@@ -1,0 +1,28 @@
+---
+description: agent-orchestrator project rules — pointer to the authoritative Claude-native instructions.
+globs:
+alwaysApply: true
+---
+
+# agent-orchestrator — Cursor rules (pointer)
+
+The authoritative, hand-maintained agent instructions are Claude-native. **Do not duplicate them here — read them:**
+
+- Project context, design principles, rules, commands → @CLAUDE.md
+- Specialized role guides → `.claude/agents/` (`developer`, `reviewer`, `tester`, `dev-security`, `dev-critic`)
+- Skills → `.claude/skills/` · Command workflows → `.claude/commands/`
+- Cross-tool overview → @AGENTS.md
+
+## Project in one line
+
+A **Python agent-orchestration framework**: drives multi-agent workflows to completion via a **DAG** of tasks (inputs/outputs as artifacts/file paths, cron + event triggers), **fully config-driven** by **structured JSON/YAML spec files** that reference payloads (md/source/dirs) by path.
+
+## Working rules (summary — CLAUDE.md is authoritative)
+
+- Smallest correct change; reuse existing patterns before new abstractions; no magic literals.
+- Validate structured specs against their schema; reference payloads by path, never inline them into the engine.
+- Keep core logic deterministic and resumable — inject RNG/clock; tasks idempotent and safe to retry.
+- Tests with `pytest`; lint/format/types via `ruff` + `mypy`. Never claim tests pass without running them.
+- When a task needs a specialized role, open the matching `.claude/agents/<role>.md` and follow it.
+
+Edit the `.claude/` originals and `CLAUDE.md`, not this pointer.
