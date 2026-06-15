@@ -121,6 +121,19 @@ Prefer adding a coverage gate (target ≥80% unless project standard differs), s
 
 ---
 
+## Ticket workspace & conventions
+
+Epic/task execution is tracked under [`ad/tickets/`](ad/tickets/) (project-local, Jira-equivalent). Full rules in [`ad/tickets/README.md`](ad/tickets/README.md); templates in [`ad/tickets/_templates/`](ad/tickets/_templates/).
+
+- **IDs**: Epic `E-<RANDOM>-<slug>` · Task `T-<RANDOM>-<slug>`, where `<RANDOM>` is exactly 6 alphanumerics (`[A-Za-z0-9]{6}`) and `<slug>` is lowercase kebab-case.
+- **Layout**: epic docs under `ad/tickets/<EpicID>/` (`EPIC.md` + `STATUS.md`); task docs under `ad/tickets/<EpicID>/<TaskID>/` (`TASK.md` + `STATUS.md` + `HANDOFF.md` when present). Start from the templates.
+- **Status sync**: any status change must stay consistent across `TASK.md`/`STATUS.md`/`HANDOFF.md` and the epic `EPIC.md`/`STATUS.md` rollup — never update one without the others.
+- **Comment attribution**: `By: <actor>` · `Role: <user|developer|tester|architect|reviewer|manager|other>` · `Date: YYYY-MM-DD` · `Comment: ...`.
+- **Large outputs** go under root `output/`, linked from ticket docs (keep ticket folders markdown-light).
+- The `architect`, `manager`, and `dev-epic` agents own most ticket creation/sync; any agent doing ticket-scoped work follows these conventions.
+
+---
+
 ## Cross-tool instructions (Claude / Copilot / Cursor)
 
 The Claude-native files are the **single source of truth**:
@@ -148,6 +161,9 @@ Claude-native subagents live in [`.claude/agents/`](.claude/agents/) and are inv
 
 | Agent | Use for |
 |-------|---------|
+| `architect` | Full-epic design + sprint planning — requirements, orchestration-landscape/competitor analysis, HLD/LLD, spec/interface/event schemas, tasks ≤3 days. Writes to `ad/tickets/`. |
+| `manager` | End-to-end delivery: turns a plan into verified outcomes by orchestrating other agents with evidence gates and ticket sync. |
+| `dev-epic` | Epic decomposition into MVP/non-MVP requirements with traceability; drives tasks to evidence-backed completion; supports mid-epic resume. |
 | `developer` | General Python implementation across the orchestrator (engine, spec handling, CLI). |
 | `reviewer` | Critical code/design review before merge. |
 | `tester` | Unit + integration tests (`pytest`); CI wiring; verifies by running suites. |

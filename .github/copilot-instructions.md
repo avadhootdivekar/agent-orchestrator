@@ -19,11 +19,16 @@ For specialized work, open the matching guide under [`../.claude/agents/`](../.c
 
 | Role | File | Use for |
 |------|------|---------|
+| architect | `architect.md` | Full-epic design + sprint planning; writes tickets to `../ad/tickets/`. |
+| manager | `manager.md` | End-to-end delivery orchestration with evidence gates + ticket sync. |
+| dev-epic | `dev-epic.md` | Epic decomposition (MVP/non-MVP + traceability), resumable drive-to-done. |
 | developer | `developer.md` | General Python implementation (engine, specs, CLI). |
 | reviewer | `reviewer.md` | Critical code/design review before merge. |
 | tester | `tester.md` | Unit + integration tests with `pytest`. |
 | dev-security | `dev-security.md` | Security audit (explicit / pre-release). |
 | dev-critic | `dev-critic.md` | Deep architecture/lock-in review (explicit). |
+
+Epic/task work is tracked under [`../ad/tickets/`](../ad/tickets/) — follow the ID format and status-sync conventions in `../ad/tickets/README.md`.
 
 ## Editing instructions
 
