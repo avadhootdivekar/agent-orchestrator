@@ -1,0 +1,120 @@
+{
+  "version": "1.0",
+  "id": "__epic_id__",
+  "name": "Epic lifecycle: requirements → design → tasks → implement → review",
+  "repo_set": "agent-orchestrator",
+  "defaults": {
+    "retries": { "max_attempts": 1, "backoff_seconds": 0 },
+    "timeout_seconds": 3600
+  },
+  "triggers": [
+    { "type": "manual" }
+  ],
+  "tasks": [
+    {
+      "id": "gather-requirements",
+      "agent": "architect",
+      "instruction": "meta/ao/instructions/01-gather-requirements.md",
+      "inputs": [
+        "meta/ao/epics/__epic_id__/prompt.md"
+      ],
+      "outputs": [
+        "meta/ao/epics/__epic_id__/outputs/requirements.md"
+      ],
+      "depends_on": [],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "design-epic",
+      "agent": "architect-opus",
+      "instruction": "meta/ao/instructions/02-design-epic.md",
+      "inputs": [
+        "meta/ao/epics/__epic_id__/outputs/requirements.md"
+      ],
+      "outputs": [
+        "meta/ao/epics/__epic_id__/outputs/adr.md",
+        "meta/ao/epics/__epic_id__/outputs/hld.md",
+        "meta/ao/epics/__epic_id__/outputs/lld.md"
+      ],
+      "depends_on": ["gather-requirements"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "create-tasks",
+      "agent": "architect",
+      "instruction": "meta/ao/instructions/03-create-tasks.md",
+      "inputs": [
+        "meta/ao/epics/__epic_id__/outputs/requirements.md",
+        "meta/ao/epics/__epic_id__/outputs/adr.md",
+        "meta/ao/epics/__epic_id__/outputs/hld.md",
+        "meta/ao/epics/__epic_id__/outputs/lld.md"
+      ],
+      "outputs": [
+        "meta/ao/epics/__epic_id__/outputs/tasks.json"
+      ],
+      "depends_on": ["design-epic"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 1800
+    },
+    {
+      "id": "implement-tasks",
+      "agent": "manager",
+      "instruction": "meta/ao/instructions/04-implement-tasks.md",
+      "inputs": [
+        "meta/ao/epics/__epic_id__/outputs/tasks.json",
+        "meta/ao/epics/__epic_id__/outputs/requirements.md",
+        "meta/ao/epics/__epic_id__/outputs/adr.md",
+        "meta/ao/epics/__epic_id__/outputs/hld.md",
+        "meta/ao/epics/__epic_id__/outputs/lld.md"
+      ],
+      "outputs": [
+        "meta/ao/epics/__epic_id__/outputs/impl-report.md"
+      ],
+      "depends_on": ["create-tasks"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 7200,
+      "retries": { "max_attempts": 1, "backoff_seconds": 0 }
+    },
+    {
+      "id": "critic-review",
+      "agent": "dev-critic",
+      "instruction": "meta/ao/instructions/05a-critic-review.md",
+      "inputs": [
+        "meta/ao/epics/__epic_id__/outputs/requirements.md",
+        "meta/ao/epics/__epic_id__/outputs/adr.md",
+        "meta/ao/epics/__epic_id__/outputs/hld.md",
+        "meta/ao/epics/__epic_id__/outputs/lld.md",
+        "meta/ao/epics/__epic_id__/outputs/tasks.json",
+        "meta/ao/epics/__epic_id__/outputs/impl-report.md"
+      ],
+      "outputs": [
+        "meta/ao/epics/__epic_id__/outputs/critic-report.md"
+      ],
+      "depends_on": ["implement-tasks"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 1800
+    },
+    {
+      "id": "architect-review",
+      "agent": "architect-opus",
+      "instruction": "meta/ao/instructions/05b-architect-review.md",
+      "inputs": [
+        "meta/ao/epics/__epic_id__/outputs/requirements.md",
+        "meta/ao/epics/__epic_id__/outputs/adr.md",
+        "meta/ao/epics/__epic_id__/outputs/hld.md",
+        "meta/ao/epics/__epic_id__/outputs/lld.md",
+        "meta/ao/epics/__epic_id__/outputs/tasks.json",
+        "meta/ao/epics/__epic_id__/outputs/impl-report.md",
+        "meta/ao/epics/__epic_id__/outputs/critic-report.md"
+      ],
+      "outputs": [
+        "meta/ao/epics/__epic_id__/outputs/final-review.md"
+      ],
+      "depends_on": ["critic-review"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 2400
+    }
+  ]
+}

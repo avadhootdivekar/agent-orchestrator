@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-orchestrator"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "jsonschema>=4.0",
+    "croniter>=2.0",
+    "typer>=0.12",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.10", "pytest-cov>=5.0"]
+
+[project.scripts]
+ao = "agent_orchestrator.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_orchestrator"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*", "croniter", "yaml"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

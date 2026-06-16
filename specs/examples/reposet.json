@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "repo_sets": {
+    "default-set": {
+      "description": "Primary code repo plus a docs repo, driven together.",
+      "workspace_root": ".",
+      "repos": [
+        { "id": "core", "path": ".", "role": "primary" },
+        { "id": "docs", "path": "./docs-md", "role": "support" }
+      ]
+    },
+    "experiment-set": {
+      "description": "A different set of repos the same orchestrator can drive.",
+      "workspace_root": "/tmp/ao-experiment",
+      "repos": [
+        { "id": "svc-a", "path": "/tmp/ao-experiment/svc-a", "role": "primary" },
+        { "id": "svc-b", "path": "/tmp/ao-experiment/svc-b", "role": "support" }
+      ]
+    }
+  }
+}

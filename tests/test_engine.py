@@ -1,0 +1,272 @@
+"""Tests for the Orchestrator engine."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from agent_orchestrator.artifacts import LocalFsArtifactStore
+from agent_orchestrator.engine import Orchestrator
+from agent_orchestrator.executors.base import Executor
+from agent_orchestrator.executors.fake import FakeExecutor
+from agent_orchestrator.models import (
+    AgentSpec,
+    RepoRef,
+    RepoSet,
+    RetryPolicy,
+    TaskContext,
+    TaskResult,
+    TaskSpec,
+    WorkflowDefaults,
+    WorkflowSpec,
+)
+from agent_orchestrator.runstate import RunStateStore
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_workspace(tmp_path: Path) -> tuple[LocalFsArtifactStore, RunStateStore]:
+    store = LocalFsArtifactStore(str(tmp_path))
+    rs_store = RunStateStore(str(tmp_path), store)
+    return store, rs_store
+
+
+def _fake_agents(executor: str = "fake") -> dict:
+    return {
+        "ag": AgentSpec(executor=executor),  # type: ignore[arg-type]
+    }
+
+
+def _fake_reposets(workspace: str) -> dict:
+    return {
+        "rs": RepoSet(
+            workspace_root=workspace,
+            repos=[RepoRef(id="core", path=".", role="primary")],
+        )
+    }
+
+
+def _workflow(
+    tasks: list[TaskSpec],
+    wf_id: str = "wf",
+    defaults: WorkflowDefaults | None = None,
+) -> WorkflowSpec:
+    return WorkflowSpec(
+        version="1.0",
+        id=wf_id,
+        repo_set="rs",
+        tasks=tasks,
+        defaults=defaults or WorkflowDefaults(),
+    )
+
+
+def _task(
+    tid: str,
+    depends_on: list[str] | None = None,
+    inputs: list[str] | None = None,
+    outputs: list[str] | None = None,
+    retries: RetryPolicy | None = None,
+    timeout_seconds: int | None = None,
+) -> TaskSpec:
+    return TaskSpec(
+        id=tid,
+        agent="ag",
+        instruction="specs/examples/instructions/design.md",
+        depends_on=depends_on or [],
+        inputs=inputs or [],
+        outputs=outputs or [],
+        retries=retries,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestLinearSuccess:
+    def test_abc_all_succeed(self, tmp_path) -> None:
+        out_a = "output/a.txt"
+        out_b = "output/b.txt"
+        out_c = "output/c.txt"
+        tasks = [
+            _task("a", outputs=[out_a]),
+            _task("b", depends_on=["a"], inputs=[out_a], outputs=[out_b]),
+            _task("c", depends_on=["b"], inputs=[out_b], outputs=[out_c]),
+        ]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        executor = FakeExecutor()
+        orch = Orchestrator(executor, store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "succeeded"
+        for tid in ["a", "b", "c"]:
+            assert state.tasks[tid].status == "succeeded"
+
+
+class TestMissingInputFailure:
+    def test_missing_input_causes_failed_state(self, tmp_path) -> None:
+        tasks = [
+            _task("a", inputs=["no/such/file.txt"]),
+        ]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        executor = FakeExecutor()
+        orch = Orchestrator(executor, store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "failed"
+        assert state.tasks["a"].status == "failed"
+
+
+class TestOutputNotProduced:
+    def test_executor_succeeded_but_outputs_absent(self, tmp_path) -> None:
+        tasks = [_task("a", outputs=["output/out.txt"])]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        # FakeExecutor with write_outputs=False => executor returns "succeeded" but file is missing
+        executor = FakeExecutor(write_outputs=False)
+        orch = Orchestrator(executor, store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "failed"
+        assert state.tasks["a"].status == "failed"
+
+
+class TestResume:
+    def test_only_failed_task_reruns_on_resume(self, tmp_path) -> None:
+        """A+B succeed, C fails. Resume -> only C runs."""
+        out_a = "output/a.txt"
+        out_b = "output/b.txt"
+        out_c = "output/c.txt"
+        tasks = [
+            _task("a", outputs=[out_a]),
+            _task("b", depends_on=["a"], inputs=[out_a], outputs=[out_b]),
+            _task("c", depends_on=["b"], inputs=[out_b], outputs=[out_c]),
+        ]
+        wf = _workflow(tasks)
+
+        store, rs_store = _make_workspace(tmp_path)
+        executor = FakeExecutor(behaviors={"c": "fail"})
+        orch = Orchestrator(executor, store, rs_store)
+
+        # First run: a, b succeed; c fails
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+        assert state.status == "failed"
+        assert state.tasks["a"].status == "succeeded"
+        assert state.tasks["b"].status == "succeeded"
+        assert state.tasks["c"].status == "failed"
+        run_id = state.run_id
+
+        # Now switch c to succeed
+        executor2 = FakeExecutor()
+        orch2 = Orchestrator(executor2, store, rs_store)
+        existing = rs_store.load(run_id)
+        existing = rs_store.prepare_resume(existing, wf)
+        state2 = orch2.run(wf, _fake_reposets(str(tmp_path)), _fake_agents(), run_state=existing)
+
+        assert state2.status == "succeeded"
+        # a and b were skipped (outputs present), c re-ran
+        assert state2.tasks["a"].status in ("succeeded", "skipped")
+        assert state2.tasks["b"].status in ("succeeded", "skipped")
+        assert state2.tasks["c"].status == "succeeded"
+
+
+class TestNFR1Hygiene:
+    def test_engine_never_passes_file_contents_in_context(self, tmp_path) -> None:
+        """The engine must only pass paths to executor; never file contents."""
+
+        class RecordingExecutor(Executor):
+            def __init__(self):
+                self.contexts: list[TaskContext] = []
+
+            def execute(self, ctx: TaskContext) -> TaskResult:
+                self.contexts.append(ctx)
+                # Write the output so the engine thinks it succeeded
+                for p in ctx.output_paths:
+                    Path(p).parent.mkdir(parents=True, exist_ok=True)
+                    Path(p).write_text("output")
+                return TaskResult(task_id=ctx.task_id, status="succeeded", attempts=1)
+
+        # Create instruction file with secret content
+        instr = tmp_path / "specs" / "examples" / "instructions"
+        instr.mkdir(parents=True)
+        instr_file = instr / "design.md"
+        instr_file.write_text("SECRET_INSTRUCTION_CONTENT_ABC")
+
+        tasks = [_task("a", outputs=["output/a.txt"])]
+        wf = _workflow(tasks)
+
+        store, rs_store = _make_workspace(tmp_path)
+        rec = RecordingExecutor()
+        orch = Orchestrator(rec, store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+        assert state.status == "succeeded"
+
+        assert len(rec.contexts) == 1
+        ctx_json = rec.contexts[0].model_dump_json()
+        assert "SECRET_INSTRUCTION_CONTENT_ABC" not in ctx_json
+
+
+class TestRetry:
+    def test_task_fails_once_then_succeeds(self, tmp_path) -> None:
+        """StatefulFakeExecutor fails on attempt 1, succeeds on attempt 2."""
+        attempts: list[int] = []
+        output_path = str(tmp_path / "output" / "a.txt")
+
+        class StatefulExecutor(Executor):
+            def execute(self, ctx: TaskContext) -> TaskResult:
+                attempts.append(1)
+                if len(attempts) < 2:
+                    return TaskResult(
+                        task_id=ctx.task_id, status="failed", attempts=1, error="transient"
+                    )
+                # Second attempt: succeed and write output
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_text("done")
+                return TaskResult(task_id=ctx.task_id, status="succeeded", attempts=1)
+
+        tasks = [_task("a", outputs=["output/a.txt"], retries=RetryPolicy(max_attempts=3))]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        orch = Orchestrator(StatefulExecutor(), store, rs_store, sleeper=lambda _: None)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+        assert state.status == "succeeded"
+        assert state.tasks["a"].status == "succeeded"
+        assert len(attempts) == 2
+
+    def test_all_retries_exhausted_leaves_failed(self, tmp_path) -> None:
+        tasks = [_task("a", outputs=["output/a.txt"], retries=RetryPolicy(max_attempts=2))]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        executor = FakeExecutor(behaviors={"a": "fail"}, write_outputs=False)
+        orch = Orchestrator(executor, store, rs_store, sleeper=lambda _: None)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+        assert state.status == "failed"
+        assert state.tasks["a"].status == "failed"
+
+
+class TestCancel:
+    def test_cancel_fn_halts_execution(self, tmp_path) -> None:
+        tasks = [
+            _task("a", outputs=["output/a.txt"]),
+            _task("b", depends_on=["a"], outputs=["output/b.txt"]),
+        ]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        executor = FakeExecutor()
+
+        # Cancel immediately
+        orch = Orchestrator(executor, store, rs_store, cancel_fn=lambda: True)
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "cancelled"

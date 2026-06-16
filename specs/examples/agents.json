@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "agents": {
+    "architect": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}"],
+      "prompt_template": "Act as the architect agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
+      "context_window": "isolated"
+    },
+    "developer": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}"],
+      "prompt_template": "Act as the developer agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
+      "context_window": "isolated"
+    },
+    "tester": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}"],
+      "prompt_template": "Act as the tester agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
+      "context_window": "isolated"
+    }
+  }
+}

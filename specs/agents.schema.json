@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestrator/specs/agents.schema.json",
+  "title": "Agents",
+  "description": "Configurable agent registry. Agents are swappable by id without touching the engine. Templates interpolate PATHS/IDS only (context-hygiene invariant).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "agents"],
+  "properties": {
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+    "agents": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/agent" }
+    }
+  },
+  "$defs": {
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executor"],
+      "properties": {
+        "executor": { "enum": ["claude_cli", "fake"] },
+        "command_template": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["claude", "-p", "{prompt}"]
+        },
+        "prompt_template": {
+          "type": "string",
+          "description": "May reference {instruction} {inputs} {outputs} {repos} — paths only, never file contents."
+        },
+        "context_window": { "enum": ["isolated", "shared"], "default": "isolated" },
+        "extra_args": { "type": "array", "items": { "type": "string" }, "default": [] }
+      }
+    }
+  }
+}

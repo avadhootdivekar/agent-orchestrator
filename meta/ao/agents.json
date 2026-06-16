@@ -1,0 +1,47 @@
+{
+  "version": "1.0",
+  "agents": {
+    "architect": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "--dangerously-skip-permissions", "-p", "{prompt}"],
+      "prompt_template": "Read and strictly follow the agent instructions in `.claude/agents/architect.md`. Then execute the task described in {instruction}. Input artifacts are at: {inputs}. Write all outputs to the exact paths listed in: {outputs}. Working repos: {repos}.",
+      "context_window": "isolated"
+    },
+    "architect-opus": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "--dangerously-skip-permissions", "--model", "claude-opus-4-8", "-p", "{prompt}"],
+      "prompt_template": "Read and strictly follow the agent instructions in `.claude/agents/architect.md`. You are running as the high-thoroughness Opus model for deep design work. Execute the task described in {instruction}. Input artifacts are at: {inputs}. Write all outputs to the exact paths listed in: {outputs}. Working repos: {repos}.",
+      "context_window": "isolated"
+    },
+    "manager": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "--dangerously-skip-permissions", "-p", "{prompt}"],
+      "prompt_template": "Read and strictly follow the agent instructions in `.claude/agents/manager.md`. Then execute the task described in {instruction}. Input artifacts are at: {inputs}. Write all outputs to the exact paths listed in: {outputs}. Working repos: {repos}.",
+      "context_window": "isolated"
+    },
+    "developer": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "--dangerously-skip-permissions", "-p", "{prompt}"],
+      "prompt_template": "Read and strictly follow the agent instructions in `.claude/agents/developer.md`. Then execute the task described in {instruction}. Input artifacts are at: {inputs}. Write all outputs to the exact paths listed in: {outputs}. Working repos: {repos}.",
+      "context_window": "isolated"
+    },
+    "tester": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "--dangerously-skip-permissions", "-p", "{prompt}"],
+      "prompt_template": "Read and strictly follow the agent instructions in `.claude/agents/tester.md`. Then execute the task described in {instruction}. Input artifacts are at: {inputs}. Write all outputs to the exact paths listed in: {outputs}. Working repos: {repos}.",
+      "context_window": "isolated"
+    },
+    "reviewer": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "--dangerously-skip-permissions", "-p", "{prompt}"],
+      "prompt_template": "Read and strictly follow the agent instructions in `.claude/agents/reviewer.md`. Then execute the task described in {instruction}. Input artifacts are at: {inputs}. Write all outputs to the exact paths listed in: {outputs}. Working repos: {repos}.",
+      "context_window": "isolated"
+    },
+    "dev-critic": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "--dangerously-skip-permissions", "-p", "{prompt}"],
+      "prompt_template": "Read and strictly follow the agent instructions in `.claude/agents/dev-critic.md`. Then execute the task described in {instruction}. Input artifacts are at: {inputs}. Write all outputs to the exact paths listed in: {outputs}. Working repos: {repos}.",
+      "context_window": "isolated"
+    }
+  }
+}
