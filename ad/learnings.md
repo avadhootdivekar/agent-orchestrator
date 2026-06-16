@@ -53,3 +53,21 @@ By: agent
 Role: agent
 Date: 2026-06-16
 ---
+
+---
+Learning-ID: LRN-20260616-tool-install-noneditable-isolation
+Learning: Use `uv tool install .` (non-editable) for v1/v2 isolation; `--editable` makes v1 and v2 the same working copy.
+Context: install.sh was generated with `--editable`; v1 broke whenever v2 regressed. Solution: non-editable snapshot + dual-invocation (`ao` = v1, `uv run ao` = v2).
+By: agent
+Role: agent
+Date: 2026-06-16
+---
+
+---
+Learning-ID: LRN-20260616-agents-json-schema-fields
+Learning: `agents.json` schema requires `executor`, `command_template`, `prompt_template`; fields `type`, `description`, `env` are rejected as additional properties.
+Context: Self-dev agents.json used `type`/`description`/`env` (intuitive names) and failed schema validation; had to match the example format exactly.
+By: agent
+Role: agent
+Date: 2026-06-16
+---

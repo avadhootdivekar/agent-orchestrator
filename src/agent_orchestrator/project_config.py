@@ -1,0 +1,219 @@
+"""Per-project configuration discovery and schema for AO.
+
+A project config file (`.ao/config.yaml` or `ao.yaml`) provides default values
+for `--workflow`, `--reposets`, and `--agents` so users don't have to pass flags
+on every invocation.
+
+Discovery rules (``find_project_config``):
+1. Start from the given directory (defaults to cwd).
+2. Check for ``.ao/config.yaml`` then ``ao.yaml`` in the current directory.
+3. Walk up one level and repeat.
+4. Stop at a ``.git/`` boundary (git root), or when reaching the filesystem root.
+5. Return the first match, or ``None`` if nothing found.
+
+Precedence (highest to lowest):
+  CLI flag > environment variable > project config file > built-in default
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import yaml
+from pydantic import BaseModel, field_validator, model_validator
+from pydantic import ValidationError as PydanticValidationError
+
+from .errors import ConfigError
+
+# Config filenames checked in order within each directory during walk-up.
+_CONFIG_CANDIDATES = [
+    Path(".ao") / "config.yaml",
+    Path("ao.yaml"),
+]
+
+
+class ProjectConfig(BaseModel):
+    """Schema for a per-project AO config file.
+
+    All path fields are stored as strings (relative paths are resolved relative
+    to the config file's directory at load time by ``load_project_config``).
+    """
+
+    workflow: str | None = None
+    """Path to the workflow JSON/YAML file."""
+
+    reposets: str | None = None
+    """Path to the reposets config JSON/YAML file."""
+
+    agents: str | None = None
+    """Path to the agents config JSON/YAML file."""
+
+    workspace_root: str | None = None
+    """Override the workspace_root from the reposet (useful in CI)."""
+
+    env: dict[str, str] = {}
+    """Key-value environment overrides applied before the command runs."""
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def _env_must_be_str_mapping(cls, v: object) -> dict[str, str]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("env must be a mapping of string keys to string values")
+        return {str(k): str(val) for k, val in v.items()}
+
+    @model_validator(mode="after")
+    def _at_least_one_path(self) -> ProjectConfig:
+        if self.workflow is None and self.reposets is None and self.agents is None:
+            # A config with no paths is technically valid (user may rely on env vars)
+            # but we warn rather than error.
+            pass
+        return self
+
+
+def find_project_config(start: Path | None = None) -> Path | None:
+    """Walk up the directory tree from *start* to find the nearest project config.
+
+    Stops at a ``.git`` boundary or the filesystem root.  Returns the resolved
+    ``Path`` of the first config file found, or ``None``.
+
+    Args:
+        start: Directory to begin the search.  Defaults to ``Path.cwd()``.
+
+    Returns:
+        Resolved path to the config file, or ``None`` if not found.
+    """
+    current = (start or Path.cwd()).resolve()
+
+    while True:
+        for candidate in _CONFIG_CANDIDATES:
+            config_path = current / candidate
+            if config_path.exists():
+                return config_path.resolve()
+
+        # Stop at git root boundary.
+        if (current / ".git").exists():
+            break
+
+        parent = current.parent
+        if parent == current:
+            # Reached filesystem root.
+            break
+        current = parent
+
+    return None
+
+
+def load_project_config(config_path: Path) -> ProjectConfig:
+    """Load and validate a project config file.
+
+    Relative paths within the config are resolved relative to the config file's
+    parent directory so that ``workflow: workflow.json`` works from any location.
+
+    Args:
+        config_path: Absolute (or resolvable) path to the config file.
+
+    Returns:
+        A validated ``ProjectConfig`` instance.
+
+    Raises:
+        ConfigError: If the file is missing, unparseable, or fails schema validation.
+    """
+    path = Path(config_path).resolve()
+    if not path.exists():
+        raise ConfigError(f"Project config not found: {path}")
+
+    try:
+        raw = path.read_text()
+        data: dict = yaml.safe_load(raw) or {}
+    except Exception as exc:
+        raise ConfigError(f"Failed to parse project config {path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"Project config must be a YAML mapping, got {type(data).__name__}: {path}"
+        )
+
+    base_dir = path.parent
+
+    # Resolve relative paths to absolute, anchored at the config file's directory.
+    for field_name in ("workflow", "reposets", "agents", "workspace_root"):
+        raw_val = data.get(field_name)
+        if raw_val and not os.path.isabs(raw_val):
+            data[field_name] = str((base_dir / raw_val).resolve())
+
+    try:
+        return ProjectConfig.model_validate(data)
+    except PydanticValidationError as exc:
+        # Flatten Pydantic's verbose error into a single readable line.
+        errors = "; ".join(
+            f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" for e in exc.errors()
+        )
+        raise ConfigError(f"Invalid project config {path}: {errors}") from exc
+
+
+def apply_project_config_env(cfg: ProjectConfig) -> None:
+    """Apply ``env`` overrides from a project config to ``os.environ``.
+
+    Only sets variables that are *not already set* in the environment (explicit
+    env vars take precedence over config-file values).
+
+    Args:
+        cfg: A loaded ``ProjectConfig``.
+    """
+    for key, value in cfg.env.items():
+        if key not in os.environ:
+            os.environ[key] = value
+
+
+# ---------------------------------------------------------------------------
+# Scaffold template for `ao init`
+# ---------------------------------------------------------------------------
+
+_INIT_TEMPLATE = """\
+# .ao/config.yaml — AO per-project configuration
+# Generated by `ao init`.  Uncomment and fill in the fields you need.
+#
+# All paths are relative to this file's directory.
+
+# workflow: path/to/workflow.json   # required for `ao run` / `ao validate`
+# reposets: path/to/reposet.json   # required (or set AO_REPOSETS env var)
+# agents:   path/to/agents.json    # required (or set AO_AGENTS env var)
+
+# workspace_root: /path/to/workspace  # overrides reposet workspace_root
+
+# env:                             # environment variable overrides
+#   MY_VAR: value
+#   ANOTHER_VAR: value
+"""
+
+
+def scaffold_init(target_dir: Path | None = None) -> Path:
+    """Write a starter `.ao/config.yaml` to *target_dir* (default: cwd).
+
+    Creates the `.ao/` directory if it doesn't exist.  Does **not** overwrite
+    an existing config file.
+
+    Args:
+        target_dir: Directory in which to create `.ao/config.yaml`.
+
+    Returns:
+        Path to the written (or already-existing) config file.
+
+    Raises:
+        ConfigError: If an existing config file would be overwritten.
+    """
+    base = (target_dir or Path.cwd()).resolve()
+    ao_dir = base / ".ao"
+    config_path = ao_dir / "config.yaml"
+
+    if config_path.exists():
+        raise ConfigError(
+            f"Config file already exists: {config_path}\nRemove it or edit it manually."
+        )
+
+    ao_dir.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(_INIT_TEMPLATE)
+    return config_path

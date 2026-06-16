@@ -8,11 +8,12 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 ## Contents
 
 - [Install](#install)
+- [Quickstart](#quickstart)
 - [Core concepts](#core-concepts)
 - [Spec files](#spec-files)
-- [Quick start](#quick-start)
 - [CLI reference](#cli-reference)
 - [Environment variables](#environment-variables)
+- [Per-project config file](#per-project-config-file)
 - [Configuring multiple repos](#configuring-multiple-repos)
 - [Schema reference](#schema-reference)
 - [Repo layout](#repo-layout)
@@ -22,6 +23,24 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 
 ## Install
 
+### One-command install (recommended)
+
+Run the bundled installer from the repo root.  It checks for `uv`, installs it
+if missing, then installs `ao` as a global tool:
+
+```bash
+bash install.sh
+```
+
+After the script finishes, `ao` is on your `$PATH`.  If your shell doesn't pick
+it up immediately, restart it or run:
+
+```bash
+source "$HOME/.local/bin/env"
+```
+
+### Manual install (development)
+
 ```bash
 # Requires Python 3.11+  (uv is the preferred package manager)
 uv pip install -e ".[dev]"   # dev extras: pytest, ruff, mypy
@@ -30,11 +49,75 @@ uv pip install -e ".[dev]"   # dev extras: pytest, ruff, mypy
 uv run ao --help
 ```
 
-Using plain pip:
+---
+
+## Quickstart
+
+### 1. Scaffold a project config
+
+In your project directory:
 
 ```bash
-pip install -e ".[dev]"
-ao --help
+ao init
+```
+
+This creates `.ao/config.yaml` with commented example fields.  Edit it:
+
+```yaml
+workflow: path/to/workflow.json
+reposets: path/to/reposet.json
+agents:   path/to/agents.json
+```
+
+Once the config is in place, `ao` discovers it automatically when you run any
+command from that directory (or any subdirectory up to the git root):
+
+```bash
+ao validate    # no flags needed
+ao run
+```
+
+Explicit flags always override the config file:
+
+```bash
+ao validate --workflow other.json   # overrides config
+```
+
+### 2. Validate your specs
+
+```bash
+ao validate \
+  --workflow  specs/examples/workflow.json \
+  --reposets  specs/examples/reposet.json \
+  --agents    specs/examples/agents.json
+```
+
+Expected output:
+
+```
+OK: all specs valid
+```
+
+### 3. Run a workflow
+
+```bash
+ao run \
+  --workflow  specs/examples/workflow.json \
+  --reposets  specs/examples/reposet.json \
+  --agents    specs/examples/agents.json
+```
+
+The engine prints a status table on completion.  Exit code is `0` on success,
+`1` on failure.
+
+### 4. Resume or inspect a run
+
+```bash
+# Resume an interrupted run by its run ID (completed tasks are skipped):
+ao resume --run-id <run-id> --workflow ... --reposets ... --agents ...
+
+# Check the status of any past run:
+ao status --run-id <run-id> --workflow ... --reposets ... --agents ...
 ```
 
 ---
@@ -92,76 +175,10 @@ specs/examples/
 
 ---
 
-## Quick start
-
-### 1. Validate your specs
-
-```bash
-uv run ao validate \
-  --workflow  specs/examples/workflow.json \
-  --reposets  specs/examples/reposet.json \
-  --agents    specs/examples/agents.json
-```
-
-Expected output:
-
-```
-OK: all specs valid
-```
-
-Validation checks JSON Schema conformance, cross-references (every `agent` key exists in agents.json, every `repo_set` key exists in reposet.json, every `depends_on` id exists), and cycle detection.
-
-### 2. Run a workflow
-
-```bash
-uv run ao run \
-  --workflow  specs/examples/workflow.json \
-  --reposets  specs/examples/reposet.json \
-  --agents    specs/examples/agents.json
-```
-
-The engine prints a run ID and a status table when the run completes:
-
-```
-Run:    feature-pipeline-20260616T120000Z
-Status: succeeded
-
-Task                           Status          Attempts
--------------------------------------------------------
-design                         succeeded       1
-implement                      succeeded       1
-test                           succeeded       1
-```
-
-Exit code is `0` on success, `1` on failure or error.
-
-### 3. Resume after failure
-
-If a run fails mid-way, resume it by run ID — completed tasks are skipped (their outputs are already on disk):
-
-```bash
-uv run ao resume \
-  --run-id   feature-pipeline-20260616T120000Z \
-  --workflow  specs/examples/workflow.json \
-  --reposets  specs/examples/reposet.json \
-  --agents    specs/examples/agents.json
-```
-
-### 4. Check run status
-
-```bash
-uv run ao status \
-  --run-id   feature-pipeline-20260616T120000Z \
-  --workflow  specs/examples/workflow.json \
-  --reposets  specs/examples/reposet.json \
-  --agents    specs/examples/agents.json
-```
-
----
-
 ## CLI reference
 
 ```
+ao init       Scaffold a per-project .ao/config.yaml (run once per project)
 ao validate   Validate workflow, reposets, and agents specs (no execution)
 ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
@@ -172,9 +189,13 @@ All commands accept:
 
 | Option | Description |
 |--------|-------------|
-| `--workflow PATH` | Path to workflow JSON or YAML **(required)** |
-| `--reposets PATH` | Path to reposets JSON or YAML (or set `AO_REPOSETS`) |
-| `--agents PATH` | Path to agents JSON or YAML (or set `AO_AGENTS`) |
+| `--workflow PATH` | Path to workflow JSON or YAML |
+| `--reposets PATH` | Path to reposets JSON or YAML |
+| `--agents PATH` | Path to agents JSON or YAML |
+
+If a flag is omitted, AO checks (in order):
+1. The matching environment variable (`AO_WORKFLOW`, `AO_REPOSETS`, `AO_AGENTS`)
+2. The nearest `.ao/config.yaml` (or `ao.yaml`) found by walking up from the current directory
 
 `ao resume` and `ao status` also require `--run-id RUN_ID`.
 
@@ -184,9 +205,36 @@ All commands accept:
 
 | Variable | Description |
 |----------|-------------|
+| `AO_WORKFLOW` | Default path to the workflow file (overridden by `--workflow`) |
 | `AO_REPOSETS` | Default path to the reposets config (overridden by `--reposets`) |
 | `AO_AGENTS` | Default path to the agents config (overridden by `--agents`) |
 | `AO_WORKSPACE_ROOT` | Override the `workspace_root` from the reposet (useful in CI) |
+
+---
+
+## Per-project config file
+
+Create `.ao/config.yaml` (or `ao.yaml`) at your project root so you don't have
+to pass `--workflow`/`--reposets`/`--agents` every time.  Run `ao init` to
+scaffold a commented starter file.
+
+```yaml
+# .ao/config.yaml
+workflow:  path/to/workflow.json   # relative to this file
+reposets:  path/to/reposet.json
+agents:    path/to/agents.json
+
+# workspace_root: /path/to/workspace  # optional: overrides reposet value
+
+# env:                  # optional: set env vars before any ao command
+#   MY_TOKEN: abc123
+```
+
+**Discovery**: AO walks up from your current directory, stopping at the git root
+or filesystem root.  The first `.ao/config.yaml` (preferred) or `ao.yaml` it
+finds is used.
+
+**Precedence**: `--flag` > `AO_*` env var > config file value.
 
 ---
 

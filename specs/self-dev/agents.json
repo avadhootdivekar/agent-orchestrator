@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "agents": {
+    "claude-cli": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}"],
+      "prompt_template": "Act as a developer agent for AO. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
+      "context_window": "isolated"
+    }
+  }
+}

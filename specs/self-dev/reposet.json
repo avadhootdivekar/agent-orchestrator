@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "repo_sets": {
+    "ao-repo": {
+      "description": "AO repo itself — used when running AO-v1 to drive AO-v2 development.",
+      "workspace_root": "../..",
+      "repos": [
+        { "id": "ao", "path": "../..", "role": "primary" }
+      ]
+    }
+  }
+}

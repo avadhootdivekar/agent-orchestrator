@@ -31,3 +31,19 @@ type: pitfall
 ---
 
 `cross_validate` in `agent_orchestrator.spec` takes `(workflow, reposets_dict, agents_dict)`. **Why**: passing agents as the second argument causes every repo_set lookup to fail with "Unknown repo_set: X" — the error looks like a missing config entry but is actually an argument-order bug. **Apply**: any time you call `cross_validate` directly, double-check the order: workflow → reposets → agents.
+
+---
+name: uv-tool-install-noneditable-for-isolation
+description: uv tool install must be non-editable for v1/v2 isolation; --editable makes the global `ao` share the working copy
+type: pitfall
+---
+
+`uv tool install --editable .` makes the globally installed `ao` and the dev copy identical — any regression in v2 breaks v1. **Why**: editable mode imports live from `src/` with no separate snapshot. **Apply**: `install.sh` must use `uv tool install .` (no `--editable`) to produce a true v1 snapshot. Dual-invocation pattern: `ao` (global) = v1 stable; `uv run ao` in repo = v2 dev.
+
+---
+name: agents-json-required-fields
+description: agents.json executor entries require `executor`, `command_template`, `prompt_template`; `type`/`description`/`env` are rejected
+type: constraint
+---
+
+The agents JSON schema (`specs/agents.schema.json`) uses `additionalProperties: false`. Valid fields are `executor`, `command_template`, `prompt_template`, `context_window`. **Why**: `type`, `description`, and `env` look intuitive but are not in the schema and cause validation failure. **Apply**: when writing or scaffolding `agents.json`, match the `specs/examples/agents.json` field names exactly.
