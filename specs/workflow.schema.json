@@ -64,6 +64,10 @@
         "instruction": { "type": "string", "description": "PATH to a prompt/spec file. Never inline contents." },
         "inputs": { "type": "array", "items": { "type": "string" }, "default": [] },
         "outputs": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "output_manifest": {
+          "type": "string",
+          "description": "Optional path to a JSON manifest the agent writes after completion. Format: {\"artifacts\": [\"path1\", ...]}. The engine reads it and passes the listed paths as {dynamic_inputs} to dependent tasks."
+        },
         "depends_on": { "type": "array", "items": { "type": "string" }, "default": [] },
         "retries": { "$ref": "#/$defs/retryPolicy" },
         "timeout_seconds": { "type": "integer", "minimum": 1 },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -56,3 +57,25 @@ class LocalFsArtifactStore(ArtifactStore):
             return os.path.exists(self.resolve(path))
         except ArtifactPathError:
             return False
+
+
+def read_manifest(artifact_store: ArtifactStore, path: str) -> list[str]:
+    """Read a machine-written output manifest and return artifact paths.
+
+    Manifest format: {"artifacts": ["path1", "path2", ...]}
+
+    This function reads file content — it is intentionally narrow in scope: only
+    machine-written JSON control files (not user payload artifacts) are read here.
+
+    Raises ValueError on missing file, invalid JSON, or wrong schema.
+    """
+    resolved = artifact_store.resolve(path)
+    try:
+        data = json.loads(Path(resolved).read_text())
+    except FileNotFoundError:
+        raise ValueError(f"Manifest not found: {path!r}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Manifest at {path!r} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("artifacts"), list):
+        raise ValueError(f'Manifest at {path!r} must be {{"artifacts": [...]}}; got: {type(data)}')
+    return [str(p) for p in data["artifacts"]]

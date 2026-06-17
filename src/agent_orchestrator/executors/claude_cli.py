@@ -24,6 +24,8 @@ class ClaudeCliExecutor(Executor):
             inputs=" ".join(ctx.input_paths),
             outputs=" ".join(ctx.output_paths),
             repos=" ".join(f"{k}={v}" for k, v in ctx.repo_paths.items()),
+            dynamic_inputs=" ".join(ctx.dynamic_input_paths),
+            output_manifest=ctx.output_manifest_path or "",
         )
         argv = [
             (arg.replace("{prompt}", prompt) if "{prompt}" in arg else arg)

@@ -1,10 +1,12 @@
-"""Tests for LocalFsArtifactStore path resolution and safety guards."""
+"""Tests for LocalFsArtifactStore path resolution and safety guards, and read_manifest."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from agent_orchestrator.artifacts import LocalFsArtifactStore
+from agent_orchestrator.artifacts import LocalFsArtifactStore, read_manifest
 from agent_orchestrator.errors import ArtifactPathError
 
 
@@ -55,3 +57,41 @@ class TestLocalFsArtifactStore:
         store = LocalFsArtifactStore(str(tmp_path))
         result = store.resolve("a/b/c/d.txt")
         assert result == str(tmp_path / "a" / "b" / "c" / "d.txt")
+
+
+class TestReadManifest:
+    def test_valid_manifest(self, tmp_path) -> None:
+        store = LocalFsArtifactStore(str(tmp_path))
+        m = tmp_path / "manifest.json"
+        m.write_text(json.dumps({"artifacts": ["src/foo.py", "tests/test_foo.py"]}))
+        result = read_manifest(store, "manifest.json")
+        assert result == ["src/foo.py", "tests/test_foo.py"]
+
+    def test_empty_artifacts_list(self, tmp_path) -> None:
+        store = LocalFsArtifactStore(str(tmp_path))
+        m = tmp_path / "manifest.json"
+        m.write_text(json.dumps({"artifacts": []}))
+        assert read_manifest(store, "manifest.json") == []
+
+    def test_missing_file_raises(self, tmp_path) -> None:
+        store = LocalFsArtifactStore(str(tmp_path))
+        with pytest.raises(ValueError, match="Manifest not found"):
+            read_manifest(store, "no_such_manifest.json")
+
+    def test_invalid_json_raises(self, tmp_path) -> None:
+        store = LocalFsArtifactStore(str(tmp_path))
+        (tmp_path / "bad.json").write_text("not json {")
+        with pytest.raises(ValueError, match="not valid JSON"):
+            read_manifest(store, "bad.json")
+
+    def test_missing_artifacts_key_raises(self, tmp_path) -> None:
+        store = LocalFsArtifactStore(str(tmp_path))
+        (tmp_path / "m.json").write_text(json.dumps({"files": ["a.py"]}))
+        with pytest.raises(ValueError, match='must be {"artifacts"'):
+            read_manifest(store, "m.json")
+
+    def test_artifacts_not_a_list_raises(self, tmp_path) -> None:
+        store = LocalFsArtifactStore(str(tmp_path))
+        (tmp_path / "m.json").write_text(json.dumps({"artifacts": "not-a-list"}))
+        with pytest.raises(ValueError, match='must be {"artifacts"'):
+            read_manifest(store, "m.json")

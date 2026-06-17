@@ -6,9 +6,15 @@ This directory contains the AO workflow definitions used to develop the agent-or
 
 **Q: Will the orchestrator break if I change its source while it's running?**
 
-The package is installed in editable mode (`uv pip install -e .`), so Python reloads the source on each new invocation. A running workflow is safe: each `uv run agent-orchestrator …` call starts fresh; in-flight tasks use the version that was loaded at their start. You can edit source between tasks freely. The only risk is changing the engine mid-task-execution, which doesn't happen here since tasks are sequential by default.
+No — `ao` is installed as a **global, locked snapshot** via `./install.sh`. The running binary is independent of the source tree; editing source mid-workflow has no effect on the in-flight `ao` process.
 
-**Recommendation**: run all orchestrator commands via `uv run agent-orchestrator …` — never `python -m` outside uv.
+**Isolation model**:
+- `ao` (globally installed, locked snapshot) → runs workflows that modify the AO source repo as a target
+- `uv run ao` → runs the current working-copy dev version for testing new engine changes
+
+**Self-development model**: the AO source repo is just another repo in the reposet — a target you point `ao` at, not the directory `ao` runs from. This is why `meta/ao/reposets.json` lists the repo root as a `primary` repo, not a special "this is where ao lives" directory.
+
+**Recommendation**: for self-development workflows, use the globally-installed `ao` (locked, isolated). Switch to `uv run ao` only when you need to test changes to the engine itself.
 
 ## Directory layout
 
@@ -86,18 +92,21 @@ cp meta/ao/workflows/epic-lifecycle-template.json meta/ao/epics/my-epic/workflow
 # Edit meta/ao/epics/my-epic/prompt.md with your requirements
 
 # 2. Validate the workflow
-uv run agent-orchestrator validate meta/ao/epics/my-epic/workflow.json \
-  --agents meta/ao/agents.json \
-  --reposets meta/ao/reposets.json
+ao validate \
+  --workflow  meta/ao/epics/my-epic/workflow.json \
+  --agents    meta/ao/agents.json \
+  --reposets  meta/ao/reposets.json
 
 # 3. Run it
-uv run agent-orchestrator run meta/ao/epics/my-epic/workflow.json \
-  --agents meta/ao/agents.json \
-  --reposets meta/ao/reposets.json
+ao run \
+  --workflow  meta/ao/epics/my-epic/workflow.json \
+  --agents    meta/ao/agents.json \
+  --reposets  meta/ao/reposets.json
 
 # 4. Check status / resume if interrupted
-uv run agent-orchestrator status meta/ao/epics/my-epic/workflow.json
-uv run agent-orchestrator resume meta/ao/epics/my-epic/workflow.json \
-  --agents meta/ao/agents.json \
-  --reposets meta/ao/reposets.json
+ao status  --workflow meta/ao/epics/my-epic/workflow.json
+ao resume  \
+  --workflow  meta/ao/epics/my-epic/workflow.json \
+  --agents    meta/ao/agents.json \
+  --reposets  meta/ao/reposets.json
 ```

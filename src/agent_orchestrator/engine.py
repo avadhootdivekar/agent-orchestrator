@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from .artifacts import ArtifactStore
+from .artifacts import ArtifactStore, read_manifest
 from .dag import build_dag
 from .executors.base import Executor
 from .models import RunState, TaskContext, TaskResult, TaskRunState, WorkflowSpec
@@ -100,7 +100,9 @@ class Orchestrator:
             # Resume / idempotency: skip completed tasks
             if self._runstate.should_skip(task, state):
                 logger.info("Skipping task %s (already succeeded with outputs present)", tid)
-                state.tasks[tid] = TaskRunState(status="skipped")
+                # Mutate in-place to preserve persisted fields (e.g. dynamic_outputs)
+                ts = state.tasks.setdefault(tid, TaskRunState())
+                ts.status = "skipped"
                 self._runstate.save(state)
                 continue
 
@@ -113,6 +115,13 @@ class Orchestrator:
                 state.status = "failed"
                 break
 
+            # Collect dynamic outputs from all upstream tasks declared in depends_on
+            dynamic_input_paths: list[str] = []
+            for dep_id in task.depends_on:
+                dep_ts = state.tasks.get(dep_id)
+                if dep_ts and dep_ts.dynamic_outputs:
+                    dynamic_input_paths.extend(dep_ts.dynamic_outputs)
+
             # Mark as running
             ts = state.tasks.setdefault(tid, TaskRunState())
             ts.status = "running"
@@ -120,7 +129,9 @@ class Orchestrator:
             self._runstate.save(state)
 
             # Execute with retries
-            result = self._run_with_retries(task, workflow, agents, repo_paths, state)
+            result = self._run_with_retries(
+                task, workflow, agents, repo_paths, state, dynamic_input_paths
+            )
 
             ts.attempts = result.attempts
             ts.ended_at = datetime.now(UTC).isoformat()
@@ -139,6 +150,19 @@ class Orchestrator:
                 else:
                     ts.status = "succeeded"
                     ts.outputs_present = True
+                    # Read output manifest if declared; failure fails the task
+                    if task.output_manifest:
+                        try:
+                            ts.dynamic_outputs = read_manifest(self._store, task.output_manifest)
+                            logger.info(
+                                "Task %s: loaded %d dynamic outputs from manifest",
+                                tid,
+                                len(ts.dynamic_outputs),
+                            )
+                        except ValueError as exc:
+                            logger.error("Task %s: output_manifest read failed: %s", tid, exc)
+                            ts.status = "failed"
+                            ts.outputs_present = False
             else:
                 ts.status = result.status
 
@@ -162,6 +186,7 @@ class Orchestrator:
         agents: dict,
         repo_paths: dict,
         state: RunState,
+        dynamic_input_paths: list[str] | None = None,
     ) -> TaskResult:
         """Execute *task* with the configured retry policy.
 
@@ -175,6 +200,9 @@ class Orchestrator:
         instruction_path = self._store.resolve(task.instruction)
         input_paths = [self._store.resolve(p) for p in task.inputs]
         output_paths = [self._store.resolve(p) for p in task.outputs]
+        output_manifest_path = (
+            self._store.resolve(task.output_manifest) if task.output_manifest else None
+        )
 
         last_result: TaskResult | None = None
 
@@ -193,6 +221,8 @@ class Orchestrator:
                 instruction_path=instruction_path,
                 input_paths=input_paths,
                 output_paths=output_paths,
+                output_manifest_path=output_manifest_path,
+                dynamic_input_paths=dynamic_input_paths or [],
                 repo_paths=repo_paths,
                 timeout_seconds=timeout,
             )

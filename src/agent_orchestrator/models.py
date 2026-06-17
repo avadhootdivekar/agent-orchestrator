@@ -41,6 +41,7 @@ class TaskSpec(BaseModel):
     instruction: str
     inputs: list[str] = []
     outputs: list[str] = []
+    output_manifest: str | None = None
     depends_on: list[str] = []
     retries: RetryPolicy | None = None
     timeout_seconds: int | None = None
@@ -89,6 +90,8 @@ class TaskContext(BaseModel):
     instruction_path: str
     input_paths: list[str]
     output_paths: list[str]
+    output_manifest_path: str | None = None
+    dynamic_input_paths: list[str] = []
     repo_paths: dict[str, str]
     timeout_seconds: int
 
@@ -112,6 +115,7 @@ class TaskRunState(BaseModel):
     started_at: str | None = None
     ended_at: str | None = None
     outputs_present: bool = False
+    dynamic_outputs: list[str] = []
 
 
 class RunState(BaseModel):

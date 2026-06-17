@@ -66,6 +66,7 @@ def _task(
     depends_on: list[str] | None = None,
     inputs: list[str] | None = None,
     outputs: list[str] | None = None,
+    output_manifest: str | None = None,
     retries: RetryPolicy | None = None,
     timeout_seconds: int | None = None,
 ) -> TaskSpec:
@@ -76,6 +77,7 @@ def _task(
         depends_on=depends_on or [],
         inputs=inputs or [],
         outputs=outputs or [],
+        output_manifest=output_manifest,
         retries=retries,
         timeout_seconds=timeout_seconds,
     )
@@ -253,6 +255,118 @@ class TestRetry:
         state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
         assert state.status == "failed"
         assert state.tasks["a"].status == "failed"
+
+
+class TestOutputManifest:
+    def test_manifest_dynamic_outputs_passed_to_downstream(self, tmp_path) -> None:
+        """Task A writes a manifest; task B receives those paths as dynamic_input_paths."""
+        manifest_path = "output/a-manifest.json"
+        dynamic_files = ["src/foo.py", "tests/test_foo.py"]
+
+        # Track what dynamic_input_paths task B receives
+        received_dynamic: list[list[str]] = []
+
+        class RecordingExecutor(Executor):
+            def __init__(self, fake: FakeExecutor):
+                self._fake = fake
+
+            def execute(self, ctx: TaskContext) -> TaskResult:
+                if ctx.task_id == "b":
+                    received_dynamic.append(list(ctx.dynamic_input_paths))
+                return self._fake.execute(ctx)
+
+        tasks = [
+            _task("a", outputs=["output/a.txt"], output_manifest=manifest_path),
+            _task("b", depends_on=["a"], outputs=["output/b.txt"]),
+        ]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        fake = FakeExecutor(manifest_payloads={"a": dynamic_files})
+        executor = RecordingExecutor(fake)
+        orch = Orchestrator(executor, store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "succeeded"
+        assert state.tasks["a"].dynamic_outputs == dynamic_files
+        assert len(received_dynamic) == 1
+        # Paths are resolved to absolute; check the basenames match
+        received_basenames = [p.split("/")[-1] for p in received_dynamic[0]]
+        assert received_basenames == ["foo.py", "test_foo.py"]
+
+    def test_manifest_read_failure_fails_task(self, tmp_path) -> None:
+        """If task declares output_manifest but the agent doesn't write it, task fails."""
+        tasks = [
+            _task("a", outputs=["output/a.txt"], output_manifest="output/missing-manifest.json"),
+        ]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        # FakeExecutor with no manifest_payloads — manifest file won't be written
+        executor = FakeExecutor()
+        orch = Orchestrator(executor, store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "failed"
+        assert state.tasks["a"].status == "failed"
+
+    def test_no_manifest_no_dynamic_inputs(self, tmp_path) -> None:
+        """Tasks without output_manifest produce empty dynamic_outputs."""
+        tasks = [
+            _task("a", outputs=["output/a.txt"]),
+            _task("b", depends_on=["a"], outputs=["output/b.txt"]),
+        ]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        orch = Orchestrator(FakeExecutor(), store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "succeeded"
+        assert state.tasks["a"].dynamic_outputs == []
+        assert state.tasks["b"].dynamic_outputs == []
+
+    def test_manifest_persisted_across_resume(self, tmp_path) -> None:
+        """Dynamic outputs are saved to run state and survive resume."""
+        manifest_path = "output/a-manifest.json"
+        dynamic_files = ["src/new.py"]
+        tasks = [
+            _task("a", outputs=["output/a.txt"], output_manifest=manifest_path),
+            _task("b", depends_on=["a"], outputs=["output/b.txt"]),
+        ]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        # First run: a succeeds with manifest, b fails
+        fake = FakeExecutor(behaviors={"b": "fail"}, manifest_payloads={"a": dynamic_files})
+        orch = Orchestrator(fake, store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+        assert state.tasks["a"].status == "succeeded"
+        assert state.tasks["a"].dynamic_outputs == dynamic_files
+        run_id = state.run_id
+
+        # Resume: load state; a is skipped; dynamic outputs should still flow to b
+        received_dynamic: list[list[str]] = []
+
+        class RecordingExecutor(Executor):
+            def __init__(self, fake: FakeExecutor):
+                self._fake = fake
+
+            def execute(self, ctx: TaskContext) -> TaskResult:
+                if ctx.task_id == "b":
+                    received_dynamic.append(list(ctx.dynamic_input_paths))
+                return self._fake.execute(ctx)
+
+        fake2 = FakeExecutor()
+        existing = rs_store.load(run_id)
+        existing = rs_store.prepare_resume(existing, wf)
+        orch2 = Orchestrator(RecordingExecutor(fake2), store, rs_store)
+        state2 = orch2.run(wf, _fake_reposets(str(tmp_path)), _fake_agents(), run_state=existing)
+
+        assert state2.status == "succeeded"
+        assert len(received_dynamic) == 1
+        received_basenames = [p.split("/")[-1] for p in received_dynamic[0]]
+        assert received_basenames == ["new.py"]
 
 
 class TestCancel:

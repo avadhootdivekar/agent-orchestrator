@@ -4,7 +4,7 @@ This is the step-by-step guide to drive a new feature epic from requirements to 
 
 ## Prerequisites
 
-- `uv run agent-orchestrator --help` works (package installed in editable mode)
+- `ao --help` works (`ao` globally installed via `./install.sh`)
 - You have a rough idea of what you want to build
 
 ## Step 1 — Pick an epic ID
@@ -55,9 +55,10 @@ sed -i "s/__epic_id__/$EPIC_ID/g" meta/ao/epics/$EPIC_ID/workflow.json
 ## Step 4 — Validate the workflow spec
 
 ```bash
-uv run agent-orchestrator validate meta/ao/epics/$EPIC_ID/workflow.json \
-  --agents meta/ao/agents.json \
-  --reposets meta/ao/reposets.json
+ao validate \
+  --workflow  meta/ao/epics/$EPIC_ID/workflow.json \
+  --agents    meta/ao/agents.json \
+  --reposets  meta/ao/reposets.json
 ```
 
 All validation checks must pass before running.
@@ -65,9 +66,10 @@ All validation checks must pass before running.
 ## Step 5 — Run the workflow
 
 ```bash
-uv run agent-orchestrator run meta/ao/epics/$EPIC_ID/workflow.json \
-  --agents meta/ao/agents.json \
-  --reposets meta/ao/reposets.json
+ao run \
+  --workflow  meta/ao/epics/$EPIC_ID/workflow.json \
+  --agents    meta/ao/agents.json \
+  --reposets  meta/ao/reposets.json
 ```
 
 The pipeline runs sequentially:
@@ -83,9 +85,10 @@ The pipeline runs sequentially:
 If the run is interrupted at any stage, resume from where it left off:
 
 ```bash
-uv run agent-orchestrator resume meta/ao/epics/$EPIC_ID/workflow.json \
-  --agents meta/ao/agents.json \
-  --reposets meta/ao/reposets.json
+ao resume \
+  --workflow  meta/ao/epics/$EPIC_ID/workflow.json \
+  --agents    meta/ao/agents.json \
+  --reposets  meta/ao/reposets.json
 ```
 
 Stages with `skip_if_outputs_exist: true` will be skipped if their outputs are already on disk.
@@ -93,7 +96,7 @@ Stages with `skip_if_outputs_exist: true` will be skipped if their outputs are a
 ## Step 7 — Check status
 
 ```bash
-uv run agent-orchestrator status meta/ao/epics/$EPIC_ID/workflow.json
+ao status --workflow meta/ao/epics/$EPIC_ID/workflow.json
 ```
 
 ## Step 8 — Review outputs

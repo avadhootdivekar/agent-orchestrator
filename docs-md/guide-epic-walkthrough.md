@@ -4,6 +4,20 @@ This guide takes you from zero to a fully orchestrated multi-task epic — inclu
 the spec files, running with a dry-run (fake) executor, handling a task failure, and resuming
 from where things stopped. It mirrors a real feature-delivery epic.
 
+## How AO is installed
+
+`ao` is a globally-installed tool (see `./install.sh`). It is **not** run from inside the
+repo you are working on — it is invoked as a standalone binary that points at your repos
+as targets via a reposet config.
+
+```
+[globally installed ao] ──runs──> [workflow spec] ──coordinates──> [your repos as targets]
+```
+
+This means you can safely use `ao` to drive changes to the AO source repo itself: the
+running binary is a locked snapshot, independent of the source tree it is modifying.
+See `meta/ao/` for the self-development workflow setup.
+
 ---
 
 ## Scenario
