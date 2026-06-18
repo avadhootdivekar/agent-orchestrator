@@ -30,6 +30,15 @@ class ArtifactStore(ABC):
         """Return True if the artifact at *path* exists on disk."""
         ...
 
+    @abstractmethod
+    def size(self, path: str) -> int:
+        """Return the byte size of the artifact at *path* using os.stat.
+
+        Returns 0 if the file does not exist or the path is invalid.
+        This is an os.stat call — NOT a content read (NFR-1 safe).
+        """
+        ...
+
 
 class LocalFsArtifactStore(ArtifactStore):
     """Artifact store backed by the local filesystem.
@@ -58,6 +67,14 @@ class LocalFsArtifactStore(ArtifactStore):
             return os.path.exists(self.resolve(path))
         except ArtifactPathError:
             return False
+
+    def size(self, path: str) -> int:
+        """Return file size in bytes via os.stat. Returns 0 if missing or invalid path."""
+        try:
+            resolved = self.resolve(path)
+            return os.stat(resolved).st_size
+        except (ArtifactPathError, FileNotFoundError, OSError):
+            return 0
 
 
 def read_manifest(artifact_store: ArtifactStore, path: str) -> list[str]:

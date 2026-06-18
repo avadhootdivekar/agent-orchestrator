@@ -10,11 +10,21 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from .artifacts import ArtifactStore, read_gate, read_manifest, read_task_manifest
+from .budget import BudgetDecision, BudgetManager
 from .dag import build_dag
 from .errors import GateError, InjectionError
+from .estimator import TokenEstimator
 from .executors.base import Executor
 from .logging_setup import attach_run_handler, detach_run_handler, get_run_logger
-from .models import LoopSpec, RunState, TaskContext, TaskResult, TaskRunState, WorkflowSpec
+from .models import (
+    EstimatorConfig,
+    LoopSpec,
+    RunState,
+    TaskContext,
+    TaskResult,
+    TaskRunState,
+    WorkflowSpec,
+)
 from .runstate import RunStateStore
 
 # Valid origin values for injected/loop tasks
@@ -50,6 +60,12 @@ class Orchestrator:
         Injectable sleep function (default: time.sleep).
     cancel_fn:
         Returns True when the run should be cancelled (default: never).
+    budget_manager:
+        Optional token budget manager; when None, budget enforcement is skipped.
+    estimator:
+        Optional token estimator paired with budget_manager; when None, budget gate is skipped.
+    clock:
+        Injectable clock returning the current UTC datetime (default: datetime.now(UTC)).
     """
 
     def __init__(
@@ -59,12 +75,18 @@ class Orchestrator:
         runstate_store: RunStateStore,
         sleeper: Callable[[float], None] = time.sleep,
         cancel_fn: Callable[[], bool] = _NO_CANCEL,
+        budget_manager: BudgetManager | None = None,
+        estimator: TokenEstimator | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._executor = executor
         self._store = artifact_store
         self._runstate = runstate_store
         self._sleeper = sleeper
         self._cancel_fn = cancel_fn
+        self._budget_manager = budget_manager
+        self._estimator = estimator
+        self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
 
     def run(
         self,
@@ -188,6 +210,153 @@ class Orchestrator:
                     if dep_ts and dep_ts.dynamic_outputs:
                         dynamic_input_paths.extend(dep_ts.dynamic_outputs)
 
+                # _estimate is declared at task-block scope so the reconcile block can
+                # reference it regardless of whether the budget gate ran (T-algywf, NFR-3).
+                _estimate = 0
+
+                # ---- Budget gate (T-algywf, FR-1..FR-3, FR-4) ----
+                if self._budget_manager is not None and self._estimator is not None:
+                    _est_agent = agents[task.agent]
+                    _est_instr = self._store.resolve(task.instruction)
+                    _est_inputs = [self._store.resolve(p) for p in task.inputs]
+                    _est_cfg = (
+                        workflow.budget.estimator if workflow.budget else None
+                    ) or EstimatorConfig()
+                    _est_ctx = TaskContext(
+                        run_id=state.run_id,
+                        task_id=tid,
+                        agent=_est_agent,
+                        instruction_path=_est_instr,
+                        input_paths=_est_inputs,
+                        output_paths=[self._store.resolve(p) for p in task.outputs],
+                        dynamic_input_paths=dynamic_input_paths,
+                        repo_paths=repo_paths,
+                        timeout_seconds=task.timeout_seconds or workflow.defaults.timeout_seconds,
+                    )
+                    _estimate = self._estimator.estimate(_est_ctx, _est_cfg)
+
+                    # Resume double-charge guard (R2, NFR-3): if this task was charged but
+                    # not yet reconciled in a previous run, reverse the stale estimate before
+                    # re-gating.
+                    if (
+                        tid in state.budget_counters.charged_estimate
+                        and tid not in state.budget_counters.reconciled_tasks
+                    ):
+                        self._budget_manager.reverse_estimate(tid, state.budget_counters)
+                        run_log.info(
+                            "Reversed stale estimate for task %s on resume",
+                            tid,
+                            extra={"event": "budget.resume_reverse", "task_id": tid},
+                        )
+
+                    # Gate loop: admit or block; handles wait-retry on window roll
+                    _gate_admitted = False
+                    while not _gate_admitted:
+                        _decision = self._budget_manager.gate(tid, _estimate, state.budget_counters)
+                        if _decision.admit:
+                            _gate_admitted = True
+                            break
+
+                        task_log.warning(
+                            "Budget gate blocked task %s: blocked_by=%s next_available=%s",
+                            tid,
+                            _decision.blocked_by,
+                            _decision.next_available_epoch,
+                            extra={
+                                "event": "budget.gate_block",
+                                "task_id": tid,
+                                "blocked_by": _decision.blocked_by,
+                                "next_available_epoch": _decision.next_available_epoch,
+                                "estimate": _estimate,
+                            },
+                        )
+
+                        # Unsatisfiable: estimate exceeds the entire budget/window — would wait
+                        # forever; stop immediately.
+                        if self._is_unsatisfiable(_estimate, _decision):
+                            run_log.error(
+                                "Task %s estimate %d exceeds %s limit — unsatisfiable; stopping",
+                                tid,
+                                _estimate,
+                                _decision.blocked_by,
+                                extra={
+                                    "event": "budget.exhausted",
+                                    "task_id": tid,
+                                    "blocked_by": _decision.blocked_by,
+                                },
+                            )
+                            state.status = "failed"
+                            failed = True
+                            break
+
+                        _on_exhaustion = (
+                            workflow.budget.on_exhaustion if workflow.budget else "stop"
+                        )
+
+                        if _on_exhaustion == "stop":
+                            run_log.warning(
+                                "Budget exhausted; stopping run",
+                                extra={
+                                    "event": "budget.exhausted",
+                                    "task_id": tid,
+                                    "blocked_by": _decision.blocked_by,
+                                    "next_available_epoch": _decision.next_available_epoch,
+                                },
+                            )
+                            state.status = "failed"
+                            failed = True
+                            break
+                        else:  # wait
+                            _next = _decision.next_available_epoch or (
+                                self._clock().timestamp() + 1
+                            )
+                            _sleep_secs = max(0.0, _next - self._clock().timestamp())
+                            run_log.info(
+                                "Budget wait: sleeping %.1f seconds until %.3f",
+                                _sleep_secs,
+                                _next,
+                                extra={
+                                    "event": "budget.wait",
+                                    "task_id": tid,
+                                    "sleep_seconds": _sleep_secs,
+                                    "next_available_epoch": _next,
+                                },
+                            )
+                            self._sleeper(_sleep_secs)
+                            if self._cancel_fn():
+                                run_log.info(
+                                    "Cancelled during budget wait",
+                                    extra={"event": "run.cancelled"},
+                                )
+                                state.status = "cancelled"
+                                failed = True
+                                break
+                            run_log.info(
+                                "Budget wait ended; re-gating task %s",
+                                tid,
+                                extra={"event": "budget.resume", "task_id": tid},
+                            )
+                            # Loop back to re-gate (window should have rolled)
+
+                    if failed:
+                        self._runstate.save(state)
+                        break
+
+                    # Charge the estimate (admitted)
+                    self._budget_manager.charge_estimate(tid, _estimate, state.budget_counters)
+                    self._runstate.save(state)
+                    task_log.info(
+                        "Budget charged estimate %d for task %s",
+                        _estimate,
+                        tid,
+                        extra={
+                            "event": "budget.charge",
+                            "task_id": tid,
+                            "estimate": _estimate,
+                            "consumed_tokens": state.budget_counters.consumed_tokens,
+                        },
+                    )
+
                 # Mark as running
                 ts = state.tasks.setdefault(tid, TaskRunState())
                 ts.status = "running"
@@ -219,6 +388,92 @@ class Orchestrator:
                     task_manifest_path=resolved_task_manifest_path,
                     gate_output_path=resolved_gate_output_path,
                 )
+
+                # ---- Budget reconcile / 429 route (T-algywf, FR-4, FR-5, FR-8) ----
+                if self._budget_manager is not None and self._estimator is not None:
+                    if result.provider_rate_limited:
+                        # Provider 429: reverse the estimate (task will re-run) then stop or wait
+                        self._budget_manager.reverse_estimate(tid, state.budget_counters)
+                        _429_decision = self._budget_manager.on_provider_429(
+                            result.provider_retry_after_epoch, state.budget_counters
+                        )
+                        run_log.warning(
+                            "Provider 429 on task %s; retry_after=%.3f",
+                            tid,
+                            _429_decision.next_available_epoch or 0,
+                            extra={
+                                "event": "budget.provider_429",
+                                "task_id": tid,
+                                "next_available_epoch": _429_decision.next_available_epoch,
+                            },
+                        )
+                        _on_exhaustion_429 = (
+                            workflow.budget.on_exhaustion if workflow.budget else "stop"
+                        )
+                        if (
+                            _on_exhaustion_429 == "wait"
+                            and _429_decision.next_available_epoch is not None
+                        ):
+                            _sleep_secs_429 = max(
+                                0.0,
+                                _429_decision.next_available_epoch - self._clock().timestamp(),
+                            )
+                            run_log.info(
+                                "Waiting %.1f seconds for provider rate limit to reset",
+                                _sleep_secs_429,
+                                extra={
+                                    "event": "budget.wait",
+                                    "task_id": tid,
+                                    "sleep_seconds": _sleep_secs_429,
+                                },
+                            )
+                            self._sleeper(_sleep_secs_429)
+                            if self._cancel_fn():
+                                state.status = "cancelled"
+                                failed = True
+                                self._runstate.save(state)
+                                break
+                            run_log.info(
+                                "Provider rate limit wait ended; re-running task %s",
+                                tid,
+                                extra={"event": "budget.resume", "task_id": tid},
+                            )
+                            # Re-run the task: step cursor back and continue the while loop
+                            cursor -= 1
+                            self._runstate.save(state)
+                            continue
+                        else:
+                            # stop (default) or no next_available — end the run
+                            run_log.warning(
+                                "Stopping run due to provider rate limit",
+                                extra={"event": "budget.exhausted", "task_id": tid},
+                            )
+                            state.status = "failed"
+                            failed = True
+                            self._runstate.save(state)
+                            break
+                    else:
+                        # Normal reconcile: replace estimate with actuals or keep estimate
+                        if result.actuals_available:
+                            _actual = self._sum_actuals(result)
+                        else:
+                            # Fallback (FR-5): keep the estimate already stored in
+                            # charged_estimate (charge_estimate stored it; reconcile will pop it)
+                            _actual = state.budget_counters.charged_estimate.get(tid, 0)
+                        self._budget_manager.reconcile(tid, _actual, state.budget_counters)
+                        task_log.info(
+                            "Budget reconciled task %s: actual=%d estimate_delta=%d",
+                            tid,
+                            _actual,
+                            _actual - _estimate,
+                            extra={
+                                "event": "budget.reconcile",
+                                "task_id": tid,
+                                "actual": _actual,
+                                "consumed_tokens": state.budget_counters.consumed_tokens,
+                            },
+                        )
+                        self._runstate.save(state)
 
                 ts.attempts = result.attempts
                 ts.ended_at = datetime.now(UTC).isoformat()
@@ -395,6 +650,41 @@ class Orchestrator:
 
         finally:
             detach_run_handler(state.run_id)
+
+    # -------------------------------------------------------------------------
+    # Budget helpers (T-algywf)
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _sum_actuals(result: TaskResult) -> int:
+        """Sum all token fields from a TaskResult (input + output + cache fields)."""
+        total = 0
+        for field in (
+            result.input_tokens,
+            result.output_tokens,
+            result.cache_creation_input_tokens,
+            result.cache_read_input_tokens,
+        ):
+            if field is not None:
+                total += field
+        return total
+
+    def _is_unsatisfiable(self, estimate: int, decision: BudgetDecision) -> bool:
+        """Return True if this estimate can NEVER be admitted (estimate alone exceeds limit).
+
+        This prevents an infinite wait loop when a single task's estimate exceeds the
+        entire window budget or total budget.
+        """
+        if self._budget_manager is None:
+            return False
+        spec = getattr(self._budget_manager, "_spec", None)
+        if spec is None:
+            return False
+        if decision.blocked_by == "total" and spec.total_tokens is not None:
+            return estimate > spec.total_tokens
+        if decision.blocked_by == "rate" and spec.rate is not None:
+            return estimate > spec.rate.tokens
+        return False
 
     def _run_with_retries(
         self,

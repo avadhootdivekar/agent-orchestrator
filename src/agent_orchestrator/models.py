@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Budget constants (NFR-7 — no magic literals in budget logic)
+WINDOW_SECONDS: dict[str, int] = {"minute": 60, "ten_minutes": 600, "hour": 3600}
+DEFAULT_CHARS_PER_TOKEN: int = 4
+DEFAULT_PESSIMISM_BUFFER: float = 1.3
+DEFAULT_OUTPUT_ALLOWANCE_TOKENS: int = 1000
+DEFAULT_429_BACKOFF_SECONDS: int = 60
 
 
 class RepoRef(BaseModel):
@@ -74,12 +81,48 @@ class LoopSpec(BaseModel):
     max_iterations: int = 5  # hard cap; >= 1
 
 
+class RateLimit(BaseModel):
+    tokens: int
+    window: Literal["minute", "ten_minutes", "hour"] | None = None
+    window_seconds: int | None = None
+
+    def seconds(self) -> int:
+        """Return the window duration in seconds."""
+        if self.window_seconds is not None:
+            return self.window_seconds
+        return WINDOW_SECONDS[self.window]  # type: ignore[index]
+
+
+class EstimatorConfig(BaseModel):
+    chars_per_token: int = DEFAULT_CHARS_PER_TOKEN
+    pessimism_buffer: float = DEFAULT_PESSIMISM_BUFFER
+    output_allowance_tokens: int = DEFAULT_OUTPUT_ALLOWANCE_TOKENS
+
+
+class BudgetSpec(BaseModel):
+    total_tokens: int | None = None
+    rate: RateLimit | None = None
+    on_exhaustion: Literal["stop", "wait"] = "stop"
+    estimator: EstimatorConfig = EstimatorConfig()
+
+
+class BudgetCounters(BaseModel):
+    """Persisted budget accounting counters inside RunState (FR-9, NFR-3)."""
+
+    consumed_tokens: int = 0
+    window_start_epoch: float | None = None
+    window_consumed_tokens: int = 0
+    charged_estimate: dict[str, int] = {}
+    reconciled_tasks: list[str] = []
+
+
 class WorkflowSpec(BaseModel):
     version: str
     id: str
     name: str = ""
     repo_set: str
     defaults: WorkflowDefaults = WorkflowDefaults()
+    budget: BudgetSpec | None = None
     triggers: list[Trigger] = [Trigger(type="manual")]
     tasks: list[TaskSpec]
     loops: list[LoopSpec] = []
@@ -129,6 +172,14 @@ class TaskResult(BaseModel):
     # Path (directory) where captured stdout/stderr live (FR-5).
     # Engine records this without reading file content (NFR-1).
     output_artifact_path: str | None = None
+    # Token accounting fields (T-oh5gl5 / FR-5, FR-8)
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    actuals_available: bool = False
+    provider_rate_limited: bool = False
+    provider_retry_after_epoch: float | None = None
 
 
 TaskStatus = Literal[
@@ -163,3 +214,6 @@ class RunState(BaseModel):
     injected_tasks: list[TaskSpec] = []
     # loop_id -> highest iteration number already materialized (idempotent on resume, FR-12).
     loop_iterations: dict[str, int] = {}
+    # Budget accounting counters (T-oh5gl5 / FR-9, NFR-3).
+    # default_factory ensures old serialized states without this field load with defaults.
+    budget_counters: BudgetCounters = Field(default_factory=BudgetCounters)

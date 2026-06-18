@@ -33,7 +33,8 @@
       "type": "array",
       "default": [],
       "items": { "$ref": "#/$defs/loop" }
-    }
+    },
+    "budget": { "$ref": "#/$defs/budget" }
   },
   "$defs": {
     "retryPolicy": {
@@ -123,6 +124,35 @@
           "default": 5,
           "description": "Hard cap on the number of iterations; loop stops cleanly when reached."
         }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_tokens": { "type": "integer", "minimum": 1 },
+        "rate": { "$ref": "#/$defs/rateLimit" },
+        "on_exhaustion": { "enum": ["stop", "wait"], "default": "stop" },
+        "estimator": { "$ref": "#/$defs/estimatorConfig" }
+      }
+    },
+    "rateLimit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tokens"],
+      "properties": {
+        "tokens": { "type": "integer", "minimum": 1 },
+        "window": { "enum": ["minute", "ten_minutes", "hour"] },
+        "window_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "estimatorConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chars_per_token": { "type": "integer", "minimum": 1, "default": 4 },
+        "pessimism_buffer": { "type": "number", "minimum": 1.0, "default": 1.3 },
+        "output_allowance_tokens": { "type": "integer", "minimum": 0, "default": 1000 }
       }
     }
   }

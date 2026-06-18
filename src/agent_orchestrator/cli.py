@@ -12,8 +12,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
+
+if TYPE_CHECKING:
+    from .models import BudgetSpec
 
 app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=False)
 
@@ -121,6 +125,116 @@ def _print_status_snapshot(snap: dict) -> None:
         )
 
 
+def _build_effective_budget(
+    wf_budget: BudgetSpec | None,
+    budget_total: int | None,
+    rate_tokens: int | None,
+    rate_window: str | None,
+    on_exhaustion_override: str | None,
+    pessimism_buffer: float | None,
+) -> BudgetSpec | None:
+    """Build effective BudgetSpec by merging CLI flags over the workflow budget block.
+
+    Precedence: CLI > spec > unset (no limit).
+    Returns None if no budget is configured anywhere (no-op path).
+    Raises typer.Exit(1) on invalid combinations.
+    """
+    from .errors import SpecValidationError
+    from .models import BudgetSpec, EstimatorConfig, RateLimit
+    from .spec import budget_cross_validate
+
+    # Validate on_exhaustion value if provided
+    if on_exhaustion_override is not None and on_exhaustion_override not in ("stop", "wait"):
+        typer.echo(
+            f"ERROR: --on-exhaustion must be 'stop' or 'wait', got '{on_exhaustion_override}'",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # Start with spec as base (or empty defaults)
+    base_total = wf_budget.total_tokens if wf_budget else None
+    base_rate = wf_budget.rate if wf_budget else None
+    base_on_exhaustion = wf_budget.on_exhaustion if wf_budget else "stop"
+    base_estimator = wf_budget.estimator if wf_budget else EstimatorConfig()
+
+    # CLI overrides (per-field, not whole-object replacement)
+    effective_total = budget_total if budget_total is not None else base_total
+
+    # Rate: CLI tokens + window override the spec rate if either is provided.
+    # Precedence is per-field: if only one of the two is given on the CLI,
+    # fall back to the spec rate for the missing piece.
+    if rate_tokens is not None or rate_window is not None:
+        resolved_rate_tokens = (
+            rate_tokens
+            if rate_tokens is not None
+            else (base_rate.tokens if base_rate is not None else None)
+        )
+        resolved_rate_window = (
+            rate_window
+            if rate_window is not None
+            else (base_rate.window if base_rate is not None else None)
+        )
+        if resolved_rate_tokens is None or resolved_rate_window is None:
+            typer.echo(
+                "ERROR: --rate-tokens and --rate-window must both be provided"
+                " when specifying a rate limit via CLI",
+                err=True,
+            )
+            raise typer.Exit(1)
+        # Validate that the window value is a known literal before constructing RateLimit.
+        # budget_cross_validate will catch this too, but a clearer message here is better.
+        valid_windows = ("minute", "ten_minutes", "hour")
+        if resolved_rate_window not in valid_windows:
+            typer.echo(
+                f"ERROR: --rate-window must be one of {valid_windows},"
+                f" got '{resolved_rate_window}'",
+                err=True,
+            )
+            raise typer.Exit(1)
+        from typing import Literal, cast
+
+        effective_rate: RateLimit | None = RateLimit(
+            tokens=resolved_rate_tokens,
+            window=cast(Literal["minute", "ten_minutes", "hour"], resolved_rate_window),
+        )
+    else:
+        effective_rate = base_rate
+
+    # Cast on_exhaustion to the expected Literal type after validation above.
+    from typing import Literal, cast
+
+    effective_on_exhaustion = cast(
+        "Literal['stop', 'wait']",
+        on_exhaustion_override if on_exhaustion_override is not None else base_on_exhaustion,
+    )
+
+    if pessimism_buffer is not None:
+        effective_estimator = base_estimator.model_copy(
+            update={"pessimism_buffer": pessimism_buffer}
+        )
+    else:
+        effective_estimator = base_estimator
+
+    # No-op path: no budget anywhere
+    if effective_total is None and effective_rate is None:
+        return None
+
+    eff = BudgetSpec(
+        total_tokens=effective_total,
+        rate=effective_rate,
+        on_exhaustion=effective_on_exhaustion,
+        estimator=effective_estimator,
+    )
+
+    try:
+        budget_cross_validate(eff)
+    except SpecValidationError as e:
+        typer.echo(f"ERROR: budget config invalid: {e}", err=True)
+        raise typer.Exit(1)
+
+    return eff
+
+
 @app.command()
 def validate(
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
@@ -143,11 +257,31 @@ def run(
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
     reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+    budget_total: int | None = typer.Option(
+        None, "--budget-total", help="Total token budget for the run"
+    ),
+    rate_tokens: int | None = typer.Option(
+        None, "--rate-tokens", help="Max tokens per rate window"
+    ),
+    rate_window: str | None = typer.Option(
+        None, "--rate-window", help="Rate window: minute, ten_minutes, or hour"
+    ),
+    on_exhaustion: str | None = typer.Option(
+        None, "--on-exhaustion", help="Action on budget exhaustion: stop (default) or wait"
+    ),
+    pessimism_buffer: float | None = typer.Option(
+        None, "--pessimism-buffer", help="Estimator pessimism multiplier (default 1.3)"
+    ),
 ) -> None:
     """Run a workflow from scratch."""
+    from datetime import UTC
+    from datetime import datetime as _dt
+
     from .artifacts import LocalFsArtifactStore
+    from .budget import DefaultBudgetManager
     from .engine import Orchestrator
     from .errors import CycleError, OrchestratorError
+    from .estimator import HeuristicTokenEstimator
     from .executors import DispatchExecutor
     from .runstate import RunStateStore
 
@@ -160,7 +294,33 @@ def run(
     store = LocalFsArtifactStore(workspace)
     rs_store = RunStateStore(workspace, store)
     executor = DispatchExecutor()
-    orch = Orchestrator(executor, store, rs_store)
+
+    # Build effective budget (CLI > spec > unset)
+    effective_budget = _build_effective_budget(
+        wf.budget, budget_total, rate_tokens, rate_window, on_exhaustion, pessimism_buffer
+    )
+
+    # Construct BudgetManager + estimator if budget is configured
+    budget_manager = None
+    estimator = None
+    clock = None
+    if effective_budget is not None:
+
+        def _wall_clock() -> _dt:
+            return _dt.now(UTC)
+
+        clock = _wall_clock
+        budget_manager = DefaultBudgetManager(effective_budget, clock)
+        estimator = HeuristicTokenEstimator(store)
+
+    orch = Orchestrator(
+        executor,
+        store,
+        rs_store,
+        budget_manager=budget_manager,
+        estimator=estimator,
+        clock=clock,
+    )
 
     try:
         state = orch.run(wf, reposet_map, agent_map)
@@ -178,11 +338,31 @@ def resume(
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
     reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+    budget_total: int | None = typer.Option(
+        None, "--budget-total", help="Total token budget override"
+    ),
+    rate_tokens: int | None = typer.Option(
+        None, "--rate-tokens", help="Max tokens per rate window override"
+    ),
+    rate_window: str | None = typer.Option(
+        None, "--rate-window", help="Rate window override: minute, ten_minutes, or hour"
+    ),
+    on_exhaustion: str | None = typer.Option(
+        None, "--on-exhaustion", help="Action on budget exhaustion: stop or wait"
+    ),
+    pessimism_buffer: float | None = typer.Option(
+        None, "--pessimism-buffer", help="Estimator pessimism multiplier override"
+    ),
 ) -> None:
     """Resume a previously interrupted run."""
+    from datetime import UTC
+    from datetime import datetime as _dt
+
     from .artifacts import LocalFsArtifactStore
+    from .budget import DefaultBudgetManager
     from .engine import Orchestrator
     from .errors import OrchestratorError
+    from .estimator import HeuristicTokenEstimator
     from .executors import DispatchExecutor
     from .runstate import RunStateStore
 
@@ -202,8 +382,32 @@ def resume(
         typer.echo(f"ERROR: {e}", err=True)
         raise typer.Exit(1)
 
+    # Build effective budget (CLI > spec > unset), using the original workflow budget
+    effective_budget = _build_effective_budget(
+        wf.budget, budget_total, rate_tokens, rate_window, on_exhaustion, pessimism_buffer
+    )
+
+    budget_manager = None
+    estimator = None
+    clock = None
+    if effective_budget is not None:
+
+        def _wall_clock() -> _dt:
+            return _dt.now(UTC)
+
+        clock = _wall_clock
+        budget_manager = DefaultBudgetManager(effective_budget, clock)
+        estimator = HeuristicTokenEstimator(store)
+
     executor = DispatchExecutor()
-    orch = Orchestrator(executor, store, rs_store)
+    orch = Orchestrator(
+        executor,
+        store,
+        rs_store,
+        budget_manager=budget_manager,
+        estimator=estimator,
+        clock=clock,
+    )
 
     try:
         state = orch.run(wf, reposet_map, agent_map, run_state=existing)

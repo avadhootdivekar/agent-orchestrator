@@ -49,6 +49,17 @@ class FakeExecutor(Executor):
         suffixed task id to the gate bool for *that* invocation.  For simplicity,
         the mapping uses the base gate_task_id and a positional list of bools;
         the executor writes the correct path based on invocation count.
+    token_outputs:
+        Mapping of task_id -> token field dict.  On success, if the task_id is
+        present, populates the token fields (input_tokens, output_tokens,
+        cache_creation_input_tokens, cache_read_input_tokens) in the returned
+        TaskResult and sets actuals_available=True.  (T-1m9744)
+    rate_limit_tasks:
+        Mapping of task_id -> retry_after_epoch (float | None).  On the *first*
+        call for that task_id the executor returns a failed TaskResult with
+        provider_rate_limited=True and the configured retry_after_epoch.
+        Subsequent calls succeed normally (the engine handles re-runs).
+        (T-1m9744)
     """
 
     def __init__(
@@ -58,16 +69,34 @@ class FakeExecutor(Executor):
         manifest_payloads: dict[str, list[str]] | None = None,
         emit_payloads: dict[str, dict] | None = None,
         gate_payloads: dict[str, list[bool]] | None = None,
+        token_outputs: dict[str, dict] | None = None,
+        rate_limit_tasks: dict[str, float | None] | None = None,
     ) -> None:
         self._behaviors: dict[str, Behavior] = behaviors or {}
         self._write_outputs = write_outputs
         self._manifest_payloads: dict[str, list[str]] = manifest_payloads or {}
         self._emit_payloads: dict[str, dict] = emit_payloads or {}
         self._gate_payloads: dict[str, list[bool]] = gate_payloads or {}
+        self._token_outputs: dict[str, dict] = token_outputs or {}
+        self._rate_limit_tasks: dict[str, float | None] = rate_limit_tasks or {}
         # invocation counters for gate tasks: base_id -> count (0-indexed)
         self._gate_invocations: dict[str, int] = {}
+        # task_ids that have already been 429'd once; subsequent calls succeed
+        self._rate_limited_once: set[str] = set()
 
     def execute(self, ctx: TaskContext) -> TaskResult:
+        # --- 429 simulation: fail on first call, succeed on retry ---
+        if ctx.task_id in self._rate_limit_tasks and ctx.task_id not in self._rate_limited_once:
+            self._rate_limited_once.add(ctx.task_id)
+            return TaskResult(
+                task_id=ctx.task_id,
+                status="failed",
+                attempts=1,
+                provider_rate_limited=True,
+                provider_retry_after_epoch=self._rate_limit_tasks[ctx.task_id],
+                error="fake 429",
+            )
+
         behavior = self._behaviors.get(ctx.task_id, "succeed")
 
         # Always write capture stubs when output_dir is set (FR-4 contract).
@@ -137,6 +166,22 @@ class FakeExecutor(Executor):
                 with open(ctx.gate_output_path, "w") as f:
                     json.dump({"continue": verdicts[invoc]}, f)
             self._gate_invocations[base_id] = invoc + 1
+
+        # Build success result; populate token fields if configured (T-1m9744).
+        token_info = self._token_outputs.get(ctx.task_id)
+        if token_info is not None:
+            return TaskResult(
+                task_id=ctx.task_id,
+                status="succeeded",
+                attempts=1,
+                exit_code=0,
+                output_artifact_path=ctx.output_dir or None,
+                actuals_available=True,
+                input_tokens=token_info.get("input_tokens"),
+                output_tokens=token_info.get("output_tokens"),
+                cache_creation_input_tokens=token_info.get("cache_creation_input_tokens"),
+                cache_read_input_tokens=token_info.get("cache_read_input_tokens"),
+            )
 
         return TaskResult(
             task_id=ctx.task_id,

@@ -50,3 +50,29 @@ class LoopError(OrchestratorError):
 
 class GateError(OrchestratorError):
     """Raised when a loop gate file is missing, its field is absent, or the value is non-bool."""
+
+
+class BudgetExhausted(OrchestratorError):
+    """Raised / recorded when the total token budget is exhausted (FR-6, FR-7, ADR-BUD-004).
+
+    The blocking task is left pending and un-charged; RunState is resumable.
+    """
+
+    def __init__(self, blocked_by: str, next_available_epoch: float | None = None) -> None:
+        super().__init__(
+            f"Token budget exhausted (blocked_by={blocked_by!r},"
+            f" next_available_epoch={next_available_epoch})"
+        )
+        self.blocked_by = blocked_by
+        self.next_available_epoch = next_available_epoch
+
+
+class RateLimited(OrchestratorError):
+    """Raised / recorded when the rate window or provider 429 blocks the run.
+
+    References: FR-6, FR-8, ADR-BUD-004.
+    """
+
+    def __init__(self, next_available_epoch: float | None = None) -> None:
+        super().__init__(f"Rate limited (next_available_epoch={next_available_epoch})")
+        self.next_available_epoch = next_available_epoch

@@ -326,3 +326,257 @@ class TestStatusCommand:
             env={"AO_WORKSPACE_ROOT": str(tmp_path)},
         )
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# Test: _build_effective_budget helper (AC 1-5 from T-xefapr-cli-budget-flags)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEffectiveBudget:
+    """Unit tests for _build_effective_budget: merge logic, no-op path, validation."""
+
+    def _call(
+        self,
+        wf_budget=None,
+        budget_total=None,
+        rate_tokens=None,
+        rate_window=None,
+        on_exhaustion=None,
+        pessimism_buffer=None,
+    ):
+        from agent_orchestrator.cli import _build_effective_budget
+
+        return _build_effective_budget(
+            wf_budget, budget_total, rate_tokens, rate_window, on_exhaustion, pessimism_buffer
+        )
+
+    def test_no_budget_anywhere_returns_none(self) -> None:
+        """AC-2: no spec budget + no CLI flags -> no-op path returns None."""
+        result = self._call()
+        assert result is None
+
+    def test_cli_total_wins_over_spec(self) -> None:
+        """AC-1: spec total_tokens=5000, CLI --budget-total=1000 -> effective total=1000."""
+        from agent_orchestrator.models import BudgetSpec
+
+        spec_budget = BudgetSpec(total_tokens=5000)
+        result = self._call(wf_budget=spec_budget, budget_total=1000)
+        assert result is not None
+        assert result.total_tokens == 1000
+
+    def test_cli_budget_total_preserves_spec_rate(self) -> None:
+        """CLI --budget-total must NOT wipe a spec rate block (per-field precedence)."""
+        from agent_orchestrator.models import BudgetSpec, RateLimit
+
+        spec_budget = BudgetSpec(total_tokens=5000, rate=RateLimit(tokens=200, window="minute"))
+        result = self._call(wf_budget=spec_budget, budget_total=1000)
+        assert result is not None
+        assert result.total_tokens == 1000
+        assert result.rate is not None
+        assert result.rate.tokens == 200
+        assert result.rate.window == "minute"
+
+    def test_cli_rate_overrides_spec_rate(self) -> None:
+        """AC-4: --rate-tokens 500 --rate-window minute -> rate.tokens==500, window=='minute'."""
+        result = self._call(budget_total=10000, rate_tokens=500, rate_window="minute")
+        assert result is not None
+        assert result.rate is not None
+        assert result.rate.tokens == 500
+        assert result.rate.window == "minute"
+
+    def test_cli_rate_tokens_only_uses_spec_window(self) -> None:
+        """Partial CLI rate: --rate-tokens supplied; window comes from spec rate."""
+        from agent_orchestrator.models import BudgetSpec, RateLimit
+
+        spec_budget = BudgetSpec(rate=RateLimit(tokens=300, window="hour"))
+        result = self._call(wf_budget=spec_budget, rate_tokens=999)
+        assert result is not None
+        assert result.rate is not None
+        assert result.rate.tokens == 999
+        assert result.rate.window == "hour"
+
+    def test_cli_rate_window_only_uses_spec_tokens(self) -> None:
+        """Partial CLI rate: --rate-window supplied; tokens come from spec rate."""
+        from agent_orchestrator.models import BudgetSpec, RateLimit
+
+        spec_budget = BudgetSpec(rate=RateLimit(tokens=300, window="hour"))
+        result = self._call(wf_budget=spec_budget, rate_window="minute")
+        assert result is not None
+        assert result.rate is not None
+        assert result.rate.tokens == 300
+        assert result.rate.window == "minute"
+
+    def test_rate_tokens_without_window_no_spec_exits(self) -> None:
+        """AC-5: --rate-tokens without --rate-window and no spec rate -> Exit(1)."""
+        import pytest
+        import typer
+
+        with pytest.raises(typer.Exit):
+            self._call(rate_tokens=500)  # no rate_window, no spec
+
+    def test_invalid_on_exhaustion_exits(self) -> None:
+        """Invalid --on-exhaustion value -> Exit(1)."""
+        import pytest
+        import typer
+
+        with pytest.raises(typer.Exit):
+            self._call(budget_total=1000, on_exhaustion="invalid")
+
+    def test_on_exhaustion_cli_wins_over_spec(self) -> None:
+        """CLI --on-exhaustion wait overrides spec 'stop'."""
+        from agent_orchestrator.models import BudgetSpec
+
+        spec_budget = BudgetSpec(total_tokens=5000, on_exhaustion="stop")
+        result = self._call(wf_budget=spec_budget, on_exhaustion="wait")
+        assert result is not None
+        assert result.on_exhaustion == "wait"
+
+    def test_pessimism_buffer_cli_wins(self) -> None:
+        """CLI --pessimism-buffer overrides spec estimator buffer."""
+        from agent_orchestrator.models import BudgetSpec
+
+        spec_budget = BudgetSpec(total_tokens=1000)
+        result = self._call(wf_budget=spec_budget, pessimism_buffer=2.5)
+        assert result is not None
+        assert result.estimator.pessimism_buffer == 2.5
+
+    def test_spec_only_budget_passed_through(self) -> None:
+        """No CLI flags: spec budget is returned unchanged."""
+        from agent_orchestrator.models import BudgetSpec, RateLimit
+
+        spec_budget = BudgetSpec(
+            total_tokens=8000, rate=RateLimit(tokens=100, window="ten_minutes")
+        )
+        result = self._call(wf_budget=spec_budget)
+        assert result is not None
+        assert result.total_tokens == 8000
+        assert result.rate is not None
+        assert result.rate.tokens == 100
+        assert result.rate.window == "ten_minutes"
+
+    def test_invalid_rate_window_value_exits(self) -> None:
+        """An invalid --rate-window string -> Exit(1)."""
+        import pytest
+        import typer
+
+        with pytest.raises(typer.Exit):
+            self._call(budget_total=1000, rate_tokens=500, rate_window="daily")
+
+
+# ---------------------------------------------------------------------------
+# Test: run command with budget flags (CLI-level smoke tests)
+# ---------------------------------------------------------------------------
+
+
+class TestRunCommandBudgetFlags:
+    """Smoke tests verifying budget flags are wired through in ao run."""
+
+    def _setup(self, tmp_path: Path) -> tuple:
+        instr_dir = tmp_path / "specs" / "examples" / "instructions"
+        instr_dir.mkdir(parents=True)
+        (instr_dir / "design.md").write_text("design instruction")
+
+        wf = tmp_path / "workflow.json"
+        rs = tmp_path / "reposets.json"
+        ag = tmp_path / "agents.json"
+        _write_workflow(
+            wf,
+            tasks=[
+                {
+                    "id": "design",
+                    "agent": "architect",
+                    "instruction": "specs/examples/instructions/design.md",
+                    "outputs": ["output/design.md"],
+                }
+            ],
+        )
+        _write_reposets(rs, str(tmp_path))
+        _write_agents_fake(ag)
+        return wf, rs, ag
+
+    def test_run_with_budget_total_succeeds(self, tmp_path) -> None:
+        """ao run --budget-total with a generous limit succeeds (fake executor uses 0 tokens)."""
+        wf, rs, ag = self._setup(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--workflow",
+                str(wf),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+                "--budget-total",
+                "100000",
+            ],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+        assert result.exit_code == 0
+        assert "succeeded" in result.output
+
+    def test_run_with_full_rate_flags_succeeds(self, tmp_path) -> None:
+        """ao run --rate-tokens + --rate-window succeeds with a generous limit."""
+        wf, rs, ag = self._setup(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--workflow",
+                str(wf),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+                "--rate-tokens",
+                "100000",
+                "--rate-window",
+                "minute",
+            ],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+        assert result.exit_code == 0
+        assert "succeeded" in result.output
+
+    def test_run_invalid_on_exhaustion_exits_1(self, tmp_path) -> None:
+        """ao run --on-exhaustion badvalue -> exit 1 with error message."""
+        wf, rs, ag = self._setup(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--workflow",
+                str(wf),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+                "--budget-total",
+                "1000",
+                "--on-exhaustion",
+                "badvalue",
+            ],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+        assert result.exit_code == 1
+
+    def test_run_rate_tokens_without_window_exits_1(self, tmp_path) -> None:
+        """ao run --rate-tokens without --rate-window and no spec rate -> exit 1."""
+        wf, rs, ag = self._setup(tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--workflow",
+                str(wf),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+                "--rate-tokens",
+                "500",
+            ],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+        assert result.exit_code == 1

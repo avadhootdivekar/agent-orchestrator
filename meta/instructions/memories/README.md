@@ -55,3 +55,11 @@ type: pitfall
 ---
 
 `dag.build_dag` adds an edge whenever one task's output path equals another's input path — in addition to explicit `depends_on`. **Why**: any feature that clones or duplicates a task (loop iterations, fan-out, retries-as-tasks) while copying its `inputs`/`outputs` will make `build_dag` infer edges between the duplicates and their originals, producing false `CycleError`s against already-terminal tasks. **Apply**: when generating/cloning tasks at runtime, clear `inputs`/`outputs` on clones (as `engine._clone_body` does for `__iterN` loop tasks, ADR-007) or otherwise ensure duplicated tasks don't share artifact paths.
+
+---
+name: persisted-model-fields-need-defaults
+description: New fields on RunState or any model nested in it must have defaults, or resuming an older run fails to deserialize state.json
+type: constraint
+---
+
+`RunState` (and everything nested in it) is persisted to `state.json` and reloaded on resume. **Why**: a new field without a default makes pydantic reject any `state.json` written before the field existed, breaking resume for in-flight runs. **Apply**: when adding a field to `RunState` or a nested persisted model, always give it a default or `Field(default_factory=...)` (as the budget work did for `RunState.budget_counters` / `BudgetCounters`).

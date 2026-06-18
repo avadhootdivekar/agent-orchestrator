@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "id": "budget-example",
+  "name": "Budget example workflow",
+  "repo_set": "main",
+  "budget": {
+    "total_tokens": 2000000,
+    "rate": {
+      "tokens": 100000,
+      "window": "minute"
+    },
+    "on_exhaustion": "wait",
+    "estimator": {
+      "chars_per_token": 4,
+      "pessimism_buffer": 1.3,
+      "output_allowance_tokens": 1500
+    }
+  },
+  "tasks": [
+    {
+      "id": "analyze",
+      "agent": "default",
+      "instruction": "instructions/analyze.md",
+      "outputs": [
+        "output/analysis.md"
+      ]
+    },
+    {
+      "id": "synthesize",
+      "agent": "default",
+      "instruction": "instructions/synthesize.md",
+      "inputs": [
+        "output/analysis.md"
+      ],
+      "outputs": [
+        "output/synthesis.md"
+      ],
+      "depends_on": [
+        "analyze"
+      ]
+    }
+  ]
+}

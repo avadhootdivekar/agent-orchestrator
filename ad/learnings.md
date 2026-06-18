@@ -98,3 +98,21 @@ By: agent
 Role: agent
 Date: 2026-06-18
 ---
+
+---
+Learning-ID: LRN-20260618-runstate-new-field-default
+Learning: Every new field added to `RunState` (or any model nested in it) must have a default/`default_factory`, or resuming a run created before the change fails to deserialize the persisted `state.json`.
+Context: Budget work added `BudgetCounters` to `RunState` via `Field(default_factory=...)` specifically so older run states still load on resume.
+By: agent
+Role: agent
+Date: 2026-06-18
+---
+
+---
+Learning-ID: LRN-20260618-wait-needs-unsatisfiable-guard
+Learning: A wait-on-exhaustion path must guard against an unsatisfiable charge (one task's estimate exceeding the entire total/rate-window cap) or the engine sleeps forever; detect and stop/fail instead of waiting.
+Context: Token-budget engine added an `_is_unsatisfiable` check so a task whose estimate can never fit a window doesn't loop indefinitely under `on_exhaustion=wait`.
+By: agent
+Role: agent
+Date: 2026-06-18
+---

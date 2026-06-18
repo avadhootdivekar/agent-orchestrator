@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import _load_file, _validate_against_schema
 from .errors import SpecValidationError
-from .models import WorkflowSpec
+from .models import BudgetSpec, WorkflowSpec
 
 # Suffix used for loop iteration cloning — authors must not use this in task ids.
 _ITER_SUFFIX_MARKER = "__iter"
@@ -140,3 +140,35 @@ def cross_validate(
                 "a task cannot be both an emitter and a gate",
                 path=f"loops.{loop.id}.gate_task_id",
             )
+
+    # Budget cross-validation (T-oh5gl5)
+    if workflow.budget is not None:
+        budget_cross_validate(workflow.budget)
+
+
+def budget_cross_validate(budget: BudgetSpec) -> None:
+    """Standalone budget cross-validation (called from CLI and cross_validate)."""
+    b = budget
+    if b.total_tokens is not None and b.total_tokens <= 0:
+        raise SpecValidationError(
+            "budget.total_tokens must be > 0",
+            path="budget.total_tokens",
+        )
+    if b.rate is not None:
+        has_window = b.rate.window is not None
+        has_secs = b.rate.window_seconds is not None
+        if has_window == has_secs:  # both set or neither set
+            raise SpecValidationError(
+                "budget.rate: set exactly one of window or window_seconds",
+                path="budget.rate",
+            )
+        if b.rate.tokens <= 0:
+            raise SpecValidationError(
+                "budget.rate.tokens must be > 0",
+                path="budget.rate.tokens",
+            )
+    if b.estimator.pessimism_buffer < 1.0:
+        raise SpecValidationError(
+            "budget.estimator.pessimism_buffer must be >= 1.0",
+            path="budget.estimator.pessimism_buffer",
+        )
