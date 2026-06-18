@@ -71,3 +71,30 @@ By: agent
 Role: agent
 Date: 2026-06-16
 ---
+
+---
+Learning-ID: LRN-20260618-venv-python-invocation
+Learning: Run project tooling via `.venv/bin/python -m <tool>` — bare `python` is absent from PATH and system `python3` has no pytest.
+Context: Capturing a test baseline failed with `python: command not found` then `No module named pytest`; only `.venv/bin/python` had the deps.
+By: agent
+Role: agent
+Date: 2026-06-18
+---
+
+---
+Learning-ID: LRN-20260618-build-dag-inferred-edges
+Learning: `build_dag` infers DAG edges from matching input/output paths, not just `depends_on`; any cloned/duplicated task that copies those paths creates spurious `CycleError`s — clear inputs/outputs on clones.
+Context: Loop-iteration clones (`__iterN`) initially carried the body's inputs/outputs and produced false cycles back to terminal tasks; fixed by emptying them in `_clone_body` (ADR-007).
+By: agent
+Role: agent
+Date: 2026-06-18
+---
+
+---
+Learning-ID: LRN-20260618-mypy-scope-src
+Learning: Run `mypy src` (not `mypy .`) for a clean production signal — `mypy .` surfaces pre-existing errors in `tests/test_project_config.py` unrelated to current work.
+Context: Subagents reported "mypy clean on production modules" while `mypy .` still showed 3 long-standing test errors; scoping to src disambiguates real regressions.
+By: agent
+Role: agent
+Date: 2026-06-18
+---

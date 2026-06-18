@@ -38,3 +38,15 @@ class ExecutorError(OrchestratorError):
 
 class ConfigError(OrchestratorError):
     """Raised when a config or spec file cannot be loaded."""
+
+
+class InjectionError(OrchestratorError):
+    """Raised when dynamic task injection fails (duplicate id, bad merge)."""
+
+
+class LoopError(OrchestratorError):
+    """Raised for loop configuration or runaway loop failures."""
+
+
+class GateError(OrchestratorError):
+    """Raised when a loop gate file is missing, its field is absent, or the value is non-bool."""

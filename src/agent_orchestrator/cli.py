@@ -104,6 +104,23 @@ def _print_state(state) -> None:
         typer.echo(f"{tid:<30} {ts.status:<15} {ts.attempts}")
 
 
+def _print_status_snapshot(snap: dict) -> None:
+    """Print a status.json snapshot in the same table format as _print_state."""
+    typer.echo(f"\nRun:          {snap.get('run_id', '')}")
+    typer.echo(f"Status:       {snap.get('status', '')}")
+    current = snap.get("current_task")
+    if current:
+        typer.echo(f"Current task: {current}")
+    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Attempts'}")
+    typer.echo("-" * 55)
+    for task_entry in snap.get("tasks", []):
+        typer.echo(
+            f"{task_entry.get('id', ''):<30} "
+            f"{task_entry.get('status', ''):<15} "
+            f"{task_entry.get('attempts', 0)}"
+        )
+
+
 @app.command()
 def validate(
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
@@ -201,23 +218,58 @@ def resume(
 @app.command()
 def status(
     run_id: str = typer.Option(..., help="Run ID to inspect"),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        help="Workspace root (or set AO_WORKSPACE_ROOT). "
+        "When provided the --workflow/--reposets/--agents triplet is not required.",
+    ),
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
     reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
 ) -> None:
-    """Show current status of a run."""
+    """Show current status of a run.
+
+    Reads status.json if present (fast path); falls back to state.json.
+    Accepts --workspace <root> (or AO_WORKSPACE_ROOT) so the full
+    --workflow/--reposets/--agents triplet is not required just to inspect a run.
+    """
+    import json
+    from pathlib import Path
+
+    # Resolve workspace: --workspace > AO_WORKSPACE_ROOT > derive from spec triplet.
+    ws_root: str | None = workspace or os.environ.get("AO_WORKSPACE_ROOT")
+
+    if ws_root is None:
+        # Fall back to deriving from the spec triplet (backward-compatible path).
+        from .artifacts import LocalFsArtifactStore
+        from .errors import OrchestratorError
+        from .runstate import RunStateStore
+
+        try:
+            wf, reposet_map, _ = _load_all(workflow, reposets, agents)
+        except (OrchestratorError, SystemExit):
+            return
+
+        ws_root = reposet_map[wf.repo_set].workspace_root
+
+    # Try status.json first (FR-6), fall back to state.json via RunStateStore.
+    status_json_path = Path(ws_root) / ".orchestrator" / "runs" / run_id / "status.json"
+    if status_json_path.exists():
+        try:
+            snap = json.loads(status_json_path.read_text())
+            _print_status_snapshot(snap)
+            return
+        except (json.JSONDecodeError, KeyError):
+            # Corrupt status.json — fall through to state.json
+            pass
+
+    # Fallback: load from state.json via RunStateStore
     from .artifacts import LocalFsArtifactStore
-    from .errors import OrchestratorError
     from .runstate import RunStateStore
 
-    try:
-        wf, reposet_map, agent_map = _load_all(workflow, reposets, agents)
-    except (OrchestratorError, SystemExit):
-        return
-
-    workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
-    store = LocalFsArtifactStore(workspace)
-    rs_store = RunStateStore(workspace, store)
+    store = LocalFsArtifactStore(ws_root)
+    rs_store = RunStateStore(ws_root, store)
 
     try:
         loaded_state = rs_store.load(run_id)

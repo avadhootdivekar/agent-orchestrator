@@ -47,3 +47,11 @@ type: constraint
 ---
 
 The agents JSON schema (`specs/agents.schema.json`) uses `additionalProperties: false`. Valid fields are `executor`, `command_template`, `prompt_template`, `context_window`. **Why**: `type`, `description`, and `env` look intuitive but are not in the schema and cause validation failure. **Apply**: when writing or scaffolding `agents.json`, match the `specs/examples/agents.json` field names exactly.
+
+---
+name: build-dag-infers-edges-from-paths
+description: build_dag derives edges from matching input/output paths, so duplicated tasks sharing paths create spurious cycles
+type: pitfall
+---
+
+`dag.build_dag` adds an edge whenever one task's output path equals another's input path — in addition to explicit `depends_on`. **Why**: any feature that clones or duplicates a task (loop iterations, fan-out, retries-as-tasks) while copying its `inputs`/`outputs` will make `build_dag` infer edges between the duplicates and their originals, producing false `CycleError`s against already-terminal tasks. **Apply**: when generating/cloning tasks at runtime, clear `inputs`/`outputs` on clones (as `engine._clone_body` does for `__iterN` loop tasks, ADR-007) or otherwise ensure duplicated tasks don't share artifact paths.

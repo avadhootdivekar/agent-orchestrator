@@ -6,3 +6,6 @@
 - Workflow `id` must be fully lowercase; uppercase `E-` ticket prefix violates the spec schema.
 - `cross_validate(workflow, reposets, agents)` — reposets second; swapping gives misleading "Unknown repo_set" errors.
 - Editable-install AO cannot safely develop itself; a regression breaks the CLI needed to recover.
+- Run tooling via `.venv/bin/python -m <tool>`; bare `python` absent, system `python3` lacks pytest.
+- `build_dag` infers edges from matching input/output paths; clear inputs/outputs on cloned tasks to avoid false cycles.
+- Use `mypy src` (not `mypy .`) for clean production signal; tests have pre-existing mypy errors.

@@ -46,6 +46,9 @@ class TaskSpec(BaseModel):
     retries: RetryPolicy | None = None
     timeout_seconds: int | None = None
     skip_if_outputs_exist: bool = True
+    # Dynamic task injection (FR-7, FR-8, Area 2).
+    emit_tasks: bool = False
+    task_manifest_path: str | None = None
 
 
 class WorkflowDefaults(BaseModel):
@@ -60,6 +63,17 @@ class Trigger(BaseModel):
     event: str | None = None
 
 
+class LoopSpec(BaseModel):
+    """Defines a repeating body of tasks driven by a gate verdict (FR-9, FR-10, FR-11)."""
+
+    id: str
+    body: list[str]  # ordered task ids forming one iteration
+    gate_task_id: str  # body task whose output decides continue/stop
+    gate_output_path: str  # path to the gate's JSON control file (per iteration, suffixed on clone)
+    gate_field: str = "continue"  # boolean field read from the gate JSON
+    max_iterations: int = 5  # hard cap; >= 1
+
+
 class WorkflowSpec(BaseModel):
     version: str
     id: str
@@ -68,6 +82,7 @@ class WorkflowSpec(BaseModel):
     defaults: WorkflowDefaults = WorkflowDefaults()
     triggers: list[Trigger] = [Trigger(type="manual")]
     tasks: list[TaskSpec]
+    loops: list[LoopSpec] = []
 
     def task(self, task_id: str) -> TaskSpec:
         for t in self.tasks:
@@ -94,6 +109,15 @@ class TaskContext(BaseModel):
     dynamic_input_paths: list[str] = []
     repo_paths: dict[str, str]
     timeout_seconds: int
+    # Resolved path where executor writes stdout.txt / stderr.txt (FR-4).
+    # Paths only — NFR-1 safe.
+    output_dir: str = ""
+    # Resolved path where the executor writes the task manifest for emit_tasks tasks (Area 2).
+    # Paths only — NFR-1 safe. None when task.emit_tasks is False.
+    task_manifest_path: str | None = None
+    # Resolved path where the executor writes the gate verdict for loop gate tasks (Area 2).
+    # Paths only — NFR-1 safe. None when the task is not a gate task.
+    gate_output_path: str | None = None
 
 
 class TaskResult(BaseModel):
@@ -102,6 +126,9 @@ class TaskResult(BaseModel):
     attempts: int
     exit_code: int | None = None
     error: str | None = None
+    # Path (directory) where captured stdout/stderr live (FR-5).
+    # Engine records this without reading file content (NFR-1).
+    output_artifact_path: str | None = None
 
 
 TaskStatus = Literal[
@@ -116,6 +143,11 @@ class TaskRunState(BaseModel):
     ended_at: str | None = None
     outputs_present: bool = False
     dynamic_outputs: list[str] = []
+    # Mirror of TaskResult.output_artifact_path for traceability (FR-5, §3.4).
+    output_artifact_path: str | None = None
+    # Provenance: "static" for spec-declared tasks; "injected"/"loop" added by Area 2.
+    # Default "static"; Area 2 can set the real value without breaking existing code.
+    origin: Literal["static", "injected", "loop"] = "static"
 
 
 class RunState(BaseModel):
@@ -126,3 +158,8 @@ class RunState(BaseModel):
     updated_at: str
     status: Literal["running", "succeeded", "failed", "cancelled"] = "running"
     tasks: dict[str, TaskRunState] = {}
+    # Full specs of every task injected at run time (emit + loop clones), in injection order.
+    # Persisted so resume can rebuild the expanded workflow (FR-8, FR-12).
+    injected_tasks: list[TaskSpec] = []
+    # loop_id -> highest iteration number already materialized (idempotent on resume, FR-12).
+    loop_iterations: dict[str, int] = {}

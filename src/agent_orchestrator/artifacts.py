@@ -7,7 +7,8 @@ import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from .errors import ArtifactPathError
+from .errors import ArtifactPathError, GateError
+from .models import TaskSpec
 
 
 class ArtifactStore(ABC):
@@ -79,3 +80,57 @@ def read_manifest(artifact_store: ArtifactStore, path: str) -> list[str]:
     if not isinstance(data, dict) or not isinstance(data.get("artifacts"), list):
         raise ValueError(f'Manifest at {path!r} must be {{"artifacts": [...]}}; got: {type(data)}')
     return [str(p) for p in data["artifacts"]]
+
+
+def read_task_manifest(artifact_store: ArtifactStore, path: str) -> list[TaskSpec]:
+    """Read a machine-written task manifest and return a list of TaskSpec objects.
+
+    Manifest format: {"tasks": [<TaskSpec>, ...]}
+
+    This function reads file content — it is intentionally narrow in scope: only
+    machine-written JSON control files are read here (NFR-1, ADR-004).
+
+    Raises ValueError on missing file, invalid JSON, wrong schema, or invalid TaskSpec.
+    """
+    resolved = artifact_store.resolve(path)
+    try:
+        data = json.loads(Path(resolved).read_text())
+    except FileNotFoundError:
+        raise ValueError(f"Task manifest not found: {path!r}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Task manifest at {path!r} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
+        raise ValueError(f'Task manifest at {path!r} must be {{"tasks": [...]}}; got: {type(data)}')
+    try:
+        return [TaskSpec(**t) for t in data["tasks"]]
+    except Exception as exc:
+        raise ValueError(f"Task manifest at {path!r} contains invalid TaskSpec: {exc}") from exc
+
+
+def read_gate(artifact_store: ArtifactStore, path: str, field: str = "continue") -> bool:
+    """Read a machine-written gate verdict file and return the boolean value of *field*.
+
+    Gate format: {"<field>": true|false, ...}
+
+    This function reads file content — it is intentionally narrow in scope: only
+    machine-written JSON control files are read here (NFR-1, ADR-004).
+
+    Raises GateError on missing file, missing field, or non-bool value.
+    """
+    resolved = artifact_store.resolve(path)
+    try:
+        data = json.loads(Path(resolved).read_text())
+    except FileNotFoundError:
+        raise GateError(f"Gate file not found: {path!r}")
+    except json.JSONDecodeError as exc:
+        raise GateError(f"Gate file at {path!r} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise GateError(f"Gate file at {path!r} must be a JSON object; got: {type(data)}")
+    if field not in data:
+        raise GateError(f"Gate file at {path!r} missing field {field!r}")
+    value = data[field]
+    if not isinstance(value, bool):
+        raise GateError(
+            f"Gate file at {path!r} field {field!r} must be bool; got: {type(value).__name__}"
+        )
+    return value
