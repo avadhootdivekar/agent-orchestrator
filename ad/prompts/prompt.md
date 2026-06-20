@@ -13,21 +13,36 @@ Agent orchestrator frameowrk is supposed to -
 
 # Current Ask is this  - 
 
-## Requirements 
+## E2E Tests addition
+**Add new e2e tests covering full paths from absolute boundaries from user perspective to core engine** 
+e.g. invoke the ao tool and check if workflows working as expected, check if loggings are generated as expected, check if epics / tasks / outputs are created as expected. 
+Create following types of tests 
+1. Fixture based tests
+2. Reproducible tests - same set of inputs each time, the expectations are also deterministic. as AO runs on LLM, we may not check exacrt contents as those may change each time even for same set of inputs - so in deterministic tests - we should just test the file neames / paths are exactly as expected etc - which will always be reproducible. 
+3. Fuzzy / undeterministic tests  - these may test for different set of random inputs OR even of same set of ibputs - where the output may change each time. 
+4. performance and correctnes tests. 
 
-**Create new epic and fix following** 
 
-1. Provide an option to limit the token usage (estimated). You suggest best strategy for how this can be handled. 
-    1. My suggestion - compute estimated tokens based on inputs provided, output generated etc. Assume computed * 1.3 tokens to have some buffer and have pessimistic computation. 
-    2. Preferrably also provide the option to limit  the token usage per min or per 10 min or per hour something. 
-    3. So there can be 2 limits - 1. Full limit , 2. Rate limit. both need to be implemented.  
-2. Catch the rate / usage limit exhaustion and also when the next quota will be availlable. 
-    1. Provide flag to sleep till the next period and continue from that point or stop when quota exhausted. i.e. stop on exhaustion OR wait on exhaustion. 
+Test Areas: 
+1. Workflow and DAG, dependencies
+2. Token computation / assumptions 
+3. Dynamic inputs / dependency specification
+4. Logging
+5. Agent output being captured for individual steps / tasks. 
+6. CLI and flags being exercised correctly e2e. 
+
 
 
 --- 
 
 # Old Ask
 
+## Input 1 
+No Code changes here/ 
+
+1.  How do we ensure that orchestration workflows are working as epected? 
+2. dynamic rules / workflows , dependencies as well as logging and all are working as expected? 
+3. what tetsts / confiedence we have and are we actually writing tests from as outside as possible - as in as close to end user as possible? 
+    1. There can be AND there MUST be unit level testing also (for individual modules / packages), however we should also have comprehensive test cases covering the whole appliacation/tool from end user perspective. Is that happening? Which files cover those tests? 
 
 

@@ -87,6 +87,7 @@ Tick each one explicitly (follow or skip, but state the status):
 
 ## Testing
 
+- Add unit, integration, and e2e tests as appropriate at different levels. For e2e tests — those should cover the full path from end user to core: from as outer a boundary as possible (e.g. invoking the CLI via `CliRunner`, not calling internal Python APIs directly).
 - Add unit tests for new logic; integration tests for new orchestration paths (DAG resolution, scheduling, artifact IO, executor boundaries).
 - Cover error and edge paths (cycles, missing inputs, failed/retried/cancelled tasks, malformed specs) — not just the happy path.
 - For anything stochastic or scheduled, use **fixed seeds / fixed clocks** so assertions are deterministic and replayable.

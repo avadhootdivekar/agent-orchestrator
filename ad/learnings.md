@@ -116,3 +116,30 @@ By: agent
 Role: agent
 Date: 2026-06-18
 ---
+
+---
+Learning-ID: LRN-20260620-api-tests-dont-cover-cli
+Learning: Testing a feature via `Orchestrator(...)` directly does not cover the CLI surface; `ao resume`, `ao validate`, and dynamic/loop workflow paths had 0% CLI coverage despite thorough engine-API tests.
+Context: E2E test audit found dynamic injection and loop construct fully tested at Python-API level but completely untested via CliRunner — resume and validate commands likewise skipped.
+By: agent
+Role: agent
+Date: 2026-06-20
+---
+
+---
+Learning-ID: LRN-20260620-fakeexecutor-manifest-auto
+Learning: `FakeExecutor` automatically writes the task manifest for tasks with `emit_tasks=True`; no manual manifest pre-seeding is needed in CLI-level dynamic injection tests.
+Context: Writing CliRunner-level dynamic injection test — expected manual setup but FakeExecutor already handles manifest writing, matching the production contract.
+By: agent
+Role: agent
+Date: 2026-06-20
+---
+
+---
+Learning-ID: LRN-20260620-resume-cli-test-pattern
+Learning: For `ao resume` CLI tests, do the first (failing) run via Python API to capture `run_id`, then invoke `ao resume --run-id <id>` via CliRunner — avoids parsing run_id from CLI stdout.
+Context: CliRunner-based resume test needed a reliable run_id; Python-API first run returns `RunState.run_id` directly.
+By: agent
+Role: agent
+Date: 2026-06-20
+---

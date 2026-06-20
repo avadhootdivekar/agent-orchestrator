@@ -9,3 +9,6 @@
 - Run tooling via `.venv/bin/python -m <tool>`; bare `python` absent, system `python3` lacks pytest.
 - `build_dag` infers edges from matching input/output paths; clear inputs/outputs on cloned tasks to avoid false cycles.
 - Use `mypy src` (not `mypy .`) for clean production signal; tests have pre-existing mypy errors.
+- Engine-API tests (`Orchestrator()` directly) don't cover CLI; always add CliRunner tests per feature.
+- `FakeExecutor` auto-writes manifest for `emit_tasks=True` tasks; no manual pre-seeding needed.
+- `ao resume` CLI test: first (failing) run via Python API to get `run_id`, then CliRunner `ao resume --run-id`.

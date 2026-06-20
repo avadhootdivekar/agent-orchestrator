@@ -63,3 +63,11 @@ type: constraint
 ---
 
 `RunState` (and everything nested in it) is persisted to `state.json` and reloaded on resume. **Why**: a new field without a default makes pydantic reject any `state.json` written before the field existed, breaking resume for in-flight runs. **Apply**: when adding a field to `RunState` or a nested persisted model, always give it a default or `Field(default_factory=...)` (as the budget work did for `RunState.budget_counters` / `BudgetCounters`).
+
+---
+name: engine-api-tests-dont-cover-cli
+description: Testing via Orchestrator() directly leaves `ao` CLI paths (resume, validate, flag parsing) uncovered even with thorough engine-API tests
+type: pitfall
+---
+
+Engine-API integration tests (calling `Orchestrator(...).run(...)` directly) do not exercise the CLI layer. Dynamic injection, loop construct, and resume were all fully covered at engine level but had 0% CliRunner coverage. **Why**: CLI wiring, flag parsing, and command routing are separate code paths that only CliRunner tests exercise. **Apply**: for every significant feature, write both an engine-API integration test AND a CliRunner E2E test — treat them as different test layers, not substitutes.
