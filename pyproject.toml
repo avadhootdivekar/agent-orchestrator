@@ -41,3 +41,8 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_llm: opt-in real ClaudeCliExecutor tier; set AO_E2E_REAL_LLM=1 to run",
+    "e2e: end-to-end test via the ao CLI",
+    "perf: performance envelope checks",
+]

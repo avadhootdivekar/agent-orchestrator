@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "id": "sum-of-array",
+  "name": "Sum-of-array: design to integrate pipeline with review loop",
+  "repo_set": "sum-set",
+  "triggers": [{ "type": "manual" }],
+  "tasks": [
+    {
+      "id": "architect-design",
+      "agent": "architect",
+      "instruction": "instructions/architect-design.md",
+      "inputs": [],
+      "outputs": ["output/design.md"],
+      "depends_on": []
+    },
+    {
+      "id": "design-review",
+      "agent": "reviewer",
+      "instruction": "instructions/design-review.md",
+      "inputs": ["output/design.md"],
+      "outputs": ["output/design-review.md"],
+      "depends_on": ["architect-design"]
+    },
+    {
+      "id": "architect-breakdown",
+      "agent": "architect",
+      "instruction": "instructions/architect-breakdown.md",
+      "inputs": ["output/design.md", "output/design-review.md"],
+      "outputs": [],
+      "depends_on": ["design-review"],
+      "emit_tasks": true,
+      "task_manifest_path": "output/tasks-manifest.json"
+    },
+    {
+      "id": "integrate",
+      "agent": "integrator",
+      "instruction": "instructions/integrate.md",
+      "inputs": ["output/tasks/t1/review.md"],
+      "outputs": ["output/integrated.md"],
+      "depends_on": ["architect-breakdown"]
+    },
+    {
+      "id": "bugfix",
+      "agent": "developer",
+      "instruction": "instructions/bugfix.md",
+      "inputs": ["output/integrated.md"],
+      "outputs": ["output/bugfix.md"],
+      "depends_on": ["integrate"]
+    },
+    {
+      "id": "final-review",
+      "agent": "reviewer",
+      "instruction": "instructions/final-review.md",
+      "inputs": ["output/bugfix.md"],
+      "outputs": ["output/final-review.md"],
+      "depends_on": ["bugfix"]
+    },
+    {
+      "id": "done",
+      "agent": "integrator",
+      "instruction": "instructions/done.md",
+      "inputs": ["output/final-review.md"],
+      "outputs": ["output/summary.md"],
+      "depends_on": ["review-round"]
+    }
+  ],
+  "loops": [
+    {
+      "id": "review-round",
+      "body": ["bugfix", "final-review"],
+      "gate_task_id": "final-review",
+      "gate_output_path": "output/final-verdict.json",
+      "gate_field": "continue",
+      "max_iterations": 3
+    }
+  ]
+}

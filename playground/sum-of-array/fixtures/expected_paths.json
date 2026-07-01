@@ -1,0 +1,13 @@
+[
+  "output/design.md",
+  "output/design-review.md",
+  "output/tasks-manifest.json",
+  "output/tasks/t1/impl.md",
+  "output/tasks/t1/tests.md",
+  "output/tasks/t1/review.md",
+  "output/integrated.md",
+  "output/bugfix.md",
+  "output/final-review.md",
+  "output/final-verdict.json",
+  "output/summary.md"
+]

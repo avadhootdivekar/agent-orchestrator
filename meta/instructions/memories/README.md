@@ -71,3 +71,11 @@ type: pitfall
 ---
 
 Engine-API integration tests (calling `Orchestrator(...).run(...)` directly) do not exercise the CLI layer. Dynamic injection, loop construct, and resume were all fully covered at engine level but had 0% CliRunner coverage. **Why**: CLI wiring, flag parsing, and command routing are separate code paths that only CliRunner tests exercise. **Apply**: for every significant feature, write both an engine-API integration test AND a CliRunner E2E test — treat them as different test layers, not substitutes.
+
+---
+name: loop-iterate-event-only-on-continue
+description: The engine emits the `loop.iterate` log event ONLY when the gate says continue; a single-iteration loop never emits it
+type: pitfall
+---
+
+A `LoopSpec` whose gate verdict is `{"continue": false}` on the first pass runs its body exactly once and **never emits a `loop.iterate` event** — the engine logs `loop.iterate` only on the branch that injects the next iteration's clones (`engine.py`, guarded by `should_cont`). Loop-body clones (ids like `bugfix__iter2`, `final-review__iter2`, `origin="loop"`) likewise only appear from iteration 2 onward. **Why**: a fixture/test that asserts `loop.iterate` (or `__iterN` clones) against a single-round happy path is unsatisfiable and will tempt someone to "fix" it by weakening the assertion. **Apply**: to observe `loop.iterate`/loop clones deterministically, pre-seed a 2-round gate sequence — iteration 1 gate `{"continue": true}` at `output/<gate>.json`, iteration 2 gate `{"continue": false}` at `output/<gate>__iter2.json` (the engine suffixes `__iterN` before the extension). Keep separate expected-event fixtures for the 1-round vs 2-round scenarios (see `playground/sum-of-array/fixtures/expected_events.json`). Related: driving specs through `CliRunner` needs absolute spec paths — `run_cli` in `tests/playground/harness.py` converts `--workflow/--reposets/--agents` values to absolute because CliRunner does not resolve them against a working dir.

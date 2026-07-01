@@ -1,0 +1,50 @@
+{
+  "_note": "Two deterministic scenarios, verified by running the workflow through the ao CLI with FakeExecutor. loop.iterate is emitted ONLY when the gate says continue (engine.py), so the 1-round happy path does NOT emit it. Select the scenario by which gate verdict fixtures are pre-seeded.",
+  "one_round": {
+    "_seed": "output/final-verdict.json = {\"continue\": false}",
+    "event_types": [
+      "run.start",
+      "task.start",
+      "task.end",
+      "task.injected",
+      "run.end"
+    ],
+    "task_start_order": [
+      "architect-design",
+      "design-review",
+      "architect-breakdown",
+      "impl-t1",
+      "testwrite-t1",
+      "taskreview-t1",
+      "integrate",
+      "bugfix",
+      "final-review",
+      "done"
+    ]
+  },
+  "two_round": {
+    "_seed": "output/final-verdict.json = {\"continue\": true}; output/final-verdict__iter2.json = {\"continue\": false}",
+    "event_types": [
+      "run.start",
+      "task.start",
+      "task.end",
+      "task.injected",
+      "loop.iterate",
+      "run.end"
+    ],
+    "task_start_order": [
+      "architect-design",
+      "design-review",
+      "architect-breakdown",
+      "impl-t1",
+      "testwrite-t1",
+      "taskreview-t1",
+      "integrate",
+      "bugfix",
+      "final-review",
+      "bugfix__iter2",
+      "final-review__iter2",
+      "done"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "repo_sets": {
+    "sum-set": {
+      "description": "Sum-of-array playground: single primary code repo.",
+      "workspace_root": ".",
+      "repos": [
+        { "id": "code", "path": ".", "role": "primary" }
+      ]
+    }
+  }
+}

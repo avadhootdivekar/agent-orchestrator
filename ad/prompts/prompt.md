@@ -31,6 +31,30 @@ Test Areas:
 5. Agent output being captured for individual steps / tasks. 
 6. CLI and flags being exercised correctly e2e. 
 
+### Potentially track the reproducible problem statements. 
+1. Maybe create a directory like playground or something in current repo. 
+2. Use thta directory to run different examples / workflows using ao. Some directories within playground can be like - sum-of-array, student-data, sorting etc. 
+3. these examples should be simple problem statements - that will test the workflows e2e - but should not consume too many tokens to test. Yes there would be burn - but we will tailor the problems to have the low burn rate. 
+4. For each of these workflows - we should define workflows like - 
+    1. architect - design (consider that tasks should be able to breakdown) - HLD + LLD + ADR
+    2. architect - breakdown the tasks based on design (no design here) 
+    3. Reviewer - design review, any missed concerns, ambiguity, tasks and interfaces and test fixures, contracts defined clearly and meaningful. 
+    4. For each task -
+        1. developer - work on and cmoplete tasks. Dont write unit tests or anything - only busines loggic and relevant integration. 
+        2. Test Write - Write the unit / integration tests. Consider design time test fixtures. Write tests by considering user flows and expected outputs - dont bend tests to just pass the business logic. 
+        3. Reviewer - review individual tasks - also against design. 
+    5. Final reviewer - Once all tasks are complete - review final work - also against design check if any misses. Create new tasks of found bugs/ reviewes etc and take one more round of dev/review. 
+
+
+We can have some playground examples with some easy problem statements like 
+1. Sort the elements in given array 
+2. Find the sum of elements in given array 
+3. Write functions  methods to work on student data
+    1. Given array of students - with name/age/standard/scores - methods should return - students within given age / score range etc. 
+
+
+These playground problem statements -  can have workflows defined - by ao repo developer - however those workflows will be executed each time - as part of e2e test of ao repo itself and we will check if ao repo / latest updated code is correctly driving those workflows to completion and all new features are working correctly. 
+
 
 
 --- 
