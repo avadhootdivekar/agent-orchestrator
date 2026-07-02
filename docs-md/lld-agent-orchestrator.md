@@ -221,20 +221,105 @@ class Orchestrator:
 - `_verify_outputs`: after a "succeeded" executor result, all declared outputs must `exists()`; else downgrade to `failed` with `error="declared outputs missing"`.
 - The engine **never** reads `instruction`/`inputs`/`outputs` *contents* — only passes paths and checks existence. (NFR-1 invariant, asserted in T12.)
 
-## 9. Errors (`errors.py`)
+## 9. Claude quota exhaustion handling (`engine.py`, `executors/claude_cli.py`)
+
+Claude's usage-quota exhaustion (session/daily/weekly limit) is **categorically distinct** from a
+provider-level 429 rate limit and is handled with a dedicated wait-and-retry loop rather than
+counting as a task failure.
+
+### Detection (`claude_cli.py`)
+
+```python
+# *** SINGLE SOURCE OF TRUTH — edit ONLY here when the quota message changes ***
+_CLAUDE_QUOTA_PATTERN = re.compile(
+    r"you(?:'ve?)?\s+hit\s+your\s+\w+\s+limit", re.IGNORECASE
+)
+```
+
+`parse_usage_and_429()` checks this pattern **before** any 429 detection. On a match it sets
+`TaskResult.claude_quota_exhausted = True` and returns immediately (no retry-after extraction,
+no JSON parse). `subprocess.run` uses `stdin=subprocess.DEVNULL` so the subprocess never blocks
+waiting for user input.
+
+### Engine loop (`engine.py`)
+
+When `result.claude_quota_exhausted` is `True`:
+
+1. Any token-budget estimate already charged for the task is **reversed** (so the budget is
+   not debited for work that never ran).
+2. `_quota_exhausted_since` is set to `now` on the first hit; subsequent hits within the same
+   episode accumulate elapsed time against it.
+3. The engine sleeps `quota_poll_seconds` (default 15 min) and then **re-queues the same task**
+   (`cursor -= 1`). The retry counter is **not incremented** — quota exhaustion is not a task
+   failure.
+4. If `now - _quota_exhausted_since >= quota_max_wait_seconds` (default 6 h), the run fails
+   with `event="quota.max_wait_exceeded"`.
+5. `_quota_exhausted_since` is reset to `None` after each **successfully completed task**, so
+   the max-wait window is per-exhaustion-episode only and does not accumulate across a run.
+
+`_run_with_retries` returns immediately on `claude_quota_exhausted` to avoid burning retry
+attempts on a transient quota state.
+
+### Configuration
+
+All quota settings follow the standard precedence: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
+
+| Setting | CLI flag | Env var | Config key | Default |
+|---------|----------|---------|------------|---------|
+| Max wait per episode | `--quota-max-wait` | `AO_QUOTA_MAX_WAIT_SECONDS` | `quota_max_wait_seconds` | 21600 (6 h) |
+| Poll interval | `--quota-poll-interval` | `AO_QUOTA_POLL_SECONDS` | `quota_poll_seconds` | 900 (15 min) |
+
+## 10. Errors (`errors.py`)
 `OrchestratorError` (base) → `SpecValidationError`, `CycleError`, `MissingInputError`, `ArtifactPathError`, `ExecutorError`, `ConfigError`. Each carries structured fields (ids/paths), no payload contents.
 
-## 10. CLI (`cli.py`, typer)
+## 11. Per-project config file (`project_config.py`)
+
+`ProjectConfig` (pydantic) is loaded from `.ao/config.yaml` or `ao.yaml` by walking up from cwd
+to the git root. All runtime execution settings are exposed in the config file at the lowest
+priority (CLI > env > config > built-in):
+
+```yaml
+# .ao/config.yaml
+workflow:  path/to/workflow.json
+reposets:  path/to/reposet.json
+agents:    path/to/agents.json
+
+max_attempts: 3          # AO_MAX_ATTEMPTS
+max_turns: 30            # AO_MAX_TURNS
+model: claude-sonnet-4-6 # AO_MODEL
+effort: medium           # AO_EFFORT  (low | medium | high)
+
+quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS
+quota_poll_seconds: 900         # AO_QUOTA_POLL_SECONDS
 ```
-ao validate --workflow specs/examples/workflow.json [--reposets ...] [--agents ...]
-ao run      --workflow ... [--reposets ...] [--agents ...]
-ao resume   --run-id <id>
-ao status   --run-id <id>
+
+`_resolve_run_settings()` in `cli.py` implements the three-layer merge (CLI > env > config) for
+`run` and `resume` commands, loading the project config only once per invocation.
+
+## 12. CLI (`cli.py`, typer)
 ```
+ao validate  --workflow ...  [--reposets ...] [--agents ...]
+ao run       --workflow ...  [--reposets ...] [--agents ...]
+ao resume    --run-id <id>   [--workflow ...] [--reposets ...] [--agents ...]
+ao status    --run-id <id>   [--workflow ...] [--reposets ...] [--agents ...]
+ao prune     --workspace <path> [--older-than N] [--dry-run]
+```
+
+`run` and `resume` accept the full set of runtime overrides:
+
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--model` | `AO_MODEL` | Claude model for all agents |
+| `--effort` | `AO_EFFORT` | `low` / `medium` / `high` |
+| `--max-attempts` | `AO_MAX_ATTEMPTS` | Max task attempts (overrides workflow defaults) |
+| `--max-turns` | `AO_MAX_TURNS` | Max turns per claude invocation |
+| `--quota-max-wait` | `AO_QUOTA_MAX_WAIT_SECONDS` | Max wait for quota exhaustion episode |
+| `--quota-poll-interval` | `AO_QUOTA_POLL_SECONDS` | Poll interval during quota wait |
+
 - `validate` → exit 0 / non-zero with the failing schema path or cycle.
 - `run`/`resume` print a compact per-task status table from RunState (no payloads).
 - All file locations come from flags/env; no hardcoded paths.
 
-## 11. Determinism & testing notes
+## 13. Determinism & testing notes
 - Topo order tie-break by sorted id; cron uses injected clock; retries use injected sleeper; FakeExecutor is deterministic. All assertions replayable (CLAUDE.md testing rules).
 - Context-hygiene test (T5/T12): a `RecordingExecutor` asserts the `TaskContext` it received contains no field equal to any artifact's file content; a static test greps the engine module for forbidden content-reading calls on artifact paths.

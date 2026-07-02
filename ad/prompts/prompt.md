@@ -13,119 +13,43 @@ Agent orchestrator frameowrk is supposed to -
 
 # Current Ask is this  - 
 
-## Playground tests still failing 
+You were already working on it - but got paused. Also note - I have addded the exact string for claude quot exhaustion now - that was not there earlier. 
+Please resume and complete. 
 
-logs - 
+## Are we gracefully handlind limit exhaustion and retrying
+1. When claude hits the usage limit - how are we handling that? 
+    1. I see following few possibilities 
+        1. Capture the claude output, identify the limit hit - fallback and retry after some period or exact resource limit end time. This SHOULD BE DONE. 
+        2. Consider this as failure and try again till max attempts times . This SHOULD NOT be done. 
+        3. Anything else? Tell me. 
+    2. Tell me what is happening. 
+2. If this mechanism is NOT already there - I want to add the support for running ao across multiple sessions / limit sessions. 
+    1. Few scenarios for more understanding for you - 
+        1. Claude sets 5 hourly / weekly quota. 
+            1. If my orchestrator hits the 5 hr quota - it should NOT fail. 
+            2. ao should wait for 5 hr time window to finish, wait for my limit to be replenished and resume once the quota is available. 
+            3. User can configure what is the maximum wait time that ao can wait for in case of quota exhastion. e.g. max_wait=8hrs , if quota exhausted at 6AM, even till 2 PM quota remains exhausted - without being able to get any usable window - then ao should fail / stop. If usable window is available before 2 PM - then wait period should reset and wait count should be started only when next quota exhaustion is hit.  
+            4. This max wait period should be configurable from CLI , in make recipe as well as config file / env variable. 
+3. We had added some configurations like - model/efforts/max attempts/ max turns etc recently
+    1. We need to expose them toend user through ALL of the following mnechanisms 
+        1. CLI arguments (MUST) 
+        2. configuration file (if config file supported)
+        3. env variable (if env variables are supported)
+
+If anything is not clear in above - ask me - lets get a cleara plan and implement it if not already in place. 
+
+Exact string for claude session limit - 
 ```
-collected 384 items / 381 deselected / 3 selected                                                                                                                                                                                                                                                                           
-                                                                                                                                                                                                                                                                                                                            
-tests/playground/test_sum_of_array_real_llm.py::TestSumOfArrayRealLLM::test_sum_of_array_real_completes FAILED                                                                                                                                       [ 33%]                                                                 
-tests/playground/test_sum_of_array_real_llm.py::TestSumOfArrayRealLLM::test_sum_of_array_real_spine_outputs_exist FAILED                                                                                                                             [ 66%]                                                                 
-tests/playground/test_sum_of_array_real_llm.py::TestSumOfArrayRealLLM::test_sum_of_array_real_control_files_exist FAILED                                                                                                                             [100%]                                                                 
-                                                                                                                                                                                                                                                                                                                            
-========================================================================================================================= FAILURES =========================================================================================================================                                                                
-__________________________________________________________________________________________________ TestSumOfArrayRealLLM.test_sum_of_array_real_completes __________________________________________________________________________________________________                                                                
-                                                                                                                                                                                                                                                                                                                            
-self = <tests.playground.test_sum_of_array_real_llm.TestSumOfArrayRealLLM object at 0x7fad135c1b50>, real_llm_workspace = PosixPath('/usr/avadhoot/mounted/agent-orchestrator/playground/.tmp/ws-416ef2f813e0')                                                                                                             
-                                                                                                                                                                                                                                                                                                                            
-    def test_sum_of_array_real_completes(self, real_llm_workspace: Path) -> None:                                                                                                                                                                                                                                           
-        """Smoke test: sum-of-array with real agents completes with exit 0.                                                                                                                                                                                                                                                 
-                                                                                                                                                                                                                                                                                                                            
-        Verifies structure/completion only, never content.                                                                                                                                                                                                                                                                  
-        Real agents generate control files (no pre-seeding).                                                                                                                                                                                                                                                                
-        """                                                                                                                                                                                                                                                                                                                 
-        requires_claude()  # Skip if claude binary not available                                                                                                                                                                                                                                                            
-                                                                                                                                                                                                                                                                                                                            
-        # Copy example (NO pre-seeding _ real agents will write control files)                                                                                                                                                                                                                                              
-        copy_example("sum-of-array", real_llm_workspace)                                                                                                                                                                                                                                                                    
-                                                                                                                                                                                                                                                                                                                            
-        # Run with real agents                                                                                                                                                                                                                                                                                              
-        result = run_cli(                                                                                                                                                                                                                                                                                                   
-            [                                                                                                                                                                                                                                                                                                               
-                "run",                                                                                                                                                                                                                                                                                                      
-                "--workflow",                                                                                                                                                                                                                                                                                               
-                "workflow.json",                                                                                                                                                                                                                                                                                            
-                "--reposets",                                                                                                                                                                                                                                                                                               
-                "reposet.json",                                                                                                                                                                                                                                                                                             
-                "--agents",                                                                                                                                                                                                                                                                                                 
-                agents_for("real"),                                                                                                                                                                                                                                                                                         
-            ],                                                                                                                                                                                                                                                                                                              
-            real_llm_workspace,                                                                                                                                                                                                                                                                                             
-        )                                                                                                                                                                                                                                                                                                                   
-                                                                                                                                                                                                                                                                                                                            
-        # Should exit 0                                                                                                                                                                                                                                                                                                     
->       assert result.exit_code == 0, (                                                                                                                                                                                                                                                                                     
-            f"Real workflow failed with exit code {result.exit_code}:\n{result.output}"                                                                                                                                                                                                                                     
-        )                                                                                                                                                                                                                                                                                                                   
-E       AssertionError: Real workflow failed with exit code 1:                                                                                                                                                                                                                                                              
-E         {"ts": "2026-07-02T09:18:51.624434+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.start", "run_id": "sum-of-array-20260702T091851Z", "event": "run.start", "workflow_id": "sum-of-array"}                                                                                                   
-E         {"ts": "2026-07-02T09:18:51.624574+00:00", "level": "WARNING", "logger": "agent_orchestrator.dag", "msg": "Inferred edge architect-design -> architect-breakdown (input output/design.md matches output) not declared in depends_on"}                                                                             
-E         {"ts": "2026-07-02T09:18:51.624925+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "sum-of-array-20260702T091851Z", "task_id": "architect-design", "event": "task.start"}                                                                                               
-E         {"ts": "2026-07-02T09:19:10.107049+00:00", "level": "WARNING", "logger": "agent_orchestrator.engine", "msg": "Task architect-design attempt 1/1 failed: okens\":0,\"ephemeral_1h_input_tokens\":434},\"type\":\"message\"}],\"speed\":\"standard\"},\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\"
-:681,\"outputTokens\":848,\"cacheReadInputTokens\":104037,\"cacheCreationInputTokens\":13155,\"webSearchRequests\":0,\"costUSD\":0.041634700000000004,\"contextWindow\":200000,\"maxOutputTokens\":32000}},\"permission_denials\":[],\"terminal_reason\":\"max_turns\",\"fast_mode_state\":\"off\",\"uuid\":\"7f775674-2189-
-429e-aba5-bbf286570759\",\"errors\":[\"Reached maximum number of turns (5)\"]}\n"}                                                                                                                                                                                                                                          
-E         {"ts": "2026-07-02T09:19:10.107346+00:00", "level": "WARNING", "logger": "agent_orchestrator", "msg": "Task ended with status failed", "run_id": "sum-of-array-20260702T091851Z", "task_id": "architect-design", "event": "task.end", "status": "failed", "exit_code": 1}                                         
-E         {"ts": "2026-07-02T09:19:10.108020+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.end", "run_id": "sum-of-array-20260702T091851Z", "event": "run.end", "status": "failed"}                                                                                                                  
-E                                                                                                                                                                                                                                                                                                                           
-E         Run:    sum-of-array-20260702T091851Z                                                                                                                                                                                                                                                                             
-E         Status: failed                                                                                                                                                                                                                                                                                                    
-E                                                                                                                                                                                                                                                                                                                           
-E         Task                           Status          Attempts                                                                                                                                                                                                                                                           
-E         -------------------------------------------------------                                                                                                                                                                                                                                                           
-E         architect-design               failed          1                                                                                                                                                                                                                                                                  
-E         design-review                  pending         0                                                                                                                                                                                                                                                                  
-E         architect-breakdown            pending         0                                                                                                                                                                                                                                                                  
-E         integrate                      pending         0                                                                                                                                                                                                                                                                  
-E         bugfix                         pending         0                                                                                                                                                                                                                                                                  
-E         final-review                   pending         0                                                                                                                                                                                                                                                                  
-E         done                           pending         0                                                                                                                                                                                                                                                                  
-E                                                                                                                                                                                                                                                                                                                           
-E       assert 1 == 0                                                                                                                                                                                                                                                                                                       
-E        +  where 1 = <Result SystemExit(1)>.exit_code                                                                                                                                                                                                                                                                      
-                                                                                                                                                                                                                                                                                                                            
-tests/playground/test_sum_of_array_real_llm.py:86: AssertionError                                                                                                                                                                                                                                                           
--------------------------------------------------------------------------------------------------------------------- Captured log call ---------------------------------------------------------------------------------------------------------------------                                                                
-WARNING  agent_orchestrator.dag:dag.py:145 Inferred edge architect-design -> architect-breakdown (input output/design.md matches output) not declared in depends_on                                                                                                                                                         
-INFO     agent_orchestrator:engine.py:128 run.start                                                                                                                                                                                                                                                                         
-WARNING  agent_orchestrator.dag:dag.py:145 Inferred edge architect-design -> architect-breakdown (input output/design.md matches output) not declared in depends_on                                                                                                                                                         
-INFO     agent_orchestrator:engine.py:365 Task started                                                                                                                                                                                                                                                                      
-WARNING  agent_orchestrator.engine:engine.py:764 Task architect-design attempt 1/1 failed: okens":0,"ephemeral_1h_input_tokens":434},"type":"message"}],"speed":"standard"},"modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":681,"outputTokens":848,"cacheReadInputTokens":104037,"cacheCreationInputTokens":13155,"
-webSearchRequests":0,"costUSD":0.041634700000000004,"contextWindow":200000,"maxOutputTokens":32000}},"permission_denials":[],"terminal_reason":"max_turns","fast_mode_state":"off","uuid":"7f775674-2189-429e-aba5-bbf286570759","errors":["Reached maximum number of turns (5)"]}                                          
-                                                                                                                                                                                                                                                                                                                            
-WARNING  agent_orchestrator:engine.py:531 Task ended with status failed  
+You've hit your session limit · resets 7:40pm (Asia/Kolkata)
+/upgrade to increase your usage limit.
 ```
 
-1. Check the logs - identify the failure - give me very clear reasoning along with evidence. 
-    1. Earlier you had mentioned that now we will NOT face the failure due to permission issue. I hope its not failing due to poermissions issue again - that would mean earlier fix is NOT working. 
-2. Get the confirmation for RCA and fix approach by me.  
-3. Onec approved , update - fix and Please run the tests by yourself and see its fixed or failing.
+here the sesion limit may be replced with weekly limit or something similar. I think the regex should be along lines of - "You've hit.*limit"
+Opportunistically parse the quota available time with - "resets (Time + Timezone)". Its possible that in some case this time may not be available - there retry periodically. 
 
 
 --- 
 
 # Old Ask
-
-## Input 7 
-
-## Not sure about your max attempts analysis - 
-
-I still suspect our max attempts computation may be different. Please check below logs and analyze why the failure. You can also go through actual run logs/other artifacts- I have not deleted them  yet. 
-
-logs - 
-<Removed logs to save context>
-
-1. Give me very clear analysis of why it failed - whats realistic evidance you have for that. 
-2. Why dos it say - max attempts reach? Did we really retry for 5 times for this task? I highly doubt that. Provide supporting logs / evidence. 
-
-
-## Input 6 
-## Max Attempts in playground test
-1. Does the first attempt itself also counts towards attempts or only retried attempts? 
-    1. If I have workflow with 20 steps and maxx_attempts = 5, 
-        1. would my workflow complete till only 5 steps? 
-        2. Or will it try "failed" jobs maximum of 5 times in overall lifecycle? 
-        3. I am expecting #2 - maximum 5 "retries" in case of failures - across full workflow lifecycle. If my 20 steps workflow will never complete - that is NOT right approach. Advise me in case anything wrong here. 
-    2. If my approach looks correct and implementation is wrong - please fix that. 
-    3. Anyways we have total token count - which will control the burn if too high tasks are injected dynamically in the workflow. It is realistically and permisably possible that I may not know the total steps when I invoke the workflow - because steps might also be injected. 
 
 

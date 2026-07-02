@@ -17,6 +17,8 @@ from .estimator import TokenEstimator
 from .executors.base import Executor
 from .logging_setup import attach_run_handler, detach_run_handler, get_run_logger
 from .models import (
+    DEFAULT_QUOTA_MAX_WAIT_SECONDS,
+    DEFAULT_QUOTA_POLL_SECONDS,
     EstimatorConfig,
     LoopSpec,
     RunState,
@@ -66,6 +68,13 @@ class Orchestrator:
         Optional token estimator paired with budget_manager; when None, budget gate is skipped.
     clock:
         Injectable clock returning the current UTC datetime (default: datetime.now(UTC)).
+    quota_max_wait_seconds:
+        Maximum total seconds ao will wait across consecutive quota-exhaustion events before
+        giving up (default: DEFAULT_QUOTA_MAX_WAIT_SECONDS).  The timer resets after each
+        successful task — it tracks only the current exhaustion episode.
+    quota_poll_seconds:
+        How long to sleep between quota-exhaustion re-run attempts
+        (default: DEFAULT_QUOTA_POLL_SECONDS).
     """
 
     def __init__(
@@ -78,6 +87,8 @@ class Orchestrator:
         budget_manager: BudgetManager | None = None,
         estimator: TokenEstimator | None = None,
         clock: Callable[[], datetime] | None = None,
+        quota_max_wait_seconds: float = DEFAULT_QUOTA_MAX_WAIT_SECONDS,
+        quota_poll_seconds: float = DEFAULT_QUOTA_POLL_SECONDS,
     ) -> None:
         self._executor = executor
         self._store = artifact_store
@@ -87,6 +98,8 @@ class Orchestrator:
         self._budget_manager = budget_manager
         self._estimator = estimator
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
+        self._quota_max_wait_seconds = quota_max_wait_seconds
+        self._quota_poll_seconds = quota_poll_seconds
 
     def run(
         self,
@@ -156,6 +169,9 @@ class Orchestrator:
             # After injection, order is rebuilt and cursor is reset to the first undone task.
             cursor = 0
             failed = False
+            # Tracks the epoch when the current quota-exhaustion episode began.
+            # Resets to None after any task succeeds (new exhaustion → fresh max_wait window).
+            _quota_exhausted_since: float | None = None
 
             while cursor < len(order):
                 if self._cancel_fn():
@@ -389,6 +405,76 @@ class Orchestrator:
                     gate_output_path=resolved_gate_output_path,
                 )
 
+                # ---- Claude quota exhaustion route (distinct from provider 429) ----
+                if result.claude_quota_exhausted:
+                    # Reverse any estimate charged for this task before re-queuing.
+                    if self._budget_manager is not None:
+                        self._budget_manager.reverse_estimate(tid, state.budget_counters)
+
+                    now = self._clock().timestamp()
+                    if _quota_exhausted_since is None:
+                        _quota_exhausted_since = now
+
+                    elapsed = now - _quota_exhausted_since
+                    remaining = self._quota_max_wait_seconds - elapsed
+
+                    if remaining <= 0:
+                        run_log.error(
+                            "Claude quota exhaustion max_wait exceeded "
+                            "(%.0f s elapsed, limit=%.0f s); stopping run",
+                            elapsed,
+                            self._quota_max_wait_seconds,
+                            extra={
+                                "event": "quota.max_wait_exceeded",
+                                "task_id": tid,
+                                "elapsed_seconds": elapsed,
+                                "max_wait_seconds": self._quota_max_wait_seconds,
+                            },
+                        )
+                        state.status = "failed"
+                        failed = True
+                        self._runstate.save(state)
+                        break
+
+                    sleep_secs = min(self._quota_poll_seconds, remaining)
+                    run_log.info(
+                        "Claude quota exhausted on task %s; "
+                        "waiting %.0f s (elapsed=%.0f/max=%.0f)",
+                        tid,
+                        sleep_secs,
+                        elapsed,
+                        self._quota_max_wait_seconds,
+                        extra={
+                            "event": "quota.wait",
+                            "task_id": tid,
+                            "sleep_seconds": sleep_secs,
+                            "elapsed_seconds": elapsed,
+                            "max_wait_seconds": self._quota_max_wait_seconds,
+                        },
+                    )
+                    self._sleeper(sleep_secs)
+
+                    if self._cancel_fn():
+                        run_log.info(
+                            "Cancelled during quota wait",
+                            extra={"event": "run.cancelled"},
+                        )
+                        state.status = "cancelled"
+                        failed = True
+                        self._runstate.save(state)
+                        break
+
+                    run_log.info(
+                        "Quota wait ended; re-running task %s",
+                        tid,
+                        extra={"event": "quota.resume", "task_id": tid},
+                    )
+                    # Reset task to pending so it re-executes cleanly.
+                    ts.status = "pending"
+                    cursor -= 1
+                    self._runstate.save(state)
+                    continue  # skip budget reconcile + normal outcome handling
+
                 # ---- Budget reconcile / 429 route (T-algywf, FR-4, FR-5, FR-8) ----
                 if self._budget_manager is not None and self._estimator is not None:
                     if result.provider_rate_limited:
@@ -527,6 +613,7 @@ class Orchestrator:
                         },
                     )
                     done.add(tid)
+                    _quota_exhausted_since = None  # successful task resets the quota-wait timer
                 else:
                     task_log.warning(
                         "Task ended with status %s",
@@ -765,6 +852,11 @@ class Orchestrator:
             last_result = result
 
             if result.status == "succeeded":
+                return result
+
+            # Quota exhaustion is handled by the engine's outer loop (wait + re-run);
+            # don't burn retry attempts on it.
+            if result.claude_quota_exhausted:
                 return result
 
             logger.warning(

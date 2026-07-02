@@ -605,3 +605,97 @@ class TestFixture:
         usage = data["usage"]
         assert "input_tokens" in usage
         assert "output_tokens" in usage
+
+
+# ---------------------------------------------------------------------------
+# parse_usage_and_429 — quota exhaustion detection tests
+# ---------------------------------------------------------------------------
+
+
+class TestQuotaExhaustionDetection:
+    """Tests for _CLAUDE_QUOTA_PATTERN detection inside parse_usage_and_429."""
+
+    def test_daily_limit_in_stdout(self) -> None:
+        """Canonical daily-limit message in stdout → claude_quota_exhausted."""
+        r = parse_usage_and_429("You've hit your daily limit", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+        assert r["provider_rate_limited"] is False
+
+    def test_hourly_limit_in_stdout(self) -> None:
+        r = parse_usage_and_429("You've hit your hourly limit", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_weekly_limit_in_stdout(self) -> None:
+        r = parse_usage_and_429("You've hit your weekly limit", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_quota_in_stderr(self) -> None:
+        """Message in stderr is also detected."""
+        r = parse_usage_and_429("", "You've hit your daily limit", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_quota_case_insensitive(self) -> None:
+        """Pattern is case-insensitive."""
+        r = parse_usage_and_429("YOU'VE HIT YOUR DAILY LIMIT", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_quota_contraction_variants(self) -> None:
+        """Matches both 'you've' and 'you hit' (without contraction)."""
+        r = parse_usage_and_429("you hit your monthly limit", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_quota_not_triggered_by_rate_limit(self) -> None:
+        """Provider 429 text does NOT trigger quota exhaustion."""
+        r = parse_usage_and_429("", "Error 429: Too Many Requests", 1, NOW)
+        assert r["claude_quota_exhausted"] is False
+        assert r["provider_rate_limited"] is True
+
+    def test_quota_early_return_skips_json_and_429(self) -> None:
+        """When quota detected: actuals_available=False, provider_rate_limited=False."""
+        # stdout has both a quota message AND would-be-valid JSON usage
+        stdout = "You've hit your daily limit\n" + json.dumps(
+            {"usage": {"input_tokens": 100, "output_tokens": 50}}
+        )
+        r = parse_usage_and_429(stdout, "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+        assert r["actuals_available"] is False
+        assert r["provider_rate_limited"] is False
+
+    def test_normal_output_no_quota_flag(self) -> None:
+        """Normal success output does not set quota flag."""
+        stdout = json.dumps({"usage": {"input_tokens": 100, "output_tokens": 50}})
+        r = parse_usage_and_429(stdout, "", 0, NOW)
+        assert r["claude_quota_exhausted"] is False
+
+
+# ---------------------------------------------------------------------------
+# FakeExecutor — quota exhaustion simulation tests
+# ---------------------------------------------------------------------------
+
+
+class TestFakeExecutorQuota:
+    """Tests for FakeExecutor.quota_exhausted_tasks parameter."""
+
+    def test_quota_exhausted_once_then_succeeds(self) -> None:
+        ex = FakeExecutor(quota_exhausted_tasks={"t1": 1})
+        r1 = ex.execute(_ctx(task_id="t1"))
+        assert r1.claude_quota_exhausted is True
+        assert r1.status == "failed"
+        r2 = ex.execute(_ctx(task_id="t1"))
+        assert r2.claude_quota_exhausted is False
+        assert r2.status == "succeeded"
+
+    def test_quota_exhausted_multiple_times(self) -> None:
+        ex = FakeExecutor(quota_exhausted_tasks={"t1": 3})
+        for _ in range(3):
+            r = ex.execute(_ctx(task_id="t1"))
+            assert r.claude_quota_exhausted is True
+        r = ex.execute(_ctx(task_id="t1"))
+        assert r.claude_quota_exhausted is False
+        assert r.status == "succeeded"
+
+    def test_quota_does_not_affect_other_tasks(self) -> None:
+        ex = FakeExecutor(quota_exhausted_tasks={"t1": 1})
+        r = ex.execute(_ctx(task_id="t2"))
+        assert r.claude_quota_exhausted is False
+        assert r.status == "succeeded"

@@ -21,3 +21,8 @@
 - `--permission-mode` must match what an agent's instruction DOES: `acceptEdits` accepts writes but silently denies Bash, so any agent that runs pytest/compile/syntax-check stalls (can exit 0 while skipping a declared output). Use `bypassPermissions` for those — simplest: standardize all example agents on it.
 - Spawn `claude` with an explicit `cwd` or it inherits the repo-root cwd and relative agent output writes (e.g. `output/tasks-manifest.json`) escape the workspace. Framework fix (config-driven, not per-test): `AgentSpec.working_dir` → engine resolves under `workspace_root` (path-guarded) → `TaskContext.cwd` → `subprocess.run(cwd=…)`; default = workspace root.
 - `AO_MAX_ATTEMPTS=""` (unset Makefile default) is falsy in Python; harness skips `--max-attempts` injection, so `max_attempts=1` (no retry) applies silently.
+- Claude quota exhaustion ("You've hit your * limit") is NOT a 429 rate limit — treat as distinct signals. Quota: long wait + re-queue without consuming a retry attempt; 429: short backoff within the retry loop.
+- Quota regex lives at ONE place only: `_CLAUDE_QUOTA_PATTERN` in `executors/claude_cli.py`. Tests import it; nothing else re-declares it.
+- Quota max-wait timer (`_quota_exhausted_since`) is per-episode only — resets after each successful task. Does NOT accumulate across the run.
+- Always `stdin=subprocess.DEVNULL` for Claude subprocesses; Claude may wait for user input on quota messages even in `-p` mode.
+- Expose all runtime settings (model, effort, max_attempts, max_turns, quota settings) via all three layers: CLI flag > env var > `.ao/config.yaml`. Implement the merge in one `_resolve_run_settings()` function shared by `run` and `resume`.

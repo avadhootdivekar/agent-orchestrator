@@ -422,3 +422,155 @@ class TestAgentCwd:
         state = orch.run(wf, _fake_reposets(str(tmp_path)), agents)
         assert state.status == "succeeded"
         assert rec.contexts[0].cwd == store.resolve("sub")
+
+
+# ---------------------------------------------------------------------------
+# Claude quota exhaustion — engine integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestQuotaExhaustion:
+    """Verify engine wait/retry/fail behaviour on claude_quota_exhausted results."""
+
+    def _orch(self, tmp_path, sleeps: list, *, quota_max_wait: float = 3600, quota_poll: float = 1) -> tuple:
+        store, rs_store = _make_workspace(tmp_path)
+        sleeper_calls: list[float] = []
+
+        def fake_sleeper(s: float) -> None:
+            sleeps.append(s)
+            sleeper_calls.append(s)
+
+        orch = Orchestrator(
+            FakeExecutor(),  # replaced per-test
+            store,
+            rs_store,
+            sleeper=fake_sleeper,
+            quota_max_wait_seconds=quota_max_wait,
+            quota_poll_seconds=quota_poll,
+        )
+        return orch, store, rs_store, sleeps
+
+    def test_quota_exhausted_once_then_succeeds(self, tmp_path) -> None:
+        """Engine waits and re-runs task after one quota exhaustion; run succeeds."""
+        wf = _workflow([_task("a", outputs=["output/a.txt"])])
+        store, rs_store = _make_workspace(tmp_path)
+        sleeps: list[float] = []
+
+        executor = FakeExecutor(quota_exhausted_tasks={"a": 1})
+        orch = Orchestrator(
+            executor,
+            store,
+            rs_store,
+            sleeper=sleeps.append,
+            quota_max_wait_seconds=3600,
+            quota_poll_seconds=10,
+        )
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "succeeded"
+        assert len(sleeps) == 1  # slept once during quota wait
+        assert sleeps[0] == 10   # slept for quota_poll_seconds
+
+    def test_quota_exhausted_multiple_times_then_succeeds(self, tmp_path) -> None:
+        """Engine retries until quota lifts (N waits), then succeeds."""
+        wf = _workflow([_task("a", outputs=["output/a.txt"])])
+        store, rs_store = _make_workspace(tmp_path)
+        sleeps: list[float] = []
+
+        executor = FakeExecutor(quota_exhausted_tasks={"a": 3})
+        orch = Orchestrator(
+            executor,
+            store,
+            rs_store,
+            sleeper=sleeps.append,
+            quota_max_wait_seconds=3600,
+            quota_poll_seconds=5,
+        )
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "succeeded"
+        assert len(sleeps) == 3
+
+    def test_quota_max_wait_exceeded_fails_run(self, tmp_path) -> None:
+        """When quota_max_wait expires the run fails instead of waiting forever."""
+        import time
+
+        wf = _workflow([_task("a", outputs=["output/a.txt"])])
+        store, rs_store = _make_workspace(tmp_path)
+        sleeps: list[float] = []
+
+        # Use a wall clock that advances 1000 seconds on each call so the second
+        # quota check always sees elapsed > max_wait.
+        _calls = [0]
+        _start = time.time()
+
+        def _fast_clock():
+            from datetime import UTC, datetime
+
+            _calls[0] += 1
+            return datetime.fromtimestamp(_start + _calls[0] * 1000, tz=UTC)
+
+        executor = FakeExecutor(quota_exhausted_tasks={"a": 99})  # exhausted indefinitely
+        orch = Orchestrator(
+            executor,
+            store,
+            rs_store,
+            sleeper=sleeps.append,
+            clock=_fast_clock,
+            quota_max_wait_seconds=500,  # expires after first 1000-second advance
+            quota_poll_seconds=10,
+        )
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "failed"
+
+    def test_quota_timer_resets_on_task_success(self, tmp_path) -> None:
+        """Quota timer resets after a successful task; second exhaustion gets a fresh window."""
+        tasks = [
+            _task("a", outputs=["output/a.txt"]),
+            _task("b", depends_on=["a"], outputs=["output/b.txt"]),
+        ]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        sleeps: list[float] = []
+
+        # Task a exhausts quota once; task b exhausts quota once — each should get a full window.
+        executor = FakeExecutor(quota_exhausted_tasks={"a": 1, "b": 1})
+        orch = Orchestrator(
+            executor,
+            store,
+            rs_store,
+            sleeper=sleeps.append,
+            quota_max_wait_seconds=3600,
+            quota_poll_seconds=10,
+        )
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.status == "succeeded"
+        assert len(sleeps) == 2  # one wait per task
+
+    def test_quota_does_not_consume_retry_attempts(self, tmp_path) -> None:
+        """Quota exhaustion bypasses the retry loop; max_attempts is preserved for real failures."""
+        wf = _workflow([_task("a", outputs=["output/a.txt"], retries=RetryPolicy(max_attempts=1))])
+        store, rs_store = _make_workspace(tmp_path)
+        sleeps: list[float] = []
+
+        executor = FakeExecutor(quota_exhausted_tasks={"a": 2})
+        orch = Orchestrator(
+            executor,
+            store,
+            rs_store,
+            sleeper=sleeps.append,
+            quota_max_wait_seconds=3600,
+            quota_poll_seconds=10,
+        )
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        # Task should have succeeded after 2 quota waits despite max_attempts=1
+        assert state.status == "succeeded"
+        assert len(sleeps) == 2

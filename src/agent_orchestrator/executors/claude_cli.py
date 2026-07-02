@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -16,6 +17,16 @@ from .base import Executor
 # Added idempotently — see _ensure_output_format_json().
 _OUTPUT_FORMAT_FLAG = "--output-format"
 _OUTPUT_FORMAT_VALUE = "json"
+
+# *** SINGLE SOURCE OF TRUTH for Claude usage-quota exhaustion detection ***
+# Edit ONLY this pattern when the exact quota message changes.
+# Matches: "You've hit your daily limit", "You've hit your hourly limit",
+#          "You hit your weekly limit", "you've hit your monthly limit", etc.
+# Group (?:'ve?)? makes the contraction fully optional so both "you've hit"
+# and "you hit" are covered.
+_CLAUDE_QUOTA_PATTERN: re.Pattern[str] = re.compile(
+    r"you(?:'ve?)?\s+hit\s+your\s+\w+\s+limit", re.IGNORECASE
+)
 
 
 def _write_capture(output_dir: str, stdout: str, stderr: str) -> None:
@@ -75,6 +86,7 @@ def parse_usage_and_429(
     -------
     dict with keys:
         actuals_available, provider_rate_limited, provider_retry_after_epoch,
+        claude_quota_exhausted,
         input_tokens, output_tokens, cache_creation_input_tokens,
         cache_read_input_tokens
     """
@@ -82,16 +94,27 @@ def parse_usage_and_429(
         "actuals_available": False,
         "provider_rate_limited": False,
         "provider_retry_after_epoch": None,
+        "claude_quota_exhausted": False,
         "input_tokens": None,
         "output_tokens": None,
         "cache_creation_input_tokens": None,
         "cache_read_input_tokens": None,
     }
 
+    combined_text = stdout + "\n" + stderr
+
+    # --- Claude usage-quota exhaustion (checked first, distinct from provider 429) ---
+    # Pattern lives in _CLAUDE_QUOTA_PATTERN — edit only there.
+    if _CLAUDE_QUOTA_PATTERN.search(combined_text):
+        result["claude_quota_exhausted"] = True
+        # Quota exhaustion is categorically different from a provider rate limit;
+        # don't attempt JSON parse or 429 detection for this case.
+        return result
+
     # --- 429 detection from process-level signals (no JSON needed) ---
-    combined_text = (stdout + "\n" + stderr).lower()
+    combined_lower = combined_text.lower()
     if returncode != 0 and (
-        "429" in combined_text or "rate_limit" in combined_text or "rate limit" in combined_text
+        "429" in combined_lower or "rate_limit" in combined_lower or "rate limit" in combined_lower
     ):
         result["provider_rate_limited"] = True
         # Still attempt JSON parse below to extract retry_after.
@@ -206,6 +229,10 @@ class ClaudeCliExecutor(Executor):
                 timeout=ctx.timeout_seconds,
                 capture_output=True,
                 text=True,
+                # Prevent the subprocess from blocking on stdin input (e.g. quota-exhaustion
+                # messages that prompt the user). With -p / non-interactive invocations this
+                # is belt-and-suspenders, but necessary if Claude ever waits for user input.
+                stdin=subprocess.DEVNULL,
             )
             _write_capture(ctx.output_dir, res.stdout or "", res.stderr or "")
 
@@ -230,6 +257,7 @@ class ClaudeCliExecutor(Executor):
                     actuals_available=usage_info["actuals_available"],
                     provider_rate_limited=usage_info["provider_rate_limited"],
                     provider_retry_after_epoch=usage_info["provider_retry_after_epoch"],
+                    claude_quota_exhausted=usage_info["claude_quota_exhausted"],
                 )
             err_tail = (res.stderr or res.stdout or "")[-500:]
             return TaskResult(
@@ -246,6 +274,7 @@ class ClaudeCliExecutor(Executor):
                 actuals_available=usage_info["actuals_available"],
                 provider_rate_limited=usage_info["provider_rate_limited"],
                 provider_retry_after_epoch=usage_info["provider_retry_after_epoch"],
+                claude_quota_exhausted=usage_info["claude_quota_exhausted"],
             )
         except subprocess.TimeoutExpired:
             # Write whatever partial capture is available (empty if none)

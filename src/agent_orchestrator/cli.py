@@ -125,6 +125,67 @@ def _print_status_snapshot(snap: dict) -> None:
         )
 
 
+def _resolve_run_settings(
+    max_attempts: int | None,
+    max_turns: int | None,
+    model: str | None,
+    effort: str | None,
+    quota_max_wait: int | None,
+    quota_poll_interval: int | None,
+) -> tuple[int | None, int | None, str | None, str | None, int, int]:
+    """Merge CLI flags, env vars, and project config for runtime execution settings.
+
+    Precedence (highest to lowest): CLI flag > env var > project config > built-in default.
+    Returns (max_attempts, max_turns, model, effort, quota_max_wait_seconds, quota_poll_seconds).
+    """
+    from .models import DEFAULT_QUOTA_MAX_WAIT_SECONDS, DEFAULT_QUOTA_POLL_SECONDS
+    from .project_config import find_project_config, load_project_config
+
+    def _int_env(name: str) -> int | None:
+        v = os.environ.get(name)
+        try:
+            return int(v) if v else None
+        except ValueError:
+            return None
+
+    cfg = None
+    config_path = find_project_config()
+    if config_path is not None:
+        try:
+            cfg = load_project_config(config_path)
+        except Exception:
+            cfg = None
+
+    resolved_max_attempts = (
+        max_attempts or _int_env("AO_MAX_ATTEMPTS") or (cfg.max_attempts if cfg else None)
+    )
+    resolved_max_turns = (
+        max_turns or _int_env("AO_MAX_TURNS") or (cfg.max_turns if cfg else None)
+    )
+    resolved_model = model or os.environ.get("AO_MODEL") or (cfg.model if cfg else None)
+    resolved_effort = effort or os.environ.get("AO_EFFORT") or (cfg.effort if cfg else None)
+    resolved_quota_max_wait = int(
+        quota_max_wait
+        or _int_env("AO_QUOTA_MAX_WAIT_SECONDS")
+        or (cfg.quota_max_wait_seconds if cfg else None)
+        or DEFAULT_QUOTA_MAX_WAIT_SECONDS
+    )
+    resolved_quota_poll = int(
+        quota_poll_interval
+        or _int_env("AO_QUOTA_POLL_SECONDS")
+        or (cfg.quota_poll_seconds if cfg else None)
+        or DEFAULT_QUOTA_POLL_SECONDS
+    )
+    return (
+        resolved_max_attempts,
+        resolved_max_turns,
+        resolved_model,
+        resolved_effort,
+        resolved_quota_max_wait,
+        resolved_quota_poll,
+    )
+
+
 def _build_effective_budget(
     wf_budget: BudgetSpec | None,
     budget_total: int | None,
@@ -275,12 +336,44 @@ def run(
     max_attempts: int | None = typer.Option(
         None,
         "--max-attempts",
-        help="Max attempts per task (overrides workflow defaults.retries.max_attempts)",
+        help=(
+            "Max attempts per task (overrides workflow defaults.retries.max_attempts)."
+            " Env: AO_MAX_ATTEMPTS"
+        ),
     ),
     max_turns: int | None = typer.Option(
         None,
         "--max-turns",
-        help="Max turns per claude agent invocation (overrides each agent's effort-derived value)",
+        help=(
+            "Max turns per claude agent invocation (overrides effort-derived value)."
+            " Env: AO_MAX_TURNS"
+        ),
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Claude model for all agents (e.g. claude-sonnet-4-6). Env: AO_MODEL",
+    ),
+    effort: str | None = typer.Option(
+        None,
+        "--effort",
+        help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+    ),
+    quota_max_wait: int | None = typer.Option(
+        None,
+        "--quota-max-wait",
+        help=(
+            "Max seconds to wait during a Claude quota-exhaustion episode before failing"
+            " (default 21600 = 6 h). Env: AO_QUOTA_MAX_WAIT_SECONDS"
+        ),
+    ),
+    quota_poll_interval: int | None = typer.Option(
+        None,
+        "--quota-poll-interval",
+        help=(
+            "Seconds to sleep between quota-exhaustion re-run attempts"
+            " (default 900 = 15 min). Env: AO_QUOTA_POLL_SECONDS"
+        ),
     ),
 ) -> None:
     """Run a workflow from scratch."""
@@ -300,12 +393,36 @@ def run(
     except (OrchestratorError, SystemExit):
         return
 
-    if max_attempts is not None:
-        wf.defaults.retries.max_attempts = max_attempts
+    (
+        eff_max_attempts,
+        eff_max_turns,
+        eff_model,
+        eff_effort,
+        eff_quota_max_wait,
+        eff_quota_poll,
+    ) = _resolve_run_settings(
+        max_attempts, max_turns, model, effort, quota_max_wait, quota_poll_interval
+    )
 
-    if max_turns is not None:
+    if eff_max_attempts is not None:
+        wf.defaults.retries.max_attempts = eff_max_attempts
+    if eff_max_turns is not None:
         for spec in agent_map.values():
-            spec.max_turns = max_turns
+            spec.max_turns = eff_max_turns
+    if eff_model is not None:
+        for spec in agent_map.values():
+            spec.model = eff_model
+    if eff_effort is not None:
+        _valid_efforts = ("low", "medium", "high")
+        if eff_effort not in _valid_efforts:
+            typer.echo(
+                f"ERROR: --effort must be one of {_valid_efforts}, got '{eff_effort}'",
+                err=True,
+            )
+            raise typer.Exit(1)
+        from typing import Literal, cast
+        for spec in agent_map.values():
+            spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
 
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
     store = LocalFsArtifactStore(workspace)
@@ -337,6 +454,8 @@ def run(
         budget_manager=budget_manager,
         estimator=estimator,
         clock=clock,
+        quota_max_wait_seconds=eff_quota_max_wait,
+        quota_poll_seconds=eff_quota_poll,
     )
 
     try:
@@ -373,12 +492,40 @@ def resume(
     max_attempts: int | None = typer.Option(
         None,
         "--max-attempts",
-        help="Max attempts per task override (overrides workflow defaults.retries.max_attempts)",
+        help=(
+            "Max attempts per task override (overrides workflow defaults.retries.max_attempts)."
+            " Env: AO_MAX_ATTEMPTS"
+        ),
     ),
     max_turns: int | None = typer.Option(
         None,
         "--max-turns",
-        help="Max turns per claude agent invocation (overrides each agent's effort-derived value)",
+        help=(
+            "Max turns per claude agent invocation (overrides effort-derived value)."
+            " Env: AO_MAX_TURNS"
+        ),
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Claude model for all agents (e.g. claude-sonnet-4-6). Env: AO_MODEL",
+    ),
+    effort: str | None = typer.Option(
+        None,
+        "--effort",
+        help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+    ),
+    quota_max_wait: int | None = typer.Option(
+        None,
+        "--quota-max-wait",
+        help="Max seconds to wait during a Claude quota-exhaustion episode before failing "
+        "(default 21600 = 6 h). Env: AO_QUOTA_MAX_WAIT_SECONDS",
+    ),
+    quota_poll_interval: int | None = typer.Option(
+        None,
+        "--quota-poll-interval",
+        help="Seconds to sleep between quota-exhaustion re-run attempts "
+        "(default 900 = 15 min). Env: AO_QUOTA_POLL_SECONDS",
     ),
 ) -> None:
     """Resume a previously interrupted run."""
@@ -402,12 +549,36 @@ def resume(
     store = LocalFsArtifactStore(workspace)
     rs_store = RunStateStore(workspace, store)
 
-    if max_attempts is not None:
-        wf.defaults.retries.max_attempts = max_attempts
+    (
+        eff_max_attempts,
+        eff_max_turns,
+        eff_model,
+        eff_effort,
+        eff_quota_max_wait,
+        eff_quota_poll,
+    ) = _resolve_run_settings(
+        max_attempts, max_turns, model, effort, quota_max_wait, quota_poll_interval
+    )
 
-    if max_turns is not None:
+    if eff_max_attempts is not None:
+        wf.defaults.retries.max_attempts = eff_max_attempts
+    if eff_max_turns is not None:
         for spec in agent_map.values():
-            spec.max_turns = max_turns
+            spec.max_turns = eff_max_turns
+    if eff_model is not None:
+        for spec in agent_map.values():
+            spec.model = eff_model
+    if eff_effort is not None:
+        _valid_efforts = ("low", "medium", "high")
+        if eff_effort not in _valid_efforts:
+            typer.echo(
+                f"ERROR: --effort must be one of {_valid_efforts}, got '{eff_effort}'",
+                err=True,
+            )
+            raise typer.Exit(1)
+        from typing import Literal, cast
+        for spec in agent_map.values():
+            spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
 
     try:
         existing = rs_store.load(run_id)
@@ -441,6 +612,8 @@ def resume(
         budget_manager=budget_manager,
         estimator=estimator,
         clock=clock,
+        quota_max_wait_seconds=eff_quota_max_wait,
+        quota_poll_seconds=eff_quota_poll,
     )
 
     try:
@@ -555,8 +728,12 @@ def init_cmd(
 @app.command()
 def prune(
     workspace: str = typer.Option(..., "--workspace", "-w", help="Workspace root to prune"),
-    older_than: int = typer.Option(7, "--older-than", help="Delete runs older than this many days (0 = all)"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be deleted without deleting"),
+    older_than: int = typer.Option(
+        7, "--older-than", help="Delete runs older than this many days (0 = all)"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print what would be deleted without deleting"
+    ),
 ) -> None:
     """Remove stale run artifacts from a workspace.
 

@@ -17,6 +17,9 @@ DEFAULT_CHARS_PER_TOKEN: int = 4
 DEFAULT_PESSIMISM_BUFFER: float = 1.3
 DEFAULT_OUTPUT_ALLOWANCE_TOKENS: int = 1000
 DEFAULT_429_BACKOFF_SECONDS: int = 60
+# Claude usage-quota exhaustion defaults (quota is the 5-hour/daily/weekly session limit)
+DEFAULT_QUOTA_POLL_SECONDS: int = 900   # poll interval while waiting for quota reset (15 min)
+DEFAULT_QUOTA_MAX_WAIT_SECONDS: int = 21600  # give up after 6 hours of exhaustion by default
 
 
 class RepoRef(BaseModel):
@@ -46,7 +49,7 @@ class AgentSpec(BaseModel):
     context_window: Literal["isolated", "shared"] = "isolated"
     extra_args: list[str] = []
     model: str | None = None  # e.g. "claude-haiku-4-5-20251001"; passed as --model
-    effort: Literal["low", "medium", "high"] | None = None  # mapped to --max-turns via EFFORT_MAX_TURNS
+    effort: Literal["low", "medium", "high"] | None = None  # → --max-turns via EFFORT_MAX_TURNS
     max_turns: int | None = None  # explicit --max-turns; overrides effort-derived value when set
     # Working directory the agent process runs in. Resolved against the workspace root
     # (reposet.workspace_root) and path-guarded to stay inside it. None -> workspace root.
@@ -196,6 +199,9 @@ class TaskResult(BaseModel):
     actuals_available: bool = False
     provider_rate_limited: bool = False
     provider_retry_after_epoch: float | None = None
+    # Set when the Claude CLI output matches _CLAUDE_QUOTA_PATTERN (usage-quota exhaustion).
+    # Distinct from provider_rate_limited (API 429) — quota is a session/time-based limit.
+    claude_quota_exhausted: bool = False
 
 
 TaskStatus = Literal[

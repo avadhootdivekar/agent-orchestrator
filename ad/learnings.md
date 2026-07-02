@@ -224,3 +224,48 @@ By: agent
 Role: developer
 Date: 2026-07-02
 ---
+
+---
+Learning-ID: LRN-20260702-quota-exhaustion-vs-429
+Learning: Claude's usage-quota exhaustion ("You've hit your * limit") is NOT a provider-level 429 rate limit. Treat them as distinct signals: quota requires a long wait (minutes to hours) + re-queue without consuming a retry attempt; 429 is transient and handled by the existing retry/backoff loop. Mixing them would either burn retry budget on quota waits or apply wrong recovery logic.
+Context: Implemented `_CLAUDE_QUOTA_PATTERN` detection in `parse_usage_and_429()` (claude_cli.py) with an early-return before 429 detection so the signals can never overlap. `TaskResult.claude_quota_exhausted` carries the flag; engine handles it in a separate outer-loop block.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-quota-single-source-regex
+Learning: Keep the Claude quota-message regex at exactly ONE editable location (`_CLAUDE_QUOTA_PATTERN` in `executors/claude_cli.py`). User requirement: when the exact quota string changes (e.g. "session limit" → "weekly limit"), there should be one grep-and-edit location. Spreading the pattern to tests or engine would require multi-file updates and risk drift.
+Context: Tests import `_CLAUDE_QUOTA_PATTERN` or craft strings that match it; they don't re-declare the pattern. Engine and models carry only the `claude_quota_exhausted` boolean flag.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-quota-max-wait-per-episode
+Learning: The quota max-wait timer (`_quota_exhausted_since`) is per-exhaustion-episode only. It resets to `None` after each successfully completed task. Do NOT accumulate wait time across a run — only time within a single continuous exhaustion episode counts against `quota_max_wait_seconds`. Misunderstanding this as a total-run budget would cause legitimate long runs to fail prematurely.
+Context: User clarification: "quota ONLY for current quota exhaustion event. Does NOT accumulate." Implemented as `_quota_exhausted_since = None` after `done.add(tid)` on success.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-stdin-devnull-subprocess
+Learning: Always use `stdin=subprocess.DEVNULL` when spawning Claude CLI subprocesses. Claude may wait for user input in some cases (e.g. quota exhaustion interactive prompt). Without `DEVNULL`, the subprocess blocks indefinitely even in `-p` (non-interactive) mode if the process tries to read stdin.
+Context: Added to `ClaudeCliExecutor.execute()` as a belt-and-suspenders measure; specifically needed when Claude outputs a quota message and then waits for a keypress before exiting.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-three-layer-config-precedence
+Learning: For any runtime setting that users might want to control (model, effort, max_attempts, max_turns, quota settings), always expose all three layers: CLI flag > env var > config file value. Implement in a single `_resolve_run_settings()` function so the merge logic is in one place, not duplicated across `run` and `resume` commands.
+Context: `model`/`effort` were missing from CLI; `max_attempts`/`max_turns` were in CLI but not in config file or env. All 6 runtime settings now live in `ProjectConfig` (pydantic), are read from `AO_*` env vars, and have `--flag` equivalents. `_resolve_run_settings()` does the merge once.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
