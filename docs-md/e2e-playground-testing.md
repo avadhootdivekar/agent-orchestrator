@@ -389,14 +389,28 @@ test → assert status.json has origin="loop" clones with __iter2 ids ; done ord
 ```
 AO_E2E_REAL_LLM=1 ; requires_claude()
 test → real_llm_workspace (playground/.tmp/ws-*, repo-local + gitignored, in sandbox allow-list)
-test → copy_example (NO pre-seed) → ao run --agents agents.claude.json (--permission-mode acceptEdits)
- engine → architect-breakdown → ClaudeCliExecutor(real claude) WRITES output/tasks-manifest.json
+test → copy_example (NO pre-seed) → ao run --agents agents.claude.json (--permission-mode bypassPermissions)
+ engine → architect-breakdown → ClaudeCliExecutor(real claude, cwd=workspace) WRITES output/tasks-manifest.json
  engine → read_task_manifest → inject → … → final-review WRITES output/final-verdict.json → done
 test → assert exit 0 ; status=succeeded ; spine outputs + control files EXIST & parse (no content asserts)
 ```
 Note: the real tier uses `real_llm_workspace` (NOT `tmp_path`) — the spawned `claude` is
-sandboxed to the repo dir, so system /tmp is unreachable. `agents.claude.json` carries
-`--permission-mode acceptEdits` so headless agents write outputs without stalling on prompts.
+sandboxed to the repo dir, so system /tmp is unreachable. See §12.5 for the three real-LLM
+hardening fixes (turn budget, permissions, agent cwd) that made this path reliably green.
+
+**12.5 Real-LLM hardening (RCA + fixes, 2026-07-02):** getting the gated tier to pass green
+against the real `claude` surfaced three distinct, order-revealed failures. Each was diagnosed
+from the captured `stdout.txt`/`stderr.txt` (`subtype`, `num_turns`, `permission_denials`,
+`terminal_reason`) plus workspace file-presence checks:
+
+| Failure | Root cause (evidence) | Fix |
+|---|---|---|
+| `architect-design` → `error_max_turns` (`num_turns:6`, `permission_denials:[]`) | `effort:medium` mapped to `--max-turns 5` — too tight for a task that non-deterministically needs 3–6 turns. **Not** a permission issue. | Raised `EFFORT_MAX_TURNS` to `{low:15, medium:30, high:60}` (turns are a loop-breaker; token budget is the real cost guard) + added explicit `AgentSpec.max_turns` override + `ao run --max-turns` flag + `MAX_TURNS`/`AO_MAX_TURNS` plumbing. |
+| `taskreview-t1` → declared output `review.md` missing (Bash in `permission_denials`) | reviewer used `acceptEdits`, which silently **denies Bash**, but `reviewer.md` requires running `pytest` — the agent stalls and skips its write. | All playground agents standardized on `--permission-mode bypassPermissions` (permission mode must match what the instruction actually needs). |
+| `architect-breakdown` → manifest "not found" (claimed success) | `subprocess.run` set **no `cwd`**, so `claude` inherited the repo-root cwd and the agent's *relative* `output/tasks-manifest.json` write landed at repo root, outside the workspace. | Framework-level, config-driven agent cwd: `AgentSpec.working_dir` → engine resolves under `workspace_root` → `TaskContext.cwd` → executor `subprocess.run(cwd=…)`. Default cwd = workspace root. (Deliberately crosses this epic's original NFR-1 "no `src/` changes" boundary, per user direction — the fix belongs in the framework, not the test.) |
+
+Validation: full real-LLM suite `3 passed in 578s` (`PYTEST_EXIT=0`); manifest now lands inside
+the workspace; fast suite `387 passed` (+4 cwd/max-turns unit+integration tests); `mypy` clean.
 
 **12.4 Failure/edge — cycle & resume (Area 1 & 6):**
 ```

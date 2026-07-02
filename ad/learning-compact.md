@@ -16,4 +16,8 @@
 - Headless `claude -p` that must write files needs `--permission-mode acceptEdits` (config in `agents.*.json`), else Write is denied; bounded, unlike `--dangerously-skip-permissions`.
 - Adding a field to `AgentSpec` also requires updating `specs/agents.schema.json` (additionalProperties:false); missing this breaks `ao validate`.
 - E2e test fixtures must NOT auto-delete workspaces on teardown; preserve artifacts for audit, use `ao prune` for manual cleanup.
-- `effort` on `AgentSpec` maps to `--max-turns`: low=3, medium=5, high=10. Playground examples use haiku + medium effort.
+- `effort`→`--max-turns` via `EFFORT_MAX_TURNS = {low:15, medium:30, high:60}`; keep GENEROUS (turns are just a loop-breaker, token budget is the real cost guard — tight caps cause flaky `error_max_turns`). `AgentSpec.max_turns` / `ao run --max-turns` / `MAX_TURNS` override it. Playground uses haiku + medium effort.
+- "Reached maximum number of turns (N)" is the Claude CLI turn budget, NOT orchestrator `max_attempts`; `attempt X/Y` in logs is the retry counter.
+- `--permission-mode` must match what an agent's instruction DOES: `acceptEdits` accepts writes but silently denies Bash, so any agent that runs pytest/compile/syntax-check stalls (can exit 0 while skipping a declared output). Use `bypassPermissions` for those — simplest: standardize all example agents on it.
+- Spawn `claude` with an explicit `cwd` or it inherits the repo-root cwd and relative agent output writes (e.g. `output/tasks-manifest.json`) escape the workspace. Framework fix (config-driven, not per-test): `AgentSpec.working_dir` → engine resolves under `workspace_root` (path-guarded) → `TaskContext.cwd` → `subprocess.run(cwd=…)`; default = workspace root.
+- `AO_MAX_ATTEMPTS=""` (unset Makefile default) is falsy in Python; harness skips `--max-attempts` injection, so `max_attempts=1` (no retry) applies silently.

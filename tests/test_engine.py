@@ -384,3 +384,41 @@ class TestCancel:
         state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
 
         assert state.status == "cancelled"
+
+
+class TestAgentCwd:
+    """The engine resolves the agent working directory (its cwd) and threads it
+    into the TaskContext so relative output paths land inside the workspace."""
+
+    class _RecordingExecutor(Executor):
+        def __init__(self) -> None:
+            self.contexts: list[TaskContext] = []
+
+        def execute(self, ctx: TaskContext) -> TaskResult:
+            self.contexts.append(ctx)
+            for p in ctx.output_paths:
+                Path(p).parent.mkdir(parents=True, exist_ok=True)
+                Path(p).write_text("output")
+            return TaskResult(task_id=ctx.task_id, status="succeeded", attempts=1)
+
+    def test_cwd_defaults_to_workspace_root(self, tmp_path) -> None:
+        wf = _workflow([_task("a", outputs=["output/a.txt"])])
+        store, rs_store = _make_workspace(tmp_path)
+        rec = self._RecordingExecutor()
+        orch = Orchestrator(rec, store, rs_store)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+        assert state.status == "succeeded"
+        assert rec.contexts[0].cwd == store.resolve(".")
+
+    def test_working_dir_override_is_honored(self, tmp_path) -> None:
+        (tmp_path / "sub").mkdir()
+        wf = _workflow([_task("a", outputs=["output/a.txt"])])
+        store, rs_store = _make_workspace(tmp_path)
+        rec = self._RecordingExecutor()
+        orch = Orchestrator(rec, store, rs_store)
+
+        agents = {"ag": AgentSpec(executor="fake", working_dir="sub")}
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), agents)
+        assert state.status == "succeeded"
+        assert rec.contexts[0].cwd == store.resolve("sub")

@@ -1,9 +1,37 @@
 # STATUS
 
 - ID: `T-g7rjh0-real-llm-gated-harness`
-- Updated At: 2026-07-01
+- Updated At: 2026-07-02
 - State: Done
-- Owner: tester
+- Owner: developer
+
+## Update 2026-07-02 — real-run hardening: turn budget, permissions, agent cwd
+Three distinct failures surfaced (in order) once the tier ran repeatedly against the real
+`claude`; each RCA'd from captured `stdout.txt`/`stderr.txt` + workspace file-presence checks:
+- **#1 `architect-design` `error_max_turns`** (`subtype:error_max_turns`, `num_turns:6`,
+  `permission_denials:[]` → NOT permissions). `effort:medium`→`--max-turns 5` was too tight for a
+  task that non-deterministically needs 3–6 turns. **Fix:** `EFFORT_MAX_TURNS` → `{15,30,60}`
+  (turns are only a loop-breaker; token budget is the real cost guard) + explicit
+  `AgentSpec.max_turns` override + `ao run/resume --max-turns` flag + `MAX_TURNS`/`AO_MAX_TURNS`
+  Makefile/harness plumbing.
+- **#2 `taskreview-t1` missing `review.md`** (agent exited 0; Bash `python -m pytest …` in
+  `permission_denials`). `acceptEdits` silently denies Bash, but `reviewer.md` requires running
+  pytest → agent stalls, skips its write. **Fix:** all 5 playground agents → `bypassPermissions`.
+- **#3 `architect-breakdown` manifest "not found"** (agent claimed success; manifest found at
+  repo-root `./output/tasks-manifest.json`). `subprocess.run` set no `cwd`, so `claude` inherited
+  the repo-root cwd and the agent's *relative* manifest write escaped the workspace. **Fix
+  (framework-level, config-driven — NOT test-only):** `AgentSpec.working_dir` → engine resolves
+  under `workspace_root` (path-guarded) → `TaskContext.cwd` → executor `subprocess.run(cwd=…)`;
+  default cwd = workspace root. This crosses the epic's original NFR-1 "no `src/` changes" boundary
+  by user direction — the working-dir contract belongs in the framework.
+- **Verified:** real-LLM suite `3 passed in 578.31s` (`PYTEST_EXIT=0`, exit code captured directly,
+  no `| tail` masking); manifest lands inside the workspace; fast suite `387 passed` (+4 new
+  unit+integration tests: `test_cwd_passed_to_subprocess`, `test_cwd_none_when_unset`,
+  `test_explicit_max_turns_overrides_effort`, `test_max_turns_not_injected_when_no_effort_or_override`,
+  plus `TestAgentCwd` in `test_engine.py`); `mypy` clean; zero new lint.
+- **Superseded from the 2026-07-01 update below:** `acceptEdits` → `bypassPermissions`; the
+  workspace still lives under `playground/.tmp/` but the agent **cwd** is now set explicitly to the
+  workspace root by the engine rather than inherited from wherever `ao` was invoked.
 
 ## Update 2026-07-01 — real-run directory-access fix (verified end-to-end)
 - **RCA**: the real-LLM tests used pytest's `tmp_path` (system `/tmp/pytest-of-…`), which is

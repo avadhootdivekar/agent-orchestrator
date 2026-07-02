@@ -56,6 +56,26 @@ class AgentSpec(BaseModel):
     )
     context_window: Literal["isolated","shared"] = "isolated"
     extra_args: list[str] = []
+    model: str | None = None                          # e.g. "claude-haiku-4-5-…"; injected as --model
+    effort: Literal["low","medium","high"] | None = None  # → --max-turns via EFFORT_MAX_TURNS {15,30,60}
+    max_turns: int | None = None                      # explicit --max-turns; overrides effort when set
+    working_dir: str | None = None                    # agent process cwd; resolved+path-guarded under
+                                                       # reposet.workspace_root. None -> workspace root.
+```
+
+`working_dir` makes the agent subprocess's **current working directory** configurable per agent.
+The engine resolves it against `reposet.workspace_root` (path-traversal guarded) and passes the
+absolute result as `TaskContext.cwd`; the executor spawns the process with that `cwd`. This is why
+an agent that writes a **relative** output path from its instruction/spec (e.g. a manifest at
+`output/tasks-manifest.json`) lands inside the workspace rather than wherever `ao` was invoked.
+Default (`None`) resolves to the workspace root.
+
+`effort`/`max_turns` bound the `claude` CLI's per-invocation **turn** budget (a loop-breaker), which
+is orthogonal to `RetryPolicy.max_attempts` (task-level **retries**). Token budgeting is the real
+cost guard, so `EFFORT_MAX_TURNS` is deliberately generous (`low=15, medium=30, high=60`); an
+explicit `max_turns` (or the `ao run --max-turns` override, which sets it on every agent) wins.
+
+```python
 
 class TaskSpec(BaseModel):
     id: str                         # unique within workflow; [a-z0-9-_]+
@@ -99,6 +119,8 @@ class TaskContext(BaseModel):       # PATHS/IDS ONLY — the NFR-1 boundary obje
     output_paths: list[str]
     repo_paths: dict[str, str]      # repo id -> abs path
     timeout_seconds: int
+    cwd: str = ""                   # resolved absolute agent cwd (from AgentSpec.working_dir);
+                                     # "" -> OS inherits the caller's cwd. Path only — NFR-1 safe.
     # NOTE: there is intentionally NO field carrying file CONTENTS.
 
 class TaskResult(BaseModel):

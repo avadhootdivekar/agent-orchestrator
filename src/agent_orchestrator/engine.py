@@ -723,6 +723,11 @@ class Orchestrator:
         # Resolve task_manifest_path for emit_tasks (already resolved at call site, passed in)
         resolved_task_manifest_path: str | None = task_manifest_path
 
+        # Working directory the agent runs in: AgentSpec.working_dir override (resolved
+        # against, and path-guarded to, the workspace root) or the workspace root itself.
+        # Ensures agents' relative output paths land inside the workspace deterministically.
+        agent_cwd = self._store.resolve(agent_spec.working_dir or ".")
+
         # Capture directory: .orchestrator/runs/<run_id>/<task_id>/  (FR-4)
         output_dir = self._store.resolve(
             os.path.join(".orchestrator", "runs", state.run_id, task.id)
@@ -749,6 +754,7 @@ class Orchestrator:
                 dynamic_input_paths=dynamic_input_paths or [],
                 repo_paths=repo_paths,
                 timeout_seconds=timeout,
+                cwd=agent_cwd,
                 output_dir=output_dir,
                 task_manifest_path=resolved_task_manifest_path,
                 gate_output_path=gate_output_path,

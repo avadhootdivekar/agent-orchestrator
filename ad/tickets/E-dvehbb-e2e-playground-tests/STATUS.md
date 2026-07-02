@@ -1,9 +1,33 @@
 # STATUS
 
 - ID: `E-dvehbb-e2e-playground-tests`
-- Updated At: 2026-07-01
+- Updated At: 2026-07-02
 - State: MVP complete (Phase 1) — Phase 2 pending
 - Owner: architect
+
+## Update (2026-07-02 — real-LLM tier hardened green; framework agent-cwd added)
+- Drove the gated real-LLM tier (`T-g7rjh0`) from flaky to reliably green against the real
+  `claude`. Three distinct, order-revealed failures were RCA'd from captured stdout/stderr
+  (`subtype`/`num_turns`/`permission_denials`/`terminal_reason`) + workspace file checks:
+  1. `architect-design` `error_max_turns` — `effort:medium`→`--max-turns 5` too tight (NOT
+     permissions; `permission_denials:[]`). Fix: `EFFORT_MAX_TURNS` → `{15,30,60}` (turns are a
+     loop-breaker, token budget is the real cost guard) + explicit `AgentSpec.max_turns` override
+     + `ao run --max-turns` flag + `MAX_TURNS`/`AO_MAX_TURNS` plumbing.
+  2. `taskreview-t1` missing `review.md` — reviewer on `acceptEdits` silently denies the Bash
+     `pytest` its instruction requires. Fix: all playground agents → `bypassPermissions`.
+  3. `architect-breakdown` manifest "not found" — `subprocess.run` had no `cwd`, so `claude`
+     inherited repo-root cwd and the relative manifest write escaped the workspace. Fix: **new
+     framework capability** — `AgentSpec.working_dir` → engine resolves under `workspace_root`
+     (path-guarded) → `TaskContext.cwd` → executor `subprocess.run(cwd=…)`; default = workspace root.
+- **NFR-1 note:** fix #3 deliberately touches `src/` (`models.py`, `engine.py`,
+  `executors/claude_cli.py`, `cli.py`), crossing this epic's original "no production `src/` changes"
+  boundary — per user direction the working-directory contract belongs in the framework (config-driven,
+  honored by `ao` commands), not patched at the test level.
+- Validation: real-LLM suite `3 passed in 578s` (`PYTEST_EXIT=0`, no pipe-masking); manifest now
+  lands in the workspace; fast suite `387 passed` (+4 cwd/max-turns unit+integration tests); `mypy`
+  clean; zero new lint. Playground `agents.claude.json` pinned to `bypassPermissions` for all 5 agents.
+- Docs: `docs-md/lld-agent-orchestrator.md` (AgentSpec `model`/`effort`/`max_turns`/`working_dir`,
+  TaskContext `cwd`) + `docs-md/e2e-playground-testing.md` §12.5 (RCA table).
 
 ## Update (2026-07-01 — real-LLM tier made runnable against real `claude`)
 - Fixed a directory-access blocker in `T-g7rjh0`: real-LLM tests ran in pytest `tmp_path`

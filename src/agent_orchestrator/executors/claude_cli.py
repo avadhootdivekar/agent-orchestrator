@@ -182,12 +182,19 @@ class ClaudeCliExecutor(Executor):
         if ctx.agent.model and "--model" not in argv and "-m" not in argv:
             argv = argv + ["--model", ctx.agent.model]
 
-        # Inject --max-turns from effort level if specified and not already in argv.
-        if ctx.agent.effort:
-            from ..models import EFFORT_MAX_TURNS
+        # Inject --max-turns unless the command already sets it. Explicit
+        # agent.max_turns wins; otherwise derive from effort. (agent.max_turns is
+        # the escape hatch a run-level --max-turns override sets on every agent.)
+        if "--max-turns" not in argv:
+            max_turns: int | None = None
+            if ctx.agent.max_turns is not None:
+                max_turns = ctx.agent.max_turns
+            elif ctx.agent.effort:
+                from ..models import EFFORT_MAX_TURNS
 
-            if "--max-turns" not in argv:
-                argv = argv + ["--max-turns", str(EFFORT_MAX_TURNS[ctx.agent.effort])]
+                max_turns = EFFORT_MAX_TURNS[ctx.agent.effort]
+            if max_turns is not None:
+                argv = argv + ["--max-turns", str(max_turns)]
 
         # Ensure JSON output so we can extract token usage (T-1m9744).
         argv = _ensure_output_format_json(argv)
@@ -195,6 +202,7 @@ class ClaudeCliExecutor(Executor):
         try:
             res = subprocess.run(
                 argv,
+                cwd=ctx.cwd or None,
                 timeout=ctx.timeout_seconds,
                 capture_output=True,
                 text=True,

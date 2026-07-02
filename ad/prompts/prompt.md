@@ -13,102 +13,119 @@ Agent orchestrator frameowrk is supposed to -
 
 # Current Ask is this  - 
 
-## Looks Better
-1. Looks like ` AO_E2E_REAL_LLM=1 make test-real-llm` is working as expected. Still it failed - but very likely due to limited number of retries or token limit etc. Dont have any concerns here as of now. Thanks. 
-2. Can we add the number of retries and Very top level total token limit in the make recipe as configurable? Please provide exact command with how to run wth those configurations. 
-    1. The max attempts / retry count is applicable for what - 
-        1. Total number of retries across all agents? 
-        2. Total number of retries per agent 
-        3. Total number of retries only for top level workflow or something else? 
-3. In the playground - sum of array example - please update the instructuions for developer and tester to ACTUALLY generate the code files - like .py or .go and actually compile and run them and test them. Current instructions just talk about creating .md files - which is INCORRECT. 
-    1. I want to run those playground tests/ examples and create ACTUAL WORKING code files / packages which will give desired output. 
+## Playground tests still failing 
 
+logs - 
+```
+collected 384 items / 381 deselected / 3 selected                                                                                                                                                                                                                                                                           
+                                                                                                                                                                                                                                                                                                                            
+tests/playground/test_sum_of_array_real_llm.py::TestSumOfArrayRealLLM::test_sum_of_array_real_completes FAILED                                                                                                                                       [ 33%]                                                                 
+tests/playground/test_sum_of_array_real_llm.py::TestSumOfArrayRealLLM::test_sum_of_array_real_spine_outputs_exist FAILED                                                                                                                             [ 66%]                                                                 
+tests/playground/test_sum_of_array_real_llm.py::TestSumOfArrayRealLLM::test_sum_of_array_real_control_files_exist FAILED                                                                                                                             [100%]                                                                 
+                                                                                                                                                                                                                                                                                                                            
+========================================================================================================================= FAILURES =========================================================================================================================                                                                
+__________________________________________________________________________________________________ TestSumOfArrayRealLLM.test_sum_of_array_real_completes __________________________________________________________________________________________________                                                                
+                                                                                                                                                                                                                                                                                                                            
+self = <tests.playground.test_sum_of_array_real_llm.TestSumOfArrayRealLLM object at 0x7fad135c1b50>, real_llm_workspace = PosixPath('/usr/avadhoot/mounted/agent-orchestrator/playground/.tmp/ws-416ef2f813e0')                                                                                                             
+                                                                                                                                                                                                                                                                                                                            
+    def test_sum_of_array_real_completes(self, real_llm_workspace: Path) -> None:                                                                                                                                                                                                                                           
+        """Smoke test: sum-of-array with real agents completes with exit 0.                                                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                                                                                                            
+        Verifies structure/completion only, never content.                                                                                                                                                                                                                                                                  
+        Real agents generate control files (no pre-seeding).                                                                                                                                                                                                                                                                
+        """                                                                                                                                                                                                                                                                                                                 
+        requires_claude()  # Skip if claude binary not available                                                                                                                                                                                                                                                            
+                                                                                                                                                                                                                                                                                                                            
+        # Copy example (NO pre-seeding _ real agents will write control files)                                                                                                                                                                                                                                              
+        copy_example("sum-of-array", real_llm_workspace)                                                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                                                                                                            
+        # Run with real agents                                                                                                                                                                                                                                                                                              
+        result = run_cli(                                                                                                                                                                                                                                                                                                   
+            [                                                                                                                                                                                                                                                                                                               
+                "run",                                                                                                                                                                                                                                                                                                      
+                "--workflow",                                                                                                                                                                                                                                                                                               
+                "workflow.json",                                                                                                                                                                                                                                                                                            
+                "--reposets",                                                                                                                                                                                                                                                                                               
+                "reposet.json",                                                                                                                                                                                                                                                                                             
+                "--agents",                                                                                                                                                                                                                                                                                                 
+                agents_for("real"),                                                                                                                                                                                                                                                                                         
+            ],                                                                                                                                                                                                                                                                                                              
+            real_llm_workspace,                                                                                                                                                                                                                                                                                             
+        )                                                                                                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                                                                                            
+        # Should exit 0                                                                                                                                                                                                                                                                                                     
+>       assert result.exit_code == 0, (                                                                                                                                                                                                                                                                                     
+            f"Real workflow failed with exit code {result.exit_code}:\n{result.output}"                                                                                                                                                                                                                                     
+        )                                                                                                                                                                                                                                                                                                                   
+E       AssertionError: Real workflow failed with exit code 1:                                                                                                                                                                                                                                                              
+E         {"ts": "2026-07-02T09:18:51.624434+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.start", "run_id": "sum-of-array-20260702T091851Z", "event": "run.start", "workflow_id": "sum-of-array"}                                                                                                   
+E         {"ts": "2026-07-02T09:18:51.624574+00:00", "level": "WARNING", "logger": "agent_orchestrator.dag", "msg": "Inferred edge architect-design -> architect-breakdown (input output/design.md matches output) not declared in depends_on"}                                                                             
+E         {"ts": "2026-07-02T09:18:51.624925+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "sum-of-array-20260702T091851Z", "task_id": "architect-design", "event": "task.start"}                                                                                               
+E         {"ts": "2026-07-02T09:19:10.107049+00:00", "level": "WARNING", "logger": "agent_orchestrator.engine", "msg": "Task architect-design attempt 1/1 failed: okens\":0,\"ephemeral_1h_input_tokens\":434},\"type\":\"message\"}],\"speed\":\"standard\"},\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\"
+:681,\"outputTokens\":848,\"cacheReadInputTokens\":104037,\"cacheCreationInputTokens\":13155,\"webSearchRequests\":0,\"costUSD\":0.041634700000000004,\"contextWindow\":200000,\"maxOutputTokens\":32000}},\"permission_denials\":[],\"terminal_reason\":\"max_turns\",\"fast_mode_state\":\"off\",\"uuid\":\"7f775674-2189-
+429e-aba5-bbf286570759\",\"errors\":[\"Reached maximum number of turns (5)\"]}\n"}                                                                                                                                                                                                                                          
+E         {"ts": "2026-07-02T09:19:10.107346+00:00", "level": "WARNING", "logger": "agent_orchestrator", "msg": "Task ended with status failed", "run_id": "sum-of-array-20260702T091851Z", "task_id": "architect-design", "event": "task.end", "status": "failed", "exit_code": 1}                                         
+E         {"ts": "2026-07-02T09:19:10.108020+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.end", "run_id": "sum-of-array-20260702T091851Z", "event": "run.end", "status": "failed"}                                                                                                                  
+E                                                                                                                                                                                                                                                                                                                           
+E         Run:    sum-of-array-20260702T091851Z                                                                                                                                                                                                                                                                             
+E         Status: failed                                                                                                                                                                                                                                                                                                    
+E                                                                                                                                                                                                                                                                                                                           
+E         Task                           Status          Attempts                                                                                                                                                                                                                                                           
+E         -------------------------------------------------------                                                                                                                                                                                                                                                           
+E         architect-design               failed          1                                                                                                                                                                                                                                                                  
+E         design-review                  pending         0                                                                                                                                                                                                                                                                  
+E         architect-breakdown            pending         0                                                                                                                                                                                                                                                                  
+E         integrate                      pending         0                                                                                                                                                                                                                                                                  
+E         bugfix                         pending         0                                                                                                                                                                                                                                                                  
+E         final-review                   pending         0                                                                                                                                                                                                                                                                  
+E         done                           pending         0                                                                                                                                                                                                                                                                  
+E                                                                                                                                                                                                                                                                                                                           
+E       assert 1 == 0                                                                                                                                                                                                                                                                                                       
+E        +  where 1 = <Result SystemExit(1)>.exit_code                                                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                                                                                            
+tests/playground/test_sum_of_array_real_llm.py:86: AssertionError                                                                                                                                                                                                                                                           
+-------------------------------------------------------------------------------------------------------------------- Captured log call ---------------------------------------------------------------------------------------------------------------------                                                                
+WARNING  agent_orchestrator.dag:dag.py:145 Inferred edge architect-design -> architect-breakdown (input output/design.md matches output) not declared in depends_on                                                                                                                                                         
+INFO     agent_orchestrator:engine.py:128 run.start                                                                                                                                                                                                                                                                         
+WARNING  agent_orchestrator.dag:dag.py:145 Inferred edge architect-design -> architect-breakdown (input output/design.md matches output) not declared in depends_on                                                                                                                                                         
+INFO     agent_orchestrator:engine.py:365 Task started                                                                                                                                                                                                                                                                      
+WARNING  agent_orchestrator.engine:engine.py:764 Task architect-design attempt 1/1 failed: okens":0,"ephemeral_1h_input_tokens":434},"type":"message"}],"speed":"standard"},"modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":681,"outputTokens":848,"cacheReadInputTokens":104037,"cacheCreationInputTokens":13155,"
+webSearchRequests":0,"costUSD":0.041634700000000004,"contextWindow":200000,"maxOutputTokens":32000}},"permission_denials":[],"terminal_reason":"max_turns","fast_mode_state":"off","uuid":"7f775674-2189-429e-aba5-bbf286570759","errors":["Reached maximum number of turns (5)"]}                                          
+                                                                                                                                                                                                                                                                                                                            
+WARNING  agent_orchestrator:engine.py:531 Task ended with status failed  
+```
+
+1. Check the logs - identify the failure - give me very clear reasoning along with evidence. 
+    1. Earlier you had mentioned that now we will NOT face the failure due to permission issue. I hope its not failing due to poermissions issue again - that would mean earlier fix is NOT working. 
+2. Get the confirmation for RCA and fix approach by me.  
+3. Onec approved , update - fix and Please run the tests by yourself and see its fixed or failing.
 
 
 --- 
 
 # Old Ask
 
+## Input 7 
 
-## Input 4 
-## Enhancements and fixes
-1. Still tests are failing - but very likely due to token exhaustion - no need to check much there - except some easy scope to reduce token usage - may be by reducing workflows steps / less number of iterations etc. Our idea is to test the POC / e2e flow here - not to get very good system.
-    1. May be 2 levels of tests - 
-        1. one light - even with using cluade - will burn even lesser tokens
-        2. Heavy - using claude - will burn some more tokens (Still not too much) due to probably more agents / steps / iterations. 
+## Not sure about your max attempts analysis - 
 
-2. DO NOT remove the artifacts/ logs/ agent outputs automatically - in normal ao flows as well as in tests also. 
-    1. May be give some clean or some command in ao itself which will remove the stale artifacts from the preconfigured paths and free up space - something like docker prune maybe. 
-    2. In tests as well as in normal ao run - DO NOT clean artifacts / output / intermediate files by default - those can be used for audit / debugging purpose. 
-    3. Add small note / task /  todo as follows - Specify the intermediate temporary artifacts size limit. When size grows over this - delete stale data. DO NOT delete data in current run anyways. This should happen as part of any noirmal ao run. But to be picked much later - once product stabilized well. 
-    4.  Third point is  to just add task/todo comment in code or someplace for tracking - DO NOT implement make any actual code changes now. 
-3. Are sufficient readmes, make recipes added to exercise all these test flows and completely test ao e2e-fulle using claude and all? 
-4. **Are we providing mechanism to decide specific model / efforts?** We should have the mechanism to specify the model and effort level in workflow - This will greatly allow us to control the cost and performance. Add this now. I assume this should be 1/2 ticket change only. If you think this is bigger and requires epic - do that - design -refview - get approval by user - implement. But most likely epic not required - then you can directly implement with some subagent. 
-5. In playground examples/tests - use the haiku or at most sonnet agent. DO NOT use opus. Use mediumm efforts.  
+I still suspect our max attempts computation may be different. Please check below logs and analyze why the failure. You can also go through actual run logs/other artifacts- I have not deleted them  yet. 
+
+logs - 
+<Removed logs to save context>
+
+1. Give me very clear analysis of why it failed - whats realistic evidance you have for that. 
+2. Why dos it say - max attempts reach? Did we really retry for 5 times for this task? I highly doubt that. Provide supporting logs / evidence. 
 
 
-
-## Input 3 
-## Tests failing
-1. Tests are still failing - however reason seems something different - probably agent output not correct format or some api failure or something. 
-2. Please check - RCA - do the fix. 
-    1. Actualy drive and test the LLM based test - may be using subagent. 
-    2. Ensure tests using LLM actually pass correctly. Earlier you said its passing - but now its failing. Probably take more relaxed constraints for timeout - if that matters - like 10min instead of 2 min. etc . but dont burn too many tokens. Upto $20 total is ok. 
-    3. ONLY after TRUE test verification with LLM get back to me. 
-
-
-## Input 2 
-
-1. Tests failing - run yourself with CLAUDE and check why. Do RCA - 
-2. Likely root cause seems to be directory access restrictions. Please check logs attached at the end. 
-    1. If directory access is indeed issue -> Have some tmp directory - which is gitignored under playground itself or somehwree correct location in repo. So cluade has the access and no issues of failure as well as no nee dto give unrestricted access. 
-3. After doing your changes - You yourself - (maybe with subagent) - check that the tests are running clean with actual claude interface and getting the desired output. 
-<Post input update - this was due to out of directory acecss restrictions only. >
-
-
-## Input 1 
-
-
-## E2E Tests addition
-**Add new e2e tests covering full paths from absolute boundaries from user perspective to core engine** 
-e.g. invoke the ao tool and check if workflows working as expected, check if loggings are generated as expected, check if epics / tasks / outputs are created as expected. 
-Create following types of tests 
-1. Fixture based tests
-2. Reproducible tests - same set of inputs each time, the expectations are also deterministic. as AO runs on LLM, we may not check exacrt contents as those may change each time even for same set of inputs - so in deterministic tests - we should just test the file neames / paths are exactly as expected etc - which will always be reproducible. 
-3. Fuzzy / undeterministic tests  - these may test for different set of random inputs OR even of same set of ibputs - where the output may change each time. 
-4. performance and correctnes tests. 
-
-
-Test Areas: 
-1. Workflow and DAG, dependencies
-2. Token computation / assumptions 
-3. Dynamic inputs / dependency specification
-4. Logging
-5. Agent output being captured for individual steps / tasks. 
-6. CLI and flags being exercised correctly e2e. 
-
-### Potentially track the reproducible problem statements. 
-1. Maybe create a directory like playground or something in current repo. 
-2. Use thta directory to run different examples / workflows using ao. Some directories within playground can be like - sum-of-array, student-data, sorting etc. 
-3. these examples should be simple problem statements - that will test the workflows e2e - but should not consume too many tokens to test. Yes there would be burn - but we will tailor the problems to have the low burn rate. 
-4. For each of these workflows - we should define workflows like - 
-    1. architect - design (consider that tasks should be able to breakdown) - HLD + LLD + ADR
-    2. architect - breakdown the tasks based on design (no design here) 
-    3. Reviewer - design review, any missed concerns, ambiguity, tasks and interfaces and test fixures, contracts defined clearly and meaningful. 
-    4. For each task -
-        1. developer - work on and cmoplete tasks. Dont write unit tests or anything - only busines loggic and relevant integration. 
-        2. Test Write - Write the unit / integration tests. Consider design time test fixtures. Write tests by considering user flows and expected outputs - dont bend tests to just pass the business logic. 
-        3. Reviewer - review individual tasks - also against design. 
-    5. Final reviewer - Once all tasks are complete - review final work - also against design check if any misses. Create new tasks of found bugs/ reviewes etc and take one more round of dev/review. 
-
-
-We can have some playground examples with some easy problem statements like 
-1. Sort the elements in given array 
-2. Find the sum of elements in given array 
-3. Write functions  methods to work on student data
-    1. Given array of students - with name/age/standard/scores - methods should return - students within given age / score range etc. 
-
-
-These playground problem statements -  can have workflows defined - by ao repo developer - however those workflows will be executed each time - as part of e2e test of ao repo itself and we will check if ao repo / latest updated code is correctly driving those workflows to completion and all new features are working correctly. 
+## Input 6 
+## Max Attempts in playground test
+1. Does the first attempt itself also counts towards attempts or only retried attempts? 
+    1. If I have workflow with 20 steps and maxx_attempts = 5, 
+        1. would my workflow complete till only 5 steps? 
+        2. Or will it try "failed" jobs maximum of 5 times in overall lifecycle? 
+        3. I am expecting #2 - maximum 5 "retries" in case of failures - across full workflow lifecycle. If my 20 steps workflow will never complete - that is NOT right approach. Advise me in case anything wrong here. 
+    2. If my approach looks correct and implementation is wrong - please fix that. 
+    3. Anyways we have total token count - which will control the burn if too high tasks are injected dynamically in the workflow. It is realistically and permisably possible that I may not know the total steps when I invoke the workflow - because steps might also be injected. 
 
 

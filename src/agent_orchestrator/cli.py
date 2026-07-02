@@ -277,6 +277,11 @@ def run(
         "--max-attempts",
         help="Max attempts per task (overrides workflow defaults.retries.max_attempts)",
     ),
+    max_turns: int | None = typer.Option(
+        None,
+        "--max-turns",
+        help="Max turns per claude agent invocation (overrides each agent's effort-derived value)",
+    ),
 ) -> None:
     """Run a workflow from scratch."""
     from datetime import UTC
@@ -297,6 +302,10 @@ def run(
 
     if max_attempts is not None:
         wf.defaults.retries.max_attempts = max_attempts
+
+    if max_turns is not None:
+        for spec in agent_map.values():
+            spec.max_turns = max_turns
 
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
     store = LocalFsArtifactStore(workspace)
@@ -366,6 +375,11 @@ def resume(
         "--max-attempts",
         help="Max attempts per task override (overrides workflow defaults.retries.max_attempts)",
     ),
+    max_turns: int | None = typer.Option(
+        None,
+        "--max-turns",
+        help="Max turns per claude agent invocation (overrides each agent's effort-derived value)",
+    ),
 ) -> None:
     """Resume a previously interrupted run."""
     from datetime import UTC
@@ -390,6 +404,10 @@ def resume(
 
     if max_attempts is not None:
         wf.defaults.retries.max_attempts = max_attempts
+
+    if max_turns is not None:
+        for spec in agent_map.values():
+            spec.max_turns = max_turns
 
     try:
         existing = rs_store.load(run_id)

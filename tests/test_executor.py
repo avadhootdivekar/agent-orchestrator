@@ -493,10 +493,11 @@ class TestClaudeCliArgBuilding:
         argv = mock_run.call_args[0][0]
         assert "--model" not in argv
 
-    def test_effort_medium_injects_max_turns_5(self, tmp_path) -> None:
+    def test_effort_medium_injects_max_turns_from_constant(self, tmp_path) -> None:
         from unittest.mock import patch
 
         from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+        from agent_orchestrator.models import EFFORT_MAX_TURNS
 
         agent = _claude_agent(effort="medium")
         ctx = _make_ctx(agent, tmp_path)
@@ -507,7 +508,65 @@ class TestClaudeCliArgBuilding:
         argv = mock_run.call_args[0][0]
         assert "--max-turns" in argv
         idx = argv.index("--max-turns")
-        assert argv[idx + 1] == "5"
+        assert argv[idx + 1] == str(EFFORT_MAX_TURNS["medium"])
+
+    def test_explicit_max_turns_overrides_effort(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        # Explicit max_turns wins over the effort-derived value.
+        agent = _claude_agent(effort="medium", max_turns=42)
+        ctx = _make_ctx(agent, tmp_path)
+
+        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
+            ClaudeCliExecutor().execute(ctx)
+
+        argv = mock_run.call_args[0][0]
+        idx = argv.index("--max-turns")
+        assert argv[idx + 1] == "42"
+        assert argv.count("--max-turns") == 1
+
+    def test_max_turns_not_injected_when_no_effort_or_override(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        agent = _claude_agent()  # no effort, no max_turns
+        ctx = _make_ctx(agent, tmp_path)
+
+        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
+            ClaudeCliExecutor().execute(ctx)
+
+        argv = mock_run.call_args[0][0]
+        assert "--max-turns" not in argv
+
+    def test_cwd_passed_to_subprocess(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        agent = _claude_agent()
+        ctx = _make_ctx(agent, tmp_path)
+        ctx.cwd = str(tmp_path)
+
+        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
+            ClaudeCliExecutor().execute(ctx)
+
+        assert mock_run.call_args.kwargs.get("cwd") == str(tmp_path)
+
+    def test_cwd_none_when_unset(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        agent = _claude_agent()
+        ctx = _make_ctx(agent, tmp_path)  # cwd defaults to ""
+
+        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
+            ClaudeCliExecutor().execute(ctx)
+
+        assert mock_run.call_args.kwargs.get("cwd") is None
 
     def test_model_not_duplicated_if_in_command_template(self, tmp_path) -> None:
         from unittest.mock import patch

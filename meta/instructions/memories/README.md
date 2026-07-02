@@ -111,3 +111,19 @@ type: constraint
 ---
 
 Auto-cleaning a real-LLM workspace in a `finally` block (`shutil.rmtree`) destroys agent outputs, logs, and control files that are essential for post-run debugging and audit. **Why**: e2e tests produce the same observable artifacts as production runs; deleting them by default violates the project's "no automatic artifact removal" policy. **Apply**: in `real_llm_workspace` (and any future e2e fixture), omit teardown cleanup — yield the path and let it persist. Run `ao prune --workspace <path>` explicitly when disk space needs reclaiming.
+
+---
+name: claude-max-turns-vs-orchestrator-max-attempts
+description: "Reached maximum number of turns (N)" is the Claude CLI turn budget, not the orchestrator retry count — they are independent limits
+type: pitfall
+---
+
+When a task fails with `"errors":["Reached maximum number of turns (N)"]`, that `N` is the Claude CLI's `--max-turns` (set by `effort` on `AgentSpec`: low=3, medium=5, high=10). It is **not** the orchestrator's `max_attempts`. The orchestrator's retry count appears as `attempt X/Y` in its log line, where Y is `max_attempts`. **Why**: two limits operate at different layers — the CLI terminates one agent invocation; the orchestrator decides whether to invoke again. **Apply**: when diagnosing a failed task, read both: `attempt X/Y` (orchestrator retries) and `terminal_reason`/`errors` in the task error JSON (why the individual agent invocation ended). `attempt 1/1` means one attempt, no retry — regardless of what `max_turns` shows.
+
+---
+name: acceptedits-blocks-bash-bypasspermissions-for-code-agents
+description: `acceptEdits` only allows file writes; agents that run Bash (compile, test) need `bypassPermissions` or they burn all turns on denials
+type: constraint
+---
+
+`--permission-mode acceptEdits` auto-approves Write/Edit file operations but **denies Bash execution** in headless mode. An agent instructed to run `python -c`, `pytest`, or any shell command will receive a silent permission denial, burn its remaining turns on workarounds, and exit code 1 without producing outputs. The denial appears as `permission_denials: [{tool_name: "Bash", ...}]` buried in the task error JSON. **Why**: the constraint is non-obvious from the permission mode name. **Apply**: agents that only write files (architect, reviewer, integrator) → `acceptEdits`; agents that must run code (developer, test-writer) → `bypassPermissions`. Scope risk by running these agents inside the repo-local gitignored workspace (`playground/.tmp/`).

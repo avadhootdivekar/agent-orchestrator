@@ -81,10 +81,10 @@ def run_cli(args: list[str], tmp_path: Path):
 
     Converts relative paths in args to absolute paths if they don't start with -.
 
-    Reads AO_MAX_ATTEMPTS and AO_BUDGET_TOTAL from the environment and appends
-    the corresponding CLI flags (--max-attempts, --budget-total) to "run" and
-    "resume" sub-commands so Makefile variables propagate into the real-LLM tier
-    without changing the test call sites.
+    Reads AO_MAX_ATTEMPTS, AO_BUDGET_TOTAL and AO_MAX_TURNS from the environment
+    and appends the corresponding CLI flags (--max-attempts, --budget-total,
+    --max-turns) to "run" and "resume" sub-commands so Makefile variables
+    propagate into the real-LLM tier without changing the test call sites.
 
     Returns the typer.testing.Result object (has .exit_code, .output).
     """
@@ -104,10 +104,13 @@ def run_cli(args: list[str], tmp_path: Path):
     if processed_args and processed_args[0] in ("run", "resume"):
         max_attempts = os.environ.get("AO_MAX_ATTEMPTS")
         budget_total = os.environ.get("AO_BUDGET_TOTAL")
+        max_turns = os.environ.get("AO_MAX_TURNS")
         if max_attempts and "--max-attempts" not in processed_args:
             processed_args += ["--max-attempts", max_attempts]
         if budget_total and "--budget-total" not in processed_args:
             processed_args += ["--budget-total", budget_total]
+        if max_turns and "--max-turns" not in processed_args:
+            processed_args += ["--max-turns", max_turns]
 
     return _runner.invoke(app, processed_args, env={"AO_WORKSPACE_ROOT": str(tmp_path)})
 

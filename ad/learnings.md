@@ -182,8 +182,44 @@ Date: 2026-07-02
 
 ---
 Learning-ID: LRN-20260702-effort-maps-to-max-turns
-Learning: The `effort` field on `AgentSpec` maps to `--max-turns` in the `claude` CLI: `low`→3, `medium`→5, `high`→10. Playground examples should use haiku model + medium effort to minimise token burn without sacrificing correctness.
-Context: Introduced as the standard effort convention in `EFFORT_MAX_TURNS` (models.py); playground `agents.claude.json` pinned to `claude-haiku-4-5-20251001` + `effort: medium`.
+Learning: The `effort` field on `AgentSpec` maps to `--max-turns` via `EFFORT_MAX_TURNS = {low:15, medium:30, high:60}` (models.py). Keep this mapping GENEROUS: `--max-turns` is only a runaway-loop breaker — the *real* cost guard is the token budget. Tight turn caps (the original 3/5/10) cause non-deterministic `error_max_turns` failures on trivial tasks that happen to need a few extra tool calls. An explicit `AgentSpec.max_turns` overrides the effort-derived value, and `ao run/resume --max-turns N` (also `MAX_TURNS`/`AO_MAX_TURNS` in the Makefile/harness) sets it on every agent.
+Context: Corrects the earlier 3/5/10 convention — real-LLM `architect-design` failed `error_max_turns` (num_turns:6, permission_denials:[]) under `medium`→5; raising to 15/30/60 + adding the override/flag fixed it. Playground `agents.claude.json` still pins `claude-haiku-4-5-20251001` + `effort: medium`.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-max-turns-vs-max-attempts
+Learning: "Reached maximum number of turns (N)" in a failed task error is the Claude CLI's per-invocation turn budget (from `effort`→`--max-turns`), NOT the orchestrator's `max_attempts`; `attempt X/Y` in logs is the orchestrator retry counter.
+Context: `impl-t1` showed `attempt 1/1` (one orchestrator attempt) but error "max_turns (5)" — two independent limits that confused diagnosis until both were read together.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-bypasspermissions-for-bash
+Learning: A headless agent's `--permission-mode` must match what its INSTRUCTION actually does. `acceptEdits` auto-accepts file writes but silently DENIES Bash; any agent whose instruction runs Bash (compile, run pytest, syntax-check) stalls and burns its turns before failing — sometimes exiting 0 while skipping a declared output. Use `--permission-mode bypassPermissions` for those. Simplest robust convention for an example: standardize ALL agents on `bypassPermissions` (the playground `agents.claude.json` does this for all 5 agents) rather than per-agent tuning that breaks whenever an instruction adds a Bash step.
+Context: Two separate hits, same root cause — `impl-t1` developer wasted its turns on a denied `python -c` syntax check; later `taskreview-t1` reviewer (still on `acceptEdits`) exited 0 but skipped `review.md` because its required `python -m pytest` was denied. Both fixed by `bypassPermissions`.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-agent-cwd-workspace
+Learning: The `claude` subprocess must be spawned with an explicit `cwd`, or it inherits whatever dir `ao` was invoked from (usually the repo root) and any agent that writes a RELATIVE output path (from its instruction/spec — e.g. a manifest at `output/tasks-manifest.json`) silently escapes the workspace, landing at repo root. The agent then reports success while the engine can't find the declared output. Fix is framework-level + config-driven, NOT a per-test patch: `AgentSpec.working_dir` (optional) → engine resolves it under `reposet.workspace_root` (path-traversal guarded) → `TaskContext.cwd` (absolute; "" = OS inherits) → `subprocess.run(cwd=ctx.cwd or None)`. Default cwd = workspace root, so relative agent writes resolve deterministically inside the run's workspace.
+Context: Real-LLM `architect-breakdown` claimed success but the manifest was found at repo-root `./output/tasks-manifest.json` instead of the workspace; `subprocess.run` had no `cwd`. Note this deliberately adds `src/` changes (models/engine/executor/cli) — the working-directory contract belongs in the framework so `ao` commands honor configured/default cwd, not in tests. Covered by `test_cwd_passed_to_subprocess`/`test_cwd_none_when_unset` (executor) + `TestAgentCwd` (engine).
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-empty-env-falsy-no-flag
+Learning: `AO_MAX_ATTEMPTS=""` (Makefile default `MAX_ATTEMPTS ?=`) is falsy in Python, so harness.py's `if max_attempts:` never injects `--max-attempts` and the workflow runs with `max_attempts=1` (no retry) silently.
+Context: Real-LLM test ran without retry; `MAX_ATTEMPTS` was unset, empty string was silently skipped by the `if` guard in `run_cli`.
 By: agent
 Role: developer
 Date: 2026-07-02

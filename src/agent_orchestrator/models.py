@@ -9,7 +9,10 @@ from pydantic import BaseModel, Field
 # Budget constants (NFR-7 — no magic literals in budget logic)
 WINDOW_SECONDS: dict[str, int] = {"minute": 60, "ten_minutes": 600, "hour": 3600}
 # Effort-level to --max-turns mapping; keeps spec constants named, not magic literals.
-EFFORT_MAX_TURNS: dict[str, int] = {"low": 3, "medium": 5, "high": 10}
+# `--max-turns` is a runaway-loop breaker, not the cost guard (the token budget is),
+# so values are generous enough for a real agent to Read instruction + inputs and
+# Write outputs with headroom. Too-low caps (e.g. 5) fail flaky before writing output.
+EFFORT_MAX_TURNS: dict[str, int] = {"low": 15, "medium": 30, "high": 60}
 DEFAULT_CHARS_PER_TOKEN: int = 4
 DEFAULT_PESSIMISM_BUFFER: float = 1.3
 DEFAULT_OUTPUT_ALLOWANCE_TOKENS: int = 1000
@@ -44,6 +47,11 @@ class AgentSpec(BaseModel):
     extra_args: list[str] = []
     model: str | None = None  # e.g. "claude-haiku-4-5-20251001"; passed as --model
     effort: Literal["low", "medium", "high"] | None = None  # mapped to --max-turns via EFFORT_MAX_TURNS
+    max_turns: int | None = None  # explicit --max-turns; overrides effort-derived value when set
+    # Working directory the agent process runs in. Resolved against the workspace root
+    # (reposet.workspace_root) and path-guarded to stay inside it. None -> workspace root.
+    # Lets agents' relative output paths (from specs/instructions) resolve deterministically.
+    working_dir: str | None = None
 
 
 class TaskSpec(BaseModel):
@@ -156,6 +164,10 @@ class TaskContext(BaseModel):
     dynamic_input_paths: list[str] = []
     repo_paths: dict[str, str]
     timeout_seconds: int
+    # Resolved absolute working directory the agent process runs in (its cwd).
+    # Defaults to the workspace root; honours AgentSpec.working_dir when set.
+    # Paths only — NFR-1 safe. Empty string -> executor lets the OS inherit cwd.
+    cwd: str = ""
     # Resolved path where executor writes stdout.txt / stderr.txt (FR-4).
     # Paths only — NFR-1 safe.
     output_dir: str = ""

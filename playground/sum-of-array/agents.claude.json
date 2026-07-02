@@ -3,7 +3,7 @@
   "agents": {
     "architect": {
       "executor": "claude_cli",
-      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the architect agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
       "model": "claude-haiku-4-5-20251001",
@@ -11,7 +11,7 @@
     },
     "reviewer": {
       "executor": "claude_cli",
-      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the reviewer agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
       "model": "claude-haiku-4-5-20251001",
@@ -19,7 +19,7 @@
     },
     "developer": {
       "executor": "claude_cli",
-      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the developer agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
       "model": "claude-haiku-4-5-20251001",
@@ -27,7 +27,7 @@
     },
     "test-writer": {
       "executor": "claude_cli",
-      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the test-writer agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
       "model": "claude-haiku-4-5-20251001",
@@ -35,7 +35,7 @@
     },
     "integrator": {
       "executor": "claude_cli",
-      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "acceptEdits"],
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the integrator agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
       "model": "claude-haiku-4-5-20251001",
