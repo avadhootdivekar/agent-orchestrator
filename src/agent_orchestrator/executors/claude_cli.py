@@ -178,6 +178,17 @@ class ClaudeCliExecutor(Executor):
             for arg in ctx.agent.command_template
         ] + ctx.agent.extra_args
 
+        # Inject --model if specified in agent spec and not already in argv.
+        if ctx.agent.model and "--model" not in argv and "-m" not in argv:
+            argv = argv + ["--model", ctx.agent.model]
+
+        # Inject --max-turns from effort level if specified and not already in argv.
+        if ctx.agent.effort:
+            from ..models import EFFORT_MAX_TURNS
+
+            if "--max-turns" not in argv:
+                argv = argv + ["--max-turns", str(EFFORT_MAX_TURNS[ctx.agent.effort])]
+
         # Ensure JSON output so we can extract token usage (T-1m9744).
         argv = _ensure_output_format_json(argv)
 

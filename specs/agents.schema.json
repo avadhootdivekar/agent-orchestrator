@@ -31,7 +31,15 @@
           "description": "May reference {instruction} {inputs} {outputs} {repos} — paths only, never file contents."
         },
         "context_window": { "enum": ["isolated", "shared"], "default": "isolated" },
-        "extra_args": { "type": "array", "items": { "type": "string" }, "default": [] }
+        "extra_args": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "model": {
+          "type": "string",
+          "description": "Claude model id passed as --model (e.g. claude-haiku-4-5-20251001). Omit to use the CLI default."
+        },
+        "effort": {
+          "enum": ["low", "medium", "high"],
+          "description": "Effort level mapped to --max-turns (low=3, medium=5, high=10)."
+        }
       }
     }
   }

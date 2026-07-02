@@ -292,7 +292,13 @@ ADR-004: playground/ is a committed product asset, not a tests/ fixture dir.
   Decision: top-level playground/ (sibling to specs/examples/); tests copy it into tmp_path.
   Reason: examples double as documentation/onboarding and can seed `ao init` templates;
     copying into tmp_path gives per-run isolation without polluting the repo.
-  Consequences: harness needs copy_example(); real runs write only under tmp_path.
+  Consequences: harness needs copy_example(); Fake-tier runs write only under tmp_path.
+  Amendment (2026-07-01): the REAL-LLM tier must NOT use pytest tmp_path. The spawned
+    `claude` subprocess is sandboxed to the repo working directory, and system /tmp is
+    outside that allow-list — instruction reads / output writes there are denied. The
+    real tier instead uses the `real_llm_workspace` fixture (a per-test, gitignored dir
+    under `playground/.tmp/`, inside the allow-list). Executor paths are absolute, so
+    only the workspace *location* changes; no `--add-dir` / unrestricted access is needed.
 
 ADR-005: One spec, two agents files select the tier (agents.fake.json / agents.claude.json).
   Context: Avoid forking the workflow per tier.
@@ -382,11 +388,15 @@ test → assert status.json has origin="loop" clones with __iter2 ids ; done ord
 **12.3 Real-LLM path (gated):**
 ```
 AO_E2E_REAL_LLM=1 ; requires_claude()
-test → copy_example (NO pre-seed) → ao run --agents agents.claude.json
+test → real_llm_workspace (playground/.tmp/ws-*, repo-local + gitignored, in sandbox allow-list)
+test → copy_example (NO pre-seed) → ao run --agents agents.claude.json (--permission-mode acceptEdits)
  engine → architect-breakdown → ClaudeCliExecutor(real claude) WRITES output/tasks-manifest.json
  engine → read_task_manifest → inject → … → final-review WRITES output/final-verdict.json → done
 test → assert exit 0 ; status=succeeded ; spine outputs + control files EXIST & parse (no content asserts)
 ```
+Note: the real tier uses `real_llm_workspace` (NOT `tmp_path`) — the spawned `claude` is
+sandboxed to the repo dir, so system /tmp is unreachable. `agents.claude.json` carries
+`--permission-mode acceptEdits` so headless agents write outputs without stalling on prompts.
 
 **12.4 Failure/edge — cycle & resume (Area 1 & 6):**
 ```

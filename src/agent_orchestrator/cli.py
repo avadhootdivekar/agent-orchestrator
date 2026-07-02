@@ -272,6 +272,11 @@ def run(
     pessimism_buffer: float | None = typer.Option(
         None, "--pessimism-buffer", help="Estimator pessimism multiplier (default 1.3)"
     ),
+    max_attempts: int | None = typer.Option(
+        None,
+        "--max-attempts",
+        help="Max attempts per task (overrides workflow defaults.retries.max_attempts)",
+    ),
 ) -> None:
     """Run a workflow from scratch."""
     from datetime import UTC
@@ -289,6 +294,9 @@ def run(
         wf, reposet_map, agent_map = _load_all(workflow, reposets, agents)
     except (OrchestratorError, SystemExit):
         return
+
+    if max_attempts is not None:
+        wf.defaults.retries.max_attempts = max_attempts
 
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
     store = LocalFsArtifactStore(workspace)
@@ -353,6 +361,11 @@ def resume(
     pessimism_buffer: float | None = typer.Option(
         None, "--pessimism-buffer", help="Estimator pessimism multiplier override"
     ),
+    max_attempts: int | None = typer.Option(
+        None,
+        "--max-attempts",
+        help="Max attempts per task override (overrides workflow defaults.retries.max_attempts)",
+    ),
 ) -> None:
     """Resume a previously interrupted run."""
     from datetime import UTC
@@ -374,6 +387,9 @@ def resume(
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
     store = LocalFsArtifactStore(workspace)
     rs_store = RunStateStore(workspace, store)
+
+    if max_attempts is not None:
+        wf.defaults.retries.max_attempts = max_attempts
 
     try:
         existing = rs_store.load(run_id)
@@ -516,6 +532,43 @@ def init_cmd(
     )
     typer.echo("  2. Run `ao validate` to check your config.")
     typer.echo("  3. Run `ao run` to execute your workflow.")
+
+
+@app.command()
+def prune(
+    workspace: str = typer.Option(..., "--workspace", "-w", help="Workspace root to prune"),
+    older_than: int = typer.Option(7, "--older-than", help="Delete runs older than this many days (0 = all)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be deleted without deleting"),
+) -> None:
+    """Remove stale run artifacts from a workspace.
+
+    Deletes run directories under <workspace>/.orchestrator/runs/ that are
+    older than --older-than days. Use --dry-run to preview. Analogous to
+    `docker system prune` -- run periodically to reclaim disk space.
+    """
+    import shutil
+    import time
+
+    runs_dir = Path(workspace) / ".orchestrator" / "runs"
+    if not runs_dir.exists():
+        typer.echo(f"Nothing to prune: {runs_dir}")
+        raise typer.Exit(0)
+
+    now = time.time()
+    cutoff = now - older_than * 86400  # 0 days => cutoff == now => all dirs qualify
+
+    candidates = [p for p in runs_dir.iterdir() if p.is_dir()]
+    to_delete = [p for p in candidates if older_than == 0 or os.path.getmtime(p) < cutoff]
+
+    for p in to_delete:
+        if dry_run:
+            typer.echo(f"Would delete: {p}")
+        else:
+            shutil.rmtree(p)
+            typer.echo(f"Deleted: {p}")
+
+    action = "would be deleted" if dry_run else "deleted"
+    typer.echo(f"{len(to_delete)} run(s) {action}")
 
 
 if __name__ == "__main__":

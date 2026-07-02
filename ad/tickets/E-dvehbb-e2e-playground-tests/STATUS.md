@@ -5,6 +5,16 @@
 - State: MVP complete (Phase 1) — Phase 2 pending
 - Owner: architect
 
+## Update (2026-07-01 — real-LLM tier made runnable against real `claude`)
+- Fixed a directory-access blocker in `T-g7rjh0`: real-LLM tests ran in pytest `tmp_path`
+  (system `/tmp`), outside the spawned `claude` subprocess's sandbox allow-list (the repo
+  working dir), so agents could not read instructions / write outputs. Moved the real-tier
+  workspace into a repo-local, gitignored dir (`playground/.tmp/`, new `real_llm_workspace`
+  fixture) and added `--permission-mode acceptEdits` to `agents.claude.json`. No `src/` change.
+- Verified against the REAL `claude` interface (`AO_E2E_REAL_LLM=1`): all 3 real-LLM tests pass
+  (smoke `status==succeeded`; spine outputs + control files well-formed). Default suite unchanged:
+  377 passed, 3 skipped. See `T-g7rjh0/STATUS.md` for RCA + evidence.
+
 ## This update (2026-07-01 — MVP delivered & verified)
 - Phase-1 MVP complete: {T-7592ux, T-1vuzyi, T-ee8hzo, T-r21p4y, T-g7rjh0} all Done.
 - Delivered: `playground/sum-of-array/` (workflow spine + emit_tasks fan-out + LoopSpec review round, instructions, both agents files, control-file + expected-structure fixtures); `tests/playground/` scaffold, gating conftest (marker `real_llm` + `AO_E2E_REAL_LLM`), harness (`copy_example`/`run_cli`/`seed_control_files`/`agents_for`/`load_expected`/`assert_tree`); three tiers — fixture (19 tests), deterministic 6-area (20 tests), gated real-LLM (3 tests, skipped by default).

@@ -80,18 +80,34 @@ def run_cli(args: list[str], tmp_path: Path):
     """Invoke the `ao` Typer app via CliRunner with AO_WORKSPACE_ROOT=tmp_path.
 
     Converts relative paths in args to absolute paths if they don't start with -.
+
+    Reads AO_MAX_ATTEMPTS and AO_BUDGET_TOTAL from the environment and appends
+    the corresponding CLI flags (--max-attempts, --budget-total) to "run" and
+    "resume" sub-commands so Makefile variables propagate into the real-LLM tier
+    without changing the test call sites.
+
     Returns the typer.testing.Result object (has .exit_code, .output).
     """
+    import os
+
     # Convert relative paths to absolute paths for workflow/reposets/agents
     processed_args = []
     spec_flags = {"--workflow", "--reposets", "--agents"}
     for i, arg in enumerate(args):
         if not arg.startswith("-") and i > 0 and args[i - 1] in spec_flags:
-            # This is a path argument following one of the spec flags
             path = tmp_path / arg
             processed_args.append(str(path))
         else:
             processed_args.append(arg)
+
+    # Inject budget/retry overrides from env vars into run/resume sub-commands.
+    if processed_args and processed_args[0] in ("run", "resume"):
+        max_attempts = os.environ.get("AO_MAX_ATTEMPTS")
+        budget_total = os.environ.get("AO_BUDGET_TOTAL")
+        if max_attempts and "--max-attempts" not in processed_args:
+            processed_args += ["--max-attempts", max_attempts]
+        if budget_total and "--budget-total" not in processed_args:
+            processed_args += ["--budget-total", budget_total]
 
     return _runner.invoke(app, processed_args, env={"AO_WORKSPACE_ROOT": str(tmp_path)})
 

@@ -143,3 +143,48 @@ By: agent
 Role: agent
 Date: 2026-06-20
 ---
+
+---
+Learning-ID: LRN-20260701-real-claude-subprocess-sandbox-tmp
+Learning: The real `claude` subprocess spawned by `ClaudeCliExecutor` is sandboxed to the repo working directory; pytest's `tmp_path` (system `/tmp/pytest-of-…`) is OUTSIDE that allow-list, so instruction reads and output writes there are denied and the run never reaches `succeeded`. Fix: run real-LLM e2e tests in a repo-local, gitignored workspace (`playground/.tmp/` via a `real_llm_workspace` fixture) so it sits inside the allow-list — no `--add-dir` / unrestricted access needed. Executor paths are absolute (resolved under `workspace_root`), so only the workspace location changes.
+Context: `test_sum_of_array_real_llm.py` failed/BLOCKED under `AO_E2E_REAL_LLM=1` with "Claude Code may only [access] the allowed working directories" for every spine agent. Moving off `tmp_path` fixed it; verified all 3 real-LLM tests pass against the real `claude` interface.
+By: agent
+Role: developer
+Date: 2026-07-01
+---
+
+---
+Learning-ID: LRN-20260701-headless-claude-permission-mode
+Learning: A headless `claude -p` agent expected to WRITE files needs an elevated permission mode or its Write tool calls are denied (no interactive prompt to approve). Add `--permission-mode acceptEdits` (auto-accepts file edits/writes, still gates bash) — a bounded choice preferable to `--dangerously-skip-permissions`. This is config-only via `agents.*.json` `command_template`, no `src/` change.
+Context: Real-LLM playground agents only read instructions/inputs and write markdown/JSON outputs; `acceptEdits` in `agents.claude.json` let them complete autonomously.
+By: agent
+Role: developer
+Date: 2026-07-01
+---
+
+---
+Learning-ID: LRN-20260702-agents-schema-must-track-agentspec
+Learning: When adding new fields to `AgentSpec` in `models.py`, `specs/agents.schema.json` MUST also be updated — it uses `additionalProperties: false`, so unregistered fields in any `agents.*.json` file cause schema validation failure at `ao validate` time.
+Context: Adding `model` and `effort` to `AgentSpec` without updating the schema would have made the playground `agents.claude.json` (and any user-authored agents file) fail to validate.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-no-auto-cleanup-e2e-fixtures
+Learning: E2E test fixtures that auto-delete workspace directories on teardown (`shutil.rmtree` in `finally`) destroy debugging artifacts needed for post-run audit. Preserve workspaces by default; expose an explicit cleanup command (`ao prune`) instead.
+Context: `real_llm_workspace` fixture auto-cleaned via `shutil.rmtree`; removed per user requirement that artifacts should survive test runs for debugging/audit.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-effort-maps-to-max-turns
+Learning: The `effort` field on `AgentSpec` maps to `--max-turns` in the `claude` CLI: `low`→3, `medium`→5, `high`→10. Playground examples should use haiku model + medium effort to minimise token burn without sacrificing correctness.
+Context: Introduced as the standard effort convention in `EFFORT_MAX_TURNS` (models.py); playground `agents.claude.json` pinned to `claude-haiku-4-5-20251001` + `effort: medium`.
+By: agent
+Role: developer
+Date: 2026-07-02
+---

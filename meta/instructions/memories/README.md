@@ -79,3 +79,35 @@ type: pitfall
 ---
 
 A `LoopSpec` whose gate verdict is `{"continue": false}` on the first pass runs its body exactly once and **never emits a `loop.iterate` event** — the engine logs `loop.iterate` only on the branch that injects the next iteration's clones (`engine.py`, guarded by `should_cont`). Loop-body clones (ids like `bugfix__iter2`, `final-review__iter2`, `origin="loop"`) likewise only appear from iteration 2 onward. **Why**: a fixture/test that asserts `loop.iterate` (or `__iterN` clones) against a single-round happy path is unsatisfiable and will tempt someone to "fix" it by weakening the assertion. **Apply**: to observe `loop.iterate`/loop clones deterministically, pre-seed a 2-round gate sequence — iteration 1 gate `{"continue": true}` at `output/<gate>.json`, iteration 2 gate `{"continue": false}` at `output/<gate>__iter2.json` (the engine suffixes `__iterN` before the extension). Keep separate expected-event fixtures for the 1-round vs 2-round scenarios (see `playground/sum-of-array/fixtures/expected_events.json`). Related: driving specs through `CliRunner` needs absolute spec paths — `run_cli` in `tests/playground/harness.py` converts `--workflow/--reposets/--agents` values to absolute because CliRunner does not resolve them against a working dir.
+
+---
+name: real-llm-tests-not-tmp-path
+description: Real ClaudeCliExecutor e2e tests must use a repo-local workspace, not pytest tmp_path (system /tmp is outside the claude sandbox)
+type: pitfall
+---
+
+The `claude` subprocess spawned by `ClaudeCliExecutor` is sandboxed to the repo working directory; pytest's `tmp_path` (system `/tmp/pytest-of-…`) is **outside** that allow-list, so the agent's instruction reads and output writes there are denied and the run never reaches `succeeded` (fails with "Claude Code may only [access] the allowed working directories"). **Why**: executor paths are absolute (resolved under `workspace_root`), so the *location* of the workspace — not path relativity — is what the sandbox rejects; no `--add-dir` is needed if the workspace lives inside the repo. **Apply**: for any test that spawns the real `claude` CLI, use the `real_llm_workspace` fixture (`tests/playground/conftest.py`) which allocates a per-test, gitignored dir under `playground/.tmp/` inside the allow-list — never `tmp_path`. Fake-executor tiers can keep using `tmp_path`.
+
+---
+name: headless-claude-needs-acceptedits
+description: A headless `claude -p` agent that must write files needs --permission-mode acceptEdits, or Write tool calls are silently denied
+type: constraint
+---
+
+`claude -p` (headless) cannot prompt for tool approval, so in the default permission mode its Write/Edit calls are denied and a file-producing agent completes without writing anything. **Why**: no interactive approver exists in a spawned subprocess. **Apply**: give file-writing agents `--permission-mode acceptEdits` (auto-accepts file edits/writes, still gates bash) via the `command_template` in `agents.*.json` — a bounded choice preferable to `--dangerously-skip-permissions`; this is config-only, no `src/` change (see `playground/sum-of-array/agents.claude.json`).
+
+---
+name: agentspec-schema-must-stay-in-sync
+description: specs/agents.schema.json uses additionalProperties:false — every new AgentSpec field must also be added to the schema or agents.*.json files fail validation
+type: pitfall
+---
+
+`specs/agents.schema.json` has `"additionalProperties": false` for agent entries. **Why**: any field in `AgentSpec` (models.py) that isn't registered there will cause `ao validate` to reject any `agents.*.json` that uses it — including the playground files. **Apply**: whenever a new field is added to `AgentSpec`, add a matching entry to `$defs/agent/properties` in `specs/agents.schema.json` in the same commit. Current registered fields: `executor`, `command_template`, `prompt_template`, `context_window`, `extra_args`, `model`, `effort`.
+
+---
+name: e2e-fixtures-must-not-auto-delete
+description: E2E test fixtures must NOT auto-delete workspaces on teardown; artifacts must survive for audit — use `ao prune` for manual cleanup
+type: constraint
+---
+
+Auto-cleaning a real-LLM workspace in a `finally` block (`shutil.rmtree`) destroys agent outputs, logs, and control files that are essential for post-run debugging and audit. **Why**: e2e tests produce the same observable artifacts as production runs; deleting them by default violates the project's "no automatic artifact removal" policy. **Apply**: in `real_llm_workspace` (and any future e2e fixture), omit teardown cleanup — yield the path and let it persist. Run `ao prune --workspace <path>` explicitly when disk space needs reclaiming.

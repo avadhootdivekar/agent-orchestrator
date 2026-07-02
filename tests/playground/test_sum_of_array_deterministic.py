@@ -110,12 +110,12 @@ def _recompute_token_estimate(tmp_path: Path) -> int:
         (
             "testwrite-t1",
             "instructions/test-writer.md",
-            ["output/tasks/t1/impl.md"],
+            ["output/tasks/t1/solution.py"],
         ),
         (
             "taskreview-t1",
             "instructions/reviewer.md",
-            ["output/tasks/t1/impl.md", "output/tasks/t1/tests.md"],
+            ["output/tasks/t1/solution.py", "output/tasks/t1/test_solution.py"],
         ),
         # Post-injection spine
         (

@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 # Budget constants (NFR-7 — no magic literals in budget logic)
 WINDOW_SECONDS: dict[str, int] = {"minute": 60, "ten_minutes": 600, "hour": 3600}
+# Effort-level to --max-turns mapping; keeps spec constants named, not magic literals.
+EFFORT_MAX_TURNS: dict[str, int] = {"low": 3, "medium": 5, "high": 10}
 DEFAULT_CHARS_PER_TOKEN: int = 4
 DEFAULT_PESSIMISM_BUFFER: float = 1.3
 DEFAULT_OUTPUT_ALLOWANCE_TOKENS: int = 1000
@@ -40,6 +42,8 @@ class AgentSpec(BaseModel):
     )
     context_window: Literal["isolated", "shared"] = "isolated"
     extra_args: list[str] = []
+    model: str | None = None  # e.g. "claude-haiku-4-5-20251001"; passed as --model
+    effort: Literal["low", "medium", "high"] | None = None  # mapped to --max-turns via EFFORT_MAX_TURNS
 
 
 class TaskSpec(BaseModel):

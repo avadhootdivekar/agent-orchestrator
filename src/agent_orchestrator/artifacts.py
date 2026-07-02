@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# TODO(future): auto-prune when .orchestrator/runs/ exceeds a configurable size limit.
+# This should trigger as part of any normal `ao run` (not the current run's data).
+# Implement once product is stable (post Phase-2+). Use `ao prune` in the meantime.
+
 import json
 import os
 from abc import ABC, abstractmethod

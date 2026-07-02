@@ -57,7 +57,7 @@ def _read_state(tmp_path: Path, run_id: str) -> dict:
 class TestSumOfArrayRealLLM:
     """Real-LLM tier — single gated smoke test for sum-of-array workflow."""
 
-    def test_sum_of_array_real_completes(self, tmp_path: Path) -> None:
+    def test_sum_of_array_real_completes(self, real_llm_workspace: Path) -> None:
         """Smoke test: sum-of-array with real agents completes with exit 0.
 
         Verifies structure/completion only, never content.
@@ -66,7 +66,7 @@ class TestSumOfArrayRealLLM:
         requires_claude()  # Skip if claude binary not available
 
         # Copy example (NO pre-seeding — real agents will write control files)
-        copy_example("sum-of-array", tmp_path)
+        copy_example("sum-of-array", real_llm_workspace)
 
         # Run with real agents
         result = run_cli(
@@ -79,7 +79,7 @@ class TestSumOfArrayRealLLM:
                 "--agents",
                 agents_for("real"),
             ],
-            tmp_path,
+            real_llm_workspace,
         )
 
         # Should exit 0
@@ -91,14 +91,14 @@ class TestSumOfArrayRealLLM:
         run_id = _extract_run_id(result.output)
 
         # Verify state.json says succeeded
-        state = _read_state(tmp_path, run_id)
+        state = _read_state(real_llm_workspace, run_id)
         assert state["status"] == "succeeded", f"Expected status='succeeded', got {state['status']}"
 
-    def test_sum_of_array_real_spine_outputs_exist(self, tmp_path: Path) -> None:
+    def test_sum_of_array_real_spine_outputs_exist(self, real_llm_workspace: Path) -> None:
         """Given a real run completes, when artifacts are checked, then spine outputs exist."""
         requires_claude()
 
-        copy_example("sum-of-array", tmp_path)
+        copy_example("sum-of-array", real_llm_workspace)
 
         result = run_cli(
             [
@@ -110,24 +110,24 @@ class TestSumOfArrayRealLLM:
                 "--agents",
                 agents_for("real"),
             ],
-            tmp_path,
+            real_llm_workspace,
         )
 
         assert result.exit_code == 0
 
         # Verify spine outputs exist (structure only, no content assertions)
         for output_path in SPINE_OUTPUTS:
-            full_path = tmp_path / output_path
+            full_path = real_llm_workspace / output_path
             assert full_path.exists(), f"Spine output missing: {output_path}"
 
-    def test_sum_of_array_real_control_files_exist(self, tmp_path: Path) -> None:
+    def test_sum_of_array_real_control_files_exist(self, real_llm_workspace: Path) -> None:
         """Given a real run completes, when control files are checked, then they parse correctly.
 
         We assert structure (JSON shape) only — never content.
         """
         requires_claude()
 
-        copy_example("sum-of-array", tmp_path)
+        copy_example("sum-of-array", real_llm_workspace)
 
         result = run_cli(
             [
@@ -139,20 +139,20 @@ class TestSumOfArrayRealLLM:
                 "--agents",
                 agents_for("real"),
             ],
-            tmp_path,
+            real_llm_workspace,
         )
 
         assert result.exit_code == 0
 
         # tasks-manifest.json should exist and parse as {"tasks":[...]}
-        manifest_path = tmp_path / "output" / "tasks-manifest.json"
+        manifest_path = real_llm_workspace / "output" / "tasks-manifest.json"
         assert manifest_path.exists(), "output/tasks-manifest.json should exist"
         manifest = json.loads(manifest_path.read_text())
         assert "tasks" in manifest, "manifest should have 'tasks' key"
         assert isinstance(manifest["tasks"], list), "manifest.tasks should be a list"
 
         # final-verdict.json should exist and parse as {"continue":bool}
-        verdict_path = tmp_path / "output" / "final-verdict.json"
+        verdict_path = real_llm_workspace / "output" / "final-verdict.json"
         assert verdict_path.exists(), "output/final-verdict.json should exist"
         verdict = json.loads(verdict_path.read_text())
         assert "continue" in verdict, "verdict should have 'continue' key"

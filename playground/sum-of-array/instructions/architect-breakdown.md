@@ -27,22 +27,22 @@ The deterministic tier pre-seeds this file; the real-LLM tier must produce the s
       "instruction": "instructions/developer.md",
       "depends_on": ["architect-breakdown"],
       "inputs": ["output/design.md"],
-      "outputs": ["output/tasks/t1/impl.md"]
+      "outputs": ["output/tasks/t1/solution.py"]
     },
     {
       "id": "testwrite-t1",
       "agent": "test-writer",
       "instruction": "instructions/test-writer.md",
       "depends_on": ["impl-t1"],
-      "inputs": ["output/tasks/t1/impl.md"],
-      "outputs": ["output/tasks/t1/tests.md"]
+      "inputs": ["output/tasks/t1/solution.py"],
+      "outputs": ["output/tasks/t1/test_solution.py"]
     },
     {
       "id": "taskreview-t1",
       "agent": "reviewer",
       "instruction": "instructions/reviewer.md",
       "depends_on": ["testwrite-t1"],
-      "inputs": ["output/tasks/t1/impl.md", "output/tasks/t1/tests.md"],
+      "inputs": ["output/tasks/t1/solution.py", "output/tasks/t1/test_solution.py"],
       "outputs": ["output/tasks/t1/review.md"]
     }
   ]
@@ -51,7 +51,7 @@ The deterministic tier pre-seeds this file; the real-LLM tier must produce the s
 
 Key constraints:
 - Task ids MUST be exactly `impl-t1`, `testwrite-t1`, `taskreview-t1`.
-- Output paths MUST be exactly `output/tasks/t1/impl.md`, `output/tasks/t1/tests.md`,
+- Output paths MUST be exactly `output/tasks/t1/solution.py`, `output/tasks/t1/test_solution.py`,
   `output/tasks/t1/review.md` (unique paths; no other paths).
 - `depends_on` MUST be as shown (chain: architect-breakdown → impl-t1 → testwrite-t1 → taskreview-t1).
 - No other tasks should be emitted.

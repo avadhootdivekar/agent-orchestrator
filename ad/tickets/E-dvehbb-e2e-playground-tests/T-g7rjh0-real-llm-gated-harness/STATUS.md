@@ -5,6 +5,27 @@
 - State: Done
 - Owner: tester
 
+## Update 2026-07-01 — real-run directory-access fix (verified end-to-end)
+- **RCA**: the real-LLM tests used pytest's `tmp_path` (system `/tmp/pytest-of-…`), which is
+  OUTSIDE the spawned `claude` subprocess's sandbox allow-list (the repo working directory).
+  Every instruction read / output write under `/tmp` was denied, so no spine agent could write
+  `output/design.md` and the run never reached `succeeded`. Paths handed to `ClaudeCliExecutor`
+  are absolute (resolved under `workspace_root`), so relocating the workspace *inside* the repo
+  restores access with no `--add-dir` and no unrestricted access.
+- **Fix (no `src/` change, NFR-1 honored)**:
+  - `tests/playground/conftest.py` — new `real_llm_workspace` fixture: per-test dir under
+    `playground/.tmp/` (repo-local, gitignored, inside the allow-list), auto-cleaned on teardown.
+  - `test_sum_of_array_real_llm.py` — all three tests use `real_llm_workspace` (not `tmp_path`).
+  - `.gitignore` — ignore `playground/.tmp/`.
+  - `playground/sum-of-array/agents.claude.json` — added `--permission-mode acceptEdits` so the
+    headless agents write outputs without stalling (bounded: auto-accepts file edits, not bash).
+- **Verified against the REAL `claude` interface** (`AO_E2E_REAL_LLM=1`, `claude` on PATH):
+  - `test_sum_of_array_real_completes` → passed (exit 0, `state.status == "succeeded"`, 6m29s).
+  - `test_sum_of_array_real_spine_outputs_exist` + `test_sum_of_array_real_control_files_exist`
+    → both passed (13m30s); real agents wrote a well-formed `tasks-manifest.json` and
+    `final-verdict.json` (structure only asserted).
+  - Default suite unaffected: `uv run pytest -q` → 377 passed, 3 skipped (tier gated off).
+
 ## This update
 - Implemented real-LLM tier: `tests/playground/test_sum_of_array_real_llm.py` with gated smoke test (double-gated: @pytest.mark.real_llm + AO_E2E_REAL_LLM=1).
 - Added `requires_claude()` helper (already in harness.py) to skip gracefully when claude binary unavailable.

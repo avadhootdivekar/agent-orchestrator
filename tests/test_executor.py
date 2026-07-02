@@ -429,6 +429,109 @@ class TestFakeExecutorTokensAnd429:
 
 
 # ---------------------------------------------------------------------------
+# ClaudeCliExecutor — model/effort argv injection tests
+# ---------------------------------------------------------------------------
+
+
+def _claude_agent(**kwargs) -> AgentSpec:
+    return AgentSpec(executor="claude_cli", **kwargs)
+
+
+def _make_ctx(agent: AgentSpec, tmp_path) -> TaskContext:
+    return TaskContext(
+        run_id="run1",
+        task_id="t1",
+        agent=agent,
+        instruction_path="/path/instr.md",
+        input_paths=[],
+        output_paths=[],
+        repo_paths={},
+        timeout_seconds=60,
+        output_dir=str(tmp_path / "out"),
+    )
+
+
+class TestClaudeCliArgBuilding:
+    """Verify --model and --max-turns are injected correctly without running subprocess."""
+
+    def _mock_run_ok(self):
+        from unittest.mock import MagicMock
+
+        mock = MagicMock()
+        mock.returncode = 0
+        mock.stdout = "{}"
+        mock.stderr = ""
+        return mock
+
+    def test_model_injected_when_set(self, tmp_path) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        agent = _claude_agent(model="claude-haiku-4-5-20251001")
+        ctx = _make_ctx(agent, tmp_path)
+
+        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
+            ClaudeCliExecutor().execute(ctx)
+
+        argv = mock_run.call_args[0][0]
+        assert "--model" in argv
+        idx = argv.index("--model")
+        assert argv[idx + 1] == "claude-haiku-4-5-20251001"
+
+    def test_model_not_injected_when_absent(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        agent = _claude_agent()
+        ctx = _make_ctx(agent, tmp_path)
+
+        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
+            ClaudeCliExecutor().execute(ctx)
+
+        argv = mock_run.call_args[0][0]
+        assert "--model" not in argv
+
+    def test_effort_medium_injects_max_turns_5(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        agent = _claude_agent(effort="medium")
+        ctx = _make_ctx(agent, tmp_path)
+
+        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
+            ClaudeCliExecutor().execute(ctx)
+
+        argv = mock_run.call_args[0][0]
+        assert "--max-turns" in argv
+        idx = argv.index("--max-turns")
+        assert argv[idx + 1] == "5"
+
+    def test_model_not_duplicated_if_in_command_template(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        # command_template already specifies --model
+        agent = _claude_agent(
+            command_template=["claude", "-p", "{prompt}", "--model", "somemodel"],
+            model="claude-haiku-4-5-20251001",
+        )
+        ctx = _make_ctx(agent, tmp_path)
+
+        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
+            ClaudeCliExecutor().execute(ctx)
+
+        argv = mock_run.call_args[0][0]
+        # --model should appear exactly once (from command_template, not injected again)
+        assert argv.count("--model") == 1
+        idx = argv.index("--model")
+        assert argv[idx + 1] == "somemodel"
+
+
+# ---------------------------------------------------------------------------
 # Fixture file sanity check (T-1m9744 AC-6)
 # ---------------------------------------------------------------------------
 
