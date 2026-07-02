@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Real-LLM e2e playground workspaces — kept repo-local (inside the sandbox
+# allow-list) so the spawned `claude` subprocess can read/write them; system
+# /tmp is outside that allow-list. See tests/playground/conftest.py.
+playground/.tmp/

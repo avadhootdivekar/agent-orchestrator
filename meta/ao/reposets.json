@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "repo_sets": {
+    "agent-orchestrator": {
+      "description": "The agent-orchestrator repo itself — used when AO drives its own development.",
+      "workspace_root": ".",
+      "repos": [
+        { "id": "core", "path": ".", "role": "primary" },
+        { "id": "docs", "path": "./docs-md", "role": "support" },
+        { "id": "specs", "path": "./specs", "role": "support" }
+      ]
+    }
+  }
+}

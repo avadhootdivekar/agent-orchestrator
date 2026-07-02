@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "id": "loop-pipeline",
+  "name": "Dev-review loop example — iterates until reviewer approves",
+  "repo_set": "default-set",
+  "tasks": [
+    {
+      "id": "develop",
+      "agent": "developer",
+      "instruction": "specs/examples/instructions/implement.md",
+      "outputs": ["output/impl.md"],
+      "depends_on": []
+    },
+    {
+      "id": "review",
+      "agent": "tester",
+      "instruction": "specs/examples/instructions/test.md",
+      "inputs": ["output/impl.md"],
+      "outputs": [],
+      "depends_on": ["develop"]
+    },
+    {
+      "id": "finalize",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "inputs": [],
+      "outputs": ["output/final.md"],
+      "depends_on": ["dev-review-loop"]
+    }
+  ],
+  "loops": [
+    {
+      "id": "dev-review-loop",
+      "body": ["develop", "review"],
+      "gate_task_id": "review",
+      "gate_output_path": "output/review-verdict.json",
+      "gate_field": "continue",
+      "max_iterations": 3
+    }
+  ]
+}

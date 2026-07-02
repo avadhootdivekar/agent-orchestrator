@@ -1,0 +1,42 @@
+{
+  "version": "1.0",
+  "id": "feature-pipeline",
+  "name": "Design -> implement -> test feature across core+docs repos",
+  "repo_set": "default-set",
+  "defaults": {
+    "retries": { "max_attempts": 2, "backoff_seconds": 5 },
+    "timeout_seconds": 1800
+  },
+  "triggers": [
+    { "type": "manual" },
+    { "type": "cron", "schedule": "0 7 * * *", "timezone": "UTC" }
+  ],
+  "tasks": [
+    {
+      "id": "design",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "inputs": [],
+      "outputs": ["output/design.md"],
+      "depends_on": [],
+      "retries": { "max_attempts": 1 },
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "implement",
+      "agent": "developer",
+      "instruction": "specs/examples/instructions/implement.md",
+      "inputs": ["output/design.md"],
+      "outputs": ["output/impl-report.md"],
+      "depends_on": ["design"]
+    },
+    {
+      "id": "test",
+      "agent": "tester",
+      "instruction": "specs/examples/instructions/test.md",
+      "inputs": ["output/impl-report.md"],
+      "outputs": ["output/test-report.md"],
+      "depends_on": ["implement"]
+    }
+  ]
+}

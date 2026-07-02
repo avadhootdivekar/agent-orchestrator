@@ -1,0 +1,28 @@
+{
+  "tasks": [
+    {
+      "id": "impl-t1",
+      "agent": "developer",
+      "instruction": "instructions/developer.md",
+      "depends_on": ["architect-breakdown"],
+      "inputs": ["output/design.md"],
+      "outputs": ["output/tasks/t1/solution.py"]
+    },
+    {
+      "id": "testwrite-t1",
+      "agent": "test-writer",
+      "instruction": "instructions/test-writer.md",
+      "depends_on": ["impl-t1"],
+      "inputs": ["output/tasks/t1/solution.py"],
+      "outputs": ["output/tasks/t1/test_solution.py"]
+    },
+    {
+      "id": "taskreview-t1",
+      "agent": "reviewer",
+      "instruction": "instructions/reviewer.md",
+      "depends_on": ["testwrite-t1"],
+      "inputs": ["output/tasks/t1/solution.py", "output/tasks/t1/test_solution.py"],
+      "outputs": ["output/tasks/t1/review.md"]
+    }
+  ]
+}

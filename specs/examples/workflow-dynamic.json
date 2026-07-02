@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "id": "dynamic-pipeline",
+  "name": "Dynamic task injection example — emitter discovers tasks at run time",
+  "repo_set": "default-set",
+  "tasks": [
+    {
+      "id": "discover",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "outputs": [],
+      "emit_tasks": true,
+      "task_manifest_path": "output/dynamic-manifest.json",
+      "depends_on": []
+    },
+    {
+      "id": "finalize",
+      "agent": "tester",
+      "instruction": "specs/examples/instructions/test.md",
+      "inputs": [],
+      "outputs": ["output/finalized.md"],
+      "depends_on": ["discover"]
+    }
+  ]
+}

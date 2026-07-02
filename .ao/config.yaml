@@ -1,0 +1,21 @@
+# .ao/config.yaml — AO self-development config
+#
+# This file wires AO's own repo as the target for AO-v1-driven workflows.
+# Isolation model:
+#   `ao`          → AO-v1, globally installed via `./install.sh` (non-editable snapshot)
+#   `uv run ao`   → AO-v2, current working copy (dev version)
+#
+# To run an AO-v1 workflow against this repo:
+#   ao run --workflow specs/self-dev/<workflow>.json
+# or simply:
+#   ao run   (picks up this config automatically)
+
+# Default reposet and agents for AO self-development.
+# Paths are relative to this file's directory (the repo root).
+reposets: ../specs/self-dev/reposet.json
+agents:   ../specs/self-dev/agents.json
+
+# workflow: ../specs/self-dev/<workflow>.json  # set per-run or define a default here
+
+# env:
+#   ANTHROPIC_API_KEY: ...   # if not already in your shell environment

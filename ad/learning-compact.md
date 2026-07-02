@@ -1,0 +1,23 @@
+# Learning compact — agent-orchestrator
+
+- Use `uv run <tool>` always; `pip`/`pip3` not installed in this environment.
+- Re-run ruff/mypy yourself after subagent delivery; they may falsely claim "clean".
+- `ruff check --fix` auto-fixes most lint issues; E501 line-length needs manual wrapping.
+- Workflow `id` must be fully lowercase; uppercase `E-` ticket prefix violates the spec schema.
+- `cross_validate(workflow, reposets, agents)` — reposets second; swapping gives misleading "Unknown repo_set" errors.
+- Editable-install AO cannot safely develop itself; a regression breaks the CLI needed to recover.
+- Run tooling via `.venv/bin/python -m <tool>`; bare `python` absent, system `python3` lacks pytest.
+- `build_dag` infers edges from matching input/output paths; clear inputs/outputs on cloned tasks to avoid false cycles.
+- Use `mypy src` (not `mypy .`) for clean production signal; tests have pre-existing mypy errors.
+- Engine-API tests (`Orchestrator()` directly) don't cover CLI; always add CliRunner tests per feature.
+- `FakeExecutor` auto-writes manifest for `emit_tasks=True` tasks; no manual pre-seeding needed.
+- `ao resume` CLI test: first (failing) run via Python API to get `run_id`, then CliRunner `ao resume --run-id`.
+- Real-LLM e2e tests must NOT use pytest `tmp_path`: the spawned `claude` is sandboxed to the repo dir, so system `/tmp` is denied. Use a repo-local gitignored workspace (`playground/.tmp/` via `real_llm_workspace` fixture).
+- Headless `claude -p` that must write files needs `--permission-mode acceptEdits` (config in `agents.*.json`), else Write is denied; bounded, unlike `--dangerously-skip-permissions`.
+- Adding a field to `AgentSpec` also requires updating `specs/agents.schema.json` (additionalProperties:false); missing this breaks `ao validate`.
+- E2e test fixtures must NOT auto-delete workspaces on teardown; preserve artifacts for audit, use `ao prune` for manual cleanup.
+- `effort`→`--max-turns` via `EFFORT_MAX_TURNS = {low:15, medium:30, high:60}`; keep GENEROUS (turns are just a loop-breaker, token budget is the real cost guard — tight caps cause flaky `error_max_turns`). `AgentSpec.max_turns` / `ao run --max-turns` / `MAX_TURNS` override it. Playground uses haiku + medium effort.
+- "Reached maximum number of turns (N)" is the Claude CLI turn budget, NOT orchestrator `max_attempts`; `attempt X/Y` in logs is the retry counter.
+- `--permission-mode` must match what an agent's instruction DOES: `acceptEdits` accepts writes but silently denies Bash, so any agent that runs pytest/compile/syntax-check stalls (can exit 0 while skipping a declared output). Use `bypassPermissions` for those — simplest: standardize all example agents on it.
+- Spawn `claude` with an explicit `cwd` or it inherits the repo-root cwd and relative agent output writes (e.g. `output/tasks-manifest.json`) escape the workspace. Framework fix (config-driven, not per-test): `AgentSpec.working_dir` → engine resolves under `workspace_root` (path-guarded) → `TaskContext.cwd` → `subprocess.run(cwd=…)`; default = workspace root.
+- `AO_MAX_ATTEMPTS=""` (unset Makefile default) is falsy in Python; harness skips `--max-attempts` injection, so `max_attempts=1` (no retry) applies silently.
