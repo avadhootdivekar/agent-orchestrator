@@ -16,6 +16,7 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [Per-project config file](#per-project-config-file)
 - [Configuring multiple repos](#configuring-multiple-repos)
 - [Schema reference](#schema-reference)
+- [Advanced workflows](#advanced-workflows)
 - [Repo layout](#repo-layout)
 - [Development](#development)
 
@@ -183,6 +184,7 @@ ao validate   Validate workflow, reposets, and agents specs (no execution)
 ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
+ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
 ```
 
 All commands accept:
@@ -197,7 +199,32 @@ If a flag is omitted, AO checks (in order):
 1. The matching environment variable (`AO_WORKFLOW`, `AO_REPOSETS`, `AO_AGENTS`)
 2. The nearest `.ao/config.yaml` (or `ao.yaml`) found by walking up from the current directory
 
-`ao resume` and `ao status` also require `--run-id RUN_ID`.
+`ao resume` and `ao status` also require `--run-id RUN_ID`. `ao status` additionally accepts
+`--workspace PATH` (or `AO_WORKSPACE_ROOT`) as a shortcut so you can check a run without
+resupplying the full `--workflow`/`--reposets`/`--agents` triplet.
+
+### `ao prune`
+
+Run state accumulates under `<workspace_root>/.orchestrator/runs/` — one directory per run.
+`ao prune` reclaims disk space by deleting old run directories, the same way `docker system
+prune` cleans up unused containers:
+
+```bash
+# Preview what would be deleted (runs older than 7 days, the default)
+ao prune --workspace /path/to/workspace --dry-run
+
+# Actually delete runs older than 30 days
+ao prune --workspace /path/to/workspace --older-than 30
+
+# Delete every run directory regardless of age
+ao prune --workspace /path/to/workspace --older-than 0
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--workspace, -w PATH` | — (required) | Workspace root to prune |
+| `--older-than DAYS` | `7` | Delete runs older than this many days (`0` = all) |
+| `--dry-run` | `false` | Print what would be deleted without deleting |
 
 ---
 
@@ -379,6 +406,26 @@ Full schemas are in `specs/` and are authoritative (validated by `ao validate`):
 |-------|-----------|
 | `claude_cli` | Runs `claude -p "<rendered-prompt>"` via subprocess |
 | `fake` | Deterministic no-op for tests/dry-runs; touches declared outputs |
+
+---
+
+## Advanced workflows
+
+Beyond a static task DAG, `workflow.json` supports dynamic task injection, bounded
+iteration loops, and token-budget enforcement — used when a workflow's shape isn't known
+until run time (e.g. a breakdown task fanning out into N implementation tasks, or a
+review→fix loop that repeats until a gate task says stop):
+
+| Feature | Schema field | Reference |
+|---------|-------------|-----------|
+| Dynamic task injection (incl. fan-out/aggregate and review-triggered fix pipelines) | `tasks[].emit_tasks` + `task_manifest_path` | [`docs-md/guide-dynamic-task-injection.md`](docs-md/guide-dynamic-task-injection.md), [`docs-md/e2e-playground-testing.md`](docs-md/e2e-playground-testing.md), [`specs/examples/workflow-dynamic.json`](specs/examples/workflow-dynamic.json), [`workflow-dynamic-fanout.json`](specs/examples/workflow-dynamic-fanout.json), [`workflow-dynamic-pipeline.json`](specs/examples/workflow-dynamic-pipeline.json) |
+| Bounded loops (review/fix cycles) | `loops[]` (`body`, `gate_task_id`, `gate_output_path`) | [`docs-md/e2e-playground-testing.md`](docs-md/e2e-playground-testing.md), [`specs/examples/workflow-loop.json`](specs/examples/workflow-loop.json) |
+| Token budget / rate limiting | `budget` (`total_tokens`, `rate`, `on_exhaustion`) | [`docs-md/token-budgeting-hld.md`](docs-md/token-budgeting-hld.md), [`specs/examples/workflow-budget.json`](specs/examples/workflow-budget.json) |
+| Per-task log capture for dynamic runs | — | [`docs-md/logging-dynamic-workflows-hld.md`](docs-md/logging-dynamic-workflows-hld.md) |
+
+A full worked example combining all three (design → implement → review pipeline with a
+dynamic fan-out and a bugfix/review loop) lives in [`playground/sum-of-array/`](playground/sum-of-array/)
+— see [`playground/README.md`](playground/README.md).
 
 ---
 

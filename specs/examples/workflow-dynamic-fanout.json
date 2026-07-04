@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "id": "dynamic-fanout-aggregate",
+  "name": "Dynamic fan-out + aggregate example — N sub-reviewers decided at run time, fixed aggregator contract",
+  "repo_set": "default-set",
+  "tasks": [
+    {
+      "id": "scope-review",
+      "agent": "reviewer",
+      "instruction": "specs/examples/instructions/scope-review.md",
+      "outputs": [],
+      "emit_tasks": true,
+      "task_manifest_path": "output/scope-manifest.json",
+      "depends_on": []
+    },
+    {
+      "id": "publish",
+      "agent": "tester",
+      "instruction": "specs/examples/instructions/test.md",
+      "inputs": ["output/review-summary.md"],
+      "outputs": ["output/published.md"],
+      "depends_on": ["scope-review"]
+    }
+  ]
+}

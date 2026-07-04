@@ -439,6 +439,30 @@ ao run (claude_cli)  ← real execution; tasks run in DAG order
 
 ---
 
+## Beyond a static DAG
+
+This walkthrough covers a fixed, linear task list. When a workflow's shape depends on
+run-time output — a breakdown task fanning out into N follow-up tasks, or a review/fix
+cycle that repeats until a gate says stop — see the **Advanced workflows** section of the
+root [`README.md`](../README.md#advanced-workflows) for dynamic task injection, loops, and
+token budgeting, each with a working example under `specs/examples/`. For the fan-out
+case specifically — e.g. a reviewer agent spawning N sub-reviewers, or a review dynamically
+triggering a developer→tester fix pipeline per finding — see
+[`guide-dynamic-task-injection.md`](guide-dynamic-task-injection.md) for two fully worked
+examples and the pattern that makes a static downstream task wait on an unknown-at-author-time
+fan-out.
+
+## Reclaiming disk space
+
+Every run writes state under `<workspace_root>/.orchestrator/runs/<run-id>/`. Once you've
+finished with old runs, prune them:
+
+```bash
+ao prune --workspace $(pwd) --older-than 30   # or --dry-run to preview
+```
+
+---
+
 ## Reference
 
 | Item | Location |
@@ -448,5 +472,7 @@ ao run (claude_cli)  ← real execution; tasks run in DAG order
 | Agents JSON Schema | `specs/agents.schema.json` |
 | Working 3-task example | `specs/examples/workflow.json` |
 | Multi-repo reposet example | `specs/examples/reposet.json` (see `experiment-set`) |
+| Dynamic tasks / loops / budget examples | `specs/examples/workflow-dynamic.json`, `workflow-dynamic-fanout.json`, `workflow-dynamic-pipeline.json`, `workflow-loop.json`, `workflow-budget.json` |
+| Dynamic task injection guide (fan-out + fix-pipeline patterns) | `docs-md/guide-dynamic-task-injection.md` |
 | CLI `--help` | `ao --help` / `ao run --help` |
 | HLD / LLD | `docs-md/hld-agent-orchestrator.md`, `docs-md/lld-agent-orchestrator.md` |
