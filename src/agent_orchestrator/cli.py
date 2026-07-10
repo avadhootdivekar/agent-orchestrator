@@ -6,10 +6,19 @@ Commands:
   ao resume     — Resume a previously interrupted run.
   ao status     — Show current status of a run.
   ao init       — Scaffold a per-project .ao/config.yaml.
+  ao prune      — Remove stale run artifacts from a workspace.
+
+Options:
+  ao --version / -V         — Show version (+ commit/build info for non-release builds).
+  ao --verbose / -v         — Debug-level logging.
+  ao --quiet / -q           — Warnings/errors only (mutually exclusive with --verbose).
+  ao --install-completion   — Install shell completion for the current shell.
+  ao --show-completion      — Print the completion script for the current shell.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,7 +28,52 @@ import typer
 if TYPE_CHECKING:
     from .models import BudgetSpec
 
-app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=False)
+app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
+
+_PACKAGE_LOGGER = "agent_orchestrator"
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        from ._version import get_version_string
+
+        typer.echo(get_version_string())
+        raise typer.Exit(0)
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the ao version and exit.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable debug-level logging (default is info-level).",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress info-level logging; show only warnings/errors.",
+    ),
+) -> None:
+    """Agent Orchestrator CLI."""
+    if verbose and quiet:
+        typer.echo("ERROR: --verbose and --quiet are mutually exclusive", err=True)
+        raise typer.Exit(1)
+    # Set the level explicitly only when asked; otherwise leave it untouched so
+    # logging_setup.attach_run_handler's own NOTSET-guarded INFO default applies.
+    if verbose:
+        logging.getLogger(_PACKAGE_LOGGER).setLevel(logging.DEBUG)
+    elif quiet:
+        logging.getLogger(_PACKAGE_LOGGER).setLevel(logging.WARNING)
 
 
 def _resolve_config_defaults(

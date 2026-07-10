@@ -221,3 +221,7 @@ __marimo__/
 # allow-list) so the spawned `claude` subprocess can read/write them; system
 # /tmp is outside that allow-list. See tests/playground/conftest.py.
 playground/.tmp/
+
+# Generated at package-build time by hatch_build.py (git commit/dirty/tag
+# provenance for `ao --version`) — never hand-edited, never committed.
+src/agent_orchestrator/_build_info.py
