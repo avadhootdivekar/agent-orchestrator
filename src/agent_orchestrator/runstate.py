@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .artifacts import ArtifactStore
 from .dag import build_dag, compute_cones
-from .models import RunState, TaskRunState, TaskSpec, WorkflowSpec
+from .models import RunState, TaskRunState, TaskSpec, WorkflowSpec, compute_run_usage_totals
 
 _FMT = "%Y%m%dT%H%M%SZ"
 
@@ -105,6 +105,10 @@ class RunStateStore:
                     "origin": getattr(ts, "origin", "static"),
                     "route": getattr(ts, "route", None),
                     "not_taken_reason": getattr(ts, "not_taken_reason", None),
+                    # Cumulative ACTUAL usage across every retry attempt (E-9h3m7k FR-2).
+                    "input_tokens": ts.cumulative_input_tokens,
+                    "output_tokens": ts.cumulative_output_tokens,
+                    "cost_usd": ts.cumulative_cost_usd,
                 }
                 for tid, ts in state.tasks.items()
             ],
@@ -120,6 +124,9 @@ class RunStateStore:
                 }
                 for tb in state.tripped_breakers
             ],
+            # Run-wide actual usage totals (E-9h3m7k FR-3), derived — see
+            # models.compute_run_usage_totals.
+            "usage_totals": compute_run_usage_totals(state).model_dump(),
         }
 
         sp = self._status_path(state.run_id)

@@ -112,6 +112,8 @@ Mechanics:
 | | `token_rate` | rate window | exists as `BudgetSpec.rate` |
 | | `run_wall_clock_seconds` | threshold | whole-run deadline (task timeout exists; run deadline doesn't) |
 | | `projected_cost_exceeds` | threshold | estimator says remaining work can't fit budget (exists as "unsatisfiable estimate") |
+| | `task_cost_usd` **(implemented, E-9h3m7k)** | threshold (USD) | any single task's cumulative ACTUAL cost (all retry attempts) ≥ threshold — distinct from `projected_cost_exceeds`, which is a pre-flight estimate |
+| | `run_cost_usd` **(implemented, E-9h3m7k)** | threshold (USD) | run-wide cumulative ACTUAL cost (sum across all tasks) ≥ threshold |
 | Provider health | `quota_exhaustion_wait_exceeded` | max wait | exists (`_quota_exhausted_since` episode timer) |
 | | `provider_429_count` | threshold, window | repeated rate-limits despite backoff |
 | | `executor_spawn_failures` | threshold | CLI missing, auth broken — fail fast, don't burn retries |
@@ -127,7 +129,7 @@ Mechanics:
 | Environment safety | `workspace_disk_usage` | cap | agents can generate GBs |
 | | `git_workspace_dirty` | task ids | repo must be clean at declared checkpoints |
 
-MVP recommendation: `task_failures`, `consecutive_failures`, `run_wall_clock_seconds`, `verdict`, `injected_task_count`, `stop_file` — plus re-framing the existing budget/quota stops. The rest are declared in the schema but can land incrementally.
+MVP recommendation: `task_failures`, `consecutive_failures`, `run_wall_clock_seconds`, `verdict`, `injected_task_count`, `stop_file` — plus re-framing the existing budget/quota stops. `task_cost_usd`/`run_cost_usd` landed later (E-9h3m7k) as actual-cost breakers. The rest are declared in the schema but can land incrementally.
 
 ## 7. Out of scope (this draft)
 - Parallel scheduling (breaker evaluation points are designed to survive it).

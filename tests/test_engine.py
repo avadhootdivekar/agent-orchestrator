@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from agent_orchestrator.artifacts import LocalFsArtifactStore
 from agent_orchestrator.engine import Orchestrator
 from agent_orchestrator.executors.base import Executor
@@ -255,6 +257,90 @@ class TestRetry:
         state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
         assert state.status == "failed"
         assert state.tasks["a"].status == "failed"
+
+    def test_cumulative_usage_summed_across_failed_and_succeeding_attempts(self, tmp_path) -> None:
+        """E-9h3m7k FR-2: a failed attempt's actual usage must not be discarded.
+
+        Attempt 1 burns real tokens/cost before failing; attempt 2 succeeds. The task's
+        final cumulative usage must be the SUM of both, not just attempt 2's numbers.
+        """
+        output_path = str(tmp_path / "output" / "a.txt")
+        calls: list[int] = []
+
+        class CostyExecutor(Executor):
+            def execute(self, ctx: TaskContext) -> TaskResult:
+                calls.append(1)
+                if len(calls) < 2:
+                    return TaskResult(
+                        task_id=ctx.task_id,
+                        status="failed",
+                        attempts=1,
+                        error="transient",
+                        input_tokens=100,
+                        output_tokens=50,
+                        cost_usd=0.01,
+                        actuals_available=True,
+                    )
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_text("done")
+                return TaskResult(
+                    task_id=ctx.task_id,
+                    status="succeeded",
+                    attempts=1,
+                    input_tokens=200,
+                    output_tokens=80,
+                    cost_usd=0.02,
+                    actuals_available=True,
+                )
+
+        tasks = [_task("a", outputs=["output/a.txt"], retries=RetryPolicy(max_attempts=3))]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        orch = Orchestrator(CostyExecutor(), store, rs_store, sleeper=lambda _: None)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        ts = state.tasks["a"]
+        assert ts.status == "succeeded"
+        assert ts.cumulative_input_tokens == 300  # 100 + 200, NOT just 200
+        assert ts.cumulative_output_tokens == 130  # 50 + 80
+        assert ts.cumulative_cost_usd == pytest.approx(0.03)  # 0.01 + 0.02
+
+        from agent_orchestrator.models import compute_run_usage_totals
+
+        totals = compute_run_usage_totals(state)
+        assert totals.cost_usd == pytest.approx(0.03)
+        assert totals.input_tokens == 300
+
+    def test_retry_attempts_get_distinct_output_dirs(self, tmp_path) -> None:
+        """A failed attempt's capture dir must survive the next retry, not be clobbered."""
+        calls: list[int] = []
+        seen_output_dirs: list[str] = []
+
+        class RecordingExecutor(Executor):
+            def execute(self, ctx: TaskContext) -> TaskResult:
+                calls.append(1)
+                seen_output_dirs.append(ctx.output_dir)
+                Path(ctx.output_dir).mkdir(parents=True, exist_ok=True)
+                Path(ctx.output_dir, "marker.txt").write_text(f"attempt {len(calls)}")
+                if len(calls) < 2:
+                    return TaskResult(task_id=ctx.task_id, status="failed", attempts=1)
+                return TaskResult(task_id=ctx.task_id, status="succeeded", attempts=1)
+
+        tasks = [_task("a", retries=RetryPolicy(max_attempts=3))]
+        wf = _workflow(tasks)
+        store, rs_store = _make_workspace(tmp_path)
+        orch = Orchestrator(RecordingExecutor(), store, rs_store, sleeper=lambda _: None)
+
+        state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        assert state.tasks["a"].status == "succeeded"
+        assert len(seen_output_dirs) == 2
+        assert seen_output_dirs[0] != seen_output_dirs[1]
+        # Attempt 1's marker file must still exist after attempt 2 ran — proves the
+        # retry didn't overwrite attempt 1's capture directory.
+        assert Path(seen_output_dirs[0], "marker.txt").read_text() == "attempt 1"
+        assert Path(seen_output_dirs[1], "marker.txt").read_text() == "attempt 2"
 
 
 class TestOutputManifest:

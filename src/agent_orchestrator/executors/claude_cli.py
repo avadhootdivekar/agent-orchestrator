@@ -251,7 +251,7 @@ def parse_usage_and_429(
         actuals_available, provider_rate_limited, provider_retry_after_epoch,
         claude_quota_exhausted,
         input_tokens, output_tokens, cache_creation_input_tokens,
-        cache_read_input_tokens
+        cache_read_input_tokens, cost_usd
     """
     result: dict = {
         "actuals_available": False,
@@ -262,6 +262,7 @@ def parse_usage_and_429(
         "output_tokens": None,
         "cache_creation_input_tokens": None,
         "cache_read_input_tokens": None,
+        "cost_usd": None,
     }
 
     combined_text = stdout + "\n" + stderr
@@ -301,6 +302,12 @@ def parse_usage_and_429(
             result["output_tokens"] = out_tok
             result["cache_creation_input_tokens"] = cache_create
             result["cache_read_input_tokens"] = cache_read
+
+    # --- Cost extraction: top-level `total_cost_usd`, sibling of `usage` (confirmed
+    # field name, not `cost_usd` — see tests/fixtures/claude_usage.json / E-9h3m7k FR-1) ---
+    cost = parsed.get("total_cost_usd")
+    if isinstance(cost, (int, float)):
+        result["cost_usd"] = float(cost)
 
     # --- 429 detection from JSON payload ---
     error_obj = parsed.get("error")
@@ -440,6 +447,7 @@ class ClaudeCliExecutor(Executor):
             "output_tokens": usage_info["output_tokens"],
             "cache_creation_input_tokens": usage_info["cache_creation_input_tokens"],
             "cache_read_input_tokens": usage_info["cache_read_input_tokens"],
+            "cost_usd": usage_info["cost_usd"],
             "actuals_available": usage_info["actuals_available"],
             "provider_rate_limited": usage_info["provider_rate_limited"],
             "provider_retry_after_epoch": usage_info["provider_retry_after_epoch"],

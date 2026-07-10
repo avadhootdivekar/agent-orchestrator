@@ -111,16 +111,33 @@ def _load_all(
 
 
 def _print_state(state) -> None:
+    from .models import compute_run_usage_totals
+
     typer.echo(f"\nRun:    {state.run_id}")
     typer.echo(f"Status: {state.status}")
-    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Route':<20} {'Attempts'}")
-    typer.echo("-" * 75)
+    typer.echo(
+        f"\n{'Task':<30} {'Status':<15} {'Route':<20} {'Attempts':<9} "
+        f"{'Tokens (in/out)':<20} {'Cost($)'}"
+    )
+    typer.echo("-" * 110)
     for tid, ts in state.tasks.items():
         route = ts.route or ""
-        typer.echo(f"{tid:<30} {ts.status:<15} {route:<20} {ts.attempts}")
+        tokens = f"{ts.cumulative_input_tokens}/{ts.cumulative_output_tokens}"
+        typer.echo(
+            f"{tid:<30} {ts.status:<15} {route:<20} {ts.attempts:<9} "
+            f"{tokens:<20} {ts.cumulative_cost_usd:.4f}"
+        )
     # Routing + circuit-breaker observability trailer (LLD §10.2, FR-CB4).
     for tb in getattr(state, "tripped_breakers", []):
         typer.echo(f"Tripped breakers: {tb.id} ({tb.condition}, action={tb.action})")
+    # Run-wide actual usage totals (E-9h3m7k FR-3) — real values, not estimates.
+    totals = compute_run_usage_totals(state)
+    typer.echo(
+        f"\nTotal tokens: in={totals.input_tokens} out={totals.output_tokens} "
+        f"cache_creation={totals.cache_creation_input_tokens} "
+        f"cache_read={totals.cache_read_input_tokens}"
+    )
+    typer.echo(f"Total cost:   ${totals.cost_usd:.4f}")
 
 
 def _print_status_snapshot(snap: dict) -> None:
@@ -130,19 +147,33 @@ def _print_status_snapshot(snap: dict) -> None:
     current = snap.get("current_task")
     if current:
         typer.echo(f"Current task: {current}")
-    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Route':<20} {'Attempts'}")
-    typer.echo("-" * 75)
+    typer.echo(
+        f"\n{'Task':<30} {'Status':<15} {'Route':<20} {'Attempts':<9} "
+        f"{'Tokens (in/out)':<20} {'Cost($)'}"
+    )
+    typer.echo("-" * 110)
     for task_entry in snap.get("tasks", []):
         route = task_entry.get("route") or ""
+        tokens = f"{task_entry.get('input_tokens', 0)}/{task_entry.get('output_tokens', 0)}"
         typer.echo(
             f"{task_entry.get('id', ''):<30} "
             f"{task_entry.get('status', ''):<15} "
             f"{route:<20} "
-            f"{task_entry.get('attempts', 0)}"
+            f"{task_entry.get('attempts', 0):<9} "
+            f"{tokens:<20} "
+            f"{task_entry.get('cost_usd', 0.0):.4f}"
         )
     # Routing + circuit-breaker observability trailer (LLD §10.2, FR-CB4).
     for tb in snap.get("tripped_breakers", []):
         typer.echo(f"Tripped breakers: {tb['id']} ({tb['condition']}, action={tb['action']})")
+    # Run-wide actual usage totals (E-9h3m7k FR-3) — real values, not estimates.
+    totals = snap.get("usage_totals") or {}
+    typer.echo(
+        f"\nTotal tokens: in={totals.get('input_tokens', 0)} out={totals.get('output_tokens', 0)} "
+        f"cache_creation={totals.get('cache_creation_input_tokens', 0)} "
+        f"cache_read={totals.get('cache_read_input_tokens', 0)}"
+    )
+    typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
 
 
 def _resolve_run_settings(

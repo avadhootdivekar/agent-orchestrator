@@ -78,10 +78,14 @@ Run directory layout:
     ├── status.json         (snapshot derived from RunState, refreshed each transition)
     ├── run.log             (structured JSON lines for the whole run)
     └── <task_id>/
-        ├── transcript.jsonl  (raw per-turn event stream — ALL turns; observability)
-        ├── stdout.txt        (human-readable render of the transcript)
-        ├── stderr.txt        (raw stderr)
-        └── result.json       (terminal result event: final text + aggregate usage)
+        └── attempt-<N>/      (E-9h3m7k: one dir PER RETRY ATTEMPT, N starting at 1 —
+            │                  a failed attempt's capture is no longer clobbered by the
+            │                  next retry; `output_artifact_path` points at whichever
+            │                  attempt-N produced the task's final TaskResult)
+            ├── transcript.jsonl  (raw per-turn event stream — ALL turns; observability)
+            ├── stdout.txt        (human-readable render of the transcript)
+            ├── stderr.txt        (raw stderr)
+            └── result.json       (terminal result event: final text + aggregate usage)
 ```
 
 ---
@@ -145,7 +149,7 @@ Cross-validation (enforced at spec LOAD time by `spec.cross_validate`):
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `output_dir` | `str` | `""` | Resolved `.orchestrator/runs/<run_id>/<task_id>/`; executor writes captured output here. Paths only — NFR-1 safe. |
+| `output_dir` | `str` | `""` | Resolved `.orchestrator/runs/<run_id>/<task_id>/attempt-<N>/` (E-9h3m7k: attempt-suffixed since `_run_with_retries` computes a fresh `output_dir` per attempt); executor writes captured output here. Paths only — NFR-1 safe. |
 | `task_manifest_path` | `str \| None` | `None` | Resolved path for an `emit_tasks` task to write its task manifest (Area 2). Passed through to the executor so it knows where to write the control file. None when `task.emit_tasks` is False. Paths only — NFR-1 safe. |
 | `gate_output_path` | `str \| None` | `None` | Resolved, iteration-suffixed path for a loop gate task to write its verdict (Area 2). Set by the engine in `_run_with_retries` from `_gate_path_for_iter(loop, cur_iter)`. None when the task is not a gate task. Paths only — NFR-1 safe. |
 
@@ -503,3 +507,14 @@ sketched:
 - `_clone_body` signature in `engine.py` takes a third argument `workflow:
   WorkflowSpec` (needed to look up base tasks). The original EPIC contract table
   showed `_clone_body(self, loop, iter_n)` without this argument.
+
+## 11. Addendum — E-9h3m7k accurate usage metrics (2026-07-10)
+
+A later epic (`E-9h3m7k-accurate-usage-metrics`) changed the capture-directory layout
+described in §2/§3.6 above: `TaskContext.output_dir` is now attempt-suffixed
+(`.../<task_id>/attempt-<N>/`, computed fresh per retry attempt inside
+`_run_with_retries`) instead of one shared directory per task. Rationale: the previous
+layout meant a failed attempt's `transcript.jsonl`/`result.json` were silently
+overwritten by the next retry attempt, destroying real observability data. See
+`docs-md/token-budgeting-hld.md` §"Accurate usage metrics addendum" for the companion
+change to `TaskResult`/`RunState` usage accounting that this addendum is paired with.

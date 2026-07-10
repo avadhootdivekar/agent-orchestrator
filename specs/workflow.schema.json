@@ -214,6 +214,7 @@
           "enum": [
             "task_failures", "consecutive_failures", "run_wall_clock_seconds",
             "verdict", "injected_task_count", "stop_file",
+            "task_cost_usd", "run_cost_usd",
             "failure_ratio", "same_task_exhausted", "projected_cost_exceeds",
             "provider_429_count", "executor_spawn_failures", "output_validation_failures",
             "loop_max_iterations_no_converge", "no_artifact_progress_seconds",
@@ -223,7 +224,11 @@
         },
         "action": { "enum": ["fail", "stop", "pause"] },
         "scope": { "enum": ["run"], "default": "run", "description": "'branch' reserved (non-MVP)." },
-        "threshold": { "type": "integer", "minimum": 1 },
+        "threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Count for task_failures/consecutive_failures/run_wall_clock_seconds/injected_task_count; USD amount for task_cost_usd/run_cost_usd (E-9h3m7k)."
+        },
         "window": { "enum": ["run"], "default": "run", "description": "'branch'/'last_n' reserved (non-MVP)." },
         "task_id": { "type": "string", "description": "verdict condition: task whose verdict is read." },
         "verdict_path": { "type": "string", "description": "verdict condition: PATH to the verdict JSON." },
@@ -235,7 +240,10 @@
           "if": {
             "properties": {
               "condition": {
-                "enum": ["task_failures", "consecutive_failures", "run_wall_clock_seconds", "injected_task_count"]
+                "enum": [
+                  "task_failures", "consecutive_failures", "run_wall_clock_seconds",
+                  "injected_task_count", "task_cost_usd", "run_cost_usd"
+                ]
               }
             }
           },

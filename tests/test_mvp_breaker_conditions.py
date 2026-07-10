@@ -28,8 +28,10 @@ from agent_orchestrator.breakers import (
     BreakerContext,
     ConsecutiveFailuresBreaker,
     InjectedTaskCountBreaker,
+    RunCostUsdBreaker,
     RunWallClockSecondsBreaker,
     StopFileBreaker,
+    TaskCostUsdBreaker,
     TaskFailuresBreaker,
     VerdictBreaker,
     _consecutive_failure_streak,
@@ -73,6 +75,10 @@ class TestRegistryWiring:
             "stop_file",
         }
         assert expected <= BREAKER_REGISTRY.keys()
+
+    def test_actual_cost_conditions_registered_at_import_time(self) -> None:
+        """E-9h3m7k FR-4: task_cost_usd / run_cost_usd are permanently registered."""
+        assert {"task_cost_usd", "run_cost_usd"} <= BREAKER_REGISTRY.keys()
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +146,107 @@ class TestTaskFailuresBreaker:
     def test_unset_threshold_never_trips(self, store: ArtifactStore) -> None:
         spec = CircuitBreakerSpec(id="b", condition="task_failures", action="fail")
         ctx = BreakerContext(state=self._state(failing=5), clock_epoch=_BASE_EPOCH, store=store)
+
+        assert self.BREAKER.evaluate(spec, ctx) is None
+
+
+# ---------------------------------------------------------------------------
+# task_cost_usd / run_cost_usd (E-9h3m7k FR-4)
+# ---------------------------------------------------------------------------
+
+
+class TestTaskCostUsdBreaker:
+    """Any single task's cumulative ACTUAL cost exceeding threshold trips."""
+
+    BREAKER = TaskCostUsdBreaker()
+
+    def _state(self, **costs: float) -> RunState:
+        tasks = {
+            tid: TaskRunState(status="succeeded", cumulative_cost_usd=cost)
+            for tid, cost in costs.items()
+        }
+        return _run_state(tasks=tasks)
+
+    @pytest.mark.parametrize(
+        "cost,threshold,expect_trip",
+        [(2.99, 3.0, False), (3.0, 3.0, True), (3.01, 3.0, True)],
+        ids=["below", "at", "above"],
+    )
+    def test_trips_exactly_at_threshold(
+        self, store: ArtifactStore, cost: float, threshold: float, expect_trip: bool
+    ) -> None:
+        spec = CircuitBreakerSpec(
+            id="b", condition="task_cost_usd", action="fail", threshold=threshold
+        )
+        ctx = BreakerContext(state=self._state(a=cost), clock_epoch=_BASE_EPOCH, store=store)
+
+        result = self.BREAKER.evaluate(spec, ctx)
+
+        if expect_trip:
+            assert result is not None
+            assert result.detail == {"task_id": "a", "cost_usd": cost, "threshold": threshold}
+        else:
+            assert result is None
+
+    def test_trips_on_any_task_not_just_the_first(self, store: ArtifactStore) -> None:
+        """A cheap task followed by an expensive one still trips (order-independent scan)."""
+        spec = CircuitBreakerSpec(id="b", condition="task_cost_usd", action="fail", threshold=5.0)
+        ctx = BreakerContext(
+            state=self._state(cheap=0.5, expensive=6.0), clock_epoch=_BASE_EPOCH, store=store
+        )
+
+        result = self.BREAKER.evaluate(spec, ctx)
+
+        assert result is not None
+        assert result.detail["task_id"] == "expensive"
+
+    def test_unset_threshold_never_trips(self, store: ArtifactStore) -> None:
+        spec = CircuitBreakerSpec(id="b", condition="task_cost_usd", action="fail")
+        ctx = BreakerContext(state=self._state(a=999.0), clock_epoch=_BASE_EPOCH, store=store)
+
+        assert self.BREAKER.evaluate(spec, ctx) is None
+
+
+class TestRunCostUsdBreaker:
+    """Run-wide cumulative ACTUAL cost (sum across all tasks) exceeding threshold trips."""
+
+    BREAKER = RunCostUsdBreaker()
+
+    def _state(self, **costs: float) -> RunState:
+        tasks = {
+            tid: TaskRunState(status="succeeded", cumulative_cost_usd=cost)
+            for tid, cost in costs.items()
+        }
+        return _run_state(tasks=tasks)
+
+    @pytest.mark.parametrize(
+        "costs,threshold,expect_trip",
+        [
+            ({"a": 40.0, "b": 59.99}, 100.0, False),
+            ({"a": 40.0, "b": 60.0}, 100.0, True),
+            ({"a": 40.0, "b": 60.01}, 100.0, True),
+        ],
+        ids=["below", "at", "above"],
+    )
+    def test_trips_on_run_total_exactly_at_threshold(
+        self, store: ArtifactStore, costs: dict, threshold: float, expect_trip: bool
+    ) -> None:
+        spec = CircuitBreakerSpec(
+            id="b", condition="run_cost_usd", action="fail", threshold=threshold
+        )
+        ctx = BreakerContext(state=self._state(**costs), clock_epoch=_BASE_EPOCH, store=store)
+
+        result = self.BREAKER.evaluate(spec, ctx)
+
+        if expect_trip:
+            assert result is not None
+            assert result.detail["cost_usd"] == pytest.approx(sum(costs.values()))
+        else:
+            assert result is None
+
+    def test_unset_threshold_never_trips(self, store: ArtifactStore) -> None:
+        spec = CircuitBreakerSpec(id="b", condition="run_cost_usd", action="fail")
+        ctx = BreakerContext(state=self._state(a=999.0), clock_epoch=_BASE_EPOCH, store=store)
 
         assert self.BREAKER.evaluate(spec, ctx) is None
 

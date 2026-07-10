@@ -17,14 +17,22 @@ Design invariants (LLD §6):
   `trip_builtin`) can call the exact same recording primitive without going through the
   full registry-driven evaluation loop.
 
-This module ships with the six MVP conditions registered (T-q5n7k2, LLD §7):
-`task_failures`, `consecutive_failures`, `run_wall_clock_seconds`, `verdict`,
-`injected_task_count`, `stop_file` — see the bottom of this module for the
-registrations. A workflow that declares a `circuit_breakers` entry whose `condition`
-is one of the non-MVP names accepted by the schema (e.g. `failure_ratio`,
-`same_task_exhausted`, ...) but not yet implemented here fails fast with
-`SpecValidationError` at evaluation time (never a silent no-op) — see
-`evaluate_breakers`.
+This module ships with eight conditions registered: the six MVP conditions
+(T-q5n7k2, LLD §7) — `task_failures`, `consecutive_failures`,
+`run_wall_clock_seconds`, `verdict`, `injected_task_count`, `stop_file` — plus two
+actual-cost conditions added by E-9h3m7k FR-4: `task_cost_usd`, `run_cost_usd`. See
+the bottom of this module for the registrations. A workflow that declares a
+`circuit_breakers` entry whose `condition` is one of the non-MVP names accepted by
+the schema (e.g. `failure_ratio`, `same_task_exhausted`, `projected_cost_exceeds`,
+...) but not yet implemented here fails fast with `SpecValidationError` at
+evaluation time (never a silent no-op) — see `evaluate_breakers`.
+
+`task_cost_usd`/`run_cost_usd` are distinct from the schema's reserved
+`projected_cost_exceeds` name: that one is a pre-flight ESTIMATE check tied to
+`budget.py`/`estimator.py` (already reframed onto `record_trip()` by T-r3j9b6). These
+two trip on ACTUAL dollars spent (`TaskRunState.cumulative_cost_usd`, sourced from the
+Claude CLI's `total_cost_usd`), evaluated after the fact at each task boundary like
+every other condition in this module.
 """
 
 from __future__ import annotations
@@ -39,7 +47,13 @@ from pydantic import BaseModel, ConfigDict
 
 from .artifacts import ArtifactStore, read_bool_field
 from .errors import SpecValidationError
-from .models import CircuitBreakerSpec, RunState, TrippedBreaker, WorkflowSpec
+from .models import (
+    CircuitBreakerSpec,
+    RunState,
+    TrippedBreaker,
+    WorkflowSpec,
+    compute_run_usage_totals,
+)
 
 # Runtime action a tripped breaker triggers. Mirrors CircuitBreakerSpec.action (run scope
 # only, MVP — see ADR-RC-004 / LLD §6.4).
@@ -157,6 +171,56 @@ class ConsecutiveFailuresBreaker(Breaker):
         return None
 
 
+class TaskCostUsdBreaker(Breaker):
+    """`task_cost_usd`: any single task's cumulative ACTUAL cost exceeds threshold.
+
+    Runaway-task guard (E-9h3m7k FR-4) — e.g. a workflow config sets `threshold: 3` to
+    cap any one task at $3 regardless of which task it is (mirrors `task_failures`'s
+    "across the whole run" shape, not a specific `task_id` like `verdict`). Scans
+    `TaskRunState.cumulative_cost_usd`, which is the SUM across every retry attempt of
+    that task (`engine._run_with_retries`), so a task that burns $1 on two failed
+    attempts before a $1.50 success trips at cumulative $2.50, not just the winning
+    attempt's cost.
+    """
+
+    condition = "task_cost_usd"
+
+    def evaluate(self, spec: CircuitBreakerSpec, ctx: BreakerContext) -> TripResult | None:
+        threshold = spec.threshold
+        if threshold is None:
+            return None
+        for task_id, ts in ctx.state.tasks.items():
+            if ts.cumulative_cost_usd >= threshold:
+                return TripResult(
+                    detail={
+                        "task_id": task_id,
+                        "cost_usd": ts.cumulative_cost_usd,
+                        "threshold": threshold,
+                    }
+                )
+        return None
+
+
+class RunCostUsdBreaker(Breaker):
+    """`run_cost_usd`: run-wide cumulative ACTUAL cost (all tasks) exceeds threshold.
+
+    E-9h3m7k FR-4 — the run-level counterpart to `task_cost_usd`. Reuses
+    `compute_run_usage_totals` (also the CLI's totals-line source) rather than summing
+    `ctx.state.tasks` locally, so the breaker and the displayed total can never disagree.
+    """
+
+    condition = "run_cost_usd"
+
+    def evaluate(self, spec: CircuitBreakerSpec, ctx: BreakerContext) -> TripResult | None:
+        threshold = spec.threshold
+        if threshold is None:
+            return None
+        total_cost_usd = compute_run_usage_totals(ctx.state).cost_usd
+        if total_cost_usd >= threshold:
+            return TripResult(detail={"cost_usd": total_cost_usd, "threshold": threshold})
+        return None
+
+
 class RunWallClockSecondsBreaker(Breaker):
     """`run_wall_clock_seconds`: elapsed run time since `RunState.started_at`.
 
@@ -258,11 +322,12 @@ class StopFileBreaker(Breaker):
         return None
 
 
-# condition name -> Breaker instance. The six MVP conditions (LLD §7) are registered
-# below at import time, so they are active as soon as this module is imported.
-# `evaluate_breakers` raises SpecValidationError for any declared `condition` not
-# present here (never a silent no-op) — this is how a non-MVP condition name (accepted
-# by the schema's full §6 catalog but not yet implemented) is rejected.
+# condition name -> Breaker instance. The six MVP conditions (LLD §7) plus the two
+# actual-cost conditions (E-9h3m7k FR-4) are registered below at import time, so they
+# are active as soon as this module is imported. `evaluate_breakers` raises
+# SpecValidationError for any declared `condition` not present here (never a silent
+# no-op) — this is how a non-MVP condition name (accepted by the schema's full §6
+# catalog but not yet implemented) is rejected.
 BREAKER_REGISTRY: dict[str, Breaker] = {}
 BREAKER_REGISTRY["task_failures"] = TaskFailuresBreaker()
 BREAKER_REGISTRY["consecutive_failures"] = ConsecutiveFailuresBreaker()
@@ -270,6 +335,8 @@ BREAKER_REGISTRY["run_wall_clock_seconds"] = RunWallClockSecondsBreaker()
 BREAKER_REGISTRY["verdict"] = VerdictBreaker()
 BREAKER_REGISTRY["injected_task_count"] = InjectedTaskCountBreaker()
 BREAKER_REGISTRY["stop_file"] = StopFileBreaker()
+BREAKER_REGISTRY["task_cost_usd"] = TaskCostUsdBreaker()
+BREAKER_REGISTRY["run_cost_usd"] = RunCostUsdBreaker()
 
 
 def record_trip(

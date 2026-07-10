@@ -27,18 +27,17 @@ Agent orchestrator frameowrk is supposed to -
 
 # Current Ask is this  - 
 
-## Catching all output from agents
-I very very much suspect that currently - if agent runs multiple turns - only last output / error is captured. Output from prior turns is lost. I want to CAPTURE ALL THE OUTPUT/ERRORS from Agents across all turns. This will be available for observability and tracability. 
-
-## Unit / integration / e2e tets assurance
-Ensure that accurate, meaningful and good coverage tests acros all - unit / integration / e2e tests are added and those also cover recently developed fatures as well as above asks like - 
-1. Branching, Circuit breaker, loops, logging, out/err capture etc. 
-
-**For e2e tests- write them as close to end user level as possible** 
+## Add accurate rate computation at the end of run / tasks
+1. I see that we are already capturing the tokens input / output / cost usd etc from claude directly which are reliable. I suspect that we may not be adding those numbers for the same task.
+    1. If same task takes 40 turns, we may be showing the metrices only for the last turn - instead of cumulative 40 turns. Is that the case? I WANT TO SEE FULL CUMULATIVE metrices for each task. This will give more clear picturre. 
+    2. SImilarly at the end of workflow - all task stats should be captured and added to the workflow stats - so that I get the total cost / tokens for the full run. These are actual values instead of estimated values. 
+    3. Also add the tripwire / circuitbreaker if actual values exceed given thresholds - which can be configurable and are circuit breakers. 
+2. Install and upgrade the latest ao in my laptop - here. 
 
 
-Ensure to update /add the playground examples with the latest syntax and latest features. Keep at least two examples separate which can demonstrate very simple basic workflows for basic users. 
+## Update workflow in `/usr/avadhoot/mounted/ao-runner-finplan/`
 
+Update the `workflows/epic-runner/new-epic-run.sh`, `/usr/avadhoot/mounted/ao-runner-finplan/.ao/config.yaml` etc to set the max turns = 200 and actual budget for each task = $3, total cost for the workflow = $100
 
 
 
@@ -46,32 +45,29 @@ Ensure to update /add the playground examples with the latest syntax and latest 
 
 # Old Ask
 
-
 ## Input 2 
-## Complete the @ad/tickets/E-rc7k2v-run-control-routing-breakers epic
 
-Use architect or other subagents as relevant and drive the epic to completion fully. 
+Ensure good default configurations for `/usr/avadhoot/mounted/ao-runner-finplan/` i.e.  `/usr/avadhoot/mounted/ao-runner-finplan/.ao/config.yaml` and related workflow files. 
 
+Do NOT use Fable. Use Opus or sonnet with sonnet for most tasks - developers / test writer etc. Also other default configs that we need - please set meaningful values, For default model - use sonnet, so when no model is specified - it wont accidently use fable or opus. 
 
 
 ## Input 1 
-**NOTE- All of the following points - may be clubbed under single epic or create different epics - depending on your judgement**
-For all of the below tasks - whichever you start with - DO NOT jump into full coding / development. In current session  - ONLY provide the design drafts and HLD, ADR, scope/requirements. LLD task breakdown etc will be handled seperately.  
+
+## Defining good workflow for my separate repo 
 
 
-## DAG With multiple possible endpoints and circuit breaker. 
-1. For our ao workflows - I want to follow philosophy that there may not necessarily be single endpoint task. e.g. workflow may start with single prompt, but based on prompts contents, it may follow the workflow path of epic or task or bug or documentation, and in each case - it may pass through different set of tasks and end on different endpoint tasks. Essentially its multiple workflwos clubbed into songle file. 
-2. I want to add acircuitbreaker option. In some cases- it may be worthwhile to fail or stop the whole workflow depending on some specifi  conditions. Also outline what all possible conditions can be there for circuit breaking. 
+### Summary
+I have a ao runner configuration / setting at - `/usr/avadhoot/mounted/ao-runner-finplan/`. This directory contains single repo - `fin_plan` which is about financial planning simulation and forecasting. I want to update/create a robust workflow which can be reused again and again to initiate, create and drive to completion, multiple different tasks/epics/bug/fixes/documentation tasks each time I invoke the script. 
 
-## Global parameterd / settings for workflows and ao in general. 
-1. Set default model and efforts etc at different levels **correct me** - 
-    1. AO cli / env variable/ config file etc.
-    2. Workflow file 
-    3. Current repo / working directory 
-2. What are the concerns / pitfalls/potentially confusion points if we do so? Or we dont need to give so much configurability and flexibility? I dont want to get in awkward position of conflicting with ourselves because of many different configurations - and just trying to see which configuration is actually taking ffect. There is one more possible approach - and that is to ALWAYS explicitly define the moedl/efforts or such configurations in workflows. They may have default values - or may at least explicitly say that they are picking values from its predecessor - like config file or env variable etc. 
+### Existing artifacts and references
+Check the current epic runner script at - `/usr/avadhoot/mounted/ao-runner-finplan/workflows/epic-runner/new-epic-run.sh` . 
+I think its better if we build on existing tools / scripts instead of adding multiple similar codes which may be abandoned later. 
+Requirements - 
+1. Add the task type - Bug / epic/  task / documentation/ testing
+    1. We should have workflows in place which will drive the tawsks to compeltion as per the ticket type. Should use the user prompt and do as much independent work as possible - preferrably not be blocked on user. Only if there is real concern or user input required - break / pause the flow and wait for user input in specific artifcat file or something. 
+2. Add the resume option in the script - may need runid from user. 
+3. Ensure that tasks are broken in sufficient details that autocompaction would typically not be required. Idea is to both optimize the cost and optimize the accuracy / performance. 
+4. Also Add git push as the last step -if its not already tehre. But NOTE - NO FORCE PUSH. Ensure we DONT accidently push to main or Force push and overwrite remote branch etc. If need to rebase or force push etc - need explicit approval from user. Dont do any destructive changes in git. 
+5. Priority for correctness and providing ground truths rather than made up claims and assuming things. These should be in general instructions. Make good use of claude subagents that are already defined in fin_plan repo wherever possible. Additional instructions can still be provided as appropriate (does that even make sense?) 
 
-
-## Further granular breakown of tasks in existing workflow 
-1. In workflow defined in @/usr/avadhoot/mounted/ao-runner-finplan/workflows/epic-runner/new-epic-run.sh , I want the developer and unit testers to breakdown tasks further in more granular level. 
-    1. I want to optimistically achieve a state where each independent task in the dynamic generated tasks will never reach the full context utilization state - BUT WITHOUT loosing the whole project context and sight of end goal. Typically what happens in development tasks is - agent session keeps running for quite some time - 10-40/50 min and in that session - context may need to be autocompacted multiple times because of reaching the 200k or some context limit. So instead of it having to go to auto compaction, I will like to breaakdown the tasks in multiple stpes early on - so that each steps or set of steps can be taken by independent agent sesions - which will probably complete there tasks in less than 100 or 150 tokens. This is based on premise and assumption that many times in long running sessions - the higher context is not because of core logic / understanding data but more so because of multiple tool calls and the verbose code being present. That may not be really required for agent to work efficiently and just summary of those functions might very well serve the purpose. By breaking the task in multiple tseps - we allow agents to have limited context and save budget. 
-    2. My end goals are - Have much more accuracy and much less hallucination. Agent should be able to complete task with very very good quality without end user intervention. Preferrably save budget also in doing so (secondary). 

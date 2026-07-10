@@ -102,7 +102,7 @@ class TestOutputCapture:
 
         assert state.status == "succeeded"
         for tid in ["task0", "task1"]:
-            task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / tid
+            task_dir = Path(state.tasks[tid].output_artifact_path)
             assert task_dir.exists(), f"output_dir missing for {tid}"
             assert (task_dir / "stdout.txt").exists(), f"stdout.txt missing for {tid}"
             assert (task_dir / "stderr.txt").exists(), f"stderr.txt missing for {tid}"
@@ -131,7 +131,7 @@ class TestOutputCapture:
         wf = _simple_workflow(tmp_path, n_tasks=1)
         state, _ = _run_workflow(tmp_path, wf, behaviors={"task0": "fail"})
 
-        task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / "task0"
+        task_dir = Path(state.tasks["task0"].output_artifact_path)
         assert (task_dir / "stdout.txt").exists()
         assert (task_dir / "stderr.txt").exists()
         # Path should still be recorded even on failure
@@ -142,7 +142,7 @@ class TestOutputCapture:
         wf = _simple_workflow(tmp_path, n_tasks=1)
         state, _ = _run_workflow(tmp_path, wf)
 
-        task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / "task0"
+        task_dir = Path(state.tasks["task0"].output_artifact_path)
         stdout_content = (task_dir / "stdout.txt").read_text()
         assert "task0" in stdout_content  # stub content includes task id
 
@@ -153,7 +153,7 @@ class TestOutputCapture:
 
         assert state.status == "succeeded"
         for tid in ["task0", "task1"]:
-            task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / tid
+            task_dir = Path(state.tasks[tid].output_artifact_path)
             transcript = task_dir / "transcript.jsonl"
             assert transcript.exists(), f"transcript.jsonl missing for {tid}"
             events = [
@@ -168,7 +168,7 @@ class TestOutputCapture:
         wf = _simple_workflow(tmp_path, n_tasks=1)
         state, _ = _run_workflow(tmp_path, wf)
 
-        task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / "task0"
+        task_dir = Path(state.tasks["task0"].output_artifact_path)
         result_json = json.loads((task_dir / "result.json").read_text())
         assert result_json["type"] == "result"
         assert "task0" in result_json["result"]

@@ -612,7 +612,9 @@ class TestArea5OutputCapture:
         ]
 
         for task_id in expected_tasks:
-            task_dir = tmp_path / ".orchestrator" / "runs" / run_id / task_id
+            # attempt-1: every task here succeeds on its first attempt (E-9h3m7k —
+            # capture dirs are now attempt-suffixed so retries don't clobber each other).
+            task_dir = tmp_path / ".orchestrator" / "runs" / run_id / task_id / "attempt-1"
             stdout = task_dir / "stdout.txt"
             stderr = task_dir / "stderr.txt"
             assert stdout.exists(), f"Missing stdout.txt for {task_id}"
@@ -653,7 +655,7 @@ class TestArea5OutputCapture:
         ]
 
         for task_id in expected_tasks:
-            task_dir = tmp_path / ".orchestrator" / "runs" / run_id / task_id
+            task_dir = tmp_path / ".orchestrator" / "runs" / run_id / task_id / "attempt-1"
             transcript = task_dir / "transcript.jsonl"
             assert transcript.exists(), f"Missing transcript.jsonl for {task_id}"
             events = [

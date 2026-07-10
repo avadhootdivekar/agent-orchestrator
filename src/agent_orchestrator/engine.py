@@ -680,6 +680,16 @@ class Orchestrator:
                 # Record captured output path (FR-5); engine never reads the files.
                 if result.output_artifact_path:
                     ts.output_artifact_path = result.output_artifact_path
+                # Cumulative actual usage across every attempt (E-9h3m7k FR-2) — result's
+                # token/cost fields already sum all attempts (_run_with_retries).
+                if result.actuals_available:
+                    ts.cumulative_input_tokens = result.input_tokens or 0
+                    ts.cumulative_output_tokens = result.output_tokens or 0
+                    ts.cumulative_cache_creation_input_tokens = (
+                        result.cache_creation_input_tokens or 0
+                    )
+                    ts.cumulative_cache_read_input_tokens = result.cache_read_input_tokens or 0
+                    ts.cumulative_cost_usd = result.cost_usd or 0.0
 
                 if result.status == "succeeded":
                     # Verify declared outputs were actually produced
@@ -1122,6 +1132,15 @@ class Orchestrator:
         )
 
         last_result: TaskResult | None = None
+        # Running sums across every attempt of THIS call (E-9h3m7k FR-2): a task that
+        # fails on attempt 1 and succeeds on attempt 2 must report the actual cost of
+        # BOTH attempts, not just the winning one — money was spent on attempt 1 too.
+        cum_input_tokens = 0
+        cum_output_tokens = 0
+        cum_cache_creation_input_tokens = 0
+        cum_cache_read_input_tokens = 0
+        cum_cost_usd = 0.0
+        any_actuals = False
 
         for attempt in range(1, retry.max_attempts + 1):
             if self._cancel_fn():
@@ -1130,6 +1149,12 @@ class Orchestrator:
                     status="cancelled",
                     attempts=attempt,
                 )
+
+            # Attempt-suffixed capture dir (E-9h3m7k): each retry gets its own
+            # transcript.jsonl/result.json instead of the next attempt overwriting the
+            # previous one's — a failed attempt's output is real observability data, not
+            # noise to discard.
+            attempt_output_dir = os.path.join(output_dir, f"attempt-{attempt}")
 
             ctx = TaskContext(
                 run_id=state.run_id,
@@ -1143,13 +1168,34 @@ class Orchestrator:
                 repo_paths=repo_paths,
                 timeout_seconds=timeout,
                 cwd=agent_cwd,
-                output_dir=output_dir,
+                output_dir=attempt_output_dir,
                 task_manifest_path=resolved_task_manifest_path,
                 gate_output_path=gate_output_path,
             )
 
             result = self._executor.execute(ctx)
             result.attempts = attempt
+
+            if result.actuals_available:
+                any_actuals = True
+                cum_input_tokens += result.input_tokens or 0
+                cum_output_tokens += result.output_tokens or 0
+                cum_cache_creation_input_tokens += result.cache_creation_input_tokens or 0
+                cum_cache_read_input_tokens += result.cache_read_input_tokens or 0
+                cum_cost_usd += result.cost_usd or 0.0
+
+            # Redefine the result's token/cost fields to mean "cumulative across every
+            # attempt of this task so far" — the correct semantic for a task-level result.
+            # Degenerates to today's single-attempt values when there's no retry.
+            result.actuals_available = any_actuals
+            result.input_tokens = cum_input_tokens if any_actuals else None
+            result.output_tokens = cum_output_tokens if any_actuals else None
+            result.cache_creation_input_tokens = (
+                cum_cache_creation_input_tokens if any_actuals else None
+            )
+            result.cache_read_input_tokens = cum_cache_read_input_tokens if any_actuals else None
+            result.cost_usd = cum_cost_usd if any_actuals else None
+
             last_result = result
 
             if result.status == "succeeded":

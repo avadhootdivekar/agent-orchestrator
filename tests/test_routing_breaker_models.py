@@ -116,6 +116,8 @@ class TestSchemaAcceptsRoutingAndBreakers:
             {"id": "b", "condition": "consecutive_failures", "action": "stop"},
             {"id": "b", "condition": "run_wall_clock_seconds", "action": "stop"},
             {"id": "b", "condition": "injected_task_count", "action": "stop"},
+            {"id": "b", "condition": "task_cost_usd", "action": "stop"},
+            {"id": "b", "condition": "run_cost_usd", "action": "stop"},
             # missing task_id + verdict_path, then missing verdict_path only:
             {"id": "b", "condition": "verdict", "action": "fail"},
             {"id": "b", "condition": "verdict", "action": "fail", "task_id": "classify"},
@@ -126,6 +128,24 @@ class TestSchemaAcceptsRoutingAndBreakers:
     def test_conditional_required_fields_enforced(self, breaker: dict) -> None:
         data = _base_workflow_dict()
         data["circuit_breakers"] = [breaker]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(data, _schema())
+
+    @pytest.mark.parametrize("condition", ["task_cost_usd", "run_cost_usd"])
+    def test_actual_cost_breaker_with_fractional_threshold_validates(self, condition: str) -> None:
+        """E-9h3m7k FR-4: threshold widened to number, accepts fractional USD amounts."""
+        data = _base_workflow_dict()
+        data["circuit_breakers"] = [
+            {"id": "cost-cap", "condition": condition, "action": "fail", "threshold": 2.5},
+        ]
+        jsonschema.validate(data, _schema())
+
+    def test_threshold_zero_still_rejected(self) -> None:
+        """exclusiveMinimum 0 — a zero threshold (would trip immediately) is invalid."""
+        data = _base_workflow_dict()
+        data["circuit_breakers"] = [
+            {"id": "b", "condition": "run_cost_usd", "action": "fail", "threshold": 0},
+        ]
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(data, _schema())
 

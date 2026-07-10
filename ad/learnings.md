@@ -350,3 +350,21 @@ By: agent
 Role: developer
 Date: 2026-07-10
 ---
+
+---
+Learning-ID: LRN-20260710-retry-loop-discarded-usage
+Learning: A retry loop that reassigns `last_result = result` on every attempt silently discards actual usage/cost data from failed attempts — only the winning attempt's numbers survive. The same overwrite-vs-sum bug also affects `output_dir` reuse across attempts (each retry clobbers the previous attempt's capture files) if the capture path isn't attempt-suffixed.
+Context: `engine._run_with_retries` overwrote `TaskResult` token/cost fields on every attempt instead of summing; fixed in E-9h3m7k by accumulating across attempts and suffixing `output_dir` with `attempt-<N>/`. This also silently under-charged budget reconciliation for retried tasks (`_sum_actuals` only saw the last attempt).
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-uv-force-not-enough
+Learning: `uv tool install <dir> --force` can resolve a stale cached build despite reporting success — observed reinstalling a snapshot missing an entire epic's worth of code (no `compute_cones`) right after a "successful" `--force` reinstall. `install.sh --check`'s git-commit-stamp comparison doesn't catch this either (it's blind to uncommitted working-tree changes, the common mid-session case).
+Context: Adding `--reinstall` to the `uv tool install` invocation in `install.sh`'s `_do_install` fixed it — confirmed via a marker-line round-trip that `--force --reinstall` picks up live source content without needing `uv cache clean`/`--no-cache`. See [[project_ao_install_staleness]].
+By: agent
+Role: developer
+Date: 2026-07-10
+---

@@ -534,6 +534,28 @@ class TestRule10BreakerRefs:
             _validate(workflow)
         assert "not implemented" in str(exc_info.value).lower()
 
+    def test_projected_cost_exceeds_still_not_implemented(self) -> None:
+        """The reserved pre-flight-estimate name stays distinct from task_cost_usd/
+        run_cost_usd (E-9h3m7k) — it is NOT implemented by this epic."""
+        tasks = [_task("a")]
+        breaker = CircuitBreakerSpec(id="future", condition="projected_cost_exceeds", action="fail")
+        workflow = _workflow(tasks, circuit_breakers=[breaker])
+
+        with pytest.raises(SpecValidationError) as exc_info:
+            _validate(workflow)
+        assert "not implemented" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("condition", ["task_cost_usd", "run_cost_usd"])
+    def test_actual_cost_conditions_accepted(self, condition: str) -> None:
+        """E-9h3m7k FR-4: task_cost_usd/run_cost_usd pass validation with a threshold."""
+        tasks = [_task("a")]
+        breaker = CircuitBreakerSpec(
+            id="cost-cap", condition=condition, action="fail", threshold=3.0
+        )
+        workflow = _workflow(tasks, circuit_breakers=[breaker])
+
+        _validate(workflow)  # must not raise
+
 
 # ---------------------------------------------------------------------------
 # Rule 11: reserved-suffix / id-pattern

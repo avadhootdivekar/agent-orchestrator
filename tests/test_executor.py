@@ -198,6 +198,31 @@ class TestParseUsageAnd429:
         assert r["input_tokens"] is None
         assert r["output_tokens"] is None
 
+    def test_total_cost_usd_extracted(self) -> None:
+        """E-9h3m7k FR-1: top-level total_cost_usd is extracted as cost_usd."""
+        stdout = json.dumps(
+            {
+                "type": "result",
+                "total_cost_usd": 0.4567,
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            }
+        )
+        r = parse_usage_and_429(stdout, "", 0, NOW)
+        assert r["cost_usd"] == 0.4567
+
+    def test_missing_total_cost_usd_is_none(self) -> None:
+        """No top-level total_cost_usd → cost_usd stays None, no crash."""
+        stdout = json.dumps({"type": "result", "usage": {"input_tokens": 5}})
+        r = parse_usage_and_429(stdout, "", 0, NOW)
+        assert r["cost_usd"] is None
+
+    def test_fixture_total_cost_usd_matches_frozen_value(self) -> None:
+        """Regression pin against the frozen real-CLI shape fixture."""
+        fixture_path = Path(__file__).parent / "fixtures" / "claude_usage.json"
+        stdout = fixture_path.read_text(encoding="utf-8")
+        r = parse_usage_and_429(stdout, "", 0, NOW)
+        assert r["cost_usd"] == 0.001
+
     def test_non_json_stdout(self) -> None:
         """AC-2: non-JSON stdout → graceful fallback, all fields None/False."""
         r = parse_usage_and_429("plain text response from agent", "", 0, NOW)
@@ -895,6 +920,29 @@ class TestClaudeCliCapture:
         assert result.actuals_available is True
         assert result.input_tokens == 120
         assert result.output_tokens == 40
+
+    def test_success_populates_cost_usd(self, tmp_path) -> None:
+        """E-9h3m7k FR-1: TaskResult.cost_usd is populated end-to-end from execute()."""
+        stream_with_cost = (
+            "\n".join(
+                [
+                    *_STREAM_LINES[:-1],
+                    json.dumps(
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "is_error": False,
+                            "result": "Task complete",
+                            "total_cost_usd": 0.1234,
+                            "usage": {"input_tokens": 120, "output_tokens": 40},
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+        result, _ = self._run(tmp_path, stdout_text=stream_with_cost)
+        assert result.cost_usd == 0.1234
 
     def test_failure_returns_failed_with_stderr_tail(self, tmp_path) -> None:
         result, out = self._run(

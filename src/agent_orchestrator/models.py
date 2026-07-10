@@ -192,7 +192,11 @@ class CircuitBreakerSpec(BaseModel):
     action: Literal["fail", "stop", "pause"]
     scope: Literal["run"] = "run"
     window: Literal["run"] = "run"
-    threshold: int | None = None
+    # float (not int): shared by count-based conditions (task_failures, ...) AND USD-cost
+    # conditions (task_cost_usd, run_cost_usd, E-9h3m7k FR-4) which need fractional
+    # thresholds (e.g. 2.50). Count-based comparisons (`count >= threshold`) are unaffected
+    # by the widened type.
+    threshold: float | None = None
     task_id: str | None = None
     verdict_path: str | None = None
     field: str = "halt"
@@ -271,11 +275,16 @@ class TaskResult(BaseModel):
     # Path (directory) where captured stdout/stderr live (FR-5).
     # Engine records this without reading file content (NFR-1).
     output_artifact_path: str | None = None
-    # Token accounting fields (T-oh5gl5 / FR-5, FR-8)
+    # Token accounting fields (T-oh5gl5 / FR-5, FR-8). Cumulative across all retry
+    # attempts of this task (engine._execute_with_retry sums per-attempt actuals into
+    # these fields before returning) — NOT just the last attempt (E-9h3m7k FR-2).
     input_tokens: int | None = None
     output_tokens: int | None = None
     cache_creation_input_tokens: int | None = None
     cache_read_input_tokens: int | None = None
+    # Actual USD cost from the Claude CLI's `total_cost_usd` (E-9h3m7k FR-1), cumulative
+    # across retry attempts like the token fields above. None when actuals unavailable.
+    cost_usd: float | None = None
     actuals_available: bool = False
     provider_rate_limited: bool = False
     provider_retry_after_epoch: float | None = None
@@ -315,6 +324,15 @@ class TaskRunState(BaseModel):
     route: str | None = None
     # e.g. "router=classify route=bug not selected" — set only when status == "not_taken".
     not_taken_reason: str | None = None
+    # Cumulative ACTUAL usage across every retry attempt of this task (E-9h3m7k FR-2),
+    # mirrored from the final TaskResult once the task settles. Zero/None until then.
+    # Not reset on resume — a resumed task starts a fresh TaskResult (fresh attempts),
+    # so these reflect only the attempts of the run that actually produced them.
+    cumulative_input_tokens: int = 0
+    cumulative_output_tokens: int = 0
+    cumulative_cache_creation_input_tokens: int = 0
+    cumulative_cache_read_input_tokens: int = 0
+    cumulative_cost_usd: float = 0.0
 
 
 class RunState(BaseModel):
@@ -339,3 +357,37 @@ class RunState(BaseModel):
     route_decisions: dict[str, list[str]] = {}
     # Every circuit-breaker trip recorded during the run (FR-CB4). Defaulted for NFR-5.
     tripped_breakers: list[TrippedBreaker] = []
+
+
+class RunUsageTotals(BaseModel):
+    """Run-wide actual usage, summed over every task's cumulative fields (E-9h3m7k FR-3).
+
+    Deliberately NOT a persisted/incrementally-mutated RunState field: a mutated running
+    total risks double-counting on resume (the same double-charge class of bug
+    `BudgetCounters.reconciled_tasks` guards against for estimates). Instead this is pure
+    and derived on demand from `RunState.tasks[*].cumulative_*` — recomputing it is O(tasks)
+    and always resume-safe by construction, with a single source of truth.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+def compute_run_usage_totals(state: RunState) -> RunUsageTotals:
+    """Sum actual usage across every task in *state* (E-9h3m7k FR-3).
+
+    Pure function of `state.tasks` — safe to call at any point (mid-run, on resume, or
+    after completion); tasks that haven't settled yet simply contribute zero (their
+    `cumulative_*` fields default to 0 / 0.0 until the engine sets them on settle).
+    """
+    totals = RunUsageTotals()
+    for ts in state.tasks.values():
+        totals.input_tokens += ts.cumulative_input_tokens
+        totals.output_tokens += ts.cumulative_output_tokens
+        totals.cache_creation_input_tokens += ts.cumulative_cache_creation_input_tokens
+        totals.cache_read_input_tokens += ts.cumulative_cache_read_input_tokens
+        totals.cost_usd += ts.cumulative_cost_usd
+    return totals

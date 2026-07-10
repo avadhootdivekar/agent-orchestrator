@@ -22,10 +22,10 @@ _ITER_SUFFIX_MARKER = "__iter"
 # checks all three so route ids get the same guarantee (rule 11).
 _ROUTING_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_]*$")
 
-# The six MVP-implemented circuit-breaker conditions (LLD §7 / breakers.py registry).
-# The schema's `condition` enum accepts the full HLD §6 catalog so specs may reference
-# not-yet-implemented conditions ahead of time; this validator rejects those with a
-# clean, named error rather than letting them reach the engine as a silent no-op.
+# The implemented circuit-breaker conditions (LLD §7 + E-9h3m7k FR-4 / breakers.py
+# registry). The schema's `condition` enum accepts the full HLD §6 catalog so specs may
+# reference not-yet-implemented conditions ahead of time; this validator rejects those
+# with a clean, named error rather than letting them reach the engine as a silent no-op.
 _MVP_BREAKER_CONDITIONS = frozenset(
     {
         "task_failures",
@@ -34,6 +34,8 @@ _MVP_BREAKER_CONDITIONS = frozenset(
         "verdict",
         "injected_task_count",
         "stop_file",
+        "task_cost_usd",
+        "run_cost_usd",
     }
 )
 
