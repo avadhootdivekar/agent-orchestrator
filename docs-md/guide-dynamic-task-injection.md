@@ -254,6 +254,26 @@ entry — `depends_on: ["review"]`, no `inputs` — that just notes there was no
 
 ---
 
+## Nested emission (multi-level fan-out)
+
+Injected tasks can themselves have `emit_tasks: true` and `task_manifest_path`, allowing a planner
+→ phase-decomposer → tasks hierarchy (or deeper). The engine's expansion hook fires for ANY
+succeeded task with `emit_tasks: true`, including injected tasks. When an injected emitter
+succeeds, it injects the next level into the running DAG, recomputes order, and continues.
+
+**Critical constraint for nested emitters:** All emitters, including injected ones, **must** set
+`skip_if_outputs_exist: false` (or omit `skip_if_outputs_exist` and explicitly set it to `false`),
+or they will skip on a fresh run and never inject their manifest. Skipped tasks exit the loop
+before the expansion hook fires, so no tasks get injected even if the manifest file exists. (This
+is why `skip_if_outputs_exist: true` is the default for non-emitting tasks but the wrong choice
+for any emitter.)
+
+To bound nesting depth and prevent runaway fan-out, track `injected_task_count` in the instruction
+file and use the builtin breaker (see the `circuit_breakers` section in the next epic task) to
+halt if the count exceeds a threshold.
+
+---
+
 ## Gotchas
 
 - **Injected tasks skip the strict schema/reference checks static tasks get.** `workflow.json`'s

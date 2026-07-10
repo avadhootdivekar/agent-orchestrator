@@ -432,7 +432,9 @@ class TestAgentCwd:
 class TestQuotaExhaustion:
     """Verify engine wait/retry/fail behaviour on claude_quota_exhausted results."""
 
-    def _orch(self, tmp_path, sleeps: list, *, quota_max_wait: float = 3600, quota_poll: float = 1) -> tuple:
+    def _orch(
+        self, tmp_path, sleeps: list, *, quota_max_wait: float = 3600, quota_poll: float = 1
+    ) -> tuple:
         store, rs_store = _make_workspace(tmp_path)
         sleeper_calls: list[float] = []
 
@@ -470,7 +472,7 @@ class TestQuotaExhaustion:
 
         assert state.status == "succeeded"
         assert len(sleeps) == 1  # slept once during quota wait
-        assert sleeps[0] == 10   # slept for quota_poll_seconds
+        assert sleeps[0] == 10  # slept for quota_poll_seconds
 
     def test_quota_exhausted_multiple_times_then_succeeds(self, tmp_path) -> None:
         """Engine retries until quota lifts (N waits), then succeeds."""

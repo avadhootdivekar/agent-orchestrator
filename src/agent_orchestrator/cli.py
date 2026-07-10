@@ -68,7 +68,8 @@ def _load_all(
 ) -> tuple:
     """Resolve defaults, then load and cross-validate workflow, reposets, and agents."""
     from .config import load_agents, load_reposets
-    from .spec import cross_validate, load_workflow
+    from .dag import build_dag
+    from .spec import cross_validate, load_workflow, validate_run_control
 
     workflow_path, rp, ap = _resolve_config_defaults(workflow, reposets, agents)
 
@@ -96,16 +97,30 @@ def _load_all(
     reposet_map = load_reposets(rp)
     agent_map = load_agents(ap)
     cross_validate(wf, reposet_map, agent_map)
+
+    # Routing + circuit-breaker static validation (LLD §4.4, epic E-rc7k2v).
+    # Must run AFTER build_dag: needs the runtime graph (declared + inferred
+    # edges) for reachability/cone computation. topological_order() surfaces
+    # CycleError here too (previously only caught inside `ao run`/`resume`).
+    graph = build_dag(wf)
+    graph.topological_order()
+    for warning in validate_run_control(wf, graph):
+        typer.echo(f"WARNING: {warning}", err=True)
+
     return wf, reposet_map, agent_map
 
 
 def _print_state(state) -> None:
     typer.echo(f"\nRun:    {state.run_id}")
     typer.echo(f"Status: {state.status}")
-    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Attempts'}")
-    typer.echo("-" * 55)
+    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Route':<20} {'Attempts'}")
+    typer.echo("-" * 75)
     for tid, ts in state.tasks.items():
-        typer.echo(f"{tid:<30} {ts.status:<15} {ts.attempts}")
+        route = ts.route or ""
+        typer.echo(f"{tid:<30} {ts.status:<15} {route:<20} {ts.attempts}")
+    # Routing + circuit-breaker observability trailer (LLD §10.2, FR-CB4).
+    for tb in getattr(state, "tripped_breakers", []):
+        typer.echo(f"Tripped breakers: {tb.id} ({tb.condition}, action={tb.action})")
 
 
 def _print_status_snapshot(snap: dict) -> None:
@@ -115,14 +130,19 @@ def _print_status_snapshot(snap: dict) -> None:
     current = snap.get("current_task")
     if current:
         typer.echo(f"Current task: {current}")
-    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Attempts'}")
-    typer.echo("-" * 55)
+    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Route':<20} {'Attempts'}")
+    typer.echo("-" * 75)
     for task_entry in snap.get("tasks", []):
+        route = task_entry.get("route") or ""
         typer.echo(
             f"{task_entry.get('id', ''):<30} "
             f"{task_entry.get('status', ''):<15} "
+            f"{route:<20} "
             f"{task_entry.get('attempts', 0)}"
         )
+    # Routing + circuit-breaker observability trailer (LLD §10.2, FR-CB4).
+    for tb in snap.get("tripped_breakers", []):
+        typer.echo(f"Tripped breakers: {tb['id']} ({tb['condition']}, action={tb['action']})")
 
 
 def _resolve_run_settings(
@@ -159,9 +179,7 @@ def _resolve_run_settings(
     resolved_max_attempts = (
         max_attempts or _int_env("AO_MAX_ATTEMPTS") or (cfg.max_attempts if cfg else None)
     )
-    resolved_max_turns = (
-        max_turns or _int_env("AO_MAX_TURNS") or (cfg.max_turns if cfg else None)
-    )
+    resolved_max_turns = max_turns or _int_env("AO_MAX_TURNS") or (cfg.max_turns if cfg else None)
     resolved_model = model or os.environ.get("AO_MODEL") or (cfg.model if cfg else None)
     resolved_effort = effort or os.environ.get("AO_EFFORT") or (cfg.effort if cfg else None)
     resolved_quota_max_wait = int(
@@ -390,7 +408,14 @@ def run(
 
     try:
         wf, reposet_map, agent_map = _load_all(workflow, reposets, agents)
-    except (OrchestratorError, SystemExit):
+    except OrchestratorError as e:
+        # Includes SpecValidationError/CycleError from the new build_dag +
+        # validate_run_control pass in _load_all (LLD §4.4) — must exit non-zero,
+        # not silently return (was previously unreachable here since _load_all
+        # never built the DAG; cycles used to surface only from orch.run() below).
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+    except SystemExit:
         return
 
     (
@@ -421,6 +446,7 @@ def run(
             )
             raise typer.Exit(1)
         from typing import Literal, cast
+
         for spec in agent_map.values():
             spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
 
@@ -542,7 +568,10 @@ def resume(
 
     try:
         wf, reposet_map, agent_map = _load_all(workflow, reposets, agents)
-    except (OrchestratorError, SystemExit):
+    except OrchestratorError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+    except SystemExit:
         return
 
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
@@ -577,6 +606,7 @@ def resume(
             )
             raise typer.Exit(1)
         from typing import Literal, cast
+
         for spec in agent_map.values():
             spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
 
@@ -659,7 +689,10 @@ def status(
 
         try:
             wf, reposet_map, _ = _load_all(workflow, reposets, agents)
-        except (OrchestratorError, SystemExit):
+        except OrchestratorError as e:
+            typer.echo(f"ERROR: {e}", err=True)
+            raise typer.Exit(1)
+        except SystemExit:
             return
 
         ws_root = reposet_map[wf.repo_set].workspace_root

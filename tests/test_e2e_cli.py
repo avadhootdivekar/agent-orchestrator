@@ -19,7 +19,6 @@ import json
 import re
 import shutil
 import time
-import uuid
 from pathlib import Path
 from random import Random
 
@@ -27,7 +26,6 @@ import pytest
 from typer.testing import CliRunner
 
 from agent_orchestrator.cli import app
-from agent_orchestrator.errors import CycleError, SpecValidationError
 
 runner = CliRunner()
 
@@ -154,7 +152,10 @@ class TestE2EWorkflowDAG:
         ag = tmp_path / "agents.json"
 
         shutil.copy(SPECS_EXAMPLES / "reposet.json", rs)
-        fake_agents = {"version": "1.0", "agents": {"architect": {"executor": "fake"}, "developer": {"executor": "fake"}}}
+        fake_agents = {
+            "version": "1.0",
+            "agents": {"architect": {"executor": "fake"}, "developer": {"executor": "fake"}},
+        }
         ag.write_text(json.dumps(fake_agents))
 
         result = runner.invoke(
@@ -543,6 +544,7 @@ class TestE2ELogging:
 
         assert result.exit_code == 0
         run_id_match = re.search(r"Run:\s+(\S+)", result.output)
+        assert run_id_match, f"Could not extract run_id from output:\n{result.output}"
         run_id = run_id_match.group(1)
 
         log_path = tmp_path / ".orchestrator" / "runs" / run_id / "run.log"
@@ -571,6 +573,7 @@ class TestE2ELogging:
 
         assert result.exit_code == 0
         run_id_match = re.search(r"Run:\s+(\S+)", result.output)
+        assert run_id_match, f"Could not extract run_id from output:\n{result.output}"
         run_id = run_id_match.group(1)
 
         log_path = tmp_path / ".orchestrator" / "runs" / run_id / "run.log"
@@ -782,7 +785,7 @@ class TestE2EFuzzy:
         tasks: list[dict] = []
         for i in range(num_tasks):
             task_id = f"task_{i:02d}"
-            depends_on = [f"task_{i-1:02d}"] if i > 0 else []
+            depends_on = [f"task_{i - 1:02d}"] if i > 0 else []
             outputs = [f"output/task_{i:02d}.txt"]
 
             tasks.append(
@@ -830,9 +833,9 @@ class TestE2EFuzzy:
 
         # All tasks should succeed (linear chain, FakeExecutor defaults to succeed)
         assert state.status == "succeeded", f"Seed {seed}: workflow failed. State: {state}"
-        assert all(
-            t.status in ("succeeded", "skipped") for t in state.tasks.values()
-        ), f"Seed {seed}: some tasks did not succeed"
+        assert all(t.status in ("succeeded", "skipped") for t in state.tasks.values()), (
+            f"Seed {seed}: some tasks did not succeed"
+        )
 
     def test_random_task_ordering_with_valid_deps_succeeds(self, tmp_path: Path) -> None:
         """Random task IDs with valid dependency structure => execution succeeds.
@@ -895,3 +898,358 @@ class TestE2EFuzzy:
         state = orch.run(wf, reposets, agents)
 
         assert state.status == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# TestE2ERouting (T-m2h5t7, epic E-rc7k2v)
+# ---------------------------------------------------------------------------
+
+
+def _write_routing_workflow(tmp_path: Path, default_route: str | None = None) -> Path:
+    """Write a workflow JSON with a two-route `branches` router (LLD §5)."""
+    wf_path = tmp_path / "routing-wf.json"
+    router: dict = {
+        "id": "classify-router",
+        "router_task_id": "classify",
+        "verdict_path": "out/verdict.json",
+        "routes": {
+            "bug": {"entry": ["bug-fix"]},
+            "documentation": {"entry": ["doc-fix"]},
+        },
+    }
+    if default_route is not None:
+        router["default_route"] = default_route
+    wf_path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "id": "routing-e2e-wf",
+                "repo_set": "default-set",
+                "tasks": [
+                    {
+                        "id": "classify",
+                        "agent": "ag",
+                        "instruction": "specs/examples/instructions/design.md",
+                        "outputs": ["out/classify-done.txt"],
+                    },
+                    {
+                        "id": "bug-fix",
+                        "agent": "ag",
+                        "instruction": "specs/examples/instructions/design.md",
+                        "depends_on": ["classify"],
+                        "outputs": ["out/bug.txt"],
+                    },
+                    {
+                        "id": "doc-fix",
+                        "agent": "ag",
+                        "instruction": "specs/examples/instructions/design.md",
+                        "depends_on": ["classify"],
+                        "outputs": ["out/doc.txt"],
+                    },
+                ],
+                "branches": [router],
+            }
+        )
+    )
+    return wf_path
+
+
+def _write_routing_reposets(tmp_path: Path) -> Path:
+    rs_path = tmp_path / "routing-reposets.json"
+    rs_path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "repo_sets": {
+                    "default-set": {
+                        "workspace_root": str(tmp_path),
+                        "repos": [{"id": "core", "path": ".", "role": "primary"}],
+                    }
+                },
+            }
+        )
+    )
+    return rs_path
+
+
+def _write_routing_agents(tmp_path: Path) -> Path:
+    ag_path = tmp_path / "routing-agents.json"
+    ag_path.write_text(json.dumps({"version": "1.0", "agents": {"ag": {"executor": "fake"}}}))
+    return ag_path
+
+
+def _write_routing_verdict(tmp_path: Path, routes: list[str]) -> None:
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "verdict.json").write_text(json.dumps({"routes": routes}))
+
+
+class TestE2ERouting:
+    """CliRunner E2E companion to tests/test_engine_routing.py (T-m2h5t7).
+
+    Proves the router-success hook, not-taken skip, and run-success/failure paths
+    are wired correctly through the real CLI entry point -- not just the engine
+    API (memory `engine-api-tests-dont-cover-cli`).
+    """
+
+    def test_single_route_selection_via_cli(self, tmp_path: Path) -> None:
+        """ao run with a verdict selecting one route => only that cone's outputs
+        exist, the status table shows the untaken cone as not_taken, exit 0."""
+        wf = _write_routing_workflow(tmp_path)
+        rs = _write_routing_reposets(tmp_path)
+        ag = _write_routing_agents(tmp_path)
+        _write_routing_verdict(tmp_path, ["bug"])
+
+        result = runner.invoke(
+            app,
+            ["run", "--workflow", str(wf), "--reposets", str(rs), "--agents", str(ag)],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0, f"CLI failed:\n{result.output}"
+        assert "not_taken" in result.output
+        assert "bug-fix" in result.output
+        assert "doc-fix" in result.output
+
+        assert (tmp_path / "out" / "bug.txt").exists()
+        assert not (tmp_path / "out" / "doc.txt").exists()
+
+    def test_empty_verdict_no_default_route_fails_via_cli(self, tmp_path: Path) -> None:
+        """ao run with an empty verdict and no default_route => non-zero exit,
+        and the run log carries a branch.route event with an `error` field."""
+        wf = _write_routing_workflow(tmp_path, default_route=None)
+        rs = _write_routing_reposets(tmp_path)
+        ag = _write_routing_agents(tmp_path)
+        _write_routing_verdict(tmp_path, [])
+
+        result = runner.invoke(
+            app,
+            ["run", "--workflow", str(wf), "--reposets", str(rs), "--agents", str(ag)],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+
+        assert result.exit_code != 0
+        run_id_match = re.search(r"Run:\s+(\S+)", result.output)
+        assert run_id_match, f"Could not extract run_id from output:\n{result.output}"
+        run_id = run_id_match.group(1)
+
+        log_path = tmp_path / ".orchestrator" / "runs" / run_id / "run.log"
+        assert log_path.exists()
+        records = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        route_events = [r for r in records if r.get("event") == "branch.route"]
+        assert route_events, f"expected a branch.route log event; got: {records}"
+        assert any("error" in r for r in route_events)
+
+    def test_breaker_trip_with_fail_action_via_cli(self, tmp_path: Path) -> None:
+        """ao run with a stop_file breaker (action=fail) that trips => run fails,
+        tripped_breakers and breaker.trip event recorded (AC1b)."""
+        wf = _write_routing_workflow(tmp_path)
+        # Add a breaker to the workflow
+        wf_data = json.loads(wf.read_text())
+        wf_data["circuit_breakers"] = [
+            {
+                "id": "halt-on-flag",
+                "condition": "stop_file",
+                "path": "control/halt.flag",
+                "action": "fail",
+            }
+        ]
+        wf.write_text(json.dumps(wf_data))
+
+        rs = _write_routing_reposets(tmp_path)
+        ag = _write_routing_agents(tmp_path)
+        _write_routing_verdict(tmp_path, ["bug"])
+
+        # Create the breaker's trigger file
+        (tmp_path / "control").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "control" / "halt.flag").write_text("trigger")
+
+        result = runner.invoke(
+            app,
+            ["run", "--workflow", str(wf), "--reposets", str(rs), "--agents", str(ag)],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+
+        assert result.exit_code != 0, f"Expected non-zero exit; got output:\n{result.output}"
+        # Extract run_id and check the run log
+        run_id_match = re.search(r"Run:\s+(\S+)", result.output)
+        assert run_id_match, f"Could not extract run_id from output:\n{result.output}"
+        run_id = run_id_match.group(1)
+
+        log_path = tmp_path / ".orchestrator" / "runs" / run_id / "run.log"
+        assert log_path.exists()
+        records = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+
+        # Verify breaker.trip event is present
+        breaker_trips = [r for r in records if r.get("event") == "breaker.trip"]
+        assert breaker_trips, (
+            f"expected breaker.trip event; got events: {[r.get('event') for r in records]}"
+        )
+        assert any(r.get("breaker_id") == "halt-on-flag" for r in breaker_trips)
+        assert any(r.get("action") == "fail" for r in breaker_trips)
+
+        # Verify status.json has tripped_breakers
+        status_path = tmp_path / ".orchestrator" / "runs" / run_id / "status.json"
+        assert status_path.exists()
+        status = json.loads(status_path.read_text())
+        assert len(status["tripped_breakers"]) > 0
+        assert any(tb["id"] == "halt-on-flag" for tb in status["tripped_breakers"])
+
+    def test_breaker_trip_with_stop_action_via_cli(self, tmp_path: Path) -> None:
+        """ao run with a stop_file breaker (action=stop) that trips => run fails,
+        status shows action=stop in tripped_breakers, breaker.trip recorded."""
+        wf = _write_routing_workflow(tmp_path)
+        # Add a breaker with stop action
+        wf_data = json.loads(wf.read_text())
+        wf_data["circuit_breakers"] = [
+            {
+                "id": "halt-on-flag",
+                "condition": "stop_file",
+                "path": "control/halt.flag",
+                "action": "stop",
+            }
+        ]
+        wf.write_text(json.dumps(wf_data))
+
+        rs = _write_routing_reposets(tmp_path)
+        ag = _write_routing_agents(tmp_path)
+        _write_routing_verdict(tmp_path, ["bug"])
+
+        # Create the breaker's trigger file
+        (tmp_path / "control").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "control" / "halt.flag").write_text("trigger")
+
+        result = runner.invoke(
+            app,
+            ["run", "--workflow", str(wf), "--reposets", str(rs), "--agents", str(ag)],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+
+        # Status should be "failed" (MVP design: stop/pause map to failed)
+        assert result.exit_code != 0
+        run_id_match = re.search(r"Run:\s+(\S+)", result.output)
+        assert run_id_match
+        run_id = run_id_match.group(1)
+
+        status_path = tmp_path / ".orchestrator" / "runs" / run_id / "status.json"
+        status = json.loads(status_path.read_text())
+        assert len(status["tripped_breakers"]) > 0
+        assert any(
+            tb["id"] == "halt-on-flag" and tb["action"] == "stop"
+            for tb in status["tripped_breakers"]
+        )
+
+    def test_breaker_trip_with_pause_action_via_cli(self, tmp_path: Path) -> None:
+        """ao run with a stop_file breaker (action=pause) that trips => run pauses
+        (status=failed, resumable), tripped_breakers records action=pause."""
+        wf = _write_routing_workflow(tmp_path)
+        # Add a breaker with pause action
+        wf_data = json.loads(wf.read_text())
+        wf_data["circuit_breakers"] = [
+            {
+                "id": "pause-flag",
+                "condition": "stop_file",
+                "path": "control/pause.flag",
+                "action": "pause",
+            }
+        ]
+        wf.write_text(json.dumps(wf_data))
+
+        rs = _write_routing_reposets(tmp_path)
+        ag = _write_routing_agents(tmp_path)
+        _write_routing_verdict(tmp_path, ["bug"])
+
+        # Create the pause trigger file
+        (tmp_path / "control").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "control" / "pause.flag").write_text("trigger")
+
+        result = runner.invoke(
+            app,
+            ["run", "--workflow", str(wf), "--reposets", str(rs), "--agents", str(ag)],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+
+        # Pause should also result in non-zero exit (run didn't complete)
+        assert result.exit_code != 0
+        run_id_match = re.search(r"Run:\s+(\S+)", result.output)
+        assert run_id_match
+        run_id = run_id_match.group(1)
+
+        status_path = tmp_path / ".orchestrator" / "runs" / run_id / "status.json"
+        status = json.loads(status_path.read_text())
+        assert status["status"] == "failed"  # Resumable per MVP design (ADR-RC-004)
+        assert len(status["tripped_breakers"]) > 0
+        assert any(
+            tb["id"] == "pause-flag" and tb["action"] == "pause"
+            for tb in status["tripped_breakers"]
+        )
+
+    def test_resume_routed_and_breaker_tripped_run_via_cli(self, tmp_path: Path) -> None:
+        """ao resume of a routed + breaker-tripped run => route decisions preserved,
+        breaker not re-tripped if stop file removed, run completes (AC1c)."""
+        wf = _write_routing_workflow(tmp_path)
+        # Add a stop_file breaker
+        wf_data = json.loads(wf.read_text())
+        wf_data["circuit_breakers"] = [
+            {
+                "id": "halt-on-flag",
+                "condition": "stop_file",
+                "path": "control/halt.flag",
+                "action": "stop",
+            }
+        ]
+        wf.write_text(json.dumps(wf_data))
+
+        rs = _write_routing_reposets(tmp_path)
+        ag = _write_routing_agents(tmp_path)
+        _write_routing_verdict(tmp_path, ["bug"])
+
+        # Create the breaker's trigger file
+        (tmp_path / "control").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "control" / "halt.flag").write_text("trigger")
+
+        # First run: hits breaker and stops
+        result1 = runner.invoke(
+            app,
+            ["run", "--workflow", str(wf), "--reposets", str(rs), "--agents", str(ag)],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+        assert result1.exit_code != 0
+        run_id_match = re.search(r"Run:\s+(\S+)", result1.output)
+        assert run_id_match
+        run_id = run_id_match.group(1)
+
+        # Verify run is in failed state with breaker tripped
+        status_path = tmp_path / ".orchestrator" / "runs" / run_id / "status.json"
+        status1 = json.loads(status_path.read_text())
+        assert status1["status"] == "failed"
+        assert len(status1["tripped_breakers"]) > 0
+        assert status1["route_decisions"] == {"classify-router": ["bug"]}
+
+        # Remove the breaker trigger file
+        (tmp_path / "control" / "halt.flag").unlink()
+
+        # Resume: breaker should not re-trip, run should complete
+        result2 = runner.invoke(
+            app,
+            [
+                "resume",
+                "--run-id",
+                run_id,
+                "--workflow",
+                str(wf),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+            ],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+        assert result2.exit_code == 0, f"Resume failed:\n{result2.output}"
+
+        # Verify route decisions are preserved
+        status_path = tmp_path / ".orchestrator" / "runs" / run_id / "status.json"
+        status2 = json.loads(status_path.read_text())
+        assert status2["route_decisions"] == {"classify-router": ["bug"]}
+        # The tripped_breakers persists but the run should complete
+        assert status2["status"] == "succeeded"

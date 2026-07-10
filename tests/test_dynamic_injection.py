@@ -462,3 +462,99 @@ class TestEmitTasksIntegration:
         # Verify control-read helpers are used (not direct json.load)
         assert "read_task_manifest" in engine_src
         assert "read_gate" in engine_src
+
+    def test_nested_emission_depth_2(
+        self,
+        make_workflow,
+        make_orchestrator,
+        workspace: Path,
+    ) -> None:
+        """Nested emission: static emitter A emits B (with emit_tasks), B emits leaf C.
+
+        Verifies that the engine's dynamic-expansion hook fires for ANY succeeded task
+        with emit_tasks=true, including injected tasks. This unblocks nested fan-out
+        patterns (e.g. planner → phase-decomposer → tasks).
+
+        Acceptance Criteria:
+        - C executes and completes (origin="injected")
+        - state.injected_tasks contains both B and C (injection depth 2)
+        - The expansion hook fired for injected task B, not only static A
+
+        Constraint (memory `skipped-emit-task-never-injects`):
+        - Both A and B must have skip_if_outputs_exist: false, or they skip and never inject
+        """
+        manifest_a_path = "output/manifest-a.json"
+        manifest_b_path = "output/manifest-b.json"
+        output_c = "output/c.txt"
+
+        # Static emitter A (skip_if_outputs_exist: false) will emit B
+        wf = make_workflow(
+            [
+                {
+                    "id": "emitter-a",
+                    "emit_tasks": True,
+                    "task_manifest_path": manifest_a_path,
+                    "skip_if_outputs_exist": False,
+                }
+            ],
+            wf_id="nested-emit-wf",
+        )
+
+        # B is also an emitter (skip_if_outputs_exist: false) that will emit C
+        # Reuse existing stub instruction (created by make_workflow for emitter-a)
+        emitter_b_spec = {
+            "id": "emitter-b",
+            "agent": "ag",
+            "instruction": "specs/instructions/emitter-a.md",  # reuse existing stub
+            "emit_tasks": True,
+            "task_manifest_path": manifest_b_path,
+            "skip_if_outputs_exist": False,
+            "depends_on": ["emitter-a"],
+        }
+
+        # C is the leaf task (emitted by B)
+        leaf_c_spec = {
+            "id": "leaf-c",
+            "agent": "ag",
+            "instruction": "specs/instructions/emitter-a.md",  # reuse existing stub
+            "outputs": [output_c],
+            "depends_on": ["emitter-b"],
+        }
+
+        # FakeExecutor writes manifests at the right time:
+        # - When A succeeds, write B's spec to manifest_a_path
+        # - When B succeeds, write C's spec to manifest_b_path
+        executor = FakeExecutor(
+            emit_payloads={
+                "emitter-a": {"tasks": [emitter_b_spec]},
+                "emitter-b": {"tasks": [leaf_c_spec]},
+            }
+        )
+        orch, reposets, agents = make_orchestrator(executor)
+        state = orch.run(wf, reposets, agents)
+
+        # Assertions
+        assert state.status == "succeeded", f"Expected succeeded, got {state.status}"
+        assert state.tasks["emitter-a"].status == "succeeded"
+        assert state.tasks["emitter-b"].status == "succeeded"
+        assert state.tasks["leaf-c"].status == "succeeded"
+
+        # Verify origins: A is static, B and C are injected
+        assert state.tasks["emitter-a"].origin == "static"
+        assert state.tasks["emitter-b"].origin == "injected"
+        assert state.tasks["leaf-c"].origin == "injected"
+
+        # Verify outputs: C wrote its output
+        assert (workspace / output_c).exists()
+
+        # Verify injected_tasks contains both B and C (depth 2)
+        injected_ids = {t.id for t in state.injected_tasks}
+        assert injected_ids == {"emitter-b", "leaf-c"}, (
+            f"Expected emitter-b and leaf-c in injected_tasks, got {injected_ids}"
+        )
+
+        # Verify expansion hook fired for injected task B (not only static A)
+        # Manifests are read in order: A's manifest -> B injected -> B's manifest -> C injected
+        # This is the key assertion that nested emission works.
+        task_count = len(state.tasks)
+        assert task_count == 3, f"Expected 3 tasks total (A, B, C), got {task_count}"

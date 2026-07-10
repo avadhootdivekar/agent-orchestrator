@@ -118,7 +118,7 @@ description: "Reached maximum number of turns (N)" is the Claude CLI turn budget
 type: pitfall
 ---
 
-When a task fails with `"errors":["Reached maximum number of turns (N)"]`, that `N` is the Claude CLI's `--max-turns` (set by `effort` on `AgentSpec`: low=3, medium=5, high=10). It is **not** the orchestrator's `max_attempts`. The orchestrator's retry count appears as `attempt X/Y` in its log line, where Y is `max_attempts`. **Why**: two limits operate at different layers — the CLI terminates one agent invocation; the orchestrator decides whether to invoke again. **Apply**: when diagnosing a failed task, read both: `attempt X/Y` (orchestrator retries) and `terminal_reason`/`errors` in the task error JSON (why the individual agent invocation ended). `attempt 1/1` means one attempt, no retry — regardless of what `max_turns` shows.
+When a task fails with `"errors":["Reached maximum number of turns (N)"]`, that `N` is the Claude CLI's `--max-turns` (set by `effort` on `AgentSpec` via `EFFORT_MAX_TURNS` in `models.py`: low=15, medium=30, high=60 — raised from an earlier, too-tight 3/5/10 that caused flaky `error_max_turns` failures on trivial tasks). It is **not** the orchestrator's `max_attempts`. The orchestrator's retry count appears as `attempt X/Y` in its log line, where Y is `max_attempts`. **Why**: two limits operate at different layers — the CLI terminates one agent invocation; the orchestrator decides whether to invoke again. **Apply**: when diagnosing a failed task, read both: `attempt X/Y` (orchestrator retries) and `terminal_reason`/`errors` in the task error JSON (why the individual agent invocation ended). `attempt 1/1` means one attempt, no retry — regardless of what `max_turns` shows.
 
 ---
 name: acceptedits-blocks-bash-bypasspermissions-for-code-agents
@@ -127,3 +127,75 @@ type: constraint
 ---
 
 `--permission-mode acceptEdits` auto-approves Write/Edit file operations but **denies Bash execution** in headless mode. An agent instructed to run `python -c`, `pytest`, or any shell command will receive a silent permission denial, burn its remaining turns on workarounds, and exit code 1 without producing outputs. The denial appears as `permission_denials: [{tool_name: "Bash", ...}]` buried in the task error JSON. **Why**: the constraint is non-obvious from the permission mode name. **Apply**: agents that only write files (architect, reviewer, integrator) → `acceptEdits`; agents that must run code (developer, test-writer) → `bypassPermissions`. Scope risk by running these agents inside the repo-local gitignored workspace (`playground/.tmp/`).
+
+---
+name: emit-tasks-skip-validation
+description: Manifest-injected tasks bypass schema/cross-validation; unknown depends_on ids crash the engine instead of failing cleanly
+type: pitfall
+---
+
+`task_manifest_path` files are parsed via `TaskSpec(**t)` (Pydantic field-level only) — no JSON-schema `additionalProperties`/id-pattern check, no agent-exists check, no `depends_on`-reference check (`read_task_manifest` in `artifacts.py`). **Why**: `cross_validate`/schema validation run once, at CLI `validate`/`run` time, only against the statically authored `workflow.json` — never re-invoked on injected tasks. A `depends_on` id that doesn't match any known task doesn't raise a clean `InjectionError`; `build_dag` silently creates a phantom node for it, and the engine later crashes with an uncaught `KeyError` trying to run it (escapes the CLI's `except (OrchestratorError, CycleError)` handler as a raw traceback). **Apply**: when writing an instruction file that has an agent emit a task manifest, double- and triple-check every `depends_on` id in the manifest matches an id also in that manifest (or an already-existing task) exactly — this class of bug fails ugly, not clean.
+
+---
+name: dynamic-fanout-fixed-aggregator-contract
+description: Unknown-N dynamic fan-out needs an emitted aggregator with a FIXED id+output path so static tasks can attach via inferred edges
+type: convention
+---
+
+When an emitting task (e.g. a reviewer deciding how many modules/findings need follow-up work) fans out into N sibling tasks where N is only known at run time, it must also emit exactly one aggregator task with a **fixed** id and **fixed** output path in the same manifest batch, with `depends_on` listing every sibling id — even emitting a trivial aggregator when N=0, so the output path always exists. **Why**: a statically-authored downstream task cannot `depends_on` task ids that don't exist yet at author time (rejected by validation), and the engine's inferred-edge matching (`build_dag`) only works against a *fixed* path, not N variable ones. Fixing the aggregator's identity while leaving sibling count dynamic is what lets a static task depend on an unknown-count fan-out. **Apply**: any workflow using `emit_tasks` for a fan-out-then-aggregate pattern (see `docs-md/guide-dynamic-task-injection.md`, `specs/examples/workflow-dynamic-fanout.json`, `workflow-dynamic-pipeline.json`); this is also the resolution to the repo's own previously-deferred OQ-2 ("multi-chain aggregator") question in `docs-md/e2e-playground-testing.md`.
+
+---
+name: injected-task-ids-globally-unique
+description: Emitted task ids must be unique across the whole run, not just within one manifest batch — collisions raise InjectionError
+type: constraint
+---
+
+`Orchestrator._inject` checks every new manifest-emitted task id against ALL existing ids (static tasks, previously injected tasks, and earlier entries in the same manifest batch) — any collision raises a clean `InjectionError` and fails the run. **Why**: task ids are the sole addressing mechanism for `depends_on` and DAG nodes; the uniqueness check is run-wide, not scoped per-emitter or per-manifest. **Apply**: when an instruction file tells an agent to emit tasks, have it namespace ids by something it controls and knows is unique (e.g. `subreview-<module-name>`, `fix-<finding-id>`) rather than a bare counter — especially if multiple emitters or nested emission could occur in the same run.
+
+---
+name: skipped-emit-task-never-injects
+description: An emit_tasks task skipped via skip_if_outputs_exist never injects its manifest; emitters must set skip_if_outputs_exist:false
+type: pitfall
+---
+
+The engine's skip path (`should_skip` → mark `skipped` → `continue`) exits the task loop **before** the dynamic-expansion hook, which only fires for `ts.status == "succeeded"` after real execution. **Why**: on a fresh `ao run` where the emitter's outputs already exist, the emitter skips, no tasks are injected, and every static task waiting on the fan-out's aggregator output fails on a missing input — while `ao resume` works fine because injected tasks are restored from persisted run state. **Apply**: any task with `emit_tasks: true` must declare `skip_if_outputs_exist: false` (as the finplan epic-runner's `task-breakdown` does); treat "emitter skipped" as a red flag when diagnosing missing-input failures downstream of a fan-out.
+
+---
+name: global-model-override-clobbers-agents
+description: ao run --model/--effort (and AO_MODEL/AO_EFFORT/config) overwrite every AgentSpec, silently downgrading pinned per-agent models
+type: pitfall
+---
+
+A global model/effort setting is applied in `cli.py` by looping `spec.model = eff_model` over ALL agents — the most specific declaration (per-agent `model` in `agents.json`) loses to the most generic one. **Why**: running a workflow with mixed-model agents (e.g. finplan's `architect-opus`/`reviewer-opus` next to haiku workers) under `ao run --model haiku` silently downgrades the opus agents; outputs look normal but come from the wrong model. **Apply**: until epic `E-st5p3q-settings-precedence-policy` lands the specific-wins chain (ADR-0003), never pass `--model`/`--effort`/`AO_MODEL`/`AO_EFFORT` (or config `model:`/`effort:`) when the agents file pins per-agent values; check `agents.*.json` first.
+
+---
+name: breaker-latch-persists-across-resume
+description: A circuit breaker id already recorded in tripped_breakers before a stop will not re-halt a resumed run, even if its condition is still true
+type: constraint
+---
+
+`evaluate_breakers` latches per breaker id for the entire life of `state.tripped_breakers` (persisted across `ao resume`), not per in-memory session. **Why**: the latch check is `if spec.id in {tb.id for tb in state.tripped_breakers}: continue` — an id present from before the run stopped is never re-evaluated, regardless of whether its underlying condition (e.g. a `stop_file` still present, an `injected_task_count` still over cap) remains true. **Apply**: when documenting or reasoning about resume behavior for `circuit_breakers`, only a condition that was *never evaluated* before the stop (e.g. a crash mid-injection, or a different breaker/failure halted the run first) will trip fresh on resume; an operator must clear the condition itself (delete the stop file, prune injected tasks) to get past an already-latched breaker. See `docs-md/lld-run-control-routing-breakers.md` §9/§11.
+
+---
+name: route-needs-own-sink-before-join
+description: ao validate requires every router route to contain its own terminal sink task in its exclusive cone; a shared downstream join task does not satisfy this
+type: constraint
+---
+
+Rule 8 of `validate_run_control` (spec.py) checks that each route's *exclusive* cone (tasks reachable only from that route) contains at least one task with no successors anywhere in the graph. **Why**: if a route's only task feeds directly into a cross-route `join` task, that task is excluded from the route's exclusive cone (it's shared/converged), so the exclusive cone has no sink and validation fails with "no sink ... this route can never reach a terminal endpoint". **Apply**: when authoring a workflow spec that combines `branches` with a converging `join` task, give each route its own dedicated terminal task (e.g. `bug-report`, `doc-report`) in addition to the shared join/notify task fed by the routes' entry tasks — see `specs/examples/workflow-routing-breakers.json`.
+
+---
+name: docs-refresh-must-search-whole-doc
+description: A ticket correcting a design-vs-implementation drift in a doc must grep the whole doc for other passages repeating the old (now-wrong) claim, not just add a note at the discovery site
+type: convention
+---
+
+Design docs (HLD/LLD) are often written before implementation surfaces a real nuance; a later docs-refresh/close-out ticket that adds a corrective note near where the nuance was found can still leave the *original*, now-incorrect claim standing elsewhere in the same document. **Why**: `docs-md/lld-run-control-routing-breakers.md` had this happen for real — §9's original resume-semantics prose and an old §11 edge-case bullet both claimed structural breakers "re-trip immediately"/"re-trip if still true" on resume, contradicting a *new* §11 gotcha bullet correctly describing the actual (latched) behavior, until both were found and reconciled together. **Apply**: before closing out a docs-reconciliation ticket, `grep` the doc for every other mention of the concept you're correcting (not just the section you were told to update) and fix all of them consistently.
+
+---
+name: verify-completion-narrative-and-header
+description: A subagent's STATUS.md Completion section can overstate what actually shipped and can leave the header State/Status field un-synced with its own "done" narrative
+type: pitfall
+---
+
+Two independent failure modes were caught in the same ticket (E-rc7k2v `T-d8w4v2`): (1) the Completion section claimed an example spec "demonstrates branches+circuit_breakers+join" when the shipped file actually had no `join` at all (the ticket's own AC2 was unmet); (2) the STATUS.md header still read `State: Draft` / `Owner: architect (pending tester assignment)` and `TASK.md` still said `Status: Draft`, despite the Completion section declaring the ticket done. **Why**: a subagent's prose summary is not itself evidence — it can drift from the artifact it describes, and updating a Completion section doesn't automatically update the header fields the ticket-conventions system (`ad/tickets/README.md`) relies on for status sync. **Apply**: when accepting a subagent's ticket as done, (a) check the actual artifact against every acceptance criterion literally, not just the narrative, and (b) confirm the header `State`/`Status`/`Owner` fields match the Completion section — fix both if they don't, and note the fix rather than silently rewriting the subagent's original text.

@@ -1,0 +1,74 @@
+{
+  "version": "1.0",
+  "id": "classify-and-route-workflow",
+  "name": "Route-based issue triage with circuit breaker",
+  "repo_set": "default-set",
+  "tasks": [
+    {
+      "id": "classify",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "outputs": ["output/classify-verdict.json"]
+    },
+    {
+      "id": "bug-fix",
+      "agent": "developer",
+      "instruction": "specs/examples/instructions/implement.md",
+      "depends_on": ["classify"],
+      "outputs": ["output/bug-fixed.md"]
+    },
+    {
+      "id": "bug-report",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "depends_on": ["bug-fix"],
+      "outputs": ["output/bug-report.md"]
+    },
+    {
+      "id": "doc-improvement",
+      "agent": "tester",
+      "instruction": "specs/examples/instructions/test.md",
+      "depends_on": ["classify"],
+      "outputs": ["output/doc-improved.md"]
+    },
+    {
+      "id": "doc-report",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "depends_on": ["doc-improvement"],
+      "outputs": ["output/doc-report.md"]
+    },
+    {
+      "id": "notify",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "depends_on": ["bug-fix", "doc-improvement"],
+      "join": "any",
+      "outputs": ["output/notified.md"]
+    }
+  ],
+  "branches": [
+    {
+      "id": "router",
+      "router_task_id": "classify",
+      "verdict_path": "output/classify-verdict.json",
+      "routes": {
+        "bug": {
+          "entry": ["bug-fix"]
+        },
+        "documentation": {
+          "entry": ["doc-improvement"]
+        }
+      },
+      "default_route": "bug"
+    }
+  ],
+  "circuit_breakers": [
+    {
+      "id": "stop-if-requested",
+      "condition": "stop_file",
+      "path": "control/halt.flag",
+      "action": "stop"
+    }
+  ]
+}

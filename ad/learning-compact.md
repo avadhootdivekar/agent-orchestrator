@@ -26,3 +26,11 @@
 - Quota max-wait timer (`_quota_exhausted_since`) is per-episode only — resets after each successful task. Does NOT accumulate across the run.
 - Always `stdin=subprocess.DEVNULL` for Claude subprocesses; Claude may wait for user input on quota messages even in `-p` mode.
 - Expose all runtime settings (model, effort, max_attempts, max_turns, quota settings) via all three layers: CLI flag > env var > `.ao/config.yaml`. Implement the merge in one `_resolve_run_settings()` function shared by `run` and `resume`.
+- Injected-manifest tasks skip schema validation; bad `depends_on` ids crash the engine, not fail cleanly.
+- A skipped (`skip_if_outputs_exist`) emit_tasks task never injects its manifest — emitters must use `skip_if_outputs_exist: false`; `ao resume` is unaffected (injected tasks persist in run state).
+- Unknown-N fan-out needs a fixed-id/fixed-path aggregator emitted alongside siblings for static tasks to attach.
+- Emitted task ids must be globally unique per run, not per-manifest; namespace by something unique.
+- Breaker latch persists across resume: an id already in `tripped_breakers` never re-halts, even if still true.
+- `ao validate` needs each route to own a sink task in its exclusive cone; a shared `join` task doesn't count.
+- Docs-refresh tickets must grep the WHOLE doc for old contradicting claims, not just add a note at the fix site.
+- Check a subagent's STATUS header (`State`/`Status`) AND its Completion narrative against the real artifact — both can drift.

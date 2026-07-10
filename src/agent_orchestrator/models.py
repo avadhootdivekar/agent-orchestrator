@@ -18,8 +18,18 @@ DEFAULT_PESSIMISM_BUFFER: float = 1.3
 DEFAULT_OUTPUT_ALLOWANCE_TOKENS: int = 1000
 DEFAULT_429_BACKOFF_SECONDS: int = 60
 # Claude usage-quota exhaustion defaults (quota is the 5-hour/daily/weekly session limit)
-DEFAULT_QUOTA_POLL_SECONDS: int = 900   # poll interval while waiting for quota reset (15 min)
+DEFAULT_QUOTA_POLL_SECONDS: int = 900  # poll interval while waiting for quota reset (15 min)
 DEFAULT_QUOTA_MAX_WAIT_SECONDS: int = 21600  # give up after 6 hours of exhaustion by default
+
+# MVP built-in (re-framed) breaker ids — named, not magic literals (LLD §2.2, §8).
+# These identify the pre-existing budget/quota stops once they are routed through the
+# breaker trip->record->act pipeline; the underlying events/status/exit-code stay byte-identical.
+BUILTIN_BUDGET_EXHAUSTED = "builtin.budget_exhausted"
+BUILTIN_BUDGET_UNSATISFIABLE = "builtin.budget_unsatisfiable"
+BUILTIN_QUOTA_MAX_WAIT = "builtin.quota_max_wait"
+# Bounded-control-file read guard (NFR-1 hardening) — shared by the loop gate, router verdict,
+# and verdict-breaker readers so no control JSON read is ever unbounded.
+MAX_CONTROL_FILE_BYTES: int = 65536
 
 
 class RepoRef(BaseModel):
@@ -71,6 +81,10 @@ class TaskSpec(BaseModel):
     # Dynamic task injection (FR-7, FR-8, Area 2).
     emit_tasks: bool = False
     task_manifest_path: str | None = None
+    # Convergence policy when a task depends on tasks from >1 route (FR-B5).
+    # "all" (default): every declared dependency must reach a terminal success state.
+    # "any": at least one declared dependency must succeed (used at route re-joins).
+    join: Literal["all", "any"] = "all"
 
 
 class WorkflowDefaults(BaseModel):
@@ -131,6 +145,70 @@ class BudgetCounters(BaseModel):
     reconciled_tasks: list[str] = []
 
 
+# ---------------------------------------------------------------------------
+# Routing (conditional branching / multi-endpoint) — FR-B1, FR-B2, FR-B5.
+# ---------------------------------------------------------------------------
+
+
+class RouteSpec(BaseModel):
+    """One named route within a router: entry task ids; cone = their exclusive descendants."""
+
+    entry: list[str]
+
+
+class RouterSpec(BaseModel):
+    """A routing gate: after ``router_task_id`` succeeds, its verdict JSON selects routes."""
+
+    id: str
+    router_task_id: str
+    verdict_path: str
+    verdict_field: str = "routes"
+    routes: dict[str, RouteSpec]
+    default_route: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Circuit breakers — FR-CB1..CB5.
+# ---------------------------------------------------------------------------
+
+# Conditions wired into the engine registry in this release (§7 of the LLD). The schema's
+# `condition` enum additionally accepts the remainder of the HLD §6 catalog so specs can
+# reference them ahead of time; CircuitBreakerSpec.condition is typed as plain `str` (not this
+# Literal) so those not-yet-implemented names still parse. The breaker registry raises a clean
+# SpecValidationError for any condition outside this set (never a silent no-op).
+BreakerCondition = Literal[
+    "task_failures",
+    "consecutive_failures",
+    "run_wall_clock_seconds",
+    "verdict",
+    "injected_task_count",
+    "stop_file",
+]
+
+
+class CircuitBreakerSpec(BaseModel):
+    id: str
+    condition: str  # validated against BreakerCondition + the engine registry (cross_validate)
+    action: Literal["fail", "stop", "pause"]
+    scope: Literal["run"] = "run"
+    window: Literal["run"] = "run"
+    threshold: int | None = None
+    task_id: str | None = None
+    verdict_path: str | None = None
+    field: str = "halt"
+    path: str | None = None
+
+
+class TrippedBreaker(BaseModel):
+    """A recorded breaker trip (persisted in RunState.tripped_breakers, FR-CB4)."""
+
+    id: str
+    condition: str
+    action: str
+    at: str  # ISO-8601 UTC
+    detail: dict = {}  # e.g. {"failures": 3, "threshold": 3}
+
+
 class WorkflowSpec(BaseModel):
     version: str
     id: str
@@ -141,6 +219,8 @@ class WorkflowSpec(BaseModel):
     triggers: list[Trigger] = [Trigger(type="manual")]
     tasks: list[TaskSpec]
     loops: list[LoopSpec] = []
+    branches: list[RouterSpec] = []
+    circuit_breakers: list[CircuitBreakerSpec] = []
 
     def task(self, task_id: str) -> TaskSpec:
         for t in self.tasks:
@@ -205,7 +285,17 @@ class TaskResult(BaseModel):
 
 
 TaskStatus = Literal[
-    "pending", "running", "succeeded", "failed", "skipped", "cancelled", "timed_out"
+    "pending",
+    "running",
+    "succeeded",
+    "failed",
+    "skipped",
+    "cancelled",
+    "timed_out",
+    # Distinct terminal status for tasks on an unselected route (ADR-RC-001, LLD §0-R1).
+    # Never "skipped"+reason: skipped self-heals from should_skip on every run; not_taken is
+    # a routing verdict that must survive resume unchanged (source of truth: route_decisions).
+    "not_taken",
 ]
 
 
@@ -221,6 +311,10 @@ class TaskRunState(BaseModel):
     # Provenance: "static" for spec-declared tasks; "injected"/"loop" added by Area 2.
     # Default "static"; Area 2 can set the real value without breaking existing code.
     origin: Literal["static", "injected", "loop"] = "static"
+    # "<router_id>:<route_id>" this task belongs to (observability only; FR-CB4).
+    route: str | None = None
+    # e.g. "router=classify route=bug not selected" — set only when status == "not_taken".
+    not_taken_reason: str | None = None
 
 
 class RunState(BaseModel):
@@ -239,3 +333,9 @@ class RunState(BaseModel):
     # Budget accounting counters (T-oh5gl5 / FR-9, NFR-3).
     # default_factory ensures old serialized states without this field load with defaults.
     budget_counters: BudgetCounters = Field(default_factory=BudgetCounters)
+    # Source of truth for routing (FR-CB4/CB5, ADR-RC-001): router_id -> selected route ids.
+    # Per-task "not_taken" status/route is *derived* from this on activation/resume, never
+    # from a fresh verdict re-read (NFR-2 determinism). Defaulted for NFR-5 backward-compat.
+    route_decisions: dict[str, list[str]] = {}
+    # Every circuit-breaker trip recorded during the run (FR-CB4). Defaulted for NFR-5.
+    tripped_breakers: list[TrippedBreaker] = []

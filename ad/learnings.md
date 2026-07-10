@@ -269,3 +269,84 @@ By: agent
 Role: developer
 Date: 2026-07-02
 ---
+
+---
+Learning-ID: LRN-20260704-emit-tasks-skips-validation
+Learning: Tasks injected via `task_manifest_path` skip schema/cross-validation; a bad `depends_on` id crashes the engine with an uncaught `KeyError`, not a clean failure.
+Context: Found while researching `read_task_manifest`/`build_dag` — manifest TaskSpecs get only Pydantic field checks, no reference validation.
+By: agent
+Role: agent
+Date: 2026-07-04
+---
+
+---
+Learning-ID: LRN-20260704-dynamic-fanout-fixed-aggregator
+Learning: For unknown-N dynamic fan-out, give the emitted aggregator a FIXED id+output path (even at N=0) so a static task attaches via inferred edges, not `depends_on`.
+Context: Static tasks can't `depends_on` not-yet-injected ids; this resolves the repo's own documented OQ-2 aggregator gap.
+By: agent
+Role: agent
+Date: 2026-07-04
+---
+
+---
+Learning-ID: LRN-20260704-injected-ids-globally-unique
+Learning: Injected task ids must be globally unique across the whole run, not just within one manifest — collisions with any prior static/injected id fail the run via `InjectionError`.
+Context: Namespace emitted ids by something the emitter controls and knows is unique (e.g. `subreview-<module>`), not a bare counter.
+By: agent
+Role: agent
+Date: 2026-07-04
+---
+
+---
+Learning-ID: LRN-20260704-skipped-emit-task-never-injects
+Learning: A task with `emit_tasks: true` that is skipped via `skip_if_outputs_exist` NEVER injects its manifest — the skip path `continue`s before the injection hook (`engine.py` runs injection only for `ts.status == "succeeded"` after real execution). Emitter tasks must set `skip_if_outputs_exist: false` or a fresh `ao run` over existing outputs strands every downstream consumer of the fan-out.
+Context: Found while wiring the finplan epic-runner workflow; `ao resume` is unaffected (injected tasks are restored from run state) — only fresh runs with pre-existing outputs hit this.
+By: agent
+Role: developer
+Date: 2026-07-04
+---
+
+---
+Learning-ID: LRN-20260709-model-override-clobbers-agents
+Learning: Global `--model`/`--effort` (or `AO_MODEL`/`AO_EFFORT`/config) overwrites the field on EVERY AgentSpec, silently downgrading deliberately-pinned per-agent models (e.g. finplan `architect-opus`).
+Context: Found in cli.py during ADR-0003 settings-precedence design; fix tracked in E-st5p3q — until then never combine global overrides with mixed-model agents.json.
+By: agent
+Role: architect
+Date: 2026-07-09
+---
+
+---
+Learning-ID: LRN-20260710-breaker-latch-persists-resume
+Learning: `evaluate_breakers`'s trip latch is keyed on `state.tripped_breakers` for the run's lifetime — an already-tripped id never re-halts a resumed run, even if its condition is still true.
+Context: Found in E-rc7k2v resume-replay (T-t4m8x1); only a condition never evaluated before the stop re-trips on resume.
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-route-sink-required-per-branch
+Learning: `ao validate` requires each router route to have its own sink (task with no successors) inside its exclusive cone — a downstream `join` task doesn't satisfy this.
+Context: A route whose only task feeds a cross-route join fails validation; add a per-route terminal task before converging.
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-doc-reconcile-search-whole-doc
+Learning: A docs-refresh ticket correcting an implementation-vs-design drift must search the WHOLE doc for other passages stating the old claim, not just add a note at the discovery site.
+Context: LLD §9 and a new §11 gotcha bullet stated opposite resume-breaker behavior until reconciled together in Wave 5 of E-rc7k2v.
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-subagent-completion-vs-header
+Learning: A subagent's Completion narrative can overstate what shipped (e.g. claiming an example spec demonstrates `join` when it doesn't) and leave the header `State`/`Status` on `Draft` despite declaring itself done.
+Context: Caught in E-rc7k2v T-d8w4v2 by checking the actual spec file and STATUS.md header against the Completion section.
+By: agent
+Role: developer
+Date: 2026-07-10
+---
