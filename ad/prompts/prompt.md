@@ -27,14 +27,31 @@ Agent orchestrator frameowrk is supposed to -
 
 # Current Ask is this  - 
 
-## Complete the @ad/tickets/E-rc7k2v-run-control-routing-breakers epic
+## Catching all output from agents
+I very very much suspect that currently - if agent runs multiple turns - only last output / error is captured. Output from prior turns is lost. I want to CAPTURE ALL THE OUTPUT/ERRORS from Agents across all turns. This will be available for observability and tracability. 
 
-Use architect or other subagents as relevant and drive the epic to completion fully. 
+## Unit / integration / e2e tets assurance
+Ensure that accurate, meaningful and good coverage tests acros all - unit / integration / e2e tests are added and those also cover recently developed fatures as well as above asks like - 
+1. Branching, Circuit breaker, loops, logging, out/err capture etc. 
+
+**For e2e tests- write them as close to end user level as possible** 
+
+
+Ensure to update /add the playground examples with the latest syntax and latest features. Keep at least two examples separate which can demonstrate very simple basic workflows for basic users. 
+
+
 
 
 --- 
 
 # Old Ask
+
+
+## Input 2 
+## Complete the @ad/tickets/E-rc7k2v-run-control-routing-breakers epic
+
+Use architect or other subagents as relevant and drive the epic to completion fully. 
+
 
 
 ## Input 1 

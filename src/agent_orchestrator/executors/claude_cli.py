@@ -1,4 +1,25 @@
-"""ClaudeCliExecutor — runs tasks by invoking the `claude` CLI subprocess."""
+"""ClaudeCliExecutor — runs tasks by invoking the `claude` CLI subprocess.
+
+Full multi-turn capture (observability & traceability)
+------------------------------------------------------
+The CLI is invoked with ``--output-format stream-json --verbose`` so it emits
+**one JSON object per event** (a JSONL stream) rather than a single collapsed
+result blob.  Every turn — the ``system`` init event, each ``assistant`` message
+(text + tool_use), each ``user`` message (tool_result), and the final
+``result`` event — is streamed live to ``transcript.jsonl`` in the task's output
+directory.  This means output/errors from *all* turns are preserved, not just
+the final turn (which is all ``--output-format json`` ever exposed).
+
+Because stdout is redirected straight to the transcript file at the OS level,
+a task that runs for a long time and then times out still leaves a *partial*
+transcript on disk instead of losing everything.
+
+Captured artifacts per task (all under ``ctx.output_dir``):
+    transcript.jsonl  raw per-turn event stream (machine-readable, all turns)
+    stdout.txt        human-readable rendering of the transcript (greppable)
+    stderr.txt        raw stderr
+    result.json       the final ``type:"result"`` event (final text + usage)
+"""
 
 from __future__ import annotations
 
@@ -13,10 +34,23 @@ from pathlib import Path
 from ..models import TaskContext, TaskResult
 from .base import Executor
 
-# Sentinel flag appended to the CLI command to request JSON output.
-# Added idempotently — see _ensure_output_format_json().
+# --- Output-format flags (stream-json is required to capture every turn) ------
+# stream-json emits one JSON event per line; --verbose is mandatory for
+# stream-json under --print (headless) mode, else the CLI errors out.
 _OUTPUT_FORMAT_FLAG = "--output-format"
-_OUTPUT_FORMAT_VALUE = "json"
+_OUTPUT_FORMAT_VALUE = "stream-json"
+_VERBOSE_FLAG = "--verbose"
+
+# --- Capture artifact filenames (named, not magic literals; FR-4/FR-5) --------
+TRANSCRIPT_FILE = "transcript.jsonl"
+STDOUT_FILE = "stdout.txt"
+STDERR_FILE = "stderr.txt"
+RESULT_FILE = "result.json"
+
+# Cap per-block text written into the *human-readable* stdout.txt render so a
+# single huge tool result doesn't make it unreadable.  The full, untruncated
+# content always remains in transcript.jsonl — no data is lost.
+_RENDER_TRUNCATE_CHARS = 2000
 
 # *** SINGLE SOURCE OF TRUTH for Claude usage-quota exhaustion detection ***
 # Edit ONLY this pattern when the exact quota message changes.
@@ -29,24 +63,32 @@ _CLAUDE_QUOTA_PATTERN: re.Pattern[str] = re.compile(
 )
 
 
-def _write_capture(output_dir: str, stdout: str, stderr: str) -> None:
-    """Create output_dir and write stdout.txt / stderr.txt (empty files allowed)."""
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    Path(os.path.join(output_dir, "stdout.txt")).write_text(stdout, encoding="utf-8")
-    Path(os.path.join(output_dir, "stderr.txt")).write_text(stderr, encoding="utf-8")
+def _selected_output_format(argv: list[str]) -> str | None:
+    """Return the value of ``--output-format`` in argv (two-arg or =form), or None."""
+    for i, arg in enumerate(argv):
+        if arg == _OUTPUT_FORMAT_FLAG:
+            return argv[i + 1] if i + 1 < len(argv) else None
+        if arg.startswith(f"{_OUTPUT_FORMAT_FLAG}="):
+            return arg.split("=", 1)[1]
+    return None
 
 
-def _ensure_output_format_json(argv: list[str]) -> list[str]:
-    """Return argv with ``--output-format json`` appended, unless already present.
+def _ensure_stream_capture_flags(argv: list[str]) -> list[str]:
+    """Return argv set up to emit a per-turn JSONL stream we can capture in full.
 
-    Checks for both ``--output-format json`` (two-arg form) and
-    ``--output-format=json`` (single-arg form).
+    - Appends ``--output-format stream-json`` unless the caller already set an
+      ``--output-format`` (any value is honoured — caller override wins).
+    - Ensures ``--verbose`` is present whenever the effective output format is
+      ``stream-json`` (the CLI requires it under ``--print``).
+
+    Idempotent and non-mutating (returns a new list).
     """
-    for arg in argv:
-        if arg == _OUTPUT_FORMAT_FLAG or arg.startswith(f"{_OUTPUT_FORMAT_FLAG}="):
-            # Already specified — honour whatever value the caller set.
-            return argv
-    return argv + [_OUTPUT_FORMAT_FLAG, _OUTPUT_FORMAT_VALUE]
+    result = list(argv)
+    if _selected_output_format(result) is None:
+        result += [_OUTPUT_FORMAT_FLAG, _OUTPUT_FORMAT_VALUE]
+    if _selected_output_format(result) == _OUTPUT_FORMAT_VALUE and _VERBOSE_FLAG not in result:
+        result += [_VERBOSE_FLAG]
+    return result
 
 
 def _parse_iso_to_epoch(value: str) -> float | None:
@@ -61,20 +103,141 @@ def _parse_iso_to_epoch(value: str) -> float | None:
         return None
 
 
+def parse_transcript_events(text: str) -> list[dict]:
+    """Parse a captured stdout stream into a list of event dicts.
+
+    Handles both the JSONL stream (``--output-format stream-json``: one JSON
+    object per line) and a single JSON object (``--output-format json`` or any
+    caller that emits one blob).  Lines that are blank or not valid JSON objects
+    are skipped — parsing is best-effort and never raises on malformed input.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    # Fast path: the whole payload is a single JSON object (legacy json format).
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return [obj]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # JSONL path: one event per line.
+    events: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(obj, dict):
+            events.append(obj)
+    return events
+
+
+def extract_result_event(text: str) -> dict | None:
+    """Return the terminal ``result`` event from a captured stream, or None.
+
+    Prefers an event with ``type == "result"`` (the CLI's final summary event
+    carrying aggregate ``usage`` and the final text).  Falls back to the last
+    dict seen when no explicit result event is present (e.g. legacy json blob
+    or a crash before the result event was emitted).
+    """
+    events = parse_transcript_events(text)
+    if not events:
+        return None
+    for event in reversed(events):
+        if event.get("type") == "result":
+            return event
+    return events[-1]
+
+
+def _truncate(value: str, limit: int = _RENDER_TRUNCATE_CHARS) -> str:
+    """Truncate ``value`` to ``limit`` chars with an explicit elision marker."""
+    if len(value) <= limit:
+        return value
+    return value[:limit] + f"… [+{len(value) - limit} chars, see {TRANSCRIPT_FILE}]"
+
+
+def _stringify_block_content(content: object) -> str:
+    """Best-effort flatten of a message-block ``content`` field to text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and "text" in item:
+                parts.append(str(item.get("text", "")))
+            else:
+                parts.append(json.dumps(item, ensure_ascii=False))
+        return "\n".join(parts)
+    return json.dumps(content, ensure_ascii=False)
+
+
+def render_transcript(events: list[dict]) -> str:
+    """Render event dicts into a human-readable, greppable transcript.
+
+    Best-effort: unknown event/block shapes are summarised as compact JSON and
+    never cause an exception.  The authoritative, untruncated record stays in
+    ``transcript.jsonl``; this is the convenience view.
+    """
+    lines: list[str] = []
+    for event in events:
+        etype = event.get("type")
+        if etype == "system":
+            subtype = event.get("subtype", "")
+            model = event.get("model", "")
+            lines.append(f"[system] {subtype} {model}".rstrip())
+        elif etype in ("assistant", "user"):
+            role = etype
+            message = event.get("message", {})
+            content = message.get("content", []) if isinstance(message, dict) else []
+            if not isinstance(content, list):
+                content = [content]
+            for block in content:
+                if not isinstance(block, dict):
+                    lines.append(f"[{role}] {_truncate(str(block))}")
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    lines.append(f"[{role}] {_truncate(str(block.get('text', '')))}")
+                elif btype == "thinking":
+                    lines.append(f"[thinking] {_truncate(str(block.get('thinking', '')))}")
+                elif btype == "tool_use":
+                    tool = block.get("name", "?")
+                    tool_input = json.dumps(block.get("input", {}), ensure_ascii=False)
+                    lines.append(f"[tool_use] {tool} {_truncate(tool_input)}")
+                elif btype == "tool_result":
+                    body = _stringify_block_content(block.get("content", ""))
+                    is_err = block.get("is_error")
+                    tag = "tool_error" if is_err else "tool_result"
+                    lines.append(f"[{tag}] {_truncate(body)}")
+                else:
+                    lines.append(f"[{role}] {_truncate(json.dumps(block, ensure_ascii=False))}")
+        elif etype == "result":
+            final = event.get("result", "")
+            if final:
+                lines.append(f"[result] {_truncate(str(final))}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def parse_usage_and_429(
     stdout: str,
     stderr: str,
     returncode: int,
     now_epoch: float,  # noqa: ARG001 — reserved for future relative retry_after
 ) -> dict:
-    """Parse token usage and 429 signal from a ``claude`` CLI invocation.
+    """Parse token usage and rate-limit/quota signals from a ``claude`` CLI run.
 
-    This is a pure function — no side effects, fully testable in isolation.
+    Pure function — no side effects, fully testable in isolation.  Accepts both
+    the JSONL stream (stream-json) and a single JSON object (legacy json); the
+    terminal ``result`` event / object is used for usage and error extraction.
 
     Parameters
     ----------
     stdout:
-        Raw stdout text from the subprocess.
+        Raw stdout text (JSONL stream or single JSON object).
     stderr:
         Raw stderr text from the subprocess.
     returncode:
@@ -117,17 +280,10 @@ def parse_usage_and_429(
         "429" in combined_lower or "rate_limit" in combined_lower or "rate limit" in combined_lower
     ):
         result["provider_rate_limited"] = True
-        # Still attempt JSON parse below to extract retry_after.
+        # Still attempt to extract retry_after from the structured payload below.
 
-    # --- JSON parse ---
-    parsed: dict | None = None
-    try:
-        parsed = json.loads(stdout)
-    except (json.JSONDecodeError, ValueError):
-        # Stdout is not JSON (e.g. streaming mode, partial output, empty).
-        # Keep actuals_available=False; return early if we already detected 429.
-        return result
-
+    # --- Terminal result event / object ---
+    parsed = extract_result_event(stdout)
     if not isinstance(parsed, dict):
         return result
 
@@ -170,6 +326,25 @@ def parse_usage_and_429(
     return result
 
 
+def _write_derived_capture(output_dir: str, transcript_text: str) -> None:
+    """Derive and write ``result.json`` + ``stdout.txt`` from the raw transcript.
+
+    ``transcript.jsonl`` and ``stderr.txt`` are written live by the child process
+    (OS-level redirect); this fills in the two derived, human-facing artifacts
+    after the run completes.  Best-effort — a parse failure still yields an empty
+    stdout.txt rather than raising.
+    """
+    events = parse_transcript_events(transcript_text)
+    Path(os.path.join(output_dir, STDOUT_FILE)).write_text(
+        render_transcript(events), encoding="utf-8"
+    )
+    result_event = extract_result_event(transcript_text)
+    if result_event is not None:
+        Path(os.path.join(output_dir, RESULT_FILE)).write_text(
+            json.dumps(result_event, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+
 class ClaudeCliExecutor(Executor):
     """Executes tasks by spawning a `claude` CLI subprocess.
 
@@ -179,12 +354,11 @@ class ClaudeCliExecutor(Executor):
     - output_paths: paths the agent should write outputs to
     - repo_paths: id=path mappings for repos in the RepoSet
 
-    Captured stdout/stderr are written to ctx.output_dir so downstream
-    agents/auditors can read them by path (FR-4).  The result carries
-    output_artifact_path pointing to that directory (FR-5).
-
-    ``--output-format json`` is appended idempotently so that token usage
-    can be extracted from the structured response (T-1m9744).
+    Output from every turn is streamed live to ``transcript.jsonl`` under
+    ``ctx.output_dir`` (see module docstring), with a human-readable
+    ``stdout.txt`` render, raw ``stderr.txt``, and the terminal ``result.json``.
+    The result carries ``output_artifact_path`` pointing to that directory
+    (FR-5).  Token usage is extracted from the terminal ``result`` event.
     """
 
     def execute(self, ctx: TaskContext) -> TaskResult:
@@ -219,70 +393,86 @@ class ClaudeCliExecutor(Executor):
             if max_turns is not None:
                 argv = argv + ["--max-turns", str(max_turns)]
 
-        # Ensure JSON output so we can extract token usage (T-1m9744).
-        argv = _ensure_output_format_json(argv)
+        # Emit a per-turn JSONL stream so all turns are captured (not just the last).
+        argv = _ensure_stream_capture_flags(argv)
 
-        try:
-            res = subprocess.run(
+        os.makedirs(ctx.output_dir, exist_ok=True)
+        transcript_path = os.path.join(ctx.output_dir, TRANSCRIPT_FILE)
+        stderr_path = os.path.join(ctx.output_dir, STDERR_FILE)
+
+        timed_out = False
+        # Redirect the child's stdout/stderr straight to files (OS-level): the
+        # full per-turn stream lands on disk live, so a long run that later times
+        # out or crashes still leaves a partial transcript instead of nothing.
+        with (
+            open(transcript_path, "w", encoding="utf-8") as tf,
+            open(stderr_path, "w", encoding="utf-8") as ef,
+        ):
+            proc = subprocess.Popen(
                 argv,
                 cwd=ctx.cwd or None,
-                timeout=ctx.timeout_seconds,
-                capture_output=True,
-                text=True,
-                # Prevent the subprocess from blocking on stdin input (e.g. quota-exhaustion
-                # messages that prompt the user). With -p / non-interactive invocations this
-                # is belt-and-suspenders, but necessary if Claude ever waits for user input.
                 stdin=subprocess.DEVNULL,
+                stdout=tf,
+                stderr=ef,
             )
-            _write_capture(ctx.output_dir, res.stdout or "", res.stderr or "")
+            try:
+                proc.wait(timeout=ctx.timeout_seconds)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                timed_out = True
 
-            usage_info = parse_usage_and_429(
-                stdout=res.stdout or "",
-                stderr=res.stderr or "",
-                returncode=res.returncode,
-                now_epoch=time.time(),
-            )
+        returncode = proc.returncode
+        transcript_text = Path(transcript_path).read_text(encoding="utf-8", errors="replace")
+        stderr_text = Path(stderr_path).read_text(encoding="utf-8", errors="replace")
 
-            if res.returncode == 0:
-                return TaskResult(
-                    task_id=ctx.task_id,
-                    status="succeeded",
-                    attempts=1,
-                    exit_code=0,
-                    output_artifact_path=ctx.output_dir,
-                    input_tokens=usage_info["input_tokens"],
-                    output_tokens=usage_info["output_tokens"],
-                    cache_creation_input_tokens=usage_info["cache_creation_input_tokens"],
-                    cache_read_input_tokens=usage_info["cache_read_input_tokens"],
-                    actuals_available=usage_info["actuals_available"],
-                    provider_rate_limited=usage_info["provider_rate_limited"],
-                    provider_retry_after_epoch=usage_info["provider_retry_after_epoch"],
-                    claude_quota_exhausted=usage_info["claude_quota_exhausted"],
-                )
-            err_tail = (res.stderr or res.stdout or "")[-500:]
-            return TaskResult(
-                task_id=ctx.task_id,
-                status="failed",
-                attempts=1,
-                exit_code=res.returncode,
-                error=err_tail,
-                output_artifact_path=ctx.output_dir,
-                input_tokens=usage_info["input_tokens"],
-                output_tokens=usage_info["output_tokens"],
-                cache_creation_input_tokens=usage_info["cache_creation_input_tokens"],
-                cache_read_input_tokens=usage_info["cache_read_input_tokens"],
-                actuals_available=usage_info["actuals_available"],
-                provider_rate_limited=usage_info["provider_rate_limited"],
-                provider_retry_after_epoch=usage_info["provider_retry_after_epoch"],
-                claude_quota_exhausted=usage_info["claude_quota_exhausted"],
-            )
-        except subprocess.TimeoutExpired:
-            # Write whatever partial capture is available (empty if none)
-            _write_capture(ctx.output_dir, "", "")
+        # Derive the human-readable stdout.txt + result.json from the captured stream.
+        _write_derived_capture(ctx.output_dir, transcript_text)
+
+        usage_info = parse_usage_and_429(
+            stdout=transcript_text,
+            stderr=stderr_text,
+            returncode=returncode,
+            now_epoch=time.time(),
+        )
+        token_fields = {
+            "input_tokens": usage_info["input_tokens"],
+            "output_tokens": usage_info["output_tokens"],
+            "cache_creation_input_tokens": usage_info["cache_creation_input_tokens"],
+            "cache_read_input_tokens": usage_info["cache_read_input_tokens"],
+            "actuals_available": usage_info["actuals_available"],
+            "provider_rate_limited": usage_info["provider_rate_limited"],
+            "provider_retry_after_epoch": usage_info["provider_retry_after_epoch"],
+            "claude_quota_exhausted": usage_info["claude_quota_exhausted"],
+        }
+
+        if timed_out:
             return TaskResult(
                 task_id=ctx.task_id,
                 status="timed_out",
                 attempts=1,
                 error="timeout",
                 output_artifact_path=ctx.output_dir,
+                **token_fields,
             )
+
+        if returncode == 0:
+            return TaskResult(
+                task_id=ctx.task_id,
+                status="succeeded",
+                attempts=1,
+                exit_code=0,
+                output_artifact_path=ctx.output_dir,
+                **token_fields,
+            )
+
+        err_tail = (stderr_text or transcript_text or "")[-500:]
+        return TaskResult(
+            task_id=ctx.task_id,
+            status="failed",
+            attempts=1,
+            exit_code=returncode,
+            error=err_tail,
+            output_artifact_path=ctx.output_dir,
+            **token_fields,
+        )

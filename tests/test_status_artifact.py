@@ -146,6 +146,33 @@ class TestOutputCapture:
         stdout_content = (task_dir / "stdout.txt").read_text()
         assert "task0" in stdout_content  # stub content includes task id
 
+    def test_transcript_jsonl_captured_per_task(self, tmp_path: Path) -> None:
+        """Full multi-turn capture: transcript.jsonl exists and holds >1 event per task."""
+        wf = _simple_workflow(tmp_path, n_tasks=2)
+        state, _ = _run_workflow(tmp_path, wf)
+
+        assert state.status == "succeeded"
+        for tid in ["task0", "task1"]:
+            task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / tid
+            transcript = task_dir / "transcript.jsonl"
+            assert transcript.exists(), f"transcript.jsonl missing for {tid}"
+            events = [
+                json.loads(line) for line in transcript.read_text().splitlines() if line.strip()
+            ]
+            # More than one event => turns beyond the final one are captured.
+            assert len(events) > 1
+            assert events[-1]["type"] == "result"
+
+    def test_result_json_captured_per_task(self, tmp_path: Path) -> None:
+        """result.json holds the terminal result event with the task's final text."""
+        wf = _simple_workflow(tmp_path, n_tasks=1)
+        state, _ = _run_workflow(tmp_path, wf)
+
+        task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / "task0"
+        result_json = json.loads((task_dir / "result.json").read_text())
+        assert result_json["type"] == "result"
+        assert "task0" in result_json["result"]
+
 
 # ---------------------------------------------------------------------------
 # T-1gsn0l — write_status / status.json

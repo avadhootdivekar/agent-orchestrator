@@ -65,10 +65,11 @@ than replaces, the `output_manifest` / `read_manifest` control-file pattern.
                           ┌───────────────────▼──────────────────▼────────────┐
                           │              Executor (DispatchExecutor)           │
                           │   ClaudeCliExecutor.execute(ctx)                   │
-                          │     subprocess.run(...) -> capture stdout/stderr   │
-                          │     write -> .orchestrator/runs/<run>/<task>/      │
-                          │                 stdout.txt | stderr.txt            │
-                          │     TaskResult.output_artifact_path = <dir/file>   │
+                          │     Popen(--output-format stream-json --verbose)   │
+                          │       stdout -> transcript.jsonl (all turns, live) │
+                          │       stderr -> stderr.txt                         │
+                          │     derive stdout.txt (render) + result.json       │
+                          │     TaskResult.output_artifact_path = <dir>        │
                           └────────────────────────────────────────────────────┘
 
 Run directory layout:
@@ -77,8 +78,10 @@ Run directory layout:
     ├── status.json         (snapshot derived from RunState, refreshed each transition)
     ├── run.log             (structured JSON lines for the whole run)
     └── <task_id>/
-        ├── stdout.txt
-        └── stderr.txt
+        ├── transcript.jsonl  (raw per-turn event stream — ALL turns; observability)
+        ├── stdout.txt        (human-readable render of the transcript)
+        ├── stderr.txt        (raw stderr)
+        └── result.json       (terminal result event: final text + aggregate usage)
 ```
 
 ---
@@ -167,21 +170,43 @@ Orchestrator.run() start
 `extra=` so callers don't repeat them. The handler is attached/detached per run
 so concurrent or sequential runs don't cross-contaminate log files.
 
-### 4.2 Agent output capture (FR-4, FR-5)
+### 4.2 Agent output capture (FR-4, FR-5) — full multi-turn stream
+
+The CLI is invoked with `--output-format stream-json --verbose` so it emits **one
+JSON event per line** (a JSONL stream) covering *every* turn, instead of the single
+collapsed blob `--output-format json` returns. That single blob was the root cause of
+lost observability: intermediate turns (tool calls, tool results, recovered errors) never
+reached stdout — only the final turn did. Streaming to disk via `Popen` with an OS-level
+file redirect also means a long run that later times out or crashes leaves a **partial**
+transcript on disk rather than nothing.
 
 ```
 engine builds TaskContext with output_dir = runs/<run_id>/<task_id>/
 ClaudeCliExecutor.execute(ctx):
-   res = subprocess.run(argv, capture_output=True, text=True)
+   argv = _ensure_stream_capture_flags(argv)   # --output-format stream-json --verbose
    mkdir -p ctx.output_dir
-   write ctx.output_dir/stdout.txt  <- res.stdout
-   write ctx.output_dir/stderr.txt  <- res.stderr
+   open transcript.jsonl (w) as tf; open stderr.txt (w) as ef
+   proc = Popen(argv, stdout=tf, stderr=ef, stdin=DEVNULL)   # child streams live to files
+   proc.wait(timeout=ctx.timeout_seconds)                    # kill+partial-preserve on timeout
+   # derive human-facing artifacts from the captured stream:
+   write stdout.txt  <- render_transcript(parse_transcript_events(transcript))
+   write result.json <- extract_result_event(transcript)     # terminal type:"result" event
+   usage = parse_usage_and_429(transcript, stderr, returncode)  # JSONL-aware
    TaskResult.output_artifact_path = ctx.output_dir
 engine records ts.output_artifact_path = result.output_artifact_path
    (path only; engine never reads the files)
 ```
-A downstream task can declare `inputs: [".orchestrator/runs/<run_id>/<task>/stdout.txt"]`
-or receive the path via `dynamic_input_paths`, so later agents/auditors consume it.
+
+Artifacts (all paths only — NFR-1 safe):
+- `transcript.jsonl` — authoritative, untruncated per-turn event stream (machine-readable).
+- `stdout.txt` — greppable human-readable render (long blocks truncated; full data stays in the transcript).
+- `stderr.txt` — raw stderr.
+- `result.json` — the terminal result event (final text + aggregate `usage`).
+
+A downstream task can declare `inputs: [".orchestrator/runs/<run_id>/<task>/transcript.jsonl"]`
+(or `stdout.txt`/`result.json`) or receive the path via `dynamic_input_paths`, so later
+agents/auditors consume it. `parse_usage_and_429` accepts both the JSONL stream and a
+single legacy JSON object, so token/quota/429 accounting is unchanged.
 
 ### 4.3 Status snapshot (FR-1, FR-6)
 

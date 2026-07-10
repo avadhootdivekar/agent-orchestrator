@@ -14,12 +14,39 @@ Behavior = Literal["succeed", "fail", "timeout"]
 
 
 def _write_capture_stubs(output_dir: str, task_id: str) -> None:
-    """Create output_dir and write stub stdout.txt / stderr.txt (FR-4 contract)."""
+    """Create output_dir and write the capture artifacts (FR-4/FR-5 contract).
+
+    Mirrors ClaudeCliExecutor's layout so integration/e2e tests can assert the
+    same files regardless of executor: a multi-event ``transcript.jsonl`` (so
+    "all turns captured" assertions have >1 event to check), the human-readable
+    ``stdout.txt``, an empty ``stderr.txt``, and the terminal ``result.json``.
+    """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": f"fake output for {task_id}",
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    }
+    transcript_events = [
+        {"type": "system", "subtype": "init", "task_id": task_id},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": f"fake stdout for {task_id}"}]},
+        },
+        result_event,
+    ]
+    Path(os.path.join(output_dir, "transcript.jsonl")).write_text(
+        "\n".join(json.dumps(e) for e in transcript_events) + "\n", encoding="utf-8"
+    )
     Path(os.path.join(output_dir, "stdout.txt")).write_text(
         f"fake stdout for {task_id}\n", encoding="utf-8"
     )
     Path(os.path.join(output_dir, "stderr.txt")).write_text("", encoding="utf-8")
+    Path(os.path.join(output_dir, "result.json")).write_text(
+        json.dumps(result_event, indent=2), encoding="utf-8"
+    )
 
 
 class FakeExecutor(Executor):
