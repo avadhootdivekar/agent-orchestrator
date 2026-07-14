@@ -9,8 +9,11 @@ from pathlib import Path
 
 from agent_orchestrator.executors.base import Executor
 from agent_orchestrator.executors.claude_cli import (
-    _ensure_output_format_json,
+    _ensure_stream_capture_flags,
+    extract_result_event,
+    parse_transcript_events,
     parse_usage_and_429,
+    render_transcript,
 )
 from agent_orchestrator.executors.fake import FakeExecutor
 from agent_orchestrator.models import AgentSpec, TaskContext, TaskResult
@@ -195,6 +198,31 @@ class TestParseUsageAnd429:
         assert r["input_tokens"] is None
         assert r["output_tokens"] is None
 
+    def test_total_cost_usd_extracted(self) -> None:
+        """E-9h3m7k FR-1: top-level total_cost_usd is extracted as cost_usd."""
+        stdout = json.dumps(
+            {
+                "type": "result",
+                "total_cost_usd": 0.4567,
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            }
+        )
+        r = parse_usage_and_429(stdout, "", 0, NOW)
+        assert r["cost_usd"] == 0.4567
+
+    def test_missing_total_cost_usd_is_none(self) -> None:
+        """No top-level total_cost_usd → cost_usd stays None, no crash."""
+        stdout = json.dumps({"type": "result", "usage": {"input_tokens": 5}})
+        r = parse_usage_and_429(stdout, "", 0, NOW)
+        assert r["cost_usd"] is None
+
+    def test_fixture_total_cost_usd_matches_frozen_value(self) -> None:
+        """Regression pin against the frozen real-CLI shape fixture."""
+        fixture_path = Path(__file__).parent / "fixtures" / "claude_usage.json"
+        stdout = fixture_path.read_text(encoding="utf-8")
+        r = parse_usage_and_429(stdout, "", 0, NOW)
+        assert r["cost_usd"] == 0.001
+
     def test_non_json_stdout(self) -> None:
         """AC-2: non-JSON stdout → graceful fallback, all fields None/False."""
         r = parse_usage_and_429("plain text response from agent", "", 0, NOW)
@@ -314,42 +342,49 @@ class TestParseUsageAnd429:
 
 
 # ---------------------------------------------------------------------------
-# _ensure_output_format_json — idempotency tests (T-1m9744, AC-5)
+# _ensure_stream_capture_flags — full multi-turn capture flag injection
 # ---------------------------------------------------------------------------
 
 
-class TestEnsureOutputFormatJson:
-    """AC-5: --output-format json is appended exactly once."""
+class TestEnsureStreamCaptureFlags:
+    """stream-json + --verbose are injected so every turn is captured."""
 
-    def test_appends_when_absent(self) -> None:
+    def test_appends_stream_json_and_verbose_when_absent(self) -> None:
         argv = ["claude", "-p", "hello"]
-        result = _ensure_output_format_json(argv)
-        assert result == ["claude", "-p", "hello", "--output-format", "json"]
+        result = _ensure_stream_capture_flags(argv)
+        assert result[:3] == ["claude", "-p", "hello"]
+        idx = result.index("--output-format")
+        assert result[idx + 1] == "stream-json"
+        assert "--verbose" in result
 
-    def test_no_duplicate_two_arg_form(self) -> None:
-        """Already has --output-format json (two-arg) → unchanged."""
+    def test_verbose_added_only_once_if_already_present(self) -> None:
+        argv = ["claude", "-p", "hi", "--verbose"]
+        result = _ensure_stream_capture_flags(argv)
+        assert result.count("--verbose") == 1
+        assert "stream-json" in result
+
+    def test_honours_caller_output_format_two_arg(self) -> None:
+        """Caller already set --output-format json → we don't override it."""
         argv = ["claude", "--output-format", "json", "-p", "hello"]
-        result = _ensure_output_format_json(argv)
-        assert result == argv
+        result = _ensure_stream_capture_flags(argv)
+        assert result.count("--output-format") == 1
+        idx = result.index("--output-format")
+        assert result[idx + 1] == "json"
+        # json (not stream-json) → --verbose is NOT force-added.
+        assert "--verbose" not in result
 
-    def test_no_duplicate_eq_form(self) -> None:
-        """Already has --output-format=json (eq-form) → unchanged."""
+    def test_honours_caller_stream_json_eq_form_adds_verbose(self) -> None:
         argv = ["claude", "--output-format=stream-json", "-p", "hello"]
-        result = _ensure_output_format_json(argv)
-        # The flag is present (any value), so we don't add another.
-        assert "--output-format" not in result[len(argv) :]
-
-    def test_no_duplicate_eq_json_form(self) -> None:
-        """Already has --output-format=json eq-form → unchanged."""
-        argv = ["claude", "--output-format=json", "-p", "hello"]
-        result = _ensure_output_format_json(argv)
-        assert result == argv
+        result = _ensure_stream_capture_flags(argv)
+        assert result.count("--output-format=stream-json") == 1
+        assert "--verbose" in result
 
     def test_returns_new_list(self) -> None:
         """Original list is not mutated."""
         argv = ["claude", "-p", "hi"]
-        result = _ensure_output_format_json(argv)
+        result = _ensure_stream_capture_flags(argv)
         assert result is not argv
+        assert argv == ["claude", "-p", "hi"]
 
 
 # ---------------------------------------------------------------------------
@@ -451,139 +486,125 @@ def _make_ctx(agent: AgentSpec, tmp_path) -> TaskContext:
     )
 
 
+def _popen_factory(
+    *,
+    stdout_text: str = "{}\n",
+    stderr_text: str = "",
+    returncode: int = 0,
+    timeout: bool = False,
+):
+    """Build a drop-in replacement for ``subprocess.Popen``.
+
+    Returns ``(factory, captured)``. The factory writes the given text to the
+    stdout/stderr file handles the executor passes in (mirroring the OS-level
+    redirect a real child does), records argv/cwd in ``captured``, and returns a
+    MagicMock process. When ``timeout`` is True the first ``wait()`` raises
+    ``TimeoutExpired`` (the executor then kills + re-waits).
+    """
+    import subprocess as _sp
+    from unittest.mock import MagicMock
+
+    captured: dict = {}
+
+    def factory(argv, cwd=None, stdin=None, stdout=None, stderr=None, **kwargs):
+        captured["argv"] = argv
+        captured["cwd"] = cwd
+        if stdout is not None and stdout_text:
+            stdout.write(stdout_text)
+        if stderr is not None and stderr_text:
+            stderr.write(stderr_text)
+        proc = MagicMock()
+        proc.returncode = -9 if timeout else returncode
+        if timeout:
+            proc.wait.side_effect = [_sp.TimeoutExpired(cmd=argv, timeout=1), None]
+        else:
+            proc.wait.return_value = returncode
+        return proc
+
+    return factory, captured
+
+
 class TestClaudeCliArgBuilding:
     """Verify --model and --max-turns are injected correctly without running subprocess."""
 
-    def _mock_run_ok(self):
-        from unittest.mock import MagicMock
-
-        mock = MagicMock()
-        mock.returncode = 0
-        mock.stdout = "{}"
-        mock.stderr = ""
-        return mock
-
-    def test_model_injected_when_set(self, tmp_path) -> None:
-        from unittest.mock import MagicMock, patch
+    def _execute_capturing_argv(self, ctx, **popen_kwargs):
+        from unittest.mock import patch
 
         from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
 
+        factory, captured = _popen_factory(**popen_kwargs)
+        with patch("subprocess.Popen", new=factory):
+            ClaudeCliExecutor().execute(ctx)
+        return captured
+
+    def test_stream_json_and_verbose_always_injected(self, tmp_path) -> None:
+        agent = _claude_agent()
+        ctx = _make_ctx(agent, tmp_path)
+        argv = self._execute_capturing_argv(ctx)["argv"]
+        idx = argv.index("--output-format")
+        assert argv[idx + 1] == "stream-json"
+        assert "--verbose" in argv
+
+    def test_model_injected_when_set(self, tmp_path) -> None:
         agent = _claude_agent(model="claude-haiku-4-5-20251001")
         ctx = _make_ctx(agent, tmp_path)
-
-        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
-            ClaudeCliExecutor().execute(ctx)
-
-        argv = mock_run.call_args[0][0]
+        argv = self._execute_capturing_argv(ctx)["argv"]
         assert "--model" in argv
         idx = argv.index("--model")
         assert argv[idx + 1] == "claude-haiku-4-5-20251001"
 
     def test_model_not_injected_when_absent(self, tmp_path) -> None:
-        from unittest.mock import patch
-
-        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
-
         agent = _claude_agent()
         ctx = _make_ctx(agent, tmp_path)
-
-        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
-            ClaudeCliExecutor().execute(ctx)
-
-        argv = mock_run.call_args[0][0]
+        argv = self._execute_capturing_argv(ctx)["argv"]
         assert "--model" not in argv
 
     def test_effort_medium_injects_max_turns_from_constant(self, tmp_path) -> None:
-        from unittest.mock import patch
-
-        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
         from agent_orchestrator.models import EFFORT_MAX_TURNS
 
         agent = _claude_agent(effort="medium")
         ctx = _make_ctx(agent, tmp_path)
-
-        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
-            ClaudeCliExecutor().execute(ctx)
-
-        argv = mock_run.call_args[0][0]
+        argv = self._execute_capturing_argv(ctx)["argv"]
         assert "--max-turns" in argv
         idx = argv.index("--max-turns")
         assert argv[idx + 1] == str(EFFORT_MAX_TURNS["medium"])
 
     def test_explicit_max_turns_overrides_effort(self, tmp_path) -> None:
-        from unittest.mock import patch
-
-        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
-
         # Explicit max_turns wins over the effort-derived value.
         agent = _claude_agent(effort="medium", max_turns=42)
         ctx = _make_ctx(agent, tmp_path)
-
-        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
-            ClaudeCliExecutor().execute(ctx)
-
-        argv = mock_run.call_args[0][0]
+        argv = self._execute_capturing_argv(ctx)["argv"]
         idx = argv.index("--max-turns")
         assert argv[idx + 1] == "42"
         assert argv.count("--max-turns") == 1
 
     def test_max_turns_not_injected_when_no_effort_or_override(self, tmp_path) -> None:
-        from unittest.mock import patch
-
-        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
-
         agent = _claude_agent()  # no effort, no max_turns
         ctx = _make_ctx(agent, tmp_path)
-
-        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
-            ClaudeCliExecutor().execute(ctx)
-
-        argv = mock_run.call_args[0][0]
+        argv = self._execute_capturing_argv(ctx)["argv"]
         assert "--max-turns" not in argv
 
     def test_cwd_passed_to_subprocess(self, tmp_path) -> None:
-        from unittest.mock import patch
-
-        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
-
         agent = _claude_agent()
         ctx = _make_ctx(agent, tmp_path)
         ctx.cwd = str(tmp_path)
-
-        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
-            ClaudeCliExecutor().execute(ctx)
-
-        assert mock_run.call_args.kwargs.get("cwd") == str(tmp_path)
+        captured = self._execute_capturing_argv(ctx)
+        assert captured["cwd"] == str(tmp_path)
 
     def test_cwd_none_when_unset(self, tmp_path) -> None:
-        from unittest.mock import patch
-
-        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
-
         agent = _claude_agent()
         ctx = _make_ctx(agent, tmp_path)  # cwd defaults to ""
-
-        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
-            ClaudeCliExecutor().execute(ctx)
-
-        assert mock_run.call_args.kwargs.get("cwd") is None
+        captured = self._execute_capturing_argv(ctx)
+        assert captured["cwd"] is None
 
     def test_model_not_duplicated_if_in_command_template(self, tmp_path) -> None:
-        from unittest.mock import patch
-
-        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
-
         # command_template already specifies --model
         agent = _claude_agent(
             command_template=["claude", "-p", "{prompt}", "--model", "somemodel"],
             model="claude-haiku-4-5-20251001",
         )
         ctx = _make_ctx(agent, tmp_path)
-
-        with patch("subprocess.run", return_value=self._mock_run_ok()) as mock_run:
-            ClaudeCliExecutor().execute(ctx)
-
-        argv = mock_run.call_args[0][0]
+        argv = self._execute_capturing_argv(ctx)["argv"]
         # --model should appear exactly once (from command_template, not injected again)
         assert argv.count("--model") == 1
         idx = argv.index("--model")
@@ -605,3 +626,345 @@ class TestFixture:
         usage = data["usage"]
         assert "input_tokens" in usage
         assert "output_tokens" in usage
+
+
+# ---------------------------------------------------------------------------
+# parse_usage_and_429 — quota exhaustion detection tests
+# ---------------------------------------------------------------------------
+
+
+class TestQuotaExhaustionDetection:
+    """Tests for _CLAUDE_QUOTA_PATTERN detection inside parse_usage_and_429."""
+
+    def test_daily_limit_in_stdout(self) -> None:
+        """Canonical daily-limit message in stdout → claude_quota_exhausted."""
+        r = parse_usage_and_429("You've hit your daily limit", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+        assert r["provider_rate_limited"] is False
+
+    def test_hourly_limit_in_stdout(self) -> None:
+        r = parse_usage_and_429("You've hit your hourly limit", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_weekly_limit_in_stdout(self) -> None:
+        r = parse_usage_and_429("You've hit your weekly limit", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_quota_in_stderr(self) -> None:
+        """Message in stderr is also detected."""
+        r = parse_usage_and_429("", "You've hit your daily limit", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_quota_case_insensitive(self) -> None:
+        """Pattern is case-insensitive."""
+        r = parse_usage_and_429("YOU'VE HIT YOUR DAILY LIMIT", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_quota_contraction_variants(self) -> None:
+        """Matches both 'you've' and 'you hit' (without contraction)."""
+        r = parse_usage_and_429("you hit your monthly limit", "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_quota_not_triggered_by_rate_limit(self) -> None:
+        """Provider 429 text does NOT trigger quota exhaustion."""
+        r = parse_usage_and_429("", "Error 429: Too Many Requests", 1, NOW)
+        assert r["claude_quota_exhausted"] is False
+        assert r["provider_rate_limited"] is True
+
+    def test_quota_early_return_skips_json_and_429(self) -> None:
+        """When quota detected: actuals_available=False, provider_rate_limited=False."""
+        # stdout has both a quota message AND would-be-valid JSON usage
+        stdout = "You've hit your daily limit\n" + json.dumps(
+            {"usage": {"input_tokens": 100, "output_tokens": 50}}
+        )
+        r = parse_usage_and_429(stdout, "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+        assert r["actuals_available"] is False
+        assert r["provider_rate_limited"] is False
+
+    def test_normal_output_no_quota_flag(self) -> None:
+        """Normal success output does not set quota flag."""
+        stdout = json.dumps({"usage": {"input_tokens": 100, "output_tokens": 50}})
+        r = parse_usage_and_429(stdout, "", 0, NOW)
+        assert r["claude_quota_exhausted"] is False
+
+
+# ---------------------------------------------------------------------------
+# FakeExecutor — quota exhaustion simulation tests
+# ---------------------------------------------------------------------------
+
+
+class TestFakeExecutorQuota:
+    """Tests for FakeExecutor.quota_exhausted_tasks parameter."""
+
+    def test_quota_exhausted_once_then_succeeds(self) -> None:
+        ex = FakeExecutor(quota_exhausted_tasks={"t1": 1})
+        r1 = ex.execute(_ctx(task_id="t1"))
+        assert r1.claude_quota_exhausted is True
+        assert r1.status == "failed"
+        r2 = ex.execute(_ctx(task_id="t1"))
+        assert r2.claude_quota_exhausted is False
+        assert r2.status == "succeeded"
+
+    def test_quota_exhausted_multiple_times(self) -> None:
+        ex = FakeExecutor(quota_exhausted_tasks={"t1": 3})
+        for _ in range(3):
+            r = ex.execute(_ctx(task_id="t1"))
+            assert r.claude_quota_exhausted is True
+        r = ex.execute(_ctx(task_id="t1"))
+        assert r.claude_quota_exhausted is False
+        assert r.status == "succeeded"
+
+    def test_quota_does_not_affect_other_tasks(self) -> None:
+        ex = FakeExecutor(quota_exhausted_tasks={"t1": 1})
+        r = ex.execute(_ctx(task_id="t2"))
+        assert r.claude_quota_exhausted is False
+        assert r.status == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# Full multi-turn capture — a realistic stream-json transcript
+# ---------------------------------------------------------------------------
+
+# One event per line, exactly as `claude --output-format stream-json` emits.
+_STREAM_LINES = [
+    json.dumps({"type": "system", "subtype": "init", "model": "claude-x", "session_id": "s1"}),
+    json.dumps(
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "Reading input"}]}}
+    ),
+    json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/x"}}]
+            },
+        }
+    ),
+    json.dumps(
+        {
+            "type": "user",
+            "message": {"content": [{"type": "tool_result", "content": "line1\nline2 of file"}]},
+        }
+    ),
+    json.dumps(
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "All done here"}]}}
+    ),
+    json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "Task complete",
+            "usage": {
+                "input_tokens": 120,
+                "output_tokens": 40,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 5,
+            },
+        }
+    ),
+]
+_STREAM_TEXT = "\n".join(_STREAM_LINES) + "\n"
+
+
+class TestParseTranscriptEvents:
+    def test_multiline_jsonl_parsed_in_order(self) -> None:
+        events = parse_transcript_events(_STREAM_TEXT)
+        assert len(events) == 6
+        assert events[0]["type"] == "system"
+        assert events[-1]["type"] == "result"
+
+    def test_single_json_object_returned_as_one_event(self) -> None:
+        """Backward-compat: a single JSON blob (legacy json format) → [obj]."""
+        events = parse_transcript_events(json.dumps({"type": "result", "usage": {}}))
+        assert len(events) == 1
+        assert events[0]["type"] == "result"
+
+    def test_blank_and_malformed_lines_skipped(self) -> None:
+        text = _STREAM_LINES[0] + "\n\nnot json at all\n" + _STREAM_LINES[-1] + "\n"
+        events = parse_transcript_events(text)
+        # system + result parsed; blank + junk skipped.
+        assert [e["type"] for e in events] == ["system", "result"]
+
+    def test_empty_text_returns_empty(self) -> None:
+        assert parse_transcript_events("") == []
+        assert parse_transcript_events("   \n  ") == []
+
+
+class TestExtractResultEvent:
+    def test_prefers_result_event_even_if_not_last(self) -> None:
+        text = _STREAM_TEXT + json.dumps({"type": "assistant", "message": {}}) + "\n"
+        ev = extract_result_event(text)
+        assert ev is not None and ev["type"] == "result"
+        assert ev["usage"]["input_tokens"] == 120
+
+    def test_falls_back_to_last_dict_when_no_result(self) -> None:
+        text = _STREAM_LINES[0] + "\n" + _STREAM_LINES[1] + "\n"
+        ev = extract_result_event(text)
+        assert ev is not None and ev["type"] == "assistant"
+
+    def test_empty_returns_none(self) -> None:
+        assert extract_result_event("") is None
+
+
+class TestRenderTranscript:
+    def test_render_includes_all_turns(self) -> None:
+        rendered = render_transcript(parse_transcript_events(_STREAM_TEXT))
+        assert "Reading input" in rendered  # first assistant turn
+        assert "[tool_use] Read" in rendered  # mid-turn tool call
+        assert "line2 of file" in rendered  # tool result body
+        assert "All done here" in rendered  # later assistant turn
+        assert "[result] Task complete" in rendered
+
+    def test_thinking_block_rendered(self) -> None:
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "thinking", "thinking": "let me reason", "signature": "sig"}
+                    ]
+                },
+            }
+        ]
+        assert "[thinking] let me reason" in render_transcript(events)
+
+    def test_tool_error_flagged(self) -> None:
+        events = [
+            {
+                "type": "user",
+                "message": {
+                    "content": [{"type": "tool_result", "content": "boom", "is_error": True}]
+                },
+            }
+        ]
+        assert "[tool_error] boom" in render_transcript(events)
+
+    def test_long_content_truncated_with_marker(self) -> None:
+        big = "x" * 5000
+        events = [{"type": "assistant", "message": {"content": [{"type": "text", "text": big}]}}]
+        rendered = render_transcript(events)
+        assert "transcript.jsonl]" in rendered
+        assert len(rendered) < 5000
+
+    def test_never_raises_on_weird_shapes(self) -> None:
+        events = [
+            {"type": "assistant", "message": {"content": "not-a-list"}},
+            {"type": "unknown"},
+            {"garbage": True},
+        ]
+        # Should not raise.
+        render_transcript(events)
+
+    def test_empty_events_returns_empty_string(self) -> None:
+        assert render_transcript([]) == ""
+
+
+class TestParseUsageJsonlStream:
+    """parse_usage_and_429 over a JSONL stream (not a single blob)."""
+
+    def test_usage_extracted_from_result_event_in_stream(self) -> None:
+        r = parse_usage_and_429(_STREAM_TEXT, "", 0, NOW)
+        assert r["actuals_available"] is True
+        assert r["input_tokens"] == 120
+        assert r["output_tokens"] == 40
+        assert r["cache_read_input_tokens"] == 5
+
+    def test_quota_message_mid_stream_detected(self) -> None:
+        text = _STREAM_LINES[0] + "\nYou've hit your weekly limit\n"
+        r = parse_usage_and_429(text, "", 1, NOW)
+        assert r["claude_quota_exhausted"] is True
+
+    def test_429_from_result_event_error(self) -> None:
+        text = (
+            _STREAM_LINES[0]
+            + "\n"
+            + json.dumps({"type": "result", "error": {"type": "rate_limit_error", "message": "rl"}})
+            + "\n"
+        )
+        r = parse_usage_and_429(text, "", 1, NOW)
+        assert r["provider_rate_limited"] is True
+
+
+class TestClaudeCliCapture:
+    """End-to-end capture-file behaviour with a patched Popen (real files)."""
+
+    def _run(self, tmp_path, **popen_kwargs):
+        from unittest.mock import patch
+
+        from agent_orchestrator.executors.claude_cli import ClaudeCliExecutor
+
+        agent = _claude_agent()
+        ctx = _make_ctx(agent, tmp_path)
+        factory, _ = _popen_factory(**popen_kwargs)
+        with patch("subprocess.Popen", new=factory):
+            result = ClaudeCliExecutor().execute(ctx)
+        return result, Path(ctx.output_dir)
+
+    def test_success_writes_all_capture_files(self, tmp_path) -> None:
+        result, out = self._run(tmp_path, stdout_text=_STREAM_TEXT)
+        assert result.status == "succeeded"
+        # transcript.jsonl holds the FULL raw stream (all turns), byte-for-byte.
+        assert (out / "transcript.jsonl").read_text() == _STREAM_TEXT
+        # stdout.txt is the human-readable render across turns.
+        rendered = (out / "stdout.txt").read_text()
+        assert "Reading input" in rendered and "[tool_use] Read" in rendered
+        # result.json is the terminal result event.
+        result_json = json.loads((out / "result.json").read_text())
+        assert result_json["type"] == "result"
+        assert result_json["usage"]["input_tokens"] == 120
+        assert (out / "stderr.txt").exists()
+
+    def test_success_populates_token_usage(self, tmp_path) -> None:
+        result, _ = self._run(tmp_path, stdout_text=_STREAM_TEXT)
+        assert result.actuals_available is True
+        assert result.input_tokens == 120
+        assert result.output_tokens == 40
+
+    def test_success_populates_cost_usd(self, tmp_path) -> None:
+        """E-9h3m7k FR-1: TaskResult.cost_usd is populated end-to-end from execute()."""
+        stream_with_cost = (
+            "\n".join(
+                [
+                    *_STREAM_LINES[:-1],
+                    json.dumps(
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "is_error": False,
+                            "result": "Task complete",
+                            "total_cost_usd": 0.1234,
+                            "usage": {"input_tokens": 120, "output_tokens": 40},
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+        result, _ = self._run(tmp_path, stdout_text=stream_with_cost)
+        assert result.cost_usd == 0.1234
+
+    def test_failure_returns_failed_with_stderr_tail(self, tmp_path) -> None:
+        result, out = self._run(
+            tmp_path, stdout_text=_STREAM_LINES[0] + "\n", stderr_text="fatal boom", returncode=2
+        )
+        assert result.status == "failed"
+        assert result.exit_code == 2
+        assert "fatal boom" in (result.error or "")
+        # Even on failure the partial transcript is captured.
+        assert (out / "transcript.jsonl").read_text().strip() != ""
+
+    def test_timeout_preserves_partial_transcript(self, tmp_path) -> None:
+        # The child writes 3 turns before being killed on timeout.
+        partial = "\n".join(_STREAM_LINES[:3]) + "\n"
+        result, out = self._run(tmp_path, stdout_text=partial, timeout=True)
+        assert result.status == "timed_out"
+        assert result.error == "timeout"
+        # Partial output is NOT lost (the key improvement over the old json path).
+        captured = (out / "transcript.jsonl").read_text()
+        assert "Reading input" in captured
+        assert len(parse_transcript_events(captured)) == 3
+
+    def test_quota_message_sets_flag(self, tmp_path) -> None:
+        result, _ = self._run(tmp_path, stdout_text="You've hit your daily limit\n", returncode=1)
+        assert result.claude_quota_exhausted is True

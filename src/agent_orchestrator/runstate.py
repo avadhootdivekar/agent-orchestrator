@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .artifacts import ArtifactStore
-from .models import RunState, TaskRunState, TaskSpec, WorkflowSpec
+from .dag import build_dag, compute_cones
+from .models import RunState, TaskRunState, TaskSpec, WorkflowSpec, compute_run_usage_totals
 
 _FMT = "%Y%m%dT%H%M%SZ"
 
@@ -76,6 +77,7 @@ class RunStateStore:
             "skipped": 0,
             "cancelled": 0,
             "timed_out": 0,
+            "not_taken": 0,
         }
         for ts in state.tasks.values():
             counts[ts.status] = counts.get(ts.status, 0) + 1
@@ -101,9 +103,30 @@ class RunStateStore:
                     "attempts": ts.attempts,
                     "output_artifact_path": getattr(ts, "output_artifact_path", None),
                     "origin": getattr(ts, "origin", "static"),
+                    "route": getattr(ts, "route", None),
+                    "not_taken_reason": getattr(ts, "not_taken_reason", None),
+                    # Cumulative ACTUAL usage across every retry attempt (E-9h3m7k FR-2).
+                    "input_tokens": ts.cumulative_input_tokens,
+                    "output_tokens": ts.cumulative_output_tokens,
+                    "cost_usd": ts.cumulative_cost_usd,
                 }
                 for tid, ts in state.tasks.items()
             ],
+            # Routing + circuit-breaker observability (FR-CB4, LLD §10.2).
+            "route_decisions": state.route_decisions,
+            "tripped_breakers": [
+                {
+                    "id": tb.id,
+                    "condition": tb.condition,
+                    "action": tb.action,
+                    "at": tb.at,
+                    "detail": tb.detail,
+                }
+                for tb in state.tripped_breakers
+            ],
+            # Run-wide actual usage totals (E-9h3m7k FR-3), derived — see
+            # models.compute_run_usage_totals.
+            "usage_totals": compute_run_usage_totals(state).model_dump(),
         }
 
         sp = self._status_path(state.run_id)
@@ -154,8 +177,14 @@ class RunStateStore:
         1. Merges ``state.injected_tasks`` back into ``workflow.tasks`` so the
            engine sees the full expanded graph before rebuilding the DAG (FR-8).
         2. Tasks that have succeeded AND whose outputs are all present are kept as-is.
-        3. All other non-pending tasks are reset to "pending" so the engine will
+        3. Tasks already ``not_taken`` (a persisted routing verdict) are kept
+           as-is — never reset to pending (LLD §9, FR-CB5).
+        4. All other non-pending tasks are reset to "pending" so the engine will
            re-run them.
+        5. Deterministically re-derives ``not_taken`` for any task belonging to
+           an unselected route's cone from persisted ``state.route_decisions``
+           (NFR-2) — the router itself stays ``succeeded`` and is never re-run,
+           and verdict files are never re-read.
 
         The caller passes in the live ``workflow`` object; mutating ``workflow.tasks``
         here is intentional — the workflow object is only used within one run session.
@@ -176,8 +205,41 @@ class RunStateStore:
             ):
                 # Keep as succeeded — idempotent skip
                 pass
+            elif ts.status == "not_taken":
+                # Keep — never reset a routing verdict (LLD §9, FR-CB5).
+                pass
             elif ts.status != "pending":
                 state.tasks[task.id] = TaskRunState(status="pending")
+
+        # Deterministically re-derive not_taken for any task that belongs to an
+        # unselected route's cone, from the persisted state.route_decisions
+        # (source of truth) — never a fresh verdict read (NFR-2). The router
+        # task itself is untouched by this block: it stays "succeeded" in
+        # state.tasks (handled by the loop above) and is never re-run. This
+        # mirrors engine.py's `_on_router_success` guard/field conventions
+        # exactly so re-derived and originally-derived not_taken tasks are
+        # indistinguishable in state.
+        graph = build_dag(workflow)
+        cones, _membership = compute_cones(workflow, graph)
+        for router_id, selected in state.route_decisions.items():
+            router = next((r for r in workflow.branches if r.id == router_id), None)
+            if router is None:
+                continue
+            router_cones = cones.get(router_id, {})
+            for route_id, route_cone in router_cones.items():
+                if route_id in selected:
+                    continue
+                for t in route_cone:
+                    settled = state.tasks.get(t)
+                    if settled is not None and settled.status in ("succeeded", "skipped", "failed"):
+                        continue  # never override an already-settled task (mirrors
+                        # engine.py's _on_router_success guard)
+                    cone_ts = state.tasks.setdefault(t, TaskRunState())
+                    cone_ts.status = "not_taken"
+                    cone_ts.route = f"{router_id}:{route_id}"
+                    cone_ts.not_taken_reason = (
+                        f"router={router.router_task_id} route={route_id} not selected (resumed)"
+                    )
 
         state.status = "running"
         return state

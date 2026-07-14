@@ -6,10 +6,19 @@ Commands:
   ao resume     — Resume a previously interrupted run.
   ao status     — Show current status of a run.
   ao init       — Scaffold a per-project .ao/config.yaml.
+  ao prune      — Remove stale run artifacts from a workspace.
+
+Options:
+  ao --version / -V         — Show version (+ commit/build info for non-release builds).
+  ao --verbose / -v         — Debug-level logging.
+  ao --quiet / -q           — Warnings/errors only (mutually exclusive with --verbose).
+  ao --install-completion   — Install shell completion for the current shell.
+  ao --show-completion      — Print the completion script for the current shell.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,7 +28,52 @@ import typer
 if TYPE_CHECKING:
     from .models import BudgetSpec
 
-app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=False)
+app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
+
+_PACKAGE_LOGGER = "agent_orchestrator"
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        from ._version import get_version_string
+
+        typer.echo(get_version_string())
+        raise typer.Exit(0)
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the ao version and exit.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable debug-level logging (default is info-level).",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress info-level logging; show only warnings/errors.",
+    ),
+) -> None:
+    """Agent Orchestrator CLI."""
+    if verbose and quiet:
+        typer.echo("ERROR: --verbose and --quiet are mutually exclusive", err=True)
+        raise typer.Exit(1)
+    # Set the level explicitly only when asked; otherwise leave it untouched so
+    # logging_setup.attach_run_handler's own NOTSET-guarded INFO default applies.
+    if verbose:
+        logging.getLogger(_PACKAGE_LOGGER).setLevel(logging.DEBUG)
+    elif quiet:
+        logging.getLogger(_PACKAGE_LOGGER).setLevel(logging.WARNING)
 
 
 def _resolve_config_defaults(
@@ -68,7 +122,8 @@ def _load_all(
 ) -> tuple:
     """Resolve defaults, then load and cross-validate workflow, reposets, and agents."""
     from .config import load_agents, load_reposets
-    from .spec import cross_validate, load_workflow
+    from .dag import build_dag
+    from .spec import cross_validate, load_workflow, validate_run_control
 
     workflow_path, rp, ap = _resolve_config_defaults(workflow, reposets, agents)
 
@@ -96,16 +151,47 @@ def _load_all(
     reposet_map = load_reposets(rp)
     agent_map = load_agents(ap)
     cross_validate(wf, reposet_map, agent_map)
+
+    # Routing + circuit-breaker static validation (LLD §4.4, epic E-rc7k2v).
+    # Must run AFTER build_dag: needs the runtime graph (declared + inferred
+    # edges) for reachability/cone computation. topological_order() surfaces
+    # CycleError here too (previously only caught inside `ao run`/`resume`).
+    graph = build_dag(wf)
+    graph.topological_order()
+    for warning in validate_run_control(wf, graph):
+        typer.echo(f"WARNING: {warning}", err=True)
+
     return wf, reposet_map, agent_map
 
 
 def _print_state(state) -> None:
+    from .models import compute_run_usage_totals
+
     typer.echo(f"\nRun:    {state.run_id}")
     typer.echo(f"Status: {state.status}")
-    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Attempts'}")
-    typer.echo("-" * 55)
+    typer.echo(
+        f"\n{'Task':<30} {'Status':<15} {'Route':<20} {'Attempts':<9} "
+        f"{'Tokens (in/out)':<20} {'Cost($)'}"
+    )
+    typer.echo("-" * 110)
     for tid, ts in state.tasks.items():
-        typer.echo(f"{tid:<30} {ts.status:<15} {ts.attempts}")
+        route = ts.route or ""
+        tokens = f"{ts.cumulative_input_tokens}/{ts.cumulative_output_tokens}"
+        typer.echo(
+            f"{tid:<30} {ts.status:<15} {route:<20} {ts.attempts:<9} "
+            f"{tokens:<20} {ts.cumulative_cost_usd:.4f}"
+        )
+    # Routing + circuit-breaker observability trailer (LLD §10.2, FR-CB4).
+    for tb in getattr(state, "tripped_breakers", []):
+        typer.echo(f"Tripped breakers: {tb.id} ({tb.condition}, action={tb.action})")
+    # Run-wide actual usage totals (E-9h3m7k FR-3) — real values, not estimates.
+    totals = compute_run_usage_totals(state)
+    typer.echo(
+        f"\nTotal tokens: in={totals.input_tokens} out={totals.output_tokens} "
+        f"cache_creation={totals.cache_creation_input_tokens} "
+        f"cache_read={totals.cache_read_input_tokens}"
+    )
+    typer.echo(f"Total cost:   ${totals.cost_usd:.4f}")
 
 
 def _print_status_snapshot(snap: dict) -> None:
@@ -115,14 +201,92 @@ def _print_status_snapshot(snap: dict) -> None:
     current = snap.get("current_task")
     if current:
         typer.echo(f"Current task: {current}")
-    typer.echo(f"\n{'Task':<30} {'Status':<15} {'Attempts'}")
-    typer.echo("-" * 55)
+    typer.echo(
+        f"\n{'Task':<30} {'Status':<15} {'Route':<20} {'Attempts':<9} "
+        f"{'Tokens (in/out)':<20} {'Cost($)'}"
+    )
+    typer.echo("-" * 110)
     for task_entry in snap.get("tasks", []):
+        route = task_entry.get("route") or ""
+        tokens = f"{task_entry.get('input_tokens', 0)}/{task_entry.get('output_tokens', 0)}"
         typer.echo(
             f"{task_entry.get('id', ''):<30} "
             f"{task_entry.get('status', ''):<15} "
-            f"{task_entry.get('attempts', 0)}"
+            f"{route:<20} "
+            f"{task_entry.get('attempts', 0):<9} "
+            f"{tokens:<20} "
+            f"{task_entry.get('cost_usd', 0.0):.4f}"
         )
+    # Routing + circuit-breaker observability trailer (LLD §10.2, FR-CB4).
+    for tb in snap.get("tripped_breakers", []):
+        typer.echo(f"Tripped breakers: {tb['id']} ({tb['condition']}, action={tb['action']})")
+    # Run-wide actual usage totals (E-9h3m7k FR-3) — real values, not estimates.
+    totals = snap.get("usage_totals") or {}
+    typer.echo(
+        f"\nTotal tokens: in={totals.get('input_tokens', 0)} out={totals.get('output_tokens', 0)} "
+        f"cache_creation={totals.get('cache_creation_input_tokens', 0)} "
+        f"cache_read={totals.get('cache_read_input_tokens', 0)}"
+    )
+    typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
+
+
+def _resolve_run_settings(
+    max_attempts: int | None,
+    max_turns: int | None,
+    model: str | None,
+    effort: str | None,
+    quota_max_wait: int | None,
+    quota_poll_interval: int | None,
+) -> tuple[int | None, int | None, str | None, str | None, int, int]:
+    """Merge CLI flags, env vars, and project config for runtime execution settings.
+
+    Precedence (highest to lowest): CLI flag > env var > project config > built-in default.
+    Returns (max_attempts, max_turns, model, effort, quota_max_wait_seconds, quota_poll_seconds).
+    """
+    from .models import DEFAULT_QUOTA_MAX_WAIT_SECONDS, DEFAULT_QUOTA_POLL_SECONDS
+    from .project_config import find_project_config, load_project_config
+
+    def _int_env(name: str) -> int | None:
+        v = os.environ.get(name)
+        try:
+            return int(v) if v else None
+        except ValueError:
+            return None
+
+    cfg = None
+    config_path = find_project_config()
+    if config_path is not None:
+        try:
+            cfg = load_project_config(config_path)
+        except Exception:
+            cfg = None
+
+    resolved_max_attempts = (
+        max_attempts or _int_env("AO_MAX_ATTEMPTS") or (cfg.max_attempts if cfg else None)
+    )
+    resolved_max_turns = max_turns or _int_env("AO_MAX_TURNS") or (cfg.max_turns if cfg else None)
+    resolved_model = model or os.environ.get("AO_MODEL") or (cfg.model if cfg else None)
+    resolved_effort = effort or os.environ.get("AO_EFFORT") or (cfg.effort if cfg else None)
+    resolved_quota_max_wait = int(
+        quota_max_wait
+        or _int_env("AO_QUOTA_MAX_WAIT_SECONDS")
+        or (cfg.quota_max_wait_seconds if cfg else None)
+        or DEFAULT_QUOTA_MAX_WAIT_SECONDS
+    )
+    resolved_quota_poll = int(
+        quota_poll_interval
+        or _int_env("AO_QUOTA_POLL_SECONDS")
+        or (cfg.quota_poll_seconds if cfg else None)
+        or DEFAULT_QUOTA_POLL_SECONDS
+    )
+    return (
+        resolved_max_attempts,
+        resolved_max_turns,
+        resolved_model,
+        resolved_effort,
+        resolved_quota_max_wait,
+        resolved_quota_poll,
+    )
 
 
 def _build_effective_budget(
@@ -275,12 +439,44 @@ def run(
     max_attempts: int | None = typer.Option(
         None,
         "--max-attempts",
-        help="Max attempts per task (overrides workflow defaults.retries.max_attempts)",
+        help=(
+            "Max attempts per task (overrides workflow defaults.retries.max_attempts)."
+            " Env: AO_MAX_ATTEMPTS"
+        ),
     ),
     max_turns: int | None = typer.Option(
         None,
         "--max-turns",
-        help="Max turns per claude agent invocation (overrides each agent's effort-derived value)",
+        help=(
+            "Max turns per claude agent invocation (overrides effort-derived value)."
+            " Env: AO_MAX_TURNS"
+        ),
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Claude model for all agents (e.g. claude-sonnet-4-6). Env: AO_MODEL",
+    ),
+    effort: str | None = typer.Option(
+        None,
+        "--effort",
+        help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+    ),
+    quota_max_wait: int | None = typer.Option(
+        None,
+        "--quota-max-wait",
+        help=(
+            "Max seconds to wait during a Claude quota-exhaustion episode before failing"
+            " (default 21600 = 6 h). Env: AO_QUOTA_MAX_WAIT_SECONDS"
+        ),
+    ),
+    quota_poll_interval: int | None = typer.Option(
+        None,
+        "--quota-poll-interval",
+        help=(
+            "Seconds to sleep between quota-exhaustion re-run attempts"
+            " (default 900 = 15 min). Env: AO_QUOTA_POLL_SECONDS"
+        ),
     ),
 ) -> None:
     """Run a workflow from scratch."""
@@ -297,15 +493,47 @@ def run(
 
     try:
         wf, reposet_map, agent_map = _load_all(workflow, reposets, agents)
-    except (OrchestratorError, SystemExit):
+    except OrchestratorError as e:
+        # Includes SpecValidationError/CycleError from the new build_dag +
+        # validate_run_control pass in _load_all (LLD §4.4) — must exit non-zero,
+        # not silently return (was previously unreachable here since _load_all
+        # never built the DAG; cycles used to surface only from orch.run() below).
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+    except SystemExit:
         return
 
-    if max_attempts is not None:
-        wf.defaults.retries.max_attempts = max_attempts
+    (
+        eff_max_attempts,
+        eff_max_turns,
+        eff_model,
+        eff_effort,
+        eff_quota_max_wait,
+        eff_quota_poll,
+    ) = _resolve_run_settings(
+        max_attempts, max_turns, model, effort, quota_max_wait, quota_poll_interval
+    )
 
-    if max_turns is not None:
+    if eff_max_attempts is not None:
+        wf.defaults.retries.max_attempts = eff_max_attempts
+    if eff_max_turns is not None:
         for spec in agent_map.values():
-            spec.max_turns = max_turns
+            spec.max_turns = eff_max_turns
+    if eff_model is not None:
+        for spec in agent_map.values():
+            spec.model = eff_model
+    if eff_effort is not None:
+        _valid_efforts = ("low", "medium", "high")
+        if eff_effort not in _valid_efforts:
+            typer.echo(
+                f"ERROR: --effort must be one of {_valid_efforts}, got '{eff_effort}'",
+                err=True,
+            )
+            raise typer.Exit(1)
+        from typing import Literal, cast
+
+        for spec in agent_map.values():
+            spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
 
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
     store = LocalFsArtifactStore(workspace)
@@ -337,6 +565,8 @@ def run(
         budget_manager=budget_manager,
         estimator=estimator,
         clock=clock,
+        quota_max_wait_seconds=eff_quota_max_wait,
+        quota_poll_seconds=eff_quota_poll,
     )
 
     try:
@@ -373,12 +603,61 @@ def resume(
     max_attempts: int | None = typer.Option(
         None,
         "--max-attempts",
-        help="Max attempts per task override (overrides workflow defaults.retries.max_attempts)",
+        help=(
+            "Max attempts per task override (overrides workflow defaults.retries.max_attempts)."
+            " Env: AO_MAX_ATTEMPTS"
+        ),
     ),
     max_turns: int | None = typer.Option(
         None,
         "--max-turns",
-        help="Max turns per claude agent invocation (overrides each agent's effort-derived value)",
+        help=(
+            "Max turns per claude agent invocation (overrides effort-derived value)."
+            " Env: AO_MAX_TURNS"
+        ),
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="Claude model for all agents (e.g. claude-sonnet-4-6). Env: AO_MODEL",
+    ),
+    effort: str | None = typer.Option(
+        None,
+        "--effort",
+        help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+    ),
+    quota_max_wait: int | None = typer.Option(
+        None,
+        "--quota-max-wait",
+        help="Max seconds to wait during a Claude quota-exhaustion episode before failing "
+        "(default 21600 = 6 h). Env: AO_QUOTA_MAX_WAIT_SECONDS",
+    ),
+    quota_poll_interval: int | None = typer.Option(
+        None,
+        "--quota-poll-interval",
+        help="Seconds to sleep between quota-exhaustion re-run attempts "
+        "(default 900 = 15 min). Env: AO_QUOTA_POLL_SECONDS",
+    ),
+    extend_breaker: str | None = typer.Option(
+        None,
+        "--extend-breaker",
+        help="Circuit breaker id (from workflow.circuit_breakers) to extend and un-latch on "
+        "this resume. Requires exactly one of --extend-by-seconds/--extend-by-same. "
+        "(E-3JTmVu FR-2d)",
+    ),
+    extend_by_seconds: float | None = typer.Option(
+        None,
+        "--extend-by-seconds",
+        help="Amount (in the breaker condition's native unit -- seconds for time-based "
+        "conditions, USD for cost conditions, a count otherwise) to add to --extend-breaker's "
+        "current effective threshold. Mutually exclusive with --extend-by-same.",
+    ),
+    extend_by_same: bool = typer.Option(
+        False,
+        "--extend-by-same",
+        help="Extend --extend-breaker's current effective threshold by the ORIGINAL "
+        "threshold set at startup (spec.threshold) again. Mutually exclusive with "
+        "--extend-by-seconds.",
     ),
 ) -> None:
     """Resume a previously interrupted run."""
@@ -386,34 +665,108 @@ def resume(
     from datetime import datetime as _dt
 
     from .artifacts import LocalFsArtifactStore
+    from .breakers import apply_breaker_extension
     from .budget import DefaultBudgetManager
     from .engine import Orchestrator
-    from .errors import OrchestratorError
+    from .errors import OrchestratorError, SpecValidationError
     from .estimator import HeuristicTokenEstimator
     from .executors import DispatchExecutor
+    from .logging_setup import attach_run_handler, get_run_logger
     from .runstate import RunStateStore
 
     try:
         wf, reposet_map, agent_map = _load_all(workflow, reposets, agents)
-    except (OrchestratorError, SystemExit):
+    except OrchestratorError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+    except SystemExit:
         return
 
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
     store = LocalFsArtifactStore(workspace)
     rs_store = RunStateStore(workspace, store)
 
-    if max_attempts is not None:
-        wf.defaults.retries.max_attempts = max_attempts
+    (
+        eff_max_attempts,
+        eff_max_turns,
+        eff_model,
+        eff_effort,
+        eff_quota_max_wait,
+        eff_quota_poll,
+    ) = _resolve_run_settings(
+        max_attempts, max_turns, model, effort, quota_max_wait, quota_poll_interval
+    )
 
-    if max_turns is not None:
+    if eff_max_attempts is not None:
+        wf.defaults.retries.max_attempts = eff_max_attempts
+    if eff_max_turns is not None:
         for spec in agent_map.values():
-            spec.max_turns = max_turns
+            spec.max_turns = eff_max_turns
+    if eff_model is not None:
+        for spec in agent_map.values():
+            spec.model = eff_model
+    if eff_effort is not None:
+        _valid_efforts = ("low", "medium", "high")
+        if eff_effort not in _valid_efforts:
+            typer.echo(
+                f"ERROR: --effort must be one of {_valid_efforts}, got '{eff_effort}'",
+                err=True,
+            )
+            raise typer.Exit(1)
+        from typing import Literal, cast
+
+        for spec in agent_map.values():
+            spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
 
     try:
         existing = rs_store.load(run_id)
         existing = rs_store.prepare_resume(existing, wf)
     except FileNotFoundError as e:
         typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+
+    # ---- Breaker extension (E-3JTmVu FR-2d) ----
+    # Applied to the already-loaded/prepared `existing` RunState, BEFORE orch.run() -- the
+    # mutation is persisted via orch.run()'s own save path (Orchestrator.run's first action
+    # is self._runstate.save(state), engine.py ~:135) since it's the same object instance.
+    if extend_breaker is not None:
+        breaker_spec = next((b for b in wf.circuit_breakers if b.id == extend_breaker), None)
+        if breaker_spec is None:
+            typer.echo(
+                f"ERROR: no circuit breaker with id {extend_breaker!r} in "
+                f"workflow.circuit_breakers",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        run_dir = os.path.join(workspace, ".orchestrator", "runs", run_id)
+        log_path = os.path.join(run_dir, "run.log")
+        attach_run_handler(run_id, log_path)  # idempotent; orch.run() attaches the same pair
+        extend_log = get_run_logger(run_id)
+
+        def _extend_clock() -> _dt:
+            return _dt.now(UTC)
+
+        old_effective = existing.breaker_overrides.get(breaker_spec.id, breaker_spec.threshold)
+        try:
+            new_threshold = apply_breaker_extension(
+                existing,
+                breaker_spec,
+                extend_by_seconds=extend_by_seconds,
+                extend_by_same=extend_by_same,
+                clock=_extend_clock,
+                run_log=extend_log,
+            )
+        except (SpecValidationError, ValueError) as e:
+            typer.echo(f"ERROR: {e}", err=True)
+            raise typer.Exit(1)
+        # Persist immediately (don't rely solely on orch.run()'s later save): later CLI-only
+        # validation below (e.g. --on-exhaustion) can still typer.Exit(1) before orch.run() is
+        # ever reached, which would otherwise silently discard an already-logged extension.
+        rs_store.save(existing)
+        typer.echo(f"Extended breaker {breaker_spec.id!r}: {old_effective} -> {new_threshold}")
+    elif extend_by_seconds is not None or extend_by_same:
+        typer.echo("ERROR: --extend-by-seconds/--extend-by-same require --extend-breaker", err=True)
         raise typer.Exit(1)
 
     # Build effective budget (CLI > spec > unset), using the original workflow budget
@@ -441,6 +794,8 @@ def resume(
         budget_manager=budget_manager,
         estimator=estimator,
         clock=clock,
+        quota_max_wait_seconds=eff_quota_max_wait,
+        quota_poll_seconds=eff_quota_poll,
     )
 
     try:
@@ -486,7 +841,10 @@ def status(
 
         try:
             wf, reposet_map, _ = _load_all(workflow, reposets, agents)
-        except (OrchestratorError, SystemExit):
+        except OrchestratorError as e:
+            typer.echo(f"ERROR: {e}", err=True)
+            raise typer.Exit(1)
+        except SystemExit:
             return
 
         ws_root = reposet_map[wf.repo_set].workspace_root
@@ -555,8 +913,12 @@ def init_cmd(
 @app.command()
 def prune(
     workspace: str = typer.Option(..., "--workspace", "-w", help="Workspace root to prune"),
-    older_than: int = typer.Option(7, "--older-than", help="Delete runs older than this many days (0 = all)"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be deleted without deleting"),
+    older_than: int = typer.Option(
+        7, "--older-than", help="Delete runs older than this many days (0 = all)"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print what would be deleted without deleting"
+    ),
 ) -> None:
     """Remove stale run artifacts from a workspace.
 

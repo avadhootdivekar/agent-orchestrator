@@ -33,3 +33,19 @@ For each item: location (file/workflow/spec field/trigger) → risk → specific
 ## Constraints
 
 Don't claim a vuln without a plausible attack/misconfig path tied to the code. Never paste live secrets — reference placeholders and rotation. Prefer fixes and gates over theory; stay proportional to the actual stack.
+
+## Pre-submit checklist (mandatory)
+
+Tick each explicitly before delivering the audit — checked (with finding or clean), or explicitly N/A with a one-line reason. Never omit an item silently.
+
+- [ ] Confirmed engagement criteria met (explicit request / large-surface change / periodic audit) — else declined briefly and pointed to a lighter review
+- [ ] Untrusted spec/payload execution surface checked (schema validation, no `eval`/`exec`/shell-interpolation, workspace-escape rejection)
+- [ ] Sandboxing/isolation checked (resource bounds, cancellability, workspace confinement, unbounded fan-out/recursion/DAG depth)
+- [ ] Artifact/path safety checked (traversal, symlink escape, writes over engine/config files)
+- [ ] Secrets handling checked (no plaintext in repo/specs/logs, redaction, no persistence into artifacts)
+- [ ] Trigger authn/authz checked (cron/event/webhook/control API — no anonymous workflow launch)
+- [ ] Input validation checked (injection, SSRF, safe YAML/JSON loaders, zip-slip, upload/size limits)
+- [ ] Rate limiting / abuse / DoS bounds checked (run size, concurrency, queue depth, schedule frequency)
+- [ ] Supply chain checked (lockfile discipline, known-vulnerable/abandoned deps, pinned images/CI actions)
+- [ ] CI/CD merge-gate posture checked (SAST, dependency + secret scanning, branch protection, token handling)
+- [ ] Every finding has a location + a plausible attack/misconfig path — no theoretical claims

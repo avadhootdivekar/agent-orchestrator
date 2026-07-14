@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 
 from .errors import CycleError, MissingInputError
-from .models import WorkflowSpec
+from .models import RouterSpec, WorkflowSpec
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +14,41 @@ logger = logging.getLogger(__name__)
 class Graph:
     """Directed graph with deterministic topological ordering (Kahn's algorithm)."""
 
-    def __init__(self, adj: dict[str, list[str]], tasks: list) -> None:
+    def __init__(
+        self,
+        adj: dict[str, list[str]],
+        tasks: list,
+        output_to_task: dict[str, str] | None = None,
+    ) -> None:
         # adj[node] = list of successor node ids (nodes that depend on `node`)
         self._adj = adj
         self._tasks = {t.id: t for t in tasks}
+        # inp path -> producing task id (built by build_dag; see output_to_task()).
+        self._output_to_task = output_to_task if output_to_task is not None else {}
+
+    def adjacency(self) -> dict[str, list[str]]:
+        """Return the graph's adjacency map (node id -> successor node ids).
+
+        Includes BOTH declared ``depends_on`` edges and inferred input/output
+        path-matching edges (see ``build_dag``) — this is the runtime graph, not
+        just declared dependencies. Returned by reference (matches this class's
+        existing accessor style, e.g. ``topological_order``/``validate_inputs``
+        reading ``self._adj`` directly); callers must not mutate the result.
+        """
+        return self._adj
+
+    def output_to_task(self) -> dict[str, str]:
+        """Return the producer map (output path -> producing task id).
+
+        Built once in ``build_dag`` from every task's declared outputs. Exposed
+        so downstream code (e.g. join-input relaxation, LLD §5.4a) can resolve
+        which task produced a given input path without recomputing the map.
+        """
+        return self._output_to_task
+
+    def producer_of(self, inp: str) -> str | None:
+        """Return the id of the task that produces output path *inp*, if any."""
+        return self._output_to_task.get(inp)
 
     def topological_order(self) -> list[str]:
         """Return a deterministic topological ordering using Kahn's algorithm.
@@ -150,4 +181,81 @@ def build_dag(workflow: WorkflowSpec) -> Graph:
                             inp,
                         )
 
-    return Graph(adj, tasks)
+    return Graph(adj, tasks, output_to_task=output_to_task)
+
+
+def forward_closure(adj: dict[str, list[str]], entries: list[str]) -> set[str]:
+    """Return the forward transitive closure of *adj* starting from *entries*.
+
+    Plain iterative BFS over an adjacency map (node id -> successor ids); entries
+    are included in the result. Pure and deterministic — no clock, no randomness
+    — though the returned ``set`` is itself unordered (callers needing a stable
+    order must sort it, per NFR-2).
+    """
+    visited: set[str] = set()
+    queue: list[str] = list(entries)
+    while queue:
+        node = queue.pop(0)
+        if node in visited:
+            continue
+        visited.add(node)
+        for successor in adj.get(node, []):
+            if successor not in visited:
+                queue.append(successor)
+    return visited
+
+
+def compute_cones(
+    workflow: WorkflowSpec, graph: Graph
+) -> tuple[dict[str, dict[str, set[str]]], dict[str, set[tuple[str, str]]]]:
+    """Compute each router's exclusive route cones and the task->routes membership map.
+
+    See LLD §4.1-4.2 (`docs-md/lld-run-control-routing-breakers.md`). Cones are
+    computed over ``graph.adjacency()`` — the full runtime graph ``build_dag``
+    returns, including edges *inferred* from input/output path matching — never
+    over ``depends_on`` alone (memory ``build-dag-infers-edges-from-paths``): an
+    inferred edge can extend a route's reach exactly like a declared one.
+
+    Returns ``(cones, membership)``:
+      - ``cones[router_id][route_id]`` = set of task ids EXCLUSIVELY reachable
+        from that route's ``entry`` list — i.e. no *other* route of the SAME
+        router also reaches them. A task reachable from >=2 routes of one
+        router is shared/convergent and appears in neither route's cone.
+      - ``membership[task_id]`` = set of ``(router_id, route_id)`` pairs for
+        every route (across every router) that reaches ``task_id``.
+
+    Pure and deterministic: depends only on ``workflow.branches`` and
+    ``graph.adjacency()``; no clock, no I/O, no mutation of either argument.
+    Two calls on the same inputs return identical cones/membership (NFR-2);
+    results are sets, so order never matters.
+
+    This is the algorithmic core only — activation/``not_taken`` logic, join
+    resolution, and ``ao validate`` rules (LLD §4.4) are separate downstream
+    tickets (T-m2h5t7, T-w6p2c8) and are intentionally not implemented here.
+    """
+    adj = graph.adjacency()
+    cones: dict[str, dict[str, set[str]]] = {}
+    membership: dict[str, set[tuple[str, str]]] = {}
+
+    router: RouterSpec
+    for router in workflow.branches:
+        reach_by_route: dict[str, set[str]] = {
+            route_id: forward_closure(adj, route.entry) for route_id, route in router.routes.items()
+        }
+
+        for route_id, reached in reach_by_route.items():
+            for task_id in reached:
+                membership.setdefault(task_id, set()).add((router.id, route_id))
+
+        # A task is exclusive to a route iff no OTHER route of THIS router also
+        # reaches it (count over this router's routes only, not all routers).
+        router_cones: dict[str, set[str]] = {}
+        for route_id, reached in reach_by_route.items():
+            router_cones[route_id] = {
+                task_id
+                for task_id in reached
+                if sum(1 for other in reach_by_route.values() if task_id in other) == 1
+            }
+        cones[router.id] = router_cones
+
+    return cones, membership

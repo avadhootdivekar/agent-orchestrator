@@ -9,20 +9,28 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal
 
-from .artifacts import ArtifactStore, read_gate, read_manifest, read_task_manifest
+from .artifacts import ArtifactStore, read_gate, read_manifest, read_routes, read_task_manifest
+from .breakers import evaluate_breakers, record_trip
 from .budget import BudgetDecision, BudgetManager
-from .dag import build_dag
-from .errors import GateError, InjectionError
+from .dag import build_dag, compute_cones
+from .errors import ControlFileError, GateError, InjectionError
 from .estimator import TokenEstimator
 from .executors.base import Executor
 from .logging_setup import attach_run_handler, detach_run_handler, get_run_logger
 from .models import (
+    BUILTIN_BUDGET_EXHAUSTED,
+    BUILTIN_BUDGET_UNSATISFIABLE,
+    BUILTIN_QUOTA_MAX_WAIT,
+    DEFAULT_QUOTA_MAX_WAIT_SECONDS,
+    DEFAULT_QUOTA_POLL_SECONDS,
     EstimatorConfig,
     LoopSpec,
+    RouterSpec,
     RunState,
     TaskContext,
     TaskResult,
     TaskRunState,
+    TaskSpec,
     WorkflowSpec,
 )
 from .runstate import RunStateStore
@@ -66,6 +74,13 @@ class Orchestrator:
         Optional token estimator paired with budget_manager; when None, budget gate is skipped.
     clock:
         Injectable clock returning the current UTC datetime (default: datetime.now(UTC)).
+    quota_max_wait_seconds:
+        Maximum total seconds ao will wait across consecutive quota-exhaustion events before
+        giving up (default: DEFAULT_QUOTA_MAX_WAIT_SECONDS).  The timer resets after each
+        successful task — it tracks only the current exhaustion episode.
+    quota_poll_seconds:
+        How long to sleep between quota-exhaustion re-run attempts
+        (default: DEFAULT_QUOTA_POLL_SECONDS).
     """
 
     def __init__(
@@ -78,6 +93,8 @@ class Orchestrator:
         budget_manager: BudgetManager | None = None,
         estimator: TokenEstimator | None = None,
         clock: Callable[[], datetime] | None = None,
+        quota_max_wait_seconds: float = DEFAULT_QUOTA_MAX_WAIT_SECONDS,
+        quota_poll_seconds: float = DEFAULT_QUOTA_POLL_SECONDS,
     ) -> None:
         self._executor = executor
         self._store = artifact_store
@@ -87,6 +104,8 @@ class Orchestrator:
         self._budget_manager = budget_manager
         self._estimator = estimator
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
+        self._quota_max_wait_seconds = quota_max_wait_seconds
+        self._quota_poll_seconds = quota_poll_seconds
 
     def run(
         self,
@@ -147,6 +166,13 @@ class Orchestrator:
             graph = build_dag(workflow)
             order = graph.topological_order()
 
+            # Route cones/membership (LLD §4.3, T-m2h5t7): computed ONCE here and
+            # cached for the whole run() call — never recomputed on injection.
+            # Injected task ids are new and never appear in a pre-computed cone;
+            # they inherit their emitter's route instead (§5.5, R4). Empty when
+            # workflow.branches is empty (the common/pre-routing case).
+            cones, membership = compute_cones(workflow, graph)
+
             # Terminal-success set: skip re-running tasks that already succeeded
             done: set[str] = {
                 tid for tid, ts in state.tasks.items() if ts.status in ("succeeded", "skipped")
@@ -156,6 +182,9 @@ class Orchestrator:
             # After injection, order is rebuilt and cursor is reset to the first undone task.
             cursor = 0
             failed = False
+            # Tracks the epoch when the current quota-exhaustion episode began.
+            # Resets to None after any task succeeds (new exhaustion → fresh max_wait window).
+            _quota_exhausted_since: float | None = None
 
             while cursor < len(order):
                 if self._cancel_fn():
@@ -169,6 +198,13 @@ class Orchestrator:
 
                 tid = order[cursor]
                 cursor += 1
+
+                # Not-taken skip (LLD §5.3): a task on an unselected route never
+                # dispatches, never bills. Checked ahead of `done` (which stays
+                # succeeded/skipped-only, §5.6) so the two sets never conflate.
+                ts0 = state.tasks.get(tid)
+                if ts0 is not None and ts0.status == "not_taken":
+                    continue
 
                 if tid in done:
                     continue
@@ -189,8 +225,36 @@ class Orchestrator:
                     self._runstate.save(state)
                     continue
 
-                # Check required inputs exist
-                missing = [inp for inp in task.inputs if not self._store.exists(inp)]
+                # Join handling (LLD §5.4): a convergence task with a not_taken
+                # dependency propagates not_taken (join="all") or is skipped only
+                # when EVERY effective dependency is not_taken (join="any").
+                # Evaluated before dispatch so a not_taken task never reaches the
+                # budget gate or the executor.
+                if self._apply_join(task, state, membership, graph.producer_of) == "not_taken":
+                    self._runstate.save(state)
+                    continue
+
+                # Check required inputs exist. join="any" tasks relax this check
+                # (§5.4a): an input whose SOLE producer is not_taken never gets
+                # written and must not fail the task — apply_join already proved
+                # at least one other effective dependency is live.
+                if task.join == "any":
+                    optional_inputs: set[str] = set()
+                    for inp in task.inputs:
+                        producer = graph.producer_of(inp)
+                        if (
+                            producer is not None
+                            and state.tasks.get(producer) is not None
+                            and state.tasks[producer].status == "not_taken"
+                        ):
+                            optional_inputs.add(inp)
+                    missing = [
+                        inp
+                        for inp in task.inputs
+                        if inp not in optional_inputs and not self._store.exists(inp)
+                    ]
+                else:
+                    missing = [inp for inp in task.inputs if not self._store.exists(inp)]
                 if missing:
                     task_log.error(
                         "Missing required inputs: %s",
@@ -285,6 +349,21 @@ class Orchestrator:
                                     "blocked_by": _decision.blocked_by,
                                 },
                             )
+                            # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
+                            # only -- the event/status/break above are unchanged (ADR-RC-003).
+                            record_trip(
+                                state=state,
+                                breaker_id=BUILTIN_BUDGET_UNSATISFIABLE,
+                                condition="projected_cost_exceeds",
+                                action="fail",
+                                detail={
+                                    "task_id": tid,
+                                    "estimate": _estimate,
+                                    "blocked_by": _decision.blocked_by,
+                                },
+                                clock=self._clock,
+                                run_log=run_log,
+                            )
                             state.status = "failed"
                             failed = True
                             break
@@ -302,6 +381,26 @@ class Orchestrator:
                                     "blocked_by": _decision.blocked_by,
                                     "next_available_epoch": _decision.next_available_epoch,
                                 },
+                            )
+                            # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
+                            # only -- the event/status/break above are unchanged (ADR-RC-003).
+                            # Condition name reflects which limit blocked admission
+                            # (_decision.blocked_by), not a single hardcoded string.
+                            _budget_condition = (
+                                "total_tokens" if _decision.blocked_by == "total" else "rate_window"
+                            )
+                            record_trip(
+                                state=state,
+                                breaker_id=BUILTIN_BUDGET_EXHAUSTED,
+                                condition=_budget_condition,
+                                action="fail",
+                                detail={
+                                    "task_id": tid,
+                                    "blocked_by": _decision.blocked_by,
+                                    "next_available_epoch": _decision.next_available_epoch,
+                                },
+                                clock=self._clock,
+                                run_log=run_log,
                             )
                             state.status = "failed"
                             failed = True
@@ -360,7 +459,18 @@ class Orchestrator:
                 # Mark as running
                 ts = state.tasks.setdefault(tid, TaskRunState())
                 ts.status = "running"
-                ts.started_at = datetime.now(UTC).isoformat()
+                # Only set started_at on the task's FIRST dispatch (E-3JTmVu FR-1 fix): the
+                # quota-exhaustion/429/budget-wait paths below reset ts.status to "pending" and
+                # loop back to this same line (`cursor -= 1; continue`) to redispatch the SAME
+                # task after a real sleep -- without this guard, that redispatch used to
+                # overwrite started_at, silently excluding the wait from
+                # `run_active_seconds`'s (ended_at - started_at) sum even though those waits are
+                # genuine engine-busy/blocked time on this task, not an operator-initiated stop.
+                # Safe: started_at has exactly one writer (here) and prepare_resume already
+                # hands a fresh TaskRunState() (started_at=None) to any task reset for `ao
+                # resume`, so a resumed dispatch still gets its own fresh started_at.
+                if ts.started_at is None:
+                    ts.started_at = datetime.now(UTC).isoformat()
                 self._runstate.save(state)
                 task_log.info("Task started", extra={"event": "task.start"})
 
@@ -388,6 +498,90 @@ class Orchestrator:
                     task_manifest_path=resolved_task_manifest_path,
                     gate_output_path=resolved_gate_output_path,
                 )
+
+                # ---- Claude quota exhaustion route (distinct from provider 429) ----
+                if result.claude_quota_exhausted:
+                    # Reverse any estimate charged for this task before re-queuing.
+                    if self._budget_manager is not None:
+                        self._budget_manager.reverse_estimate(tid, state.budget_counters)
+
+                    now = self._clock().timestamp()
+                    if _quota_exhausted_since is None:
+                        _quota_exhausted_since = now
+
+                    elapsed = now - _quota_exhausted_since
+                    remaining = self._quota_max_wait_seconds - elapsed
+
+                    if remaining <= 0:
+                        run_log.error(
+                            "Claude quota exhaustion max_wait exceeded "
+                            "(%.0f s elapsed, limit=%.0f s); stopping run",
+                            elapsed,
+                            self._quota_max_wait_seconds,
+                            extra={
+                                "event": "quota.max_wait_exceeded",
+                                "task_id": tid,
+                                "elapsed_seconds": elapsed,
+                                "max_wait_seconds": self._quota_max_wait_seconds,
+                            },
+                        )
+                        # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
+                        # only -- the event/status/break above are unchanged (ADR-RC-003).
+                        record_trip(
+                            state=state,
+                            breaker_id=BUILTIN_QUOTA_MAX_WAIT,
+                            condition="quota_exhaustion_wait_exceeded",
+                            action="fail",
+                            detail={
+                                "task_id": tid,
+                                "elapsed_seconds": elapsed,
+                                "max_wait_seconds": self._quota_max_wait_seconds,
+                            },
+                            clock=self._clock,
+                            run_log=run_log,
+                        )
+                        state.status = "failed"
+                        failed = True
+                        self._runstate.save(state)
+                        break
+
+                    sleep_secs = min(self._quota_poll_seconds, remaining)
+                    run_log.info(
+                        "Claude quota exhausted on task %s; waiting %.0f s (elapsed=%.0f/max=%.0f)",
+                        tid,
+                        sleep_secs,
+                        elapsed,
+                        self._quota_max_wait_seconds,
+                        extra={
+                            "event": "quota.wait",
+                            "task_id": tid,
+                            "sleep_seconds": sleep_secs,
+                            "elapsed_seconds": elapsed,
+                            "max_wait_seconds": self._quota_max_wait_seconds,
+                        },
+                    )
+                    self._sleeper(sleep_secs)
+
+                    if self._cancel_fn():
+                        run_log.info(
+                            "Cancelled during quota wait",
+                            extra={"event": "run.cancelled"},
+                        )
+                        state.status = "cancelled"
+                        failed = True
+                        self._runstate.save(state)
+                        break
+
+                    run_log.info(
+                        "Quota wait ended; re-running task %s",
+                        tid,
+                        extra={"event": "quota.resume", "task_id": tid},
+                    )
+                    # Reset task to pending so it re-executes cleanly.
+                    ts.status = "pending"
+                    cursor -= 1
+                    self._runstate.save(state)
+                    continue  # skip budget reconcile + normal outcome handling
 
                 # ---- Budget reconcile / 429 route (T-algywf, FR-4, FR-5, FR-8) ----
                 if self._budget_manager is not None and self._estimator is not None:
@@ -448,6 +642,23 @@ class Orchestrator:
                                 "Stopping run due to provider rate limit",
                                 extra={"event": "budget.exhausted", "task_id": tid},
                             )
+                            # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
+                            # only -- the event/status/break above are unchanged (ADR-RC-003).
+                            # Shares BUILTIN_BUDGET_EXHAUSTED with the gate-path stop above
+                            # (LLD §8.1 groups both under one builtin id); the condition name
+                            # keeps the two sites distinguishable in tripped_breakers.
+                            record_trip(
+                                state=state,
+                                breaker_id=BUILTIN_BUDGET_EXHAUSTED,
+                                condition="provider_429",
+                                action="fail",
+                                detail={
+                                    "task_id": tid,
+                                    "next_available_epoch": _429_decision.next_available_epoch,
+                                },
+                                clock=self._clock,
+                                run_log=run_log,
+                            )
                             state.status = "failed"
                             failed = True
                             self._runstate.save(state)
@@ -480,6 +691,16 @@ class Orchestrator:
                 # Record captured output path (FR-5); engine never reads the files.
                 if result.output_artifact_path:
                     ts.output_artifact_path = result.output_artifact_path
+                # Cumulative actual usage across every attempt (E-9h3m7k FR-2) — result's
+                # token/cost fields already sum all attempts (_run_with_retries).
+                if result.actuals_available:
+                    ts.cumulative_input_tokens = result.input_tokens or 0
+                    ts.cumulative_output_tokens = result.output_tokens or 0
+                    ts.cumulative_cache_creation_input_tokens = (
+                        result.cache_creation_input_tokens or 0
+                    )
+                    ts.cumulative_cache_read_input_tokens = result.cache_read_input_tokens or 0
+                    ts.cumulative_cost_usd = result.cost_usd or 0.0
 
                 if result.status == "succeeded":
                     # Verify declared outputs were actually produced
@@ -527,6 +748,17 @@ class Orchestrator:
                         },
                     )
                     done.add(tid)
+                    _quota_exhausted_since = None  # successful task resets the quota-wait timer
+
+                    # ---- Router-success hook (T-m2h5t7, LLD §5.2) ----
+                    # Runs BEFORE the circuit-breaker evaluation below so
+                    # route_decisions/not_taken are settled before any breaker
+                    # inspects RunState.
+                    router = self._router_for_task(workflow, tid)
+                    if router is not None:
+                        if self._on_router_success(router, state, cones, run_log) == "failed":
+                            failed = True
+                            break
                 else:
                     task_log.warning(
                         "Task ended with status %s",
@@ -539,6 +771,23 @@ class Orchestrator:
                     )
 
                 self._runstate.save(state)
+
+                # ---- Circuit-breaker evaluation (T-x8v4d3, LLD §6.1) ----
+                # Task boundary: after outcome handling + save, before the next dispatch.
+                # Runs regardless of ts.status (a failure is itself a boundary a breaker may
+                # react to, e.g. the future task_failures/consecutive_failures conditions).
+                # No-op today: workflow.circuit_breakers defaults to [] and no built-ins are
+                # wired yet (T-r3j9b6), so the loop body never executes for existing workflows.
+                breaker_action = evaluate_breakers(
+                    workflow, state, self._clock, self._store, run_log
+                )
+                if breaker_action is not None:
+                    # fail/stop/pause all land on resumable status="failed" for MVP (ADR-RC-004);
+                    # the distinguishing action is preserved in tripped_breakers[].action.
+                    state.status = "failed"
+                    failed = True
+                    self._runstate.save(state)
+                    break
 
                 if ts.status not in ("succeeded", "skipped"):
                     state.status = "failed"
@@ -564,7 +813,7 @@ class Orchestrator:
                         failed = True
                         break
                     try:
-                        self._inject(new_specs, workflow, state, origin="injected")
+                        self._inject(new_specs, workflow, state, origin="injected", route=ts.route)
                     except InjectionError as exc:
                         task_log.error(
                             "Task injection failed: %s",
@@ -610,7 +859,7 @@ class Orchestrator:
                             next_iter = cur_iter + 1
                             clones = self._clone_body(loop, next_iter, workflow)
                             try:
-                                self._inject(clones, workflow, state, origin="loop")
+                                self._inject(clones, workflow, state, origin="loop", route=ts.route)
                             except InjectionError as exc:
                                 task_log.error(
                                     "Loop clone injection failed: %s",
@@ -686,6 +935,166 @@ class Orchestrator:
             return estimate > spec.rate.tokens
         return False
 
+    # -------------------------------------------------------------------------
+    # Routing helpers (T-m2h5t7, LLD §5)
+    # -------------------------------------------------------------------------
+
+    def _router_for_task(self, workflow: WorkflowSpec, task_id: str) -> RouterSpec | None:
+        """Return the RouterSpec whose ``router_task_id`` matches *task_id*, if any."""
+        for router in workflow.branches:
+            if router.router_task_id == task_id:
+                return router
+        return None
+
+    def _apply_join(
+        self,
+        task: TaskSpec,
+        state: RunState,
+        membership: dict[str, set[tuple[str, str]]],
+        producer_of: Callable[[str], str | None],
+    ) -> str | None:
+        """Evaluate join policy pre-dispatch (LLD §5.4).
+
+        Returns ``"not_taken"`` when the task must be skipped without dispatching
+        (its join policy says so — see below), else ``None`` (dispatch normally).
+
+        ``membership`` is accepted (unused in the resolution below) to mirror the
+        LLD §5.4 signature and leave room for future join diagnostics; resolving
+        the join only needs each *effective dependency*'s settled status.
+
+        - ``join == "all"`` (default): any not_taken effective dependency
+          propagates not_taken to *task* (a full convergence needs every branch).
+        - ``join == "any"``: *task* is not_taken only when EVERY effective
+          dependency is not_taken; it dispatches once at least one is live (its
+          missing-input check is separately relaxed for not_taken producers,
+          §5.4a, at the call site).
+
+        "Effective dependencies" = declared ``depends_on`` plus every inferred
+        producer of a declared input not already in ``depends_on`` (mirrors the
+        DAG's own inferred-edge rule, ``dag.build_dag``).
+        """
+        effective_deps: list[str] = list(task.depends_on)
+        for inp in task.inputs:
+            producer = producer_of(inp)
+            if producer is not None and producer not in effective_deps:
+                effective_deps.append(producer)
+
+        not_taken_deps = [
+            d
+            for d in effective_deps
+            if state.tasks.get(d) is not None and state.tasks[d].status == "not_taken"
+        ]
+
+        if task.join == "all":
+            if not_taken_deps:
+                ts = state.tasks.setdefault(task.id, TaskRunState())
+                ts.status = "not_taken"
+                ts.not_taken_reason = "join=all; dep(s) not_taken: " + ",".join(not_taken_deps)
+                return "not_taken"
+            return None  # topo order already guarantees deps are settled
+
+        # join == "any": dispatch once at least one effective dependency is live.
+        live_deps = [d for d in effective_deps if d not in not_taken_deps]
+        if not live_deps:
+            ts = state.tasks.setdefault(task.id, TaskRunState())
+            ts.status = "not_taken"
+            ts.not_taken_reason = "join=any; all dep(s) not_taken: " + ",".join(not_taken_deps)
+            return "not_taken"
+        return None
+
+    def _on_router_success(
+        self,
+        router: RouterSpec,
+        state: RunState,
+        cones: dict[str, dict[str, set[str]]],
+        run_log: logging.LoggerAdapter,
+    ) -> Literal["ok", "failed"]:
+        """Router-success hook (LLD §5.2), called once ``router.router_task_id``
+        settles ``succeeded``: read the verdict, persist ``route_decisions`` as
+        the source of truth, mark every unselected route's exclusive cone
+        ``not_taken``, and tag activated tasks' ``route``.
+
+        Returns ``"failed"`` when the run must fail (verdict unreadable, or an
+        empty/unknown verdict with no ``default_route``) — ``_route_fail`` has
+        already set ``state.status="failed"`` and persisted; the caller sets the
+        run loop's ``failed=True`` and breaks (mirrors the loop's existing
+        break-on-terminal-failure pattern). Returns ``"ok"`` otherwise.
+        """
+        try:
+            selected_raw = read_routes(self._store, router.verdict_path, router.verdict_field)
+        except ControlFileError as exc:
+            self._route_fail(state, router, f"verdict unreadable: {exc}", run_log)
+            return "failed"
+
+        known = set(router.routes.keys())
+        selected = [r for r in selected_raw if r in known]  # drop unknown route ids
+
+        if not selected:
+            if router.default_route is not None:
+                selected = [router.default_route]
+            else:
+                self._route_fail(state, router, "empty/unknown verdict, no default_route", run_log)
+                return "failed"
+
+        state.route_decisions[router.id] = selected  # source of truth, persisted below
+
+        router_cones = cones.get(router.id, {})
+        not_taken_ids: list[str] = []
+        for route_id, route_cone in router_cones.items():
+            if route_id in selected:
+                continue
+            for t in route_cone:
+                ts = state.tasks.setdefault(t, TaskRunState())
+                if ts.status in ("succeeded", "skipped", "failed"):
+                    continue  # never override an already-settled task
+                ts.status = "not_taken"
+                ts.route = f"{router.id}:{route_id}"
+                ts.not_taken_reason = (
+                    f"router={router.router_task_id} route={route_id} not selected"
+                )
+                not_taken_ids.append(t)
+
+        for route_id in selected:
+            for t in router_cones.get(route_id, set()):
+                state.tasks.setdefault(t, TaskRunState()).route = f"{router.id}:{route_id}"
+
+        run_log.info(
+            "branch.route",
+            extra={
+                "event": "branch.route",
+                "router_id": router.id,
+                "router_task_id": router.router_task_id,
+                "selected": selected,
+                "not_taken_count": len(not_taken_ids),
+            },
+        )
+        self._runstate.save(state)
+        return "ok"
+
+    def _route_fail(
+        self,
+        state: RunState,
+        router: RouterSpec,
+        reason: str,
+        run_log: logging.LoggerAdapter,
+    ) -> None:
+        """Validation-style routing failure (LLD §5.2/§5.6) — distinct from a
+        circuit breaker. Sets ``state.status="failed"``, emits ``branch.route``
+        with an ``error`` field, and persists. The caller is responsible for
+        setting the run loop's ``failed=True`` and breaking (mirrors the engine's
+        existing break-on-terminal-failure pattern)."""
+        state.status = "failed"
+        run_log.error(
+            "branch.route",
+            extra={
+                "event": "branch.route",
+                "router_id": router.id,
+                "router_task_id": router.router_task_id,
+                "error": reason,
+            },
+        )
+        self._runstate.save(state)
+
     def _run_with_retries(
         self,
         task,
@@ -734,6 +1143,15 @@ class Orchestrator:
         )
 
         last_result: TaskResult | None = None
+        # Running sums across every attempt of THIS call (E-9h3m7k FR-2): a task that
+        # fails on attempt 1 and succeeds on attempt 2 must report the actual cost of
+        # BOTH attempts, not just the winning one — money was spent on attempt 1 too.
+        cum_input_tokens = 0
+        cum_output_tokens = 0
+        cum_cache_creation_input_tokens = 0
+        cum_cache_read_input_tokens = 0
+        cum_cost_usd = 0.0
+        any_actuals = False
 
         for attempt in range(1, retry.max_attempts + 1):
             if self._cancel_fn():
@@ -742,6 +1160,12 @@ class Orchestrator:
                     status="cancelled",
                     attempts=attempt,
                 )
+
+            # Attempt-suffixed capture dir (E-9h3m7k): each retry gets its own
+            # transcript.jsonl/result.json instead of the next attempt overwriting the
+            # previous one's — a failed attempt's output is real observability data, not
+            # noise to discard.
+            attempt_output_dir = os.path.join(output_dir, f"attempt-{attempt}")
 
             ctx = TaskContext(
                 run_id=state.run_id,
@@ -755,16 +1179,42 @@ class Orchestrator:
                 repo_paths=repo_paths,
                 timeout_seconds=timeout,
                 cwd=agent_cwd,
-                output_dir=output_dir,
+                output_dir=attempt_output_dir,
                 task_manifest_path=resolved_task_manifest_path,
                 gate_output_path=gate_output_path,
             )
 
             result = self._executor.execute(ctx)
             result.attempts = attempt
+
+            if result.actuals_available:
+                any_actuals = True
+                cum_input_tokens += result.input_tokens or 0
+                cum_output_tokens += result.output_tokens or 0
+                cum_cache_creation_input_tokens += result.cache_creation_input_tokens or 0
+                cum_cache_read_input_tokens += result.cache_read_input_tokens or 0
+                cum_cost_usd += result.cost_usd or 0.0
+
+            # Redefine the result's token/cost fields to mean "cumulative across every
+            # attempt of this task so far" — the correct semantic for a task-level result.
+            # Degenerates to today's single-attempt values when there's no retry.
+            result.actuals_available = any_actuals
+            result.input_tokens = cum_input_tokens if any_actuals else None
+            result.output_tokens = cum_output_tokens if any_actuals else None
+            result.cache_creation_input_tokens = (
+                cum_cache_creation_input_tokens if any_actuals else None
+            )
+            result.cache_read_input_tokens = cum_cache_read_input_tokens if any_actuals else None
+            result.cost_usd = cum_cost_usd if any_actuals else None
+
             last_result = result
 
             if result.status == "succeeded":
+                return result
+
+            # Quota exhaustion is handled by the engine's outer loop (wait + re-run);
+            # don't burn retry attempts on it.
+            if result.claude_quota_exhausted:
                 return result
 
             logger.warning(
@@ -792,11 +1242,21 @@ class Orchestrator:
         workflow: WorkflowSpec,
         state: RunState,
         origin: _TaskOrigin,
+        route: str | None = None,
     ) -> None:
         """Merge *new* TaskSpec objects into the live workflow and RunState.
 
         Raises InjectionError if any id in *new* already exists in the workflow
         (NFR-6 — duplicate-id rejection).
+
+        Parameters
+        ----------
+        route:
+            The emitting task's ``TaskRunState.route`` (LLD §5.5, R4) — inherited
+            by every injected task so branch bookkeeping (not_taken tagging,
+            breaker counts) stays consistent across dynamic expansion. None when
+            the emitter is not on an activated branch (no ``branches`` declared,
+            or a pre-routing workflow).
         """
         existing = {t.id for t in workflow.tasks}
         for spec in new:
@@ -807,7 +1267,7 @@ class Orchestrator:
             workflow.tasks.append(spec)
             existing.add(spec.id)
             state.injected_tasks.append(spec)
-            state.tasks[spec.id] = TaskRunState(origin=origin)
+            state.tasks[spec.id] = TaskRunState(origin=origin, route=route)
 
     def _recompute_order(self, graph, done: set[str]) -> tuple[list[str], int]:
         """Recompute full topological order and return (order, cursor).

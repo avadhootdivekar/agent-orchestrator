@@ -21,3 +21,20 @@
 - `--permission-mode` must match what an agent's instruction DOES: `acceptEdits` accepts writes but silently denies Bash, so any agent that runs pytest/compile/syntax-check stalls (can exit 0 while skipping a declared output). Use `bypassPermissions` for those — simplest: standardize all example agents on it.
 - Spawn `claude` with an explicit `cwd` or it inherits the repo-root cwd and relative agent output writes (e.g. `output/tasks-manifest.json`) escape the workspace. Framework fix (config-driven, not per-test): `AgentSpec.working_dir` → engine resolves under `workspace_root` (path-guarded) → `TaskContext.cwd` → `subprocess.run(cwd=…)`; default = workspace root.
 - `AO_MAX_ATTEMPTS=""` (unset Makefile default) is falsy in Python; harness skips `--max-attempts` injection, so `max_attempts=1` (no retry) applies silently.
+- Claude quota exhaustion ("You've hit your * limit") is NOT a 429 rate limit — treat as distinct signals. Quota: long wait + re-queue without consuming a retry attempt; 429: short backoff within the retry loop.
+- Quota regex lives at ONE place only: `_CLAUDE_QUOTA_PATTERN` in `executors/claude_cli.py`. Tests import it; nothing else re-declares it.
+- Quota max-wait timer (`_quota_exhausted_since`) is per-episode only — resets after each successful task. Does NOT accumulate across the run.
+- Always `stdin=subprocess.DEVNULL` for Claude subprocesses; Claude may wait for user input on quota messages even in `-p` mode.
+- Expose all runtime settings (model, effort, max_attempts, max_turns, quota settings) via all three layers: CLI flag > env var > `.ao/config.yaml`. Implement the merge in one `_resolve_run_settings()` function shared by `run` and `resume`.
+- Injected-manifest tasks skip schema validation; bad `depends_on` ids crash the engine, not fail cleanly.
+- A skipped (`skip_if_outputs_exist`) emit_tasks task never injects its manifest — emitters must use `skip_if_outputs_exist: false`; `ao resume` is unaffected (injected tasks persist in run state).
+- Unknown-N fan-out needs a fixed-id/fixed-path aggregator emitted alongside siblings for static tasks to attach.
+- Emitted task ids must be globally unique per run, not per-manifest; namespace by something unique.
+- Breaker latch persists across resume: an id already in `tripped_breakers` never re-halts, even if still true.
+- `ao validate` needs each route to own a sink task in its exclusive cone; a shared `join` task doesn't count.
+- Docs-refresh tickets must grep the WHOLE doc for old contradicting claims, not just add a note at the fix site.
+- Check a subagent's STATUS header (`State`/`Status`) AND its Completion narrative against the real artifact — both can drift.
+- ClaudeCliExecutor captures ALL turns: runs `claude --output-format stream-json --verbose` via `Popen` with OS-level file redirect (child streams live to `transcript.jsonl`), so a long run that times out still keeps a partial transcript. `--output-format json` collapses to only the final turn — never use it for capture. Per-task files: `transcript.jsonl` (raw all-turn events), `stdout.txt` (human render, long blocks truncated), `stderr.txt`, `result.json` (terminal `result` event). `parse_usage_and_429`/`extract_result_event` are JSONL-aware AND accept a single legacy JSON blob, so token/quota/429 accounting is unchanged. `render_transcript` special-cases text/thinking/tool_use/tool_result blocks; unknowns dump as compact JSON (never raises).
+- Retry loops that do `last_result = result` on every attempt silently DISCARD prior attempts' actual usage/cost — sum across attempts instead, and attempt-suffix any shared `output_dir` or the next retry clobbers the previous attempt's capture files.
+- Claude CLI's real cost field is `total_cost_usd` (top-level, sibling of `usage`), NOT `cost_usd` — frozen in `tests/fixtures/claude_usage.json`.
+- `uv tool install <dir> --force` alone can resolve a stale cached wheel despite "success" — add `--reinstall` (confirmed fixes it; no `--no-cache`/`cache clean` needed). `install.sh --check`'s commit-stamp is blind to uncommitted changes — probe the tool venv directly (`<tooldir>/bin/python -c "import ..."`) when in doubt.

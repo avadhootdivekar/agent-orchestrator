@@ -16,6 +16,7 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [Per-project config file](#per-project-config-file)
 - [Configuring multiple repos](#configuring-multiple-repos)
 - [Schema reference](#schema-reference)
+- [Advanced workflows](#advanced-workflows)
 - [Repo layout](#repo-layout)
 - [Development](#development)
 
@@ -183,6 +184,7 @@ ao validate   Validate workflow, reposets, and agents specs (no execution)
 ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
+ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
 ```
 
 All commands accept:
@@ -197,18 +199,52 @@ If a flag is omitted, AO checks (in order):
 1. The matching environment variable (`AO_WORKFLOW`, `AO_REPOSETS`, `AO_AGENTS`)
 2. The nearest `.ao/config.yaml` (or `ao.yaml`) found by walking up from the current directory
 
-`ao resume` and `ao status` also require `--run-id RUN_ID`.
+`ao resume` and `ao status` also require `--run-id RUN_ID`. `ao status` additionally accepts
+`--workspace PATH` (or `AO_WORKSPACE_ROOT`) as a shortcut so you can check a run without
+resupplying the full `--workflow`/`--reposets`/`--agents` triplet.
+
+### `ao prune`
+
+Run state accumulates under `<workspace_root>/.orchestrator/runs/` — one directory per run.
+`ao prune` reclaims disk space by deleting old run directories, the same way `docker system
+prune` cleans up unused containers:
+
+```bash
+# Preview what would be deleted (runs older than 7 days, the default)
+ao prune --workspace /path/to/workspace --dry-run
+
+# Actually delete runs older than 30 days
+ao prune --workspace /path/to/workspace --older-than 30
+
+# Delete every run directory regardless of age
+ao prune --workspace /path/to/workspace --older-than 0
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--workspace, -w PATH` | — (required) | Workspace root to prune |
+| `--older-than DAYS` | `7` | Delete runs older than this many days (`0` = all) |
+| `--dry-run` | `false` | Print what would be deleted without deleting |
 
 ---
 
 ## Environment variables
 
-| Variable | Description |
-|----------|-------------|
-| `AO_WORKFLOW` | Default path to the workflow file (overridden by `--workflow`) |
-| `AO_REPOSETS` | Default path to the reposets config (overridden by `--reposets`) |
-| `AO_AGENTS` | Default path to the agents config (overridden by `--agents`) |
-| `AO_WORKSPACE_ROOT` | Override the `workspace_root` from the reposet (useful in CI) |
+All runtime settings can be provided via environment variable.  Precedence is
+always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
+
+| Variable | CLI equivalent | Description |
+|----------|---------------|-------------|
+| `AO_WORKFLOW` | `--workflow` | Default path to the workflow file |
+| `AO_REPOSETS` | `--reposets` | Default path to the reposets config |
+| `AO_AGENTS` | `--agents` | Default path to the agents config |
+| `AO_WORKSPACE_ROOT` | — | Override the `workspace_root` from the reposet (useful in CI) |
+| `AO_MODEL` | `--model` | Claude model for all agents (e.g. `claude-sonnet-4-6`) |
+| `AO_EFFORT` | `--effort` | Effort level: `low`, `medium`, or `high` |
+| `AO_MAX_ATTEMPTS` | `--max-attempts` | Max task attempts (overrides workflow `defaults.retries.max_attempts`) |
+| `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides effort-derived value) |
+| `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
+| `AO_QUOTA_POLL_SECONDS` | `--quota-poll-interval` | Seconds between quota-exhaustion re-run attempts (default: 900 = 15 min) |
 
 ---
 
@@ -228,13 +264,60 @@ agents:    path/to/agents.json
 
 # env:                  # optional: set env vars before any ao command
 #   MY_TOKEN: abc123
+
+# --- Runtime execution settings (env var equivalents shown) ---
+# max_attempts: 3          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
+# max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
+# model: claude-sonnet-4-6 # AO_MODEL        — claude model for all agents
+# effort: medium           # AO_EFFORT       — low / medium / high
+
+# --- Claude usage-quota exhaustion handling ---
+# quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h
+# quota_poll_seconds: 900         # AO_QUOTA_POLL_SECONDS     — poll every 15 min
 ```
 
 **Discovery**: AO walks up from your current directory, stopping at the git root
 or filesystem root.  The first `.ao/config.yaml` (preferred) or `ao.yaml` it
 finds is used.
 
-**Precedence**: `--flag` > `AO_*` env var > config file value.
+**Precedence**: `--flag` > `AO_*` env var > config file value > built-in default.
+
+---
+
+## Claude usage-quota exhaustion
+
+When Claude hits its session/daily/weekly usage limit, `ao` detects the message,
+waits, and retries automatically — it does **not** count quota exhaustion as a
+task failure or consume retry attempts.
+
+### How it works
+
+1. `ClaudeCliExecutor` detects the quota message (`"You've hit your * limit"`) in
+   the subprocess output via a single regex (one editable location in `claude_cli.py`).
+2. The engine reverses any token-budget charge for the task, sleeps
+   `quota_poll_seconds` (default: 15 min), then re-queues the same task.
+3. This repeats until either:
+   - The task succeeds (quota replenished) → the max-wait timer resets.
+   - `quota_max_wait_seconds` elapses since the episode began → the run fails with
+     `event="quota.max_wait_exceeded"`.
+
+The max-wait timer is **per exhaustion episode** and resets after each
+successfully completed task, so a long run with occasional quota hits does not
+accumulate wait time unfairly.
+
+### Configuration
+
+```bash
+# Wait up to 8 hours; poll every 10 minutes
+ao run --quota-max-wait 28800 --quota-poll-interval 600 --workflow ...
+
+# Or via env vars (useful in CI)
+export AO_QUOTA_MAX_WAIT_SECONDS=28800
+export AO_QUOTA_POLL_SECONDS=600
+ao run --workflow ...
+```
+
+Both settings can also be set in `.ao/config.yaml` (see [Per-project config file](#per-project-config-file)).
 
 ---
 
@@ -323,6 +406,26 @@ Full schemas are in `specs/` and are authoritative (validated by `ao validate`):
 |-------|-----------|
 | `claude_cli` | Runs `claude -p "<rendered-prompt>"` via subprocess |
 | `fake` | Deterministic no-op for tests/dry-runs; touches declared outputs |
+
+---
+
+## Advanced workflows
+
+Beyond a static task DAG, `workflow.json` supports dynamic task injection, bounded
+iteration loops, and token-budget enforcement — used when a workflow's shape isn't known
+until run time (e.g. a breakdown task fanning out into N implementation tasks, or a
+review→fix loop that repeats until a gate task says stop):
+
+| Feature | Schema field | Reference |
+|---------|-------------|-----------|
+| Dynamic task injection (incl. fan-out/aggregate and review-triggered fix pipelines) | `tasks[].emit_tasks` + `task_manifest_path` | [`docs-md/guide-dynamic-task-injection.md`](docs-md/guide-dynamic-task-injection.md), [`docs-md/e2e-playground-testing.md`](docs-md/e2e-playground-testing.md), [`specs/examples/workflow-dynamic.json`](specs/examples/workflow-dynamic.json), [`workflow-dynamic-fanout.json`](specs/examples/workflow-dynamic-fanout.json), [`workflow-dynamic-pipeline.json`](specs/examples/workflow-dynamic-pipeline.json) |
+| Bounded loops (review/fix cycles) | `loops[]` (`body`, `gate_task_id`, `gate_output_path`) | [`docs-md/e2e-playground-testing.md`](docs-md/e2e-playground-testing.md), [`specs/examples/workflow-loop.json`](specs/examples/workflow-loop.json) |
+| Token budget / rate limiting | `budget` (`total_tokens`, `rate`, `on_exhaustion`) | [`docs-md/token-budgeting-hld.md`](docs-md/token-budgeting-hld.md), [`specs/examples/workflow-budget.json`](specs/examples/workflow-budget.json) |
+| Per-task log capture for dynamic runs | — | [`docs-md/logging-dynamic-workflows-hld.md`](docs-md/logging-dynamic-workflows-hld.md) |
+
+A full worked example combining all three (design → implement → review pipeline with a
+dynamic fan-out and a bugfix/review loop) lives in [`playground/sum-of-array/`](playground/sum-of-array/)
+— see [`playground/README.md`](playground/README.md).
 
 ---
 

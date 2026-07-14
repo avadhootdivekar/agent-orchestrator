@@ -65,10 +65,11 @@ than replaces, the `output_manifest` / `read_manifest` control-file pattern.
                           ┌───────────────────▼──────────────────▼────────────┐
                           │              Executor (DispatchExecutor)           │
                           │   ClaudeCliExecutor.execute(ctx)                   │
-                          │     subprocess.run(...) -> capture stdout/stderr   │
-                          │     write -> .orchestrator/runs/<run>/<task>/      │
-                          │                 stdout.txt | stderr.txt            │
-                          │     TaskResult.output_artifact_path = <dir/file>   │
+                          │     Popen(--output-format stream-json --verbose)   │
+                          │       stdout -> transcript.jsonl (all turns, live) │
+                          │       stderr -> stderr.txt                         │
+                          │     derive stdout.txt (render) + result.json       │
+                          │     TaskResult.output_artifact_path = <dir>        │
                           └────────────────────────────────────────────────────┘
 
 Run directory layout:
@@ -77,8 +78,14 @@ Run directory layout:
     ├── status.json         (snapshot derived from RunState, refreshed each transition)
     ├── run.log             (structured JSON lines for the whole run)
     └── <task_id>/
-        ├── stdout.txt
-        └── stderr.txt
+        └── attempt-<N>/      (E-9h3m7k: one dir PER RETRY ATTEMPT, N starting at 1 —
+            │                  a failed attempt's capture is no longer clobbered by the
+            │                  next retry; `output_artifact_path` points at whichever
+            │                  attempt-N produced the task's final TaskResult)
+            ├── transcript.jsonl  (raw per-turn event stream — ALL turns; observability)
+            ├── stdout.txt        (human-readable render of the transcript)
+            ├── stderr.txt        (raw stderr)
+            └── result.json       (terminal result event: final text + aggregate usage)
 ```
 
 ---
@@ -142,7 +149,7 @@ Cross-validation (enforced at spec LOAD time by `spec.cross_validate`):
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
-| `output_dir` | `str` | `""` | Resolved `.orchestrator/runs/<run_id>/<task_id>/`; executor writes captured output here. Paths only — NFR-1 safe. |
+| `output_dir` | `str` | `""` | Resolved `.orchestrator/runs/<run_id>/<task_id>/attempt-<N>/` (E-9h3m7k: attempt-suffixed since `_run_with_retries` computes a fresh `output_dir` per attempt); executor writes captured output here. Paths only — NFR-1 safe. |
 | `task_manifest_path` | `str \| None` | `None` | Resolved path for an `emit_tasks` task to write its task manifest (Area 2). Passed through to the executor so it knows where to write the control file. None when `task.emit_tasks` is False. Paths only — NFR-1 safe. |
 | `gate_output_path` | `str \| None` | `None` | Resolved, iteration-suffixed path for a loop gate task to write its verdict (Area 2). Set by the engine in `_run_with_retries` from `_gate_path_for_iter(loop, cur_iter)`. None when the task is not a gate task. Paths only — NFR-1 safe. |
 
@@ -167,21 +174,43 @@ Orchestrator.run() start
 `extra=` so callers don't repeat them. The handler is attached/detached per run
 so concurrent or sequential runs don't cross-contaminate log files.
 
-### 4.2 Agent output capture (FR-4, FR-5)
+### 4.2 Agent output capture (FR-4, FR-5) — full multi-turn stream
+
+The CLI is invoked with `--output-format stream-json --verbose` so it emits **one
+JSON event per line** (a JSONL stream) covering *every* turn, instead of the single
+collapsed blob `--output-format json` returns. That single blob was the root cause of
+lost observability: intermediate turns (tool calls, tool results, recovered errors) never
+reached stdout — only the final turn did. Streaming to disk via `Popen` with an OS-level
+file redirect also means a long run that later times out or crashes leaves a **partial**
+transcript on disk rather than nothing.
 
 ```
 engine builds TaskContext with output_dir = runs/<run_id>/<task_id>/
 ClaudeCliExecutor.execute(ctx):
-   res = subprocess.run(argv, capture_output=True, text=True)
+   argv = _ensure_stream_capture_flags(argv)   # --output-format stream-json --verbose
    mkdir -p ctx.output_dir
-   write ctx.output_dir/stdout.txt  <- res.stdout
-   write ctx.output_dir/stderr.txt  <- res.stderr
+   open transcript.jsonl (w) as tf; open stderr.txt (w) as ef
+   proc = Popen(argv, stdout=tf, stderr=ef, stdin=DEVNULL)   # child streams live to files
+   proc.wait(timeout=ctx.timeout_seconds)                    # kill+partial-preserve on timeout
+   # derive human-facing artifacts from the captured stream:
+   write stdout.txt  <- render_transcript(parse_transcript_events(transcript))
+   write result.json <- extract_result_event(transcript)     # terminal type:"result" event
+   usage = parse_usage_and_429(transcript, stderr, returncode)  # JSONL-aware
    TaskResult.output_artifact_path = ctx.output_dir
 engine records ts.output_artifact_path = result.output_artifact_path
    (path only; engine never reads the files)
 ```
-A downstream task can declare `inputs: [".orchestrator/runs/<run_id>/<task>/stdout.txt"]`
-or receive the path via `dynamic_input_paths`, so later agents/auditors consume it.
+
+Artifacts (all paths only — NFR-1 safe):
+- `transcript.jsonl` — authoritative, untruncated per-turn event stream (machine-readable).
+- `stdout.txt` — greppable human-readable render (long blocks truncated; full data stays in the transcript).
+- `stderr.txt` — raw stderr.
+- `result.json` — the terminal result event (final text + aggregate `usage`).
+
+A downstream task can declare `inputs: [".orchestrator/runs/<run_id>/<task>/transcript.jsonl"]`
+(or `stdout.txt`/`result.json`) or receive the path via `dynamic_input_paths`, so later
+agents/auditors consume it. `parse_usage_and_429` accepts both the JSONL stream and a
+single legacy JSON object, so token/quota/429 accounting is unchanged.
 
 ### 4.3 Status snapshot (FR-1, FR-6)
 
@@ -478,3 +507,14 @@ sketched:
 - `_clone_body` signature in `engine.py` takes a third argument `workflow:
   WorkflowSpec` (needed to look up base tasks). The original EPIC contract table
   showed `_clone_body(self, loop, iter_n)` without this argument.
+
+## 11. Addendum — E-9h3m7k accurate usage metrics (2026-07-10)
+
+A later epic (`E-9h3m7k-accurate-usage-metrics`) changed the capture-directory layout
+described in §2/§3.6 above: `TaskContext.output_dir` is now attempt-suffixed
+(`.../<task_id>/attempt-<N>/`, computed fresh per retry attempt inside
+`_run_with_retries`) instead of one shared directory per task. Rationale: the previous
+layout meant a failed attempt's `transcript.jsonl`/`result.json` were silently
+overwritten by the next retry attempt, destroying real observability data. See
+`docs-md/token-budgeting-hld.md` §"Accurate usage metrics addendum" for the companion
+change to `TaskResult`/`RunState` usage accounting that this addendum is paired with.

@@ -1,4 +1,5 @@
-"""Tests for T-f0xkdw, T-1gsn0l, T-38jqbk — output capture, status artifact, ao status."""
+"""Tests for T-f0xkdw, T-1gsn0l, T-38jqbk, T-n9k3r5 — output capture, status artifact,
+ao status, and routing/circuit-breaker observability in status.json + ao status."""
 
 from __future__ import annotations
 
@@ -14,8 +15,11 @@ from agent_orchestrator.engine import Orchestrator
 from agent_orchestrator.executors.fake import FakeExecutor
 from agent_orchestrator.models import (
     AgentSpec,
+    CircuitBreakerSpec,
     RepoRef,
     RepoSet,
+    RouterSpec,
+    RouteSpec,
     TaskSpec,
     WorkflowSpec,
 )
@@ -98,7 +102,7 @@ class TestOutputCapture:
 
         assert state.status == "succeeded"
         for tid in ["task0", "task1"]:
-            task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / tid
+            task_dir = Path(state.tasks[tid].output_artifact_path)
             assert task_dir.exists(), f"output_dir missing for {tid}"
             assert (task_dir / "stdout.txt").exists(), f"stdout.txt missing for {tid}"
             assert (task_dir / "stderr.txt").exists(), f"stderr.txt missing for {tid}"
@@ -127,7 +131,7 @@ class TestOutputCapture:
         wf = _simple_workflow(tmp_path, n_tasks=1)
         state, _ = _run_workflow(tmp_path, wf, behaviors={"task0": "fail"})
 
-        task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / "task0"
+        task_dir = Path(state.tasks["task0"].output_artifact_path)
         assert (task_dir / "stdout.txt").exists()
         assert (task_dir / "stderr.txt").exists()
         # Path should still be recorded even on failure
@@ -138,9 +142,36 @@ class TestOutputCapture:
         wf = _simple_workflow(tmp_path, n_tasks=1)
         state, _ = _run_workflow(tmp_path, wf)
 
-        task_dir = tmp_path / ".orchestrator" / "runs" / state.run_id / "task0"
+        task_dir = Path(state.tasks["task0"].output_artifact_path)
         stdout_content = (task_dir / "stdout.txt").read_text()
         assert "task0" in stdout_content  # stub content includes task id
+
+    def test_transcript_jsonl_captured_per_task(self, tmp_path: Path) -> None:
+        """Full multi-turn capture: transcript.jsonl exists and holds >1 event per task."""
+        wf = _simple_workflow(tmp_path, n_tasks=2)
+        state, _ = _run_workflow(tmp_path, wf)
+
+        assert state.status == "succeeded"
+        for tid in ["task0", "task1"]:
+            task_dir = Path(state.tasks[tid].output_artifact_path)
+            transcript = task_dir / "transcript.jsonl"
+            assert transcript.exists(), f"transcript.jsonl missing for {tid}"
+            events = [
+                json.loads(line) for line in transcript.read_text().splitlines() if line.strip()
+            ]
+            # More than one event => turns beyond the final one are captured.
+            assert len(events) > 1
+            assert events[-1]["type"] == "result"
+
+    def test_result_json_captured_per_task(self, tmp_path: Path) -> None:
+        """result.json holds the terminal result event with the task's final text."""
+        wf = _simple_workflow(tmp_path, n_tasks=1)
+        state, _ = _run_workflow(tmp_path, wf)
+
+        task_dir = Path(state.tasks["task0"].output_artifact_path)
+        result_json = json.loads((task_dir / "result.json").read_text())
+        assert result_json["type"] == "result"
+        assert "task0" in result_json["result"]
 
 
 # ---------------------------------------------------------------------------
@@ -466,3 +497,188 @@ class TestAoStatusCommand:
         )
         assert "task0" in result.output
         assert "task1" in result.output
+
+
+# ---------------------------------------------------------------------------
+# T-n9k3r5 — Routing + circuit-breaker observability in status.json / ao status
+# (epic E-rc7k2v). Builds on the RouterSpec/RouteSpec/CircuitBreakerSpec patterns
+# from tests/test_engine_routing.py and tests/test_engine_breakers.py.
+# ---------------------------------------------------------------------------
+
+
+def _write_verdict(workspace: Path, path: str, routes: list[str]) -> None:
+    full = workspace / path
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(json.dumps({"routes": routes}))
+
+
+def _classify_router() -> RouterSpec:
+    return RouterSpec(
+        id="classify-router",
+        router_task_id="classify",
+        verdict_path="out/verdict.json",
+        routes={
+            "bug": RouteSpec(entry=["bug-fix"]),
+            "documentation": RouteSpec(entry=["doc-fix"]),
+        },
+    )
+
+
+def _routed_workflow(circuit_breakers: list[CircuitBreakerSpec] | None = None) -> WorkflowSpec:
+    """classify -> {bug-fix, doc-fix} router, optionally with circuit breakers attached."""
+    tasks = [
+        TaskSpec(
+            id="classify",
+            agent="ag",
+            instruction="specs/examples/instructions/design.md",
+            outputs=["out/classify-done.txt"],
+        ),
+        TaskSpec(
+            id="bug-fix",
+            agent="ag",
+            instruction="specs/examples/instructions/design.md",
+            depends_on=["classify"],
+            outputs=["out/bug.txt"],
+        ),
+        TaskSpec(
+            id="doc-fix",
+            agent="ag",
+            instruction="specs/examples/instructions/design.md",
+            depends_on=["classify"],
+            outputs=["out/doc.txt"],
+        ),
+    ]
+    return WorkflowSpec(
+        version="1.0",
+        id="routed-wf",
+        repo_set="rs",
+        tasks=tasks,
+        branches=[_classify_router()],
+        circuit_breakers=circuit_breakers or [],
+    )
+
+
+def _stop_file_breaker(path: str = "stop.flag") -> CircuitBreakerSpec:
+    return CircuitBreakerSpec(id="stop-breaker", condition="stop_file", action="fail", path=path)
+
+
+class TestWriteStatusRoutingObservability:
+    """Unit tests for write_status()'s route/breaker fields (AC1, LLD §10.2)."""
+
+    def test_route_decisions_and_task_route_persisted(self, tmp_path: Path) -> None:
+        wf = _routed_workflow()
+        _write_verdict(tmp_path, "out/verdict.json", ["bug"])
+        state, _ = _run_workflow(tmp_path, wf)
+        assert state.status == "succeeded"
+
+        status_path = tmp_path / ".orchestrator" / "runs" / state.run_id / "status.json"
+        snap = json.loads(status_path.read_text())
+
+        assert snap["route_decisions"] == {"classify-router": ["bug"]}
+        task_by_id = {t["id"]: t for t in snap["tasks"]}
+        assert task_by_id["bug-fix"]["status"] == "succeeded"
+        assert task_by_id["bug-fix"]["route"] == "classify-router:bug"
+        assert task_by_id["doc-fix"]["status"] == "not_taken"
+        assert task_by_id["doc-fix"]["route"] == "classify-router:documentation"
+        assert task_by_id["doc-fix"]["not_taken_reason"] is not None
+        assert snap["counts"]["not_taken"] == 1
+
+    def test_tripped_breakers_summary_present(self, tmp_path: Path) -> None:
+        (tmp_path / "stop.flag").write_text("halt")
+        wf = _routed_workflow(circuit_breakers=[_stop_file_breaker()])
+        _write_verdict(tmp_path, "out/verdict.json", ["bug"])
+        state, _ = _run_workflow(tmp_path, wf)
+        assert state.status == "failed"
+
+        status_path = tmp_path / ".orchestrator" / "runs" / state.run_id / "status.json"
+        snap = json.loads(status_path.read_text())
+
+        assert len(snap["tripped_breakers"]) == 1
+        tb = snap["tripped_breakers"][0]
+        assert tb["id"] == "stop-breaker"
+        assert tb["condition"] == "stop_file"
+        assert tb["action"] == "fail"
+        assert tb.get("at")
+        assert tb["detail"] == {"path": "stop.flag"}
+
+    def test_non_routed_non_breaker_run_has_empty_route_summaries(self, tmp_path: Path) -> None:
+        """Backward-compat: ordinary workflows still get the new keys, just empty."""
+        wf = _simple_workflow(tmp_path, n_tasks=1)
+        state, _ = _run_workflow(tmp_path, wf)
+
+        status_path = tmp_path / ".orchestrator" / "runs" / state.run_id / "status.json"
+        snap = json.loads(status_path.read_text())
+
+        assert snap["route_decisions"] == {}
+        assert snap["tripped_breakers"] == []
+        assert snap["tasks"][0]["route"] is None
+        assert snap["tasks"][0]["not_taken_reason"] is None
+
+
+class TestAoStatusRoutingAndBreakerObservability:
+    """CliRunner E2E — `ao status` surfaces the Route column + tripped-breaker
+    trailer (AC2, AC3, AC5). Per memory `engine-api-tests-dont-cover-cli`, these
+    assert on the real `ao status` CLI entry point (CliRunner), not on
+    `_print_state`/`_print_status_snapshot` called directly."""
+
+    def test_routed_run_status_shows_route_column_and_distinguishes_statuses(
+        self, tmp_path: Path
+    ) -> None:
+        wf = _routed_workflow()
+        _write_verdict(tmp_path, "out/verdict.json", ["bug"])
+        state, _ = _run_workflow(tmp_path, wf)
+        assert state.status == "succeeded"
+
+        result = runner.invoke(
+            app,
+            ["status", "--run-id", state.run_id, "--workspace", str(tmp_path)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Route" in result.output  # new column header
+
+        lines = {ln.split()[0]: ln for ln in result.output.splitlines() if ln.strip()}
+        # AC3: succeeded (taken route) vs not_taken (excluded route) both visible,
+        # each still tagged with its own route id -- the new column doesn't erase
+        # the existing Status-column distinction.
+        assert "classify-router:bug" in lines["bug-fix"]
+        assert "succeeded" in lines["bug-fix"]
+        assert "classify-router:documentation" in lines["doc-fix"]
+        assert "not_taken" in lines["doc-fix"]
+        assert "Tripped breakers" not in result.output
+
+    def test_tripped_breaker_run_status_shows_trailer_line(self, tmp_path: Path) -> None:
+        (tmp_path / "stop.flag").write_text("halt")
+        wf = _routed_workflow(circuit_breakers=[_stop_file_breaker()])
+        _write_verdict(tmp_path, "out/verdict.json", ["bug"])
+        state, _ = _run_workflow(tmp_path, wf)
+        assert state.status == "failed"
+
+        result = runner.invoke(
+            app,
+            ["status", "--run-id", state.run_id, "--workspace", str(tmp_path)],
+        )
+        assert result.exit_code == 0, result.output
+        # Exact trailer format, LLD §10.2 example.
+        assert "Tripped breakers: stop-breaker (stop_file, action=fail)" in result.output
+
+
+class TestRunLogRoutingAndBreakerEvents:
+    """AC4: branch.route + breaker.trip both reach run.log via the existing
+    per-run structured-log handler for a routed + breaker-tripped run. Both events
+    are emitted by earlier tickets (T-m2h5t7, T-x8v4d3/T-r3j9b6) -- this only
+    verifies the log-delivery path, no new production code."""
+
+    def test_branch_route_and_breaker_trip_both_in_run_log(
+        self, tmp_path: Path, read_jsonl: Callable[[Path], list[dict]]
+    ) -> None:
+        (tmp_path / "stop.flag").write_text("halt")
+        wf = _routed_workflow(circuit_breakers=[_stop_file_breaker()])
+        _write_verdict(tmp_path, "out/verdict.json", ["bug"])
+        state, _ = _run_workflow(tmp_path, wf)
+        assert state.status == "failed"
+
+        log_path = tmp_path / ".orchestrator" / "runs" / state.run_id / "run.log"
+        records = read_jsonl(log_path)
+        events = [r.get("event") for r in records]
+        assert "branch.route" in events
+        assert "breaker.trip" in events

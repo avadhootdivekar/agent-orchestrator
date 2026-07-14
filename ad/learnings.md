@@ -224,3 +224,165 @@ By: agent
 Role: developer
 Date: 2026-07-02
 ---
+
+---
+Learning-ID: LRN-20260702-quota-exhaustion-vs-429
+Learning: Claude's usage-quota exhaustion ("You've hit your * limit") is NOT a provider-level 429 rate limit. Treat them as distinct signals: quota requires a long wait (minutes to hours) + re-queue without consuming a retry attempt; 429 is transient and handled by the existing retry/backoff loop. Mixing them would either burn retry budget on quota waits or apply wrong recovery logic.
+Context: Implemented `_CLAUDE_QUOTA_PATTERN` detection in `parse_usage_and_429()` (claude_cli.py) with an early-return before 429 detection so the signals can never overlap. `TaskResult.claude_quota_exhausted` carries the flag; engine handles it in a separate outer-loop block.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-quota-single-source-regex
+Learning: Keep the Claude quota-message regex at exactly ONE editable location (`_CLAUDE_QUOTA_PATTERN` in `executors/claude_cli.py`). User requirement: when the exact quota string changes (e.g. "session limit" → "weekly limit"), there should be one grep-and-edit location. Spreading the pattern to tests or engine would require multi-file updates and risk drift.
+Context: Tests import `_CLAUDE_QUOTA_PATTERN` or craft strings that match it; they don't re-declare the pattern. Engine and models carry only the `claude_quota_exhausted` boolean flag.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-quota-max-wait-per-episode
+Learning: The quota max-wait timer (`_quota_exhausted_since`) is per-exhaustion-episode only. It resets to `None` after each successfully completed task. Do NOT accumulate wait time across a run — only time within a single continuous exhaustion episode counts against `quota_max_wait_seconds`. Misunderstanding this as a total-run budget would cause legitimate long runs to fail prematurely.
+Context: User clarification: "quota ONLY for current quota exhaustion event. Does NOT accumulate." Implemented as `_quota_exhausted_since = None` after `done.add(tid)` on success.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-stdin-devnull-subprocess
+Learning: Always use `stdin=subprocess.DEVNULL` when spawning Claude CLI subprocesses. Claude may wait for user input in some cases (e.g. quota exhaustion interactive prompt). Without `DEVNULL`, the subprocess blocks indefinitely even in `-p` (non-interactive) mode if the process tries to read stdin.
+Context: Added to `ClaudeCliExecutor.execute()` as a belt-and-suspenders measure; specifically needed when Claude outputs a quota message and then waits for a keypress before exiting.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260702-three-layer-config-precedence
+Learning: For any runtime setting that users might want to control (model, effort, max_attempts, max_turns, quota settings), always expose all three layers: CLI flag > env var > config file value. Implement in a single `_resolve_run_settings()` function so the merge logic is in one place, not duplicated across `run` and `resume` commands.
+Context: `model`/`effort` were missing from CLI; `max_attempts`/`max_turns` were in CLI but not in config file or env. All 6 runtime settings now live in `ProjectConfig` (pydantic), are read from `AO_*` env vars, and have `--flag` equivalents. `_resolve_run_settings()` does the merge once.
+By: agent
+Role: developer
+Date: 2026-07-02
+---
+
+---
+Learning-ID: LRN-20260704-emit-tasks-skips-validation
+Learning: Tasks injected via `task_manifest_path` skip schema/cross-validation; a bad `depends_on` id crashes the engine with an uncaught `KeyError`, not a clean failure.
+Context: Found while researching `read_task_manifest`/`build_dag` — manifest TaskSpecs get only Pydantic field checks, no reference validation.
+By: agent
+Role: agent
+Date: 2026-07-04
+---
+
+---
+Learning-ID: LRN-20260704-dynamic-fanout-fixed-aggregator
+Learning: For unknown-N dynamic fan-out, give the emitted aggregator a FIXED id+output path (even at N=0) so a static task attaches via inferred edges, not `depends_on`.
+Context: Static tasks can't `depends_on` not-yet-injected ids; this resolves the repo's own documented OQ-2 aggregator gap.
+By: agent
+Role: agent
+Date: 2026-07-04
+---
+
+---
+Learning-ID: LRN-20260704-injected-ids-globally-unique
+Learning: Injected task ids must be globally unique across the whole run, not just within one manifest — collisions with any prior static/injected id fail the run via `InjectionError`.
+Context: Namespace emitted ids by something the emitter controls and knows is unique (e.g. `subreview-<module>`), not a bare counter.
+By: agent
+Role: agent
+Date: 2026-07-04
+---
+
+---
+Learning-ID: LRN-20260704-skipped-emit-task-never-injects
+Learning: A task with `emit_tasks: true` that is skipped via `skip_if_outputs_exist` NEVER injects its manifest — the skip path `continue`s before the injection hook (`engine.py` runs injection only for `ts.status == "succeeded"` after real execution). Emitter tasks must set `skip_if_outputs_exist: false` or a fresh `ao run` over existing outputs strands every downstream consumer of the fan-out.
+Context: Found while wiring the finplan epic-runner workflow; `ao resume` is unaffected (injected tasks are restored from run state) — only fresh runs with pre-existing outputs hit this.
+By: agent
+Role: developer
+Date: 2026-07-04
+---
+
+---
+Learning-ID: LRN-20260709-model-override-clobbers-agents
+Learning: Global `--model`/`--effort` (or `AO_MODEL`/`AO_EFFORT`/config) overwrites the field on EVERY AgentSpec, silently downgrading deliberately-pinned per-agent models (e.g. finplan `architect-opus`).
+Context: Found in cli.py during ADR-0003 settings-precedence design; fix tracked in E-st5p3q — until then never combine global overrides with mixed-model agents.json.
+By: agent
+Role: architect
+Date: 2026-07-09
+---
+
+---
+Learning-ID: LRN-20260710-breaker-latch-persists-resume
+Learning: `evaluate_breakers`'s trip latch is keyed on `state.tripped_breakers` for the run's lifetime — an already-tripped id never re-halts a resumed run, even if its condition is still true.
+Context: Found in E-rc7k2v resume-replay (T-t4m8x1); only a condition never evaluated before the stop re-trips on resume.
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-route-sink-required-per-branch
+Learning: `ao validate` requires each router route to have its own sink (task with no successors) inside its exclusive cone — a downstream `join` task doesn't satisfy this.
+Context: A route whose only task feeds a cross-route join fails validation; add a per-route terminal task before converging.
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-doc-reconcile-search-whole-doc
+Learning: A docs-refresh ticket correcting an implementation-vs-design drift must search the WHOLE doc for other passages stating the old claim, not just add a note at the discovery site.
+Context: LLD §9 and a new §11 gotcha bullet stated opposite resume-breaker behavior until reconciled together in Wave 5 of E-rc7k2v.
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-subagent-completion-vs-header
+Learning: A subagent's Completion narrative can overstate what shipped (e.g. claiming an example spec demonstrates `join` when it doesn't) and leave the header `State`/`Status` on `Draft` despite declaring itself done.
+Context: Caught in E-rc7k2v T-d8w4v2 by checking the actual spec file and STATUS.md header against the Completion section.
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-retry-loop-discarded-usage
+Learning: A retry loop that reassigns `last_result = result` on every attempt silently discards actual usage/cost data from failed attempts — only the winning attempt's numbers survive. The same overwrite-vs-sum bug also affects `output_dir` reuse across attempts (each retry clobbers the previous attempt's capture files) if the capture path isn't attempt-suffixed.
+Context: `engine._run_with_retries` overwrote `TaskResult` token/cost fields on every attempt instead of summing; fixed in E-9h3m7k by accumulating across attempts and suffixing `output_dir` with `attempt-<N>/`. This also silently under-charged budget reconciliation for retried tasks (`_sum_actuals` only saw the last attempt).
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260710-uv-force-not-enough
+Learning: `uv tool install <dir> --force` can resolve a stale cached build despite reporting success — observed reinstalling a snapshot missing an entire epic's worth of code (no `compute_cones`) right after a "successful" `--force` reinstall. `install.sh --check`'s git-commit-stamp comparison doesn't catch this either (it's blind to uncommitted working-tree changes, the common mid-session case).
+Context: Adding `--reinstall` to the `uv tool install` invocation in `install.sh`'s `_do_install` fixed it — confirmed via a marker-line round-trip that `--force --reinstall` picks up live source content without needing `uv cache clean`/`--no-cache`. See [[project_ao_install_staleness]].
+By: agent
+Role: developer
+Date: 2026-07-10
+---
+
+---
+Learning-ID: LRN-20260714-wall-clock-started-at-frozen
+Learning: `RunState.started_at` is set once at run creation and never updated on resume, so `run_wall_clock_seconds` counts pause/resume gaps as elapsed. Use the new `run_active_seconds` condition (E-3JTmVu) when gaps must not count.
+Context: `prepare_resume()` only resets status to running; started_at is untouched — confirmed while designing the pause-immune breaker.
+By: agent
+Role: developer
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260714-task-started-at-single-writer
+Learning: `TaskRunState.started_at` must be set only on a task's FIRST dispatch — quota/429/budget-wait redispatch loops (`cursor -= 1; continue`) that skip the guard silently overwrite it, undercounting `run_active_seconds`'s duration sum.
+Context: Fixed with `if ts.started_at is None:` guard in engine.py during E-3JTmVu's reviewer pass; single writer, single reader field.
+By: agent
+Role: developer
+Date: 2026-07-14
+---

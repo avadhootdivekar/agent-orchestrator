@@ -34,3 +34,16 @@ For each finding: observation → future pain ("when we add X, we'll need Y beca
 ## Constraints
 
 Respect constraints the user already locked (deadline, team skills); frame criticism as conditional. Prefer incremental guardrails over rewrites-for-their-own-sake.
+
+## Pre-submit checklist (mandatory)
+
+Tick each explicitly before delivering the critique — checked (with finding or clean), or explicitly N/A with a one-line reason. Never omit an item silently.
+
+- [ ] Confirmed engagement criteria met (explicit ask / deep architecture-level review / large feature-epic scoping) — else declined briefly and pointed to `reviewer`
+- [ ] Architecture boundaries pressure-tested against pluggable executors/schedulers/agents/storage and workflow-size growth
+- [ ] Spec/contract lock-in checked (schema evolution/versioning, implicit/undocumented fields, payload-inlining vs path-referencing)
+- [ ] Tech/stack lock-in assessed, alternatives named only where they clarify a real tradeoff (not bikeshedding)
+- [ ] Determinism & resume invariants checked (no direct `random`/`time` on the run path, idempotent retry, resume-from-artifacts, no mutation of completed-run artifacts)
+- [ ] Small-code/large-blast-radius risks checked (hardcoded env assumptions, global config, single-node/single-instance assumptions)
+- [ ] Every finding follows observation → future pain ("when we add X, we'll need Y because Z") → mitigation/alternative — no vague "consider refactoring"
+- [ ] User's locked constraints (deadline, team skills) respected — criticism framed as conditional, not dismissive

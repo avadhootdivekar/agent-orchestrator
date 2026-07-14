@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "id": "dynamic-review-fix-pipeline",
+  "name": "Dynamic review-triggered fix pipeline — reviewer injects developer+tester chains per finding",
+  "repo_set": "default-set",
+  "tasks": [
+    {
+      "id": "review",
+      "agent": "reviewer",
+      "instruction": "specs/examples/instructions/review-and-triage.md",
+      "outputs": ["output/review.md"],
+      "emit_tasks": true,
+      "task_manifest_path": "output/fix-manifest.json",
+      "depends_on": []
+    },
+    {
+      "id": "final-report",
+      "agent": "tester",
+      "instruction": "specs/examples/instructions/test.md",
+      "inputs": ["output/verify-summary.md"],
+      "outputs": ["output/final-report.md"],
+      "depends_on": ["review"]
+    }
+  ]
+}

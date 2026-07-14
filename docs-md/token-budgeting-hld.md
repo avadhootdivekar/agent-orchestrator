@@ -407,3 +407,53 @@ Consequences: executor must detect 429 + reset time; engine reverses the charge 
 
 - OPEN (follow-on): Recursive sizing for directory inputs in the estimator (MVP: top-level
   stat only, documented limitation).
+
+---
+
+## 10. Accurate usage metrics addendum (E-9h3m7k, 2026-07-10)
+
+This epic (`E-9h3m7k-accurate-usage-metrics`) is separate from — and downstream of —
+the token budgeting/rate-limiting work above. It fixed three confirmed gaps in ACTUAL
+(not estimated) usage accounting:
+
+1. **`TaskResult.cost_usd`** — the real `total_cost_usd` field (confirmed §9 above,
+   frozen in `tests/fixtures/claude_usage.json`) was never extracted; only the four
+   `usage.*` token fields were. `parse_usage_and_429` now also returns `cost_usd`.
+
+2. **Cross-attempt discard bug** — `engine._run_with_retries`'s retry loop
+   *overwrote* `last_result` on every attempt; a task that failed on attempt 1 (real
+   tokens/cost spent) and succeeded on attempt 2 only ever reported attempt 2's
+   numbers. The loop now sums `input_tokens`/`output_tokens`/`cache_*_tokens`/`cost_usd`
+   across every attempt and returns the CUMULATIVE total as the task's `TaskResult` —
+   this is also what `_sum_actuals` feeds into `BudgetManager.reconcile`, so budget
+   reconciliation is now correctly charged for retried tasks too (previously
+   under-charged by the discarded attempts' tokens).
+
+3. **No run-level rollup** — `TaskRunState` gained
+   `cumulative_input_tokens`/`cumulative_output_tokens`/`cumulative_cache_creation_input_tokens`/
+   `cumulative_cache_read_input_tokens`/`cumulative_cost_usd`, mirrored from the (now
+   cumulative) `TaskResult` once a task settles. `models.compute_run_usage_totals(state)`
+   is a pure function summing these across every task — deliberately NOT a
+   separately-mutated `RunState` counter (avoids the double-charge-on-resume failure
+   mode that `BudgetCounters.reconciled_tasks` exists to guard against elsewhere).
+   `ao run`/`ao status` (`cli.py`) print per-task cost/tokens and a run-total line
+   using this function; `status.json` carries a `usage_totals` block for the same data.
+
+4. **Actual-cost circuit breakers** — `breakers.py` gained `task_cost_usd` (any single
+   task's cumulative cost ≥ threshold) and `run_cost_usd` (run-wide cumulative cost ≥
+   threshold), registered in `BREAKER_REGISTRY` and `spec._MVP_BREAKER_CONDITIONS`
+   alongside the six existing MVP conditions. These are distinct from the schema's
+   reserved `projected_cost_exceeds` name (still unimplemented — that one is a
+   pre-flight ESTIMATE check tied to `budget.py`/`estimator.py`, not actuals).
+   `CircuitBreakerSpec.threshold` widened `int -> float` (schema: `integer` ->
+   `number`, `minimum: 1` -> `exclusiveMinimum: 0`) to allow fractional USD thresholds;
+   count-based conditions are unaffected (`count >= float_threshold` still works).
+
+Companion change: `TaskContext.output_dir` is now attempt-suffixed — see
+`docs-md/logging-dynamic-workflows-hld.md` §11.
+
+Not in scope: token-count breakers (`task_tokens`/`run_tokens` — token *totals* are
+already capped via `BudgetSpec.total_tokens`); accumulating usage across a
+quota-exhaustion-triggered whole-task re-run (the outer `engine.run()` loop, distinct
+from the retry loop fixed here) — quota exhaustion is detected before real work
+happens in practice, so this was judged out of scope for this pass.

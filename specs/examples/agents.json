@@ -18,6 +18,12 @@
       "command_template": ["claude", "-p", "{prompt}"],
       "prompt_template": "Act as the tester agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated"
+    },
+    "reviewer": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}"],
+      "prompt_template": "Act as the reviewer agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
+      "context_window": "isolated"
     }
   }
 }

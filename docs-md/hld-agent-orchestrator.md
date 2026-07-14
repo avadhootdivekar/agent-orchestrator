@@ -4,7 +4,8 @@
 - Decision: [`ADR-0001`](adr/ADR-0001-orchestration-approach.md)
 - LLD (implementable detail): [`lld-agent-orchestrator.md`](lld-agent-orchestrator.md)
 - Date: 2026-06-16
-- Feature design docs: [`logging-dynamic-workflows-hld.md`](logging-dynamic-workflows-hld.md), [`token-budgeting-hld.md`](token-budgeting-hld.md)
+- Feature design docs: [`logging-dynamic-workflows-hld.md`](logging-dynamic-workflows-hld.md), [`token-budgeting-hld.md`](token-budgeting-hld.md), [`multi-endpoint-circuit-breaker-hld.md`](multi-endpoint-circuit-breaker-hld.md) *(draft)*, [`granular-task-decomposition-hld.md`](granular-task-decomposition-hld.md) *(draft)*
+- Settings/precedence policy: [`adr/ADR-0003-settings-precedence-policy.md`](adr/ADR-0003-settings-precedence-policy.md) *(accepted)*
 
 ## 1. Goal
 A small, declarative, config-driven engine that drives multi-agent, multi-repo workflows to completion from a `workflow.json` DAG spec, while keeping the **orchestrator's own context limited to paths and task statuses** (NFR-1). Execution is delegated to **Claude-native, context-isolated agents**.

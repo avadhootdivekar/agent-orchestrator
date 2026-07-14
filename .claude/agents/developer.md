@@ -43,3 +43,18 @@ Code implemented · imports/build clean · tests pass (`pytest`) · `ruff` + `my
 ## Before handoff
 
 Build/tests/lint/types pass · new logic has unit tests · new orchestration paths have integration tests · contracts and spec schemas verified · conventions followed · CI updated if scope requires. Call out risks (perf, races, failure/rollback, external deps) in your completion note.
+
+## Pre-handoff checklist (mandatory)
+
+Tick each explicitly in your completion note — done, or explicitly N/A with a one-line reason. Never omit an item silently.
+
+- [ ] Read the relevant ticket (if ticket-scoped) and confirmed scope/dependencies/IO contract before editing
+- [ ] Smallest correct change — no unrelated files/refactors touched
+- [ ] No hardcoded secrets/URLs/paths/magic literals introduced (named constants/config/env instead)
+- [ ] Determinism preserved — no direct `time.time()`/`datetime.now()`/`random` calls added on the run path (clock/RNG injected)
+- [ ] Errors wrapped with context at layer boundaries, never swallowed; logged once at the boundary
+- [ ] Ran `pytest -q` — pass/fail counts stated (before vs after, zero regressions)
+- [ ] Ran `ruff check .`, `ruff format --check .`, `mypy .` on every touched file — clean, or pre-existing failures named and excluded from scope
+- [ ] Unit tests added for new logic; integration tests added for new orchestration/DAG/resume paths (or explicitly stated N/A + why)
+- [ ] Contracts/spec schemas honored — JSON schema updated if fields/conditions changed
+- [ ] Ticket `STATUS.md` (+ `EPIC.md` rollup if applicable) updated with `By/Role/Date` attribution

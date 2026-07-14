@@ -1,0 +1,39 @@
+{
+  "run_id": "test-wf-20260101T000000Z",
+  "workflow_id": "test-wf",
+  "repo_set": "rs",
+  "started_at": "2026-01-01T00:00:00+00:00",
+  "updated_at": "2026-01-01T00:05:00+00:00",
+  "status": "succeeded",
+  "tasks": {
+    "a": {
+      "status": "succeeded",
+      "attempts": 1,
+      "started_at": "2026-01-01T00:00:00+00:00",
+      "ended_at": "2026-01-01T00:01:00+00:00",
+      "outputs_present": true,
+      "dynamic_outputs": [],
+      "output_artifact_path": "output/a",
+      "origin": "static"
+    },
+    "b": {
+      "status": "succeeded",
+      "attempts": 1,
+      "started_at": "2026-01-01T00:01:00+00:00",
+      "ended_at": "2026-01-01T00:02:00+00:00",
+      "outputs_present": true,
+      "dynamic_outputs": [],
+      "output_artifact_path": "output/b",
+      "origin": "static"
+    }
+  },
+  "injected_tasks": [],
+  "loop_iterations": {},
+  "budget_counters": {
+    "consumed_tokens": 0,
+    "window_start_epoch": null,
+    "window_consumed_tokens": 0,
+    "charged_estimate": {},
+    "reconciled_tasks": []
+  }
+}

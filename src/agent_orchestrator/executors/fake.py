@@ -14,12 +14,39 @@ Behavior = Literal["succeed", "fail", "timeout"]
 
 
 def _write_capture_stubs(output_dir: str, task_id: str) -> None:
-    """Create output_dir and write stub stdout.txt / stderr.txt (FR-4 contract)."""
+    """Create output_dir and write the capture artifacts (FR-4/FR-5 contract).
+
+    Mirrors ClaudeCliExecutor's layout so integration/e2e tests can assert the
+    same files regardless of executor: a multi-event ``transcript.jsonl`` (so
+    "all turns captured" assertions have >1 event to check), the human-readable
+    ``stdout.txt``, an empty ``stderr.txt``, and the terminal ``result.json``.
+    """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    result_event = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": f"fake output for {task_id}",
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    }
+    transcript_events = [
+        {"type": "system", "subtype": "init", "task_id": task_id},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": f"fake stdout for {task_id}"}]},
+        },
+        result_event,
+    ]
+    Path(os.path.join(output_dir, "transcript.jsonl")).write_text(
+        "\n".join(json.dumps(e) for e in transcript_events) + "\n", encoding="utf-8"
+    )
     Path(os.path.join(output_dir, "stdout.txt")).write_text(
         f"fake stdout for {task_id}\n", encoding="utf-8"
     )
     Path(os.path.join(output_dir, "stderr.txt")).write_text("", encoding="utf-8")
+    Path(os.path.join(output_dir, "result.json")).write_text(
+        json.dumps(result_event, indent=2), encoding="utf-8"
+    )
 
 
 class FakeExecutor(Executor):
@@ -60,6 +87,10 @@ class FakeExecutor(Executor):
         provider_rate_limited=True and the configured retry_after_epoch.
         Subsequent calls succeed normally (the engine handles re-runs).
         (T-1m9744)
+    quota_exhausted_tasks:
+        Mapping of task_id -> exhaust_count (int).  For the first *exhaust_count*
+        calls the executor returns a failed TaskResult with claude_quota_exhausted=True.
+        Subsequent calls succeed normally (the engine handles quota-wait + re-run).
     """
 
     def __init__(
@@ -71,6 +102,7 @@ class FakeExecutor(Executor):
         gate_payloads: dict[str, list[bool]] | None = None,
         token_outputs: dict[str, dict] | None = None,
         rate_limit_tasks: dict[str, float | None] | None = None,
+        quota_exhausted_tasks: dict[str, int] | None = None,
     ) -> None:
         self._behaviors: dict[str, Behavior] = behaviors or {}
         self._write_outputs = write_outputs
@@ -79,12 +111,26 @@ class FakeExecutor(Executor):
         self._gate_payloads: dict[str, list[bool]] = gate_payloads or {}
         self._token_outputs: dict[str, dict] = token_outputs or {}
         self._rate_limit_tasks: dict[str, float | None] = rate_limit_tasks or {}
+        self._quota_exhausted_tasks: dict[str, int] = quota_exhausted_tasks or {}
         # invocation counters for gate tasks: base_id -> count (0-indexed)
         self._gate_invocations: dict[str, int] = {}
         # task_ids that have already been 429'd once; subsequent calls succeed
         self._rate_limited_once: set[str] = set()
+        # remaining quota-exhaustion counts per task_id
+        self._quota_exhausted_remaining: dict[str, int] = dict(self._quota_exhausted_tasks)
 
     def execute(self, ctx: TaskContext) -> TaskResult:
+        # --- Quota exhaustion simulation: fail N times, then succeed ---
+        if self._quota_exhausted_remaining.get(ctx.task_id, 0) > 0:
+            self._quota_exhausted_remaining[ctx.task_id] -= 1
+            return TaskResult(
+                task_id=ctx.task_id,
+                status="failed",
+                attempts=1,
+                claude_quota_exhausted=True,
+                error="fake quota exhaustion",
+            )
+
         # --- 429 simulation: fail on first call, succeed on retry ---
         if ctx.task_id in self._rate_limit_tasks and ctx.task_id not in self._rate_limited_once:
             self._rate_limited_once.add(ctx.task_id)

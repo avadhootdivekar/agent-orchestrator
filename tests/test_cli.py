@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from agent_orchestrator.cli import app
@@ -580,3 +581,80 @@ class TestRunCommandBudgetFlags:
             env={"AO_WORKSPACE_ROOT": str(tmp_path)},
         )
         assert result.exit_code == 1
+
+
+class TestVersionOption:
+    """ao --version / -V is an eager top-level flag (install.sh already relies on it)."""
+
+    def test_version_long_flag_exits_0_and_prints_ao_and_semver(self) -> None:
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert result.output.startswith("ao ")
+        from agent_orchestrator import __version__
+
+        assert __version__ in result.output
+
+    def test_version_short_flag_matches_long_flag(self) -> None:
+        long_result = runner.invoke(app, ["--version"])
+        short_result = runner.invoke(app, ["-V"])
+        assert short_result.exit_code == 0
+        assert short_result.output == long_result.output
+
+    def test_version_does_not_require_a_subcommand(self) -> None:
+        """--version must short-circuit before subcommand resolution (is_eager)."""
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+
+    def test_subcommands_unaffected_by_top_level_callback(self, tmp_path: Path) -> None:
+        """Adding the app-level --version callback must not break existing subcommands."""
+        result = runner.invoke(app, ["validate", "--workflow", "/nonexistent.yaml"])
+        assert result.exit_code == 1
+        assert "ERROR" in result.output
+
+
+class TestVerboseQuietOptions:
+    """ao -v/--verbose and -q/--quiet set the 'agent_orchestrator' logger level."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_logger_level(self):
+        import logging
+
+        pkg_logger = logging.getLogger("agent_orchestrator")
+        original = pkg_logger.level
+        yield
+        pkg_logger.setLevel(original)
+
+    def test_verbose_sets_debug_level(self, tmp_path: Path) -> None:
+        import logging
+
+        runner.invoke(app, ["-v", "validate", "--workflow", "/nonexistent.yaml"])
+        assert logging.getLogger("agent_orchestrator").level == logging.DEBUG
+
+    def test_quiet_sets_warning_level(self, tmp_path: Path) -> None:
+        import logging
+
+        runner.invoke(app, ["-q", "validate", "--workflow", "/nonexistent.yaml"])
+        assert logging.getLogger("agent_orchestrator").level == logging.WARNING
+
+    def test_verbose_and_quiet_together_exits_1(self) -> None:
+        result = runner.invoke(app, ["-v", "-q", "validate"])
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
+    def test_neither_flag_leaves_logger_level_untouched(self) -> None:
+        import logging
+
+        pkg_logger = logging.getLogger("agent_orchestrator")
+        pkg_logger.setLevel(logging.NOTSET)
+        runner.invoke(app, ["validate", "--workflow", "/nonexistent.yaml"])
+        assert pkg_logger.level == logging.NOTSET
+
+
+class TestShellCompletion:
+    """Shell completion is enabled (add_completion=True) — was previously off."""
+
+    def test_help_lists_completion_options(self) -> None:
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "--install-completion" in result.output
+        assert "--show-completion" in result.output

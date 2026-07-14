@@ -48,8 +48,21 @@ class LoopError(OrchestratorError):
     """Raised for loop configuration or runaway loop failures."""
 
 
-class GateError(OrchestratorError):
-    """Raised when a loop gate file is missing, its field is absent, or the value is non-bool."""
+class ControlFileError(OrchestratorError):
+    """Raised by the shared bounded-JSON control-file reader (`artifacts.read_control` and its
+    typed helpers) — used by loop gates, routers, and verdict breakers alike (NFR-1: engine reads
+    only bounded control/verdict JSON, never payload artifacts). Raised on: missing file, size
+    over `MAX_CONTROL_FILE_BYTES`, invalid JSON, non-object root, or a field failing its typed
+    check.
+    """
+
+
+class GateError(ControlFileError):
+    """Raised when a loop gate file is missing, its field is absent, or the value is non-bool.
+
+    Kept as a distinct subclass of `ControlFileError` for backward compatibility: engine.py's
+    loop-gate handling catches this concrete type (see `artifacts.read_gate`).
+    """
 
 
 class BudgetExhausted(OrchestratorError):

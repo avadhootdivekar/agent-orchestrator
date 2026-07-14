@@ -612,11 +612,57 @@ class TestArea5OutputCapture:
         ]
 
         for task_id in expected_tasks:
-            task_dir = tmp_path / ".orchestrator" / "runs" / run_id / task_id
+            # attempt-1: every task here succeeds on its first attempt (E-9h3m7k —
+            # capture dirs are now attempt-suffixed so retries don't clobber each other).
+            task_dir = tmp_path / ".orchestrator" / "runs" / run_id / task_id / "attempt-1"
             stdout = task_dir / "stdout.txt"
             stderr = task_dir / "stderr.txt"
             assert stdout.exists(), f"Missing stdout.txt for {task_id}"
             assert stderr.exists(), f"Missing stderr.txt for {task_id}"
+
+    def test_transcript_and_result_captured_for_all_tasks(self, tmp_path: Path) -> None:
+        """E2E via the CLI: transcript.jsonl (all turns) + result.json exist per task."""
+        copy_example("sum-of-array", tmp_path)
+        seed_control_files(tmp_path, rounds=1)
+
+        result = run_cli(
+            [
+                "run",
+                "--workflow",
+                "workflow.json",
+                "--reposets",
+                "reposet.json",
+                "--agents",
+                agents_for("fake"),
+            ],
+            tmp_path,
+        )
+
+        assert result.exit_code == 0
+        run_id = _extract_run_id(result.output)
+
+        expected_tasks = [
+            "architect-design",
+            "design-review",
+            "architect-breakdown",
+            "impl-t1",
+            "testwrite-t1",
+            "taskreview-t1",
+            "integrate",
+            "bugfix",
+            "final-review",
+            "done",
+        ]
+
+        for task_id in expected_tasks:
+            task_dir = tmp_path / ".orchestrator" / "runs" / run_id / task_id / "attempt-1"
+            transcript = task_dir / "transcript.jsonl"
+            assert transcript.exists(), f"Missing transcript.jsonl for {task_id}"
+            events = [
+                json.loads(line) for line in transcript.read_text().splitlines() if line.strip()
+            ]
+            assert len(events) > 1, f"transcript.jsonl for {task_id} lost intermediate turns"
+            assert (task_dir / "result.json").exists(), f"Missing result.json for {task_id}"
 
     def test_state_json_has_output_artifact_paths(self, tmp_path: Path) -> None:
         """Given state.json, when read, then each task has output_artifact_path set."""
