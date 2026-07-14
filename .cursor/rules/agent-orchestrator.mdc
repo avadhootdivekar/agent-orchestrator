@@ -11,7 +11,7 @@ The authoritative, hand-maintained agent instructions are Claude-native. **Do no
 - Project context, design principles, rules, commands → @CLAUDE.md
 - Specialized role guides → `.claude/agents/` (`architect`, `manager`, `dev-epic`, `developer`, `reviewer`, `tester`, `dev-security`, `dev-critic`)
 - Skills → `.claude/skills/` · Command workflows → `.claude/commands/`
-- Ticket workspace (epics/tasks + conventions) → `ad/tickets/` (`ad/tickets/README.md`)
+- Ticket workspace (epics/tasks + conventions) → `meta/tickets/` (`meta/tickets/README.md`)
 - Cross-tool overview → @AGENTS.md
 
 ## Project in one line

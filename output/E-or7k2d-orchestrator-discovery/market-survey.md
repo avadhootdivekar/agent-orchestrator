@@ -4,7 +4,7 @@
 > Author: Claude (architect role) · Date: 2026-06-16
 > Status: **Discovery only.** No design/LLD/task-breakup performed yet (per ask, awaiting consent).
 
-This document answers the four discovery questions in [`ad/prompts/prompt.md`](../../ad/prompts/prompt.md):
+This document answers the four discovery questions in [`meta/prompts/prompt.md`](../../meta/prompts/prompt.md):
 1. Consolidated requirements.
 2. Market survey — alternative tools/frameworks.
 3. Does our tool add value vs competitors? Is it a viable business?

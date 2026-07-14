@@ -1,7 +1,7 @@
 # E2E Playground Testing — Design (E-dvehbb-e2e-playground-tests)
 
 > Status: Draft · Owner: architect · Created: 2026-07-01
-> Epic: `ad/tickets/E-dvehbb-e2e-playground-tests/EPIC.md`
+> Epic: `meta/tickets/E-dvehbb-e2e-playground-tests/EPIC.md`
 > Related behavior: `docs-md/logging-dynamic-workflows-hld.md`, `docs-md/token-budgeting-hld.md`
 
 This is the architecture package for adding **end-to-end playground tests** that prove AO's

@@ -44,4 +44,4 @@ One of:
 - **NOT APPROVED**: Items that must be resolved before approval (with owner + expected fix).
 
 ## Output
-Write `final-review.md` with all three parts. Update `ad/tickets/{epic_id}/STATUS.md` to reflect the final verdict.
+Write `final-review.md` with all three parts. Update `meta/tickets/{epic_id}/STATUS.md` to reflect the final verdict.

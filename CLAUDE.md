@@ -1,6 +1,6 @@
 # agent-orchestrator — Claude Instructions
 
-> Project intent / current ask: [`ad/prompts/prompt.md`](ad/prompts/prompt.md)
+> Project intent / current ask: [`meta/prompts/prompt.md`](meta/prompts/prompt.md)
 > Design & architecture docs (as they land): [`docs-md/`](docs-md/)
 > Cross-tool note: this file and everything under `.claude/` are the **authoritative** agent instructions. Copilot and Cursor read thin pointer files that forward here — see [Cross-tool instructions](#cross-tool-instructions-claude--copilot--cursor).
 
@@ -20,7 +20,7 @@ Core responsibilities:
 **Where things live** (intended layout — create dirs as work lands, don't scaffold empty):
 - Orchestrator core / Python package → `src/`
 - Structured workflow/DAG spec files (JSON/YAML) → `specs/`, or alongside the workflow they describe
-- Tickets → `ad/tickets/` · learnings/memories → `ad/` · prompts → `ad/prompts/`
+- Tickets → `meta/tickets/` · learnings/memories → `meta/` · prompts → `meta/prompts/`
 - Docs → `docs-md/`
 - Agent/skill/command assets → `.claude/` (authoritative), mirrored by thin pointers for Copilot/Cursor
 
@@ -114,20 +114,20 @@ Prefer adding a coverage gate (target ≥80% unless project standard differs), s
 ## Learning capture and compaction
 
 - Add learnings from agent work only when genuinely applicable; avoid flooding repetitive notes each iteration.
-- Maintain long-form learnings in `ad/learnings.md`.
-- Maintain compact, curated learnings in `ad/learning-compact.md` for lightweight agent context.
+- Maintain long-form learnings in `meta/learnings.md`.
+- Maintain compact, curated learnings in `meta/learning-compact.md` for lightweight agent context.
 - Keep each learning entry clearly separable (distinct markers/sections) to simplify review and conflict resolution.
 - Prefer entry fields: learning statement, optional context (why/when), `By`, `Role`, `Date`.
-- `ad/learning-compact.md` is the periodic distilled output from `ad/learnings.md`; refresh as needed.
+- `meta/learning-compact.md` is the periodic distilled output from `meta/learnings.md`; refresh as needed.
 
 ---
 
 ## Ticket workspace & conventions
 
-Epic/task execution is tracked under [`ad/tickets/`](ad/tickets/) (project-local, Jira-equivalent). Full rules in [`ad/tickets/README.md`](ad/tickets/README.md); templates in [`ad/tickets/_templates/`](ad/tickets/_templates/).
+Epic/task execution is tracked under [`meta/tickets/`](meta/tickets/) (project-local, Jira-equivalent). Full rules in [`meta/tickets/README.md`](meta/tickets/README.md); templates in [`meta/tickets/_templates/`](meta/tickets/_templates/).
 
 - **IDs**: Epic `E-<RANDOM>-<slug>` · Task `T-<RANDOM>-<slug>`, where `<RANDOM>` is exactly 6 alphanumerics (`[A-Za-z0-9]{6}`) and `<slug>` is lowercase kebab-case.
-- **Layout**: epic docs under `ad/tickets/<EpicID>/` (`EPIC.md` + `STATUS.md`); task docs under `ad/tickets/<EpicID>/<TaskID>/` (`TASK.md` + `STATUS.md` + `HANDOFF.md` when present). Start from the templates.
+- **Layout**: epic docs under `meta/tickets/<EpicID>/` (`EPIC.md` + `STATUS.md`); task docs under `meta/tickets/<EpicID>/<TaskID>/` (`TASK.md` + `STATUS.md` + `HANDOFF.md` when present). Start from the templates.
 - **Status sync**: any status change must stay consistent across `TASK.md`/`STATUS.md`/`HANDOFF.md` and the epic `EPIC.md`/`STATUS.md` rollup — never update one without the others.
 - **Comment attribution**: `By: <actor>` · `Role: <user|developer|tester|architect|reviewer|manager|other>` · `Date: YYYY-MM-DD` · `Comment: ...`.
 - **Large outputs** go under root `output/`, linked from ticket docs (keep ticket folders markdown-light).
@@ -162,7 +162,7 @@ Claude-native subagents live in [`.claude/agents/`](.claude/agents/) and are inv
 
 | Agent | Use for |
 |-------|---------|
-| `architect` | Full-epic design + sprint planning — requirements, orchestration-landscape/competitor analysis, HLD/LLD, spec/interface/event schemas, tasks ≤3 days. Writes to `ad/tickets/`. |
+| `architect` | Full-epic design + sprint planning — requirements, orchestration-landscape/competitor analysis, HLD/LLD, spec/interface/event schemas, tasks ≤3 days. Writes to `meta/tickets/`. |
 | `manager` | End-to-end delivery: turns a plan into verified outcomes by orchestrating other agents with evidence gates and ticket sync. |
 | `dev-epic` | Epic decomposition into MVP/non-MVP requirements with traceability; drives tasks to evidence-backed completion; supports mid-epic resume. |
 | `developer` | General Python implementation across the orchestrator (engine, spec handling, CLI). |

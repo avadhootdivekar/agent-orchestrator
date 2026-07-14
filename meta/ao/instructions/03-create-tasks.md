@@ -58,17 +58,17 @@ Rules:
 
 ### B. Create the epic ticket
 
-The `epic_id` in `tasks.json` uses the standard ticket format `E-XXXXXX-slug` (uppercase `E-` prefix, matching `ad/tickets/` conventions). This is distinct from the lowercase workflow directory under `meta/ao/epics/`.
+The `epic_id` in `tasks.json` uses the standard ticket format `E-XXXXXX-slug` (uppercase `E-` prefix, matching `meta/tickets/` conventions). This is distinct from the lowercase workflow directory under `meta/ao/epics/`.
 
-Create or update the following files using the templates in `ad/tickets/_templates/`:
-- `ad/tickets/{epic_id}/EPIC.md` — with task list pre-populated from tasks.json
-- `ad/tickets/{epic_id}/STATUS.md` — initial status: `In Progress`
+Create or update the following files using the templates in `meta/tickets/_templates/`:
+- `meta/tickets/{epic_id}/EPIC.md` — with task list pre-populated from tasks.json
+- `meta/tickets/{epic_id}/STATUS.md` — initial status: `In Progress`
 
 For each task, also create:
-- `ad/tickets/{epic_id}/{task_id}/TASK.md`
-- `ad/tickets/{epic_id}/{task_id}/STATUS.md`
+- `meta/tickets/{epic_id}/{task_id}/TASK.md`
+- `meta/tickets/{epic_id}/{task_id}/STATUS.md`
 
 ---
 
 ## Output
-Write `tasks.json` to the output path provided. Create ticket files in `ad/tickets/` as described above.
+Write `tasks.json` to the output path provided. Create ticket files in `meta/tickets/` as described above.

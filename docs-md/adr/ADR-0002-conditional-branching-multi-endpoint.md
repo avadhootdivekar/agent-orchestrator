@@ -2,8 +2,8 @@
 
 - Status: **Accepted** (user approved recommendations 2026-07-09)
 - Date: 2026-07-09
-- Deciders: avadhoot (user), Claude (architect role)
-- Related: HLD [`multi-endpoint-circuit-breaker-hld.md`](../multi-endpoint-circuit-breaker-hld.md) · LLD [`lld-run-control-routing-breakers.md`](../lld-run-control-routing-breakers.md) · [`guide-dynamic-task-injection.md`](../guide-dynamic-task-injection.md) · ADR-0001 · Epic [`E-rc7k2v-run-control-routing-breakers`](../../ad/tickets/E-rc7k2v-run-control-routing-breakers/EPIC.md)
+- Deciders: Avadhoot Divekar (user), Claude (architect role)
+- Related: HLD [`multi-endpoint-circuit-breaker-hld.md`](../multi-endpoint-circuit-breaker-hld.md) · LLD [`lld-run-control-routing-breakers.md`](../lld-run-control-routing-breakers.md) · [`guide-dynamic-task-injection.md`](../guide-dynamic-task-injection.md) · ADR-0001 · Epic [`E-rc7k2v-run-control-routing-breakers`](../../meta/tickets/E-rc7k2v-run-control-routing-breakers/EPIC.md)
 
 ## Context
 

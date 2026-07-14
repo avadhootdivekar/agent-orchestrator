@@ -29,7 +29,7 @@ Code implemented · imports/build clean · tests pass (`pytest`) · `ruff` + `my
 - No hardcoded secrets/URLs/paths/env values — use config/env. Spec constants are named, not magic literals.
 - Run commands non-interactively (don't leave a terminal waiting on input).
 - If a requirement seems wrong, say so — don't silently build a bad design.
-- Ticket-scoped work: read the ticket under `ad/tickets/` first; consider the full flow (upstream/downstream deps, IO contracts, schema, tests). Sync ticket status when it changes; attribute comments with `By/Role/Date`.
+- Ticket-scoped work: read the ticket under `meta/tickets/` first; consider the full flow (upstream/downstream deps, IO contracts, schema, tests). Sync ticket status when it changes; attribute comments with `By/Role/Date`.
 
 ## Orchestration domain rules
 
