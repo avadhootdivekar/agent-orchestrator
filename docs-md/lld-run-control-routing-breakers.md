@@ -887,3 +887,96 @@ Residual open questions (non-blocking):
 - `OPEN_QUESTION`: dedicated `RunState.status` values `stopped`/`paused` (ADR-RC-004) — schedule as a small
   non-MVP follow-on once a consumer needs the distinction beyond `tripped_breakers[].action`.
 ```
+
+---
+
+## 16. Addendum (E-3JTmVu, 2026-07-14) — `run_active_seconds` + breaker resume-extension
+
+Follow-on epic [`E-3JTmVu-breaker-resume-extend`](../ad/tickets/E-3JTmVu-breaker-resume-extend/EPIC.md)
+(not a reopening of this LLD/epic) closes two gaps this document and `T-t4m8x1`'s STATUS.md flagged but
+left for a later owner. Both pieces are additive — every decision above (R1/R2/R3, the six MVP
+conditions, the framework's latch semantics) is unchanged.
+
+### 16.1 `run_active_seconds` — a pause/resume-immune alternative to `run_wall_clock_seconds`
+
+§7's `run_wall_clock_seconds` is, by design, a **deadline** semantic: elapsed is measured from
+`RunState.started_at` (the run's *original* creation time, never touched by `prepare_resume`), so a run
+paused for hours/days and resumed counts the entire gap as elapsed and can trip on the very next task
+boundary. That is intentional for workflows that genuinely want a wall-clock SLA regardless of operator
+pauses.
+
+`run_active_seconds` is the complementary **"how much real work happened"** semantic: it sums
+`(TaskRunState.ended_at - TaskRunState.started_at)` over every SETTLED task in `state.tasks`. Because
+each task's timestamps are its own, independent window, any gap between one task's `ended_at` and the
+next task's `started_at` — including an operator pause-then-resume — contributes nothing. In-task waits
+(429/quota/budget retry sleeps) DO count, since those happen inside a task's own execution window and
+represent the engine genuinely busy/blocked on that task, not an operator-initiated stop. Implemented as
+`RunActiveSecondsBreaker` in `breakers.py`, registered under `run_active_seconds` — the ninth breaker
+condition (see the module's own docstring header for the up-to-date count). Both conditions coexist in
+the schema and registry; a workflow author picks whichever fits (`run_wall_clock_seconds` for a hard
+deadline, `run_active_seconds` for a "don't runaway while actually executing" cap).
+
+Like `_consecutive_failure_streak` (§7), the summation is a pure reconstruction from persisted
+`state.tasks[*].started_at/ended_at` — no new bookkeeping field, so it is resume-safe by construction and
+requires zero changes to `prepare_resume`.
+
+**Engine fix required to make "in-task waits DO count" actually true** (`engine.py`, one guarded line):
+`TaskRunState.started_at` has exactly one writer in `engine.py` — a review of this epic's diff found that
+writer unconditionally overwrote `started_at` on every dispatch, including the quota-exhaustion and
+429/budget-wait redispatch loops (`cursor -= 1; continue`, then straight back through the same write
+site). That silently reset `started_at` to the POST-wait time, dropping the wait itself from
+`run_active_seconds`'s sum — directly contradicting the paragraph above. Fixed by guarding the write to
+fire only when `ts.started_at is None` (i.e. the task's first-ever dispatch); `prepare_resume` already
+hands a fresh `TaskRunState()` (started_at unset) to any task it resets to pending for `ao resume`, so a
+resumed dispatch still gets its own fresh `started_at` — only the SAME-process wait-and-redispatch loops
+are affected. Verified safe: `started_at` has no other reader in the codebase besides
+`RunActiveSecondsBreaker`, and the full regression suite (including `tests/test_engine_budget.py`,
+`tests/test_stop_reframe_parity.py`, `tests/test_resume_replay.py`) stays green, unmodified. See
+`tests/test_run_active_seconds_breaker.py::TestRunActiveSecondsCountsQuotaWaitTime` for the integration
+test that pins this.
+
+### 16.2 Scoped breaker-threshold extension + un-latch (`ao resume --extend-breaker`)
+
+§6.3's per-`spec.id` latch (`state.tripped_breakers`) is intentionally permanent for the life of a run —
+an id, once recorded, is never re-evaluated. `T-t4m8x1` (Wave 4) explicitly flagged this as a gap for
+resumed runs: a breaker that tripped before the run stopped stays latched forever, even if an operator
+believes the underlying condition should no longer block progress (e.g. they've reviewed the situation and
+want to raise the cap for this run only).
+
+The fix is deliberately **scoped**, not a blanket "un-latch everything on resume": a blanket unlatch would
+regress the existing, intentional "a resumed run doesn't immediately re-trip on a still-true condition"
+behaviour for every OTHER breaker in the workflow (§9) — an operator who extends breaker A should not
+silently reset breaker B's latch too.
+
+Mechanism:
+- `RunState.breaker_overrides: dict[str, float]` (breaker id → absolute overridden threshold, in the
+  condition's own native unit — seconds, USD, or a raw count) — defaulted `{}` for NFR-5, same pattern as
+  `tripped_breakers`/`route_decisions`.
+- `evaluate_breakers` resolves the effective threshold **once, centrally**:
+  `state.breaker_overrides.get(spec.id, spec.threshold)`, evaluating a `spec.model_copy(update=
+  {"threshold": effective_threshold})` when an override is present. No individual `Breaker` subclass
+  needs to know overrides exist — this is what makes the mechanism uniform across all nine conditions
+  (and any future one) rather than a wall-clock-only special case.
+- `apply_breaker_extension(state, spec, *, extend_by_seconds, extend_by_same, clock, run_log) -> float`
+  (standalone, same calling convention as `record_trip`) computes the new effective threshold (current
+  effective + either an explicit delta or the ORIGINAL `spec.threshold` again for "extend by the same
+  amount set at startup"), writes it into `breaker_overrides`, removes the matching `TrippedBreaker`
+  record(s) for that id (the un-latch), and logs a structured `breaker.extend` event mirroring
+  `record_trip`'s `breaker.trip` logging shape. Rejects a non-positive `extend_by_seconds` (would silently
+  shrink or no-op the threshold, bypassing the schema's own `exclusiveMinimum: 0` invariant).
+- `ao resume --extend-breaker <id> [--extend-by-seconds <f> | --extend-by-same]` validates the id exists
+  in `wf.circuit_breakers`, applies the extension to the loaded/prepared `RunState` before `orch.run()`,
+  and prints an old→new confirmation line.
+
+**Persistence fix from review**: the extension is applied to the same `RunState` instance later passed
+into `orch.run()`, so `orch.run()`'s own save path *would* persist it in the common case — but `resume`
+still runs other CLI-only validation (e.g. `--on-exhaustion`) AFTER the extension block and BEFORE
+`orch.run()`, and any of those can `typer.Exit(1)` first. Relying solely on `orch.run()`'s later save would
+silently discard an already-logged, already-confirmed extension whenever an unrelated flag was also bad.
+Fixed by an explicit `rs_store.save(existing)` immediately after `apply_breaker_extension` returns — the
+extension is durable the moment it's applied and confirmed, independent of anything checked afterward.
+
+Explicitly out of scope (do not build without a fresh epic): live/in-process threshold mutation for an
+already-running `ao run`/`ao resume` invocation (no `WorkflowSpec` hot-reload, no stop-file-style live
+poll for thresholds) — this mechanism only ever applies at `ao resume` time, before the run resumes.
+

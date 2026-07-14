@@ -180,6 +180,7 @@ BreakerCondition = Literal[
     "task_failures",
     "consecutive_failures",
     "run_wall_clock_seconds",
+    "run_active_seconds",
     "verdict",
     "injected_task_count",
     "stop_file",
@@ -357,6 +358,13 @@ class RunState(BaseModel):
     route_decisions: dict[str, list[str]] = {}
     # Every circuit-breaker trip recorded during the run (FR-CB4). Defaulted for NFR-5.
     tripped_breakers: list[TrippedBreaker] = []
+    # breaker id -> absolute overridden threshold (native unit: seconds for time-based
+    # conditions, USD for cost conditions, etc.), set only via an explicit operator
+    # `ao resume --extend-breaker` (E-3JTmVu FR-2a). Empty for every breaker that was never
+    # extended -- `evaluate_breakers` falls back to `CircuitBreakerSpec.threshold` in that case,
+    # so this is purely additive and never changes behaviour for an untouched breaker. Defaulted
+    # for NFR-5 backward-compat (old state.json files predate this field).
+    breaker_overrides: dict[str, float] = {}
 
 
 class RunUsageTotals(BaseModel):

@@ -638,17 +638,40 @@ def resume(
         help="Seconds to sleep between quota-exhaustion re-run attempts "
         "(default 900 = 15 min). Env: AO_QUOTA_POLL_SECONDS",
     ),
+    extend_breaker: str | None = typer.Option(
+        None,
+        "--extend-breaker",
+        help="Circuit breaker id (from workflow.circuit_breakers) to extend and un-latch on "
+        "this resume. Requires exactly one of --extend-by-seconds/--extend-by-same. "
+        "(E-3JTmVu FR-2d)",
+    ),
+    extend_by_seconds: float | None = typer.Option(
+        None,
+        "--extend-by-seconds",
+        help="Amount (in the breaker condition's native unit -- seconds for time-based "
+        "conditions, USD for cost conditions, a count otherwise) to add to --extend-breaker's "
+        "current effective threshold. Mutually exclusive with --extend-by-same.",
+    ),
+    extend_by_same: bool = typer.Option(
+        False,
+        "--extend-by-same",
+        help="Extend --extend-breaker's current effective threshold by the ORIGINAL "
+        "threshold set at startup (spec.threshold) again. Mutually exclusive with "
+        "--extend-by-seconds.",
+    ),
 ) -> None:
     """Resume a previously interrupted run."""
     from datetime import UTC
     from datetime import datetime as _dt
 
     from .artifacts import LocalFsArtifactStore
+    from .breakers import apply_breaker_extension
     from .budget import DefaultBudgetManager
     from .engine import Orchestrator
-    from .errors import OrchestratorError
+    from .errors import OrchestratorError, SpecValidationError
     from .estimator import HeuristicTokenEstimator
     from .executors import DispatchExecutor
+    from .logging_setup import attach_run_handler, get_run_logger
     from .runstate import RunStateStore
 
     try:
@@ -700,6 +723,50 @@ def resume(
         existing = rs_store.prepare_resume(existing, wf)
     except FileNotFoundError as e:
         typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+
+    # ---- Breaker extension (E-3JTmVu FR-2d) ----
+    # Applied to the already-loaded/prepared `existing` RunState, BEFORE orch.run() -- the
+    # mutation is persisted via orch.run()'s own save path (Orchestrator.run's first action
+    # is self._runstate.save(state), engine.py ~:135) since it's the same object instance.
+    if extend_breaker is not None:
+        breaker_spec = next((b for b in wf.circuit_breakers if b.id == extend_breaker), None)
+        if breaker_spec is None:
+            typer.echo(
+                f"ERROR: no circuit breaker with id {extend_breaker!r} in "
+                f"workflow.circuit_breakers",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        run_dir = os.path.join(workspace, ".orchestrator", "runs", run_id)
+        log_path = os.path.join(run_dir, "run.log")
+        attach_run_handler(run_id, log_path)  # idempotent; orch.run() attaches the same pair
+        extend_log = get_run_logger(run_id)
+
+        def _extend_clock() -> _dt:
+            return _dt.now(UTC)
+
+        old_effective = existing.breaker_overrides.get(breaker_spec.id, breaker_spec.threshold)
+        try:
+            new_threshold = apply_breaker_extension(
+                existing,
+                breaker_spec,
+                extend_by_seconds=extend_by_seconds,
+                extend_by_same=extend_by_same,
+                clock=_extend_clock,
+                run_log=extend_log,
+            )
+        except (SpecValidationError, ValueError) as e:
+            typer.echo(f"ERROR: {e}", err=True)
+            raise typer.Exit(1)
+        # Persist immediately (don't rely solely on orch.run()'s later save): later CLI-only
+        # validation below (e.g. --on-exhaustion) can still typer.Exit(1) before orch.run() is
+        # ever reached, which would otherwise silently discard an already-logged extension.
+        rs_store.save(existing)
+        typer.echo(f"Extended breaker {breaker_spec.id!r}: {old_effective} -> {new_threshold}")
+    elif extend_by_seconds is not None or extend_by_same:
+        typer.echo("ERROR: --extend-by-seconds/--extend-by-same require --extend-breaker", err=True)
         raise typer.Exit(1)
 
     # Build effective budget (CLI > spec > unset), using the original workflow budget

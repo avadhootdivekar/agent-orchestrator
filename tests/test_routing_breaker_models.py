@@ -115,6 +115,7 @@ class TestSchemaAcceptsRoutingAndBreakers:
             {"id": "b", "condition": "task_failures", "action": "stop"},
             {"id": "b", "condition": "consecutive_failures", "action": "stop"},
             {"id": "b", "condition": "run_wall_clock_seconds", "action": "stop"},
+            {"id": "b", "condition": "run_active_seconds", "action": "stop"},
             {"id": "b", "condition": "injected_task_count", "action": "stop"},
             {"id": "b", "condition": "task_cost_usd", "action": "stop"},
             {"id": "b", "condition": "run_cost_usd", "action": "stop"},
@@ -130,6 +131,19 @@ class TestSchemaAcceptsRoutingAndBreakers:
         data["circuit_breakers"] = [breaker]
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(data, _schema())
+
+    def test_run_active_seconds_breaker_with_threshold_validates(self) -> None:
+        """E-3JTmVu FR-1: run_active_seconds accepted by the schema with a threshold."""
+        data = _base_workflow_dict()
+        data["circuit_breakers"] = [
+            {
+                "id": "active-cap",
+                "condition": "run_active_seconds",
+                "action": "stop",
+                "threshold": 3600,
+            },
+        ]
+        jsonschema.validate(data, _schema())
 
     @pytest.mark.parametrize("condition", ["task_cost_usd", "run_cost_usd"])
     def test_actual_cost_breaker_with_fractional_threshold_validates(self, condition: str) -> None:

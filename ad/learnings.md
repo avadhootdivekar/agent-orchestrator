@@ -368,3 +368,21 @@ By: agent
 Role: developer
 Date: 2026-07-10
 ---
+
+---
+Learning-ID: LRN-20260714-wall-clock-started-at-frozen
+Learning: `RunState.started_at` is set once at run creation and never updated on resume, so `run_wall_clock_seconds` counts pause/resume gaps as elapsed. Use the new `run_active_seconds` condition (E-3JTmVu) when gaps must not count.
+Context: `prepare_resume()` only resets status to running; started_at is untouched — confirmed while designing the pause-immune breaker.
+By: agent
+Role: developer
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260714-task-started-at-single-writer
+Learning: `TaskRunState.started_at` must be set only on a task's FIRST dispatch — quota/429/budget-wait redispatch loops (`cursor -= 1; continue`) that skip the guard silently overwrite it, undercounting `run_active_seconds`'s duration sum.
+Context: Fixed with `if ts.started_at is None:` guard in engine.py during E-3JTmVu's reviewer pass; single writer, single reader field.
+By: agent
+Role: developer
+Date: 2026-07-14
+---

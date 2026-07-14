@@ -199,3 +199,19 @@ type: pitfall
 ---
 
 Two independent failure modes were caught in the same ticket (E-rc7k2v `T-d8w4v2`): (1) the Completion section claimed an example spec "demonstrates branches+circuit_breakers+join" when the shipped file actually had no `join` at all (the ticket's own AC2 was unmet); (2) the STATUS.md header still read `State: Draft` / `Owner: architect (pending tester assignment)` and `TASK.md` still said `Status: Draft`, despite the Completion section declaring the ticket done. **Why**: a subagent's prose summary is not itself evidence — it can drift from the artifact it describes, and updating a Completion section doesn't automatically update the header fields the ticket-conventions system (`ad/tickets/README.md`) relies on for status sync. **Apply**: when accepting a subagent's ticket as done, (a) check the actual artifact against every acceptance criterion literally, not just the narrative, and (b) confirm the header `State`/`Status`/`Owner` fields match the Completion section — fix both if they don't, and note the fix rather than silently rewriting the subagent's original text.
+
+---
+name: wall-clock-started-at-frozen-across-resume
+description: RunState.started_at never updates on resume, so run_wall_clock_seconds counts pause/resume gaps as elapsed run time
+type: pitfall
+---
+
+`RunStateStore.new_run()` sets `RunState.started_at` once; `prepare_resume()` resets `status` back to `"running"` but leaves `started_at` untouched. **Why**: `run_wall_clock_seconds` (breakers.py) is documented as a "deadline" semantic measured from the original start — a run paused for days and resumed can trip immediately on the next task boundary, since the whole gap counts as elapsed. **Apply**: when a workflow needs elapsed time that's immune to operator pause/resume gaps, use `run_active_seconds` (E-3JTmVu) instead, which sums only settled-task `(ended_at - started_at)` deltas. Both conditions coexist; pick per use case.
+
+---
+name: task-started-at-single-writer-guard
+description: TaskRunState.started_at must only be set on a task's first dispatch, or retry-wait redispatch loops corrupt duration-based breaker accounting
+type: constraint
+---
+
+`engine.py`'s dispatch loop writes `ts.started_at = datetime.now(UTC).isoformat()` right before marking a task `"running"`. **Why**: the quota-exhaustion/429/budget-wait paths reset a task to redispatch the SAME id after a real sleep (`cursor -= 1; continue`) looping back to that same line — without a guard, each redispatch overwrites `started_at`, silently shrinking `(ended_at - started_at)` and undercounting `run_active_seconds`. **Apply**: any dispatch/retry-loop code touching `TaskRunState.started_at` must guard with `if ts.started_at is None:` so only the task's true first dispatch sets it (fixed in E-3JTmVu; see the guard's comment in engine.py for the full reasoning).

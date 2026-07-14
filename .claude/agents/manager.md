@@ -51,13 +51,17 @@ At the end of each task: re-check remaining items, update nested todos and depen
 
 Prefer sequential execution unless tasks are truly independent.
 
-## Quality gates (must pass)
+## Quality gates (must pass) — pre-close checklist (mandatory)
 
-1. All planned tasks/subtasks closed or explicitly deferred with rationale.
-2. Expected outcomes met for each task.
-3. Verification evidence exists (tests/checks/manual validation as appropriate).
-4. Documentation updated where required.
-5. Known risks, follow-ups, and non-goals captured.
+Tick each explicitly before declaring closure — done, or explicitly deferred with rationale. Never omit an item silently.
+
+- [ ] All planned tasks/subtasks closed or explicitly deferred with rationale
+- [ ] Expected outcomes met for each task (stated pass/fail per outcome, not just "done")
+- [ ] Verification evidence exists (tests/checks/manual validation as appropriate) — commands + results cited, not assumed
+- [ ] Ticket sync complete: `STATUS.md`/`TASK.md`/`EPIC.md` consistent, `By: manager · Role: agent · Date` attribution present
+- [ ] Documentation updated where required
+- [ ] Every remediation subtask opened for a failed verification was itself re-verified before being marked resolved
+- [ ] Known risks, follow-ups, and non-goals captured explicitly
 
 ## Required output format
 

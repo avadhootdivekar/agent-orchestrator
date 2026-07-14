@@ -17,15 +17,17 @@ Design invariants (LLD §6):
   `trip_builtin`) can call the exact same recording primitive without going through the
   full registry-driven evaluation loop.
 
-This module ships with eight conditions registered: the six MVP conditions
+This module ships with nine conditions registered: the six MVP conditions
 (T-q5n7k2, LLD §7) — `task_failures`, `consecutive_failures`,
 `run_wall_clock_seconds`, `verdict`, `injected_task_count`, `stop_file` — plus two
-actual-cost conditions added by E-9h3m7k FR-4: `task_cost_usd`, `run_cost_usd`. See
-the bottom of this module for the registrations. A workflow that declares a
-`circuit_breakers` entry whose `condition` is one of the non-MVP names accepted by
-the schema (e.g. `failure_ratio`, `same_task_exhausted`, `projected_cost_exceeds`,
-...) but not yet implemented here fails fast with `SpecValidationError` at
-evaluation time (never a silent no-op) — see `evaluate_breakers`.
+actual-cost conditions added by E-9h3m7k FR-4: `task_cost_usd`, `run_cost_usd` — plus
+`run_active_seconds` added by E-3JTmVu FR-1 (sums settled-task execution time only,
+immune to operator pause/resume gaps — see `RunActiveSecondsBreaker`). See the bottom
+of this module for the registrations. A workflow that declares a `circuit_breakers`
+entry whose `condition` is one of the non-MVP names accepted by the schema (e.g.
+`failure_ratio`, `same_task_exhausted`, `projected_cost_exceeds`, ...) but not yet
+implemented here fails fast with `SpecValidationError` at evaluation time (never a
+silent no-op) — see `evaluate_breakers`.
 
 `task_cost_usd`/`run_cost_usd` are distinct from the schema's reserved
 `projected_cost_exceeds` name: that one is a pre-flight ESTIMATE check tied to
@@ -33,6 +35,15 @@ evaluation time (never a silent no-op) — see `evaluate_breakers`.
 two trip on ACTUAL dollars spent (`TaskRunState.cumulative_cost_usd`, sourced from the
 Claude CLI's `total_cost_usd`), evaluated after the fact at each task boundary like
 every other condition in this module.
+
+E-3JTmVu FR-2 additionally added a scoped, resume-time extension mechanism:
+`RunState.breaker_overrides` (id -> operator-overridden threshold) is resolved
+centrally in `evaluate_breakers` (never per-Breaker-subclass), and
+`apply_breaker_extension()` (standalone, same style as `record_trip()`) lets `ao
+resume --extend-breaker <id>` bump a SPECIFIC already-tripped breaker's threshold and
+un-latch it — addressing the always-latched gap flagged by T-t4m8x1, without a
+blanket un-latch-everything-on-resume that would regress every other breaker's
+existing resumability.
 """
 
 from __future__ import annotations
@@ -244,6 +255,58 @@ class RunWallClockSecondsBreaker(Breaker):
         return None
 
 
+def _settled_task_active_seconds(state: RunState) -> float:
+    """Sum `(ended_at - started_at)` over every SETTLED task in `state.tasks`.
+
+    Pure reconstruction from persisted per-task timestamps only (same pattern as
+    `_consecutive_failure_streak`) -- no new bookkeeping field, so it reconstructs identically
+    whether called mid-run or freshly after a resume. A task counts only once both timestamps
+    are present (`started_at`/`ended_at` are set together by the engine's dispatch/settle path,
+    engine.py ~:462/:679); a still-`pending`/`running`/`not_taken` task contributes 0. This
+    naturally excludes any gap between one task's `ended_at` and the next task's `started_at`
+    (e.g. an operator pause-then-resume), while still counting in-task waits (quota/429/budget
+    retry sleeps happen inside that task's own started_at..ended_at window, so they count as the
+    engine genuinely being busy/blocked on that task).
+    """
+    total = 0.0
+    for ts in state.tasks.values():
+        if ts.started_at is None or ts.ended_at is None:
+            continue
+        started = datetime.fromisoformat(ts.started_at)
+        ended = datetime.fromisoformat(ts.ended_at)
+        total += (ended - started).total_seconds()
+    return total
+
+
+class RunActiveSecondsBreaker(Breaker):
+    """`run_active_seconds`: total real time actually spent executing/retrying tasks.
+
+    Distinct from `run_wall_clock_seconds` (which measures from the run's ORIGINAL
+    `started_at` -- a "deadline" semantic that counts any operator pause/resume gap as
+    elapsed): this condition sums only settled-task `(ended_at - started_at)` deltas
+    (`_settled_task_active_seconds`), so a run paused for hours/days and resumed does NOT
+    count that gap toward elapsed -- only genuine task execution/retry time does. Both
+    conditions coexist; a workflow author picks whichever semantic fits (E-3JTmVu FR-1).
+
+    Takes `ctx` for signature consistency with every other `Breaker`, but does not actually
+    need `ctx.clock_epoch` -- there is no "currently running task" partial contribution to
+    add, since breaker evaluation only ever happens right after a task settles (engine.py's
+    `evaluate_breakers` call site, immediately after `self._runstate.save(state)`), so there
+    is never a still-running task at evaluation time.
+    """
+
+    condition = "run_active_seconds"
+
+    def evaluate(self, spec: CircuitBreakerSpec, ctx: BreakerContext) -> TripResult | None:
+        threshold = spec.threshold
+        if threshold is None:
+            return None
+        elapsed = _settled_task_active_seconds(ctx.state)
+        if elapsed >= threshold:
+            return TripResult(detail={"elapsed": elapsed, "threshold": threshold})
+        return None
+
+
 class VerdictBreaker(Breaker):
     """`verdict`: a named task's succeeded verdict file has `field == True`.
 
@@ -332,6 +395,7 @@ BREAKER_REGISTRY: dict[str, Breaker] = {}
 BREAKER_REGISTRY["task_failures"] = TaskFailuresBreaker()
 BREAKER_REGISTRY["consecutive_failures"] = ConsecutiveFailuresBreaker()
 BREAKER_REGISTRY["run_wall_clock_seconds"] = RunWallClockSecondsBreaker()
+BREAKER_REGISTRY["run_active_seconds"] = RunActiveSecondsBreaker()
 BREAKER_REGISTRY["verdict"] = VerdictBreaker()
 BREAKER_REGISTRY["injected_task_count"] = InjectedTaskCountBreaker()
 BREAKER_REGISTRY["stop_file"] = StopFileBreaker()
@@ -381,6 +445,83 @@ def record_trip(
     return rec
 
 
+def apply_breaker_extension(
+    state: RunState,
+    spec: CircuitBreakerSpec,
+    *,
+    extend_by_seconds: float | None,
+    extend_by_same: bool,
+    clock: Callable[[], datetime],
+    run_log: LoggerAdapter,
+) -> float:
+    """Bump *spec*'s effective threshold and un-latch it (E-3JTmVu FR-2b).
+
+    Standalone, reusable function -- same style/signature shape as `record_trip` (required
+    *clock*/*run_log*, caller owns both persistence of *state* and logging infra) -- so `ao
+    resume --extend-breaker` (cli.py) can call it directly without going through the full
+    registry-driven `evaluate_breakers` loop. Addresses the T-t4m8x1-documented gap directly,
+    but SCOPED -- only the named *spec.id*, not a blanket un-latch-everything-on-resume (which
+    would regress the existing, intentional "resumed run doesn't immediately re-trip on a
+    still-true condition" resumability behaviour for every OTHER breaker).
+
+    Steps:
+      (a) `current_effective = state.breaker_overrides.get(spec.id, spec.threshold)`.
+      (b) `new_threshold = current_effective + (extend_by_seconds if given else spec.threshold)`
+          -- "extend by the same amount set at startup" means adding the ORIGINAL
+          `spec.threshold` again, not the current effective value.
+      (c) `state.breaker_overrides[spec.id] = new_threshold`.
+      (d) Remove any existing `TrippedBreaker` record(s) for *spec.id* from
+          `state.tripped_breakers` -- un-latches it so `evaluate_breakers`'s `already_tripped`
+          set no longer contains it and it becomes eligible to trip again later if the new,
+          extended threshold is ALSO exceeded.
+      (e) Log a structured `breaker.extend` event (mirrors `record_trip`'s logging style).
+      (f) Return *new_threshold* for the caller (e.g. the CLI) to print.
+
+    Raises `SpecValidationError` if both `extend_by_seconds` and `extend_by_same` are given, or
+    neither is given -- exactly one is required. Raises `SpecValidationError` if
+    `extend_by_seconds` is given but not strictly positive (a zero/negative "extension" would
+    silently shrink or leave unchanged the effective threshold, defeating the point of
+    extending and bypassing the schema's own `exclusiveMinimum: 0` invariant on thresholds).
+    Raises `SpecValidationError` if *spec.threshold* is unset (a breaker with no threshold has
+    nothing to extend from).
+    """
+    if (extend_by_seconds is not None) == extend_by_same:
+        raise SpecValidationError(
+            "apply_breaker_extension: exactly one of extend_by_seconds/extend_by_same is "
+            "required (both or neither were given)",
+            path=f"circuit_breakers.{spec.id}",
+        )
+    if extend_by_seconds is not None and extend_by_seconds <= 0:
+        raise SpecValidationError(
+            f"apply_breaker_extension: extend_by_seconds must be > 0, got {extend_by_seconds!r}",
+            path=f"circuit_breakers.{spec.id}",
+        )
+    if spec.threshold is None:
+        raise SpecValidationError(
+            f"Circuit breaker {spec.id!r} has no threshold to extend",
+            path=f"circuit_breakers.{spec.id}.threshold",
+        )
+
+    current_effective = state.breaker_overrides.get(spec.id, spec.threshold)
+    delta = extend_by_seconds if extend_by_seconds is not None else spec.threshold
+    new_threshold = current_effective + delta
+
+    state.breaker_overrides[spec.id] = new_threshold
+    state.tripped_breakers = [tb for tb in state.tripped_breakers if tb.id != spec.id]
+
+    run_log.warning(
+        "breaker.extend",
+        extra={
+            "event": "breaker.extend",
+            "breaker_id": spec.id,
+            "old_threshold": current_effective,
+            "new_threshold": new_threshold,
+            "at": clock().isoformat(),
+        },
+    )
+    return new_threshold
+
+
 def map_action(action: str) -> Action:
     """Map a `CircuitBreakerSpec.action` value to the runtime effect it triggers.
 
@@ -407,10 +548,18 @@ def evaluate_breakers(
 
     Evaluation order is deterministic: `workflow.circuit_breakers` in declared order,
     then *builtin_specs* (the extension point T-r3j9b6 will populate; empty/None until
-    then). For each spec, looks up `BREAKER_REGISTRY[spec.condition]` and calls
-    `.evaluate(spec, ctx)`. A NEW trip (its `spec.id` not already present in
-    `state.tripped_breakers`) is recorded via `record_trip()`; an id already latched is
-    skipped (no duplicate record) even if it re-trips.
+    then). For each spec, the EFFECTIVE threshold is resolved once, centrally, as
+    `state.breaker_overrides.get(spec.id, spec.threshold)` (E-3JTmVu FR-2c) -- a spec with no
+    override entry evaluates against its own unchanged `spec.threshold`, byte-identical to
+    before overrides existed. When an override is present, a `spec.model_copy(update=
+    {"threshold": effective_threshold})` is passed to `.evaluate()` instead of the original
+    spec, so every `Breaker` subclass (current and future) honours an operator's `ao resume
+    --extend-breaker` bump uniformly, with zero per-condition special-casing. Looks up
+    `BREAKER_REGISTRY[spec.condition]` and calls `.evaluate(effective_spec, ctx)`. A NEW trip
+    (its `spec.id` not already present in `state.tripped_breakers`) is recorded via
+    `record_trip()`; an id already latched is skipped (no duplicate record) even if it
+    re-trips -- unless an operator has explicitly un-latched it via `apply_breaker_extension`
+    (FR-2b), which removes it from `state.tripped_breakers` so it becomes eligible again.
 
     If one or more breakers trip NEW this boundary, the FIRST one in evaluation order
     owns the returned action — deterministic, documented (LLD §6.3/§6.4). Callers must
@@ -449,7 +598,17 @@ def evaluate_breakers(
                 path=f"circuit_breakers.{spec.id}.condition",
             )
         breaker = BREAKER_REGISTRY[spec.condition]
-        trip = breaker.evaluate(spec, ctx)
+        # Centralized override resolution (FR-2c): a spec with no override entry evaluates
+        # against its own unchanged threshold (byte-identical to pre-override behaviour); an
+        # extended id evaluates against the operator-bumped value instead. Resolved here ONCE
+        # so no individual Breaker subclass needs to know about breaker_overrides.
+        effective_threshold = state.breaker_overrides.get(spec.id, spec.threshold)
+        effective_spec = (
+            spec
+            if effective_threshold == spec.threshold
+            else spec.model_copy(update={"threshold": effective_threshold})
+        )
+        trip = breaker.evaluate(effective_spec, ctx)
         if trip is None:
             continue
         if spec.id in already_tripped:

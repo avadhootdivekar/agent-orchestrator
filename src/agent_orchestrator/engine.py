@@ -459,7 +459,18 @@ class Orchestrator:
                 # Mark as running
                 ts = state.tasks.setdefault(tid, TaskRunState())
                 ts.status = "running"
-                ts.started_at = datetime.now(UTC).isoformat()
+                # Only set started_at on the task's FIRST dispatch (E-3JTmVu FR-1 fix): the
+                # quota-exhaustion/429/budget-wait paths below reset ts.status to "pending" and
+                # loop back to this same line (`cursor -= 1; continue`) to redispatch the SAME
+                # task after a real sleep -- without this guard, that redispatch used to
+                # overwrite started_at, silently excluding the wait from
+                # `run_active_seconds`'s (ended_at - started_at) sum even though those waits are
+                # genuine engine-busy/blocked time on this task, not an operator-initiated stop.
+                # Safe: started_at has exactly one writer (here) and prepare_resume already
+                # hands a fresh TaskRunState() (started_at=None) to any task reset for `ao
+                # resume`, so a resumed dispatch still gets its own fresh started_at.
+                if ts.started_at is None:
+                    ts.started_at = datetime.now(UTC).isoformat()
                 self._runstate.save(state)
                 task_log.info("Task started", extra={"event": "task.start"})
 

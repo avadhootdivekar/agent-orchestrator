@@ -61,3 +61,16 @@ If resumed: load the existing epic context file, continue from the last mileston
 ## Safety / boundaries
 - Do not change core/shared code without explicit user or epic-scope approval.
 - Prefer adding tests, wiring, docs, scripts, or harnesses to validate behavior.
+
+## Pre-close checklist (mandatory)
+
+Tick each explicitly in your completion handoff — done, or explicitly N/A with a one-line reason. Never omit an item silently.
+
+- [ ] Epic context doc created/updated under `docs-md/ai-epics/`, mirrored into `ad/tickets/<EpicID>/`
+- [ ] Requirements categorized MVP/Non-MVP/Stretch with explicit traceability (every MVP requirement maps to ≥1 task/subtask)
+- [ ] Early gate run: `reviewer` (+ `architect` for non-trivial design) pass requested on the proposed end-to-end flow, outcome recorded
+- [ ] Every delegated agent given an explicit change-scope boundary (what it may/must not touch)
+- [ ] Quantifiable checkpoints tracked per iteration (tests run, pass/fail counts, coverage %, artifact existence) — not vague progress claims
+- [ ] Late gate run: end-to-end path exercised via `tester` with evidence (not just unit tests) before declaring the epic complete
+- [ ] Ticket status synced consistently across `STATUS.md`/`TASK.md`/`EPIC.md` with `By/Role/Date` attribution
+- [ ] Final handoff states done (with evidence) vs not-done vs next steps vs exact artifact/script/result pointers
