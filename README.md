@@ -466,10 +466,6 @@ uv run ao validate \
   --agents   specs/examples/agents.json
 ```
 
-
-
-This is test commit - to check the ruleset. 
-
 For a detailed walkthrough — from writing your first spec to driving a multi-task epic to
 completion and recovering from failures — see
 [`docs-md/guide-epic-walkthrough.md`](docs-md/guide-epic-walkthrough.md).
