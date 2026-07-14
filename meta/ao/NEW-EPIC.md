@@ -10,7 +10,7 @@ This is the step-by-step guide to drive a new feature epic from requirements to 
 ## Step 1 — Pick an epic ID
 
 Use a **lowercase** ID for the workflow (schema requirement). Format: `e-<6-alnum>-<slug>` (e.g. `e-abc123-my-feature`).
-The ticket system under `ad/tickets/` uses the standard `E-<6-alnum>-<slug>` uppercase prefix — the `create-tasks` stage handles that mapping.
+The ticket system under `meta/tickets/` uses the standard `E-<6-alnum>-<slug>` uppercase prefix — the `create-tasks` stage handles that mapping.
 
 ```bash
 EPIC_ID="e-abc123-my-feature"    # lowercase, used for workflow + epics/ dir
@@ -75,7 +75,7 @@ ao run \
 The pipeline runs sequentially:
 1. `gather-requirements` (~20 min) → `outputs/requirements.md`
 2. `design-epic` (~40 min, Opus) → `outputs/adr.md` + `hld.md` + `lld.md`
-3. `create-tasks` (~30 min) → `outputs/tasks.json` + ticket files in `ad/tickets/`
+3. `create-tasks` (~30 min) → `outputs/tasks.json` + ticket files in `meta/tickets/`
 4. `implement-tasks` (~2-4 hours, manager) → `outputs/impl-report.md`
 5. `critic-review` (~30 min) → `outputs/critic-report.md`
 6. `architect-review` (~40 min, Opus) → `outputs/final-review.md`
@@ -103,7 +103,7 @@ ao status --workflow meta/ao/epics/$EPIC_ID/workflow.json
 
 After the workflow completes:
 - `outputs/final-review.md` — architect's sign-off verdict (APPROVED / APPROVED WITH CONDITIONS / NOT APPROVED)
-- `ad/tickets/$EPIC_ID/` — fully populated ticket files
+- `meta/tickets/$EPIC_ID/` — fully populated ticket files
 - `docs-md/` — updated design docs
 
 If the verdict is NOT APPROVED, address the items listed, then rerun the affected stages by deleting the relevant output files and re-running `resume`.

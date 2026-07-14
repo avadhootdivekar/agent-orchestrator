@@ -519,8 +519,8 @@ class TestSchemaRoundTrip:
     def test_schema_round_trip(self, tmp_path: Path) -> None:
         """Load workflow-budget.json and verify it round-trips without error."""
         # First, ensure the example file exists
-        example_path = Path(
-            "/usr/avadhoot/mounted/agent-orchestrator/specs/examples/workflow-budget.json"
+        example_path = (
+            Path(__file__).resolve().parents[1] / "specs" / "examples" / "workflow-budget.json"
         )
         if example_path.exists():
             # Load and validate

@@ -1,6 +1,6 @@
 # LLD — Run-control: conditional routing, multi-endpoint success & circuit breakers
 
-- Epic: [`E-rc7k2v-run-control-routing-breakers`](../ad/tickets/E-rc7k2v-run-control-routing-breakers/EPIC.md)
+- Epic: [`E-rc7k2v-run-control-routing-breakers`](../meta/tickets/E-rc7k2v-run-control-routing-breakers/EPIC.md)
 - HLD: [`multi-endpoint-circuit-breaker-hld.md`](multi-endpoint-circuit-breaker-hld.md) (§3 requirements, §4 routing, §5 breaker, §6 catalog)
 - ADR: [`ADR-0002`](adr/ADR-0002-conditional-branching-multi-endpoint.md) (Accepted — first-class `branches`)
 - Core docs: [`hld-agent-orchestrator.md`](hld-agent-orchestrator.md) · [`lld-agent-orchestrator.md`](lld-agent-orchestrator.md)
@@ -892,7 +892,7 @@ Residual open questions (non-blocking):
 
 ## 16. Addendum (E-3JTmVu, 2026-07-14) — `run_active_seconds` + breaker resume-extension
 
-Follow-on epic [`E-3JTmVu-breaker-resume-extend`](../ad/tickets/E-3JTmVu-breaker-resume-extend/EPIC.md)
+Follow-on epic [`E-3JTmVu-breaker-resume-extend`](../meta/tickets/E-3JTmVu-breaker-resume-extend/EPIC.md)
 (not a reopening of this LLD/epic) closes two gaps this document and `T-t4m8x1`'s STATUS.md flagged but
 left for a later owner. Both pieces are additive — every decision above (R1/R2/R3, the six MVP
 conditions, the framework's latch semantics) is unchanged.

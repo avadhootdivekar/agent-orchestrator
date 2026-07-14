@@ -1,6 +1,6 @@
 # HLD — Multi-endpoint workflows & circuit breaker
 
-- Epic: [`E-rc7k2v-run-control-routing-breakers`](../ad/tickets/E-rc7k2v-run-control-routing-breakers/EPIC.md)
+- Epic: [`E-rc7k2v-run-control-routing-breakers`](../meta/tickets/E-rc7k2v-run-control-routing-breakers/EPIC.md)
 - Status: **Implemented** (LLD: [`lld-run-control-routing-breakers.md`](lld-run-control-routing-breakers.md) — all tickets landed and merged)
 - Date: 2026-07-09
 - Decision record: [`ADR-0002`](adr/ADR-0002-conditional-branching-multi-endpoint.md)

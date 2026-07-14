@@ -1,9 +1,9 @@
 # HLD (draft) — Granular task decomposition for the epic-runner (context-bounded agent sessions)
 
-- Epic: [`E-gd8m4x-granular-task-decomposition`](../ad/tickets/E-gd8m4x-granular-task-decomposition/EPIC.md)
+- Epic: [`E-gd8m4x-granular-task-decomposition`](../meta/tickets/E-gd8m4x-granular-task-decomposition/EPIC.md)
 - Status: **Draft — design only, no implementation yet**
 - Date: 2026-07-09
-- Applies to: `ao-runner-finplan/workflows/epic-runner/` (workflow + instructions) with a short list of framework enablers in `agent-orchestrator`
+- Applies to: `ao-runner/workflows/epic-runner/` (workflow + instructions) with a short list of framework enablers in `agent-orchestrator`
 - Related: [`guide-dynamic-task-injection.md`](guide-dynamic-task-injection.md) · [`token-budgeting-hld.md`](token-budgeting-hld.md) · [`adr/ADR-0003-settings-precedence-policy.md`](adr/ADR-0003-settings-precedence-policy.md)
 
 ## 1. Problem & goals

@@ -439,7 +439,7 @@ agent-orchestrator/
     examples/                 Working example specs
   tests/                    pytest unit + integration tests
   docs-md/                  Design docs, ADRs, walkthroughs
-  ad/                       Tickets, prompts, learnings/memories
+  meta/                     Tickets, prompts, learnings, memories, AO configs
   .claude/                  Authoritative agent/skill/command assets
 ```
 

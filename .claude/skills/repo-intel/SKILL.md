@@ -17,7 +17,7 @@ description: Use the `ri` (repo-intel) CLI as a repo intelligence layer for expl
 
 Re-check with `ri doctor` / `ri index status` if behavior differs from this note.
 
-- **Overlay may not be initialized.** This repo's working tickets/learnings live under `ad/` (e.g. `ad/tickets/`, `ad/learnings.md`), not the `meta/` overlay. If `ri` reports the overlay is missing and you genuinely want overlay features, run `ri init` — but day-to-day ticket work here uses `ad/`, so prefer that unless told otherwise.
+- **Overlay may not be initialized.** This repo's working tickets/learnings are hand-authored under `meta/` (e.g. `meta/tickets/`, `meta/learnings.md`), not managed through the `ri` overlay's own store. If `ri` reports the overlay is missing and you genuinely want overlay features, run `ri init` — but day-to-day ticket work here uses `meta/tickets/`, so prefer that unless told otherwise.
 - **`ri search` is the reliable workhorse** — it uses `rg` (ripgrep) / `sg` (ast-grep) and searches all files regardless of index state. Best for precise symbol/string lookup.
 - **`ri context` / `ri index` need `bm25s` + a built index.** If unavailable, fall back to `ri search`. Build/refresh with `ri index build` and check freshness with `ri index status`.
 - **Index footgun — generated/minified files.** Keep generated, vendored, or minified files (e.g. `*.min.js`, build output, `coverage/`, `reports/`) out of the index `include:` globs — duplicate ctags can crash `ri index build` with a `UNIQUE constraint failed: corpus.doc_id` error.
@@ -82,7 +82,7 @@ echo '{"commands":[
   {"id":"tests","cmd":"pytest -q","detail":"summary"},
   {"id":"lint","cmd":"ruff check .","detail":"summary"},
   {"id":"types","cmd":"mypy .","detail":"summary"}
-]}' | ri run --stdin --cwd /usr/avadhoot/mounted/agent-orchestrator
+]}' | ri run --stdin --cwd /path/to/agent-orchestrator
 ```
 
 | Field | Required | Default | Meaning |
@@ -153,4 +153,4 @@ Checks `meta/` presence, AGENTS.md, ticket IDs/front-matter, design/ADR numberin
 | `ri init [--force]` | bootstrap overlay |
 | `ri sync-agents` | regenerate agent shims from `AGENTS.md` — **do not run in this repo** |
 
-Overlay conventions: ticket IDs are Crockford-Base32 (`E-`/`T-`/`S-XXXXXX-slug`); designs/ADRs are sequentially numbered and never renumbered after publication; lifecycle `backlog → ready → in_progress → in_review → done|cancelled`. This repo's day-to-day tickets live in `ad/tickets/`, separate from this overlay.
+Overlay conventions: ticket IDs are Crockford-Base32 (`E-`/`T-`/`S-XXXXXX-slug`); designs/ADRs are sequentially numbered and never renumbered after publication; lifecycle `backlog → ready → in_progress → in_review → done|cancelled`. This repo's day-to-day tickets live in `meta/tickets/`, separate from this overlay.

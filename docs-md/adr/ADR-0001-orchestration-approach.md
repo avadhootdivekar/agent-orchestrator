@@ -2,8 +2,8 @@
 
 - Status: **Accepted**
 - Date: 2026-06-16
-- Deciders: avadhoot (user), Claude (architect role)
-- Related: discovery epic [`E-or7k2d-orchestrator-discovery`](../../ad/tickets/E-or7k2d-orchestrator-discovery/EPIC.md) · build epic [`E-m2k9pa-orchestrator-mvp-a`](../../ad/tickets/E-m2k9pa-orchestrator-mvp-a/EPIC.md) · survey [`output/.../market-survey.md`](../../output/E-or7k2d-orchestrator-discovery/market-survey.md)
+- Deciders: Avadhoot Divekar (user), Claude (architect role)
+- Related: discovery epic [`E-or7k2d-orchestrator-discovery`](../../meta/tickets/E-or7k2d-orchestrator-discovery/EPIC.md) · build epic [`E-m2k9pa-orchestrator-mvp-a`](../../meta/tickets/E-m2k9pa-orchestrator-mvp-a/EPIC.md) · survey [`output/.../market-survey.md`](../../output/E-or7k2d-orchestrator-discovery/market-survey.md)
 
 ## Context
 The agent-orchestrator must drive multi-agent, multi-repo workflows from declarative JSON/YAML specs, with cron/event triggers, artifact-by-path IO, resume/idempotency, and — critically — **orchestrator context hygiene (NFR-1)**: the orchestrator must know only paths and statuses, never payload contents.

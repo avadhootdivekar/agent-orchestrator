@@ -18,12 +18,12 @@ If nothing qualifies: report **"No new learnings to capture."** and stop. Do NOT
 
 ## Step 1: Read existing entries (dedup)
 
-Read `ad/learnings.md` and `meta/instructions/memories/README.md`.  
+Read `meta/learnings.md` and `meta/instructions/memories/README.md`.  
 Skip anything already covered there.
 
 ---
 
-## Step 2: Append to `ad/learnings.md`
+## Step 2: Append to `meta/learnings.md`
 
 For each new learning, append one block in this exact format:
 
@@ -64,7 +64,7 @@ type: decision | constraint | pitfall | convention
 
 ---
 
-## Step 4: Update `ad/learning-compact.md` (conditional)
+## Step 4: Update `meta/learning-compact.md` (conditional)
 
 Only if **3 or more new learnings** were added. Add one bullet per new learning, ≤ 15 words, actionable insight only. Preserve all existing bullets.
 
@@ -73,6 +73,6 @@ Only if **3 or more new learnings** were added. Add one bullet per new learning,
 ## Output
 
 Report exactly three lines:
-- Learnings added: N (to ad/learnings.md)
+- Learnings added: N (to meta/learnings.md)
 - Memories added: N (to meta/instructions/memories/README.md)
 - Compact updated: yes / no

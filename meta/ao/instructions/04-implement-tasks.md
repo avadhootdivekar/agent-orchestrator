@@ -48,7 +48,7 @@ Spawn a reviewer subagent with:
 
 #### If reviewer says PASS:
 - Update the task's STATUS.md to `Done`
-- Update `ad/tickets/{epic_id}/EPIC.md` task list (check the box)
+- Update `meta/tickets/{epic_id}/EPIC.md` task list (check the box)
 
 ---
 

@@ -1,6 +1,6 @@
 # HLD — Agent Orchestrator (Option A: Claude-native + thin spec)
 
-- Epic: [`E-m2k9pa-orchestrator-mvp-a`](../ad/tickets/E-m2k9pa-orchestrator-mvp-a/EPIC.md)
+- Epic: [`E-m2k9pa-orchestrator-mvp-a`](../meta/tickets/E-m2k9pa-orchestrator-mvp-a/EPIC.md)
 - Decision: [`ADR-0001`](adr/ADR-0001-orchestration-approach.md)
 - LLD (implementable detail): [`lld-agent-orchestrator.md`](lld-agent-orchestrator.md)
 - Date: 2026-06-16

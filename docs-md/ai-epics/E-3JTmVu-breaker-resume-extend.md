@@ -7,7 +7,7 @@
 - Created: 2026-07-14
 - Last Updated: 2026-07-14
 - Status: Done
-- Foundation / prior art: [`E-rc7k2v-run-control-routing-breakers`](../../ad/tickets/E-rc7k2v-run-control-routing-breakers/EPIC.md) (Done, 2026-07-09) — this epic is an additive follow-on, NOT a reopening. `E-rc7k2v` is not touched/reopened.
+- Foundation / prior art: [`E-rc7k2v-run-control-routing-breakers`](../../meta/tickets/E-rc7k2v-run-control-routing-breakers/EPIC.md) (Done, 2026-07-09) — this epic is an additive follow-on, NOT a reopening. `E-rc7k2v` is not touched/reopened.
 
 ## Goal
 `E-rc7k2v` shipped a pluggable circuit-breaker framework with a per-breaker-id latch
@@ -147,7 +147,7 @@ call. Given that scope, the "early gate" is satisfied by:
 - Confirmed no re-derivation needed: every signature/behavior the user specified matches what is
   actually in the code (evaluate_breakers call site, RunState field list, resume command
   structure) — no BLOCKED assumptions needed.
-- Ticket structure created under `ad/tickets/E-3JTmVu-breaker-resume-extend/` (this epic + 4
+- Ticket structure created under `meta/tickets/E-3JTmVu-breaker-resume-extend/` (this epic + 4
   tasks). Baseline `uv run pytest -q` captured: **643 passed, 3 skipped**.
 
 ### 2026-07-14 — Iteration 2 (FR-1 + FR-2 implemented, reviewer pass, 2 real bugs found + fixed)

@@ -2,8 +2,8 @@
 
 - Status: **Accepted** (user approved recommendations 2026-07-09; resolved decisions below)
 - Date: 2026-07-09
-- Deciders: avadhoot (user), Claude (architect role)
-- Related: `project_config.py` (three-layer resolution, shipped) · memory `project_config_three_layers` · [`token-budgeting-hld.md`](../token-budgeting-hld.md) · Epic [`E-st5p3q-settings-precedence-policy`](../../ad/tickets/E-st5p3q-settings-precedence-policy/EPIC.md)
+- Deciders: Avadhoot Divekar (user), Claude (architect role)
+- Related: `project_config.py` (three-layer resolution, shipped) · memory `project_config_three_layers` · [`token-budgeting-hld.md`](../token-budgeting-hld.md) · Epic [`E-st5p3q-settings-precedence-policy`](../../meta/tickets/E-st5p3q-settings-precedence-policy/EPIC.md)
 
 ## Context
 
@@ -15,7 +15,7 @@ Runtime settings (model, effort, max_attempts, max_turns, quota waits, timeouts,
 
 Note: "current repo / working directory" as a level **already is** the project-config layer — `.ao/config.yaml` is found by walking up from cwd to the git root. It is not a fourth mechanism.
 
-**Live defect that motivates this ADR**: a global `--model`/`AO_MODEL`/config `model` is applied by overwriting `model` on *every* `AgentSpec` (cli.py `spec.model = eff_model`). Deliberately-pinned per-agent models (e.g. finplan's `architect-opus`, `reviewer-opus`) are silently downgraded by `ao run --model haiku`. The same holds for `effort`. This is precedence inversion: the most *specific* declaration loses to the most *generic* one.
+**Live defect that motivates this ADR**: a global `--model`/`AO_MODEL`/config `model` is applied by overwriting `model` on *every* `AgentSpec` (cli.py `spec.model = eff_model`). Deliberately-pinned per-agent models (e.g. a downstream runner's `architect-opus`, `reviewer-opus`) are silently downgraded by `ao run --model haiku`. The same holds for `effort`. This is precedence inversion: the most *specific* declaration loses to the most *generic* one.
 
 ## Decision
 
@@ -45,7 +45,7 @@ task-level (workflow)            ← most specific, wins
 
 - **Option 2 — always-explicit workflows** (every workflow declares model/effort or an explicit `inherit` marker; user-proposed). Pros: self-contained, reproducible-by-reading. Cons: `inherit: env` re-encodes the same precedence chain with extra typing (the confusion moves, it doesn't die); workflow files become environment-coupled and less portable across repos/plans; templates/scaffolds (epic-runner generates workflow.json) must grow knobs anyway. Captured instead as the `ao validate --strict` lint in 1.2.
 - **Option 3 — flatten to two layers** (workflow file + CLI only; drop env/config for runtime knobs). Simplest mental model but breaks CI ergonomics (env is how CI configures), regresses shipped `.ao/config.yaml` behavior, and makes shared-machine defaults impossible.
-- **Option 4 — status quo** (invocation clobbers agents). Rejected: the finplan opus-agents downgrade is a real silent-wrong-result case.
+- **Option 4 — status quo** (invocation clobbers agents). Rejected: the downstream-runner opus-agents downgrade is a real silent-wrong-result case.
 
 ## Known pitfalls this policy must handle (from repo history)
 

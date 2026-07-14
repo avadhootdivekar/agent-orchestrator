@@ -19,7 +19,7 @@ An **agent orchestration framework / tool** (Python) that drives multi-step, mul
 | Specialized role guides (adopt the matching one) | [`.claude/agents/`](.claude/agents/) — `architect`, `manager`, `dev-epic`, `developer`, `reviewer`, `tester`, `dev-security`, `dev-critic` |
 | Skills (repo intelligence / search) | [`.claude/skills/`](.claude/skills/) |
 | Repeatable command workflows (commit/push, memorize) | [`.claude/commands/`](.claude/commands/) |
-| Ticket workspace (epics/tasks + conventions) | [`ad/tickets/`](ad/tickets/) (`ad/tickets/README.md`) |
+| Ticket workspace (epics/tasks + conventions) | [`meta/tickets/`](meta/tickets/) (`meta/tickets/README.md`) |
 
 ## How to use the role guides
 

@@ -22,7 +22,7 @@ description: Workflow `id` field in JSON/YAML spec must be fully lowercase; uppe
 type: constraint
 ---
 
-The `id` field in every workflow spec is validated against `^[a-z0-9][a-z0-9-_]*$`. **Why**: the JSON schema enforces this pattern and rejects anything with uppercase characters, including the standard ticket prefix `E-`. **Apply**: when instantiating any workflow (including the epic-lifecycle template), always use a lowercase id (e.g. `e-abc123-my-feature`). The `ad/tickets/` directory still uses uppercase `E-` — these are separate concerns.
+The `id` field in every workflow spec is validated against `^[a-z0-9][a-z0-9-_]*$`. **Why**: the JSON schema enforces this pattern and rejects anything with uppercase characters, including the standard ticket prefix `E-`. **Apply**: when instantiating any workflow (including the epic-lifecycle template), always use a lowercase id (e.g. `e-abc123-my-feature`). The `meta/tickets/` directory still uses uppercase `E-` — these are separate concerns.
 
 ---
 name: cross-validate-arg-order
@@ -158,7 +158,7 @@ description: An emit_tasks task skipped via skip_if_outputs_exist never injects 
 type: pitfall
 ---
 
-The engine's skip path (`should_skip` → mark `skipped` → `continue`) exits the task loop **before** the dynamic-expansion hook, which only fires for `ts.status == "succeeded"` after real execution. **Why**: on a fresh `ao run` where the emitter's outputs already exist, the emitter skips, no tasks are injected, and every static task waiting on the fan-out's aggregator output fails on a missing input — while `ao resume` works fine because injected tasks are restored from persisted run state. **Apply**: any task with `emit_tasks: true` must declare `skip_if_outputs_exist: false` (as the finplan epic-runner's `task-breakdown` does); treat "emitter skipped" as a red flag when diagnosing missing-input failures downstream of a fan-out.
+The engine's skip path (`should_skip` → mark `skipped` → `continue`) exits the task loop **before** the dynamic-expansion hook, which only fires for `ts.status == "succeeded"` after real execution. **Why**: on a fresh `ao run` where the emitter's outputs already exist, the emitter skips, no tasks are injected, and every static task waiting on the fan-out's aggregator output fails on a missing input — while `ao resume` works fine because injected tasks are restored from persisted run state. **Apply**: any task with `emit_tasks: true` must declare `skip_if_outputs_exist: false` (as a downstream runner's epic-runner's `task-breakdown` does); treat "emitter skipped" as a red flag when diagnosing missing-input failures downstream of a fan-out.
 
 ---
 name: global-model-override-clobbers-agents
@@ -166,7 +166,7 @@ description: ao run --model/--effort (and AO_MODEL/AO_EFFORT/config) overwrite e
 type: pitfall
 ---
 
-A global model/effort setting is applied in `cli.py` by looping `spec.model = eff_model` over ALL agents — the most specific declaration (per-agent `model` in `agents.json`) loses to the most generic one. **Why**: running a workflow with mixed-model agents (e.g. finplan's `architect-opus`/`reviewer-opus` next to haiku workers) under `ao run --model haiku` silently downgrades the opus agents; outputs look normal but come from the wrong model. **Apply**: until epic `E-st5p3q-settings-precedence-policy` lands the specific-wins chain (ADR-0003), never pass `--model`/`--effort`/`AO_MODEL`/`AO_EFFORT` (or config `model:`/`effort:`) when the agents file pins per-agent values; check `agents.*.json` first.
+A global model/effort setting is applied in `cli.py` by looping `spec.model = eff_model` over ALL agents — the most specific declaration (per-agent `model` in `agents.json`) loses to the most generic one. **Why**: running a workflow with mixed-model agents (e.g. a downstream runner's `architect-opus`/`reviewer-opus` next to haiku workers) under `ao run --model haiku` silently downgrades the opus agents; outputs look normal but come from the wrong model. **Apply**: until epic `E-st5p3q-settings-precedence-policy` lands the specific-wins chain (ADR-0003), never pass `--model`/`--effort`/`AO_MODEL`/`AO_EFFORT` (or config `model:`/`effort:`) when the agents file pins per-agent values; check `agents.*.json` first.
 
 ---
 name: breaker-latch-persists-across-resume
@@ -198,7 +198,7 @@ description: A subagent's STATUS.md Completion section can overstate what actual
 type: pitfall
 ---
 
-Two independent failure modes were caught in the same ticket (E-rc7k2v `T-d8w4v2`): (1) the Completion section claimed an example spec "demonstrates branches+circuit_breakers+join" when the shipped file actually had no `join` at all (the ticket's own AC2 was unmet); (2) the STATUS.md header still read `State: Draft` / `Owner: architect (pending tester assignment)` and `TASK.md` still said `Status: Draft`, despite the Completion section declaring the ticket done. **Why**: a subagent's prose summary is not itself evidence — it can drift from the artifact it describes, and updating a Completion section doesn't automatically update the header fields the ticket-conventions system (`ad/tickets/README.md`) relies on for status sync. **Apply**: when accepting a subagent's ticket as done, (a) check the actual artifact against every acceptance criterion literally, not just the narrative, and (b) confirm the header `State`/`Status`/`Owner` fields match the Completion section — fix both if they don't, and note the fix rather than silently rewriting the subagent's original text.
+Two independent failure modes were caught in the same ticket (E-rc7k2v `T-d8w4v2`): (1) the Completion section claimed an example spec "demonstrates branches+circuit_breakers+join" when the shipped file actually had no `join` at all (the ticket's own AC2 was unmet); (2) the STATUS.md header still read `State: Draft` / `Owner: architect (pending tester assignment)` and `TASK.md` still said `Status: Draft`, despite the Completion section declaring the ticket done. **Why**: a subagent's prose summary is not itself evidence — it can drift from the artifact it describes, and updating a Completion section doesn't automatically update the header fields the ticket-conventions system (`meta/tickets/README.md`) relies on for status sync. **Apply**: when accepting a subagent's ticket as done, (a) check the actual artifact against every acceptance criterion literally, not just the narrative, and (b) confirm the header `State`/`Status`/`Owner` fields match the Completion section — fix both if they don't, and note the fix rather than silently rewriting the subagent's original text.
 
 ---
 name: wall-clock-started-at-frozen-across-resume

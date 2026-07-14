@@ -1,6 +1,6 @@
 # LLD — Agent Orchestrator (Option A)
 
-- Epic: [`E-m2k9pa-orchestrator-mvp-a`](../ad/tickets/E-m2k9pa-orchestrator-mvp-a/EPIC.md) · HLD: [`hld-agent-orchestrator.md`](hld-agent-orchestrator.md) · ADR: [`ADR-0001`](adr/ADR-0001-orchestration-approach.md)
+- Epic: [`E-m2k9pa-orchestrator-mvp-a`](../meta/tickets/E-m2k9pa-orchestrator-mvp-a/EPIC.md) · HLD: [`hld-agent-orchestrator.md`](hld-agent-orchestrator.md) · ADR: [`ADR-0001`](adr/ADR-0001-orchestration-approach.md)
 - Audience: a developer new to the repo should be able to implement each module from this doc alone.
 - Stack: Python 3.11+, `pydantic` v2 (models/validation), `jsonschema` (spec schema), `croniter` (cron), `typer` (CLI), `pytest`/`ruff`/`mypy`.
 
