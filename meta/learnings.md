@@ -386,3 +386,48 @@ By: agent
 Role: developer
 Date: 2026-07-14
 ---
+
+---
+Learning-ID: LRN-20260714-set-repo-local-git-identity
+Learning: Sandbox has no git `user.name`/`user.email` at any scope; set them repo-local before committing or git fails or auto-derives a machine-hostname identity, leaking the host into public history.
+Context: Public-sanitization commit — `git config user.email` returned empty here.
+By: agent
+Role: agent
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260714-exists-guard-silent-skip-test
+Learning: A test wrapping assertions in `if abs_path.exists():` around a hardcoded absolute path runs ZERO assertions wherever that path is absent (CI/other machines) — a green no-op; build paths via `Path(__file__).resolve().parents[N]`.
+Context: `test_schema_round_trip` asserted nothing off-machine until its absolute path was made repo-relative.
+By: agent
+Role: agent
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260714-stash-baseline-splits-renames
+Learning: `git stash`/`pop` to snapshot a baseline on a `git mv`-heavy tree de-consolidates rename staging (pop yields unstaged deletions + staged adds, not renames); re-run `git add -A` and re-verify.
+Context: Baseline pytest via stashing 140 renames; pop left ad/ as ` D`, meta/ as `A`.
+By: agent
+Role: agent
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260714-toplevel-dir-rename-preserves-depth
+Learning: Renaming one top-level dir to another (`ad/`→`meta/`) preserves every relative-link depth, so a plain string-swap of the path prefix in `../..` links is correct without recomputing `../` counts.
+Context: Migrated 148 files; `../../ad/tickets`→`../../meta/tickets` resolved with no depth change.
+By: agent
+Role: agent
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260714-git-grep-publish-surface-sweep
+Learning: For "what gets published" audits, sweep with `git grep`/`git ls-files` (tracked-only, includes dotfiles) not `rg` (skips hidden, honors .gitignore); anchor bare tokens `(^|[^[:alnum:]/])ad/` to skip read/head/load and `uv.lock` fragments.
+Context: Public-sanitization; unanchored `ad/` matched read//head/ and lockfile hashes.
+By: agent
+Role: agent
+Date: 2026-07-14
+---

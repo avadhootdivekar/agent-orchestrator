@@ -38,3 +38,8 @@
 - Retry loops that do `last_result = result` on every attempt silently DISCARD prior attempts' actual usage/cost — sum across attempts instead, and attempt-suffix any shared `output_dir` or the next retry clobbers the previous attempt's capture files.
 - Claude CLI's real cost field is `total_cost_usd` (top-level, sibling of `usage`), NOT `cost_usd` — frozen in `tests/fixtures/claude_usage.json`.
 - `uv tool install <dir> --force` alone can resolve a stale cached wheel despite "success" — add `--reinstall` (confirmed fixes it; no `--no-cache`/`cache clean` needed). `install.sh --check`'s commit-stamp is blind to uncommitted changes — probe the tool venv directly (`<tooldir>/bin/python -c "import ..."`) when in doubt.
+- No git identity in this sandbox; set repo-local name/email before committing (else git fabricates a hostname identity).
+- `if abs_path.exists():` wrapping test assertions = silent no-op off-machine; build paths via `Path(__file__).resolve().parents[N]`.
+- `git stash`/pop on a `git mv`-heavy tree splits rename staging; re-run `git add -A` afterward.
+- Renaming one top-level dir to another preserves relative-link depths; string-swap the prefix, don't recount `../`.
+- Publish sweeps: `git grep`/`git ls-files` (tracked, incl. dotfiles); anchor bare tokens vs read/head/load + `uv.lock`.

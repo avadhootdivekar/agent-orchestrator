@@ -215,3 +215,19 @@ type: constraint
 ---
 
 `engine.py`'s dispatch loop writes `ts.started_at = datetime.now(UTC).isoformat()` right before marking a task `"running"`. **Why**: the quota-exhaustion/429/budget-wait paths reset a task to redispatch the SAME id after a real sleep (`cursor -= 1; continue`) looping back to that same line — without a guard, each redispatch overwrites `started_at`, silently shrinking `(ended_at - started_at)` and undercounting `run_active_seconds`. **Apply**: any dispatch/retry-loop code touching `TaskRunState.started_at` must guard with `if ts.started_at is None:` so only the task's true first dispatch sets it (fixed in E-3JTmVu; see the guard's comment in engine.py for the full reasoning).
+
+---
+name: sandbox-git-identity-repo-local
+description: This sandbox has no git identity at any scope; set it repo-local before committing or git leaks a machine hostname
+type: pitfall
+---
+
+This working environment has no `git config user.name`/`user.email` set at any scope (local, global, or system). **Why**: with both empty, `git commit` either aborts ("empty ident name") or silently auto-derives an identity from the OS user and machine hostname (e.g. `avadhoot@avadhoot-thinkstation-p3`), breaking attribution and leaking the hostname into published history. **Apply**: before any commit here, set them repo-local and verify non-empty first — `git config user.name "…"; git config user.email "…"` (a GitHub `ID+user@users.noreply.github.com` address avoids exposing a real email/hostname).
+
+---
+name: exists-guarded-abs-path-test-noop
+description: A test guarding a hardcoded absolute path with exists() runs zero assertions off-machine — a silent no-op, not a pass
+type: pitfall
+---
+
+A test that constructs a hardcoded absolute path and wraps its assertions in `if path.exists():` executes **zero** assertions anywhere that path is absent (CI, other machines) — it reports green while checking nothing. **Why**: the guard makes the entire test body conditional on one developer's filesystem layout, so it degrades to a no-op instead of failing loudly. **Apply**: locate in-repo fixtures via `Path(__file__).resolve().parents[N] / "…"` (repo-relative) so assertions run everywhere; treat `if <abs_path>.exists():` wrapping assertions as a review red flag (fixed in `tests/test_budget_integration.py::test_schema_round_trip`).
