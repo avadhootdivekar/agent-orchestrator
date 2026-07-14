@@ -431,3 +431,21 @@ By: agent
 Role: agent
 Date: 2026-07-14
 ---
+
+---
+Learning-ID: LRN-20260714-validator-allowlists-derive-from-registry
+Learning: A validator's "implemented features" allowlist must be derived from the implementation registry, never hand-copied: spec.py's hardcoded `_MVP_BREAKER_CONDITIONS` silently drifted when E-3JTmVu registered `run_active_seconds` in `BREAKER_REGISTRY` + schema but not in the allowlist, so `ao validate` rejected a fully-implemented condition as "not implemented". Fixed by `frozenset(BREAKER_REGISTRY)` + a parametrized test pinning validate-acceptance to every registry key.
+Context: Same drift class as the agents.schema.json additionalProperties pitfall; the epic's test only exercised jsonschema, not validate_run_control — always test the acceptance path at the validator layer too.
+By: agent
+Role: developer
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260714-install-yes-noops-on-matching-stamp
+Learning: `bash install.sh --yes` no-ops ("already up to date") whenever the commit stamp matches HEAD — it is blind to uncommitted src/ changes. To promote working-tree edits into the global `ao` snapshot, run `bash install.sh --force` (its `uv tool install --force --reinstall` correctly picks up live tree content).
+Context: Reinstall after the run_active_seconds fix silently skipped; probing the tool venv (`assert _MVP_BREAKER_CONDITIONS == frozenset(BREAKER_REGISTRY)`) caught it.
+By: agent
+Role: developer
+Date: 2026-07-14
+---

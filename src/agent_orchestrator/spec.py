@@ -7,6 +7,7 @@ from collections import defaultdict
 from itertools import product
 from pathlib import Path
 
+from .breakers import BREAKER_REGISTRY
 from .config import _load_file, _validate_against_schema
 from .dag import Graph, compute_cones, forward_closure
 from .errors import SpecValidationError
@@ -22,22 +23,14 @@ _ITER_SUFFIX_MARKER = "__iter"
 # checks all three so route ids get the same guarantee (rule 11).
 _ROUTING_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_]*$")
 
-# The implemented circuit-breaker conditions (LLD §7 + E-9h3m7k FR-4 / breakers.py
-# registry). The schema's `condition` enum accepts the full HLD §6 catalog so specs may
-# reference not-yet-implemented conditions ahead of time; this validator rejects those
-# with a clean, named error rather than letting them reach the engine as a silent no-op.
-_MVP_BREAKER_CONDITIONS = frozenset(
-    {
-        "task_failures",
-        "consecutive_failures",
-        "run_wall_clock_seconds",
-        "verdict",
-        "injected_task_count",
-        "stop_file",
-        "task_cost_usd",
-        "run_cost_usd",
-    }
-)
+# The implemented circuit-breaker conditions. The schema's `condition` enum accepts the
+# full HLD §6 catalog so specs may reference not-yet-implemented conditions ahead of
+# time; this validator rejects those with a clean, named error rather than letting them
+# reach the engine as a silent no-op. Derived from BREAKER_REGISTRY (the engine's actual
+# implementations) instead of a hand-maintained copy: a previous hardcoded set here
+# silently drifted when E-3JTmVu added `run_active_seconds` to the registry but not to
+# this list, making `ao validate` reject a fully-implemented condition.
+_MVP_BREAKER_CONDITIONS = frozenset(BREAKER_REGISTRY)
 
 # Safety cap on the route-selection combinations enumerated for rule 7's any-join
 # satisfiability check (product of route counts across all routers). Real specs have

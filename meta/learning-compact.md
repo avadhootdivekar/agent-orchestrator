@@ -43,3 +43,5 @@
 - `git stash`/pop on a `git mv`-heavy tree splits rename staging; re-run `git add -A` afterward.
 - Renaming one top-level dir to another preserves relative-link depths; string-swap the prefix, don't recount `../`.
 - Publish sweeps: `git grep`/`git ls-files` (tracked, incl. dotfiles); anchor bare tokens vs read/head/load + `uv.lock`.
+- Derive validator allowlists from the implementation registry (`frozenset(BREAKER_REGISTRY)`), never hand-copy: E-3JTmVu's `run_active_seconds` was implemented+in-schema yet rejected by `ao validate`; test feature acceptance at the validate_run_control layer, not just jsonschema.
+- `install.sh --yes` no-ops when the commit stamp matches HEAD even with uncommitted src/ edits — use `install.sh --force` to promote working-tree changes into the snapshot, then probe the tool venv to confirm.
