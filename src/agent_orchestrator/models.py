@@ -72,6 +72,12 @@ class AgentSpec(BaseModel):
     # (reposet.workspace_root) and path-guarded to stay inside it. None -> workspace root.
     # Lets agents' relative output paths (from specs/instructions) resolve deterministically.
     working_dir: str | None = None
+    # Opt-in tools to disable for this agent (claude_cli). Default [] = allow all
+    # (web/TodoWrite/subagents stay enabled). Passed as `--disallowedTools <names>`;
+    # an explicit policy flag in command_template/extra_args wins over this list.
+    # See executors.claude_cli.RECOMMENDED_HEADLESS_DISALLOWED_TOOLS for the
+    # background-shell set that is meaningless under headless `claude -p`.
+    disallowed_tools: list[str] = []
 
 
 class TaskSpec(BaseModel):

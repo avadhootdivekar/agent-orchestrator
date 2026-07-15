@@ -29,7 +29,7 @@ Agent orchestrator frameowrk is supposed to -
 
 
 ## Agent based monitoring and self healing for workflows 
-Also check - disallowed tools -> monitoring for claude -p mode.
+Also check - disallowed tools -> monitoring for claude -p mode. This is supposed to wait for background command to complete - but in '-p' mode it just exits - is that right understanding? 
 Also note - thsi looks like specilization / customization for claude - not a general technique - I WANT to handle it - but see the bestt place to keep it as it may not be general and may be model / provider specific configuration - You decide.
 Also capture what other tools we may nee to disable in claude -p mode or for the kind of run / tooling we are having and make necessary changes. 
 

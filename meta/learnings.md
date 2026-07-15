@@ -476,3 +476,21 @@ By: agent
 Role: developer
 Date: 2026-07-15
 ---
+
+---
+Learning-ID: LRN-20260715-headless-claude-p-background-tools-and-disallow-policy
+Learning: `claude -p` (headless) runs the agent loop and exits the moment the model ends a turn with no pending tool calls — there is NO persistent session to observe a `run_in_background` shell finishing or to be re-invoked on its completion, so a background shell is torn down with the process (same process group) or orphaned unobserved, and its monitor tools (`BashOutput`, `KillShell`/`KillBash`) read nothing. "Start in background, check later" is therefore unreliable BY CONSTRUCTION in every `ClaudeCliExecutor` task; foreground `Bash` (blocks within the turn) is the correct pattern for anything that must complete. Tool policy for `claude -p` is provider-specific and lives in the EXECUTOR, not the core: `AgentSpec.disallowed_tools: list[str] = []` (default allow-all — web/TodoWrite/subagents stay ON) → executor appends `--disallowedTools <names>`, SKIPPED if the agent already set `--disallowedTools`/`--allowedTools`/`--tools` (either spelling / `=`-form) in command_template/extra_args (explicit flag wins). `--disallowedTools` is VARIADIC (`<tools...>`) so it MUST be injected BEFORE the `--output-format` stream flags or the parser consumes them as tool names; it matches tool names exactly and ignores unknowns. List BOTH `KillShell` AND `KillBash` — Claude Code v2 renamed KillBash→KillShell and v2.1.209 still ships both literals, so listing both is correct across versions and a harmless no-op. Adding the field also required updating `specs/agents.schema.json` (additionalProperties:false).
+Context: prompt.md "Current Ask" second half; user directive "ALLOW ALL … provide flags to disable optionally" → allow-all default with opt-in per-agent disable (ADR-0005). `RECOMMENDED_HEADLESS_DISALLOWED_TOOLS = ("BashOutput","KillShell","KillBash")` names the background set for copy-paste opt-in.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-agents-schema-drift-max-turns-working-dir-missing
+Learning: `specs/agents.schema.json` has `additionalProperties: false` on the agent object, so any field on `AgentSpec` it omits is silently rejected by `ao validate` (config.py `load_agents` → `_validate_against_schema`) even though the engine would run it — a latent drift bug. Discovered while adding `disallowed_tools`: `max_turns` and `working_dir` had been on `AgentSpec` but were MISSING from the schema. FIXED 2026-07-15: both added to the schema alongside `disallowed_tools`, with a regression test (`tests/test_config.py::TestLoadAgentsSchema`) asserting they validate AND that an unknown field still fails.
+Context: The general rule (LRN: "Adding a field to AgentSpec also requires updating specs/agents.schema.json") was under-applied for max_turns/working_dir when they landed; grep the schema against `AgentSpec.__fields__` when touching either.
+By: agent
+Role: developer
+Date: 2026-07-15
+---

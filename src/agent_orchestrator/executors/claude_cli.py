@@ -41,6 +41,42 @@ _OUTPUT_FORMAT_FLAG = "--output-format"
 _OUTPUT_FORMAT_VALUE = "stream-json"
 _VERBOSE_FLAG = "--verbose"
 
+# --- Headless tool policy (`claude -p`) ---------------------------------------
+# Default posture is ALLOW ALL: this executor injects no tool restriction unless
+# an agent opts in via `AgentSpec.disallowed_tools` (or sets its own policy flag
+# in command_template/extra_args). Web search, TodoWrite, and subagent spawning
+# stay enabled by default — disabling is opt-in, per agent.
+#
+# The one class worth knowing about: background-shell tooling under `claude -p`.
+# `claude -p` runs the agent loop and exits the moment the model ends a turn with
+# no pending tool calls — there is NO persistent session left alive to observe a
+# `run_in_background` shell finishing or to be re-invoked when it does, so the
+# shell is torn down with the process (or orphaned, unobserved) and its monitors
+# read nothing. `RECOMMENDED_HEADLESS_DISALLOWED_TOOLS` names that set so opting
+# out is copy-paste; see ADR-0005 for the full rationale and other candidates.
+#
+# `--disallowedTools` matches tool names EXACTLY; an unknown name is a harmless
+# no-op. `KillBash` was renamed `KillShell` in Claude Code v2, so BOTH are listed
+# to keep the rule correct across CLI versions (v2.1.209 still ships both names).
+_TOOL_POLICY_FLAGS: frozenset[str] = frozenset(
+    {
+        "--disallowedTools",
+        "--disallowed-tools",
+        "--allowedTools",
+        "--allowed-tools",
+        "--tools",
+    }
+)
+_DISALLOWED_TOOLS_FLAG = "--disallowedTools"
+# Convenience set an agent MAY opt into (not applied by default) — the tools that
+# are meaningless/unobservable under headless `claude -p`. Copy into an agent's
+# `disallowed_tools` to silence the background-shell trap.
+RECOMMENDED_HEADLESS_DISALLOWED_TOOLS: tuple[str, ...] = (
+    "BashOutput",
+    "KillShell",
+    "KillBash",
+)
+
 # --- Capture artifact filenames (named, not magic literals; FR-4/FR-5) --------
 TRANSCRIPT_FILE = "transcript.jsonl"
 STDOUT_FILE = "stdout.txt"
@@ -89,6 +125,29 @@ def _ensure_stream_capture_flags(argv: list[str]) -> list[str]:
     if _selected_output_format(result) == _OUTPUT_FORMAT_VALUE and _VERBOSE_FLAG not in result:
         result += [_VERBOSE_FLAG]
     return result
+
+
+def _has_tool_policy(argv: list[str]) -> bool:
+    """True if argv already carries a tool-selection flag (either spelling / ``=`` form)."""
+    return any(arg.split("=", 1)[0] in _TOOL_POLICY_FLAGS for arg in argv)
+
+
+def _ensure_disallowed_tools(argv: list[str], tools: tuple[str, ...]) -> list[str]:
+    """Append ``--disallowedTools <tools>`` for an agent's opt-in disable list.
+
+    Default posture is allow-all: with an empty ``tools`` (the AgentSpec default)
+    this is a no-op. When ``tools`` is non-empty we inject the flag UNLESS argv
+    already sets its own policy (``--disallowedTools`` / ``--allowedTools`` /
+    ``--tools``, either spelling) — an explicit command_template/extra_args flag
+    wins, so the agent keeps full control. Non-mutating; returns a new list.
+
+    ``--disallowedTools`` is variadic (``<tools...>``), so this MUST be injected
+    before a terminating ``--flag`` (the stream-capture flags do this) or the CLI
+    parser keeps consuming following tokens as tool names.
+    """
+    if not tools or _has_tool_policy(argv):
+        return list(argv)
+    return list(argv) + [_DISALLOWED_TOOLS_FLAG, *tools]
 
 
 def _parse_iso_to_epoch(value: str) -> float | None:
@@ -399,6 +458,11 @@ class ClaudeCliExecutor(Executor):
                 max_turns = EFFORT_MAX_TURNS[ctx.agent.effort]
             if max_turns is not None:
                 argv = argv + ["--max-turns", str(max_turns)]
+
+        # Apply the agent's opt-in tool-disable list (default: none → allow all)
+        # BEFORE the stream flags, so the variadic --disallowedTools list is
+        # terminated by --output-format rather than swallowing it.
+        argv = _ensure_disallowed_tools(argv, tuple(ctx.agent.disallowed_tools))
 
         # Emit a per-turn JSONL stream so all turns are captured (not just the last).
         argv = _ensure_stream_capture_flags(argv)
