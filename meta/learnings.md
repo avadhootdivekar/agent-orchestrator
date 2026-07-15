@@ -449,3 +449,30 @@ By: agent
 Role: developer
 Date: 2026-07-14
 ---
+
+---
+Learning-ID: LRN-20260715-dispatchexecutor-fake-uncontrollable-via-cli
+Learning: `DispatchExecutor` (used by every real `ao run`/`ao resume` invocation) always constructs a bare `FakeExecutor()` with zero configuration — there is no way to make an `executor: "fake"` agent fail deterministically (custom error text, fail-then-succeed sequencing, rate-limit/quota simulation) through the unmodified CLI path, only via the engine-API (`Orchestrator(FakeExecutor(behaviors=...), ...)` constructed directly in test code).
+Context: Discovered independently while writing CliRunner e2e tests for self-heal (needed a genuine dispatch failure with a specific transient-vs-non-transient error message); then found `tests/test_cli.py::TestRunCommand::test_failed_run_exits_1`'s own comment already documents hitting the identical wall and working around it via a missing-input failure instead. Workaround used here: an `executor: "claude_cli"` agent with a deterministic, network-free `sh -c "echo '...' >&2; exit 1"` `command_template` in place of `claude` — genuinely real subprocess failure, no API key/binary needed, and it lets the error text be controlled (unlike a missing-input failure).
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-wheel-packaging-excludes-specs-bake-templates
+Learning: `pyproject.toml`'s `[tool.hatch.build.targets.wheel] packages = ["src/agent_orchestrator"]` means `specs/` (and anything else outside the package dir) is NOT shipped in the built wheel. Any feature that needs bundled template/instruction content at runtime (not just at dev-time from a repo checkout) must bake that content as a Python string constant inside the package, never reference it via a repo-relative path — a `uv tool install`ed `ao` binary has no `specs/` directory alongside it once installed.
+Context: `AgentMonitor` (E-XyfjuZ) needs to hand a monitor-agent subprocess an instruction file; a `specs/examples/instructions/*.md` path would silently 404 for any installed (non-editable) `ao`. Resolved by baking the instruction text as a module-level string constant in `monitoring.py`, written out fresh into the run's own `.orchestrator/runs/.../monitor/.../instruction.md` at consult time.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-phantom-failure-technique-for-breaker-boundary-tests
+Learning: To engine-integration-test breaker logic that depends on accumulated failure counts (`task_failures`, `consecutive_failures`) via a REAL `orch.run()`, seed a "phantom" already-`"failed"` `TaskRunState` entry directly into the initial `RunState` under an id that is NOT one of the workflow's real tasks. `evaluate_breakers`'s count-based conditions scan ALL of `state.tasks.values()` regardless of whether an id belongs to the current `WorkflowSpec`, so the phantom count is picked up — while the REAL dispatched task can still cleanly succeed, letting the breaker trip at a boundary the run would otherwise sail past. This matters because a genuinely-dispatched task failure ends the whole run via a separate, unconditional `if ts.status not in ("succeeded","skipped"): failed=True; break` check regardless of any breaker's threshold, so a real multi-failure accumulation scenario can never be driven through the sequential engine loop directly (existing unit tests for these two conditions construct a synthetic `RunState` and call `Breaker.evaluate()` directly for exactly this reason — the phantom-entry technique extends that to a full `orch.run()` integration test).
+Context: Used throughout `tests/test_monitoring_breaker_consult.py` (E-XyfjuZ Consult Point A) to prove the monitor-consult wiring fires at a real breaker-trip boundary without needing an actually-failing dispatch.
+By: agent
+Role: developer
+Date: 2026-07-15
+---

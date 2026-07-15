@@ -21,6 +21,7 @@ import pytest
 
 from agent_orchestrator.models import (
     CircuitBreakerSpec,
+    MonitorDecisionRecord,
     RouterSpec,
     RouteSpec,
     RunState,
@@ -28,6 +29,9 @@ from agent_orchestrator.models import (
     TaskSpec,
     TrippedBreaker,
     WorkflowSpec,
+    count_monitor_breaker_extensions,
+    count_monitor_calls_made,
+    count_monitor_heal_retries,
 )
 from agent_orchestrator.spec import load_workflow
 
@@ -293,6 +297,10 @@ class TestBackwardCompatOldStateJson:
         # Run-level new fields default.
         assert state.route_decisions == {}
         assert state.tripped_breakers == []
+        # E-XyfjuZ: monitor_decisions (the sole new monitoring-subsystem field, D9) also
+        # defaults empty for a fixture that predates this epic too.
+        assert "monitor_decisions" not in raw
+        assert state.monitor_decisions == []
         # Pre-existing fields still load correctly.
         assert state.run_id == "test-wf-20260101T000000Z"
         assert state.status == "succeeded"
@@ -348,3 +356,217 @@ class TestNotTakenStatus:
         loaded = RunState.model_validate_json(state.model_dump_json())
         assert loaded.tasks["skipped-route-task"].status == "not_taken"
         assert loaded.route_decisions == {"classify-router": ["epic"]}
+
+
+class TestGuardrailMode:
+    """E-XyfjuZ FR-1/FR-7: CircuitBreakerSpec.mode field + schema enum, kept in sync
+    with the Pydantic Literal (never hand-copied -- mirrors the BREAKER_REGISTRY-derived
+    allowlist fix in commit 8debeb3, so schema and model can never silently drift apart)."""
+
+    def test_mode_defaults_to_hard(self) -> None:
+        breaker = CircuitBreakerSpec(id="b", condition="task_failures", action="stop", threshold=1)
+        assert breaker.mode == "hard"
+
+    def test_mode_recommend_accepted(self) -> None:
+        breaker = CircuitBreakerSpec(
+            id="b", condition="task_failures", action="stop", threshold=1, mode="recommend"
+        )
+        assert breaker.mode == "recommend"
+
+    def test_mode_invalid_value_rejected_by_pydantic(self) -> None:
+        with pytest.raises(Exception):  # pydantic ValidationError
+            CircuitBreakerSpec(
+                id="b", condition="task_failures", action="stop", threshold=1, mode="bogus"
+            )
+
+    def test_schema_accepts_hard_and_recommend_modes(self) -> None:
+        for mode in ("hard", "recommend"):
+            data = _base_workflow_dict()
+            data["circuit_breakers"][0]["mode"] = mode
+            jsonschema.validate(data, _schema())
+
+    def test_schema_rejects_unknown_mode_value(self) -> None:
+        data = _base_workflow_dict()
+        data["circuit_breakers"][0]["mode"] = "bogus"
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(data, _schema())
+
+    def test_schema_mode_omitted_still_validates(self) -> None:
+        """Existing specs that never declare `mode` at all remain valid (byte-identical)."""
+        jsonschema.validate(_base_workflow_dict(), _schema())
+
+    def test_schema_enum_matches_pydantic_literal_exactly(self) -> None:
+        """Drift guard: the schema's `mode` enum and CircuitBreakerSpec.mode's Literal args
+        must be the exact same set. A hand-edited schema or model that falls out of sync
+        would otherwise silently accept/reject the wrong values (cf. the run_active_seconds
+        breaker-condition allowlist bug fixed in commit 8debeb3 -- same class of drift)."""
+        from typing import get_args
+
+        schema = _schema()
+        schema_modes = set(schema["$defs"]["circuitBreaker"]["properties"]["mode"]["enum"])
+
+        annotation = CircuitBreakerSpec.model_fields["mode"].annotation
+        model_modes = set(get_args(annotation))
+
+        assert schema_modes == model_modes == {"hard", "recommend"}
+
+    def test_load_workflow_rejects_invalid_mode_through_the_full_cli_validation_path(
+        self, tmp_path: Path
+    ) -> None:
+        """Acceptance tested at the load_workflow layer (schema validation is the FIRST
+        step `ao validate`/`_load_all` performs), not only via a raw jsonschema.validate()
+        call -- proves the production code path (not just the schema file in isolation)
+        rejects an invalid mode."""
+        data = _base_workflow_dict()
+        data["circuit_breakers"][0]["mode"] = "bogus"
+        spec_path = tmp_path / "workflow.json"
+        spec_path.write_text(json.dumps(data))
+
+        from agent_orchestrator.errors import SpecValidationError
+
+        with pytest.raises(SpecValidationError):
+            load_workflow(spec_path)
+
+    def test_load_workflow_accepts_valid_recommend_mode(self, tmp_path: Path) -> None:
+        data = _base_workflow_dict()
+        data["circuit_breakers"][0]["mode"] = "recommend"
+        spec_path = tmp_path / "workflow.json"
+        spec_path.write_text(json.dumps(data))
+
+        wf = load_workflow(spec_path)
+
+        assert wf.circuit_breakers[0].mode == "recommend"
+
+
+class TestMonitorDecisionRecordAndDerivedCounters:
+    """E-XyfjuZ FR-6 / Design Decision D9: RunState.monitor_decisions is the ONLY new
+    persisted field; monitor_breaker_extensions/monitor_heal_retries/monitor_calls_made are
+    DERIVED from it, never separately persisted."""
+
+    def test_monitor_decisions_defaults_empty(self) -> None:
+        state = RunState(
+            run_id="r1",
+            workflow_id="wf",
+            repo_set="rs",
+            started_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+        assert state.monitor_decisions == []
+        assert count_monitor_calls_made(state) == 0
+        assert count_monitor_breaker_extensions(state, "any-breaker") == 0
+        assert count_monitor_heal_retries(state, "any-task") == 0
+
+    def test_monitor_decision_record_round_trips(self) -> None:
+        record = MonitorDecisionRecord(
+            at="2026-01-01T00:00:00+00:00",
+            consult_point="breaker_trip",
+            subject_id="cost-cap",
+            decision="extend",
+            monitor="rules",
+            detail={"extend_by_seconds": None, "reason": "first extension"},
+        )
+        loaded = MonitorDecisionRecord.model_validate_json(record.model_dump_json())
+        assert loaded == record
+
+    def test_count_monitor_breaker_extensions_counts_only_matching_extend_decisions(self) -> None:
+        state = RunState(
+            run_id="r1",
+            workflow_id="wf",
+            repo_set="rs",
+            started_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+            monitor_decisions=[
+                MonitorDecisionRecord(
+                    at="t1",
+                    consult_point="breaker_trip",
+                    subject_id="b1",
+                    decision="extend",
+                    monitor="rules",
+                ),
+                MonitorDecisionRecord(
+                    at="t2",
+                    consult_point="breaker_trip",
+                    subject_id="b1",
+                    decision="halt",  # different decision -- must not count
+                    monitor="rules",
+                ),
+                MonitorDecisionRecord(
+                    at="t3",
+                    consult_point="breaker_trip",
+                    subject_id="b2",  # different breaker id -- must not count for b1
+                    decision="extend",
+                    monitor="rules",
+                ),
+                MonitorDecisionRecord(
+                    at="t4",
+                    consult_point="task_failure",  # different consult point -- must not count
+                    subject_id="b1",
+                    decision="extend",
+                    monitor="rules",
+                ),
+            ],
+        )
+        assert count_monitor_breaker_extensions(state, "b1") == 1
+        assert count_monitor_breaker_extensions(state, "b2") == 1
+        assert count_monitor_breaker_extensions(state, "b3") == 0
+
+    def test_count_monitor_heal_retries_counts_only_matching_retry_decisions(self) -> None:
+        state = RunState(
+            run_id="r1",
+            workflow_id="wf",
+            repo_set="rs",
+            started_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+            monitor_decisions=[
+                MonitorDecisionRecord(
+                    at="t1",
+                    consult_point="task_failure",
+                    subject_id="task-a",
+                    decision="retry",
+                    monitor="rules",
+                ),
+                MonitorDecisionRecord(
+                    at="t2",
+                    consult_point="task_failure",
+                    subject_id="task-a",
+                    decision="accept_failure",  # different decision -- must not count
+                    monitor="rules",
+                ),
+                MonitorDecisionRecord(
+                    at="t3",
+                    consult_point="task_failure",
+                    subject_id="task-b",  # different task id -- must not count for task-a
+                    decision="retry",
+                    monitor="rules",
+                ),
+            ],
+        )
+        assert count_monitor_heal_retries(state, "task-a") == 1
+        assert count_monitor_heal_retries(state, "task-b") == 1
+        assert count_monitor_heal_retries(state, "task-c") == 0
+
+    def test_count_monitor_calls_made_counts_every_record_regardless_of_kind(self) -> None:
+        state = RunState(
+            run_id="r1",
+            workflow_id="wf",
+            repo_set="rs",
+            started_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+            monitor_decisions=[
+                MonitorDecisionRecord(
+                    at="t1",
+                    consult_point="breaker_trip",
+                    subject_id="b1",
+                    decision="extend",
+                    monitor="rules",
+                ),
+                MonitorDecisionRecord(
+                    at="t2",
+                    consult_point="task_failure",
+                    subject_id="task-a",
+                    decision="accept_failure",
+                    monitor="rules",
+                ),
+            ],
+        )
+        assert count_monitor_calls_made(state) == 2

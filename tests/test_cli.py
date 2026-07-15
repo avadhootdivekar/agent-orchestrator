@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from agent_orchestrator.cli import app
@@ -658,3 +659,107 @@ class TestShellCompletion:
         assert result.exit_code == 0
         assert "--install-completion" in result.output
         assert "--show-completion" in result.output
+
+
+class TestResolveMonitoringSettings:
+    """Unit tests for _resolve_monitoring_settings (E-XyfjuZ, T-QyNnf5): CLI > env > project
+    config > built-in default (tri-state, revised D7 per early-gate reviewer feedback)."""
+
+    def _call(self, self_heal, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from agent_orchestrator.cli import _resolve_monitoring_settings
+
+        monkeypatch.chdir(tmp_path)  # isolate from this repo's own .ao/config.yaml
+        return _resolve_monitoring_settings(self_heal)
+
+    def test_no_cli_no_env_no_config_defaults_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = self._call(None, tmp_path, monkeypatch)
+        assert cfg.self_heal is False
+        assert cfg.monitor == "rules"
+
+    def test_cli_true_wins_over_everything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AO_SELF_HEAL", "0")
+        cfg = self._call(True, tmp_path, monkeypatch)
+        assert cfg.self_heal is True
+
+    def test_cli_false_wins_over_env_and_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """D7 (revised): --no-self-heal must override an env/config value of True."""
+        monkeypatch.setenv("AO_SELF_HEAL", "1")
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("monitoring:\n  self_heal: true\n")
+        cfg = self._call(False, tmp_path, monkeypatch)
+        assert cfg.self_heal is False
+
+    def test_env_wins_over_config_when_cli_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AO_SELF_HEAL", "1")
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("monitoring:\n  self_heal: false\n")
+        cfg = self._call(None, tmp_path, monkeypatch)
+        assert cfg.self_heal is True
+
+    def test_config_applies_when_cli_and_env_both_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AO_SELF_HEAL", raising=False)
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text(
+            "monitoring:\n  self_heal: true\n  monitor: my-agent\n  max_heal_retries_per_task: 3\n"
+        )
+        cfg = self._call(None, tmp_path, monkeypatch)
+        assert cfg.self_heal is True
+        assert cfg.monitor == "my-agent"
+        assert cfg.max_heal_retries_per_task == 3
+
+    def test_absent_monitoring_block_is_all_defaults(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AO_SELF_HEAL", raising=False)
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("workflow: w.json\n")
+        cfg = self._call(None, tmp_path, monkeypatch)
+        assert cfg.self_heal is False
+        assert cfg.monitor == "rules"
+        assert cfg.max_extensions_per_breaker == 1
+        assert cfg.max_heal_retries_per_task == 1
+        assert cfg.max_monitor_calls_per_run == 10
+
+
+class TestBuildMonitor:
+    """Unit tests for _build_monitor (E-XyfjuZ, T-QyNnf5)."""
+
+    def test_rules_returns_rule_based_monitor(self, tmp_path: Path) -> None:
+        from agent_orchestrator.cli import _build_monitor
+        from agent_orchestrator.monitoring import RuleBasedMonitor
+        from agent_orchestrator.project_config import MonitoringConfig
+
+        cfg = MonitoringConfig(monitor="rules", heal_wait_seconds=5.0)
+        monitor = _build_monitor(cfg, {}, None, None)
+        assert isinstance(monitor, RuleBasedMonitor)
+
+    def test_unknown_agent_name_exits_1(self, tmp_path: Path) -> None:
+        from agent_orchestrator.cli import _build_monitor
+        from agent_orchestrator.project_config import MonitoringConfig
+
+        cfg = MonitoringConfig(monitor="ghost-agent")
+        with pytest.raises(typer.Exit):
+            _build_monitor(cfg, {}, None, None)
+
+    def test_known_agent_name_returns_agent_monitor(self, tmp_path: Path) -> None:
+        from agent_orchestrator.cli import _build_monitor
+        from agent_orchestrator.executors.fake import FakeExecutor
+        from agent_orchestrator.models import AgentSpec
+        from agent_orchestrator.monitoring import AgentMonitor
+        from agent_orchestrator.project_config import MonitoringConfig
+
+        cfg = MonitoringConfig(monitor="my-monitor-agent")
+        agent_map = {"my-monitor-agent": AgentSpec(executor="fake")}
+        monitor = _build_monitor(cfg, agent_map, None, FakeExecutor())
+        assert isinstance(monitor, AgentMonitor)
+        assert monitor.name == "my-monitor-agent"

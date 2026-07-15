@@ -980,3 +980,42 @@ Explicitly out of scope (do not build without a fresh epic): live/in-process thr
 already-running `ao run`/`ao resume` invocation (no `WorkflowSpec` hot-reload, no stop-file-style live
 poll for thresholds) — this mechanism only ever applies at `ao resume` time, before the run resumes.
 
+---
+
+## 17. Addendum (E-XyfjuZ, 2026-07-15) — guardrail modes + monitor-driven extension
+
+Follow-on epic
+[`E-XyfjuZ-agent-monitoring-self-healing`](../meta/tickets/E-XyfjuZ-agent-monitoring-self-healing/EPIC.md)
+(not a reopening of this LLD/epic — additive, same as §16) adds a SECOND way a breaker's threshold can
+be extended, alongside §16.2's operator-driven `ao resume --extend-breaker`: an in-process, agent-based
+**Monitor** consult, gated per-breaker by a new `CircuitBreakerSpec.mode: "hard" | "recommend"` field
+(default `"hard"` — every breaker declared before this epic, and every breaker that never sets `mode`,
+is completely unaffected; behavior is byte-identical). Full design in
+[`lld-agent-monitoring-self-healing.md`](lld-agent-monitoring-self-healing.md); this addendum records
+only how the two extension paths relate, since a reader of §16 could otherwise assume
+`ao resume --extend-breaker` is the *only* lever on `breaker_overrides`.
+
+- **Same underlying mechanism, different callers.** The monitor-driven path (`engine.py`'s
+  `_consult_breaker_trips`, called at the same `evaluate_breakers` boundary this LLD's §6.1 already
+  documents) calls the exact same `apply_breaker_extension()` function §16.2 introduced — same
+  `breaker_overrides` dict, same un-latch semantics, same `breaker.extend` event shape. No parallel
+  bookkeeping was added.
+- **Independent bounds.** The monitor path is bounded by a SEPARATE, engine-enforced
+  `max_extensions_per_breaker` counter (derived from `RunState.monitor_decisions`, never a raw
+  `RunState` field — see the new LLD's Design Decision D9) — it does NOT share a budget with, or get
+  reset by, an operator's `ao resume --extend-breaker` invocation, and vice versa. An operator can
+  still always extend an already-monitor-extended breaker manually; a monitor can still be consulted
+  again on a SUBSEQUENT trip even after an operator has manually extended the same breaker once
+  (subject to its own bound). Both simply add to the same effective `breaker_overrides[id]` value.
+- **Only reachable when `mode: "recommend"`.** Unlike `ao resume --extend-breaker` (works on any
+  breaker, operator-invoked, unbounded), the monitor is NEVER consulted for a `mode: "hard"` breaker —
+  including all three built-in re-framed stops (§8), which never carry a `mode` at all (they never
+  construct a `CircuitBreakerSpec`). This is enforced structurally (built-ins `break` the run loop
+  before `evaluate_breakers` is ever reached in the same iteration) plus a defensive assertion in
+  `_consult_breaker_trips`, not by convention alone.
+- **Resume interaction.** `RunState.monitor_decisions` (and therefore the monitor-extension bound) is
+  untouched by `prepare_resume` — same NFR-5/backward-compat pattern every other run-scoped counter in
+  this LLD follows. A monitor-driven extension recorded before a run stopped remains in effect (and
+  counted against the bound) across `ao resume`, exactly like `breaker_overrides`/`tripped_breakers`
+  already do for the operator-driven path.
+

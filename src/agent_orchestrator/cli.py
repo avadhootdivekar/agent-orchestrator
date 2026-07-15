@@ -26,7 +26,11 @@ from typing import TYPE_CHECKING
 import typer
 
 if TYPE_CHECKING:
+    from .artifacts import ArtifactStore
+    from .executors.base import Executor
     from .models import BudgetSpec
+    from .monitoring import Monitor
+    from .project_config import MonitoringConfig, ProjectConfig
 
 app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
 
@@ -230,6 +234,28 @@ def _print_status_snapshot(snap: dict) -> None:
     typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
 
 
+def _load_project_config_or_none() -> ProjectConfig | None:
+    """Discover + load the nearest project config, swallowing any error to `None`.
+
+    Shared by `_resolve_run_settings` and `_resolve_monitoring_settings` — previously each
+    had its own verbatim copy of this find-then-load-then-swallow block (late-gate reviewer
+    finding; CLAUDE.md's DRY rule: "no duplicate logic — extract to a function... if logic
+    appears twice"). Each resolver still calls this once per `ao run`/`ao resume` invocation
+    (two calls total per command, same as before) — this extraction removes the duplicated
+    *logic*, not the duplicated *call*; a single-parse-per-command optimization would need a
+    shared cache, which isn't worth the added state for a small, local config file read.
+    """
+    from .project_config import find_project_config, load_project_config
+
+    config_path = find_project_config()
+    if config_path is None:
+        return None
+    try:
+        return load_project_config(config_path)
+    except Exception:
+        return None
+
+
 def _resolve_run_settings(
     max_attempts: int | None,
     max_turns: int | None,
@@ -244,7 +270,6 @@ def _resolve_run_settings(
     Returns (max_attempts, max_turns, model, effort, quota_max_wait_seconds, quota_poll_seconds).
     """
     from .models import DEFAULT_QUOTA_MAX_WAIT_SECONDS, DEFAULT_QUOTA_POLL_SECONDS
-    from .project_config import find_project_config, load_project_config
 
     def _int_env(name: str) -> int | None:
         v = os.environ.get(name)
@@ -253,13 +278,7 @@ def _resolve_run_settings(
         except ValueError:
             return None
 
-    cfg = None
-    config_path = find_project_config()
-    if config_path is not None:
-        try:
-            cfg = load_project_config(config_path)
-        except Exception:
-            cfg = None
+    cfg = _load_project_config_or_none()
 
     resolved_max_attempts = (
         max_attempts or _int_env("AO_MAX_ATTEMPTS") or (cfg.max_attempts if cfg else None)
@@ -287,6 +306,68 @@ def _resolve_run_settings(
         resolved_quota_max_wait,
         resolved_quota_poll,
     )
+
+
+def _resolve_monitoring_settings(self_heal: bool | None) -> MonitoringConfig:
+    """Merge CLI flag, env var, and project config for monitoring settings (E-XyfjuZ).
+
+    `self_heal` uses the SAME tri-state CLI > env var > project config > built-in default
+    precedence as every other runtime setting in `_resolve_run_settings` (revised from an
+    earlier monotonic-enable-only draft per early-gate reviewer feedback: an operator must
+    be able to force self-heal OFF via CLI/env even when the project config enables it,
+    matching every other setting's override symmetry). Every other monitoring knob
+    (`monitor` selection, bounds, `transient_patterns`) is config-file-ONLY — no CLI/env —
+    per the epic brief's "config file is the primary surface; don't explode flag count."
+
+    Returns the fully-resolved `MonitoringConfig` (never `None` — an absent project config
+    resolves to `MonitoringConfig()`'s all-defaults, byte-identical to pre-epic behavior).
+    """
+    from .project_config import MonitoringConfig
+
+    cfg = _load_project_config_or_none()
+    base = cfg.monitoring if cfg else MonitoringConfig()
+
+    def _bool_env(name: str) -> bool | None:
+        v = os.environ.get(name)
+        if not v:
+            return None
+        return v.strip().lower() in ("1", "true", "yes", "on")
+
+    resolved_self_heal = self_heal
+    if resolved_self_heal is None:
+        resolved_self_heal = _bool_env("AO_SELF_HEAL")
+    if resolved_self_heal is None:
+        resolved_self_heal = base.self_heal
+
+    return base.model_copy(update={"self_heal": resolved_self_heal})
+
+
+def _build_monitor(
+    cfg: MonitoringConfig, agent_map: dict, store: ArtifactStore, executor: Executor
+) -> Monitor:
+    """Construct the configured `Monitor` implementation (E-XyfjuZ).
+
+    `cfg.monitor == "rules"` (default) -> `RuleBasedMonitor` seeded from `cfg`'s
+    `heal_wait_seconds`/`transient_patterns`. Any other value -> looked up in *agent_map*
+    (`agents.json`) and wrapped in `AgentMonitor`; a clean `typer.Exit(1)` if the name isn't
+    a known agent (fails fast, before any task dispatch, mirroring `_load_all`'s existing
+    validation style).
+    """
+    from .monitoring import AgentMonitor, RuleBasedMonitor
+
+    if cfg.monitor == "rules":
+        return RuleBasedMonitor(
+            wait_seconds=cfg.heal_wait_seconds,
+            extra_transient_patterns=cfg.transient_patterns,
+        )
+    if cfg.monitor not in agent_map:
+        typer.echo(
+            f"ERROR: monitoring.monitor {cfg.monitor!r} not found in agents "
+            f"(known agents: {sorted(agent_map)})",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return AgentMonitor(agent_map[cfg.monitor], executor, store, name=cfg.monitor)
 
 
 def _build_effective_budget(
@@ -478,6 +559,16 @@ def run(
             " (default 900 = 15 min). Env: AO_QUOTA_POLL_SECONDS"
         ),
     ),
+    self_heal: bool | None = typer.Option(
+        None,
+        "--self-heal/--no-self-heal",
+        help=(
+            "Enable/disable task-failure self-healing (Consult Point B, E-XyfjuZ);"
+            " overrides env/config in either direction. Env: AO_SELF_HEAL (1/0)."
+            " Default: off. Unrelated to recommend-mode breaker consult (Consult Point A),"
+            " which activates purely from a workflow's own circuit_breakers[].mode."
+        ),
+    ),
 ) -> None:
     """Run a workflow from scratch."""
     from datetime import UTC
@@ -558,6 +649,10 @@ def run(
         budget_manager = DefaultBudgetManager(effective_budget, clock)
         estimator = HeuristicTokenEstimator(store)
 
+    # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
+    monitoring_cfg = _resolve_monitoring_settings(self_heal)
+    monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
+
     orch = Orchestrator(
         executor,
         store,
@@ -567,6 +662,11 @@ def run(
         clock=clock,
         quota_max_wait_seconds=eff_quota_max_wait,
         quota_poll_seconds=eff_quota_poll,
+        monitor=monitor,
+        max_extensions_per_breaker=monitoring_cfg.max_extensions_per_breaker,
+        max_monitor_calls_per_run=monitoring_cfg.max_monitor_calls_per_run,
+        self_heal_enabled=monitoring_cfg.self_heal,
+        max_heal_retries_per_task=monitoring_cfg.max_heal_retries_per_task,
     )
 
     try:
@@ -658,6 +758,15 @@ def resume(
         help="Extend --extend-breaker's current effective threshold by the ORIGINAL "
         "threshold set at startup (spec.threshold) again. Mutually exclusive with "
         "--extend-by-seconds.",
+    ),
+    self_heal: bool | None = typer.Option(
+        None,
+        "--self-heal/--no-self-heal",
+        help=(
+            "Enable/disable task-failure self-healing (Consult Point B, E-XyfjuZ);"
+            " overrides env/config in either direction. Env: AO_SELF_HEAL (1/0)."
+            " Default: off."
+        ),
     ),
 ) -> None:
     """Resume a previously interrupted run."""
@@ -787,6 +896,11 @@ def resume(
         estimator = HeuristicTokenEstimator(store)
 
     executor = DispatchExecutor()
+
+    # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
+    monitoring_cfg = _resolve_monitoring_settings(self_heal)
+    monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
+
     orch = Orchestrator(
         executor,
         store,
@@ -796,6 +910,11 @@ def resume(
         clock=clock,
         quota_max_wait_seconds=eff_quota_max_wait,
         quota_poll_seconds=eff_quota_poll,
+        monitor=monitor,
+        max_extensions_per_breaker=monitoring_cfg.max_extensions_per_breaker,
+        max_monitor_calls_per_run=monitoring_cfg.max_monitor_calls_per_run,
+        self_heal_enabled=monitoring_cfg.self_heal,
+        max_heal_retries_per_task=monitoring_cfg.max_heal_retries_per_task,
     )
 
     try:

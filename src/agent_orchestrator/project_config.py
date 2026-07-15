@@ -25,12 +25,53 @@ from pydantic import BaseModel, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from .errors import ConfigError
+from .models import (
+    DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
+    DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
+    DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
+)
+from .monitoring import DEFAULT_HEAL_WAIT_SECONDS
 
 # Config filenames checked in order within each directory during walk-up.
 _CONFIG_CANDIDATES = [
     Path(".ao") / "config.yaml",
     Path("ao.yaml"),
 ]
+
+
+class MonitoringConfig(BaseModel):
+    """Schema for the `monitoring:` block of a per-project AO config file (E-XyfjuZ).
+
+    All fields default such that an ABSENT `monitoring:` block (every config predating
+    this epic) is byte-identical: `self_heal` defaults off, the default monitor is the
+    deterministic zero-cost `RuleBasedMonitor`, and every bound matches the engine's own
+    built-in defaults (`models.DEFAULT_MAX_*`).
+    """
+
+    self_heal: bool = False
+    """Opt-in switch for Consult Point B (task-failure self-healing). Independent of any
+    workflow's circuit-breaker `mode` declarations (Consult Point A activates purely from
+    the spec, never from this flag)."""
+
+    monitor: str = "rules"
+    """Which Monitor implementation to consult: the literal string "rules" (default,
+    `RuleBasedMonitor`) or the name of an agent declared in `agents.json` (`AgentMonitor`)."""
+
+    max_extensions_per_breaker: int = DEFAULT_MAX_EXTENSIONS_PER_BREAKER
+    """Cap on monitor-driven breaker-threshold extensions per breaker id, per run."""
+
+    max_heal_retries_per_task: int = DEFAULT_MAX_HEAL_RETRIES_PER_TASK
+    """Cap on self-heal retries per task id, per run."""
+
+    max_monitor_calls_per_run: int = DEFAULT_MAX_MONITOR_CALLS_PER_RUN
+    """Cap on total ACTUAL monitor consults per run, shared across both consult points."""
+
+    heal_wait_seconds: float = DEFAULT_HEAL_WAIT_SECONDS
+    """Seconds `RuleBasedMonitor` recommends waiting before a healed retry."""
+
+    transient_patterns: list[str] = []
+    """Additional regex patterns (case-insensitive) ADDED to `RuleBasedMonitor`'s built-in
+    transient-failure patterns (network/timeout/5xx/JSON-decode) -- never replaces them."""
 
 
 class ProjectConfig(BaseModel):
@@ -73,6 +114,10 @@ class ProjectConfig(BaseModel):
 
     quota_poll_seconds: int | None = None
     """Seconds to sleep between quota-exhaustion re-run attempts."""
+
+    monitoring: MonitoringConfig = MonitoringConfig()
+    """Agent-based monitoring & self-healing settings (E-XyfjuZ). Absent block ->
+    all-defaults -> byte-identical to pre-epic behavior."""
 
     @field_validator("env", mode="before")
     @classmethod
@@ -217,6 +262,16 @@ _INIT_TEMPLATE = """\
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h of exhaustion
 # quota_poll_seconds: 900         # AO_QUOTA_POLL_SECONDS     — poll every 15 min
+
+# --- Agent-based monitoring & self-healing (absent -> all defaults, byte-identical) ---
+# monitoring:
+#   self_heal: false               # AO_SELF_HEAL / --self-heal / --no-self-heal — opt-in
+#   monitor: rules                 # "rules" (default) or an agent name from agents.json
+#   max_extensions_per_breaker: 1  # bound on monitor-driven breaker extensions per breaker id
+#   max_heal_retries_per_task: 1   # bound on self-heal retries per task id
+#   max_monitor_calls_per_run: 10  # shared cap on real monitor consults per run
+#   heal_wait_seconds: 30          # RuleBasedMonitor's recommended wait before a healed retry
+#   transient_patterns: []         # extra regexes ADDED to the built-in transient patterns
 """
 
 

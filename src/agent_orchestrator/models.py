@@ -31,6 +31,13 @@ BUILTIN_QUOTA_MAX_WAIT = "builtin.quota_max_wait"
 # and verdict-breaker readers so no control JSON read is ever unbounded.
 MAX_CONTROL_FILE_BYTES: int = 65536
 
+# Agent-based monitoring & self-healing defaults (E-XyfjuZ) — named, not magic literals.
+# Bounds are enforced centrally in engine.py (never trusted to a Monitor implementation) so a
+# misbehaving/compromised monitor cannot exceed them regardless of what it recommends.
+DEFAULT_MAX_EXTENSIONS_PER_BREAKER: int = 1
+DEFAULT_MAX_HEAL_RETRIES_PER_TASK: int = 1
+DEFAULT_MAX_MONITOR_CALLS_PER_RUN: int = 10
+
 
 class RepoRef(BaseModel):
     id: str
@@ -202,6 +209,15 @@ class CircuitBreakerSpec(BaseModel):
     verdict_path: str | None = None
     field: str = "halt"
     path: str | None = None
+    # Guardrail mode (E-XyfjuZ FR-1): "hard" (default) is today's behavior, byte-identical —
+    # never consultable, never extendable by the monitoring subsystem. "recommend" opts this
+    # SPECIFIC breaker into the monitor-consult path at the evaluate_breakers boundary
+    # (engine.py's Consult Point A): a monitor may extend the threshold (bounded) or halt.
+    # Built-in re-framed stops (BUILTIN_BUDGET_EXHAUSTED/BUILTIN_BUDGET_UNSATISFIABLE/
+    # BUILTIN_QUOTA_MAX_WAIT) never construct a CircuitBreakerSpec at all (they call
+    # record_trip() directly at their own dedicated sites) and so have no `mode` to set —
+    # they are unconditionally hard by construction, not by a flag here.
+    mode: Literal["hard", "recommend"] = "hard"
 
 
 class TrippedBreaker(BaseModel):
@@ -212,6 +228,33 @@ class TrippedBreaker(BaseModel):
     action: str
     at: str  # ISO-8601 UTC
     detail: dict = {}  # e.g. {"failures": 3, "threshold": 3}
+
+
+class MonitorDecisionRecord(BaseModel):
+    """One monitor consult, persisted in RunState.monitor_decisions (E-XyfjuZ FR-6).
+
+    This is the ONLY new persisted field the monitoring subsystem adds to RunState — every
+    other piece of monitor bookkeeping (how many times a breaker id has been extended, how
+    many heal retries a task id has used, how many monitor calls have been made this run) is
+    DERIVED from this list on demand (see count_monitor_breaker_extensions/
+    count_monitor_heal_retries/count_monitor_calls_made below), never duplicated into
+    separate counters that could drift from the audit trail (Design Decision D9 — mirrors
+    this codebase's existing "derive, don't duplicate bookkeeping" convention used by
+    breakers.py's `_consecutive_failure_streak`/`_settled_task_active_seconds`).
+
+    One record is appended per ACTUAL consult (a real call to Monitor.decide_breaker_trip/
+    decide_task_failure) -- never for a bound/cap-exhausted skip (those never call the
+    monitor at all, so there is nothing to record; the engine falls back to the safe default
+    silently in that case, observable only via the absence of a corresponding record plus a
+    distinct `monitor.cap_exceeded` log event when the cap specifically was the cause).
+    """
+
+    at: str  # ISO-8601 UTC
+    consult_point: Literal["breaker_trip", "task_failure"]
+    subject_id: str  # breaker id (breaker_trip) or task id (task_failure)
+    decision: str  # "extend"/"halt" (breaker_trip) or "retry"/"accept_failure" (task_failure)
+    monitor: str  # Monitor.name -- "rules" or the configured agent name
+    detail: dict = {}  # e.g. {"extend_by_seconds": None, "reason": "..."}
 
 
 class WorkflowSpec(BaseModel):
@@ -365,6 +408,12 @@ class RunState(BaseModel):
     # so this is purely additive and never changes behaviour for an untouched breaker. Defaulted
     # for NFR-5 backward-compat (old state.json files predate this field).
     breaker_overrides: dict[str, float] = {}
+    # Every agent-based monitor consult made during the run (E-XyfjuZ FR-6) -- the ONLY new
+    # persisted field the monitoring subsystem adds. Bound-tracking counters
+    # (monitor_breaker_extensions/monitor_heal_retries/monitor_calls_made) are DERIVED from
+    # this list on demand (Design Decision D9), never separately persisted. Defaulted for
+    # NFR-5 backward-compat (old state.json files predate this field).
+    monitor_decisions: list[MonitorDecisionRecord] = []
 
 
 class RunUsageTotals(BaseModel):
@@ -399,3 +448,52 @@ def compute_run_usage_totals(state: RunState) -> RunUsageTotals:
         totals.cache_read_input_tokens += ts.cumulative_cache_read_input_tokens
         totals.cost_usd += ts.cumulative_cost_usd
     return totals
+
+
+# ---------------------------------------------------------------------------
+# Monitor bookkeeping — derived from RunState.monitor_decisions (Design Decision D9,
+# E-XyfjuZ). Pure functions, same "derive, don't duplicate persisted bookkeeping" pattern
+# as compute_run_usage_totals above and breakers.py's _consecutive_failure_streak /
+# _settled_task_active_seconds — resume-safe by construction, single source of truth.
+# ---------------------------------------------------------------------------
+
+
+def count_monitor_breaker_extensions(state: RunState, breaker_id: str) -> int:
+    """How many times *breaker_id* has been extended by a monitor consult this run.
+
+    Counts `monitor_decisions` entries for `consult_point == "breaker_trip"`,
+    `subject_id == breaker_id`, and `decision == "extend"` — engine.py checks this against
+    `max_extensions_per_breaker` BEFORE consulting the monitor again for that breaker id.
+    """
+    return sum(
+        1
+        for d in state.monitor_decisions
+        if d.consult_point == "breaker_trip"
+        and d.subject_id == breaker_id
+        and d.decision == "extend"
+    )
+
+
+def count_monitor_heal_retries(state: RunState, task_id: str) -> int:
+    """How many heal retries *task_id* has already used this run.
+
+    Counts `monitor_decisions` entries for `consult_point == "task_failure"`,
+    `subject_id == task_id`, and `decision == "retry"` — engine.py checks this against
+    `max_heal_retries_per_task` BEFORE consulting the monitor again for that task id.
+    """
+    return sum(
+        1
+        for d in state.monitor_decisions
+        if d.consult_point == "task_failure" and d.subject_id == task_id and d.decision == "retry"
+    )
+
+
+def count_monitor_calls_made(state: RunState) -> int:
+    """Total number of ACTUAL monitor consults made this run (both consult points combined).
+
+    Every `monitor_decisions` entry corresponds to exactly one real `Monitor.decide_*` call
+    (bound/cap-exhausted skips never append a record — see `MonitorDecisionRecord`'s
+    docstring) — so this is simply the list length. engine.py checks this against
+    `max_monitor_calls_per_run` BEFORE every consult, across both consult points.
+    """
+    return len(state.monitor_decisions)

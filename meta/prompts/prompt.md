@@ -28,6 +28,10 @@ Agent orchestrator frameowrk is supposed to -
 # Current Ask is this  - 
 
 
+## Agent based monitoring and self healing for workflows 
+Also check - disallowed tools -> monitoring for claude -p mode.
+Also note - thsi looks like specilization / customization for claude - not a general technique - I WANT to handle it - but see the bestt place to keep it as it may not be general and may be model / provider specific configuration - You decide.
+Also capture what other tools we may nee to disable in claude -p mode or for the kind of run / tooling we are having and make necessary changes. 
 
 
 

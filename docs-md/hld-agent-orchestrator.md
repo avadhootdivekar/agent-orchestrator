@@ -4,7 +4,7 @@
 - Decision: [`ADR-0001`](adr/ADR-0001-orchestration-approach.md)
 - LLD (implementable detail): [`lld-agent-orchestrator.md`](lld-agent-orchestrator.md)
 - Date: 2026-06-16
-- Feature design docs: [`logging-dynamic-workflows-hld.md`](logging-dynamic-workflows-hld.md), [`token-budgeting-hld.md`](token-budgeting-hld.md), [`multi-endpoint-circuit-breaker-hld.md`](multi-endpoint-circuit-breaker-hld.md) *(draft)*, [`granular-task-decomposition-hld.md`](granular-task-decomposition-hld.md) *(draft)*
+- Feature design docs: [`logging-dynamic-workflows-hld.md`](logging-dynamic-workflows-hld.md), [`token-budgeting-hld.md`](token-budgeting-hld.md), [`multi-endpoint-circuit-breaker-hld.md`](multi-endpoint-circuit-breaker-hld.md) *(draft)*, [`granular-task-decomposition-hld.md`](granular-task-decomposition-hld.md) *(draft)*, [`lld-agent-monitoring-self-healing.md`](lld-agent-monitoring-self-healing.md) *(agent-based monitoring & self-healing, guardrail modes)*
 - Settings/precedence policy: [`adr/ADR-0003-settings-precedence-policy.md`](adr/ADR-0003-settings-precedence-policy.md) *(accepted)*
 
 ## 1. Goal

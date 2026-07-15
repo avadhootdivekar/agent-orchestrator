@@ -225,6 +225,11 @@
         },
         "action": { "enum": ["fail", "stop", "pause"] },
         "scope": { "enum": ["run"], "default": "run", "description": "'branch' reserved (non-MVP)." },
+        "mode": {
+          "enum": ["hard", "recommend"],
+          "default": "hard",
+          "description": "'hard' (default): never consultable/extendable by the monitoring subsystem -- today's behavior. 'recommend': the monitor may extend this breaker's threshold (bounded) or halt when it trips."
+        },
         "threshold": {
           "type": "number",
           "exclusiveMinimum": 0,

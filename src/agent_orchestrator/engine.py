@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from .artifacts import ArtifactStore, read_gate, read_manifest, read_routes, read_task_manifest
-from .breakers import evaluate_breakers, record_trip
+from .breakers import apply_breaker_extension, evaluate_breakers, record_trip
 from .budget import BudgetDecision, BudgetManager
 from .dag import build_dag, compute_cones
 from .errors import ControlFileError, GateError, InjectionError
@@ -21,10 +21,15 @@ from .models import (
     BUILTIN_BUDGET_EXHAUSTED,
     BUILTIN_BUDGET_UNSATISFIABLE,
     BUILTIN_QUOTA_MAX_WAIT,
+    DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
+    DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
+    DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
     DEFAULT_QUOTA_MAX_WAIT_SECONDS,
     DEFAULT_QUOTA_POLL_SECONDS,
+    CircuitBreakerSpec,
     EstimatorConfig,
     LoopSpec,
+    MonitorDecisionRecord,
     RouterSpec,
     RunState,
     TaskContext,
@@ -32,6 +37,19 @@ from .models import (
     TaskRunState,
     TaskSpec,
     WorkflowSpec,
+    count_monitor_breaker_extensions,
+    count_monitor_calls_made,
+    count_monitor_heal_retries,
+)
+from .monitoring import (
+    SAFE_DEFAULT_BREAKER_VERDICT,
+    SAFE_DEFAULT_HEAL_VERDICT,
+    BreakerTripSummary,
+    BreakerVerdict,
+    HealVerdict,
+    Monitor,
+    RuleBasedMonitor,
+    build_task_failure_summary,
 )
 from .runstate import RunStateStore
 
@@ -81,6 +99,38 @@ class Orchestrator:
     quota_poll_seconds:
         How long to sleep between quota-exhaustion re-run attempts
         (default: DEFAULT_QUOTA_POLL_SECONDS).
+    monitor:
+        Agent-based monitoring/self-healing implementation (E-XyfjuZ). Defaults to a fresh
+        `RuleBasedMonitor()` (deterministic, zero-cost) when None — recommend-mode breakers
+        and self-heal both need SOME monitor available so a workflow that declares
+        `mode: "recommend"` gets consistent behavior regardless of whether the caller wired
+        one up explicitly. Only ever consulted for `mode: "recommend"` breaker trips
+        (Consult Point A) and, when `self_heal_enabled`, task failures (Consult Point B) --
+        hard-mode breakers and disabled self-heal are completely unaffected (byte-identical).
+    max_extensions_per_breaker:
+        Cap on monitor-driven extensions per breaker id this run (default
+        DEFAULT_MAX_EXTENSIONS_PER_BREAKER). Enforced centrally here, never trusted to the
+        Monitor implementation — bound exhausted halts regardless of the monitor's answer.
+        Tracked via `count_monitor_breaker_extensions(state, breaker_id)` (derived from
+        `RunState.monitor_decisions`, D9) — independent of the unbounded, operator-driven
+        `ao resume --extend-breaker` mechanism (E-3JTmVu), which this never touches.
+    max_monitor_calls_per_run:
+        Cap on total ACTUAL monitor consults this run, shared across both consult points
+        (default DEFAULT_MAX_MONITOR_CALLS_PER_RUN). Exhausting it falls back to the safe
+        default (halt / accept_failure) without calling the monitor again.
+    self_heal_enabled:
+        Opt-in switch for Consult Point B (task-failure self-healing, default False —
+        byte-identical to today when unset). When True, a task that settles `"failed"`
+        after exhausting its `RetryPolicy` is offered ONE bounded extra retry via
+        `self._monitor.decide_task_failure(...)` before the run gives up on it. Scoped
+        strictly to `result.status == "failed"` — `timed_out`/`cancelled` are never healed
+        (deliberate MVP boundary).
+    max_heal_retries_per_task:
+        Cap on heal retries per task id this run (default
+        DEFAULT_MAX_HEAL_RETRIES_PER_TASK). Enforced centrally here via
+        `count_monitor_heal_retries(state, task_id)` (derived from
+        `RunState.monitor_decisions`, D9) — heal retries never consume
+        `RetryPolicy.max_attempts` accounting (a completely separate counter).
     """
 
     def __init__(
@@ -95,6 +145,11 @@ class Orchestrator:
         clock: Callable[[], datetime] | None = None,
         quota_max_wait_seconds: float = DEFAULT_QUOTA_MAX_WAIT_SECONDS,
         quota_poll_seconds: float = DEFAULT_QUOTA_POLL_SECONDS,
+        monitor: Monitor | None = None,
+        max_extensions_per_breaker: int = DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
+        max_monitor_calls_per_run: int = DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
+        self_heal_enabled: bool = False,
+        max_heal_retries_per_task: int = DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
     ) -> None:
         self._executor = executor
         self._store = artifact_store
@@ -106,6 +161,14 @@ class Orchestrator:
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
         self._quota_max_wait_seconds = quota_max_wait_seconds
         self._quota_poll_seconds = quota_poll_seconds
+        # Agent-based monitoring & self-healing (E-XyfjuZ). Defaults to a fresh
+        # RuleBasedMonitor() (never a shared module-level instance) so each Orchestrator
+        # owns an independent, stateless-but-distinct monitor.
+        self._monitor: Monitor = monitor if monitor is not None else RuleBasedMonitor()
+        self._max_extensions_per_breaker = max_extensions_per_breaker
+        self._max_monitor_calls_per_run = max_monitor_calls_per_run
+        self._self_heal_enabled = self_heal_enabled
+        self._max_heal_retries_per_task = max_heal_retries_per_task
 
     def run(
         self,
@@ -686,21 +749,91 @@ class Orchestrator:
                         )
                         self._runstate.save(state)
 
+                # ---- Consult Point B: task-failure self-healing (E-XyfjuZ, opt-in) ----
+                # Design Decision D4: placed BEFORE ts.attempts/ts.ended_at are ever
+                # touched for this attempt -- mirrors exactly where the quota-exhaustion
+                # and provider-429 routes above already short-circuit on result.* fields,
+                # before any TaskRunState settle-time mutation. A successfully healed
+                # failure therefore never sets ts.status="failed", never reaches
+                # evaluate_breakers, and never touches ts.started_at (the E-3JTmVu
+                # single-writer guard is untouched -- this block only ever resets
+                # ts.status, exactly like the quota-exhaustion requeue above). Scoped
+                # strictly to result.status == "failed": timed_out/cancelled are a
+                # deliberate MVP boundary, never healed.
+                if self._self_heal_enabled and result.status == "failed":
+                    _heal_verdict = self._consult_task_failure_heal(tid, result, state, run_log)
+                    if _heal_verdict is not None and _heal_verdict.decision == "retry":
+                        # Reviewer-flagged Critical fix: this failed cycle's REAL actuals
+                        # (a failed attempt can still report actuals_available -- tokens/
+                        # cost were genuinely spent before the error) would otherwise be
+                        # silently discarded by the `continue` below, since this cycle
+                        # never reaches the settle-time cumulative block further down.
+                        # Accumulate now (mirrors _run_with_retries' own cum_* pattern one
+                        # level up, across heal cycles instead of within one call) --
+                        # `+=` because a later heal cycle (if max_heal_retries_per_task > 1)
+                        # must not clobber an earlier one's already-accumulated actuals.
+                        # This is the same bug class E-9h3m7k fixed for retries WITHIN one
+                        # _run_with_retries call; self-heal's cross-call redispatch needed
+                        # the identical treatment, caught by a late-gate reviewer pass.
+                        if result.actuals_available:
+                            ts.cumulative_input_tokens += result.input_tokens or 0
+                            ts.cumulative_output_tokens += result.output_tokens or 0
+                            ts.cumulative_cache_creation_input_tokens += (
+                                result.cache_creation_input_tokens or 0
+                            )
+                            ts.cumulative_cache_read_input_tokens += (
+                                result.cache_read_input_tokens or 0
+                            )
+                            ts.cumulative_cost_usd += result.cost_usd or 0.0
+                        self._sleeper(_heal_verdict.wait_seconds)
+                        if self._cancel_fn():
+                            run_log.info(
+                                "Cancelled during self-heal wait",
+                                extra={"event": "run.cancelled"},
+                            )
+                            state.status = "cancelled"
+                            failed = True
+                            self._runstate.save(state)
+                            break
+                        ts.status = "pending"
+                        run_log.info(
+                            "Self-heal retry: re-running task %s after %.1f s",
+                            tid,
+                            _heal_verdict.wait_seconds,
+                            extra={
+                                "event": "monitor.heal_retry",
+                                "task_id": tid,
+                                "wait_seconds": _heal_verdict.wait_seconds,
+                            },
+                        )
+                        cursor -= 1
+                        self._runstate.save(state)
+                        continue
+                    # else: bound/cap exhausted (_heal_verdict is None) or an explicit
+                    # accept_failure verdict -- fall through to the existing, unmodified
+                    # settle/outcome handling below exactly as if self-heal were disabled.
+
                 ts.attempts = result.attempts
                 ts.ended_at = datetime.now(UTC).isoformat()
                 # Record captured output path (FR-5); engine never reads the files.
                 if result.output_artifact_path:
                     ts.output_artifact_path = result.output_artifact_path
                 # Cumulative actual usage across every attempt (E-9h3m7k FR-2) — result's
-                # token/cost fields already sum all attempts (_run_with_retries).
+                # token/cost fields already sum all attempts (_run_with_retries). `+=` (not
+                # `=`) so a prior, healed-and-discarded cycle's already-accumulated actuals
+                # (added above, in the Consult Point B retry branch) are preserved rather
+                # than clobbered -- safe for every other caller too: this line runs at most
+                # once per dispatch outside of self-heal, and `prepare_resume` hands any
+                # re-dispatched task a fresh `TaskRunState()` (cumulative_* defaulted to 0),
+                # so `+=` is byte-identical to `=` whenever nothing was accumulated first.
                 if result.actuals_available:
-                    ts.cumulative_input_tokens = result.input_tokens or 0
-                    ts.cumulative_output_tokens = result.output_tokens or 0
-                    ts.cumulative_cache_creation_input_tokens = (
+                    ts.cumulative_input_tokens += result.input_tokens or 0
+                    ts.cumulative_output_tokens += result.output_tokens or 0
+                    ts.cumulative_cache_creation_input_tokens += (
                         result.cache_creation_input_tokens or 0
                     )
-                    ts.cumulative_cache_read_input_tokens = result.cache_read_input_tokens or 0
-                    ts.cumulative_cost_usd = result.cost_usd or 0.0
+                    ts.cumulative_cache_read_input_tokens += result.cache_read_input_tokens or 0
+                    ts.cumulative_cost_usd += result.cost_usd or 0.0
 
                 if result.status == "succeeded":
                     # Verify declared outputs were actually produced
@@ -778,16 +911,58 @@ class Orchestrator:
                 # react to, e.g. the future task_failures/consecutive_failures conditions).
                 # No-op today: workflow.circuit_breakers defaults to [] and no built-ins are
                 # wired yet (T-r3j9b6), so the loop body never executes for existing workflows.
+                #
+                # Consult Point A (E-XyfjuZ, epic doc Design Decisions D1-D3):
+                # evaluate_breakers() itself is UNCHANGED here (D2) -- its byte-identical no-op
+                # guarantee (no clock() call when there are no specs) and every existing test
+                # that calls it directly are preserved. "Which specs newly tripped this
+                # boundary" is instead derived AT THE CALL SITE by diffing state.tripped_breakers
+                # ids before/after this one call. Built-in re-framed stops (budget/quota/429)
+                # can never appear in that diff: each already breaks the run loop via its own
+                # record_trip() call earlier in this same iteration, well before
+                # evaluate_breakers is ever reached (D1) -- so they are unconditionally hard by
+                # construction, never consultable, regardless of any workflow.circuit_breakers
+                # declaration.
+                _before_tripped_ids = {tb.id for tb in state.tripped_breakers}
                 breaker_action = evaluate_breakers(
                     workflow, state, self._clock, self._store, run_log
                 )
                 if breaker_action is not None:
-                    # fail/stop/pause all land on resumable status="failed" for MVP (ADR-RC-004);
-                    # the distinguishing action is preserved in tripped_breakers[].action.
-                    state.status = "failed"
-                    failed = True
+                    _newly_tripped_ids = {
+                        tb.id for tb in state.tripped_breakers if tb.id not in _before_tripped_ids
+                    }
+                    # Filtering workflow.circuit_breakers (rather than iterating the id set
+                    # directly) preserves DECLARED order (D3's "consult in declared order").
+                    _newly_tripped_specs = [
+                        b for b in workflow.circuit_breakers if b.id in _newly_tripped_ids
+                    ]
+                    _consultable = (
+                        len(_newly_tripped_specs) == len(_newly_tripped_ids)
+                        and bool(_newly_tripped_specs)
+                        and all(b.mode == "recommend" for b in _newly_tripped_specs)
+                    )
+                    # No self._runstate.save() happens between evaluate_breakers() recording
+                    # the trip(s) above and the consult resolving below (early-gate architect
+                    # finding) -- a half-consulted state must never hit disk.
+                    _consult_outcome = (
+                        self._consult_breaker_trips(_newly_tripped_specs, state, run_log)
+                        if _consultable
+                        else "halt"
+                    )
+                    if _consult_outcome == "halt":
+                        # fail/stop/pause all land on resumable status="failed" for MVP
+                        # (ADR-RC-004); the distinguishing action is preserved in
+                        # tripped_breakers[].action.
+                        state.status = "failed"
+                        failed = True
+                        self._runstate.save(state)
+                        break
+                    # _consult_outcome == "extend": _consult_breaker_trips already applied
+                    # apply_breaker_extension (bumping breaker_overrides + un-latching the
+                    # tripped record(s)) for every newly-tripped breaker -- fall through to the
+                    # rest of the loop body exactly as if breaker_action had been None (today's
+                    # no-trip path).
                     self._runstate.save(state)
-                    break
 
                 if ts.status not in ("succeeded", "skipped"):
                     state.status = "failed"
@@ -1094,6 +1269,247 @@ class Orchestrator:
             },
         )
         self._runstate.save(state)
+
+    # -------------------------------------------------------------------------
+    # Monitoring / self-healing helpers (E-XyfjuZ, Consult Point A)
+    # -------------------------------------------------------------------------
+
+    def _consult_breaker_trips(
+        self,
+        newly_tripped_specs: list[CircuitBreakerSpec],
+        state: RunState,
+        run_log: logging.LoggerAdapter,
+    ) -> Literal["extend", "halt"]:
+        """Consult Point A (epic doc Design Decisions D1-D3): per newly-tripped
+        recommend-mode breaker, in DECLARED order, ask ``self._monitor`` whether to
+        extend or halt.
+
+        All-or-nothing (D3): if EVERY consulted breaker resolves to ``"extend"``, every
+        extension is applied (via the existing ``apply_breaker_extension``, un-latching
+        each breaker) and ``"extend"`` is returned so the caller lets the run continue. If
+        ANY breaker resolves to ``"halt"`` — an explicit monitor answer, or a
+        bound/cap already exhausted — NO extension is applied at all and ``"halt"`` is
+        returned (today's halt path). The caller is responsible for persisting ``state``
+        — this method mutates it in-memory only, mirroring
+        ``evaluate_breakers``/``apply_breaker_extension``'s own persistence convention.
+
+        Defense-in-depth: every *newly_tripped_specs* entry must be ``mode="recommend"``
+        (the caller already filters for this before calling). Raised (not an ``assert``,
+        which ``python -O`` strips) because built-in hard stops must NEVER reach this
+        method by construction (D1) — this is enforcement in code, not convention.
+
+        Reviewer-flagged edge case: an EMPTY *newly_tripped_specs* would make the later
+        ``all(...)`` vacuously ``True`` (Python's `all([])` is `True`), which would
+        wrongly return ``"extend"``. The current call site never invokes this with an
+        empty list (it only calls in when `_newly_tripped_specs` is non-empty), but this
+        guard makes that precondition explicit and safe for any future caller.
+        """
+        if not newly_tripped_specs:
+            return "halt"
+        if any(b.mode != "recommend" for b in newly_tripped_specs):
+            raise AssertionError(
+                "_consult_breaker_trips must only ever be called with recommend-mode breakers"
+            )
+
+        decisions: list[tuple[CircuitBreakerSpec, BreakerVerdict | None]] = []
+        for spec in newly_tripped_specs:
+            prior = count_monitor_breaker_extensions(state, spec.id)
+            if prior >= self._max_extensions_per_breaker:
+                # Bound exhausted -> forced halt contribution WITHOUT consulting at all
+                # (never even calls the monitor, per the epic brief's "bound exhausted ->
+                # halt regardless of monitor answer").
+                decisions.append((spec, None))
+                continue
+            if count_monitor_calls_made(state) >= self._max_monitor_calls_per_run:
+                run_log.warning(
+                    "monitor call cap reached; falling back to the safe default (halt)",
+                    extra={
+                        "event": "monitor.cap_exceeded",
+                        "consult_point": "breaker_trip",
+                        "subject_id": spec.id,
+                        "max_monitor_calls_per_run": self._max_monitor_calls_per_run,
+                    },
+                )
+                decisions.append((spec, None))
+                continue
+
+            trip_record = next((tb for tb in state.tripped_breakers if tb.id == spec.id), None)
+            trip = BreakerTripSummary(
+                breaker_id=spec.id,
+                condition=spec.condition,
+                action=spec.action,
+                detail=trip_record.detail if trip_record is not None else {},
+                prior_extensions=prior,
+            )
+            run_log.info(
+                "monitor.consult",
+                extra={
+                    "event": "monitor.consult",
+                    "consult_point": "breaker_trip",
+                    "subject_id": spec.id,
+                    "monitor": self._monitor.name,
+                },
+            )
+            try:
+                verdict = self._monitor.decide_breaker_trip(trip, run_id=state.run_id)
+            except Exception as exc:
+                # NFR-2: a monitor bug must never make the run less safe than today --
+                # fall back to the safe default rather than propagating.
+                run_log.error(
+                    "Monitor.decide_breaker_trip raised; falling back to the safe default: %s",
+                    exc,
+                    extra={
+                        "event": "monitor.decision",
+                        "consult_point": "breaker_trip",
+                        "subject_id": spec.id,
+                        "monitor": self._monitor.name,
+                        "decision": SAFE_DEFAULT_BREAKER_VERDICT.decision,
+                    },
+                )
+                state.monitor_decisions.append(
+                    MonitorDecisionRecord(
+                        at=self._clock().isoformat(),
+                        consult_point="breaker_trip",
+                        subject_id=spec.id,
+                        decision=SAFE_DEFAULT_BREAKER_VERDICT.decision,
+                        monitor=self._monitor.name,
+                        detail={"reason": f"monitor raised: {exc}"},
+                    )
+                )
+                decisions.append((spec, SAFE_DEFAULT_BREAKER_VERDICT))
+                continue
+
+            state.monitor_decisions.append(
+                MonitorDecisionRecord(
+                    at=self._clock().isoformat(),
+                    consult_point="breaker_trip",
+                    subject_id=spec.id,
+                    decision=verdict.decision,
+                    monitor=self._monitor.name,
+                    detail={
+                        "extend_by_seconds": verdict.extend_by_seconds,
+                        "reason": verdict.reason,
+                    },
+                )
+            )
+            run_log.info(
+                "monitor.decision",
+                extra={
+                    "event": "monitor.decision",
+                    "consult_point": "breaker_trip",
+                    "subject_id": spec.id,
+                    "monitor": self._monitor.name,
+                    "decision": verdict.decision,
+                },
+            )
+            decisions.append((spec, verdict))
+
+        if all(v is not None and v.decision == "extend" for _, v in decisions):
+            for spec, resolved_verdict in decisions:
+                assert resolved_verdict is not None  # narrowed by the all(...) check above
+                apply_breaker_extension(
+                    state,
+                    spec,
+                    extend_by_seconds=resolved_verdict.extend_by_seconds,
+                    extend_by_same=resolved_verdict.extend_by_seconds is None,
+                    clock=self._clock,
+                    run_log=run_log,
+                )
+            return "extend"
+        return "halt"
+
+    def _consult_task_failure_heal(
+        self,
+        tid: str,
+        result: TaskResult,
+        state: RunState,
+        run_log: logging.LoggerAdapter,
+    ) -> HealVerdict | None:
+        """Consult Point B (epic doc Design Decision D4): ask ``self._monitor`` whether a
+        task that just settled ``"failed"`` (after exhausting its ``RetryPolicy``) should
+        get one bounded extra retry.
+
+        Returns ``None`` when the bound (``max_heal_retries_per_task``) or the shared cap
+        (``max_monitor_calls_per_run``) is already exhausted — the caller treats ``None``
+        identically to an explicit ``"accept_failure"`` verdict: fall through to the
+        existing, unmodified failure-handling code without even asking the monitor.
+        Returns the Monitor's actual verdict otherwise (which may itself be
+        ``"accept_failure"``).
+        """
+        prior = count_monitor_heal_retries(state, tid)
+        if prior >= self._max_heal_retries_per_task:
+            return None  # bound exhausted -> accept the failure, never even consult
+        if count_monitor_calls_made(state) >= self._max_monitor_calls_per_run:
+            run_log.warning(
+                "monitor call cap reached; falling back to the safe default (accept_failure)",
+                extra={
+                    "event": "monitor.cap_exceeded",
+                    "consult_point": "task_failure",
+                    "subject_id": tid,
+                    "max_monitor_calls_per_run": self._max_monitor_calls_per_run,
+                },
+            )
+            return None
+
+        summary = build_task_failure_summary(result, prior_heal_retries=prior)
+        run_log.info(
+            "monitor.consult",
+            extra={
+                "event": "monitor.consult",
+                "consult_point": "task_failure",
+                "subject_id": tid,
+                "monitor": self._monitor.name,
+            },
+        )
+        try:
+            verdict = self._monitor.decide_task_failure(summary, run_id=state.run_id)
+        except Exception as exc:
+            # NFR-2: a monitor bug must never make the run less safe than today -- fall
+            # back to the safe default rather than propagating.
+            run_log.error(
+                "Monitor.decide_task_failure raised; falling back to the safe default: %s",
+                exc,
+                extra={
+                    "event": "monitor.decision",
+                    "consult_point": "task_failure",
+                    "subject_id": tid,
+                    "monitor": self._monitor.name,
+                    "decision": SAFE_DEFAULT_HEAL_VERDICT.decision,
+                },
+            )
+            state.monitor_decisions.append(
+                MonitorDecisionRecord(
+                    at=self._clock().isoformat(),
+                    consult_point="task_failure",
+                    subject_id=tid,
+                    decision=SAFE_DEFAULT_HEAL_VERDICT.decision,
+                    monitor=self._monitor.name,
+                    detail={"reason": f"monitor raised: {exc}"},
+                )
+            )
+            return SAFE_DEFAULT_HEAL_VERDICT
+
+        state.monitor_decisions.append(
+            MonitorDecisionRecord(
+                at=self._clock().isoformat(),
+                consult_point="task_failure",
+                subject_id=tid,
+                decision=verdict.decision,
+                monitor=self._monitor.name,
+                detail={"wait_seconds": verdict.wait_seconds, "reason": verdict.reason},
+            )
+        )
+        run_log.info(
+            "monitor.decision",
+            extra={
+                "event": "monitor.decision",
+                "consult_point": "task_failure",
+                "subject_id": tid,
+                "monitor": self._monitor.name,
+                "decision": verdict.decision,
+            },
+        )
+        return verdict
 
     def _run_with_retries(
         self,
