@@ -431,3 +431,129 @@ By: agent
 Role: agent
 Date: 2026-07-14
 ---
+
+---
+Learning-ID: LRN-20260714-validator-allowlists-derive-from-registry
+Learning: A validator's "implemented features" allowlist must be derived from the implementation registry, never hand-copied: spec.py's hardcoded `_MVP_BREAKER_CONDITIONS` silently drifted when E-3JTmVu registered `run_active_seconds` in `BREAKER_REGISTRY` + schema but not in the allowlist, so `ao validate` rejected a fully-implemented condition as "not implemented". Fixed by `frozenset(BREAKER_REGISTRY)` + a parametrized test pinning validate-acceptance to every registry key.
+Context: Same drift class as the agents.schema.json additionalProperties pitfall; the epic's test only exercised jsonschema, not validate_run_control — always test the acceptance path at the validator layer too.
+By: agent
+Role: developer
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260714-install-yes-noops-on-matching-stamp
+Learning: `bash install.sh --yes` no-ops ("already up to date") whenever the commit stamp matches HEAD — it is blind to uncommitted src/ changes. To promote working-tree edits into the global `ao` snapshot, run `bash install.sh --force` (its `uv tool install --force --reinstall` correctly picks up live tree content).
+Context: Reinstall after the run_active_seconds fix silently skipped; probing the tool venv (`assert _MVP_BREAKER_CONDITIONS == frozenset(BREAKER_REGISTRY)`) caught it.
+By: agent
+Role: developer
+Date: 2026-07-14
+---
+
+---
+Learning-ID: LRN-20260715-dispatchexecutor-fake-uncontrollable-via-cli
+Learning: `DispatchExecutor` (used by every real `ao run`/`ao resume` invocation) always constructs a bare `FakeExecutor()` with zero configuration — there is no way to make an `executor: "fake"` agent fail deterministically (custom error text, fail-then-succeed sequencing, rate-limit/quota simulation) through the unmodified CLI path, only via the engine-API (`Orchestrator(FakeExecutor(behaviors=...), ...)` constructed directly in test code).
+Context: Discovered independently while writing CliRunner e2e tests for self-heal (needed a genuine dispatch failure with a specific transient-vs-non-transient error message); then found `tests/test_cli.py::TestRunCommand::test_failed_run_exits_1`'s own comment already documents hitting the identical wall and working around it via a missing-input failure instead. Workaround used here: an `executor: "claude_cli"` agent with a deterministic, network-free `sh -c "echo '...' >&2; exit 1"` `command_template` in place of `claude` — genuinely real subprocess failure, no API key/binary needed, and it lets the error text be controlled (unlike a missing-input failure).
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-wheel-packaging-excludes-specs-bake-templates
+Learning: `pyproject.toml`'s `[tool.hatch.build.targets.wheel] packages = ["src/agent_orchestrator"]` means `specs/` (and anything else outside the package dir) is NOT shipped in the built wheel. Any feature that needs bundled template/instruction content at runtime (not just at dev-time from a repo checkout) must bake that content as a Python string constant inside the package, never reference it via a repo-relative path — a `uv tool install`ed `ao` binary has no `specs/` directory alongside it once installed.
+Context: `AgentMonitor` (E-XyfjuZ) needs to hand a monitor-agent subprocess an instruction file; a `specs/examples/instructions/*.md` path would silently 404 for any installed (non-editable) `ao`. Resolved by baking the instruction text as a module-level string constant in `monitoring.py`, written out fresh into the run's own `.orchestrator/runs/.../monitor/.../instruction.md` at consult time.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-phantom-failure-technique-for-breaker-boundary-tests
+Learning: To engine-integration-test breaker logic that depends on accumulated failure counts (`task_failures`, `consecutive_failures`) via a REAL `orch.run()`, seed a "phantom" already-`"failed"` `TaskRunState` entry directly into the initial `RunState` under an id that is NOT one of the workflow's real tasks. `evaluate_breakers`'s count-based conditions scan ALL of `state.tasks.values()` regardless of whether an id belongs to the current `WorkflowSpec`, so the phantom count is picked up — while the REAL dispatched task can still cleanly succeed, letting the breaker trip at a boundary the run would otherwise sail past. This matters because a genuinely-dispatched task failure ends the whole run via a separate, unconditional `if ts.status not in ("succeeded","skipped"): failed=True; break` check regardless of any breaker's threshold, so a real multi-failure accumulation scenario can never be driven through the sequential engine loop directly (existing unit tests for these two conditions construct a synthetic `RunState` and call `Breaker.evaluate()` directly for exactly this reason — the phantom-entry technique extends that to a full `orch.run()` integration test).
+Context: Used throughout `tests/test_monitoring_breaker_consult.py` (E-XyfjuZ Consult Point A) to prove the monitor-consult wiring fires at a real breaker-trip boundary without needing an actually-failing dispatch.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-headless-claude-p-background-tools-and-disallow-policy
+Learning: `claude -p` (headless) runs the agent loop and exits the moment the model ends a turn with no pending tool calls — there is NO persistent session to observe a `run_in_background` shell finishing or to be re-invoked on its completion, so a background shell is torn down with the process (same process group) or orphaned unobserved, and its monitor tools (`BashOutput`, `KillShell`/`KillBash`) read nothing. "Start in background, check later" is therefore unreliable BY CONSTRUCTION in every `ClaudeCliExecutor` task; foreground `Bash` (blocks within the turn) is the correct pattern for anything that must complete. Tool policy for `claude -p` is provider-specific and lives in the EXECUTOR, not the core: `AgentSpec.disallowed_tools: list[str] = []` (default allow-all — web/TodoWrite/subagents stay ON) → executor appends `--disallowedTools <names>`, SKIPPED if the agent already set `--disallowedTools`/`--allowedTools`/`--tools` (either spelling / `=`-form) in command_template/extra_args (explicit flag wins). `--disallowedTools` is VARIADIC (`<tools...>`) so it MUST be injected BEFORE the `--output-format` stream flags or the parser consumes them as tool names; it matches tool names exactly and ignores unknowns. List BOTH `KillShell` AND `KillBash` — Claude Code v2 renamed KillBash→KillShell and v2.1.209 still ships both literals, so listing both is correct across versions and a harmless no-op. Adding the field also required updating `specs/agents.schema.json` (additionalProperties:false).
+Context: prompt.md "Current Ask" second half; user directive "ALLOW ALL … provide flags to disable optionally" → allow-all default with opt-in per-agent disable (ADR-0005). `RECOMMENDED_HEADLESS_DISALLOWED_TOOLS = ("BashOutput","KillShell","KillBash")` names the background set for copy-paste opt-in.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-agents-schema-drift-max-turns-working-dir-missing
+Learning: `specs/agents.schema.json` has `additionalProperties: false` on the agent object, so any field on `AgentSpec` it omits is silently rejected by `ao validate` (config.py `load_agents` → `_validate_against_schema`) even though the engine would run it — a latent drift bug. Discovered while adding `disallowed_tools`: `max_turns` and `working_dir` had been on `AgentSpec` but were MISSING from the schema. FIXED 2026-07-15: both added to the schema alongside `disallowed_tools`, with a regression test (`tests/test_config.py::TestLoadAgentsSchema`) asserting they validate AND that an unknown field still fails.
+Context: The general rule (LRN: "Adding a field to AgentSpec also requires updating specs/agents.schema.json") was under-applied for max_turns/working_dir when they landed; grep the schema against `AgentSpec.__fields__` when touching either.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-verbatim-extraction-for-byte-identical-regression-gate
+Learning: When refactoring a large control-flow method into a scheduler/split of responsibilities where a regression gate demands byte-identical behavior at the default setting, extract the original code VERBATIM via anchor-based, assert-verified string substitutions (each anchor checked to match exactly once before substitution) rather than hand-retyping from memory — then prove it by running the EXISTING test suite UNEDITED at the default setting, not by writing new assertions. A test suite passing with zero edits is a far stronger byte-identical proof than a hand-derived "looks equivalent" review.
+Context: T-j8YLGd (`E-IasNXu-parallel-execution`) split `Orchestrator.run()`'s ~800-line inline per-task body into `_prepare_and_maybe_dispatch`/`_settle_completed_task` via `sed`-extracted line ranges + four sanctioned mechanical transforms, each anchor-verified pre/post; `tests/test_engine*.py` (58 tests) passed unedited at `max_parallel=1`, the epic's blocking AC-1 gate. Re-verified unedited again at T-VSfAUN and T-TNleFt handoff (0 deletions across the whole epic per `git diff --numstat tests/`).
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-serialized-core-worker-dispatch-concurrency-pattern
+Learning: To add opt-in concurrency to a stateful, single-writer engine loop without a rewrite: keep 100% of state mutation (RunState writes, `save()`, budget/breaker/router/injection decisions) on the main thread and push ONLY the pure-read, side-effect-free unit of work onto worker threads. Tasks that mutate shared topology/routing/loop bookkeeping must run as solo "barriers" — nothing else in flight when one starts, nothing new admitted until it settles — so their side effects stay atomic without a single lock anywhere in the engine.
+Context: ADR-0007 D3/D4 (`E-IasNXu-parallel-execution`). `ThreadPoolExecutor(max_workers=max_parallel)` submits only `_run_with_retries` (task/workflow/agents/repo_paths/`state.run_id` in, `TaskResult` out — mutates nothing). `_is_barrier()` treats `emit_tasks`, loop-gate (incl. `__iter` clones), and router tasks as barriers, reusing existing `_loop_for_gate`/`_router_for_task` lookups rather than hand-rolled id matching. Zero locks were needed anywhere.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-blocked-drain-not-sleep-while-sibling-holds-capacity
+Learning: When a resource gate (budget/rate window, quota, etc.) says "wait" under concurrency, never sleep inline while a sibling task already holds the capacity that might free the window — that is a guaranteed deadlock (the engine blocks itself from ever draining the very completion that would unblock it). Instead, return a distinct non-terminal "blocked" signal that stops filling the current wave and falls through to draining an in-flight completion (which reconciles actuals and may free the window); only sleep inline when nothing is in flight to drain (the `N=1` case, where this collapses to the original inline-sleep behavior — byte-identical by construction).
+Context: T-VSfAUN FR-6 / ADR-0007 §7.1, closing `EPIC.md` risk R3. `_prepare_and_maybe_dispatch(..., in_flight_nonempty: bool)` branches exactly on this. `TestNoBudgetDeadlockOnRollingWindow` proves forward progress via the exact `run.log` event order (`gate_block` → no `wait` → `reconcile` → `gate_block` again → now `wait`) rather than relying on thread timing.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-int-flag-zero-falls-through-to-default-not-error
+Learning: In an `x = cli_flag or env_var or config_value or DEFAULT` precedence chain, an explicit `0` from ANY source is indistinguishable from "unset" (falsy in Python) and silently falls through to the default — it never reaches a `< 1` validation guard. This is not a per-flag special case to fix; it is the established, consistent behavior of every int runtime setting in this codebase (`--max-attempts 0`, `--quota-max-wait 0`, and now `--max-parallel 0` all resolve to their default rather than erroring). Only a genuinely negative value survives the chain (negative ints are truthy) and hits the guard.
+Context: T-JXiI9j (`E-IasNXu-parallel-execution`) flagged this against `TASK.md`'s own AC-2 prose, which had grouped "0 and negative" under "exits 1" — the ticket's own executable pseudocode already showed the `or`-chain treatment. T-TNleFt's CliRunner e2e tests confirmed the shipped behavior (`--max-parallel 0` exits 0/serial, `--max-parallel -1` exits 1) and the ticket wording was corrected to match rather than the code changed to match stale prose.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-verify-verbatim-extraction-via-static-diff
+Learning: Independently verify a subagent's "verbatim extraction" refactor with a static diff, not only the passing suite: `sort -u` the normalized old (`git show HEAD:file`) and new source (strip whitespace + blank/comment lines), `comm -23` for lines only-in-old, and compare fixed-string call-counts per critical function old-vs-new. Any only-in-old business logic, or a per-function call-count that changed, that is NOT explained by a sanctioned mechanical transform / formatter reflow / context-object threading is a dropped-or-altered statement — potentially on a code path the existing tests never exercise.
+Context: Validated T-j8YLGd's ~800-line settle-body extraction (E-IasNXu). "Existing suite passes unedited" only proves the tested paths; the line-set + call-count diff proves the rest (it surfaced one benign call-count delta that turned out to be an added comment, not a double-charge).
+By: agent
+Role: reviewer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-default-grep-is-ugrep-use-fixed-string-for-parens
+Learning: The default `grep` in this environment is ugrep, not GNU grep: `grep -E 'evaluate_breakers('` aborts with "mismatched ( )" because `-E` reads a literal `(` as a regex group-open. Use `grep -F` (fixed-string) — or backslash-escape the parens — when counting or matching literal function-call patterns; plain-word searches are unaffected.
+Context: Cost a re-run mid-verification while comparing per-function call counts old-vs-new in engine.py (E-IasNXu); `grep -Fc 'name('` is the reliable form.
+By: agent
+Role: reviewer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-commit-per-task-in-stacked-epics
+Learning: When orchestrating a multi-task epic, commit (or at minimum record coverage numbers) after each validated task. If every task's changes stay uncommitted and stacked in the working tree, `git diff` can only show the whole epic vs pre-epic HEAD — you cannot isolate a single task's incremental diff, and you cannot recover the pre-epic coverage baseline for a quantitative delta without unstacking (stash or a throwaway worktree).
+Context: All four implementation tasks of E-IasNXu were left stacked uncommitted; this blocked both per-task diff isolation and the exact pre→post coverage delta the prompt's checklist demanded (fell back to the measured post number + the +58/0-removed test delta).
+By: agent
+Role: manager
+Date: 2026-07-15
+---

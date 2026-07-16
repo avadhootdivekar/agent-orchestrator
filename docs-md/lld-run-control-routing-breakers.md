@@ -487,6 +487,15 @@ after the outcome-handling block (engine.py ~:628, after `self._runstate.save(st
 `self._evaluate_breakers(...)`. Designed to survive a future parallel engine (same points per worker + a timer
 for time conditions); MVP is sequential.
 
+**Update (2026-07-15, ADR-0007 / `E-IasNXu-parallel-execution`):** opt-in parallel task *dispatch*
+shipped (`max_parallel`, default 1 = the sequential behavior this section describes, unchanged).
+Breaker evaluation itself did not move "per worker" as speculated above — it stayed exactly at this
+same task-boundary call site inside `_settle_completed_task`, invoked once per drained completion on
+the main thread regardless of `N`. No timer-based check was added. The one behavioral change: at
+`max_parallel > 1`, multiple tasks can be genuinely in flight at once, so the *order* in which task
+boundaries are reached is thread-timing-dependent rather than dispatch-order-dependent — see the
+`consecutive_failures`/`run_wall_clock_seconds` notes below.
+
 ### 6.2 Registry (pluggable, ABC — mirrors `Executor`/`BudgetManager` DI style)
 
 ```python
@@ -561,9 +570,13 @@ Notes:
   reconstruct from `ended_at` sort. Detail records the streak.
 - **verdict** uses the *shared reader* `read_bool_field` (§3) — same audited path as loop gates. Reads only when
   `spec.task_id` just settled succeeded, so it evaluates at most once per verdict file (latch handles resume).
-- **run_wall_clock_seconds** is checked at task boundaries only (MVP sequential). A single long task can overrun
-  the deadline; documented limitation (a future timer-based check closes it; the eval point is chosen to survive
-  that addition). Uses `state.started_at` (§2.2) so resume measures from original start.
+- **run_wall_clock_seconds** is checked at task boundaries only (MVP sequential; default `max_parallel=1`,
+  unchanged post-ADR-0007). A single long task can overrun the deadline; documented limitation (a future
+  timer-based check closes it; the eval point is chosen to survive that addition). Uses `state.started_at`
+  (§2.2) so resume measures from original start. **Note (2026-07-15):** at `max_parallel > 1` this
+  limitation is not fixed and not worsened in kind, but its exposure grows — up to `N` tasks can be
+  simultaneously in flight and overrunning before any one of them settles and triggers the next
+  boundary check. Still no timer-based check; still a documented limitation, not a regression.
 - **stop_file** = operator external kill switch; `ao stop --run-id` (future CLI verb) or an operator `touch`
   writes the file. Existence-only (`store.exists`), never content — NFR-1 clean.
 - **injected_task_count** is the E2 enabler consumed by epic `E-gd8m4x` (runaway fan-out cap). `injection_depth`
@@ -805,6 +818,11 @@ Consequences: verdict/router catch ControlFileError; loop keeps GateError; size 
 ```
 ASSUMPTION: MVP engine is sequential (no parallel workers).  Risk: run_wall_clock_seconds granularity is
   task-boundary, not real-time.  Mitigation: eval point chosen to survive a future timer; documented limitation.
+  SUPERSEDED 2026-07-15 (ADR-0007 / E-IasNXu-parallel-execution): parallel workers now exist, opt-in via
+  `max_parallel` (default 1 = this assumption's original sequential behavior, unchanged). Breaker evaluation
+  stayed centralized on the main thread (one task-settle at a time) rather than moving per-worker, so the
+  mitigation above still applies verbatim; the risk is now compounded rather than resolved (see §6.1 update
+  and the run_wall_clock_seconds note in §7).
 ASSUMPTION: team_size = 2 developers (<4 yrs) for sprint capacity (not stated in epic).  Risk: sprint count off.
   Mitigation: capacity math shown (§14) so re-planning with the real number is trivial.
 ASSUMPTION: nested routers are out of MVP; validate rejects them.  Risk: a real workflow needs one.  Mitigation:
@@ -979,4 +997,43 @@ extension is durable the moment it's applied and confirmed, independent of anyth
 Explicitly out of scope (do not build without a fresh epic): live/in-process threshold mutation for an
 already-running `ao run`/`ao resume` invocation (no `WorkflowSpec` hot-reload, no stop-file-style live
 poll for thresholds) — this mechanism only ever applies at `ao resume` time, before the run resumes.
+
+---
+
+## 17. Addendum (E-XyfjuZ, 2026-07-15) — guardrail modes + monitor-driven extension
+
+Follow-on epic
+[`E-XyfjuZ-agent-monitoring-self-healing`](../meta/tickets/E-XyfjuZ-agent-monitoring-self-healing/EPIC.md)
+(not a reopening of this LLD/epic — additive, same as §16) adds a SECOND way a breaker's threshold can
+be extended, alongside §16.2's operator-driven `ao resume --extend-breaker`: an in-process, agent-based
+**Monitor** consult, gated per-breaker by a new `CircuitBreakerSpec.mode: "hard" | "recommend"` field
+(default `"hard"` — every breaker declared before this epic, and every breaker that never sets `mode`,
+is completely unaffected; behavior is byte-identical). Full design in
+[`lld-agent-monitoring-self-healing.md`](lld-agent-monitoring-self-healing.md); this addendum records
+only how the two extension paths relate, since a reader of §16 could otherwise assume
+`ao resume --extend-breaker` is the *only* lever on `breaker_overrides`.
+
+- **Same underlying mechanism, different callers.** The monitor-driven path (`engine.py`'s
+  `_consult_breaker_trips`, called at the same `evaluate_breakers` boundary this LLD's §6.1 already
+  documents) calls the exact same `apply_breaker_extension()` function §16.2 introduced — same
+  `breaker_overrides` dict, same un-latch semantics, same `breaker.extend` event shape. No parallel
+  bookkeeping was added.
+- **Independent bounds.** The monitor path is bounded by a SEPARATE, engine-enforced
+  `max_extensions_per_breaker` counter (derived from `RunState.monitor_decisions`, never a raw
+  `RunState` field — see the new LLD's Design Decision D9) — it does NOT share a budget with, or get
+  reset by, an operator's `ao resume --extend-breaker` invocation, and vice versa. An operator can
+  still always extend an already-monitor-extended breaker manually; a monitor can still be consulted
+  again on a SUBSEQUENT trip even after an operator has manually extended the same breaker once
+  (subject to its own bound). Both simply add to the same effective `breaker_overrides[id]` value.
+- **Only reachable when `mode: "recommend"`.** Unlike `ao resume --extend-breaker` (works on any
+  breaker, operator-invoked, unbounded), the monitor is NEVER consulted for a `mode: "hard"` breaker —
+  including all three built-in re-framed stops (§8), which never carry a `mode` at all (they never
+  construct a `CircuitBreakerSpec`). This is enforced structurally (built-ins `break` the run loop
+  before `evaluate_breakers` is ever reached in the same iteration) plus a defensive assertion in
+  `_consult_breaker_trips`, not by convention alone.
+- **Resume interaction.** `RunState.monitor_decisions` (and therefore the monitor-extension bound) is
+  untouched by `prepare_resume` — same NFR-5/backward-compat pattern every other run-scoped counter in
+  this LLD follows. A monitor-driven extension recorded before a run stopped remains in effect (and
+  counted against the bound) across `ao resume`, exactly like `breaker_overrides`/`tripped_breakers`
+  already do for the operator-driven path.
 

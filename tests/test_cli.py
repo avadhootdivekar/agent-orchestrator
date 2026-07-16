@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from agent_orchestrator.cli import app
@@ -658,3 +659,194 @@ class TestShellCompletion:
         assert result.exit_code == 0
         assert "--install-completion" in result.output
         assert "--show-completion" in result.output
+
+
+class TestResolveRunSettingsMaxParallel:
+    """Unit tests for _resolve_run_settings's max_parallel resolution (T-JXiI9j AC-1/2/3):
+    CLI > env > project config > built-in default (DEFAULT_MAX_PARALLEL=1) -- the identical
+    `_int_env` + `or`-chain shape used by quota_max_wait_seconds. Isolates from this repo's own
+    .ao/config.yaml via chdir, mirroring TestResolveMonitoringSettings's technique below."""
+
+    def _call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, max_parallel: int | None
+    ) -> int:
+        from agent_orchestrator.cli import _resolve_run_settings
+
+        monkeypatch.chdir(tmp_path)  # isolate from this repo's own .ao/config.yaml
+        result = _resolve_run_settings(None, None, None, None, None, None, max_parallel)
+        return result[-1]
+
+    def test_none_everywhere_defaults_to_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
+        assert self._call(tmp_path, monkeypatch, None) == 1
+
+    def test_config_only_resolves_to_config_value(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("max_parallel: 4\n")
+        assert self._call(tmp_path, monkeypatch, None) == 4
+
+    def test_env_overrides_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("max_parallel: 4\n")
+        monkeypatch.setenv("AO_MAX_PARALLEL", "6")
+        assert self._call(tmp_path, monkeypatch, None) == 6
+
+    def test_cli_overrides_env_and_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("max_parallel: 4\n")
+        monkeypatch.setenv("AO_MAX_PARALLEL", "6")
+        assert self._call(tmp_path, monkeypatch, 8) == 8
+
+    def test_empty_env_treated_as_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC-3 / learning #23 (empty-env-is-falsy): AO_MAX_PARALLEL="" must fall through to
+        the default rather than raising ValueError from a bare int()."""
+        monkeypatch.setenv("AO_MAX_PARALLEL", "")
+        assert self._call(tmp_path, monkeypatch, None) == 1
+
+    def test_cli_zero_falls_through_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """0 is falsy, so the `or`-chain treats --max-parallel 0 as unset -- identical to how
+        --quota-max-wait 0 / --max-attempts 0 already resolve to their defaults in this same
+        function -- and it silently becomes DEFAULT_MAX_PARALLEL rather than erroring. Only a
+        value that is truthy-but-invalid (negative) survives the chain far enough to reach the
+        explicit `< 1` guard below."""
+        monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
+        assert self._call(tmp_path, monkeypatch, 0) == 1
+
+    def test_negative_cli_value_exits_1_with_message(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """AC-2: --max-parallel -1 -> exit 1 with a clear 'must be >= 1' error."""
+        monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
+        with pytest.raises(typer.Exit):
+            self._call(tmp_path, monkeypatch, -1)
+        assert "must be >= 1" in capsys.readouterr().err
+
+    def test_negative_env_value_exits_1_with_message(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """AC-2: AO_MAX_PARALLEL=-1 -> exit 1 with a clear 'must be >= 1' error."""
+        monkeypatch.setenv("AO_MAX_PARALLEL", "-1")
+        with pytest.raises(typer.Exit):
+            self._call(tmp_path, monkeypatch, None)
+        assert "must be >= 1" in capsys.readouterr().err
+
+
+class TestResolveMonitoringSettings:
+    """Unit tests for _resolve_monitoring_settings (E-XyfjuZ, T-QyNnf5): CLI > env > project
+    config > built-in default (tri-state, revised D7 per early-gate reviewer feedback)."""
+
+    def _call(self, self_heal, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from agent_orchestrator.cli import _resolve_monitoring_settings
+
+        monkeypatch.chdir(tmp_path)  # isolate from this repo's own .ao/config.yaml
+        return _resolve_monitoring_settings(self_heal)
+
+    def test_no_cli_no_env_no_config_defaults_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = self._call(None, tmp_path, monkeypatch)
+        assert cfg.self_heal is False
+        assert cfg.monitor == "rules"
+
+    def test_cli_true_wins_over_everything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AO_SELF_HEAL", "0")
+        cfg = self._call(True, tmp_path, monkeypatch)
+        assert cfg.self_heal is True
+
+    def test_cli_false_wins_over_env_and_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """D7 (revised): --no-self-heal must override an env/config value of True."""
+        monkeypatch.setenv("AO_SELF_HEAL", "1")
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("monitoring:\n  self_heal: true\n")
+        cfg = self._call(False, tmp_path, monkeypatch)
+        assert cfg.self_heal is False
+
+    def test_env_wins_over_config_when_cli_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AO_SELF_HEAL", "1")
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("monitoring:\n  self_heal: false\n")
+        cfg = self._call(None, tmp_path, monkeypatch)
+        assert cfg.self_heal is True
+
+    def test_config_applies_when_cli_and_env_both_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AO_SELF_HEAL", raising=False)
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text(
+            "monitoring:\n  self_heal: true\n  monitor: my-agent\n  max_heal_retries_per_task: 3\n"
+        )
+        cfg = self._call(None, tmp_path, monkeypatch)
+        assert cfg.self_heal is True
+        assert cfg.monitor == "my-agent"
+        assert cfg.max_heal_retries_per_task == 3
+
+    def test_absent_monitoring_block_is_all_defaults(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AO_SELF_HEAL", raising=False)
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("workflow: w.json\n")
+        cfg = self._call(None, tmp_path, monkeypatch)
+        assert cfg.self_heal is False
+        assert cfg.monitor == "rules"
+        assert cfg.max_extensions_per_breaker == 1
+        assert cfg.max_heal_retries_per_task == 1
+        assert cfg.max_monitor_calls_per_run == 10
+
+
+class TestBuildMonitor:
+    """Unit tests for _build_monitor (E-XyfjuZ, T-QyNnf5)."""
+
+    def test_rules_returns_rule_based_monitor(self, tmp_path: Path) -> None:
+        from agent_orchestrator.cli import _build_monitor
+        from agent_orchestrator.monitoring import RuleBasedMonitor
+        from agent_orchestrator.project_config import MonitoringConfig
+
+        cfg = MonitoringConfig(monitor="rules", heal_wait_seconds=5.0)
+        monitor = _build_monitor(cfg, {}, None, None)
+        assert isinstance(monitor, RuleBasedMonitor)
+
+    def test_unknown_agent_name_exits_1(self, tmp_path: Path) -> None:
+        from agent_orchestrator.cli import _build_monitor
+        from agent_orchestrator.project_config import MonitoringConfig
+
+        cfg = MonitoringConfig(monitor="ghost-agent")
+        with pytest.raises(typer.Exit):
+            _build_monitor(cfg, {}, None, None)
+
+    def test_known_agent_name_returns_agent_monitor(self, tmp_path: Path) -> None:
+        from agent_orchestrator.cli import _build_monitor
+        from agent_orchestrator.executors.fake import FakeExecutor
+        from agent_orchestrator.models import AgentSpec
+        from agent_orchestrator.monitoring import AgentMonitor
+        from agent_orchestrator.project_config import MonitoringConfig
+
+        cfg = MonitoringConfig(monitor="my-monitor-agent")
+        agent_map = {"my-monitor-agent": AgentSpec(executor="fake")}
+        monitor = _build_monitor(cfg, agent_map, None, FakeExecutor())
+        assert isinstance(monitor, AgentMonitor)
+        assert monitor.name == "my-monitor-agent"

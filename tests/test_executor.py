@@ -9,6 +9,9 @@ from pathlib import Path
 
 from agent_orchestrator.executors.base import Executor
 from agent_orchestrator.executors.claude_cli import (
+    RECOMMENDED_HEADLESS_DISALLOWED_TOOLS,
+    ClaudeCliExecutor,
+    _ensure_disallowed_tools,
     _ensure_stream_capture_flags,
     extract_result_event,
     parse_transcript_events,
@@ -385,6 +388,123 @@ class TestEnsureStreamCaptureFlags:
         result = _ensure_stream_capture_flags(argv)
         assert result is not argv
         assert argv == ["claude", "-p", "hi"]
+
+
+# ---------------------------------------------------------------------------
+# _ensure_disallowed_tools — opt-in per-agent tool disabling (allow-all default)
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureDisallowedTools:
+    """Default posture is allow-all; disabling is opt-in and override-safe."""
+
+    def test_empty_tools_is_noop_allow_all_default(self) -> None:
+        argv = ["claude", "-p", "hi"]
+        result = _ensure_disallowed_tools(argv, ())
+        assert result == ["claude", "-p", "hi"]
+        assert "--disallowedTools" not in result
+
+    def test_injects_opt_in_tools(self) -> None:
+        argv = ["claude", "-p", "hi"]
+        result = _ensure_disallowed_tools(argv, ("BashOutput", "WebSearch"))
+        idx = result.index("--disallowedTools")
+        assert result[idx + 1 : idx + 3] == ["BashOutput", "WebSearch"]
+
+    def test_recommended_set_covers_both_kill_tool_names(self) -> None:
+        # KillBash was renamed KillShell in Claude Code v2; both must be present
+        # so the rule holds across CLI versions (v2.1.209 ships both literals).
+        assert "KillShell" in RECOMMENDED_HEADLESS_DISALLOWED_TOOLS
+        assert "KillBash" in RECOMMENDED_HEADLESS_DISALLOWED_TOOLS
+        assert "BashOutput" in RECOMMENDED_HEADLESS_DISALLOWED_TOOLS
+
+    def test_skips_when_caller_set_disallowed_tools(self) -> None:
+        """An explicit --disallowedTools in argv wins; we don't double-inject."""
+        argv = ["claude", "-p", "hi", "--disallowedTools", "Bash"]
+        result = _ensure_disallowed_tools(argv, ("WebSearch",))
+        assert result.count("--disallowedTools") == 1
+        assert "WebSearch" not in result
+
+    def test_skips_when_caller_set_allowed_tools(self) -> None:
+        argv = ["claude", "-p", "hi", "--allowedTools", "Read"]
+        result = _ensure_disallowed_tools(argv, ("WebSearch",))
+        assert "--disallowedTools" not in result
+
+    def test_skips_when_caller_set_tools_flag(self) -> None:
+        argv = ["claude", "-p", "hi", "--tools", "default"]
+        result = _ensure_disallowed_tools(argv, ("WebSearch",))
+        assert "--disallowedTools" not in result
+
+    def test_recognizes_hyphenated_and_eq_forms(self) -> None:
+        assert (
+            _ensure_disallowed_tools(
+                ["claude", "--disallowed-tools", "Bash"], ("WebSearch",)
+            ).count("--disallowedTools")
+            == 0
+        )
+        assert "--disallowedTools" not in _ensure_disallowed_tools(
+            ["claude", "--allowed-tools=Read"], ("WebSearch",)
+        )
+
+    def test_returns_new_list(self) -> None:
+        argv = ["claude", "-p", "hi"]
+        result = _ensure_disallowed_tools(argv, ("WebSearch",))
+        assert result is not argv
+        assert argv == ["claude", "-p", "hi"]
+
+    def test_variadic_list_terminated_by_stream_flags(self) -> None:
+        """execute() order: disallowed-tools BEFORE stream flags, so --output-format
+        terminates the variadic list rather than being swallowed as a tool name."""
+        argv = _ensure_disallowed_tools(["claude", "-p", "hi"], ("BashOutput", "Task"))
+        argv = _ensure_stream_capture_flags(argv)
+        di = argv.index("--disallowedTools")
+        of = argv.index("--output-format")
+        assert di < of
+        assert argv[di + 1 : of] == ["BashOutput", "Task"]
+
+
+class TestClaudeCliExecutorDisallowedToolsWiring:
+    """execute() forwards AgentSpec.disallowed_tools into the real spawned argv."""
+
+    def _capture_argv(self, monkeypatch, tmp_path, disallowed: tuple[str, ...]) -> list[str]:
+        captured: dict[str, list[str]] = {}
+
+        class _FakePopen:
+            def __init__(self, argv: list[str], **kwargs: object) -> None:
+                captured["argv"] = argv
+                self.returncode = 0
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                pass
+
+        monkeypatch.setattr("agent_orchestrator.executors.claude_cli.subprocess.Popen", _FakePopen)
+        agent = AgentSpec(executor="claude_cli", disallowed_tools=list(disallowed))
+        ctx = TaskContext(
+            run_id="r1",
+            task_id="t1",
+            agent=agent,
+            instruction_path="/i.md",
+            input_paths=[],
+            output_paths=[],
+            repo_paths={},
+            timeout_seconds=60,
+            output_dir=str(tmp_path),
+        )
+        result = ClaudeCliExecutor().execute(ctx)
+        assert result.status == "succeeded"
+        return captured["argv"]
+
+    def test_field_injected_before_stream_flags(self, monkeypatch, tmp_path) -> None:
+        argv = self._capture_argv(monkeypatch, tmp_path, ("BashOutput", "KillShell", "KillBash"))
+        di = argv.index("--disallowedTools")
+        of = argv.index("--output-format")
+        assert argv[di + 1 : of] == ["BashOutput", "KillShell", "KillBash"]
+
+    def test_empty_field_is_allow_all(self, monkeypatch, tmp_path) -> None:
+        argv = self._capture_argv(monkeypatch, tmp_path, ())
+        assert "--disallowedTools" not in argv
 
 
 # ---------------------------------------------------------------------------

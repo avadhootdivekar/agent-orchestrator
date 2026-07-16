@@ -6,13 +6,15 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
 from .artifacts import ArtifactStore, read_gate, read_manifest, read_routes, read_task_manifest
-from .breakers import evaluate_breakers, record_trip
+from .breakers import apply_breaker_extension, evaluate_breakers, record_trip
 from .budget import BudgetDecision, BudgetManager
-from .dag import build_dag, compute_cones
+from .dag import Graph, build_dag, compute_cones
 from .errors import ControlFileError, GateError, InjectionError
 from .estimator import TokenEstimator
 from .executors.base import Executor
@@ -21,10 +23,16 @@ from .models import (
     BUILTIN_BUDGET_EXHAUSTED,
     BUILTIN_BUDGET_UNSATISFIABLE,
     BUILTIN_QUOTA_MAX_WAIT,
+    DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
+    DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
+    DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
+    DEFAULT_MAX_PARALLEL,
     DEFAULT_QUOTA_MAX_WAIT_SECONDS,
     DEFAULT_QUOTA_POLL_SECONDS,
+    CircuitBreakerSpec,
     EstimatorConfig,
     LoopSpec,
+    MonitorDecisionRecord,
     RouterSpec,
     RunState,
     TaskContext,
@@ -32,6 +40,19 @@ from .models import (
     TaskRunState,
     TaskSpec,
     WorkflowSpec,
+    count_monitor_breaker_extensions,
+    count_monitor_calls_made,
+    count_monitor_heal_retries,
+)
+from .monitoring import (
+    SAFE_DEFAULT_BREAKER_VERDICT,
+    SAFE_DEFAULT_HEAL_VERDICT,
+    BreakerTripSummary,
+    BreakerVerdict,
+    HealVerdict,
+    Monitor,
+    RuleBasedMonitor,
+    build_task_failure_summary,
 )
 from .runstate import RunStateStore
 
@@ -46,6 +67,73 @@ def _no_cancel() -> bool:
 
 
 _NO_CANCEL: Callable[[], bool] = _no_cancel
+
+
+# ---------------------------------------------------------------------------
+# Wave/barrier scheduler control-flow types (T-j8YLGd, ADR-0007)
+# ---------------------------------------------------------------------------
+
+# Outcome of `Orchestrator._prepare_and_maybe_dispatch`.
+DispatchSignal = Literal["skipped", "dispatch", "halt", "blocked"]
+
+# Outcome of `Orchestrator._settle_completed_task`.
+SettleSignal = Literal["settled", "requeue", "halt", "reshaped"]
+
+
+@dataclass
+class DispatchPrep:
+    """Result of `_prepare_and_maybe_dispatch` (T-j8YLGd).
+
+    Only ``signal == "dispatch"`` populates the payload fields -- exactly what
+    `run()` needs to submit `self._run_with_retries(...)` for *task*, mirroring
+    today's inline call one-for-one (task/dynamic_input_paths/resolved manifest
+    + gate paths).
+    """
+
+    signal: DispatchSignal
+    task: TaskSpec | None = None
+    dynamic_input_paths: list[str] | None = None
+    task_manifest_path: str | None = None
+    gate_output_path: str | None = None
+
+
+@dataclass
+class SettleResult:
+    """Result of `_settle_completed_task` (T-j8YLGd).
+
+    ``signal == "reshaped"`` carries the already-rebuilt `graph`/`order` back to
+    `run()` -- computed once, inside settle, at the same point (and for the same
+    logging purpose) the original inline code computed them, so handing them
+    back avoids a second, duplicate `build_dag` call in `run()` that would
+    double-emit `dag.py`'s inferred-edge warning into `run.log`.
+    """
+
+    signal: SettleSignal
+    graph: Graph | None = None
+    order: list[str] | None = None
+
+
+@dataclass
+class _RunContext:
+    """Per-`run()` state shared across `_prepare_and_maybe_dispatch` and
+    `_settle_completed_task` (T-j8YLGd).
+
+    Bundles the values the old single-cursor loop computed once in setup and
+    closed over for the rest of the method (`repo_paths`, `agents`, `cones`,
+    `membership`, `run_log`) alongside the two genuinely mutable pieces of
+    loop-local state the extracted bodies read AND write (`done`,
+    `quota_exhausted_since`) -- held here BY REFERENCE (not copied), so a
+    mutation made inside one helper call (e.g. ``done.add(tid)``) is visible on
+    the very next wave, exactly as the old inline closure was.
+    """
+
+    repo_paths: dict[str, str]
+    agents: dict
+    cones: dict[str, dict[str, set[str]]]
+    membership: dict[str, set[tuple[str, str]]]
+    run_log: logging.LoggerAdapter
+    done: set[str]
+    quota_exhausted_since: float | None = None
 
 
 class Orchestrator:
@@ -81,6 +169,47 @@ class Orchestrator:
     quota_poll_seconds:
         How long to sleep between quota-exhaustion re-run attempts
         (default: DEFAULT_QUOTA_POLL_SECONDS).
+    monitor:
+        Agent-based monitoring/self-healing implementation (E-XyfjuZ). Defaults to a fresh
+        `RuleBasedMonitor()` (deterministic, zero-cost) when None — recommend-mode breakers
+        and self-heal both need SOME monitor available so a workflow that declares
+        `mode: "recommend"` gets consistent behavior regardless of whether the caller wired
+        one up explicitly. Only ever consulted for `mode: "recommend"` breaker trips
+        (Consult Point A) and, when `self_heal_enabled`, task failures (Consult Point B) --
+        hard-mode breakers and disabled self-heal are completely unaffected (byte-identical).
+    max_extensions_per_breaker:
+        Cap on monitor-driven extensions per breaker id this run (default
+        DEFAULT_MAX_EXTENSIONS_PER_BREAKER). Enforced centrally here, never trusted to the
+        Monitor implementation — bound exhausted halts regardless of the monitor's answer.
+        Tracked via `count_monitor_breaker_extensions(state, breaker_id)` (derived from
+        `RunState.monitor_decisions`, D9) — independent of the unbounded, operator-driven
+        `ao resume --extend-breaker` mechanism (E-3JTmVu), which this never touches.
+    max_monitor_calls_per_run:
+        Cap on total ACTUAL monitor consults this run, shared across both consult points
+        (default DEFAULT_MAX_MONITOR_CALLS_PER_RUN). Exhausting it falls back to the safe
+        default (halt / accept_failure) without calling the monitor again.
+    self_heal_enabled:
+        Opt-in switch for Consult Point B (task-failure self-healing, default False —
+        byte-identical to today when unset). When True, a task that settles `"failed"`
+        after exhausting its `RetryPolicy` is offered ONE bounded extra retry via
+        `self._monitor.decide_task_failure(...)` before the run gives up on it. Scoped
+        strictly to `result.status == "failed"` — `timed_out`/`cancelled` are never healed
+        (deliberate MVP boundary).
+    max_heal_retries_per_task:
+        Cap on heal retries per task id this run (default
+        DEFAULT_MAX_HEAL_RETRIES_PER_TASK). Enforced centrally here via
+        `count_monitor_heal_retries(state, task_id)` (derived from
+        `RunState.monitor_decisions`, D9) — heal retries never consume
+        `RetryPolicy.max_attempts` accounting (a completely separate counter).
+    max_parallel:
+        Max independent ready tasks the engine may dispatch concurrently (default
+        DEFAULT_MAX_PARALLEL = 1). Invocation-scoped (ADR-0003 §3 / ADR-0007 D5) — plumbed
+        identically to quota_max_wait_seconds, never a workflow-spec field. Stored as
+        `self._max_parallel`, defensively clamped to >= 1. `run()`'s wave/barrier scheduler
+        (ADR-0007) dispatches up to N ready non-barrier tasks at once on a thread pool while
+        the engine core stays serialized on the main thread; `emit_tasks`/loop-gate/router
+        tasks run solo as barriers. The default of 1 is byte-identical to the pre-ADR-0007
+        serial engine.
     """
 
     def __init__(
@@ -95,6 +224,12 @@ class Orchestrator:
         clock: Callable[[], datetime] | None = None,
         quota_max_wait_seconds: float = DEFAULT_QUOTA_MAX_WAIT_SECONDS,
         quota_poll_seconds: float = DEFAULT_QUOTA_POLL_SECONDS,
+        monitor: Monitor | None = None,
+        max_extensions_per_breaker: int = DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
+        max_monitor_calls_per_run: int = DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
+        self_heal_enabled: bool = False,
+        max_heal_retries_per_task: int = DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
+        max_parallel: int = DEFAULT_MAX_PARALLEL,
     ) -> None:
         self._executor = executor
         self._store = artifact_store
@@ -106,6 +241,18 @@ class Orchestrator:
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
         self._quota_max_wait_seconds = quota_max_wait_seconds
         self._quota_poll_seconds = quota_poll_seconds
+        # Agent-based monitoring & self-healing (E-XyfjuZ). Defaults to a fresh
+        # RuleBasedMonitor() (never a shared module-level instance) so each Orchestrator
+        # owns an independent, stateless-but-distinct monitor.
+        self._monitor: Monitor = monitor if monitor is not None else RuleBasedMonitor()
+        self._max_extensions_per_breaker = max_extensions_per_breaker
+        self._max_monitor_calls_per_run = max_monitor_calls_per_run
+        self._self_heal_enabled = self_heal_enabled
+        self._max_heal_retries_per_task = max_heal_retries_per_task
+        # Concurrency bound (ADR-0007). Defensive clamp: never below 1 regardless of what a
+        # caller passes. NOT consumed by run() yet -- T-j8YLGd wires the wave scheduler that
+        # reads this; until then the engine is unconditionally serial (T-JXiI9j plumbing-only).
+        self._max_parallel = max(1, int(max_parallel))
 
     def run(
         self,
@@ -178,714 +325,129 @@ class Orchestrator:
                 tid for tid, ts in state.tasks.items() if ts.status in ("succeeded", "skipped")
             }
 
-            # Re-entrant cursor (ADR-005): drives execution over a recomputable order.
-            # After injection, order is rebuilt and cursor is reset to the first undone task.
-            cursor = 0
+            # Predecessor map for the ready-set (ADR-0007 D6); rebuilt alongside
+            # `graph`/`order` on every RESHAPED signal.
+            preds = self._predecessors(graph)
             failed = False
-            # Tracks the epoch when the current quota-exhaustion episode began.
-            # Resets to None after any task succeeds (new exhaustion → fresh max_wait window).
-            _quota_exhausted_since: float | None = None
 
-            while cursor < len(order):
-                if self._cancel_fn():
-                    run_log.info(
-                        "Cancellation requested; halting",
-                        extra={"event": "run.cancelled"},
-                    )
-                    state.status = "cancelled"
-                    failed = True
-                    break
+            # Per-run context (T-j8YLGd): bundles the values the old inline loop
+            # closed over (repo_paths/agents/cones/membership/run_log) plus the two
+            # pieces of genuinely mutable loop-local state the extracted prepare/
+            # settle bodies read AND write (`done`, `quota_exhausted_since`) into one
+            # shared object so mutations made inside a helper call are visible on the
+            # very next wave, exactly as the old inline closure was. Tracks the epoch
+            # when the current quota-exhaustion episode began; resets to None after
+            # any task succeeds (new exhaustion → fresh max_wait window) — unchanged
+            # semantics from the old `_quota_exhausted_since` local.
+            ctx = _RunContext(
+                repo_paths=repo_paths,
+                agents=agents,
+                cones=cones,
+                membership=membership,
+                run_log=run_log,
+                done=done,
+            )
 
-                tid = order[cursor]
-                cursor += 1
-
-                # Not-taken skip (LLD §5.3): a task on an unselected route never
-                # dispatches, never bills. Checked ahead of `done` (which stays
-                # succeeded/skipped-only, §5.6) so the two sets never conflate.
-                ts0 = state.tasks.get(tid)
-                if ts0 is not None and ts0.status == "not_taken":
-                    continue
-
-                if tid in done:
-                    continue
-
-                task = workflow.task(tid)
-                task_log = get_run_logger(state.run_id, tid)
-
-                # Resume / idempotency: skip completed tasks
-                if self._runstate.should_skip(task, state):
-                    task_log.info(
-                        "Skipping task (already succeeded with outputs present)",
-                        extra={"event": "task.skip"},
-                    )
-                    # Mutate in-place to preserve persisted fields (e.g. dynamic_outputs)
-                    ts = state.tasks.setdefault(tid, TaskRunState())
-                    ts.status = "skipped"
-                    done.add(tid)
-                    self._runstate.save(state)
-                    continue
-
-                # Join handling (LLD §5.4): a convergence task with a not_taken
-                # dependency propagates not_taken (join="all") or is skipped only
-                # when EVERY effective dependency is not_taken (join="any").
-                # Evaluated before dispatch so a not_taken task never reaches the
-                # budget gate or the executor.
-                if self._apply_join(task, state, membership, graph.producer_of) == "not_taken":
-                    self._runstate.save(state)
-                    continue
-
-                # Check required inputs exist. join="any" tasks relax this check
-                # (§5.4a): an input whose SOLE producer is not_taken never gets
-                # written and must not fail the task — apply_join already proved
-                # at least one other effective dependency is live.
-                if task.join == "any":
-                    optional_inputs: set[str] = set()
-                    for inp in task.inputs:
-                        producer = graph.producer_of(inp)
-                        if (
-                            producer is not None
-                            and state.tasks.get(producer) is not None
-                            and state.tasks[producer].status == "not_taken"
-                        ):
-                            optional_inputs.add(inp)
-                    missing = [
-                        inp
-                        for inp in task.inputs
-                        if inp not in optional_inputs and not self._store.exists(inp)
-                    ]
-                else:
-                    missing = [inp for inp in task.inputs if not self._store.exists(inp)]
-                if missing:
-                    task_log.error(
-                        "Missing required inputs: %s",
-                        missing,
-                        extra={"event": "task.fail", "reason": "missing_inputs"},
-                    )
-                    state.tasks[tid] = TaskRunState(status="failed")
-                    self._runstate.save(state)
-                    state.status = "failed"
-                    failed = True
-                    break
-
-                # Collect dynamic outputs from all upstream tasks declared in depends_on
-                dynamic_input_paths: list[str] = []
-                for dep_id in task.depends_on:
-                    dep_ts = state.tasks.get(dep_id)
-                    if dep_ts and dep_ts.dynamic_outputs:
-                        dynamic_input_paths.extend(dep_ts.dynamic_outputs)
-
-                # _estimate is declared at task-block scope so the reconcile block can
-                # reference it regardless of whether the budget gate ran (T-algywf, NFR-3).
-                _estimate = 0
-
-                # ---- Budget gate (T-algywf, FR-1..FR-3, FR-4) ----
-                if self._budget_manager is not None and self._estimator is not None:
-                    _est_agent = agents[task.agent]
-                    _est_instr = self._store.resolve(task.instruction)
-                    _est_inputs = [self._store.resolve(p) for p in task.inputs]
-                    _est_cfg = (
-                        workflow.budget.estimator if workflow.budget else None
-                    ) or EstimatorConfig()
-                    _est_ctx = TaskContext(
-                        run_id=state.run_id,
-                        task_id=tid,
-                        agent=_est_agent,
-                        instruction_path=_est_instr,
-                        input_paths=_est_inputs,
-                        output_paths=[self._store.resolve(p) for p in task.outputs],
-                        dynamic_input_paths=dynamic_input_paths,
-                        repo_paths=repo_paths,
-                        timeout_seconds=task.timeout_seconds or workflow.defaults.timeout_seconds,
-                    )
-                    _estimate = self._estimator.estimate(_est_ctx, _est_cfg)
-
-                    # Resume double-charge guard (R2, NFR-3): if this task was charged but
-                    # not yet reconciled in a previous run, reverse the stale estimate before
-                    # re-gating.
-                    if (
-                        tid in state.budget_counters.charged_estimate
-                        and tid not in state.budget_counters.reconciled_tasks
-                    ):
-                        self._budget_manager.reverse_estimate(tid, state.budget_counters)
-                        run_log.info(
-                            "Reversed stale estimate for task %s on resume",
-                            tid,
-                            extra={"event": "budget.resume_reverse", "task_id": tid},
-                        )
-
-                    # Gate loop: admit or block; handles wait-retry on window roll
-                    _gate_admitted = False
-                    while not _gate_admitted:
-                        _decision = self._budget_manager.gate(tid, _estimate, state.budget_counters)
-                        if _decision.admit:
-                            _gate_admitted = True
-                            break
-
-                        task_log.warning(
-                            "Budget gate blocked task %s: blocked_by=%s next_available=%s",
-                            tid,
-                            _decision.blocked_by,
-                            _decision.next_available_epoch,
-                            extra={
-                                "event": "budget.gate_block",
-                                "task_id": tid,
-                                "blocked_by": _decision.blocked_by,
-                                "next_available_epoch": _decision.next_available_epoch,
-                                "estimate": _estimate,
-                            },
-                        )
-
-                        # Unsatisfiable: estimate exceeds the entire budget/window — would wait
-                        # forever; stop immediately.
-                        if self._is_unsatisfiable(_estimate, _decision):
-                            run_log.error(
-                                "Task %s estimate %d exceeds %s limit — unsatisfiable; stopping",
-                                tid,
-                                _estimate,
-                                _decision.blocked_by,
-                                extra={
-                                    "event": "budget.exhausted",
-                                    "task_id": tid,
-                                    "blocked_by": _decision.blocked_by,
-                                },
-                            )
-                            # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
-                            # only -- the event/status/break above are unchanged (ADR-RC-003).
-                            record_trip(
-                                state=state,
-                                breaker_id=BUILTIN_BUDGET_UNSATISFIABLE,
-                                condition="projected_cost_exceeds",
-                                action="fail",
-                                detail={
-                                    "task_id": tid,
-                                    "estimate": _estimate,
-                                    "blocked_by": _decision.blocked_by,
-                                },
-                                clock=self._clock,
-                                run_log=run_log,
-                            )
-                            state.status = "failed"
-                            failed = True
-                            break
-
-                        _on_exhaustion = (
-                            workflow.budget.on_exhaustion if workflow.budget else "stop"
-                        )
-
-                        if _on_exhaustion == "stop":
-                            run_log.warning(
-                                "Budget exhausted; stopping run",
-                                extra={
-                                    "event": "budget.exhausted",
-                                    "task_id": tid,
-                                    "blocked_by": _decision.blocked_by,
-                                    "next_available_epoch": _decision.next_available_epoch,
-                                },
-                            )
-                            # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
-                            # only -- the event/status/break above are unchanged (ADR-RC-003).
-                            # Condition name reflects which limit blocked admission
-                            # (_decision.blocked_by), not a single hardcoded string.
-                            _budget_condition = (
-                                "total_tokens" if _decision.blocked_by == "total" else "rate_window"
-                            )
-                            record_trip(
-                                state=state,
-                                breaker_id=BUILTIN_BUDGET_EXHAUSTED,
-                                condition=_budget_condition,
-                                action="fail",
-                                detail={
-                                    "task_id": tid,
-                                    "blocked_by": _decision.blocked_by,
-                                    "next_available_epoch": _decision.next_available_epoch,
-                                },
-                                clock=self._clock,
-                                run_log=run_log,
-                            )
-                            state.status = "failed"
-                            failed = True
-                            break
-                        else:  # wait
-                            _next = _decision.next_available_epoch or (
-                                self._clock().timestamp() + 1
-                            )
-                            _sleep_secs = max(0.0, _next - self._clock().timestamp())
-                            run_log.info(
-                                "Budget wait: sleeping %.1f seconds until %.3f",
-                                _sleep_secs,
-                                _next,
-                                extra={
-                                    "event": "budget.wait",
-                                    "task_id": tid,
-                                    "sleep_seconds": _sleep_secs,
-                                    "next_available_epoch": _next,
-                                },
-                            )
-                            self._sleeper(_sleep_secs)
-                            if self._cancel_fn():
-                                run_log.info(
-                                    "Cancelled during budget wait",
-                                    extra={"event": "run.cancelled"},
-                                )
-                                state.status = "cancelled"
-                                failed = True
-                                break
-                            run_log.info(
-                                "Budget wait ended; re-gating task %s",
-                                tid,
-                                extra={"event": "budget.resume", "task_id": tid},
-                            )
-                            # Loop back to re-gate (window should have rolled)
-
-                    if failed:
-                        self._runstate.save(state)
-                        break
-
-                    # Charge the estimate (admitted)
-                    self._budget_manager.charge_estimate(tid, _estimate, state.budget_counters)
-                    self._runstate.save(state)
-                    task_log.info(
-                        "Budget charged estimate %d for task %s",
-                        _estimate,
-                        tid,
-                        extra={
-                            "event": "budget.charge",
-                            "task_id": tid,
-                            "estimate": _estimate,
-                            "consumed_tokens": state.budget_counters.consumed_tokens,
-                        },
-                    )
-
-                # Mark as running
-                ts = state.tasks.setdefault(tid, TaskRunState())
-                ts.status = "running"
-                # Only set started_at on the task's FIRST dispatch (E-3JTmVu FR-1 fix): the
-                # quota-exhaustion/429/budget-wait paths below reset ts.status to "pending" and
-                # loop back to this same line (`cursor -= 1; continue`) to redispatch the SAME
-                # task after a real sleep -- without this guard, that redispatch used to
-                # overwrite started_at, silently excluding the wait from
-                # `run_active_seconds`'s (ended_at - started_at) sum even though those waits are
-                # genuine engine-busy/blocked time on this task, not an operator-initiated stop.
-                # Safe: started_at has exactly one writer (here) and prepare_resume already
-                # hands a fresh TaskRunState() (started_at=None) to any task reset for `ao
-                # resume`, so a resumed dispatch still gets its own fresh started_at.
-                if ts.started_at is None:
-                    ts.started_at = datetime.now(UTC).isoformat()
-                self._runstate.save(state)
-                task_log.info("Task started", extra={"event": "task.start"})
-
-                # Resolve emit_tasks task manifest path (Area 2)
-                resolved_task_manifest_path: str | None = None
-                if task.emit_tasks and task.task_manifest_path:
-                    resolved_task_manifest_path = self._store.resolve(task.task_manifest_path)
-
-                # Resolve gate output path for loop gate tasks (Area 2)
-                gate_loop = self._loop_for_gate(workflow, tid)
-                resolved_gate_output_path: str | None = None
-                if gate_loop is not None:
-                    cur_iter = state.loop_iterations.get(gate_loop.id, 1)
-                    raw_gate_path = self._gate_path_for_iter(gate_loop, cur_iter)
-                    resolved_gate_output_path = self._store.resolve(raw_gate_path)
-
-                # Execute with retries
-                result = self._run_with_retries(
-                    task,
-                    workflow,
-                    agents,
-                    repo_paths,
-                    state,
-                    dynamic_input_paths,
-                    task_manifest_path=resolved_task_manifest_path,
-                    gate_output_path=resolved_gate_output_path,
-                )
-
-                # ---- Claude quota exhaustion route (distinct from provider 429) ----
-                if result.claude_quota_exhausted:
-                    # Reverse any estimate charged for this task before re-queuing.
-                    if self._budget_manager is not None:
-                        self._budget_manager.reverse_estimate(tid, state.budget_counters)
-
-                    now = self._clock().timestamp()
-                    if _quota_exhausted_since is None:
-                        _quota_exhausted_since = now
-
-                    elapsed = now - _quota_exhausted_since
-                    remaining = self._quota_max_wait_seconds - elapsed
-
-                    if remaining <= 0:
-                        run_log.error(
-                            "Claude quota exhaustion max_wait exceeded "
-                            "(%.0f s elapsed, limit=%.0f s); stopping run",
-                            elapsed,
-                            self._quota_max_wait_seconds,
-                            extra={
-                                "event": "quota.max_wait_exceeded",
-                                "task_id": tid,
-                                "elapsed_seconds": elapsed,
-                                "max_wait_seconds": self._quota_max_wait_seconds,
-                            },
-                        )
-                        # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
-                        # only -- the event/status/break above are unchanged (ADR-RC-003).
-                        record_trip(
-                            state=state,
-                            breaker_id=BUILTIN_QUOTA_MAX_WAIT,
-                            condition="quota_exhaustion_wait_exceeded",
-                            action="fail",
-                            detail={
-                                "task_id": tid,
-                                "elapsed_seconds": elapsed,
-                                "max_wait_seconds": self._quota_max_wait_seconds,
-                            },
-                            clock=self._clock,
-                            run_log=run_log,
-                        )
-                        state.status = "failed"
-                        failed = True
-                        self._runstate.save(state)
-                        break
-
-                    sleep_secs = min(self._quota_poll_seconds, remaining)
-                    run_log.info(
-                        "Claude quota exhausted on task %s; waiting %.0f s (elapsed=%.0f/max=%.0f)",
-                        tid,
-                        sleep_secs,
-                        elapsed,
-                        self._quota_max_wait_seconds,
-                        extra={
-                            "event": "quota.wait",
-                            "task_id": tid,
-                            "sleep_seconds": sleep_secs,
-                            "elapsed_seconds": elapsed,
-                            "max_wait_seconds": self._quota_max_wait_seconds,
-                        },
-                    )
-                    self._sleeper(sleep_secs)
-
+            # Wave/barrier scheduler (ADR-0007 D3): the entire engine core stays
+            # serialized on the main thread (RunState mutation, save, budget gate/
+            # charge/reconcile, breaker eval, router hook, injection, loop clone,
+            # quota/429/self-heal decisions) -- only `_run_with_retries` (a pure
+            # reader) runs on a worker. `pool.shutdown(wait=True)` is guaranteed by
+            # the `with` block on every exit path, including an exception raised by
+            # a worker (NFR-4 -- no thread leak).
+            with ThreadPoolExecutor(max_workers=self._max_parallel) as pool:
+                in_flight: dict[Future[TaskResult], str] = {}
+                while True:
                     if self._cancel_fn():
                         run_log.info(
-                            "Cancelled during quota wait",
+                            "Cancellation requested; halting",
                             extra={"event": "run.cancelled"},
                         )
                         state.status = "cancelled"
                         failed = True
-                        self._runstate.save(state)
+                        self._drain_remaining(in_flight, workflow, state, ctx)
                         break
 
-                    run_log.info(
-                        "Quota wait ended; re-running task %s",
-                        tid,
-                        extra={"event": "quota.resume", "task_id": tid},
-                    )
-                    # Reset task to pending so it re-executes cleanly.
-                    ts.status = "pending"
-                    cursor -= 1
-                    self._runstate.save(state)
-                    continue  # skip budget reconcile + normal outcome handling
+                    # ---- FILL: launch ready non-barrier tasks up to N ----
+                    ready = self._ready_ids(order, preds, state, done, set(in_flight.values()))
+                    if not ready and not in_flight:
+                        break  # nothing ready, nothing running -> run complete
 
-                # ---- Budget reconcile / 429 route (T-algywf, FR-4, FR-5, FR-8) ----
-                if self._budget_manager is not None and self._estimator is not None:
-                    if result.provider_rate_limited:
-                        # Provider 429: reverse the estimate (task will re-run) then stop or wait
-                        self._budget_manager.reverse_estimate(tid, state.budget_counters)
-                        _429_decision = self._budget_manager.on_provider_429(
-                            result.provider_retry_after_epoch, state.budget_counters
+                    for tid in ready:
+                        if len(in_flight) >= self._max_parallel:
+                            break
+                        barrier = self._is_barrier(workflow.task(tid), workflow)
+                        if barrier and in_flight:
+                            break  # barrier must run solo -- drain the wave first
+                        prep = self._prepare_and_maybe_dispatch(
+                            tid, workflow, graph, state, ctx, in_flight_nonempty=bool(in_flight)
                         )
-                        run_log.warning(
-                            "Provider 429 on task %s; retry_after=%.3f",
-                            tid,
-                            _429_decision.next_available_epoch or 0,
-                            extra={
-                                "event": "budget.provider_429",
-                                "task_id": tid,
-                                "next_available_epoch": _429_decision.next_available_epoch,
-                            },
-                        )
-                        _on_exhaustion_429 = (
-                            workflow.budget.on_exhaustion if workflow.budget else "stop"
-                        )
-                        if (
-                            _on_exhaustion_429 == "wait"
-                            and _429_decision.next_available_epoch is not None
-                        ):
-                            _sleep_secs_429 = max(
-                                0.0,
-                                _429_decision.next_available_epoch - self._clock().timestamp(),
-                            )
-                            run_log.info(
-                                "Waiting %.1f seconds for provider rate limit to reset",
-                                _sleep_secs_429,
-                                extra={
-                                    "event": "budget.wait",
-                                    "task_id": tid,
-                                    "sleep_seconds": _sleep_secs_429,
-                                },
-                            )
-                            self._sleeper(_sleep_secs_429)
-                            if self._cancel_fn():
-                                state.status = "cancelled"
-                                failed = True
-                                self._runstate.save(state)
-                                break
-                            run_log.info(
-                                "Provider rate limit wait ended; re-running task %s",
-                                tid,
-                                extra={"event": "budget.resume", "task_id": tid},
-                            )
-                            # Re-run the task: step cursor back and continue the while loop
-                            cursor -= 1
-                            self._runstate.save(state)
+                        if prep.signal == "skipped":
                             continue
-                        else:
-                            # stop (default) or no next_available — end the run
-                            run_log.warning(
-                                "Stopping run due to provider rate limit",
-                                extra={"event": "budget.exhausted", "task_id": tid},
-                            )
-                            # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
-                            # only -- the event/status/break above are unchanged (ADR-RC-003).
-                            # Shares BUILTIN_BUDGET_EXHAUSTED with the gate-path stop above
-                            # (LLD §8.1 groups both under one builtin id); the condition name
-                            # keeps the two sites distinguishable in tripped_breakers.
-                            record_trip(
-                                state=state,
-                                breaker_id=BUILTIN_BUDGET_EXHAUSTED,
-                                condition="provider_429",
-                                action="fail",
-                                detail={
-                                    "task_id": tid,
-                                    "next_available_epoch": _429_decision.next_available_epoch,
-                                },
-                                clock=self._clock,
-                                run_log=run_log,
-                            )
-                            state.status = "failed"
-                            failed = True
-                            self._runstate.save(state)
-                            break
-                    else:
-                        # Normal reconcile: replace estimate with actuals or keep estimate
-                        if result.actuals_available:
-                            _actual = self._sum_actuals(result)
-                        else:
-                            # Fallback (FR-5): keep the estimate already stored in
-                            # charged_estimate (charge_estimate stored it; reconcile will pop it)
-                            _actual = state.budget_counters.charged_estimate.get(tid, 0)
-                        self._budget_manager.reconcile(tid, _actual, state.budget_counters)
-                        task_log.info(
-                            "Budget reconciled task %s: actual=%d estimate_delta=%d",
-                            tid,
-                            _actual,
-                            _actual - _estimate,
-                            extra={
-                                "event": "budget.reconcile",
-                                "task_id": tid,
-                                "actual": _actual,
-                                "consumed_tokens": state.budget_counters.consumed_tokens,
-                            },
-                        )
-                        self._runstate.save(state)
-
-                ts.attempts = result.attempts
-                ts.ended_at = datetime.now(UTC).isoformat()
-                # Record captured output path (FR-5); engine never reads the files.
-                if result.output_artifact_path:
-                    ts.output_artifact_path = result.output_artifact_path
-                # Cumulative actual usage across every attempt (E-9h3m7k FR-2) — result's
-                # token/cost fields already sum all attempts (_run_with_retries).
-                if result.actuals_available:
-                    ts.cumulative_input_tokens = result.input_tokens or 0
-                    ts.cumulative_output_tokens = result.output_tokens or 0
-                    ts.cumulative_cache_creation_input_tokens = (
-                        result.cache_creation_input_tokens or 0
-                    )
-                    ts.cumulative_cache_read_input_tokens = result.cache_read_input_tokens or 0
-                    ts.cumulative_cost_usd = result.cost_usd or 0.0
-
-                if result.status == "succeeded":
-                    # Verify declared outputs were actually produced
-                    missing_outputs = [o for o in task.outputs if not self._store.exists(o)]
-                    if missing_outputs:
-                        task_log.error(
-                            "Task succeeded but declared outputs missing: %s",
-                            missing_outputs,
-                            extra={"event": "task.fail", "reason": "missing_outputs"},
-                        )
-                        ts.status = "failed"
-                        ts.outputs_present = False
-                    else:
-                        ts.status = "succeeded"
-                        ts.outputs_present = True
-                        # Read output manifest if declared; failure fails the task
-                        if task.output_manifest:
-                            try:
-                                ts.dynamic_outputs = read_manifest(
-                                    self._store, task.output_manifest
-                                )
-                                task_log.info(
-                                    "Loaded %d dynamic outputs from manifest",
-                                    len(ts.dynamic_outputs),
-                                    extra={"event": "task.manifest_loaded"},
-                                )
-                            except ValueError as exc:
-                                task_log.error(
-                                    "output_manifest read failed: %s",
-                                    exc,
-                                    extra={"event": "task.fail", "reason": "manifest_error"},
-                                )
-                                ts.status = "failed"
-                                ts.outputs_present = False
-                else:
-                    ts.status = result.status
-
-                if ts.status == "succeeded":
-                    task_log.info(
-                        "Task succeeded",
-                        extra={
-                            "event": "task.end",
-                            "status": "succeeded",
-                            "exit_code": result.exit_code,
-                        },
-                    )
-                    done.add(tid)
-                    _quota_exhausted_since = None  # successful task resets the quota-wait timer
-
-                    # ---- Router-success hook (T-m2h5t7, LLD §5.2) ----
-                    # Runs BEFORE the circuit-breaker evaluation below so
-                    # route_decisions/not_taken are settled before any breaker
-                    # inspects RunState.
-                    router = self._router_for_task(workflow, tid)
-                    if router is not None:
-                        if self._on_router_success(router, state, cones, run_log) == "failed":
+                        if prep.signal == "halt":
                             failed = True
                             break
-                else:
-                    task_log.warning(
-                        "Task ended with status %s",
-                        ts.status,
-                        extra={
-                            "event": "task.end",
-                            "status": ts.status,
-                            "exit_code": result.exit_code,
-                        },
-                    )
-
-                self._runstate.save(state)
-
-                # ---- Circuit-breaker evaluation (T-x8v4d3, LLD §6.1) ----
-                # Task boundary: after outcome handling + save, before the next dispatch.
-                # Runs regardless of ts.status (a failure is itself a boundary a breaker may
-                # react to, e.g. the future task_failures/consecutive_failures conditions).
-                # No-op today: workflow.circuit_breakers defaults to [] and no built-ins are
-                # wired yet (T-r3j9b6), so the loop body never executes for existing workflows.
-                breaker_action = evaluate_breakers(
-                    workflow, state, self._clock, self._store, run_log
-                )
-                if breaker_action is not None:
-                    # fail/stop/pause all land on resumable status="failed" for MVP (ADR-RC-004);
-                    # the distinguishing action is preserved in tripped_breakers[].action.
-                    state.status = "failed"
-                    failed = True
-                    self._runstate.save(state)
-                    break
-
-                if ts.status not in ("succeeded", "skipped"):
-                    state.status = "failed"
-                    failed = True
-                    break
-
-                # ---- Dynamic expansion hooks (Area 2) ----
-
-                # 2a: emit_tasks — read manifest, inject new tasks, rebuild DAG + order
-                if task.emit_tasks and ts.status == "succeeded":
-                    try:
-                        new_specs = read_task_manifest(self._store, task.task_manifest_path)  # type: ignore[arg-type]
-                    except ValueError as exc:
-                        task_log.error(
-                            "task_manifest_path read failed: %s",
-                            exc,
-                            extra={"event": "task.fail", "reason": "manifest_error"},
+                        if prep.signal == "blocked":
+                            # Budget gate said wait (T-VSfAUN, FR-6): stop filling
+                            # this wave. If siblings are in flight, `_prepare_and_
+                            # maybe_dispatch` already skipped sleeping (R3 -- would
+                            # deadlock on capacity they hold) so we fall straight
+                            # through to drain one of them below, which reconciles
+                            # actuals and may free the window before the next
+                            # wave re-gates. If nothing is in flight, it already
+                            # slept once inline before returning here, and the
+                            # `in_flight == {}` branch just below re-enters the
+                            # fill loop immediately to re-gate (byte-identical to
+                            # the old internal retry loop at N=1, where in_flight
+                            # is always empty at gate time).
+                            break
+                        assert prep.task is not None  # DISPATCH always carries its payload
+                        fut = pool.submit(
+                            self._run_with_retries,
+                            prep.task,
+                            workflow,
+                            agents,
+                            repo_paths,
+                            state,
+                            prep.dynamic_input_paths,
+                            task_manifest_path=prep.task_manifest_path,
+                            gate_output_path=prep.gate_output_path,
                         )
-                        ts.status = "failed"
-                        ts.outputs_present = False
-                        state.status = "failed"
-                        self._runstate.save(state)
-                        failed = True
+                        in_flight[fut] = tid
+                        if barrier:
+                            break  # launched solo -- go drain it before filling further
+
+                    if failed:
                         break
-                    try:
-                        self._inject(new_specs, workflow, state, origin="injected", route=ts.route)
-                    except InjectionError as exc:
-                        task_log.error(
-                            "Task injection failed: %s",
-                            exc,
-                            extra={"event": "task.fail", "reason": "injection_error"},
-                        )
-                        ts.status = "failed"
-                        state.status = "failed"
-                        self._runstate.save(state)
-                        failed = True
-                        break
-                    graph = build_dag(workflow)
-                    order, cursor = self._recompute_order(graph, done)
-                    task_log.info(
-                        "Injected %d tasks; order recomputed (%d remaining)",
-                        len(new_specs),
-                        len(order) - cursor,
-                        extra={"event": "task.injected"},
-                    )
-                    self._runstate.save(state)
+                    if not in_flight:
+                        continue  # everything blocked this pass -> re-evaluate
 
-                # 2b/2c: loop gate — check if a completed task is a gate task
-                loop = self._loop_for_gate(workflow, tid)
-                if loop is not None and ts.status == "succeeded":
-                    cur_iter = state.loop_iterations.get(loop.id, 1)
-                    if cur_iter < loop.max_iterations:
-                        # Determine gate path for the current iteration
-                        gate_path = self._gate_path_for_iter(loop, cur_iter)
-                        try:
-                            should_cont = read_gate(self._store, gate_path, loop.gate_field)
-                        except GateError as exc:
-                            task_log.error(
-                                "Gate read failed: %s",
-                                exc,
-                                extra={"event": "task.fail", "reason": "gate_error"},
-                            )
-                            ts.status = "failed"
-                            state.status = "failed"
-                            self._runstate.save(state)
-                            failed = True
-                            break
-                        if should_cont:
-                            next_iter = cur_iter + 1
-                            clones = self._clone_body(loop, next_iter, workflow)
-                            try:
-                                self._inject(clones, workflow, state, origin="loop", route=ts.route)
-                            except InjectionError as exc:
-                                task_log.error(
-                                    "Loop clone injection failed: %s",
-                                    exc,
-                                    extra={"event": "task.fail", "reason": "injection_error"},
-                                )
-                                ts.status = "failed"
-                                state.status = "failed"
-                                self._runstate.save(state)
-                                failed = True
-                                break
-                            state.loop_iterations[loop.id] = next_iter
-                            graph = build_dag(workflow)
-                            order, cursor = self._recompute_order(graph, done)
-                            run_log.info(
-                                "Loop %s starting iteration %d",
-                                loop.id,
-                                next_iter,
-                                extra={
-                                    "event": "loop.iterate",
-                                    "loop_id": loop.id,
-                                    "iteration": next_iter,
-                                },
-                            )
-                            self._runstate.save(state)
-                    # else: max_iterations reached or gate says stop — loop ends, proceed
+                    # ---- DRAIN: one completion at a time, settle on main thread ----
+                    done_fut = next(as_completed(list(in_flight)))
+                    settled_tid = in_flight.pop(done_fut)
+                    result = done_fut.result()
+                    settle = self._settle_completed_task(settled_tid, result, workflow, state, ctx)
+                    if settle.signal == "halt":
+                        failed = True
+                        self._drain_remaining(in_flight, workflow, state, ctx)
+                        break
+                    if settle.signal == "requeue":
+                        # Normalizes every requeue path uniformly to "pending":
+                        # the quota/self-heal paths already set this status inside
+                        # _settle_completed_task (verbatim), but the provider-429-wait
+                        # path never did (today's code re-visits the same cursor
+                        # position regardless of ts.status, so it never needed to) --
+                        # the ready-set model needs an explicit non-running status to
+                        # re-admit the task on a later wave, so this is applied
+                        # unconditionally regardless of which site requeued.
+                        state.tasks[settled_tid].status = "pending"
+                    elif settle.signal == "reshaped":
+                        assert settle.graph is not None and settle.order is not None
+                        graph = settle.graph
+                        order = settle.order
+                        preds = self._predecessors(graph)
+                    # settled: nothing extra
+                # pool.shutdown(wait=True) via `with`, on every exit path
 
             if not failed and state.status == "running":
                 state.status = "succeeded"
@@ -899,6 +461,978 @@ class Orchestrator:
 
         finally:
             detach_run_handler(state.run_id)
+
+    def _prepare_and_maybe_dispatch(
+        self,
+        tid: str,
+        workflow: WorkflowSpec,
+        graph: Graph,
+        state: RunState,
+        ctx: _RunContext,
+        in_flight_nonempty: bool = False,
+    ) -> DispatchPrep:
+        """Pre-dispatch checks + budget gate/charge for task *tid*.
+
+        Extracted VERBATIM from the old per-task cursor-loop body (pre-T-j8YLGd
+        ``engine.py`` lines ~279-577) -- same statements, same order, same
+        ``self._runstate.save(state)`` sites. The only changes are mechanical:
+        the loop-local ``done``/``membership``/``agents``/``repo_paths`` closures
+        become ``ctx.*`` lookups, each bare ``continue`` (skip) becomes
+        ``return DispatchPrep(signal="skipped")``, and each terminal
+        ``failed = True; break`` becomes ``return DispatchPrep(signal="halt")``
+        (immediately after the identical status-mutation + save statements the
+        original had before its break). The now-unreachable
+        ``if failed: save(); break`` that used to sit after the budget gate's
+        inner retry loop is dropped -- every failure path inside that loop now
+        returns directly, so nothing falls through to it any more.
+
+        Returns ``DispatchPrep(signal="dispatch", ...)`` with the exact payload
+        (task, dynamic_input_paths, resolved manifest/gate paths) the caller
+        needs to ``pool.submit(self._run_with_retries, ...)`` -- mirroring
+        today's direct inline call one-for-one, just moved to the call site.
+
+        ``in_flight_nonempty`` (T-VSfAUN, FR-6/ADR-0007 §7.1): True when the
+        caller already has at least one sibling task dispatched THIS wave (or
+        still draining from a prior one). The budget-wait branch below uses it
+        to choose between the two documented, non-deadlocking strategies:
+        return ``BLOCKED`` immediately (never sleep while capacity is held by
+        an in-flight sibling -- draining a completion may free the window; R3)
+        when True, or sleep inline exactly as the pre-epic serial engine did
+        when False (always the case at ``N=1``, since nothing can ever be in
+        flight at gate time then -- byte-identical by construction).
+        """
+        run_log = ctx.run_log
+
+        # Not-taken skip (LLD §5.3): a task on an unselected route never
+        # dispatches, never bills. Checked ahead of `done` (which stays
+        # succeeded/skipped-only, §5.6) so the two sets never conflate.
+        ts0 = state.tasks.get(tid)
+        if ts0 is not None and ts0.status == "not_taken":
+            return DispatchPrep(signal="skipped")
+
+        if tid in ctx.done:
+            return DispatchPrep(signal="skipped")
+
+        task = workflow.task(tid)
+        task_log = get_run_logger(state.run_id, tid)
+
+        # Resume / idempotency: skip completed tasks
+        if self._runstate.should_skip(task, state):
+            task_log.info(
+                "Skipping task (already succeeded with outputs present)",
+                extra={"event": "task.skip"},
+            )
+            # Mutate in-place to preserve persisted fields (e.g. dynamic_outputs)
+            ts = state.tasks.setdefault(tid, TaskRunState())
+            ts.status = "skipped"
+            ctx.done.add(tid)
+            self._runstate.save(state)
+            return DispatchPrep(signal="skipped")
+
+        # Join handling (LLD §5.4): a convergence task with a not_taken
+        # dependency propagates not_taken (join="all") or is skipped only
+        # when EVERY effective dependency is not_taken (join="any").
+        # Evaluated before dispatch so a not_taken task never reaches the
+        # budget gate or the executor.
+        if self._apply_join(task, state, ctx.membership, graph.producer_of) == "not_taken":
+            self._runstate.save(state)
+            return DispatchPrep(signal="skipped")
+
+        # Check required inputs exist. join="any" tasks relax this check
+        # (§5.4a): an input whose SOLE producer is not_taken never gets
+        # written and must not fail the task — apply_join already proved
+        # at least one other effective dependency is live.
+        if task.join == "any":
+            optional_inputs: set[str] = set()
+            for inp in task.inputs:
+                producer = graph.producer_of(inp)
+                if (
+                    producer is not None
+                    and state.tasks.get(producer) is not None
+                    and state.tasks[producer].status == "not_taken"
+                ):
+                    optional_inputs.add(inp)
+            missing = [
+                inp
+                for inp in task.inputs
+                if inp not in optional_inputs and not self._store.exists(inp)
+            ]
+        else:
+            missing = [inp for inp in task.inputs if not self._store.exists(inp)]
+        if missing:
+            task_log.error(
+                "Missing required inputs: %s",
+                missing,
+                extra={"event": "task.fail", "reason": "missing_inputs"},
+            )
+            state.tasks[tid] = TaskRunState(status="failed")
+            self._runstate.save(state)
+            state.status = "failed"
+            return DispatchPrep(signal="halt")
+
+        # Collect dynamic outputs from all upstream tasks declared in depends_on
+        dynamic_input_paths: list[str] = []
+        for dep_id in task.depends_on:
+            dep_ts = state.tasks.get(dep_id)
+            if dep_ts and dep_ts.dynamic_outputs:
+                dynamic_input_paths.extend(dep_ts.dynamic_outputs)
+
+        # _estimate is declared at task-block scope so the reconcile block can
+        # reference it regardless of whether the budget gate ran (T-algywf, NFR-3).
+        _estimate = 0
+
+        # ---- Budget gate (T-algywf, FR-1..FR-3, FR-4) ----
+        if self._budget_manager is not None and self._estimator is not None:
+            _est_agent = ctx.agents[task.agent]
+            _est_instr = self._store.resolve(task.instruction)
+            _est_inputs = [self._store.resolve(p) for p in task.inputs]
+            _est_cfg = (workflow.budget.estimator if workflow.budget else None) or EstimatorConfig()
+            _est_ctx = TaskContext(
+                run_id=state.run_id,
+                task_id=tid,
+                agent=_est_agent,
+                instruction_path=_est_instr,
+                input_paths=_est_inputs,
+                output_paths=[self._store.resolve(p) for p in task.outputs],
+                dynamic_input_paths=dynamic_input_paths,
+                repo_paths=ctx.repo_paths,
+                timeout_seconds=task.timeout_seconds or workflow.defaults.timeout_seconds,
+            )
+            _estimate = self._estimator.estimate(_est_ctx, _est_cfg)
+
+            # Resume double-charge guard (R2, NFR-3): if this task was charged but
+            # not yet reconciled in a previous run, reverse the stale estimate before
+            # re-gating.
+            if (
+                tid in state.budget_counters.charged_estimate
+                and tid not in state.budget_counters.reconciled_tasks
+            ):
+                self._budget_manager.reverse_estimate(tid, state.budget_counters)
+                run_log.info(
+                    "Reversed stale estimate for task %s on resume",
+                    tid,
+                    extra={"event": "budget.resume_reverse", "task_id": tid},
+                )
+
+            # Single gate check per call (T-VSfAUN, FR-6/ADR-0007 §7.1). Re-gating
+            # after a window-roll wait now happens by the CALLER re-invoking this
+            # method on a later wave (the `blocked` returns below) instead of an
+            # internal retry loop -- this is what lets in-flight siblings drain
+            # instead of the engine sleeping while THEY hold the capacity that
+            # might free the window (R3: never sleep on a rolled window while
+            # capacity is held by in-flight siblings -- that is the deadlock).
+            _decision = self._budget_manager.gate(tid, _estimate, state.budget_counters)
+            if not _decision.admit:
+                task_log.warning(
+                    "Budget gate blocked task %s: blocked_by=%s next_available=%s",
+                    tid,
+                    _decision.blocked_by,
+                    _decision.next_available_epoch,
+                    extra={
+                        "event": "budget.gate_block",
+                        "task_id": tid,
+                        "blocked_by": _decision.blocked_by,
+                        "next_available_epoch": _decision.next_available_epoch,
+                        "estimate": _estimate,
+                    },
+                )
+
+                # Unsatisfiable: estimate exceeds the entire budget/window — would wait
+                # forever; stop immediately.
+                if self._is_unsatisfiable(_estimate, _decision):
+                    run_log.error(
+                        "Task %s estimate %d exceeds %s limit — unsatisfiable; stopping",
+                        tid,
+                        _estimate,
+                        _decision.blocked_by,
+                        extra={
+                            "event": "budget.exhausted",
+                            "task_id": tid,
+                            "blocked_by": _decision.blocked_by,
+                        },
+                    )
+                    # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
+                    # only -- the event/status/break above are unchanged (ADR-RC-003).
+                    record_trip(
+                        state=state,
+                        breaker_id=BUILTIN_BUDGET_UNSATISFIABLE,
+                        condition="projected_cost_exceeds",
+                        action="fail",
+                        detail={
+                            "task_id": tid,
+                            "estimate": _estimate,
+                            "blocked_by": _decision.blocked_by,
+                        },
+                        clock=self._clock,
+                        run_log=run_log,
+                    )
+                    state.status = "failed"
+                    self._runstate.save(state)
+                    return DispatchPrep(signal="halt")
+
+                _on_exhaustion = workflow.budget.on_exhaustion if workflow.budget else "stop"
+
+                if _on_exhaustion == "stop":
+                    run_log.warning(
+                        "Budget exhausted; stopping run",
+                        extra={
+                            "event": "budget.exhausted",
+                            "task_id": tid,
+                            "blocked_by": _decision.blocked_by,
+                            "next_available_epoch": _decision.next_available_epoch,
+                        },
+                    )
+                    # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
+                    # only -- the event/status/break above are unchanged (ADR-RC-003).
+                    # Condition name reflects which limit blocked admission
+                    # (_decision.blocked_by), not a single hardcoded string.
+                    _budget_condition = (
+                        "total_tokens" if _decision.blocked_by == "total" else "rate_window"
+                    )
+                    record_trip(
+                        state=state,
+                        breaker_id=BUILTIN_BUDGET_EXHAUSTED,
+                        condition=_budget_condition,
+                        action="fail",
+                        detail={
+                            "task_id": tid,
+                            "blocked_by": _decision.blocked_by,
+                            "next_available_epoch": _decision.next_available_epoch,
+                        },
+                        clock=self._clock,
+                        run_log=run_log,
+                    )
+                    state.status = "failed"
+                    self._runstate.save(state)
+                    return DispatchPrep(signal="halt")
+                else:  # wait
+                    # A sibling holds capacity this wave: do NOT sleep here (that
+                    # would block the whole engine while the sibling could finish
+                    # and free the window itself). Stop filling; the run loop
+                    # drains a completion (reconciling actuals, possibly rolling
+                    # the window) and re-gates this task on a later wave.
+                    if in_flight_nonempty:
+                        return DispatchPrep(signal="blocked")
+
+                    # Nothing in flight (always true at N=1, since nothing can be
+                    # dispatched-but-undrained at gate time then): sleep inline
+                    # exactly as the pre-epic serial engine did, then return
+                    # BLOCKED so the caller re-gates via a fresh call. Same event
+                    # sequence (gate_block/wait/resume, repeated) as the old
+                    # internal retry loop -- nothing else can progress meanwhile.
+                    _next = _decision.next_available_epoch or (self._clock().timestamp() + 1)
+                    _sleep_secs = max(0.0, _next - self._clock().timestamp())
+                    run_log.info(
+                        "Budget wait: sleeping %.1f seconds until %.3f",
+                        _sleep_secs,
+                        _next,
+                        extra={
+                            "event": "budget.wait",
+                            "task_id": tid,
+                            "sleep_seconds": _sleep_secs,
+                            "next_available_epoch": _next,
+                        },
+                    )
+                    self._sleeper(_sleep_secs)
+                    if self._cancel_fn():
+                        run_log.info(
+                            "Cancelled during budget wait",
+                            extra={"event": "run.cancelled"},
+                        )
+                        state.status = "cancelled"
+                        self._runstate.save(state)
+                        return DispatchPrep(signal="halt")
+                    run_log.info(
+                        "Budget wait ended; re-gating task %s",
+                        tid,
+                        extra={"event": "budget.resume", "task_id": tid},
+                    )
+                    return DispatchPrep(signal="blocked")
+
+            # Charge the estimate (admitted)
+            self._budget_manager.charge_estimate(tid, _estimate, state.budget_counters)
+            self._runstate.save(state)
+            task_log.info(
+                "Budget charged estimate %d for task %s",
+                _estimate,
+                tid,
+                extra={
+                    "event": "budget.charge",
+                    "task_id": tid,
+                    "estimate": _estimate,
+                    "consumed_tokens": state.budget_counters.consumed_tokens,
+                },
+            )
+
+        # Mark as running
+        ts = state.tasks.setdefault(tid, TaskRunState())
+        ts.status = "running"
+        # Only set started_at on the task's FIRST dispatch (E-3JTmVu FR-1 fix): the
+        # quota-exhaustion/429/budget-wait paths (now in _settle_completed_task) return
+        # REQUEUE, which sends this task back through THIS method on a later wave to
+        # redispatch the SAME task after a real sleep -- without this guard, that
+        # redispatch used to overwrite started_at, silently excluding the wait from
+        # `run_active_seconds`'s (ended_at - started_at) sum even though those waits are
+        # genuine engine-busy/blocked time on this task, not an operator-initiated stop.
+        # Safe: started_at has exactly one writer (here) and prepare_resume already
+        # hands a fresh TaskRunState() (started_at=None) to any task reset for `ao
+        # resume`, so a resumed dispatch still gets its own fresh started_at.
+        if ts.started_at is None:
+            ts.started_at = datetime.now(UTC).isoformat()
+        self._runstate.save(state)
+        task_log.info("Task started", extra={"event": "task.start"})
+
+        # Resolve emit_tasks task manifest path (Area 2)
+        resolved_task_manifest_path: str | None = None
+        if task.emit_tasks and task.task_manifest_path:
+            resolved_task_manifest_path = self._store.resolve(task.task_manifest_path)
+
+        # Resolve gate output path for loop gate tasks (Area 2)
+        gate_loop = self._loop_for_gate(workflow, tid)
+        resolved_gate_output_path: str | None = None
+        if gate_loop is not None:
+            cur_iter = state.loop_iterations.get(gate_loop.id, 1)
+            raw_gate_path = self._gate_path_for_iter(gate_loop, cur_iter)
+            resolved_gate_output_path = self._store.resolve(raw_gate_path)
+
+        return DispatchPrep(
+            signal="dispatch",
+            task=task,
+            dynamic_input_paths=dynamic_input_paths,
+            task_manifest_path=resolved_task_manifest_path,
+            gate_output_path=resolved_gate_output_path,
+        )
+
+    def _settle_completed_task(
+        self,
+        tid: str,
+        result: TaskResult,
+        workflow: WorkflowSpec,
+        state: RunState,
+        ctx: _RunContext,
+    ) -> SettleResult:
+        """Post-dispatch settlement for task *tid*'s completed *result*.
+
+        Extracted VERBATIM from the old per-task cursor-loop body (pre-T-j8YLGd
+        ``engine.py`` lines ~579-1077) -- same statements, same order, same
+        ``self._runstate.save(state)`` sites; nothing inside was reordered or
+        "cleaned up" while moving it (T-j8YLGd's N=1 byte-identical gate depends
+        on this). Only the control-flow shell changed:
+        - each ``cursor -= 1; continue`` (quota / provider-429-wait / self-heal
+          requeue) -> ``return SettleResult(signal="requeue")``, keeping
+          whatever reverse-estimate / ``self._sleeper`` / ``ts.status =
+          "pending"`` / save statements that site already had (note: the
+          provider-429-wait site never set ``ts.status = "pending"`` today --
+          that asymmetry is preserved; ``run()`` normalizes status to
+          "pending" uniformly for every REQUEUE so the ready-set model can
+          re-admit the task on a later wave regardless of which site fired).
+        - each terminal ``failed = True; break`` -> ``return
+          SettleResult(signal="halt")``, keeping whatever ``state.status = ...``
+          / save statements that site already had before its break (some sites
+          saved before the status write, some after -- both orders preserved
+          exactly per site).
+        - the two DAG-rebuild sites (emit_tasks manifest injection, loop-gate
+          clone injection) -> the inject + ``build_dag`` still happen HERE
+          (so the log lines that read ``order``/``cursor`` keep their exact
+          values), then ``return SettleResult(signal="reshaped", graph=graph,
+          order=order)`` hands the already-computed graph/order back so
+          ``run()`` never has to rebuild the DAG a second time (which would
+          double-emit dag.py's inferred-edge warning into run.log).
+        - the loop-gate site drops the now-unused ``cursor`` half of
+          ``self._recompute_order(...)`` (that log line never reads it) and
+          calls ``graph.topological_order()`` directly for the identical
+          ``order`` value -- cursor is not part of the new interface anywhere.
+        - the normal fall-through end of the body -> ``return
+          SettleResult(signal="settled")``.
+
+        ``ctx.done``/``ctx.quota_exhausted_since``/``ctx.cones`` replace the old
+        inline loop's closed-over locals of the same name (mutations are
+        visible to ``run()``'s next wave because ``ctx`` is a single shared,
+        mutable object, not a copy).
+        """
+        task = workflow.task(tid)
+        task_log = get_run_logger(state.run_id, tid)
+        run_log = ctx.run_log
+        ts = state.tasks[tid]
+
+        # ---- Claude quota exhaustion route (distinct from provider 429) ----
+        if result.claude_quota_exhausted:
+            # Reverse any estimate charged for this task before re-queuing.
+            if self._budget_manager is not None:
+                self._budget_manager.reverse_estimate(tid, state.budget_counters)
+
+            now = self._clock().timestamp()
+            if ctx.quota_exhausted_since is None:
+                ctx.quota_exhausted_since = now
+
+            elapsed = now - ctx.quota_exhausted_since
+            remaining = self._quota_max_wait_seconds - elapsed
+
+            if remaining <= 0:
+                run_log.error(
+                    "Claude quota exhaustion max_wait exceeded "
+                    "(%.0f s elapsed, limit=%.0f s); stopping run",
+                    elapsed,
+                    self._quota_max_wait_seconds,
+                    extra={
+                        "event": "quota.max_wait_exceeded",
+                        "task_id": tid,
+                        "elapsed_seconds": elapsed,
+                        "max_wait_seconds": self._quota_max_wait_seconds,
+                    },
+                )
+                # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
+                # only -- the event/status/break above are unchanged (ADR-RC-003).
+                record_trip(
+                    state=state,
+                    breaker_id=BUILTIN_QUOTA_MAX_WAIT,
+                    condition="quota_exhaustion_wait_exceeded",
+                    action="fail",
+                    detail={
+                        "task_id": tid,
+                        "elapsed_seconds": elapsed,
+                        "max_wait_seconds": self._quota_max_wait_seconds,
+                    },
+                    clock=self._clock,
+                    run_log=run_log,
+                )
+                state.status = "failed"
+                self._runstate.save(state)
+                return SettleResult(signal="halt")
+
+            sleep_secs = min(self._quota_poll_seconds, remaining)
+            run_log.info(
+                "Claude quota exhausted on task %s; waiting %.0f s (elapsed=%.0f/max=%.0f)",
+                tid,
+                sleep_secs,
+                elapsed,
+                self._quota_max_wait_seconds,
+                extra={
+                    "event": "quota.wait",
+                    "task_id": tid,
+                    "sleep_seconds": sleep_secs,
+                    "elapsed_seconds": elapsed,
+                    "max_wait_seconds": self._quota_max_wait_seconds,
+                },
+            )
+            self._sleeper(sleep_secs)
+
+            if self._cancel_fn():
+                run_log.info(
+                    "Cancelled during quota wait",
+                    extra={"event": "run.cancelled"},
+                )
+                state.status = "cancelled"
+                self._runstate.save(state)
+                return SettleResult(signal="halt")
+
+            run_log.info(
+                "Quota wait ended; re-running task %s",
+                tid,
+                extra={"event": "quota.resume", "task_id": tid},
+            )
+            # Reset task to pending so it re-executes cleanly.
+            ts.status = "pending"
+            self._runstate.save(state)
+            return SettleResult(signal="requeue")  # skip budget reconcile + normal outcome handling
+
+        # ---- Budget reconcile / 429 route (T-algywf, FR-4, FR-5, FR-8) ----
+        if self._budget_manager is not None and self._estimator is not None:
+            if result.provider_rate_limited:
+                # Provider 429: reverse the estimate (task will re-run) then stop or wait
+                self._budget_manager.reverse_estimate(tid, state.budget_counters)
+                _429_decision = self._budget_manager.on_provider_429(
+                    result.provider_retry_after_epoch, state.budget_counters
+                )
+                run_log.warning(
+                    "Provider 429 on task %s; retry_after=%.3f",
+                    tid,
+                    _429_decision.next_available_epoch or 0,
+                    extra={
+                        "event": "budget.provider_429",
+                        "task_id": tid,
+                        "next_available_epoch": _429_decision.next_available_epoch,
+                    },
+                )
+                _on_exhaustion_429 = workflow.budget.on_exhaustion if workflow.budget else "stop"
+                if _on_exhaustion_429 == "wait" and _429_decision.next_available_epoch is not None:
+                    _sleep_secs_429 = max(
+                        0.0,
+                        _429_decision.next_available_epoch - self._clock().timestamp(),
+                    )
+                    run_log.info(
+                        "Waiting %.1f seconds for provider rate limit to reset",
+                        _sleep_secs_429,
+                        extra={
+                            "event": "budget.wait",
+                            "task_id": tid,
+                            "sleep_seconds": _sleep_secs_429,
+                        },
+                    )
+                    self._sleeper(_sleep_secs_429)
+                    if self._cancel_fn():
+                        state.status = "cancelled"
+                        self._runstate.save(state)
+                        return SettleResult(signal="halt")
+                    run_log.info(
+                        "Provider rate limit wait ended; re-running task %s",
+                        tid,
+                        extra={"event": "budget.resume", "task_id": tid},
+                    )
+                    # Re-run the task
+                    self._runstate.save(state)
+                    return SettleResult(signal="requeue")
+                else:
+                    # stop (default) or no next_available — end the run
+                    run_log.warning(
+                        "Stopping run due to provider rate limit",
+                        extra={"event": "budget.exhausted", "task_id": tid},
+                    )
+                    # Re-frame onto trip->record->act (T-r3j9b6, LLD §8.2): additive
+                    # only -- the event/status/break above are unchanged (ADR-RC-003).
+                    # Shares BUILTIN_BUDGET_EXHAUSTED with the gate-path stop above
+                    # (LLD §8.1 groups both under one builtin id); the condition name
+                    # keeps the two sites distinguishable in tripped_breakers.
+                    record_trip(
+                        state=state,
+                        breaker_id=BUILTIN_BUDGET_EXHAUSTED,
+                        condition="provider_429",
+                        action="fail",
+                        detail={
+                            "task_id": tid,
+                            "next_available_epoch": _429_decision.next_available_epoch,
+                        },
+                        clock=self._clock,
+                        run_log=run_log,
+                    )
+                    state.status = "failed"
+                    self._runstate.save(state)
+                    return SettleResult(signal="halt")
+            else:
+                # Normal reconcile: replace estimate with actuals or keep estimate
+                # (T-j8YLGd: the task-block-scoped `_estimate` local from the old
+                # inline loop no longer exists after the prepare/settle split --
+                # charged_estimate[tid] holds the identical value charge_estimate()
+                # stored pre-dispatch; read it here BEFORE reconcile() pops it so
+                # the log line below is unchanged.)
+                _estimate = state.budget_counters.charged_estimate.get(tid, 0)
+                if result.actuals_available:
+                    _actual = self._sum_actuals(result)
+                else:
+                    # Fallback (FR-5): keep the estimate already stored in
+                    # charged_estimate (charge_estimate stored it; reconcile will pop it)
+                    _actual = state.budget_counters.charged_estimate.get(tid, 0)
+                self._budget_manager.reconcile(tid, _actual, state.budget_counters)
+                task_log.info(
+                    "Budget reconciled task %s: actual=%d estimate_delta=%d",
+                    tid,
+                    _actual,
+                    _actual - _estimate,
+                    extra={
+                        "event": "budget.reconcile",
+                        "task_id": tid,
+                        "actual": _actual,
+                        "consumed_tokens": state.budget_counters.consumed_tokens,
+                    },
+                )
+                self._runstate.save(state)
+
+        # ---- Consult Point B: task-failure self-healing (E-XyfjuZ, opt-in) ----
+        # Design Decision D4: placed BEFORE ts.attempts/ts.ended_at are ever
+        # touched for this attempt -- mirrors exactly where the quota-exhaustion
+        # and provider-429 routes above already short-circuit on result.* fields,
+        # before any TaskRunState settle-time mutation. A successfully healed
+        # failure therefore never sets ts.status="failed", never reaches
+        # evaluate_breakers, and never touches ts.started_at (the E-3JTmVu
+        # single-writer guard is untouched -- this block only ever resets
+        # ts.status, exactly like the quota-exhaustion requeue above). Scoped
+        # strictly to result.status == "failed": timed_out/cancelled are a
+        # deliberate MVP boundary, never healed.
+        if self._self_heal_enabled and result.status == "failed":
+            _heal_verdict = self._consult_task_failure_heal(tid, result, state, run_log)
+            if _heal_verdict is not None and _heal_verdict.decision == "retry":
+                # Reviewer-flagged Critical fix: this failed cycle's REAL actuals
+                # (a failed attempt can still report actuals_available -- tokens/
+                # cost were genuinely spent before the error) would otherwise be
+                # silently discarded by the `continue` below, since this cycle
+                # never reaches the settle-time cumulative block further down.
+                # Accumulate now (mirrors _run_with_retries' own cum_* pattern one
+                # level up, across heal cycles instead of within one call) --
+                # `+=` because a later heal cycle (if max_heal_retries_per_task > 1)
+                # must not clobber an earlier one's already-accumulated actuals.
+                # This is the same bug class E-9h3m7k fixed for retries WITHIN one
+                # _run_with_retries call; self-heal's cross-call redispatch needed
+                # the identical treatment, caught by a late-gate reviewer pass.
+                if result.actuals_available:
+                    ts.cumulative_input_tokens += result.input_tokens or 0
+                    ts.cumulative_output_tokens += result.output_tokens or 0
+                    ts.cumulative_cache_creation_input_tokens += (
+                        result.cache_creation_input_tokens or 0
+                    )
+                    ts.cumulative_cache_read_input_tokens += result.cache_read_input_tokens or 0
+                    ts.cumulative_cost_usd += result.cost_usd or 0.0
+                self._sleeper(_heal_verdict.wait_seconds)
+                if self._cancel_fn():
+                    run_log.info(
+                        "Cancelled during self-heal wait",
+                        extra={"event": "run.cancelled"},
+                    )
+                    state.status = "cancelled"
+                    self._runstate.save(state)
+                    return SettleResult(signal="halt")
+                ts.status = "pending"
+                run_log.info(
+                    "Self-heal retry: re-running task %s after %.1f s",
+                    tid,
+                    _heal_verdict.wait_seconds,
+                    extra={
+                        "event": "monitor.heal_retry",
+                        "task_id": tid,
+                        "wait_seconds": _heal_verdict.wait_seconds,
+                    },
+                )
+                self._runstate.save(state)
+                return SettleResult(signal="requeue")
+            # else: bound/cap exhausted (_heal_verdict is None) or an explicit
+            # accept_failure verdict -- fall through to the existing, unmodified
+            # settle/outcome handling below exactly as if self-heal were disabled.
+
+        ts.attempts = result.attempts
+        ts.ended_at = datetime.now(UTC).isoformat()
+        # Record captured output path (FR-5); engine never reads the files.
+        if result.output_artifact_path:
+            ts.output_artifact_path = result.output_artifact_path
+        # Cumulative actual usage across every attempt (E-9h3m7k FR-2) — result's
+        # token/cost fields already sum all attempts (_run_with_retries). `+=` (not
+        # `=`) so a prior, healed-and-discarded cycle's already-accumulated actuals
+        # (added above, in the Consult Point B retry branch) are preserved rather
+        # than clobbered -- safe for every other caller too: this line runs at most
+        # once per dispatch outside of self-heal, and `prepare_resume` hands any
+        # re-dispatched task a fresh `TaskRunState()` (cumulative_* defaulted to 0),
+        # so `+=` is byte-identical to `=` whenever nothing was accumulated first.
+        if result.actuals_available:
+            ts.cumulative_input_tokens += result.input_tokens or 0
+            ts.cumulative_output_tokens += result.output_tokens or 0
+            ts.cumulative_cache_creation_input_tokens += result.cache_creation_input_tokens or 0
+            ts.cumulative_cache_read_input_tokens += result.cache_read_input_tokens or 0
+            ts.cumulative_cost_usd += result.cost_usd or 0.0
+
+        if result.status == "succeeded":
+            # Verify declared outputs were actually produced
+            missing_outputs = [o for o in task.outputs if not self._store.exists(o)]
+            if missing_outputs:
+                task_log.error(
+                    "Task succeeded but declared outputs missing: %s",
+                    missing_outputs,
+                    extra={"event": "task.fail", "reason": "missing_outputs"},
+                )
+                ts.status = "failed"
+                ts.outputs_present = False
+            else:
+                ts.status = "succeeded"
+                ts.outputs_present = True
+                # Read output manifest if declared; failure fails the task
+                if task.output_manifest:
+                    try:
+                        ts.dynamic_outputs = read_manifest(self._store, task.output_manifest)
+                        task_log.info(
+                            "Loaded %d dynamic outputs from manifest",
+                            len(ts.dynamic_outputs),
+                            extra={"event": "task.manifest_loaded"},
+                        )
+                    except ValueError as exc:
+                        task_log.error(
+                            "output_manifest read failed: %s",
+                            exc,
+                            extra={"event": "task.fail", "reason": "manifest_error"},
+                        )
+                        ts.status = "failed"
+                        ts.outputs_present = False
+        else:
+            ts.status = result.status
+
+        if ts.status == "succeeded":
+            task_log.info(
+                "Task succeeded",
+                extra={
+                    "event": "task.end",
+                    "status": "succeeded",
+                    "exit_code": result.exit_code,
+                },
+            )
+            ctx.done.add(tid)
+            ctx.quota_exhausted_since = None  # successful task resets the quota-wait timer
+
+            # ---- Router-success hook (T-m2h5t7, LLD §5.2) ----
+            # Runs BEFORE the circuit-breaker evaluation below so
+            # route_decisions/not_taken are settled before any breaker
+            # inspects RunState.
+            router = self._router_for_task(workflow, tid)
+            if router is not None:
+                if self._on_router_success(router, state, ctx.cones, run_log) == "failed":
+                    return SettleResult(signal="halt")
+        else:
+            task_log.warning(
+                "Task ended with status %s",
+                ts.status,
+                extra={
+                    "event": "task.end",
+                    "status": ts.status,
+                    "exit_code": result.exit_code,
+                },
+            )
+
+        self._runstate.save(state)
+
+        # ---- Circuit-breaker evaluation (T-x8v4d3, LLD §6.1) ----
+        # Task boundary: after outcome handling + save, before the next dispatch.
+        # Runs regardless of ts.status (a failure is itself a boundary a breaker may
+        # react to, e.g. the future task_failures/consecutive_failures conditions).
+        # No-op today: workflow.circuit_breakers defaults to [] and no built-ins are
+        # wired yet (T-r3j9b6), so the loop body never executes for existing workflows.
+        #
+        # Consult Point A (E-XyfjuZ, epic doc Design Decisions D1-D3):
+        # evaluate_breakers() itself is UNCHANGED here (D2) -- its byte-identical no-op
+        # guarantee (no clock() call when there are no specs) and every existing test
+        # that calls it directly are preserved. "Which specs newly tripped this
+        # boundary" is instead derived AT THE CALL SITE by diffing state.tripped_breakers
+        # ids before/after this one call. Built-in re-framed stops (budget/quota/429)
+        # can never appear in that diff: each already breaks the run loop via its own
+        # record_trip() call earlier in this same iteration, well before
+        # evaluate_breakers is ever reached (D1) -- so they are unconditionally hard by
+        # construction, never consultable, regardless of any workflow.circuit_breakers
+        # declaration.
+        _before_tripped_ids = {tb.id for tb in state.tripped_breakers}
+        breaker_action = evaluate_breakers(workflow, state, self._clock, self._store, run_log)
+        if breaker_action is not None:
+            _newly_tripped_ids = {
+                tb.id for tb in state.tripped_breakers if tb.id not in _before_tripped_ids
+            }
+            # Filtering workflow.circuit_breakers (rather than iterating the id set
+            # directly) preserves DECLARED order (D3's "consult in declared order").
+            _newly_tripped_specs = [
+                b for b in workflow.circuit_breakers if b.id in _newly_tripped_ids
+            ]
+            _consultable = (
+                len(_newly_tripped_specs) == len(_newly_tripped_ids)
+                and bool(_newly_tripped_specs)
+                and all(b.mode == "recommend" for b in _newly_tripped_specs)
+            )
+            # No self._runstate.save() happens between evaluate_breakers() recording
+            # the trip(s) above and the consult resolving below (early-gate architect
+            # finding) -- a half-consulted state must never hit disk.
+            _consult_outcome = (
+                self._consult_breaker_trips(_newly_tripped_specs, state, run_log)
+                if _consultable
+                else "halt"
+            )
+            if _consult_outcome == "halt":
+                # fail/stop/pause all land on resumable status="failed" for MVP
+                # (ADR-RC-004); the distinguishing action is preserved in
+                # tripped_breakers[].action.
+                state.status = "failed"
+                self._runstate.save(state)
+                return SettleResult(signal="halt")
+            # _consult_outcome == "extend": _consult_breaker_trips already applied
+            # apply_breaker_extension (bumping breaker_overrides + un-latching the
+            # tripped record(s)) for every newly-tripped breaker -- fall through to the
+            # rest of the loop body exactly as if breaker_action had been None (today's
+            # no-trip path).
+            self._runstate.save(state)
+
+        if ts.status not in ("succeeded", "skipped"):
+            state.status = "failed"
+            return SettleResult(signal="halt")
+
+        # ---- Dynamic expansion hooks (Area 2) ----
+
+        # 2a: emit_tasks — read manifest, inject new tasks, rebuild DAG + order
+        if task.emit_tasks and ts.status == "succeeded":
+            try:
+                new_specs = read_task_manifest(self._store, task.task_manifest_path)  # type: ignore[arg-type]
+            except ValueError as exc:
+                task_log.error(
+                    "task_manifest_path read failed: %s",
+                    exc,
+                    extra={"event": "task.fail", "reason": "manifest_error"},
+                )
+                ts.status = "failed"
+                ts.outputs_present = False
+                state.status = "failed"
+                self._runstate.save(state)
+                return SettleResult(signal="halt")
+            try:
+                self._inject(new_specs, workflow, state, origin="injected", route=ts.route)
+            except InjectionError as exc:
+                task_log.error(
+                    "Task injection failed: %s",
+                    exc,
+                    extra={"event": "task.fail", "reason": "injection_error"},
+                )
+                ts.status = "failed"
+                state.status = "failed"
+                self._runstate.save(state)
+                return SettleResult(signal="halt")
+            graph = build_dag(workflow)
+            order, cursor = self._recompute_order(graph, ctx.done)
+            task_log.info(
+                "Injected %d tasks; order recomputed (%d remaining)",
+                len(new_specs),
+                len(order) - cursor,
+                extra={"event": "task.injected"},
+            )
+            self._runstate.save(state)
+            return SettleResult(signal="reshaped", graph=graph, order=order)
+
+        # 2b/2c: loop gate — check if a completed task is a gate task
+        loop = self._loop_for_gate(workflow, tid)
+        if loop is not None and ts.status == "succeeded":
+            cur_iter = state.loop_iterations.get(loop.id, 1)
+            if cur_iter < loop.max_iterations:
+                # Determine gate path for the current iteration
+                gate_path = self._gate_path_for_iter(loop, cur_iter)
+                try:
+                    should_cont = read_gate(self._store, gate_path, loop.gate_field)
+                except GateError as exc:
+                    task_log.error(
+                        "Gate read failed: %s",
+                        exc,
+                        extra={"event": "task.fail", "reason": "gate_error"},
+                    )
+                    ts.status = "failed"
+                    state.status = "failed"
+                    self._runstate.save(state)
+                    return SettleResult(signal="halt")
+                if should_cont:
+                    next_iter = cur_iter + 1
+                    clones = self._clone_body(loop, next_iter, workflow)
+                    try:
+                        self._inject(clones, workflow, state, origin="loop", route=ts.route)
+                    except InjectionError as exc:
+                        task_log.error(
+                            "Loop clone injection failed: %s",
+                            exc,
+                            extra={"event": "task.fail", "reason": "injection_error"},
+                        )
+                        ts.status = "failed"
+                        state.status = "failed"
+                        self._runstate.save(state)
+                        return SettleResult(signal="halt")
+                    state.loop_iterations[loop.id] = next_iter
+                    # T-j8YLGd: order's cursor is dead in the new ready-set model (only
+                    # `order` is handed back to the caller) -- call `topological_order()`
+                    # directly rather than `_recompute_order` to avoid computing a value
+                    # nothing consumes; identical `order` result either way.
+                    graph = build_dag(workflow)
+                    order = graph.topological_order()
+                    run_log.info(
+                        "Loop %s starting iteration %d",
+                        loop.id,
+                        next_iter,
+                        extra={
+                            "event": "loop.iterate",
+                            "loop_id": loop.id,
+                            "iteration": next_iter,
+                        },
+                    )
+                    self._runstate.save(state)
+                    return SettleResult(signal="reshaped", graph=graph, order=order)
+            # else: max_iterations reached or gate says stop — loop ends, proceed
+
+        return SettleResult(signal="settled")
+
+    def _drain_remaining(
+        self,
+        in_flight: dict[Future[TaskResult], str],
+        workflow: WorkflowSpec,
+        state: RunState,
+        ctx: _RunContext,
+    ) -> None:
+        """Wait out every still-running worker after a HALT/cancel decision.
+
+        Settles each drained result on the main thread (ADR-0007 D7: drain, don't
+        kill) so its artifacts + ``RunState`` mutations are persisted exactly as
+        they would be on a normal wave -- the run stays resumable. Any further
+        signal a drained settle returns (HALT/REQUEUE/RESHAPED) is intentionally
+        NOT acted on: the run is already stopping, so re-deriving a fresh
+        graph/order or flipping a task back to "pending" would be immediately
+        discarded work. ``pool.shutdown(wait=True)`` (the ``with`` block in
+        ``run()``) is the structural backstop against a thread leak (NFR-4)
+        regardless of what happens in here -- draining exists so completed work
+        is not silently thrown away, not to guarantee the shutdown itself.
+        """
+        for fut in as_completed(list(in_flight)):
+            tid = in_flight.pop(fut)
+            result = fut.result()
+            self._settle_completed_task(tid, result, workflow, state, ctx)
+
+    # -------------------------------------------------------------------------
+    # Wave/barrier scheduler helpers (T-j8YLGd, ADR-0007 D3/D4/D6)
+    # -------------------------------------------------------------------------
+
+    def _is_barrier(self, task: TaskSpec, workflow: WorkflowSpec) -> bool:
+        """Return True when *task* must run alone (ADR-0007 D4): nothing else in
+        flight when it starts, and nothing new launched until it fully settles.
+
+        A task is a barrier iff it reshapes the DAG (``emit_tasks``) or mutates
+        route/loop bookkeeping the ready-set and budget gate read: a loop-gate
+        task id (including ``__iter`` clones, via ``_loop_for_gate`` -- reused
+        rather than hand-rolling id matching) or a router task id (via
+        ``_router_for_task``).
+        """
+        if task.emit_tasks:
+            return True
+        if self._loop_for_gate(workflow, task.id) is not None:
+            return True
+        if self._router_for_task(workflow, task.id) is not None:
+            return True
+        return False
+
+    def _predecessors(self, graph: Graph) -> dict[str, set[str]]:
+        """Invert *graph*'s adjacency map (successors) into a predecessor map.
+
+        Computed once per DAG build (initial + every RESHAPED reshape), reused
+        by every ``_ready_ids`` call in between.
+        """
+        preds: dict[str, set[str]] = {n: set() for n in graph.adjacency()}
+        for node, succs in graph.adjacency().items():
+            for s in succs:
+                preds[s].add(node)
+        return preds
+
+    def _ready_ids(
+        self,
+        order: list[str],
+        preds: dict[str, set[str]],
+        state: RunState,
+        done: set[str],
+        in_flight_ids: set[str],
+    ) -> list[str]:
+        """Return the wave's candidate ids: tasks in *order* (deterministic
+        sorted-Kahn tie-break, ADR-0007 D6) whose every predecessor has settled
+        (succeeded/skipped/not_taken), that are not already done or in flight,
+        and whose own status is not already succeeded/skipped/not_taken/running.
+
+        A ``not_taken`` predecessor counts as settled (join resolution --
+        propagate vs. skip -- is decided downstream in
+        ``_prepare_and_maybe_dispatch`` via ``_apply_join``, unchanged from
+        today).
+        """
+        settled = ("succeeded", "skipped", "not_taken")
+        excluded = ("succeeded", "skipped", "not_taken", "running")
+        ready: list[str] = []
+        for tid in order:
+            if tid in done or tid in in_flight_ids:
+                continue
+            ts = state.tasks.get(tid)
+            if ts is not None and ts.status in excluded:
+                continue
+            if all(
+                state.tasks.get(p) is not None and state.tasks[p].status in settled
+                for p in preds.get(tid, set())
+            ):
+                ready.append(tid)
+        return ready
 
     # -------------------------------------------------------------------------
     # Budget helpers (T-algywf)
@@ -1094,6 +1628,247 @@ class Orchestrator:
             },
         )
         self._runstate.save(state)
+
+    # -------------------------------------------------------------------------
+    # Monitoring / self-healing helpers (E-XyfjuZ, Consult Point A)
+    # -------------------------------------------------------------------------
+
+    def _consult_breaker_trips(
+        self,
+        newly_tripped_specs: list[CircuitBreakerSpec],
+        state: RunState,
+        run_log: logging.LoggerAdapter,
+    ) -> Literal["extend", "halt"]:
+        """Consult Point A (epic doc Design Decisions D1-D3): per newly-tripped
+        recommend-mode breaker, in DECLARED order, ask ``self._monitor`` whether to
+        extend or halt.
+
+        All-or-nothing (D3): if EVERY consulted breaker resolves to ``"extend"``, every
+        extension is applied (via the existing ``apply_breaker_extension``, un-latching
+        each breaker) and ``"extend"`` is returned so the caller lets the run continue. If
+        ANY breaker resolves to ``"halt"`` — an explicit monitor answer, or a
+        bound/cap already exhausted — NO extension is applied at all and ``"halt"`` is
+        returned (today's halt path). The caller is responsible for persisting ``state``
+        — this method mutates it in-memory only, mirroring
+        ``evaluate_breakers``/``apply_breaker_extension``'s own persistence convention.
+
+        Defense-in-depth: every *newly_tripped_specs* entry must be ``mode="recommend"``
+        (the caller already filters for this before calling). Raised (not an ``assert``,
+        which ``python -O`` strips) because built-in hard stops must NEVER reach this
+        method by construction (D1) — this is enforcement in code, not convention.
+
+        Reviewer-flagged edge case: an EMPTY *newly_tripped_specs* would make the later
+        ``all(...)`` vacuously ``True`` (Python's `all([])` is `True`), which would
+        wrongly return ``"extend"``. The current call site never invokes this with an
+        empty list (it only calls in when `_newly_tripped_specs` is non-empty), but this
+        guard makes that precondition explicit and safe for any future caller.
+        """
+        if not newly_tripped_specs:
+            return "halt"
+        if any(b.mode != "recommend" for b in newly_tripped_specs):
+            raise AssertionError(
+                "_consult_breaker_trips must only ever be called with recommend-mode breakers"
+            )
+
+        decisions: list[tuple[CircuitBreakerSpec, BreakerVerdict | None]] = []
+        for spec in newly_tripped_specs:
+            prior = count_monitor_breaker_extensions(state, spec.id)
+            if prior >= self._max_extensions_per_breaker:
+                # Bound exhausted -> forced halt contribution WITHOUT consulting at all
+                # (never even calls the monitor, per the epic brief's "bound exhausted ->
+                # halt regardless of monitor answer").
+                decisions.append((spec, None))
+                continue
+            if count_monitor_calls_made(state) >= self._max_monitor_calls_per_run:
+                run_log.warning(
+                    "monitor call cap reached; falling back to the safe default (halt)",
+                    extra={
+                        "event": "monitor.cap_exceeded",
+                        "consult_point": "breaker_trip",
+                        "subject_id": spec.id,
+                        "max_monitor_calls_per_run": self._max_monitor_calls_per_run,
+                    },
+                )
+                decisions.append((spec, None))
+                continue
+
+            trip_record = next((tb for tb in state.tripped_breakers if tb.id == spec.id), None)
+            trip = BreakerTripSummary(
+                breaker_id=spec.id,
+                condition=spec.condition,
+                action=spec.action,
+                detail=trip_record.detail if trip_record is not None else {},
+                prior_extensions=prior,
+            )
+            run_log.info(
+                "monitor.consult",
+                extra={
+                    "event": "monitor.consult",
+                    "consult_point": "breaker_trip",
+                    "subject_id": spec.id,
+                    "monitor": self._monitor.name,
+                },
+            )
+            try:
+                verdict = self._monitor.decide_breaker_trip(trip, run_id=state.run_id)
+            except Exception as exc:
+                # NFR-2: a monitor bug must never make the run less safe than today --
+                # fall back to the safe default rather than propagating.
+                run_log.error(
+                    "Monitor.decide_breaker_trip raised; falling back to the safe default: %s",
+                    exc,
+                    extra={
+                        "event": "monitor.decision",
+                        "consult_point": "breaker_trip",
+                        "subject_id": spec.id,
+                        "monitor": self._monitor.name,
+                        "decision": SAFE_DEFAULT_BREAKER_VERDICT.decision,
+                    },
+                )
+                state.monitor_decisions.append(
+                    MonitorDecisionRecord(
+                        at=self._clock().isoformat(),
+                        consult_point="breaker_trip",
+                        subject_id=spec.id,
+                        decision=SAFE_DEFAULT_BREAKER_VERDICT.decision,
+                        monitor=self._monitor.name,
+                        detail={"reason": f"monitor raised: {exc}"},
+                    )
+                )
+                decisions.append((spec, SAFE_DEFAULT_BREAKER_VERDICT))
+                continue
+
+            state.monitor_decisions.append(
+                MonitorDecisionRecord(
+                    at=self._clock().isoformat(),
+                    consult_point="breaker_trip",
+                    subject_id=spec.id,
+                    decision=verdict.decision,
+                    monitor=self._monitor.name,
+                    detail={
+                        "extend_by_seconds": verdict.extend_by_seconds,
+                        "reason": verdict.reason,
+                    },
+                )
+            )
+            run_log.info(
+                "monitor.decision",
+                extra={
+                    "event": "monitor.decision",
+                    "consult_point": "breaker_trip",
+                    "subject_id": spec.id,
+                    "monitor": self._monitor.name,
+                    "decision": verdict.decision,
+                },
+            )
+            decisions.append((spec, verdict))
+
+        if all(v is not None and v.decision == "extend" for _, v in decisions):
+            for spec, resolved_verdict in decisions:
+                assert resolved_verdict is not None  # narrowed by the all(...) check above
+                apply_breaker_extension(
+                    state,
+                    spec,
+                    extend_by_seconds=resolved_verdict.extend_by_seconds,
+                    extend_by_same=resolved_verdict.extend_by_seconds is None,
+                    clock=self._clock,
+                    run_log=run_log,
+                )
+            return "extend"
+        return "halt"
+
+    def _consult_task_failure_heal(
+        self,
+        tid: str,
+        result: TaskResult,
+        state: RunState,
+        run_log: logging.LoggerAdapter,
+    ) -> HealVerdict | None:
+        """Consult Point B (epic doc Design Decision D4): ask ``self._monitor`` whether a
+        task that just settled ``"failed"`` (after exhausting its ``RetryPolicy``) should
+        get one bounded extra retry.
+
+        Returns ``None`` when the bound (``max_heal_retries_per_task``) or the shared cap
+        (``max_monitor_calls_per_run``) is already exhausted — the caller treats ``None``
+        identically to an explicit ``"accept_failure"`` verdict: fall through to the
+        existing, unmodified failure-handling code without even asking the monitor.
+        Returns the Monitor's actual verdict otherwise (which may itself be
+        ``"accept_failure"``).
+        """
+        prior = count_monitor_heal_retries(state, tid)
+        if prior >= self._max_heal_retries_per_task:
+            return None  # bound exhausted -> accept the failure, never even consult
+        if count_monitor_calls_made(state) >= self._max_monitor_calls_per_run:
+            run_log.warning(
+                "monitor call cap reached; falling back to the safe default (accept_failure)",
+                extra={
+                    "event": "monitor.cap_exceeded",
+                    "consult_point": "task_failure",
+                    "subject_id": tid,
+                    "max_monitor_calls_per_run": self._max_monitor_calls_per_run,
+                },
+            )
+            return None
+
+        summary = build_task_failure_summary(result, prior_heal_retries=prior)
+        run_log.info(
+            "monitor.consult",
+            extra={
+                "event": "monitor.consult",
+                "consult_point": "task_failure",
+                "subject_id": tid,
+                "monitor": self._monitor.name,
+            },
+        )
+        try:
+            verdict = self._monitor.decide_task_failure(summary, run_id=state.run_id)
+        except Exception as exc:
+            # NFR-2: a monitor bug must never make the run less safe than today -- fall
+            # back to the safe default rather than propagating.
+            run_log.error(
+                "Monitor.decide_task_failure raised; falling back to the safe default: %s",
+                exc,
+                extra={
+                    "event": "monitor.decision",
+                    "consult_point": "task_failure",
+                    "subject_id": tid,
+                    "monitor": self._monitor.name,
+                    "decision": SAFE_DEFAULT_HEAL_VERDICT.decision,
+                },
+            )
+            state.monitor_decisions.append(
+                MonitorDecisionRecord(
+                    at=self._clock().isoformat(),
+                    consult_point="task_failure",
+                    subject_id=tid,
+                    decision=SAFE_DEFAULT_HEAL_VERDICT.decision,
+                    monitor=self._monitor.name,
+                    detail={"reason": f"monitor raised: {exc}"},
+                )
+            )
+            return SAFE_DEFAULT_HEAL_VERDICT
+
+        state.monitor_decisions.append(
+            MonitorDecisionRecord(
+                at=self._clock().isoformat(),
+                consult_point="task_failure",
+                subject_id=tid,
+                decision=verdict.decision,
+                monitor=self._monitor.name,
+                detail={"wait_seconds": verdict.wait_seconds, "reason": verdict.reason},
+            )
+        )
+        run_log.info(
+            "monitor.decision",
+            extra={
+                "event": "monitor.decision",
+                "consult_point": "task_failure",
+                "subject_id": tid,
+                "monitor": self._monitor.name,
+                "decision": verdict.decision,
+            },
+        )
+        return verdict
 
     def _run_with_retries(
         self,

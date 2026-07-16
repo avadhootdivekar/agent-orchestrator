@@ -39,6 +39,20 @@
         "effort": {
           "enum": ["low", "medium", "high"],
           "description": "Effort level mapped to --max-turns (low=15, medium=30, high=60)."
+        },
+        "max_turns": {
+          "type": "integer",
+          "description": "Explicit --max-turns for this agent; overrides the effort-derived value when set."
+        },
+        "working_dir": {
+          "type": "string",
+          "description": "Directory the agent process runs in, resolved against and path-guarded to the workspace root. Omit to use the workspace root."
+        },
+        "disallowed_tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Opt-in tools to disable for this agent (claude_cli), passed as --disallowedTools. Default [] = allow all (web/TodoWrite/subagents stay on). E.g. [\"BashOutput\",\"KillShell\",\"KillBash\"] to silence the headless -p background-shell trap."
         }
       }
     }

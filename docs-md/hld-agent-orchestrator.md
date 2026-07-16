@@ -4,7 +4,7 @@
 - Decision: [`ADR-0001`](adr/ADR-0001-orchestration-approach.md)
 - LLD (implementable detail): [`lld-agent-orchestrator.md`](lld-agent-orchestrator.md)
 - Date: 2026-06-16
-- Feature design docs: [`logging-dynamic-workflows-hld.md`](logging-dynamic-workflows-hld.md), [`token-budgeting-hld.md`](token-budgeting-hld.md), [`multi-endpoint-circuit-breaker-hld.md`](multi-endpoint-circuit-breaker-hld.md) *(draft)*, [`granular-task-decomposition-hld.md`](granular-task-decomposition-hld.md) *(draft)*
+- Feature design docs: [`logging-dynamic-workflows-hld.md`](logging-dynamic-workflows-hld.md), [`token-budgeting-hld.md`](token-budgeting-hld.md), [`multi-endpoint-circuit-breaker-hld.md`](multi-endpoint-circuit-breaker-hld.md) *(draft)*, [`granular-task-decomposition-hld.md`](granular-task-decomposition-hld.md) *(draft)*, [`lld-agent-monitoring-self-healing.md`](lld-agent-monitoring-self-healing.md) *(agent-based monitoring & self-healing, guardrail modes)*, [`parallel-execution-hld.md`](parallel-execution-hld.md) *(opt-in parallel task execution — bounded thread pool, serialized core; [ADR-0007](adr/ADR-0007-parallel-task-execution.md))*
 - Settings/precedence policy: [`adr/ADR-0003-settings-precedence-policy.md`](adr/ADR-0003-settings-precedence-policy.md) *(accepted)*
 
 ## 1. Goal
@@ -70,7 +70,9 @@ A small, declarative, config-driven engine that drives multi-agent, multi-repo w
    - persist run-state after each task.
 3. Finalize run status; `status`/`resume` operate on persisted state.
 
-MVP runs sequentially in topo order; the model is parallel-ready (independent nodes) for a later task.
+Default: serial, one task at a time in topo order (`max_parallel=1`). Opt-in parallel dispatch of
+up to `max_parallel` independent *ready* tasks shipped via the wave/barrier scheduler — see
+[`parallel-execution-hld.md`](parallel-execution-hld.md) / [ADR-0007](adr/ADR-0007-parallel-task-execution.md).
 
 ## 6. Configurability (FR-7, FR-8)
 - **Repos**: `reposet.json` defines N named sets, each with M repos → orchestrator works with multiple different repo sets.

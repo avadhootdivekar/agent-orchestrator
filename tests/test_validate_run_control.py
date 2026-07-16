@@ -18,6 +18,7 @@ from typing import Literal
 import pytest
 from typer.testing import CliRunner
 
+from agent_orchestrator.breakers import BREAKER_REGISTRY
 from agent_orchestrator.cli import app
 from agent_orchestrator.dag import build_dag
 from agent_orchestrator.errors import SpecValidationError
@@ -552,6 +553,34 @@ class TestRule10BreakerRefs:
         breaker = CircuitBreakerSpec(
             id="cost-cap", condition=condition, action="fail", threshold=3.0
         )
+        workflow = _workflow(tasks, circuit_breakers=[breaker])
+
+        _validate(workflow)  # must not raise
+
+    def test_run_active_seconds_accepted(self) -> None:
+        """E-3JTmVu regression: run_active_seconds was in BREAKER_REGISTRY and the schema
+        but missing from the validator's implemented-conditions set, so `ao validate`
+        rejected a fully-implemented condition as "not implemented"."""
+        tasks = [_task("a")]
+        breaker = CircuitBreakerSpec(
+            id="active-cap", condition="run_active_seconds", action="stop", threshold=3600
+        )
+        workflow = _workflow(tasks, circuit_breakers=[breaker])
+
+        _validate(workflow)  # must not raise
+
+    @pytest.mark.parametrize("condition", sorted(BREAKER_REGISTRY))
+    def test_every_registry_condition_accepted(self, condition: str) -> None:
+        """Every condition the engine actually implements (BREAKER_REGISTRY) must pass
+        validate_run_control — pins the validator's set to the registry so the two can
+        never drift apart again."""
+        tasks = [_task("a")]
+        extra: dict[str, object] = {"threshold": 3}
+        if condition == "stop_file":
+            extra = {"path": "control/stop.flag"}
+        elif condition == "verdict":
+            extra = {"task_id": "a", "verdict_path": "out/v.json"}
+        breaker = CircuitBreakerSpec(id="reg", condition=condition, action="fail", **extra)
         workflow = _workflow(tasks, circuit_breakers=[breaker])
 
         _validate(workflow)  # must not raise
