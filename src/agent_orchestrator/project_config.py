@@ -115,6 +115,12 @@ class ProjectConfig(BaseModel):
     quota_poll_seconds: int | None = None
     """Seconds to sleep between quota-exhaustion re-run attempts."""
 
+    max_parallel: int | None = None
+    """Max independent ready tasks dispatched concurrently (default 1 = serial). Invocation-
+    scoped (ADR-0003 §3 / ADR-0007 D5): rides the CLI/env/config/default chain only, never a
+    workflow-spec field. Consumed by Orchestrator.run()'s wave/barrier scheduler (ADR-0007);
+    the default of 1 is byte-identical to the pre-ADR-0007 serial engine."""
+
     monitoring: MonitoringConfig = MonitoringConfig()
     """Agent-based monitoring & self-healing settings (E-XyfjuZ). Absent block ->
     all-defaults -> byte-identical to pre-epic behavior."""
@@ -258,6 +264,7 @@ _INIT_TEMPLATE = """\
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
 # model: claude-sonnet-4-6 # AO_MODEL        — claude model for all agents
 # effort: medium           # AO_EFFORT       — low / medium / high
+# max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h of exhaustion

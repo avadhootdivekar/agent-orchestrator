@@ -19,7 +19,7 @@ Two related gaps in the engine's run-completion semantics:
 
 | Fact | Where |
 |---|---|
-| Sequential topo-order execution; first task failure breaks the run | `engine.py` (`failed = True; break`) |
+| Sequential topo-order execution *(default `max_parallel=1`; opt-in parallel dispatch via ADR-0007)*; first task failure breaks the run | `engine.py` (`failed = True; break`) |
 | Every task always dispatches; `skip_if_outputs_exist` is idempotency, not routing | `engine.py` / `models.TaskSpec` |
 | Gate-verdict pattern already exists: engine reads a small JSON control file written by a task and acts on a boolean field | `LoopSpec.gate_output_path` / `gate_field` |
 | Dynamic task injection: a succeeded `emit_tasks` task's manifest injects new tasks; persisted for resume | `engine._inject`, `runstate.injected_tasks` |
@@ -96,6 +96,15 @@ Mechanics:
 ```
 
 - Evaluated at **task boundaries** (after each task settles, before the next dispatch) — cheap and sufficient for a sequential engine; a future parallel engine evaluates at the same points per worker plus on a timer for time conditions.
+  **Update (2026-07-15, ADR-0007):** opt-in parallel *dispatch* shipped, but breaker evaluation did
+  **not** move to per-worker — it stayed exactly here, centralized on the main thread, one
+  `_settle_completed_task` call at a time, regardless of `max_parallel`. Only task dispatch runs
+  concurrently; the settle/evaluate path (and every `RunState` mutation) remains fully serialized by
+  design (ADR-0007 D3). The one real consequence: at `max_parallel > 1`, completion order across
+  independent tasks is thread-timing-dependent, so *which* task's settle trips a count-based breaker
+  (`task_failures`/`consecutive_failures`) can vary run-to-run — accepted and documented as R4 in
+  `E-IasNXu-parallel-execution/EPIC.md`; `max_parallel=1` remains fully deterministic. No timer-based
+  check was added for time conditions (`run_wall_clock_seconds` remains task-boundary-only).
 - A trip is recorded in run state (`tripped_breakers: [{id, at, detail}]`) and emitted as a `breaker.trip` event; action then executes.
 - Existing hard-coded stops (budget exhaustion, quota max-wait, unsatisfiable estimate) are **re-framed as built-in breakers** over time so there is one trip/record/act path — no behavior change, one mechanism.
 - Reset/half-open semantics apply only to *transient* conditions (429 bursts, quota): those already have episode logic; declarative breakers in MVP are latch-only (trip once, act).

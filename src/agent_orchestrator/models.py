@@ -20,6 +20,10 @@ DEFAULT_429_BACKOFF_SECONDS: int = 60
 # Claude usage-quota exhaustion defaults (quota is the 5-hour/daily/weekly session limit)
 DEFAULT_QUOTA_POLL_SECONDS: int = 900  # poll interval while waiting for quota reset (15 min)
 DEFAULT_QUOTA_MAX_WAIT_SECONDS: int = 21600  # give up after 6 hours of exhaustion by default
+# Max independent ready tasks the engine may dispatch concurrently (ADR-0007 D1). 1 = fully
+# serial -- byte-identical to the pre-epic engine. Invocation-scoped (ADR-0007 D5): rides the
+# same CLI/env/config precedence chain as the quota fields above, never a workflow-spec field.
+DEFAULT_MAX_PARALLEL: int = 1
 
 # MVP built-in (re-framed) breaker ids — named, not magic literals (LLD §2.2, §8).
 # These identify the pre-existing budget/quota stops once they are routed through the

@@ -661,6 +661,93 @@ class TestShellCompletion:
         assert "--show-completion" in result.output
 
 
+class TestResolveRunSettingsMaxParallel:
+    """Unit tests for _resolve_run_settings's max_parallel resolution (T-JXiI9j AC-1/2/3):
+    CLI > env > project config > built-in default (DEFAULT_MAX_PARALLEL=1) -- the identical
+    `_int_env` + `or`-chain shape used by quota_max_wait_seconds. Isolates from this repo's own
+    .ao/config.yaml via chdir, mirroring TestResolveMonitoringSettings's technique below."""
+
+    def _call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, max_parallel: int | None
+    ) -> int:
+        from agent_orchestrator.cli import _resolve_run_settings
+
+        monkeypatch.chdir(tmp_path)  # isolate from this repo's own .ao/config.yaml
+        result = _resolve_run_settings(None, None, None, None, None, None, max_parallel)
+        return result[-1]
+
+    def test_none_everywhere_defaults_to_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
+        assert self._call(tmp_path, monkeypatch, None) == 1
+
+    def test_config_only_resolves_to_config_value(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("max_parallel: 4\n")
+        assert self._call(tmp_path, monkeypatch, None) == 4
+
+    def test_env_overrides_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("max_parallel: 4\n")
+        monkeypatch.setenv("AO_MAX_PARALLEL", "6")
+        assert self._call(tmp_path, monkeypatch, None) == 6
+
+    def test_cli_overrides_env_and_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / ".ao").mkdir()
+        (tmp_path / ".ao" / "config.yaml").write_text("max_parallel: 4\n")
+        monkeypatch.setenv("AO_MAX_PARALLEL", "6")
+        assert self._call(tmp_path, monkeypatch, 8) == 8
+
+    def test_empty_env_treated_as_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC-3 / learning #23 (empty-env-is-falsy): AO_MAX_PARALLEL="" must fall through to
+        the default rather than raising ValueError from a bare int()."""
+        monkeypatch.setenv("AO_MAX_PARALLEL", "")
+        assert self._call(tmp_path, monkeypatch, None) == 1
+
+    def test_cli_zero_falls_through_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """0 is falsy, so the `or`-chain treats --max-parallel 0 as unset -- identical to how
+        --quota-max-wait 0 / --max-attempts 0 already resolve to their defaults in this same
+        function -- and it silently becomes DEFAULT_MAX_PARALLEL rather than erroring. Only a
+        value that is truthy-but-invalid (negative) survives the chain far enough to reach the
+        explicit `< 1` guard below."""
+        monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
+        assert self._call(tmp_path, monkeypatch, 0) == 1
+
+    def test_negative_cli_value_exits_1_with_message(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """AC-2: --max-parallel -1 -> exit 1 with a clear 'must be >= 1' error."""
+        monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
+        with pytest.raises(typer.Exit):
+            self._call(tmp_path, monkeypatch, -1)
+        assert "must be >= 1" in capsys.readouterr().err
+
+    def test_negative_env_value_exits_1_with_message(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        """AC-2: AO_MAX_PARALLEL=-1 -> exit 1 with a clear 'must be >= 1' error."""
+        monkeypatch.setenv("AO_MAX_PARALLEL", "-1")
+        with pytest.raises(typer.Exit):
+            self._call(tmp_path, monkeypatch, None)
+        assert "must be >= 1" in capsys.readouterr().err
+
+
 class TestResolveMonitoringSettings:
     """Unit tests for _resolve_monitoring_settings (E-XyfjuZ, T-QyNnf5): CLI > env > project
     config > built-in default (tri-state, revised D7 per early-gate reviewer feedback)."""

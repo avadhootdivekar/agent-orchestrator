@@ -231,3 +231,11 @@ type: pitfall
 ---
 
 A test that constructs a hardcoded absolute path and wraps its assertions in `if path.exists():` executes **zero** assertions anywhere that path is absent (CI, other machines) — it reports green while checking nothing. **Why**: the guard makes the entire test body conditional on one developer's filesystem layout, so it degrades to a no-op instead of failing loudly. **Apply**: locate in-repo fixtures via `Path(__file__).resolve().parents[N] / "…"` (repo-relative) so assertions run everywhere; treat `if <abs_path>.exists():` wrapping assertions as a review red flag (fixed in `tests/test_budget_integration.py::test_schema_round_trip`).
+
+---
+name: default-grep-is-ugrep
+description: The environment's grep is ugrep; grep -E errors on a literal ( in the pattern — use grep -F
+type: pitfall
+---
+
+The default `grep` in this environment is **ugrep**, not GNU grep. **Why**: `grep -E 'evaluate_breakers('` fails with `ugrep: error ... mismatched ( )` because `-E` treats a literal `(` as a regex group-open — a silent trap when grepping for function-call patterns (e.g. old-vs-new call-count comparisons). **Apply**: use `grep -F` / `grep -Fc` (fixed-string) for literal call/paren patterns, or backslash-escape the parens; plain-word and normal-regex searches are unaffected.

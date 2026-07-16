@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -662,3 +663,107 @@ class TestQuotaExhaustion:
         # Task should have succeeded after 2 quota waits despite max_attempts=1
         assert state.status == "succeeded"
         assert len(sleeps) == 2
+
+
+class TestMaxParallelPlumbing:
+    """T-JXiI9j: Orchestrator accepts/stores max_parallel; run() does not consume it yet --
+    the wave/barrier scheduler that actually dispatches N>1 ready tasks concurrently is
+    T-j8YLGd. This class only proves the constructor plumbing + the "still serial" regression."""
+
+    def test_stores_configured_value(self, tmp_path) -> None:
+        store, rs_store = _make_workspace(tmp_path)
+        orch = Orchestrator(FakeExecutor(), store, rs_store, max_parallel=4)
+        assert orch._max_parallel == 4
+
+    def test_default_is_one(self, tmp_path) -> None:
+        store, rs_store = _make_workspace(tmp_path)
+        orch = Orchestrator(FakeExecutor(), store, rs_store)
+        assert orch._max_parallel == 1
+
+    def test_zero_is_defensively_clamped_to_one(self, tmp_path) -> None:
+        """__init__'s own clamp never trusts a caller's value below 1. The primary gate against
+        an invalid CLI/env/config value is _resolve_run_settings's `< 1` check (tests/test_cli.py
+        TestResolveRunSettingsMaxParallel); this is belt-and-suspenders at the engine boundary."""
+        store, rs_store = _make_workspace(tmp_path)
+        orch = Orchestrator(FakeExecutor(), store, rs_store, max_parallel=0)
+        assert orch._max_parallel == 1
+
+    def test_negative_is_defensively_clamped_to_one(self, tmp_path) -> None:
+        store, rs_store = _make_workspace(tmp_path)
+        orch = Orchestrator(FakeExecutor(), store, rs_store, max_parallel=-5)
+        assert orch._max_parallel == 1
+
+    def test_run_byte_identical_regardless_of_max_parallel(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC-5 explicit regression: run() never reads self._max_parallel this task, so a run
+        started with max_parallel=4 must produce a RunState byte-identical to max_parallel=1 --
+        proving the engine really is still fully serial.
+
+        TaskRunState.started_at/ended_at are written via direct datetime.now(UTC) calls in
+        engine.py (not the injectable clock) -- frozen here the same way
+        tests/test_monitoring_self_heal.py's _StepDatetime does, except with a constant return
+        (not stepped) so call count/order can never cause a spurious mismatch between the two
+        runs. Both runs share one workspace + one fixed run_id (same workflow id + a fixed
+        RunStateStore clock) so path-shaped fields (output_artifact_path etc.) line up too.
+        """
+        import agent_orchestrator.engine as engine_module
+
+        class _FrozenDatetime:
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[no-untyped-def]
+                from datetime import UTC as _UTC
+                from datetime import datetime as _dt
+
+                return _dt(2026, 1, 1, tzinfo=tz or _UTC)
+
+        monkeypatch.setattr(engine_module, "datetime", _FrozenDatetime)
+
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
+        def _fixed_clock() -> _dt:
+            return _dt(2026, 1, 1, tzinfo=_UTC)
+
+        def _diamond_tasks() -> list[TaskSpec]:
+            # a fans out to b/c which fan back into d -- a meaningful "wide" DAG shape (the
+            # kind a future wave scheduler would actually parallelize), not a single-task no-op.
+            return [
+                _task("a", outputs=["output/a.txt"]),
+                _task("b", depends_on=["a"], inputs=["output/a.txt"], outputs=["output/b.txt"]),
+                _task("c", depends_on=["a"], inputs=["output/a.txt"], outputs=["output/c.txt"]),
+                _task(
+                    "d",
+                    depends_on=["b", "c"],
+                    inputs=["output/b.txt", "output/c.txt"],
+                    outputs=["output/d.txt"],
+                ),
+            ]
+
+        store = LocalFsArtifactStore(str(tmp_path))
+        rs_store = RunStateStore(str(tmp_path), store, clock=_fixed_clock)
+
+        wf_serial = _workflow(_diamond_tasks(), wf_id="diamond")
+        orch_serial = Orchestrator(
+            FakeExecutor(), store, rs_store, clock=_fixed_clock, max_parallel=1
+        )
+        state_serial = orch_serial.run(wf_serial, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        # Both runs deliberately share one workspace (so path-shaped fields like
+        # output_artifact_path resolve to identical strings) and the same fixed run_id --
+        # but that means the second run's `skip_if_outputs_exist` (default True) would see the
+        # first run's real output/*.txt files on disk and skip every task instead of executing
+        # it. Clear them so the second run actually re-dispatches every task via FakeExecutor,
+        # same as the first run did (a "second run finds nothing to skip" reset, not a resume).
+        shutil.rmtree(tmp_path / "output")
+
+        wf_parallel = _workflow(_diamond_tasks(), wf_id="diamond")
+        orch_parallel = Orchestrator(
+            FakeExecutor(), store, rs_store, clock=_fixed_clock, max_parallel=4
+        )
+        state_parallel = orch_parallel.run(
+            wf_parallel, _fake_reposets(str(tmp_path)), _fake_agents()
+        )
+
+        assert state_serial.status == "succeeded"
+        assert state_serial.model_dump() == state_parallel.model_dump()

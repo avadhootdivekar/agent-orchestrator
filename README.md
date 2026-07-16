@@ -14,6 +14,7 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [CLI reference](#cli-reference)
 - [Environment variables](#environment-variables)
 - [Per-project config file](#per-project-config-file)
+- [Parallel execution](#parallel-execution)
 - [Configuring multiple repos](#configuring-multiple-repos)
 - [Schema reference](#schema-reference)
 - [Advanced workflows](#advanced-workflows)
@@ -243,6 +244,7 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_EFFORT` | `--effort` | Effort level: `low`, `medium`, or `high` |
 | `AO_MAX_ATTEMPTS` | `--max-attempts` | Max task attempts (overrides workflow `defaults.retries.max_attempts`) |
 | `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides effort-derived value) |
+| `AO_MAX_PARALLEL` | `--max-parallel` | Max independent ready tasks to run at once (default: `1` = serial); see [Parallel execution](#parallel-execution) |
 | `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
 | `AO_QUOTA_POLL_SECONDS` | `--quota-poll-interval` | Seconds between quota-exhaustion re-run attempts (default: 900 = 15 min) |
 
@@ -270,6 +272,7 @@ agents:    path/to/agents.json
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
 # model: claude-sonnet-4-6 # AO_MODEL        — claude model for all agents
 # effort: medium           # AO_EFFORT       — low / medium / high
+# max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h
@@ -318,6 +321,47 @@ ao run --workflow ...
 ```
 
 Both settings can also be set in `.ao/config.yaml` (see [Per-project config file](#per-project-config-file)).
+
+---
+
+## Parallel execution
+
+By default `ao` runs one task at a time (`max_parallel=1`), always in the same deterministic order.
+You can opt into running multiple independent *ready* tasks concurrently — up to a bound — which
+speeds up wide DAGs where wall-clock time is dominated by the `claude` subprocess waiting on its own
+I/O rather than on CPU.
+
+### How it works
+
+1. Each "wave," the engine computes the set of tasks whose dependencies have already settled and
+   dispatches up to `max_parallel` of them at once on a bounded thread pool.
+2. Structural/routing tasks (`emit_tasks`, loop-gate tasks, router tasks) always run **solo**: the
+   engine drains everything else in flight before starting one and admits nothing new until it
+   settles, so dynamic task injection, loops, and routing stay exactly as safe as they are today.
+3. Every `RunState` mutation, budget/quota/breaker decision, and `save()` call happens on the main
+   thread only — workers only execute the task and hand back a result. `max_parallel=1` (the
+   default) is byte-identical to the serial engine: same dispatch order, same events, same final
+   state.
+
+Full design: [`docs-md/adr/ADR-0007-parallel-task-execution.md`](docs-md/adr/ADR-0007-parallel-task-execution.md).
+
+### Configuration
+
+```bash
+# Run up to 4 independent ready tasks concurrently
+ao run --max-parallel 4 --workflow ...
+
+# Or via env var (useful in CI)
+export AO_MAX_PARALLEL=4
+ao run --workflow ...
+```
+
+Also settable in `.ao/config.yaml` (see [Per-project config file](#per-project-config-file)).
+
+**Precedence**: `--max-parallel` > `AO_MAX_PARALLEL` > `.ao/config.yaml: max_parallel` > default `1`.
+`0` is treated as unset and falls through to the default (serial, **no error**) — the same
+treatment `--quota-max-wait 0` / `--max-attempts 0` already get. A negative value is rejected:
+`ao run --max-parallel -1` exits `1` with `ERROR: --max-parallel must be >= 1`.
 
 ---
 

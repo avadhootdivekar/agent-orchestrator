@@ -487,6 +487,15 @@ after the outcome-handling block (engine.py ~:628, after `self._runstate.save(st
 `self._evaluate_breakers(...)`. Designed to survive a future parallel engine (same points per worker + a timer
 for time conditions); MVP is sequential.
 
+**Update (2026-07-15, ADR-0007 / `E-IasNXu-parallel-execution`):** opt-in parallel task *dispatch*
+shipped (`max_parallel`, default 1 = the sequential behavior this section describes, unchanged).
+Breaker evaluation itself did not move "per worker" as speculated above — it stayed exactly at this
+same task-boundary call site inside `_settle_completed_task`, invoked once per drained completion on
+the main thread regardless of `N`. No timer-based check was added. The one behavioral change: at
+`max_parallel > 1`, multiple tasks can be genuinely in flight at once, so the *order* in which task
+boundaries are reached is thread-timing-dependent rather than dispatch-order-dependent — see the
+`consecutive_failures`/`run_wall_clock_seconds` notes below.
+
 ### 6.2 Registry (pluggable, ABC — mirrors `Executor`/`BudgetManager` DI style)
 
 ```python
@@ -561,9 +570,13 @@ Notes:
   reconstruct from `ended_at` sort. Detail records the streak.
 - **verdict** uses the *shared reader* `read_bool_field` (§3) — same audited path as loop gates. Reads only when
   `spec.task_id` just settled succeeded, so it evaluates at most once per verdict file (latch handles resume).
-- **run_wall_clock_seconds** is checked at task boundaries only (MVP sequential). A single long task can overrun
-  the deadline; documented limitation (a future timer-based check closes it; the eval point is chosen to survive
-  that addition). Uses `state.started_at` (§2.2) so resume measures from original start.
+- **run_wall_clock_seconds** is checked at task boundaries only (MVP sequential; default `max_parallel=1`,
+  unchanged post-ADR-0007). A single long task can overrun the deadline; documented limitation (a future
+  timer-based check closes it; the eval point is chosen to survive that addition). Uses `state.started_at`
+  (§2.2) so resume measures from original start. **Note (2026-07-15):** at `max_parallel > 1` this
+  limitation is not fixed and not worsened in kind, but its exposure grows — up to `N` tasks can be
+  simultaneously in flight and overrunning before any one of them settles and triggers the next
+  boundary check. Still no timer-based check; still a documented limitation, not a regression.
 - **stop_file** = operator external kill switch; `ao stop --run-id` (future CLI verb) or an operator `touch`
   writes the file. Existence-only (`store.exists`), never content — NFR-1 clean.
 - **injected_task_count** is the E2 enabler consumed by epic `E-gd8m4x` (runaway fan-out cap). `injection_depth`
@@ -805,6 +818,11 @@ Consequences: verdict/router catch ControlFileError; loop keeps GateError; size 
 ```
 ASSUMPTION: MVP engine is sequential (no parallel workers).  Risk: run_wall_clock_seconds granularity is
   task-boundary, not real-time.  Mitigation: eval point chosen to survive a future timer; documented limitation.
+  SUPERSEDED 2026-07-15 (ADR-0007 / E-IasNXu-parallel-execution): parallel workers now exist, opt-in via
+  `max_parallel` (default 1 = this assumption's original sequential behavior, unchanged). Breaker evaluation
+  stayed centralized on the main thread (one task-settle at a time) rather than moving per-worker, so the
+  mitigation above still applies verbatim; the risk is now compounded rather than resolved (see §6.1 update
+  and the run_wall_clock_seconds note in §7).
 ASSUMPTION: team_size = 2 developers (<4 yrs) for sprint capacity (not stated in epic).  Risk: sprint count off.
   Mitigation: capacity math shown (§14) so re-planning with the real number is trivial.
 ASSUMPTION: nested routers are out of MVP; validate rejects them.  Risk: a real workflow needs one.  Mitigation:

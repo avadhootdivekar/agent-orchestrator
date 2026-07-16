@@ -489,6 +489,20 @@ future parallelism need revisiting. Mitigation: order recomputation is pure and
 idempotent (safe to run in a future parallel scheduler), but the `done: set`
 and cursor state would need per-shard coordination.
 
+**RESOLVED 2026-07-15 (ADR-0007 / `E-IasNXu-parallel-execution`):** opt-in parallel task dispatch
+shipped (default `max_parallel=1` remains the byte-identical single-task-at-a-time behavior this
+assumption describes). The "per-shard coordination" concern flagged above did not materialize,
+because dispatch went parallel while state mutation stayed fully serialized (ADR-0007 D3): the
+cursor was replaced by a ready-set model (`_ready_ids(order, preds, state, done, in_flight)`,
+`dag.py`'s `Graph`/`topological_order` reused unchanged), and `done` now lives on a `_RunContext`
+shared object mutated **only** by the single main-thread writer — never by a worker. Order
+recomputation on injection/loop-clone (`emit_tasks`, loop-gate) is unchanged in substance (still
+pure/idempotent, still main-thread-only) and additionally now runs as a **serial barrier**
+(ADR-0007 D4: nothing else in flight when a reshaping task starts or while it settles), which is a
+stronger guarantee than "safe to run in a future parallel scheduler" — it never actually runs
+concurrently with a sibling. See [`parallel-execution-hld.md`](parallel-execution-hld.md) §14 for
+the full as-built reconciliation.
+
 ## 10. Deviations from original design
 
 No behavioral deviations. Minor implementation clarifications from what the HLD

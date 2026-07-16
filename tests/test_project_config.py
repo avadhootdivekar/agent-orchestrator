@@ -76,6 +76,17 @@ class TestProjectConfigSchema:
         with pytest.raises(Exception):
             ProjectConfig(env="not-a-dict")  # type: ignore[arg-type]
 
+    def test_max_parallel_round_trips(self) -> None:
+        """T-JXiI9j AC-4: ProjectConfig(max_parallel=3) round-trips."""
+        cfg = ProjectConfig(max_parallel=3)
+        assert cfg.max_parallel == 3
+
+    def test_max_parallel_absent_defaults_to_none(self) -> None:
+        """T-JXiI9j AC-4: a config with no max_parallel key loads with max_parallel is None
+        (byte-identical to pre-task behavior for every existing config file)."""
+        cfg = ProjectConfig()
+        assert cfg.max_parallel is None
+
 
 # ---------------------------------------------------------------------------
 # load_project_config tests
@@ -208,6 +219,13 @@ class TestScaffoldInit:
         assert "reposets" in content
         assert "agents" in content
         assert "ao init" in content or "Generated" in content
+
+    def test_file_contains_max_parallel_comment(self, tmp_path: Path) -> None:
+        """T-JXiI9j AC-6: the scaffolded template documents max_parallel + AO_MAX_PARALLEL."""
+        scaffold_init(tmp_path)
+        content = (tmp_path / ".ao" / "config.yaml").read_text()
+        assert "max_parallel" in content
+        assert "AO_MAX_PARALLEL" in content
 
     def test_raises_if_file_already_exists(self, tmp_path: Path) -> None:
         scaffold_init(tmp_path)  # create once

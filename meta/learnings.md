@@ -494,3 +494,66 @@ By: agent
 Role: developer
 Date: 2026-07-15
 ---
+
+---
+Learning-ID: LRN-20260715-verbatim-extraction-for-byte-identical-regression-gate
+Learning: When refactoring a large control-flow method into a scheduler/split of responsibilities where a regression gate demands byte-identical behavior at the default setting, extract the original code VERBATIM via anchor-based, assert-verified string substitutions (each anchor checked to match exactly once before substitution) rather than hand-retyping from memory — then prove it by running the EXISTING test suite UNEDITED at the default setting, not by writing new assertions. A test suite passing with zero edits is a far stronger byte-identical proof than a hand-derived "looks equivalent" review.
+Context: T-j8YLGd (`E-IasNXu-parallel-execution`) split `Orchestrator.run()`'s ~800-line inline per-task body into `_prepare_and_maybe_dispatch`/`_settle_completed_task` via `sed`-extracted line ranges + four sanctioned mechanical transforms, each anchor-verified pre/post; `tests/test_engine*.py` (58 tests) passed unedited at `max_parallel=1`, the epic's blocking AC-1 gate. Re-verified unedited again at T-VSfAUN and T-TNleFt handoff (0 deletions across the whole epic per `git diff --numstat tests/`).
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-serialized-core-worker-dispatch-concurrency-pattern
+Learning: To add opt-in concurrency to a stateful, single-writer engine loop without a rewrite: keep 100% of state mutation (RunState writes, `save()`, budget/breaker/router/injection decisions) on the main thread and push ONLY the pure-read, side-effect-free unit of work onto worker threads. Tasks that mutate shared topology/routing/loop bookkeeping must run as solo "barriers" — nothing else in flight when one starts, nothing new admitted until it settles — so their side effects stay atomic without a single lock anywhere in the engine.
+Context: ADR-0007 D3/D4 (`E-IasNXu-parallel-execution`). `ThreadPoolExecutor(max_workers=max_parallel)` submits only `_run_with_retries` (task/workflow/agents/repo_paths/`state.run_id` in, `TaskResult` out — mutates nothing). `_is_barrier()` treats `emit_tasks`, loop-gate (incl. `__iter` clones), and router tasks as barriers, reusing existing `_loop_for_gate`/`_router_for_task` lookups rather than hand-rolled id matching. Zero locks were needed anywhere.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-blocked-drain-not-sleep-while-sibling-holds-capacity
+Learning: When a resource gate (budget/rate window, quota, etc.) says "wait" under concurrency, never sleep inline while a sibling task already holds the capacity that might free the window — that is a guaranteed deadlock (the engine blocks itself from ever draining the very completion that would unblock it). Instead, return a distinct non-terminal "blocked" signal that stops filling the current wave and falls through to draining an in-flight completion (which reconciles actuals and may free the window); only sleep inline when nothing is in flight to drain (the `N=1` case, where this collapses to the original inline-sleep behavior — byte-identical by construction).
+Context: T-VSfAUN FR-6 / ADR-0007 §7.1, closing `EPIC.md` risk R3. `_prepare_and_maybe_dispatch(..., in_flight_nonempty: bool)` branches exactly on this. `TestNoBudgetDeadlockOnRollingWindow` proves forward progress via the exact `run.log` event order (`gate_block` → no `wait` → `reconcile` → `gate_block` again → now `wait`) rather than relying on thread timing.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-int-flag-zero-falls-through-to-default-not-error
+Learning: In an `x = cli_flag or env_var or config_value or DEFAULT` precedence chain, an explicit `0` from ANY source is indistinguishable from "unset" (falsy in Python) and silently falls through to the default — it never reaches a `< 1` validation guard. This is not a per-flag special case to fix; it is the established, consistent behavior of every int runtime setting in this codebase (`--max-attempts 0`, `--quota-max-wait 0`, and now `--max-parallel 0` all resolve to their default rather than erroring). Only a genuinely negative value survives the chain (negative ints are truthy) and hits the guard.
+Context: T-JXiI9j (`E-IasNXu-parallel-execution`) flagged this against `TASK.md`'s own AC-2 prose, which had grouped "0 and negative" under "exits 1" — the ticket's own executable pseudocode already showed the `or`-chain treatment. T-TNleFt's CliRunner e2e tests confirmed the shipped behavior (`--max-parallel 0` exits 0/serial, `--max-parallel -1` exits 1) and the ticket wording was corrected to match rather than the code changed to match stale prose.
+By: agent
+Role: developer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-verify-verbatim-extraction-via-static-diff
+Learning: Independently verify a subagent's "verbatim extraction" refactor with a static diff, not only the passing suite: `sort -u` the normalized old (`git show HEAD:file`) and new source (strip whitespace + blank/comment lines), `comm -23` for lines only-in-old, and compare fixed-string call-counts per critical function old-vs-new. Any only-in-old business logic, or a per-function call-count that changed, that is NOT explained by a sanctioned mechanical transform / formatter reflow / context-object threading is a dropped-or-altered statement — potentially on a code path the existing tests never exercise.
+Context: Validated T-j8YLGd's ~800-line settle-body extraction (E-IasNXu). "Existing suite passes unedited" only proves the tested paths; the line-set + call-count diff proves the rest (it surfaced one benign call-count delta that turned out to be an added comment, not a double-charge).
+By: agent
+Role: reviewer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-default-grep-is-ugrep-use-fixed-string-for-parens
+Learning: The default `grep` in this environment is ugrep, not GNU grep: `grep -E 'evaluate_breakers('` aborts with "mismatched ( )" because `-E` reads a literal `(` as a regex group-open. Use `grep -F` (fixed-string) — or backslash-escape the parens — when counting or matching literal function-call patterns; plain-word searches are unaffected.
+Context: Cost a re-run mid-verification while comparing per-function call counts old-vs-new in engine.py (E-IasNXu); `grep -Fc 'name('` is the reliable form.
+By: agent
+Role: reviewer
+Date: 2026-07-15
+---
+
+---
+Learning-ID: LRN-20260715-commit-per-task-in-stacked-epics
+Learning: When orchestrating a multi-task epic, commit (or at minimum record coverage numbers) after each validated task. If every task's changes stay uncommitted and stacked in the working tree, `git diff` can only show the whole epic vs pre-epic HEAD — you cannot isolate a single task's incremental diff, and you cannot recover the pre-epic coverage baseline for a quantitative delta without unstacking (stash or a throwaway worktree).
+Context: All four implementation tasks of E-IasNXu were left stacked uncommitted; this blocked both per-task diff isolation and the exact pre→post coverage delta the prompt's checklist demanded (fell back to the measured post number + the +58/0-removed test delta).
+By: agent
+Role: manager
+Date: 2026-07-15
+---

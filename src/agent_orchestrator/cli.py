@@ -263,13 +263,19 @@ def _resolve_run_settings(
     effort: str | None,
     quota_max_wait: int | None,
     quota_poll_interval: int | None,
-) -> tuple[int | None, int | None, str | None, str | None, int, int]:
+    max_parallel: int | None,
+) -> tuple[int | None, int | None, str | None, str | None, int, int, int]:
     """Merge CLI flags, env vars, and project config for runtime execution settings.
 
     Precedence (highest to lowest): CLI flag > env var > project config > built-in default.
-    Returns (max_attempts, max_turns, model, effort, quota_max_wait_seconds, quota_poll_seconds).
+    Returns (max_attempts, max_turns, model, effort, quota_max_wait_seconds, quota_poll_seconds,
+    max_parallel).
     """
-    from .models import DEFAULT_QUOTA_MAX_WAIT_SECONDS, DEFAULT_QUOTA_POLL_SECONDS
+    from .models import (
+        DEFAULT_MAX_PARALLEL,
+        DEFAULT_QUOTA_MAX_WAIT_SECONDS,
+        DEFAULT_QUOTA_POLL_SECONDS,
+    )
 
     def _int_env(name: str) -> int | None:
         v = os.environ.get(name)
@@ -298,6 +304,19 @@ def _resolve_run_settings(
         or (cfg.quota_poll_seconds if cfg else None)
         or DEFAULT_QUOTA_POLL_SECONDS
     )
+    # NOTE: like every other `or`-chain above, a falsy 0 here is indistinguishable from
+    # "unset" and falls through to DEFAULT_MAX_PARALLEL (=1) -- consistent with how
+    # --quota-max-wait/--max-attempts 0 already behave in this function. A negative value is
+    # truthy in Python so it survives the chain unchanged and is what the guard below rejects.
+    resolved_max_parallel = int(
+        max_parallel
+        or _int_env("AO_MAX_PARALLEL")
+        or (cfg.max_parallel if cfg else None)
+        or DEFAULT_MAX_PARALLEL
+    )
+    if resolved_max_parallel < 1:
+        typer.echo("ERROR: --max-parallel must be >= 1", err=True)
+        raise typer.Exit(1)
     return (
         resolved_max_attempts,
         resolved_max_turns,
@@ -305,6 +324,7 @@ def _resolve_run_settings(
         resolved_effort,
         resolved_quota_max_wait,
         resolved_quota_poll,
+        resolved_max_parallel,
     )
 
 
@@ -559,6 +579,14 @@ def run(
             " (default 900 = 15 min). Env: AO_QUOTA_POLL_SECONDS"
         ),
     ),
+    max_parallel: int | None = typer.Option(
+        None,
+        "--max-parallel",
+        help=(
+            "Max independent ready tasks to run at once (default 1 = serial)."
+            " Env: AO_MAX_PARALLEL. Config: max_parallel."
+        ),
+    ),
     self_heal: bool | None = typer.Option(
         None,
         "--self-heal/--no-self-heal",
@@ -601,8 +629,15 @@ def run(
         eff_effort,
         eff_quota_max_wait,
         eff_quota_poll,
+        eff_max_parallel,
     ) = _resolve_run_settings(
-        max_attempts, max_turns, model, effort, quota_max_wait, quota_poll_interval
+        max_attempts,
+        max_turns,
+        model,
+        effort,
+        quota_max_wait,
+        quota_poll_interval,
+        max_parallel,
     )
 
     if eff_max_attempts is not None:
@@ -667,6 +702,7 @@ def run(
         max_monitor_calls_per_run=monitoring_cfg.max_monitor_calls_per_run,
         self_heal_enabled=monitoring_cfg.self_heal,
         max_heal_retries_per_task=monitoring_cfg.max_heal_retries_per_task,
+        max_parallel=eff_max_parallel,
     )
 
     try:
@@ -738,6 +774,14 @@ def resume(
         help="Seconds to sleep between quota-exhaustion re-run attempts "
         "(default 900 = 15 min). Env: AO_QUOTA_POLL_SECONDS",
     ),
+    max_parallel: int | None = typer.Option(
+        None,
+        "--max-parallel",
+        help=(
+            "Max independent ready tasks to run at once (default 1 = serial)."
+            " Env: AO_MAX_PARALLEL. Config: max_parallel."
+        ),
+    ),
     extend_breaker: str | None = typer.Option(
         None,
         "--extend-breaker",
@@ -802,8 +846,15 @@ def resume(
         eff_effort,
         eff_quota_max_wait,
         eff_quota_poll,
+        eff_max_parallel,
     ) = _resolve_run_settings(
-        max_attempts, max_turns, model, effort, quota_max_wait, quota_poll_interval
+        max_attempts,
+        max_turns,
+        model,
+        effort,
+        quota_max_wait,
+        quota_poll_interval,
+        max_parallel,
     )
 
     if eff_max_attempts is not None:
@@ -915,6 +966,7 @@ def resume(
         max_monitor_calls_per_run=monitoring_cfg.max_monitor_calls_per_run,
         self_heal_enabled=monitoring_cfg.self_heal,
         max_heal_retries_per_task=monitoring_cfg.max_heal_retries_per_task,
+        max_parallel=eff_max_parallel,
     )
 
     try:
