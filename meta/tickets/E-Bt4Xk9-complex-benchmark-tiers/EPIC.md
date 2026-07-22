@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → developer/tester agents (delivery)
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: **In Progress** (6/11 tasks delivered as of 2026-07-22; T-Md7Vc3 + T-Sg6Jf2 in flight)
+- Status: **In Progress** (10/11 delivered; PLAN Run 1 medium done $17.05 all-6/6-saturated; large campaign executing; T-Dc1Yg7 docs pending)
 - Predecessor: `E-9Qk4Zt-agent-benchmark-harness` (MVP harness, Done 2026-07-22)
 
 ## Summary
@@ -95,11 +95,11 @@ T-Tr1Km8 1.5(12) · T-Bg2Wq4 2.5(20) · T-Pl3Rx7 2.5(20) · T-Wp4Nz5 2.0(16) · 
 - [x] `T-Pl3Rx7-parallel-bench-runner` (2.5d) — `--max-parallel` thread pool + lock-guarded budget/state in `runner.py`/`cli.py`. **Deps: T-Bg2Wq4 (same file; must be concurrency-correct over budget).**
 - [x] `T-Wp4Nz5-workspace-provider-seam` (2.0d) — `WorkspaceProvider` ABC+registry + `fixture` provider + `source` field. **Deps: T-Tr1Km8 (spec.py/schema sequencing).** Parallel-safe with: T-Bg2Wq4.
 - [x] `T-Sw5Hd9-swebench-import-provider` (3.0d) — importer + pinned instances + `swebench` provider + optional extra. **Deps: T-Wp4Nz5, T-Tr1Km8.** Parallel-safe with: T-Md7Vc3, T-Pl3Rx7.
-- [ ] `T-Sg6Jf2-swebench-grader-docker` (3.0d) — `SweBenchGrader` (Docker eval + cleanup + predictions bridge + Docker lock). **Deps: T-Wp4Nz5 (spec KNOWN_GRADER_TYPES/registries sequencing), T-Sw5Hd9 (optional extra).** Parallel-safe with: T-Md7Vc3, T-Pl3Rx7.
-- [ ] `T-Md7Vc3-dev-medium-suite` (3.0d) — `benchmarks/suites/dev-medium/` 4–8 discriminating tasks. **Deps: T-Tr1Km8.** Parallel-safe with: T-Sw5Hd9, T-Sg6Jf2, T-Pl3Rx7 (new dir, no code overlap).
+- [x] `T-Sg6Jf2-swebench-grader-docker` (3.0d) — `SweBenchGrader` (Docker eval + cleanup + predictions bridge + Docker lock). **Deps: T-Wp4Nz5 (spec KNOWN_GRADER_TYPES/registries sequencing), T-Sw5Hd9 (optional extra).** Parallel-safe with: T-Md7Vc3, T-Pl3Rx7.
+- [x] `T-Md7Vc3-dev-medium-suite` (3.0d) — `benchmarks/suites/dev-medium/` 4–8 discriminating tasks. **Deps: T-Tr1Km8.** Parallel-safe with: T-Sw5Hd9, T-Sg6Jf2, T-Pl3Rx7 (new dir, no code overlap).
 - [x] `T-Ep8Lq6-ao-epic-plus-subject` (1.5d) — 4-agent plan→implement→review→fix `ao_workflow` subject. **Deps: none** (all new files). Parallel-safe with: everything.
-- [ ] `T-Cm9Tb4-campaign-tier-recipes` (2.0d) — `ao-bench campaign` (whole-run cap) + `make bench-medium/bench-large` + `--enable-xlarge`. **Deps: T-Bg2Wq4, T-Pl3Rx7, T-Tr1Km8.**
-- [ ] `T-Ts0Xn5-tier-budget-parallel-tests` (2.5d) — tests for tier/budget/parallel/provider/campaign; swebench tests behind marker+extra; CI stays network-free. **Deps: T-Cm9Tb4 (+ all features it tests).**
+- [x] `T-Cm9Tb4-campaign-tier-recipes` (2.0d) — `ao-bench campaign` (whole-run cap) + `make bench-medium/bench-large` + `--enable-xlarge`. **Deps: T-Bg2Wq4, T-Pl3Rx7, T-Tr1Km8.**
+- [x] `T-Ts0Xn5-tier-budget-parallel-tests` (2.5d) — tests for tier/budget/parallel/provider/campaign; swebench tests behind marker+extra; CI stays network-free. **Deps: T-Cm9Tb4 (+ all features it tests).**
 - [ ] `T-Dc1Yg7-docs-adr0009-reconcile` (1.5d) — README/HLD/ADR-0009→Accepted/learnings, reconciled to as-built (**post-implementation docs-refresh, mandatory**). **Deps: all.**
 
 ### Parallel-safe execution waves (for parallel subagents — file-ownership is disjoint within a wave)
