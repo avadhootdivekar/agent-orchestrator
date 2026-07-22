@@ -1,0 +1,299 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "swe-verified-mini",
+  "generated_at": "2026-07-22T18:27:28.660937+00:00",
+  "subjects": [
+    "claude-sonnet",
+    "claude-opus",
+    "ao-epic-sonnet"
+  ],
+  "not_run": [],
+  "task_ids": [
+    "django__django-11138",
+    "django__django-11292",
+    "django__django-12304",
+    "django__django-14007",
+    "django__django-14053",
+    "psf__requests-2931",
+    "pytest-dev__pytest-10356",
+    "pytest-dev__pytest-7571",
+    "sphinx-doc__sphinx-10466",
+    "sympy__sympy-20590"
+  ],
+  "matrix": {
+    "django__django-11138": {
+      "claude-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 1.2035565000000001,
+        "wall_clock_seconds": 244.23379493500397
+      },
+      "claude-opus": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 1.4844484999999998,
+        "wall_clock_seconds": 212.47770993900485
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "failed",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.0933876,
+        "wall_clock_seconds": 4.520933910011081
+      }
+    },
+    "django__django-11292": {
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.7886944999999999,
+        "wall_clock_seconds": 156.25672429300903
+      },
+      "claude-opus": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 1.271905,
+        "wall_clock_seconds": 203.8140683919919
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.8530444,
+        "wall_clock_seconds": 159.22098371099855
+      }
+    },
+    "django__django-12304": {
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.611672,
+        "wall_clock_seconds": 114.87046192299749
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.4610609999999999,
+        "wall_clock_seconds": 65.20552620998933
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.8434986,
+        "wall_clock_seconds": 149.00044041399087
+      }
+    },
+    "django__django-14007": {
+      "claude-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.757235,
+        "wall_clock_seconds": 107.63728430500487
+      },
+      "claude-opus": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 1.0968925000000003,
+        "wall_clock_seconds": 193.71075981900503
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.9598492999999997,
+        "wall_clock_seconds": 173.42704245301138
+      }
+    },
+    "django__django-14053": {
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.5528441000000001,
+        "wall_clock_seconds": 90.4324730829976
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.9107734999999999,
+        "wall_clock_seconds": 128.39820077900367
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.9716945000000001,
+        "wall_clock_seconds": 167.76980890599953
+      }
+    },
+    "psf__requests-2931": {
+      "claude-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.7456805,
+        "wall_clock_seconds": 129.23079251899617
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.6570004999999999,
+        "wall_clock_seconds": 183.43950589100132
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 1.1334742999999998,
+        "wall_clock_seconds": 205.72212782299903
+      }
+    },
+    "pytest-dev__pytest-10356": {
+      "claude-sonnet": {
+        "subject_status": "failed",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.8845713,
+        "wall_clock_seconds": 256.2947447450133
+      },
+      "claude-opus": {
+        "subject_status": "failed",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 1.1524295,
+        "wall_clock_seconds": 348.26738184900023
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.9476976,
+        "wall_clock_seconds": 198.06130914499226
+      }
+    },
+    "pytest-dev__pytest-7571": {
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.7530748,
+        "wall_clock_seconds": 286.8315475959971
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.8046475000000001,
+        "wall_clock_seconds": 295.9503973820101
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.8137669999999999,
+        "wall_clock_seconds": 274.6949848039949
+      }
+    },
+    "sphinx-doc__sphinx-10466": {
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.8129371000000001,
+        "wall_clock_seconds": 141.8605536140094
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 1.1162529999999995,
+        "wall_clock_seconds": 309.4814537140046
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.7796101000000001,
+        "wall_clock_seconds": 268.5551928060013
+      }
+    },
+    "sympy__sympy-20590": {
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.48287839999999993,
+        "wall_clock_seconds": 135.46971989200392
+      },
+      "claude-opus": {
+        "subject_status": "failed",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.9563655,
+        "wall_clock_seconds": 339.985472897999
+      },
+      "ao-epic-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.7610892999999999,
+        "wall_clock_seconds": 316.0970407999994
+      }
+    }
+  },
+  "per_subject": {
+    "claude-sonnet": {
+      "solved": 9,
+      "total": 10,
+      "solve_rate": 0.9,
+      "mean_score": 0.9,
+      "total_cost_usd": 7.5931442,
+      "cost_available": true,
+      "cost_per_solved": 0.8436826888888889,
+      "total_wall_clock_seconds": 1663.1180969050329,
+      "total_input_tokens": 536,
+      "total_output_tokens": 92577,
+      "total_cache_creation_input_tokens": 382907,
+      "total_cache_read_input_tokens": 12992604
+    },
+    "claude-opus": {
+      "solved": 9,
+      "total": 10,
+      "solve_rate": 0.9,
+      "mean_score": 0.9,
+      "total_cost_usd": 9.9117765,
+      "cost_available": true,
+      "cost_per_solved": 1.1013085,
+      "total_wall_clock_seconds": 2280.73047687301,
+      "total_input_tokens": 486,
+      "total_output_tokens": 90621,
+      "total_cache_creation_input_tokens": 301319,
+      "total_cache_read_input_tokens": 9246047
+    },
+    "ao-epic-sonnet": {
+      "solved": 9,
+      "total": 10,
+      "solve_rate": 0.9,
+      "mean_score": 0.9,
+      "total_cost_usd": 8.157112699999999,
+      "cost_available": true,
+      "cost_per_solved": 0.9063458555555555,
+      "total_wall_clock_seconds": 1917.0698647719983,
+      "total_input_tokens": 554,
+      "total_output_tokens": 98564,
+      "total_cache_creation_input_tokens": 423831,
+      "total_cache_read_input_tokens": 13698729
+    }
+  }
+}
