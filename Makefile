@@ -1,4 +1,5 @@
-.PHONY: test test-fast test-playground test-real-llm lint format typecheck validate-sum-of-array
+.PHONY: test test-fast test-playground test-real-llm lint format typecheck validate-sum-of-array \
+        bench-validate bench-smoke bench-run bench-report
 
 # Configurable knobs for the real-LLM tier (override on the command line):
 #   make test-real-llm MAX_ATTEMPTS=3 BUDGET_TOTAL=200000 MAX_TURNS=40
@@ -8,6 +9,18 @@
 MAX_ATTEMPTS ?=
 BUDGET_TOTAL ?=
 MAX_TURNS ?=
+
+# Configurable knobs for the ao-bench targets (override on the command line):
+#   make bench-run SUITE=benchmarks/suites/dev-core/suite.json SUBJECT=benchmarks/subjects/claude-opus.json
+#   make bench-report RESULTS=benchmarks/results SUITE=dev-core
+# SUITE   — path to a suite.json (bench-run) or a committed suite id (bench-report --suite)
+# SUBJECT — path to a subject.json (bench-run)
+# RESULTS — results root ao-bench report auto-discovers the latest run per subject under
+BENCH_SUITE_PATH ?= benchmarks/suites/dev-core/suite.json
+BENCH_FAKE_SUBJECT_PATH ?= benchmarks/subjects/fake-pass.json
+SUITE ?=
+SUBJECT ?=
+RESULTS ?= benchmarks/results
 
 test:
 	uv run pytest -q
@@ -36,3 +49,29 @@ validate-sum-of-array:
 	  --workflow playground/sum-of-array/workflow.json \
 	  --reposets playground/sum-of-array/reposet.json \
 	  --agents   playground/sum-of-array/agents.fake.json
+
+# ao-bench targets (E-9Qk4Zt): standalone `ao-bench` console script, never `ao` itself
+# (design doc §7, SI-1) — `benchmarks/suites/dev-core/` + `benchmarks/subjects/` are
+# committed fixtures T-Fx6Dp0 lands; bench-validate/bench-smoke guard on their presence
+# with a friendly skip message until then, rather than failing the whole `make` run.
+bench-validate:
+	@if [ -f "$(BENCH_SUITE_PATH)" ]; then \
+	  uv run ao-bench validate --suite $(BENCH_SUITE_PATH); \
+	else \
+	  echo "SKIP bench-validate: $(BENCH_SUITE_PATH) not found yet (lands with T-Fx6Dp0)"; \
+	fi
+
+bench-smoke:
+	@if [ -f "$(BENCH_SUITE_PATH)" ] && [ -f "$(BENCH_FAKE_SUBJECT_PATH)" ]; then \
+	  uv run ao-bench run --suite $(BENCH_SUITE_PATH) --subject $(BENCH_FAKE_SUBJECT_PATH); \
+	else \
+	  echo "SKIP bench-smoke: $(BENCH_SUITE_PATH) / $(BENCH_FAKE_SUBJECT_PATH) not found yet" \
+	       "(land with T-Fx6Dp0); once real haiku subjects land, extend this to loop" \
+	       "over them the way the design doc's bench-smoke sketch does."; \
+	fi
+
+bench-run:
+	uv run ao-bench run --suite $(SUITE) --subject $(SUBJECT)
+
+bench-report:
+	uv run ao-bench report --results-root $(RESULTS) --suite $(SUITE)

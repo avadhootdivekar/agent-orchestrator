@@ -2,10 +2,20 @@
 
 - ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Updated At: 2026-07-22
-- State: In Progress (4/9 tasks delivered — Sprint 1 complete; Sprint 2 next: `T-Rpt3Wq`, `T-Cli8Nf`)
+- State: In Progress (6/9 tasks delivered — next: `T-Fx6Dp0` MVP suite/fixtures, then `T-Tst4Ln`, `T-Dcs2Rk`)
 - Owner: architect agent (design) → developer/tester (delivery)
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Rpt3Wq` + `T-Cli8Nf` complete
+  (one developer agent, sequential). `bench/results.py`: load_run/write_summary_md/
+  build_comparison/write_comparison with unlike-suite + mixed-fingerprint refusal
+  (`allow_mixed` escape), winner lines per axis; `ResultsError` added to errors.py.
+  `bench/cli.py`: full `ao-bench validate|run|report|list` (exit codes 0/1/2; grader-unsolved
+  is NOT exit 2 — only subject-level failure is); single-line `[project.scripts]` entry;
+  `make bench-validate|bench-smoke|bench-run|bench-report` (guarded skip until fixtures land).
+  35 net new tests incl. SI-1 subprocess check (core `ao` import never loads bench). Independent
+  re-verification: 1025 passed/4 deselected, core CLI suite 81 passed, ruff/mypy clean,
+  `ao-bench --help` resolves, make guards behave. Detail: both task STATUS.md files.
 - By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Run5Tz-runner-metrics` complete —
   Sprint 1 (harness engine) done. `bench/runner.py`: `run_suite` with deterministic order,
   atomic per-task persist of `run.json` (crash-resumable; resume skips recorded tasks, `force`
