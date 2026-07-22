@@ -6,8 +6,43 @@
 - Owner: developer agent
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: Draft
+- Status: Done
 - Estimate: 3.0 days
+
+## Reconciliation note (as-built vs this doc's original plan)
+- By: developer agent / Role: developer / Date: 2026-07-22
+- Comment: the orchestrator's dispatch message (issued after this TASK.md was drafted,
+  carrying verified ground-truth probes: pinned revision, image sizes, difficulty
+  distribution) superseded a few of this doc's original design choices below. Shipped
+  as-built (see STATUS.md for full AC-by-AC evidence):
+  1. **Module paths** differ from "File ownership" below: the importer landed at
+     `src/agent_orchestrator/bench/swebench_import.py` (not
+     `benchmarks/importers/swebench_import.py`) and the provider at
+     `src/agent_orchestrator/bench/swebench_provider.py` (not `providers_swebench.py`)
+     -- both per the dispatch message's explicit module names, registered as an
+     `ao-bench import-swebench` CLI command (2-line `cli.py` hook) rather than a
+     standalone `python -m` script, since a committed, deterministic importer is more
+     discoverable as a first-class `ao-bench` subcommand.
+  2. **`source` shape is minimal**: `{"type": "swebench", "instance_id": ...}` only --
+     NOT `{type, instance_id, repo, base_commit, dataset, revision}` as this doc's
+     pseudocode shows. `repo`/`base_commit` live in the single pinned
+     `instances.json` (suite-relative); `SweBenchWorkspaceProvider` looks them up
+     there at `prepare()` time instead of `datasets` re-fetching them, per the
+     dispatch message's explicit deliverable text. Avoids two copies of the same
+     pinned metadata (suite.json + instances.json) drifting apart; `datasets` is
+     still never needed at run time (module docstrings).
+  3. **Checkout strategy resolved** (this doc's Pseudocode left `ensure_clone`
+     underspecified re: partial vs full clone): a `--filter=blob:none` partial clone
+     chained through a second local partial clone hit real, verified
+     "filtering not recognized by server" / promisor-fetch failures in this
+     environment -- both the cache clone and the per-task local clone are FULL clones
+     instead (same-filesystem local clones hardlink objects, so still fast). `.git`
+     is preserved (not stripped/reinitialized) at exactly `base_commit`, HEAD
+     detached, clean working tree -- `git diff` against HEAD is the T-Sg6Jf2 baseline
+     (see STATUS.md Next actions).
+  4. **`KNOWN_GRADER_TYPES`**: added `"swebench"` here (dispatch message explicitly
+     authorized this, "you MAY add the string ... but do NOT implement the grader") --
+     T-Sg6Jf2 still owns registering the actual `SweBenchGrader` class.
 
 ## Requirements Mapping
 - FR-5 (SWE-bench importer + pinned instances + `swebench` WorkspaceProvider + optional deps)

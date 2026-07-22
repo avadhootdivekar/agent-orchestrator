@@ -45,7 +45,17 @@ _ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_]*$")
 # Closed lists of implemented types (design doc §6). The JSON schemas leave `type` as an
 # open string (see benchmark-suite.schema.json/subject.schema.json) precisely so these
 # sets -- not a schema edit -- are the single place that grows as T-Grd7Vx/T-Sbj9Ka land.
-KNOWN_GRADER_TYPES: frozenset[str] = frozenset({"pytest", "command", "file_assertion", "fake"})
+# "swebench" added by T-Sw5Hd9 alongside suite.json's `grader:{"type":"swebench"}`
+# declaration for the large tier -- this only unblocks `ao-bench validate`/`load_suite`
+# for that suite; T-Sg6Jf2 implements + registers the actual SweBenchGrader class into
+# GRADER_REGISTRY. STUB NOTE: until T-Sg6Jf2 lands, `ao-bench run` on this suite fails
+# each task per-task (runner.py's `GRADER_REGISTRY[task.grader.type]` KeyError is
+# caught by the runner's own broad per-task exception boundary and recorded as an
+# errored task, never a crash) -- `ao-bench validate` (spec-level only) is unaffected
+# and is what this task's acceptance criteria require to pass.
+KNOWN_GRADER_TYPES: frozenset[str] = frozenset(
+    {"pytest", "command", "file_assertion", "fake", "swebench"}
+)
 KNOWN_SUBJECT_TYPES: frozenset[str] = frozenset({"claude_cli", "ao_workflow", "fake"})
 
 # Closed list of benchmark tiers (design doc / E-Bt4Xk9 T-Tr1Km8). The JSON schema's
@@ -63,8 +73,11 @@ KNOWN_TIERS: frozenset[str] = frozenset({"small", "medium", "large", "xlarge"})
 # KNOWN_GRADER_TYPES/KNOWN_SUBJECT_TYPES precedent above -- the registry is populated by
 # `bench/workspace.py` at import time (only "fixture" today), and checking against it
 # here would create an import-order dependency this module deliberately avoids (module
-# docstring). T-Sw5Hd9 adds "swebench" to this set alongside registering its provider.
-KNOWN_WORKSPACE_PROVIDER_TYPES: frozenset[str] = frozenset({"fixture"})
+# docstring). T-Sw5Hd9 adds "swebench" to this set alongside registering its provider
+# (bench/swebench_provider.py's `SweBenchWorkspaceProvider`, registered at that
+# module's import time -- both the registration AND this closed-list entry are
+# required together, see that module's own trailing comment).
+KNOWN_WORKSPACE_PROVIDER_TYPES: frozenset[str] = frozenset({"fixture", "swebench"})
 
 
 # ---------------------------------------------------------------------------

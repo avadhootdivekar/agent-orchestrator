@@ -19,14 +19,17 @@ from typing import TYPE_CHECKING
 import typer
 
 from ..errors import SpecValidationError
+from . import swebench_provider  # noqa: F401 -- registers "swebench" workspace provider (T-Sw5Hd9)
 from .errors import BenchError
 from .spec import load_subject, load_suite
+from .swebench_import import import_swebench_command
 
 if TYPE_CHECKING:
     from .results import ComparisonRecord
     from .runner import BenchRunRecord
 
 app = typer.Typer(name="ao-bench", help="Benchmark harness CLI for agent-orchestrator subjects.")
+app.command(name="import-swebench")(import_swebench_command)  # T-Sw5Hd9
 
 # Exit codes (design doc §7 / this task's own AC): 0 ok, 1 usage/spec error, 2 a run
 # completed but at least one task's SUBJECT (not grader-verdict) status indicates a
