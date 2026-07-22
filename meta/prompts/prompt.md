@@ -27,9 +27,12 @@ Agent orchestrator frameowrk is supposed to -
 
 # Current Ask is this  - 
 
-Do we allow for parallel execution of task or not supported inengine? 
-If not supported- can we add support for parallel execution of tasks in engine? Default - Only serially execute the tasks, opt in for parallel execution based on some cli flag env - whatever we are already supporting. 
-
+1. Add the benchmark tests-  
+    1. Analyze, survey available benchmarks and tests for checking quality, accuracy, time, cost of the AI agent's soultion and problem solving - especially for development purpose.
+    2. Integrate and Use the benchmarking tool to compare the efficiency of our ao tool vs laude sonnet vs claude opus on the given benchmarks. 
+    3. Addd the script / make recipe to runb the benchmarks and publish/add results to pre configured directory and add to git for result preservation. 
+    4. Its preferred if we benchmarks (same or different) can later be configured for non-software development benchmarking also. e.g. can our ao tool be used for efficient biology problem solving, physics, marketing, legal etc. If we want to later add benchmarks for those non-software development also - put our benchmarking framework configurable that way - of feasible and not too far stretched / overload. 
+2. Once framework done - run benchmark of our workflow - epic/bug/ etc against claude sonnet and opus and provide me results. 
 
 
 --- 
@@ -44,3 +47,13 @@ Also check - disallowed tools -> monitoring for claude -p mode. This is supposed
 Also note - thsi looks like specilization / customization for claude - not a general technique - I WANT to handle it - but see the bestt place to keep it as it may not be general and may be model / provider specific configuration - You decide.
 Also capture what other tools we may nee to disable in claude -p mode or for the kind of run / tooling we are having and make necessary changes. 
 
+
+## Input 2
+
+Can I turn my tool into runtime agent - like claude? Where I can do backend API calls to any LLM / AI Agnet - like grok / deepseek/gemini/openai etc. 
+Get them to respond in specific predetrmined structured format - like json/yaml or something and execute tool calls on their behalf and also make file edist etc? 
+
+1. Is it doable? What will be scope / esstimates to get basics working - for at least development cycle - grep/build/eexecute/ file edits / saves / got commands etc? 
+2. Is it worth it? Is it any value addition? Why would anyone use this tool over claude/aider etc? Go through whole design / requirements / scope and understand if its worth it as a product. 
+
+NOTE - This is PLAN and deliberation only - do NOT do any changes. You can only add documentation as md files or something. 
