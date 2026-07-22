@@ -557,3 +557,48 @@ By: agent
 Role: manager
 Date: 2026-07-15
 ---
+
+---
+Learning-ID: LRN-20260722-date-suite-keyed-artifact-name-overwrites-on-regen
+Learning: An output artifact directory/file named only from (date + logical-key) — with no hash or version of the actual input SET that produced it — silently overwrites on any same-day regeneration with a different input set, even though nothing "wrong" happened at write time (write-temp + atomic rename can still make each individual write safe). If the artifact is meant to be a durable, git-committed comparison/report over a variable set of inputs (not a single deterministic re-run of the same inputs), the name must also encode the input-set identity (a hash of the sorted input ids, or a monotonic counter) or the tool must refuse to overwrite without an explicit flag.
+Context: `ao-bench`'s `compute_compare_id` (`bench/results.py`) derives `<date>-<suite_id>-compare` from date+suite only. `benchmarks/results/2026-07-22-dev-core-compare/` was regenerated three times the same day as more real-subject runs (haiku→sonnet→opus) landed, each `ao-bench report` invocation silently overwriting the prior comparison.md/json in the working tree — the final committed file reflects the last (5-subject) run, not the original 3-subject `make bench-smoke` set. Per-run `run.json`/`summary.md` dirs are unaffected (subject-id-keyed, so each subject gets its own dir). Accepted as an MVP limitation (E-9Qk4Zt/T-Dcs2Rk), documented rather than fixed — a subject-set hash suffix is the natural fix if ever needed.
+By: agent
+Role: developer
+Date: 2026-07-22
+---
+
+---
+Learning-ID: LRN-20260722-uniform-model-workaround-for-global-model-clobber-defect
+Learning: Given the known "global `--model`/`AO_MODEL` override silently clobbers every `AgentSpec.model`" defect (LRN-20260709-model-override-clobbers-agents, still live), a multi-agent workflow spec can stay entirely safe from it without waiting for the core fix: simply never set a per-agent `model` field. If no agent declares its own model, the global override has nothing to clobber — every agent already inherits the run-level model uniformly by design, so the defect's blast radius (silent per-agent downgrade) collapses to a no-op. This is a spec-authoring discipline, not a code fix, and is only safe when the workflow genuinely wants one uniform model across all its agents (which a benchmark "subject" always does — mixed-model subjects would confuse cost/capability attribution anyway).
+Context: `benchmarks/subjects/ao-epic/agents.json` (E-9Qk4Zt/T-Fx6Dp0): neither the `developer` nor the `tester` agent sets `model`; the `ao_workflow` bench subject's own `model` field flows through `AO_MODEL` to both uniformly. Verified by a dedicated regression test (`test_ao_epic_subjects_pin_model_via_subject_not_per_agent`) asserting neither agent config carries a `model` key.
+By: agent
+Role: developer
+Date: 2026-07-22
+---
+
+---
+Learning-ID: LRN-20260722-directory-scan-attribution-needs-exactly-one-match-enforced
+Learning: When attributing cost/usage/output to "the one thing that just ran" by scanning a directory for run artifacts after the fact (rather than capturing an explicit id at invocation time), the ONLY safe contract is "this directory must contain exactly one candidate" — enforced by raising a typed error on zero OR more than one match, never by silently taking the latest/first/sorted-last one. A silent pick is a latent correctness bug: it works fine until a stale artifact from a prior run lingers (partial cleanup, a retried invocation, a shared directory reused across calls), at which point it attributes cost to the wrong run without any visible symptom. The cheap, robust fix is architectural, not defensive code: guarantee the precondition by construction (a fresh, freshly-created directory per invocation) so the "exactly one" assumption is actually true, and still assert it rather than trusting it blindly.
+Context: `bench/subjects.py`'s `AoWorkflowSubject` attributes cost by scanning `<workspace>/.orchestrator/runs/` for the `ao` run directory the subprocess just produced (there is no other channel back from a black-box `uv run ao run` subprocess). `_latest_run_dir` raises `SubjectError` on 0 or >1 candidates rather than picking one (ASSUMPTION A4 / Risk R2 in the design doc); a fresh, disposable workspace per (subject, task) makes "exactly one" true by construction, and the assertion catches it if that invariant is ever violated (e.g. a future subject reusing a workspace across tasks).
+By: agent
+Role: developer
+Date: 2026-07-22
+---
+
+---
+Learning-ID: LRN-20260722-parallel-dev-agents-strict-ownership-plus-arbitrated-shared-files
+Learning: Multiple developer subagents can safely implement adjacent parts of one epic in parallel (not just sequentially) if each task's "files you own" list is an explicit, disjoint set, AND any file that multiple tasks must touch (a shared registry, a shared "start empty" test asserting a state only true before ANY of them land) is flagged up-front as orchestrator-arbitrated rather than owned by either task. When two concurrent tasks both need to mutate the same shared file (e.g. both register into the same registry), the correct pattern is: each task edits only its OWN new files, and treats a conflict in the shared file as a "flag for arbitration, do not silently fix" finding — the orchestrator (or a designated task) resolves it once, after seeing both sides, rather than either subagent guessing or one silently overwriting the other's edit.
+Context: E-9Qk4Zt's `T-Sbj9Ka` (subjects) and `T-Grd7Vx` (graders) ran concurrently, both registering into shared registries; both independently flagged the same pre-existing `test_registries.py::test_registries_start_empty` (asserted an empty registry, false the moment either task's `register_*` calls landed) as a cross-task conflict rather than fixing it unilaterally. It was resolved once, by whichever agent's registration landed second, replacing the stale assertion with a membership check — verified by both tasks' independent test runs showing zero unexpected failures. No merge conflict or silently-clobbered edit resulted.
+By: agent
+Role: manager
+Date: 2026-07-22
+---
+
+---
+Learning-ID: LRN-20260722-trivial-benchmark-suite-shows-orchestration-cost-not-solve-rate-gain
+Learning: On a benchmark suite trivial enough for a single bare LLM CLI call to already solve every task (6/6), an orchestrated multi-agent workflow (implement-agent → verify-agent) built on top of that same model produces the SAME solve rate but costs materially more — observed ~1.8-2.4x the bare-CLI cost and ~2.1-3.2x the wall-clock, scaling with model tier (larger/slower models amplify both the base cost AND the second agent's overhead). This is the expected, uninteresting result for an easy suite, not a signal that the orchestration adds no value: a verify/retry loop only pays for itself in solve-rate terms when the base model has non-trivial odds of getting it wrong on the first pass. Do not use a trivial/smoke suite's numbers as evidence for or against a multi-agent workflow's value — a suite needs genuine first-pass failure headroom (harder tasks, tighter constraints, ambiguous specs) before "solve rate" becomes a discriminating axis; cost/wall-clock overhead is visible even on an easy suite and is the correct axis to sanity-check there instead.
+Context: E-9Qk4Zt real dev-core runs (2026-07-22, all 6/6): claude-haiku $0.3732 vs ao-epic-haiku $0.6617 (1.77x); claude-sonnet $1.2148 vs ao-epic-sonnet $2.8744 (2.37x); wall-clock ratios higher still (2.06x / 3.17x) because ao-epic's two sequential agent turns each pay their own claude-CLI startup/turn overhead. Documented in `docs-md/benchmarking-framework-hld.md` §11.1 and `benchmarks/README.md`; the epic's own scope note (EPIC.md) explicitly defers the real Sonnet/Opus/harder-suite Phase-2 comparison as a separate follow-up for exactly this reason.
+By: agent
+Role: developer
+Date: 2026-07-22
+---

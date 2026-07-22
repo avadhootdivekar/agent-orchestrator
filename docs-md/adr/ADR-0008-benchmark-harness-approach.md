@@ -1,6 +1,7 @@
 # ADR-0008 — Benchmark harness: build a thin custom harness vs adopt an external one
 
-- Status: **Proposed** (design 2026-07-22; awaiting user approval before epic `E-9Qk4Zt` is executed)
+- Status: **Accepted — implemented as designed** (epic `E-9Qk4Zt` delivered 2026-07-22, MVP complete; see
+  "Implementation notes" below for as-built deviations, all recorded/low-risk, none contradicting this decision)
 - Date: 2026-07-22
 - Deciders: Avadhoot Divekar (user), Claude (architect role)
 - Related: Epic [`E-9Qk4Zt-agent-benchmark-harness`](../../meta/tickets/E-9Qk4Zt-agent-benchmark-harness/EPIC.md) · design doc [`benchmarking-framework-hld.md`](../benchmarking-framework-hld.md) · evidence [`benchmark-landscape-survey.md`](../benchmark-landscape-survey.md) · ADR-0001 (Claude-native + thin spec — same "thin, own-the-spine" instinct) · ADR-0003 (settings precedence — bench knobs ride the invocation chain) · ADR-0005 (headless tool policy — bench subjects inherit `--permission-mode` semantics)
@@ -53,6 +54,34 @@ Documented and justified as deferred (C3/C5): Docker is installed but 120 GB ima
 - **−** We own a (small) harness rather than inheriting a maintained one; the D2 seam is a design commitment we must honor to make imports cheap later.
 - **−** MVP scores are LLM-stochastic (only the scaffolding is deterministic); the framework guarantees a reproducible result-dir + recorded configs, not identical numbers (documented, A5).
 - **Follow-ons:** `DockerSubject` + SWE-bench importer; inspect-ai bridge; `LlmJudgeGrader`; non-dev domain suites; multi-seed statistical rigor; nightly cron trigger. All non-MVP (design §12).
+
+## Implementation notes (2026-07-22, as-built)
+
+All 9 epic tasks delivered; every D1–D6 sub-decision above shipped as designed. Full module-by-module deviations
+are documented inline in [`benchmarking-framework-hld.md`](../benchmarking-framework-hld.md) §4; the ones that
+matter at the ADR level:
+
+- **D1 (thin custom harness):** shipped as 10 modules under `src/agent_orchestrator/bench/` — the pydantic spec
+  models live in `spec.py` itself (no separate `models.py`); `runner.py` owns `run.json` persistence
+  (write-temp + atomic rename, resumable), `results.py` owns `summary.md` + cross-subject `comparison.{json,md}`
+  on top of it. Bench coverage: **98%** (1120 stmts/18 missed), all tests deterministic except an opt-in
+  `real_llm` tier never run in CI.
+- **D4 (standalone `ao-bench` script, not an `ao bench` subcommand):** shipped exactly as decided — one
+  `[project.scripts]` line, core `ao`'s import graph and test suite (81 tests) confirmed byte-unaffected
+  (`agent_orchestrator.bench` never appears in `sys.modules` after importing `agent_orchestrator.cli`).
+- **D5 (SI-1, `bench/` outside the engine import graph):** held throughout; zero edits to
+  `engine.py`/executors/`workflow.schema.json`/`agents.schema.json`/`reposet.schema.json` across all 9 tasks
+  (grep-verified per task, re-verified at docs-refresh time).
+- **New, ADR-relevant finding not anticipated in the original design:** the cross-subject `comparison.{json,md}`
+  directory name (`<date>-<suite>-compare`) is not subject-set-aware, so same-day report regeneration overwrites
+  the working-tree comparison artifact (per-run `run.json`/`summary.md` are unaffected — they're subject-id-keyed).
+  Documented as a known limitation, not a defect requiring a design change; see HLD §9.
+- **Real dev-core numbers (2026-07-22, all 6/6 solved on every subject)** validate the ADR's core differentiator
+  claim — cost/time apples-to-apples via reused core usage plumbing: bare `claude -p` cost $0.37 (haiku) /
+  $1.21 (sonnet) / $1.55 (opus); the `ao-epic` 2-agent workflow cost $0.66 (haiku) / $2.87 (sonnet) — roughly
+  1.8–2.4× the bare-CLI cost for the same solve rate on this trivial suite (see HLD §11.1). This is the expected
+  shape for an *easy* suite (no headroom for a verify/retry loop to pay for itself); the framework is now ready for
+  the real Phase-2 comparison on harder tasks, which is explicitly out of this epic's scope.
 
 ## Positioning (anti-feature-creep, from the survey)
 ```

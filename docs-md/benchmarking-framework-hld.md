@@ -4,7 +4,9 @@
 - Landscape survey (evidence): [`benchmark-landscape-survey.md`](benchmark-landscape-survey.md)
 - Decision record: [`adr/ADR-0008-benchmark-harness-approach.md`](adr/ADR-0008-benchmark-harness-approach.md)
 - Master HLD: [`hld-agent-orchestrator.md`](hld-agent-orchestrator.md)
-- Date: 2026-07-22 · Author: architect agent · Status: **Design (not yet implemented)**
+- Date: 2026-07-22 · Author: architect agent · Status: **Implemented (as-built — MVP delivered 2026-07-22)**. This doc is
+  reconciled to the shipped code (T-Dcs2Rk); every as-built deviation from the original design is called out inline
+  where it occurs, and Q1–Q3 (§18) are resolved to their final answers. ADR-0008 status: Accepted.
 
 > **Scope of this doc:** design a declarative, pluggable, resumable, observable, safe-by-default
 > benchmarking framework that compares **subjects** (an `ao` workflow vs bare `claude -p` at a
@@ -94,6 +96,14 @@ ASSUMPTION A6: Model ids are pass-through strings to `--model`/`AO_MODEL`. The C
 
 Import direction is **one-way**: `bench/` imports pure helpers *from* core; **nothing in core imports `bench/`**. The engine's `ao run` runs whether or not `bench/` exists (safety invariant SI-1).
 
+> **As-built note (module split — the diagram above simplifies this):** `runner.py`, not `results.py`, owns and
+> atomically persists `run.json` (write-temp + atomic rename after every task, mirroring `runstate.RunStateStore.save`)
+> — the resume/crash-recovery contract requires the writer and the orchestration loop to be the same module.
+> `results.py` builds on top of the already-persisted `run.json` shape (`load_run` → `BenchRunRecord.model_validate`)
+> and owns `write_summary_md` + the cross-subject `build_comparison`/`write_comparison` writers. There is also a
+> tenth module not shown above, `workspace.py` (`RunContext` model + `materialize_workspace`), which both subjects
+> and the runner depend on for path-guarded workspace setup — see §9's file list.
+
 ### 3.1 Core domain concepts
 
 | Concept | Meaning |
@@ -143,6 +153,12 @@ FUNCTION load_subject(path) -> SubjectSpec:
 - **Interface / data schemas:** see §5 (spec schema) and §6 (models).
 - **Subtasks:** JSON/YAML read · jsonschema validate · pydantic parse · path resolution+existence · grader-type/subject-type registry check · lowercase/unique id check.
 - **Edge cases:** empty/malformed JSON → structured error naming the file; unknown `grader.type`/`subject.type` → error listing known types; duplicate task id → error naming the id; missing fixture dir / instruction file → error naming the path; uppercase id → error (mirrors core lowercase rule); `version` absent → error (required, versioned spec).
+- **As-built note:** the pydantic models (`BenchSuite`, `BenchTask`, `BenchSuiteDefaults`, `GraderConfig`,
+  `SubjectSpec`, `Assertion`) live in `bench/spec.py` itself, alongside the loaders — there is no separate
+  `models.py`. `Assertion.golden` (the `equals_file` grader's reference file, authored relative to `suite.json`) is
+  checked to exist AND **rewritten to an absolute path in place** by `load_suite`/`_check_assertions` at load time —
+  necessary because the grade-time `RunContext` carries no suite base directory, so a still-relative `golden` would
+  be unresolvable by `FileAssertionGrader` later (§4.3).
 
 ### 4.2 Module `bench/subjects.py` — Subject adapters
 
@@ -177,11 +193,14 @@ CLASS ClaudeCliSubject(Subject):   # bare `claude -p`, the baseline
 CLASS AoWorkflowSubject(Subject):   # an ao DAG is the system under test
   run(task, ctx):
     render ctx.reposet_json  with workspace_root=ctx.workspace, repos[0].path=ctx.repo_dir
-    write task.instruction    to ctx.repo_dir/INSTRUCTION.md   (subject workflow's first task reads it)
-    env = {AO_MODEL: spec.model?, AO_MAX_TURNS: spec.max_turns?, AO_BUDGET_TOTAL: spec.budget_total?,
+    # INSTRUCTION.md is already present at ctx.repo_dir/INSTRUCTION.md — written once,
+    # shared by every subject, by workspace.materialize_workspace BEFORE Subject.run is
+    # called (not by AoWorkflowSubject itself; as-built deviation, see note below).
+    env = {AO_MODEL: spec.model?, AO_MAX_TURNS: spec.max_turns?,
            AO_MAX_PARALLEL: spec.max_parallel?, AO_WORKSPACE_ROOT: ctx.workspace}
     argv = ["uv","run","ao","run","--workflow",ctx.workflow_json,
             "--reposets",ctx.rendered_reposet,"--agents",spec.agents_json]
+    IF ctx.budget_total or spec.budget_total: argv += ["--budget-total", str(ctx.budget_total or spec.budget_total)]
     t0 = monotonic(); rc = run(argv, cwd=REPO_ROOT, stdin=DEVNULL, env=env, timeout=task.timeout,
                                stdout=ctx.capture_dir/"ao.stdout.txt")
     wall = monotonic() - t0
@@ -197,7 +216,33 @@ CLASS FakeSubject(Subject):        # deterministic, network-free — the ONLY su
 ```
 
 - **Subtasks:** prompt/reposet rendering · subprocess spawn+capture (OS-level redirect, `stdin=DEVNULL`) · timeout kill · status mapping · cost/usage extraction (reuse) · turns/attempts best-effort · `FakeSubject` scripted effect.
-- **Edge cases:** subject non-zero exit → `status="failed"` (task still graded — a failed subject can still leave a partial fix); timeout → `status="timed_out"`, keep partial capture; `claude`/`ao` not on PATH → `status="error"` with a clear message (checked up-front in `ao-bench validate`); quota exhaustion (`claude_quota_exhausted` from `parse_usage_and_429`) → surface distinctly, do NOT count as a solve, mark `subject_status="error"` with reason; missing `state.json` for ao subject → cost=None but still grade; permission-mode mismatch (write-only agent that runs tests) → documented: default `bypassPermissions` for claude subject (learnings §21).
+- **Edge cases:** subject non-zero exit → `status="failed"` (task still graded — a failed subject can still leave a partial fix); timeout → `status="timed_out"`, keep partial capture; `claude`/`ao` not on PATH → `status="error"` with a clear message (checked up-front in `ao-bench validate`); quota exhaustion (`claude_quota_exhausted` from `parse_usage_and_429`) → surface distinctly, do NOT count as a solve, mark `subject_status="error"` with reason; missing `state.json` for ao subject → cost=None but still grade; permission-mode mismatch (write-only agent that runs tests) → documented: default `bypassPermissions` for claude subject (learnings §21); **an `ao_workflow` subject's workflow task CANNOT reference a path under a generic mirrored `instructions/` directory** — `AO_WORKSPACE_ROOT` is that bench task's own ephemeral workspace, which has no such directory, so every workflow task's `instruction` field must be `repo/INSTRUCTION.md` instead (the file `materialize_workspace` already wrote there) — a design gap found and worked around during `T-Fx6Dp0`, see deviation 3 above.
+
+**As-built deviations from this module's pseudocode (T-Sbj9Ka, verified against `bench/subjects.py` + `bench/workspace.py`):**
+1. **No `AO_BUDGET_TOTAL` env var.** Core `cli.py`'s `run`/`resume` read budget only via the `--budget-total` CLI
+   flag (unlike `AO_MAX_TURNS`/`AO_MODEL`/`AO_MAX_PARALLEL`, which core *does* wire as env vars). `AoWorkflowSubject`
+   passes `--budget-total <n>` as an argv flag instead (`ctx.budget_total` wins over `spec.budget_total`, mirroring
+   core's own CLI > spec > unset precedence).
+2. **`INSTRUCTION.md` is written by `workspace.materialize_workspace`, not by `AoWorkflowSubject.run`.** It writes
+   `task.instruction` to `ctx.repo_dir/INSTRUCTION.md` once, before *any* subject runs — `ClaudeCliSubject` benefits
+   too (its `{instruction}` prompt placeholder always resolves to a real on-disk file inside the workspace).
+3. **The `ao_workflow` subject's `workflow.json`/`reposet.json`/`agents.json` do NOT get a generic `instructions/`
+   directory mirrored into the workspace.** `AO_WORKSPACE_ROOT` (set by `AoWorkflowSubject`) is the bench task's own
+   ephemeral per-run workspace, and every workflow-relative artifact path — including a task's `instruction` field —
+   resolves against *that* workspace, not the committed `benchmarks/subjects/<id>/` directory. So the committed
+   `ao-epic` workflow's tasks reference `instruction: "repo/INSTRUCTION.md"` (the same file `materialize_workspace`
+   already wrote, per deviation 2) rather than a path under a mirrored `instructions/` dir. The committed
+   `benchmarks/subjects/ao-epic/instructions/{implement,verify}.md` files exist purely as human-readable role
+   documentation, mirrored verbatim into `agents.json`'s `prompt_template` strings (the text the engine actually
+   renders) — see §9 for the full asset list and §18 Q1 for the workflow-shape resolution this fed into.
+4. **`RunContext` gained an additive `subject_base_dir` field** (not in §6's original listing) so `AoWorkflowSubject`
+   can resolve `spec.workflow`/`.reposets`/`.agents` (documented as "relative to this subject.json") against the
+   subject.json's own directory; the runner sets it to `Path(subject_path).resolve().parent`.
+5. **`SubjectResult` gained additive `argv`/`resolved_model`/`resolved_permission_mode` fields** (observability for
+   `config_fingerprint` and audit), populated by all three subjects (`FakeSubject`: `argv=[]`).
+6. **Exactly-one-run-dir (A4/R2) is enforced by `subjects._latest_run_dir`,** which raises `SubjectError` (not a
+   silent pick) if zero or more than one `run_id` directory exists under `<ws>/.orchestrator/runs/` — the runner
+   catches this and records the task as `subject_status="error"`.
 
 ### 4.3 Module `bench/graders.py` — Grader adapters
 
@@ -261,7 +306,17 @@ FUNCTION aggregate(metrics: [TaskMetric]) -> Aggregate:
 ### 4.5 Module `bench/runner.py` — orchestration (deterministic, resumable, bounded)
 
 - **Purpose:** run a suite against one subject: `for task in suite (sorted)` → materialize → run → grade → persist per-task metric; skip already-done tasks (resume); bound each task; never mutate committed fixtures.
-- **Pseudocode:**
+- **As-built signature (supersedes the pseudocode below, which used already-loaded objects):**
+  `run_suite(suite_path, subject_path, *, out_dir=None, force=False, task_filter=None, budget_total=None,
+  max_turns=None, default_timeout=None, clock=None) -> BenchRunRecord`. `run_suite` itself calls `load_suite`/
+  `load_subject` as its first step (paths in, not pre-loaded models — matches how the CLI invokes it:
+  `--suite <path> --subject <path>`). It returns the persisted `BenchRunRecord` directly (no separate `RunResult`
+  wrapper); `compute_bench_run_id`/`resolve_result_dir` are exposed as public functions so callers (the CLI, or
+  `results.py`) can independently derive the result directory. **`run_suite` does NOT call `write_summary_md`
+  itself** — `summary.md` is written by the CLI's `run` command, calling `results.write_summary_md` on the returned
+  record, after `run_suite` completes (keeping `results.py` the sole owner of human-readable output). An injectable
+  `clock` param satisfies the determinism rule (CLAUDE.md) — defaults to `datetime.now(UTC)`.
+- **Original pseudocode (illustrative — see the as-built signature/behavior above and deviations below):**
 ```
 FUNCTION run_suite(suite, subject_spec, opts) -> RunResult:
   bench_run_id = f"{utc_date()}-{suite.id}-{subject_spec.id}"        # stable, reproducible dir name
@@ -289,20 +344,49 @@ FUNCTION run_suite(suite, subject_spec, opts) -> RunResult:
   RETURN RunResult(bench_run_id, result_dir, metrics, aggregate(...))
 ```
 - **Interface (CLI):** see §7.
-- **Subtasks:** bench-run-id derivation · workspace materialize (copytree, path-guarded under `playground/.tmp/bench`) · deterministic task iteration · resume skip · fingerprint · subject dispatch · grader dispatch · per-task persist · summary write · structured logging (`bench.run.start/task.start/task.end/run.end`).
+- **Subtasks:** bench-run-id derivation · workspace materialize (copytree, path-guarded under `playground/.tmp/bench`) · deterministic task iteration · resume skip · fingerprint · subject dispatch · grader dispatch · per-task persist · structured logging (`bench.run.start/task.start/task.end/run.end`).
 - **Edge cases:** partially-written `run.json` from an interrupted run → resume reads valid task entries, re-runs the rest (persist-after-each-task guarantees the file is always valid JSON per completed task); `--force` re-runs all; a fixture path that escapes `playground/.tmp/bench` (symlink/`..`) → rejected (path guard, mirrors engine `working_dir` guard); one task crashing → recorded as `subject_status="error"`, run continues (no all-or-nothing); disk cleanup is manual (`ao prune`-style; workspaces preserved for audit per learnings §18).
+
+**As-built deviations (T-Run5Tz, verified against `bench/runner.py`):**
+1. **`run.json` persistence is owned by `runner.py`, not `results.py`.** The resume/crash-resumable contract is
+   meaningless unless the same module that decides "which tasks to run" also durably records completed ones — write-
+   temp + atomic rename (mirrors `runstate.RunStateStore.save`) after every task that actually runs.
+   `BenchRunRecord`/`BenchTaskRecord`/`BenchRunSubjectInfo`/`BenchRunEnv` (the `run.json` shape) are defined in
+   `runner.py`; `results.py` builds `summary.md`/`comparison.*` **on top of** this shape by reading it back
+   (`BenchRunRecord.model_validate`), not by assembling it itself (there is no separate `assemble_run_json`
+   function — see §4.6).
+2. **`BenchTaskRecord` (a `TaskMetric` subclass, local to `runner.py`) adds `raw_error`/`grader_detail`/
+   `grader_raw_tail`** beyond `metrics.TaskMetric`'s fields, so the persisted per-task record carries full
+   diagnostic detail without a `metrics.py` edit.
+3. **Two `config_fingerprint`s exist:** a per-task one (`BenchTaskRecord.config_fingerprint`, `sha256` of
+   task+subject+`ao --version`, as originally specified) AND a run-level one
+   (`BenchRunRecord.config_fingerprint`, hashing suite id/version + subject spec + the behavior-affecting overrides
+   `budget_total`/`max_turns`/`default_timeout` + `ao`/`claude` versions — `force`/`task_filter` are excluded as
+   control-flow, not config that produced the metric values).
+4. **`_effective_timeout` has three tiers, not two:** a task's own `timeout_seconds` → the run-level
+   `--timeout`/`default_timeout` override → `suite.defaults.timeout_seconds` (§5.1's schema field, now actually
+   consumed) → the builtin `DEFAULT_TASK_TIMEOUT_SECONDS = 1800` last resort.
+5. **A fully-skipped resume (every considered task already recorded) writes nothing to disk** — `run_suite` returns
+   the existing record without reopening `run.json` for writing, so the file's mtime is provably unchanged (AC2's
+   literal "run.json unchanged").
+6. **A per-run structured-log file** (`bench.run.start`/`task.start`/`task.end`/`run.end`, §8) is written under the
+   GITIGNORED workspace tree (`playground/.tmp/bench/<bench_run_id>/bench.log`) via the reused core
+   `attach_run_handler`/`get_run_logger`/`detach_run_handler`, never inside the committed `benchmarks/results/` dir.
 
 ### 4.6 Module `bench/results.py` — result & comparison writers
 
-- **Purpose:** write `run.json` (machine) + `summary.md` (human) per subject; write cross-subject `comparison.{json,md}`.
-- **Pseudocode:**
+- **Purpose:** read back the `run.json` `runner.py` already persisted (§4.5) and write `summary.md` (human) per
+  subject; build + write cross-subject `comparison.{json,md}`. `results.py` does **not** assemble `run.json` itself —
+  there is no `assemble_run_json` function; that shape (`BenchRunRecord`) is defined and persisted by `runner.py`.
+- **As-built API (supersedes the illustrative pseudocode below):**
 ```
-FUNCTION assemble_run_json(suite, subject_spec, metrics, agg, env) -> dict:
-  RETURN {schema_version:"1.0", bench_run_id, suite:suite.id, domain:suite.domain,
-          subject:{id,type,model,resolved_config}, env:{ao_version, claude_version, os, git_sha},
-          started_at, ended_at, tasks:[metric.dict() for metric in metrics],
-          aggregate: agg.dict()}
-
+load_run(run_dir) -> BenchRunRecord                          # accepts a run dir OR a run.json path directly
+write_summary_md(record | run_dir, run_dir=...) -> Path       # per-task table + aggregate footer
+build_comparison(run_dirs, *, allow_mixed=False, clock=None) -> ComparisonRecord
+write_comparison(comparison, out_dir) -> tuple[Path, Path]    # (comparison.json path, comparison.md path)
+```
+- **Original illustrative pseudocode (kept for the shape of the idea; see the as-built API + deviations for the real behavior):**
+```
 FUNCTION write_comparison(result_dirs: [dir]) -> None:                 # `ao-bench report`
   runs = [load run.json from d for d IN result_dirs where same suite]
   matrix = {task_id: {subject_id: {solved, score, cost_usd, wall}}}    # per-task, all subjects
@@ -311,8 +395,17 @@ FUNCTION write_comparison(result_dirs: [dir]) -> None:                 # `ao-ben
   write_md(compare_dir/"comparison.md", side_by_side_table(per_subject) + per_task_table(matrix))
 ```
 - **`summary.md` shape (committed):** a markdown table `task | category | solved | score | cost($) | wall(s) | tokens(in/out) | status` + an aggregate footer (`solved/total`, `solve_rate`, `total_cost`, `cost_per_solved`).
-- **`comparison.md` shape:** `subject | solved/total | solve_rate | total_cost | cost_per_solved | total_wall` side-by-side, plus a per-task solved/cost matrix.
-- **Edge cases:** subjects run against different suites → `report` errors (refuses to compare unlike suites); a subject's `run.json` missing → listed as "not run" in the comparison, never a crash; transcripts are **not** committed (huge, may contain noise) — `run.json` stores the workspace path as a pointer only (§4.4).
+- **`comparison.md` shape:** `subject | solved/total | solve_rate | total_cost | cost_per_solved | total_wall` side-by-side, a per-task solved/cost matrix, and a "winner" line per axis (solve rate, total cost, cost per solved, wall-clock) — ties break on subject id ascending for a deterministic winner (`render_winners`).
+- **Edge cases:** subjects run against different suites, or different `schema_version`s → `report` refuses
+  (`ResultsError`); two runs for the SAME subject id with a different `config_fingerprint` → refused unless
+  `--allow-mixed`/`allow_mixed=True` (then last-wins); a subject's `run.json` missing → listed as "not run" in the
+  comparison (`ComparisonRecord.not_run`), never a crash — its subject id is recovered from the run-dir name itself
+  (`<date>-<suite_id>-<subject_id>`) once at least one sibling dir DID load, so the suite id prefix is known; if
+  **every** given dir is missing, `build_comparison` raises `ResultsError` (no information to determine the suite
+  from at all); a single run dir degrades gracefully to a one-subject "comparison"; transcripts are **not** committed
+  (huge, may contain noise) — `run.json` stores the workspace path as a pointer only (§4.4).
+- **`ResultsError`** (new, in `bench/errors.py`, co-located with `SubjectError`/`GraderError`) is the typed error
+  `load_run`/`build_comparison` raise for all of the above refusals.
 
 ## 5. Spec schemas (JSON, versioned, `additionalProperties:false`)
 
@@ -361,7 +454,10 @@ FUNCTION write_comparison(result_dirs: [dir]) -> None:                 # `ao-ben
 
 ```
 BenchTask:   id:str · category:str · instruction:str(path) · fixture:str(path)
-             grader:GraderConfig · timeout_seconds:int|None · tags:[str] · domain:str(inherited)
+             grader:GraderConfig · timeout_seconds:int|None · tags:[str]
+             # AS-BUILT: BenchTask has NO `domain` field. `domain` lives only on BenchSuite;
+             # build_task_metric(..., domain: str, ...) takes it as an explicit param from the
+             # suite (the caller), rather than reading a (nonexistent) task.domain.
 BenchSuite:  version:str · id:str · domain:str · description:str · defaults:{timeout_seconds:int} · tasks:[BenchTask]
 GraderConfig: type:Literal["pytest","command","file_assertion","fake"] · command?:str · cwd?:str
              · timeout_seconds?:int · pass_threshold?:float · assertions?:[Assertion]
@@ -371,19 +467,26 @@ SubjectSpec: version:str · id:str · type:Literal["claude_cli","ao_workflow","f
              · scripted_effect?:str · fake_cost?:float · fake_tokens?:{in:int,out:int}
 RunContext:  workspace:str · repo_dir:str · instruction_path:str · capture_dir:str · timeout_seconds:int
              · budget_total:int|None · max_turns:int|None · workflow_json?:str · rendered_reposet?:str
+             · subject_base_dir?:str   # AS-BUILT additive: dir containing the running subject's own
+                                       # subject.json, so AoWorkflowSubject can resolve workflow/reposets/agents
 SubjectResult: status:Literal["succeeded","failed","timed_out","error"] · wall_clock_seconds:float
              · cost_usd?:float · input_tokens?:int · output_tokens?:int
              · cache_creation_input_tokens?:int · cache_read_input_tokens?:int
              · attempts?:int · turns?:int · capture_dir:str · raw_error?:str
+             · argv?:[str] · resolved_model?:str · resolved_permission_mode?:str   # AS-BUILT additive (observability)
 GradeResult: solved:bool · score:float · detail:dict · raw_tail:str
 TaskMetric:  subject_id · task_id · domain · category · solved · score · wall_clock_seconds
              · cost_usd? · input_tokens? · output_tokens? · cache_* · attempts? · turns?
              · subject_status · grader_type · workspace(pointer) · config_fingerprint · started_at · ended_at
+             # AS-BUILT: the type PERSISTED into run.json is `BenchTaskRecord(TaskMetric)` (runner.py), which
+             # adds `raw_error` / `grader_detail` / `grader_raw_tail` on top of the fields above.
 
 PROTOCOL Subject:  run(task:BenchTask, ctx:RunContext) -> SubjectResult   # errors: SubjectError
 PROTOCOL Grader:   grade(cfg:GraderConfig, ctx:RunContext) -> GradeResult # errors: GraderError
 REGISTRIES: SUBJECT_REGISTRY:{str->type[Subject]} · GRADER_REGISTRY:{str->type[Grader]}
-ERRORS: BenchError(base) · SpecValidationError(reuse core) · SubjectError · GraderError
+ERRORS: BenchError(base) · SpecValidationError(reuse core) · SubjectError · GraderError · ResultsError
+        # ResultsError (AS-BUILT additive, bench/errors.py): raised by results.py's load_run/build_comparison
+        # for a malformed/missing run.json or a refused (unlike-suite / mixed-fingerprint) comparison.
 ```
 Idempotency & versioning: result dir name = `<date>-<suite>-<subject>` is stable → re-run skips completed tasks unless `--force`; `schema_version` on suite/subject/run.json enables forward migration; a `config_fingerprint` (sha256 of task+subject+`ao --version`) records exactly what produced each metric.
 
@@ -391,22 +494,42 @@ Idempotency & versioning: result dir name = `<date>-<suite>-<subject>` is stable
 
 **Decision (ADR-0008 D4): a standalone `ao-bench` console script**, not an `ao bench` subcommand. Rationale: keeps the core `ao` command surface and its test suite untouched (SI-1, "third-party integrations must never destabilize core"); `bench` deps/imports never load on a normal `ao run`. Registered as a separate `[project.scripts]` entry point.
 
+**As-built CLI (T-Sc4Hm2/T-Cli8Nf, `bench/cli.py` — supersedes the illustrative sketch originally here):**
 ```
-ao-bench validate --suite benchmarks/suites/dev-core/suite.json
-ao-bench validate --subject benchmarks/subjects/claude-opus.json     # also probes `claude --version`
-ao-bench run  --suite <suite.json> --subject <subject.json> [--force] [--budget-total N] [--max-turns N] [--timeout S]
-ao-bench report --suite dev-core --results-dir benchmarks/results     # writes comparison.{json,md}
-ao-bench list --suites | --subjects | --results
+ao-bench validate --suite <suite.json>                     # schema + semantic validate a suite
+ao-bench validate --subject <subject.json>                 # also probes `claude --version` (non-fatal WARNING only)
+ao-bench run --suite <suite.json> --subject <subject.json> [--out-dir D] [--force] [--task ID ...]
+             [--budget-total N] [--max-turns N] [--timeout S]
+             # writes run.json + summary.md. Exit 0 clean run; exit 2 if any task's SUBJECT status (not its
+             # grader verdict — an unsolved-but-cleanly-run task is a normal outcome) is failed/timed_out/error;
+             # exit 1 on a usage/spec-loading error.
+ao-bench report (--run-dir D [--run-dir D ...] | --results-root R --suite SUITE_ID) [--out-dir D] [--allow-mixed]
+             # --run-dir: explicit result dirs to compare.
+             # --results-root+--suite: auto-discover the LATEST result dir per subject id under that root
+             #   (dir names sort lexicographically = their embedded ISO date, so "last in sorted order" = latest).
+             # writes comparison.{json,md}; exit 0 on success, 1 on a refused/usage error.
+ao-bench list --suite <suite.json>                          # a task table: id/category/grader type/timeout/tags
 ```
-`Make` recipes (added to the existing `Makefile`):
+`list` and `report` differ from the design's original one-line sketches (`list --suites|--subjects|--results`;
+`report --suite dev-core --results-dir ...`) — the shapes above are what shipped; both are simpler and map directly
+onto how `T-Fx6Dp0`'s committed suite/subjects and `Makefile` recipes actually invoke them.
+
+`Make` recipes (as-built, appended to the existing `Makefile` — no existing target edited):
 ```
-bench-validate:  uv run ao-bench validate --suite benchmarks/suites/dev-core/suite.json
-bench-smoke:     for s in claude-haiku ao-epic-haiku ; do \
-                   uv run ao-bench run --suite benchmarks/suites/dev-core/suite.json \
-                     --subject benchmarks/subjects/$$s.json --max-turns 20 ; done   # cheap, haiku
-bench-run:       uv run ao-bench run --suite $(SUITE) --subject $(SUBJECT)          # real (sonnet/opus)
-bench-report:    uv run ao-bench report --suite dev-core --results-dir benchmarks/results
+bench-validate:  uv run ao-bench validate --suite $(BENCH_SUITE_PATH)
+bench-smoke:     uv run ao-bench run --suite $(BENCH_SUITE_PATH) --subject $(BENCH_FAKE_SUBJECT_PATH)
+                 -uv run ao-bench run --suite $(BENCH_SUITE_PATH) --subject $(BENCH_HAIKU_SUBJECT_PATH) \
+                     --max-turns $(BENCH_SMOKE_MAX_TURNS)
+                 -uv run ao-bench run --suite $(BENCH_SUITE_PATH) --subject $(BENCH_AO_EPIC_HAIKU_SUBJECT_PATH) \
+                     --max-turns $(BENCH_SMOKE_MAX_TURNS)
+                 uv run ao-bench report --results-root $(RESULTS) --suite $(BENCH_SMOKE_SUITE_ID)
+                 # fake-pass (free, proves plumbing) + claude-haiku + ao-epic-haiku (both real, cheap; the `-`
+                 # prefix means one flaky real-subject line never blocks the rest) + a report over all three.
+bench-run:       uv run ao-bench run --suite $(SUITE) --subject $(SUBJECT)          # real (sonnet/opus/…)
+bench-report:    uv run ao-bench report --results-root $(RESULTS) --suite $(SUITE)
 ```
+See `benchmarks/README.md` for the full knob reference (`BENCH_SUITE_PATH`, `BENCH_*_SUBJECT_PATH`, `RESULTS`,
+`SUITE`, `SUBJECT`, `BENCH_SMOKE_MAX_TURNS`).
 
 ## 8. Trigger / event schema (observability)
 
@@ -418,25 +541,48 @@ bench.task.end    {task_id, solved, score, cost_usd, wall_clock_seconds, subject
 bench.run.end     {bench_run_id, solved, total, solve_rate, total_cost_usd}
 ```
 
-## 9. Where things live (proposed layout)
+## 9. Where things live (as-built layout)
 ```
 benchmarks/
   schemas/  benchmark-suite.schema.json  subject.schema.json          # committed
-  suites/dev-core/  suite.json  tasks/<task>/{instruction.md, fixture/…}   # committed fixtures
-  subjects/  claude-opus.json  claude-sonnet.json  claude-haiku.json
-             ao-epic.json  ao-epic-haiku.json  fake-pass.json         # committed
+  suites/dev-core/  suite.json  tasks/<task-id>/{instruction.md, fixture/…}   # committed fixtures
+                    # fixture/ carries a committed .bench-solution/ reference overlay (FakeSubject's
+                    # "copy-solution" scripted_effect); refactor/test-writing tasks also carry their own
+                    # check.py/check_tests.py that a `command` grader shells out to.
+  subjects/  claude-haiku.json  claude-sonnet.json  claude-opus.json
+             ao-epic-haiku.json  ao-epic-sonnet.json  fake-pass.json  # committed subject configs
+             ao-epic/  workflow.json  reposet.json  agents.json      # the ao_workflow subject's own
+                       instructions/{implement,verify}.md            # templates (§4.2 deviation 3)
   results/<date>-<suite>-<subject>/  run.json  summary.md             # COMMITTED (git-preserved)
-          <date>-<suite>-compare/    comparison.json  comparison.md   # COMMITTED
-src/agent_orchestrator/bench/  __init__.py spec.py subjects.py graders.py metrics.py runner.py
-                               results.py cli.py errors.py registries.py                # code
-tests/bench/                   unit + CliRunner e2e (FakeSubject/FakeGrader — no real LLM)
+          <date>-<suite>-compare/    comparison.json  comparison.md   # COMMITTED — see the naming
+                                                                       # limitation note below
+src/agent_orchestrator/bench/  __init__.py spec.py subjects.py workspace.py graders.py metrics.py
+                               runner.py results.py cli.py errors.py registries.py      # code (10 modules)
+tests/bench/                   unit + CliRunner e2e (FakeSubject/FakeGrader — no real LLM) + opt-in real_llm
 playground/.tmp/bench/         # GITIGNORED workspaces (already covered by playground/.tmp/)
 ```
+
+> **Known limitation — comparison directory naming is not subject-set-aware.** `compute_compare_id` derives
+> `<date>-<suite_id>-compare` from only the UTC date + suite id (§4.6/`results.py`) — it does not encode which
+> subjects went into the comparison. Regenerating `ao-bench report` for the same suite on the same day (e.g. adding
+> a newly-run subject to the comparison, or re-running with `--allow-mixed`) **overwrites** the existing
+> `<date>-<suite>-compare/comparison.{json,md}` in the working tree with the new subject set — there is no
+> versioning or subject-set suffix. This is scoped to the *comparison* artifact only: per-run `run.json`/`summary.md`
+> dirs (`<date>-<suite>-<subject>/`) are keyed by subject id too, so they are never clobbered by each other. In
+> practice (`benchmarks/results/2026-07-22-dev-core-compare/`), this is exactly what happened: the comparison was
+> regenerated as more real-subject runs (sonnet, opus) landed later the same day, and the committed
+> `comparison.md` now reflects the fuller 5-subject set, not the original 3-subject `make bench-smoke` set. Accepted
+> for MVP (§12 lists statistical/dashboard rigor as non-MVP); a fix would suffix the compare id with a subject-set
+> hash or a monotonic counter. See `benchmarks/README.md`.
 `pyproject.toml`: add `ao-bench = "agent_orchestrator.bench.cli:app"` to `[project.scripts]`. `bench/` ships in the wheel (packaged under `src/agent_orchestrator`); **schemas/suites/fixtures under `benchmarks/` are NOT packaged** — `ao-bench` resolves them relative to the repo/CWD (bench is a dev/repo tool, not an installed end-user command), so no wheel-packaging trap (learnings §49) for data files.
 
 ## 10. Deployment / rollout / upgrade
 - **Rollout:** additive, opt-in, isolated. New module + new console script + `benchmarks/` tree; zero change to `src/agent_orchestrator/engine.py`, executors, or the workflow/agents/reposet schemas. `ao run/validate/resume` and their tests are byte-unaffected (SI-1, regression-gated in tests).
-- **CI:** add a `bench-unit`/`bench-e2e` job using `FakeSubject`/`FakeGrader` (no network, no real LLM). The real-LLM bench run is **never** in CI (cost); it's a manual `make bench-*`.
+- **CI (as-built):** `.github/workflows/ci.yml`'s single `test` job gained one added step, "Run bench tests
+  (deterministic, no real_llm)": `pytest tests/bench -q -m "not real_llm" --cov=agent_orchestrator.bench
+  --cov-fail-under=80` — `FakeSubject`/`FakeGrader` only, network-free, no separate job. Actual coverage as of
+  T-Tst4Ln: **98%** (1120 statements, 18 missed — documented hard-to-trigger abstract-method/race-condition lines).
+  The real-LLM bench run is **never** in CI (cost); it's a manual `make bench-*`.
 - **Upgrade/versioning:** `schema_version` on every spec + `run.json`; a fingerprint per metric. New grader/subject types are additive registry+enum entries. Old result dirs stay valid (append-only history).
 - **Docker/external suites:** documented as non-MVP; Docker is installed, so a `DockerSubject`/SWE-bench importer is unblocked behind the same seam later.
 
@@ -446,6 +592,31 @@ playground/.tmp/bench/         # GITIGNORED workspaces (already covered by playg
 - **Fast local iteration:** `make bench-smoke` at haiku is cheap; `FakeSubject` gives instant, network-free end-to-end runs for harness development.
 - **Reproducible:** result dir name + `config_fingerprint` + recorded `ao/claude` versions make "what produced this number" answerable; re-run resumes.
 - **Ergonomic knobs:** budget/max-turns/timeout are CLI + per-suite defaults; models live in committed subject configs (swap Opus↔Sonnet↔Haiku by pointing at a different subject file).
+- **Known limitation:** the cross-subject `comparison.{json,md}` directory name is date+suite-keyed only, not
+  subject-set-aware — see §9's "Known limitation" box (same-day regenerate overwrites the working-tree comparison;
+  per-subject `run.json`/`summary.md` are unaffected).
+
+### 11.1 Real dev-core results (2026-07-22, verified against committed `run.json`s)
+All 6 dev-core tasks (2 bugfix / 2 feature / 1 refactor / 1 test-writing) solved 6/6 by every subject run so far:
+
+| Subject | Solved | Total cost | Cost/solved | Total wall-clock |
+|---|---|---|---|---|
+| `fake-pass` | 6/6 | $0.00 | $0.00 | ~0.001s |
+| `claude-haiku` | 6/6 | $0.3732 | $0.0622 | 166.37s |
+| `ao-epic-haiku` | 6/6 | $0.6617 | $0.1103 | 343.05s |
+| `claude-sonnet` | 6/6 | $1.2148 | $0.2025 | 122.28s |
+| `claude-opus` | 6/6 | $1.5483 | $0.2580 | 129.97s |
+| `ao-epic-sonnet` | 6/6 | $2.8744 | $0.4791 | 387.31s |
+
+On this trivial-suite signal (tasks a single `claude -p` call can already ace), the `ao-epic` 2-agent
+(implement→verify) workflow does **not** raise the solve rate over bare `claude -p` (both are 6/6) but costs
+**~1.8× (haiku) to ~2.4× (sonnet)** the bare-CLI run, and takes **~2.1× to ~3.2×** the wall-clock — the extra
+verify-agent turn's overhead is not repaid on tasks this easy. This is the expected, documented shape of a "trivial"
+smoke suite (§12/ADR-0008 consequences: "MVP scores are LLM-stochastic … the framework guarantees a reproducible
+result-dir + recorded configs, not identical numbers") — a harder suite is where an orchestrated multi-agent
+workflow's verify/retry loop is expected to pay for itself via a HIGHER solve rate, not just show up as overhead.
+See `benchmarks/README.md` for the full table and `benchmarks/results/2026-07-22-dev-core-compare/comparison.md`
+for the live artifact.
 
 ## 12. Non-MVP (explicitly deferred — anti-feature-creep)
 `LlmJudgeGrader` (needs a judge model) · SWE-bench Verified / terminal-bench **DockerSubject + importer** · **inspect-ai bridge** (run a fixture as an inspect Task) · Aider/EvalPlus subset importers · non-dev **domain suites** (biology/physics/legal/marketing — the framework *supports* them via `domain` + `CommandGrader`, but ships none) · HTTP/API subjects (raw Anthropic/OpenAI SDK, aider CLI) · statistical rigor (multi-seed, bootstrap CIs, pass@k) · a results dashboard/`ao-bench serve` · a nightly cron trigger.
@@ -471,6 +642,12 @@ playground/.tmp/bench/         # GITIGNORED workspaces (already covered by playg
 | all | Unit+integration+CliRunner suites pass; ≥80% coverage of `bench/`; ruff/mypy clean on `bench/`. | test task | T-Tst4Ln |
 | docs | HLD/LLD/ADR/README reconciled to as-built; learnings captured. | docs-refresh | T-Dcs2Rk |
 
+**Verified as-built (2026-07-22):** all rows above confirmed against the shipped code/tests, not just the epic's
+self-reported STATUS.md narratives — `pytest tests/bench -q -m "not real_llm" --cov=agent_orchestrator.bench` →
+**221 passed, 1 deselected, 98% coverage** (1120 stmts/18 missed); `pytest -q -m "not real_llm"` (whole repo) →
+**1078 passed, 4 deselected**, zero regressions; `make bench-smoke` + the 6 committed subject `run.json`s (§11.1)
+confirm G6/G1/G2 end to end for real (not just `FakeSubject`).
+
 ## 15. Design Artifacts Checklist
 **After HLD:** [x] logical architecture diagram (§3) · [x] component breakdown (§3.1) · [x] integration points (§3.2) · [x] plugin/extension strategy (§3.2 registries).
 **After LLD:** [x] all interfaces/contracts (§6) · [x] all schemas (§5) · [x] pseudocode for every module (§4) · [x] edge cases per module (§4) · [x] ADRs (ADR-0008).
@@ -487,12 +664,34 @@ playground/.tmp/bench/         # GITIGNORED workspaces (already covered by playg
 - **architect** (this doc, ADR-0008, epic/tasks) → **developer** (T-Sc4Hm2…T-Cli8Nf: schemas, subjects, graders, runner, results, CLI) → **developer/tester** (T-Fx6Dp0 fixtures + smoke) → **tester** (T-Tst4Ln suites/CI) → **developer** (T-Dcs2Rk docs-refresh). Each task's HANDOFF boundary is in its `TASK.md`.
 
 ## 18. Risks / open questions
-- **R1** Bare `claude -p` needs the right `--permission-mode` to actually edit + run tests (learnings §21). Mitigation: default subjects to `bypassPermissions` in committed configs; document; smoke-test at haiku surfaces it early.
-- **R2** ao-workflow subject cost attribution depends on exactly one run_id per workspace (A4). Mitigation: fresh workspace per task; `latest_run_dir` asserts a single run dir.
-- **R3** pytest summary parsing is brittle across versions. Mitigation: exit-code is the source of truth (A3); summary parse only enriches `score`.
-- **OPEN_QUESTION Q1:** the `ao-epic` subject's default workflow template — how many agents (design→implement→test) vs a single "solver" task? Proposed: start with a **minimal 2-task** template (implement→test) for cost control; T-Fx6Dp0 owns finalizing it. Escalate if a richer epic template is wanted for the headline comparison.
-- **OPEN_QUESTION Q2:** exact model ids to pin in committed subject configs (`claude-opus-4-8`/`claude-sonnet-5`/`claude-haiku-4-5` vs aliases `opus`/`sonnet`/`haiku`). Proposed: pin full current ids, record resolved value in `run.json`; revisit if the CLI rejects a full id.
-- **OPEN_QUESTION Q3:** should `report` auto-discover the latest result dir per subject, or take explicit dirs? Proposed: auto-discover latest per `(suite,subject)` under `--results-dir`, with an explicit-dirs override.
+- **R1** Bare `claude -p` needs the right `--permission-mode` to actually edit + run tests (learnings §21). Mitigation: default subjects to `bypassPermissions` in committed configs; document; smoke-test at haiku surfaces it early. **Closed:** all 6 committed subject configs (`claude-*`) and the `ao-epic` `agents.json` (`developer`/`tester`) use `bypassPermissions`; the real haiku/sonnet/opus runs (§11.1) confirm it works end to end.
+- **R2** ao-workflow subject cost attribution depends on exactly one run_id per workspace (A4). Mitigation: fresh workspace per task; `latest_run_dir` asserts a single run dir. **Closed:** `subjects._latest_run_dir` raises `SubjectError` on zero/multiple run dirs (not a silent pick); real `ao-epic-haiku`/`ao-epic-sonnet` runs confirm real cost/token attribution.
+- **R3** pytest summary parsing is brittle across versions. Mitigation: exit-code is the source of truth (A3); summary parse only enriches `score`. **Closed:** implemented exactly as designed in `PytestGrader`; no issues surfaced.
+
+**Resolved (final answers, verified against the shipped code — no longer open):**
+- **Q1 (`ao-epic` workflow shape):** resolved to the proposed **minimal 2-task pipeline** — `implement` (agent
+  `developer`) → `verify` (agent `tester`), both `claude_cli`-executor tasks reading `repo/INSTRUCTION.md` (§4.2
+  deviation 3). Committed at `benchmarks/subjects/ao-epic/{workflow,reposet,agents}.json`. Not escalated for a
+  richer template — kept minimal for cost control as proposed; a richer epic template remains available as a future
+  subject variant (add a new `ao-epic-*` config, no framework change needed).
+- **Q2 (model ids):** resolved to **full pinned ids in every committed subject config**, exactly as proposed — no
+  bare aliases anywhere. Actual pinned values: `claude-opus-4-8` (`claude-opus.json`), `claude-sonnet-5`
+  (`claude-sonnet.json`, `ao-epic-sonnet.json`), `claude-haiku-4-5-20251001` (`claude-haiku.json`,
+  `ao-epic-haiku.json`) — note the haiku id carries a date suffix (`-20251001`) not shown in this doc's original
+  `claude-haiku-4-5` example; the CLI accepted it without issue, so the "revisit if the CLI rejects a full id"
+  contingency never triggered. `SubjectResult.resolved_model` records the value actually used per run.
+- **Q3 (`report` auto-discovery):** resolved to the proposed **auto-discover latest per `(suite,subject)`**, with an
+  explicit-dirs override — shipped as `ao-bench report --results-root R --suite ID` (auto-discover) vs
+  `--run-dir D [--run-dir D...]` (explicit; repeatable), per §7's as-built CLI shapes (note: the flag is
+  `--results-root`, not the original sketch's `--results-dir`).
 
 ## 19. Post-implementation docs-refresh (T-Dcs2Rk — mandatory)
 After implementation, reconcile this HLD/LLD + ADR-0008 to as-built (grep the whole doc for contradicting claims, not just the fix site — learnings §35), add the feature pointer to `hld-agent-orchestrator.md`, add a `benchmarks/README.md`, and capture learnings. Mark complete only after confirming docs against implemented code.
+
+**Done (2026-07-22, T-Dcs2Rk):** this doc reconciled §3–§9, §11, §14, §18 to as-built (module ownership split,
+`AoWorkflowSubject`/`instructions/` design gap, CLI/Make shapes, comparison-naming limitation, Q1–Q3 resolved);
+ADR-0008 moved Proposed → Accepted with an as-built implementation-notes section; `benchmarks/README.md` added;
+`hld-agent-orchestrator.md`'s feature-docs list updated; learnings appended to `meta/learnings.md` +
+`meta/learning-compact.md`. Every claim above was checked against the actual code/tests/committed results, not
+copied from a task STATUS.md narrative — see the completion note in
+`meta/tickets/E-9Qk4Zt-agent-benchmark-harness/T-Dcs2Rk-docs-adr-reconcile/STATUS.md` for the verification commands.
