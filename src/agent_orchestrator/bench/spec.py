@@ -159,8 +159,29 @@ def _read_spec_file(path: str | Path) -> dict:
 
 
 def _validate_against_schema(data: dict, schema_file: str) -> None:
+    """Load *schema_file* from `_SCHEMAS_DIR` and validate *data* against it.
+
+    `_SCHEMAS_DIR` is derived from `__file__` (module docstring), so it only resolves
+    on a repo checkout -- a non-editable/packaged install has no `benchmarks/schemas/`
+    on disk at all. Both that "dir missing" case and a merely missing/unreadable
+    individual schema file are guarded here and turned into a typed
+    `SpecValidationError` (caught by the CLI's existing `(SpecValidationError,
+    BenchError)` handlers) with an actionable message, instead of letting a raw
+    `FileNotFoundError` escape as an unhandled traceback (W1).
+    """
     schema_path = _SCHEMAS_DIR / schema_file
-    schema = json.loads(schema_path.read_text())
+    if not schema_path.is_file():
+        raise SpecValidationError(
+            "ao-bench must run from a repo checkout (schemas under benchmarks/schemas "
+            f"are not packaged); missing schema file: {schema_path}",
+            path=str(schema_path),
+        )
+    try:
+        schema = json.loads(schema_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SpecValidationError(
+            f"Failed to read bench schema {schema_path}: {exc}", path=str(schema_path)
+        ) from exc
     try:
         jsonschema.validate(data, schema)
     except jsonschema.ValidationError as exc:

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "suite_id": "dev-core",
-  "generated_at": "2026-07-22T11:30:07.814961+00:00",
+  "generated_at": "2026-07-22T11:56:36.324445+00:00",
   "subjects": [
     "claude-haiku",
     "ao-epic-haiku",

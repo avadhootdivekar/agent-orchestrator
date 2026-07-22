@@ -388,3 +388,35 @@ def test_load_suite_invalid_yaml(tmp_path: Path) -> None:
     bad.write_text("{")
     with pytest.raises(SpecValidationError, match="Invalid YAML"):
         load_suite(bad)
+
+
+# ---------------------------------------------------------------------------
+# W1 -- missing/non-packaged schemas dir must fail as a typed SpecValidationError
+# (not a raw FileNotFoundError) with an actionable "run from a repo checkout" message.
+# ---------------------------------------------------------------------------
+
+
+def test_load_suite_missing_schemas_dir_raises_typed_error(
+    suite_factory: SuiteFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    suite_path = suite_factory()
+    monkeypatch.setattr(
+        "agent_orchestrator.bench.spec._SCHEMAS_DIR", tmp_path / "does-not-exist-schemas"
+    )
+    # pytest.raises(SpecValidationError) already proves this is NOT a raw
+    # FileNotFoundError escaping -- a FileNotFoundError would propagate uncaught here.
+    with pytest.raises(SpecValidationError, match="repo checkout") as exc_info:
+        load_suite(suite_path)
+    assert "benchmarks/schemas" in str(exc_info.value)
+
+
+def test_load_subject_missing_schemas_dir_raises_typed_error(
+    subject_factory: SubjectFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    subject_path = subject_factory()
+    monkeypatch.setattr(
+        "agent_orchestrator.bench.spec._SCHEMAS_DIR", tmp_path / "does-not-exist-schemas"
+    )
+    with pytest.raises(SpecValidationError, match="repo checkout") as exc_info:
+        load_subject(subject_path)
+    assert "benchmarks/schemas" in str(exc_info.value)

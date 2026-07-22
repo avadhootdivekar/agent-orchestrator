@@ -187,6 +187,22 @@ def test_validate_claude_cli_subject_probe_nonzero_exit_warns(
     assert "OK" in result.output
 
 
+def test_validate_missing_schemas_dir_exits_1_with_repo_checkout_message(
+    suite_factory: SuiteFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """W1: a non-editable install (or any checkout missing benchmarks/schemas/) must
+    fail `ao-bench validate` cleanly -- exit 1 with an actionable message, never a raw
+    traceback."""
+    suite_path = suite_factory()
+    monkeypatch.setattr(
+        "agent_orchestrator.bench.spec._SCHEMAS_DIR", tmp_path / "does-not-exist-schemas"
+    )
+    result = runner.invoke(app, ["validate", "--suite", str(suite_path)])
+    assert result.exit_code == 1
+    assert "repo checkout" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_validate_fake_subject_does_not_probe_claude(
     subject_factory: SubjectFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -637,7 +637,24 @@ def test_run_suite_corrupt_existing_run_json_raises(
 # ---------------------------------------------------------------------------
 
 
-def test_task_config_fingerprint_stable_and_sensitive_to_changes() -> None:
+def test_relativize_golden_branches(tmp_path: Path) -> None:
+    """Unit coverage for `_relativize_golden`'s three branches directly (W2 helper):
+    already-relative input passes through untouched; an absolute path under
+    `suite_dir` is relativized; an absolute path OUTSIDE `suite_dir` falls back to
+    just the basename."""
+    suite_dir = tmp_path / "suite-dir"
+    suite_dir.mkdir()
+
+    assert runner._relativize_golden("golden/out.txt", suite_dir) == "golden/out.txt"
+
+    under = suite_dir / "golden" / "out.txt"
+    assert runner._relativize_golden(str(under), suite_dir) == "golden/out.txt"
+
+    outside = tmp_path / "elsewhere" / "out.txt"
+    assert runner._relativize_golden(str(outside), suite_dir) == "out.txt"
+
+
+def test_task_config_fingerprint_stable_and_sensitive_to_changes(tmp_path: Path) -> None:
     task = BenchTask(
         id="t1",
         category="bugfix",
@@ -649,13 +666,211 @@ def test_task_config_fingerprint_stable_and_sensitive_to_changes() -> None:
     subject = SubjectSpec(version="1.0", id="s1", type="fake")
     other_subject = subject.model_copy(update={"id": "s2"})
 
-    fp1 = runner._task_config_fingerprint(task, subject, "ao-0.1.0")
-    fp2 = runner._task_config_fingerprint(task, subject, "ao-0.1.0")
-    assert fp1 == fp2  # stable across identical (task, subject, ao_version)
+    fp1 = runner._task_config_fingerprint(task, subject, "ao-0.1.0", tmp_path)
+    fp2 = runner._task_config_fingerprint(task, subject, "ao-0.1.0", tmp_path)
+    assert fp1 == fp2  # stable across identical (task, subject, ao_version, suite_dir)
 
-    assert runner._task_config_fingerprint(other_task, subject, "ao-0.1.0") != fp1
-    assert runner._task_config_fingerprint(task, other_subject, "ao-0.1.0") != fp1
-    assert runner._task_config_fingerprint(task, subject, "ao-0.2.0") != fp1
+    assert runner._task_config_fingerprint(other_task, subject, "ao-0.1.0", tmp_path) != fp1
+    assert runner._task_config_fingerprint(task, other_subject, "ao-0.1.0", tmp_path) != fp1
+    assert runner._task_config_fingerprint(task, subject, "ao-0.2.0", tmp_path) != fp1
+
+
+# ---------------------------------------------------------------------------
+# W2 regression -- config_fingerprint must be checkout-path-independent even though
+# `load_suite` rewrites an `equals_file` assertion's `golden` to an ABSOLUTE path.
+# ---------------------------------------------------------------------------
+
+
+def _write_equals_file_task_suite(base: Path, suite_id: str, task_id: str = "t1") -> Path:
+    """A minimal, self-contained suite with one `file_assertion`/`equals_file` task,
+    materialized fully under *base* (instruction, fixture, golden) -- mirrors
+    `conftest.py`'s `suite_factory` shape but written directly so this can be called
+    twice against two independent directory trees (two "checkouts")."""
+    (base / "fixture").mkdir(parents=True)
+    (base / "fixture" / "placeholder.txt").write_text("fixture content\n")
+    (base / "instruction.md").write_text("# fix\n")
+    golden_dir = base / "golden"
+    golden_dir.mkdir(parents=True)
+    (golden_dir / "out.txt").write_text("golden content\n")
+
+    task = {
+        "id": task_id,
+        "category": "test",
+        "instruction": "instruction.md",
+        "fixture": "fixture",
+        "grader": {
+            "type": "file_assertion",
+            "assertions": [{"type": "equals_file", "path": "out.txt", "golden": "golden/out.txt"}],
+        },
+    }
+    return _write_suite(base, suite_id, [task])
+
+
+def test_task_config_fingerprint_checkout_path_independent(tmp_path: Path) -> None:
+    """The regression the reviewer reproduced: byte-identical suites (same
+    `equals_file` golden reference) checked out under two different absolute paths
+    must hash to the SAME per-task `config_fingerprint`, even though `load_suite`
+    rewrites `golden` to an absolute (and thus checkout-path-dependent) path.
+    """
+    uniq = _uniq()
+    checkout_a = tmp_path / "checkout-a"
+    checkout_b = tmp_path / "checkout-b-a-longer-dirname"
+    checkout_a.mkdir()
+    checkout_b.mkdir()
+
+    suite_path_a = _write_equals_file_task_suite(checkout_a, f"fp-checkout-{uniq}")
+    suite_path_b = _write_equals_file_task_suite(checkout_b, f"fp-checkout-{uniq}")
+
+    suite_a = load_suite(suite_path_a)
+    suite_b = load_suite(suite_path_b)
+    golden_a = suite_a.tasks[0].grader.assertions[0].golden
+    golden_b = suite_b.tasks[0].grader.assertions[0].golden
+    assert golden_a is not None and golden_b is not None
+    # Sanity: load_suite really did rewrite `golden` to two DIFFERENT absolute paths
+    # (otherwise this test would not be exercising the regression at all).
+    assert golden_a != golden_b
+
+    subject = SubjectSpec(version="1.0", id=f"s-{uniq}", type="fake")
+    fp_a = runner._task_config_fingerprint(
+        suite_a.tasks[0], subject, "ao-0.1.0", suite_path_a.resolve().parent
+    )
+    fp_b = runner._task_config_fingerprint(
+        suite_b.tasks[0], subject, "ao-0.1.0", suite_path_b.resolve().parent
+    )
+    assert fp_a == fp_b
+
+
+def test_run_suite_task_fingerprint_checkout_path_independent_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """Same regression, exercised through the full `run_suite` entrypoint rather than
+    calling `_task_config_fingerprint` directly -- proves `suite_base_dir` is actually
+    threaded through from `run_suite` into the fingerprint computation.
+    """
+    uniq = _uniq()
+    checkout_a = tmp_path / "checkout-a"
+    checkout_b = tmp_path / "checkout-b-a-longer-dirname"
+    checkout_a.mkdir()
+    checkout_b.mkdir()
+
+    suite_path_a = _write_equals_file_task_suite(checkout_a, f"fp-e2e-{uniq}")
+    suite_path_b = _write_equals_file_task_suite(checkout_b, f"fp-e2e-{uniq}")
+    subject_path_a = _write_fake_subject(checkout_a, f"fp-e2e-subj-{uniq}")
+    subject_path_b = _write_fake_subject(checkout_b, f"fp-e2e-subj-{uniq}")
+
+    record_a = runner.run_suite(
+        suite_path_a, subject_path_a, out_dir=tmp_path / "results-a", clock=_fixed_clock
+    )
+    record_b = runner.run_suite(
+        suite_path_b, subject_path_b, out_dir=tmp_path / "results-b", clock=_fixed_clock
+    )
+
+    assert record_a.tasks[0].config_fingerprint == record_b.tasks[0].config_fingerprint
+
+
+# ---------------------------------------------------------------------------
+# W4 -- same-day resume with a changed subject/suite config must not silently
+# overwrite run-level config_fingerprint; force=True re-runs everything instead.
+# ---------------------------------------------------------------------------
+
+
+def test_run_suite_resume_after_subject_config_change_raises_typed_error(
+    tmp_path: Path, suite_factory: Any, subject_factory: Any
+) -> None:
+    uniq = _uniq()
+    suite_path = suite_factory(
+        suite_id=f"rt-cfgchg-{uniq}", tasks=[_fake_task("t1"), _fake_task("t2")]
+    )
+    subject_path = subject_factory(
+        subject_id=f"fake-cfgchg-{uniq}", type_="fake", extra={"model": "model-a"}
+    )
+    out_dir = tmp_path / "results"
+
+    first = runner.run_suite(suite_path, subject_path, out_dir=out_dir, clock=_fixed_clock)
+    assert len(first.tasks) == 2
+
+    # Mutate the subject spec ON DISK (same bench_run_id: same suite/subject id, same
+    # UTC day) -- the run-level config_fingerprint recomputed on the next call must no
+    # longer match what's already on record.
+    data = json.loads(subject_path.read_text())
+    data["model"] = "model-b"
+    subject_path.write_text(json.dumps(data))
+
+    with pytest.raises(BenchError, match="force"):
+        runner.run_suite(suite_path, subject_path, out_dir=out_dir, clock=_fixed_clock)
+
+    # The stale record on disk must be left untouched by the rejected resume attempt.
+    result_path = out_dir / first.bench_run_id / runner.RUN_JSON_FILENAME
+    on_disk = json.loads(result_path.read_text())
+    assert on_disk["subject"]["resolved_config"]["model"] == "model-a"
+
+
+def test_run_suite_resume_after_subject_config_change_force_reruns_all(
+    tmp_path: Path, suite_factory: Any, subject_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uniq = _uniq()
+    suite_path = suite_factory(
+        suite_id=f"rt-cfgfrc-{uniq}", tasks=[_fake_task("t1"), _fake_task("t2")]
+    )
+    subject_path = subject_factory(
+        subject_id=f"fake-cfgfrc-{uniq}", type_="fake", extra={"model": "model-a"}
+    )
+    out_dir = tmp_path / "results"
+
+    class _CountingSubject(subjects_mod.FakeSubject):
+        call_count = 0
+
+        def run(self, task: BenchTask, ctx: RunContext) -> SubjectResult:
+            type(self).call_count += 1
+            return super().run(task, ctx)
+
+    monkeypatch.setitem(SUBJECT_REGISTRY, "fake", _CountingSubject)
+
+    first = runner.run_suite(suite_path, subject_path, out_dir=out_dir, clock=_fixed_clock)
+    assert _CountingSubject.call_count == 2
+
+    data = json.loads(subject_path.read_text())
+    data["model"] = "model-b"
+    subject_path.write_text(json.dumps(data))
+
+    # force=True bypasses the mismatch check entirely and re-runs every task under
+    # the new config -- succeeds, and the record now reflects the new model.
+    second = runner.run_suite(
+        suite_path, subject_path, out_dir=out_dir, force=True, clock=_fixed_clock
+    )
+    assert _CountingSubject.call_count == 4  # both tasks re-invoked
+    assert len(second.tasks) == 2
+    assert second.subject.model == "model-b"
+    assert second.config_fingerprint != first.config_fingerprint
+
+
+def test_run_suite_resume_without_config_change_still_resumes_normally(
+    tmp_path: Path, suite_factory: Any, subject_factory: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sanity companion to the mismatch tests above: an unmodified suite/subject
+    resumes exactly as before W4 (no false positive on an unchanged config)."""
+    uniq = _uniq()
+    suite_path = suite_factory(
+        suite_id=f"rt-cfgok-{uniq}", tasks=[_fake_task("t1"), _fake_task("t2")]
+    )
+    subject_path = subject_factory(subject_id=f"fake-cfgok-{uniq}", type_="fake")
+    out_dir = tmp_path / "results"
+
+    class _CountingSubject(subjects_mod.FakeSubject):
+        call_count = 0
+
+        def run(self, task: BenchTask, ctx: RunContext) -> SubjectResult:
+            type(self).call_count += 1
+            return super().run(task, ctx)
+
+    monkeypatch.setitem(SUBJECT_REGISTRY, "fake", _CountingSubject)
+
+    runner.run_suite(suite_path, subject_path, out_dir=out_dir, clock=_fixed_clock)
+    assert _CountingSubject.call_count == 2
+
+    second = runner.run_suite(suite_path, subject_path, out_dir=out_dir, clock=_fixed_clock)
+    assert _CountingSubject.call_count == 2  # untouched: fully skipped, no mismatch
+    assert len(second.tasks) == 2
 
 
 def test_run_config_fingerprint_stable_and_sensitive_to_changes() -> None:

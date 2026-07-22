@@ -1,6 +1,6 @@
 # Bench comparison — dev-core
 
-- generated_at: 2026-07-22T11:30:07.814961+00:00
+- generated_at: 2026-07-22T11:56:36.324445+00:00
 
 ## Per-subject
 
@@ -25,7 +25,7 @@
 
 ## Winners
 
-- Highest solve rate: ao-epic-haiku (100.0%)
+- Highest solve rate: ao-epic-haiku (100.0%, tied with 4 others)
 - Lowest total cost: claude-haiku ($0.3732)
 - Lowest cost per solved: claude-haiku ($0.0622)
 - Fastest total wall-clock: claude-sonnet (122.28s)

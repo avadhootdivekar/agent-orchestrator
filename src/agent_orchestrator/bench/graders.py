@@ -139,7 +139,9 @@ def _run_command(command: str, cwd: Path, timeout_seconds: int) -> _CommandRun:
 # "1 failed, 3 passed in 0.05s" or "2 errors in 0.01s". Deliberately permissive: an
 # unrecognized/garbled summary format degrades to zero matches (passed=failed=total=0)
 # rather than raising, since the exit code -- not this regex -- is the pass source of
-# truth (design §4.3).
+# truth (design §4.3). Note: "skipped"/"xfailed" are intentionally NOT matched, so
+# they never contribute to `passed`/`failed`/`total` (score); `solved` is unaffected
+# either way since it is still gated on `run.returncode == 0`.
 _PYTEST_SUMMARY_COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors)\b")
 
 
@@ -240,20 +242,15 @@ class CommandGrader(Grader):
 def _resolve_golden_path(assertion: Assertion) -> Path | None:
     """Resolve `assertion.golden` for an `equals_file` check.
 
-    KNOWN CONTRACT GAP (flagged for arbitration -- not fixed here, it lives outside the
-    files this task owns): `Assertion.golden` (`bench/spec.py`) is documented as
-    "relative to the suite.json", and `load_suite` validates the referenced file exists
-    at LOAD time using that suite-relative base -- but it does not rewrite `golden` to
-    an absolute path before returning the `BenchSuite`, and neither `GraderConfig` nor
-    `RunContext` (design §6) carries the suite's base directory through to grade time.
-    So a `FileAssertionGrader` running later (invoked by the future runner, T-Run5Tz)
-    cannot itself reconstruct the same base path `load_suite` used.
-
-    Until that's threaded through (recommended fix: `load_suite` resolves `golden` to
-    an absolute path in place), this resolves an already-absolute `golden` directly,
-    and a relative one against the current working directory (the convention for a
-    caller that `cd`s to/near the suite before invoking the runner) -- and NEVER
-    raises: an unresolvable golden degrades the assertion to `passed=False` (see
+    `load_suite` (`bench/spec.py::_check_assertions`) now resolves `golden` to an
+    ABSOLUTE path in place at load time, before a `BenchSuite`/`BenchTask` is ever
+    handed to a grader -- so in the normal `load_suite` -> runner -> grader path,
+    `assertion.golden` already arrives here absolute and this function's `Path.cwd()`
+    fallback is never exercised. That fallback is kept only as a defensive default for
+    a `GraderConfig`/`Assertion` constructed directly (e.g. in a unit test) without
+    going through `load_suite` at all, where a still-relative `golden` is resolved
+    against the current working directory. Either way this NEVER raises: an
+    unresolvable golden degrades the assertion to `passed=False` (see
     `_check_assertion`), not an exception.
     """
     if not assertion.golden:

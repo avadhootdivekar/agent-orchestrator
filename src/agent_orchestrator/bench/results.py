@@ -416,6 +416,14 @@ def _best(candidates: list[tuple[float, str]], *, minimize: bool) -> tuple[float
     return min(candidates, key=key)
 
 
+def _tie_count(candidates: list[tuple[float, str]], value: float) -> int:
+    """Count of *candidates* sharing the winning *value* (W5: a winner line must
+    disclose when >1 subject shares that value, not silently hide it behind `_best`'s
+    deterministic subject-id tiebreak).
+    """
+    return sum(1 for v, _ in candidates if v == value)
+
+
 def render_winners(comparison: ComparisonRecord) -> list[str]:
     """A "winner" line per axis (solve_rate, total cost, cost per solved, wall-clock) --
     TASK.md T-Rpt3Wq bullet (c). Only subjects that actually ran are candidates; an axis
@@ -430,24 +438,42 @@ def render_winners(comparison: ComparisonRecord) -> list[str]:
     if not ran:
         return ["- no subjects were run; nothing to compare."]
 
-    best_solve = _best([(agg.solve_rate, sid) for sid, agg in ran.items()], minimize=False)
-    best_cost = _best([(agg.total_cost_usd, sid) for sid, agg in ran.items()], minimize=True)
-    best_cost_per_solved = _best(
-        [(agg.cost_per_solved, sid) for sid, agg in ran.items() if agg.cost_per_solved is not None],
-        minimize=True,
-    )
-    best_wall = _best(
-        [(agg.total_wall_clock_seconds, sid) for sid, agg in ran.items()], minimize=True
-    )
+    solve_candidates = [(agg.solve_rate, sid) for sid, agg in ran.items()]
+    cost_candidates = [(agg.total_cost_usd, sid) for sid, agg in ran.items()]
+    cost_per_solved_candidates = [
+        (agg.cost_per_solved, sid) for sid, agg in ran.items() if agg.cost_per_solved is not None
+    ]
+    wall_candidates = [(agg.total_wall_clock_seconds, sid) for sid, agg in ran.items()]
 
-    def _line(label: str, best: tuple[float, str] | None, fmt: Callable[[float], str]) -> str:
-        return f"- {label}: n/a" if best is None else f"- {label}: {best[1]} ({fmt(best[0])})"
+    best_solve = _best(solve_candidates, minimize=False)
+    best_cost = _best(cost_candidates, minimize=True)
+    best_cost_per_solved = _best(cost_per_solved_candidates, minimize=True)
+    best_wall = _best(wall_candidates, minimize=True)
+
+    def _line(
+        label: str,
+        best: tuple[float, str] | None,
+        fmt: Callable[[float], str],
+        candidates: list[tuple[float, str]],
+    ) -> str:
+        if best is None:
+            return f"- {label}: n/a"
+        others = _tie_count(candidates, best[0]) - 1
+        # W5: disclose a tie rather than letting the subject-id tiebreak in `_best`
+        # silently present one winner as sole when others share the same value.
+        tie_note = f", tied with {others} other{'s' if others != 1 else ''}" if others > 0 else ""
+        return f"- {label}: {best[1]} ({fmt(best[0])}{tie_note})"
 
     return [
-        _line("Highest solve rate", best_solve, _fmt_pct),
-        _line("Lowest total cost", best_cost, lambda v: f"${v:.4f}"),
-        _line("Lowest cost per solved", best_cost_per_solved, lambda v: f"${v:.4f}"),
-        _line("Fastest total wall-clock", best_wall, lambda v: f"{v:.2f}s"),
+        _line("Highest solve rate", best_solve, _fmt_pct, solve_candidates),
+        _line("Lowest total cost", best_cost, lambda v: f"${v:.4f}", cost_candidates),
+        _line(
+            "Lowest cost per solved",
+            best_cost_per_solved,
+            lambda v: f"${v:.4f}",
+            cost_per_solved_candidates,
+        ),
+        _line("Fastest total wall-clock", best_wall, lambda v: f"{v:.2f}s", wall_candidates),
     ]
 
 

@@ -225,14 +225,51 @@ def _sha256_of(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _task_config_fingerprint(task: BenchTask, subject_spec: SubjectSpec, ao_version: str) -> str:
+def _relativize_golden(golden: str, suite_dir: Path) -> str:
+    """Relativize an absolute `assertions[*].golden` path against *suite_dir* for
+    fingerprinting only (W2 fix).
+
+    `spec.py::_check_assertions` rewrites `golden` to an ABSOLUTE path at `load_suite`
+    time (needed for grade time, since the suite's base dir isn't otherwise carried
+    through to the grading context) -- but hashing that absolute path means a
+    byte-identical suite checked out at two different paths hashes to two different
+    `config_fingerprint`s. Falls back to the basename if *golden* isn't under
+    *suite_dir* at all (an unusual absolute reference elsewhere on disk).
+    """
+    p = Path(golden)
+    if not p.is_absolute():
+        return golden
+    try:
+        return p.relative_to(suite_dir).as_posix()
+    except ValueError:
+        return p.name
+
+
+def _task_fingerprint_payload(task: BenchTask, suite_dir: Path) -> dict[str, Any]:
+    """`task.model_dump(mode="json")` with any absolute `grader.assertions[*].golden`
+    path relativized against *suite_dir* (see `_relativize_golden`) before hashing --
+    grading behavior itself is unchanged, this only affects what gets fingerprinted.
+    """
+    payload = task.model_dump(mode="json")
+    for assertion in payload.get("grader", {}).get("assertions", []):
+        golden = assertion.get("golden")
+        if golden:
+            assertion["golden"] = _relativize_golden(golden, suite_dir)
+    return payload
+
+
+def _task_config_fingerprint(
+    task: BenchTask, subject_spec: SubjectSpec, ao_version: str, suite_dir: Path
+) -> str:
     """Per-task fingerprint (design §4.5: `sha256(canonical(task)+canonical(subject)+
     ao_version())`) -- what `BenchTaskRecord.config_fingerprint` (inherited from
-    `TaskMetric`) records for AC6.
+    `TaskMetric`) records for AC6. *suite_dir* (the suite file's parent dir) is used
+    only to make an `equals_file` assertion's `golden` path checkout-independent (W2
+    fix) -- it is not itself part of the hashed payload.
     """
     return _sha256_of(
         {
-            "task": task.model_dump(mode="json"),
+            "task": _task_fingerprint_payload(task, suite_dir),
             "subject": subject_spec.model_dump(mode="json"),
             "ao_version": ao_version,
         }
@@ -420,8 +457,11 @@ def run_suite(
     SpecValidationError
         *suite_path*/*subject_path* fails to load/validate.
     BenchError
-        *subject_path*'s `type` has no registered `Subject` class, or an existing
-        `run.json` at the resume path is corrupt/schema-mismatched.
+        *subject_path*'s `type` has no registered `Subject` class, an existing
+        `run.json` at the resume path is corrupt/schema-mismatched, or (W4,
+        `force=False` only) an existing `run.json`'s `config_fingerprint` no longer
+        matches the freshly computed one -- the subject/suite config changed since
+        the completed tasks on record were produced.
     """
     resolved_clock = clock or _utc_now
 
@@ -472,6 +512,28 @@ def run_suite(
         run_fingerprint = _run_config_fingerprint(
             suite, subject_spec, overrides, ao_version, claude_version
         )
+
+        # W4: a same-day resume (same bench_run_id) whose suite/subject config was
+        # mutated since the tasks already on `existing_record` were produced must not
+        # silently overwrite the run-level fingerprint with the new one -- that would
+        # misrepresent completed tasks as having been produced under today's config.
+        # `force=True` means "re-run everything under the new config", so the mismatch
+        # is moot there (every task_id in tasks_dict is about to be overwritten below).
+        if (
+            existing_record is not None
+            and not force
+            and existing_record.config_fingerprint != run_fingerprint
+        ):
+            raise BenchError(
+                f"Config changed since bench_run_id {bench_run_id!r} was last run: "
+                f"existing config_fingerprint={existing_record.config_fingerprint!r}, "
+                f"current={run_fingerprint!r}. The subject or suite config was mutated "
+                "mid-run, so resuming would mix tasks produced under two different "
+                "configs. Re-run with force=True (--force) to re-run every task under "
+                "the new config, or restore the previous subject/suite config to "
+                "resume as-is."
+            )
+
         subject_info = BenchRunSubjectInfo(
             id=subject_spec.id,
             type=subject_spec.type,
@@ -568,7 +630,7 @@ def run_suite(
                 )
 
             task_ended_at = resolved_clock().isoformat()
-            fingerprint = _task_config_fingerprint(task, subject_spec, ao_version)
+            fingerprint = _task_config_fingerprint(task, subject_spec, ao_version, suite_base_dir)
             metric = build_task_metric(
                 subject_spec.id,
                 task,

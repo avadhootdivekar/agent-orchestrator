@@ -24,12 +24,13 @@ import pytest
 
 from agent_orchestrator.bench import runner
 from agent_orchestrator.bench.errors import ResultsError
-from agent_orchestrator.bench.metrics import aggregate
+from agent_orchestrator.bench.metrics import Aggregate, aggregate
 from agent_orchestrator.bench.results import (
     ComparisonRecord,
     build_comparison,
     compute_compare_id,
     load_run,
+    render_winners,
     write_comparison,
     write_summary_md,
 )
@@ -482,6 +483,83 @@ def test_build_comparison_divergent_task_sets_union_keyed(tmp_path: Path) -> Non
     assert comparison.matrix["only-b"][a.subject.id] is None  # a never ran "only-b"
     assert comparison.matrix["shared"][a.subject.id] is not None
     assert comparison.matrix["shared"][b.subject.id] is not None
+
+
+def _tied_aggregate() -> Aggregate:
+    """An `Aggregate` shared byte-for-byte by every subject in
+    `test_render_winners_discloses_ties` -- built directly (rather than via a real
+    `run_suite` call) so every axis (solve_rate/cost/cost_per_solved/wall-clock) ties
+    EXACTLY, including wall-clock (a real `FakeSubject` run's wall-clock is genuine
+    monotonic time and would almost never tie by chance).
+    """
+    return Aggregate(
+        solved=2,
+        total=2,
+        solve_rate=1.0,
+        mean_score=1.0,
+        total_cost_usd=0.05,
+        cost_available=True,
+        cost_per_solved=0.025,
+        total_wall_clock_seconds=1.5,
+        total_input_tokens=0,
+        total_output_tokens=0,
+        total_cache_creation_input_tokens=0,
+        total_cache_read_input_tokens=0,
+    )
+
+
+def test_render_winners_discloses_ties() -> None:
+    """W5: when >1 subject shares the winning value on an axis, the winner line must
+    disclose the tie (e.g. "... (100.0%, tied with 2 others)") rather than silently
+    presenting the deterministic subject-id tiebreak winner as if it were sole."""
+    subject_ids = ["fk-tie-a", "fk-tie-b", "fk-tie-c"]
+    comparison = ComparisonRecord(
+        suite_id="rs-tie",
+        generated_at=_FIXED_NOW.isoformat(),
+        subjects=subject_ids,
+        task_ids=["t1"],
+        matrix={},
+        per_subject={sid: _tied_aggregate() for sid in subject_ids},
+    )
+
+    winners = render_winners(comparison)
+
+    # Deterministic tiebreak (ascending subject id) names "fk-tie-a" as the line's
+    # winner; the tie with the other 2 subjects must still be disclosed on every axis.
+    assert len(winners) == 4
+    for line in winners:
+        assert line.startswith("- ")
+        assert "fk-tie-a" in line
+        assert "tied with 2 others" in line
+
+
+def test_render_winners_no_tie_omits_tie_note(tmp_path: Path) -> None:
+    """Companion negative case: a genuinely sole winner gets no tie note at all (the
+    two-subject `test_build_and_write_comparison_two_subjects_same_suite` case above
+    already covers this via the rendered `comparison.md`; this asserts the same thing
+    directly against `render_winners`'s return value)."""
+    winner_agg = _tied_aggregate()
+    loser_agg = winner_agg.model_copy(
+        update={
+            "solve_rate": 0.5,
+            "solved": 1,
+            "total_cost_usd": 0.5,
+            "cost_per_solved": 0.5,
+            "total_wall_clock_seconds": 3.0,
+        }
+    )
+    comparison = ComparisonRecord(
+        suite_id="rs-no-tie",
+        generated_at=_FIXED_NOW.isoformat(),
+        subjects=["fk-winner", "fk-loser"],
+        task_ids=["t1"],
+        matrix={},
+        per_subject={"fk-winner": winner_agg, "fk-loser": loser_agg},
+    )
+
+    winners = render_winners(comparison)
+    for line in winners:
+        assert "tied with" not in line
 
 
 def test_build_comparison_no_subjects_ran_winners_render_no_crash(tmp_path: Path) -> None:
