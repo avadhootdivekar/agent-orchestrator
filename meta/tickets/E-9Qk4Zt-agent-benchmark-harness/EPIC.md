@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → developer/tester agents (delivery)
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: Draft (design complete; awaiting user approval to execute — Phase 2 real runs are NOT part of this epic)
+- Status: In Progress (1/9 tasks delivered — `T-Sc4Hm2` Done; Phase 2 real runs are NOT part of this epic)
 
 ## Summary
 - **Goal:** a declarative, pluggable, resumable, observable, safe-by-default benchmarking framework that runs **subjects** (an `ao` multi-agent workflow · bare `claude -p --model opus|sonnet|haiku` · future CLIs/APIs) over **suites** of dev tasks, grades them, and publishes machine-readable + human-readable **results** to a git-committed directory — reusing `ao`'s own cost/usage plumbing so numbers are apples-to-apples.
@@ -54,7 +54,7 @@ Task sizing (person-days → hours at 8h/d): T-Sc4Hm2 2.0(16) · T-Sbj9Ka 3.0(24
 - **Sprint 2 (MVP-complete, ~10.0 d):** T-Rpt3Wq → T-Cli8Nf → T-Fx6Dp0 (fixtures + haiku smoke, results committed, make recipe working = the MVP finish line) → T-Tst4Ln → T-Dcs2Rk. Contingency: if T-Fx6Dp0's real-LLM smoke is flaky/expensive, its blocking part is "suite validates + fake subject runs it green"; the real haiku run can trail into a short buffer.
 
 ## Task List (ordered; each ≤3 days)
-- [ ] `T-Sc4Hm2-suite-subject-schemas` (2.0d) — suite/subject JSON schemas + models + loader/validator + `ao-bench validate`. Deps: none.
+- [x] `T-Sc4Hm2-suite-subject-schemas` (2.0d) — suite/subject JSON schemas + models + loader/validator + `ao-bench validate`. Deps: none. **Done 2026-07-22.**
 - [ ] `T-Sbj9Ka-subject-adapters` (3.0d) — `Subject` ABC + registry; AoWorkflow/ClaudeCli/Fake subjects; workspace materialization; cost/tokens via reused core helpers. Deps: T-Sc4Hm2.
 - [ ] `T-Grd7Vx-grader-registry` (2.0d) — `Grader` ABC + registry (pytest/command/file/fake) + `metrics.py`. Deps: T-Sc4Hm2.
 - [ ] `T-Run5Tz-runner-metrics` (3.0d) — runner orchestration: deterministic/resumable/bounded, path-guard, per-task persist. Deps: T-Sbj9Ka, T-Grd7Vx.

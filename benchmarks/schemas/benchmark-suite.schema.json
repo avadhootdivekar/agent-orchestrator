@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestrator/benchmarks/schemas/benchmark-suite.schema.json",
+  "title": "BenchmarkSuite",
+  "description": "Declarative benchmark suite spec for ao-bench (design doc §5.1). Instructions/fixtures are referenced by PATH, relative to this file; never inlined.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "domain", "tasks"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Spec schema version, e.g. \"1.0\"."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-_]*$",
+      "description": "Lowercase kebab suite id, unique among committed suites."
+    },
+    "domain": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-string domain label (e.g. \"software\"); enables non-dev suites later without a schema change."
+    },
+    "description": { "type": "string", "default": "" },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/task" }
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "instruction", "fixture", "grader"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-_]*$",
+          "description": "Lowercase kebab task id, unique within the suite."
+        },
+        "category": {
+          "enum": ["bugfix", "feature", "refactor", "test", "other"]
+        },
+        "instruction": {
+          "type": "string",
+          "description": "PATH to a .md instruction file, relative to this suite.json. Never inline contents."
+        },
+        "fixture": {
+          "type": "string",
+          "description": "PATH to a tiny fixture repo dir, relative to this suite.json. Never inline contents."
+        },
+        "grader": { "$ref": "#/$defs/grader" },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+    "grader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Grader type key into GRADER_REGISTRY (e.g. \"pytest\", \"command\", \"file_assertion\", \"fake\"). Closed list enforced by the loader (bench/spec.py KNOWN_GRADER_TYPES), not this schema, so new types can be added ahead of registry wiring without a schema edit."
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to run for pytest/command graders. Defaults are grader-type specific."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Working dir for the grader command, relative to the task's mutated repo."
+        },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "pass_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum score (pass-rate) required to mark solved=true. Defaults to exit-code-only semantics when unset."
+        },
+        "assertions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/assertion" },
+          "description": "file_assertion grader: checks evaluated against the mutated repo."
+        }
+      }
+    },
+    "assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path"],
+      "properties": {
+        "type": { "enum": ["exists", "contains", "equals_file"] },
+        "path": {
+          "type": "string",
+          "description": "PATH relative to the task's mutated repo, checked by this assertion."
+        },
+        "substring": {
+          "type": "string",
+          "description": "Required for type=contains: substring that must appear in `path`."
+        },
+        "golden": {
+          "type": "string",
+          "description": "Required for type=equals_file: PATH to a golden reference file, relative to this suite.json."
+        }
+      }
+    }
+  }
+}
