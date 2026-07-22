@@ -2,10 +2,19 @@
 
 - ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Updated At: 2026-07-22
-- State: In Progress (3/9 tasks delivered — `T-Sc4Hm2`, `T-Grd7Vx`, `T-Sbj9Ka` Done; Sprint 1 remaining: `T-Run5Tz`)
+- State: In Progress (4/9 tasks delivered — Sprint 1 complete; Sprint 2 next: `T-Rpt3Wq`, `T-Cli8Nf`)
 - Owner: architect agent (design) → developer/tester (delivery)
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Run5Tz-runner-metrics` complete —
+  Sprint 1 (harness engine) done. `bench/runner.py`: `run_suite` with deterministic order,
+  atomic per-task persist of `run.json` (crash-resumable; resume skips recorded tasks, `force`
+  re-runs), per-task error isolation (SubjectError/GraderError/unexpected → recorded, run
+  continues), run+task `config_fingerprint`, injected clock for determinism. 17 new tests.
+  Deviation accepted by orchestrator: runner writes `run.json` itself (resume is meaningless
+  otherwise); `T-Rpt3Wq` owns `summary.md` + comparison writers on top of the recorded shape.
+  Independent re-verification: 990 passed/4 deselected, ruff/mypy clean.
+  Detail: `T-Run5Tz-runner-metrics/STATUS.md`.
 - By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Sbj9Ka-subject-adapters` complete.
   `bench/subjects.py` (`Subject` ABC + `SubjectResult` with argv/model/permission-mode
   observability; `ClaudeCliSubject` stream-json capture + reused core usage parser;

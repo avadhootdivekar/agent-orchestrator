@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → developer/tester agents (delivery)
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: In Progress (3/9 tasks delivered — `T-Sc4Hm2`, `T-Grd7Vx`, `T-Sbj9Ka` Done; Phase 2 real runs are NOT part of this epic)
+- Status: In Progress (4/9 tasks delivered — Sprint 1 complete: `T-Sc4Hm2`, `T-Grd7Vx`, `T-Sbj9Ka`, `T-Run5Tz` Done; Phase 2 real runs are NOT part of this epic)
 
 ## Summary
 - **Goal:** a declarative, pluggable, resumable, observable, safe-by-default benchmarking framework that runs **subjects** (an `ao` multi-agent workflow · bare `claude -p --model opus|sonnet|haiku` · future CLIs/APIs) over **suites** of dev tasks, grades them, and publishes machine-readable + human-readable **results** to a git-committed directory — reusing `ao`'s own cost/usage plumbing so numbers are apples-to-apples.
@@ -57,7 +57,7 @@ Task sizing (person-days → hours at 8h/d): T-Sc4Hm2 2.0(16) · T-Sbj9Ka 3.0(24
 - [x] `T-Sc4Hm2-suite-subject-schemas` (2.0d) — suite/subject JSON schemas + models + loader/validator + `ao-bench validate`. Deps: none. **Done 2026-07-22.**
 - [x] `T-Sbj9Ka-subject-adapters` (3.0d) — `Subject` ABC + registry; AoWorkflow/ClaudeCli/Fake subjects; workspace materialization; cost/tokens via reused core helpers. Deps: T-Sc4Hm2. **Done 2026-07-22.**
 - [x] `T-Grd7Vx-grader-registry` (2.0d) — `Grader` ABC + registry (pytest/command/file/fake) + `metrics.py`. Deps: T-Sc4Hm2. **Done 2026-07-22.**
-- [ ] `T-Run5Tz-runner-metrics` (3.0d) — runner orchestration: deterministic/resumable/bounded, path-guard, per-task persist. Deps: T-Sbj9Ka, T-Grd7Vx.
+- [x] `T-Run5Tz-runner-metrics` (3.0d) — runner orchestration: deterministic/resumable/bounded, path-guard, per-task persist. Deps: T-Sbj9Ka, T-Grd7Vx. **Done 2026-07-22.**
 - [ ] `T-Rpt3Wq-results-comparison-report` (2.0d) — `run.json`+`summary.md` writers + cross-subject `comparison.{json,md}`. Deps: T-Run5Tz.
 - [ ] `T-Cli8Nf-bench-cli-make-entrypoints` (1.5d) — standalone `ao-bench` console script + `pyproject` entry + `make bench-*`; core untouched. Deps: T-Rpt3Wq.
 - [ ] `T-Fx6Dp0-mvp-dev-suite-fixtures` (3.0d) — curated 4–8 task dev suite (tiny fixtures/instructions/graders) + subject configs; `make bench-smoke` all 3 subjects at haiku; results committed. **MVP finish line.** Deps: T-Cli8Nf.
