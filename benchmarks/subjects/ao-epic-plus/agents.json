@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "agents": {
+    "planner": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
+      "prompt_template": "Act as the planner agent. Read {instruction} in the repo. Do NOT make any code changes yet. Produce a short, concrete implementation plan: the files you expect to touch, the approach, and any edge cases or risks to watch for. Write the plan to {outputs}. Repos: {repos}.",
+      "context_window": "isolated",
+      "working_dir": "repo",
+      "effort": "medium"
+    },
+    "developer": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
+      "prompt_template": "Act as the developer agent. Read {instruction} in the repo and the plan at {inputs}. Make the necessary code changes to satisfy the instruction, following the plan (you may deviate from it if it turns out to be wrong -- note why in your report if so). Run the repo's own test suite (e.g. `uv run pytest -q` or `python3 -m pytest -q`) and confirm it passes before finishing. Do not modify {instruction} or any grading/check script already present in the repo (e.g. check.py, check_tests.py). Write a short report to {outputs} summarizing what you changed and the test result. Repos: {repos}.",
+      "context_window": "isolated",
+      "working_dir": "repo",
+      "effort": "medium"
+    },
+    "reviewer": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
+      "prompt_template": "Act as the reviewer agent. Read {instruction} in the repo and the developer's report at {inputs}. Re-run the repo's own visible test suite yourself (e.g. `uv run pytest -q` or `python3 -m pytest -q`) to independently confirm the change satisfies {instruction}; also inspect the change for correctness, missed edge cases, and style issues. Do NOT modify {instruction} or any grading/check script already present in the repo (e.g. check.py, check_tests.py) -- your job is to judge the change, not to alter what judges it. Write your findings to {outputs}: state PASS or FAIL, and list any specific issues found (or write \"no issues\" if none). Repos: {repos}.",
+      "context_window": "isolated",
+      "working_dir": "repo",
+      "effort": "medium"
+    },
+    "fixer": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
+      "prompt_template": "Act as the fixer agent. Read the reviewer's findings at {inputs} and {instruction} in the repo. If the findings report any issues, make the minimal code changes needed to resolve them. Run the repo's own visible test suite (e.g. `uv run pytest -q` or `python3 -m pytest -q`) and confirm it passes -- whether or not you made changes. Do NOT modify {instruction} or any grading/check script already present in the repo (e.g. check.py, check_tests.py). Write a short report to {outputs} describing what (if anything) you fixed and the final test result. Repos: {repos}.",
+      "context_window": "isolated",
+      "working_dir": "repo",
+      "effort": "medium"
+    }
+  }
+}

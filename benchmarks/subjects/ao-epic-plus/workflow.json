@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "id": "ao-epic-plus",
+  "name": "ao-epic-plus bench subject: plan, implement, review, fix",
+  "repo_set": "bench-set",
+  "triggers": [{ "type": "manual" }],
+  "tasks": [
+    {
+      "id": "plan",
+      "agent": "planner",
+      "instruction": "repo/INSTRUCTION.md",
+      "inputs": [],
+      "outputs": ["output/plan.md"],
+      "depends_on": []
+    },
+    {
+      "id": "implement",
+      "agent": "developer",
+      "instruction": "repo/INSTRUCTION.md",
+      "inputs": ["output/plan.md"],
+      "outputs": ["output/impl.md"],
+      "depends_on": ["plan"]
+    },
+    {
+      "id": "review",
+      "agent": "reviewer",
+      "instruction": "repo/INSTRUCTION.md",
+      "inputs": ["output/impl.md"],
+      "outputs": ["output/review.md"],
+      "depends_on": ["implement"]
+    },
+    {
+      "id": "fix",
+      "agent": "fixer",
+      "instruction": "repo/INSTRUCTION.md",
+      "inputs": ["output/review.md"],
+      "outputs": ["output/fix.md"],
+      "depends_on": ["review"]
+    }
+  ]
+}
