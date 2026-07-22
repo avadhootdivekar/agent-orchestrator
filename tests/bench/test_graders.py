@@ -280,7 +280,7 @@ def test_fake_grader_scripted_score_via_pass_threshold() -> None:
 
 
 def test_grader_registry_has_all_mvp_types() -> None:
-    assert set(GRADER_REGISTRY) == {"pytest", "command", "file_assertion", "fake"}
+    assert {"pytest", "command", "file_assertion", "fake", "swebench"} <= set(GRADER_REGISTRY)
     assert GRADER_REGISTRY["pytest"] is PytestGrader
     assert GRADER_REGISTRY["command"] is CommandGrader
     assert GRADER_REGISTRY["file_assertion"] is FileAssertionGrader

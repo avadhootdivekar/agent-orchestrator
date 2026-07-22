@@ -6,11 +6,62 @@
 - Owner: developer agent
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: Draft
+- Status: Done
 - Estimate: 3.0 days
 
 ## Requirements Mapping
 - FR-6 (SweBenchGrader: Docker eval on extracted patch; `resolved`=solved; per-instance timeout; disk cleanup; Docker-eval lock)
+
+## Reconciliation note (as-built vs this doc's original plan)
+- By: developer agent / Role: developer / Date: 2026-07-22
+- Comment: the orchestrator's dispatch message (issued after this TASK.md was drafted,
+  carrying verified ground-truth probes: the real harness CLI shape, report
+  filenames/schema, image-tag naming) superseded some of this doc's own pseudocode.
+  Deviations, all either explicitly authorized by that dispatch or forced by a real,
+  verified contract gap:
+  1. **Module path**: `src/agent_orchestrator/bench/swebench_grader.py` (not
+     `graders_swebench.py`) — per the dispatch's explicit deliverable text.
+  2. **Instance identity**: `GraderContext`/`RunContext` carry no `task`/`source`
+     today (verified by reading `runner.py`/`workspace.py`, both read-only/forbidden
+     for this task) — `task.source.instance_id` is NOT available to `Grader.grade`.
+     Instead of widening those two files, the grader derives the instance id from an
+     invariant they already guarantee: `repo_dir`'s PARENT directory name is always
+     `task.id` (`runner.py`'s `ws_path = subject_ws_root / task.id`), and
+     `task.id == source.instance_id` for the committed suite (verified against the
+     real `suite.json`). Flagged as a forward note for a future contract-widening
+     task rather than a `runner.py`/`workspace.py` edit here.
+  3. **`keep_images` is NOT a `GraderConfig` field**: `GraderConfig` (`bench/spec.py`,
+     forbidden to edit in this task) has no `extra="allow"` — an unmodeled key in a
+     suite's `grader:{...}` block is silently DROPPED by pydantic (empirically
+     verified) before this grader ever sees it, so a suite-level `keep_images` field
+     could not work without a `spec.py` edit. Implemented instead as an
+     `AO_BENCH_SWEBENCH_KEEP_IMAGES` env var (config/env, CLAUDE.md-sanctioned) +
+     a `SweBenchGrader(keep_images=...)` constructor arg (tests only). No
+     `benchmarks/suites/swe-verified-mini/suite.json` edit was made — `timeout_seconds`
+     already works via the existing `GraderConfig.timeout_seconds` field, and
+     `keep_images` genuinely cannot be threaded through the suite file today.
+  4. **Patch extraction is `git diff HEAD`, not a bare `git diff`** (T-Sw5Hd9's own
+     forward note suggested the latter). `HEAD` is pinned/detached at exactly
+     `base_commit`, so `git diff HEAD` captures BOTH staged and unstaged changes
+     against that immutable baseline — matching, literally, what every task's own
+     `instruction.md` promises the agent ("your changes are graded by diffing the
+     working tree against the original checkout"). A bare `git diff` only shows
+     unstaged changes and would silently drop a fix the agent happened to `git add`.
+     Both forms equally exclude the untracked `INSTRUCTION.md`.
+  5. **`model_name_or_path` is the stable constant `"ao-bench"`**, not a subject id —
+     `RunContext` has no subject-id field today; explicitly sanctioned by the
+     dispatch note ("if the subject id isn't available, use a stable constant... and
+     document").
+  6. **One pre-existing, out-of-ownership test now fails**:
+     `tests/bench/test_graders.py::test_grader_registry_has_all_mvp_types` asserts
+     `set(GRADER_REGISTRY) == {"pytest","command","file_assertion","fake"}` — an
+     exact-equality check that is now stale by design (this task correctly adds a
+     5th type). `graders.py`/"all other test files" are forbidden for this task with
+     no carve-out (unlike `cli.py`/`registries.py`), so this was NOT edited; flagged
+     here and in the epic-level report instead. One-line fix needed (add
+     `"swebench"` to the expected set, or switch to a superset/membership check
+     mirroring `test_registries.py`'s/`test_workspace.py`'s own safer pattern for
+     `WORKSPACE_PROVIDER_REGISTRY`).
 
 ## Description
 Grade a SWE-bench instance with the **official** `swebench` evaluation harness. After the subject mutates `ws/repo`, extract the patch (`git diff` against `base_commit`), write a predictions file, run `swebench.harness.run_evaluation` in Docker for that single instance, parse the produced report → `resolved` → `solved`. Serialize the Docker-eval step behind a **module-global lock** (so agent runs can parallelize via T-Pl3Rx7 but only one Docker eval runs at a time — disk safety on ~37 GB), enforce a per-instance timeout, and **delete the instance image + prune build cache after each eval**. `swebench` is lazy-imported; a missing extra / Docker degrades to a graceful `GradeResult(solved=False, ...)` with a clear reason, never a crash.

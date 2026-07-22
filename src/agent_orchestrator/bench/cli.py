@@ -19,7 +19,10 @@ from typing import TYPE_CHECKING
 import typer
 
 from ..errors import SpecValidationError
-from . import swebench_provider  # noqa: F401 -- registers "swebench" workspace provider (T-Sw5Hd9)
+from . import (
+    swebench_grader,  # noqa: F401 -- registers "swebench" grader (T-Sg6Jf2)
+    swebench_provider,  # noqa: F401 -- registers "swebench" workspace provider (T-Sw5Hd9)
+)
 from .errors import BenchError
 from .spec import load_subject, load_suite
 from .swebench_import import import_swebench_command
