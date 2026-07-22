@@ -375,6 +375,32 @@ def test_report_different_suites_exits_1(tmp_path: Path) -> None:
     assert "ERROR" in result.output
 
 
+def test_report_results_root_no_results_for_suite_exits_1(
+    tmp_path: Path,
+) -> None:
+    """When --results-root and --suite given but no matching dirs, exit 1.
+
+    Tests line 273-276.
+    """
+    results_root = tmp_path / "results"
+    results_root.mkdir()
+    # Create no result directories -- just an empty directory
+
+    result = runner.invoke(
+        app,
+        [
+            "report",
+            "--results-root",
+            str(results_root),
+            "--suite",
+            "nonexistent-suite",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "ERROR" in result.output
+    assert "no result dirs found" in result.output
+
+
 # ---------------------------------------------------------------------------
 # `ao-bench list`
 # ---------------------------------------------------------------------------

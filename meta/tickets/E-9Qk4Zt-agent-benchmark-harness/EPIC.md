@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → developer/tester agents (delivery)
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: In Progress (7/9 tasks delivered — MVP COMPLETE at `T-Fx6Dp0`; remaining: `T-Tst4Ln`, `T-Dcs2Rk`; Phase 2 real runs are NOT part of this epic)
+- Status: In Progress (8/9 tasks delivered — MVP COMPLETE; remaining: `T-Dcs2Rk`; Phase 2 real runs in progress outside this epic)
 
 ## Summary
 - **Goal:** a declarative, pluggable, resumable, observable, safe-by-default benchmarking framework that runs **subjects** (an `ao` multi-agent workflow · bare `claude -p --model opus|sonnet|haiku` · future CLIs/APIs) over **suites** of dev tasks, grades them, and publishes machine-readable + human-readable **results** to a git-committed directory — reusing `ao`'s own cost/usage plumbing so numbers are apples-to-apples.
@@ -61,7 +61,7 @@ Task sizing (person-days → hours at 8h/d): T-Sc4Hm2 2.0(16) · T-Sbj9Ka 3.0(24
 - [x] `T-Rpt3Wq-results-comparison-report` (2.0d) — `run.json`+`summary.md` writers + cross-subject `comparison.{json,md}`. Deps: T-Run5Tz. **Done 2026-07-22.**
 - [x] `T-Cli8Nf-bench-cli-make-entrypoints` (1.5d) — standalone `ao-bench` console script + `pyproject` entry + `make bench-*`; core untouched. Deps: T-Rpt3Wq. **Done 2026-07-22.**
 - [x] `T-Fx6Dp0-mvp-dev-suite-fixtures` (3.0d) — curated 6-task dev-core suite + 6 subject configs + ao-epic workflow assets; `make bench-smoke` (fake + claude-haiku + ao-epic-haiku) ran end-to-end 6/6 solved each (≈$1.04 real spend); results committed. **MVP finish line reached 2026-07-22.** Deps: T-Cli8Nf.
-- [ ] `T-Tst4Ln-bench-tests` (2.5d) — unit+integration+CliRunner + opt-in real_llm tier; CI job (fake, no network); ≥80% coverage of `bench/`. Deps: T-Run5Tz, T-Rpt3Wq, T-Cli8Nf.
+- [x] `T-Tst4Ln-bench-tests` (2.5d) — unit+integration+CliRunner + opt-in real_llm tier; CI job (fake, no network); coverage gate ≥80% (actual: 98%). Deps: T-Run5Tz, T-Rpt3Wq, T-Cli8Nf. **Done 2026-07-22.**
 - [ ] `T-Dcs2Rk-docs-adr-reconcile` (1.0d) — reconcile HLD/LLD + ADR-0008 to as-built, `benchmarks/README.md`, HLD-index pointer, learnings (post-implementation docs-refresh). Deps: all.
 
 All nine tasks are **MVP**. Non-MVP items (NM-1..NM-9) are listed above without task folders (anti-overbuild; created only when scheduled).

@@ -170,6 +170,23 @@ def test_validate_claude_cli_subject_probe_missing_binary_warns_not_fails(
     assert "OK" in result.output
 
 
+def test_validate_claude_cli_subject_probe_nonzero_exit_warns(
+    subject_factory: SubjectFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When claude --version exits non-zero, it should warn but still pass validation (line 88)."""
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(argv, returncode=1, stdout="", stderr="error")
+
+    monkeypatch.setattr("agent_orchestrator.bench.cli.subprocess.run", fake_run)
+    subject_path = subject_factory(type_="claude_cli")
+    result = runner.invoke(app, ["validate", "--subject", str(subject_path)])
+    # A non-zero exit code from `claude --version` is a WARNING, not a validate failure
+    assert result.exit_code == 0, result.output
+    assert "WARNING" in result.output
+    assert "OK" in result.output
+
+
 def test_validate_fake_subject_does_not_probe_claude(
     subject_factory: SubjectFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

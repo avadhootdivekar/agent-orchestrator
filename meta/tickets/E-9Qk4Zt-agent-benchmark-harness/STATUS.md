@@ -2,10 +2,16 @@
 
 - ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Updated At: 2026-07-22
-- State: In Progress (7/9 tasks delivered — **MVP complete**; remaining: `T-Tst4Ln`, `T-Dcs2Rk`)
+- State: In Progress (8/9 tasks delivered — **MVP complete**; remaining: `T-Dcs2Rk`)
 - Owner: architect agent (design) → developer/tester (delivery)
 
 ## This update
+- By: Claude · Role: tester · Date: 2026-07-22 · Comment: `T-Tst4Ln-bench-tests` complete.
+  Bench coverage 96%→98% (1120 stmts, 18 missed — all hard-to-trigger race/abstract paths,
+  documented); +31 deterministic edge-case tests (221 total in tests/bench); CI job added to
+  `.github/workflows/ci.yml` with `--cov-fail-under=80` gate, network-free. Zero production
+  code changes. Independent re-verification: 1078 passed/4 deselected, ruff/mypy clean,
+  ci.yml parses. Detail: `T-Tst4Ln-bench-tests/STATUS.md`.
 - By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Fx6Dp0-mvp-dev-suite-fixtures`
   complete — **MVP finish line**. dev-core suite: 6 tasks (2 bugfix / 2 feature / 1 refactor /
   1 test-writing), tiny stdlib-only fixtures, fail-before/pass-after verified, test-writing
