@@ -59,7 +59,10 @@ class Assertion(BaseModel):
     type: Literal["exists", "contains", "equals_file"]
     path: str  # relative to the task's mutated repo
     substring: str | None = None  # required for type="contains"
-    golden: str | None = None  # required for type="equals_file"; relative to the suite.json
+    # Required for type="equals_file". Authored relative to the suite.json; load_suite
+    # rewrites it to an absolute path so graders can resolve it at grade time (the
+    # suite's base directory is not carried through to the grading context).
+    golden: str | None = None
 
 
 class GraderConfig(BaseModel):
@@ -252,6 +255,9 @@ def _check_assertions(task: BenchTask, base: Path) -> None:
                     f"Task {task.id!r}: golden file not found: {golden_path}",
                     path=f"{item_path}.golden",
                 )
+            # Rewrite to absolute in place: the grading context has no suite base dir,
+            # so a still-relative golden would be unresolvable at grade time.
+            assertion.golden = str(golden_path.resolve())
         elif assertion.type == "contains" and not assertion.substring:
             raise SpecValidationError(
                 f"Task {task.id!r}: assertion[{i}] type=contains requires 'substring'",

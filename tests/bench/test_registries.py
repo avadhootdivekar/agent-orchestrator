@@ -15,10 +15,11 @@ class _DummyGrader:
     pass
 
 
-def test_registries_start_empty() -> None:
-    # Foundation task (T-Sc4Hm2): no concrete Subject/Grader classes registered yet.
-    assert registries.SUBJECT_REGISTRY == {}
-    assert registries.GRADER_REGISTRY == {}
+def test_grader_registry_populated_on_import() -> None:
+    # T-Grd7Vx: importing bench.graders registers every MVP grader type.
+    import agent_orchestrator.bench.graders  # noqa: F401
+
+    assert {"pytest", "command", "file_assertion", "fake"} <= set(registries.GRADER_REGISTRY)
 
 
 def test_register_subject_adds_entry() -> None:

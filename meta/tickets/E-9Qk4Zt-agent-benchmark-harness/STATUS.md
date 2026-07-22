@@ -2,10 +2,20 @@
 
 - ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Updated At: 2026-07-22
-- State: In Progress (1/9 tasks delivered — `T-Sc4Hm2` Done)
+- State: In Progress (2/9 tasks delivered — `T-Sc4Hm2`, `T-Grd7Vx` Done; `T-Sbj9Ka` in progress)
 - Owner: architect agent (design) → developer/tester (delivery)
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Grd7Vx-grader-registry` complete
+  (parallel with in-flight `T-Sbj9Ka`). Delivered `bench/graders.py` (`Grader` ABC + `GradeResult`,
+  `PytestGrader` exit-code-authoritative, `CommandGrader`, `FileAssertionGrader`, `FakeGrader`,
+  all registered) and `bench/metrics.py` (`TaskMetric`/`Aggregate`/`build_task_metric`/`aggregate`
+  with `cost_usd=None` + `solved==0` handling); 31 new tests. Orchestrator arbitration applied on
+  top: `load_suite` now rewrites `Assertion.golden` to an absolute path (grade-time contexts have
+  no suite base dir; happy-path test updated) and `test_registries_start_empty` replaced with
+  `test_grader_registry_populated_on_import` (import-time registration is now the designed
+  behavior). Verified: bench suite 79 passed, `ruff`/`mypy` clean. Detail:
+  `T-Grd7Vx-grader-registry/STATUS.md`.
 - By: Claude · Role: developer · Date: 2026-07-22 · Comment: `T-Sc4Hm2-suite-subject-schemas`
   complete — the epic's foundation task. Delivered both versioned `additionalProperties:false`
   JSON schemas (`benchmarks/schemas/{benchmark-suite,subject}.schema.json`), the pydantic models
@@ -42,6 +52,7 @@
 
 ## Next actions
 1. ~~Start Sprint 1: `T-Sc4Hm2-suite-subject-schemas` (no deps).~~ — done 2026-07-22.
-2. Start `T-Sbj9Ka-subject-adapters` and `T-Grd7Vx-grader-registry` (both unblocked, depend only
-   on `T-Sc4Hm2`).
-3. Resolve Q1/Q2 before `T-Fx6Dp0` (fixtures) lands.
+2. ~~Start `T-Sbj9Ka-subject-adapters` and `T-Grd7Vx-grader-registry`.~~ — `T-Grd7Vx` done
+   2026-07-22; `T-Sbj9Ka` in progress.
+3. On `T-Sbj9Ka` completion: verify, commit, then start `T-Run5Tz-runner-metrics` (unblocks).
+4. Resolve Q1/Q2 before `T-Fx6Dp0` (fixtures) lands.

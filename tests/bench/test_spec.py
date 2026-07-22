@@ -345,7 +345,10 @@ def test_load_suite_file_assertion_equals_file_golden_present_ok(
     }
     suite_path = suite_factory(tasks=[task])
     suite = load_suite(suite_path)
-    assert suite.tasks[0].grader.assertions[0].golden == "golden/out.txt"
+    # load_suite rewrites `golden` to an absolute path so graders can resolve it
+    # at grade time without the suite's base directory.
+    resolved = suite.tasks[0].grader.assertions[0].golden
+    assert resolved == str((suite_path.parent / "golden/out.txt").resolve())
 
 
 def test_load_suite_file_assertion_contains_missing_substring(suite_factory: SuiteFactory) -> None:
