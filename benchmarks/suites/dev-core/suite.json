@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "id": "dev-core",
+  "domain": "software",
+  "description": "Curated MVP dev-task suite (E-9Qk4Zt / T-Fx6Dp0): 6 tiny, stdlib-only, self-contained Python fixtures spanning bugfix/feature/refactor/test-writing. Every task is solvable by a competent junior in under 10 minutes.",
+  "defaults": { "timeout_seconds": 600 },
+  "tasks": [
+    {
+      "id": "bugfix-off-by-one",
+      "category": "bugfix",
+      "instruction": "tasks/bugfix-off-by-one/instruction.md",
+      "fixture": "tasks/bugfix-off-by-one/fixture",
+      "grader": { "type": "pytest", "command": "uv run pytest -q --tb=no", "cwd": "." },
+      "tags": ["python", "easy"]
+    },
+    {
+      "id": "bugfix-grade-boundary",
+      "category": "bugfix",
+      "instruction": "tasks/bugfix-grade-boundary/instruction.md",
+      "fixture": "tasks/bugfix-grade-boundary/fixture",
+      "grader": { "type": "pytest", "command": "uv run pytest -q --tb=no", "cwd": "." },
+      "tags": ["python", "easy"]
+    },
+    {
+      "id": "feature-count-vowels",
+      "category": "feature",
+      "instruction": "tasks/feature-count-vowels/instruction.md",
+      "fixture": "tasks/feature-count-vowels/fixture",
+      "grader": { "type": "pytest", "command": "uv run pytest -q --tb=no", "cwd": "." },
+      "tags": ["python", "easy"]
+    },
+    {
+      "id": "feature-is-leap-year",
+      "category": "feature",
+      "instruction": "tasks/feature-is-leap-year/instruction.md",
+      "fixture": "tasks/feature-is-leap-year/fixture",
+      "grader": { "type": "pytest", "command": "uv run pytest -q --tb=no", "cwd": "." },
+      "tags": ["python", "easy"]
+    },
+    {
+      "id": "refactor-extract-validation",
+      "category": "refactor",
+      "instruction": "tasks/refactor-extract-validation/instruction.md",
+      "fixture": "tasks/refactor-extract-validation/fixture",
+      "grader": { "type": "command", "command": "uv run python check.py", "cwd": "." },
+      "tags": ["python", "medium"]
+    },
+    {
+      "id": "test-write-clamp",
+      "category": "test",
+      "instruction": "tasks/test-write-clamp/instruction.md",
+      "fixture": "tasks/test-write-clamp/fixture",
+      "grader": { "type": "command", "command": "uv run python check_tests.py", "cwd": "." },
+      "timeout_seconds": 900,
+      "tags": ["python", "medium"]
+    }
+  ]
+}

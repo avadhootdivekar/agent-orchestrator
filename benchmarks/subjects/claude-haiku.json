@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "id": "claude-haiku",
+  "type": "claude_cli",
+  "model": "claude-haiku-4-5-20251001",
+  "permission_mode": "bypassPermissions",
+  "max_turns": 30,
+  "prompt_template": "Solve the task described in {instruction}. Repo: {repo}. Make the necessary code changes directly in the repo, then run the test suite described in the instruction (e.g. `uv run pytest -q` or `python3 -m pytest -q`) to confirm your fix before finishing.",
+  "extra_args": []
+}

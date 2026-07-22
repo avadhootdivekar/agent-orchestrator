@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "repo_sets": {
+    "bench-set": {
+      "description": "ao-epic bench subject: single primary code repo (the bench task's mutated fixture copy). workspace_root/repos[0].path below are placeholders -- AoWorkflowSubject._render_reposet (bench/subjects.py) rewrites both per run to the actual ephemeral bench workspace before invoking `ao run`.",
+      "workspace_root": ".",
+      "repos": [
+        { "id": "code", "path": ".", "role": "primary" }
+      ]
+    }
+  }
+}

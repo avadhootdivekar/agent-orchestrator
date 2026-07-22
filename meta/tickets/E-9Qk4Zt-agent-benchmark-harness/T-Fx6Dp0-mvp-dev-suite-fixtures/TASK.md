@@ -4,8 +4,8 @@
 - Task ID: `T-Fx6Dp0-mvp-dev-suite-fixtures`
 - Epic ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Owner: developer agent (with tester review)
-- Created: 2026-07-22 · Last Updated: 2026-07-22
-- Status: Draft · Estimate: 3.0 days (≤3)
+- Created: 2026-07-22 · Last Updated: 2026-07-22 (implementation complete — see STATUS.md)
+- Status: Done · Estimate: 3.0 days (≤3)
 - **This is the MVP finish line** (design G6): a small curated dev suite runnable end-to-end for all three subjects, results committed, make recipe working.
 
 ## Requirements Mapping

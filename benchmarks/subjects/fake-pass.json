@@ -1,0 +1,8 @@
+{
+  "version": "1.0",
+  "id": "fake-pass",
+  "type": "fake",
+  "scripted_effect": "copy-solution",
+  "fake_cost": 0.0,
+  "fake_tokens": { "in": 0, "out": 0 }
+}

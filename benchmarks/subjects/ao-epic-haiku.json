@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "id": "ao-epic-haiku",
+  "type": "ao_workflow",
+  "workflow": "ao-epic/workflow.json",
+  "reposets": "ao-epic/reposet.json",
+  "agents": "ao-epic/agents.json",
+  "model": "claude-haiku-4-5-20251001",
+  "max_turns": 30
+}

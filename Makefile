@@ -18,6 +18,13 @@ MAX_TURNS ?=
 # RESULTS — results root ao-bench report auto-discovers the latest run per subject under
 BENCH_SUITE_PATH ?= benchmarks/suites/dev-core/suite.json
 BENCH_FAKE_SUBJECT_PATH ?= benchmarks/subjects/fake-pass.json
+BENCH_HAIKU_SUBJECT_PATH ?= benchmarks/subjects/claude-haiku.json
+BENCH_AO_EPIC_HAIKU_SUBJECT_PATH ?= benchmarks/subjects/ao-epic-haiku.json
+BENCH_SMOKE_SUITE_ID ?= dev-core
+# Cheap/bounded for the haiku smoke tier (design doc §7's own bench-smoke sketch);
+# `bench-run`'s real (sonnet/opus) invocations leave --max-turns unset, deferring to
+# each committed subject.json's own default.
+BENCH_SMOKE_MAX_TURNS ?= 20
 SUITE ?=
 SUBJECT ?=
 RESULTS ?= benchmarks/results
@@ -51,24 +58,23 @@ validate-sum-of-array:
 	  --agents   playground/sum-of-array/agents.fake.json
 
 # ao-bench targets (E-9Qk4Zt): standalone `ao-bench` console script, never `ao` itself
-# (design doc §7, SI-1) — `benchmarks/suites/dev-core/` + `benchmarks/subjects/` are
-# committed fixtures T-Fx6Dp0 lands; bench-validate/bench-smoke guard on their presence
-# with a friendly skip message until then, rather than failing the whole `make` run.
+# (design doc §7, SI-1). `benchmarks/suites/dev-core/` + `benchmarks/subjects/` are the
+# committed MVP fixtures (T-Fx6Dp0).
 bench-validate:
-	@if [ -f "$(BENCH_SUITE_PATH)" ]; then \
-	  uv run ao-bench validate --suite $(BENCH_SUITE_PATH); \
-	else \
-	  echo "SKIP bench-validate: $(BENCH_SUITE_PATH) not found yet (lands with T-Fx6Dp0)"; \
-	fi
+	uv run ao-bench validate --suite $(BENCH_SUITE_PATH)
 
+# All THREE subject kinds over dev-core at haiku (TASK.md T-Fx6Dp0 AC3): fake (no LLM,
+# proves the harness/grader plumbing), bare claude_cli, and the ao_workflow ao-epic
+# template — then a comparison report across all three. `-` on each `run` line: one
+# subject hitting a transient real-LLM failure (subject_status
+# failed/timed_out/error, `ao-bench run` exit 2) must not abort the whole target before
+# the OTHER subjects get a chance to run and `report` still summarizes whatever DID
+# complete — this is a manual dev convenience target, never a CI gate.
 bench-smoke:
-	@if [ -f "$(BENCH_SUITE_PATH)" ] && [ -f "$(BENCH_FAKE_SUBJECT_PATH)" ]; then \
-	  uv run ao-bench run --suite $(BENCH_SUITE_PATH) --subject $(BENCH_FAKE_SUBJECT_PATH); \
-	else \
-	  echo "SKIP bench-smoke: $(BENCH_SUITE_PATH) / $(BENCH_FAKE_SUBJECT_PATH) not found yet" \
-	       "(land with T-Fx6Dp0); once real haiku subjects land, extend this to loop" \
-	       "over them the way the design doc's bench-smoke sketch does."; \
-	fi
+	uv run ao-bench run --suite $(BENCH_SUITE_PATH) --subject $(BENCH_FAKE_SUBJECT_PATH)
+	-uv run ao-bench run --suite $(BENCH_SUITE_PATH) --subject $(BENCH_HAIKU_SUBJECT_PATH) --max-turns $(BENCH_SMOKE_MAX_TURNS)
+	-uv run ao-bench run --suite $(BENCH_SUITE_PATH) --subject $(BENCH_AO_EPIC_HAIKU_SUBJECT_PATH) --max-turns $(BENCH_SMOKE_MAX_TURNS)
+	uv run ao-bench report --results-root $(RESULTS) --suite $(BENCH_SMOKE_SUITE_ID)
 
 bench-run:
 	uv run ao-bench run --suite $(SUITE) --subject $(SUBJECT)

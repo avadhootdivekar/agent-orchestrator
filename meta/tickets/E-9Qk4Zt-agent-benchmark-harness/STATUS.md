@@ -2,10 +2,21 @@
 
 - ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Updated At: 2026-07-22
-- State: In Progress (6/9 tasks delivered — next: `T-Fx6Dp0` MVP suite/fixtures, then `T-Tst4Ln`, `T-Dcs2Rk`)
+- State: In Progress (7/9 tasks delivered — **MVP complete**; remaining: `T-Tst4Ln`, `T-Dcs2Rk`)
 - Owner: architect agent (design) → developer/tester (delivery)
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Fx6Dp0-mvp-dev-suite-fixtures`
+  complete — **MVP finish line**. dev-core suite: 6 tasks (2 bugfix / 2 feature / 1 refactor /
+  1 test-writing), tiny stdlib-only fixtures, fail-before/pass-after verified, test-writing
+  grader mutation-checked. 6 subject configs (full model ids pinned per Q2) + ao-epic 2-task
+  implement→verify workflow (Q1; uniform-model, clobber-safe). Real haiku smoke: claude-haiku
+  6/6 @$0.373/166s; ao-epic-haiku 6/6 @$0.662/343s; fake-pass 6/6; resume proven; comparison
+  committed under `benchmarks/results/2026-07-22-dev-core-*`. One design gap worked around and
+  documented (AoWorkflowSubject doesn't mirror a generic instructions/ dir into the workspace —
+  workflow tasks reference `repo/INSTRUCTION.md`). 22 new deterministic tests; independent
+  re-verification 1047 passed/4 deselected, ruff/mypy clean.
+  Detail: `T-Fx6Dp0-mvp-dev-suite-fixtures/STATUS.md`.
 - By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Rpt3Wq` + `T-Cli8Nf` complete
   (one developer agent, sequential). `bench/results.py`: load_run/write_summary_md/
   build_comparison/write_comparison with unlike-suite + mixed-fingerprint refusal

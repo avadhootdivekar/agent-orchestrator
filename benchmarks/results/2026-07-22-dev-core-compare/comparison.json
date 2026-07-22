@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "dev-core",
+  "generated_at": "2026-07-22T11:07:17.951958+00:00",
+  "subjects": [
+    "ao-epic-haiku",
+    "claude-haiku",
+    "fake-pass"
+  ],
+  "not_run": [],
+  "task_ids": [
+    "bugfix-grade-boundary",
+    "bugfix-off-by-one",
+    "feature-count-vowels",
+    "feature-is-leap-year",
+    "refactor-extract-validation",
+    "test-write-clamp"
+  ],
+  "matrix": {
+    "bugfix-grade-boundary": {
+      "ao-epic-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.10062310000000001,
+        "wall_clock_seconds": 49.87917465099599
+      },
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.054222,
+        "wall_clock_seconds": 23.711119220999535
+      },
+      "fake-pass": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0,
+        "wall_clock_seconds": 0.0002535179955884814
+      }
+    },
+    "bugfix-off-by-one": {
+      "ao-epic-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.10652840000000001,
+        "wall_clock_seconds": 53.878767820991925
+      },
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.05516780000000001,
+        "wall_clock_seconds": 24.21643842899357
+      },
+      "fake-pass": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0,
+        "wall_clock_seconds": 0.00015822799468878657
+      }
+    },
+    "feature-count-vowels": {
+      "ao-epic-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.11115380000000001,
+        "wall_clock_seconds": 53.639980649008066
+      },
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.05765140000000001,
+        "wall_clock_seconds": 22.368083908004337
+      },
+      "fake-pass": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0,
+        "wall_clock_seconds": 0.0001659159897826612
+      }
+    },
+    "feature-is-leap-year": {
+      "ao-epic-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1023454,
+        "wall_clock_seconds": 49.372937587992055
+      },
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0573426,
+        "wall_clock_seconds": 26.72455310600344
+      },
+      "fake-pass": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0,
+        "wall_clock_seconds": 0.00015728399739600718
+      }
+    },
+    "refactor-extract-validation": {
+      "ao-epic-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1125043,
+        "wall_clock_seconds": 59.893682987996726
+      },
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0648892,
+        "wall_clock_seconds": 28.033384189999197
+      },
+      "fake-pass": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0,
+        "wall_clock_seconds": 0.00014783799997530878
+      }
+    },
+    "test-write-clamp": {
+      "ao-epic-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1285904,
+        "wall_clock_seconds": 76.38452029100154
+      },
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0838801,
+        "wall_clock_seconds": 41.311663115004194
+      },
+      "fake-pass": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0,
+        "wall_clock_seconds": 0.00017380400095134974
+      }
+    }
+  },
+  "per_subject": {
+    "ao-epic-haiku": {
+      "solved": 6,
+      "total": 6,
+      "solve_rate": 1.0,
+      "mean_score": 1.0,
+      "total_cost_usd": 0.6617454,
+      "cost_available": true,
+      "cost_per_solved": 0.11029090000000001,
+      "total_wall_clock_seconds": 343.0490639879863,
+      "total_input_tokens": 600,
+      "total_output_tokens": 25389,
+      "total_cache_creation_input_tokens": 156912,
+      "total_cache_read_input_tokens": 2086184
+    },
+    "claude-haiku": {
+      "solved": 6,
+      "total": 6,
+      "solve_rate": 1.0,
+      "mean_score": 1.0,
+      "total_cost_usd": 0.3731531,
+      "cost_available": true,
+      "cost_per_solved": 0.06219218333333334,
+      "total_wall_clock_seconds": 166.36524196900427,
+      "total_input_tokens": 372,
+      "total_output_tokens": 11652,
+      "total_cache_creation_input_tokens": 89779,
+      "total_cache_read_input_tokens": 1303801
+    },
+    "fake-pass": {
+      "solved": 6,
+      "total": 6,
+      "solve_rate": 1.0,
+      "mean_score": 1.0,
+      "total_cost_usd": 0.0,
+      "cost_available": true,
+      "cost_per_solved": 0.0,
+      "total_wall_clock_seconds": 0.0010565879783825949,
+      "total_input_tokens": 0,
+      "total_output_tokens": 0,
+      "total_cache_creation_input_tokens": 0,
+      "total_cache_read_input_tokens": 0
+    }
+  }
+}
