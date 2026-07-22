@@ -5,7 +5,7 @@
 - Epic ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Owner: developer agent
 - Created: 2026-07-22 · Last Updated: 2026-07-22
-- Status: Draft · Estimate: 3.0 days (≤3)
+- Status: Done · Estimate: 3.0 days (≤3)
 
 ## Requirements Mapping
 - FR-2, NFR-1 (core untouched), NFR-2 (repo-local workspaces).

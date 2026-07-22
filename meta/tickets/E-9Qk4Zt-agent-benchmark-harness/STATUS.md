@@ -2,10 +2,20 @@
 
 - ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Updated At: 2026-07-22
-- State: In Progress (2/9 tasks delivered — `T-Sc4Hm2`, `T-Grd7Vx` Done; `T-Sbj9Ka` in progress)
+- State: In Progress (3/9 tasks delivered — `T-Sc4Hm2`, `T-Grd7Vx`, `T-Sbj9Ka` Done; Sprint 1 remaining: `T-Run5Tz`)
 - Owner: architect agent (design) → developer/tester (delivery)
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Sbj9Ka-subject-adapters` complete.
+  `bench/subjects.py` (`Subject` ABC + `SubjectResult` with argv/model/permission-mode
+  observability; `ClaudeCliSubject` stream-json capture + reused core usage parser;
+  `AoWorkflowSubject` with exactly-one-run-dir invariant; `FakeSubject` scripted effects) and
+  `bench/workspace.py` (`RunContext`, path-guarded `materialize_workspace`). 51 new tests
+  (116 passed/1 skipped in tests/bench); real haiku sanity check confirmed live cost/token
+  parsing (`total_cost_usd` 0.026, 1 turn). Independent re-verification: 973 passed/4 deselected,
+  ruff/mypy clean. Forward notes for `T-Run5Tz`: set `RunContext.subject_base_dir` to the
+  subject.json parent dir for `ao_workflow` subjects; catch `SubjectError` around `Subject.run()`.
+  Detail: `T-Sbj9Ka-subject-adapters/STATUS.md`.
 - By: Claude · Role: manager · Date: 2026-07-22 · Comment: `T-Grd7Vx-grader-registry` complete
   (parallel with in-flight `T-Sbj9Ka`). Delivered `bench/graders.py` (`Grader` ABC + `GradeResult`,
   `PytestGrader` exit-code-authoritative, `CommandGrader`, `FileAssertionGrader`, `FakeGrader`,

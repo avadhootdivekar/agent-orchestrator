@@ -1,0 +1,161 @@
+"""Workspace materialization for bench subjects (design doc §4.2, §4.5; task T-Sbj9Ka).
+
+For each (subject x task) run, `materialize_workspace` builds a fresh, disposable
+workspace under the repo-local, gitignored `playground/.tmp/bench/` tree (constraint
+C2: workspaces are never `/tmp` -- mirrors `tests/playground/conftest.py`'s
+`_REAL_LLM_TMP_BASE` convention, since a spawned `claude`/`ao` subprocess's own sandbox
+allow-list is the repo working directory, not the system temp dir):
+
+    ws/                     caller-composed target, e.g.
+                            playground/.tmp/bench/<runid>/<subject>/<task>/
+      repo/                 mutable COPY of the task's committed fixture (never the
+                            fixture itself -- AC6) + a copied INSTRUCTION.md so every
+                            subject (bare `claude -p` via {instruction} in its prompt,
+                            or an `ao_workflow` subject whose first task reads the file
+                            directly out of its repo) can reach the task instruction the
+                            same way, by path.
+      capture/              subject-populated transcript/stdout/stderr (T-Sbj9Ka
+                            subjects.py writes into this directory; created empty here).
+
+The target `ws` path is path-guarded to stay under `BENCH_WORKSPACE_ROOT` (mirrors
+`LocalFsArtifactStore.resolve`'s escape guard) -- a `..` traversal or a symlinked path
+component that resolves outside the sandbox raises `SubjectError` rather than silently
+writing outside `playground/.tmp/bench/` (AC6). The guard applies to the WORKSPACE
+target only: the task's fixture/instruction source live under a committed
+`benchmarks/suites/.../tasks/<id>/` tree elsewhere in the repo and are read-only inputs,
+never write targets.
+"""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from .errors import SubjectError
+from .spec import BenchTask
+
+# Repo root: bench/workspace.py -> bench/ -> agent_orchestrator/ -> src/ -> repo root.
+# Mirrors bench/spec.py's `_SCHEMAS_DIR` resolution (same four `.parent` hops) so both
+# modules agree on where "the repo" is without hardcoding an absolute path.
+REPO_ROOT: Path = Path(__file__).resolve().parent.parent.parent.parent
+
+# Repo-local, gitignored sandbox for every bench workspace (constraint C2). Already
+# covered by the existing `playground/.tmp/` gitignore entry.
+BENCH_WORKSPACE_ROOT: Path = REPO_ROOT / "playground" / ".tmp" / "bench"
+
+# Named, not magic literals (CLAUDE.md).
+REPO_DIRNAME = "repo"
+CAPTURE_DIRNAME = "capture"
+INSTRUCTION_FILENAME = "INSTRUCTION.md"
+
+
+class RunContext(BaseModel):
+    """Resolved paths + run knobs for one (subject, task) execution (design doc §6).
+
+    Produced by `materialize_workspace` and consumed by `Subject.run(task, ctx)`
+    (subjects.py). `workflow_json` is populated by the caller for an `ao_workflow`
+    subject (points at that subject's own template, resolved relative to its
+    subject.json -- see `subject_base_dir` below); `rendered_reposet` is populated by
+    `AoWorkflowSubject` itself once it has rendered the reposet template for this task.
+
+    `subject_base_dir` is additive beyond the design doc §6 listing: the directory
+    containing the running subject's own `subject.json`, needed so `AoWorkflowSubject`
+    can resolve that spec's `workflow`/`reposets`/`agents` fields, which
+    `benchmarks/schemas/subject.schema.json` documents as "relative to this
+    subject.json" (bench/spec.py's `load_subject` does not resolve them -- see
+    subjects.py module docstring). Optional and defaulted so a `RunContext` built from
+    exactly the §6 field set still constructs unchanged.
+    """
+
+    workspace: str
+    repo_dir: str
+    instruction_path: str
+    capture_dir: str
+    timeout_seconds: int
+    budget_total: int | None = None
+    max_turns: int | None = None
+    workflow_json: str | None = None
+    rendered_reposet: str | None = None
+    subject_base_dir: str | None = None
+
+
+def _assert_under_bench_root(path: Path) -> Path:
+    """Resolve *path* and assert it stays under `BENCH_WORKSPACE_ROOT`.
+
+    Catches both a caller-composed `..` traversal and a symlinked path component that
+    would otherwise resolve outside the sandbox (AC6; mirrors
+    `LocalFsArtifactStore.resolve`'s path-escape guard in `artifacts.py`). Raises
+    `SubjectError` naming both the requested and resolved path -- never silently clamps.
+    """
+    root = BENCH_WORKSPACE_ROOT.resolve()
+    resolved = path.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise SubjectError(
+            f"Bench workspace path escapes the sandbox {root}: {path} -> resolved {resolved}"
+        )
+    return resolved
+
+
+def materialize_workspace(
+    task: BenchTask,
+    ws: Path | str,
+    *,
+    suite_base_dir: Path | str,
+    timeout_seconds: int,
+    budget_total: int | None = None,
+    max_turns: int | None = None,
+    subject_base_dir: Path | str | None = None,
+    workflow_json: str | None = None,
+) -> RunContext:
+    """Materialize a fresh, disposable workspace for one (subject, task) run.
+
+    - Guards `ws` under `BENCH_WORKSPACE_ROOT` (raises `SubjectError` on escape, AC6).
+    - Removes any pre-existing `ws` (fresh workspace per (subject, task) -- ASSUMPTION
+      A4: exactly one `ao` run_id must land under this workspace, so a stale prior run
+      cannot linger and confuse cost attribution).
+    - Copies `task.fixture` (resolved against `suite_base_dir`, mirrors `spec.py`'s own
+      `load_suite` path resolution) into `ws/repo/` -- the committed fixture itself is
+      never touched (AC6), only this copy.
+    - Copies `task.instruction` into `ws/repo/INSTRUCTION.md` so every subject can reach
+      the instruction the same way, by path (see module docstring).
+    - Creates an empty `ws/capture/` for the subject to populate.
+
+    Raises `SubjectError` for: a `ws` that escapes the bench sandbox, or a
+    fixture/instruction path that does not exist on disk (mirrors `spec.py`'s own
+    missing-path errors, but at materialize time rather than suite-load time -- a
+    fixture/instruction could theoretically be removed between `load_suite` and a run).
+    """
+    ws_path = _assert_under_bench_root(Path(ws))
+    if ws_path.exists():
+        shutil.rmtree(ws_path)
+    ws_path.mkdir(parents=True)
+
+    base = Path(suite_base_dir)
+    fixture_src = (base / task.fixture).resolve()
+    if not fixture_src.is_dir():
+        raise SubjectError(f"Task {task.id!r}: fixture directory not found: {fixture_src}")
+    instruction_src = (base / task.instruction).resolve()
+    if not instruction_src.is_file():
+        raise SubjectError(f"Task {task.id!r}: instruction file not found: {instruction_src}")
+
+    repo_dir = ws_path / REPO_DIRNAME
+    shutil.copytree(fixture_src, repo_dir)
+    instruction_dest = repo_dir / INSTRUCTION_FILENAME
+    shutil.copy2(instruction_src, instruction_dest)
+
+    capture_dir = ws_path / CAPTURE_DIRNAME
+    capture_dir.mkdir()
+
+    return RunContext(
+        workspace=str(ws_path),
+        repo_dir=str(repo_dir),
+        instruction_path=str(instruction_dest),
+        capture_dir=str(capture_dir),
+        timeout_seconds=timeout_seconds,
+        budget_total=budget_total,
+        max_turns=max_turns,
+        workflow_json=workflow_json,
+        subject_base_dir=str(Path(subject_base_dir)) if subject_base_dir is not None else None,
+    )
