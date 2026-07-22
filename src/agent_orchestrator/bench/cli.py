@@ -41,6 +41,9 @@ EXIT_RUN_HAD_FAILURES = 2
 # a legitimate benchmark data point (the subject ran fine, it just didn't solve the
 # task) and must never flip the CLI's exit code. AC2: "a suite where the fake subject
 # fails a task -> exit non-zero" means exactly this (e.g. `scripted_effect: "fail"`).
+# `"skipped_budget"` (ADR-0009 D3, T-Bg2Wq4) is DELIBERATELY excluded here: a run that
+# stopped scheduling because it hit its USD cost cap is a clean, resumable, expected
+# outcome (raise the cap and re-run to finish it), never a harness failure.
 _HARNESS_FAILURE_STATUSES = frozenset({"failed", "timed_out", "error"})
 
 
@@ -161,17 +164,41 @@ def run(
         help="Run-level default per-task timeout in seconds (a task's own timeout_seconds,"
         " then the suite's defaults.timeout_seconds, still win over this).",
     ),
+    cost_budget_usd: float | None = typer.Option(
+        None,
+        "--cost-budget-usd",
+        help="Hard USD cost cap for this run (ADR-0009 D3), distinct from --budget-total"
+        " (a token budget threaded to `ao run`, not enforced by the harness itself)."
+        " Default: the suite's tier default from benchmarks/tiers.json"
+        " (cost_budget_usd_per_subject -- small=$5, medium=$50, large=$100). Tasks past"
+        " the cap are recorded subject_status=skipped_budget rather than run; re-running"
+        " with a higher cap re-attempts exactly those tasks.",
+    ),
 ) -> None:
     """Run a benchmark suite against a subject; writes run.json + summary.md.
 
-    Exit 0 on a clean run; exit 2 if any task's SUBJECT status (not its grader verdict --
-    an unsolved-but-cleanly-run task is a normal benchmark outcome, not a failure) was
-    failed/timed_out/error; exit 1 on a usage or spec-loading error.
+    Exit 0 on a clean run (a run that stopped early on its USD budget is still exit 0 --
+    `skipped_budget` is a clean, resumable outcome, not a failure); exit 2 if any task's
+    SUBJECT status (not its grader verdict -- an unsolved-but-cleanly-run task is a
+    normal benchmark outcome, not a failure) was failed/timed_out/error; exit 1 on a
+    usage or spec-loading error.
     """
     from .results import write_summary_md
     from .runner import resolve_result_dir, run_suite
+    from .tiers import load_tier_config
 
     try:
+        loaded_suite = load_suite(suite)
+        # Precedence (ADR-0009 D3): an explicit --cost-budget-usd always wins; absent
+        # that, the suite's OWN tier (bench/spec.py's `BenchSuite.tier`, default
+        # "small") supplies its per-subject default cap via bench/tiers.json.
+        # `is not None` (not `or`) so an explicit `--cost-budget-usd 0` -- a real,
+        # maximally-restrictive cap -- is never mistaken for "not given".
+        effective_cost_budget_usd = (
+            cost_budget_usd
+            if cost_budget_usd is not None
+            else load_tier_config(loaded_suite.tier).cost_budget_usd_per_subject
+        )
         record = run_suite(
             suite,
             subject,
@@ -181,6 +208,7 @@ def run(
             budget_total=budget_total,
             max_turns=max_turns,
             default_timeout=timeout,
+            cost_budget_usd=effective_cost_budget_usd,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)

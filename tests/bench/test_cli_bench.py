@@ -43,7 +43,7 @@ def _fake_task(task_id: str, *, grader: dict[str, Any] | None = None) -> dict[st
     }
 
 
-def _write_suite(base: Path, suite_id: str, tasks: list[dict[str, Any]]) -> Path:
+def _write_suite(base: Path, suite_id: str, tasks: list[dict[str, Any]], **extra: Any) -> Path:
     for task in tasks:
         instruction = base / task["instruction"]
         instruction.parent.mkdir(parents=True, exist_ok=True)
@@ -51,13 +51,14 @@ def _write_suite(base: Path, suite_id: str, tasks: list[dict[str, Any]]) -> Path
         fixture = base / task["fixture"]
         fixture.mkdir(parents=True, exist_ok=True)
         (fixture / "placeholder.txt").write_text("fixture content\n")
-    data = {
+    data: dict[str, Any] = {
         "version": "1.0",
         "id": suite_id,
         "domain": "software",
         "description": "cli test suite",
         "tasks": tasks,
     }
+    data.update(extra)
     path = base / f"{suite_id}-suite.json"
     path.write_text(json.dumps(data, indent=2))
     return path
@@ -95,6 +96,7 @@ def test_run_help_documents_flags() -> None:
         "--budget-total",
         "--max-turns",
         "--timeout",
+        "--cost-budget-usd",
     ):
         assert flag in result.output
 
@@ -244,6 +246,178 @@ def test_run_force_reruns_completed_task(tmp_path: Path) -> None:
 
     third = runner.invoke(app, [*args, "--force"])
     assert third.exit_code == 0, third.output
+
+
+# ---------------------------------------------------------------------------
+# USD cost-budget enforcement (T-Bg2Wq4, ADR-0009 D3): --cost-budget-usd, tier default
+# resolution (AC4), and skipped_budget never flipping the exit code (AC2).
+# ---------------------------------------------------------------------------
+
+
+def test_run_explicit_cost_budget_usd_caps_the_run(tmp_path: Path) -> None:
+    uniq = _uniq()
+    suite_id = f"cli-budget-explicit-{uniq}"
+    suite_path = _write_suite(tmp_path, suite_id, [_fake_task("t1"), _fake_task("t2")])
+    subject_path = _write_fake_subject(tmp_path, f"fk-budget-{uniq}", fake_cost=10.0)
+    out_dir = tmp_path / "results"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(out_dir),
+            "--cost-budget-usd",
+            "5",
+        ],
+    )
+    assert result.exit_code == 0, result.output  # skipped_budget is not a failure (AC2)
+
+    run_dir = next(out_dir.glob(f"*{suite_id}*"))
+    on_disk = json.loads((run_dir / "run.json").read_text())
+    by_id = {t["task_id"]: t for t in on_disk["tasks"]}
+    # t1 (cum 0<5) runs for real; t2 (cum 10>=5) is skipped_budget.
+    assert by_id["t1"]["subject_status"] == "succeeded"
+    assert by_id["t2"]["subject_status"] == "skipped_budget"
+    assert by_id["t2"]["cost_usd"] == 0.0
+
+
+def test_run_no_cost_budget_flag_defaults_to_suite_tier_small_cap(tmp_path: Path) -> None:
+    """AC4: no `--cost-budget-usd` and no `tier` on the suite -> defaults to "small"
+    -> benchmarks/tiers.json's committed `small.cost_budget_usd_per_subject` ($5)."""
+    uniq = _uniq()
+    suite_id = f"cli-budget-tiersmall-{uniq}"
+    suite_path = _write_suite(tmp_path, suite_id, [_fake_task("t1"), _fake_task("t2")])
+    subject_path = _write_fake_subject(tmp_path, f"fk-tiersmall-{uniq}", fake_cost=10.0)
+    out_dir = tmp_path / "results"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    run_dir = next(out_dir.glob(f"*{suite_id}*"))
+    on_disk = json.loads((run_dir / "run.json").read_text())
+    by_id = {t["task_id"]: t for t in on_disk["tasks"]}
+    # small.cost_budget_usd_per_subject == $5 (benchmarks/tiers.json): t1 (cum 0<5) runs,
+    # t2 (cum 10>=5) is skipped_budget.
+    assert by_id["t1"]["subject_status"] == "succeeded"
+    assert by_id["t2"]["subject_status"] == "skipped_budget"
+
+
+def test_run_no_cost_budget_flag_defaults_to_suite_tier_medium_cap(tmp_path: Path) -> None:
+    """AC4: `tier: medium` on the suite -> defaults to $50 (medium.cost_budget_usd_per_
+    subject) -- the same two $10 tasks that budget-capped under the small default (see
+    above) both fit comfortably under medium's cap."""
+    uniq = _uniq()
+    suite_id = f"cli-budget-tiermedium-{uniq}"
+    suite_path = _write_suite(
+        tmp_path,
+        suite_id,
+        [_fake_task("t1"), _fake_task("t2")],
+        tier="medium",
+    )
+    subject_path = _write_fake_subject(tmp_path, f"fk-tiermedium-{uniq}", fake_cost=10.0)
+    out_dir = tmp_path / "results"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    run_dir = next(out_dir.glob(f"*{suite_id}*"))
+    on_disk = json.loads((run_dir / "run.json").read_text())
+    assert all(t["subject_status"] == "succeeded" for t in on_disk["tasks"])
+
+
+def test_run_explicit_cost_budget_usd_overrides_tier_default(tmp_path: Path) -> None:
+    """An explicit --cost-budget-usd wins over even a more generous tier default."""
+    uniq = _uniq()
+    suite_id = f"cli-budget-override-{uniq}"
+    suite_path = _write_suite(
+        tmp_path,
+        suite_id,
+        [_fake_task("t1"), _fake_task("t2")],
+        tier="medium",  # tier default would be $50 -- both tasks would otherwise fit.
+    )
+    subject_path = _write_fake_subject(tmp_path, f"fk-override-{uniq}", fake_cost=10.0)
+    out_dir = tmp_path / "results"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(out_dir),
+            "--cost-budget-usd",
+            "5",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    run_dir = next(out_dir.glob(f"*{suite_id}*"))
+    on_disk = json.loads((run_dir / "run.json").read_text())
+    by_id = {t["task_id"]: t for t in on_disk["tasks"]}
+    assert by_id["t1"]["subject_status"] == "succeeded"
+    assert by_id["t2"]["subject_status"] == "skipped_budget"
+
+
+def test_run_only_skipped_budget_tasks_still_exits_zero(tmp_path: Path) -> None:
+    """AC2: a run whose only non-solved tasks are skipped_budget exits 0 -- never a
+    harness failure. Cap=$0 skips EVERY task (running_cost 0 >= cap 0 from the first
+    check), the most extreme case: zero successes, zero failures, all skipped_budget.
+    """
+    uniq = _uniq()
+    suite_id = f"cli-budget-allzero-{uniq}"
+    suite_path = _write_suite(tmp_path, suite_id, [_fake_task("t1"), _fake_task("t2")])
+    subject_path = _write_fake_subject(tmp_path, f"fk-allzero-{uniq}", fake_cost=1.0)
+    out_dir = tmp_path / "results"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(out_dir),
+            "--cost-budget-usd",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    run_dir = next(out_dir.glob(f"*{suite_id}*"))
+    on_disk = json.loads((run_dir / "run.json").read_text())
+    assert all(t["subject_status"] == "skipped_budget" for t in on_disk["tasks"])
 
 
 # ---------------------------------------------------------------------------

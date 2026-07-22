@@ -97,7 +97,7 @@ class SubjectResult(BaseModel):
     (T-Run5Tz/T-Rpt3Wq) can be derived from what actually ran, not just the spec.
     """
 
-    status: Literal["succeeded", "failed", "timed_out", "error"]
+    status: Literal["succeeded", "failed", "timed_out", "error", "skipped_budget"]
     wall_clock_seconds: float
     cost_usd: float | None = None
     input_tokens: int | None = None
@@ -111,6 +111,28 @@ class SubjectResult(BaseModel):
     argv: list[str] = []
     resolved_model: str | None = None
     resolved_permission_mode: str | None = None
+
+
+def _budget_skipped_result(capture_dir: str = "") -> SubjectResult:
+    """Factory for a task the runner (bench/runner.py, T-Bg2Wq4) stopped scheduling
+    because the run's cumulative USD cost already reached `cost_budget_usd` (ADR-0009
+    D3: "check-before-schedule"). No subprocess is spawned and no workspace is
+    materialized for this task -- `capture_dir` defaults to `""` since there is no
+    capture to point at; the runner may pass the would-be workspace path anyway for a
+    consistent `TaskMetric.workspace` field.
+
+    `cost_usd=0.0` (not `None`) is deliberate: this task contributed nothing to spend,
+    and `metrics.aggregate`'s `cost_usd is None` handling means None would instead flip
+    `Aggregate.cost_available` to False and imply "cost unknown" rather than "cost is
+    zero, this never ran".
+    """
+    return SubjectResult(
+        status="skipped_budget",
+        wall_clock_seconds=0.0,
+        cost_usd=0.0,
+        capture_dir=capture_dir,
+        raw_error=None,
+    )
 
 
 class Subject(ABC):

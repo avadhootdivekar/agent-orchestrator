@@ -65,7 +65,7 @@ from .graders import GradeResult
 from .metrics import Aggregate, SubjectResultLike, TaskMetric, aggregate, build_task_metric
 from .registries import GRADER_REGISTRY, SUBJECT_REGISTRY
 from .spec import BenchSuite, BenchTask, SubjectSpec, load_subject, load_suite
-from .subjects import SubjectResult
+from .subjects import SubjectResult, _budget_skipped_result
 from .workspace import BENCH_WORKSPACE_ROOT, CAPTURE_DIRNAME, REPO_ROOT, materialize_workspace
 
 # ---------------------------------------------------------------------------
@@ -414,6 +414,7 @@ def run_suite(
     budget_total: int | None = None,
     max_turns: int | None = None,
     default_timeout: int | None = None,
+    cost_budget_usd: float | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> BenchRunRecord:
     """Run *suite* against *subject* end to end (design §4.5).
@@ -448,6 +449,27 @@ def run_suite(
         (`budget_total`/`max_turns`) or into `_effective_timeout`
         (`default_timeout`) -- CLI/run-level, beating a subject's own spec default
         but losing to a task's own explicit `timeout_seconds`.
+    cost_budget_usd:
+        Hard USD cost cap for this (suite x subject) run (ADR-0009 D3), DISTINCT from
+        the pre-existing token `budget_total` above. `None` (the default) means
+        unlimited -- no budget check at all -- so every pre-existing caller of
+        `run_suite` that does not pass this is unaffected. The CLI (`bench/cli.py`)
+        always resolves a concrete cap before calling in here (explicit
+        `--cost-budget-usd` > the suite's tier default via `bench/tiers.py`); `None` is
+        for direct callers (tests, or a future caller) that explicitly want no cap.
+        Before scheduling each task, if the cumulative `cost_usd` of already-recorded,
+        non-`skipped_budget` tasks THIS run has reached the cap, every remaining task is
+        recorded with `subject_status="skipped_budget"` (solved=False, score=0,
+        cost=0) instead of being materialized/run -- check-before-schedule, so overshoot
+        is bounded to at most the one task that was already in flight when the cap was
+        crossed. A `skipped_budget` record is NEVER a harness failure (`bench/cli.py`'s
+        `_HARNESS_FAILURE_STATUSES` excludes it) and is excluded from `config_fingerprint`
+        (control-flow, not subject-affecting config) -- so raising the cap between two
+        same-day runs never trips the W4 mismatch guard. On resume, a task already
+        recorded as `skipped_budget` is the ONE exception to "already recorded -> skip":
+        it is re-attempted under the current cap (every other recorded status still
+        skips), so raising the cap and re-running finishes a previously budget-capped
+        suite.
     clock:
         Injectable UTC clock (CLAUDE.md determinism rule) -- defaults to
         `datetime.now(UTC)`.
@@ -497,6 +519,22 @@ def run_suite(
             started_at = resolved_clock().isoformat()
             tasks_dict = {}
 
+        # ADR-0009 D3: cumulative USD spend for THIS run, recomputed (not merely
+        # carried over) from already-recorded, non-`skipped_budget` tasks -- a
+        # `skipped_budget` record never actually ran and cost $0, so counting it here
+        # would double-penalize a resumed run. `cost_usd is None` (AC6, e.g. a missing
+        # `state.json`) is treated as $0 for this running total: an unknown cost must
+        # never itself look like unbounded spend that starves every later task.
+        #
+        # LOCK-IN POINT for T-Pl3Rx7 (parallel runner): this running total, the
+        # check-before-schedule read of it below, and the `tasks_dict[...] = ...` +
+        # `running_cost += ...` writes after each task all need to happen under the
+        # SAME lock once tasks can run concurrently -- today (serial, max_parallel=1)
+        # there is only ever one in-flight task so a plain float suffices.
+        running_cost: float = sum(
+            (t.cost_usd or 0.0) for t in tasks_dict.values() if t.subject_status != "skipped_budget"
+        )
+
         tasks_to_consider = sorted(suite.tasks, key=lambda t: t.id)
         if task_filter is not None:
             filter_set = set(task_filter)
@@ -504,6 +542,11 @@ def run_suite(
 
         ao_version = _ao_version()
         claude_version = _probe_claude_version()
+        # `cost_budget_usd` is DELIBERATELY ABSENT from `overrides` (and thus from
+        # `run_fingerprint`/AC5): it is control-flow ("how many tasks run", like
+        # `force`/`task_filter`), not config that changes what a subject DOES per task
+        # -- so raising/lowering the cap between two same-day runs must never trip the
+        # W4 "config changed" resume guard.
         overrides: dict[str, Any] = {
             "budget_total": budget_total,
             "max_turns": max_turns,
@@ -581,9 +624,62 @@ def run_suite(
         record: BenchRunRecord | None = None
         for task in tasks_to_consider:
             if task.id in tasks_dict and not force:
+                # ADR-0009 D3 resume rule: a recorded `skipped_budget` task is the ONE
+                # exception to "already recorded -> skip" -- it never actually ran, so
+                # it is treated as not-yet-run and falls through to be re-attempted
+                # (subject to today's budget check, below). Every OTHER recorded
+                # status still means "already done", unchanged from before this task.
+                if tasks_dict[task.id].subject_status != "skipped_budget":
+                    run_log.info(
+                        "bench.task.skip",
+                        extra={"event": "bench.task.skip", "task_id": task.id},
+                    )
+                    continue
+
+            if cost_budget_usd is not None and running_cost >= cost_budget_usd:
+                # Check-before-schedule (ADR-0009 D3): the cap is a floor the run stops
+                # *above*, never a ceiling checked mid-task -- bounded overshoot is at
+                # most one already-scheduled task (moot here since this module is
+                # strictly serial; T-Pl3Rx7 makes the same check concurrency-correct
+                # under a lock so overshoot stays bounded to `max_parallel` in flight).
+                # No workspace is materialized and no subprocess is spawned for this
+                # task: it is recorded directly as `skipped_budget` (solved=False,
+                # score=0, cost=0) and the loop continues so every remaining task also
+                # gets a record -- a clean, resumable, NON-failing outcome (never a
+                # harness failure; see bench/cli.py's `_HARNESS_FAILURE_STATUSES`).
+                budget_skip_at = resolved_clock().isoformat()
+                skip_sr = _budget_skipped_result()
+                skip_gr = GradeResult(solved=False, score=0.0, detail={}, raw_tail="")
+                skip_fingerprint = _task_config_fingerprint(
+                    task, subject_spec, ao_version, suite_base_dir
+                )
+                skip_metric = build_task_metric(
+                    subject_spec.id,
+                    task,
+                    suite.domain,
+                    cast(SubjectResultLike, skip_sr),
+                    skip_gr,
+                    skip_fingerprint,
+                    budget_skip_at,
+                    budget_skip_at,
+                )
+                tasks_dict[task.id] = BenchTaskRecord(
+                    **skip_metric.model_dump(),
+                    raw_error=None,
+                    grader_detail=skip_gr.detail,
+                    grader_raw_tail=skip_gr.raw_tail,
+                )
+                # `running_cost` is unchanged: a skipped_budget task always costs $0.
+                record = _build_record(budget_skip_at)
+                _persist_record(result_path, record)
                 run_log.info(
-                    "bench.task.skip",
-                    extra={"event": "bench.task.skip", "task_id": task.id},
+                    "bench.task.skip_budget",
+                    extra={
+                        "event": "bench.task.skip_budget",
+                        "task_id": task.id,
+                        "running_cost": running_cost,
+                        "cap": cost_budget_usd,
+                    },
                 )
                 continue
 
@@ -651,6 +747,12 @@ def run_suite(
                 grader_detail=gr.detail,
                 grader_raw_tail=gr.raw_tail,
             )
+            # ADR-0009 D3 accounting: a `None` cost (AC6, e.g. a missing state.json)
+            # counts as $0 toward the running total, same convention as its initial
+            # computation above. See that comment for the T-Pl3Rx7 lock-in note --
+            # this += must move under the same lock as the budget check above once
+            # tasks can run concurrently.
+            running_cost += sr.cost_usd or 0.0
 
             record = _build_record(task_ended_at)
             _persist_record(result_path, record)

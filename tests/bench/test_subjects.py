@@ -37,6 +37,7 @@ from agent_orchestrator.bench.subjects import (
     AoWorkflowSubject,
     ClaudeCliSubject,
     FakeSubject,
+    SubjectResult,
 )
 from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT, RunContext
 from agent_orchestrator.models import RunState, TaskRunState
@@ -173,6 +174,39 @@ def test_all_subjects_registered() -> None:
     assert SUBJECT_REGISTRY["claude_cli"] is ClaudeCliSubject
     assert SUBJECT_REGISTRY["ao_workflow"] is AoWorkflowSubject
     assert SUBJECT_REGISTRY["fake"] is FakeSubject
+
+
+# ---------------------------------------------------------------------------
+# _budget_skipped_result (T-Bg2Wq4, ADR-0009 D3) -- the runner's factory for a task it
+# stopped scheduling because the run's USD cost budget was already reached.
+# ---------------------------------------------------------------------------
+
+
+def test_budget_skipped_result_defaults() -> None:
+    result = subjects._budget_skipped_result()
+
+    assert result.status == "skipped_budget"
+    assert result.wall_clock_seconds == 0.0
+    assert result.cost_usd == 0.0  # never None -- this task contributed $0 to spend.
+    assert result.capture_dir == ""  # no workspace was ever materialized.
+    assert result.raw_error is None
+    assert result.argv == []
+
+
+def test_budget_skipped_result_accepts_a_capture_dir() -> None:
+    result = subjects._budget_skipped_result("/some/would-be/workspace")
+
+    assert result.status == "skipped_budget"
+    assert result.capture_dir == "/some/would-be/workspace"
+
+
+def test_subject_result_status_literal_accepts_skipped_budget() -> None:
+    # Regression guard: SubjectResult.status's Literal must include "skipped_budget"
+    # (not just via the factory above) -- constructing one directly must not raise.
+    result = SubjectResult(
+        status="skipped_budget", wall_clock_seconds=0.0, cost_usd=0.0, capture_dir=""
+    )
+    assert result.status == "skipped_budget"
 
 
 # ---------------------------------------------------------------------------
