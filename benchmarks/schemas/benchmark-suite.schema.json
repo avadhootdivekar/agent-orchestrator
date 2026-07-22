@@ -23,6 +23,11 @@
       "description": "Free-string domain label (e.g. \"software\"); enables non-dev suites later without a schema change."
     },
     "description": { "type": "string", "default": "" },
+    "tier": {
+      "enum": ["small", "medium", "large", "xlarge"],
+      "default": "small",
+      "description": "Benchmark tier; drives per-tier budget/parallel/timeout defaults from benchmarks/tiers.json. Closed list enforced by the loader (bench/spec.py KNOWN_TIERS)."
+    },
     "defaults": {
       "type": "object",
       "additionalProperties": false,

@@ -47,6 +47,15 @@ _ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_]*$")
 KNOWN_GRADER_TYPES: frozenset[str] = frozenset({"pytest", "command", "file_assertion", "fake"})
 KNOWN_SUBJECT_TYPES: frozenset[str] = frozenset({"claude_cli", "ao_workflow", "fake"})
 
+# Closed list of benchmark tiers (design doc / E-Bt4Xk9 T-Tr1Km8). The JSON schema's
+# `enum` already rejects an unknown tier before a BenchSuite is even constructed; this
+# set is re-checked in load_suite() for a clearer, bench-specific error message and
+# defense-in-depth, mirroring the KNOWN_GRADER_TYPES/KNOWN_SUBJECT_TYPES/`_ID_PATTERN`
+# precedent above. Per-tier defaults (budget caps, parallelism, timeout) live in
+# `benchmarks/tiers.json`, loaded by `bench/tiers.py` -- this module only validates the
+# tier NAME, it does not know about tier defaults.
+KNOWN_TIERS: frozenset[str] = frozenset({"small", "medium", "large", "xlarge"})
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models (design doc §6)
@@ -93,6 +102,9 @@ class BenchSuite(BaseModel):
     id: str
     domain: str
     description: str = ""
+    # Defaults to "small" so `dev-core` (no `tier` field) stays byte-unchanged and still
+    # validates -- see load_suite()'s KNOWN_TIERS check below for the closed-list gate.
+    tier: str = "small"
     defaults: BenchSuiteDefaults = BenchSuiteDefaults()
     tasks: list[BenchTask]
 
@@ -206,9 +218,10 @@ def load_suite(path: str | Path) -> BenchSuite:
 
     Raises SpecValidationError for: malformed JSON/YAML, a schema violation (including
     a missing `version` or an uppercase/malformed id -- both required-field/`pattern`
-    checks in the schema), a duplicate task id, an unknown `grader.type`, a missing
-    `instruction` file, a missing `fixture` directory, or (for `file_assertion` graders)
-    a missing/malformed `equals_file`/`contains` assertion.
+    checks in the schema), an unknown `tier` (defaults to "small" when absent), a
+    duplicate task id, an unknown `grader.type`, a missing `instruction` file, a missing
+    `fixture` directory, or (for `file_assertion` graders) a missing/malformed
+    `equals_file`/`contains` assertion.
     """
     data = _read_spec_file(path)
     _validate_against_schema(data, _SUITE_SCHEMA_FILE)
@@ -218,6 +231,12 @@ def load_suite(path: str | Path) -> BenchSuite:
         raise SpecValidationError(f"Suite model error: {exc}", path=str(path)) from exc
 
     _check_id_pattern(suite.id, "id")
+
+    if suite.tier not in KNOWN_TIERS:
+        raise SpecValidationError(
+            f"Suite {suite.id!r}: unknown tier {suite.tier!r}; known tiers: {sorted(KNOWN_TIERS)}",
+            path="tier",
+        )
 
     base = Path(path).resolve().parent
     seen_task_ids: set[str] = set()

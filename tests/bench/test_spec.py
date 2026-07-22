@@ -11,6 +11,7 @@ from agent_orchestrator.bench.errors import SpecValidationError
 from agent_orchestrator.bench.spec import (
     KNOWN_GRADER_TYPES,
     KNOWN_SUBJECT_TYPES,
+    KNOWN_TIERS,
     load_subject,
     load_suite,
 )
@@ -84,6 +85,55 @@ def test_load_subject_valid_ao_workflow(subject_factory: SubjectFactory) -> None
     subject = load_subject(subject_path)
     assert subject.type == "ao_workflow"
     assert subject.workflow == "workflow.json"
+
+
+# ---------------------------------------------------------------------------
+# Tier field (T-Tr1Km8 AC1-2): optional, defaults to "small", validated against
+# KNOWN_TIERS ("small", "medium", "large", "xlarge").
+# ---------------------------------------------------------------------------
+
+
+def test_load_suite_tier_defaults_to_small_when_absent(suite_factory: SuiteFactory) -> None:
+    suite_path = suite_factory()
+    suite = load_suite(suite_path)
+    assert suite.tier == "small"
+
+
+def test_load_suite_tier_medium_accepted(suite_factory: SuiteFactory) -> None:
+    suite_path = suite_factory(extra_top_level={"tier": "medium"})
+    suite = load_suite(suite_path)
+    assert suite.tier == "medium"
+
+
+@pytest.mark.parametrize("tier", sorted(KNOWN_TIERS))
+def test_load_suite_every_known_tier_accepted(suite_factory: SuiteFactory, tier: str) -> None:
+    suite_path = suite_factory(extra_top_level={"tier": tier})
+    suite = load_suite(suite_path)
+    assert suite.tier == tier
+
+
+def test_load_suite_unknown_tier_rejected(suite_factory: SuiteFactory) -> None:
+    suite_path = suite_factory(extra_top_level={"tier": "gigantic"})
+    with pytest.raises(SpecValidationError) as exc_info:
+        load_suite(suite_path)
+    msg = str(exc_info.value)
+    assert "gigantic" in msg
+    for known in KNOWN_TIERS:
+        assert known in msg
+
+
+def test_committed_dev_core_suite_has_no_tier_field_and_defaults_to_small() -> None:
+    """AC1: the committed dev-core/suite.json (no `tier` field at all -- confirmed by
+    `git diff --stat benchmarks/suites/dev-core` staying empty for this task, checked
+    separately in CI/verification, not here) must still validate and default to
+    `tier == "small"`.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    suite_path = repo_root / "benchmarks" / "suites" / "dev-core" / "suite.json"
+    raw = json.loads(suite_path.read_text())
+    assert "tier" not in raw, "dev-core/suite.json must stay byte-unchanged (no tier field added)"
+    suite = load_suite(suite_path)
+    assert suite.tier == "small"
 
 
 # ---------------------------------------------------------------------------
