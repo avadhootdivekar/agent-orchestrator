@@ -21,6 +21,20 @@ T-Grd7Vx: both `Subject.run()` and `Grader.grade()` are wrapped by a SINGLE per-
 try/except spanning both calls -- catches `BenchError` subclasses (`SubjectError`,
 `GraderError`) as well as any other unexpected exception).
 
+`max_parallel` (T-Pl3Rx7, ADR-0009 D4) opts into bounded task-level parallelism via a
+`ThreadPoolExecutor`. `max_parallel<=1` (the default) walks `tasks_to_consider` in a
+plain `for` loop -- BYTE-IDENTICAL to the pre-parallelism serial path (same order, same
+log events, same persist cadence); `max_parallel>1` dispatches the same per-task body
+(`_run_one`, a nested closure so it can share `run_suite`'s locals) across a bounded
+pool. Tasks are independent (no DAG, unlike the core engine's ADR-0007 wave/barrier
+scheduler, deliberately not reused here -- SI-1) and per-task workspaces are already
+disjoint (`bench/workspace.py`), so the ONLY shared mutable state is `tasks_dict`, the
+running-cost total, and the `run.json` persist -- all three (plus the budget
+check-before-schedule) are guarded by one `threading.Lock` (`_dispatch_or_skip`/
+`_run_one` below). Overshoot on the USD cap is bounded to at most `max_parallel`
+in-flight tasks (documented on `cost_budget_usd` below); persisted `tasks` stays
+id-sorted regardless of completion order (`_build_record`, unchanged).
+
 File-ownership note for `T-Rpt3Wq` (results.py, not yet landed): this task's mandate
 is the machine-readable ``run.json`` -- the pydantic run-record model lives here
 (`BenchRunRecord`/`BenchTaskRecord`) and IS persisted to disk by this module. Design
@@ -50,8 +64,10 @@ import os
 import platform
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -415,6 +431,7 @@ def run_suite(
     max_turns: int | None = None,
     default_timeout: int | None = None,
     cost_budget_usd: float | None = None,
+    max_parallel: int = 1,
     clock: Callable[[], datetime] | None = None,
 ) -> BenchRunRecord:
     """Run *suite* against *subject* end to end (design §4.5).
@@ -470,6 +487,25 @@ def run_suite(
         it is re-attempted under the current cap (every other recorded status still
         skips), so raising the cap and re-running finishes a previously budget-capped
         suite.
+    max_parallel:
+        Bounded task-level parallelism (ADR-0009 D4). Default `1` = strictly serial,
+        BYTE-IDENTICAL to the pre-parallelism behavior (every pre-existing caller that
+        does not pass this is unaffected). `>1` runs up to `max_parallel` tasks
+        concurrently via a `ThreadPoolExecutor` (tasks are independent -- no DAG --
+        and per-task workspaces are already disjoint, so this is safe); the budget
+        check-before-schedule, `tasks_dict` mutation, running-cost accumulation, and
+        `run.json` persist are all guarded by one lock so they stay correct under
+        concurrency. Persisted `tasks` order is always id-sorted regardless of
+        completion order. Overshoot on `cost_budget_usd` is bounded to at most
+        `max_parallel` tasks that were already in flight (past the check, not yet
+        added to the running total) when the cap was crossed -- i.e. cumulative
+        recorded cost lands in `[cap, cap + max_parallel * max_task_cost)`, not
+        exactly at the cap. Deliberately excluded from `config_fingerprint` (like
+        `cost_budget_usd`): it is control-flow (how fast a run executes), not config
+        that changes what a subject DOES per task, so resuming with a different
+        `max_parallel` never trips the W4 mismatch guard. The CLI's own default
+        resolution (`--max-parallel` > the suite's tier `default_max_parallel` via
+        `bench/tiers.py`) is a caller concern, not this function's.
     clock:
         Injectable UTC clock (CLAUDE.md determinism rule) -- defaults to
         `datetime.now(UTC)`.
@@ -526,11 +562,14 @@ def run_suite(
         # `state.json`) is treated as $0 for this running total: an unknown cost must
         # never itself look like unbounded spend that starves every later task.
         #
-        # LOCK-IN POINT for T-Pl3Rx7 (parallel runner): this running total, the
-        # check-before-schedule read of it below, and the `tasks_dict[...] = ...` +
-        # `running_cost += ...` writes after each task all need to happen under the
-        # SAME lock once tasks can run concurrently -- today (serial, max_parallel=1)
-        # there is only ever one in-flight task so a plain float suffices.
+        # ADR-0009 D4: this running total, the check-before-schedule read of it, and
+        # the `tasks_dict[...] = ...` + `running_cost += ...` writes after each task
+        # all happen under `_run_lock` (defined below, right before it is first used)
+        # -- the SAME lock across all three -- so a `running_cost >= cap` check and
+        # the following schedule/append are atomic across worker threads. At
+        # `max_parallel<=1` there is only ever one in-flight task, so the lock is
+        # uncontended and this is a plain float in practice (byte-identical to the
+        # pre-parallelism behavior).
         running_cost: float = sum(
             (t.cost_usd or 0.0) for t in tasks_dict.values() if t.subject_status != "skipped_budget"
         )
@@ -542,11 +581,11 @@ def run_suite(
 
         ao_version = _ao_version()
         claude_version = _probe_claude_version()
-        # `cost_budget_usd` is DELIBERATELY ABSENT from `overrides` (and thus from
-        # `run_fingerprint`/AC5): it is control-flow ("how many tasks run", like
-        # `force`/`task_filter`), not config that changes what a subject DOES per task
-        # -- so raising/lowering the cap between two same-day runs must never trip the
-        # W4 "config changed" resume guard.
+        # `cost_budget_usd` and `max_parallel` (ADR-0009 D3/D4) are DELIBERATELY ABSENT
+        # from `overrides` (and thus from `run_fingerprint`): both are control-flow
+        # ("how many tasks run" / "how fast", like `force`/`task_filter`), not config
+        # that changes what a subject DOES per task -- so changing either between two
+        # same-day runs must never trip the W4 "config changed" resume guard.
         overrides: dict[str, Any] = {
             "budget_total": budget_total,
             "max_turns": max_turns,
@@ -618,70 +657,108 @@ def run_suite(
                 "task_count": len(tasks_to_consider),
                 "ao_version": ao_version,
                 "claude_version": claude_version,
+                "max_parallel": max_parallel,
             },
         )
 
         record: BenchRunRecord | None = None
-        for task in tasks_to_consider:
-            if task.id in tasks_dict and not force:
-                # ADR-0009 D3 resume rule: a recorded `skipped_budget` task is the ONE
-                # exception to "already recorded -> skip" -- it never actually ran, so
-                # it is treated as not-yet-run and falls through to be re-attempted
-                # (subject to today's budget check, below). Every OTHER recorded
-                # status still means "already done", unchanged from before this task.
-                if tasks_dict[task.id].subject_status != "skipped_budget":
-                    run_log.info(
-                        "bench.task.skip",
-                        extra={"event": "bench.task.skip", "task_id": task.id},
-                    )
-                    continue
 
-            if cost_budget_usd is not None and running_cost >= cost_budget_usd:
-                # Check-before-schedule (ADR-0009 D3): the cap is a floor the run stops
-                # *above*, never a ceiling checked mid-task -- bounded overshoot is at
-                # most one already-scheduled task (moot here since this module is
-                # strictly serial; T-Pl3Rx7 makes the same check concurrency-correct
-                # under a lock so overshoot stays bounded to `max_parallel` in flight).
-                # No workspace is materialized and no subprocess is spawned for this
-                # task: it is recorded directly as `skipped_budget` (solved=False,
-                # score=0, cost=0) and the loop continues so every remaining task also
-                # gets a record -- a clean, resumable, NON-failing outcome (never a
-                # harness failure; see bench/cli.py's `_HARNESS_FAILURE_STATUSES`).
-                budget_skip_at = resolved_clock().isoformat()
-                skip_sr = _budget_skipped_result()
-                skip_gr = GradeResult(solved=False, score=0.0, detail={}, raw_tail="")
-                skip_fingerprint = _task_config_fingerprint(
-                    task, subject_spec, ao_version, suite_base_dir
-                )
-                skip_metric = build_task_metric(
-                    subject_spec.id,
-                    task,
-                    suite.domain,
-                    cast(SubjectResultLike, skip_sr),
-                    skip_gr,
-                    skip_fingerprint,
-                    budget_skip_at,
-                    budget_skip_at,
-                )
-                tasks_dict[task.id] = BenchTaskRecord(
-                    **skip_metric.model_dump(),
-                    raw_error=None,
-                    grader_detail=skip_gr.detail,
-                    grader_raw_tail=skip_gr.raw_tail,
-                )
-                # `running_cost` is unchanged: a skipped_budget task always costs $0.
-                record = _build_record(budget_skip_at)
-                _persist_record(result_path, record)
-                run_log.info(
-                    "bench.task.skip_budget",
-                    extra={
-                        "event": "bench.task.skip_budget",
-                        "task_id": task.id,
-                        "running_cost": running_cost,
-                        "cap": cost_budget_usd,
-                    },
-                )
-                continue
+        # ADR-0009 D4: the ONE lock guarding every piece of state shared across
+        # concurrently-dispatched tasks -- the budget check-before-schedule, the
+        # `tasks_dict` mutation, the running-cost accumulation, and the `run.json`
+        # persist (`_dispatch_or_skip`/`_run_one` below, both nested closures so they
+        # can reach `run_suite`'s locals without threading a dozen params through).
+        # At `max_parallel<=1` this lock is never contended (one task in flight at a
+        # time), so acquiring/releasing it changes nothing observable -- byte-identical
+        # to the pre-parallelism serial path.
+        _run_lock = threading.Lock()
+
+        def _dispatch_or_skip(task: BenchTask) -> bool:
+            """Returns True iff *task* should be materialized/run/graded (by the
+            caller, OUTSIDE this lock -- kept short here so holding it never blocks
+            another worker's actual subject.run/grader.grade). A "no" is either
+            "already recorded, nothing to do" (resume skip) or "budget cap already
+            reached" (recorded directly as `skipped_budget` and persisted, right here
+            under the lock, so that write is atomic with the check that produced it).
+            """
+            nonlocal record
+            with _run_lock:
+                if task.id in tasks_dict and not force:
+                    # ADR-0009 D3 resume rule: a recorded `skipped_budget` task is the
+                    # ONE exception to "already recorded -> skip" -- it never actually
+                    # ran, so it is treated as not-yet-run and falls through to be
+                    # re-attempted (subject to today's budget check, below). Every
+                    # OTHER recorded status still means "already done", unchanged.
+                    if tasks_dict[task.id].subject_status != "skipped_budget":
+                        run_log.info(
+                            "bench.task.skip",
+                            extra={"event": "bench.task.skip", "task_id": task.id},
+                        )
+                        return False
+
+                if cost_budget_usd is not None and running_cost >= cost_budget_usd:
+                    # Check-before-schedule (ADR-0009 D3), now concurrency-correct
+                    # (D4): the read of `running_cost` and this skip-record+persist
+                    # happen atomically with every other worker's identical check, so
+                    # two workers can never both pass the check on the same "last
+                    # dollar" of headroom. Overshoot is still possible -- but only from
+                    # tasks that passed this check EARLIER and are still in flight
+                    # (materializing/running/grading OUTSIDE the lock, cost not yet
+                    # added) -- bounded to at most `max_parallel` such tasks. No
+                    # workspace is materialized and no subprocess is spawned for this
+                    # task: it is recorded directly as `skipped_budget` (solved=False,
+                    # score=0, cost=0) so every remaining task also gets a record -- a
+                    # clean, resumable, NON-failing outcome (never a harness failure;
+                    # see bench/cli.py's `_HARNESS_FAILURE_STATUSES`).
+                    budget_skip_at = resolved_clock().isoformat()
+                    skip_sr = _budget_skipped_result()
+                    skip_gr = GradeResult(solved=False, score=0.0, detail={}, raw_tail="")
+                    skip_fingerprint = _task_config_fingerprint(
+                        task, subject_spec, ao_version, suite_base_dir
+                    )
+                    skip_metric = build_task_metric(
+                        subject_spec.id,
+                        task,
+                        suite.domain,
+                        cast(SubjectResultLike, skip_sr),
+                        skip_gr,
+                        skip_fingerprint,
+                        budget_skip_at,
+                        budget_skip_at,
+                    )
+                    tasks_dict[task.id] = BenchTaskRecord(
+                        **skip_metric.model_dump(),
+                        raw_error=None,
+                        grader_detail=skip_gr.detail,
+                        grader_raw_tail=skip_gr.raw_tail,
+                    )
+                    # `running_cost` is unchanged: a skipped_budget task always costs $0.
+                    record = _build_record(budget_skip_at)
+                    _persist_record(result_path, record)
+                    run_log.info(
+                        "bench.task.skip_budget",
+                        extra={
+                            "event": "bench.task.skip_budget",
+                            "task_id": task.id,
+                            "running_cost": running_cost,
+                            "cap": cost_budget_usd,
+                        },
+                    )
+                    return False
+
+                return True
+
+        def _run_one(task: BenchTask) -> None:
+            """The full per-task body: dispatch decision, then (if scheduled)
+            materialize/run/grade OUTSIDE the lock -- the long-running, per-task-
+            isolated work -- then write the result back and persist INSIDE the lock.
+            Safe to call from multiple worker threads concurrently: every access to
+            shared state (`tasks_dict`, `running_cost`, `record`, `result_path` on
+            disk) is confined to the two `with _run_lock:` sections.
+            """
+            nonlocal running_cost, record
+            if not _dispatch_or_skip(task):
+                return
 
             task_log = get_run_logger(bench_run_id, task_id=task.id)
             ws_path = subject_ws_root / task.id
@@ -741,21 +818,22 @@ def run_suite(
                 task_started_at,
                 task_ended_at,
             )
-            tasks_dict[task.id] = BenchTaskRecord(
+            task_record = BenchTaskRecord(
                 **metric.model_dump(),
                 raw_error=sr.raw_error,
                 grader_detail=gr.detail,
                 grader_raw_tail=gr.raw_tail,
             )
-            # ADR-0009 D3 accounting: a `None` cost (AC6, e.g. a missing state.json)
-            # counts as $0 toward the running total, same convention as its initial
-            # computation above. See that comment for the T-Pl3Rx7 lock-in note --
-            # this += must move under the same lock as the budget check above once
-            # tasks can run concurrently.
-            running_cost += sr.cost_usd or 0.0
 
-            record = _build_record(task_ended_at)
-            _persist_record(result_path, record)
+            with _run_lock:
+                tasks_dict[task.id] = task_record
+                # ADR-0009 D3/D4 accounting: a `None` cost (AC6, e.g. a missing
+                # state.json) counts as $0 toward the running total, same convention
+                # as its initial computation above. Guarded by the same lock as the
+                # budget check in `_dispatch_or_skip` so the two can never race.
+                running_cost += sr.cost_usd or 0.0
+                record = _build_record(task_ended_at)
+                _persist_record(result_path, record)
 
             task_log.info(
                 "bench.task.end",
@@ -769,6 +847,20 @@ def run_suite(
                     "subject_status": sr.status,
                 },
             )
+
+        if max_parallel <= 1:
+            # Exact pre-parallelism serial path: a plain for-loop, one task fully
+            # completing (including its persist + log events) before the next starts.
+            for task in tasks_to_consider:
+                _run_one(task)
+        else:
+            # Bounded concurrency (ADR-0009 D4): `ThreadPoolExecutor.map` submits every
+            # task up front (queued FIFO, `max_parallel` running at a time) and
+            # `list(...)` blocks until all have completed -- exceptions from a single
+            # task never surface here (isolated inside `_run_one`'s own try/except),
+            # so one crashing task can never abort the pool.
+            with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+                list(executor.map(_run_one, tasks_to_consider))
 
         if record is not None:
             final_record = record

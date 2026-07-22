@@ -11,11 +11,18 @@ per-test random id suffix (`_uniq()`) so repeated/concurrent test runs on the sa
 never collide on `bench_run_id` (mirrors `tests/bench/test_runner.py`'s own convention).
 
 A fixed, injected clock (CLAUDE.md determinism rule) is used everywhere.
+
+The trailing `TestBudgetUnderConcurrency` class (T-Pl3Rx7, ADR-0009 D4) extends this
+file with `max_parallel > 1` cases -- the budget check-before-schedule must stay
+correct (bounded overshoot only) once tasks can run concurrently. No sleeps-as-
+synchronization: a `threading.Barrier` forces genuine, deterministic in-flight overlap.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -349,3 +356,121 @@ def test_budget_resume_recomputes_running_cost_treating_none_as_zero(
     )
     by_id = {t.task_id: t for t in second.tasks}
     assert by_id["t2"].subject_status == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# T-Pl3Rx7 (ADR-0009 D4) -- budget correctness under `max_parallel > 1`.
+# ---------------------------------------------------------------------------
+
+
+class TestBudgetUnderConcurrency:
+    """`cost_budget_usd` + `max_parallel > 1` combined (TASK.md AC3/R3): the
+    check-before-schedule lock must keep the SAME semantics as serial (see
+    `test_budget_boundary_overshoot_then_skips_remaining` above), only with the
+    documented bounded overshoot widened from "1 already-in-flight task" to "up to
+    `max_parallel` already-in-flight tasks"."""
+
+    def test_overshoot_bounded_by_max_parallel_in_flight_tasks(
+        self,
+        tmp_path: Path,
+        suite_factory: Any,
+        subject_factory: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """8 tasks x $3/task, cap=$1, max_parallel=4: a `threading.Barrier(4)`
+        deterministically forces the first 4 dispatched tasks (t1-t4, the first 4
+        submitted to a 4-worker pool) to all be PAST the budget check -- and thus
+        all "in flight" with their cost not yet added -- before any of them returns,
+        so all 4 run for real despite a cap that would allow only t1 in serial mode.
+        The remaining 4 (t5-t8) are dispatched only once a worker frees up, by which
+        point at least one of t1-t4 has already recorded its cost past the cap, so
+        every one of them is `skipped_budget`. Asserts the exact documented bound:
+        `cap <= total_cost_usd < cap + max_parallel * max_task_cost`.
+        """
+        uniq = _uniq()
+        task_ids = [f"t{i}" for i in range(1, 9)]
+        suite_path = suite_factory(
+            suite_id=f"budget-conc-overshoot-{uniq}", tasks=[_fake_task(tid) for tid in task_ids]
+        )
+        subject_path = subject_factory(
+            subject_id=f"fake-conc-overshoot-{uniq}", extra={"fake_cost": 3.0}
+        )
+
+        max_parallel = 4
+        barrier = threading.Barrier(max_parallel, timeout=5)
+        barrier_task_ids = frozenset(task_ids[:max_parallel])  # t1..t4
+
+        class _BarrierSubject(subjects_mod.FakeSubject):
+            def run(self, task: BenchTask, ctx: RunContext) -> SubjectResult:
+                if task.id in barrier_task_ids:
+                    barrier.wait()  # rendezvous: all 4 must be dispatched before any returns
+                return super().run(task, ctx)
+
+        monkeypatch.setitem(SUBJECT_REGISTRY, "fake", _BarrierSubject)
+
+        record = runner.run_suite(
+            suite_path,
+            subject_path,
+            out_dir=tmp_path / "results",
+            cost_budget_usd=1.0,
+            max_parallel=max_parallel,
+            clock=_fixed_clock,
+        )
+
+        assert len(record.tasks) == 8
+        by_id = {t.task_id: t for t in record.tasks}
+        for tid in barrier_task_ids:
+            assert by_id[tid].subject_status == "succeeded"
+            assert by_id[tid].cost_usd == 3.0
+        for tid in set(task_ids) - barrier_task_ids:
+            assert by_id[tid].subject_status == "skipped_budget"
+            assert by_id[tid].cost_usd == 0.0
+
+        cap = 1.0
+        max_task_cost = 3.0
+        assert cap <= record.aggregate.total_cost_usd < cap + max_parallel * max_task_cost
+        assert record.aggregate.total_cost_usd == 12.0  # exactly the 4 barrier tasks' cost
+
+        # run.json persisted order is still id-sorted regardless of completion order.
+        result_path = tmp_path / "results" / record.bench_run_id / runner.RUN_JSON_FILENAME
+        on_disk_ids = [t["task_id"] for t in json.loads(result_path.read_text())["tasks"]]
+        assert on_disk_ids == sorted(on_disk_ids)
+
+    def test_resume_under_concurrency_reattempts_all_skipped_budget_tasks(
+        self, tmp_path: Path, suite_factory: Any, subject_factory: Any
+    ) -> None:
+        """A cap of $0 deterministically skips EVERY task regardless of dispatch
+        order under concurrency (no boundary ambiguity), proving resume + D4's lock
+        combine correctly: raising the cap and re-running with `max_parallel=4`
+        re-attempts every previously-skipped task and all succeed."""
+        uniq = _uniq()
+        task_ids = [f"t{i}" for i in range(1, 7)]
+        suite_path = suite_factory(
+            suite_id=f"budget-conc-resume-{uniq}", tasks=[_fake_task(tid) for tid in task_ids]
+        )
+        subject_path = subject_factory(
+            subject_id=f"fake-conc-resume-{uniq}", extra={"fake_cost": 1.0}
+        )
+        out_dir = tmp_path / "results"
+
+        first = runner.run_suite(
+            suite_path,
+            subject_path,
+            out_dir=out_dir,
+            cost_budget_usd=0.0,
+            max_parallel=4,
+            clock=_fixed_clock,
+        )
+        assert all(t.subject_status == "skipped_budget" for t in first.tasks)
+
+        second = runner.run_suite(
+            suite_path,
+            subject_path,
+            out_dir=out_dir,
+            cost_budget_usd=100.0,
+            max_parallel=4,
+            clock=_fixed_clock,
+        )
+        assert all(t.subject_status == "succeeded" for t in second.tasks)
+        assert second.aggregate.total_cost_usd == 6.0
+        assert second.config_fingerprint == first.config_fingerprint
