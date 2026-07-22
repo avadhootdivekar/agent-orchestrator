@@ -2,10 +2,23 @@
 
 - ID: `E-9Qk4Zt-agent-benchmark-harness`
 - Updated At: 2026-07-22
-- State: In Progress (8/9 tasks delivered — **MVP complete**; remaining: `T-Dcs2Rk`)
-- Owner: architect agent (design) → developer/tester (delivery)
+- State: **Done** (9/9 tasks delivered 2026-07-22)
+- Owner: architect agent (design) → developer/tester (delivery) → closed by manager
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-07-22 · Comment: **Epic closed.** `T-Dcs2Rk` complete
+  (HLD 16 stale claims reconciled, ADR-0008 → Accepted, benchmarks/README.md, 5 learnings; commit
+  `c1e0190`). Full-branch reviewer pass: verdict approve-with-nits, zero critical findings, SI-1
+  independently confirmed (grep + import probe + real wheel build), methodology judged fair
+  (identical instructions/workspaces/graders per subject) with saturation caveat. All four
+  reviewer warnings fixed same-day (commit `4ec2938`): W1 typed repo-checkout error, W2
+  checkout-independent fingerprints, W4 resume fingerprint-mismatch guard, W5 tie disclosure in
+  winner lines (committed comparison regenerated). Deferred follow-ups (documented in
+  benchmarks/README.md): runner lockfile for concurrent same-(suite,subject) runs;
+  subject-set-aware comparison dir naming; a harder discriminating suite for capability claims.
+  Phase-2 comparison (user ask, on top of the framework): all five real subjects 6/6 on dev-core;
+  results + 5-way comparison committed (`1c60a07`, regenerated in `4ec2938`). Final verification:
+  1089 passed/4 deselected, bench coverage 98% (runner 100%), ruff/mypy clean.
 - By: Claude · Role: tester · Date: 2026-07-22 · Comment: `T-Tst4Ln-bench-tests` complete.
   Bench coverage 96%→98% (1120 stmts, 18 missed — all hard-to-trigger race/abstract paths,
   documented); +31 deterministic edge-case tests (221 total in tests/bench); CI job added to
