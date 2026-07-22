@@ -20,9 +20,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from agent_orchestrator.bench.cli import app
+from agent_orchestrator.bench.errors import BenchError
 
 runner = CliRunner()
 
@@ -80,7 +82,7 @@ def _write_fake_subject(base: Path, subject_id: str, **extra: Any) -> Path:
 def test_help_lists_all_commands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0, result.output
-    for name in ("validate", "run", "report", "list"):
+    for name in ("validate", "run", "report", "list", "campaign"):
         assert name in result.output
 
 
@@ -97,6 +99,8 @@ def test_run_help_documents_flags() -> None:
         "--max-turns",
         "--timeout",
         "--cost-budget-usd",
+        "--max-parallel",
+        "--enable-xlarge",
     ):
         assert flag in result.output
 
@@ -353,7 +357,15 @@ def test_run_no_cost_budget_flag_defaults_to_suite_tier_medium_cap(tmp_path: Pat
 
 
 def test_run_explicit_cost_budget_usd_overrides_tier_default(tmp_path: Path) -> None:
-    """An explicit --cost-budget-usd wins over even a more generous tier default."""
+    """An explicit --cost-budget-usd wins over even a more generous tier default.
+
+    Pins `--max-parallel 1`: `tier="medium"`'s own `default_max_parallel` (4, T-Cm9Tb4's
+    new CLI wiring) would otherwise dispatch both tasks concurrently, and the
+    check-before-schedule budget gate's documented bounded overshoot (ADR-0009 D4) could
+    then let t2 slip past the $5 cap alongside t1 before either's cost lands -- this
+    test is about --cost-budget-usd precedence, not concurrency, so it stays serial to
+    keep the skip boundary deterministic.
+    """
     uniq = _uniq()
     suite_id = f"cli-budget-override-{uniq}"
     suite_path = _write_suite(
@@ -377,6 +389,8 @@ def test_run_explicit_cost_budget_usd_overrides_tier_default(tmp_path: Path) -> 
             str(out_dir),
             "--cost-budget-usd",
             "5",
+            "--max-parallel",
+            "1",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -418,6 +432,173 @@ def test_run_only_skipped_budget_tasks_still_exits_zero(tmp_path: Path) -> None:
     run_dir = next(out_dir.glob(f"*{suite_id}*"))
     on_disk = json.loads((run_dir / "run.json").read_text())
     assert all(t["subject_status"] == "skipped_budget" for t in on_disk["tasks"])
+
+
+# ---------------------------------------------------------------------------
+# `--max-parallel` (T-Cm9Tb4, per T-Pl3Rx7's forward note): flag > tier default > 1.
+# `run_suite` itself is stubbed (monkeypatched at its `runner` module attribute, which
+# `ao-bench run`'s lazy `from .runner import run_suite` picks up at call time) so these
+# tests isolate the CLI's OWN precedence-resolution logic from `run_suite`'s already
+# separately-tested real concurrency behavior (T-Pl3Rx7's own test suite). The stub
+# records the `max_parallel` kwarg it was called with, then raises a `BenchError` --
+# caught by `run`'s own existing error handling, so the test only needs `result.output`/
+# `exit_code`, no real run.json is ever written.
+# ---------------------------------------------------------------------------
+
+
+def _stub_run_suite_capturing_max_parallel(captured: dict[str, Any]) -> Any:
+    def _fake_run_suite(*_args: Any, **kwargs: Any) -> Any:
+        captured["max_parallel"] = kwargs.get("max_parallel")
+        raise BenchError("captured-max-parallel")
+
+    return _fake_run_suite
+
+
+def test_run_max_parallel_flag_overrides_tier_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "agent_orchestrator.bench.runner.run_suite",
+        _stub_run_suite_capturing_max_parallel(captured),
+    )
+    uniq = _uniq()
+    suite_path = _write_suite(
+        tmp_path,
+        f"cli-mp-flag-{uniq}",
+        [_fake_task("t1")],
+        tier="medium",  # tier default: 4
+    )
+    subject_path = _write_fake_subject(tmp_path, f"fk-mp-flag-{uniq}")
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(tmp_path / "results"),
+            "--max-parallel",
+            "2",
+        ],
+    )
+    assert result.exit_code == 1, result.output  # the stub's sentinel BenchError
+    assert captured["max_parallel"] == 2  # explicit flag wins over the tier's 4
+
+
+def test_run_max_parallel_defaults_to_suite_tier_medium_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "agent_orchestrator.bench.runner.run_suite",
+        _stub_run_suite_capturing_max_parallel(captured),
+    )
+    uniq = _uniq()
+    suite_path = _write_suite(tmp_path, f"cli-mp-medium-{uniq}", [_fake_task("t1")], tier="medium")
+    subject_path = _write_fake_subject(tmp_path, f"fk-mp-medium-{uniq}")
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(tmp_path / "results"),
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert captured["max_parallel"] == 4  # benchmarks/tiers.json medium.default_max_parallel
+
+
+def test_run_max_parallel_defaults_to_suite_tier_small_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `tier` on the suite -> defaults to "small" -> `default_max_parallel` 1."""
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "agent_orchestrator.bench.runner.run_suite",
+        _stub_run_suite_capturing_max_parallel(captured),
+    )
+    uniq = _uniq()
+    suite_path = _write_suite(tmp_path, f"cli-mp-small-{uniq}", [_fake_task("t1")])
+    subject_path = _write_fake_subject(tmp_path, f"fk-mp-small-{uniq}")
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(tmp_path / "results"),
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert captured["max_parallel"] == 1  # benchmarks/tiers.json small.default_max_parallel
+
+
+# ---------------------------------------------------------------------------
+# Disabled-tier gate (`--enable-xlarge`, T-Cm9Tb4): `ao-bench run` refuses a suite whose
+# resolved tier is `enabled:false` in the COMMITTED benchmarks/tiers.json (xlarge) unless
+# --enable-xlarge is passed. Uses the real committed tiers.json (xlarge really is
+# disabled there) rather than a temp fixture -- exercises the actual, shipped config.
+# ---------------------------------------------------------------------------
+
+
+def test_run_disabled_tier_refused_without_enable_xlarge(tmp_path: Path) -> None:
+    uniq = _uniq()
+    suite_path = _write_suite(tmp_path, f"cli-xlarge-{uniq}", [_fake_task("t1")], tier="xlarge")
+    subject_path = _write_fake_subject(tmp_path, f"fk-xlarge-{uniq}")
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(tmp_path / "results"),
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "ERROR" in result.output
+    assert "xlarge" in result.output
+    assert "--enable-xlarge" in result.output
+    assert not list((tmp_path / "results").glob(f"*{uniq}*"))  # nothing written
+
+
+def test_run_disabled_tier_proceeds_with_enable_xlarge(tmp_path: Path) -> None:
+    uniq = _uniq()
+    suite_path = _write_suite(tmp_path, f"cli-xlarge-ok-{uniq}", [_fake_task("t1")], tier="xlarge")
+    subject_path = _write_fake_subject(tmp_path, f"fk-xlarge-ok-{uniq}")
+    out_dir = tmp_path / "results"
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--suite",
+            str(suite_path),
+            "--subject",
+            str(subject_path),
+            "--out-dir",
+            str(out_dir),
+            "--enable-xlarge",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert list(out_dir.glob("*xlarge-ok*"))
 
 
 # ---------------------------------------------------------------------------

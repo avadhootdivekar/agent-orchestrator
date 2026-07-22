@@ -1,4 +1,7 @@
-"""`ao-bench` CLI -- `validate` (T-Sc4Hm2) plus `run`/`report`/`list` (T-Cli8Nf).
+"""`ao-bench` CLI -- `validate` (T-Sc4Hm2), `run`/`report`/`list` (T-Cli8Nf), plus
+`campaign` (T-Cm9Tb4, whole-run USD cap across a list of subjects -- see
+`bench/campaign.py`, which owns the actual orchestration; this module stays a thin CLI
+wrapper around it, same convention as `run`'s own thin wrapper around `runner.run_suite`).
 
 Registered as the standalone `ao-bench` console script (`pyproject.toml`
 `[project.scripts]`, ADR-0008 D4) -- a SEPARATE entry point from `ao`, so the core `ao`
@@ -28,6 +31,7 @@ from .spec import load_subject, load_suite
 from .swebench_import import import_swebench_command
 
 if TYPE_CHECKING:
+    from .campaign import CampaignResult
     from .results import ComparisonRecord
     from .runner import BenchRunRecord
 
@@ -180,6 +184,22 @@ def run(
         " the cap are recorded subject_status=skipped_budget rather than run; re-running"
         " with a higher cap re-attempts exactly those tasks.",
     ),
+    max_parallel: int | None = typer.Option(
+        None,
+        "--max-parallel",
+        help="Bounded task-level parallelism (ADR-0009 D4): run up to this many tasks"
+        " concurrently via a thread pool. Default: the suite's tier default from"
+        " benchmarks/tiers.json (default_max_parallel -- small=1/serial, medium=4,"
+        " large=3). 1 (or any value <=1) is strictly serial, byte-identical to the"
+        " original single-task-at-a-time behavior.",
+    ),
+    enable_xlarge: bool = typer.Option(
+        False,
+        "--enable-xlarge",
+        help="Allow running a suite whose resolved tier is disabled in"
+        " benchmarks/tiers.json (enabled=false, e.g. xlarge). Gates ANY disabled tier,"
+        " not only xlarge -- the flag name is historical/literal per the epic.",
+    ),
 ) -> None:
     """Run a benchmark suite against a subject; writes run.json + summary.md.
 
@@ -187,14 +207,19 @@ def run(
     `skipped_budget` is a clean, resumable outcome, not a failure); exit 2 if any task's
     SUBJECT status (not its grader verdict -- an unsolved-but-cleanly-run task is a
     normal benchmark outcome, not a failure) was failed/timed_out/error; exit 1 on a
-    usage or spec-loading error.
+    usage or spec-loading error (including a disabled tier without --enable-xlarge).
     """
+    from .campaign import enforce_tier_enabled
     from .results import write_summary_md
     from .runner import resolve_result_dir, run_suite
-    from .tiers import load_tier_config
+    from .tiers import load_tier_config, resolve_effective
 
     try:
         loaded_suite = load_suite(suite)
+        # Resolved once (T-Pl3Rx7's own forward note: "reuse that same load, do not
+        # load twice") and reused for every tier-derived default below.
+        tier_config = load_tier_config(loaded_suite.tier)
+        enforce_tier_enabled(loaded_suite.tier, tier_config, enable_xlarge)
         # Precedence (ADR-0009 D3): an explicit --cost-budget-usd always wins; absent
         # that, the suite's OWN tier (bench/spec.py's `BenchSuite.tier`, default
         # "small") supplies its per-subject default cap via bench/tiers.json.
@@ -203,7 +228,13 @@ def run(
         effective_cost_budget_usd = (
             cost_budget_usd
             if cost_budget_usd is not None
-            else load_tier_config(loaded_suite.tier).cost_budget_usd_per_subject
+            else tier_config.cost_budget_usd_per_subject
+        )
+        # Same CLI > tier-default > builtin-fallback precedence, via the single
+        # `resolve_effective` helper bench/tiers.py already provides (T-Pl3Rx7's own
+        # forward note: reuse it, don't re-derive).
+        effective_max_parallel = int(
+            resolve_effective(tier_config, cli_max_parallel=max_parallel)["max_parallel"]
         )
         record = run_suite(
             suite,
@@ -215,6 +246,7 @@ def run(
             max_turns=max_turns,
             default_timeout=timeout,
             cost_budget_usd=effective_cost_budget_usd,
+            max_parallel=effective_max_parallel,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -232,6 +264,108 @@ def run(
 
     any_harness_failure = any(t.subject_status in _HARNESS_FAILURE_STATUSES for t in record.tasks)
     raise typer.Exit(EXIT_RUN_HAD_FAILURES if any_harness_failure else EXIT_OK)
+
+
+def _print_campaign_summary(result: CampaignResult) -> None:
+    record = result.record
+    typer.echo(f"Campaign dir: {result.campaign_dir}")
+    typer.echo(
+        f"Suite: {record.suite_id} (tier={record.tier}) "
+        f"whole_run_cap=${record.whole_run_cap_usd:.4f} "
+        f"per_subject_cap=${record.per_subject_cap_usd:.4f} "
+        f"max_parallel={record.max_parallel}"
+    )
+    for sr in record.subjects:
+        if sr.launched:
+            solve_rate = "—" if sr.solve_rate is None else f"{sr.solve_rate * 100:.1f}%"
+            cost = "—" if sr.total_cost_usd is None else f"${sr.total_cost_usd:.4f}"
+            typer.echo(
+                f"  {sr.subject_id}: {sr.status} solved={sr.solved}/{sr.total} "
+                f"({solve_rate}) cost={cost} run_dir={sr.run_dir}"
+            )
+        else:
+            typer.echo(f"  {sr.subject_id}: {sr.status} (not launched)")
+    typer.echo(f"Total spent: ${record.total_spent_usd:.4f} / ${record.whole_run_cap_usd:.4f}")
+    if record.comparison_json is not None:
+        typer.echo(f"Comparison: {record.comparison_json}")
+        typer.echo(f"            {record.comparison_md}")
+
+
+@app.command()
+def campaign(
+    suite: str = typer.Option(..., "--suite", help="Path to a suite.json/.yaml to run."),
+    subject: list[str] = typer.Option(
+        ...,
+        "--subject",
+        help="Path to a subject.json/.yaml to include (repeatable; run IN THE GIVEN"
+        " ORDER against --suite). At least one required.",
+    ),
+    max_parallel: int | None = typer.Option(
+        None,
+        "--max-parallel",
+        help="Per-subject task-level parallelism, same meaning/precedence as `ao-bench"
+        " run --max-parallel` (default: the suite's tier default_max_parallel).",
+    ),
+    cost_budget_usd: float | None = typer.Option(
+        None,
+        "--cost-budget-usd",
+        help="Per-subject USD cost cap override, same meaning as `ao-bench run"
+        " --cost-budget-usd` (default: the suite's tier cost_budget_usd_per_subject)."
+        " The cap actually applied to a given subject is this value further bounded by"
+        " the remaining whole-run headroom (ADR-0009 D3) -- see --run-budget-usd.",
+    ),
+    run_budget_usd: float | None = typer.Option(
+        None,
+        "--run-budget-usd",
+        help="Whole-CAMPAIGN USD cost cap across every --subject (ADR-0009 D3)."
+        " Default: the suite's tier cost_budget_usd_per_run. Once cumulative actual"
+        " spend from completed subjects reaches this cap, every remaining subject is"
+        " recorded status=skipped_budget without being launched.",
+    ),
+    out_dir: str | None = typer.Option(
+        None,
+        "--out-dir",
+        help="Override the results root (default: benchmarks/results/, committed).",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Re-run every considered task even if already recorded."
+    ),
+    enable_xlarge: bool = typer.Option(
+        False,
+        "--enable-xlarge",
+        help="Allow running a suite whose resolved tier is disabled in"
+        " benchmarks/tiers.json (enabled=false, e.g. xlarge). Gates ANY disabled tier,"
+        " not only xlarge -- the flag name is historical/literal per the epic.",
+    ),
+) -> None:
+    """Run a suite against a LIST of subjects, enforcing a whole-run USD cap across all
+    of them (ADR-0009 D3); writes each subject's own run.json/summary.md plus a
+    campaign.json + comparison.{json,md} for the whole campaign.
+
+    Exit 0 whether every subject completed or some were budget-skipped -- a
+    budget-skipped subject is a clean, resumable outcome, never a harness failure
+    (mirrors `ao-bench run`'s own `skipped_budget` convention, one level up); exit 1 on
+    a usage or spec-loading error (including a disabled tier without --enable-xlarge).
+    """
+    from .campaign import run_campaign
+
+    try:
+        result = run_campaign(
+            suite,
+            subject,
+            max_parallel=max_parallel,
+            cost_budget_usd=cost_budget_usd,
+            run_budget_usd=run_budget_usd,
+            out_dir=out_dir,
+            force=force,
+            enable_xlarge=enable_xlarge,
+        )
+    except (SpecValidationError, BenchError) as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(EXIT_USAGE_ERROR) from exc
+
+    _print_campaign_summary(result)
+    raise typer.Exit(EXIT_OK)
 
 
 # `<date>-<suite_id>-<subject_id>` (runner.compute_bench_run_id) -- suite_id is a known,
