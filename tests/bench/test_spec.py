@@ -12,6 +12,7 @@ from agent_orchestrator.bench.spec import (
     KNOWN_GRADER_TYPES,
     KNOWN_SUBJECT_TYPES,
     KNOWN_TIERS,
+    KNOWN_WORKSPACE_PROVIDER_TYPES,
     load_subject,
     load_suite,
 )
@@ -134,6 +135,137 @@ def test_committed_dev_core_suite_has_no_tier_field_and_defaults_to_small() -> N
     assert "tier" not in raw, "dev-core/suite.json must stay byte-unchanged (no tier field added)"
     suite = load_suite(suite_path)
     assert suite.tier == "small"
+
+
+# ---------------------------------------------------------------------------
+# Optional task-level `source` field (T-Wp4Nz5 AC3-4): an alternative to `fixture`
+# that directs materialize_workspace at a non-default WorkspaceProvider. A task must
+# declare at least one of `fixture`/`source`; `source.type` is validated against the
+# closed KNOWN_WORKSPACE_PROVIDER_TYPES list (mirrors grader.type/subject.type).
+# ---------------------------------------------------------------------------
+
+
+def _task_with_instruction_only(suite_path: Path, task: dict) -> None:
+    """Materialize just the `instruction` file for *task* (no fixture dir) -- used by
+    the `source`-present tests below, which must not require a fixture on disk.
+    """
+    instruction_path = suite_path.parent / task["instruction"]
+    instruction_path.parent.mkdir(parents=True, exist_ok=True)
+    instruction_path.write_text("# Fix the bug\n")
+
+
+def test_load_suite_source_present_no_fixture_ok(suite_factory: SuiteFactory) -> None:
+    task = {
+        "id": "swebench-a",
+        "category": "bugfix",
+        "instruction": "tasks/swebench-a/instruction.md",
+        "source": {"type": "fixture"},
+        "grader": {"type": "fake"},
+    }
+    suite_path = suite_factory(tasks=[task], materialize=False)
+    _task_with_instruction_only(suite_path, task)
+
+    suite = load_suite(suite_path)
+
+    assert suite.tasks[0].fixture is None
+    assert suite.tasks[0].source is not None
+    assert suite.tasks[0].source.type == "fixture"
+
+
+def test_load_suite_neither_fixture_nor_source_rejected(suite_factory: SuiteFactory) -> None:
+    task = {
+        "id": "no-source-no-fixture",
+        "category": "bugfix",
+        "instruction": "tasks/no-source-no-fixture/instruction.md",
+        "grader": {"type": "fake"},
+    }
+    suite_path = suite_factory(tasks=[task], materialize=False)
+    _task_with_instruction_only(suite_path, task)
+
+    with pytest.raises(SpecValidationError, match="must declare either 'fixture' or 'source'"):
+        load_suite(suite_path)
+
+
+def test_load_suite_unknown_source_type_rejected(suite_factory: SuiteFactory) -> None:
+    task = {
+        "id": "swebench-b",
+        "category": "bugfix",
+        "instruction": "tasks/swebench-b/instruction.md",
+        "source": {"type": "unknown"},
+        "grader": {"type": "fake"},
+    }
+    suite_path = suite_factory(tasks=[task], materialize=False)
+    _task_with_instruction_only(suite_path, task)
+
+    with pytest.raises(SpecValidationError, match="unknown source.type") as exc_info:
+        load_suite(suite_path)
+    msg = str(exc_info.value)
+    assert "swebench-b" in msg
+    assert "unknown" in msg
+    for known in KNOWN_WORKSPACE_PROVIDER_TYPES:
+        assert known in msg
+
+
+def test_load_suite_source_extra_provider_fields_allowed(suite_factory: SuiteFactory) -> None:
+    """`Source` allows arbitrary extra fields (`extra="allow"`) -- provider-specific
+    keys (e.g. a future swebench provider's instance_id/dataset/revision) are not
+    validated at this layer.
+    """
+    task = {
+        "id": "swebench-c",
+        "category": "bugfix",
+        "instruction": "tasks/swebench-c/instruction.md",
+        "source": {"type": "fixture", "instance_id": "astropy__astropy-1234"},
+        "grader": {"type": "fake"},
+    }
+    suite_path = suite_factory(tasks=[task], materialize=False)
+    _task_with_instruction_only(suite_path, task)
+
+    suite = load_suite(suite_path)
+
+    assert suite.tasks[0].source is not None
+    assert suite.tasks[0].source.model_extra == {"instance_id": "astropy__astropy-1234"}
+
+
+def test_load_suite_source_missing_type_rejected_by_schema(suite_factory: SuiteFactory) -> None:
+    """The JSON schema itself requires `source.type` -- caught before the Python-level
+    KNOWN_WORKSPACE_PROVIDER_TYPES check even runs.
+    """
+    task = {
+        "id": "swebench-d",
+        "category": "bugfix",
+        "instruction": "tasks/swebench-d/instruction.md",
+        "source": {},
+        "grader": {"type": "fake"},
+    }
+    suite_path = suite_factory(tasks=[task], materialize=False)
+    _task_with_instruction_only(suite_path, task)
+
+    with pytest.raises(SpecValidationError):
+        load_suite(suite_path)
+
+
+def test_load_suite_source_and_fixture_both_present_fixture_checked(
+    suite_factory: SuiteFactory,
+) -> None:
+    """When both `fixture` and `source` are declared, the fixture-existence check is
+    skipped (per T-Wp4Nz5 design: only checked when `source` is absent) -- `source`
+    takes over workspace materialization.
+    """
+    task = {
+        "id": "both-present",
+        "category": "bugfix",
+        "instruction": "tasks/both-present/instruction.md",
+        "fixture": "tasks/both-present/fixture-does-not-exist",
+        "source": {"type": "fixture"},
+        "grader": {"type": "fake"},
+    }
+    suite_path = suite_factory(tasks=[task], materialize=False)
+    _task_with_instruction_only(suite_path, task)
+
+    suite = load_suite(suite_path)
+
+    assert suite.tasks[0].fixture == "tasks/both-present/fixture-does-not-exist"
 
 
 # ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@
     "task": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "category", "instruction", "fixture", "grader"],
+      "required": ["id", "category", "instruction", "grader"],
       "properties": {
         "id": {
           "type": "string",
@@ -61,7 +61,19 @@
         },
         "fixture": {
           "type": "string",
-          "description": "PATH to a tiny fixture repo dir, relative to this suite.json. Never inline contents."
+          "description": "PATH to a tiny fixture repo dir, relative to this suite.json. Never inline contents. Optional when `source` is set instead; the loader (bench/spec.py) requires at least one of `fixture`/`source`."
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type"],
+          "description": "Optional alternative to `fixture`: directs materialize_workspace (bench/workspace.py) to a non-default WorkspaceProvider, e.g. a SWE-bench repo checkout instead of a committed fixture copy.",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Workspace provider type key into WORKSPACE_PROVIDER_REGISTRY (e.g. \"fixture\", \"swebench\"). Closed list enforced by the loader (bench/spec.py KNOWN_WORKSPACE_PROVIDER_TYPES), not this schema, so new provider types can be added ahead of registry wiring without a schema edit. Provider-specific fields (e.g. swebench's instance_id/dataset/revision) are open here -- each provider validates its own fields."
+            }
+          }
         },
         "grader": { "$ref": "#/$defs/grader" },
         "timeout_seconds": { "type": "integer", "minimum": 1 },

@@ -6,8 +6,12 @@
 - Owner: developer agent
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: Draft
+- Status: Done
 - Estimate: 2.0 days
+
+<!-- By: developer agent / Role: developer / Date: 2026-07-22
+     Comment: Implemented per this TASK.md; see STATUS.md for AC-by-AC evidence and
+     test/lint/type-check results. -->
 
 ## Requirements Mapping
 - FR-4 (WorkspaceProvider ABC + registry; `fixture` default provider; optional task `source` field)

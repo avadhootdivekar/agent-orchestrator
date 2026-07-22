@@ -6,12 +6,13 @@ is deliberately self-contained: `bench/` is a separate module outside the engine
 graph (SI-1) with its own schemas directory (`benchmarks/schemas/`, not `specs/`), so it
 does not import core `config.py`'s private helpers.
 
-`grader.type` / `subject.type` are validated against the static `KNOWN_GRADER_TYPES` /
-`KNOWN_SUBJECT_TYPES` closed lists below, NOT against `registries.GRADER_REGISTRY` /
-`SUBJECT_REGISTRY` -- those registries are empty until `T-Grd7Vx`/`T-Sbj9Ka` register
-concrete classes, and checking against an empty registry would reject every suite/
-subject. Downstream tasks extend these sets alongside registering their classes (see
-`registries.py` module docstring).
+`grader.type` / `subject.type` / a task's `source.type` are validated against the static
+`KNOWN_GRADER_TYPES` / `KNOWN_SUBJECT_TYPES` / `KNOWN_WORKSPACE_PROVIDER_TYPES` closed
+lists below, NOT against `registries.GRADER_REGISTRY` / `SUBJECT_REGISTRY` /
+`WORKSPACE_PROVIDER_REGISTRY` -- checking against a registry populated by another
+module's import-time side effect would make this module's validation order-dependent on
+import order. Downstream tasks extend these sets alongside registering their classes
+(see `registries.py` module docstring).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 import jsonschema
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .errors import SpecValidationError
 
@@ -56,6 +57,15 @@ KNOWN_SUBJECT_TYPES: frozenset[str] = frozenset({"claude_cli", "ao_workflow", "f
 # tier NAME, it does not know about tier defaults.
 KNOWN_TIERS: frozenset[str] = frozenset({"small", "medium", "large", "xlarge"})
 
+# Closed list of workspace-provider types (design doc / E-Bt4Xk9 T-Wp4Nz5). A task's
+# optional `source.type` is validated against this set in load_suite() rather than
+# against `registries.WORKSPACE_PROVIDER_REGISTRY` directly, mirroring the
+# KNOWN_GRADER_TYPES/KNOWN_SUBJECT_TYPES precedent above -- the registry is populated by
+# `bench/workspace.py` at import time (only "fixture" today), and checking against it
+# here would create an import-order dependency this module deliberately avoids (module
+# docstring). T-Sw5Hd9 adds "swebench" to this set alongside registering its provider.
+KNOWN_WORKSPACE_PROVIDER_TYPES: frozenset[str] = frozenset({"fixture"})
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models (design doc §6)
@@ -83,11 +93,34 @@ class GraderConfig(BaseModel):
     assertions: list[Assertion] = []
 
 
+class Source(BaseModel):
+    """Optional task-level workspace-provider directive (FR-4, T-Wp4Nz5).
+
+    An alternative to `BenchTask.fixture`: when present, `materialize_workspace`
+    (bench/workspace.py) dispatches to `WORKSPACE_PROVIDER_REGISTRY[type]` instead of
+    copying `fixture` into `ws/repo`. `type` is validated against the closed
+    `KNOWN_WORKSPACE_PROVIDER_TYPES` list in `load_suite` below (mirrors
+    `GraderConfig.type`/`SubjectSpec.type` -- the JSON schema deliberately leaves this
+    open, see benchmark-suite.schema.json). Provider-specific fields (e.g. the
+    `swebench` provider's `instance_id`/`dataset`/`revision`, T-Sw5Hd9) are NOT modeled
+    here: `extra="allow"` passes them through unvalidated at this layer -- each provider
+    is responsible for validating its own fields.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+
+
 class BenchTask(BaseModel):
     id: str
     category: Literal["bugfix", "feature", "refactor", "test", "other"]
     instruction: str  # PATH, relative to the suite.json
-    fixture: str  # PATH to a tiny repo dir, relative to the suite.json
+    # PATH to a tiny repo dir, relative to the suite.json. Optional when `source` is
+    # set instead (T-Wp4Nz5) -- load_suite requires at least one of the two.
+    fixture: str | None = None
+    # Alternative to `fixture`: directs a non-default WorkspaceProvider (T-Wp4Nz5).
+    source: Source | None = None
     grader: GraderConfig
     timeout_seconds: int | None = None
     tags: list[str] = []
@@ -219,9 +252,10 @@ def load_suite(path: str | Path) -> BenchSuite:
     Raises SpecValidationError for: malformed JSON/YAML, a schema violation (including
     a missing `version` or an uppercase/malformed id -- both required-field/`pattern`
     checks in the schema), an unknown `tier` (defaults to "small" when absent), a
-    duplicate task id, an unknown `grader.type`, a missing `instruction` file, a missing
-    `fixture` directory, or (for `file_assertion` graders) a missing/malformed
-    `equals_file`/`contains` assertion.
+    duplicate task id, an unknown `grader.type`, a missing `instruction` file, a task
+    declaring neither `fixture` nor `source`, an unknown `source.type` (T-Wp4Nz5), a
+    missing `fixture` directory (only checked when `source` is absent), or (for
+    `file_assertion` graders) a missing/malformed `equals_file`/`contains` assertion.
     """
     data = _read_spec_file(path)
     _validate_against_schema(data, _SUITE_SCHEMA_FILE)
@@ -256,12 +290,31 @@ def load_suite(path: str | Path) -> BenchSuite:
                 f"Task {t.id!r}: instruction not found: {instruction_path}",
                 path=f"tasks.{t.id}.instruction",
             )
-        fixture_path = base / t.fixture
-        if not fixture_path.is_dir():
-            raise SpecValidationError(
-                f"Task {t.id!r}: fixture directory not found: {fixture_path}",
-                path=f"tasks.{t.id}.fixture",
-            )
+
+        # T-Wp4Nz5: a task declares its workspace via `fixture` (default `fixture`
+        # provider) OR `source` (a non-default WorkspaceProvider, e.g. a SWE-bench
+        # checkout) -- never neither. The fixture existence check only applies when
+        # `source` is absent: a source provider materializes its own repo at run time
+        # (bench/workspace.py), so there is nothing on disk to check here.
+        if t.source is not None:
+            if t.source.type not in KNOWN_WORKSPACE_PROVIDER_TYPES:
+                raise SpecValidationError(
+                    f"Task {t.id!r}: unknown source.type {t.source.type!r}; "
+                    f"known types: {sorted(KNOWN_WORKSPACE_PROVIDER_TYPES)}",
+                    path=f"tasks.{t.id}.source.type",
+                )
+        else:
+            if t.fixture is None:
+                raise SpecValidationError(
+                    f"Task {t.id!r}: must declare either 'fixture' or 'source'",
+                    path=f"tasks.{t.id}",
+                )
+            fixture_path = base / t.fixture
+            if not fixture_path.is_dir():
+                raise SpecValidationError(
+                    f"Task {t.id!r}: fixture directory not found: {fixture_path}",
+                    path=f"tasks.{t.id}.fixture",
+                )
 
         if t.grader.type not in KNOWN_GRADER_TYPES:
             raise SpecValidationError(
