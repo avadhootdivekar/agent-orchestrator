@@ -2,10 +2,22 @@
 
 - ID: `E-Bt4Xk9-complex-benchmark-tiers`
 - Updated At: 2026-07-22
-- State: **Draft** (design complete; delivery not started)
+- State: **In Progress** (6/11 delivered; T-Md7Vc3 + T-Sg6Jf2 in flight; T-Cm9Tb4/T-Ts0Xn5/T-Dc1Yg7 queued)
 - Owner: architect agent (design) → developer/tester agents (delivery)
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-07-22 · Comment: **Waves A+B done, C mostly done — 6/11
+  delivered, each independently re-verified then committed**: `T-Tr1Km8` tier model (`c66ae68`),
+  `T-Ep8Lq6` ao-epic-plus 4-agent subject incl. $0.25 real haiku smoke solved (`41485f1`),
+  `T-Wp4Nz5` workspace-provider seam, fixture provider behavior-identical (`1ceba56`),
+  `T-Bg2Wq4` USD budgets with skipped_budget/resume/fingerprint semantics (`1275169`),
+  `T-Pl3Rx7` parallel runner, measured 2.55x at 4 workers, budget lock-correct (`a5199c1`),
+  `T-Sw5Hd9` SWE-bench importer + provider + pinned 10-instance swe-verified-mini suite,
+  optional [swebench] extra, real HF+GitHub verification (`d665d35`). Full fast suite at last
+  commit: 1197 passed/2 skipped/4 deselected (branch baseline 1089/4 before epic). In flight:
+  `T-Md7Vc3` dev-medium suite (with $8-capped discrimination smoke gate) and `T-Sg6Jf2`
+  swebench grader (with opt-in gold-patch grade of psf__requests-2931). cli.py single-owner
+  discipline held throughout (max-parallel flag wiring deferred to `T-Cm9Tb4` by design).
 - By: Claude · Role: manager · Date: 2026-07-22 · Comment: **OQ-1..OQ-4 resolved by orchestrator**
   (user's budget envelope covers them; decisions surfaced in the final report for veto).
   OQ-1: medium caps $150/run, $50/subject **accepted** — sits proportionally between the

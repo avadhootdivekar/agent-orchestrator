@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → developer/tester agents (delivery)
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: **Draft** (design complete; not started)
+- Status: **In Progress** (6/11 tasks delivered as of 2026-07-22; T-Md7Vc3 + T-Sg6Jf2 in flight)
 - Predecessor: `E-9Qk4Zt-agent-benchmark-harness` (MVP harness, Done 2026-07-22)
 
 ## Summary
@@ -90,14 +90,14 @@ T-Tr1Km8 1.5(12) · T-Bg2Wq4 2.5(20) · T-Pl3Rx7 2.5(20) · T-Wp4Nz5 2.0(16) · 
 - **Sprint 3 (integrate + ship + run, ~6.0 d + run):** T-Cm9Tb4 → T-Ts0Xn5 → T-Dc1Yg7, then execute the PLAN run matrix. Contingency: if the large-tier real run is disk/flaky, its blocking part is "importer + grader pass their mocked/opt-in-single-instance tests"; the full 10-instance run trails into buffer.
 
 ## Task List (dependency-ordered; each ≤3 days)
-- [ ] `T-Tr1Km8-tier-model-budgets-config` (1.5d) — `tier` schema field + `benchmarks/tiers.json` + `bench/tiers.py`. **Deps: none.** Parallel-safe with: T-Ep8Lq6.
-- [ ] `T-Bg2Wq4-usd-budget-enforcement` (2.5d) — per-run USD cap + `skipped_budget` + resume rule in `runner.py`/`subjects.py`/`cli.py`. **Deps: T-Tr1Km8.** Parallel-safe with: T-Wp4Nz5, T-Ep8Lq6.
-- [ ] `T-Pl3Rx7-parallel-bench-runner` (2.5d) — `--max-parallel` thread pool + lock-guarded budget/state in `runner.py`/`cli.py`. **Deps: T-Bg2Wq4 (same file; must be concurrency-correct over budget).**
-- [ ] `T-Wp4Nz5-workspace-provider-seam` (2.0d) — `WorkspaceProvider` ABC+registry + `fixture` provider + `source` field. **Deps: T-Tr1Km8 (spec.py/schema sequencing).** Parallel-safe with: T-Bg2Wq4.
-- [ ] `T-Sw5Hd9-swebench-import-provider` (3.0d) — importer + pinned instances + `swebench` provider + optional extra. **Deps: T-Wp4Nz5, T-Tr1Km8.** Parallel-safe with: T-Md7Vc3, T-Pl3Rx7.
+- [x] `T-Tr1Km8-tier-model-budgets-config` (1.5d) — `tier` schema field + `benchmarks/tiers.json` + `bench/tiers.py`. **Deps: none.** Parallel-safe with: T-Ep8Lq6.
+- [x] `T-Bg2Wq4-usd-budget-enforcement` (2.5d) — per-run USD cap + `skipped_budget` + resume rule in `runner.py`/`subjects.py`/`cli.py`. **Deps: T-Tr1Km8.** Parallel-safe with: T-Wp4Nz5, T-Ep8Lq6.
+- [x] `T-Pl3Rx7-parallel-bench-runner` (2.5d) — `--max-parallel` thread pool + lock-guarded budget/state in `runner.py`/`cli.py`. **Deps: T-Bg2Wq4 (same file; must be concurrency-correct over budget).**
+- [x] `T-Wp4Nz5-workspace-provider-seam` (2.0d) — `WorkspaceProvider` ABC+registry + `fixture` provider + `source` field. **Deps: T-Tr1Km8 (spec.py/schema sequencing).** Parallel-safe with: T-Bg2Wq4.
+- [x] `T-Sw5Hd9-swebench-import-provider` (3.0d) — importer + pinned instances + `swebench` provider + optional extra. **Deps: T-Wp4Nz5, T-Tr1Km8.** Parallel-safe with: T-Md7Vc3, T-Pl3Rx7.
 - [ ] `T-Sg6Jf2-swebench-grader-docker` (3.0d) — `SweBenchGrader` (Docker eval + cleanup + predictions bridge + Docker lock). **Deps: T-Wp4Nz5 (spec KNOWN_GRADER_TYPES/registries sequencing), T-Sw5Hd9 (optional extra).** Parallel-safe with: T-Md7Vc3, T-Pl3Rx7.
 - [ ] `T-Md7Vc3-dev-medium-suite` (3.0d) — `benchmarks/suites/dev-medium/` 4–8 discriminating tasks. **Deps: T-Tr1Km8.** Parallel-safe with: T-Sw5Hd9, T-Sg6Jf2, T-Pl3Rx7 (new dir, no code overlap).
-- [ ] `T-Ep8Lq6-ao-epic-plus-subject` (1.5d) — 4-agent plan→implement→review→fix `ao_workflow` subject. **Deps: none** (all new files). Parallel-safe with: everything.
+- [x] `T-Ep8Lq6-ao-epic-plus-subject` (1.5d) — 4-agent plan→implement→review→fix `ao_workflow` subject. **Deps: none** (all new files). Parallel-safe with: everything.
 - [ ] `T-Cm9Tb4-campaign-tier-recipes` (2.0d) — `ao-bench campaign` (whole-run cap) + `make bench-medium/bench-large` + `--enable-xlarge`. **Deps: T-Bg2Wq4, T-Pl3Rx7, T-Tr1Km8.**
 - [ ] `T-Ts0Xn5-tier-budget-parallel-tests` (2.5d) — tests for tier/budget/parallel/provider/campaign; swebench tests behind marker+extra; CI stays network-free. **Deps: T-Cm9Tb4 (+ all features it tests).**
 - [ ] `T-Dc1Yg7-docs-adr0009-reconcile` (1.5d) — README/HLD/ADR-0009→Accepted/learnings, reconciled to as-built (**post-implementation docs-refresh, mandatory**). **Deps: all.**
