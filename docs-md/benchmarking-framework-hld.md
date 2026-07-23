@@ -542,24 +542,40 @@ bench.run.end     {bench_run_id, solved, total, solve_rate, total_cost_usd}
 ```
 
 ## 9. Where things live (as-built layout)
+
+> **Extended by epic `E-Bt4Xk9` (§20):** `tiers.json`, `dev-medium`, `swe-verified-mini`, `ao-epic-plus`, the
+> `campaign`/`tiers`/`swebench_*` code modules, and the `<date>-<suite>-campaign/` result dirs below were all added
+> after this block was first written — see §20 for the as-built architecture of each.
+
 ```
 benchmarks/
+  tiers.json                                                          # committed per-tier caps/knobs (§20.1)
   schemas/  benchmark-suite.schema.json  subject.schema.json          # committed
-  suites/dev-core/  suite.json  tasks/<task-id>/{instruction.md, fixture/…}   # committed fixtures
+  suites/dev-core/  suite.json  tasks/<task-id>/{instruction.md, fixture/…}   # committed fixtures, tier small (default)
                     # fixture/ carries a committed .bench-solution/ reference overlay (FakeSubject's
                     # "copy-solution" scripted_effect); refactor/test-writing tasks also carry their own
                     # check.py/check_tests.py that a `command` grader shells out to.
+        dev-medium/       suite.json  tasks/<task-id>/{instruction.md, fixture/…, fixture/.grading/}  # tier medium (§20.7)
+        swe-verified-mini/ suite.json  instances.json  tasks/<instance-id>/instruction.md             # tier large (§20.5)
   subjects/  claude-haiku.json  claude-sonnet.json  claude-opus.json
-             ao-epic-haiku.json  ao-epic-sonnet.json  fake-pass.json  # committed subject configs
-             ao-epic/  workflow.json  reposet.json  agents.json      # the ao_workflow subject's own
-                       instructions/{implement,verify}.md            # templates (§4.2 deviation 3)
+             ao-epic-haiku.json  ao-epic-sonnet.json  ao-epic-plus-haiku.json  ao-epic-plus-sonnet.json
+             fake-pass.json                                           # committed subject configs
+             ao-epic/       workflow.json  reposet.json  agents.json  # the 2-agent ao_workflow subject's own
+                             instructions/{implement,verify}.md       # templates (§4.2 deviation 3)
+             ao-epic-plus/  workflow.json  reposet.json  agents.json  # the 4-agent plan→implement→review→fix
+                             instructions/{plan,implement,review,fix}.md   # subject (§20.7)
   results/<date>-<suite>-<subject>/  run.json  summary.md             # COMMITTED (git-preserved)
           <date>-<suite>-compare/    comparison.json  comparison.md   # COMMITTED — see the naming
                                                                        # limitation note below
+          <date>-<suite>-campaign/   campaign.json  comparison.{json,md}   # COMMITTED — `ao-bench campaign` output (§20.6)
 src/agent_orchestrator/bench/  __init__.py spec.py subjects.py workspace.py graders.py metrics.py
-                               runner.py results.py cli.py errors.py registries.py      # code (10 modules)
-tests/bench/                   unit + CliRunner e2e (FakeSubject/FakeGrader — no real LLM) + opt-in real_llm
+                               runner.py results.py cli.py errors.py registries.py      # MVP code (10 modules)
+                               tiers.py campaign.py                                     # tier/budget/campaign (§20.1/§20.6)
+                               swebench_import.py swebench_provider.py swebench_grader.py  # large tier (§20.5,
+                                                                                          # optional `swebench` extra)
+tests/bench/                   unit + CliRunner e2e (FakeSubject/FakeGrader — no real LLM) + opt-in real_llm/swebench
 playground/.tmp/bench/         # GITIGNORED workspaces (already covered by playground/.tmp/)
+playground/.tmp/swebench-repo-cache/  # GITIGNORED, sibling of BENCH_WORKSPACE_ROOT — shared git clone cache (§20.5)
 ```
 
 > **Known limitation — comparison directory naming is not subject-set-aware.** `compute_compare_id` derives
@@ -619,7 +635,14 @@ See `benchmarks/README.md` for the full table and `benchmarks/results/2026-07-22
 for the live artifact.
 
 ## 12. Non-MVP (explicitly deferred — anti-feature-creep)
-`LlmJudgeGrader` (needs a judge model) · SWE-bench Verified / terminal-bench **DockerSubject + importer** · **inspect-ai bridge** (run a fixture as an inspect Task) · Aider/EvalPlus subset importers · non-dev **domain suites** (biology/physics/legal/marketing — the framework *supports* them via `domain` + `CommandGrader`, but ships none) · HTTP/API subjects (raw Anthropic/OpenAI SDK, aider CLI) · statistical rigor (multi-seed, bootstrap CIs, pass@k) · a results dashboard/`ao-bench serve` · a nightly cron trigger.
+`LlmJudgeGrader` (needs a judge model) · **inspect-ai bridge** (run a fixture as an inspect Task) · Aider/EvalPlus subset importers · non-dev **domain suites** (biology/physics/legal/marketing — the framework *supports* them via `domain` + `CommandGrader`, but ships none) · HTTP/API subjects (raw Anthropic/OpenAI SDK, aider CLI) · statistical rigor (multi-seed, bootstrap CIs, pass@k) · a results dashboard/`ao-bench serve` · a nightly cron trigger.
+
+> **As-built update (§20, epic `E-Bt4Xk9`):** this list originally named "SWE-bench Verified / terminal-bench
+> **DockerSubject + importer**" as non-MVP — that shipped in a follow-on epic (tiers/budgets/parallelism/SWE-bench,
+> `E-Bt4Xk9`, ADR-0009), not as a `DockerSubject` but as a `WorkspaceProvider` (`swebench`) + a `SweBenchGrader`
+> behind the exact seam this MVP reserved (§3.2's "External-suite import ... = a new Subject/Suite-importer behind
+> the same seam"). See §20 for the as-built architecture and ADR-0009 for the design record. §12's remaining items
+> are still genuinely non-MVP after that epic too; §20.7 lists what *that* epic itself still deferred.
 
 ## 13. Test strategy
 - **Unit (target ≥80% of `bench/`):** schema validate (good/malformed/unknown-type/duplicate-id/uppercase-id/missing-fixture) · `PytestGrader.parse_pytest_summary` + exit-code-source-of-truth · `CommandGrader`/`FileAssertionGrader` · metrics aggregation incl. `cost_usd is None` and `solved==0` · runner resume (skip completed) · path-guard rejection · fingerprint stability.
@@ -647,6 +670,16 @@ self-reported STATUS.md narratives — `pytest tests/bench -q -m "not real_llm" 
 **221 passed, 1 deselected, 98% coverage** (1120 stmts/18 missed); `pytest -q -m "not real_llm"` (whole repo) →
 **1078 passed, 4 deselected**, zero regressions; `make bench-smoke` + the 6 committed subject `run.json`s (§11.1)
 confirm G6/G1/G2 end to end for real (not just `FakeSubject`).
+
+> **Extended by epic `E-Bt4Xk9` (FR-1..FR-11):** this table covers the original MVP epic's goals (G1–G7) only. The
+> tiers/budgets/parallelism/SWE-bench epic's own requirement-to-task traceability table (FR-1..FR-11, with a
+> "Verify" column per row) lives in its `EPIC.md` — not duplicated here to avoid a second copy drifting out of
+> sync; see §20 for the as-built architecture summary and `benchmarks/README.md`'s Results interpretation section
+> for the acceptance-relevant PLAN run evidence (FR-11's own "docs match shipped code" bar). Coverage as of this
+> epic (`T-Ts0Xn5`, `tests/bench -q -m "not real_llm and not swebench"`): **97%** of `agent_orchestrator.bench`
+> (1757 stmts, 56 missed — optional-dep/Docker/network paths behind the `swebench` marker); full-repo
+> `pytest -q -m "not real_llm and not swebench"` at HEAD (`f71ed87`, re-verified by this docs task): **1266
+> passed**, 7 deselected, zero regressions.
 
 ## 15. Design Artifacts Checklist
 **After HLD:** [x] logical architecture diagram (§3) · [x] component breakdown (§3.1) · [x] integration points (§3.2) · [x] plugin/extension strategy (§3.2 registries).
@@ -695,3 +728,258 @@ ADR-0008 moved Proposed → Accepted with an as-built implementation-notes secti
 `meta/learning-compact.md`. Every claim above was checked against the actual code/tests/committed results, not
 copied from a task STATUS.md narrative — see the completion note in
 `meta/tickets/E-9Qk4Zt-agent-benchmark-harness/T-Dcs2Rk-docs-adr-reconcile/STATUS.md` for the verification commands.
+
+---
+
+## 20. Tiers, USD budgets, parallel runner, workspace-provider seam, SWE-bench (epic `E-Bt4Xk9`, as-built)
+
+Epic [`E-Bt4Xk9-complex-benchmark-tiers`](../meta/tickets/E-Bt4Xk9-complex-benchmark-tiers/EPIC.md) extends §3–§9
+above with four coupled capabilities, recorded as decisions in
+[`ADR-0009`](adr/ADR-0009-benchmark-tiers-external-suites-budgets-parallelism.md) (Status: Accepted) and delivered
+across 10 implementation tasks + this docs task. This section reconciles the as-built code to that ADR — read it
+alongside ADR-0009's own "Outcome" section (deviations recorded there are not repeated verbatim here). SI-1 holds
+throughout: nothing new here is imported by core; `bench/` remains a separate module (§3.2, §10).
+
+### 20.1 Tier model (`bench/tiers.py` + `benchmarks/tiers.json`) — ADR-0009 D1
+`BenchSuite` gains an optional `tier: str = "small"` field (§5.1 schema, `spec.py`); an unknown tier is rejected
+against a closed-list `KNOWN_TIERS = {"small","medium","large","xlarge"}` at `load_suite` time. A single committed
+`benchmarks/tiers.json` maps each tier → `{enabled, cost_budget_usd_per_run, cost_budget_usd_per_subject,
+default_max_parallel, default_timeout_seconds}` — see `benchmarks/README.md`'s Tiers table for the committed
+values. `bench/tiers.py`'s `resolve_effective(tier_config, cli_max_parallel=, cli_cost_budget=)` implements the
+precedence **CLI > tier default > builtin fallback** for both the budget and parallelism knobs in one place (reused
+by both `ao-bench run` and `ao-bench campaign` — see §20.6), using `is not None` checks throughout (not `x or y`) so
+an explicit `0` from the CLI is a real value, never mistaken for "unset". `dev-core/suite.json` is byte-unchanged
+(no `tier` key at all) and still validates, defaulting to `small`.
+
+### 20.2 USD budget enforcement — ADR-0009 D3
+`run_suite(..., cost_budget_usd: float | None = None)` — the harness's own new **cost_budget_usd**, kept strictly
+separate from the pre-existing **token** budget (`budget_total`, threaded to `ao run --budget-total`, never
+enforced by the harness itself). Before scheduling each task, if the run's cumulative recorded `cost_usd` (over
+non-`skipped_budget` records) has reached the cap, every remaining task is recorded
+`subject_status="skipped_budget"` (`solved=False`, `score=0`, `cost=0.0`, no workspace ever materialized) rather
+than run. `skipped_budget` is excluded from `_HARNESS_FAILURE_STATUSES` — never a non-zero exit. **Resume:** a
+`skipped_budget` record is the ONE exception to "already recorded → skip" — it is always re-attempted, so raising
+the cap and re-running finishes the suite. `cost_budget_usd` (and `max_parallel`, §20.3) are excluded from
+`config_fingerprint` — both are control-flow (how many tasks run / how fast), not config that changes what a
+subject *does* per task, so raising the cap must not trip the fingerprint-mismatch guard. `run_suite`'s own default
+stays `None` (unlimited) — every pre-existing direct caller unaffected; resolution to the tier default happens one
+level up, in `bench/cli.py`'s `run`/`campaign` commands (`--cost-budget-usd`).
+
+### 20.3 Parallel bench runner (`--max-parallel`) — ADR-0009 D4
+`run_suite(..., max_parallel: int = 1)`. `max_parallel<=1` walks the exact original serial `for` loop (a nested
+`_run_one(task)` closure now, but byte-identical order/log-events/persist-cadence — proven by the full pre-existing
+`test_runner.py`/`test_budget.py` suites passing **unedited**). `max_parallel>1` dispatches the same `_run_one`
+across a `ThreadPoolExecutor(max_workers=max_parallel)`. **One** `threading.Lock` guards everything that must stay
+atomic across worker threads: the resume/budget dispatch decision (§20.2's check, folded into one
+`_dispatch_or_skip` critical section together with the resume-skip read), the `tasks_dict` write-back, the
+`running_cost +=` accumulation, and every `run.json` persist — never held across `materialize_workspace`/
+`Subject.run`/`Grader.grade` (the long-running, per-task-isolated work happens entirely outside the lock).
+Persisted `run.json` `tasks` stays id-sorted regardless of completion order. Threads, not processes (subprocess/
+IO-bound tasks release the GIL during `wait()`; trivially shared in-process state, no pickling). Overshoot under
+concurrency is bounded and documented: `cap <= total_cost_usd < cap + max_parallel × max_task_cost` (verified by a
+`Barrier`-forced test proving all `max_parallel` in-flight tasks pass the check before any writes back).
+
+**Do not confuse this with `SubjectSpec.max_parallel`** (§5.2/§6, pre-existing, unrelated): that field is an
+`ao_workflow` subject's own internal knob, threaded via `AO_MAX_PARALLEL` into the `ao run` subprocess to control
+the **core engine's** DAG wave/barrier scheduler (ADR-0007) for that workflow's internal tasks. The bench-level
+`--max-parallel` here runs multiple **bench tasks** concurrently, one level up; the two compose but share neither a
+value nor a meaning. See `benchmarks/README.md`'s Tiers section for the same clarification aimed at operators.
+
+**As-built scope note:** `--max-parallel` CLI wiring on `ao-bench run` was deliberately deferred from the task that
+built the thread pool itself to the task that added `ao-bench campaign` (orchestrator-authorized scope shift,
+landed together) — see §20.6.
+
+### 20.4 Workspace-provider seam — ADR-0009 (epic FR-4)
+A `WorkspaceProvider` ABC + `WORKSPACE_PROVIDER_REGISTRY` (mirrors `SUBJECT_REGISTRY`/`GRADER_REGISTRY`, §3.2).
+`prepare(self, task, repo_dir, *, suite_base_dir, subject_base_dir=None) -> None` — `repo_dir` does not exist yet
+when called; the provider creates it. The pre-existing fixture-copy logic moved **verbatim** into a
+`FixtureProvider`, registered as `"fixture"` — the default when a task declares no `source`, so every existing
+suite/test is behavior-identical (proven by the full pre-existing `test_workspace.py` suite passing unedited). A
+new optional task-level `source: {type: str, ...}` field (`Source` pydantic model, `extra="allow"` for
+provider-specific keys) selects a non-default provider; `KNOWN_WORKSPACE_PROVIDER_TYPES` is the closed list
+`load_suite` validates `source.type` against. A task must declare `fixture`, `source`, or both — declaring neither
+is a load-time error. `materialize_workspace`'s public signature/return (`RunContext`) is unchanged, so `runner.py`
+needed zero edits — it already dispatches through the registry via this same function.
+
+### 20.5 SWE-bench Verified import + provider + grader — the `large` tier (ADR-0009 D2, epic FR-5/FR-6)
+Three new modules, all under `src/agent_orchestrator/bench/` (not `benchmarks/importers/`/`providers_swebench.py`
+as originally sketched — see ADR-0009's Outcome section for why):
+- **`swebench_import.py`** — `import_swebench()` + the `ao-bench import-swebench` CLI command. Pinned
+  `(dataset, revision)` (`PINNED_REVISION` constant, a HuggingFace commit sha, never a live head) + an explicit
+  instance-id list → deterministic, byte-identical `suite.json`/`instances.json`/`instruction.md` regen (verified:
+  a real HF-driven import and a jsonl-fixture-driven import of the same inputs diff to zero bytes).
+  `datasets` is imported only inside this module's function bodies (lazy, optional `swebench` extra —
+  `pyproject.toml`). The committed `swe-verified-mini` suite: 10 instances, tier `large`, selected for repo
+  diversity (≥4 repos, ≤2 of any one) and a deliberate difficulty mix (6× "15 min–1 hour", 3× "1–4 hours", 1×
+  "<15 min fix") biased toward smaller Docker images/faster test suites — see `benchmarks/README.md`'s Results
+  interpretation caveats for what this selection bias implies about the solve-rate numbers.
+- **`swebench_provider.py`** — `SweBenchWorkspaceProvider` (`WorkspaceProvider`, registered `"swebench"`): checks
+  out the instance's repo at exactly `base_commit` into `repo_dir` via a **full local clone** from a shared,
+  persistent, gitignored repo-local cache (`playground/.tmp/swebench-repo-cache/<owner>__<name>/`, a *sibling* of
+  `BENCH_WORKSPACE_ROOT`, never nested inside the per-run `ws` tree it tears down/recreates every run) — not a
+  chained `--filter=blob:none` partial clone, which hit real, reproduced "filtering not recognized by server"
+  failures in this environment (documented in the module's own docstring as a verified finding). Defense-in-depth:
+  `INSTRUCTION.md` is pre-registered in the checked-out repo's `.git/info/exclude` so it never contaminates a naive
+  `git add -A`/`git status --porcelain`.
+- **`swebench_grader.py`** — `SweBenchGrader` (`Grader`, `grader.type="swebench"`, registered into
+  `GRADER_REGISTRY`): extracts the agent's patch via `git -C repo_dir diff HEAD` (captures both staged AND
+  unstaged changes against the pinned, detached-HEAD `base_commit` — a bare `git diff` would silently miss a
+  `git add`ed fix; deliberately not the bare form an earlier forward note suggested), writes it to a predictions
+  file, and invokes the **official `swebench.harness.run_evaluation`** as a subprocess (`sys.executable`, never an
+  internal import) inside Docker. `resolved` (parsed from the harness's own per-instance report) is authoritative
+  — `solved = resolved`. An empty diff short-circuits before any Docker/subprocess spawn (`GradeResult(solved=False,
+  detail={"reason":"empty patch"})`). A module-global `_DOCKER_EVAL_LOCK` serializes the Docker-eval step only
+  (disk safety, ADR-0009 D4/R1) — agent execution still parallelizes normally under `--max-parallel`. After every
+  instance: `docker rmi -f` + `docker builder prune -f`, **unless** `AO_BENCH_SWEBENCH_KEEP_IMAGES=1` — see
+  `benchmarks/README.md`'s SWE-bench import section for the disk-budgeting tradeoff this env var makes.
+
+  **Two verified, forced deviations from the original design** (full rationale in
+  `T-Sg6Jf2`'s TASK.md "Reconciliation note" and STATUS.md): (a) **instance id** is derived from `repo_dir`'s
+  *parent* directory name (an invariant `runner.py`'s `ws_path = subject_ws_root / task.id` already guarantees,
+  and `task.id == source.instance_id` for the committed suite) rather than read off `task.source.instance_id`
+  directly — `GraderContext`/`RunContext` carry no `task`/`source` today, and widening them was out of this task's
+  file ownership; flagged below as a forward note. (b) **`keep_images`** is an env var + a test-only constructor
+  arg, not a `GraderConfig`/suite.json field — `GraderConfig` has no `extra="allow"`, so an unmodeled suite-level
+  key would be silently dropped by pydantic before the grader ever saw it, and widening `GraderConfig` was also out
+  of file ownership.
+
+### 20.6 `ao-bench campaign` command + tier `make` recipes — ADR-0009 D3, epic FR-9
+`bench/campaign.py`'s `run_campaign(suite_path, subject_paths, *, max_parallel=, cost_budget_usd=,
+run_budget_usd=, ...)` runs a suite against a **list** of subjects in the given order under one whole-run USD cap
+(`run_budget_usd`, default the tier's `cost_budget_usd_per_run`). The cap actually applied to a given subject's own
+`run_suite` call is `min(cost_budget_usd or tier default, remaining whole-run headroom)` — bounded, so a single
+already-scheduled subject's first task can still push total spend over the whole cap by at most that task's own
+cost (the complementary bound to §20.2's per-task overshoot). Once cumulative spend reaches the whole cap, every
+remaining subject is recorded `status="skipped_budget"`/`launched=false` **without `run_suite` ever being called**
+for it. Skipped subjects ARE still fed into `build_comparison` (via their predicted, never-materialized result
+dir), so they show up as `not_run` rather than being silently omitted. Writes `campaign.json` (schema_version,
+campaign_id, tier, caps, `max_parallel`, `total_spent_usd`, per-subject status/cost/solve-rate) +
+`comparison.{json,md}` (reused as-is from §4.6). **Exit codes: 0 (clean or budget-skipped) / 1 (usage/spec error,
+incl. a disabled tier without `--enable-xlarge`) — no code-2 equivalent** unlike `ao-bench run` (§7): a per-task
+harness failure inside one subject's own run is fully visible in `campaign.json`/stdout but does not escalate the
+campaign's own exit code (TASK.md's AC6 only specified 0/1; a documented, deliberate scope decision, not an
+oversight).
+
+`--enable-xlarge` is a single shared gate (`campaign.enforce_tier_enabled`, one helper, no duplicated check) used
+by **both** `ao-bench run` and `ao-bench campaign` — it lifts the disabled-tier refusal for any tier whose
+`tiers.json` entry has `enabled:false`, not literally only `xlarge`; the flag name is historical/literal per the
+epic's own framing.
+
+The `Makefile` gained `bench-medium`/`bench-large`/`bench-xlarge` recipes (see `benchmarks/README.md` for the full
+command reference): each always prints the tier's expected-cost envelope + the exact `ao-bench campaign` invocation
+it would run, then refuses to launch (exit 1) unless `AO_BENCH_CONFIRM=1` is set on the same invocation —
+deliberate friction against an accidental real-money spend. `--max-parallel` is left unset in every recipe so it
+resolves from each suite's own tier default (§20.1/§20.3).
+
+### 20.7 `dev-medium` suite + `ao-epic-plus` subject — epic FR-7/FR-8
+`benchmarks/suites/dev-medium/` — 6 multi-file, 30–90-min-of-agent-work tasks (feature/refactor/misleading-symptom
+bugfix/performance-correctness bugfix/integration-point feature/test-writing), tier `medium`, pytest/command-graded
+via a **per-fixture `.grading/` honor-system convention** (no dedicated `grading_overlay` framework feature — that
+remains non-MVP, §12) — see `benchmarks/README.md`'s "Held-out grading" subsection for the full shape. `ao-epic-plus`
+(`benchmarks/subjects/ao-epic-plus/`) is a 4-agent `plan→implement→review→fix` `ao_workflow` subject, uniform-model
+(no per-agent `model`, sidestepping the live model-override-clobber defect exactly as `ao-epic` already does — §4.2
+deviation, `meta/learnings.md`).
+
+**Authoring-gate finding (R4, epic risk register):** at the `dev-core`-tuned baseline config (`max_turns=30`,
+every committed `claude-*` subject's unedited default), **both haiku and sonnet solve 100%** of the `dev-medium`
+tasks they were run against during authoring, with genuinely-correct (not shallow/gamed) fixes — confirmed by
+diffing actual code changes against each task's `.bench-solution/` reference. One held-out-edge-case tightening
+round (the ticket's mandated remediation) did not change this. A companion, allowed, scratchpad-only diagnostic
+probe — the same 6 tasks, `max_turns` capped to 6, a temp subject copy, no committed config edited — solved only
+**2/6 (33%)**. **The suite's proven discrimination axis is turn/investigation budget, not raw task solvability**;
+see `benchmarks/README.md`'s Results interpretation section for how this played out in the real PLAN medium
+campaign (§20.9).
+
+### 20.8 Deviations from design (as-built vs ADR-0009/the epic's original task specs)
+Per-area summary (full rationale lives in each task's own TASK.md "Reconciliation note"/STATUS.md "Deviations" —
+linked here rather than duplicated, mirroring §4's per-module "as-built deviations" convention above):
+- **Tier resolution lives in `bench/cli.py`, not inside `run_suite`** — `run_suite`'s own `cost_budget_usd`/
+  `max_parallel` defaults stay `None`/`1` (unlimited/serial) so every pre-existing direct caller is unaffected; the
+  CLI resolves the effective value once via `tiers.resolve_effective` and passes it in already-resolved. (§20.1/
+  §20.2, `T-Bg2Wq4`)
+- **`--max-parallel` CLI wiring landed with `ao-bench campaign` (`T-Cm9Tb4`), not with the thread-pool itself
+  (`T-Pl3Rx7`)** — an orchestrator-authorized scope shift, not a missed requirement. (§20.3/§20.6)
+- **Module paths for the SWE-bench provider/grader**: `bench/swebench_import.py`/`swebench_provider.py`/
+  `swebench_grader.py` (flat, alongside every other `bench/` module) — not `benchmarks/importers/`/
+  `providers_swebench.py`/`graders_swebench.py` as the epic's own original task drafts sketched. (§20.5,
+  `T-Sw5Hd9`/`T-Sg6Jf2`)
+- **`source` (task-level, SWE-bench) is minimal**: `{"type":"swebench","instance_id":...}` only — `repo`/
+  `base_commit`/test-id lists live in the suite's `instances.json`, looked up by id at `prepare()`/`grade()` time,
+  not duplicated onto every task's `source` object. (§20.5, `T-Sw5Hd9`)
+- **SWE-bench instance id, at grade time, is derived from `repo_dir`'s parent dirname**, not read off
+  `task.source.instance_id` — `GraderContext`/`RunContext` carry no `task`/`source` field today; a forward-note,
+  not a design change (see §20.9's "Known gaps" below). (§20.5, `T-Sg6Jf2`)
+- **`keep_images` is `AO_BENCH_SWEBENCH_KEEP_IMAGES` (env var) + a test-only constructor arg**, not a
+  `GraderConfig`/suite.json field — `GraderConfig` has no `extra="allow"` today. (§20.5, `T-Sg6Jf2`)
+- **Patch extraction is `git diff HEAD`, not a bare `git diff`** — deliberately captures staged changes too,
+  matching every task's own `instruction.md` promise. (§20.5, `T-Sg6Jf2`)
+- **`campaign` has no exit-2 equivalent** (0/1 only) — a documented, literal reading of its own acceptance
+  criteria, not an oversight. (§20.6, `T-Cm9Tb4`)
+- **No `grading_overlay` framework feature** — `dev-medium` uses the same per-fixture `.grading/` honor-system
+  convention `dev-core`'s `check.py` already established, generalized rather than formalized into a schema. (§20.7,
+  `T-Md7Vc3`)
+
+**Known gaps flagged forward (not fixed in this epic, no carve-out granted to fix them here):**
+1. `RunContext`/`runner.py`'s call site does not carry `task`/`task.source` through to `Grader.grade` — a future
+   task should widen this so a grader can read instance metadata directly instead of deriving it from directory
+   structure, and so `keep_images` (and similar per-grader config) can become genuinely suite-driven via a
+   `GraderConfig.extra="allow"` (or a dedicated typed field).
+2. `tests/bench/test_graders.py::test_grader_registry_has_all_mvp_types` asserts an exact `set(GRADER_REGISTRY)`
+   equality that went stale the moment `"swebench"` registered — a one-line fix (membership/superset check,
+   mirroring `test_registries.py`'s own safer pattern), out of file ownership for the task that surfaced it, not
+   yet applied. Verify this before relying on that specific test file's assertions.
+3. No cross-process lockfile for concurrent `ao-bench run`/`campaign` invocations against the same result dir
+   (§4.5/§11 "Known limitation" carries over unchanged — the new intra-process locking in §20.3 does not address
+   this; see `benchmarks/README.md`'s Running section).
+
+### 20.9 PLAN run results (as-built, epic `E-Bt4Xk9`, 2026-07-22)
+Both funded PLAN campaigns executed and are committed under `benchmarks/results/`. Full tables + caveats +
+interpretation live in `benchmarks/README.md`'s "Results interpretation" section (the canonical copy — condensed
+here for the design-doc record, cross-checked against the same committed `campaign.json`/`run.json` files):
+
+- **Medium** (`2026-07-22-dev-medium-campaign`): `claude-sonnet` 6/6 $1.9346 · `claude-opus` 6/6 $3.2723 ·
+  `ao-epic-sonnet` 6/6 $4.2324 · `ao-epic-plus-sonnet` 6/6 $7.6140 · campaign total **$17.0533** of $150 cap,
+  `--max-parallel 4`. All 4 subjects saturate at 6/6 — see §20.7's R4 finding for why solve rate alone
+  under-discriminates here.
+- **Large** (`2026-07-22-swe-verified-mini-campaign`): `claude-sonnet` 9/10 $7.5931 · `claude-opus` 9/10 $9.9118 ·
+  `ao-epic-sonnet` 9/10 $8.1571 · campaign total **$25.6620** of $800 cap, ~45.5 min wall for all 3 subjects,
+  official Docker grading. **Key finding**: both bare models failed `pytest-dev__pytest-10356` (labeled "1-4
+  hours" difficulty); `ao-epic-sonnet` solved it — the 2-agent workflow beat both bare models on the hardest
+  instance in the set, at +7% cost over bare sonnet and −18% vs bare opus. `ao-epic-sonnet`'s own single miss
+  (`django__django-11138`) was a 4.5-second transient harness abort (`missing_outputs`, empty patch, 1 turn) — the
+  committed `run.json` records this as-run outcome for result integrity; a supplementary, uncommitted diagnostic
+  re-run confirmed it solves cleanly on retry (1/1, $1.1492/252s), motivating a `meta/learnings.md` entry about
+  `max_attempts` on `ao_workflow` benchmark subjects.
+- **Caveats that must accompany every citation of the numbers above** (N=10 small sample; subset selection biased
+  toward smaller/faster instances — our 90% solve rate is not comparable to full-Verified leaderboard numbers; the
+  `pytest-10356` discrimination is one instance, directional not statistical; medium-tier numbers measure
+  cost/latency at saturation plus turn-budget-constrained discrimination, not raw capability) are spelled out in
+  full in `benchmarks/README.md` — do not requote the headline numbers without them.
+- **Total epic spend** ≈$48.6 (medium $17.05 + large $25.66 + authoring/smoke/gold-patch/diagnostic ≈$5.9) against
+  an $800 whole-large-run envelope. Scaling levers (larger `large`-tier N) were deliberately not pulled — see
+  `benchmarks/README.md`'s "Total epic spend" subsection.
+
+---
+
+## 21. Post-implementation docs-refresh (T-Dc1Yg7 — mandatory, epic `E-Bt4Xk9`)
+After this epic's implementation, reconcile §12 + append §20 (as-built tier/budget/parallel/workspace-provider/
+SWE-bench/campaign architecture, deviations, PLAN results) to this HLD, flip ADR-0009 Proposed → Accepted with an
+Outcome section, extend `benchmarks/README.md`, and capture learnings. Mark complete only after confirming every
+claim against the shipped code/tests/committed results, not against ADR-0009's own design prose.
+
+**Done (2026-07-22/2026-07-23, T-Dc1Yg7):** §12 updated (SWE-bench importer/grader moved from non-MVP to shipped,
+with a pointer to §20); §20 added (9 subsections: tiers, budgets, parallel runner, workspace-provider seam,
+SWE-bench import/provider/grader, campaign, dev-medium/ao-epic-plus, deviations, PLAN results) — every claim
+spot-checked against `src/agent_orchestrator/bench/{tiers,runner,campaign,workspace,swebench_import,
+swebench_provider,swebench_grader,spec}.py`, `benchmarks/tiers.json`, `benchmarks/suites/{dev-medium,
+swe-verified-mini}/`, and the committed `benchmarks/results/2026-07-22-{dev-medium,swe-verified-mini}-campaign/`
+artifacts at HEAD (commit `f71ed87`), not copied from task STATUS.md narratives alone (cross-referenced against
+them, then independently verified — e.g. `pytest-dev__pytest-10356`'s and `django__django-11138`'s per-task
+`run.json` failure rows, `campaign.json`'s exact dollar figures, `ao-bench run/campaign --help` output, `make -n
+bench-medium/bench-large`). ADR-0009 moved Proposed → Accepted with an Outcome section; `benchmarks/README.md`
+extended with Tiers/campaign/SWE-bench-import/Results-interpretation sections; learnings appended to
+`meta/learnings.md` + `meta/learning-compact.md`. Full pytest run at HEAD (`pytest -q -m "not real_llm and not
+swebench"`): **1266 passed**, 7 deselected — zero regressions from this docs-only change (no `src/`/`tests/` files
+touched by this task). See this task's own STATUS.md
+(`meta/tickets/E-Bt4Xk9-complex-benchmark-tiers/T-Dc1Yg7-docs-adr0009-reconcile/STATUS.md`) for the full AC-by-AC
+verification record.

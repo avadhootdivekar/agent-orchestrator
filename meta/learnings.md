@@ -602,3 +602,144 @@ By: agent
 Role: developer
 Date: 2026-07-22
 ---
+
+---
+Learning-ID: LRN-20260723-self-authored-tasks-saturate-under-generous-turn-budgets
+Learning: A self-authored benchmark suite of genuinely longer/harder tasks (multi-file, 30–90 minutes of agent
+work, misleading-symptom bugs, held-out grading) can still fail to discriminate between subjects if every subject
+runs at a generous turn/investigation budget — modern agents (bare `claude -p` included) reliably solve
+well-specified, single-repo tasks given enough turns, regardless of how "hard" the task design intends to be. This
+was proven directly: `dev-medium`'s 6 tasks solved 6/6 by ALL of `claude-sonnet`/`claude-opus`/`ao-epic-sonnet`/
+`ao-epic-plus-sonnet` at the `dev-core`-tuned `max_turns=30` default, with genuinely-correct (diff-verified, not
+shallow/gamed) fixes. The same 6 tasks solved only 2/6 (33%) when `max_turns` was capped to 6 in an authoring-time
+diagnostic probe. Two practical implications: (1) if the goal is a solve-RATE discrimination signal at a self-
+authored suite's natural difficulty, the single-agent baselines need a MATERIALLY tighter turn/cost budget than
+whatever a prior, easier suite was tuned for — otherwise the discrimination signal shows up only in
+cost_per_solved/turns/wall-clock, not solve rate; (2) genuine capability discrimination (not just budget-starved
+discrimination) needs an externally-credible, independently-harder suite — SWE-bench Verified real repo issues
+discriminated for real (both bare models failed one real instance; the orchestrated workflow solved it) without
+any turn-budget tightening at all.
+Context: `E-Bt4Xk9-complex-benchmark-tiers` (`T-Md7Vc3` authoring gate + the PLAN medium/large campaigns,
+2026-07-22/23). `dev-medium` campaign: all 4 subjects 6/6 at `max_turns=30` (`benchmarks/results/
+2026-07-22-dev-medium-campaign/campaign.json`); scratchpad-only `max_turns=6` probe: 2/6 (documented in
+`T-Md7Vc3`'s STATUS.md, no committed subject config touched). `swe-verified-mini` large-tier campaign: both
+`claude-sonnet`/`claude-opus` failed `pytest-dev__pytest-10356` ("1-4 hours" labeled difficulty);
+`ao-epic-sonnet` solved it (`benchmarks/results/2026-07-22-swe-verified-mini-*/run.json`).
+By: agent
+Role: developer
+Date: 2026-07-23
+---
+
+---
+Learning-ID: LRN-20260723-orchestration-overhead-shrinks-as-task-duration-grows
+Learning: An orchestrated multi-agent workflow's cost overhead over a bare single-CLI-call baseline (same model)
+shrinks as task duration/real-world difficulty grows, and can flip to a net WIN on the hardest tasks. Measured
+across three tiers on the SAME model (sonnet) and the SAME 2-agent `ao-epic` workflow: trivial spot-fix tasks
+(`dev-core`, 6/6 saturated) — `ao-epic-sonnet` $2.8744 vs bare `claude-sonnet` $1.2148, **+136.6% overhead**;
+genuinely longer multi-file tasks (`dev-medium`, 6/6 saturated) — `ao-epic-sonnet` $4.2324 vs bare $1.9346,
+**+118.8% overhead**; real SWE-bench Verified repo issues (`swe-verified-mini`, 9/10) — `ao-epic-sonnet` $8.1571
+vs bare $7.5931, **+7.4% overhead only** — AND on the single hardest instance in that set
+(`pytest-dev__pytest-10356`), `ao-epic-sonnet` solved what BOTH bare `claude-sonnet` and bare `claude-opus`
+missed, at a cost 18% below bare opus. The mechanism: a fixed per-turn orchestration tax (an extra agent's own
+CLI startup + turn overhead) is a large RELATIVE cost on a task the base model solves in one or two turns anyway,
+but amortizes toward negligible as the task itself grows longer/harder — and on tasks hard enough that the base
+model's first pass can genuinely fail, the second agent's verify/investigate capacity can turn that fixed tax into
+a net solve-rate win instead of pure overhead. Do not judge an orchestration workflow's cost efficiency from a
+trivial/saturated suite alone — the overhead ratio is itself a function of task difficulty, not a fixed property
+of the workflow.
+Context: `E-Bt4Xk9-complex-benchmark-tiers` PLAN Run 1 (`benchmarks/results/2026-07-22-dev-medium-campaign/
+campaign.json`) + PLAN Run 2 (`benchmarks/results/2026-07-22-swe-verified-mini-campaign/campaign.json`), cross-
+checked against `E-9Qk4Zt`'s earlier `dev-core` numbers (`benchmarks/results/2026-07-22-dev-core-*/run.json`,
+already captured in `LRN-20260722-trivial-benchmark-suite-shows-orchestration-cost-not-solve-rate-gain`). Ratios
+computed directly from the three committed `campaign.json`/`run.json` cost figures above.
+By: agent
+Role: developer
+Date: 2026-07-23
+---
+
+---
+Learning-ID: LRN-20260723-benchmark-ao-workflow-subjects-should-consider-max-attempts
+Learning: A benchmark `ao_workflow` subject that runs with the engine's default `max_attempts=1` (no retry) is
+vulnerable to a transient, non-capability harness abort costing a full solve-rate point on an otherwise-real
+capability comparison — indistinguishable in the aggregate solve-rate number from a genuine miss unless someone
+inspects the per-task record. Observed for real: `ao-epic-sonnet`'s one miss out of 10 large-tier instances
+(`django__django-11138`) was a 4.5-second `missing_outputs` abort on the `implement` task (1 turn, empty patch) —
+not a capability failure. A same-instance diagnostic re-run (uncommitted, scratch dir) solved it cleanly 1/1 at
+$1.1492/252s. The engine already supports `max_attempts>1` retries; this is a benchmark-SUBJECT config choice
+(`ao-epic-sonnet.json`'s own workflow/agents templates, or the `ao run --max-attempts` flag the subject threads
+through), not an engine gap. The trade-off to weigh before defaulting every benchmark subject to `max_attempts>1`:
+retries cost extra $/tokens and change what's being compared (a single-attempt bare-CLI baseline is not directly
+cost-comparable to a multi-attempt orchestrated subject unless the baseline gets the same retry allowance) — so
+this is a considered subject-authoring decision, not an unconditional "always set max_attempts>1" rule.
+Context: `E-Bt4Xk9-complex-benchmark-tiers` PLAN Run 2 (large tier). `benchmarks/results/
+2026-07-22-swe-verified-mini-ao-epic-sonnet/run.json`'s `django__django-11138` task record:
+`subject_status="failed"`, `cost_usd=0.0933876`, `wall_clock_seconds=4.520933910011081`. Diagnostic re-run
+(reported by the orchestrator, not committed to `benchmarks/results/`): solved 1/1, $1.1492, 252s.
+By: agent
+Role: developer
+Date: 2026-07-23
+---
+
+---
+Learning-ID: LRN-20260723-swebench-keep-images-env-var-saves-repull-time-across-subjects
+Learning: A multi-subject campaign against the SAME SWE-bench-sourced suite re-pulls each instance's ~1 GB Docker
+image once PER SUBJECT if per-instance cleanup (`docker rmi` + build-cache prune after every graded instance,
+the disk-safety default) stays on — for a 10-instance/3-subject campaign, that is up to 2 avoidable re-pulls ×
+~4 minutes × 10 instances (~80 minutes) of pure network/pull wall-clock. Setting `AO_BENCH_SWEBENCH_KEEP_IMAGES=1`
+for the whole campaign (not per-run) keeps pulled images resident across all subjects instead, trading ~10 GB of
+retained disk (bounded by instance count × ~1 GB/image) for that ~80 minutes saved — well within a ~37 GB disk
+budget for a 10-instance suite, but a real per-suite-size tradeoff to recompute if N grows. Cleanup at the end is
+then a manual step (`docker rmi`/`docker image prune`), not automatic per-instance.
+Context: `E-Bt4Xk9-complex-benchmark-tiers` `T-Sg6Jf2` (grader) forward note, applied by `T-Cm9Tb4`'s
+`make bench-large` recipe (`AO_BENCH_SWEBENCH_KEEP_IMAGES=1` exported for the whole invocation) and confirmed
+practical by the real PLAN Run 2 large-tier campaign (`benchmarks/results/2026-07-22-swe-verified-mini-campaign/`,
+~45.5 min wall-clock for all 3 subjects against 10 instances each — well under the un-cached-repull estimate).
+By: agent
+Role: developer
+Date: 2026-07-23
+---
+
+---
+Learning-ID: LRN-20260723-git-diff-misses-untracked-files
+Learning: Stage everything (`git add -A`) before extracting a patch via `git diff HEAD` — untracked new files are silently omitted, corrupting downstream grading or patch application with no error.
+Context: Reviewer C1 on SweBenchGrader: an agent fix that adds a new file would grade resolved=False silently.
+By: agent
+Role: agent
+Date: 2026-07-23
+---
+
+---
+Learning-ID: LRN-20260723-threading-locks-dont-serialize-processes
+Learning: A threading.Lock serializes only within one process; disk/Docker safety guards for concurrently-invokable CLIs need OS file locks (fcntl.flock) or PID lockfiles.
+Context: Reviewer W1: two parallel `ao-bench run` shells defeat the Docker-eval serialization the disk-safety design assumes.
+By: agent
+Role: agent
+Date: 2026-07-23
+---
+
+---
+Learning-ID: LRN-20260723-config-defaults-must-preserve-legacy-noflag-behavior
+Learning: When wiring config-file-derived defaults into an existing CLI, preserve legacy no-flag semantics — resolving small-tier's $5 cap silently changed `ao-bench run` from unlimited to capped.
+Context: Reviewer W2 on tier defaults; harmless at today's costs but would truncate a pricier rerun mid-suite.
+By: agent
+Role: agent
+Date: 2026-07-23
+---
+
+---
+Learning-ID: LRN-20260723-per-task-turn-budgets-multiply-workflow-allowance
+Learning: max_turns applies per DAG task, so an N-agent workflow gets N× the total turn budget of a bare single-call subject — disclose the asymmetry and normalize comparisons on cost.
+Context: Reviewer methodology note on ao-epic-plus; medium-tier data showed the extra budget bought nothing at saturation.
+By: agent
+Role: agent
+Date: 2026-07-23
+---
+
+---
+Learning-ID: LRN-20260723-session-limit-kills-subagents-midwrite
+Learning: Claude session usage limits kill subagents mid-task with uncommitted multi-file work; diff-inspect the partial state before redoing — the work may be nearly complete and salvageable.
+Context: T-Dc1Yg7 docs agent died at the session limit after substantially editing all five owned files.
+By: agent
+Role: agent
+Date: 2026-07-23
+---

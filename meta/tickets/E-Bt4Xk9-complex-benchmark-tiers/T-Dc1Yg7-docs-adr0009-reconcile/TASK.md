@@ -6,7 +6,7 @@
 - Owner: developer agent (docs)
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: Draft
+- Status: Done
 - Estimate: 1.5 days
 - Note: **This is the mandatory post-implementation docs-refresh ticket** — mark complete only after confirming docs against the implemented code.
 
