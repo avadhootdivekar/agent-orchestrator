@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → developer/tester agents (delivery)
 - Created: 2026-07-22
 - Last Updated: 2026-07-22
-- Status: **In Progress** (10/11 delivered; PLAN Run 1 medium done $17.05 all-6/6-saturated; large campaign executing; T-Dc1Yg7 docs pending)
+- Status: **Done** (11/11 delivered 2026-07-23; both funded PLAN campaigns executed and committed; reviewer verdict request-changes -> C1 fixed + W2 visibility fix same-day in `154f57e`, W1 deferred-documented, W3/W4 disclosed in README)
 - Predecessor: `E-9Qk4Zt-agent-benchmark-harness` (MVP harness, Done 2026-07-22)
 
 ## Summary
@@ -100,7 +100,7 @@ T-Tr1Km8 1.5(12) · T-Bg2Wq4 2.5(20) · T-Pl3Rx7 2.5(20) · T-Wp4Nz5 2.0(16) · 
 - [x] `T-Ep8Lq6-ao-epic-plus-subject` (1.5d) — 4-agent plan→implement→review→fix `ao_workflow` subject. **Deps: none** (all new files). Parallel-safe with: everything.
 - [x] `T-Cm9Tb4-campaign-tier-recipes` (2.0d) — `ao-bench campaign` (whole-run cap) + `make bench-medium/bench-large` + `--enable-xlarge`. **Deps: T-Bg2Wq4, T-Pl3Rx7, T-Tr1Km8.**
 - [x] `T-Ts0Xn5-tier-budget-parallel-tests` (2.5d) — tests for tier/budget/parallel/provider/campaign; swebench tests behind marker+extra; CI stays network-free. **Deps: T-Cm9Tb4 (+ all features it tests).**
-- [ ] `T-Dc1Yg7-docs-adr0009-reconcile` (1.5d) — README/HLD/ADR-0009→Accepted/learnings, reconciled to as-built (**post-implementation docs-refresh, mandatory**). **Deps: all.**
+- [x] `T-Dc1Yg7-docs-adr0009-reconcile` (1.5d) — README/HLD/ADR-0009→Accepted/learnings, reconciled to as-built (**post-implementation docs-refresh, mandatory**). **Deps: all.**
 
 ### Parallel-safe execution waves (for parallel subagents — file-ownership is disjoint within a wave)
 - **Wave A:** T-Tr1Km8, T-Ep8Lq6.

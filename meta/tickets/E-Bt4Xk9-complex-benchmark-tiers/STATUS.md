@@ -2,10 +2,24 @@
 
 - ID: `E-Bt4Xk9-complex-benchmark-tiers`
 - Updated At: 2026-07-22
-- State: **In Progress** (6/11 delivered; T-Md7Vc3 + T-Sg6Jf2 in flight; T-Cm9Tb4/T-Ts0Xn5/T-Dc1Yg7 queued)
+- State: **Done** (11/11 delivered 2026-07-23)
 - Owner: architect agent (design) → developer/tester agents (delivery)
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-07-23 · Comment: **Epic closed 11/11.** Waves C-E:
+  `T-Md7Vc3` dev-medium (`74c5729`, R4 saturation finding), `T-Sg6Jf2` swebench grader
+  (`7e42023`, real gold-grade 98.3s), `T-Cm9Tb4` campaign+recipes (`b3315d2`), `T-Ts0Xn5`
+  97% bench coverage (`7a1de11`), `T-Dc1Yg7` docs/ADR/learnings (`4c2ebb5`; agent killed by
+  session limit pre-report, output verified+completed by orchestrator). PLAN Run 1 medium
+  campaign `3cd484c`: all 4 subjects 6/6, $17.05 (saturated -> cost/latency signal). PLAN Run 2
+  large campaign `f71ed87`: all 3 subjects 9/10, $25.66, 45.5 min — ao-epic-sonnet SOLVED
+  pytest-dev__pytest-10356 which BOTH bare sonnet and opus failed, at +7% cost vs bare sonnet;
+  its one miss was a 4.5s transient abort (diagnostic re-run solved 1/1, uncommitted). Full-epic
+  reviewer: request-changes -> C1 (patch extraction dropped untracked files; fixed + regression
+  test, committed verdicts audited unaffected) and W2 (silent tier cap; now echoed) fixed
+  same-day in `154f57e`; W1 cross-process lock deferred-documented; W3 medium-null-discrimination
+  and W4 django-skew disclosed in README caveats. Final: 1267 passed/3 skipped/4 deselected,
+  bench coverage 97%. Total epic LLM spend ≈$48.6 of $800 envelope.
 - By: Claude · Role: manager · Date: 2026-07-22 · Comment: **Waves A+B done, C mostly done — 6/11
   delivered, each independently re-verified then committed**: `T-Tr1Km8` tier model (`c66ae68`),
   `T-Ep8Lq6` ao-epic-plus 4-agent subject incl. $0.25 real haiku smoke solved (`41485f1`),
