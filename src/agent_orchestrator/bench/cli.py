@@ -230,6 +230,13 @@ def run(
             if cost_budget_usd is not None
             else tier_config.cost_budget_usd_per_subject
         )
+        if cost_budget_usd is None:
+            # Reviewer W2: a tier-derived cap applies even with no flag (a behavior
+            # change vs the pre-tier, uncapped CLI) -- say so up front, never silently.
+            typer.echo(
+                f"Cost cap: ${effective_cost_budget_usd:.2f}/subject"
+                f" (tier '{loaded_suite.tier}' default; override with --cost-budget-usd)"
+            )
         # Same CLI > tier-default > builtin-fallback precedence, via the single
         # `resolve_effective` helper bench/tiers.py already provides (T-Pl3Rx7's own
         # forward note: reuse it, don't re-derive).

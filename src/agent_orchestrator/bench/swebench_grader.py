@@ -204,12 +204,25 @@ def _instance_id_from_repo_dir(repo_dir: str) -> str:
 
 
 def _extract_patch(repo_dir: str) -> tuple[str, str | None]:
-    """`git -C repo_dir diff HEAD` (module docstring: deliberate deviation from a bare
-    `git diff`, to also capture staged changes). Returns `(patch_text, error)` --
-    `error` is `None` on success (including a genuinely empty diff -- an empty PATCH is
-    not a git failure, the caller distinguishes the two). Never raises.
+    """Stage everything, then `git -C repo_dir diff HEAD`. Staging first (`add -A`)
+    is load-bearing: `git diff HEAD` never reports *untracked* files, so an agent fix
+    that creates a new file would otherwise be silently absent from the graded patch
+    (reviewer finding C1 -- a false negative indistinguishable from a wrong fix).
+    `add -A` respects `.git/info/exclude`, so the provider-registered INSTRUCTION.md
+    exclusion still holds. Returns `(patch_text, error)` -- `error` is `None` on
+    success (including a genuinely empty diff -- an empty PATCH is not a git failure,
+    the caller distinguishes the two). Never raises.
     """
     try:
+        add_proc = subprocess.run(  # noqa: S603 -- fixed argv, no shell, bounded timeout
+            ["git", "-C", repo_dir, "add", "-A"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_DIFF_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if add_proc.returncode != 0:
+            return "", f"git add -A exited {add_proc.returncode}: {add_proc.stderr[-500:]}"
         proc = subprocess.run(  # noqa: S603 -- fixed argv, no shell, bounded timeout
             ["git", "-C", repo_dir, "diff", "HEAD"],
             capture_output=True,

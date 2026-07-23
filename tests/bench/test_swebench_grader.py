@@ -97,6 +97,11 @@ def _make_repo(
     (repo_dir / "app.py").write_text(baseline)
     _git(["add", "."], cwd=repo_dir)
     _git(["commit", "-m", "base"], cwd=repo_dir)
+    # Mirror swebench_provider's real workspace setup: INSTRUCTION.md is registered in
+    # .git/info/exclude, which `git add -A` respects (C1 fix stages untracked files).
+    exclude = repo_dir / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text("INSTRUCTION.md\n")
     return repo_dir, capture_dir
 
 
@@ -282,6 +287,20 @@ def test_extract_patch_excludes_untracked_instruction_md(tmp_path: Path) -> None
 
     assert err is None
     assert "INSTRUCTION.md" not in patch
+
+
+def test_extract_patch_captures_untracked_new_file(tmp_path: Path) -> None:
+    """Reviewer C1 regression: an agent fix that CREATES a file must appear in the
+    graded patch -- `git diff HEAD` alone omits untracked files; `add -A` first fixes it.
+    """
+    repo_dir, _ = _make_repo(tmp_path, "some__instance-6")
+    (repo_dir / "new_module.py").write_text("def helper():\n    return 42\n")
+
+    patch, err = _extract_patch(str(repo_dir))
+
+    assert err is None
+    assert "new_module.py" in patch
+    assert "+    return 42" in patch
 
 
 def test_extract_patch_no_changes_is_empty_not_an_error(tmp_path: Path) -> None:
