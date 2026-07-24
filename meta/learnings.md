@@ -743,3 +743,57 @@ By: agent
 Role: agent
 Date: 2026-07-23
 ---
+
+---
+Learning-ID: LRN-20260724-zombie-pid-defeats-liveness-probe
+Learning: `os.kill(pid, 0)` succeeds for an exited-but-unreaped child, so PID-probe liveness reports finished subprocesses as alive forever; retain the `Popen` and `poll()` it to reap.
+Context: Broke cancel and `is_running` in the dashboard's ProcessSupervisor; caught only by a test asserting a noop child stops being "running".
+By: agent
+Role: agent
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260724-spa-catchall-shadows-api-404
+Learning: A FastAPI SPA fallback `@app.get("/{full_path:path}")` also matches unknown `/api/*` paths, returning index.html with 200 instead of a JSON 404; exclude the API prefix inside the handler.
+Context: A typo'd or removed endpoint returned HTML, turning a clear client error into a JSON-parse hunt.
+By: agent
+Role: agent
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260724-general-instructions-additive-not-precedence
+Learning: `general_instructions` merges as a UNION across config/env/CLI/workflow — deliberately NOT the usual CLI>env>config chain, because a precedence chain lets one `--general-instruction` silently drop the workspace's house rules.
+Context: ADR-0010 D1. Qualifies LRN-20260710 three-layer precedence; do not "fix" this to match other settings.
+By: agent
+Role: agent
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260724-runstate-save-restamps-updated-at
+Learning: `RunStateStore.save()` overwrites `state.updated_at` from its own clock, so a test fixture that sets `updated_at` has it silently discarded; inject `clock=lambda: pinned` for deterministic wall-clock assertions.
+Context: Wall-time stat tests read "now minus fixture start" until the clock was pinned.
+By: agent
+Role: agent
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260724-reposet-file-key-is-repo-sets
+Learning: The reposet FILE's top-level key is `repo_sets`, even though the CLI flag is `--reposets` and the config-file key is `reposets`; writing `reposets` in the file fails with "Additional properties are not allowed".
+Context: Cost a full test-suite round-trip when hand-writing fixture specs.
+By: agent
+Role: agent
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260724-vitest-config-must-be-separate-file
+Learning: Under Vite 8 / Vitest 4 the `test` key is no longer part of Vite's config type, so a `test:` block in vite.config.ts fails `tsc -b`; put it in a separate vitest.config.ts via `mergeConfig`.
+Context: ui/ frontend typecheck failed on an otherwise-standard colocated config.
+By: agent
+Role: agent
+Date: 2026-07-24
+---

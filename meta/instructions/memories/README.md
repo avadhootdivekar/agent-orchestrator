@@ -247,3 +247,43 @@ type: pitfall
 ---
 
 `git diff HEAD` never shows untracked files, so a patch extracted without staging silently drops newly-created files. **Why**: an agent's fix that adds a file (test fixture, new module) produces a patch that applies/grades as if the file never existed — a silent false negative. **Apply**: in any patch-extraction path (SweBenchGrader `_extract_patch`, future diff-based tooling), run `git add -A` (repo excludes still respected) before `git diff HEAD`, and test the new-untracked-file case explicitly.
+
+---
+name: general-instructions-are-additive-not-precedence
+description: general_instructions unions across config/env/CLI/workflow — the one deliberate exception to the CLI>env>config chain; do not "fix" it
+type: decision
+---
+
+`general_instructions` merges as a **UNION** across `.ao/config.yaml`, `AO_GENERAL_INSTRUCTIONS`, `--general-instruction`, and the workflow spec — deliberately NOT the `CLI > env > config > default` precedence every other runtime setting uses. **Why**: the contract is "define once per workspace, applied to every task regardless"; under a precedence chain a single `--general-instruction extra.md` would *replace* the config layer and silently drop the workspace's house rules — the opposite of the requirement. Replacement is right for a *value* (one model, one effort); union is right for a *set of rules that all apply*. **Apply**: when touching `cli.resolve_general_instructions` or reviewing it against the three-layer convention, treat the union as intentional (ADR-0010 D1), not as an inconsistency to normalize. There is deliberately no per-run suppression; if that is ever needed it must be an explicit `--no-general-instructions` opt-out, never a silent side effect.
+
+---
+name: zombie-pid-defeats-liveness-probe
+description: os.kill(pid, 0) succeeds on an unreaped exited child, so PID-probe liveness reports finished subprocesses as alive forever
+type: pitfall
+---
+
+An exited child stays a **zombie** — and therefore still signalable — until its parent reaps it, so `os.kill(pid, 0)` returns success indefinitely. **Why**: this silently breaks any "is my subprocess still running" check built on a bare PID probe; in `ui/processes.py` it made `is_running` always true and `cancel` refuse to act on finished runs. **Apply**: for a process THIS instance spawned, retain the `Popen` and use `poll()` (which reaps and yields the exit code) — see `ProcessSupervisor._alive`. Reserve the bare `_pid_alive` probe for PIDs inherited from a previous process (already reparented to init, so reaped by it). After SIGKILL, `wait()` the child too.
+
+---
+name: spa-catchall-shadows-api-404
+description: A FastAPI SPA fallback route also matches unknown /api/* paths, returning index.html 200 instead of a JSON 404
+type: pitfall
+---
+
+`@app.get("/{full_path:path}")` registered for SPA deep-link fallback matches **every** unmatched path, including `/api/*`. **Why**: a typo'd, renamed, or removed endpoint then returns HTML with status 200 instead of a 404, turning an obvious client error into a "why is my JSON parse failing" hunt. **Apply**: in `ui/app.py`'s `spa_fallback`, unknown paths under `API_PREFIX` raise `HTTPException(404)` before the static-file lookup. Keep the integration test that asserts `/api/does-not-exist` is 404 — it is the only thing pinning this.
+
+---
+name: runstate-save-restamps-updated-at
+description: RunStateStore.save() overwrites state.updated_at from its own clock; pin the clock in fixtures needing deterministic timings
+type: pitfall
+---
+
+`RunStateStore.save()` sets `state.updated_at = self._clock().isoformat()` before writing. **Why**: a test fixture that constructs a `RunState` with a chosen `updated_at` has it silently discarded, so anything derived from it (wall-clock span, "actual vs wall" stats) becomes "now minus fixture start" — nondeterministic and usually wrong. **Apply**: build run fixtures through the real store (so `status.json` is derived the same way production does) but inject `RunStateStore(ws, store, clock=lambda: pinned)`. Only bypass the store with a direct `state.json` write for states the store could never produce (e.g. a deliberately corrupt timestamp) — see `tests/ui/conftest.py`'s `write_run` / `write_run_raw`.
+
+---
+name: reposet-file-key-is-repo-sets
+description: The reposet file's top-level key is repo_sets, though the CLI flag is --reposets and the config key is reposets
+type: convention
+---
+
+Three spellings coexist: the CLI flag is `--reposets`, the `.ao/config.yaml` key is `reposets`, but the reposet FILE's own top-level key is **`repo_sets`** (underscore). **Why**: `specs/reposet.schema.json` sets `additionalProperties: false`, so writing `reposets` inside the file fails with a non-obvious "Additional properties are not allowed ('reposets' was unexpected)" that reads like a flag problem rather than a key-name problem. **Apply**: when hand-writing reposet fixtures or specs, copy the shape from `specs/examples/reposet.json` rather than inferring the key from the flag name.
