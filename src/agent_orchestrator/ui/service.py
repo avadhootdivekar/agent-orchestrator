@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -21,6 +22,7 @@ import yaml
 
 from ..models import RunState
 from ..project_config import ProjectConfig, find_project_config, load_project_config
+from ..templates import TemplateError, discover_templates, instantiate, load_template
 from .files import FileBrowser, Root
 from .processes import LaunchError, LaunchRecord, ProcessSupervisor
 from .runs import RunNotFoundError, RunRepository
@@ -49,6 +51,19 @@ DISCOVERY_SKIP_DIRS = frozenset(
 
 # Bound on how deep workflow discovery walks below each search root.
 DISCOVERY_MAX_DEPTH = 4
+
+# Distinct `DashboardError` message prefixes `create_instance()` uses so `app.py` can map
+# status codes unambiguously. A naive "is this message about a missing template" substring
+# check on the underlying `TemplateError` text would collide: `templates._render` raises
+# "unknown template variable '...' in ..." for a rendering failure (400), which contains
+# "unknown template" as a substring of `templates.load_template`'s own "unknown template
+# 'x': ..." (404) text. Prefixing deliberately here, at the one call site that knows which
+# case it is, sidesteps that collision entirely.
+TEMPLATE_NOT_FOUND_PREFIX = "template not found"
+PROMPT_CONFLICT_PREFIX = "prompt conflict"
+
+# Non-alnum run -> single hyphen, for deriving a slug from a free-text prompt (HLD §2.6).
+_SLUG_DERIVE_RE = re.compile(r"[^a-z0-9]+")
 
 
 class DashboardError(Exception):
@@ -111,6 +126,27 @@ def _load_workflow_info(path: Path) -> WorkflowInfo | None:
         prompt_path=data.get("prompt_path"),
         general_instructions=[str(g) for g in gi] if isinstance(gi, list) else [],
     )
+
+
+def _derive_slug_from_prompt(prompt: str | None) -> str | None:
+    """Kebab-case slug from the first non-empty line of *prompt*, or ``None`` if there is
+    no usable text to derive one from (HLD §2.6: "derive a slug from the first prompt
+    line").
+
+    Shaped to satisfy the bare-slug pattern ``templates._SLUG_RE`` requires
+    (``^[a-z0-9][a-z0-9-]*$``): lowercased, runs of non-alnum characters collapsed to a
+    single hyphen, leading/trailing hyphens stripped. A line with no alnum characters at
+    all (e.g. "!!!") yields ``None`` rather than an empty string, so the caller's
+    "missing slug" error fires instead of `instantiate()` rejecting an empty slug less
+    clearly.
+    """
+    if not prompt:
+        return None
+    for line in prompt.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return _SLUG_DERIVE_RE.sub("-", stripped.lower()).strip("-") or None
+    return None
 
 
 class DashboardService:
@@ -249,6 +285,86 @@ class DashboardService:
                 if name.endswith(WORKFLOW_SUFFIXES):
                     out.append(current / name)
         return out
+
+    # -- templates (E-Tpl3x9, HLD §2.6) -----------------------------------------
+
+    def list_templates(self) -> list[dict]:
+        """Discovered templates (built-in + workspace-registered) for the template picker."""
+        try:
+            infos = discover_templates(self.workspace_root, self._config)
+        except TemplateError as exc:
+            raise DashboardError(str(exc)) from exc
+        return [asdict(info) for info in infos]
+
+    def create_instance(
+        self,
+        name: str,
+        slug_or_id: str | None = None,
+        params: dict[str, str] | None = None,
+        prompt: str | None = None,
+        start: bool = False,
+        options: dict | None = None,
+    ) -> dict:
+        """Scaffold (and optionally launch) a run instance from template *name* (HLD §2.6).
+
+        Mirrors ``ao new`` (``cli.py``) but resolves the slug from the prompt's first line
+        when the caller doesn't supply one, and — when *start* is True — launches through
+        the same :class:`ProcessSupervisor` path :meth:`start_run` uses. ``instantiate()``
+        below already writes *prompt* into the instance's ``prompt.md``, so *prompt* is
+        deliberately NOT forwarded to ``launch_run`` — that would write it a second time,
+        through a separate launch-scoped prompt file, over a prompt.md the caller may have
+        already asked to keep (`keep_existing`).
+        """
+        try:
+            template = load_template(name, self.workspace_root, self._config)
+        except TemplateError as exc:
+            raise DashboardError(f"{TEMPLATE_NOT_FOUND_PREFIX}: {name!r} ({exc})") from exc
+
+        resolved_slug = (slug_or_id or "").strip() or _derive_slug_from_prompt(prompt)
+        if not resolved_slug:
+            raise DashboardError(
+                "no slug_or_id given and no prompt to derive one from — provide at least one"
+            )
+
+        prompt_text = prompt if prompt and prompt.strip() else None
+
+        try:
+            result = instantiate(
+                template,
+                self.workspace_root,
+                slug_or_id=resolved_slug,
+                params=params or {},
+                prompt_text=prompt_text,
+            )
+        except TemplateError as exc:
+            # `instantiate()` already raises its prompt-conflict TemplateError with a
+            # message starting with `PROMPT_CONFLICT_PREFIX` (see `templates._write_prompt_text`),
+            # so no re-prefixing is needed here — passed through as-is.
+            raise DashboardError(str(exc)) from exc
+
+        workflow_info = _load_workflow_info(Path(result.workflow_path))
+        if workflow_info is None:
+            raise DashboardError(f"rendered workflow is not a valid spec: {result.workflow_path}")
+
+        launch: dict | None = None
+        if start:
+            try:
+                record = self._supervisor.launch_run(
+                    workflow_path=result.workflow_path,
+                    reposets=self._config.reposets if self._config else None,
+                    agents=self._config.agents if self._config else None,
+                    options=options or {},
+                )
+            except LaunchError as exc:
+                raise DashboardError(str(exc)) from exc
+            launch = record.to_dict()
+
+        return {
+            "instance_dir": result.instance_dir,
+            "workflow_path": result.workflow_path,
+            "workflow": asdict(workflow_info),
+            "launch": launch,
+        }
 
     # -- runs ------------------------------------------------------------------
 
@@ -433,6 +549,8 @@ class DashboardService:
 
 
 __all__ = [
+    "PROMPT_CONFLICT_PREFIX",
+    "TEMPLATE_NOT_FOUND_PREFIX",
     "DashboardError",
     "DashboardService",
     "LaunchRecord",

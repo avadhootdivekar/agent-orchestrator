@@ -25,7 +25,12 @@ from pydantic import BaseModel, Field
 
 from .._version import get_version_string
 from .files import PathNotAllowedError, PathNotFoundError
-from .service import DashboardError, DashboardService
+from .service import (
+    PROMPT_CONFLICT_PREFIX,
+    TEMPLATE_NOT_FOUND_PREFIX,
+    DashboardError,
+    DashboardService,
+)
 
 # Where the built frontend lands. Populated by `npm run build` in ui/ (see
 # ui/vite.config.ts, whose outDir points here) and shipped inside the wheel.
@@ -45,6 +50,16 @@ class StartRunRequest(BaseModel):
 class ResumeRunRequest(BaseModel):
     """Body for ``POST /api/runs/{run_id}/resume`` (FR-R2)."""
 
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateInstanceRequest(BaseModel):
+    """Body for ``POST /api/templates/{name}/instances`` (HLD §2.6)."""
+
+    slug_or_id: str | None = None
+    params: dict[str, str] = Field(default_factory=dict)
+    prompt: str | None = None
+    start: bool = False
     options: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -112,6 +127,36 @@ def create_app(service: DashboardService) -> FastAPI:
         from dataclasses import asdict
 
         return [asdict(w) for w in service.list_workflows()]
+
+    # -- templates (E-Tpl3x9, HLD §2.6) -----------------------------------------
+
+    @app.get(f"{API_PREFIX}/templates")
+    def list_templates() -> list[dict]:
+        try:
+            return service.list_templates()
+        except DashboardError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post(f"{API_PREFIX}/templates/{{name}}/instances", status_code=201)
+    def create_instance(name: str, body: CreateInstanceRequest) -> dict:
+        try:
+            return service.create_instance(
+                name,
+                slug_or_id=body.slug_or_id,
+                params=body.params,
+                prompt=body.prompt,
+                start=body.start,
+                options=body.options,
+            )
+        except DashboardError as exc:
+            message = str(exc)
+            if message.startswith(TEMPLATE_NOT_FOUND_PREFIX):
+                status = 404
+            elif message.startswith(PROMPT_CONFLICT_PREFIX):
+                status = 409
+            else:
+                status = 400
+            raise HTTPException(status_code=status, detail=message) from exc
 
     # -- runs ------------------------------------------------------------------
 

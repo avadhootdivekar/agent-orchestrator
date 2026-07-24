@@ -46,10 +46,10 @@
 
 ## Task List
 - [x] `T-Tc0r3a-core-templates` — templates module + ProjectConfig + `ao new`/`ao templates` + tests
-- [ ] `T-Tu1api-ui-endpoints` — DashboardService + FastAPI template endpoints + tests
+- [x] `T-Tu1api-ui-endpoints` — DashboardService + FastAPI template endpoints + tests
 - [x] `T-Tf2end-frontend-template-form` — New-run "From template" mode + vitest
 - [x] `T-Tb3rtr-builtin-routed-runner` — finplan-free built-in template + validate e2e
-- [ ] `T-Tw4fpl-finplan-wiring` — ao-runner-finplan template/config/script delegation
+- [x] `T-Tw4fpl-finplan-wiring` — ao-runner-finplan template/config/script delegation
 - [ ] `T-Te5rev-e2e-review` — cross-cutting e2e (scaffold→run with fakes), review pass, docs
 
 ## Risks and Dependencies

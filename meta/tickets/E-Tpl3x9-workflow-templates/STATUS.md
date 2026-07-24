@@ -7,10 +7,10 @@
 | Task | Status |
 |------|--------|
 | T-Tc0r3a-core-templates | Done |
-| T-Tu1api-ui-endpoints | To Do |
+| T-Tu1api-ui-endpoints | Done |
 | T-Tf2end-frontend-template-form | Done |
 | T-Tb3rtr-builtin-routed-runner | Done |
-| T-Tw4fpl-finplan-wiring | To Do |
+| T-Tw4fpl-finplan-wiring | Done |
 | T-Te5rev-e2e-review | To Do |
 
 ## Comments
@@ -37,3 +37,30 @@
   skipped/0 failed; flagged one compatibility decision (`when:` accepts both the
   HLD-documented `params.<name>` form and the bare `<name>` form the built-in template
   actually uses) — see task STATUS.md for full evidence and all flagged judgment calls.
+- By: claude · Role: developer · Date: 2026-07-24 · Comment: T-Tw4fpl-finplan-wiring
+  done — sibling `ao-runner-finplan` repo wired per HLD §2.9 (no engine-repo code
+  touched): `workflows/epic-runner/template/` (manifest + 3 `.tmpl` files),
+  `.ao/config.yaml` `templates:` registration, `new-epic-run.sh` slimmed 729→295 lines to
+  delegate scaffolding to `ao new epic-runner` behind a new `require_template_support`
+  probe, `README.md` updated. Verified live against the real `.venv/bin/ao`: `ao
+  templates` lists `epic-runner [workspace]` + `routed-runner [builtin]` side by side;
+  scaffold→validate OK; workflow.json/breakdown-contract.md/prompt.md diffed against a
+  replay of the original (pre-edit) script generator — only delta is the new
+  `prompt_path` field (contract/prompt files are exact byte matches); idempotent
+  re-scaffold keeps an edited prompt.md; `--type bug` writes/clears `forced-type.txt`
+  correctly; throwaway run dir deleted after. Flagged two judgment calls (the `.ao/
+  config.yaml` `templates:` path needed a `../` prefix the task text omitted, since
+  entries anchor to `.ao/`'s own directory same as `agents:`/`reposets:`; and the
+  `workflow.json`'s `name` field was kept literally as `"routed-runner: {{ id }}"` to
+  match the original script's actual (seemingly leftover) literal text) — see task
+  STATUS.md for full evidence and rationale.
+- By: claude · Role: developer · Date: 2026-07-24 · Comment: T-Tu1api-ui-endpoints done —
+  `DashboardService.list_templates`/`create_instance` + `GET /api/templates` +
+  `POST /api/templates/{name}/instances` shipped per HLD §2.6, thin-adapter split
+  preserved. 23 new tests (service-level + FastAPI `TestClient`); full suite 1634
+  passed/7 skipped/0 failed (confirmed +23 over the 1611/7/0 baseline with the new test
+  file excluded — no regressions). Flagged a real message-collision risk between two
+  different `TemplateError`s that both contain the substring "unknown template" (one is
+  the true 404 case, the other a 400 rendering failure) and fixed it with a dedicated,
+  non-colliding `TEMPLATE_NOT_FOUND_PREFIX` constant; see task STATUS.md for full
+  evidence and all flagged judgment calls.
