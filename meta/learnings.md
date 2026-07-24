@@ -797,3 +797,21 @@ By: agent
 Role: agent
 Date: 2026-07-24
 ---
+
+---
+Learning-ID: LRN-20260724-fake-executor-clobbers-declared-outputs
+Learning: `FakeExecutor` unconditionally writes stub content to every DECLARED output path, so pre-seeding a router's `route-verdict.json` (a declared output of `classify`) cannot survive a fake run — routed workflows can never COMPLETE under fake executors. The finplan "pre-seed" dry-run technique works only for `task_manifest_path` files, which are not declared outputs. Cover run-to-completion e2e with a non-routed fixture template instead, and assert dispatch (not completion) for routed DAGs.
+Context: Discovered while writing the builtin routed-runner e2e for E-Tpl3x9; an agent initially assumed the pre-seed would work based on the finplan README.
+By: agent
+Role: tester
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260724-template-render-needs-json-escaping-and-real-schema
+Learning: Any `{{ var }}`-substitution into a JSON spec must JSON-escape values (chars only, keep bare numerics raw) AND validate the rendered result against the real WorkflowSpec loader — shallow "has id/tasks" checks let structural injection through. Same lesson for reads: `Path(dir) / rel` silently discards `dir` when `rel` is absolute, so template `source:` fields need absolute-path rejection plus resolve()+is_relative_to containment.
+Context: Two execution-confirmed review BLOCKERs (B1/B2) in the E-Tpl3x9 templates module, fixed same-day; see meta/tickets/E-Tpl3x9-workflow-templates/T-Te5rev-e2e-review/REVIEW.md.
+By: agent
+Role: reviewer
+Date: 2026-07-24
+---
