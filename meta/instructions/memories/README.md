@@ -239,3 +239,11 @@ type: pitfall
 ---
 
 The default `grep` in this environment is **ugrep**, not GNU grep. **Why**: `grep -E 'evaluate_breakers('` fails with `ugrep: error ... mismatched ( )` because `-E` treats a literal `(` as a regex group-open — a silent trap when grepping for function-call patterns (e.g. old-vs-new call-count comparisons). **Apply**: use `grep -F` / `grep -Fc` (fixed-string) for literal call/paren patterns, or backslash-escape the parens; plain-word and normal-regex searches are unaffected.
+
+---
+name: patch-extraction-must-stage-untracked
+description: git diff HEAD omits untracked new files; stage with git add -A before extracting any patch used downstream
+type: pitfall
+---
+
+`git diff HEAD` never shows untracked files, so a patch extracted without staging silently drops newly-created files. **Why**: an agent's fix that adds a file (test fixture, new module) produces a patch that applies/grades as if the file never existed — a silent false negative. **Apply**: in any patch-extraction path (SweBenchGrader `_extract_patch`, future diff-based tooling), run `git add -A` (repo excludes still respected) before `git diff HEAD`, and test the new-untracked-file case explicitly.

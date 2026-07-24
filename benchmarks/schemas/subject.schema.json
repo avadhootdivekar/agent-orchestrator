@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestrator/benchmarks/schemas/subject.schema.json",
+  "title": "Subject",
+  "description": "Declarative subject-under-test spec for ao-bench (design doc §5.2): claude_cli | ao_workflow | fake. All fields are optional except version/id/type -- each subject type uses the subset relevant to it. Payloads (workflow/reposets/agents templates) are referenced by PATH, relative to this file; never inlined.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "type"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Spec schema version, e.g. \"1.0\"."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-_]*$",
+      "description": "Lowercase kebab subject id, unique among committed subjects."
+    },
+    "type": {
+      "type": "string",
+      "description": "Subject type key into SUBJECT_REGISTRY (e.g. \"claude_cli\", \"ao_workflow\", \"fake\"). Closed list enforced by the loader (bench/spec.py KNOWN_SUBJECT_TYPES), not this schema, so new types can be added ahead of registry wiring without a schema edit."
+    },
+    "model": {
+      "type": "string",
+      "description": "Pass-through model id/alias for --model / AO_MODEL."
+    },
+    "permission_mode": {
+      "type": "string",
+      "description": "claude_cli subject: --permission-mode value (e.g. bypassPermissions, acceptEdits)."
+    },
+    "max_turns": { "type": "integer", "minimum": 1 },
+    "prompt_template": {
+      "type": "string",
+      "description": "claude_cli subject: may reference {instruction} {repo} -- paths only, never file contents."
+    },
+    "extra_args": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "workflow": {
+      "type": "string",
+      "description": "ao_workflow subject: PATH to a template workflow.json, relative to this subject.json."
+    },
+    "reposets": {
+      "type": "string",
+      "description": "ao_workflow subject: PATH to a template reposet.json, relative to this subject.json."
+    },
+    "agents": {
+      "type": "string",
+      "description": "ao_workflow subject: PATH to a template agents.json, relative to this subject.json."
+    },
+    "max_parallel": { "type": "integer", "minimum": 1 },
+    "budget_total": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "scripted_effect": {
+      "type": "string",
+      "description": "fake subject (test-only): scripted side-effect to apply to the workspace."
+    },
+    "fake_cost": {
+      "type": "number",
+      "minimum": 0,
+      "description": "fake subject (test-only): cost_usd to report."
+    },
+    "fake_tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "fake subject (test-only): token counts to report.",
+      "properties": {
+        "in": { "type": "integer", "minimum": 0 },
+        "out": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

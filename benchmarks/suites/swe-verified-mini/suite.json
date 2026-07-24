@@ -1,0 +1,172 @@
+{
+  "version": "1.0",
+  "id": "swe-verified-mini",
+  "domain": "software",
+  "description": "Pinned 10-instance subset of princeton-nlp/SWE-bench_Verified (large tier, E-Bt4Xk9 T-Sw5Hd9). Per-instance metadata (repo/base_commit/tests/image) is committed in instances.json; regenerate via `ao-bench import-swebench`.",
+  "tier": "large",
+  "defaults": {
+    "timeout_seconds": 5400
+  },
+  "tasks": [
+    {
+      "id": "django__django-11138",
+      "category": "bugfix",
+      "instruction": "tasks/django__django-11138/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "django__django-11138"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "django",
+        "swebench"
+      ]
+    },
+    {
+      "id": "django__django-11292",
+      "category": "bugfix",
+      "instruction": "tasks/django__django-11292/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "django__django-11292"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "django",
+        "swebench"
+      ]
+    },
+    {
+      "id": "django__django-12304",
+      "category": "bugfix",
+      "instruction": "tasks/django__django-12304/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "django__django-12304"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "django",
+        "swebench"
+      ]
+    },
+    {
+      "id": "django__django-14007",
+      "category": "bugfix",
+      "instruction": "tasks/django__django-14007/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "django__django-14007"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "django",
+        "swebench"
+      ]
+    },
+    {
+      "id": "django__django-14053",
+      "category": "bugfix",
+      "instruction": "tasks/django__django-14053/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "django__django-14053"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "django",
+        "swebench"
+      ]
+    },
+    {
+      "id": "psf__requests-2931",
+      "category": "bugfix",
+      "instruction": "tasks/psf__requests-2931/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "psf__requests-2931"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "requests",
+        "swebench"
+      ]
+    },
+    {
+      "id": "pytest-dev__pytest-10356",
+      "category": "bugfix",
+      "instruction": "tasks/pytest-dev__pytest-10356/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "pytest-dev__pytest-10356"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "pytest",
+        "swebench"
+      ]
+    },
+    {
+      "id": "pytest-dev__pytest-7571",
+      "category": "bugfix",
+      "instruction": "tasks/pytest-dev__pytest-7571/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "pytest-dev__pytest-7571"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "pytest",
+        "swebench"
+      ]
+    },
+    {
+      "id": "sphinx-doc__sphinx-10466",
+      "category": "bugfix",
+      "instruction": "tasks/sphinx-doc__sphinx-10466/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "sphinx-doc__sphinx-10466"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "sphinx",
+        "swebench"
+      ]
+    },
+    {
+      "id": "sympy__sympy-20590",
+      "category": "bugfix",
+      "instruction": "tasks/sympy__sympy-20590/instruction.md",
+      "source": {
+        "type": "swebench",
+        "instance_id": "sympy__sympy-20590"
+      },
+      "grader": {
+        "type": "swebench"
+      },
+      "tags": [
+        "sympy",
+        "swebench"
+      ]
+    }
+  ]
+}

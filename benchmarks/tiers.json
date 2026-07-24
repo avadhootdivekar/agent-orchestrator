@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "tiers": {
+    "small": {
+      "enabled": true,
+      "cost_budget_usd_per_run": 10,
+      "cost_budget_usd_per_subject": 5,
+      "default_max_parallel": 1,
+      "default_timeout_seconds": 900
+    },
+    "medium": {
+      "enabled": true,
+      "cost_budget_usd_per_run": 150,
+      "cost_budget_usd_per_subject": 50,
+      "default_max_parallel": 4,
+      "default_timeout_seconds": 3600
+    },
+    "large": {
+      "enabled": true,
+      "cost_budget_usd_per_run": 800,
+      "cost_budget_usd_per_subject": 100,
+      "default_max_parallel": 3,
+      "default_timeout_seconds": 5400
+    },
+    "xlarge": {
+      "enabled": false,
+      "cost_budget_usd_per_run": 8000,
+      "cost_budget_usd_per_subject": 1000,
+      "default_max_parallel": 4,
+      "default_timeout_seconds": 7200
+    }
+  }
+}

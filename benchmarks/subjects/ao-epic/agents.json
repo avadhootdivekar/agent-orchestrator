@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "agents": {
+    "developer": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
+      "prompt_template": "Act as the developer agent. Read {instruction} in the repo and make the necessary code changes to satisfy it. Run the repo's own test suite (e.g. `uv run pytest -q` or `python3 -m pytest -q`) and confirm it passes before finishing. Do not modify {instruction} or any grading/check script already present in the repo (e.g. check.py, check_tests.py). Write a short report to {outputs} summarizing what you changed and the test result. Repos: {repos}.",
+      "context_window": "isolated",
+      "working_dir": "repo",
+      "effort": "medium"
+    },
+    "tester": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
+      "prompt_template": "Act as the tester agent. Re-run the repo's own test suite (e.g. `uv run pytest -q` or `python3 -m pytest -q`) to confirm the change made by the developer agent (see {inputs}) satisfies {instruction} in the repo. If the tests pass, write a short PASS report to {outputs}. If they fail, make the minimal fix needed to get them passing, re-run the tests, and report what you fixed. Do not modify {instruction} or any grading/check script already present in the repo (e.g. check.py, check_tests.py). Repos: {repos}.",
+      "context_window": "isolated",
+      "working_dir": "repo",
+      "effort": "medium"
+    }
+  }
+}

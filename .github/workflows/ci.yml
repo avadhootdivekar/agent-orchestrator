@@ -18,5 +18,7 @@ jobs:
         run: mypy src
       - name: Run tests
         run: pytest -q --tb=short
+      - name: Run bench tests (deterministic, network-free, no real_llm/swebench)
+        run: pytest tests/bench -q -m "not real_llm and not swebench" --cov=agent_orchestrator.bench --cov-report=term --cov-fail-under=80
       - name: Validate example specs
         run: python -m agent_orchestrator.validate specs/

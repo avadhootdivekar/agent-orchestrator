@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "campaign_id": "2026-07-22-swe-verified-mini-campaign",
+  "suite_id": "swe-verified-mini",
+  "tier": "large",
+  "generated_at": "2026-07-22T18:27:28.668342+00:00",
+  "whole_run_cap_usd": 800.0,
+  "per_subject_cap_usd": 100.0,
+  "max_parallel": 3,
+  "total_spent_usd": 25.6620334,
+  "subjects": [
+    {
+      "subject_id": "claude-sonnet",
+      "subject_path": "benchmarks/subjects/claude-sonnet.json",
+      "status": "completed",
+      "launched": true,
+      "run_dir": "benchmarks/results/2026-07-22-swe-verified-mini-claude-sonnet",
+      "total_cost_usd": 7.5931442,
+      "solved": 9,
+      "total": 10,
+      "solve_rate": 0.9
+    },
+    {
+      "subject_id": "claude-opus",
+      "subject_path": "benchmarks/subjects/claude-opus.json",
+      "status": "completed",
+      "launched": true,
+      "run_dir": "benchmarks/results/2026-07-22-swe-verified-mini-claude-opus",
+      "total_cost_usd": 9.9117765,
+      "solved": 9,
+      "total": 10,
+      "solve_rate": 0.9
+    },
+    {
+      "subject_id": "ao-epic-sonnet",
+      "subject_path": "benchmarks/subjects/ao-epic-sonnet.json",
+      "status": "completed",
+      "launched": true,
+      "run_dir": "benchmarks/results/2026-07-22-swe-verified-mini-ao-epic-sonnet",
+      "total_cost_usd": 8.157112699999999,
+      "solved": 9,
+      "total": 10,
+      "solve_rate": 0.9
+    }
+  ],
+  "comparison_json": "benchmarks/results/2026-07-22-swe-verified-mini-campaign/comparison.json",
+  "comparison_md": "benchmarks/results/2026-07-22-swe-verified-mini-campaign/comparison.md"
+}

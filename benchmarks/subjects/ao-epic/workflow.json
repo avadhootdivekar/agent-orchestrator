@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "id": "ao-epic",
+  "name": "ao-epic bench subject: implement then verify",
+  "repo_set": "bench-set",
+  "triggers": [{ "type": "manual" }],
+  "tasks": [
+    {
+      "id": "implement",
+      "agent": "developer",
+      "instruction": "repo/INSTRUCTION.md",
+      "inputs": [],
+      "outputs": ["output/implement-report.md"],
+      "depends_on": []
+    },
+    {
+      "id": "verify",
+      "agent": "tester",
+      "instruction": "repo/INSTRUCTION.md",
+      "inputs": ["output/implement-report.md"],
+      "outputs": ["output/verify-report.md"],
+      "depends_on": ["implement"]
+    }
+  ]
+}
