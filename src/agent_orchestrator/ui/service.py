@@ -22,7 +22,7 @@ import yaml
 
 from ..models import RunState
 from ..project_config import ProjectConfig, find_project_config, load_project_config
-from ..templates import TemplateError, discover_templates, instantiate, load_template
+from ..templates import TemplateError, discover_templates, instantiate
 from .files import FileBrowser, Root
 from .processes import LaunchError, LaunchRecord, ProcessSupervisor
 from .runs import RunNotFoundError, RunRepository
@@ -314,11 +314,28 @@ class DashboardService:
         deliberately NOT forwarded to ``launch_run`` — that would write it a second time,
         through a separate launch-scoped prompt file, over a prompt.md the caller may have
         already asked to keep (`keep_existing`).
+
+        *name* is resolved ONLY against ``discover_templates()``'s vetted list — the exact
+        same list ``list_templates()``/``GET /api/templates`` returns — never through
+        ``templates.load_template()``'s ad-hoc-filesystem-path branch (M1 fix). That
+        ad-hoc-path affordance (``ao new /path/to/template ...``) is a deliberate CLI-only
+        convenience (HLD §2.1 point 3 / §2.5); the HTTP surface must not inherit it, since
+        that would let an HTTP caller instantiate an unregistered, un-vetted template
+        directory the server process merely happens to be able to read, wider than
+        anything the dashboard UI ever shows.
         """
         try:
-            template = load_template(name, self.workspace_root, self._config)
+            discovered = discover_templates(self.workspace_root, self._config)
         except TemplateError as exc:
-            raise DashboardError(f"{TEMPLATE_NOT_FOUND_PREFIX}: {name!r} ({exc})") from exc
+            raise DashboardError(str(exc)) from exc
+
+        template = next((t for t in discovered if t.name == name), None)
+        if template is None:
+            raise DashboardError(
+                f"{TEMPLATE_NOT_FOUND_PREFIX}: {name!r} (not one of the discovered "
+                "templates; see GET /api/templates -- ad-hoc filesystem paths are a "
+                "CLI-only affordance, not available here)"
+            )
 
         resolved_slug = (slug_or_id or "").strip() or _derive_slug_from_prompt(prompt)
         if not resolved_slug:

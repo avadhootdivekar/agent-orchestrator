@@ -6,7 +6,7 @@
 - Owner: `avadhoot`
 - Created: `2026-07-24`
 - Last Updated: `2026-07-24`
-- Status: `In Progress`
+- Status: `Done`
 
 ## Summary
 - Goal: Generalize ao-runner-finplan's `new-epic-run.sh` into a first-class ao feature:
@@ -50,7 +50,7 @@
 - [x] `T-Tf2end-frontend-template-form` — New-run "From template" mode + vitest
 - [x] `T-Tb3rtr-builtin-routed-runner` — finplan-free built-in template + validate e2e
 - [x] `T-Tw4fpl-finplan-wiring` — ao-runner-finplan template/config/script delegation
-- [ ] `T-Te5rev-e2e-review` — cross-cutting e2e (scaffold→run with fakes), review pass, docs
+- [x] `T-Te5rev-e2e-review` — cross-cutting e2e (scaffold→run with fakes), review pass, docs
 
 ## Risks and Dependencies
 - Builds on `ad/ui-dashboard` (E-Ui7Kq2) — not yet merged to main; PR ordering matters.

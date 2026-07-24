@@ -1,6 +1,6 @@
 # STATUS: E-Tpl3x9-workflow-templates
 
-- Status: `In Progress`
+- Status: `Done`
 - Last Updated: `2026-07-24`
 
 ## Rollup
@@ -11,7 +11,7 @@
 | T-Tf2end-frontend-template-form | Done |
 | T-Tb3rtr-builtin-routed-runner | Done |
 | T-Tw4fpl-finplan-wiring | Done |
-| T-Te5rev-e2e-review | To Do |
+| T-Te5rev-e2e-review | Done |
 
 ## Comments
 - By: avadhoot · Role: user · Date: 2026-07-24 · Comment: Requested generalizing
@@ -64,3 +64,17 @@
   the true 404 case, the other a 400 rendering failure) and fixed it with a dedicated,
   non-colliding `TEMPLATE_NOT_FOUND_PREFIX` constant; see task STATUS.md for full
   evidence and all flagged judgment calls.
+- By: claude · Role: manager · Date: 2026-07-24 · Comment: T-Te5rev-e2e-review done, epic
+  closed. E2e half: 7 tests incl. scaffold→validate→engine-dispatch of the builtin
+  template; empirically established that the FakeExecutor overwrites declared outputs, so
+  a routed run cannot COMPLETE under fakes (route-verdict.json is classify's declared
+  output; the finplan "pre-seed" technique only works for task_manifest_path files) — the
+  run-to-completion gate is instead covered by the core CLI e2e's fixture template
+  (`ao new --run` driven to completed with fakes). Review half: 2 BLOCKERs + 1 MAJOR
+  found, all fixed same-day with regression tests (B1 template-dir source escape, B2 JSON
+  structural injection via params + shallow rendered-workflow validation, M1 dashboard
+  ad-hoc-path fallthrough) — see REVIEW.md "Fixes applied". Final: 1651 passed/7 skipped/
+  0 failed, ruff clean, mypy clean (pre-existing _version.py errors only).
+  Deferred follow-ups (reviewer W1–W3, non-blocking): atomic writes/locking for
+  concurrent instantiate on the same id; bare-slug-that-matches-id-pattern ambiguity;
+  duplicate config parsing in `ao new --run`.

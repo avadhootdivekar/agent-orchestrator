@@ -535,6 +535,143 @@ class TestPathSafety:
                 params={"evil": "../../../../etc/passwd"},
             )
 
+    # -- B1: absolute `source:` rejected at manifest-validation time --------------
+
+    def test_absolute_source_in_files_rejected_at_manifest_time(self, tmp_path: Path) -> None:
+        """review B1: `Path(template_dir) / "/etc/passwd"` silently discards template_dir
+        (absolute right operand wins), so an absolute `files[].source` must be rejected
+        loudly at manifest-validation time, before any file IO happens."""
+        m = dict(_DEFAULT_MANIFEST)
+        m["files"] = [{"source": "/etc/passwd", "target": "workflow.json"}]
+        tdir = _write_template(tmp_path, manifest=m)
+        with pytest.raises(TemplateError, match="absolute"):
+            load_template(str(tdir), str(tmp_path), None)
+
+    def test_absolute_source_in_assets_rejected_at_manifest_time(self, tmp_path: Path) -> None:
+        m = dict(_DEFAULT_MANIFEST)
+        m["assets"] = [{"source": "/etc", "target": "shared/"}]
+        tdir = _write_template(tmp_path, manifest=m)
+        with pytest.raises(TemplateError, match="absolute"):
+            load_template(str(tdir), str(tmp_path), None)
+
+    # -- B1: read-site defense-in-depth beyond the literal '..' segment check -----
+
+    def test_symlink_escape_blocked_at_read_site_for_file_source(self, tmp_path: Path) -> None:
+        """A symlink INSIDE the template dir pointing outside it contains no literal '..'
+        segment at all, so only the read-site resolve()+containment check (`_safe_join`),
+        not the manifest-time string check, can catch it."""
+        outside_dir = tmp_path / "outside-secret"
+        outside_dir.mkdir()
+        (outside_dir / "secret.txt").write_text("TOP SECRET\n")
+
+        m = dict(_DEFAULT_MANIFEST)
+        m["files"] = [
+            {"source": "workflow.json.tmpl", "target": "workflow.json"},
+            {"source": "escape-link/secret.txt", "target": "outputs/leaked.txt"},
+        ]
+        tdir = _write_template(tmp_path, manifest=m)
+        (tdir / "escape-link").symlink_to(outside_dir, target_is_directory=True)
+        info = _load_info(tdir, tmp_path)
+
+        with pytest.raises(TemplateError, match="escapes"):
+            instantiate(info, str(tmp_path), slug_or_id="x", params={})
+
+        runs_dir = tmp_path / "runs"
+        assert not runs_dir.exists() or not any(runs_dir.rglob("leaked.txt"))
+
+    def test_symlink_escape_blocked_in_asset_directory_copy(self, tmp_path: Path) -> None:
+        """review B1's second reproduction: an `assets[]` directory copy must not follow a
+        symlink inside it out of the template dir (e.g. standing in for `~/.ssh`). Uses a
+        symlink to a FILE (not a directory) -- `Path.rglob` on this Python version does not
+        descend INTO a symlinked subdirectory, but it does yield a top-level symlink-to-file
+        entry (and `.is_file()` follows it), so that is the exploitable shape."""
+        outside_dir = tmp_path / "outside-secret-dir"
+        outside_dir.mkdir()
+        secret_file = outside_dir / "id_rsa"
+        secret_file.write_text("PRIVATE KEY\n")
+
+        m = dict(_DEFAULT_MANIFEST)
+        m["assets"] = [{"source": "instructions/", "target": "shared/instructions/"}]
+        tdir = _write_template(
+            tmp_path,
+            manifest=m,
+            extra_files={"instructions/a.md": "safe\n"},
+        )
+        (tdir / "instructions" / "escape-link").symlink_to(secret_file)
+        info = _load_info(tdir, tmp_path)
+
+        with pytest.raises(TemplateError, match="escapes"):
+            instantiate(info, str(tmp_path), slug_or_id="x", params={})
+
+        shared_dir = tmp_path / "shared"
+        assert not shared_dir.exists() or not any(shared_dir.rglob("id_rsa"))
+
+
+# ---------------------------------------------------------------------------
+# B2: JSON structural injection via {{ params.* }} substitution
+# ---------------------------------------------------------------------------
+
+
+class TestJsonEscaping:
+    def _template_with_templated_repo_set(self, tmp_path: Path) -> Path:
+        m = dict(_DEFAULT_MANIFEST)
+        m["params"] = {"repo_set": {"description": "repo set", "required": True}}
+        wf = dict(_DEFAULT_WORKFLOW)
+        wf["repo_set"] = "{{ params.repo_set }}"
+        return _write_template(tmp_path, manifest=m, workflow=wf)
+
+    def test_quote_breakout_payload_renders_as_inert_string(self, tmp_path: Path) -> None:
+        """review's exact reproduction payload: a `repo_set` value containing a raw `"`
+        must no longer break out of its JSON string context -- it must render as an inert
+        string value, with no extra top-level key injected."""
+        tdir = self._template_with_templated_repo_set(tmp_path)
+        info = _load_info(tdir, tmp_path)
+        payload = 'fin-plan", "injected_key": "pwned'
+
+        result = instantiate(info, str(tmp_path), slug_or_id="x", params={"repo_set": payload})
+
+        wf = json.loads(Path(result.workflow_path).read_text())
+        assert wf["repo_set"] == payload
+        assert "injected_key" not in wf
+
+    def test_backslash_and_control_chars_also_escaped(self, tmp_path: Path) -> None:
+        tdir = self._template_with_templated_repo_set(tmp_path)
+        info = _load_info(tdir, tmp_path)
+        payload = 'a\\b"c\nd'
+
+        result = instantiate(info, str(tmp_path), slug_or_id="x", params={"repo_set": payload})
+
+        wf = json.loads(Path(result.workflow_path).read_text())
+        assert wf["repo_set"] == payload
+
+    def test_rendered_workflow_failing_full_spec_validation_raises(self, tmp_path: Path) -> None:
+        """B2(b): `_validate_rendered_workflow` now runs the real `WorkflowSpec` pydantic
+        model (via `spec.load_workflow`), not just the shallow id/tasks/prompt_path shape
+        check -- a workflow missing a schema-required field must be rejected."""
+        wf = dict(_DEFAULT_WORKFLOW)
+        del wf["version"]  # required by workflow.schema.json / WorkflowSpec
+        tdir = _write_template(tmp_path, workflow=wf)
+        info = _load_info(tdir, tmp_path)
+        with pytest.raises(TemplateError, match="WorkflowSpec validation"):
+            instantiate(info, str(tmp_path), slug_or_id="x", params={})
+
+    def test_builtin_routed_runner_budget_thresholds_render_as_bare_json_numbers(
+        self, tmp_path: Path
+    ) -> None:
+        """B2(a)'s explicit non-regression: the shipped `routed-runner` built-in splices
+        `{{ params.task_budget_usd }}` / `{{ params.run_budget_usd }}` directly into an
+        UNQUOTED numeric JSON position -- these must render as bare JSON numbers, not be
+        wrapped in quotes or otherwise mangled by the new JSON-escaping."""
+        info = load_template("routed-runner", str(tmp_path), None)
+        result = instantiate(
+            info, str(tmp_path), slug_or_id="my-run", params={"repo_set": "fin-plan"}
+        )
+        wf = json.loads(Path(result.workflow_path).read_text())
+        breakers = {b["id"]: b for b in wf["circuit_breakers"]}
+        assert breakers["task-budget-cap"]["threshold"] == 75
+        assert breakers["run-budget-cap"]["threshold"] == 1500
+        assert isinstance(breakers["task-budget-cap"]["threshold"], int | float)
+
 
 # ---------------------------------------------------------------------------
 # id/slug resolution

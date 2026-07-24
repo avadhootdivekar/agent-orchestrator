@@ -214,6 +214,17 @@ class TestCreateInstanceService:
         with pytest.raises(DashboardError, match="template not found"):
             service_with_template.create_instance("does-not-exist", slug_or_id="x", params={})
 
+    def test_ad_hoc_filesystem_path_as_name_is_rejected(
+        self, service_with_template: DashboardService, mini_template_dir: Path
+    ) -> None:
+        """M1 regression: `create_instance` must resolve `name` ONLY against the
+        discovered/vetted list -- `templates.load_template()`'s ad-hoc-filesystem-path
+        branch (a CLI-only affordance) must not be reachable through the dashboard, even
+        when the path happens to point at an otherwise-registered template's own
+        directory."""
+        with pytest.raises(DashboardError, match="template not found"):
+            service_with_template.create_instance(str(mini_template_dir), slug_or_id="x", params={})
+
     def test_missing_slug_and_prompt_raises(self, service_with_template: DashboardService) -> None:
         with pytest.raises(DashboardError, match="slug"):
             service_with_template.create_instance("mini", params={})
@@ -346,6 +357,29 @@ class TestTemplatesApi:
         response = template_client.post(
             f"{API_PREFIX}/templates/does-not-exist/instances",
             json={"params": {}, "start": False, "options": {}},
+        )
+        assert response.status_code == 404
+
+    def test_post_cwd_relative_path_to_unregistered_template_returns_404(
+        self,
+        template_client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """M1 regression -- reproduces the review's 'sneaky' scenario: only ``mini`` is
+        registered (`GET /api/templates` -> ``["mini"]``), but a second, completely
+        unregistered template directory exists elsewhere. Before the fix, `create_instance`
+        fell through to `templates.load_template()`'s ad-hoc-path branch, so a bare
+        (slash-free) `name` that happened to resolve to a valid template dir relative to
+        the *server process's* CWD would be silently accepted and instantiated (201) even
+        though the dashboard never listed it. It must now be a 404."""
+        sneaky_parent = tmp_path / "sneaky-parent"
+        write_template(sneaky_parent, dirname="sneaky", name="sneaky")
+        monkeypatch.chdir(sneaky_parent)
+
+        response = template_client.post(
+            f"{API_PREFIX}/templates/sneaky/instances",
+            json={"slug_or_id": "x", "params": {}, "start": False, "options": {}},
         )
         assert response.status_code == 404
 

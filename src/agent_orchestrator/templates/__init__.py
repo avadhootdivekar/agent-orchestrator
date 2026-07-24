@@ -48,8 +48,9 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from ..artifacts import LocalFsArtifactStore
-from ..errors import ArtifactPathError
+from ..errors import ArtifactPathError, OrchestratorError
 from ..project_config import ProjectConfig
+from ..spec import load_workflow
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -266,6 +267,14 @@ class _TemplateManifest(BaseModel):
 def _reject_traversal(value: str) -> None:
     if ".." in re.split(r"[\\/]", value):
         raise ValueError(f"path must not contain '..' segments: {value!r}")
+    # B1 fix: reject absolute paths too. `Path(template_dir) / value` silently DISCARDS
+    # template_dir when `value` is absolute (that's how `pathlib.Path.__truediv__` works),
+    # so an absolute `source:`/`target:` would otherwise escape the template dir entirely
+    # with no error -- this check applies to every field routed through `_reject_traversal`
+    # (files[].source/target, assets[].source/target, dirs[]), closing the gap at
+    # manifest-validation time, before any file IO happens.
+    if Path(value).is_absolute():
+        raise ValueError(f"path must be relative, not absolute: {value!r}")
 
 
 def _strip_when_prefix(when: str) -> str:
@@ -311,8 +320,25 @@ def _load_manifest(template_dir: Path) -> _TemplateManifest:
         ) from exc
 
 
+def _safe_join(template_dir: Path, rel: str, desc: str) -> Path:
+    """Resolve *rel* against *template_dir* and verify containment (B1 defense-in-depth).
+
+    Mirrors `LocalFsArtifactStore.resolve()`'s write-side guard: normalize-then-check-
+    containment via `.resolve()` + `.is_relative_to()`, rather than trusting the literal
+    joined path. `_reject_traversal` already rejects absolute paths and literal `..`
+    segments at manifest-validation time; this additionally catches relative-traversal-
+    through-symlinks (a symlink inside the template dir pointing outside it) since
+    `.resolve()` follows symlinks before the containment check runs.
+    """
+    template_dir_resolved = template_dir.resolve()
+    candidate = (template_dir / rel).resolve()
+    if not candidate.is_relative_to(template_dir_resolved):
+        raise TemplateError(f"{desc}: source {rel!r} escapes the template directory")
+    return candidate
+
+
 def _read_template_file(template_dir: Path, rel: str, template_name: str) -> str:
-    p = template_dir / rel
+    p = _safe_join(template_dir, rel, f"template {template_name!r}")
     if not p.is_file():
         raise TemplateError(f"template {template_name!r}: source file not found: {p}")
     try:
@@ -464,15 +490,45 @@ def load_template(
 # ---------------------------------------------------------------------------
 
 
-def _render(text: str, variables: dict[str, str], *, source_desc: str) -> str:
+# B2 fix: a bare JSON number (optional '-', digits, optional single '.') is substituted
+# unescaped -- this is what lets a `.json` template splice a param straight into a NUMERIC
+# position with no surrounding quotes (e.g. the built-in routed-runner's circuit-breaker
+# budget thresholds, `"threshold": {{ params.task_budget_usd }}`) keep working.
+_JSON_BARE_NUMBER_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _json_escape_value(value: str) -> str:
+    """JSON-string-escape *value*'s characters for safe placement inside a JSON string
+    literal a template already supplies the surrounding quotes for (B2 fix).
+
+    Deliberately does NOT add quotes itself -- `json.dumps(value)[1:-1]` strips the pair
+    `json.dumps` adds, leaving only the escaped characters -- so a value can never break
+    out of the JSON string it's substituted into (a stray `"`, `\\`, or control character
+    is escaped rather than terminating the string early). A bare-numeric value is left
+    untouched so numeric substitutions still render as valid unquoted JSON numbers.
+    """
+    if _JSON_BARE_NUMBER_RE.match(value):
+        return value
+    return json.dumps(value)[1:-1]
+
+
+def _render(
+    text: str, variables: dict[str, str], *, source_desc: str, escape_json: bool = False
+) -> str:
     """Whitespace-tolerant `{{ var }}` substitution (HLD §2.2). Unknown variable -> TemplateError
-    naming the variable and the offending file/description (fail fast, no silent leakage)."""
+    naming the variable and the offending file/description (fail fast, no silent leakage).
+
+    `escape_json=True` (set by callers rendering content into a `.json`-suffixed target,
+    B2 fix) JSON-string-escapes every substituted value via `_json_escape_value` so a
+    param value can never inject structure into the generated workflow spec.
+    """
 
     def _sub(match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in variables:
             raise TemplateError(f"unknown template variable '{{{{ {name} }}}}' in {source_desc}")
-        return variables[name]
+        value = variables[name]
+        return _json_escape_value(value) if escape_json else value
 
     return _VAR_RE.sub(_sub, text)
 
@@ -618,7 +674,12 @@ def _materialize_asset_file(
         skipped.append(_workspace_rel(dest_file, workspace_root))
         return
     raw = src_file.read_text(encoding="utf-8")
-    rendered = _render(raw, variables, source_desc=str(src_file))
+    rendered = _render(
+        raw,
+        variables,
+        source_desc=str(src_file),
+        escape_json=dest_file.suffix.lower() == ".json",
+    )
     dest_file.parent.mkdir(parents=True, exist_ok=True)
     dest_file.write_text(rendered, encoding="utf-8")
     created.append(_workspace_rel(dest_file, workspace_root))
@@ -634,17 +695,28 @@ def _materialize_asset(
     created: list[str],
     skipped: list[str],
 ) -> None:
-    source_path = template_dir / asset.source
+    source_path = _safe_join(template_dir, asset.source, f"assets[{asset.source!r}].source")
     target_rel = _render(asset.target, variables, source_desc=f"assets[{asset.source!r}].target")
     target_path = _ws_resolve(store, target_rel, f"assets[{asset.source!r}].target")
 
     if source_path.is_dir():
+        template_dir_resolved = template_dir.resolve()
         for src_file in sorted(source_path.rglob("*")):
             if not src_file.is_file():
                 continue
+            # B1 defense-in-depth: `source_path` itself is contained (via `_safe_join`
+            # above), but `rglob` follows symlinked subdirectories -- resolve() each
+            # candidate file and re-check containment before reading it, so a symlink
+            # planted inside the asset dir can't smuggle an outside file into the copy.
+            resolved_src = src_file.resolve()
+            if not resolved_src.is_relative_to(template_dir_resolved):
+                raise TemplateError(
+                    f"assets[{asset.source!r}]: {src_file} escapes the template "
+                    "directory (symlink?)"
+                )
             dest_file = target_path / src_file.relative_to(source_path)
             _materialize_asset_file(
-                src_file,
+                resolved_src,
                 dest_file,
                 asset.keep_existing,
                 variables,
@@ -670,7 +742,10 @@ def _validate_rendered_workflow(
     instance_dir_abs: Path, manifest: _TemplateManifest, variables: dict[str, str]
 ) -> tuple[Path, dict]:
     """Sanity-check the rendered workflow (HLD §2.3): parses as JSON/YAML, has id/tasks,
-    declares a non-empty prompt_path. Raises TemplateError otherwise."""
+    declares a non-empty prompt_path, AND (B2 fix) validates against the real
+    `WorkflowSpec` pydantic model / JSON Schema via `spec.load_workflow` -- the same
+    loader `ao validate`/`ao run` use, reused rather than re-implemented. Raises
+    TemplateError otherwise."""
     candidate: Path | None = None
     for f in manifest.files:
         target_rel = _render(f.target, variables, source_desc=f"{manifest.name}.files.target")
@@ -699,6 +774,20 @@ def _validate_rendered_workflow(
             f"rendered workflow {candidate} must declare a non-empty 'prompt_path' "
             "(HLD §2.3 -- required for the UI/CLI prompt box to work)"
         )
+
+    # B2(b): full structural/type validation (JSON Schema + WorkflowSpec construction),
+    # on top of the shallow id/tasks/prompt_path shape check above. Closes the gap where
+    # a schema-shaped-but-injected payload (B2's structural-injection primitive, e.g. an
+    # extra top-level key or a spliced-in extra task) would otherwise sail through
+    # `instantiate()` unnoticed -- `additionalProperties: false` in workflow.schema.json
+    # rejects exactly that shape.
+    try:
+        load_workflow(candidate)
+    except OrchestratorError as exc:
+        raise TemplateError(
+            f"rendered workflow {candidate} failed WorkflowSpec validation: {exc}"
+        ) from exc
+
     return candidate, data
 
 
@@ -787,7 +876,12 @@ def instantiate(
             if f.content is not None
             else _read_template_file(template_dir, f.source or "", manifest.name)
         )
-        rendered = _render(raw, variables, source_desc=f.source or f"{manifest.name} ({f.target})")
+        rendered = _render(
+            raw,
+            variables,
+            source_desc=f.source or f"{manifest.name} ({f.target})",
+            escape_json=target_path.suffix.lower() == ".json",
+        )
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(rendered, encoding="utf-8")
         created.append(_workspace_rel(target_path, workspace_root_path))

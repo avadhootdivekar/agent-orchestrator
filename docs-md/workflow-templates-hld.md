@@ -1,6 +1,6 @@
 # Workflow templates — HLD (E-Tpl3x9)
 
-Status: in progress · Branch: `ad/workflow-templates` (on top of `ad/ui-dashboard`)
+Status: Shipped on branch `ad/workflow-templates` (PR to main pending)
 Driven by: generalizing `ao-runner-finplan/workflows/epic-runner/new-epic-run.sh` into a
 first-class, config-registered scaffolding feature usable from the CLI and the dashboard.
 
