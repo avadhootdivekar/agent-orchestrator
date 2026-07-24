@@ -2,6 +2,8 @@
 
 import type {
   AggregateStats,
+  CreateInstanceRequest,
+  CreateInstanceResponse,
   DirListing,
   FileContent,
   GeneralInstruction,
@@ -9,6 +11,7 @@ import type {
   RunDetail,
   RunOptions,
   RunSummary,
+  TemplateInfo,
   WorkflowInfo,
   WorkspaceInfo,
 } from "./types";
@@ -65,6 +68,13 @@ export const api = {
   },
 
   workflows: () => request<WorkflowInfo[]>("/workflows"),
+
+  templates: () => request<TemplateInfo[]>("/templates"),
+  createInstance: (name: string, body: CreateInstanceRequest) =>
+    request<CreateInstanceResponse>(`/templates/${encodeURIComponent(name)}/instances`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   runs: () => request<RunSummary[]>("/runs"),
   runStats: () => request<AggregateStats>("/runs/stats"),

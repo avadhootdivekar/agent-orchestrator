@@ -1,0 +1,72 @@
+version: "1.0"
+name: routed-runner
+description: >-
+  One prompt -> classified route (bug/epic/task/documentation/testing) -> done.
+  A classify router reads prompt.md and drives only the matching pipeline to
+  completion (design/review/task-fan-out for epics, triage/fix/test for bugs,
+  plan/implement/test/review/fix/re-test for tasks, plan/write/review for docs,
+  gap-analysis/write/run for testing) with a shared git-branch-off head and a
+  per-route git-push tail. See this template's README.md for the full route
+  table and breaker rationale.
+id_pattern: "e-{rand6}-{slug}"
+instance_dir: "workflows/routed-runner/runs/{id}"
+params:
+  type:
+    description: Force the route (omit to auto-classify from prompt.md)
+    required: false
+    enum: [bug, epic, task, documentation, testing]
+  repo_set:
+    description: >-
+      Key into this workspace's reposet config -- the repo(s) every stage of
+      the run operates on. No default: every workspace must name its own.
+    required: true
+  task_budget_usd:
+    description: >-
+      Per-task real-spend USD cap (task_cost_usd circuit breaker threshold;
+      mode "recommend" -- one bounded auto-extension before a repeat trip
+      hard-fails the task).
+    required: false
+    default: "75"
+  run_budget_usd:
+    description: >-
+      Per-run real-spend USD cap (run_cost_usd circuit breaker threshold;
+      mode "recommend" -- one bounded auto-extension before a repeat trip
+      hard-stops the run).
+    required: false
+    default: "1500"
+dirs:
+  - outputs
+  - outputs/bug
+  - outputs/epic
+  - outputs/task
+  - outputs/doc
+  - outputs/testing
+  - outputs/tasks
+  - control
+  - needs-input
+files:
+  - source: workflow.json.tmpl
+    target: workflow.json
+  - source: prompt.md.tmpl
+    target: prompt.md
+    keep_existing: true
+  - source: breakdown-contract.md.tmpl
+    target: breakdown-contract.md
+  - content: "{{ params.type }}\n"
+    target: outputs/forced-type.txt
+    when: type
+assets:
+  - source: instructions/
+    target: workflows/routed-runner/instructions/
+    keep_existing: true
+required_agents:
+  - architect
+  - git-operator
+  - developer
+  - tester
+  - reviewer
+  - market-surveyor
+  - architect-opus
+  - reviewer-opus
+  - full-tester
+  - manager

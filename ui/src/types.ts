@@ -134,3 +134,43 @@ export interface RunOptions {
   budget_total?: number;
   self_heal?: boolean;
 }
+
+/**
+ * Workflow-template dataclasses (see `agent_orchestrator/templates.py`, HLD §2.4),
+ * serialized with `dataclasses.asdict` — field names are already snake_case.
+ */
+export interface TemplateParam {
+  name: string;
+  description: string;
+  required: boolean;
+  enum: string[] | null;
+  default: string | null;
+}
+
+export interface TemplateInfo {
+  name: string;
+  description: string;
+  path: string;
+  source: "builtin" | "workspace" | "path";
+  params: TemplateParam[];
+  required_agents: string[];
+  /** Rendered-with-placeholders preview of prompt.md; null when the template has none. */
+  prompt_skeleton: string | null;
+}
+
+/** Body of `POST /api/templates/{name}/instances` (HLD §2.6). */
+export interface CreateInstanceRequest {
+  slug_or_id?: string;
+  params: Record<string, string>;
+  prompt?: string;
+  start: boolean;
+  options: RunOptions;
+}
+
+/** 201 response of `POST /api/templates/{name}/instances` (HLD §2.6). */
+export interface CreateInstanceResponse {
+  instance_dir: string;
+  workflow_path: string;
+  workflow: WorkflowInfo;
+  launch: LaunchRecord | null;
+}
