@@ -35,9 +35,14 @@ class HeuristicTokenEstimator(TokenEstimator):
     """Default chars/4 heuristic estimator.
 
     Algorithm (NFR-1 safe — file sizes only):
-      input_bytes = sum of sizes of instruction_path + all input_paths + dynamic_input_paths
+      input_bytes = sum of sizes of instruction_path + general_instruction_paths
+                    + all input_paths + dynamic_input_paths
       raw = (input_bytes / chars_per_token) + output_allowance_tokens
       estimate = ceil(raw * pessimism_buffer)
+
+    General instructions are counted because the agent genuinely reads them on every task
+    (E-Ui7Kq2 FR-GI1) — omitting them would under-estimate every task in a workspace that
+    configures them, letting the budget gate admit work it cannot actually afford.
 
     All tuning knobs come from EstimatorConfig (NFR-7 — no magic literals here).
     """
@@ -48,7 +53,11 @@ class HeuristicTokenEstimator(TokenEstimator):
     def estimate(self, ctx: TaskContext, cfg: EstimatorConfig) -> int:
         """Return ceil((bytes/chars_per_token + output_allowance) * pessimism_buffer)."""
         input_bytes = self._store.size(ctx.instruction_path)
-        for p in (*ctx.input_paths, *ctx.dynamic_input_paths):
+        for p in (
+            *ctx.general_instruction_paths,
+            *ctx.input_paths,
+            *ctx.dynamic_input_paths,
+        ):
             input_bytes += self._store.size(p)  # os.stat, 0 if missing — NFR-1 safe
 
         raw = (input_bytes / cfg.chars_per_token) + cfg.output_allowance_tokens

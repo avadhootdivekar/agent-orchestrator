@@ -9,7 +9,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # The `ui` extra is required for the dashboard's integration/e2e tiers; without it
+        # those tests skip via importorskip and the dashboard would ship untested.
+        run: pip install -e ".[dev,ui]"
       - name: Lint
         run: ruff check .
       - name: Format check
@@ -20,5 +22,34 @@ jobs:
         run: pytest -q --tb=short
       - name: Run bench tests (deterministic, network-free, no real_llm/swebench)
         run: pytest tests/bench -q -m "not real_llm and not swebench" --cov=agent_orchestrator.bench --cov-report=term --cov-fail-under=80
+      - name: Run dashboard tests (unit + integration + e2e)
+        run: pytest tests/ui tests/test_general_instructions.py tests/test_e2e_cli_prompt_and_instructions.py -q --cov=agent_orchestrator.ui --cov-report=term --cov-fail-under=80
       - name: Validate example specs
         run: python -m agent_orchestrator.validate specs/
+
+  frontend:
+    # Separate job: the dashboard frontend is a node build, and keeping it off the Python
+    # job means a node/npm outage can never block the engine's own test signal.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type check
+        run: npx tsc -b --noEmit
+      - name: Unit tests
+        run: npm run test
+      - name: Build
+        # Also proves the committed src/agent_orchestrator/ui/static/ can be regenerated
+        # from source — a build break here means the shipped dashboard is unreproducible.
+        run: npm run build
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high

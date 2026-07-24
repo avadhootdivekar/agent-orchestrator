@@ -1,5 +1,6 @@
 .PHONY: test test-fast test-playground test-real-llm lint format typecheck validate-sum-of-array \
-        bench-validate bench-smoke bench-run bench-report bench-medium bench-large bench-xlarge
+        bench-validate bench-smoke bench-run bench-report bench-medium bench-large bench-xlarge \
+        ui ui-install ui-build ui-dev ui-test ui-typecheck test-ui
 
 # Configurable knobs for the real-LLM tier (override on the command line):
 #   make test-real-llm MAX_ATTEMPTS=3 BUDGET_TOTAL=200000 MAX_TURNS=40
@@ -71,6 +72,44 @@ format:
 
 typecheck:
 	uv run mypy .
+
+# --- Dashboard (E-Ui7Kq2) ----------------------------------------------------
+# The frontend lives in ui/ (React + Vite) and builds INTO the Python package at
+# src/agent_orchestrator/ui/static/, which is committed so `pip install` ships a working
+# dashboard without needing node. Re-run `make ui-build` after changing anything in ui/src.
+#
+#   make ui                 # serve the dashboard on http://127.0.0.1:8765
+#   make ui PORT=9000 WORKSPACE=/path/to/repo
+#   make ui-dev             # vite dev server w/ hot reload (proxies /api to `make ui`)
+UI_HOST ?= 127.0.0.1
+PORT ?= 8765
+WORKSPACE ?= .
+
+ui-install:
+	cd ui && npm install
+
+ui-build:
+	cd ui && npm run build
+
+ui-test:
+	cd ui && npm run test
+
+ui-typecheck:
+	cd ui && npx tsc -b --noEmit
+
+# Serve the dashboard. Depends on ui-build so a stale frontend is never served silently.
+ui: ui-build
+	uv run ao ui --host $(UI_HOST) --port $(PORT) --workspace $(WORKSPACE)
+
+# Hot-reloading frontend against an already-running `make ui` on port 8765.
+ui-dev:
+	cd ui && npm run dev
+
+# Every dashboard test tier: python unit/integration/e2e plus the frontend unit tests.
+test-ui:
+	uv run pytest tests/ui tests/test_general_instructions.py \
+	  tests/test_e2e_cli_prompt_and_instructions.py -q
+	cd ui && npm run test
 
 validate-sum-of-array:
 	uv run ao validate \

@@ -7,6 +7,7 @@ Commands:
   ao status     — Show current status of a run.
   ao init       — Scaffold a per-project .ao/config.yaml.
   ao prune      — Remove stale run artifacts from a workspace.
+  ao ui         — Serve the browser dashboard (needs the optional `ui` extra).
 
 Options:
   ao --version / -V         — Show version (+ commit/build info for non-release builds).
@@ -254,6 +255,122 @@ def _load_project_config_or_none() -> ProjectConfig | None:
         return load_project_config(config_path)
     except Exception:
         return None
+
+
+# Env var carrying the workspace-scoped general-instruction list, os.pathsep-separated
+# (":" on POSIX, ";" on Windows) — the same convention PATH/PYTHONPATH use, so shells and
+# CI systems can compose it without inventing a project-specific delimiter.
+ENV_GENERAL_INSTRUCTIONS = "AO_GENERAL_INSTRUCTIONS"
+
+
+def resolve_general_instructions(
+    cli_paths: list[str] | None,
+    workflow_paths: list[str] | None = None,
+) -> list[str]:
+    """Build the effective general-instruction path list for a run (E-Ui7Kq2 FR-GI1).
+
+    General instructions are **additive across every layer**, not an override chain — this
+    is the one setting in AO that deliberately does NOT follow the CLI > env > config
+    precedence of `_resolve_run_settings`. The user-facing contract is "define them once in
+    the workspace and every task gets them regardless"; a precedence chain would mean a
+    single `--general-instruction` on the command line silently *dropped* the workspace's
+    house rules, which is the opposite of that contract.
+
+    Merge order (stable, first occurrence wins on duplicates):
+        project config -> env var -> CLI flags -> workflow spec
+
+    Ordering is "broadest scope first" so workspace-wide rules are presented to the agent
+    before workflow-specific ones. De-duplication is by resolved path string, so the same
+    file named twice across layers is passed to the agent only once.
+
+    Args:
+        cli_paths: Values of repeated ``--general-instruction`` flags (may be None/empty).
+        workflow_paths: ``WorkflowSpec.general_instructions`` (may be None/empty).
+
+    Returns:
+        De-duplicated, order-preserving list of instruction paths. Empty list when no layer
+        declares any — which keeps every pre-epic run byte-identical.
+    """
+    cfg = _load_project_config_or_none()
+
+    env_raw = os.environ.get(ENV_GENERAL_INSTRUCTIONS, "")
+    env_paths = [p for p in env_raw.split(os.pathsep) if p.strip()]
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for layer in (
+        list(cfg.general_instructions) if cfg else [],
+        env_paths,
+        list(cli_paths or []),
+        list(workflow_paths or []),
+    ):
+        for path in layer:
+            candidate = path.strip()
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                merged.append(candidate)
+    return merged
+
+
+def _apply_prompt(
+    wf,  # WorkflowSpec — untyped to keep this module's lazy-import style
+    store: ArtifactStore,
+    prompt: str | None,
+    prompt_file: str | None,
+) -> None:
+    """Write ``--prompt`` / ``--prompt-file`` content into the workflow's prompt artifact.
+
+    This is the per-RUN input path (E-Ui7Kq2 FR-P1) and is deliberately separate from
+    general instructions (per-WORKSPACE): the prompt says *what this run should do*, the
+    general instructions say *how every task in this workspace should behave*.
+
+    The destination is ``WorkflowSpec.prompt_path``, resolved through the artifact store so
+    it is path-guarded to the workspace root exactly like every other artifact. A workflow
+    consumes the prompt by listing that same path in a task's ``inputs``.
+
+    No-ops when neither flag is given, so a workflow with a hand-written prompt file (the
+    ``meta/ao/epics/<id>/prompt.md`` convention) keeps working untouched.
+
+    Raises:
+        typer.Exit: If both flags are given, if the workflow declares no ``prompt_path``,
+            or if ``--prompt-file`` points at an unreadable file.
+    """
+    if prompt is None and prompt_file is None:
+        return
+
+    if prompt is not None and prompt_file is not None:
+        typer.echo("ERROR: --prompt and --prompt-file are mutually exclusive", err=True)
+        raise typer.Exit(1)
+
+    if not wf.prompt_path:
+        typer.echo(
+            f"ERROR: workflow '{wf.id}' declares no `prompt_path`, so there is nowhere to "
+            'write the prompt. Add `"prompt_path": "<path>"` to the workflow spec and '
+            "list that same path in the inputs of the task that should consume it.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    if prompt_file is not None:
+        try:
+            text = Path(prompt_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            typer.echo(f"ERROR: cannot read --prompt-file {prompt_file}: {exc}", err=True)
+            raise typer.Exit(1)
+    else:
+        text = prompt or ""
+
+    from .errors import ArtifactPathError
+
+    try:
+        dest = Path(store.resolve(wf.prompt_path))
+    except ArtifactPathError as exc:
+        typer.echo(f"ERROR: invalid workflow prompt_path: {exc}", err=True)
+        raise typer.Exit(1)
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    typer.echo(f"Wrote prompt ({len(text)} chars) to {dest}")
 
 
 def _resolve_run_settings(
@@ -597,6 +714,32 @@ def run(
             " which activates purely from a workflow's own circuit_breakers[].mode."
         ),
     ),
+    general_instruction: list[str] = typer.Option(
+        [],
+        "--general-instruction",
+        help=(
+            "PATH to an instruction file applied to EVERY task (repeatable). ADDITIVE, not an"
+            " override: merged with .ao/config.yaml general_instructions,"
+            f" {ENV_GENERAL_INSTRUCTIONS} (os.pathsep-separated), and the workflow's own"
+            " general_instructions."
+        ),
+    ),
+    prompt: str | None = typer.Option(
+        None,
+        "--prompt",
+        help=(
+            "Prompt text for this run; written to the workflow's declared `prompt_path`"
+            " before the run starts. Requires the workflow to declare prompt_path."
+        ),
+    ),
+    prompt_file: str | None = typer.Option(
+        None,
+        "--prompt-file",
+        help=(
+            "Read the run prompt from this file instead of --prompt; its contents are copied"
+            " into the workflow's declared `prompt_path`. Mutually exclusive with --prompt."
+        ),
+    ),
 ) -> None:
     """Run a workflow from scratch."""
     from datetime import UTC
@@ -666,6 +809,14 @@ def run(
     rs_store = RunStateStore(workspace, store)
     executor = DispatchExecutor()
 
+    # Materialize the run prompt BEFORE the run starts, so the task that lists prompt_path
+    # in its inputs sees the new text (and its missing-inputs gate passes).
+    _apply_prompt(wf, store, prompt, prompt_file)
+
+    effective_general_instructions = resolve_general_instructions(
+        general_instruction, wf.general_instructions
+    )
+
     # Build effective budget (CLI > spec > unset)
     effective_budget = _build_effective_budget(
         wf.budget, budget_total, rate_tokens, rate_window, on_exhaustion, pessimism_buffer
@@ -703,6 +854,7 @@ def run(
         self_heal_enabled=monitoring_cfg.self_heal,
         max_heal_retries_per_task=monitoring_cfg.max_heal_retries_per_task,
         max_parallel=eff_max_parallel,
+        general_instructions=effective_general_instructions,
     )
 
     try:
@@ -812,8 +964,26 @@ def resume(
             " Default: off."
         ),
     ),
+    general_instruction: list[str] = typer.Option(
+        [],
+        "--general-instruction",
+        help=(
+            "PATH to an instruction file applied to EVERY task (repeatable). ADDITIVE, not an"
+            " override: merged with .ao/config.yaml general_instructions,"
+            f" {ENV_GENERAL_INSTRUCTIONS} (os.pathsep-separated), and the workflow's own"
+            " general_instructions."
+        ),
+    ),
 ) -> None:
-    """Resume a previously interrupted run."""
+    """Resume a previously interrupted run.
+
+    Note there is deliberately no ``--prompt`` here: the run prompt is a per-run INPUT
+    artifact that the original ``ao run`` already materialized, and tasks that consumed it
+    have their outputs on disk. Rewriting it mid-run would make the run irreproducible from
+    its own artifacts (the resumability invariant). Start a new run to change the prompt.
+    General instructions, by contrast, are resolved fresh on every invocation, so a workspace
+    can add house rules and have a resumed run's remaining tasks pick them up.
+    """
     from datetime import UTC
     from datetime import datetime as _dt
 
@@ -838,6 +1008,10 @@ def resume(
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
     store = LocalFsArtifactStore(workspace)
     rs_store = RunStateStore(workspace, store)
+
+    effective_general_instructions = resolve_general_instructions(
+        general_instruction, wf.general_instructions
+    )
 
     (
         eff_max_attempts,
@@ -967,6 +1141,7 @@ def resume(
         self_heal_enabled=monitoring_cfg.self_heal,
         max_heal_retries_per_task=monitoring_cfg.max_heal_retries_per_task,
         max_parallel=eff_max_parallel,
+        general_instructions=effective_general_instructions,
     )
 
     try:
@@ -1079,6 +1254,92 @@ def init_cmd(
     )
     typer.echo("  2. Run `ao validate` to check your config.")
     typer.echo("  3. Run `ao run` to execute your workflow.")
+
+
+# Loopback default for `ao ui --host`. The dashboard has NO authentication in this release
+# and can both read the filesystem and spend money by launching runs, so it must not be
+# reachable off-box unless an operator deliberately overrides this.
+UI_DEFAULT_HOST = "127.0.0.1"
+UI_DEFAULT_PORT = 8765
+
+
+@app.command(name="ui")
+def ui_cmd(
+    host: str = typer.Option(
+        UI_DEFAULT_HOST,
+        "--host",
+        help=(
+            "Interface to bind. Defaults to loopback because the dashboard is unauthenticated"
+            " and can launch runs; only change this on a trusted network."
+        ),
+    ),
+    port: int = typer.Option(UI_DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Workspace root to serve (default: current directory). Env: AO_WORKSPACE_ROOT",
+    ),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev)."),
+    open_browser: bool = typer.Option(
+        False, "--open", help="Open the dashboard in the default browser once it is serving."
+    ),
+) -> None:
+    """Serve the browser-based dashboard.
+
+    Requires the optional `ui` extra:  uv sync --extra ui  (or pip install 'agent-orchestrator[ui]')
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        typer.echo(
+            "ERROR: the dashboard needs the optional 'ui' extra.\n"
+            "  uv sync --extra ui       (this repo)\n"
+            "  pip install 'agent-orchestrator[ui]'",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    ws = workspace or os.environ.get("AO_WORKSPACE_ROOT") or os.getcwd()
+    ws = str(Path(ws).resolve())
+    if not Path(ws).is_dir():
+        typer.echo(f"ERROR: workspace root is not a directory: {ws}", err=True)
+        raise typer.Exit(1)
+
+    from .ui.app import create_app
+    from .ui.service import DashboardService
+
+    url = f"http://{host}:{port}"
+    typer.echo(f"Agent Orchestrator dashboard — workspace: {ws}")
+    typer.echo(f"Serving on {url}  (Ctrl-C to stop)")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        typer.echo(
+            f"WARNING: binding {host} exposes an UNAUTHENTICATED dashboard that can browse "
+            "files and start runs. Only do this on a trusted network.",
+            err=True,
+        )
+
+    if open_browser:
+        import threading
+        import webbrowser
+
+        # Fire after a short delay so the server is accepting connections by the time the
+        # browser requests the page.
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+
+    if reload:
+        # uvicorn's reloader re-imports the app in a fresh process, so it needs an import
+        # string plus the workspace handed over via env rather than a live object.
+        os.environ["AO_UI_WORKSPACE"] = ws
+        uvicorn.run(
+            "agent_orchestrator.ui.app:create_app_from_env",
+            host=host,
+            port=port,
+            reload=True,
+            factory=True,
+        )
+    else:
+        uvicorn.run(create_app(DashboardService(ws)), host=host, port=port)
 
 
 @app.command()

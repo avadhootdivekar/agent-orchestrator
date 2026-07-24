@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -279,6 +280,16 @@ class WorkflowSpec(BaseModel):
     loops: list[LoopSpec] = []
     branches: list[RouterSpec] = []
     circuit_breakers: list[CircuitBreakerSpec] = []
+    # PATHS to instruction files handed to EVERY task in this workflow, in addition to the
+    # task's own `instruction` (E-Ui7Kq2 FR-GI1). Workflow-declared layer of the general-
+    # instruction set; the workspace-scoped layers (config file / env / CLI) are merged on
+    # top by cli.resolve_general_instructions. Paths only — never contents (NFR-1).
+    general_instructions: list[str] = []
+    # PATH to this workflow's prompt artifact — the file `ao run --prompt/--prompt-file`
+    # writes into before the run starts (E-Ui7Kq2 FR-P1). Declaring it is what makes a
+    # workflow "promptable"; a task consumes it by listing the same path in its `inputs`.
+    # Per-RUN input, deliberately distinct from `general_instructions` (per-WORKSPACE).
+    prompt_path: str | None = None
 
     def task(self, task_id: str) -> TaskSpec:
         for t in self.tasks:
@@ -299,6 +310,10 @@ class TaskContext(BaseModel):
     task_id: str
     agent: AgentSpec
     instruction_path: str
+    # Resolved absolute paths of the workspace/workflow general instructions that apply to
+    # EVERY task (E-Ui7Kq2 FR-GI1). Paths only — NFR-1 safe. Empty list = none configured,
+    # which keeps every pre-epic prompt byte-identical.
+    general_instruction_paths: list[str] = []
     input_paths: list[str]
     output_paths: list[str]
     output_manifest_path: str | None = None
@@ -466,6 +481,31 @@ def compute_run_usage_totals(state: RunState) -> RunUsageTotals:
 # as compute_run_usage_totals above and breakers.py's _consecutive_failure_streak /
 # _settled_task_active_seconds — resume-safe by construction, single source of truth.
 # ---------------------------------------------------------------------------
+
+
+def compute_run_active_seconds(state: RunState) -> float:
+    """Sum ``(ended_at - started_at)`` over every SETTLED task in *state*.
+
+    The "actual time the engine was genuinely busy" measure, as opposed to wall-clock
+    elapsed (``updated_at - started_at``), which also counts operator pause/resume gaps.
+    A task contributes only once BOTH timestamps are present (the engine sets them together
+    on dispatch/settle); pending/running/not_taken tasks contribute 0. In-task waits
+    (quota/429/budget retry sleeps) happen inside a task's own window and so DO count — the
+    engine really was blocked on that task.
+
+    Pure reconstruction from persisted per-task timestamps, so it yields the same answer
+    mid-run, after a resume, or long after the run ended (same "derive, don't duplicate
+    bookkeeping" convention as ``compute_run_usage_totals``). Shared by the
+    ``run_active_seconds`` circuit breaker and the dashboard's per-run stats.
+    """
+    total = 0.0
+    for ts in state.tasks.values():
+        if ts.started_at is None or ts.ended_at is None:
+            continue
+        started = datetime.fromisoformat(ts.started_at)
+        ended = datetime.fromisoformat(ts.ended_at)
+        total += (ended - started).total_seconds()
+    return total
 
 
 def count_monitor_breaker_extensions(state: RunState, breaker_id: str) -> int:

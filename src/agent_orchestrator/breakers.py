@@ -63,6 +63,7 @@ from .models import (
     RunState,
     TrippedBreaker,
     WorkflowSpec,
+    compute_run_active_seconds,
     compute_run_usage_totals,
 )
 
@@ -258,24 +259,12 @@ class RunWallClockSecondsBreaker(Breaker):
 def _settled_task_active_seconds(state: RunState) -> float:
     """Sum `(ended_at - started_at)` over every SETTLED task in `state.tasks`.
 
-    Pure reconstruction from persisted per-task timestamps only (same pattern as
-    `_consecutive_failure_streak`) -- no new bookkeeping field, so it reconstructs identically
-    whether called mid-run or freshly after a resume. A task counts only once both timestamps
-    are present (`started_at`/`ended_at` are set together by the engine's dispatch/settle path,
-    engine.py ~:462/:679); a still-`pending`/`running`/`not_taken` task contributes 0. This
-    naturally excludes any gap between one task's `ended_at` and the next task's `started_at`
-    (e.g. an operator pause-then-resume), while still counting in-task waits (quota/429/budget
-    retry sleeps happen inside that task's own started_at..ended_at window, so they count as the
-    engine genuinely being busy/blocked on that task).
+    Thin alias for `models.compute_run_active_seconds`, which is where this logic now lives
+    so the dashboard's per-run "actual time" stat and this breaker cannot drift apart
+    (CLAUDE.md's DRY rule). Kept as a module-private name because `RunActiveSecondsBreaker`
+    and this module's tests refer to it.
     """
-    total = 0.0
-    for ts in state.tasks.values():
-        if ts.started_at is None or ts.ended_at is None:
-            continue
-        started = datetime.fromisoformat(ts.started_at)
-        ended = datetime.fromisoformat(ts.ended_at)
-        total += (ended - started).total_seconds()
-    return total
+    return compute_run_active_seconds(state)
 
 
 class RunActiveSecondsBreaker(Breaker):

@@ -33,6 +33,7 @@ from pathlib import Path
 
 from ..models import TaskContext, TaskResult
 from .base import Executor
+from .prompt import build_prompt
 
 # --- Output-format flags (stream-json is required to capture every turn) ------
 # stream-json emits one JSON event per line; --verbose is mandatory for
@@ -428,14 +429,7 @@ class ClaudeCliExecutor(Executor):
     """
 
     def execute(self, ctx: TaskContext) -> TaskResult:
-        prompt = ctx.agent.prompt_template.format(
-            instruction=ctx.instruction_path,
-            inputs=" ".join(ctx.input_paths),
-            outputs=" ".join(ctx.output_paths),
-            repos=" ".join(f"{k}={v}" for k, v in ctx.repo_paths.items()),
-            dynamic_inputs=" ".join(ctx.dynamic_input_paths),
-            output_manifest=ctx.output_manifest_path or "",
-        )
+        prompt = build_prompt(ctx)
         argv = [
             (arg.replace("{prompt}", prompt) if "{prompt}" in arg else arg)
             for arg in ctx.agent.command_template

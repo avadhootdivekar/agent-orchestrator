@@ -12,6 +12,8 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [Core concepts](#core-concepts)
 - [Spec files](#spec-files)
 - [CLI reference](#cli-reference)
+- [Dashboard (`ao ui`)](#dashboard-ao-ui)
+- [General instructions](#general-instructions)
 - [Environment variables](#environment-variables)
 - [Per-project config file](#per-project-config-file)
 - [Parallel execution](#parallel-execution)
@@ -186,6 +188,7 @@ ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
+ao ui         Serve the browser dashboard (needs the optional `ui` extra)
 ```
 
 All commands accept:
@@ -229,6 +232,121 @@ ao prune --workspace /path/to/workspace --older-than 0
 
 ---
 
+## Dashboard (`ao ui`)
+
+A browser dashboard for browsing the workspace, controlling runs, and reading run
+statistics.  Needs the optional `ui` extra:
+
+```bash
+uv sync --extra ui                    # in this repo
+pip install 'agent-orchestrator[ui]'  # installed elsewhere
+
+ao ui                                 # http://127.0.0.1:8765
+ao ui --port 9000 --workspace /path/to/repo --open
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host HOST` | `127.0.0.1` | Interface to bind.  Loopback by default — see the warning below |
+| `--port, -p PORT` | `8765` | Port to listen on |
+| `--workspace, -w PATH` | cwd | Workspace root to serve.  Env: `AO_WORKSPACE_ROOT` |
+| `--open` | `false` | Open the dashboard in your browser once it is serving |
+| `--reload` | `false` | Auto-reload on code changes (development) |
+
+**What it does**
+
+- **Files** — browse directories and read files anywhere under the workspace, *including
+  hidden dotfiles and binaries*.  Paths that would escape the workspace (traversal strings
+  or symlinks) are refused.
+- **Runs** — workspace-wide totals (runs, tasks, cost, tokens, wall time, actual execution
+  time) and the same breakdown per run, with a per-task table and the captured CLI log.
+- **New run** — pick a workflow, type a prompt, optionally override model / effort /
+  parallelism / budget, and start it.  The prompt is written to the workflow's declared
+  `prompt_path`, exactly as `ao run --prompt` does.
+- **Run control** — resume an interrupted run, cancel a running one, delete old runs.
+- **Workspace** — the effective [general instructions](#general-instructions), with a flag
+  showing whether each path actually resolves.
+
+Runs start as separate `ao run` processes, so closing the browser (or restarting the
+dashboard) does not stop them.
+
+> **⚠️ There is no authentication in this release.**  The dashboard can read any file under
+> the workspace and can start runs that cost money, so it binds loopback by default.  Only
+> bind another interface on a network you trust.  Authentication and configurable secrets
+> are the top item on the [roadmap](meta/ROADMAP.md).
+
+**Deferred:** UI-based dynamic workflow generation (building a DAG in the browser) is on the
+roadmap, not in this release.
+
+---
+
+## General instructions
+
+Instruction files that apply to **every task of every run** — house rules, coding standards,
+review checklists — declared **once per workspace** rather than per run.  They reach tasks
+even when `ao run` is invoked without mentioning them.
+
+Declare them in any of four places:
+
+```yaml
+# .ao/config.yaml — the "define once per workspace" home.
+# Paths are relative to this file's directory.
+general_instructions:
+  - instructions/house-rules.md
+  - instructions/coding-standards.md
+```
+
+```bash
+export AO_GENERAL_INSTRUCTIONS="/abs/a.md:/abs/b.md"   # os.pathsep-separated
+ao run --general-instruction extra.md                   # repeatable, one invocation
+```
+
+```jsonc
+// workflow.json — instructions this particular workflow requires
+{ "general_instructions": ["instructions/api-conventions.md"] }
+```
+
+**The layers are additive, not a precedence chain.**  This is the one setting in AO that
+deliberately does *not* follow `CLI > env > config > default`: the effective set is the
+**union** of all four layers, de-duplicated.  A `--general-instruction` on the command line
+*adds* to your workspace rules — it never silently replaces them.  (See
+[ADR-0010](docs-md/adr/ADR-0010-dashboard-architecture-and-general-instructions.md) D1.)
+
+Notes:
+
+- Only **paths** are passed to agents, never file contents — the same context-hygiene
+  invariant the rest of the engine holds to.
+- A path that cannot be resolved is skipped with a log warning rather than failing the run;
+  `ao validate` and the dashboard's Workspace view are where you catch a typo.
+- Instruction file sizes count toward the token estimate, so budget gating stays accurate.
+
+### Run prompts are a different thing
+
+A **run prompt** says *what this run should do*; **general instructions** say *how every task
+should behave*.  Give a workflow a `prompt_path`, list it in a task's `inputs`, and write it
+per run:
+
+```jsonc
+// workflow.json
+{
+  "prompt_path": "prompts/run.md",
+  "tasks": [{ "id": "plan", "agent": "architect",
+              "instruction": "instructions/plan.md",
+              "inputs": ["prompts/run.md"] }]
+}
+```
+
+```bash
+ao run --prompt "Add rate limiting to the /orders API"
+ao run --prompt-file ./feature-request.md
+```
+
+`ao resume` has no `--prompt`: the prompt is a per-run input artifact the original run
+already materialized, and rewriting it mid-run would make the run irreproducible from its own
+artifacts.  Start a new run to change the prompt.
+
+---
+
 ## Environment variables
 
 All runtime settings can be provided via environment variable.  Precedence is
@@ -247,6 +365,8 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_MAX_PARALLEL` | `--max-parallel` | Max independent ready tasks to run at once (default: `1` = serial); see [Parallel execution](#parallel-execution) |
 | `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
 | `AO_QUOTA_POLL_SECONDS` | `--quota-poll-interval` | Seconds between quota-exhaustion re-run attempts (default: 900 = 15 min) |
+| `AO_GENERAL_INSTRUCTIONS` | `--general-instruction` | `os.pathsep`-separated instruction paths applied to **every** task; **additive**, not an override — see [General instructions](#general-instructions) |
+| `AO_UI_WORKSPACE` | `ao ui --workspace` | Workspace the dashboard serves (used by `ao ui --reload`) |
 
 ---
 
@@ -478,12 +598,16 @@ dynamic fan-out and a bugfix/review loop) lives in [`playground/sum-of-array/`](
 ```
 agent-orchestrator/
   src/agent_orchestrator/   Python package (engine, CLI, executors, DAG, …)
+    ui/                       Dashboard backend + built frontend (served by `ao ui`)
+  ui/                       Dashboard frontend source (React + Vite) — see ui/README.md
   specs/                    JSON schemas + example spec files
     *.schema.json             Authoritative schemas
     examples/                 Working example specs
   tests/                    pytest unit + integration tests
+    ui/                       Dashboard unit / integration / e2e tests
   docs-md/                  Design docs, ADRs, walkthroughs
   meta/                     Tickets, prompts, learnings, memories, AO configs
+    ROADMAP.md                Status summary + 3–6 month roadmap
   .claude/                  Authoritative agent/skill/command assets
 ```
 
@@ -492,8 +616,9 @@ agent-orchestrator/
 ## Development
 
 ```bash
-# Install (one-time)
+# Install (one-time). Add the `ui` extra to work on (or test) the dashboard.
 uv pip install -e ".[dev]"
+uv sync --extra ui --extra dev
 
 # Tests
 uv run pytest -q
@@ -510,6 +635,28 @@ uv run ao validate \
   --agents   specs/examples/agents.json
 ```
 
-For a detailed walkthrough — from writing your first spec to driving a multi-task epic to
-completion and recovering from failures — see
-[`docs-md/guide-epic-walkthrough.md`](docs-md/guide-epic-walkthrough.md).
+### Working on the dashboard
+
+The frontend lives in `ui/` (React + TypeScript + Vite) and **builds into the Python
+package** at `src/agent_orchestrator/ui/static/`.  That build output is committed, so
+`pip install` ships a working dashboard without needing node — re-run the build after
+changing anything under `ui/src`.
+
+```bash
+make ui-install       # npm install (one-time)
+make ui               # build the frontend, then serve on http://127.0.0.1:8765
+make ui-dev           # vite dev server w/ hot reload, proxying /api to a running `make ui`
+make ui-build         # rebuild the committed frontend bundle
+make test-ui          # every dashboard test tier (python + frontend)
+```
+
+See [`ui/README.md`](ui/README.md) for the frontend layout and conventions.
+
+### Where to look next
+
+- **Roadmap and current status** — [`meta/ROADMAP.md`](meta/ROADMAP.md)
+- **Detailed walkthrough** — from writing your first spec to driving a multi-task epic to
+  completion and recovering from failures —
+  [`docs-md/guide-epic-walkthrough.md`](docs-md/guide-epic-walkthrough.md)
+- **Dashboard & general-instruction design** —
+  [`docs-md/dashboard-and-general-instructions-hld.md`](docs-md/dashboard-and-general-instructions-hld.md)

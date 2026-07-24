@@ -9,6 +9,7 @@ from typing import Literal
 
 from ..models import TaskContext, TaskResult
 from .base import Executor
+from .prompt import build_prompt
 
 Behavior = Literal["succeed", "fail", "timeout"]
 
@@ -118,8 +119,17 @@ class FakeExecutor(Executor):
         self._rate_limited_once: set[str] = set()
         # remaining quota-exhaustion counts per task_id
         self._quota_exhausted_remaining: dict[str, int] = dict(self._quota_exhausted_tasks)
+        # task_id -> prompt this executor WOULD have sent, rendered through the same
+        # executors.prompt.build_prompt the real ClaudeCliExecutor uses. Lets tests assert
+        # on prompt assembly (e.g. that general instructions reached every task) without
+        # spawning a subprocess. Recorded per invocation; the last one per task wins.
+        self.prompts: dict[str, str] = {}
 
     def execute(self, ctx: TaskContext) -> TaskResult:
+        # Render through the SHARED builder so prompt-assembly assertions made against the
+        # fake executor stay honest about what the real one would produce.
+        self.prompts[ctx.task_id] = build_prompt(ctx)
+
         # --- Quota exhaustion simulation: fail N times, then succeed ---
         if self._quota_exhausted_remaining.get(ctx.task_id, 0) > 0:
             self._quota_exhausted_remaining[ctx.task_id] -= 1
