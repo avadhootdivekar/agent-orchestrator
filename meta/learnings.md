@@ -815,3 +815,12 @@ By: agent
 Role: reviewer
 Date: 2026-07-24
 ---
+
+---
+Learning-ID: LRN-20260724-install-sh-missed-ui-extra
+Learning: `install.sh`'s `uv tool install "$SCRIPT_DIR"` omitted the optional `[ui]` extra (fastapi/uvicorn/httpx), so the globally installed snapshot had a fully working `ao ui` *command* that raised at runtime asking for the extra it was never given. `uv tool install` has no `--extra` flag; the extra must be requested via package-spec brackets: `uv tool install "$SCRIPT_DIR[ui]"`. Fixed in install.sh.
+Context: Found while installing the ad/workflow-templates snapshot globally and verifying `ao ui` actually serves for a consumer workspace (ao-runner-finplan) — the pre-existing 8765/8766 dashboards on this host were both running from the local dev venv (`uv run`, editable), never from the global uv-tool snapshot, which is why the gap went unnoticed.
+By: agent
+Role: developer
+Date: 2026-07-24
+---

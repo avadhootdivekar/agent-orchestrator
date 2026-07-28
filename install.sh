@@ -136,7 +136,9 @@ _do_install() {
     # old, missing entire epics) despite --force reporting success, because uv's local-path
     # build cache isn't guaranteed to key on live source content on every code path.
     # --reinstall forces uv to actually rebuild/relink rather than reuse a cached resolution.
-    uv tool install "$SCRIPT_DIR" --force --reinstall
+    # [ui] pulls in fastapi/uvicorn/httpx so the global snapshot can serve `ao ui` directly —
+    # without it the dashboard command exists but fails at runtime asking for the extra.
+    uv tool install "$SCRIPT_DIR[ui]" --force --reinstall
     mkdir -p "$STATE_DIR"
     _source_commit > "$COMMIT_STAMP"
     _ok "Installed snapshot at source commit $(_installed_commit)."
