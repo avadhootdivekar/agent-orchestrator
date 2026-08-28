@@ -21,6 +21,28 @@ end goal. Prefer more, smaller tasks over few large ones; express ordering with
 `depends_on`, not by bundling. A task that would plausibly need mid-run auto-compaction
 is too big — split it.
 
+## Effort & model per task
+Any emitted entry may set `"effort"` (and, when warranted, `"model"`) directly — same
+values an agent's own `effort`/`model` accept, but a task-level value wins over the
+agent's (fill-in, never the reverse: an entry that omits a field simply inherits the
+agent's own setting for it).
+
+- **Default: size each task to finish in ~10 minutes of agent work and mark it
+  `"effort": "medium"`.** This is the concrete target behind the GRANULARITY rule above
+  — "a single cohesive unit... well under its context limit" means roughly a 10-minute
+  slice. The example entries below default every `impl`/`test` pass to `"medium"`.
+- **You (the breakdown agent) choose bigger when it's genuinely warranted** — a unit
+  that would lose the end goal if split further, or a step that needs materially more
+  investigation/turns than a typical pass. Mark those `"high"`; reserve `"xhigh"` for a
+  task you expect to run long even under `"high"`'s already-generous turn budget. Don't
+  use a bigger effort as a substitute for splitting a task that legitimately fits the
+  GRANULARITY guidance above.
+- **A different `"model"` is fair game too** — a cheaper/faster model for trivial,
+  low-risk boilerplate; a stronger one for architecture-sensitive or unusually hard
+  code. Omit `model` to inherit the agent's own.
+- `effort`/`model` are both optional on every entry; omit either (or both) to inherit
+  the agent's own values unchanged.
+
 ## Manifest shape
 
 ```json
@@ -35,14 +57,14 @@ is too big — split it.
   "depends_on": ["task-breakdown"],
   "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md"],
   "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md"],
-  "timeout_seconds": 10800, "skip_if_outputs_exist": true}
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true, "effort": "medium"}
 
 {"id": "test1-<tid>", "agent": "tester",
   "instruction": "workflows/routed-runner/instructions/09-write-tests.md",
   "depends_on": ["impl1-<tid>"],
   "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md", "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md"],
   "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/test-pass-1.md"],
-  "timeout_seconds": 10800, "skip_if_outputs_exist": true}
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true, "effort": "medium"}
 
 {"id": "review-<tid>", "agent": "reviewer",
   "instruction": "workflows/routed-runner/instructions/10-review-task.md",
@@ -57,15 +79,22 @@ is too big — split it.
   "depends_on": ["review-<tid>"],
   "inputs": ["{{ instance_dir }}/outputs/tasks/<tid>/review.md", "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md"],
   "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-2.md"],
-  "timeout_seconds": 10800, "skip_if_outputs_exist": true}
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true, "effort": "medium"}
 
 {"id": "test2-<tid>", "agent": "tester",
   "instruction": "workflows/routed-runner/instructions/09-write-tests.md",
   "depends_on": ["impl2-<tid>"],
   "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md", "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-2.md"],
   "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/test-pass-2.md"],
-  "timeout_seconds": 10800, "skip_if_outputs_exist": true}
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true, "effort": "medium"}
 ```
+
+`review-<tid>` and the aggregator below are left without an explicit `effort` (they
+inherit the `reviewer`/`manager` agents' own settings) — reviewing one task's diff, and
+collating already-finished reports, are usually quick and rarely need a bigger budget;
+set it explicitly if a given epic's tasks are unusually large. Bump any entry above to
+`"high"`/`"xhigh"` (and/or set `"model"`) instead of `"medium"` when ITS specific task
+genuinely needs more — see "Effort & model per task" above.
 
 ### Aggregator — emit EXACTLY ONE, even when there are ZERO epic tasks
 
@@ -94,5 +123,8 @@ If task B needs task A's code: add `"test2-<tidA>"` to `impl1-<tidB>`'s `depends
 3. Ids exactly per the patterns above; globally unique; never reuse a `<tid>`.
 4. Aggregator id (`aggregate-epic-tasks`) and its output path: copy EXACTLY.
 5. Do not add fields beyond: id, agent, instruction, depends_on, inputs, outputs,
-   timeout_seconds, skip_if_outputs_exist.
+   timeout_seconds, skip_if_outputs_exist, effort, model, max_turns. The last three are
+   OPTIONAL per-entry overrides (see "Effort & model per task" above) — every entry above
+   already shows the expected default (`"effort": "medium"` or omitted); don't add `model`
+   or `max_turns` unless a specific task genuinely warrants it.
 6. Agent names are exactly: `developer`, `tester`, `reviewer`, `manager`.

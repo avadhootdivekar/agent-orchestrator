@@ -689,6 +689,30 @@ class TestClaudeCliArgBuilding:
         idx = argv.index("--max-turns")
         assert argv[idx + 1] == str(EFFORT_MAX_TURNS["medium"])
 
+    def test_effort_xhigh_injects_max_turns_from_constant(self, tmp_path) -> None:
+        from agent_orchestrator.models import EFFORT_MAX_TURNS
+
+        agent = _claude_agent(effort="xhigh")
+        ctx = _make_ctx(agent, tmp_path)
+        argv = self._execute_capturing_argv(ctx)["argv"]
+        assert "--max-turns" in argv
+        idx = argv.index("--max-turns")
+        assert argv[idx + 1] == str(EFFORT_MAX_TURNS["xhigh"])
+
+    def test_resolved_effective_agent_reaches_argv(self, tmp_path) -> None:
+        """task > agent precedence (ADR-0003 decision 2), exercised through the SAME merge
+        the engine performs (`resolve_effective_agent`) and then the real argv-building
+        code path -- proves the executor needs no per-task-aware logic of its own."""
+        from agent_orchestrator.models import TaskSpec, resolve_effective_agent
+
+        agent = _claude_agent(model="agent-model", effort="low")
+        task = TaskSpec(id="t1", agent="ag", instruction="i.md", model="task-model", effort="xhigh")
+        effective = resolve_effective_agent(task, agent)
+        ctx = _make_ctx(effective, tmp_path)
+        argv = self._execute_capturing_argv(ctx)["argv"]
+        assert argv[argv.index("--model") + 1] == "task-model"
+        assert argv[argv.index("--max-turns") + 1] == "120"
+
     def test_explicit_max_turns_overrides_effort(self, tmp_path) -> None:
         # Explicit max_turns wins over the effort-derived value.
         agent = _claude_agent(effort="medium", max_turns=42)

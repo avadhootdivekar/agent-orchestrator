@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from ..models import TaskContext, TaskResult
+from ..models import AgentSpec, TaskContext, TaskResult
 from .base import Executor
 from .prompt import build_prompt
 
@@ -124,11 +124,18 @@ class FakeExecutor(Executor):
         # on prompt assembly (e.g. that general instructions reached every task) without
         # spawning a subprocess. Recorded per invocation; the last one per task wins.
         self.prompts: dict[str, str] = {}
+        # task_id -> the ctx.agent this executor received, i.e. AFTER the engine's
+        # per-task model/effort/max_turns resolution (ADR-0003 decision 2,
+        # `models.resolve_effective_agent`). Lets tests assert the resolved settings
+        # reached dispatch without spawning a subprocess or a ClaudeCliExecutor-specific
+        # argv capture. Recorded per invocation; the last one per task wins.
+        self.resolved_agents: dict[str, AgentSpec] = {}
 
     def execute(self, ctx: TaskContext) -> TaskResult:
         # Render through the SHARED builder so prompt-assembly assertions made against the
         # fake executor stay honest about what the real one would produce.
         self.prompts[ctx.task_id] = build_prompt(ctx)
+        self.resolved_agents[ctx.task_id] = ctx.agent
 
         # --- Quota exhaustion simulation: fail N times, then succeed ---
         if self._quota_exhausted_remaining.get(ctx.task_id, 0) > 0:

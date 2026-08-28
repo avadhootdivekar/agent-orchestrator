@@ -13,7 +13,11 @@ WINDOW_SECONDS: dict[str, int] = {"minute": 60, "ten_minutes": 600, "hour": 3600
 # `--max-turns` is a runaway-loop breaker, not the cost guard (the token budget is),
 # so values are generous enough for a real agent to Read instruction + inputs and
 # Write outputs with headroom. Too-low caps (e.g. 5) fail flaky before writing output.
-EFFORT_MAX_TURNS: dict[str, int] = {"low": 15, "medium": 30, "high": 60}
+# "xhigh" (ADR-0003 decision 2 follow-through, per-task settings) sits above "high" for
+# the rare task that genuinely needs a long, many-turn session.
+EFFORT_MAX_TURNS: dict[str, int] = {"low": 15, "medium": 30, "high": 60, "xhigh": 120}
+# Shared Literal so AgentSpec and TaskSpec can't drift on the allowed effort values.
+EffortLevel = Literal["low", "medium", "high", "xhigh"]
 DEFAULT_CHARS_PER_TOKEN: int = 4
 DEFAULT_PESSIMISM_BUFFER: float = 1.3
 DEFAULT_OUTPUT_ALLOWANCE_TOKENS: int = 1000
@@ -71,7 +75,7 @@ class AgentSpec(BaseModel):
     context_window: Literal["isolated", "shared"] = "isolated"
     extra_args: list[str] = []
     model: str | None = None  # e.g. "claude-haiku-4-5-20251001"; passed as --model
-    effort: Literal["low", "medium", "high"] | None = None  # → --max-turns via EFFORT_MAX_TURNS
+    effort: EffortLevel | None = None  # → --max-turns via EFFORT_MAX_TURNS
     max_turns: int | None = None  # explicit --max-turns; overrides effort-derived value when set
     # Working directory the agent process runs in. Resolved against the workspace root
     # (reposet.workspace_root) and path-guarded to stay inside it. None -> workspace root.
@@ -103,6 +107,39 @@ class TaskSpec(BaseModel):
     # "all" (default): every declared dependency must reach a terminal success state.
     # "any": at least one declared dependency must succeed (used at route re-joins).
     join: Literal["all", "any"] = "all"
+    # Per-task overrides of the dispatched agent's model/effort/max_turns (ADR-0003
+    # decision 2). None (the default) means "no override" -- fields fall through to the
+    # agent's own value, never the reverse (fill-in, not clobber). See
+    # `resolve_effective_agent` for the one place this precedence is applied.
+    model: str | None = None
+    effort: EffortLevel | None = None
+    max_turns: int | None = None
+
+
+def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
+    """Merge *task*'s model/effort/max_turns overrides onto *agent* (ADR-0003 decision 2).
+
+    Precedence at dispatch: task > agent > (whatever the agent already resolved from the
+    invocation-level CLI/env/config fill-in chain, see `cli._resolve_run_settings`). Each
+    field is independent: an unset task field falls through to the agent's own value
+    rather than clobbering it, so a task can pin just `effort` while leaving `model`
+    agent-controlled. This is the ONE place the precedence is applied -- callers (the
+    engine's dispatch path) must route every `TaskContext.agent` through here rather than
+    passing the raw `AgentSpec` so the executor's argv-injection logic never has to know
+    about task-level overrides.
+
+    Returns *agent* unchanged (no copy) when the task declares no overrides at all, so the
+    common case (no per-task tuning) allocates nothing new.
+    """
+    if task.model is None and task.effort is None and task.max_turns is None:
+        return agent
+    return agent.model_copy(
+        update={
+            "model": task.model if task.model is not None else agent.model,
+            "effort": task.effort if task.effort is not None else agent.effort,
+            "max_turns": task.max_turns if task.max_turns is not None else agent.max_turns,
+        }
+    )
 
 
 class WorkflowDefaults(BaseModel):

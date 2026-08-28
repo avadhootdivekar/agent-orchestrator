@@ -43,6 +43,7 @@ from .models import (
     count_monitor_breaker_extensions,
     count_monitor_calls_made,
     count_monitor_heal_retries,
+    resolve_effective_agent,
 )
 from .monitoring import (
     SAFE_DEFAULT_BREAKER_VERDICT,
@@ -1942,6 +1943,10 @@ class Orchestrator:
         retry = task.retries or workflow.defaults.retries
         timeout = task.timeout_seconds or workflow.defaults.timeout_seconds
         agent_spec = agents[task.agent]
+        # Task-level model/effort/max_turns win over the agent's own (ADR-0003 decision 2,
+        # fill-in not clobber) -- resolved once here so the executor never has to know
+        # about task-level overrides; it just reads ctx.agent like before.
+        effective_agent = resolve_effective_agent(task, agent_spec)
 
         # Resolve all paths through the artifact store (no content reads)
         instruction_path = self._store.resolve(task.instruction)
@@ -1958,7 +1963,8 @@ class Orchestrator:
         # Working directory the agent runs in: AgentSpec.working_dir override (resolved
         # against, and path-guarded to, the workspace root) or the workspace root itself.
         # Ensures agents' relative output paths land inside the workspace deterministically.
-        agent_cwd = self._store.resolve(agent_spec.working_dir or ".")
+        # (working_dir has no task-level override, so effective_agent == agent_spec here.)
+        agent_cwd = self._store.resolve(effective_agent.working_dir or ".")
 
         # Capture directory: .orchestrator/runs/<run_id>/<task_id>/  (FR-4)
         output_dir = self._store.resolve(
@@ -1993,7 +1999,7 @@ class Orchestrator:
             ctx = TaskContext(
                 run_id=state.run_id,
                 task_id=task.id,
-                agent=agent_spec,
+                agent=effective_agent,
                 instruction_path=instruction_path,
                 general_instruction_paths=general_instruction_paths,
                 input_paths=input_paths,

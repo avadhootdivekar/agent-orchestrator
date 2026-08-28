@@ -53,6 +53,20 @@ For every task, emit EXACTLY the 5-entry pipeline defined in `breakdown-contract
 copy the id/path/instruction strings from the contract literally, substituting only
 `<tid>`.
 
+### Task sizing, effort, and model — YOU decide this per task
+The contract's example entries default `impl`/`test` passes to `"effort": "medium"`,
+which assumes a task sized to finish in roughly 10 minutes of agent work — the same
+grain Part A's "≤ 3 days of work each" / GRANULARITY split targets at the fine-grained
+pipeline-entry level. Keep that default for a normally-sized `<tid>`.
+
+You (not a fixed rule) decide when a task warrants more: if a `<tid>` is a genuinely
+large, non-splittable unit, or its impl/test/fix passes need materially more
+investigation than a typical pass, raise that entry's `effort` to `"high"` or (only for
+tasks you expect to run long even under `"high"`) `"xhigh"`, and/or set an explicit
+`model` for a step that's unusually cheap or unusually hard relative to the rest of the
+pipeline. See the contract's "Effort & model per task" section for the full guidance —
+it is authoritative on the allowed values and field names.
+
 ### Hard rules (violations crash or hang the run)
 1. **Valid strict JSON** — no comments, no trailing commas, double-quoted keys.
 2. **Every `depends_on` id must exist** — either another id in this same manifest or
@@ -70,7 +84,9 @@ copy the id/path/instruction strings from the contract literally, substituting o
    to `impl1-<tidB>`'s `depends_on` (in addition to the emitting task id), so B's
    pipeline starts only after A's pipeline finished. Keep such chains minimal — they
    serialize execution.
-6. Emit nothing beyond what the contract defines: no extra fields, no extra tasks.
+6. Emit nothing beyond what the contract's field allowlist defines: no extra fields
+   (`effort`/`model`/`max_turns` ARE allowed, per-entry and optional — see above), no
+   extra tasks.
 
 ## Final self-check (do it, in this order, before finishing)
 1. Re-read `breakdown-contract.md` top to bottom.

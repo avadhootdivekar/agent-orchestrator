@@ -113,3 +113,10 @@ per-instance from `breakdown-contract.md.tmpl`) gives the breakdown agent the ex
 ids/paths/JSON shapes to emit — a malformed manifest (dangling `depends_on`, renamed
 aggregator) crashes or hangs the run, so the contract is authoritative over the general
 instruction where they'd ever disagree.
+
+Each emitted entry may also set `effort` (`low`/`medium`/`high`/`xhigh`) and `model`,
+which win over the dispatched agent's own values for that one task (ADR-0003 decision 2).
+The contract defaults `impl`/`test` passes to `"effort": "medium"` — a task sized to
+finish in roughly 10 minutes — and leaves the breakdown agent free to mark a genuinely
+larger `<tid>` `"high"`/`"xhigh"` and/or pin a different `model`, instead of forcing an
+artificial split. See the contract's "Effort & model per task" section.

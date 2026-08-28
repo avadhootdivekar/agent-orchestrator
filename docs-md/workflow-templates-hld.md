@@ -172,6 +172,17 @@ prompt skeleton has a generic "Project context" section, `repo_set` is `{{ param
 (required param, no default). Instructions materialize as workspace assets on first use so
 each workspace can tune them.
 
+**Per-task effort/model (ADR-0003 decision 2, follow-through):** `TaskSpec` gained
+optional `model`/`effort`/`max_turns` fields that win over the dispatched agent's own
+values (fill-in, not clobber; resolved once at dispatch by
+`models.resolve_effective_agent`), and `effort` gained an `"xhigh"` tier above `"high"`
+(→ 120 `--max-turns`, `EFFORT_MAX_TURNS`). The epic route's `task-breakdown` stage uses
+this: `breakdown-contract.md.tmpl`'s emitted 5-entry pipeline shapes default `impl`/`test`
+passes to `"effort": "medium"` (a ~10-minute task grain), and the breakdown agent may mark
+a genuinely larger `<tid>` `"high"`/`"xhigh"` and/or set an explicit `model` instead of
+forcing an artificial split — see the contract's "Effort & model per task" section and
+`instructions/07-task-breakdown.md`.
+
 ### 2.9 ao-runner-finplan wiring (kept out of the engine repo)
 
 - `workflows/epic-runner/template/` — `template.yaml` + `workflow.json.tmpl` +
