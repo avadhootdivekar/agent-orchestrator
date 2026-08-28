@@ -206,7 +206,8 @@ class TestE2EDynamicInjection:
                 shutil.copy(f, instr_dst / f.name)
 
         # For FakeExecutor to emit dynamic tasks, we need to pre-seed the manifest
-        # that the 'discover' task will write. The task_manifest_path is 'output/dynamic-manifest.json'
+        # that the 'discover' task will write. The task_manifest_path is
+        # 'output/dynamic-manifest.json'.
         # The FakeExecutor emit_payloads will write it if configured.
         # For this test, we create a simple manifest with one injected task.
         output_dir = tmp_path / "output"
@@ -266,11 +267,10 @@ class TestE2EDynamicInjection:
             env={"AO_WORKSPACE_ROOT": str(tmp_path)},
         )
 
-        # The dynamic manifest path is 'output/dynamic-manifest.json' per workflow-dynamic.json
-        manifest_path = tmp_path / "output" / "dynamic-manifest.json"
-        # It may not exist if discover task failed to write it (which is expected
-        # since FakeExecutor doesn't auto-write emit_payloads without config).
-        # But we can verify the workflow was attempted.
+        # The dynamic manifest ('output/dynamic-manifest.json' per workflow-dynamic.json)
+        # may not exist if the discover task did not write it, which is expected here since
+        # FakeExecutor doesn't auto-write emit_payloads without config.
+        # What this test asserts is that the workflow was attempted.
         assert "Run:" in result.output
 
 

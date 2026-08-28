@@ -125,6 +125,14 @@ class ProjectConfig(BaseModel):
     """Agent-based monitoring & self-healing settings (E-XyfjuZ). Absent block ->
     all-defaults -> byte-identical to pre-epic behavior."""
 
+    general_instructions: list[str] = []
+    """Paths to instruction files handed to EVERY task of EVERY run in this workspace
+    (E-Ui7Kq2 FR-GI1) -- the "define once per workspace" layer. Unlike `workflow`/`reposets`,
+    these are NOT an invocation override: they are ADDITIVE and apply even when `ao run` is
+    called with no general-instruction flag at all. Merged (union, order-preserving) with
+    AO_GENERAL_INSTRUCTIONS, `--general-instruction`, and the workflow spec's own
+    `general_instructions` by `cli.resolve_general_instructions`."""
+
     @field_validator("env", mode="before")
     @classmethod
     def _env_must_be_str_mapping(cls, v: object) -> dict[str, str]:
@@ -214,6 +222,15 @@ def load_project_config(config_path: Path) -> ProjectConfig:
         if raw_val and not os.path.isabs(raw_val):
             data[field_name] = str((base_dir / raw_val).resolve())
 
+    # Same anchoring for the general-instruction list, so `general_instructions: [a.md]`
+    # means "next to this config file" regardless of the cwd `ao` is invoked from.
+    raw_gi = data.get("general_instructions")
+    if isinstance(raw_gi, list):
+        data["general_instructions"] = [
+            str(gi) if os.path.isabs(str(gi)) else str((base_dir / str(gi)).resolve())
+            for gi in raw_gi
+        ]
+
     try:
         return ProjectConfig.model_validate(data)
     except PydanticValidationError as exc:
@@ -269,6 +286,16 @@ _INIT_TEMPLATE = """\
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h of exhaustion
 # quota_poll_seconds: 900         # AO_QUOTA_POLL_SECONDS     — poll every 15 min
+
+# --- General instructions: defined ONCE here, applied to EVERY task of EVERY run ---
+# Unlike the settings above these are ADDITIVE, not overrides: they take effect even when
+# `ao run` is invoked with no general-instruction flag. Paths are relative to this file.
+# Env equivalent: AO_GENERAL_INSTRUCTIONS (os.pathsep-separated). CLI: --general-instruction
+# (repeatable). A workflow may declare its own `general_instructions: [...]` too; the
+# effective set is the union of all four layers, in config -> env -> CLI -> workflow order.
+# general_instructions:
+#   - instructions/house-rules.md
+#   - instructions/coding-standards.md
 
 # --- Agent-based monitoring & self-healing (absent -> all defaults, byte-identical) ---
 # monitoring:

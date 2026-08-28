@@ -44,6 +44,16 @@
       "type": "array",
       "default": [],
       "items": { "$ref": "#/$defs/circuitBreaker" }
+    },
+    "general_instructions": {
+      "type": "array",
+      "default": [],
+      "items": { "type": "string" },
+      "description": "PATHS to instruction files applied to EVERY task in this workflow, in addition to the task's own instruction. Merged (union) with the workspace-scoped layers from .ao/config.yaml, AO_GENERAL_INSTRUCTIONS, and --general-instruction. Never inline contents."
+    },
+    "prompt_path": {
+      "type": "string",
+      "description": "PATH to this workflow's prompt artifact, written by `ao run --prompt`/`--prompt-file` before the run starts. A task consumes it by listing the same path in its inputs. Per-run input; distinct from general_instructions, which are per-workspace."
     }
   },
   "$defs": {

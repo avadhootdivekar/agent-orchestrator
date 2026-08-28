@@ -15,7 +15,7 @@ from .artifacts import ArtifactStore, read_gate, read_manifest, read_routes, rea
 from .breakers import apply_breaker_extension, evaluate_breakers, record_trip
 from .budget import BudgetDecision, BudgetManager
 from .dag import Graph, build_dag, compute_cones
-from .errors import ControlFileError, GateError, InjectionError
+from .errors import ArtifactPathError, ControlFileError, GateError, InjectionError
 from .estimator import TokenEstimator
 from .executors.base import Executor
 from .logging_setup import attach_run_handler, detach_run_handler, get_run_logger
@@ -230,6 +230,7 @@ class Orchestrator:
         self_heal_enabled: bool = False,
         max_heal_retries_per_task: int = DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
         max_parallel: int = DEFAULT_MAX_PARALLEL,
+        general_instructions: list[str] | None = None,
     ) -> None:
         self._executor = executor
         self._store = artifact_store
@@ -253,6 +254,11 @@ class Orchestrator:
         # caller passes. NOT consumed by run() yet -- T-j8YLGd wires the wave scheduler that
         # reads this; until then the engine is unconditionally serial (T-JXiI9j plumbing-only).
         self._max_parallel = max(1, int(max_parallel))
+        # Workspace/workflow general instructions applied to EVERY task (E-Ui7Kq2 FR-GI1).
+        # Stored UNRESOLVED here; resolved through the artifact store per task in
+        # _execute_with_retry (same treatment as task.instruction) so the path guard runs
+        # on the same code path and no unguarded absolute path can leak into a TaskContext.
+        self._general_instructions = list(general_instructions or [])
 
     def run(
         self,
@@ -592,6 +598,7 @@ class Orchestrator:
                 task_id=tid,
                 agent=_est_agent,
                 instruction_path=_est_instr,
+                general_instruction_paths=self._resolve_general_instructions(workflow),
                 input_paths=_est_inputs,
                 output_paths=[self._store.resolve(p) for p in task.outputs],
                 dynamic_input_paths=dynamic_input_paths,
@@ -1370,6 +1377,46 @@ class Orchestrator:
     # Wave/barrier scheduler helpers (T-j8YLGd, ADR-0007 D3/D4/D6)
     # -------------------------------------------------------------------------
 
+    def _resolve_general_instructions(self, workflow: WorkflowSpec) -> list[str]:
+        """Resolve the general-instruction paths that apply to every task (E-Ui7Kq2 FR-GI1).
+
+        Merges the injected workspace-scoped list (``general_instructions=`` ctor arg, which
+        the CLI fills from config file + env + ``--general-instruction``) with the workflow
+        spec's own ``general_instructions``, de-duplicating by RESOLVED path so a file named
+        in two layers is handed to the agent once.
+
+        Merging the workflow layer here — rather than trusting the caller to have done it —
+        is what makes the guarantee hold for direct library/API users of ``Orchestrator``
+        too, not just for runs launched through ``ao``. The CLI passes an already-merged
+        list that includes the workflow layer; de-duplication makes that harmless.
+
+        Every path goes through ``ArtifactStore.resolve`` for the same workspace-root path
+        guard as ``task.instruction``, so a traversal path in a config file cannot smuggle
+        an out-of-workspace file into a prompt. A path that fails the guard is dropped with
+        a warning rather than killing the run: general instructions are additive context,
+        and one bad entry in a workspace config should not fail every task in every
+        workflow. ``ao validate`` is the layer that reports such a path up front.
+        """
+        resolved: list[str] = []
+        seen: set[str] = set()
+        for raw in (*self._general_instructions, *workflow.general_instructions):
+            try:
+                path = self._store.resolve(raw)
+            except ArtifactPathError as exc:
+                logger.warning(
+                    "general_instruction.rejected",
+                    extra={
+                        "event": "general_instruction.rejected",
+                        "path": raw,
+                        "error": str(exc),
+                    },
+                )
+                continue
+            if path not in seen:
+                seen.add(path)
+                resolved.append(path)
+        return resolved
+
     def _is_barrier(self, task: TaskSpec, workflow: WorkflowSpec) -> bool:
         """Return True when *task* must run alone (ADR-0007 D4): nothing else in
         flight when it starts, and nothing new launched until it fully settles.
@@ -1898,6 +1945,7 @@ class Orchestrator:
 
         # Resolve all paths through the artifact store (no content reads)
         instruction_path = self._store.resolve(task.instruction)
+        general_instruction_paths = self._resolve_general_instructions(workflow)
         input_paths = [self._store.resolve(p) for p in task.inputs]
         output_paths = [self._store.resolve(p) for p in task.outputs]
         output_manifest_path = (
@@ -1947,6 +1995,7 @@ class Orchestrator:
                 task_id=task.id,
                 agent=agent_spec,
                 instruction_path=instruction_path,
+                general_instruction_paths=general_instruction_paths,
                 input_paths=input_paths,
                 output_paths=output_paths,
                 output_manifest_path=output_manifest_path,
