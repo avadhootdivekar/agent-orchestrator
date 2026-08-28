@@ -14,7 +14,10 @@ No test here invokes `ao service run` (it blocks and binds a real port) or shell
 
 from __future__ import annotations
 
+import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -270,3 +273,98 @@ class TestBuildStatusProvider:
         )()
 
         assert "run_summary" not in payload["workspaces"][0]
+
+
+class TestStartStopWithSystemctl:
+    """The systemctl-present branches (coverage top-up): `systemctl_available` and the
+    `*_via_systemctl` helpers are monkeypatched at the CLI module's imported names, so no
+    real systemd is touched."""
+
+    @staticmethod
+    def _completed(rc: int, stderr: str = "") -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=["systemctl"], returncode=rc, stderr=stderr)
+
+    def test_start_success_echoes_confirmation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("agent_orchestrator.service.cli.systemctl_available", lambda: True)
+        monkeypatch.setattr(
+            "agent_orchestrator.service.cli.start_via_systemctl", lambda: self._completed(0)
+        )
+        result = runner.invoke(app, ["service", "start"])
+        assert result.exit_code == 0, result.output
+        assert "Started" in result.output
+
+    def test_start_failure_exits_nonzero_with_stderr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("agent_orchestrator.service.cli.systemctl_available", lambda: True)
+        monkeypatch.setattr(
+            "agent_orchestrator.service.cli.start_via_systemctl",
+            lambda: self._completed(1, stderr="unit not found"),
+        )
+        result = runner.invoke(app, ["service", "start"])
+        assert result.exit_code == 1
+        assert "unit not found" in result.output
+
+    def test_stop_success_echoes_confirmation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("agent_orchestrator.service.cli.systemctl_available", lambda: True)
+        monkeypatch.setattr(
+            "agent_orchestrator.service.cli.stop_via_systemctl", lambda: self._completed(0)
+        )
+        result = runner.invoke(app, ["service", "stop"])
+        assert result.exit_code == 0, result.output
+        assert "Stopped" in result.output
+
+    def test_stop_failure_exits_nonzero_with_stderr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("agent_orchestrator.service.cli.systemctl_available", lambda: True)
+        monkeypatch.setattr(
+            "agent_orchestrator.service.cli.stop_via_systemctl",
+            lambda: self._completed(1, stderr="stop failed"),
+        )
+        result = runner.invoke(app, ["service", "stop"])
+        assert result.exit_code == 1
+        assert "stop failed" in result.output
+
+
+class TestStatusPaths:
+    """`status`'s live-hub, corrupted-snapshot, and probe-failure branches."""
+
+    def test_live_hub_json_is_printed_verbatim(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        live = {"workspaces": [], "hub_port": 9999}
+        monkeypatch.setattr("agent_orchestrator.service.cli._probe_hub_status", lambda port: live)
+        result = runner.invoke(app, ["service", "status"])
+        assert result.exit_code == 0, result.output
+        assert '"hub_port": 9999' in result.output
+
+    def test_corrupted_supervisor_snapshot_falls_back_to_guessed_port(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "supervisor.json").write_text("{not json", encoding="utf-8")
+        monkeypatch.setattr("agent_orchestrator.service.cli._probe_hub_status", lambda port: None)
+        result = runner.invoke(app, ["service", "status"])
+        assert result.exit_code == 0, result.output
+        assert "guessed default port" in result.output
+
+    def test_probe_returns_none_on_unreachable_hub(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_orchestrator.service.cli import _probe_hub_status
+
+        def _raise(*args: object, **kwargs: object) -> object:
+            raise urllib.error.URLError("refused")
+
+        monkeypatch.setattr("urllib.request.urlopen", _raise)
+        assert _probe_hub_status(65001) is None
+
+    def test_probe_returns_none_on_non_dict_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_orchestrator.service.cli import _probe_hub_status
+
+        class _Resp:
+            def __enter__(self) -> _Resp:
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'["a", "list"]'
+
+        monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
+        assert _probe_hub_status(65001) is None
