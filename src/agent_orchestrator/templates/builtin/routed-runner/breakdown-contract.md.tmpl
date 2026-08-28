@@ -1,0 +1,98 @@
+# Task-breakdown manifest contract — {{ id }}
+
+This file is generated per-run and is AUTHORITATIVE for the epic route's stage 7
+(task-breakdown). Copy ids, paths, and shapes from here LITERALLY, substituting only `<tid>`.
+
+## Paths for this run
+- Run dir:        `{{ instance_dir }}`
+- Outputs dir:    `{{ instance_dir }}/outputs`
+- Write tasks.md: `{{ instance_dir }}/outputs/tasks.md`
+- Write manifest: `{{ instance_dir }}/outputs/tasks-manifest.json`  (strict JSON, shape below)
+
+## Task ids
+Pick one short kebab-case id per epic task: `t<NN>-<slug>` (e.g. `t01-scenario-parser`).
+**At most 20 epic tasks.** The emitting task's id is `task-breakdown` — that exact
+string is the only `depends_on` value allowed to reference outside this manifest.
+
+## GRANULARITY (avoid auto-compaction)
+Slice small. Each `impl` task must be a single cohesive unit (one module/layer/endpoint),
+sized so an isolated agent finishes well under its context limit WITHOUT losing the
+end goal. Prefer more, smaller tasks over few large ones; express ordering with
+`depends_on`, not by bundling. A task that would plausibly need mid-run auto-compaction
+is too big — split it.
+
+## Manifest shape
+
+```json
+{"tasks": [ ...five entries per epic task... , ...one aggregator... ]}
+```
+
+### Per epic task `<tid>` — emit EXACTLY these 5 entries
+
+```json
+{"id": "impl1-<tid>", "agent": "developer",
+  "instruction": "workflows/routed-runner/instructions/08-implement-task.md",
+  "depends_on": ["task-breakdown"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md"],
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true}
+
+{"id": "test1-<tid>", "agent": "tester",
+  "instruction": "workflows/routed-runner/instructions/09-write-tests.md",
+  "depends_on": ["impl1-<tid>"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md", "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/test-pass-1.md"],
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true}
+
+{"id": "review-<tid>", "agent": "reviewer",
+  "instruction": "workflows/routed-runner/instructions/10-review-task.md",
+  "depends_on": ["test1-<tid>"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md", "{{ instance_dir }}/outputs/tasks/<tid>/test-pass-1.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/review.md"],
+  "timeout_seconds": 4800, "skip_if_outputs_exist": true}
+
+{"id": "impl2-<tid>", "agent": "developer",
+  "instruction": "workflows/routed-runner/instructions/11-fix-task.md",
+  "depends_on": ["review-<tid>"],
+  "inputs": ["{{ instance_dir }}/outputs/tasks/<tid>/review.md", "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-2.md"],
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true}
+
+{"id": "test2-<tid>", "agent": "tester",
+  "instruction": "workflows/routed-runner/instructions/09-write-tests.md",
+  "depends_on": ["impl2-<tid>"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md", "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-2.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/test-pass-2.md"],
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true}
+```
+
+### Aggregator — emit EXACTLY ONE, even when there are ZERO epic tasks
+
+```json
+{"id": "aggregate-epic-tasks", "agent": "manager",
+  "instruction": "workflows/routed-runner/instructions/12-aggregate.md",
+  "depends_on": ["test2-<tid-1>", "test2-<tid-2>", "...one entry per epic task..."],
+  "inputs": ["{{ instance_dir }}/outputs/tasks/<tid-1>/test-pass-2.md", "...one entry per epic task..."],
+  "outputs": ["{{ instance_dir }}/outputs/all-tasks-complete.md"],
+  "timeout_seconds": 3600, "skip_if_outputs_exist": false}
+```
+
+Zero-task edge case: `"depends_on": ["task-breakdown"]`, `"inputs": []` — id and
+output path unchanged. The downstream `full-test` task statically waits on
+`{{ instance_dir }}/outputs/all-tasks-complete.md`; if the aggregator (or its exact output path) is
+missing or renamed, the whole run fails.
+
+### Cross-task dependencies
+If task B needs task A's code: add `"test2-<tidA>"` to `impl1-<tidB>`'s `depends_on`
+(keeping `"task-breakdown"` there too). Nothing else changes.
+
+## Hard rules (a violation crashes or hangs the run)
+1. Strict JSON — no comments, no trailing commas.
+2. Every `depends_on` value must be an id in THIS manifest, or the literal string
+   `task-breakdown`. Dangling ids crash the engine ungracefully.
+3. Ids exactly per the patterns above; globally unique; never reuse a `<tid>`.
+4. Aggregator id (`aggregate-epic-tasks`) and its output path: copy EXACTLY.
+5. Do not add fields beyond: id, agent, instruction, depends_on, inputs, outputs,
+   timeout_seconds, skip_if_outputs_exist.
+6. Agent names are exactly: `developer`, `tester`, `reviewer`, `manager`.

@@ -8,6 +8,8 @@ Commands:
   ao init       — Scaffold a per-project .ao/config.yaml.
   ao prune      — Remove stale run artifacts from a workspace.
   ao ui         — Serve the browser dashboard (needs the optional `ui` extra).
+  ao templates  — List discovered workflow templates (E-Tpl3x9).
+  ao new        — Scaffold (and optionally validate/run) a workflow instance from a template.
 
 Options:
   ao --version / -V         — Show version (+ commit/build info for non-release builds).
@@ -1307,12 +1309,15 @@ def ui_cmd(
         raise typer.Exit(1)
 
     from .ui.app import create_app
+    from .ui.security import DEFAULT_ALLOWED_HOSTS, resolve_allowed_hosts
     from .ui.service import DashboardService
 
     url = f"http://{host}:{port}"
     typer.echo(f"Agent Orchestrator dashboard — workspace: {ws}")
     typer.echo(f"Serving on {url}  (Ctrl-C to stop)")
-    if host not in ("127.0.0.1", "localhost", "::1"):
+    # Single source of truth for the loopback host list: ui/security.py's DEFAULT_ALLOWED_HOSTS
+    # (imported lazily, same as the rest of this function — the [ui] extra must stay optional).
+    if host not in DEFAULT_ALLOWED_HOSTS:
         typer.echo(
             f"WARNING: binding {host} exposes an UNAUTHENTICATED dashboard that can browse "
             "files and start runs. Only do this on a trusted network.",
@@ -1327,10 +1332,15 @@ def ui_cmd(
         # browser requests the page.
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
+    # The Host allowlist always includes the loopback defaults plus whatever host this
+    # process actually bound to (see ui/security.py) — so a deliberate off-loopback bind
+    # (warned about above) still works, while any *other* Host header (DNS rebinding) is
+    # rejected with 421.
     if reload:
         # uvicorn's reloader re-imports the app in a fresh process, so it needs an import
-        # string plus the workspace handed over via env rather than a live object.
+        # string plus the workspace/bound-host handed over via env rather than a live object.
         os.environ["AO_UI_WORKSPACE"] = ws
+        os.environ["AO_UI_BOUND_HOST"] = host
         uvicorn.run(
             "agent_orchestrator.ui.app:create_app_from_env",
             host=host,
@@ -1339,7 +1349,10 @@ def ui_cmd(
             factory=True,
         )
     else:
-        uvicorn.run(create_app(DashboardService(ws)), host=host, port=port)
+        app_instance = create_app(
+            DashboardService(ws), allowed_hosts=resolve_allowed_hosts(bound_host=host)
+        )
+        uvicorn.run(app_instance, host=host, port=port)
 
 
 @app.command()
@@ -1381,6 +1394,223 @@ def prune(
 
     action = "would be deleted" if dry_run else "deleted"
     typer.echo(f"{len(to_delete)} run(s) {action}")
+
+
+def _resolve_templates_workspace_root(workspace: str | None) -> str:
+    """Workspace-root resolution shared by `ao templates`/`ao new` (E-Tpl3x9).
+
+    Mirrors `ui_cmd`'s own `--workspace`/`AO_WORKSPACE_ROOT`/cwd resolution rather than
+    `_load_all`'s reposet-derived one: template discovery/scaffolding operates directly on
+    a workspace directory, with no workflow/reposets/agents triplet loaded yet (that only
+    happens afterwards, for `--validate-only`/`--run`, via the normal `_load_all` path).
+    """
+    ws = workspace or os.environ.get("AO_WORKSPACE_ROOT") or os.getcwd()
+    return str(Path(ws).resolve())
+
+
+def _parse_param_options(raw: list[str]) -> dict[str, str]:
+    """Parse repeated `--param key=value` options into a dict. Raises ValueError on a
+    malformed entry (no `=`, or an empty key) so the caller can report a clean CLI error."""
+    parsed: dict[str, str] = {}
+    for item in raw:
+        if "=" not in item:
+            raise ValueError(f"--param must be key=value, got {item!r}")
+        key, _, value = item.partition("=")
+        key = key.strip()
+        if not key:
+            raise ValueError(f"--param has an empty key: {item!r}")
+        parsed[key] = value
+    return parsed
+
+
+@app.command(name="templates")
+def templates_cmd(
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Workspace root to discover templates in (default: current directory). "
+        "Env: AO_WORKSPACE_ROOT",
+    ),
+) -> None:
+    """List discovered workflow templates (built-in + workspace-registered, E-Tpl3x9)."""
+    from .templates import TemplateError, discover_templates
+
+    ws_root = _resolve_templates_workspace_root(workspace)
+    cfg = _load_project_config_or_none()
+
+    try:
+        infos = discover_templates(ws_root, cfg)
+    except TemplateError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+
+    if not infos:
+        typer.echo("No templates discovered.")
+        typer.echo(
+            "Register one via .ao/config.yaml's `templates:` list, or point `ao new` at a "
+            "template directory directly."
+        )
+        return
+
+    for info in infos:
+        typer.echo(f"{info.name}  [{info.source}]")
+        if info.description:
+            typer.echo(f"  {info.description}")
+        if info.required_agents:
+            typer.echo(f"  required agents: {', '.join(info.required_agents)}")
+        if info.params:
+            typer.echo("  params:")
+            for p in info.params:
+                req = "required" if p.required else "optional"
+                extra = f", enum={p.enum}" if p.enum else ""
+                default = f", default={p.default!r}" if p.default is not None else ""
+                desc = f" — {p.description}" if p.description else ""
+                typer.echo(f"    --param {p.name}=<value>  ({req}{extra}{default}){desc}")
+        else:
+            typer.echo("  params: (none)")
+        typer.echo("")
+
+
+def _invoke_run_in_process(workflow_path: str, reposets: str | None, agents: str | None) -> int:
+    """Invoke the existing `run` command in-process for `ao new --run`.
+
+    Deliberately does NOT subprocess to an `ao` binary (the global snapshot can be stale and
+    silently ignore features — the exact "routing support" staleness trap new-epic-run.sh's
+    `require_routing_support` guards against) and does NOT duplicate `run`'s ~150-line body.
+    `typer.main.get_command(app).main(args=[...], standalone_mode=False)` was verified
+    directly (manual run against this repo's own example workflow with the fake executor)
+    to both suppress `run`'s internal `raise typer.Exit(...)` from propagating as a real
+    `SystemExit` AND return its intended exit code, so the caller gets a clean int back.
+    """
+    import typer.main
+
+    args = ["run", "--workflow", workflow_path]
+    if reposets:
+        args += ["--reposets", reposets]
+    if agents:
+        args += ["--agents", agents]
+    command = typer.main.get_command(app)
+    return int(command.main(args=args, standalone_mode=False))
+
+
+@app.command(name="new")
+def new_cmd(
+    template: str = typer.Argument(
+        ..., help="Template name (from `ao templates`) or a directory path containing template.yaml"
+    ),
+    slug_or_id: str = typer.Argument(
+        ...,
+        help="A bare slug (a random instance id is generated) or a full id already matching "
+        "the template's id_pattern",
+    ),
+    param: list[str] = typer.Option(
+        [], "--param", help="Template param as key=value (repeatable)."
+    ),
+    prompt_file: str | None = typer.Option(
+        None,
+        "--prompt-file",
+        help="Write this file's content into the instance's prompt.md. Conflict-checked "
+        "against an existing, differently-edited prompt.md (never silently overwritten).",
+    ),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Workspace root to scaffold into (default: current directory). Must match the "
+        "target repo_set's workspace_root for --validate-only/--run to resolve correctly. "
+        "Env: AO_WORKSPACE_ROOT",
+    ),
+    validate_only: bool = typer.Option(
+        False,
+        "--validate-only",
+        help="Scaffold, then `ao validate` the rendered workflow, and stop.",
+    ),
+    run: bool = typer.Option(
+        False,
+        "--run",
+        help="Scaffold, validate, then run the rendered workflow in-process "
+        "(equivalent to `ao run --workflow <rendered>`).",
+    ),
+    reposets: str | None = typer.Option(
+        None, help="Path to reposets config JSON/YAML (used only by --validate-only/--run)"
+    ),
+    agents: str | None = typer.Option(
+        None, help="Path to agents config JSON/YAML (used only by --validate-only/--run)"
+    ),
+) -> None:
+    """Scaffold (and optionally validate/run) a workflow instance from a template (E-Tpl3x9)."""
+    from .errors import OrchestratorError
+    from .templates import TemplateError, instantiate, load_template
+
+    if validate_only and run:
+        typer.echo("ERROR: --validate-only and --run are mutually exclusive", err=True)
+        raise typer.Exit(1)
+
+    ws_root = _resolve_templates_workspace_root(workspace)
+    cfg = _load_project_config_or_none()
+
+    try:
+        parsed_params = _parse_param_options(param)
+    except ValueError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+
+    prompt_text: str | None = None
+    if prompt_file is not None:
+        try:
+            prompt_text = Path(prompt_file).read_text(encoding="utf-8")
+        except OSError as e:
+            typer.echo(f"ERROR: cannot read --prompt-file {prompt_file}: {e}", err=True)
+            raise typer.Exit(1)
+
+    try:
+        tmpl = load_template(template, ws_root, cfg)
+        result = instantiate(
+            tmpl, ws_root, slug_or_id=slug_or_id, params=parsed_params, prompt_text=prompt_text
+        )
+    except TemplateError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Instance ready: {result.instance_dir}")
+    typer.echo(f"  workflow -> {result.workflow_path}")
+    if result.prompt_path:
+        typer.echo(f"  prompt   -> {result.prompt_path}")
+    if result.created:
+        typer.echo(f"  created ({len(result.created)}): " + ", ".join(result.created))
+    if result.skipped:
+        typer.echo(
+            f"  skipped ({len(result.skipped)}, already present): " + ", ".join(result.skipped)
+        )
+
+    if not validate_only and not run:
+        typer.echo("")
+        typer.echo("Next steps:")
+        step = 1
+        if result.prompt_path:
+            typer.echo(f"  {step}. Edit your prompt:   $EDITOR {result.prompt_path}")
+            step += 1
+        typer.echo(f"  {step}. Validate:           ao validate --workflow {result.workflow_path}")
+        step += 1
+        typer.echo(f"  {step}. Run:                ao run      --workflow {result.workflow_path}")
+        return
+
+    try:
+        _load_all(result.workflow_path, reposets, agents)
+        typer.echo("OK: rendered workflow is valid")
+    except OrchestratorError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1)
+    except SystemExit:
+        return
+
+    if not run:
+        return
+
+    typer.echo("Running (in-process, equivalent to `ao run --workflow <rendered>`)...")
+    exit_code = _invoke_run_in_process(result.workflow_path, reposets, agents)
+    raise typer.Exit(exit_code)
 
 
 if __name__ == "__main__":

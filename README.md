@@ -13,6 +13,7 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [Spec files](#spec-files)
 - [CLI reference](#cli-reference)
 - [Dashboard (`ao ui`)](#dashboard-ao-ui)
+- [Workflow templates](#workflow-templates)
 - [General instructions](#general-instructions)
 - [Environment variables](#environment-variables)
 - [Per-project config file](#per-project-config-file)
@@ -42,6 +43,30 @@ it up immediately, restart it or run:
 ```bash
 source "$HOME/.local/bin/env"
 ```
+
+### Beta flavor (parallel install)
+
+The installer also supports installing a second, fully-separate **beta** snapshot
+alongside the stable one — useful for trying an unreleased branch without touching your
+working `ao`:
+
+```bash
+AO_FLAVOR=beta bash install.sh     # or: bash install.sh --flavor beta
+```
+
+| | stable (default) | beta |
+|---|---|---|
+| commands | `ao`, `ao-bench` | `ao-beta`, `ao-bench-beta` |
+| uv tool/bin dirs | uv's defaults | isolated under `~/.local/share/ao-beta/` |
+| commit stamp | `installed.commit` | `beta.commit` |
+
+`--flavor <name>` (CLI flag) overrides `AO_FLAVOR` (env var); an unrecognized value is
+rejected. `AO_FLAVOR` unset behaves exactly like the single-flavor installer always has.
+
+**`.ao/config.yaml` and every `AO_*` env var are shared between flavors** — they're
+resolved per-project at runtime, not by the installer, so there's nothing to namespace.
+Don't add a per-flavor config or env prefix for them. See
+[`docs-md/install-flavors.md`](docs-md/install-flavors.md) for the full rationale.
 
 ### Manual install (development)
 
@@ -183,6 +208,8 @@ specs/examples/
 
 ```
 ao init       Scaffold a per-project .ao/config.yaml (run once per project)
+ao templates  List available workflow templates (built-in + workspace-registered)
+ao new        Scaffold a run instance from a workflow template
 ao validate   Validate workflow, reposets, and agents specs (no execution)
 ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
@@ -277,6 +304,59 @@ dashboard) does not stop them.
 
 **Deferred:** UI-based dynamic workflow generation (building a DAG in the browser) is on the
 roadmap, not in this release.
+
+---
+
+## Workflow templates
+
+Pre-built, parameterized workflow skeletons that scaffold a complete run instance — with a
+rendered workflow DAG, prompt file, and instruction assets — in one command. Templates are
+registered at config time and are never authored in the UI.
+
+### Discovery and usage
+
+List available templates:
+
+```bash
+ao templates
+```
+
+Scaffold a run instance from a template (the cheapest example is the builtin `routed-runner`
+with documentation route):
+
+```bash
+ao new routed-runner my-task --param repo_set=main --param type=documentation
+```
+
+The command produces:
+- An instance directory with ID `e-XXXXXX-my-task` (workspace-relative)
+- A rendered `workflow.json` validated against your agents and reposets
+- A `prompt.md` file (user-editable, survives re-scaffolding on the same ID)
+- Shared instruction assets materialized once per workspace
+
+Then run the instance:
+
+```bash
+ao run --workflow workflows/routed-runner/runs/e-XXXXXX-my-task/workflow.json ...
+```
+
+Or start it from the dashboard's **"From template"** mode, which auto-discovers the scaffolded
+workflow.
+
+### Registration
+
+Templates are discovered from three sources (in precedence order):
+
+1. **Workspace-registered** — paths listed in `.ao/config.yaml`:
+   ```yaml
+   templates:
+     - path/to/my-template         # a template directory
+     - templates/                   # a directory of template directories (scanned 1 level)
+   ```
+2. **Built-in** — shipped with this package (e.g., `routed-runner`).
+3. **Ad-hoc path** — `ao new /path/to/template/dir …` accepts a directory directly.
+
+For more detail, see the [workflow templates HLD](docs-md/workflow-templates-hld.md).
 
 ---
 

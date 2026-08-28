@@ -25,13 +25,33 @@ from pydantic import BaseModel, Field
 
 from .._version import get_version_string
 from .files import PathNotAllowedError, PathNotFoundError
-from .service import DashboardError, DashboardService
+from .htmlpreview import NotMarkupError
+from .security import SecurityMiddleware, resolve_allowed_hosts
+from .service import (
+    PROMPT_CONFLICT_PREFIX,
+    TEMPLATE_NOT_FOUND_PREFIX,
+    DashboardError,
+    DashboardService,
+)
 
 # Where the built frontend lands. Populated by `npm run build` in ui/ (see
 # ui/vite.config.ts, whose outDir points here) and shipped inside the wheel.
 STATIC_DIR = Path(__file__).parent / "static"
 
 API_PREFIX = "/api"
+
+
+class _AllowedHostsUnset:
+    """Sentinel for `create_app`'s `allowed_hosts` parameter.
+
+    An explicit `allowed_hosts=None` means "Host check disabled" (see
+    `security.resolve_allowed_hosts`'s return contract) — a plain `None` default would make
+    that indistinguishable from "the caller didn't pass this at all, resolve it from the
+    environment at call time". This sentinel keeps the two apart.
+    """
+
+
+_ALLOWED_HOSTS_UNSET = _AllowedHostsUnset()
 
 
 class StartRunRequest(BaseModel):
@@ -48,12 +68,34 @@ class ResumeRunRequest(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
-def create_app(service: DashboardService) -> FastAPI:
+class CreateInstanceRequest(BaseModel):
+    """Body for ``POST /api/templates/{name}/instances`` (HLD §2.6)."""
+
+    slug_or_id: str | None = None
+    params: dict[str, str] = Field(default_factory=dict)
+    prompt: str | None = None
+    start: bool = False
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+def create_app(
+    service: DashboardService,
+    *,
+    allowed_hosts: frozenset[str] | None | _AllowedHostsUnset = _ALLOWED_HOSTS_UNSET,
+) -> FastAPI:
     """Build the dashboard app around an already-constructed *service*.
 
     Taking the service as an argument (rather than building one from env vars inside)
     is what lets the integration tests drive every route against a temp workspace with a
     stub supervisor — no subprocesses, no monkeypatching.
+
+    Args:
+        allowed_hosts: Host allowlist for `SecurityMiddleware` (see `security.py`). Left
+            unset, this resolves `resolve_allowed_hosts()` (env `AO_UI_ALLOWED_HOSTS` +
+            the loopback defaults) at call time — `ao ui` instead passes its own bound
+            host explicitly so that value is always included too. Pass `None` explicitly
+            to disable the Host check outright (equivalent to the `AO_UI_ALLOWED_HOSTS=*`
+            escape hatch); this is deliberately distinct from leaving the argument unset.
     """
     app = FastAPI(
         title="Agent Orchestrator Dashboard",
@@ -62,6 +104,10 @@ def create_app(service: DashboardService) -> FastAPI:
         openapi_url=f"{API_PREFIX}/openapi.json",
     )
     app.state.service = service
+    effective_hosts = (
+        resolve_allowed_hosts() if isinstance(allowed_hosts, _AllowedHostsUnset) else allowed_hosts
+    )
+    app.add_middleware(SecurityMiddleware, allowed_hosts=effective_hosts)
 
     # -- health / workspace ----------------------------------------------------
 
@@ -105,6 +151,20 @@ def create_app(service: DashboardService) -> FastAPI:
         except PathNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get(f"{API_PREFIX}/files/html")
+    def file_html(
+        path: str = Query(..., description="Path relative to the root"),
+        root: str | None = Query(None),
+    ) -> dict:
+        try:
+            return service.read_html_preview(root=root, path=path)
+        except PathNotAllowedError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except PathNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except NotMarkupError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # -- workflows -------------------------------------------------------------
 
     @app.get(f"{API_PREFIX}/workflows")
@@ -112,6 +172,36 @@ def create_app(service: DashboardService) -> FastAPI:
         from dataclasses import asdict
 
         return [asdict(w) for w in service.list_workflows()]
+
+    # -- templates (E-Tpl3x9, HLD §2.6) -----------------------------------------
+
+    @app.get(f"{API_PREFIX}/templates")
+    def list_templates() -> list[dict]:
+        try:
+            return service.list_templates()
+        except DashboardError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post(f"{API_PREFIX}/templates/{{name}}/instances", status_code=201)
+    def create_instance(name: str, body: CreateInstanceRequest) -> dict:
+        try:
+            return service.create_instance(
+                name,
+                slug_or_id=body.slug_or_id,
+                params=body.params,
+                prompt=body.prompt,
+                start=body.start,
+                options=body.options,
+            )
+        except DashboardError as exc:
+            message = str(exc)
+            if message.startswith(TEMPLATE_NOT_FOUND_PREFIX):
+                status = 404
+            elif message.startswith(PROMPT_CONFLICT_PREFIX):
+                status = 409
+            else:
+                status = 400
+            raise HTTPException(status_code=status, detail=message) from exc
 
     # -- runs ------------------------------------------------------------------
 
@@ -231,11 +321,20 @@ def _mount_frontend(app: FastAPI) -> None:
 
 
 def create_app_from_env() -> FastAPI:
-    """Build an app from ``AO_UI_WORKSPACE`` (or the cwd) — the uvicorn factory entrypoint."""
+    """Build an app from ``AO_UI_WORKSPACE`` (or the cwd) — the uvicorn factory entrypoint.
+
+    Used by ``ao ui --reload``, where uvicorn re-imports the app in a fresh process, so
+    ``cli.py`` hands the bound host over via ``AO_UI_BOUND_HOST`` (same env-relay pattern
+    as ``AO_UI_WORKSPACE``) rather than a live object — this keeps the reload path's Host
+    allowlist consistent with the non-reload path's, which passes the bound host directly.
+    """
     import os
 
     workspace = os.environ.get("AO_UI_WORKSPACE") or os.getcwd()
-    return create_app(DashboardService(workspace))
+    bound_host = os.environ.get("AO_UI_BOUND_HOST")
+    return create_app(
+        DashboardService(workspace), allowed_hosts=resolve_allowed_hosts(bound_host=bound_host)
+    )
 
 
 __all__ = ["API_PREFIX", "STATIC_DIR", "create_app", "create_app_from_env"]

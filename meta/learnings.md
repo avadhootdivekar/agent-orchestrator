@@ -797,3 +797,39 @@ By: agent
 Role: agent
 Date: 2026-07-24
 ---
+
+---
+Learning-ID: LRN-20260724-fake-executor-clobbers-declared-outputs
+Learning: `FakeExecutor` unconditionally writes stub content to every DECLARED output path, so pre-seeding a router's `route-verdict.json` (a declared output of `classify`) cannot survive a fake run — routed workflows can never COMPLETE under fake executors. The finplan "pre-seed" dry-run technique works only for `task_manifest_path` files, which are not declared outputs. Cover run-to-completion e2e with a non-routed fixture template instead, and assert dispatch (not completion) for routed DAGs.
+Context: Discovered while writing the builtin routed-runner e2e for E-Tpl3x9; an agent initially assumed the pre-seed would work based on the finplan README.
+By: agent
+Role: tester
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260724-template-render-needs-json-escaping-and-real-schema
+Learning: Any `{{ var }}`-substitution into a JSON spec must JSON-escape values (chars only, keep bare numerics raw) AND validate the rendered result against the real WorkflowSpec loader — shallow "has id/tasks" checks let structural injection through. Same lesson for reads: `Path(dir) / rel` silently discards `dir` when `rel` is absolute, so template `source:` fields need absolute-path rejection plus resolve()+is_relative_to containment.
+Context: Two execution-confirmed review BLOCKERs (B1/B2) in the E-Tpl3x9 templates module, fixed same-day; see meta/tickets/E-Tpl3x9-workflow-templates/T-Te5rev-e2e-review/REVIEW.md.
+By: agent
+Role: reviewer
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260724-install-sh-missed-ui-extra
+Learning: `install.sh`'s `uv tool install "$SCRIPT_DIR"` omitted the optional `[ui]` extra (fastapi/uvicorn/httpx), so the globally installed snapshot had a fully working `ao ui` *command* that raised at runtime asking for the extra it was never given. `uv tool install` has no `--extra` flag; the extra must be requested via package-spec brackets: `uv tool install "$SCRIPT_DIR[ui]"`. Fixed in install.sh.
+Context: Found while installing the ad/workflow-templates snapshot globally and verifying `ao ui` actually serves for a consumer workspace (ao-runner-finplan) — the pre-existing 8765/8766 dashboards on this host were both running from the local dev venv (`uv run`, editable), never from the global uv-tool snapshot, which is why the gap went unnoticed.
+By: agent
+Role: developer
+Date: 2026-07-24
+---
+
+---
+Learning-ID: LRN-20260730-sanitizer-blocklists-must-enumerate-declarative-animation
+Learning: An HTML/SVG sanitizer's element/attribute blocklist must separately enumerate DECLARATIVE ANIMATION (SVG SMIL: `<animate>`, `<set>`, `<animateTransform>`, `<animateMotion>`, `<discard>`) as its own URL-bearing construct class — it is not covered by stripping `href`/`src`-shaped attributes, because `<animate attributeName="href" values="http://attacker.example/...">` retargets an attribute to an attacker-chosen value AFTER those attributes have already been sanitized/stripped, live, on a timer, with no script execution and no user interaction beyond rendering. It also survives a scripting sandbox: SMIL animation is a declarative browser engine feature, not JavaScript, so `sandbox=""` (no `allow-scripts`) does not disable it. Confirmed in real headless Chrome: a synthetic click on an `<a>` whose `href` had been live-retargeted by a sibling `<animate>` made the (sandboxed, srcdoc) iframe navigate to the attacker URL — a genuine one-click network-egress/redirect primitive, not merely a theoretical gap. This also invalidates the common sanitizer-author assumption "a sandboxed iframe can't navigate anywhere, so a live href is harmless dead UI" — a sandboxed iframe without `allow-top-navigation` cannot navigate OTHER frames, but can always navigate ITSELF.
+Context: Execution-confirmed by a dedicated adversarial security audit of the `agent_orchestrator/ui/htmlpreview.py` sanitizer (E-Tpl3x9 follow-on dashboard file-preview work, H1 finding) and independently reproduced by the coordinator via the live `/api/files/html` endpoint before the fix landed. Fixed by adding the SMIL element names to `DROPPED_ELEMENTS_WITH_SUBTREE` outright — there is no legitimate use for live attribute retargeting in a static preview, so this is a zero-functionality-tradeoff closure, not a mitigation.
+By: agent
+Role: developer
+Date: 2026-07-30
+---

@@ -2,13 +2,17 @@
 
 import type {
   AggregateStats,
+  CreateInstanceRequest,
+  CreateInstanceResponse,
   DirListing,
   FileContent,
   GeneralInstruction,
+  HtmlPreview,
   LaunchRecord,
   RunDetail,
   RunOptions,
   RunSummary,
+  TemplateInfo,
   WorkflowInfo,
   WorkspaceInfo,
 } from "./types";
@@ -64,7 +68,21 @@ export const api = {
     return request<FileContent>(`/files/content?${params}`);
   },
 
+  /** Sanitized, self-contained HTML for markup files (`.html`/`.svg`/etc) — see 1A.2. */
+  readFileHtml: (path: string, root?: string) => {
+    const params = new URLSearchParams({ path });
+    if (root) params.set("root", root);
+    return request<HtmlPreview>(`/files/html?${params}`);
+  },
+
   workflows: () => request<WorkflowInfo[]>("/workflows"),
+
+  templates: () => request<TemplateInfo[]>("/templates"),
+  createInstance: (name: string, body: CreateInstanceRequest) =>
+    request<CreateInstanceResponse>(`/templates/${encodeURIComponent(name)}/instances`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   runs: () => request<RunSummary[]>("/runs"),
   runStats: () => request<AggregateStats>("/runs/stats"),

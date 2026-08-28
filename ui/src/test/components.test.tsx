@@ -140,6 +140,23 @@ describe("NewRun", () => {
     expect(body.prompt).toBe("Add rate limiting");
     expect(onLaunched).toHaveBeenCalledWith("new-run");
   });
+
+  it("switches to the template form under the 'From template' tab, leaving the workflow form intact", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({ "/api/workflows": WORKFLOWS, "/api/templates": [] }),
+    );
+    render(<NewRun onLaunched={() => {}} />);
+
+    await screen.findByLabelText("Workflow");
+    await userEvent.click(screen.getByRole("tab", { name: "From template" }));
+
+    expect(screen.queryByLabelText("Workflow")).not.toBeInTheDocument();
+    expect(await screen.findByText(/No templates registered/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "From workflow" }));
+    expect(await screen.findByLabelText("Workflow")).toBeInTheDocument();
+  });
 });
 
 describe("RunsList", () => {

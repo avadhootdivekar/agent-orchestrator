@@ -13,12 +13,29 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agent_orchestrator.artifacts import LocalFsArtifactStore
 from agent_orchestrator.models import RunState, TaskRunState
 from agent_orchestrator.runstate import RunStateStore
 from agent_orchestrator.ui.processes import LaunchError, LaunchRecord
 from agent_orchestrator.ui.service import DashboardService
+
+
+@pytest.fixture(autouse=True)
+def _allow_testclient_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `SecurityMiddleware`'s Host allowlist (ui/security.py) accept `TestClient`.
+
+    httpx's `TestClient` sends `Host: testserver` on every request, which is not one of
+    the dashboard's default allowed hosts (loopback only) — every request in this suite
+    would otherwise 421. Fixed in this ONE place (rather than at each app-construction call
+    site across the test files) by widening the allowlist via the same env var an operator
+    would use (`AO_UI_ALLOWED_HOSTS`); `create_app()` resolves it at call time, so this
+    applies regardless of which test file builds the app. Tests that need to prove the
+    Host check actually rejects a bad value (test_security.py) construct their app with an
+    explicit `allowed_hosts=` argument instead, which bypasses env resolution entirely.
+    """
+    monkeypatch.setenv("AO_UI_ALLOWED_HOSTS", "testserver")
 
 
 @pytest.fixture()
@@ -117,6 +134,64 @@ def write_workflow(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
     return path
+
+
+def write_template(
+    root: Path,
+    *,
+    dirname: str = "mini-template",
+    name: str = "mini",
+    description: str = "A minimal template for dashboard API tests.",
+    extra_params: dict | None = None,
+) -> Path:
+    """Write a minimal, schema-valid workflow template dir (HLD §2.2) under *root*.
+
+    Kept local to the UI test suite (rather than importing `tests/test_templates.py`'s own
+    fixture builder) so the two suites don't couple to one shared private fixture shape —
+    this one only needs to exercise the dashboard's template endpoints, not the full
+    manifest surface the core module's own tests cover.
+    """
+    tdir = root / dirname
+    tdir.mkdir(parents=True, exist_ok=True)
+
+    manifest = {
+        "version": "1.0",
+        "name": name,
+        "description": description,
+        "id_pattern": "e-{rand6}-{slug}",
+        "instance_dir": "runs/{id}",
+        "params": {
+            "greeting": {"description": "Greeting text", "required": False, "default": "hello"},
+            **(extra_params or {}),
+        },
+        "dirs": ["outputs"],
+        "files": [
+            {"source": "workflow.json.tmpl", "target": "workflow.json"},
+            {"source": "prompt.md.tmpl", "target": "prompt.md", "keep_existing": True},
+        ],
+        "required_agents": ["worker"],
+    }
+    (tdir / "template.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    workflow_tmpl = {
+        "version": "1.0",
+        "id": "{{ id }}",
+        "repo_set": "default-set",
+        "prompt_path": "{{ instance_dir }}/prompt.md",
+        "tasks": [
+            {
+                "id": "do-work",
+                "agent": "worker",
+                "instruction": "instructions/do-work.md",
+                "inputs": ["{{ instance_dir }}/prompt.md"],
+                "outputs": ["{{ instance_dir }}/outputs/result.md"],
+                "depends_on": [],
+            }
+        ],
+    }
+    (tdir / "workflow.json.tmpl").write_text(json.dumps(workflow_tmpl), encoding="utf-8")
+    (tdir / "prompt.md.tmpl").write_text("# {{ id }}\n", encoding="utf-8")
+    return tdir
 
 
 class StubSupervisor:

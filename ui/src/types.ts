@@ -25,6 +25,39 @@ export interface FileContent {
   is_binary: boolean;
   truncated: boolean;
   text: string | null;
+  /** See ui/htmlpreview + files.py classification. */
+  kind: "text" | "image" | "markup" | "binary";
+  /** Allowlisted MIME, set only when kind === "image". */
+  mime: string | null;
+  /** `data:<mime>;base64,...`, set only when kind === "image" and size is within the inline cap. */
+  data_uri: string | null;
+}
+
+/** One asset/href the HTML sanitizer declined to inline (see `ui/htmlpreview.py`). */
+export interface DroppedRef {
+  /** Original ref, already truncated by the server for display safety. */
+  url: string;
+  reason:
+    | "external"
+    | "outside-root"
+    | "not-found"
+    | "too-large"
+    | "budget-exhausted"
+    | "unsupported-scheme"
+    | "depth-exceeded";
+}
+
+/** Response of `GET /api/files/html` — sanitized, self-contained HTML for iframe srcdoc. */
+export interface HtmlPreview {
+  path: string;
+  root: string;
+  html: string;
+  inlined: number;
+  dropped: DroppedRef[];
+  scripts_removed: number;
+  truncated: boolean;
+  budget_bytes: number;
+  budget_used: number;
 }
 
 export interface WorkflowInfo {
@@ -133,4 +166,44 @@ export interface RunOptions {
   max_parallel?: number;
   budget_total?: number;
   self_heal?: boolean;
+}
+
+/**
+ * Workflow-template dataclasses (see `agent_orchestrator/templates.py`, HLD §2.4),
+ * serialized with `dataclasses.asdict` — field names are already snake_case.
+ */
+export interface TemplateParam {
+  name: string;
+  description: string;
+  required: boolean;
+  enum: string[] | null;
+  default: string | null;
+}
+
+export interface TemplateInfo {
+  name: string;
+  description: string;
+  path: string;
+  source: "builtin" | "workspace" | "path";
+  params: TemplateParam[];
+  required_agents: string[];
+  /** Rendered-with-placeholders preview of prompt.md; null when the template has none. */
+  prompt_skeleton: string | null;
+}
+
+/** Body of `POST /api/templates/{name}/instances` (HLD §2.6). */
+export interface CreateInstanceRequest {
+  slug_or_id?: string;
+  params: Record<string, string>;
+  prompt?: string;
+  start: boolean;
+  options: RunOptions;
+}
+
+/** 201 response of `POST /api/templates/{name}/instances` (HLD §2.6). */
+export interface CreateInstanceResponse {
+  instance_dir: string;
+  workflow_path: string;
+  workflow: WorkflowInfo;
+  launch: LaunchRecord | null;
 }

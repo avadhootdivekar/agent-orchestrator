@@ -1,0 +1,465 @@
+{
+  "version": "1.0",
+  "id": "{{ id }}",
+  "name": "routed-runner: {{ id }}",
+  "repo_set": "{{ params.repo_set }}",
+  "prompt_path": "{{ instance_dir }}/prompt.md",
+  "defaults": {
+    "retries": { "max_attempts": 3, "backoff_seconds": 60 },
+    "timeout_seconds": 7200
+  },
+  "triggers": [{ "type": "manual" }],
+  "tasks": [
+    {
+      "id": "git-branch-off",
+      "agent": "git-operator",
+      "instruction": "workflows/routed-runner/instructions/01-git-branch-off.md",
+      "inputs": ["{{ instance_dir }}/prompt.md"],
+      "outputs": ["{{ instance_dir }}/outputs/git-go-ahead.md"],
+      "depends_on": [],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 1800
+    },
+    {
+      "id": "classify",
+      "agent": "architect",
+      "instruction": "workflows/routed-runner/instructions/00-classify.md",
+      "inputs": [
+        "{{ instance_dir }}/prompt.md",
+        "{{ instance_dir }}/outputs/git-go-ahead.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/route-verdict.json"],
+      "depends_on": ["git-branch-off"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "bug-triage",
+      "agent": "developer",
+      "instruction": "workflows/routed-runner/instructions/20-bug-triage.md",
+      "inputs": ["{{ instance_dir }}/prompt.md"],
+      "outputs": ["{{ instance_dir }}/outputs/bug/triage.md"],
+      "depends_on": ["classify"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "bug-fix",
+      "agent": "developer",
+      "instruction": "workflows/routed-runner/instructions/21-bug-fix.md",
+      "inputs": ["{{ instance_dir }}/outputs/bug/triage.md"],
+      "outputs": ["{{ instance_dir }}/outputs/bug/fix.md"],
+      "depends_on": ["bug-triage"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 10800
+    },
+    {
+      "id": "bug-test",
+      "agent": "tester",
+      "instruction": "workflows/routed-runner/instructions/22-bug-test.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/bug/triage.md",
+        "{{ instance_dir }}/outputs/bug/fix.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/bug/test.md"],
+      "depends_on": ["bug-fix"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 10800
+    },
+    {
+      "id": "bug-review",
+      "agent": "reviewer",
+      "instruction": "workflows/routed-runner/instructions/23-bug-review.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/bug/triage.md",
+        "{{ instance_dir }}/outputs/bug/fix.md",
+        "{{ instance_dir }}/outputs/bug/test.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/bug/review.md"],
+      "depends_on": ["bug-test"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 4800
+    },
+    {
+      "id": "refine-requirements",
+      "agent": "architect",
+      "instruction": "workflows/routed-runner/instructions/02-refine-requirements.md",
+      "inputs": ["{{ instance_dir }}/prompt.md"],
+      "outputs": ["{{ instance_dir }}/outputs/requirements-draft.md"],
+      "depends_on": ["classify"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "market-survey",
+      "agent": "market-surveyor",
+      "instruction": "workflows/routed-runner/instructions/03-market-survey.md",
+      "inputs": [
+        "{{ instance_dir }}/prompt.md",
+        "{{ instance_dir }}/outputs/requirements-draft.md"
+      ],
+      "outputs": [
+        "{{ instance_dir }}/outputs/survey.md",
+        "{{ instance_dir }}/outputs/requirements.md"
+      ],
+      "depends_on": ["refine-requirements"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 4800
+    },
+    {
+      "id": "design-draft",
+      "agent": "architect-opus",
+      "instruction": "workflows/routed-runner/instructions/04-design-draft.md",
+      "inputs": [
+        "{{ instance_dir }}/prompt.md",
+        "{{ instance_dir }}/outputs/requirements.md",
+        "{{ instance_dir }}/outputs/survey.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/design-draft.md"],
+      "depends_on": ["market-survey"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "design-review",
+      "agent": "reviewer-opus",
+      "instruction": "workflows/routed-runner/instructions/05-design-review.md",
+      "inputs": [
+        "{{ instance_dir }}/prompt.md",
+        "{{ instance_dir }}/outputs/requirements.md",
+        "{{ instance_dir }}/outputs/survey.md",
+        "{{ instance_dir }}/outputs/design-draft.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/review-1.md"],
+      "depends_on": ["design-draft"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 4800
+    },
+    {
+      "id": "design-final",
+      "agent": "architect-opus",
+      "instruction": "workflows/routed-runner/instructions/06-design-final.md",
+      "inputs": [
+        "{{ instance_dir }}/prompt.md",
+        "{{ instance_dir }}/outputs/requirements.md",
+        "{{ instance_dir }}/outputs/survey.md",
+        "{{ instance_dir }}/outputs/design-draft.md",
+        "{{ instance_dir }}/outputs/review-1.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/design.md"],
+      "depends_on": ["design-review"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "task-breakdown",
+      "agent": "architect-opus",
+      "instruction": "workflows/routed-runner/instructions/07-task-breakdown.md",
+      "inputs": [
+        "{{ instance_dir }}/prompt.md",
+        "{{ instance_dir }}/outputs/requirements.md",
+        "{{ instance_dir }}/outputs/survey.md",
+        "{{ instance_dir }}/outputs/design.md",
+        "{{ instance_dir }}/breakdown-contract.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/tasks.md"],
+      "emit_tasks": true,
+      "task_manifest_path": "{{ instance_dir }}/outputs/tasks-manifest.json",
+      "depends_on": ["design-final"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 4800
+    },
+    {
+      "id": "full-test",
+      "agent": "full-tester",
+      "instruction": "workflows/routed-runner/instructions/13-full-test.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/all-tasks-complete.md",
+        "{{ instance_dir }}/outputs/requirements.md",
+        "{{ instance_dir }}/outputs/design.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/integration-test-report.md"],
+      "depends_on": ["task-breakdown"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 21600
+    },
+    {
+      "id": "task-plan",
+      "agent": "architect",
+      "instruction": "workflows/routed-runner/instructions/30-task-plan.md",
+      "inputs": ["{{ instance_dir }}/prompt.md"],
+      "outputs": ["{{ instance_dir }}/outputs/task/plan.md"],
+      "depends_on": ["classify"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 3600
+    },
+    {
+      "id": "task-impl",
+      "agent": "developer",
+      "instruction": "workflows/routed-runner/instructions/31-task-impl.md",
+      "inputs": ["{{ instance_dir }}/outputs/task/plan.md"],
+      "outputs": ["{{ instance_dir }}/outputs/task/dev-pass-1.md"],
+      "depends_on": ["task-plan"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 10800
+    },
+    {
+      "id": "task-test",
+      "agent": "tester",
+      "instruction": "workflows/routed-runner/instructions/32-task-test.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/task/plan.md",
+        "{{ instance_dir }}/outputs/task/dev-pass-1.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/task/test-pass-1.md"],
+      "depends_on": ["task-impl"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 10800
+    },
+    {
+      "id": "task-review",
+      "agent": "reviewer",
+      "instruction": "workflows/routed-runner/instructions/33-task-review.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/task/plan.md",
+        "{{ instance_dir }}/outputs/task/dev-pass-1.md",
+        "{{ instance_dir }}/outputs/task/test-pass-1.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/task/review.md"],
+      "depends_on": ["task-test"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 4800
+    },
+    {
+      "id": "task-fix",
+      "agent": "developer",
+      "instruction": "workflows/routed-runner/instructions/34-task-fix.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/task/review.md",
+        "{{ instance_dir }}/outputs/task/dev-pass-1.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/task/dev-pass-2.md"],
+      "depends_on": ["task-review"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 10800
+    },
+    {
+      "id": "task-retest",
+      "agent": "tester",
+      "instruction": "workflows/routed-runner/instructions/35-task-retest.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/task/plan.md",
+        "{{ instance_dir }}/outputs/task/dev-pass-2.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/task/test-pass-2.md"],
+      "depends_on": ["task-fix"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 10800
+    },
+    {
+      "id": "doc-plan",
+      "agent": "architect",
+      "instruction": "workflows/routed-runner/instructions/40-doc-plan.md",
+      "inputs": ["{{ instance_dir }}/prompt.md"],
+      "outputs": ["{{ instance_dir }}/outputs/doc/plan.md"],
+      "depends_on": ["classify"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "doc-write",
+      "agent": "developer",
+      "instruction": "workflows/routed-runner/instructions/41-doc-write.md",
+      "inputs": ["{{ instance_dir }}/outputs/doc/plan.md"],
+      "outputs": ["{{ instance_dir }}/outputs/doc/draft.md"],
+      "depends_on": ["doc-plan"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 7200
+    },
+    {
+      "id": "doc-review",
+      "agent": "reviewer",
+      "instruction": "workflows/routed-runner/instructions/42-doc-review.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/doc/plan.md",
+        "{{ instance_dir }}/outputs/doc/draft.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/doc/review.md"],
+      "depends_on": ["doc-write"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 4800
+    },
+    {
+      "id": "test-gap-analysis",
+      "agent": "tester",
+      "instruction": "workflows/routed-runner/instructions/50-test-gap.md",
+      "inputs": ["{{ instance_dir }}/prompt.md"],
+      "outputs": ["{{ instance_dir }}/outputs/testing/gaps.md"],
+      "depends_on": ["classify"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 4800
+    },
+    {
+      "id": "test-write",
+      "agent": "tester",
+      "instruction": "workflows/routed-runner/instructions/51-test-write.md",
+      "inputs": ["{{ instance_dir }}/outputs/testing/gaps.md"],
+      "outputs": ["{{ instance_dir }}/outputs/testing/tests-written.md"],
+      "depends_on": ["test-gap-analysis"],
+      "skip_if_outputs_exist": true,
+      "timeout_seconds": 10800
+    },
+    {
+      "id": "test-run",
+      "agent": "full-tester",
+      "instruction": "workflows/routed-runner/instructions/52-test-run.md",
+      "inputs": [
+        "{{ instance_dir }}/outputs/testing/gaps.md",
+        "{{ instance_dir }}/outputs/testing/tests-written.md"
+      ],
+      "outputs": ["{{ instance_dir }}/outputs/testing/test-report.md"],
+      "depends_on": ["test-write"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 14400
+    },
+    {
+      "id": "bug-push",
+      "agent": "git-operator",
+      "instruction": "workflows/routed-runner/instructions/90-final-push.md",
+      "inputs": ["{{ instance_dir }}/outputs/bug/review.md"],
+      "outputs": ["{{ instance_dir }}/outputs/bug/push-report.md"],
+      "depends_on": ["bug-review"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "epic-push",
+      "agent": "git-operator",
+      "instruction": "workflows/routed-runner/instructions/90-final-push.md",
+      "inputs": ["{{ instance_dir }}/outputs/integration-test-report.md"],
+      "outputs": ["{{ instance_dir }}/outputs/epic/push-report.md"],
+      "depends_on": ["full-test"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "task-push",
+      "agent": "git-operator",
+      "instruction": "workflows/routed-runner/instructions/90-final-push.md",
+      "inputs": ["{{ instance_dir }}/outputs/task/test-pass-2.md"],
+      "outputs": ["{{ instance_dir }}/outputs/task/push-report.md"],
+      "depends_on": ["task-retest"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "doc-push",
+      "agent": "git-operator",
+      "instruction": "workflows/routed-runner/instructions/90-final-push.md",
+      "inputs": ["{{ instance_dir }}/outputs/doc/review.md"],
+      "outputs": ["{{ instance_dir }}/outputs/doc/push-report.md"],
+      "depends_on": ["doc-review"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 2400
+    },
+    {
+      "id": "testing-push",
+      "agent": "git-operator",
+      "instruction": "workflows/routed-runner/instructions/90-final-push.md",
+      "inputs": ["{{ instance_dir }}/outputs/testing/test-report.md"],
+      "outputs": ["{{ instance_dir }}/outputs/testing/push-report.md"],
+      "depends_on": ["test-run"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 2400
+    }
+  ],
+  "branches": [
+    {
+      "id": "type-router",
+      "router_task_id": "classify",
+      "verdict_path": "{{ instance_dir }}/outputs/route-verdict.json",
+      "routes": {
+        "bug": { "entry": ["bug-triage"] },
+        "epic": { "entry": ["refine-requirements"] },
+        "task": { "entry": ["task-plan"] },
+        "documentation": { "entry": ["doc-plan"] },
+        "testing": { "entry": ["test-gap-analysis"] }
+      },
+      "default_route": null
+    }
+  ],
+  "circuit_breakers": [
+    {
+      "id": "human-input-gate",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/pause.flag",
+      "action": "pause"
+    },
+    {
+      "id": "human-input-gate-2",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/pause-2.flag",
+      "action": "pause"
+    },
+    {
+      "id": "human-input-gate-3",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/pause-3.flag",
+      "action": "pause"
+    },
+    {
+      "id": "operator-kill",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/halt.flag",
+      "action": "stop"
+    },
+    {
+      "id": "operator-kill-2",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/halt-2.flag",
+      "action": "stop"
+    },
+    {
+      "id": "run-deadline",
+      "condition": "run_wall_clock_seconds",
+      "threshold": 432000,
+      "action": "stop",
+      "mode": "recommend"
+    },
+    {
+      "id": "run-active-cap",
+      "condition": "run_active_seconds",
+      "threshold": 432000,
+      "action": "stop",
+      "mode": "recommend"
+    },
+    {
+      "id": "systemic-breakage",
+      "condition": "consecutive_failures",
+      "threshold": 3,
+      "action": "fail",
+      "mode": "recommend"
+    },
+    {
+      "id": "runaway-fanout",
+      "condition": "injected_task_count",
+      "threshold": 115,
+      "action": "fail",
+      "mode": "recommend"
+    },
+    {
+      "id": "task-budget-cap",
+      "condition": "task_cost_usd",
+      "threshold": {{ params.task_budget_usd }},
+      "action": "fail",
+      "mode": "recommend"
+    },
+    {
+      "id": "run-budget-cap",
+      "condition": "run_cost_usd",
+      "threshold": {{ params.run_budget_usd }},
+      "action": "stop",
+      "mode": "recommend"
+    }
+  ]
+}

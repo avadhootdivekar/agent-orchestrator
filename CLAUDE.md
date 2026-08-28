@@ -24,6 +24,13 @@ Core responsibilities:
 - Docs → `docs-md/`
 - Agent/skill/command assets → `.claude/` (authoritative), mirrored by thin pointers for Copilot/Cursor
 
+**Primary consumer**: `ao-runner-finplan/`, a sibling repo (`../ao-runner-finplan` relative to
+this repo), is the typical real-world user of this tool — it drives its `fin_plan/` epics via
+`ao` (`.ao/config.yaml`, `ao ui` dashboard, workflow templates). It installs `ao` from this repo
+via `install.sh` (non-editable `uv tool` snapshot, see that script's header) and is a good
+reference for how the CLI/dashboard get used end-to-end; treat it as out of scope for orchestrator
+work otherwise.
+
 ---
 
 ## Design principles

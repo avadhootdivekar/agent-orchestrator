@@ -109,23 +109,62 @@ export function statusGlyph(status: string): string {
   }
 }
 
-/** Language hint for the code viewer, derived from the file extension. */
+/**
+ * Language hint for the code viewer, derived from the file extension.
+ *
+ * Names match the curated highlight.js subset registered in `components/viewer/CodeView.tsx`
+ * (see 1B.1) — only that subset ships in the bundle, so a name outside it just falls back to
+ * plain text via `hljs.getLanguage` returning undefined.
+ */
 export function languageFor(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const base = path.split("/").pop() ?? path;
+  const ext = base.includes(".") ? base.split(".").pop()!.toLowerCase() : "";
+
+  // Dockerfiles are conventionally extensionless — check the bare name before falling
+  // through to the extension map below.
+  if (base.toLowerCase() === "dockerfile") return "dockerfile";
+
   const map: Record<string, string> = {
     py: "python",
     ts: "typescript",
     tsx: "typescript",
     js: "javascript",
     jsx: "javascript",
+    mjs: "javascript",
+    cjs: "javascript",
     json: "json",
     yaml: "yaml",
     yml: "yaml",
     md: "markdown",
-    sh: "shell",
+    markdown: "markdown",
+    sh: "bash",
+    bash: "bash",
     toml: "toml",
-    html: "html",
+    ini: "ini",
+    html: "xml",
+    htm: "xml",
+    xml: "xml",
+    svg: "xml",
     css: "css",
+    rs: "rust",
+    go: "go",
+    c: "c",
+    h: "c",
+    cpp: "cpp",
+    cc: "cpp",
+    cxx: "cpp",
+    hpp: "cpp",
+    java: "java",
+    sql: "sql",
+    diff: "diff",
+    patch: "diff",
+    dockerfile: "dockerfile",
   };
   return map[ext] ?? "text";
+}
+
+/** True for extensions the dashboard treats as markdown (drives the Preview/Source toggle). */
+export function isMarkdownPath(path: string): boolean {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  return ext === "md" || ext === "markdown";
 }

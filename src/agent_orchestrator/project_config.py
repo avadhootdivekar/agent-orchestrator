@@ -133,6 +133,18 @@ class ProjectConfig(BaseModel):
     AO_GENERAL_INSTRUCTIONS, `--general-instruction`, and the workflow spec's own
     `general_instructions` by `cli.resolve_general_instructions`."""
 
+    templates: list[str] = []
+    """Workspace-registered workflow templates (E-Tpl3x9 FR-1, HLD §2.1). Each entry is
+    EITHER a template directory (contains `template.yaml`) OR a directory of template dirs
+    (scanned exactly one level deep) -- `templates.discover_templates` tells the two apart
+    by probing for `template.yaml`. Anchored the same way as `general_instructions`: relative
+    entries are resolved against THIS config file's directory at load time, so
+    `templates: [workflows/epic-runner/template]` means "next to this config file"
+    regardless of the cwd `ao` is invoked from. Workspace templates shadow built-ins of the
+    same `name:`. An `ao` build predating this field ignores an unknown `templates:` key
+    (pydantic's default `extra="ignore"` on this model), so older configs stay
+    forward-compatible without needing this field at all."""
+
     @field_validator("env", mode="before")
     @classmethod
     def _env_must_be_str_mapping(cls, v: object) -> dict[str, str]:
@@ -231,6 +243,15 @@ def load_project_config(config_path: Path) -> ProjectConfig:
             for gi in raw_gi
         ]
 
+    # Same anchoring for `templates:` (E-Tpl3x9 FR-1) -- each entry is a template dir or a
+    # dir-of-template-dirs, resolved relative to this config file's directory.
+    raw_templates = data.get("templates")
+    if isinstance(raw_templates, list):
+        data["templates"] = [
+            str(t) if os.path.isabs(str(t)) else str((base_dir / str(t)).resolve())
+            for t in raw_templates
+        ]
+
     try:
         return ProjectConfig.model_validate(data)
     except PydanticValidationError as exc:
@@ -306,6 +327,15 @@ _INIT_TEMPLATE = """\
 #   max_monitor_calls_per_run: 10  # shared cap on real monitor consults per run
 #   heal_wait_seconds: 30          # RuleBasedMonitor's recommended wait before a healed retry
 #   transient_patterns: []         # extra regexes ADDED to the built-in transient patterns
+
+# --- Workflow templates: config-registered scaffolding (`ao new` / `ao templates`) ---
+# Each entry is EITHER a template directory (contains template.yaml) OR a directory of
+# template directories (scanned exactly one level deep). Paths are relative to this file.
+# Workspace templates shadow built-ins of the same `name:`. Older `ao` builds ignore this
+# key entirely (forward-compatible config).
+# templates:
+#   - workflows/epic-runner/template
+#   - my-templates/
 """
 
 
