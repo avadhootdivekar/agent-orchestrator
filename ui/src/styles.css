@@ -596,6 +596,217 @@ pre.code {
   tab-size: 4;
 }
 
+/* ---------- file viewer: typography, code, markdown, html preview, image ---------- */
+
+/*
+ * Typography controls (1B.6) apply here as CSS custom properties, with defaults matching
+ * the previous fixed `pre.code` look — everything under this class opts in via `inherit`
+ * below, so RunDetail's own `pre.code` run-log viewer (a different container entirely) is
+ * untouched.
+ */
+.viewer-typography {
+  font-family: var(--viewer-font-family, var(--font-mono));
+  font-size: var(--viewer-font-size, 12px);
+  line-height: var(--viewer-line-height, 1.6);
+  letter-spacing: var(--viewer-letter-spacing, 0);
+}
+
+.viewer-typography .code-block,
+.viewer-typography .markdown-view {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+}
+
+.typography-controls {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.field-inline span:first-child {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.field-inline select {
+  width: auto;
+}
+
+.field-inline input[type="range"] {
+  width: 100px;
+}
+
+/* ---------- CodeView: highlighted, line-numbered code (1B.3) ---------- */
+
+.code-block {
+  overflow: auto;
+  max-height: 66vh;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+}
+
+.code-lines {
+  margin: 0;
+  padding: 14px 14px 14px 3.2em;
+  tab-size: 4;
+}
+
+.code-lines li {
+  white-space: pre;
+}
+
+/*
+ * The line number IS the list-item marker, not text alongside the code — `::marker` content
+ * is excluded from text selection/copy in every evergreen browser, so "select all" on a code
+ * block never picks up the gutter along with the code (1B.3).
+ */
+.code-lines li::marker {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* highlight.js token colors — kept minimal and theme-aware rather than pulling in a full
+   hljs stylesheet (which assumes a fixed light or dark background). */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal {
+  color: var(--accent);
+}
+
+.hljs-string,
+.hljs-attr {
+  color: var(--status-good-text);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.hljs-number,
+.hljs-title {
+  color: var(--status-warning);
+}
+
+/* ---------- MarkdownView (1B.4) ---------- */
+
+.markdown-view {
+  overflow: auto;
+  max-height: 66vh;
+  line-height: 1.6;
+}
+
+.markdown-view :first-child {
+  margin-top: 0;
+}
+
+.markdown-view img {
+  max-width: 100%;
+}
+
+.markdown-view pre {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  overflow: auto;
+}
+
+.markdown-view code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.markdown-view table {
+  border-collapse: collapse;
+}
+
+.markdown-view th,
+.markdown-view td {
+  border: 1px solid var(--hairline);
+  padding: 4px 8px;
+}
+
+.markdown-view blockquote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--hairline);
+  color: var(--text-secondary);
+}
+
+/* A relative image ref that 403/404s, or that ran past MARKDOWN_MAX_IMAGES — inert text,
+   never a raw URL or a live link (1B.4). */
+.broken-image {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px dashed var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* ---------- HtmlPreview (1B.5) ---------- */
+
+.html-preview-meta {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.html-preview-dropped {
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.html-preview-dropped summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.html-preview-dropped-group {
+  margin: 6px 0 6px 12px;
+}
+
+.html-preview-dropped-group ul {
+  margin: 2px 0;
+  padding-left: 16px;
+}
+
+.html-preview-frame {
+  width: 100%;
+  height: 66vh;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+/* ---------- ImageView ---------- */
+
+.image-view {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+}
+
+.image-view img {
+  max-width: 100%;
+  max-height: 66vh;
+  border-radius: var(--radius-sm);
+}
+
 /* ---------- misc ---------- */
 
 .muted {

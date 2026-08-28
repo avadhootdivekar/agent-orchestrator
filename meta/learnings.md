@@ -824,3 +824,12 @@ By: agent
 Role: developer
 Date: 2026-07-24
 ---
+
+---
+Learning-ID: LRN-20260730-sanitizer-blocklists-must-enumerate-declarative-animation
+Learning: An HTML/SVG sanitizer's element/attribute blocklist must separately enumerate DECLARATIVE ANIMATION (SVG SMIL: `<animate>`, `<set>`, `<animateTransform>`, `<animateMotion>`, `<discard>`) as its own URL-bearing construct class — it is not covered by stripping `href`/`src`-shaped attributes, because `<animate attributeName="href" values="http://attacker.example/...">` retargets an attribute to an attacker-chosen value AFTER those attributes have already been sanitized/stripped, live, on a timer, with no script execution and no user interaction beyond rendering. It also survives a scripting sandbox: SMIL animation is a declarative browser engine feature, not JavaScript, so `sandbox=""` (no `allow-scripts`) does not disable it. Confirmed in real headless Chrome: a synthetic click on an `<a>` whose `href` had been live-retargeted by a sibling `<animate>` made the (sandboxed, srcdoc) iframe navigate to the attacker URL — a genuine one-click network-egress/redirect primitive, not merely a theoretical gap. This also invalidates the common sanitizer-author assumption "a sandboxed iframe can't navigate anywhere, so a live href is harmless dead UI" — a sandboxed iframe without `allow-top-navigation` cannot navigate OTHER frames, but can always navigate ITSELF.
+Context: Execution-confirmed by a dedicated adversarial security audit of the `agent_orchestrator/ui/htmlpreview.py` sanitizer (E-Tpl3x9 follow-on dashboard file-preview work, H1 finding) and independently reproduced by the coordinator via the live `/api/files/html` endpoint before the fix landed. Fixed by adding the SMIL element names to `DROPPED_ELEMENTS_WITH_SUBTREE` outright — there is no legitimate use for live attribute retargeting in a static preview, so this is a zero-functionality-tradeoff closure, not a mitigation.
+By: agent
+Role: developer
+Date: 2026-07-30
+---

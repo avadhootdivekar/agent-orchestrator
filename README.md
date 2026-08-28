@@ -44,6 +44,30 @@ it up immediately, restart it or run:
 source "$HOME/.local/bin/env"
 ```
 
+### Beta flavor (parallel install)
+
+The installer also supports installing a second, fully-separate **beta** snapshot
+alongside the stable one — useful for trying an unreleased branch without touching your
+working `ao`:
+
+```bash
+AO_FLAVOR=beta bash install.sh     # or: bash install.sh --flavor beta
+```
+
+| | stable (default) | beta |
+|---|---|---|
+| commands | `ao`, `ao-bench` | `ao-beta`, `ao-bench-beta` |
+| uv tool/bin dirs | uv's defaults | isolated under `~/.local/share/ao-beta/` |
+| commit stamp | `installed.commit` | `beta.commit` |
+
+`--flavor <name>` (CLI flag) overrides `AO_FLAVOR` (env var); an unrecognized value is
+rejected. `AO_FLAVOR` unset behaves exactly like the single-flavor installer always has.
+
+**`.ao/config.yaml` and every `AO_*` env var are shared between flavors** — they're
+resolved per-project at runtime, not by the installer, so there's nothing to namespace.
+Don't add a per-flavor config or env prefix for them. See
+[`docs-md/install-flavors.md`](docs-md/install-flavors.md) for the full rationale.
+
 ### Manual install (development)
 
 ```bash

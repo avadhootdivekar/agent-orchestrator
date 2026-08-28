@@ -24,6 +24,7 @@ from ..models import RunState
 from ..project_config import ProjectConfig, find_project_config, load_project_config
 from ..templates import TemplateError, discover_templates, instantiate
 from .files import FileBrowser, Root
+from .htmlpreview import build_html_preview
 from .processes import LaunchError, LaunchRecord, ProcessSupervisor
 from .runs import RunNotFoundError, RunRepository
 
@@ -243,6 +244,15 @@ class DashboardService:
     def read_file(self, root: str | None = None, path: str = "") -> dict:
         """File contents for the code viewer (FR-B2)."""
         return asdict(self._browser.read_file(root, path))
+
+    def read_html_preview(self, root: str | None = None, path: str = "") -> dict:
+        """Sanitized, self-contained HTML/SVG preview safe for an `iframe srcdoc`.
+
+        Thin pass-through to `htmlpreview.build_html_preview` — see that module for the
+        sanitizer itself; this method exists only so `app.py` (like every other route)
+        talks to the framework-free service layer rather than a sanitizer module directly.
+        """
+        return asdict(build_html_preview(self._browser, root, path))
 
     # -- workflows -------------------------------------------------------------
 

@@ -1309,12 +1309,15 @@ def ui_cmd(
         raise typer.Exit(1)
 
     from .ui.app import create_app
+    from .ui.security import DEFAULT_ALLOWED_HOSTS, resolve_allowed_hosts
     from .ui.service import DashboardService
 
     url = f"http://{host}:{port}"
     typer.echo(f"Agent Orchestrator dashboard — workspace: {ws}")
     typer.echo(f"Serving on {url}  (Ctrl-C to stop)")
-    if host not in ("127.0.0.1", "localhost", "::1"):
+    # Single source of truth for the loopback host list: ui/security.py's DEFAULT_ALLOWED_HOSTS
+    # (imported lazily, same as the rest of this function — the [ui] extra must stay optional).
+    if host not in DEFAULT_ALLOWED_HOSTS:
         typer.echo(
             f"WARNING: binding {host} exposes an UNAUTHENTICATED dashboard that can browse "
             "files and start runs. Only do this on a trusted network.",
@@ -1329,10 +1332,15 @@ def ui_cmd(
         # browser requests the page.
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
+    # The Host allowlist always includes the loopback defaults plus whatever host this
+    # process actually bound to (see ui/security.py) — so a deliberate off-loopback bind
+    # (warned about above) still works, while any *other* Host header (DNS rebinding) is
+    # rejected with 421.
     if reload:
         # uvicorn's reloader re-imports the app in a fresh process, so it needs an import
-        # string plus the workspace handed over via env rather than a live object.
+        # string plus the workspace/bound-host handed over via env rather than a live object.
         os.environ["AO_UI_WORKSPACE"] = ws
+        os.environ["AO_UI_BOUND_HOST"] = host
         uvicorn.run(
             "agent_orchestrator.ui.app:create_app_from_env",
             host=host,
@@ -1341,7 +1349,10 @@ def ui_cmd(
             factory=True,
         )
     else:
-        uvicorn.run(create_app(DashboardService(ws)), host=host, port=port)
+        app_instance = create_app(
+            DashboardService(ws), allowed_hosts=resolve_allowed_hosts(bound_host=host)
+        )
+        uvicorn.run(app_instance, host=host, port=port)
 
 
 @app.command()

@@ -8,6 +8,7 @@ the service-level unit tests cannot.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -96,6 +97,73 @@ class TestFilesApi:
 
     def test_content_requires_a_path(self, client: TestClient) -> None:
         assert client.get(f"{API_PREFIX}/files/content").status_code == 422
+
+    @pytest.mark.parametrize(
+        "endpoint", [f"{API_PREFIX}/files/content", f"{API_PREFIX}/files/html"]
+    )
+    @pytest.mark.parametrize(
+        "raw_path",
+        ["../../etc/passwd", "%2e%2e%2f%2e%2e%2fetc%2fpasswd", "/etc/passwd"],
+    )
+    def test_traversal_is_403_on_both_file_endpoints(
+        self, client: TestClient, endpoint: str, raw_path: str
+    ) -> None:
+        # Sent as a raw query string (not the `params=` dict) so percent-encoding is
+        # preserved exactly as an attacker would send it -- FastAPI/Starlette decode the
+        # query string before the path ever reaches FileBrowser.resolve(), so this is
+        # exactly the real HTTP-layer path, unlike the unit-level ../.. cases already
+        # covered directly against FileBrowser/build_html_preview.
+        response = client.get(f"{endpoint}?path={raw_path}")
+        assert response.status_code == 403
+
+    @pytest.mark.parametrize(
+        "endpoint", [f"{API_PREFIX}/files/content", f"{API_PREFIX}/files/html"]
+    )
+    def test_symlink_escape_is_403_on_both_file_endpoints(
+        self,
+        client: TestClient,
+        workspace: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+        endpoint: str,
+    ) -> None:
+        outside = tmp_path_factory.mktemp("outside")
+        (outside / "secret.html").write_text("<p>secret</p>", encoding="utf-8")
+        os.symlink(outside / "secret.html", workspace / "escape.html")
+
+        response = client.get(endpoint, params={"path": "escape.html"})
+        assert response.status_code == 403
+
+
+class TestFilesHtmlApi:
+    def test_returns_sanitized_html_for_an_html_file(
+        self, client: TestClient, workspace: Path
+    ) -> None:
+        (workspace / "a.html").write_text("<p>hi</p><script>alert(1)</script>", encoding="utf-8")
+        body = client.get(f"{API_PREFIX}/files/html", params={"path": "a.html"}).json()
+        assert "<script" not in body["html"]
+        assert "hi" in body["html"]
+        assert body["scripts_removed"] == 1
+        assert body["path"] == "a.html"
+
+    def test_svg_is_accepted_and_sanitized(self, client: TestClient, workspace: Path) -> None:
+        (workspace / "a.svg").write_text(
+            '<svg><script>alert(1)</script><circle r="5"/></svg>', encoding="utf-8"
+        )
+        body = client.get(f"{API_PREFIX}/files/html", params={"path": "a.svg"}).json()
+        assert "<script" not in body["html"]
+        assert "<circle" in body["html"]
+
+    def test_non_markup_file_returns_400(self, client: TestClient, workspace: Path) -> None:
+        (workspace / "a.txt").write_text("just text", encoding="utf-8")
+        response = client.get(f"{API_PREFIX}/files/html", params={"path": "a.txt"})
+        assert response.status_code == 400
+
+    def test_missing_file_returns_404(self, client: TestClient) -> None:
+        response = client.get(f"{API_PREFIX}/files/html", params={"path": "nope.html"})
+        assert response.status_code == 404
+
+    def test_requires_a_path(self, client: TestClient) -> None:
+        assert client.get(f"{API_PREFIX}/files/html").status_code == 422
 
 
 class TestWorkflowsApi:

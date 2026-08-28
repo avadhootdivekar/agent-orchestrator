@@ -7,6 +7,7 @@ import type {
   DirListing,
   FileContent,
   GeneralInstruction,
+  HtmlPreview,
   LaunchRecord,
   RunDetail,
   RunOptions,
@@ -65,6 +66,13 @@ export const api = {
     const params = new URLSearchParams({ path });
     if (root) params.set("root", root);
     return request<FileContent>(`/files/content?${params}`);
+  },
+
+  /** Sanitized, self-contained HTML for markup files (`.html`/`.svg`/etc) — see 1A.2. */
+  readFileHtml: (path: string, root?: string) => {
+    const params = new URLSearchParams({ path });
+    if (root) params.set("root", root);
+    return request<HtmlPreview>(`/files/html?${params}`);
   },
 
   workflows: () => request<WorkflowInfo[]>("/workflows"),

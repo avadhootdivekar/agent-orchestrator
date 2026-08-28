@@ -6,18 +6,36 @@ dangling entries), and it must show NOTHING outside one.
 
 from __future__ import annotations
 
+import base64
 import os
+import struct
+import zlib
 from pathlib import Path
 
 import pytest
 
 from agent_orchestrator.ui.files import (
     BINARY_SNIFF_BYTES,
+    IMAGE_INLINE_MAX_BYTES,
     FileBrowser,
     PathNotAllowedError,
     PathNotFoundError,
     Root,
 )
+
+
+def _make_png_bytes(width: int = 2, height: int = 2) -> bytes:
+    """A minimal, valid, single-color PNG — real magic bytes, not a placeholder."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    raw = (b"\x00" + b"\xff\x00\x00" * width) * height
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(raw))
+    png += chunk(b"IEND", b"")
+    return png
 
 
 @pytest.fixture()
@@ -218,3 +236,100 @@ class TestReadFile:
         content = browser.read_file("workspace", "empty.txt")
         assert content.text == ""
         assert content.is_binary is False
+
+
+class TestClassification:
+    """`kind`/`mime`/`data_uri` (1A.1) — additive fields on top of the pre-existing
+    `is_binary`/`text`/`truncated` contract, which the tests above still exercise
+    unchanged."""
+
+    def test_plain_text_file_is_kind_text(self, tmp_path: Path) -> None:
+        (tmp_path / "a.py").write_text("print(1)\n", encoding="utf-8")
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", "a.py")
+        assert content.kind == "text"
+        assert content.mime is None
+        assert content.data_uri is None
+
+    def test_nul_bearing_non_image_file_is_kind_binary(self, tmp_path: Path) -> None:
+        (tmp_path / "blob.dat").write_bytes(b"\x00\x01\x02")
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", "blob.dat")
+        assert content.kind == "binary"
+        assert content.is_binary is True
+        assert content.text is None
+
+    @pytest.mark.parametrize("ext", ["html", "htm", "svg", "xhtml"])
+    def test_markup_extensions_are_kind_markup(self, tmp_path: Path, ext: str) -> None:
+        path = tmp_path / f"page.{ext}"
+        path.write_text("<p>hi</p>", encoding="utf-8")
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", path.name)
+        assert content.kind == "markup"
+
+    def test_svg_with_script_is_still_kind_markup_not_image(self, tmp_path: Path) -> None:
+        path = tmp_path / "evil.svg"
+        path.write_text("<svg><script>alert(1)</script></svg>", encoding="utf-8")
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", "evil.svg")
+        assert content.kind == "markup"
+        assert content.mime is None
+        assert content.data_uri is None
+
+    def test_real_png_is_classified_as_image_and_inlined(self, tmp_path: Path) -> None:
+        png_bytes = _make_png_bytes()
+        (tmp_path / "pic.png").write_bytes(png_bytes)
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", "pic.png")
+
+        assert content.kind == "image"
+        assert content.mime == "image/png"
+        assert content.is_binary is True
+        assert content.text is None
+        assert content.data_uri is not None
+        prefix = "data:image/png;base64,"
+        assert content.data_uri.startswith(prefix)
+        decoded = base64.b64decode(content.data_uri[len(prefix) :])
+        assert decoded == png_bytes
+
+    def test_png_containing_html_bytes_is_not_classified_as_image(self, tmp_path: Path) -> None:
+        # The core anti-spoofing case: a mismatched extension must not be trusted just
+        # because the request says ".png".
+        (tmp_path / "fake.png").write_text("<html><body>not a png</body></html>", encoding="utf-8")
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", "fake.png")
+        assert content.kind != "image"
+        assert content.data_uri is None
+        assert content.mime is None
+
+    def test_oversized_image_is_still_kind_image_but_not_inlined(self, tmp_path: Path) -> None:
+        # Real PNG magic bytes, but padded (via a large IDAT/garbage tail is unnecessary --
+        # the size check happens before any content validation past the header) past the
+        # inline cap.
+        png_bytes = _make_png_bytes()
+        padded = png_bytes + b"\x00" * (IMAGE_INLINE_MAX_BYTES + 1 - len(png_bytes))
+        (tmp_path / "big.png").write_bytes(padded)
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", "big.png")
+
+        assert content.kind == "image"
+        assert content.data_uri is None
+        assert content.truncated is True
+        assert content.size == len(padded)
+
+    def test_webp_magic_bytes_are_recognized(self, tmp_path: Path) -> None:
+        # RIFF <size> WEBP -- minimal container header, no need for a real VP8 payload
+        # since only the two fixed tags are checked.
+        head = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"more-bytes-after-the-header"
+        (tmp_path / "pic.webp").write_bytes(head)
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", "pic.webp")
+        assert content.kind == "image"
+        assert content.mime == "image/webp"
+
+    def test_jpeg_extension_maps_to_the_jpeg_mime(self, tmp_path: Path) -> None:
+        jpeg_bytes = b"\xff\xd8\xff" + b"\x00" * 20
+        (tmp_path / "x.jpg").write_bytes(jpeg_bytes)
+        browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        content = browser.read_file("workspace", "x.jpg")
+        assert content.mime == "image/jpeg"

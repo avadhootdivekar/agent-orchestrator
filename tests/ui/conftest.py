@@ -22,6 +22,22 @@ from agent_orchestrator.ui.processes import LaunchError, LaunchRecord
 from agent_orchestrator.ui.service import DashboardService
 
 
+@pytest.fixture(autouse=True)
+def _allow_testclient_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `SecurityMiddleware`'s Host allowlist (ui/security.py) accept `TestClient`.
+
+    httpx's `TestClient` sends `Host: testserver` on every request, which is not one of
+    the dashboard's default allowed hosts (loopback only) — every request in this suite
+    would otherwise 421. Fixed in this ONE place (rather than at each app-construction call
+    site across the test files) by widening the allowlist via the same env var an operator
+    would use (`AO_UI_ALLOWED_HOSTS`); `create_app()` resolves it at call time, so this
+    applies regardless of which test file builds the app. Tests that need to prove the
+    Host check actually rejects a bad value (test_security.py) construct their app with an
+    explicit `allowed_hosts=` argument instead, which bypasses env resolution entirely.
+    """
+    monkeypatch.setenv("AO_UI_ALLOWED_HOSTS", "testserver")
+
+
 @pytest.fixture()
 def workspace(tmp_path: Path) -> Path:
     """An empty workspace root for the dashboard to serve."""

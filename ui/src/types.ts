@@ -25,6 +25,39 @@ export interface FileContent {
   is_binary: boolean;
   truncated: boolean;
   text: string | null;
+  /** See ui/htmlpreview + files.py classification. */
+  kind: "text" | "image" | "markup" | "binary";
+  /** Allowlisted MIME, set only when kind === "image". */
+  mime: string | null;
+  /** `data:<mime>;base64,...`, set only when kind === "image" and size is within the inline cap. */
+  data_uri: string | null;
+}
+
+/** One asset/href the HTML sanitizer declined to inline (see `ui/htmlpreview.py`). */
+export interface DroppedRef {
+  /** Original ref, already truncated by the server for display safety. */
+  url: string;
+  reason:
+    | "external"
+    | "outside-root"
+    | "not-found"
+    | "too-large"
+    | "budget-exhausted"
+    | "unsupported-scheme"
+    | "depth-exceeded";
+}
+
+/** Response of `GET /api/files/html` — sanitized, self-contained HTML for iframe srcdoc. */
+export interface HtmlPreview {
+  path: string;
+  root: string;
+  html: string;
+  inlined: number;
+  dropped: DroppedRef[];
+  scripts_removed: number;
+  truncated: boolean;
+  budget_bytes: number;
+  budget_used: number;
 }
 
 export interface WorkflowInfo {
