@@ -74,6 +74,14 @@ class MonitoringConfig(BaseModel):
     transient-failure patterns (network/timeout/5xx/JSON-decode) -- never replaces them."""
 
 
+class UIConfig(BaseModel):
+    """Schema for the `ui:` block of a per-project AO config file (E-GIytcL, multi-workspace
+    service): `ui.port` is the P1 (highest-precedence) port pin for this workspace's dashboard.
+    """
+
+    port: int | None = None
+
+
 class ProjectConfig(BaseModel):
     """Schema for a per-project AO config file.
 
@@ -144,6 +152,10 @@ class ProjectConfig(BaseModel):
     same `name:`. An `ao` build predating this field ignores an unknown `templates:` key
     (pydantic's default `extra="ignore"` on this model), so older configs stay
     forward-compatible without needing this field at all."""
+
+    ui: UIConfig = UIConfig()
+    """Dashboard settings for this workspace (E-GIytcL): `ui.port` is the P1 port pin
+    consulted by the multi-workspace service's port resolution (`service.ports`)."""
 
     @field_validator("env", mode="before")
     @classmethod

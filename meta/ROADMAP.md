@@ -35,6 +35,7 @@ ships a browser dashboard.
 | Benchmark harness (`ao-bench`, S/M/L tiers, SWE-bench import) | **Stable** | See `docs-md/benchmarking-framework-hld.md`. |
 | Installable CLI (`ao`, `ao-bench`) | **Stable** | `install.sh`; snapshot-install semantics. |
 | **Browser dashboard (`ao ui`)** | **New** | Files, runs, stats, run control. Unauthenticated — §2. |
+| **Multi-workspace service (`ao service`)** | **New** | One supervisor daemon serves every registered workspace's dashboard on its own port; boot-resume for orphaned runs; installable as a user systemd unit. Unauthenticated, same posture as `ao ui` — §2. |
 | **General instructions** | **New** | Workspace-scoped rules applied to every task. |
 | Authentication / multi-user | **Absent** | Deliberate for now — §2. |
 | Cron / event triggers | **Spec'd, not scheduled** | `Trigger` model exists; no daemon runs it — §3. |
@@ -47,6 +48,7 @@ ships a browser dashboard.
 - **E-XyfjuZ — Monitoring & self-healing**: `Monitor` ABC, recommend-mode breakers.
 - **E-9h3m7k — Accurate usage metrics**: true per-task/run cost and token totals.
 - **E-Ui7Kq2 — Dashboard + general instructions** (this change): see §2.
+- **E-GIytcL — Multi-workspace service** (2026-08-28): `ao service` supervisor daemon (spawn/monitor/restart per-workspace dashboards, bounded auto-resume, hub, systemd install) — see §2a.
 
 ---
 
@@ -76,6 +78,37 @@ chain.
 | No file editing in the browser | Read-only browsing | §3 — Editing |
 | Polling, not streaming | Up to a few seconds of staleness; no live transcript tail | §3 — Live updates |
 | Run-id attribution is a directory diff | Two runs launched in the same instant could in principle be mis-attributed | §4 |
+
+---
+
+## 2a. Just landed: multi-workspace service
+
+**`ao service`** — a single user-level supervisor daemon (`ao service run`) that serves
+every registered workspace's dashboard, replacing the by-hand "one `ao ui` process per
+workspace, one hand-written systemd unit per workspace" pattern:
+
+- Explicit registration (`ao service add/remove/list`) against a registry file
+  (`~/.config/ao/service.yaml`); one child `ao ui` process per workspace, monitored and
+  restarted with backoff.
+- Port resolution: a workspace's own `.ao/config.yaml` (`ui.port`) beats a registry pin,
+  which beats a random free port persisted back into the registry for stability; conflicts
+  are resolved deterministically and surfaced in `ao service status`.
+- Bounded, default-on boot-resume: a run left `running` by a reboot with a dead owning PID
+  is auto-resumed once per boot, with a cross-boot cooldown and quarantine so a poisoned run
+  cannot loop-resume.
+- A small hub (fixed port 8770, loopback-only, same unauthenticated posture as `ao ui`)
+  listing every workspace, plus `GET /api/service/status`.
+- `ao service install [--print]` writes a **user** systemd unit
+  (`Restart=on-failure`, `KillMode=process` — required so systemd's default control-group
+  kill mode does not reach a detached in-flight agent run; empirically verified against a
+  real `systemctl --user` unit, not just asserted).
+
+See [`docs-md/multi-workspace-service-hld.md`](../docs-md/multi-workspace-service-hld.md)
+and [`docs-md/adr/ADR-0012-multi-workspace-service-supervisor.md`](../docs-md/adr/ADR-0012-multi-workspace-service-supervisor.md).
+Standalone `ao ui` is unchanged. Same known limitations as §2's dashboard apply to each
+served workspace (no auth, polling not streaming, etc.) — carried in §3.1/§3.3, not
+duplicated here. Boot-resume is scoped to dashboard-launched runs only (a bare-terminal
+`ao run` has no PID artifact the service can observe) — documented, not a defect.
 
 ---
 

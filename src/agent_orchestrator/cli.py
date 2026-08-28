@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING
 
 import typer
 
+from .service.cli import app as service_app
+
 if TYPE_CHECKING:
     from .artifacts import ArtifactStore
     from .executors.base import Executor
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
     from .project_config import MonitoringConfig, ProjectConfig
 
 app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
+app.add_typer(service_app, name="service")
 
 _PACKAGE_LOGGER = "agent_orchestrator"
 
