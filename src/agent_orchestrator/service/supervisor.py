@@ -34,7 +34,13 @@ from pydantic import BaseModel
 from ..ui.processes import ProcessSupervisor
 from ..ui.runs import RunNotFoundError, RunRepository
 from .boot_resume import BootResumeGuard, Decision, ResumeCandidate, scan_resumable_runs
-from .ports import PortResolution, persist_resolution, pick_free_port, resolve_ports
+from .ports import (
+    PortResolution,
+    persist_resolution,
+    pick_free_port,
+    resolve_host,
+    resolve_ports,
+)
 from .registry import ServiceRegistry, ServiceRegistryFile
 
 logger = logging.getLogger(__name__)
@@ -49,6 +55,9 @@ LOGS_SUBDIR = "logs"
 # service module intentionally does not import `cli.py` (out of bounds for this task), so
 # this is a deliberate, small, documented duplication of the same literal.
 DEFAULT_CHILD_HOST = "127.0.0.1"
+
+# Hosts that do NOT trigger the non-loopback exposure warning at child spawn.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 # Restart backoff (AC5 / HLD §6.3): base 1s, x2, capped at 60s; resets once a restarted
 # child has stayed up continuously past the 30s stability window.
@@ -176,6 +185,7 @@ class ManagedChild:
 
     root: str
     port: int
+    host: str = DEFAULT_CHILD_HOST
     popen: subprocess.Popen | None = None
     restart_count: int = 0
     next_retry_at: float | None = None
@@ -236,7 +246,7 @@ class SupervisorSnapshot(BaseModel):
     children: list[ManagedChildSnapshot] = []
 
 
-ChildSpawner = Callable[[str, int, Path], "subprocess.Popen"]
+ChildSpawner = Callable[[str, int, str, Path], "subprocess.Popen"]
 
 
 def default_child_spawner(ao_executable: list[str]) -> ChildSpawner:
@@ -248,14 +258,14 @@ def default_child_spawner(ao_executable: list[str]) -> ChildSpawner:
     a SIGTERM to *this* process's controlling terminal also reaching them.
     """
 
-    def _spawn(root: str, port: int, log_path: Path) -> subprocess.Popen:
+    def _spawn(root: str, port: int, host: str, log_path: Path) -> subprocess.Popen:
         argv = [
             *ao_executable,
             "ui",
             "--workspace",
             root,
             "--host",
-            DEFAULT_CHILD_HOST,
+            host,
             "--port",
             str(port),
         ]
@@ -413,7 +423,16 @@ class Supervisor:
             port = resolution.ports.get(entry.root)
             if port is None:
                 continue  # defensive; resolve_ports always assigns a port per workspace
-            child = ManagedChild(root=entry.root, port=port)
+            host = resolve_host(entry)
+            if host not in LOOPBACK_HOSTS:
+                logger.warning(
+                    "workspace %s binds %s -- the UNAUTHENTICATED dashboard is exposed "
+                    "beyond loopback (deliberate per-workspace host pin; see `ui.host` / "
+                    "registry `host`)",
+                    entry.root,
+                    host,
+                )
+            child = ManagedChild(root=entry.root, port=port, host=host)
             self._children[entry.root] = child
             self._respawn(child, self._monotonic())
             self._sleeper(self._spawn_stagger_seconds)
@@ -582,7 +601,7 @@ class Supervisor:
     def _respawn(self, child: ManagedChild, now: float) -> None:
         log_path = self._log_path_for(child.root)
         try:
-            popen = self._child_spawner(child.root, child.port, log_path)
+            popen = self._child_spawner(child.root, child.port, child.host, log_path)
         except OSError as exc:
             child.last_error = f"spawn failed: {exc}"
             child.popen = None
@@ -654,6 +673,7 @@ class Supervisor:
             {
                 "root": root,
                 "port": child.port,
+                "host": child.host,
                 "pid": child.popen.pid if child.popen is not None else None,
                 "state": self._child_state(child),
                 "restart_count": child.restart_count,

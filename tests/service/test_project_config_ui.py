@@ -67,3 +67,15 @@ class TestLoadProjectConfigUI:
 
         assert cfg.workflow == str(config_path.parent / "wf.json")
         assert cfg.ui.port is None
+
+
+class TestUIConfigHost:
+    def test_ui_host_defaults_to_none(self) -> None:
+        assert ProjectConfig().ui.host is None
+
+    def test_ui_host_loads_from_config(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".ao" / "config.yaml"
+        _write_config(config_path, "ui:\n  host: 0.0.0.0\n  port: 8767\n")
+        cfg = load_project_config(config_path)
+        assert cfg.ui.host == "0.0.0.0"
+        assert cfg.ui.port == 8767

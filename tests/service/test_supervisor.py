@@ -66,7 +66,7 @@ def _sleep_child_spawner(script: str = "sleep 100"):
     """A fake `child_spawner` running a real `sh -c` script instead of `ao ui`/uvicorn --
     ignores *root*/*port* entirely, ao AC6 intends for tests."""
 
-    def _spawn(root: str, port: int, log_path: Path) -> subprocess.Popen:
+    def _spawn(root: str, port: int, host: str, log_path: Path) -> subprocess.Popen:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "wb") as log_handle:
             return subprocess.Popen(  # noqa: S602, S603 - fixed test-only script, no shell injection
@@ -975,5 +975,68 @@ class TestStartBasic:
             for child in supervisor._children.values():
                 assert child.popen is not None
                 assert child.popen.poll() is None
+        finally:
+            supervisor.shutdown(grace_seconds=2.0)
+
+
+class TestPerWorkspaceHost:
+    """The registry `host` pin (P2) reaches the spawner and the status snapshot."""
+
+    def test_registry_host_reaches_spawner_and_snapshot(
+        self, tmp_path: Path, state_dir: Path, registry_path: Path
+    ) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        registry = ServiceRegistryFile(
+            workspaces=[WorkspaceEntry(root=str(ws), port=_free_port(), host="0.0.0.0")]
+        )
+        ServiceRegistry(path=registry_path).save(registry)
+
+        spawned_hosts: list[str] = []
+        real_spawner = _sleep_child_spawner()
+
+        def _recording_spawner(root: str, port: int, host: str, log_path: Path) -> subprocess.Popen:
+            spawned_hosts.append(host)
+            return real_spawner(root, port, host, log_path)
+
+        supervisor = Supervisor(
+            registry=registry,
+            state_dir=state_dir,
+            hub_port=8770,
+            registry_path=registry_path,
+            child_spawner=_recording_spawner,
+            sleeper=_no_sleep,
+        )
+        supervisor.start()
+        try:
+            assert spawned_hosts == ["0.0.0.0"]
+            snapshot = supervisor.status_snapshot()
+            assert snapshot["workspaces"][0]["host"] == "0.0.0.0"
+        finally:
+            supervisor.shutdown(grace_seconds=2.0)
+
+    def test_default_host_is_loopback(
+        self, tmp_path: Path, state_dir: Path, registry_path: Path
+    ) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        spawned_hosts: list[str] = []
+        real_spawner = _sleep_child_spawner()
+
+        def _recording_spawner(root: str, port: int, host: str, log_path: Path) -> subprocess.Popen:
+            spawned_hosts.append(host)
+            return real_spawner(root, port, host, log_path)
+
+        supervisor = Supervisor(
+            registry=_one_workspace_registry(registry_path, ws, port=_free_port()),
+            state_dir=state_dir,
+            hub_port=8770,
+            registry_path=registry_path,
+            child_spawner=_recording_spawner,
+            sleeper=_no_sleep,
+        )
+        supervisor.start()
+        try:
+            assert spawned_hosts == ["127.0.0.1"]
         finally:
             supervisor.shutdown(grace_seconds=2.0)

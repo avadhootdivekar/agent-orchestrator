@@ -178,3 +178,18 @@ class TestConcurrentMutate:
 
         final = ServiceRegistry(registry_path).load()
         assert len(final.workspaces) == num_writers
+
+
+class TestHostField:
+    """P2 `host` pin round-trip (per-workspace bind host)."""
+
+    def test_add_with_host_round_trips(self, tmp_path: Path) -> None:
+        registry = ServiceRegistry(path=tmp_path / "service.yaml")
+        registry.add(str(tmp_path / "ws"), host="0.0.0.0")
+        loaded = registry.load()
+        assert loaded.workspaces[0].host == "0.0.0.0"
+
+    def test_add_without_host_defaults_to_none(self, tmp_path: Path) -> None:
+        registry = ServiceRegistry(path=tmp_path / "service.yaml")
+        registry.add(str(tmp_path / "ws"))
+        assert registry.load().workspaces[0].host is None

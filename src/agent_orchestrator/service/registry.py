@@ -49,6 +49,11 @@ class WorkspaceEntry(BaseModel):
     """Pinned port (P2), or `None` to let port resolution assign one (P3) and persist it
     back here so the URL is stable across restarts."""
 
+    host: str | None = None
+    """Pinned bind host (P2), or `None` to defer to the workspace's own `ui.host` (P1) or
+    the loopback default. A non-loopback value exposes the UNAUTHENTICATED dashboard --
+    deliberate, warned-about choice (same posture as `ao ui --host`)."""
+
     autoresume: bool = True
     """Whether boot-resume should consider this workspace's orphaned runs."""
 
@@ -124,14 +129,20 @@ class ServiceRegistry:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def add(
-        self, root: str, port: int | None = None, autoresume: bool = True
+        self,
+        root: str,
+        port: int | None = None,
+        autoresume: bool = True,
+        host: str | None = None,
     ) -> ServiceRegistryFile:
         """Register (or re-register, replacing the prior entry) a workspace, via ``mutate``."""
         resolved_root = str(Path(root).resolve())
 
         def _add(data: ServiceRegistryFile) -> ServiceRegistryFile:
             remaining = [w for w in data.workspaces if w.root != resolved_root]
-            remaining.append(WorkspaceEntry(root=resolved_root, port=port, autoresume=autoresume))
+            remaining.append(
+                WorkspaceEntry(root=resolved_root, port=port, autoresume=autoresume, host=host)
+            )
             return ServiceRegistryFile(workspaces=remaining)
 
         return self.mutate(_add)

@@ -368,3 +368,14 @@ class TestStatusPaths:
 
         monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _Resp())
         assert _probe_hub_status(65001) is None
+
+
+class TestAddWithHost:
+    def test_add_with_host_persists_the_pin(self, workspace: Path, tmp_path: Path) -> None:
+        result = runner.invoke(app, ["service", "add", str(workspace), "--host", "0.0.0.0"])
+        assert result.exit_code == 0, result.output
+
+        from agent_orchestrator.service.registry import ServiceRegistry
+
+        loaded = ServiceRegistry().load()
+        assert loaded.workspaces[0].host == "0.0.0.0"

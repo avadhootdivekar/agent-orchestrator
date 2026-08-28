@@ -89,6 +89,34 @@ def _p1_port(root: Path) -> int | None:
     return cfg.ui.port
 
 
+DEFAULT_WORKSPACE_HOST = "127.0.0.1"
+
+
+def _p1_host(root: Path) -> str | None:
+    """Best-effort P1 read of the workspace's own `.ao/config.yaml` `ui.host` -- same
+    never-raise contract as `_p1_port`."""
+    config_path = find_project_config(start=root)
+    if config_path is None:
+        return None
+    try:
+        cfg = load_project_config(config_path)
+    except ConfigError:
+        return None
+    return cfg.ui.host
+
+
+def resolve_host(entry: WorkspaceEntry) -> str:
+    """Bind-host precedence for one workspace: P1 (workspace `ui.host`) > P2 (registry
+    `host`) > loopback default. Unlike ports there is no random tier, no conflict set, and
+    nothing to persist back -- absence simply means loopback."""
+    p1 = _p1_host(Path(entry.root))
+    if p1:
+        return p1
+    if entry.host:
+        return entry.host
+    return DEFAULT_WORKSPACE_HOST
+
+
 def _port_is_bindable(port: int) -> bool:
     """Probe whether *port* is free right now via a real bind to that specific port.
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from agent_orchestrator.service.ports import persist_resolution, resolve_ports
+from agent_orchestrator.service.ports import persist_resolution, resolve_host, resolve_ports
 from agent_orchestrator.service.registry import ServiceRegistryFile, WorkspaceEntry
 
 
@@ -185,3 +185,33 @@ class TestEmptyRegistry:
         resolution = resolve_ports(ServiceRegistryFile(workspaces=[]))
         assert resolution.ports == {}
         assert resolution.conflicts == []
+
+
+class TestResolveHost:
+    """`resolve_host` precedence (per-workspace bind host): P1 `ui.host` > P2 registry
+    `host` > loopback default. No random tier, nothing persisted."""
+
+    @staticmethod
+    def _workspace_with_host(tmp_path: Path, name: str, ui_host: str | None) -> Path:
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        root = tmp_path / name
+        root.mkdir()
+        if ui_host is not None:
+            ao_dir = root / ".ao"
+            ao_dir.mkdir()
+            (ao_dir / "config.yaml").write_text(yaml.safe_dump({"ui": {"host": ui_host}}))
+        return root
+
+    def test_default_is_loopback(self, tmp_path: Path) -> None:
+        root = self._workspace_with_host(tmp_path, "plain", None)
+        assert resolve_host(WorkspaceEntry(root=str(root))) == "127.0.0.1"
+
+    def test_p2_registry_host_wins_over_default(self, tmp_path: Path) -> None:
+        root = self._workspace_with_host(tmp_path, "p2", None)
+        entry = WorkspaceEntry(root=str(root), host="0.0.0.0")
+        assert resolve_host(entry) == "0.0.0.0"
+
+    def test_p1_config_host_wins_over_p2(self, tmp_path: Path) -> None:
+        root = self._workspace_with_host(tmp_path, "p1", "0.0.0.0")
+        entry = WorkspaceEntry(root=str(root), host="192.168.1.50")
+        assert resolve_host(entry) == "0.0.0.0"

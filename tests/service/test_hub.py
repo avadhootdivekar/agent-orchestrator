@@ -156,3 +156,32 @@ def test_hub_module_imports_cleanly_even_when_fastapi_is_unavailable(
     finally:
         monkeypatch.delitem(sys.modules, "agent_orchestrator.service.hub", raising=False)
         importlib.import_module("agent_orchestrator.service.hub")
+
+
+class TestHostAwareLinks:
+    """A workspace bound to 0.0.0.0 gets a connectable loopback link plus a bind
+    annotation; an explicit LAN host is linked as-is."""
+
+    def test_wildcard_bind_links_loopback_and_annotates(self) -> None:
+        from agent_orchestrator.service.hub import _render_workspace_row
+
+        row = _render_workspace_row(
+            {"root": "/w", "port": 8767, "host": "0.0.0.0", "state": "running"}
+        )
+        assert "http://127.0.0.1:8767/" in row
+        assert "bound 0.0.0.0" in row
+
+    def test_explicit_host_is_linked_directly(self) -> None:
+        from agent_orchestrator.service.hub import _render_workspace_row
+
+        row = _render_workspace_row(
+            {"root": "/w", "port": 9001, "host": "192.168.1.50", "state": "running"}
+        )
+        assert "http://192.168.1.50:9001/" in row
+        assert "bound" not in row
+
+    def test_missing_host_falls_back_to_loopback(self) -> None:
+        from agent_orchestrator.service.hub import _render_workspace_row
+
+        row = _render_workspace_row({"root": "/w", "port": 9002, "state": "running"})
+        assert "http://127.0.0.1:9002/" in row

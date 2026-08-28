@@ -81,6 +81,11 @@ class UIConfig(BaseModel):
 
     port: int | None = None
 
+    host: str | None = None
+    """P1 bind host for this workspace's dashboard (e.g. `"0.0.0.0"` to expose on all
+    interfaces -- a deliberate, warned-about choice; the dashboard is unauthenticated).
+    `None` defers to the service registry's `host` (P2), then the loopback default."""
+
 
 class ProjectConfig(BaseModel):
     """Schema for a per-project AO config file.

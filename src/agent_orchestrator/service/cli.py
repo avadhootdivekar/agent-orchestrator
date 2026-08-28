@@ -197,13 +197,22 @@ def add(
     port: int | None = typer.Option(
         None, "--port", help="Pin a port (P2); omit to auto-resolve (P3) at daemon boot."
     ),
+    host: str | None = typer.Option(
+        None,
+        "--host",
+        help=(
+            "Pin a bind host (P2), e.g. 0.0.0.0 to expose on all interfaces -- the"
+            " dashboard is UNAUTHENTICATED, only do this on a trusted network. Omit for"
+            " loopback (the workspace's own `ui.host` still takes precedence)."
+        ),
+    ),
     no_autoresume: bool = typer.Option(
         False, "--no-autoresume", help="Disable boot-resume for this workspace's runs."
     ),
 ) -> None:
     """Register a workspace with the service."""
     root = _resolve_registered_dir(directory, must_exist=True)
-    ServiceRegistry().add(root, port=port, autoresume=not no_autoresume)
+    ServiceRegistry().add(root, port=port, autoresume=not no_autoresume, host=host)
     suffix = f" (pinned port {port})" if port is not None else ""
     typer.echo(f"Registered {root}{suffix}")
 

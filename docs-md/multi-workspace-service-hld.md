@@ -251,6 +251,21 @@ that a workspace's own P1 pin should never be silently overridden):
 Every recorded conflict is written to `port_resolution.json` and included verbatim in the
 hub's `/api/service/status` payload and in `ao service status`'s fallback path.
 
+### 6.2a Bind-host resolution (per workspace)
+
+Added post-epic (same change set as the first real migration, 2026-08-28): two live
+pre-service deployments (`ao-runner-finplan`, `ao-runner-ai-models`) bind `0.0.0.0` by
+explicit operator request, so a loopback-only supervisor would have silently reverted a
+deliberate choice on migration.
+
+Each child's `--host` resolves like ports, minus the random tier and persistence
+(absence just means loopback): **P1** workspace `.ao/config.yaml` `ui.host` > **P2**
+registry entry `host` (settable via `ao service add --host`) > default `127.0.0.1`
+(`ports.resolve_host`). A non-loopback resolution logs the same UNAUTHENTICATED-exposure
+warning `ao ui --host` prints, once per child at spawn. The hub links `0.0.0.0`/`::`
+binds via `127.0.0.1` (a bind address is not a connectable URL) and annotates the actual
+bind; explicit LAN hosts are linked as-is.
+
 ### 6.3 Child monitoring and restart backoff
 
 Each managed child (`ManagedChild`: workspace root, port, `Popen`, restart count, next-retry

@@ -102,9 +102,14 @@ def _render_workspace_row(ws: dict[str, Any]) -> str:
     root = escape(str(ws.get("root", "")))
     port = ws.get("port")
     state = escape(str(ws.get("state", "unknown")))
+    host = str(ws.get("host") or "127.0.0.1")
+    # 0.0.0.0/:: are bind-addresses, not connectable URLs -- link loopback and annotate.
+    link_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     if port:
-        url = f"http://127.0.0.1:{port}/"
+        url = f"http://{link_host}:{port}/"
         link = f'<a href="{escape(url)}">{escape(url)}</a>'
+        if host != link_host:
+            link += f" <small>(bound {escape(host)})</small>"
     else:
         link = "n/a"
 
