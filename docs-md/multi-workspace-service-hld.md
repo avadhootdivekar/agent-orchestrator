@@ -294,18 +294,39 @@ reimplementing PID liveness:
 
 ```
 records = ProcessSupervisor(workspace_root).reconcile()   # marks dead-PID records finished
-for record in records:
-    if record.run_id is None or record.finished_at is None:
-        continue                       # still alive, or never got an id — nothing to do
-    state = RunRepository(workspace_root).load_state(record.run_id)
+by_run = group_by(records, key=run_id, skipping=run_id is None)   # newest-first preserved
+for run_id, run_records in by_run:
+    if any(r.finished_at is None for r in run_records):
+        continue                       # some launch of this run is still alive — leave it
+    state = RunRepository(workspace_root).load_state(run_id)
     if state.status == "running":      # engine never got to mark it terminal
-        yield ResumeCandidate(workspace_root, record.run_id)
+        yield ResumeCandidate(workspace_root, run_id, *_recover_spec_paths(run_records))
 ```
 
 This only considers runs that were launched **through the dashboard** (they have a
 persisted `LaunchRecord`, hence a known PID to have checked); a run started from a bare
 terminal `ao run` has no PID the service can observe and is out of scope — documented
 limitation, not a gap in the reused mechanism.
+
+**The candidate must carry the original launch's spec paths, and grouping is what makes
+that reliable** (both learned from the first live deployment, 2026-08-29 — see the epic
+`STATUS.md` post-epic defect entry). A resume spawned with `--run-id` alone only works in a
+workspace whose `.ao/config.yaml` sets a global `workflow`; the live runner workspaces
+deliberately do not (each epic owns its own workflow file), so the child exits at once with
+`--workflow is required`. `ResumeCandidate` therefore also carries `workflow_path` (a
+first-class `LaunchRecord` field) plus `reposets`/`agents`, which have no record field and
+are read back out of the recorded argv.
+
+Grouping matters because a single run accumulates **one record per launch attempt**, and
+those records do not carry equal information — a resume spawned by a *pre-fix* boot-resume
+persisted a record with `workflow_path=None` and a bare `--run-id`-only argv. Emitting one
+candidate per record and leaving `BootResumeGuard`'s `run_id` dedup to pick a winner would
+select whichever record sorts newest, i.e. exactly those information-free ones on any
+workspace that already hit the bug. So: **one candidate per run**, with each spec path taken
+independently from the newest record that actually carries it (`_recover_spec_paths`;
+`workflow_path` also falls back to its own `--workflow` argv flag). For the same reason
+liveness is evaluated across *all* of a run's records rather than per record — a live resume
+child alongside an older finished record must not yield a candidate.
 
 **Decide** (`boot_resume.BootResumeGuard`) applies bookkeeping loaded from
 `boot_resume.json`, keyed by `f"{workspace_root}|{run_id}"`:

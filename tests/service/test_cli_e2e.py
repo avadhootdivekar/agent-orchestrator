@@ -91,7 +91,12 @@ class TestAddListRemove:
 
 
 class TestStatusFallback:
-    def test_status_with_no_daemon_and_empty_registry_falls_back_cleanly(self) -> None:
+    def test_status_with_no_daemon_and_empty_registry_falls_back_cleanly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A REAL daemon may be serving this box's default hub port (it is, since the first
+        # live deployment 2026-08-28) -- force the "unreachable" branch this test is about.
+        monkeypatch.setattr("agent_orchestrator.service.cli._probe_hub_status", lambda port: None)
         result = runner.invoke(app, ["service", "status"])
         assert result.exit_code == 0, result.output
         assert "Traceback" not in result.output
@@ -105,7 +110,10 @@ class TestStatusFallback:
         assert result.exit_code == 0, result.output
         assert "Traceback" not in result.output
 
-    def test_list_with_no_daemon_notes_it_is_unconfirmed(self, workspace: Path) -> None:
+    def test_list_with_no_daemon_notes_it_is_unconfirmed(
+        self, workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("agent_orchestrator.service.cli._probe_hub_status", lambda port: None)
         runner.invoke(app, ["service", "add", str(workspace)])
         result = runner.invoke(app, ["service", "list"])
         assert result.exit_code == 0, result.output
@@ -379,3 +387,153 @@ class TestAddWithHost:
 
         loaded = ServiceRegistry().load()
         assert loaded.workspaces[0].host == "0.0.0.0"
+
+
+# -- Uncovered line tests (priority 4/5) -------------------------------------------------------
+
+
+class TestBuildStatusProviderEdgeCases:
+    """Tests for `build_status_provider` uncovered paths (line 111)."""
+
+    def test_status_provider_skips_workspace_with_missing_root(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Line 111: workspace dict without 'root' key must be skipped (continue),
+        not crash the whole status aggregation."""
+        from agent_orchestrator.service.cli import build_status_provider
+
+        # Create a mock supervisor that returns status with one workspace missing 'root'
+        class MockSupervisor:
+            def status_snapshot(self):
+                return {
+                    "hub_port": 8770,
+                    "workspaces": [
+                        {"root": None},  # Missing root -- should be skipped
+                    ],
+                }
+
+        provider = build_status_provider(MockSupervisor())
+        payload = provider()
+
+        # Should still return valid payload with workspaces (just skipped the None root)
+        assert isinstance(payload, dict)
+        assert "workspaces" in payload
+
+    def test_status_provider_resilient_to_run_repository_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Line 111 + 114-121: When RunRepository.aggregate() raises OSError,
+        the provider must skip that workspace (continue) but keep going."""
+        from agent_orchestrator.service.cli import build_status_provider
+
+        class MockSupervisor:
+            def status_snapshot(self):
+                return {
+                    "hub_port": 8770,
+                    "workspaces": [
+                        {"root": "/bad/workspace"},
+                    ],
+                }
+
+        def _bad_repo(root):
+            raise OSError("Cannot read runs")
+
+        provider = build_status_provider(MockSupervisor(), run_repository_factory=_bad_repo)
+        payload = provider()
+
+        # Should still return valid payload despite the error
+        assert isinstance(payload, dict)
+        # run_summary should not be present (it failed to aggregate)
+        workspace = payload["workspaces"][0]
+        assert "run_summary" not in workspace
+
+
+class TestPersistedHubPort:
+    """Tests for `_persisted_hub_port` uncovered paths (line 167)."""
+
+    def test_hub_port_read_successfully_from_supervisor_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Line 167: Successfully reading valid hub_port from supervisor.json
+        returns (port, confirmed=True)."""
+        from agent_orchestrator.service.cli import _persisted_hub_port
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        supervisor_json = state_dir / "supervisor.json"
+        supervisor_json.write_text('{"hub_port": 9999}', encoding="utf-8")
+
+        monkeypatch.setenv("AO_SERVICE_STATE_DIR", str(state_dir))
+
+        port, confirmed = _persisted_hub_port(state_dir)
+        assert port == 9999
+        assert confirmed is True
+
+    def test_hub_port_defaults_when_supervisor_json_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No supervisor.json means no confirmed port -- returns (default, False)."""
+        from agent_orchestrator.service.cli import _persisted_hub_port
+        from agent_orchestrator.service.systemd import DEFAULT_HUB_PORT
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        port, confirmed = _persisted_hub_port(state_dir)
+        assert port == DEFAULT_HUB_PORT
+        assert confirmed is False
+
+    def test_hub_port_defaults_on_corrupted_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Malformed JSON in supervisor.json falls back to default."""
+        from agent_orchestrator.service.cli import _persisted_hub_port
+        from agent_orchestrator.service.systemd import DEFAULT_HUB_PORT
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        supervisor_json = state_dir / "supervisor.json"
+        supervisor_json.write_text("{not json", encoding="utf-8")
+
+        port, confirmed = _persisted_hub_port(state_dir)
+        assert port == DEFAULT_HUB_PORT
+        assert confirmed is False
+
+
+class TestFallbackStatusOutput:
+    """Tests for fallback status output paths (line 278)."""
+
+    def test_fallback_status_when_hub_down_and_no_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Line 278: When hub is unreachable and no persisted state exists,
+        fall back gracefully and report 'No persisted service state'."""
+        # Mock probe to return None (hub unreachable)
+        monkeypatch.setattr("agent_orchestrator.service.cli._probe_hub_status", lambda port: None)
+
+        # Request status when hub is down and no state
+        result = runner.invoke(app, ["service", "status"])
+        assert result.exit_code == 0
+        # Should report that hub is not running and no state found
+        assert "not running" in result.output or "unreachable" in result.output
+
+    def test_fallback_status_with_persisted_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fallback status echoes JSON when persisted supervisor.json exists."""
+        from agent_orchestrator.service.supervisor import SUPERVISOR_SNAPSHOT_FILENAME
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        supervisor_json = state_dir / SUPERVISOR_SNAPSHOT_FILENAME
+        supervisor_json.write_text(
+            '{"hub_port": 9999, "boot_id": "test", "children": []}', encoding="utf-8"
+        )
+
+        monkeypatch.setenv("AO_SERVICE_STATE_DIR", str(state_dir))
+        monkeypatch.setattr("agent_orchestrator.service.cli._probe_hub_status", lambda port: None)
+
+        result = runner.invoke(app, ["service", "status"])
+        assert result.exit_code == 0
+        # Should echo the fallback JSON
+        assert "hub_port" in result.output or "supervisor" in result.output

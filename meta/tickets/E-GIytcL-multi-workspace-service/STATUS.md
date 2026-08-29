@@ -147,3 +147,49 @@ full mapping). Docs synced: `meta/ROADMAP.md` (§2a + table row + "Recently deli
 bullet), HLD and ADR-0012 status headers flipped to Accepted/shipped.
 
 Epic status: **Done**.
+
+---
+
+## Post-epic field defect: boot-resume spawned an unusable `ao resume` (2026-08-29)
+
+By: Claude (Opus 5)
+Role: developer
+Date: 2026-08-29
+
+Found on the **first live deployment** of the shipped service, not by the suite. Two
+distinct bugs, one symptom.
+
+**Symptom.** Boot-resume approved run `e-0hdsi3-ad-firstdraft-20260827T105508Z` in
+`ao-runner-ai-models`, spawned it, and the child exited immediately with
+`--workflow is required`. The run stayed `status=="running"` with no process owning it, and
+the hub's `boot_resume_decisions` showed `approve` followed by `skip_already_this_boot`.
+
+**Bug 1 — candidates carried no spec paths.** `ResumeCandidate` held only
+`(workspace_root, run_id)`, so `launch_resume` was called with `--run-id` alone. That is
+fine only for a workspace whose `.ao/config.yaml` sets a global `workflow`; both live
+runner workspaces deliberately do NOT (each epic owns its own workflow file), so the resume
+could never start. Fix: `scan_resumable_runs` now recovers `workflow_path` from the
+`LaunchRecord` field and `--reposets`/`--agents` from the recorded argv (neither has a
+first-class record field), and `Supervisor._decide_and_act` passes all three through.
+
+**Bug 2 — the recovery was defeated by the wreckage Bug 1 left behind.** Each failed
+boot-resume had persisted its *own* `LaunchRecord`, carrying `workflow_path=None` and a bare
+`--run-id`-only argv. `scan_resumable_runs` emitted one candidate **per record** and
+`BootResumeGuard` dedupes by `run_id`, so the candidate that actually reached the spawn was
+built from whichever record sorted newest — and `reconcile()` returns newest-first, i.e. one
+of the information-free records the bug itself created. Verified against the live workspace's
+real four-record history: record `[0]` (newest) had all three paths `None` while `[2]`/`[3]`
+had all of them. **The Bug 1 fix alone would have failed silently on exactly the machine it
+was written to repair.** Fix: `scan_resumable_runs` groups records by `run_id` and emits one
+candidate per *run*, merging each spec path independently from the newest record that
+actually carries it (`_recover_spec_paths`); `workflow_path` also falls back to its own
+`--workflow` argv flag. Liveness is now judged across **all** of a run's records, so a live
+launch plus older finished ones no longer yields a candidate.
+
+**Evidence.** Fixed `scan_resumable_runs`, run against a copy of the live
+`ao-runner-ai-models` launch records, returns exactly 1 candidate with all three paths
+populated (pre-fix: 4 candidates, the winning one all-`None`). Regression tests in
+`tests/service/test_boot_resume_record_merge.py` are built from those real record shapes.
+
+Carried limitation (unchanged): boot-resume still only sees dashboard-launched runs — a bare
+terminal `ao run` leaves no `LaunchRecord`, so there is no argv to recover paths from.

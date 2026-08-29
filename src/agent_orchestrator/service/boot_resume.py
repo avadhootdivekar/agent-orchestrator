@@ -22,7 +22,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from ..ui.processes import ProcessSupervisor
+from ..ui.processes import LaunchRecord, ProcessSupervisor
 from ..ui.runs import RunNotFoundError, RunRepository
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,56 @@ class ResumeCandidate:
     workspace_root: str
     run_id: str
 
+    workflow_path: str | None = None
+    """The original launch's --workflow, from its ``LaunchRecord.workflow_path``. Without
+    it, a workspace whose ``.ao/config.yaml`` deliberately has no global ``workflow`` key
+    (each epic owns its own workflow file) makes the spawned ``ao resume`` exit immediately
+    with "--workflow is required" -- the exact failure observed on the first live
+    migration (run e-0hdsi3, 2026-08-28)."""
+
+    reposets: str | None = None
+    """--reposets recovered from the original launch argv (no first-class record field)."""
+
+    agents: str | None = None
+    """--agents recovered from the original launch argv (no first-class record field)."""
+
+
+def _argv_flag_value(argv: list[str], flag: str) -> str | None:
+    """The value following *flag* in *argv*, or None (absent flag, or flag is last)."""
+    try:
+        idx = argv.index(flag)
+    except ValueError:
+        return None
+    if idx + 1 >= len(argv):
+        return None
+    return argv[idx + 1]
+
+
+def _recover_spec_paths(
+    records: list[LaunchRecord],
+) -> tuple[str | None, str | None, str | None]:
+    """``(workflow_path, reposets, agents)`` for one run, each taken from the newest record
+    that actually carries it. *records* must be newest-first.
+
+    ``workflow_path`` is a first-class ``LaunchRecord`` field, but ``--reposets``/``--agents``
+    are not, so those are read back out of the recorded argv. ``workflow_path`` additionally
+    falls back to its own argv flag, so a record whose field never got populated but whose
+    argv shows the flag is still usable.
+    """
+    workflow_path: str | None = None
+    reposets: str | None = None
+    agents: str | None = None
+    for record in records:
+        argv = list(getattr(record, "argv", None) or [])
+        workflow_path = (
+            workflow_path
+            or getattr(record, "workflow_path", None)
+            or _argv_flag_value(argv, "--workflow")
+        )
+        reposets = reposets or _argv_flag_value(argv, "--reposets")
+        agents = agents or _argv_flag_value(argv, "--agents")
+    return workflow_path, reposets, agents
+
 
 def scan_resumable_runs(
     workspace_root: str,
@@ -77,22 +127,50 @@ def scan_resumable_runs(
     supervisor = supervisor_factory(root)
     repo = repo_factory(root)
 
-    candidates: list[ResumeCandidate] = []
+    # Group by run, preserving `reconcile()`'s newest-first order. One run accumulates one
+    # record per launch attempt (the original `ao run`, then one per resume), and those
+    # attempts do NOT carry equal information: a resume spawned by a *pre-fix* boot-resume
+    # persisted a record with `workflow_path=None` and a bare `--run-id`-only argv. Emitting
+    # one candidate per record and leaving `BootResumeGuard` to dedupe by run_id would hand
+    # the spawn whichever record sorts newest -- and on a workspace that already suffered the
+    # bug, that is exactly the information-free one, so the resume would die on
+    # "--workflow is required" all over again. One candidate per run, each spec path taken
+    # from the newest record that actually carries it, is what makes the recovery stick.
+    records_by_run: dict[str, list[LaunchRecord]] = {}
     for record in supervisor.reconcile():
-        if record.run_id is None or record.finished_at is None:
-            continue  # still alive, or never observed a run directory -- nothing to do here
+        if record.run_id is None:
+            continue  # never observed a run directory -- nothing identifiable to resume
+        records_by_run.setdefault(record.run_id, []).append(record)
+
+    candidates: list[ResumeCandidate] = []
+    for run_id, records in records_by_run.items():
+        if any(record.finished_at is None for record in records):
+            # Some launch of this run is still alive; leave it alone. Checked across ALL of
+            # the run's records, not per-record: a live resume child plus an older finished
+            # record for the same run must not yield a candidate.
+            continue
         try:
-            state = repo.load_state(record.run_id)
+            state = repo.load_state(run_id)
         except RunNotFoundError:
             logger.warning(
                 "boot-resume scan: run %r launch-record exists but its run directory is "
                 "missing/unreadable in workspace %r -- skipping (defensive, not expected)",
-                record.run_id,
+                run_id,
                 root,
             )
             continue  # run directory pruned/missing since -- defensive, not expected
-        if state.status == "running":
-            candidates.append(ResumeCandidate(workspace_root=root, run_id=record.run_id))
+        if state.status != "running":
+            continue
+        workflow_path, reposets, agents = _recover_spec_paths(records)
+        candidates.append(
+            ResumeCandidate(
+                workspace_root=root,
+                run_id=run_id,
+                workflow_path=workflow_path,
+                reposets=reposets,
+                agents=agents,
+            )
+        )
     return candidates
 
 

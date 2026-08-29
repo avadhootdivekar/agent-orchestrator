@@ -232,6 +232,36 @@ independent reviews' agreement on the underlying mechanism (cgroup membership su
 the recorded justification, and this gap is carried forward explicitly rather than glossed
 over.
 
+## Field correction (2026-08-29) — a resume candidate is per-*run*, and must carry the launch's spec paths
+
+D4 as originally written scoped boot-resume correctly but under-specified the candidate: it
+carried only `(workspace_root, run_id)`. The first live deployment showed why that is not
+enough, in two stages.
+
+`ao resume --run-id <id>` alone resolves its workflow from the workspace's `.ao/config.yaml`
+`workflow` key. Both live runner workspaces deliberately omit that key — each epic owns its
+own workflow file — so every auto-resume died instantly on `--workflow is required`.
+`ResumeCandidate` now also carries `workflow_path` (a first-class `LaunchRecord` field) plus
+`reposets` and `agents`, which have no record field and are recovered from the recorded argv.
+
+That alone was still not enough, and the reason is a genuine design point rather than a
+detail. Each failed resume persisted its *own* `LaunchRecord` carrying `workflow_path=None`
+and a bare argv. Because the scan emitted one candidate per *record* while `BootResumeGuard`
+dedupes by `run_id`, the record that actually reached the spawn was whichever sorted newest
+— and `reconcile()` is newest-first, so on any workspace that had already hit the bug the
+winner was guaranteed to be one of the information-free records the bug had just written.
+The scan is therefore now defined over **runs, not records**: group by `run_id`, emit one
+candidate, and merge each spec path independently from the newest record that actually has
+it. Liveness likewise became a whole-run property (`any(finished_at is None)`), which also
+closes a latent race where a live resume child plus an older finished record could yield a
+candidate.
+
+Generalizable lesson for anything else reading `LaunchRecord`s: **a run's records are an
+append-only history of unequal quality, not a set of interchangeable snapshots.** A failed
+attempt writes a record too, and it is the newest one. Reading "the latest record" to
+recover a run's launch parameters is therefore wrong by construction; reduce across the
+run's records instead.
+
 ## Consequences summary
 
 - New `service/` package; `ui/processes.py` is read, not modified (§HLD 3.1) — the
