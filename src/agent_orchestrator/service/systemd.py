@@ -37,6 +37,11 @@ from .paths import XDG_CONFIG_HOME_ENV
 # workspace's dashboard.
 DEFAULT_HUB_PORT = 8770
 
+# Loopback by default, mirroring `ao ui`'s own deliberate bind default: the hub is
+# unauthenticated and exposes every workspace's state, so reaching it from the network must
+# be an explicit operator choice (`--hub-host 0.0.0.0`), never something a default hands out.
+DEFAULT_HUB_HOST = "127.0.0.1"
+
 # Where a written unit lands by default: `(XDG_CONFIG_HOME or ~/.config)/systemd/user/
 # ao.service` (HLD §7). `_UNIT_SUBPATH` mirrors `paths.py`'s own segment-tuple style.
 _UNIT_SUBPATH = ("systemd", "user")
@@ -50,7 +55,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={ao_executable} service run --hub-port {hub_port}
+ExecStart={ao_executable} service run --hub-host {hub_host} --hub-port {hub_port}
 Restart=on-failure
 RestartSec=5
 StartLimitIntervalSec=120
@@ -99,14 +104,19 @@ def resolve_ao_executable() -> str:
     )
 
 
-def render_unit(ao_executable: str, *, hub_port: int = DEFAULT_HUB_PORT) -> str:
-    """Render the exact HLD §7 unit text for *ao_executable* / *hub_port*.
+def render_unit(
+    ao_executable: str,
+    *,
+    hub_port: int = DEFAULT_HUB_PORT,
+    hub_host: str = DEFAULT_HUB_HOST,
+) -> str:
+    """Render the exact HLD §7 unit text for *ao_executable* / *hub_host* / *hub_port*.
 
-    `hub_port` is always rendered explicitly (never left to `service run`'s own default) --
-    an implicit default that later changed would silently desync a previously-installed unit
-    from a new binary's default (HLD §7, AC16).
+    Both `hub_host` and `hub_port` are always rendered explicitly (never left to `service
+    run`'s own defaults) -- an implicit default that later changed would silently desync a
+    previously-installed unit from a new binary's default (HLD §7, AC16).
     """
-    return _UNIT_TEMPLATE.format(ao_executable=ao_executable, hub_port=hub_port)
+    return _UNIT_TEMPLATE.format(ao_executable=ao_executable, hub_port=hub_port, hub_host=hub_host)
 
 
 def _default_unit_dir() -> Path:
@@ -118,14 +128,18 @@ def _default_unit_dir() -> Path:
 
 
 def install_unit(
-    *, print_only: bool, unit_dir: Path | None = None, hub_port: int = DEFAULT_HUB_PORT
+    *,
+    print_only: bool,
+    unit_dir: Path | None = None,
+    hub_port: int = DEFAULT_HUB_PORT,
+    hub_host: str = DEFAULT_HUB_HOST,
 ) -> Path | str:
     """Render the unit and either print it (`print_only=True`, zero filesystem writes -- safe
     for CI/tests) or write it to `unit_dir or _default_unit_dir()` (creating parent dirs) and
     return the written path.
     """
     ao_executable = resolve_ao_executable()
-    text = render_unit(ao_executable, hub_port=hub_port)
+    text = render_unit(ao_executable, hub_port=hub_port, hub_host=hub_host)
     if print_only:
         return text
 
@@ -168,6 +182,7 @@ def stop_via_systemctl(
 
 
 __all__ = [
+    "DEFAULT_HUB_HOST",
     "DEFAULT_HUB_PORT",
     "SYSTEMCTL_UNIT_NAME",
     "UNIT_FILENAME",

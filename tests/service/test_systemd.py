@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from agent_orchestrator.service.systemd import (
+    DEFAULT_HUB_HOST,
     DEFAULT_HUB_PORT,
     SYSTEMCTL_UNIT_NAME,
     ServiceError,
@@ -34,14 +35,27 @@ class TestRenderUnit:
         text = render_unit("/usr/local/bin/ao")
         assert "KillMode=process" in text
 
-    def test_contains_the_exec_start_line_with_hub_port(self) -> None:
-        text = render_unit("/usr/local/bin/ao", hub_port=9999)
-        assert "ExecStart=/usr/local/bin/ao service run --hub-port 9999" in text
+    def test_contains_the_exec_start_line_with_hub_host_and_port(self) -> None:
+        text = render_unit("/usr/local/bin/ao", hub_port=9999, hub_host="0.0.0.0")
+        assert "ExecStart=/usr/local/bin/ao service run --hub-host 0.0.0.0 --hub-port 9999" in text
 
     def test_exec_start_uses_the_default_hub_port_when_unspecified(self) -> None:
         text = render_unit("/usr/local/bin/ao")
         assert f"--hub-port {DEFAULT_HUB_PORT}" in text
         assert DEFAULT_HUB_PORT == 8770
+
+    def test_exec_start_uses_the_default_hub_host_when_unspecified(self) -> None:
+        """The hub defaults to loopback: it is unauthenticated and reports every registered
+        workspace's state, so LAN exposure must be an explicit `--hub-host` choice."""
+        text = render_unit("/usr/local/bin/ao")
+        assert f"--hub-host {DEFAULT_HUB_HOST}" in text
+        assert DEFAULT_HUB_HOST == "127.0.0.1"
+
+    def test_hub_host_is_rendered_explicitly_not_left_to_the_binary_default(self) -> None:
+        """Same AC16 rationale that already applies to `--hub-port`: a previously-installed
+        unit must not silently change meaning if a later binary changes its own default."""
+        text = render_unit("/usr/local/bin/ao")
+        assert "--hub-host " in text
 
     def test_contains_restart_on_failure_and_wanted_by(self) -> None:
         text = render_unit("/usr/local/bin/ao")
@@ -136,6 +150,30 @@ class TestInstallUnit:
         text = result.read_text()
         assert "KillMode=process" in text
         assert "--hub-port 8888" in text
+
+    def test_hub_host_is_propagated_into_the_written_unit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["/usr/local/bin/ao", "service", "install"])
+        unit_dir = tmp_path / "config" / "systemd" / "user"
+
+        result = install_unit(print_only=False, unit_dir=unit_dir, hub_host="0.0.0.0")
+
+        assert isinstance(result, Path)
+        assert "--hub-host 0.0.0.0" in result.read_text()
+
+    def test_written_unit_defaults_to_loopback_hub_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Installing without --hub-host must never silently expose the hub."""
+        monkeypatch.setattr(sys, "argv", ["/usr/local/bin/ao", "service", "install"])
+        unit_dir = tmp_path / "config" / "systemd" / "user"
+
+        result = install_unit(print_only=False, unit_dir=unit_dir)
+
+        assert isinstance(result, Path)
+        assert "--hub-host 127.0.0.1" in result.read_text()
+        assert "0.0.0.0" not in result.read_text()
 
     def test_raises_service_error_when_ao_executable_cannot_be_resolved(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

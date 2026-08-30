@@ -169,6 +169,35 @@ class TestInstall:
         unit_path = fake_home_config / "systemd" / "user" / "ao.service"
         assert "--hub-port 9321" in unit_path.read_text()
 
+    def test_install_with_hub_host_bakes_it_into_the_written_unit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression for the first live deployment (2026-08-30): the hub bind was hardcoded
+        to 127.0.0.1 with no way to change it, so the dashboards were reachable on the LAN
+        (they bind per-workspace `ui.host`) while the hub refused the connection outright."""
+        monkeypatch.setattr(sys, "argv", ["/opt/ao/bin/ao", "service", "install"])
+        fake_home_config = tmp_path / "config"
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(fake_home_config))
+
+        result = runner.invoke(app, ["service", "install", "--hub-host", "0.0.0.0"])
+
+        assert result.exit_code == 0, result.output
+        unit_path = fake_home_config / "systemd" / "user" / "ao.service"
+        assert "--hub-host 0.0.0.0" in unit_path.read_text()
+
+    def test_install_defaults_to_loopback_hub_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["/opt/ao/bin/ao", "service", "install"])
+        fake_home_config = tmp_path / "config"
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(fake_home_config))
+
+        result = runner.invoke(app, ["service", "install"])
+
+        assert result.exit_code == 0, result.output
+        unit_path = fake_home_config / "systemd" / "user" / "ao.service"
+        assert "--hub-host 127.0.0.1" in unit_path.read_text()
+
     def test_install_errors_clearly_when_ao_executable_cannot_be_resolved(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

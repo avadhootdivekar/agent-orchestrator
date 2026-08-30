@@ -391,7 +391,7 @@ touch run subprocesses) is what actually governs what stops.
 
 ## 7. systemd unit
 
-`ao service install [--print] [--hub-port N]`:
+`ao service install [--print] [--hub-port N] [--hub-host HOST]`:
 
 ```ini
 [Unit]
@@ -400,7 +400,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=<absolute path to the running `ao`> service run --hub-port <N>
+ExecStart=<absolute path to the running `ao`> service run --hub-host <HOST> --hub-port <N>
 Restart=on-failure
 RestartSec=5
 StartLimitIntervalSec=120
@@ -425,9 +425,17 @@ that a globally-installed `ao` can be a stale snapshot of a different version �
 printed guidance names that risk explicitly and points at `install.sh --force` as the
 existing fix, rather than silently working around it by switching mechanisms.
 
-`--hub-port <N>` is always rendered explicitly (default 8770 if `--hub-port` was not passed
-to `install`), never left implicit — an implicit default that later changed would silently
-desync a previously-installed unit from a new binary's default.
+`--hub-port <N>` and `--hub-host <HOST>` are both always rendered explicitly (defaults
+8770 and `127.0.0.1` if not passed to `install`), never left implicit — an implicit default
+that later changed would silently desync a previously-installed unit from a new binary's
+default.
+
+**The hub binds loopback by default, unlike the per-workspace dashboards** (which take their
+host from `.ao/config.yaml`'s `ui.host`, P1). It is unauthenticated and reports every
+registered workspace's state, so LAN exposure is an explicit `--hub-host 0.0.0.0` choice.
+Worth stating because the asymmetry surprises: on the first live deployment the dashboards
+were reachable across the LAN while the hub refused the connection outright (TCP refused,
+not a 403/421), which reads as a broken daemon rather than a deliberate bind.
 
 `EnvironmentFile=-%h/.config/ao/service.env` (leading `-` = optional, missing file is not a
 startup failure) is new versus the original plan: the systemd **user manager**'s own
@@ -491,10 +499,10 @@ ao service add <dir> [--port N] [--no-autoresume]
 ao service remove <dir>
 ao service list
 ao service status
-ao service install [--print] [--hub-port N]
+ao service install [--print] [--hub-port N] [--hub-host HOST]
 ao service start
 ao service stop
-ao service run [--hub-port N]
+ao service run [--hub-port N] [--hub-host HOST]
 ```
 
 `cli.py` changes by exactly one import + one line:

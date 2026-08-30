@@ -40,6 +40,7 @@ from .supervisor import (
     SupervisorLockHeldError,
 )
 from .systemd import (
+    DEFAULT_HUB_HOST,
     DEFAULT_HUB_PORT,
     ServiceError,
     install_unit,
@@ -289,10 +290,19 @@ def install(
     hub_port: int = typer.Option(
         DEFAULT_HUB_PORT, "--hub-port", help="Hub port to bake into the unit's ExecStart."
     ),
+    hub_host: str = typer.Option(
+        DEFAULT_HUB_HOST,
+        "--hub-host",
+        help=(
+            "Hub bind address to bake into the unit's ExecStart. Defaults to loopback; "
+            "use 0.0.0.0 to reach the hub from the LAN (unauthenticated -- trusted "
+            "networks only)."
+        ),
+    ),
 ) -> None:
     """Generate (and, unless --print, install) the `ao.service` systemd user unit."""
     try:
-        result = install_unit(print_only=print_only, hub_port=hub_port)
+        result = install_unit(print_only=print_only, hub_port=hub_port, hub_host=hub_host)
     except ServiceError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -358,6 +368,15 @@ def run(
     hub_port: int = typer.Option(
         DEFAULT_HUB_PORT, "--hub-port", help="Port for the hub HTTP server."
     ),
+    hub_host: str = typer.Option(
+        DEFAULT_HUB_HOST,
+        "--hub-host",
+        help=(
+            "Interface for the hub HTTP server. Defaults to loopback because the hub is "
+            "unauthenticated and reports every registered workspace's state; use 0.0.0.0 "
+            "to expose it on the LAN (trusted networks only)."
+        ),
+    ),
 ) -> None:
     """Foreground supervisor + hub daemon (HLD §6/§8). Blocks; installs SIGTERM/SIGINT
     handlers. Not invoked by any test in this epic (AC12) -- its parts (`Supervisor`,
@@ -400,7 +419,7 @@ def run(
     status_provider = build_status_provider(supervisor)
     hub_app = build_hub_app(status_provider)
     server = uvicorn.Server(
-        uvicorn.Config(hub_app, host="127.0.0.1", port=hub_port, log_level="warning")
+        uvicorn.Config(hub_app, host=hub_host, port=hub_port, log_level="warning")
     )
 
     stop_event = threading.Event()
@@ -414,7 +433,7 @@ def run(
     hub_thread = threading.Thread(target=server.run, daemon=True)
     hub_thread.start()
 
-    typer.echo(f"Agent Orchestrator service running -- hub on http://127.0.0.1:{hub_port}/")
+    typer.echo(f"Agent Orchestrator service running -- hub on http://{hub_host}:{hub_port}/")
     try:
         while not stop_event.is_set():
             # `.wait()` (unlike `time.sleep()`) returns as soon as the SIGTERM/SIGINT
