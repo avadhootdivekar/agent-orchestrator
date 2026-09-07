@@ -6,7 +6,7 @@
 - Owner: unassigned (developer)
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: In Review
 - Estimate: 3 days
 
 ## Requirements Mapping
@@ -141,11 +141,19 @@ HLD §7.1 group_repos, §7.2 effective_path, §11 M3 WorktreeManager.ensure/rele
 
 ## Schemas / Interface Notes
 - Interface / API (locked): `group_repos`, `IsolatedRepo`, `RepoMember`, `TaskIsolation`,
-  `RepoIsolation`, `WorktreeManager(workspace_root, run_id, repos, integration)` with
-  `ensure/release/reconcile/gc_run`, and every `paths.py` function named in AC-1.
+  `RepoIsolation`, `WorktreeManager(workspace_root, run_id, repos, integration_heads)` with
+  `ensure/release/reconcile/gc_run` — C-4 (review, 2026-09-07): the 4th ctor param is a plain
+  `dict[str, str]` (repo_key -> current integration head sha), not a `RunIntegrationState`
+  reference, so `WorktreeManager` stays decoupled from `RunState` (same R-20/NFR-3 reasoning
+  as the Integrator's own ctor) — and every `paths.py` function named in AC-1.
 - Spec / data schema: none new (consumes `T-Sc7Rm2`'s models).
-- Triggers / events: emits `worktree.created|reused|removed|remove_failed|orphan_reaped` via the
-  standard `extra={"event": ...}` convention; the full event contract is `T-Cx4Jf1`'s to audit.
+- Triggers / events: emits `worktree.created|reused|removed|remove_failed|orphan_reaped` plus
+  `worktree.branch_reattached` and `worktree.remove_skipped` (both added in the review-fix
+  pass — C-5: `remove_skipped` covers `release()`'s `locked`/`in_use` non-removal outcomes,
+  which previously logged the misleading `worktree.removed` event name) via the standard
+  `extra={"event": ...}` convention; a branch/path collision D-ENS cannot resolve
+  automatically raises `errors.WorktreeCollisionError` instead of emitting an event. The full
+  event contract is `T-Cx4Jf1`'s to audit.
 - Artifacts: worktrees under `$AO_STATE_DIR/worktrees/...` (never under the workspace root).
 
 ## Handoff Boundary
@@ -166,3 +174,85 @@ HLD §7.1 group_repos, §7.2 effective_path, §11 M3 WorktreeManager.ensure/rele
   R-8 (`declared_outputs` on `TaskIsolation`, which is what lets the Integrator stay `RunState`-free
   per R-20) and S-9 (0700). `ensure()` gains `cycle` and `declared_outputs`. Re-estimated 2.5 -> 3 days
   for the extra module (`view.py`), the shared helper plus its migration, and five new tests.
+
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: All 20 ACs implemented.
+  `isolation/paths.py` (pure, import-safe without git): `sanitize_ref_component`, `task_branch`,
+  `integration_branch`, `squash_ref`, `workspace_key`, `state_dir`, `worktree_root`,
+  `worktree_root_prefix_for` (extra helper backing R-6's scoped-prune sites, named after the HLD's own
+  `worktree_root_prefix_for` pseudocode), `effective_path`, `RESERVED_SHARED_PREFIXES`,
+  `RESERVED_BRANCH_COMPONENTS`. `isolation/worktrees.py`: `group_repos`/`IsolatedRepo`/`RepoMember`
+  (impure — needs `GitRepo.probe` — so live here, not in the "all pure" `paths.py`), `TaskIsolation`/
+  `RepoIsolation`/`ReconcileReport`, `WorktreeManager.ensure/release/reconcile/gc_run`. `isolation/
+  view.py`: `IsolatedArtifactView`, built from exactly one `TaskIsolation` (S-4). `xdg.py` reused
+  as-is (already landed by `T-Gt4Pw8`, not recreated). `service/paths.py`: only `default_state_dir`
+  migrated onto `xdg.resolve_state_dir`; `default_registry_path` deliberately left alone (see
+  Deviations). `artifacts.py`: added `LocalFsArtifactStore.resolve_unchecked`/`.root` (read-only) plus
+  two shared private helpers (`_exists_via_resolve`/`_size_via_resolve`) so `IsolatedArtifactView`
+  doesn't duplicate the resolve-then-stat pattern; `resolve()`'s existing containment guard is
+  unchanged (`tests/test_artifacts.py` passes unedited). No `extra_roots` param added to
+  `LocalFsArtifactStore`, per the ticket's explicit instruction.
+
+  **Tests**: `tests/isolation/test_paths.py` (250, incl. a 220-string generated corpus — no
+  `hypothesis` dependency available — pinned against real `git check-ref-format --allow-onelevel`),
+  `tests/isolation/test_worktrees.py` (28, real git repos via `conftest.py`'s fixtures + one
+  `RecordingFakeRunner` case each for `release()`'s and `reconcile()`'s GitError-never-raises proof),
+  `tests/isolation/test_view.py` (16, incl. the S-4 task-A/task-B test, symlink-escape, cross-run,
+  traversal, and the `RunStateStore` never-wrapped assertion), `tests/isolation/
+  test_service_paths_migration.py` (4, equivalence proof for every `default_state_dir` precedence
+  branch — `tests/service/test_paths.py` is the primary gate and passes **unedited**).
+
+  **Gates**: `uv run ruff check .` / `ruff format --check .` clean repo-wide (only files I touched:
+  `isolation/paths.py`, `isolation/worktrees.py`, `isolation/view.py`, `artifacts.py`,
+  `service/paths.py`, plus my 4 new test files — never the concurrently-modified
+  `templates/builtin/**`/`test_builtin_routed_runner_assets.py`/`isolation/git.py`/
+  `isolation/hotspots.py`/`scheduling/` files another task's developer has in flight). `uv run mypy
+  src` — unchanged at exactly 4 pre-existing `_version.py` errors. Targeted gate (`tests/isolation
+  tests/service tests/test_artifacts.py tests/test_xdg.py`): **632 passed / 0 failed**. Full suite,
+  run twice: first run **4 failed** (all in `tests/test_builtin_routed_runner_assets.py`, a
+  concurrently in-progress file this ticket never touches — a different task's instruction-template
+  edits mid-flight, not `tests/test_isolation_*` as the brief anticipated but the same transient-
+  concurrent-edit class); second run **3244 passed / 7 skipped / 0 failed**, stable. Coverage: new
+  modules `isolation/paths.py` 100%, `isolation/view.py` 100%, `isolation/worktrees.py` 97%
+  (`_is_submodule`'s `except OSError` defensive branch and `_mkdir_0700`'s filesystem-root guard are
+  the only uncovered lines — both genuinely hard to trigger without faking a filesystem error),
+  `service/paths.py` 100%; repo TOTAL 95% (baseline 94%, no regression).
+
+  **Deviations / decisions**:
+  1. **`default_registry_path` NOT migrated onto `xdg.resolve_state_dir`** — per the ticket's own
+     escape hatch ("if the two resolutions turn out not to be genuinely the same shape, do not force
+     them together"). It resolves a *file* path via `$XDG_CONFIG_HOME` under `~/.config`;
+     `resolve_state_dir` is hardcoded to `$XDG_STATE_HOME` under `~/.local/state` and resolves a
+     *directory*. Only `default_state_dir` is genuinely the same shape (verified: identical
+     override-env / XDG-subdir / default-subdir triple), so only it migrated.
+  2. **`RESERVED_SHARED_PREFIXES`/`effective_path` needed `TaskIsolation.workspace_root`** — the HLD's
+     §7.2 pseudocode templates `RESERVED_SHARED_PREFIXES` on `<workspace_root>` but `effective_path`'s
+     locked signature takes only `(resolved_abs, task_iso)`, so `TaskIsolation` carries
+     `workspace_root: str` (beyond AC-19's minimum of `cycle`/`declared_outputs`) for the reserved-
+     prefix containment check to be computable at all. `effective_path` itself is generic over a
+     `Protocol`, not an import of `worktrees.TaskIsolation`, so `paths.py` stays git-free/import-safe.
+  3. **`group_repos`, `IsolatedRepo`, `RepoMember` live in `worktrees.py`, not `paths.py`** — `AC-1`
+     enumerates `paths.py`'s pure-function surface and does not name `group_repos`; it needs
+     `GitRepo.probe` (I/O), so it lives in the impure lifecycle module alongside `WorktreeManager`,
+     which is the same module `IsolatedRepo`/`RepoMember` naturally belong with.
+  4. **A minor edge case from the ticket's own Risks section — "branch exists and points somewhere
+     unrelated" as a hard error on a `run_id` collision — was NOT implemented separately** from the
+     HLD's literal `ensure()` pseudocode (which unconditionally `delete_ref`s a stray branch before
+     recreating). No AC requires the extra nuance; `worktree_add`'s own `GitError` still surfaces any
+     genuine anomaly.
+  5. **A disk-footprint guard was NOT implemented** — the ticket lists it as "if specified"; the HLD's
+     matching finding (S-7, retained-failed-worktree cap) is explicitly disposed to `T-En8Hd4`
+     (a warning tied to an existing breaker), not this ticket.
+
+  **Hook points for `T-Ib5Qy9`/`T-En8Hd4`** (published per the Handoff Boundary): `WorktreeManager(
+  workspace_root: str, run_id: str, repos: list[IsolatedRepo], integration_heads: dict[str, str], *,
+  runner: Runner | None = None, hooks_dir: Path | None = None)`; `.ensure(task_id: str, cycle: int,
+  declared_outputs: Sequence[str]) -> TaskIsolation`; `.release(task_id: str, outcome:
+  Literal["integrated","failed"], policy: Literal["never","on_failure","always"]) -> None` (never
+  raises); `.reconcile(known_task_ids: set[str]) -> ReconcileReport`; `.gc_run(run_id: str) -> None`
+  (for `T-Cx4Jf1`'s `ao prune`). `group_repos(repo_paths: dict[str, str], *, probe=GitRepo.probe) ->
+  tuple[list[IsolatedRepo], list[str]]` (groups, skipped non-git repo ids) is the upstream input to
+  `WorktreeManager(repos=...)`. `IsolatedArtifactView(base: LocalFsArtifactStore, task_isolation:
+  TaskIsolation)` — construct fresh per dispatch from that task's own `TaskIsolation` only.
+
+  Not done / needs a look from a reviewer: item 4 above (the branch-collision hard-error nuance) if a
+  downstream ticket's tests need it; no other gaps found against the ACs.

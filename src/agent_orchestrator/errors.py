@@ -128,3 +128,57 @@ class GitForbiddenCommandError(GitError):
     """Raised when a `FORBIDDEN_SUBCOMMANDS` verb reaches `_run`, before any subprocess is
     spawned (S-1 / no-network-ever guarantee). `exit_code` is always None.
     """
+
+
+class WorktreeCollisionError(OrchestratorError):
+    """Raised by `WorktreeManager.ensure()` (E-Wk9Tz3 T-Wk3Nv6, HLD §11 M3 "D-ENS") when the
+    `ao/<run>/<task>` branch a task's worktree needs is already in use by a worktree this
+    call did not just create -- either a different worktree already occupies the expected
+    path (on a different branch, or with no readable HEAD), or the branch itself is checked
+    out at an entirely different worktree path.
+
+    `ensure()` never deletes a ref to resolve this: the `ao/` namespace is reserved (S-8),
+    so a pre-existing branch here is almost always this run's OWN leftover from a crash, and
+    deleting it would destroy work §12.1's crash-recovery story promises to preserve.
+    Deletion belongs only to `release()`/`reconcile()`/`gc_run()`, where ownership has
+    already been established -- this error exists for the one state those three can't safely
+    resolve on their own: an operator (or a second live process) is the only thing that can
+    know whether reusing, removing or renaming the conflicting worktree is correct.
+    """
+
+    def __init__(
+        self,
+        expected_branch: str,
+        worktree_path: str,
+        remedy: str,
+        *,
+        found_branch: str | None = None,
+    ) -> None:
+        detail = f"found {found_branch!r} checked out there" if found_branch else "already in use"
+        super().__init__(
+            f"cannot use worktree path {worktree_path!r} for branch {expected_branch!r}: "
+            f"{detail}. {remedy}"
+        )
+        self.expected_branch = expected_branch
+        self.worktree_path = worktree_path
+        self.found_branch = found_branch
+        self.remedy = remedy
+
+
+# --- Task isolation: integration (E-Wk9Tz3 T-Ib5Qy9) -------------------------------------
+
+
+class IntegrationLockTimeoutError(OrchestratorError):
+    """Raised by `IntegrationLock.__enter__` (the context-manager convenience path only)
+    when `.acquire()` cannot obtain the lock within its configured timeout.
+
+    `Integrator` itself never raises this: it calls `.acquire(timeout)` directly and turns
+    a `False` return into `IntegrationResult(status="failed", reason="lock_timeout")`
+    (AC-13) — a lock timeout is an expected, recoverable outcome on the hot path, not an
+    exceptional one.
+    """
+
+    def __init__(self, common_dir: str, timeout: float) -> None:
+        super().__init__(f"integration lock on {common_dir!r} not acquired within {timeout}s")
+        self.common_dir = common_dir
+        self.timeout = timeout

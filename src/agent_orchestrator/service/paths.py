@@ -10,12 +10,25 @@ spec (``XDG_CONFIG_HOME``/``XDG_STATE_HOME``), then a hardcoded ``~/.config``/
 Both functions read ``os.environ`` at call time -- no module-level caching -- so tests can
 monkeypatch/``os.environ`` per-test without import-order fragility (mirrors the rest of this
 codebase's env-driven config resolution, e.g. ``project_config.py``).
+
+``default_state_dir`` (E-Wk9Tz3 T-Wk3Nv6, R-11) is implemented on top of the shared
+``xdg.resolve_state_dir`` helper -- this was the second hand-copy of that override ->
+``$XDG_STATE_HOME`` -> ``~/.local/state`` precedence, and factoring it keeps
+``isolation/paths.py`` from becoming a third. ``default_registry_path`` is deliberately
+**not** migrated: it resolves a *file* path via ``$XDG_CONFIG_HOME`` (config-home
+anchoring, defaulting under ``~/.config``), a genuinely different shape from
+``resolve_state_dir``'s directory-under-``$XDG_STATE_HOME`` precedence -- forcing them
+together would be a false DRY (see the R-11 disposition, HLD §24 and the T-Wk3Nv6 ticket's
+own Risks section, which calls this out explicitly as the escape hatch to take when the two
+resolutions are not genuinely the same shape).
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+
+from ..xdg import resolve_state_dir
 
 # Env var names.
 AO_SERVICE_CONFIG_ENV = "AO_SERVICE_CONFIG"
@@ -27,6 +40,9 @@ XDG_STATE_HOME_ENV = "XDG_STATE_HOME"
 _SERVICE_SUBDIR = "ao"
 _REGISTRY_FILENAME = "service.yaml"
 _STATE_SUBDIR = "service"
+# `resolve_state_dir`'s xdg_subdir/default_subdir args -- both branches of the pre-migration
+# code joined the same two segments ("ao", "service"), so they stay identical here too.
+_STATE_SUBPATH = f"{_SERVICE_SUBDIR}/{_STATE_SUBDIR}"
 
 
 def default_registry_path() -> Path:
@@ -50,10 +66,4 @@ def default_state_dir() -> Path:
     Precedence: ``AO_SERVICE_STATE_DIR`` (exact directory path) >
     ``$XDG_STATE_HOME/ao/service`` > ``~/.local/state/ao/service``.
     """
-    override = os.environ.get(AO_SERVICE_STATE_DIR_ENV)
-    if override:
-        return Path(override)
-
-    xdg_state_home = os.environ.get(XDG_STATE_HOME_ENV)
-    state_home = Path(xdg_state_home) if xdg_state_home else Path.home() / ".local" / "state"
-    return state_home / _SERVICE_SUBDIR / _STATE_SUBDIR
+    return resolve_state_dir(AO_SERVICE_STATE_DIR_ENV, _STATE_SUBPATH, _STATE_SUBPATH)
