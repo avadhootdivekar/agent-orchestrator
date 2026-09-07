@@ -1121,7 +1121,12 @@ class TestCheckoutSync:
         # the shared checkout.
         assert (repo / "landed.txt").exists()
 
-    def test_dirty_checkout_fails_sync_and_halts_dispatch(self, tmp_path: Path) -> None:
+    def test_colliding_dirty_checkout_fails_sync_and_halts_dispatch(self, tmp_path: Path) -> None:
+        """E-Wk9Tz3 T-Wl2Bq7 R-12: `_sync_checkout` only refuses when a local dirty path
+        genuinely COLLIDES with the incoming change -- superseding the old, coarser "any
+        dirty file anywhere blocks the whole sync" behaviour (see the sibling
+        `test_unrelated_dirty_checkout_still_syncs_successfully` for the non-colliding
+        case this ticket's R-12 fixes)."""
         (tmp_path / "out").mkdir()
         _instructions(tmp_path)
         repo = _git_repo(tmp_path)
@@ -1131,17 +1136,39 @@ class TestCheckoutSync:
                 _task("shared", depends_on=["iso"], outputs=["out/shared.txt"], isolation="none"),
             ],
         )
-        # "iso" must actually LAND something (an Empty integration advances no head, so
-        # `_sync_checkout` would see current == target and skip the dirty check entirely)
-        # -- write into the repo so the integration head genuinely moves past HEAD.
-        fake = FakeExecutor(repo_writes={"iso": {"core": {"landed.txt": "x\n"}}})
-        # NOW make the primary checkout dirty -- must happen AFTER _git_repo's own base
-        # commit but is otherwise independent of what "iso" lands (a different file).
+        # "iso" rewrites README.md (an EXISTING tracked path) so the shared checkout's own
+        # local edit to that SAME path is a genuine collision, not merely "some dirty file
+        # exists somewhere".
+        fake = FakeExecutor(repo_writes={"iso": {"core": {"README.md": "changed by iso\n"}}})
         (repo / "README.md").write_text("dirty, uncommitted\n")
         orch = _orch(tmp_path, executor=fake)
         state = _run(orch, wf, tmp_path)
         assert state.status == "failed"
         assert "shared" not in fake.contexts  # never dispatched
+        assert (repo / "README.md").read_text() == "dirty, uncommitted\n"  # never clobbered
+
+    def test_unrelated_dirty_checkout_still_syncs_successfully(self, tmp_path: Path) -> None:
+        """E-Wk9Tz3 T-Wl2Bq7 R-12 / AC-9: a checkout dirtied ONLY on a path the run never
+        touches must still sync -- the old implementation refused on ANY dirty tracked
+        file, which the HLD's own R-12 motivation (a 4106-entry real-world dirty checkout)
+        made a near-certain first-adoption failure."""
+        (tmp_path / "out").mkdir()
+        _instructions(tmp_path)
+        repo = _git_repo(tmp_path)
+        wf = _workflow(
+            [
+                _task("iso", outputs=["out/iso.txt"], isolation="worktree"),
+                _task("shared", depends_on=["iso"], outputs=["out/shared.txt"], isolation="none"),
+            ],
+        )
+        fake = FakeExecutor(repo_writes={"iso": {"core": {"landed.txt": "x\n"}}})
+        # Dirty an UNRELATED, already-tracked path -- never touched by "iso".
+        (repo / "README.md").write_text("dirty, uncommitted, unrelated\n")
+        orch = _orch(tmp_path, executor=fake)
+        state = _run(orch, wf, tmp_path)
+        assert state.status == "succeeded"
+        assert (repo / "landed.txt").exists()
+        assert (repo / "README.md").read_text() == "dirty, uncommitted, unrelated\n"
 
     def test_sync_checkout_never_skips_sync_entirely(self, tmp_path: Path) -> None:
         (tmp_path / "out").mkdir()

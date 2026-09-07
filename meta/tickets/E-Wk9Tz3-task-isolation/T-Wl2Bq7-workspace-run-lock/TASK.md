@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-Wl2Bq7-workspace-run-lock`
 - Epic ID: `E-Wk9Tz3-task-isolation`
-- Owner: unassigned (developer)
+- Owner: developer-agent
 - Created: 2026-09-07
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: In Review
 - Estimate: 1.5 days
 
 ## Requirements Mapping

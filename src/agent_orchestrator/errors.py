@@ -182,3 +182,27 @@ class IntegrationLockTimeoutError(OrchestratorError):
         super().__init__(f"integration lock on {common_dir!r} not acquired within {timeout}s")
         self.common_dir = common_dir
         self.timeout = timeout
+
+
+# --- Task isolation: workspace run lock (E-Wk9Tz3 T-Wl2Bq7) ------------------------------
+
+
+class WorkspaceLockHeldError(OrchestratorError):
+    """Raised by `WorkspaceRunLock.__enter__` (the context-manager convenience path only)
+    when `.acquire()` is denied by a live holder.
+
+    `Orchestrator._activate_integration` never raises this itself: it calls `.acquire()`
+    directly (never-raising, like `IntegrationLock.acquire()`) and turns a denied
+    `WorkspaceLockClaim` into a graceful per-policy outcome (degrade to `isolation: none`
+    for `"require"`; proceed without checkout-sync protection for `"skip_sync"`) — a
+    denied claim is an expected, recoverable outcome on the hot path, not an exceptional
+    one, mirroring `IntegrationLockTimeoutError`'s own precedent above.
+    """
+
+    def __init__(self, lock_path: str, holder_run_id: str | None, holder_pid: int | None) -> None:
+        super().__init__(
+            f"workspace run lock {lock_path!r} is held by run {holder_run_id!r} (pid {holder_pid})"
+        )
+        self.lock_path = lock_path
+        self.holder_run_id = holder_run_id
+        self.holder_pid = holder_pid

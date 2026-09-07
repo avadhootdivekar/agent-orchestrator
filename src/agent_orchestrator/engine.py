@@ -45,6 +45,7 @@ from .isolation.integrator import (
     ResolverHook,
     RunIntegrationSnapshot,
 )
+from .isolation.runlock import WorkspaceRunLock
 from .isolation.view import IsolatedArtifactView
 from .isolation.worktrees import TaskIsolation, WorktreeManager, group_repos
 from .logging_setup import attach_run_handler, detach_run_handler, get_run_logger
@@ -121,6 +122,13 @@ _INFO_EXCLUDE_ENTRY = ".orchestrator/"
 # block for the full "state in one place" rule). Named to match `budget.py`'s own
 # `_CYCLE_KEY_SEP` precedent (no magic literals at the call site).
 _CYCLE_DIR_PREFIX = "cycle-"
+
+# E-Wk9Tz3 T-Wl2Bq7 (HLD §12.3, ADR-0013 D8): `IntegrationSpec.workspace_lock` policy
+# values -- named here (not in models.py, which is frozen for this ticket) so every
+# comparison at a call site below reads as a policy name, never a bare string literal.
+_WORKSPACE_LOCK_REQUIRE = "require"
+_WORKSPACE_LOCK_SKIP_SYNC = "skip_sync"
+_WORKSPACE_LOCK_OFF = "off"
 
 _ENV_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_]")
 
@@ -354,6 +362,12 @@ class _RunContext:
     integration_degraded: bool = False
     # S-7: emit worktree.retention_high at most once per run.
     retention_warned: bool = False
+    # E-Wk9Tz3 T-Wl2Bq7: set (only) when this run's `_activate_integration` /
+    # `_reconcile_integration_on_resume` successfully claims the workspace lock -- held for
+    # the run's entire lifetime, released ONLY in `run()`'s `finally`. `None` for the
+    # byte-identical non-isolated path (NFR-2) and for `workspace_lock: "off"`/a denied
+    # claim, both of which never touch this field.
+    workspace_lock: WorkspaceRunLock | None = None
 
 
 class Orchestrator:
@@ -558,6 +572,11 @@ class Orchestrator:
         run_log = get_run_logger(state.run_id)
         run_log.info("run.start", extra={"event": "run.start", "workflow_id": workflow.id})
 
+        # E-Wk9Tz3 T-Wl2Bq7: declared here (not inside `try`) so `finally` can always
+        # reference it, even for an exception raised before `ctx` itself is constructed --
+        # at which point no lock could have been claimed yet either, so `None` there is
+        # always the correct "nothing to release" answer.
+        ctx: _RunContext | None = None
         try:
             repo_set = reposets[workflow.repo_set]
             repo_paths = {r.id: self._store.resolve(r.path) for r in repo_set.repos}
@@ -786,6 +805,13 @@ class Orchestrator:
             return state
 
         finally:
+            # E-Wk9Tz3 T-Wl2Bq7 AC-4: released here (every run() exit path -- success,
+            # halt, cancel, or an exception raised anywhere above) alongside
+            # detach_run_handler, so an exception or a cancel can never leak the
+            # workspace lock. `release()` never raises; `ctx`/`ctx.workspace_lock` are
+            # both `None` on the byte-identical non-isolated path (NFR-2).
+            if ctx is not None and ctx.workspace_lock is not None:
+                ctx.workspace_lock.release()
             detach_run_handler(state.run_id)
 
     def _prepare_and_maybe_dispatch(
@@ -2226,26 +2252,26 @@ class Orchestrator:
         isolated dispatch never re-probes or re-warns (its caller just sees
         ``state.integration.active`` still False and downgrades to ``isolation: none``).
 
-        R-4 (`WorkspaceRunLock` claim before ref creation) is explicitly OUT of this
-        ticket's scope (`T-Wl2Bq7-workspace-run-lock`), so
-        ``state.integration.workspace_lock_held`` stays at its schema default (False) here.
+        E-Wk9Tz3 T-Wl2Bq7 (HLD §12.3, ADR-0013 D8): claims the per-workspace
+        `WorkspaceRunLock` BEFORE any ref is created, per `workflow.integration.
+        workspace_lock` (``"require"`` default): a live holder degrades this run to
+        `isolation: none` (or, under `isolation.strict`, fails it -- `_degrade` already
+        implements that branch); ``"skip_sync"`` isolates regardless of the claim outcome
+        (landing is already safe by construction -- only the checkout sync needs the lock,
+        and `_sync_checkout` unconditionally skips it for this policy); ``"off"`` never
+        calls `acquire()` at all ("no lock, no protection") and only warns.
         """
         run_log = ctx.run_log
 
-        def _degrade(reason: str) -> bool:
+        def _degrade(reason: str, **extra_fields: object) -> bool:
             state.integration.degraded_reason = reason
             ctx.integration_degraded = True
+            log_extra = {"event": "integration.degraded", "reason": reason, **extra_fields}
             if self._isolation_strict:
                 state.status = "failed"
-                run_log.error(
-                    "integration.degraded",
-                    extra={"event": "integration.degraded", "reason": reason, "strict": True},
-                )
+                run_log.error("integration.degraded", extra={**log_extra, "strict": True})
             else:
-                run_log.warning(
-                    "integration.degraded",
-                    extra={"event": "integration.degraded", "reason": reason},
-                )
+                run_log.warning("integration.degraded", extra=log_extra)
             return False
 
         git_version = GitRepo.version()
@@ -2265,6 +2291,12 @@ class Orchestrator:
             ):
                 return _degrade("unsafe_state_dir")
 
+        # E-Wk9Tz3 T-Wl2Bq7 review W-3: every OTHER degrade check in this function runs
+        # BEFORE the lock claim below (`git_unavailable_or_old`, `no_git_repos`,
+        # `unsafe_state_dir`) -- the unborn-HEAD probe belongs in that same group, not
+        # after the claim, so a workflow that will degrade anyway never needlessly holds
+        # the workspace lock (denying a concurrent run's REAL isolation attempt) for the
+        # rest of this run over a repo that was never going to activate isolation at all.
         git_repos: dict[str, GitRepo] = {}
         heads: dict[str, str] = {}
         base_heads: dict[str, str] = {}
@@ -2274,13 +2306,70 @@ class Orchestrator:
             head = git.rev_parse("HEAD")
             if head is None:
                 return _degrade("unborn_branch")
-            if git.is_dirty():
+            # R-12 run-start pre-flight: compute the dirty set once, up front, so the
+            # collision risk a barrier-time sync might hit is visible before the first
+            # barrier rather than at it.
+            dirty_entries = git.status_porcelain(repo.toplevel, untracked=False)
+            if dirty_entries:
                 run_log.warning(
                     "worktree.checkout_dirty",
-                    extra={"event": "worktree.checkout_dirty", "repo": repo.key},
+                    extra={
+                        "event": "worktree.checkout_dirty",
+                        "repo": repo.key,
+                        "count": len(dirty_entries),
+                    },
                 )
             heads[repo.key] = head
             base_heads[repo.key] = head
+
+        # R-4: claim the workspace lock only once every other degrade check has passed --
+        # still before any ref is created (AC-4).
+        policy = workflow.integration.workspace_lock
+        if policy == _WORKSPACE_LOCK_OFF:
+            run_log.warning(
+                "integration.workspace_lock_off",
+                extra={
+                    "event": "integration.workspace_lock_off",
+                    "risk": "no protection against a concurrent run's checkout sync",
+                },
+            )
+        else:
+            workspace_lock = WorkspaceRunLock(workspace_root, state.run_id, clock=self._clock)
+            claim = workspace_lock.acquire()
+            if claim.granted:
+                ctx.workspace_lock = workspace_lock
+                state.integration.workspace_lock_held = True
+                if claim.reclaimed:
+                    run_log.warning(
+                        "integration.runlock_reclaimed",
+                        extra={
+                            "event": "integration.runlock_reclaimed",
+                            "prior_run_id": claim.holder_run_id,
+                            "prior_pid": claim.holder_pid,
+                            "stale_reason": claim.stale_reason,
+                        },
+                    )
+                else:
+                    run_log.info(
+                        "integration.runlock_acquired",
+                        extra={"event": "integration.runlock_acquired"},
+                    )
+            elif policy == _WORKSPACE_LOCK_REQUIRE:
+                return _degrade(
+                    f"workspace_locked:{claim.holder_run_id}",
+                    holder_run_id=claim.holder_run_id,
+                    holder_pid=claim.holder_pid,
+                )
+            else:  # skip_sync, denied -- proceed unprotected; sync is disabled regardless
+                run_log.warning(
+                    "integration.runlock_denied",
+                    extra={
+                        "event": "integration.runlock_denied",
+                        "holder_run_id": claim.holder_run_id,
+                        "holder_pid": claim.holder_pid,
+                        "policy": policy,
+                    },
+                )
 
         branch = isolation_paths.integration_branch(state.run_id)
         for repo in repos:
@@ -2311,6 +2400,16 @@ class Orchestrator:
         *run_state* was loaded from a previous (crashed/interrupted) run -- reconstruct the
         `WorktreeManager`/`Integrator` from the ALREADY-activated integration state (never
         re-probe/re-activate) and reap any worktree/ref whose task id is no longer known.
+
+        E-Wk9Tz3 T-Wl2Bq7: resume takeover of the workspace lock. The crashed process's own
+        `WorkspaceRunLock` (if it held one -- `state.integration.workspace_lock_held`,
+        preserved verbatim across `prepare_resume`) is gone along with its process; its
+        `flock` was released by the OS when that process died, so a fresh `acquire()` here
+        either succeeds trivially (the common case -- logged as a reclaim) or, if some OTHER
+        live run has since taken the workspace, is denied. A denied reclaim does not fail
+        the resume: `state.integration.workspace_lock_held` is set False and
+        `_sync_checkout` (gated on that flag for ``"require"``) simply stops syncing for the
+        rest of this run rather than risk an unprotected checkout mutation.
         """
         repos, _skipped = group_repos(ctx.repo_paths)
         workspace_root = _workspace_root_from_run_dir(ctx.run_dir)
@@ -2319,6 +2418,36 @@ class Orchestrator:
         )
         ctx.integrator = self._build_integrator(workflow, state)
         ctx.integration_degraded = True  # already active; never (re-)probe this run
+
+        policy = workflow.integration.workspace_lock
+        if policy != _WORKSPACE_LOCK_OFF and state.integration.workspace_lock_held:
+            workspace_lock = WorkspaceRunLock(workspace_root, state.run_id, clock=self._clock)
+            claim = workspace_lock.acquire()
+            if claim.granted:
+                ctx.workspace_lock = workspace_lock
+                if claim.reclaimed:
+                    ctx.run_log.warning(
+                        "integration.runlock_reclaimed",
+                        extra={
+                            "event": "integration.runlock_reclaimed",
+                            "prior_run_id": claim.holder_run_id,
+                            "prior_pid": claim.holder_pid,
+                            "stale_reason": claim.stale_reason,
+                            "resume": True,
+                        },
+                    )
+            else:
+                state.integration.workspace_lock_held = False
+                ctx.run_log.warning(
+                    "integration.runlock_denied",
+                    extra={
+                        "event": "integration.runlock_denied",
+                        "holder_run_id": claim.holder_run_id,
+                        "holder_pid": claim.holder_pid,
+                        "policy": policy,
+                        "resume": True,
+                    },
+                )
         report = ctx.worktree_manager.reconcile({t.id for t in workflow.tasks})
         ctx.run_log.info(
             "worktree.reconciled",
@@ -2333,22 +2462,19 @@ class Orchestrator:
         """FR-13: fast-forward every isolated repo's PRIMARY checkout (never a worktree) to
         the current integration head, at a barrier point (before a non-isolated dispatch)
         or at run end (best-effort). Returns True on success/skip/nothing-to-do, False on a
-        structured failure (a dirty primary checkout, or a genuine non-fast-forward).
+        structured failure (a dirty collision, a genuine non-fast-forward, or a sync
+        anomaly).
 
-        `git.py` ships no public ``merge``/``checkout``/fast-forward wrapper (out of this
-        ticket's ownership to extend, and `isolation/*` is off-limits to this ticket) --
-        this reaches `GitRepo._run` directly for ``merge --ff-only``. Review W-1
-        (2026-09-07): an earlier version of this comment claimed this mirrored
-        `isolation.integrator`'s own verify-check precedent for reaching `_run` directly;
-        that is no longer accurate -- `Integrator`'s default verify check now calls the
-        PUBLIC `GitRepo.grep_conflict_markers`/`.diff_check` wrappers, not `_run`. This is
-        genuinely the first (and, as of this comment, only) caller reaching into
-        `GitRepo`'s private surface; it remains safe in effect (`_run` is still the S-1
-        single choke point every public method routes through -- hook suppression,
-        forbidden-command guard, forced env all still apply here) but is a real,
-        acknowledged layering gap. Interface-gap note (not filed as a blocking issue): a
-        follow-up ticket should add a public `GitRepo.merge_ff_only(cwd, target) -> bool`
-        so this reach-across can be dropped.
+        E-Wk9Tz3 T-Wl2Bq7 R-4/R-12: uses `GitRepo.fast_forward_checkout` -- a ref/index-safe
+        plumbing sequence (`read-tree` + `update-ref`, never `merge`/`rebase`) -- resolving
+        the T-En8Hd4 review W-1 interface gap (this file no longer reaches `GitRepo._run`
+        directly). R-4: for ``workspace_lock: "skip_sync"`` this is unconditionally a no-op
+        (the shared checkout must never see this run's work -- landing on the integration
+        ref is still safe and complete, mergeable by hand); for ``"require"``, syncing only
+        ever proceeds while `state.integration.workspace_lock_held` is True (never set for a
+        denied/not-yet-attempted claim, and cleared by a denied resume-takeover reclaim) --
+        the lock is what makes this fast-forward of the ONE shared checkout safe against a
+        second run's own barrier-time sync (HLD §12.3).
         """
         run_log = ctx.run_log
         spec = workflow.integration
@@ -2360,6 +2486,22 @@ class Orchestrator:
             return True
         if ctx.worktree_manager is None:
             return True  # nothing activated yet -- nothing to sync
+        if spec.workspace_lock == _WORKSPACE_LOCK_SKIP_SYNC:
+            run_log.info(
+                "integration.sync_skipped",
+                extra={"event": "integration.sync_skipped", "reason": "workspace_lock=skip_sync"},
+            )
+            return True
+        require_but_unheld = (
+            spec.workspace_lock == _WORKSPACE_LOCK_REQUIRE
+            and not state.integration.workspace_lock_held
+        )
+        if require_but_unheld:
+            run_log.info(
+                "integration.sync_skipped",
+                extra={"event": "integration.sync_skipped", "reason": "workspace_lock_not_held"},
+            )
+            return True
 
         ok = True
         for repo in ctx.worktree_manager.repos:
@@ -2371,34 +2513,78 @@ class Orchestrator:
             if current == target:
                 state.integration.checkout_synced_to[repo.key] = target
                 continue
-            if git.is_dirty():
-                run_log.warning(
-                    "integration.sync_failed",
-                    extra={
-                        "event": "integration.sync_failed",
-                        "repo": repo.key,
-                        "reason": "dirty_checkout",
-                    },
-                )
-                ok = False
-                continue
-            cp = git._run(["merge", "--ff-only", target], check=False)  # noqa: SLF001
-            if cp.returncode != 0:
+            if current is None or not git.is_ancestor(current, target):
                 run_log.warning(
                     "integration.sync_failed",
                     extra={
                         "event": "integration.sync_failed",
                         "repo": repo.key,
                         "reason": "not_fast_forward",
+                        "current": current,
+                        "target": target,
                     },
                 )
                 ok = False
                 continue
-            state.integration.checkout_synced_to[repo.key] = target
-            run_log.info(
-                "integration.sync_ok",
-                extra={"event": "integration.sync_ok", "repo": repo.key, "head": target},
-            )
+
+            # R-12: the collision set is computed BEFORE attempting the fast-forward,
+            # purely to classify a failure's cause afterwards -- never to skip the
+            # attempt itself (a non-colliding dirty file must still sync successfully,
+            # AC-9). Review C-2: rename detection forced OFF (`diff_names_no_renames`,
+            # not `diff_names`) so a pure rename upstream still surfaces its OLD path --
+            # a local edit sitting at that now-renamed-away path is exactly as real a
+            # collision as one at the new path, and default rename-collapsed output would
+            # silently miss it. Review W-1: the dirty set now includes untracked entries
+            # too (`status_porcelain`'s own default), so an untracked-file collision
+            # (`read-tree`'s "would be overwritten" case) is also named, not just reported
+            # as a generic anomaly.
+            incoming = set(git.diff_names_no_renames(repo.toplevel, current, target))
+            dirty = {e.path for e in git.status_porcelain(repo.toplevel)}
+            colliding = sorted(incoming & dirty)
+
+            if git.fast_forward_checkout(repo.toplevel, current, target):
+                state.integration.checkout_synced_to[repo.key] = target
+                run_log.info(
+                    "integration.sync_ok",
+                    extra={"event": "integration.sync_ok", "repo": repo.key, "head": target},
+                )
+                continue
+
+            ok = False
+            if colliding:
+                run_log.warning(
+                    "integration.sync_failed",
+                    extra={
+                        "event": "integration.sync_failed",
+                        "repo": repo.key,
+                        "reason": "dirty_checkout",
+                        "colliding_paths": colliding,
+                        "hint": (
+                            f"cd {repo.toplevel!r} && commit or stash local changes to "
+                            f"{', '.join(colliding)}, then "
+                            f"git merge --ff-only {state.integration.branch} (or merge it "
+                            "by hand later -- the integration branch is complete either way)"
+                        ),
+                    },
+                )
+            else:
+                # R-12: collision set was empty (now covering rename-old-paths AND
+                # untracked entries, C-2/W-1) yet the fast-forward still refused -- a
+                # genuine anomaly: the checkout moved under us between the collision-set
+                # computation above and the attempt itself. Distinct cause, distinct
+                # report.
+                run_log.warning(
+                    "integration.sync_failed",
+                    extra={
+                        "event": "integration.sync_failed",
+                        "repo": repo.key,
+                        "reason": "sync_anomaly",
+                        "hint": (
+                            f"the checkout at {repo.toplevel!r} moved during sync -- retry, "
+                            f"or merge {state.integration.branch} by hand"
+                        ),
+                    },
+                )
         return ok
 
     def _copy_untracked_outputs(

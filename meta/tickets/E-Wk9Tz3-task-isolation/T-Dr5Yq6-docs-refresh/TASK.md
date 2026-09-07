@@ -91,6 +91,13 @@ epic owner rather than making them — that file is owned elsewhere.
     "per-workspace cap of 1 until the isolation epic states a multi-run policy" note can now be
     relaxed, given ADR-0013 D8 states that policy (recommendation: **no** — `workspace_lock: require`
     makes a cap violation degrade safely, but the cap is still the better default).
+13. **§12.3 mechanism correction (from `T-Wl2Bq7` review C-1).** HLD §12.3's own text describes the
+    checkout-sync fast-forward as `git merge --ff-only <integration_branch>`; the shipped
+    `Orchestrator._sync_checkout` instead calls a new `GitRepo.fast_forward_checkout` (`git read-tree
+    -u -m` + `git update-ref HEAD`, self-verifying ancestry) — a `T-Wl2Bq7` implementation choice
+    (safety-equivalent, verified empirically, approved by review), not a requirement §12.3 itself
+    stated. Update §12.3's text to describe the actual shipped mechanism and record it as an
+    "As-built deviation" per AC-1.
 
 ## Risks
 - Docs drifting from code is the failure this ticket exists to prevent — so "read the ticket and

@@ -345,6 +345,112 @@
   instruction.
   — By: developer-agent · Role: developer · Date: 2026-09-07
 
+- **2026-09-07 — `T-Rm2Lx7-mechanical-resolvers` rollup: In Review.** All 10 ACs (incl. the S-5/S-6
+  amendments) implemented: `src/agent_orchestrator/isolation/resolvers.py` (new) — pure
+  `plan_resolution` precedence ladder (rerere-replay-recognized → regenerate → union → unresolved),
+  `apply_plan` + a pluggable `MechanicalResolver` registry (`UnionResolver` over index stages,
+  `RegenerateResolver` bounded by its own `rule.timeout_seconds`, never the run-wide lock timeout),
+  and the `resolve_mechanically` `ResolverHook` entry point `Integrator` (`T-Ib5Qy9`) calls on a real
+  conflict. 33 new tests (`tests/isolation/test_resolvers.py`), real git fixtures throughout (all six
+  `make_conflict_repo` kinds table-driven), 94% coverage on `resolvers.py`. Targeted suite (+
+  `test_integrator.py`) 78 passed; `tests/isolation` 537 passed; full suite **3518 passed / 7 skipped
+  / 0 failed**, one clean run. `ruff`/`format --check` clean; `mypy src` unchanged at 4 pre-existing
+  `_version.py` errors. Two real correctness bugs found and fixed against the HLD §11 M6 pseudocode
+  during implementation (both internal to this module, no locked interface changed): (1) staging the
+  regenerate rule's chosen stage BEFORE running the command prematurely resolved the conflict in
+  git's index even on a failed/timed-out command — fixed via `git checkout --ours/--theirs`
+  (worktree-only) + `git checkout --merge` to restore markers on failure; (2) an unscoped
+  `git add -A` after a successful regenerate would silently "resolve" an unrelated, still-genuinely-
+  conflicted sibling path left by the same rebase — fixed by scoping the stage to mtime-changed paths
+  only. Two interface change requests (no `GitRepo`/`integrator.py` edits made — outside this task's
+  owned files): `GitRepo` has no `merge-file`/`checkout --ours/--theirs/--merge` wrapper (worked
+  around with local hardened `subprocess` helpers); `Integrator._git_for` never threads
+  `spec.resolvers.rerere` into `GitRepo(..., rerere=...)`, so that config flag currently only affects
+  whether THIS module credits/events a resolution as tier `rerere`, not whether git's own rerere
+  actually fires. Full detail, including "Hook points for `T-Lr6Ka3`", in
+  `T-Rm2Lx7-mechanical-resolvers/STATUS.md`. Awaiting review; no commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Rm2Lx7-mechanical-resolvers` review response: In Review (unchanged).**
+  `REVIEW.md` verdict APPROVE WITH CHANGES; all 3 Blocking/Major findings fixed. **C-1** (S-1
+  porcelain bypass): added `GitRepo.checkout_stage`/`checkout_merge`/`merge_file_union`
+  (`isolation/git.py`, appended additively, coordinated with `T-Wl2Bq7`'s concurrent
+  `fast_forward_checkout`); `resolvers.py`'s local `subprocess` git calls deleted — `grep -n
+  subprocess resolvers.py` now shows exactly the one authorized regenerate-command call site. **C-2**
+  (rerere escape hatch not wired): `Integrator._git_for` now threads `spec.resolvers.rerere` into
+  `GitRepo(rerere=...)`, proven by a new real-`Integrator` teach/replay test with the flag off. **C-3**
+  (ladder's `"mechanical"` entry had no effect): `Integrator._rebase_onto_and_resolve` now gates the
+  resolver-hook call on `TIER_MECHANICAL in spec.ladder`, with `tier_reached` correctly staying
+  `"auto"` when skipped; proven by a new test with a union rule that would resolve the conflict but a
+  ladder omitting `"mechanical"`. Also applied: 2 should-fix items (silent-decline logging;
+  `status_porcelain`-diff replacing an `mtime`-walk for sibling-file scoping) and 3 nits (docstring
+  correction, coverage-narrative fix + closing test, a stale STATUS.md citation corrected). Gates
+  re-verified: `ruff`/`format --check` clean on every touched file (one unrelated pre-existing finding
+  in `T-Wl2Bq7`'s own uncommitted `tests/test_engine_workspace_lock_sync.py`, not touched); `mypy src`
+  unchanged at 4 pre-existing errors; targeted suite (`test_resolvers`/`test_integrator`/`test_git`)
+  202 passed; `tests/isolation` 546 passed; full suite **3544 passed / 7 skipped / 0 failed**, one
+  clean run; coverage on `resolvers.py` 94%. Full per-finding disposition in
+  `T-Rm2Lx7-mechanical-resolvers/STATUS.md`. Awaiting re-review; no commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Wl2Bq7-workspace-run-lock` rollup: In Review.** R-4 (multi-run policy) and R-12
+  (checkout-sync diagnostics) implemented narrowly against the merged `T-En8Hd4`/`T-Ac6Vd9` `engine.py`.
+  New `isolation/runlock.py::WorkspaceRunLock` (`$AO_STATE_DIR/runlocks/<workspace_key>.lock`, flock +
+  pid/boot-id stale-lock reclamation, deterministic JSON payload, injectable clock/pid/boot-id,
+  never-raising `acquire()`/`release()`, context-manager convenience raising typed
+  `WorkspaceLockHeldError`). `_activate_integration` claims it before any ref is created, per
+  `workflow.integration.workspace_lock` (already-frozen `T-Sc7Rm2` field): `"require"` (default) — a
+  live holder degrades this run to `isolation: none` with ONE warning naming the holder run id/pid
+  (`integration.degraded reason="workspace_locked:<holder>"`), `isolation.strict` turns it into a run
+  failure; `"skip_sync"` — isolates and lands regardless of the claim outcome (landing is safe by
+  construction), `_sync_checkout` unconditionally no-ops for it; `"off"` — acquires nothing at all,
+  warns once (`integration.workspace_lock_off`). Released in `run()`'s `finally`, alongside
+  `detach_run_handler`, so an exception/cancel never leaks it; resume takeover
+  (`_reconcile_integration_on_resume`) re-claims (reclaiming only if stale) or, if genuinely denied,
+  clears `workspace_lock_held` so the resumed run degrades to never-sync rather than risk an
+  unprotected checkout mutation. R-12: `_sync_checkout` now fast-forwards via a NEW additive
+  `GitRepo.fast_forward_checkout` (`read-tree -u -m` + `update-ref HEAD`, ref/index-safe plumbing,
+  never `merge`/`rebase` — resolves the `T-En8Hd4` review W-1 interface gap in a stricter form than
+  W-1's own suggested `merge_ff_only` wrapper) with the collision set (`diff_names` ∩ dirty
+  tracked-modified paths) precomputed before the attempt so a genuine collision names the exact
+  colliding path(s) + an operator remedy, a non-colliding dirty file still syncs successfully, a
+  diverged (non-fast-forward) checkout is reported distinctly, and an empty-collision-set failure is
+  reported as a distinct `sync_anomaly`. Run-start pre-flight now logs `worktree.checkout_dirty` with
+  a count (not just a boolean). Confirmed by re-reading ADR-0014: nothing there contradicts D8 —
+  `"require"` is exactly the behaviour it already assumed for the per-workspace concurrency cap.
+  Stash-and-restore of non-overlapping dirty files explicitly NOT implemented, per HLD §12.3/R-12's own
+  disposition (declined, not deferred) — `T-Ee3Mn8` measures the real collision rate.
+  New tests: `tests/isolation/test_runlock.py` (21, including two REAL-second-process scenarios via
+  `subprocess.Popen` — denial naming the holder pid, and reclaim after `proc.kill()`), new
+  `tests/isolation/test_git.py::TestFastForwardCheckout` (4, incl. a recording-runner proof that only
+  `read-tree`/`update-ref` ever run, never `merge`/`rebase`), new
+  `tests/test_engine_workspace_lock_sync.py` (15: require-degrade w/ one warning naming the holder,
+  `isolation.strict` failure, skip_sync isolate+land+checkout-untouched (even when its own claim is
+  denied), off acquires-nothing+warns, clean FF at a barrier, colliding/diverged/anomaly diagnostics,
+  never-called-when-nothing-isolated, called-only-at-barriers+run-end, ref/index-safe-only proof
+  against the SHARED checkout specifically, resume-reclaims-a-stale-lock). Two PRE-EXISTING
+  `tests/test_engine_isolation.py::TestCheckoutSync` tests updated: the old
+  `test_dirty_checkout_fails_sync_and_halts_dispatch` encoded the coarser pre-R-12 "any dirty file
+  anywhere blocks the whole sync" behaviour this ticket deliberately supersedes — renamed to
+  `test_colliding_dirty_checkout_fails_sync_and_halts_dispatch` and re-shaped to dirty a path that
+  genuinely collides (was previously dirtying an unrelated path, which is now the NEW companion test
+  `test_unrelated_dirty_checkout_still_syncs_successfully`'s job). Gates: `ruff`/`format --check`
+  clean repo-wide; `mypy src` unchanged at 4 pre-existing `_version.py` errors; targeted suite (the 7
+  files this ticket's Gates section names) 247 passed; full suite (`pytest -q`, one clean run, no
+  transient failures to re-run) **3533 passed / 7 skipped / 0 failed**. No commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Wl2Bq7-workspace-run-lock` review fix pass.** Reviewer APPROVE WITH CHANGES
+  (`REVIEW.md`); all must-fix (C-1 doc-provenance correction, C-2 rename-collision misclassification)
+  and required warnings (C-3 self-verified ancestry, W-3 lock-claim reorder, W-4 resume-denied test,
+  W-5/W-6 doc notes) fixed; W-2 deferred per the reviewer's own recommendation (out of file-ownership
+  scope). New additive `GitRepo.diff_names_no_renames`; `fast_forward_checkout` now self-verifies
+  `is_ancestor` before `read-tree`. One line added to `T-Dr5Yq6-docs-refresh/TASK.md` (HLD §12.3
+  mechanism-wording reconciliation), the only other ticket file touched. Full detail and per-finding
+  disposition in `T-Wl2Bq7-workspace-run-lock/STATUS.md`. Gates: targeted 255/0 (was 247), full suite
+  3544 passed / 7 skipped / 0 failed, one clean run. No commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
 ## Evidence
 - `docs-md/task-isolation-hld.md` — 1874 lines.
 - `docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md` — 269 lines.
