@@ -261,8 +261,28 @@ class RunStateStore:
                 # transcript capture directory), so it must be carried forward by hand or a
                 # resumed requeue would silently restart its cycle counter at 0 and clobber
                 # an already-captured transcript directory.
+                #
+                # E-Wk9Tz3 T-Ac6Vd9 (review Major-1): the cumulative ACTUAL usage counters
+                # (token/cache/cost fields, E-9h3m7k FR-2) are carried forward the same way,
+                # for the same reason -- a crash between a settled cycle's reconcile and the
+                # NEXT cycle's own settle must not silently wipe the already-earned actuals
+                # from this per-task view. `ts` here is whatever was persisted before the
+                # crash (defaults to 0/0.0 for a task that never ran, via the `TaskRunState()`
+                # fallback above -- old, pre-this-fix state.json files with a `cumulative_*`
+                # value already default the same way, so this is a pure superset: nothing
+                # regresses for a task with zero cumulative usage, and a task with real
+                # accumulated usage no longer loses it on resume). The run-level ledger
+                # (`RunState.budget_counters.consumed_tokens`, used by breakers/rate-window
+                # gating) was never affected by this gap -- it is never rebuilt here -- so this
+                # fix is purely restoring the per-task DISPLAY/observability view to match it.
                 state.tasks[task.id] = TaskRunState(
-                    status="pending", dispatch_cycle=ts.dispatch_cycle
+                    status="pending",
+                    dispatch_cycle=ts.dispatch_cycle,
+                    cumulative_input_tokens=ts.cumulative_input_tokens,
+                    cumulative_output_tokens=ts.cumulative_output_tokens,
+                    cumulative_cache_creation_input_tokens=ts.cumulative_cache_creation_input_tokens,
+                    cumulative_cache_read_input_tokens=ts.cumulative_cache_read_input_tokens,
+                    cumulative_cost_usd=ts.cumulative_cost_usd,
                 )
 
         # E-Wk9Tz3 AC-17: state.integration and state.task_integration are otherwise

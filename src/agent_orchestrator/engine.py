@@ -23,7 +23,7 @@ from .artifacts import (
     read_task_manifest,
 )
 from .breakers import apply_breaker_extension, evaluate_breakers, record_trip
-from .budget import BudgetDecision, BudgetManager
+from .budget import BudgetDecision, BudgetManager, cycle_key
 from .dag import Graph, build_dag, compute_cones
 from .errors import (
     ArtifactPathError,
@@ -115,6 +115,12 @@ _WORKTREE_RETENTION_WARN_THRESHOLD = 5
 # HLD §7.2 RESERVED_SHARED_PREFIXES: appended to <common_dir>/info/exclude at activation
 # (AC-4) -- never .gitignore, so a repo's own tracked ignore rules are never touched.
 _INFO_EXCLUDE_ENTRY = ".orchestrator/"
+
+# R-21 (E-Wk9Tz3 T-Ac6Vd9): capture-directory segment for a dispatch cycle >= 2 (cycle 1
+# keeps the legacy flat layout, no prefix at all -- see `_run_with_retries`'s own comment
+# block for the full "state in one place" rule). Named to match `budget.py`'s own
+# `_CYCLE_KEY_SEP` precedent (no magic literals at the call site).
+_CYCLE_DIR_PREFIX = "cycle-"
 
 _ENV_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_]")
 
@@ -254,6 +260,12 @@ class DispatchPrep:
       dispatch from the live `RunIntegrationState` (never a reference to it -- R-20/NFR-3).
     ``env_overlay``: ``TaskContext.env`` (AC-8) -- AO_ISOLATION/AO_TASK_BRANCH/
       AO_INTEGRATION_BRANCH/AO_WORKTREE_ROOT_<repo> plus any `isolation.env` overlay.
+
+    E-Wk9Tz3 T-Ac6Vd9 addition -- ``cycle``: this dispatch's ``TaskRunState.dispatch_cycle``
+    (R-21), always populated (every dispatch, isolated or not) since `dispatch_cycle` is
+    incremented unconditionally in `_prepare_and_maybe_dispatch`. Threaded through to
+    `_run_and_integrate`/`_run_with_retries` to key the capture directory, and used by
+    the caller's budget charge/reconcile/reverse calls (R-1b) to key the ledger.
     """
 
     signal: DispatchSignal
@@ -266,6 +278,7 @@ class DispatchPrep:
     repo_paths: dict[str, str] | None = None
     run_integration: RunIntegrationSnapshot | None = None
     env_overlay: dict[str, str] | None = None
+    cycle: int = 1
 
 
 @dataclass
@@ -715,6 +728,7 @@ class Orchestrator:
                             run_integration=prep.run_integration,
                             env_overlay=prep.env_overlay,
                             agent_id=prep.task.agent,
+                            cycle=prep.cycle,
                         )
                         in_flight[fut] = tid
                         if barrier:
@@ -978,18 +992,34 @@ class Orchestrator:
             )
             _estimate = self._estimator.estimate(_est_ctx, _est_cfg)
 
-            # Resume double-charge guard (R2, NFR-3): if this task was charged but
-            # not yet reconciled in a previous run, reverse the stale estimate before
-            # re-gating.
-            if (
-                tid in state.budget_counters.charged_estimate
-                and tid not in state.budget_counters.reconciled_tasks
-            ):
-                self._budget_manager.reverse_estimate(tid, state.budget_counters)
+            # Resume double-charge guard (R2, NFR-3, R-1b): if the PREVIOUS dispatch
+            # cycle of this task was charged but never reconciled (the process crashed
+            # between charge_estimate() and settle), reverse that stale estimate before
+            # re-gating. `ts_pre.dispatch_cycle` was already incremented for THIS
+            # dispatch above, so the stale cycle -- if any -- is exactly one behind it:
+            # `prepare_resume` carries `dispatch_cycle` forward verbatim rather than
+            # resetting it (runstate.py), and nothing can charge cycle N+1 before cycle
+            # N's own settle has run (charge only ever happens here, once per prepare
+            # call). Cycle-keyed (R-1b) rather than task-id-keyed: `charged_estimate`
+            # no longer collapses every cycle of a task onto one dict entry, so the
+            # stale entry must be looked up by ITS OWN cycle, not the current one --
+            # membership alone (no separate `reconciled_tasks` check) is sufficient,
+            # since reconcile()/reverse_estimate() always pop a cycle's key once it is
+            # settled.
+            _stale_cycle = ts_pre.dispatch_cycle - 1
+            _stale_key = cycle_key(tid, _stale_cycle)
+            if _stale_key in state.budget_counters.charged_estimate:
+                self._budget_manager.reverse_estimate(
+                    tid, state.budget_counters, cycle=_stale_cycle
+                )
                 run_log.info(
                     "Reversed stale estimate for task %s on resume",
                     tid,
-                    extra={"event": "budget.resume_reverse", "task_id": tid},
+                    extra={
+                        "event": "budget.resume_reverse",
+                        "task_id": tid,
+                        "cycle": _stale_cycle,
+                    },
                 )
 
             # Single gate check per call (T-VSfAUN, FR-6/ADR-0007 §7.1). Re-gating
@@ -1127,8 +1157,12 @@ class Orchestrator:
                     )
                     return DispatchPrep(signal="blocked")
 
-            # Charge the estimate (admitted)
-            self._budget_manager.charge_estimate(tid, _estimate, state.budget_counters)
+            # Charge the estimate (admitted); keyed by THIS dispatch cycle (R-1b) so a
+            # redispatch of this task charges its own ledger entry rather than
+            # overwriting/racing an earlier, already-settled cycle's.
+            self._budget_manager.charge_estimate(
+                tid, _estimate, state.budget_counters, cycle=ts_pre.dispatch_cycle
+            )
             self._runstate.save(state)
             task_log.info(
                 "Budget charged estimate %d for task %s",
@@ -1137,6 +1171,7 @@ class Orchestrator:
                 extra={
                     "event": "budget.charge",
                     "task_id": tid,
+                    "cycle": ts_pre.dispatch_cycle,
                     "estimate": _estimate,
                     "consumed_tokens": state.budget_counters.consumed_tokens,
                 },
@@ -1184,6 +1219,7 @@ class Orchestrator:
             repo_paths=iso_repo_paths,
             run_integration=run_integration,
             env_overlay=(env_overlay or None),
+            cycle=ts_pre.dispatch_cycle,
         )
 
     def _settle_completed_task(
@@ -1249,9 +1285,14 @@ class Orchestrator:
 
         # ---- Claude quota exhaustion route (distinct from provider 429) ----
         if result.claude_quota_exhausted:
-            # Reverse any estimate charged for this task before re-queuing.
+            # Reverse any estimate charged for this task's CURRENT cycle before
+            # re-queuing (R-1b: cycle-keyed, not task-id-keyed -- ts.dispatch_cycle is
+            # still the cycle this very dispatch was charged under; nothing mutates it
+            # between prepare and settle).
             if self._budget_manager is not None:
-                self._budget_manager.reverse_estimate(tid, state.budget_counters)
+                self._budget_manager.reverse_estimate(
+                    tid, state.budget_counters, cycle=ts.dispatch_cycle
+                )
 
             now = self._clock().timestamp()
             if ctx.quota_exhausted_since is None:
@@ -1331,8 +1372,11 @@ class Orchestrator:
         # ---- Budget reconcile / 429 route (T-algywf, FR-4, FR-5, FR-8) ----
         if self._budget_manager is not None and self._estimator is not None:
             if result.provider_rate_limited:
-                # Provider 429: reverse the estimate (task will re-run) then stop or wait
-                self._budget_manager.reverse_estimate(tid, state.budget_counters)
+                # Provider 429: reverse the estimate (task will re-run) then stop or
+                # wait. Cycle-keyed (R-1b), same reasoning as the quota route above.
+                self._budget_manager.reverse_estimate(
+                    tid, state.budget_counters, cycle=ts.dispatch_cycle
+                )
                 _429_decision = self._budget_manager.on_provider_429(
                     result.provider_retry_after_epoch, state.budget_counters
                 )
@@ -1404,17 +1448,22 @@ class Orchestrator:
                 # Normal reconcile: replace estimate with actuals or keep estimate
                 # (T-j8YLGd: the task-block-scoped `_estimate` local from the old
                 # inline loop no longer exists after the prepare/settle split --
-                # charged_estimate[tid] holds the identical value charge_estimate()
-                # stored pre-dispatch; read it here BEFORE reconcile() pops it so
-                # the log line below is unchanged.)
-                _estimate = state.budget_counters.charged_estimate.get(tid, 0)
+                # charged_estimate[cycle_key(tid, ts.dispatch_cycle)] holds the
+                # identical value charge_estimate() stored pre-dispatch; read it here
+                # BEFORE reconcile() pops it so the log line below is unchanged.
+                # R-1b: keyed by THIS cycle, not the bare task_id -- a T2/T3/self-heal/
+                # quota redispatch's own charge lives under its OWN cycle's key.)
+                _cycle_key = cycle_key(tid, ts.dispatch_cycle)
+                _estimate = state.budget_counters.charged_estimate.get(_cycle_key, 0)
                 if result.actuals_available:
                     _actual = self._sum_actuals(result)
                 else:
                     # Fallback (FR-5): keep the estimate already stored in
                     # charged_estimate (charge_estimate stored it; reconcile will pop it)
-                    _actual = state.budget_counters.charged_estimate.get(tid, 0)
-                self._budget_manager.reconcile(tid, _actual, state.budget_counters)
+                    _actual = state.budget_counters.charged_estimate.get(_cycle_key, 0)
+                self._budget_manager.reconcile(
+                    tid, _actual, state.budget_counters, cycle=ts.dispatch_cycle
+                )
                 task_log.info(
                     "Budget reconciled task %s: actual=%d estimate_delta=%d",
                     tid,
@@ -1423,6 +1472,7 @@ class Orchestrator:
                     extra={
                         "event": "budget.reconcile",
                         "task_id": tid,
+                        "cycle": ts.dispatch_cycle,
                         "actual": _actual,
                         "consumed_tokens": state.budget_counters.consumed_tokens,
                     },
@@ -1450,19 +1500,15 @@ class Orchestrator:
                 # never reaches the settle-time cumulative block further down.
                 # Accumulate now (mirrors _run_with_retries' own cum_* pattern one
                 # level up, across heal cycles instead of within one call) --
-                # `+=` because a later heal cycle (if max_heal_retries_per_task > 1)
-                # must not clobber an earlier one's already-accumulated actuals.
-                # This is the same bug class E-9h3m7k fixed for retries WITHIN one
-                # _run_with_retries call; self-heal's cross-call redispatch needed
-                # the identical treatment, caught by a late-gate reviewer pass.
-                if result.actuals_available:
-                    ts.cumulative_input_tokens += result.input_tokens or 0
-                    ts.cumulative_output_tokens += result.output_tokens or 0
-                    ts.cumulative_cache_creation_input_tokens += (
-                        result.cache_creation_input_tokens or 0
-                    )
-                    ts.cumulative_cache_read_input_tokens += result.cache_read_input_tokens or 0
-                    ts.cumulative_cost_usd += result.cost_usd or 0.0
+                # `+=` (inside `_accumulate_actuals`) because a later heal cycle (if
+                # max_heal_retries_per_task > 1) must not clobber an earlier one's
+                # already-accumulated actuals. This is the same bug class E-9h3m7k
+                # fixed for retries WITHIN one _run_with_retries call; self-heal's
+                # cross-call redispatch needed the identical treatment, caught by a
+                # late-gate reviewer pass -- and the T2/T3 conflict ladder needed it
+                # again (R-1a, E-Wk9Tz3 T-Ac6Vd9), which is why this is now the one
+                # shared `_accumulate_actuals` helper instead of a third near-copy.
+                self._accumulate_actuals(ts, result)
                 self._sleeper(_heal_verdict.wait_seconds)
                 if self._cancel_fn():
                     run_log.info(
@@ -1495,19 +1541,18 @@ class Orchestrator:
         if result.output_artifact_path:
             ts.output_artifact_path = result.output_artifact_path
         # Cumulative actual usage across every attempt (E-9h3m7k FR-2) — result's
-        # token/cost fields already sum all attempts (_run_with_retries). `+=` (not
-        # `=`) so a prior, healed-and-discarded cycle's already-accumulated actuals
-        # (added above, in the Consult Point B retry branch) are preserved rather
-        # than clobbered -- safe for every other caller too: this line runs at most
-        # once per dispatch outside of self-heal, and `prepare_resume` hands any
-        # re-dispatched task a fresh `TaskRunState()` (cumulative_* defaulted to 0),
-        # so `+=` is byte-identical to `=` whenever nothing was accumulated first.
-        if result.actuals_available:
-            ts.cumulative_input_tokens += result.input_tokens or 0
-            ts.cumulative_output_tokens += result.output_tokens or 0
-            ts.cumulative_cache_creation_input_tokens += result.cache_creation_input_tokens or 0
-            ts.cumulative_cache_read_input_tokens += result.cache_read_input_tokens or 0
-            ts.cumulative_cost_usd += result.cost_usd or 0.0
+        # token/cost fields already sum all attempts (_run_with_retries). `_accumulate_
+        # actuals` uses `+=` (not `=`) so a prior, healed-and-discarded cycle's
+        # already-accumulated actuals (added above, in the Consult Point B retry
+        # branch) are preserved rather than clobbered -- safe for every other caller
+        # too: this line runs at most once per dispatch outside of self-heal, and
+        # `prepare_resume` hands any re-dispatched task a fresh `TaskRunState()`
+        # (cumulative_* defaulted to 0), so `+=` is byte-identical to `=` whenever
+        # nothing was accumulated first. This SAME call is also what makes R-1a hold
+        # for the T2/T3 conflict-ladder requeue below (`conflict_resolver`/
+        # `conflict_rerun`): it runs unconditionally, before that switch, so no
+        # second accumulation call is needed there (E-Wk9Tz3 T-Ac6Vd9).
+        self._accumulate_actuals(ts, result)
 
         if result.status == "succeeded":
             # Verify declared outputs were actually produced. E-Wk9Tz3 C-1 (review fix):
@@ -2463,6 +2508,29 @@ class Orchestrator:
                 total += usage_field
         return total
 
+    @staticmethod
+    def _accumulate_actuals(ts: TaskRunState, result: TaskResult) -> None:
+        """Add *result*'s actual usage onto *ts*'s cumulative totals (E-9h3m7k FR-2).
+
+        Shared by every cross-call requeue site (self-heal's Consult Point B retry,
+        and the settle-time accumulation that also covers the T2/T3 conflict-ladder
+        `conflict_resolver`/`conflict_rerun` requeue, R-1a/E-Wk9Tz3 T-Ac6Vd9) so there
+        is exactly ONE implementation of "accumulate before a cross-call requeue can
+        discard this cycle's actuals" rather than a near-duplicate per call site
+        (CLAUDE.md no-duplicate-logic). `+=` (not `=`): a prior cycle's already-
+        accumulated actuals (added by an earlier call to this same helper) must never
+        be clobbered -- safe for every caller, since a fresh `TaskRunState` (a task's
+        first dispatch, or `prepare_resume`'s reset) always starts `cumulative_*` at 0,
+        so `+=` is byte-identical to `=` whenever nothing was accumulated first.
+        """
+        if not result.actuals_available:
+            return
+        ts.cumulative_input_tokens += result.input_tokens or 0
+        ts.cumulative_output_tokens += result.output_tokens or 0
+        ts.cumulative_cache_creation_input_tokens += result.cache_creation_input_tokens or 0
+        ts.cumulative_cache_read_input_tokens += result.cache_read_input_tokens or 0
+        ts.cumulative_cost_usd += result.cost_usd or 0.0
+
     def _is_unsatisfiable(self, estimate: int, decision: BudgetDecision) -> bool:
         """Return True if this estimate can NEVER be admitted (estimate alone exceeds limit).
 
@@ -2897,12 +2965,17 @@ class Orchestrator:
         run_integration: RunIntegrationSnapshot | None,
         env_overlay: dict[str, str] | None,
         agent_id: str,
+        cycle: int = 1,
     ) -> WorkerOutcome:
         """Runs on a WORKER thread (ADR-0007 D3): `_run_with_retries` is unchanged, then --
         for a succeeded, isolated task ONLY -- `integrate()` through `_integrate_task` (the
         ONE adapter into `isolation.integrator.Integrator`). Performs NO `RunState`
         mutation and NO ``save()`` (NFR-3): everything read off *state*/*task*/*task_iso*
         here is read-only.
+
+        *cycle* (E-Wk9Tz3 T-Ac6Vd9, R-21): this dispatch's ``TaskRunState.dispatch_cycle``,
+        forwarded verbatim to `_run_with_retries` to key its capture directory -- see that
+        function's own docstring.
 
         HOOK POINT for `T-Lr6Ka3` (resolver/rerun dispatch, HLD §8.4-8.5): a task requeued
         in "resolve"/"rerun" mode (`state.task_integration[tid].mode`, set by
@@ -2928,6 +3001,7 @@ class Orchestrator:
             gate_output_path=gate_output_path,
             store=store,
             env_overlay=env_overlay,
+            cycle=cycle,
         )
         if result.status != "succeeded" or task_iso is None:
             return WorkerOutcome(result, None, task_iso=task_iso)
@@ -2965,6 +3039,7 @@ class Orchestrator:
         gate_output_path: str | None = None,
         store: ArtifactStore | None = None,
         env_overlay: dict[str, str] | None = None,
+        cycle: int = 1,
     ) -> TaskResult:
         """Execute *task* with the configured retry policy.
 
@@ -2988,6 +3063,13 @@ class Orchestrator:
             E-Wk9Tz3 AC-8: ``TaskContext.env`` -- empty (the default) for a non-isolated
             task, which is what keeps ``ClaudeCliExecutor``'s ``env=`` argument byte-
             identical (``None``) for every pre-epic workflow.
+        cycle:
+            E-Wk9Tz3 T-Ac6Vd9 (R-21): this dispatch's ``TaskRunState.dispatch_cycle``,
+            defaulting to ``1`` (the value a task's first-ever dispatch always carries,
+            since the engine increments it unconditionally before every dispatch --
+            R-21/T-En8Hd4). Keys the capture directory (see ``output_dir`` below) so a
+            T2/T3 conflict-ladder redispatch, a self-heal retry, or a quota/429 requeue
+            never overwrites an earlier cycle's already-captured transcript.
         """
         st: ArtifactStore = store if store is not None else self._store
         retry = task.retries or workflow.defaults.retries
@@ -3016,13 +3098,35 @@ class Orchestrator:
         # (working_dir has no task-level override, so effective_agent == agent_spec here.)
         agent_cwd = st.resolve(effective_agent.working_dir or ".")
 
-        # Capture directory: .orchestrator/runs/<run_id>/<task_id>/  (FR-4). NOT through
-        # `st` -- lives under .orchestrator/, read back by the engine (R-15) -- always
-        # self._store regardless of isolation, exactly like task_manifest_path/
-        # gate_output_path above.
-        output_dir = self._store.resolve(
-            os.path.join(".orchestrator", "runs", state.run_id, task.id)
+        # Capture directory: .orchestrator/runs/<run_id>/<task_id>/[cycle-<cycle>/]  (FR-4,
+        # R-21/E-Wk9Tz3 T-Ac6Vd9). NOT through `st` -- lives under .orchestrator/, read
+        # back by the engine (R-15) -- always self._store regardless of isolation,
+        # exactly like task_manifest_path/gate_output_path above.
+        #
+        # R-21 / AC-7's "state in one place" decision: cycle 1 (the common, never-
+        # requeued case) keeps the LEGACY FLAT layout, "<run_dir>/<task_id>/attempt-<n>/"
+        # -- byte-identical to every pre-this-ticket run (NFR-2), confirmed by
+        # tests/playground/test_sum_of_array_deterministic.py's own hardcoded
+        # "<task_id>/attempt-1/..." path assertions, which regressed under an earlier
+        # "nest every cycle, including 1" draft of this fix and is the concrete evidence
+        # this decision is based on, not just an estimate. Cycle 2+ (a T2/T3 conflict-
+        # ladder redispatch, a self-heal retry, or a quota/429 requeue -- all brand-new
+        # calls to this method, whose own `for attempt in range(1, ...)` loop below
+        # restarts at 1) nests under "cycle-<n>/" instead, so it can never collide with
+        # cycle 1's own "attempt-<n>/" (the exact bug class E-9h3m7k already fixed once
+        # for retries WITHIN one call). `ui/runs.py` (verified, not edited here -- out of
+        # this ticket's file scope) never parses this path itself: it only ever surfaces
+        # `TaskRunState.output_artifact_path` as an opaque string, so both shapes "just
+        # work" as display strings with no reader-side change needed -- flagged in
+        # STATUS.md for T-Dr5Yq6 in case a future capture-path-browsing feature ever
+        # parses this shape directly.
+        _task_run_dir = os.path.join(".orchestrator", "runs", state.run_id, task.id)
+        _cycle_relpath = (
+            _task_run_dir
+            if cycle <= 1
+            else os.path.join(_task_run_dir, f"{_CYCLE_DIR_PREFIX}{cycle}")
         )
+        output_dir = self._store.resolve(_cycle_relpath)
 
         last_result: TaskResult | None = None
         # Running sums across every attempt of THIS call (E-9h3m7k FR-2): a task that

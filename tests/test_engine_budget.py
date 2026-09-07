@@ -22,7 +22,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from agent_orchestrator.artifacts import LocalFsArtifactStore
-from agent_orchestrator.budget import DefaultBudgetManager
+from agent_orchestrator.budget import DefaultBudgetManager, cycle_key
 from agent_orchestrator.engine import Orchestrator
 from agent_orchestrator.estimator import HeuristicTokenEstimator
 from agent_orchestrator.executors.fake import FakeExecutor
@@ -33,6 +33,7 @@ from agent_orchestrator.models import (
     RateLimit,
     RepoRef,
     RepoSet,
+    TaskRunState,
     TaskSpec,
     WorkflowDefaults,
     WorkflowSpec,
@@ -488,8 +489,12 @@ class TestUnsatisfiable:
 
 class TestResumeDoubleChargeGuard:
     def test_stale_estimate_reversed_on_resume(self, tmp_path) -> None:
-        """If charged_estimate[tid] exists and tid not in reconciled_tasks on resume,
-        the estimate is reversed before re-gating (no double-charge)."""
+        """R-1b (E-Wk9Tz3 T-Ac6Vd9): the guard is now cycle-keyed. Simulates a crash
+        after task "a"'s dispatch cycle 1 was charged and persisted but never
+        reconciled (the process died before settle); on resume, the guard must find
+        and reverse THAT cycle's stale entry -- `cycle_key("a", 1)`, not the bare
+        task_id, which is no longer how `charge_estimate` keys anything -- before the
+        resumed dispatch (cycle 2) re-gates. No double-charge."""
         budget_spec = BudgetSpec(
             total_tokens=100_000,
             estimator=EstimatorConfig(
@@ -513,11 +518,19 @@ class TestResumeDoubleChargeGuard:
         tasks = [_task("a", outputs=["out/a.txt"])]
         wf = _workflow(tasks, budget=budget_spec)
 
-        # Simulate a previous partial run where "a" was charged but not reconciled
+        # Simulate a previous partial run: "a"'s dispatch cycle 1 was charged
+        # (persisted "running") but never reconciled before the crash.
         partial_state = rs_store.new_run(wf)
+        partial_state.tasks["a"] = TaskRunState(status="running", dispatch_cycle=1)
         partial_state.budget_counters.consumed_tokens = 999
-        partial_state.budget_counters.charged_estimate["a"] = 999
+        partial_state.budget_counters.charged_estimate[cycle_key("a", 1)] = 999
         partial_state.budget_counters.window_consumed_tokens = 999
+        # prepare_resume is the real resume entry point (mirrors the CLI's own resume
+        # path): resets "running" -> "pending" while carrying dispatch_cycle FORWARD
+        # verbatim (runstate.py) -- exactly what lets the guard's "current cycle - 1"
+        # lookup find this stale cycle-1 entry once the resumed dispatch increments
+        # dispatch_cycle to 2.
+        rs_store.prepare_resume(partial_state, wf)
         rs_store.save(partial_state)
 
         # Resume from that partial state
@@ -525,9 +538,13 @@ class TestResumeDoubleChargeGuard:
 
         assert state.status == "succeeded"
         assert state.tasks["a"].status == "succeeded"
-        # After reverse (−999) and re-charge+reconcile: consumed should equal just the actual
-        # consumed for this run (not 999 + estimate again)
-        assert state.budget_counters.consumed_tokens < 100_000
+        assert state.tasks["a"].dispatch_cycle == 2  # resumed dispatch is a NEW cycle (R-21)
+        # The stale cycle-1 charge (999) was reversed, not left to inflate
+        # consumed_tokens forever: the only surviving contribution is cycle 2's own
+        # charge+reconcile (FakeExecutor reports no actuals, so reconcile keeps the
+        # estimate -- exactly 100, the configured output_allowance_tokens).
+        assert state.budget_counters.consumed_tokens == 100
+        assert state.budget_counters.charged_estimate == {}
 
 
 # ---------------------------------------------------------------------------

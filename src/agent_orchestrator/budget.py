@@ -7,8 +7,20 @@ and NEVER sleeps, persists, or logs. The engine owns those concerns (NFR-6 / ADR
 Invariants:
 - Total checked before rate (FR-3 precedence).
 - Tumbling window keyed by window_start_epoch in BudgetCounters (ADR-BUD-003).
-- reconcile() is idempotent — reconciled_tasks guard prevents double-charge (NFR-3).
-- reverse_estimate() undoes a charged estimate before a task is re-run on resume (R2/NFR-3).
+- reconcile() is idempotent per DISPATCH CYCLE — ``reconciled_cycles`` (keyed
+  ``"<task_id>#<cycle>"`` via `cycle_key`) guards double-charge (NFR-3, R-1b/E-Wk9Tz3
+  T-Ac6Vd9). A T2/T3 conflict-ladder redispatch (or self-heal/quota/429 requeue) is a
+  NEW cycle of the SAME task, so it must be independently gateable, chargeable and
+  reconcilable rather than silently latched out by the first cycle's reconcile() --
+  `DefaultBudgetManager.reconcile()` used to latch one-shot per bare `task_id`
+  (`reconciled_tasks`), which made every later redispatch's reconcile a no-op and hid
+  a conflicting task's real spend from `total_tokens`/rate-window gating (the exact
+  "spend is bounded for free" gap D9/ADR-0013 assumed away). `reconciled_tasks` is
+  left in place, populated once per task_id on its first reconcile (deduped), purely
+  for backward compatibility with any reader of an older `state.json` shape -- it is
+  never consulted for the idempotency guard itself.
+- reverse_estimate() undoes a charged estimate before a task is re-run on resume (R2/NFR-3),
+  now scoped to the specific dispatch cycle that charged it.
 - on_provider_429() feeds the same BudgetDecision path as gate() (ADR-BUD-005).
 - No magic literals — all constants come from BudgetSpec / models constants (NFR-7).
 """
@@ -23,6 +35,25 @@ from typing import Literal
 from pydantic import BaseModel
 
 from .models import DEFAULT_429_BACKOFF_SECONDS, BudgetCounters, BudgetSpec
+
+# R-1b (E-Wk9Tz3 T-Ac6Vd9): ledger key separator between a task id and its dispatch
+# cycle. Task ids are schema-constrained (`^[a-z0-9][a-z0-9-_]*$`, see the HLD's ref
+# sanitization note) and never contain "#", so this is unambiguous and reversible.
+_CYCLE_KEY_SEP = "#"
+
+
+def cycle_key(task_id: str, cycle: int) -> str:
+    """Ledger key for one dispatch cycle of a task: ``"<task_id>#<cycle>"``.
+
+    Every independently-charged/reconciled dispatch (the original attempt, a T2/T3
+    conflict-ladder redispatch, a self-heal retry, a quota/429 requeue) gets its own
+    key so a later cycle's reconcile is never silently latched out by an earlier
+    cycle's (R-1b) -- see the module docstring. Exported so `engine.py` can look up
+    a *specific* cycle's stale `charged_estimate` entry directly (the resume
+    double-charge guard) without a matching `BudgetManager` ABC method for a plain
+    membership check.
+    """
+    return f"{task_id}{_CYCLE_KEY_SEP}{cycle}"
 
 
 class BudgetDecision(BaseModel):
@@ -42,18 +73,27 @@ class BudgetManager(ABC):
         ...
 
     @abstractmethod
-    def charge_estimate(self, task_id: str, estimate: int, counters: BudgetCounters) -> None:
-        """Record *estimate* as in-flight for *task_id* and add to totals."""
+    def charge_estimate(
+        self, task_id: str, estimate: int, counters: BudgetCounters, cycle: int = 1
+    ) -> None:
+        """Record *estimate* as in-flight for *task_id*'s dispatch *cycle* and add to totals.
+
+        *cycle* defaults to ``1`` so an existing caller/third-party implementation
+        keeps working unchanged (R-1b, E-Wk9Tz3 T-Ac6Vd9) -- pass
+        ``TaskRunState.dispatch_cycle`` to make a redispatch independently chargeable.
+        """
         ...
 
     @abstractmethod
-    def reconcile(self, task_id: str, actual: int, counters: BudgetCounters) -> None:
-        """Replace the charged estimate with the actual token count. Idempotent."""
+    def reconcile(
+        self, task_id: str, actual: int, counters: BudgetCounters, cycle: int = 1
+    ) -> None:
+        """Replace *cycle*'s charged estimate with the actual token count. Idempotent per cycle."""
         ...
 
     @abstractmethod
-    def reverse_estimate(self, task_id: str, counters: BudgetCounters) -> None:
-        """Undo a charged estimate for *task_id* (used on resume or 429 re-run, NFR-3)."""
+    def reverse_estimate(self, task_id: str, counters: BudgetCounters, cycle: int = 1) -> None:
+        """Undo *cycle*'s charged estimate for *task_id* (used on resume or 429 re-run, NFR-3)."""
         ...
 
     @abstractmethod
@@ -137,35 +177,58 @@ class DefaultBudgetManager(BudgetManager):
 
         return BudgetDecision(admit=True)
 
-    def charge_estimate(self, task_id: str, estimate: int, counters: BudgetCounters) -> None:
-        """Record estimate as in-flight and add to totals (FR-4 — pessimistic pre-charge)."""
-        counters.charged_estimate[task_id] = estimate
+    def charge_estimate(
+        self, task_id: str, estimate: int, counters: BudgetCounters, cycle: int = 1
+    ) -> None:
+        """Record estimate as in-flight and add to totals (FR-4 — pessimistic pre-charge).
+
+        Keyed by (*task_id*, *cycle*) (R-1b) so a redispatch of the same task never
+        overwrites an earlier, still-outstanding cycle's own charged_estimate entry.
+        """
+        counters.charged_estimate[cycle_key(task_id, cycle)] = estimate
         counters.consumed_tokens += estimate
         counters.window_consumed_tokens += estimate
 
-    def reconcile(self, task_id: str, actual: int, counters: BudgetCounters) -> None:
-        """Replace the charged estimate with actuals. Idempotent (NFR-3 / FR-4).
+    def reconcile(
+        self, task_id: str, actual: int, counters: BudgetCounters, cycle: int = 1
+    ) -> None:
+        """Replace *cycle*'s charged estimate with actuals. Idempotent per cycle (NFR-3/FR-4/R-1b).
 
-        If task_id is already in reconciled_tasks, this is a no-op to prevent
-        double-charge on repeated calls.
+        If this (task_id, cycle) is already in reconciled_cycles, this is a no-op to
+        prevent double-charge on repeated calls -- but, unlike the pre-R-1b guard, a
+        LATER cycle of the same task_id (a T2/T3 conflict-ladder redispatch, or a
+        self-heal/quota/429 requeue) is NOT blocked by an earlier cycle's own
+        reconcile, which is exactly the bug this ticket fixes: D9/ADR-0013's "conflict
+        spend is bounded for free" claim requires every redispatch's real spend to
+        reach `consumed_tokens`/the rate window, not just the first one.
         """
-        if task_id in counters.reconciled_tasks:
-            return  # idempotent guard (NFR-3)
+        key = cycle_key(task_id, cycle)
+        if key in counters.reconciled_cycles:
+            return  # idempotent guard, scoped to this cycle (NFR-3 / R-1b)
 
-        est = counters.charged_estimate.pop(task_id, 0)
+        est = counters.charged_estimate.pop(key, 0)
         delta = actual - est
         counters.consumed_tokens += delta
         counters.window_consumed_tokens += delta
-        counters.reconciled_tasks.append(task_id)
+        counters.reconciled_cycles.append(key)
+        # Backward-compat dual-write: `reconciled_tasks` (pre-R-1b field) is left
+        # exactly as populated as it always was for a single-cycle task (appended once,
+        # deduped) so an older `state.json` reader / a task that never requeues sees
+        # byte-identical `reconciled_tasks` contents. It is never read by this class's
+        # own idempotency check (that's `reconciled_cycles`' job now).
+        if task_id not in counters.reconciled_tasks:
+            counters.reconciled_tasks.append(task_id)
 
-    def reverse_estimate(self, task_id: str, counters: BudgetCounters) -> None:
-        """Undo a charged estimate (used on 429 re-run or resume double-charge guard, R2/NFR-3).
+    def reverse_estimate(self, task_id: str, counters: BudgetCounters, cycle: int = 1) -> None:
+        """Undo *cycle*'s charged estimate (429 re-run / resume double-charge guard, R2/NFR-3/R-1b).
 
-        If task_id has no charged estimate (already reconciled or never charged), this is a no-op.
+        If (task_id, cycle) has no charged estimate (already reconciled or never
+        charged), this is a no-op.
         """
-        if task_id not in counters.charged_estimate:
+        key = cycle_key(task_id, cycle)
+        if key not in counters.charged_estimate:
             return
-        est = counters.charged_estimate.pop(task_id)
+        est = counters.charged_estimate.pop(key)
         counters.consumed_tokens -= est
         counters.window_consumed_tokens -= est
 

@@ -250,6 +250,80 @@
   instruction.
   — By: developer-agent · Role: developer · Date: 2026-09-07
 
+- **2026-09-07 — `T-Cx4Jf1-cli-config-prune-observability` Part A rollup: In Review** (Part B
+  — `engine.py` event emission — split out, **Pending** after `T-Lr6Ka3`). Coordinator-directed
+  split; full detail and every deviation in `T-Cx4Jf1-cli-config-prune-observability/TASK.md`'s
+  "Coordinator split" section and `STATUS.md`. Delivered, `engine.py`-untouched (`git status`
+  confirms only `cli.py`/`project_config.py` under `src/`): `--isolation {none,worktree,auto}` on
+  `run`/`resume` (`--isolation` > `AO_ISOLATION` > `.ao/config.yaml isolation.mode` > `"auto"`,
+  mirroring `--max-parallel`'s own chain) as a pure `WorkflowSpec.defaults.isolation` FILL-IN —
+  never overrides a task's own explicit `isolation` (a deliberate, recorded narrowing of this
+  ticket's original AC-2/AC-3 "global kill switch" text, per the coordinator's explicit Part A
+  brief and ADR-0006); `isolation.strict`/`isolation.env` wired straight to the already-existing
+  `Orchestrator(isolation_strict=, isolation_env=)` params `T-En8Hd4` added but left unwired
+  (config-file-only, no CLI/env surface, per HLD §11 M9's own interface table); `.ao/config.yaml`
+  `isolation.state_dir` fills in `$AO_STATE_DIR` (real env always wins); `project_config.
+  IsolationConfig` (`mode`/`strict`/`state_dir`/`env`) plus an `_INIT_TEMPLATE` block carrying the
+  S-8 reserved-namespace sentence verbatim; `ao prune` worktree GC (`--worktrees/--no-worktrees`,
+  `--dry-run` extended to worktrees) and a standalone `ao prune --worktrees-only` reconciliation
+  pass, both discovering a run's real git repos by probing the physical worktree directories left
+  on disk (no reposets/workflow context needed) and routing every removal through
+  `WorktreeManager.gc_run`/`GitRepo.prune_worktrees_scoped` only (R-6: a foreign worktree on the
+  same repo survives both variants, dedicated test); `ao status`/`ao run`/`ao resume` gain a
+  one-line integration summary (branch/head(s)/integrated/conflict/failed/`tier_counts`, S-5's CLI
+  half) over the `status.json` fields `T-Sc7Rm2` already shipped — no new `status.json` keys, no
+  new mechanism, degrades to byte-identical output when isolation never activated. AC-9 (dashboard
+  column/run-header line) is explicitly **unassigned** to either Part A or Part B — flagged as a
+  follow-up rather than dropped. 27 new tests (`tests/test_cli_isolation_flags.py` 20,
+  `tests/test_e2e_cli_prune_worktrees.py` 7) + 9 additive `tests/test_project_config.py` cases;
+  targeted suite (8 files named in `STATUS.md`) **165 passed / 0 failed**; full suite run
+  twice: **3443 passed / 7 skipped / 3 failed** then **3444 passed / 7 skipped / 2 failed**,
+  both persisting failures independently root-caused to `T-Ac6Vd9`'s own concurrent,
+  uncommitted `engine.py`/`budget.py` capture-directory re-keying (files this ticket never
+  touches; the third, run-1-only failure confirmed transient). `ruff`/`format --check` clean on every file this
+  ticket touched; `mypy src` unchanged at 4 pre-existing `_version.py` errors. Awaiting review; no
+  commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Ac6Vd9-requeue-accounting` rollup: In Review.** R-1a/R-1b/R-21 implemented
+  narrowly against the merged `T-En8Hd4` `engine.py`, per `T-Ac6Vd9-requeue-accounting/STATUS.md`
+  (full detail there). R-1a (accumulate cumulative_* before a T2/T3/self-heal requeue) was
+  already correct by construction in the merged code; this ticket extracted the two
+  near-duplicate accumulation sites into one shared `Orchestrator._accumulate_actuals` helper
+  and proved the whole chain with a live 3-cycle conflict-ladder test. R-1b: `budget.py`'s
+  ledger (`charged_estimate`/`reconciled_cycles`) is now keyed by `cycle_key(task_id, cycle) ->
+  "<task_id>#<cycle>"` (new exported function); the `BudgetManager` ABC's `charge_estimate`/
+  `reconcile`/`reverse_estimate` gained a `cycle: int = 1` parameter; every `engine.py` call
+  site (including the resume double-charge guard, now cycle-aware) updated to match.
+  `reconciled_tasks` (pre-existing field) stays populated once-per-task_id for backward
+  compatibility but is no longer the idempotency guard. R-21: capture directories are cycle-keyed
+  for cycle 2+ (`cycle-<n>/attempt-<m>/`); **cycle 1 deliberately keeps the pre-existing flat
+  layout** (`attempt-<n>/`, no cycle segment) -- an earlier draft nested every cycle uniformly,
+  which the full suite caught as a real regression in
+  `tests/playground/test_sum_of_array_deterministic.py::TestArea5OutputCapture` (the two failures
+  the T-Cx4Jf1 rollup above independently observed and correctly attributed to this ticket's
+  then-uncommitted, then-still-in-progress work); root-caused and fixed, both tests re-confirmed
+  green, and now this is the resolved, final state on disk. AC-9's suspected self-heal
+  transcript-clobber gap is **confirmed** (self-heal's requeue used the same unkeyed `output_dir`
+  before this ticket) and is closed as a byproduct of the same general R-21 fix, not a second
+  patch -- verified by a dedicated capture-directory-distinctness test, not assumed. Gates:
+  `ruff`/`format --check` clean; `mypy src` unchanged at 4 pre-existing `_version.py` errors;
+  targeted suite (9 files named in `STATUS.md`) **155 passed / 0 failed**; full suite WITH
+  coverage, run in the foreground per instruction, **3446 passed / 7 skipped / 0 failed** in
+  177.89s, **TOTAL 95%** (matches baseline) -- includes a clean re-run of the two previously
+  regressed playground tests. New tests: `tests/test_engine_isolation_accounting.py` (9, new).
+  Additive/updated: `tests/test_budget.py` (18 -> 24: 6 new cycle-keying unit tests, 3 existing
+  updated for the real, system-wide `charged_estimate` key-format change -- counters/totals stay
+  byte-identical, only the internal dict key literal changes); `tests/test_engine_budget.py`
+  (19, 1 rewritten for the new cycle-keyed resume guard with a strictly stronger assertion than
+  the one it replaced). Files touched: `src/agent_orchestrator/budget.py`,
+  `src/agent_orchestrator/engine.py`, `tests/test_budget.py`, `tests/test_engine_budget.py`
+  (modified), `tests/test_engine_isolation_accounting.py` (new) -- nothing outside this ticket's
+  concurrency-boundary file list. Published interface/hook points for `T-Wl2Bq7`/`T-Lr6Ka3`/
+  `T-Cx4Jf1` in `T-Ac6Vd9-requeue-accounting/STATUS.md`. Awaiting review; no commit made per
+  instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
 ## Evidence
 - `docs-md/task-isolation-hld.md` — 1874 lines.
 - `docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md` — 269 lines.

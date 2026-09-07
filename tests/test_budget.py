@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agent_orchestrator.budget import DefaultBudgetManager
+from agent_orchestrator.budget import DefaultBudgetManager, cycle_key
 from agent_orchestrator.models import (
     DEFAULT_429_BACKOFF_SECONDS,
     BudgetCounters,
@@ -158,14 +158,19 @@ def test_charge_then_reconcile_net_is_actual():
 
     mgr.charge_estimate("t1", 520, counters)
     assert counters.consumed_tokens == 520
-    assert counters.charged_estimate == {"t1": 520}
+    # R-1b (E-Wk9Tz3 T-Ac6Vd9): charged_estimate is keyed by "<task_id>#<cycle>", not
+    # the bare task_id -- cycle defaults to 1, so an un-cycled caller's key is "t1#1".
+    assert counters.charged_estimate == {cycle_key("t1", 1): 520}
 
     mgr.reconcile("t1", 300, counters)
 
     # Net change from zero = +300 (not +820)
     assert counters.consumed_tokens == 300
+    # reconciled_tasks (pre-R-1b field) is still populated -- backward compat, dual-
+    # write alongside the new cycle-keyed reconciled_cycles (asserted separately below).
     assert "t1" in counters.reconciled_tasks
-    assert "t1" not in counters.charged_estimate
+    assert cycle_key("t1", 1) in counters.reconciled_cycles
+    assert counters.charged_estimate == {}
 
 
 def test_reconcile_window_consumed_adjusted():
@@ -304,12 +309,13 @@ def test_reverse_estimate_removes_charged():
 
     mgr.charge_estimate("t1", 400, counters)
     assert counters.consumed_tokens == 400
+    assert cycle_key("t1", 1) in counters.charged_estimate
 
     mgr.reverse_estimate("t1", counters)
 
     assert counters.consumed_tokens == 0
     assert counters.window_consumed_tokens == 0
-    assert "t1" not in counters.charged_estimate
+    assert cycle_key("t1", 1) not in counters.charged_estimate
 
 
 def test_reverse_estimate_noop_when_not_charged():
@@ -381,4 +387,110 @@ def test_charge_estimate_adds_to_both_totals():
 
     assert counters.consumed_tokens == 300
     assert counters.window_consumed_tokens == 300
-    assert counters.charged_estimate["t1"] == 300
+    assert counters.charged_estimate[cycle_key("t1", 1)] == 300
+
+
+# ---------------------------------------------------------------------------
+# R-1b (E-Wk9Tz3 T-Ac6Vd9): the ledger is keyed by (task_id, dispatch_cycle), not
+# just task_id — a T2/T3 conflict-ladder redispatch (or self-heal/quota/429 requeue)
+# of the SAME task must be independently gateable, chargeable and reconcilable.
+# ---------------------------------------------------------------------------
+
+
+def test_charge_estimate_cycle_1_default_matches_pre_r1b_shape():
+    """Superset guarantee: an un-cycled caller (cycle defaults to 1) behaves exactly
+    like a task that never requeues -- the counters this ticket must stay
+    byte-identical for (Risks section) are the numeric totals, not the dict key
+    literal (which legitimately changes shape, see the AC-5 test above)."""
+    spec = _make_rate_spec()
+    mgr = DefaultBudgetManager(spec, _clock_at())
+    counters = BudgetCounters()
+
+    mgr.charge_estimate("t1", 520, counters)  # no cycle= kwarg -> defaults to 1
+    mgr.reconcile("t1", 300, counters)
+
+    assert counters.consumed_tokens == 300
+    assert counters.window_consumed_tokens == 300
+    assert counters.charged_estimate == {}
+    assert "t1" in counters.reconciled_tasks  # backward-compat dual-write
+
+
+def test_two_cycles_of_the_same_task_are_independently_charged():
+    """A redispatch (cycle 2) of a task charges its OWN ledger entry -- does not
+    collide with, or get silently overwritten by, cycle 1's still-outstanding entry."""
+    spec = _make_rate_spec(tokens=10_000, window_seconds=60)
+    mgr = DefaultBudgetManager(spec, _clock_at())
+    counters = BudgetCounters()
+
+    mgr.charge_estimate("t1", 100, counters, cycle=1)
+    mgr.charge_estimate("t1", 250, counters, cycle=2)
+
+    assert counters.charged_estimate == {
+        cycle_key("t1", 1): 100,
+        cycle_key("t1", 2): 250,
+    }
+    assert counters.consumed_tokens == 350
+
+
+def test_reconcile_of_one_cycle_does_not_block_reconcile_of_the_next():
+    """R-1b's central fix: pre-R-1b, reconcile() latched one-shot per bare task_id, so
+    a SECOND cycle's reconcile for the same task_id was silently a no-op. Each cycle
+    must reconcile independently."""
+    spec = _make_rate_spec(tokens=10_000, window_seconds=60)
+    mgr = DefaultBudgetManager(spec, _clock_at())
+    counters = BudgetCounters()
+
+    mgr.charge_estimate("t1", 100, counters, cycle=1)
+    mgr.reconcile("t1", 90, counters, cycle=1)
+    assert counters.consumed_tokens == 90
+    assert cycle_key("t1", 1) in counters.reconciled_cycles
+
+    # Cycle 2: a fresh charge + reconcile for the SAME task_id must NOT be swallowed
+    # by cycle 1's already-populated reconciled_cycles/reconciled_tasks entries.
+    mgr.charge_estimate("t1", 200, counters, cycle=2)
+    assert counters.consumed_tokens == 290  # 90 + 200
+    mgr.reconcile("t1", 180, counters, cycle=2)
+
+    assert counters.consumed_tokens == 270  # 90 + 180, NOT stuck at 90
+    assert cycle_key("t1", 2) in counters.reconciled_cycles
+    assert counters.charged_estimate == {}
+    # reconciled_tasks (backward-compat) records the task_id once, not once per cycle.
+    assert counters.reconciled_tasks.count("t1") == 1
+
+
+def test_reconcile_same_cycle_twice_is_still_idempotent():
+    """The idempotency guard AC-6 exercises still holds -- scoped to one cycle now."""
+    spec = _make_rate_spec()
+    mgr = DefaultBudgetManager(spec, _clock_at())
+    counters = BudgetCounters()
+
+    mgr.charge_estimate("t1", 520, counters, cycle=3)
+    mgr.reconcile("t1", 300, counters, cycle=3)
+    consumed_after_first = counters.consumed_tokens
+
+    mgr.reconcile("t1", 300, counters, cycle=3)  # second call for the SAME cycle
+
+    assert counters.consumed_tokens == consumed_after_first
+    assert counters.reconciled_cycles.count(cycle_key("t1", 3)) == 1
+
+
+def test_reverse_estimate_scoped_to_its_own_cycle():
+    """reverse_estimate() for cycle N must not touch a different, still-charged cycle
+    of the same task_id (the resume double-charge guard relies on this)."""
+    spec = _make_rate_spec(tokens=10_000, window_seconds=60)
+    mgr = DefaultBudgetManager(spec, _clock_at())
+    counters = BudgetCounters()
+
+    mgr.charge_estimate("t1", 100, counters, cycle=1)
+    mgr.charge_estimate("t1", 250, counters, cycle=2)
+
+    mgr.reverse_estimate("t1", counters, cycle=1)
+
+    assert counters.charged_estimate == {cycle_key("t1", 2): 250}
+    assert counters.consumed_tokens == 250
+
+
+def test_cycle_key_format():
+    """The key format is exactly `<task_id>#<cycle>` (HLD §10.3 / TASK.md pseudocode)."""
+    assert cycle_key("task-a", 1) == "task-a#1"
+    assert cycle_key("task-a", 2) == "task-a#2"
