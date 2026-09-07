@@ -92,6 +92,15 @@ class FakeExecutor(Executor):
         Mapping of task_id -> exhaust_count (int).  For the first *exhaust_count*
         calls the executor returns a failed TaskResult with claude_quota_exhausted=True.
         Subsequent calls succeed normally (the engine handles quota-wait + re-run).
+    repo_writes:
+        E-Wk9Tz3 (T-En8Hd4): mapping of task_id -> {repo_id: {relative_path: content}}.
+        On success, for each entry writes *content* to ``ctx.repo_paths[repo_id]/
+        relative_path`` (parents created as needed) -- lets a test simulate an agent that
+        actually modifies a tracked file inside a repo (isolated or not), which
+        ``output_paths``-only writes cannot: those may live outside every repo entirely.
+        For an isolated task ``ctx.repo_paths[repo_id]`` already resolves into that task's
+        worktree (the engine remaps it before dispatch -- R-19), so this needs no isolation
+        awareness of its own. Additive and backward compatible: no entry, no effect.
     """
 
     def __init__(
@@ -104,6 +113,7 @@ class FakeExecutor(Executor):
         token_outputs: dict[str, dict] | None = None,
         rate_limit_tasks: dict[str, float | None] | None = None,
         quota_exhausted_tasks: dict[str, int] | None = None,
+        repo_writes: dict[str, dict[str, dict[str, str]]] | None = None,
     ) -> None:
         self._behaviors: dict[str, Behavior] = behaviors or {}
         self._write_outputs = write_outputs
@@ -113,6 +123,7 @@ class FakeExecutor(Executor):
         self._token_outputs: dict[str, dict] = token_outputs or {}
         self._rate_limit_tasks: dict[str, float | None] = rate_limit_tasks or {}
         self._quota_exhausted_tasks: dict[str, int] = quota_exhausted_tasks or {}
+        self._repo_writes: dict[str, dict[str, dict[str, str]]] = repo_writes or {}
         # invocation counters for gate tasks: base_id -> count (0-indexed)
         self._gate_invocations: dict[str, int] = {}
         # task_ids that have already been 429'd once; subsequent calls succeed
@@ -130,12 +141,20 @@ class FakeExecutor(Executor):
         # reached dispatch without spawning a subprocess or a ClaudeCliExecutor-specific
         # argv capture. Recorded per invocation; the last one per task wins.
         self.resolved_agents: dict[str, AgentSpec] = {}
+        # E-Wk9Tz3 (T-En8Hd4, R-19 proof): the FULL TaskContext this executor received,
+        # per task_id -- the real object the engine built, not a helper's return value.
+        # Lets a test assert every path category (instruction_path/input_paths/
+        # output_paths/output_manifest_path/repo_paths/cwd) actually resolved inside an
+        # isolated task's worktree, and that ctx.env carries the AO_* isolation vars.
+        # Recorded per invocation; the last one per task wins.
+        self.contexts: dict[str, TaskContext] = {}
 
     def execute(self, ctx: TaskContext) -> TaskResult:
         # Render through the SHARED builder so prompt-assembly assertions made against the
         # fake executor stay honest about what the real one would produce.
         self.prompts[ctx.task_id] = build_prompt(ctx)
         self.resolved_agents[ctx.task_id] = ctx.agent
+        self.contexts[ctx.task_id] = ctx
 
         # --- Quota exhaustion simulation: fail N times, then succeed ---
         if self._quota_exhausted_remaining.get(ctx.task_id, 0) > 0:
@@ -214,6 +233,24 @@ class FakeExecutor(Executor):
                     os.makedirs(parent, exist_ok=True)
                 with open(ctx.task_manifest_path, "w") as f:
                     json.dump(payload, f)
+
+            # E-Wk9Tz3 (T-En8Hd4): write into a repo path (isolated -> already remapped
+            # into the task's worktree by the engine; not isolated -> the shared checkout).
+            # {repo_id: {relative_path: content}} -- simulates an agent that modifies a
+            # TRACKED file, which output_paths-only writes cannot (those commonly live
+            # outside every repo entirely).
+            if ctx.task_id in self._repo_writes:
+                for repo_id, files in self._repo_writes[ctx.task_id].items():
+                    repo_root = ctx.repo_paths.get(repo_id)
+                    if repo_root is None:
+                        continue
+                    for rel_path, content in files.items():
+                        full = os.path.join(repo_root, rel_path)
+                        parent = os.path.dirname(full)
+                        if parent:
+                            os.makedirs(parent, exist_ok=True)
+                        with open(full, "w") as f:
+                            f.write(content)
 
         # Write gate verdict file (gate_payloads) on the K-th invocation of a gate task.
         # The base task id (without __iterN suffix) is used as the key in gate_payloads.

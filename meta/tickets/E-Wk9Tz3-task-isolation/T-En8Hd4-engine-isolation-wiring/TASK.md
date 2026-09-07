@@ -6,7 +6,7 @@
 - Owner: unassigned (developer)
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: In Review
 - Estimate: 3 days
 
 ## Requirements Mapping

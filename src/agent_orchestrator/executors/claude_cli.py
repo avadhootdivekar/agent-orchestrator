@@ -476,6 +476,11 @@ class ClaudeCliExecutor(Executor):
             proc = subprocess.Popen(
                 argv,
                 cwd=ctx.cwd or None,
+                # E-Wk9Tz3 AC-8: overlay os.environ with ctx.env (AO_ISOLATION/
+                # AO_TASK_BRANCH/AO_WORKTREE_ROOT_<repo>/... for an isolated task) only
+                # when non-empty; `env=None` lets Popen inherit the process env verbatim,
+                # which is what keeps the non-isolated path byte-identical (NFR-2).
+                env=({**os.environ, **ctx.env} if ctx.env else None),
                 stdin=subprocess.DEVNULL,
                 stdout=tf,
                 stderr=ef,

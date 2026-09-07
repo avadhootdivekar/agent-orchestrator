@@ -188,6 +188,68 @@
   commit made per instruction.
   — By: developer-agent · Role: developer · Date: 2026-09-07
 
+- **2026-09-07 — `T-En8Hd4-engine-isolation-wiring` rollup: In Review.** All 21 ACs implemented,
+  `engine.py`-only (narrow, additive branches around the existing wave/barrier scheduler) plus small
+  additive edits to `executors/claude_cli.py` (`env=` overlay) and `executors/fake.py`
+  (`self.contexts` recording + additive `repo_writes` option). R-19/AC-15 done first as instructed:
+  `_run_with_retries` gained `store: ArtifactStore | None = None` (byte-identical default) and all six
+  internal path-resolve call sites route through it; the seventh category (`repo_paths`) is a per-task
+  dict built by `_iso_repo_paths`. New worker function `_run_and_integrate` wraps
+  `_run_with_retries` + R-2's outputs gate + the one integrator call site (`_integrate_task`, the
+  single thin adapter TASK.md required). `_settle_completed_task` now takes a `WorkerOutcome`;
+  the pre-existing "extracted verbatim" body is untouched except for one new line and one new block
+  implementing the full integrated/empty/conflict_resolver/conflict_rerun/failed switch (HLD §11 M5),
+  including R-23's release()-on-plain-failure case with its own dedicated test. `_ready_ids` now uses
+  `_settled_for_dependents` (FR-9: integrated, not merely succeeded); `_is_barrier` gained the
+  integration-active/non-isolated barrier rule (backward-compatible 2-arg signature preserved);
+  `should_skip`'s integration gate is layered at the `_prepare_and_maybe_dispatch` call site (R-3, both
+  branches, with a dedicated branch-2 regression test) since `runstate.py` stayed off-limits;
+  `rank_wave` wired at the wave-fill call site (R-5), soft preference + hotspots loaded once at run
+  start, gated on `resolve_overlap_preference` so a non-isolated workflow never pays for it (byte-
+  identical, NFR-2 — the `test_wave_scheduler.py` golden event-sequence test catches this unedited).
+  `validate_isolation` re-run at `emit_tasks` injection time. Two interface gaps found and resolved as
+  additive `Orchestrator` constructor params rather than guessed at: `isolation_strict`/`isolation_env`
+  have no CLI/config wiring yet (HLD §11 M9's `.ao/config.yaml: isolation.*` / `--isolation` chain is
+  not a created ticket) — the engine-side injection points exist and are tested; a future M9 ticket
+  wires them up. `resolver_hook`/`escalation_hook` default to a no-op/fail-safe pair (documented,
+  module-level) since `T-Rm2Lx7`/`T-Lr6Ka3` have not landed — a genuine conflict fails straight to T4
+  in production until then, by design; the settle switch's conflict branches are fully implemented and
+  tested against an injected test-double hook. 54 new tests (`tests/test_engine_isolation.py` 52,
+  `tests/test_e2e_cli_isolation.py` 2, the latter driving `ao run`/`ao resume` via `CliRunner` with a
+  real git repo, `max_parallel: 3`, two disjoint isolated tasks + one dependent — all land, integration
+  ref carries the expected 3 commits, checked-out branch untouched). Targeted gate suite (incl. every
+  pre-epic `test_engine*.py`/`test_wave_*.py` file, unedited) 145 passed / 0 failed; full suite (plain,
+  no coverage) **3389 passed / 7 skipped / 0 failed**, one clean run (reflects the merged tree — several
+  sibling tickets landed commits to this branch during this session). `ruff`/`format --check` clean;
+  `mypy src` unchanged at 4 pre-existing `_version.py` errors. Coverage: `engine.py` **96%** (misses are
+  pre-existing/unedited lines); repo-wide `--cov` hung specifically inside the pre-existing, unedited
+  `tests/bench/test_workspace.py` under coverage instrumentation (confirmed via `/proc` — `do_sys_poll`,
+  CPU time not advancing — independent of this ticket, which never touches `bench/`); with
+  `--ignore=tests/bench` repo TOTAL is 78% (bench modules read as 0% purely from exclusion) and every
+  isolation/* module is 97-100%. Full detail, the four published hook points for
+  `T-Ac6Vd9`/`T-Wl2Bq7`/`T-Lr6Ka3`/`T-Cx4Jf1` (in engine.py's fixed edit order), and the R-2/AC-16
+  documented outputs-inside-repo limitation are in `T-En8Hd4-engine-isolation-wiring/STATUS.md`.
+  Awaiting review; no commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-En8Hd4` review response: APPROVE WITH CHANGES, fix pass complete.** Reviewer found
+  the "outputs-inside-repo" note above was mischaracterized as an accepted limitation — it was a real
+  Blocking defect (C-1): code landed (`task_integration.status == "integrated"`) but the run still
+  halted `failed` because the pre-existing missing-outputs check ran against the stale, un-synced
+  shared checkout. Fixed: the outputs verdict for an isolated task is now the worker's own R-2 gate
+  (evaluated in the worktree, before landing), not the main-thread check, which is now redirected for
+  isolated tasks; a related latent bug (R-23 clobbering a genuine `cancelled`/`timed_out` result to
+  `"failed"`) fixed in the same pass. C-2 (cancel mid-integration + resume) and C-3 (NFR-3 no
+  cross-thread `RunState` mutation) — both previously invariant-holds-by-inspection but untested —
+  now have dedicated regression tests. `[tool.coverage.run] concurrency = ["thread"]` added per the
+  review's own Investigation B recommendation (the `--cov` hang this ticket originally reported did
+  not reproduce in either the reviewer's or this fix pass's runs). Full suite with coverage: **3394
+  passed / 7 skipped / 0 failed, TOTAL 95%** (matches baseline — the earlier 78%/`--ignore=tests/bench`
+  figure is superseded). Full per-finding disposition in
+  `T-En8Hd4-engine-isolation-wiring/STATUS.md`'s "Review response" section. No commit made per
+  instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
 ## Evidence
 - `docs-md/task-isolation-hld.md` — 1874 lines.
 - `docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md` — 269 lines.
