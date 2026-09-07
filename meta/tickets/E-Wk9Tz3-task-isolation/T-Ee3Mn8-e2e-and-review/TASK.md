@@ -63,9 +63,14 @@ with an explicit note naming the owning ticket and the reason.
 10. e2e-8 **degradation**: a reposet pointing at a plain (non-git) directory runs to completion with
     `integration.degraded`, and the same spec with `isolation.strict: true` fails with a clear message.
 11. **Security pass (dev-security)** over exactly these surfaces, with findings recorded in
-    `STATUS.md`: (a) the `extra_roots` widening in `artifacts.py` — confirm `extra_roots` can only be
-    produced by `WorktreeManager`, that `resolve()` still runs before containment, that traversal and
-    symlink escapes still raise, and that `RunStateStore`'s store is un-widened; (b) ref-name
+    `STATUS.md`: (a) the path-guard widening **as built** — it lives in
+    `isolation/view.py::IsolatedArtifactView`, not in `LocalFsArtifactStore` (which gained no
+    `extra_roots` parameter and whose `resolve()` guard is unchanged). Confirm: the view's roots can
+    only be produced by `WorktreeManager` via a single task's `TaskIsolation`; abspath+symlink
+    resolution still runs before containment; traversal and symlink escapes still raise;
+    `RunStateStore`'s store is the base store and is never a view; and — the structural guard —
+    **`resolve_unchecked` has no caller outside `isolation/view.py`** (assert by AST/grep over `src/`,
+    so a future edit cannot quietly reuse the unguarded primitive); (b) ref-name
     sanitization against a hostile injected task id; (c) `verify_command` / `regenerate[].command`
     execution (argv-only, timeout, cwd, captured+capped output); (d) `isolation.env` provenance
     (config only, never spec/manifest); (e) auto-commit not sweeping secrets (`.gitignore` respected,
@@ -87,14 +92,14 @@ with an explicit note naming the owning ticket and the reason.
 16. **HLD §17.5 is a checklist, not a suggestion.** Every row of the finding-driven test table in
     §17.5 is either present and passing, or explicitly listed in `STATUS.md` as deferred **with the
     owning ticket named**. A row silently absent is a failure of this gate.
-17. **S-4 — the test the original security AC did not cover.** AC-11(a) as first written only asserted
-    that `extra_roots` can be produced solely by `WorktreeManager`. The narrower and more important
-    property is **per-task scoping**: an absolute path under **task B's** worktree, submitted as an
-    input, an output, or as `cwd` for **task A**, must raise `ArtifactPathError` from task A's view.
-    Without it, a buggy or hostile task could read a sibling's uncommitted work or write into it,
-    laundering content through a task that never asked for it and whose own verify would then run
-    against tampered input. Three explicit cases (input / output / cwd), distinct from the
-    producer-restriction test.
+17. **S-4 — verify the property end to end, at the engine boundary.** `T-Wk3Nv6` already unit-tests
+    `IsolatedArtifactView` directly (sibling-task, cross-run, traversal, symlink-escape); **do not
+    re-implement those.** What no ticket covers is the same property through a **real dispatch**: in a
+    `max_parallel=2` isolated run, a task A whose spec declares an absolute input, an absolute output,
+    and an `AgentSpec.working_dir` under **task B's** worktree must fail with a structured
+    `ArtifactPathError` at dispatch — and task B's worktree must be provably unmodified afterwards.
+    Three explicit cases (input / output / cwd). Also assert the sibling case for a worktree belonging
+    to a **different run** in the same workspace.
 18. **R-20 / NFR-3 — assert the invariant, don't assume it.** A test that fails if `RunState` is
     mutated or `save()` is called from any thread other than the main thread during a
     `max_parallel=3` isolated run (wrap the runstate store and record

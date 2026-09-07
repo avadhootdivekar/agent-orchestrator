@@ -23,7 +23,11 @@ to today.
 
 Files you own:
 - `src/agent_orchestrator/engine.py` (edit)
-- `src/agent_orchestrator/artifacts.py` (edit — `extra_roots` + `IsolatedArtifactView` only)
+- ~~`src/agent_orchestrator/artifacts.py`~~ — **no longer this ticket's file.** `T-Wk3Nv6` already
+  shipped everything needed there (a read-only `resolve_unchecked` + `root`, used solely by the view)
+  and `isolation/view.py::IsolatedArtifactView`. **Do not add an `extra_roots` parameter to
+  `LocalFsArtifactStore`** — HLD §7.3 rejects exactly that, because `RunStateStore` shares the same
+  instance and widening it would silently widen run-state resolution too.
 - `src/agent_orchestrator/runstate.py` (edit — integration-aware `should_skip` only)
 - `src/agent_orchestrator/executors/claude_cli.py` (edit — `env=` overlay only, ~2 lines)
 - `src/agent_orchestrator/executors/fake.py` (edit — record `ctx.env`/`ctx.cwd` for assertions)
@@ -54,10 +58,16 @@ Do NOT touch: any `isolation/` module (read them), `models.py`, `spec.py`, `spec
 5. **Lazy activation is load-bearing**: a workflow whose first task (`isolation: none`) creates and
    checks out a branch, followed by isolated tasks, must base the integration ref on the **new**
    branch's HEAD. Test this exact shape (it mirrors the consumer's `git-branch-off` → fan-out flow).
-6. `IsolatedArtifactView` wraps the base store, applies `effective_path`, and adds only the task's own
-   worktree roots as `extra_roots`. Tests: traversal (`../../etc/passwd`) still raises
-   `ArtifactPathError`; a symlink pointing outside still raises; a path in another task's worktree
-   raises; `RunStateStore`'s store is **not** widened (assert its `_extra_roots` is empty).
+6. **Consume the already-shipped view; build nothing new here.** Per dispatch of an isolated task,
+   construct `isolation.view.IsolatedArtifactView(base=self._store, task_isolation=task_iso)` and pass
+   **that** object as the task's store (AC-15). The shared `LocalFsArtifactStore` is never widened and
+   never mutated. `T-Wk3Nv6` already ships and tests the view's own guarantees (sibling-task,
+   cross-run, traversal, symlink-escape, reserved prefixes, nested `RepoRef`) in
+   `tests/isolation/test_view.py` — **do not duplicate those tests here.** This ticket's own assertion
+   is the wiring one: `RunStateStore`'s store is the **base** store, never a view — follow
+   `T-Wk3Nv6`'s `tests/isolation/test_view.py::TestRunStateStoreNeverWrapped` pattern
+   (`assert rs_store._store is base` / `not isinstance(rs_store._store, IsolatedArtifactView)`), and
+   assert a non-isolated task's `TaskContext` is built from the base store unchanged (NFR-2).
 7. Every path in `TaskContext` is built through the view for an isolated task — `instruction_path`,
    `general_instruction_paths`, `input_paths`, `output_paths`, `output_manifest_path`, `repo_paths`,
    `cwd` — and `task_manifest_path`, `gate_output_path`, `output_dir` are **not** (they stay under

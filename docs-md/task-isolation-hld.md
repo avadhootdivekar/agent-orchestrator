@@ -418,9 +418,18 @@ class IsolatedArtifactView(ArtifactStore):          # NORMATIVE
     def size(self, path):   ...
 ```
 
+**As-built (T-Wk3Nv6, merged 2026-09-07) — this is the shape to build against.** The wrapper shipped
+as `isolation/view.py::IsolatedArtifactView(base: LocalFsArtifactStore, task_isolation: TaskIsolation)`.
+`LocalFsArtifactStore` gained **no** `extra_roots` parameter: it gained only a read-only
+`resolve_unchecked(path)` (abspath + symlink resolution, no containment test) and a `root` property,
+both used **solely** by the view. `resolve()`'s own guard is byte-for-byte unchanged. The view keeps its
+own private `_roots` tuple built from `task_isolation.repos[*].worktree_root`. Anywhere below that says
+"`extra_roots`", read "the view's private `_roots`".
+
 Rules that keep this safe:
-1. `extra_roots` is **never** taken from a spec file, a manifest, or an agent. The only producer is
-   `WorktreeManager`, and the only values are worktree roots it just created under `$AO_STATE_DIR`.
+1. The view's roots are **never** taken from a spec file, a manifest, or an agent. The only producer is
+   `WorktreeManager` (via the `TaskIsolation` it returns), and the only values are worktree roots it
+   just created under `$AO_STATE_DIR`.
 2. Traversal is still rejected: abspath + symlink resolution happens *before* the containment test, so
    `../` and symlink escapes fail exactly as today.
 3. The store used for **run state** (`RunStateStore`) keeps the un-widened root, so no run-state path
@@ -1294,8 +1303,10 @@ FUNCTION worktree_root(ws_root, run_id, task_id, repo_key) -> Path:
 FUNCTION effective_path(resolved_abs, task_iso) -> str        # exactly as §7.2
 
 # --- worktrees.py ---
-CLASS WorktreeManager:
-  __init__(workspace_root, run_id, repos: list[IsolatedRepo], integration: RunIntegrationState)
+CLASS WorktreeManager:                  # as built (T-Wk3Nv6): integration_heads is a plain dict,
+                                        # NOT a live RunIntegrationState — same NFR-3 reasoning as R-20
+  __init__(workspace_root: str, run_id: str, repos: list[IsolatedRepo],
+           integration_heads: dict[str, str], *, runner=None, hooks_dir=None)
 
   FUNCTION ensure(task_id, cycle, declared_outputs) -> TaskIsolation:
       # S-9: every directory ao creates under $AO_STATE_DIR is mode 0700 (worktree parents included),
@@ -1319,10 +1330,20 @@ CLASS WorktreeManager:
               # worktree of this repo whose directory is transiently unreachable, including ones the
               # USER created (Claude Code worktree mode is named prior art in §4, so foreign worktrees
               # on an ao-managed repo are expected, not hypothetical).
-              git.prune_worktrees_scoped(worktree_root_prefix_for(run_id))
-              IF branch already exists: git.delete_ref("refs/heads/" + branch)   # only when not registered
-              git.worktree_add(path, branch, head)
-              LOG worktree.created {task_id, repo=repo.key, branch, base=head}
+              git.prune_worktrees_scoped(worktree_root_prefix_for(repo, run_id))
+              # ---- D-ENS (see below): ensure() NEVER deletes a user-visible ref ----
+              IF NOT git.branch_exists(branch):
+                  git.worktree_add(path, branch, head)                     # create: `-b <branch>`
+                  LOG worktree.created {task_id, repo=repo.key, branch, base=head}
+              ELSE IF branch is checked out in some OTHER registered worktree:
+                  RAISE WorktreeCollisionError(branch, other_path,
+                        remedy="ao prune --worktrees-only, or git worktree remove <other_path>")
+              ELSE:
+                  # Leftover from a crashed run with this same run id: re-attach, preserving its
+                  # commits. The integrator's squash+rebase lands whatever is there (§12.1).
+                  git.worktree_add(path, branch)                           # attach: NO `-b`
+                  LOG worktree.branch_reattached {task_id, repo=repo.key, branch,
+                                                  tip=git.rev_parse(branch)}
           iso.repos.append(RepoIsolation(key=repo.key, toplevel=repo.toplevel,
                                          worktree_root=path, branch=branch, base=head,
                                          members=repo.members))
@@ -1349,15 +1370,42 @@ CLASS WorktreeManager:
       then delete refs/heads/ao/<run_id>/* and refs/ao/runs/<run_id>/*
 ```
 
+**D-ENS — `ensure()` never deletes a user-visible ref (resolves an internal contradiction).** An
+earlier draft's pseudocode unconditionally `delete_ref`'d a pre-existing `ao/<run>/<task>` branch
+before recreating it, while this section's own prose said `ensure` "treats 'branch exists and points
+somewhere unrelated' as a hard error rather than silently reusing". Those cannot both be right, and
+`T-Wk3Nv6`'s review surfaced the contradiction (deviation 4). **Decision — reuse when the state is
+verifiably consistent, hard-error when another worktree owns the branch, and never destroy a ref:**
+
+| State found | Action |
+|---|---|
+| Registered worktree at the expected path, on the expected branch | **Reuse** (abort any in-progress rebase first) — unchanged |
+| Registered worktree at the expected path, on a **different** branch | **Hard error** `WorktreeCollisionError`, naming both branches |
+| No worktree registered, branch **absent** | Create with `-b <branch>` — unchanged |
+| No worktree registered, branch **present** | **Re-attach** (`worktree add <path> <branch>`, no `-b`), preserving its commits; log `worktree.branch_reattached` |
+| Branch present and checked out in **another** registered worktree | **Hard error**, naming the branch, the other worktree path, and the remedy (`ao prune --worktrees-only`) |
+
+Rationale. The `ao/` namespace is reserved (S-8), so a pre-existing `ao/<run_id>/<task_id>` branch is
+almost always *our own* leftover from a crashed run — deleting it destroys that run's work, which is
+exactly what §12.1's crash-recovery story promises to preserve. Re-attaching is non-destructive and
+strictly better than both the old pseudocode (silent deletion) and the old prose (hard-error on a
+recoverable state): the integrator's squash+rebase then lands whatever is on the branch. The genuinely
+ambiguous case — a different run reaching the same `run_id` **and** `task_id` — is bounded by the
+`run_id`'s workflow-id + UTC-second composition and by hashing on task-id truncation, and the one case
+we cannot disambiguate safely (another live worktree already holds the branch) is a hard error naming
+the remedy rather than a guess. **Ref deletion belongs only to `release()`, `reconcile()` and
+`gc_run()`**, where ownership has already been established.
+
 **S-4 — the per-task `IsolatedArtifactView` is built here.** `WorktreeManager` owns `TaskIsolation`,
 and the view is constructed from **that one object**, never from the manager's registry of every
 worktree it has created for the run. That narrower scoping *is* the security property — see §7.3 rule 5
 and its dedicated test.
 
-**Edge cases.** Worktree path length near `PATH_MAX` → hash-shorten `task_id` beyond 80 chars.
-Two runs of the same workflow within one second share a `run_id`? No — `run_id` embeds a UTC second
-and the workflow id (`runstate.py:54`); a genuine collision would reuse branches, so `ensure` treats
-"branch exists and points somewhere unrelated" as a hard error rather than silently reusing.
+**Edge cases.** Worktree path length near `PATH_MAX` → hash-shorten (never plain-truncate — a
+truncation collision silently merges two tasks' worktrees and defeats S-4). `run_id` embeds a UTC
+second and the workflow id (`runstate.py:54`), so a cross-run `ao/<run>/<task>` collision needs two
+runs of the same workflow in the same second; D-ENS above states exactly what `ensure` does in every
+branch-collision state, and it never deletes a ref.
 `$AO_STATE_DIR` on a different filesystem → fine (worktrees store an absolute `gitdir` pointer).
 Deleting a worktree while a `claude` grandchild still holds a file open → `worktree_remove --force`
 plus a logged failure; never fatal. A worktree whose repo was deleted → `worktree_prune` handles it.
@@ -1536,7 +1584,8 @@ IF iso_mode == "worktree":
         IF NOT ok: iso_mode = "none"                            # FR-12 degrade + warn, once per run
 IF iso_mode == "worktree":
     task_iso = self._worktrees.ensure(tid, cycle=ts.dispatch_cycle, declared_outputs=task.outputs)
-    ctx_view = IsolatedArtifactView(self._store, task_iso)       # §7.3 — THIS task's roots only (S-4)
+    ctx_view = IsolatedArtifactView(base=self._store, task_isolation=task_iso)   # as built, T-Wk3Nv6
+                                                                 # §7.3 — THIS task's roots only (S-4)
     record base_commits/branches into state.task_integration[tid]
 ELSE:
     IF state.integration.active AND state.integration.sync_needed():
@@ -2228,7 +2277,7 @@ unblock. Mitigations, in order:
 |---|---|---|
 | `integration.verify_command` from a spec file | A workflow spec can already run arbitrary agents in the workspace, so this is not a new trust boundary — but it is a new *direct* code-execution surface that does not go through an agent. | argv list only (never a shell string); explicit timeout; cwd pinned to the worktree; output size-capped; `ao validate` prints the command so it is reviewable. |
 | `resolvers.regenerate[].command` | Same class. | Same treatment; additionally only runs when a matching path actually conflicted. |
-| Artifact path guard widening (§7.3) | The guard is the existing defence against path traversal into the workspace (ADR-0011 lineage). | `extra_roots` is producer-restricted to `WorktreeManager`, never spec- or agent-supplied; `resolve()` still runs before containment; the run-state store keeps the un-widened root; `$AO_STATE_DIR` is validated absolute and outside every repo. |
+| Artifact path guard widening (§7.3) | The guard is the existing defence against path traversal into the workspace (ADR-0011 lineage). | The widening lives in a **separate wrapper** (`isolation/view.py::IsolatedArtifactView`), not in `LocalFsArtifactStore`, which gained no `extra_roots` parameter and whose `resolve()` guard is unchanged. The view's roots are producer-restricted to `WorktreeManager` and scoped to **one** task's `TaskIsolation`; abspath+symlink resolution still runs before containment; `RunStateStore` is never wrapped; `$AO_STATE_DIR` is validated absolute and outside every repo. The one new primitive, `resolve_unchecked`, must have **no caller outside `isolation/view.py`** — asserted structurally. |
 | Branch/ref names from task ids | Task ids are schema-constrained (`^[a-z0-9][a-z0-9-_]*$`) but injected ids arrive from an agent-written manifest. A crafted id could try `../` or `.lock` ref tricks. | `sanitize_ref_component` (allowlist regex + `.lock`/`..`/length handling), and refs are always created under the fixed `ao/<run>/` namespace, never at an agent-chosen path. |
 | **Repo-local git hooks (S-1)** | `worktree add` fires `post-checkout`, auto-commit fires `pre-commit`/`commit-msg`, rebase fires `post-checkout`/`post-rewrite`. Hooks are never cloned, but real projects install them via a bootstrap the operator ran **once, interactively**. This design would fire them **unattended, once per task** — dozens to ~100 times per consumer epic, concurrently, with the `ao` process's privileges. | Every engine-issued git call carries `SAFETY_ARGS` (§11 M1): `-c core.hooksPath=<always-empty dir>` so no hook is ever found, plus `-c commit.gpgsign=false` / `-c core.editor=true` / `GIT_TERMINAL_PROMPT=0` so the engine can never block on a passphrase, editor or credential prompt. Per-invocation `-c` only — nothing is written to any git config. Proven by a planted-hook fixture in `T-Gt4Pw8`. A hook the **task's own agent** chooses to run is unchanged and out of scope (same trust tier as today). |
 | **The T2 resolver agent's tool access (S-2)** | The resolver must open the conflicted files with its own tools — content authored by two different tasks, neither reviewed against the other, reaching an agent that per ADR-0005 defaults to allow-all tools (`Bash`, `WebFetch`, `WebSearch`, `Task`). This is a *new, engine-triggered* dispatch fed by unreviewed input, not a workflow-author-chosen one. `merge-resolve.md`'s "do not push" is prompt text, not a boundary — and a worktree shares the main repo's remotes and credential helper. | `integration.resolver_disallowed_tools` (default `["WebFetch","WebSearch"]`) is **force-injected** at the T2 dispatch, UNIONed with the named agent's own `disallowed_tools` — closed by construction, not by prompt (the same force-injection pattern ADR-0005 already uses). V11 makes an empty list fatal; V10 warns when the agent's own spec is misleading. `resolver_deny_push` (default true) neutralizes the push path for the duration (empty `credential.helper`, unreachable proxy, `GIT_TERMINAL_PROMPT=0`). |
@@ -2464,7 +2513,7 @@ because they are the hardest to change afterwards.
 | R1 | Cold rebuilds per worktree make isolated runs slower than the parallelism gains | High for Rust/monorepo consumers | High | §16 recipe (shared cache via `isolation.env`), per-task opt-in, heavy stages left unisolated, measured on first adoption |
 | R2 | The LLM resolver produces a plausible-but-wrong merge (silently drops one task's intent) | Medium | High | Verify runs after resolution; the resolver instruction forbids deleting a sibling's change; T2 is capped at 1; the landed commit is a single reviewable commit per task; `rerere` never learns from an unverified resolution because verify precedes landing |
 | R3 | Integration becomes the serial bottleneck (Amdahl) — N agents finish, then queue on one lock | Medium | Medium | Default verify is free; T0/T1 are pure git and fast; measure `integration.merged duration_ms`; speculative/parallel integration is a named non-MVP follow-on |
-| R4 | Widening the artifact path guard introduces a traversal hole | Low | High | Producer-restricted `extra_roots`, resolve-before-contain preserved, run-state store un-widened, dedicated security review in `T-Ee3Mn8` |
+| R4 | Widening the artifact path guard introduces a traversal hole | Low | High | The widening is a separate per-task wrapper, not a widened shared store; producer-restricted roots, resolve-before-contain preserved, `RunStateStore` never wrapped, `resolve_unchecked` has no caller outside the view, dedicated security review in `T-Ee3Mn8` |
 | R5 | Worktree/branch/ref leakage fills the disk (already observed in the consumer: a stray `.worktrees/full-test-*` and 14 orphan `worktree-agent-*` branches) | Medium | Medium | `release` after success, `reconcile` at run start/resume, `ao prune --worktrees`, `--worktrees-only` sweep |
 | R6 | `should_skip` + ephemeral worktrees strand work on resume (the consumer sets `skip_if_outputs_exist: true` on every fan-out entry) | High if unhandled | High | D10: `should_skip` requires `integration_status == "integrated"` for isolated tasks — an explicit AC, not an afterthought |
 | R7 | Non-isolated tasks racing an integration land | Medium | High | D5: non-isolated tasks are barriers whenever the run has an integration context; checkout sync happens only at those barrier points |
@@ -2570,6 +2619,20 @@ because implementation had begun against them.
 | **S-9** worktree directory permissions | **Fixed** — 0700 for every directory ao creates under `$AO_STATE_DIR`. |
 | **S-10** captured verify output could echo secrets | **Accepted** — pre-existing pattern (agent transcripts already do this), size-capped, documented; no new gap introduced. |
 | **S-11** `git worktree prune` scope | **No action** — the security reviewer's own analysis found it clean; R-6 tightens it anyway on the *registration* argument, which is a different concern. |
+
+### Post-merge amendments (from the `T-Wk3Nv6` code review, 2026-09-07)
+
+Two coordination items raised by that ticket's review are dispositioned here rather than in a separate
+log, so §24 stays the single record.
+
+| ID | Disposition | Where |
+|---|---|---|
+| **C-3** stale `extra_roots`-on-the-store design in downstream tickets | **Fixed.** `T-Wk3Nv6` implemented S-4 as the wrapper HLD §7.3 made normative and correctly did **not** add `extra_roots` to `LocalFsArtifactStore` (it added only a read-only `resolve_unchecked`/`root`, used solely by the view). `T-En8Hd4` and `T-Ee3Mn8` still described the pre-amendment shape — either could have reintroduced the exact widening S-4 exists to prevent, and `T-En8Hd4`'s AC-6 asserted an `_extra_roots` attribute that does not exist. Both rewritten to *consume* `isolation.view.IsolatedArtifactView`; `artifacts.py` removed from `T-En8Hd4`'s owned files; `T-Ee3Mn8`'s security AC now asserts **`resolve_unchecked` has no caller outside `isolation/view.py`** plus the S-4 sibling/cross-run/symlink property **at the engine boundary** (the unit-level cases are already covered by `T-Wk3Nv6` and are explicitly not duplicated). §7.3, §14, §21 R4, ADR-0013's Consequences, `EPIC.md` and the ai-epics page all restated to the as-built shape. | §7.3, §14, §21, `T-En8Hd4` AC-6, `T-Ee3Mn8` AC-17/AC-20 |
+| **deviation 4 / C-6** `ensure()`'s branch-collision behaviour: pseudocode and prose contradicted each other | **Fixed — decision recorded as D-ENS (§11 M3).** The pseudocode silently `delete_ref`'d a pre-existing `ao/<run>/<task>` branch; the prose in the same section said that state was a hard error. Neither is right: the `ao/` namespace is reserved (S-8), so such a branch is almost always *this run's own* leftover from a crash, and deleting it destroys work §12.1 promises to preserve. D-ENS: reuse a consistent registered worktree; **re-attach** (no `-b`) to a leftover branch, preserving its commits; **hard error** naming the branch, the owning worktree and the `ao prune` remedy when another worktree already holds it; and **never** delete a ref in `ensure()` — deletion belongs to `release()`/`reconcile()`/`gc_run()`, where ownership is established. **This changes `T-Wk3Nv6`'s shipped behaviour** (it implemented the old pseudocode's unconditional `delete_ref` + `-b`); routed to that ticket's developer as a follow-up rather than edited here, since the ticket is in review. | §11 M3 (D-ENS table + rationale), `T-Wk3Nv6` follow-up |
+
+Also corrected in passing while syncing to as-built: §11 M3's `WorktreeManager.__init__` signature
+(`integration_heads: dict[str, str]`, not a live `RunIntegrationState` — the same NFR-3 reasoning as
+R-20), and §11 M5's `IsolatedArtifactView(base=..., task_isolation=...)` construction.
 
 ### Deferred, with rationale
 

@@ -132,7 +132,9 @@ Full register in the HLD §21. The five that shape the plan:
 - **R2 — the LLM resolver merges plausibly but wrongly.** Verify runs after resolution; T2 is capped
   at one attempt; one commit per task keeps the result reviewable.
 - **R4 — the artifact path-guard widening.** `T-Ee3Mn8` carries a mandatory security pass over exactly
-  that change; `extra_roots` is producer-restricted and never spec- or agent-supplied.
+  that change. As built (`T-Wk3Nv6`), the widening is a separate per-task wrapper
+  (`isolation/view.py::IsolatedArtifactView`) and `LocalFsArtifactStore` gained no `extra_roots`
+  parameter; the wrapper's roots are producer-restricted and never spec- or agent-supplied.
 - **R6 — `should_skip` + ephemeral worktrees stranding work on resume.** The consumer sets
   `skip_if_outputs_exist: true` on every fan-out entry and keeps artifacts outside the repo, so an
   artifact can exist while the code never landed. Handled by an explicit rule (integration-aware

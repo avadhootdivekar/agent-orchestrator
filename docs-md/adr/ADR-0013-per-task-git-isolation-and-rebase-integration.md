@@ -77,7 +77,9 @@ work of the predecessors it depends on. Basing at dispatch time makes dependency
 copies of the source inside the tree that agents search — every `rg`/glob in the main checkout would
 match N duplicates, `git status` would be permanently noisy, and a non-isolated task's `git add -A`
 could sweep them in. The price is one narrow, producer-restricted widening of the artifact path guard
-(HLD §7.3): `extra_roots` is supplied only by `WorktreeManager`, never by a spec, manifest or agent,
+(HLD §7.3): the widening lives in a separate per-task wrapper (`isolation/view.py::
+IsolatedArtifactView`) rather than in `LocalFsArtifactStore`, whose own guard is unchanged; the
+wrapper's roots are supplied only by `WorktreeManager`, never by a spec, manifest or agent,
 and `resolve()` still runs before the containment test so traversal defence is unchanged.
 
 **Why one worktree per *repository*, not per `RepoRef`.** The real consumer lists `core=./fin_plan`

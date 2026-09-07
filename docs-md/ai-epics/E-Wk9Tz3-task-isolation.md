@@ -124,7 +124,8 @@ row-by-row verification matrix. The gates that decide the epic:
    worktree → manual fix → `ao resume` completes.
 4. `should_skip` refuses to skip an isolated task whose artifact exists but whose integration failed.
 5. Security pass over the artifact path-guard widening: traversal and symlink escapes still raise,
-   `extra_roots` is producer-restricted, the run-state store is un-widened.
+   the widening is a per-task wrapper (`isolation/view.py`) rather than a widened shared store, its
+   roots are producer-restricted, and `RunStateStore` is never wrapped.
 6. NFR-1 audit: no module under `isolation/` reads a repository file's contents; the conflict manifest
    handed to an agent contains only ids, paths and refs.
 
