@@ -347,7 +347,16 @@ class Integrator:
         """
         git = self._git_repos.get(repo.key)
         if git is None:
-            git = GitRepo(repo.toplevel, runner=self._runner, hooks_dir=self._hooks_dir)
+            # review C-2 (T-Rm2Lx7): `resolvers.rerere` is the documented escape hatch
+            # for a bad cached rerere resolution (HLD OQ-4) -- it must reach the actual
+            # `GitRepo` whose per-invocation `-c rerere.*` args drive replay, not just
+            # `resolve_mechanically`'s own crediting/eventing of an already-resolved path.
+            git = GitRepo(
+                repo.toplevel,
+                runner=self._runner,
+                hooks_dir=self._hooks_dir,
+                rerere=self._spec.resolvers.rerere,
+            )
             self._git_repos[repo.key] = git
         return git
 
@@ -984,16 +993,29 @@ class Integrator:
         self._log_event(
             task_id, EVENT_CONFLICT, level=logging.WARNING, repo=repo.key, paths=list(outcome.paths)
         )
-        if outcome.paths:
+        unresolved_tier: ResolverTier
+        if outcome.paths and TIER_MECHANICAL in self._spec.ladder:
             unresolved = self._resolver_hook(
                 list(outcome.paths), worktree=wt, git=git, config=self._spec.resolvers, env=env
             )
+            unresolved_tier = TIER_MECHANICAL
+        elif outcome.paths:
+            # review C-3 (T-Rm2Lx7): `"mechanical"` removed from `integration.ladder`
+            # disables the tier per HLD §8.4 ("removing an entry disables that tier") --
+            # every path left conflicted by the rebase escalates directly, the hook is
+            # never invoked, and the tier this stage reached stays `auto` (mechanical was
+            # never attempted, so it must not be credited). Git's own rerere replay, if
+            # any, already happened INSIDE `rebase_onto` above and is governed separately
+            # by `resolvers.rerere`/C-2 -- this gate only controls whether NEW mechanical
+            # work is attempted here.
+            unresolved = list(outcome.paths)
+            unresolved_tier = TIER_AUTO
         else:
             # A conflict occurred (non-clean rebase) but rerere already replayed and staged
             # every hunk (S-5): still tier T1 mechanical, never silently "auto".
             unresolved = []
         if unresolved:
-            return _StageResult(squash_sha, True, None, unresolved, TIER_MECHANICAL)
+            return _StageResult(squash_sha, True, None, unresolved, unresolved_tier)
 
         self._log_event(
             task_id, EVENT_RESOLVED, repo=repo.key, tier=TIER_MECHANICAL, resolver="mechanical"

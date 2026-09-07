@@ -328,6 +328,13 @@ class TestStructuralNoNetworkSurface:
             "commit": (("/wt", "msg"), {}),
             "reset_hard": (("/wt", "HEAD"), {}),
             "diff_names": (("/wt", "a", "b"), {}),
+            # E-Wk9Tz3 T-Wl2Bq7 R-4/R-12: `_sync_checkout`'s ref/index-safe fast-forward
+            # primitive -- resolves the T-En8Hd4 review W-1 interface gap without a
+            # `merge`/`rebase` porcelain call (this ticket's own implementation choice).
+            "fast_forward_checkout": (("/wt", "old", "new"), {}),
+            # E-Wk9Tz3 T-Wl2Bq7 review C-2: rename-detection-off variant so a pure rename
+            # surfaces both its old and new path for collision-set classification.
+            "diff_names_no_renames": (("/wt", "a", "b"), {}),
             # E-Wk9Tz3 T-Ib5Qy9 review C-3: promoted from a private `integrator.py`
             # reach-across into this module's public surface.
             "grep_conflict_markers": (("/wt", "HEAD"), {"paths": ["f.txt"]}),
@@ -347,6 +354,12 @@ class TestStructuralNoNetworkSurface:
             "rebase_in_progress": (("/wt",), {}),
             "conflicted_paths": (("/wt",), {}),
             "show_stage": (("/wt", 1, "f.txt"), {}),
+            # E-Wk9Tz3 T-Rm2Lx7 review C-1: mechanical-resolver git calls routed through
+            # this single choke point instead of a local `subprocess` call in
+            # `isolation/resolvers.py`.
+            "checkout_stage": (("/wt", "ours", "f.txt"), {}),
+            "checkout_merge": (("/wt", "f.txt"), {}),
+            "merge_file_union": ((b"ours", b"base", b"theirs"), {}),
         }
         assert set(call_args) >= set(public_methods), (
             f"new public method(s) not exercised by this structural test: "
@@ -894,6 +907,117 @@ class TestRefsAndCommits:
         assert (repo / "f.txt").read_text() == "base\n"
 
 
+class TestFastForwardCheckout:
+    """E-Wk9Tz3 T-Wl2Bq7 R-4/R-12: the ref/index-safe fast-forward primitive
+    `_sync_checkout` uses instead of `git merge`/`git rebase`.
+    """
+
+    def test_clean_fast_forward_moves_head_and_updates_only_touched_paths(
+        self, tmp_path: Path
+    ) -> None:
+        repo = make_repo(tmp_path, files={"a.txt": "1\n", "b.txt": "unrelated\n"})
+        g = GitRepo(str(repo))
+        old = g.rev_parse("HEAD")
+        (repo / "a.txt").write_text("1\n2\n")
+        g.add_all(str(repo))
+        new = g.commit(str(repo), "advance a.txt")
+        assert new is not None
+        g.reset_hard(str(repo), old)  # back to old -- as if this were the shared checkout
+
+        assert g.fast_forward_checkout(str(repo), old, new) is True
+        assert g.rev_parse("HEAD") == new
+        assert (repo / "a.txt").read_text() == "1\n2\n"
+        assert (repo / "b.txt").read_text() == "unrelated\n"
+        assert g.is_dirty() is False
+
+    def test_unrelated_dirty_file_is_left_untouched(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"a.txt": "1\n", "b.txt": "unrelated\n"})
+        g = GitRepo(str(repo))
+        old = g.rev_parse("HEAD")
+        (repo / "a.txt").write_text("1\n2\n")
+        g.add_all(str(repo))
+        new = g.commit(str(repo), "advance a.txt")
+        assert new is not None
+        g.reset_hard(str(repo), old)
+        (repo / "b.txt").write_text("locally dirtied, not part of the incoming diff\n")
+
+        assert g.fast_forward_checkout(str(repo), old, new) is True
+        assert g.rev_parse("HEAD") == new
+        assert (repo / "a.txt").read_text() == "1\n2\n"
+        assert (repo / "b.txt").read_text() == "locally dirtied, not part of the incoming diff\n"
+
+    def test_colliding_dirty_file_refuses_and_leaves_working_tree_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        repo = make_repo(tmp_path, files={"a.txt": "1\n"})
+        g = GitRepo(str(repo))
+        old = g.rev_parse("HEAD")
+        (repo / "a.txt").write_text("1\n2\n")
+        g.add_all(str(repo))
+        new = g.commit(str(repo), "advance a.txt")
+        assert new is not None
+        g.reset_hard(str(repo), old)
+        (repo / "a.txt").write_text("1\nLOCAL EDIT\n")
+
+        assert g.fast_forward_checkout(str(repo), old, new) is False
+        assert g.rev_parse("HEAD") == old  # untouched -- no ref move, no data loss
+        assert (repo / "a.txt").read_text() == "1\nLOCAL EDIT\n"
+
+    def test_divergent_old_refuses_without_touching_anything(self, tmp_path: Path) -> None:
+        """Review C-3: safety must not depend on the caller's own `is_ancestor` gate --
+        `fast_forward_checkout` verifies ancestry itself. Plain `git read-tree -u -m` does
+        NOT self-verify this (confirmed empirically: given a genuinely divergent *old* it
+        silently stages a nonsensical deletion instead of refusing), so this pins the
+        method's OWN internal guard, independent of any caller."""
+        repo = make_repo(tmp_path, files={"a.txt": "1\n"})
+        g = GitRepo(str(repo))
+        base = g.rev_parse("HEAD")
+        # Two divergent branches off the same base -- neither is an ancestor of the other.
+        (repo / "a.txt").write_text("1\nours\n")
+        g.add_all(str(repo))
+        ours = g.commit(str(repo), "ours")
+        assert ours is not None
+        g.reset_hard(str(repo), base)
+        (repo / "a.txt").write_text("1\ntheirs\n")
+        g.add_all(str(repo))
+        theirs = g.commit(str(repo), "theirs")
+        assert theirs is not None
+        g.reset_hard(str(repo), ours)  # checkout sits on "ours" -- diverged from "theirs"
+
+        assert g.is_ancestor(ours, theirs) is False
+        assert g.fast_forward_checkout(str(repo), ours, theirs) is False
+        assert g.rev_parse("HEAD") == ours  # untouched -- no ref move, no data loss
+        assert (repo / "a.txt").read_text() == "1\nours\n"
+        assert g.is_dirty() is False
+
+    def test_never_invokes_merge_or_rebase(self, tmp_path: Path) -> None:
+        """R-4/R-12's own explicit contract: only ref/index-safe plumbing, never the
+        `merge`/`rebase` porcelain commands."""
+        repo = make_repo(tmp_path, files={"a.txt": "1\n"})
+        g = GitRepo(str(repo))
+        old = g.rev_parse("HEAD")
+        (repo / "a.txt").write_text("1\n2\n")
+        g.add_all(str(repo))
+        new = g.commit(str(repo), "advance a.txt")
+        assert new is not None
+        g.reset_hard(str(repo), old)
+
+        recorder = RecordingFakeRunner()
+        real_run = subprocess.run
+
+        def _spy_and_run(argv, **kwargs):  # type: ignore[no-untyped-def]
+            recorder.calls.append({"argv": argv})
+            return real_run(argv, capture_output=True, **kwargs)
+
+        g2 = GitRepo(str(repo))
+        g2.runner = _spy_and_run  # type: ignore[assignment]
+        assert g2.fast_forward_checkout(str(repo), old, new) is True
+        for call in recorder.calls:
+            argv = call["argv"]
+            assert "merge" not in argv
+            assert "rebase" not in argv
+
+
 class TestRebase:
     def test_clean_rebase(self, tmp_path: Path) -> None:
         repo, base_sha, ours, theirs = make_conflict_repo(tmp_path, "clean")
@@ -1207,3 +1331,69 @@ class TestHooksAndSafetyS1:
         g = GitRepo(str(repo))
         g.worktree_add(str(tmp_path / "wt-hostile-global"), "ao/hostile-global", "HEAD")
         assert not sentinel.exists()
+
+
+# ---------------------------------------------------------------------------------------
+# Unit tests: checkout_stage / checkout_merge / merge_file_union
+# (E-Wk9Tz3 T-Rm2Lx7 review C-1: mechanical-resolver git calls promoted from a local
+# `subprocess` call in `isolation/resolvers.py` into this module's own public surface,
+# so they route through `_run`'s SAFETY_ARGS/forced env/forbidden-subcommand guard.)
+# ---------------------------------------------------------------------------------------
+
+
+class TestCheckoutStageAndMergeFileUnion:
+    def test_checkout_stage_writes_worktree_only_index_stays_unmerged(self, tmp_path: Path) -> None:
+        repo, base_sha, ours, theirs = make_conflict_repo(tmp_path, "true_conflict")
+        g = GitRepo(str(repo))
+        outcome = g.rebase_onto(str(repo), theirs, base_sha, ours)
+        assert outcome.clean is False
+        assert outcome.paths == ["f.txt"]
+
+        # git rebase's own ours/theirs swap (documented empirically in `resolvers.py`'s
+        # `RegenerateResolver` docstring): stage 3 ("theirs") is the `ours`-named branch
+        # being replayed, not the `theirs`-named onto-target.
+        g.checkout_stage(str(repo), "theirs", "f.txt")
+        # Worktree file now holds that stage's content, but the index is untouched -- the
+        # path is still reported as unmerged (matches empirical git behavior this
+        # method's docstring documents).
+        assert (repo / "f.txt").read_text() == "a-ours\nb\nc\n"
+        assert g.conflicted_paths(str(repo)) == ["f.txt"]
+
+    def test_checkout_merge_restores_original_conflict_markers(self, tmp_path: Path) -> None:
+        repo, base_sha, ours, theirs = make_conflict_repo(tmp_path, "true_conflict")
+        g = GitRepo(str(repo))
+        g.rebase_onto(str(repo), theirs, base_sha, ours)
+
+        g.checkout_stage(str(repo), "ours", "f.txt")
+        assert "<<<<<<<" not in (repo / "f.txt").read_text()
+
+        g.checkout_merge(str(repo), "f.txt")
+        restored = (repo / "f.txt").read_text()
+        assert "<<<<<<<" in restored
+        assert g.conflicted_paths(str(repo)) == ["f.txt"]
+
+    def test_merge_file_union_merges_additive_blobs(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path)
+        g = GitRepo(str(repo))
+        merged = g.merge_file_union(
+            ours=b"a\nb\nc\nx\ny\n", base=b"a\nb\nc\n", theirs=b"a\nb\nc\nx\nz\n"
+        )
+        assert merged == b"a\nb\nc\nx\ny\nz\n"
+
+    def test_merge_file_union_returns_none_for_binary_content(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path)
+        g = GitRepo(str(repo))
+        merged = g.merge_file_union(ours=bytes(range(16)), base=bytes(4), theirs=bytes(range(8)))
+        assert merged is None
+
+    def test_checkout_stage_and_merge_file_union_never_reach_a_forbidden_verb(
+        self, tmp_path: Path
+    ) -> None:
+        fake = RecordingFakeRunner(responses=[ok(stdout=b"")] * 10)
+        g = GitRepo("/repo", runner=fake)
+        g.checkout_stage("/wt", "ours", "f.txt")
+        g.checkout_merge("/wt", "f.txt")
+        g.merge_file_union(b"ours", b"base", b"theirs")
+        for argv in fake.argvs():
+            for verb in FORBIDDEN_SUBCOMMANDS:
+                assert verb not in argv, f"forbidden verb {verb!r} reachable via argv {argv}"

@@ -6,7 +6,7 @@
 - Owner: unassigned (developer)
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: In Review
 - Estimate: 2.5 days
 
 ## Requirements Mapping
@@ -109,3 +109,6 @@ HLD §11 M6 — plan_resolution and apply_plan, verbatim.
 - By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. S-6 wired: the
   regenerate subprocess uses `rule.timeout_seconds`, with a test asserting it fails fast at its own
   bound rather than holding the per-repo integration lock for the full 1800s. Estimate unchanged.
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: Implemented and in review. All
+  10 ACs (incl. S-5/S-6 amendments) covered by real-git tests; two implementation-time corrections to
+  the HLD pseudocode found and fixed (see `STATUS.md` "Implementation notes"). Full detail below.

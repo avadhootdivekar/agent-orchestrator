@@ -26,6 +26,7 @@ from agent_orchestrator.isolation.integrator import (
     REASON_DENYLISTED_PATH,
     REASON_LOCK_TIMEOUT,
     REASON_REF_RACE,
+    STATUS_CONFLICT_RESOLVER,
     STATUS_EMPTY,
     STATUS_FAILED,
     STATUS_INTEGRATED,
@@ -34,6 +35,7 @@ from agent_orchestrator.isolation.integrator import (
     ResolverHook,
     RunIntegrationSnapshot,
 )
+from agent_orchestrator.isolation.resolvers import resolve_mechanically
 from agent_orchestrator.isolation.worktrees import (
     IsolatedRepo,
     TaskIsolation,
@@ -44,6 +46,7 @@ from agent_orchestrator.models import (
     ON_DENYLISTED_ALLOW,
     ON_DENYLISTED_WARN,
     TIER_AUTO,
+    TIER_MECHANICAL,
     IntegrationSpec,
     ResolverConfig,
     TaskIntegrationState,
@@ -534,6 +537,123 @@ class TestMechanicalResolution:
         assert resolver_calls == []
         assert result.status == STATUS_INTEGRATED
         assert result.tier_reached == "mechanical"
+
+    def test_rerere_false_prevents_replay_end_to_end_via_the_real_integrator(
+        self, tmp_path: Path
+    ) -> None:
+        """review C-2 (T-Rm2Lx7): `resolvers.rerere: false` must stop git's OWN rerere
+        replay, not merely withhold `resolve_mechanically`'s after-the-fact crediting of
+        an already-resolved path. Proven through a REAL `Integrator` -- whose `_git_for`
+        now threads `spec.resolvers.rerere` into the `GitRepo` it constructs -- using
+        T-Rm2Lx7's actual `resolve_mechanically` (not a stub) as the `resolver_hook`.
+
+        Same teach/replay shape as the sibling test above (rerere ON for the teaching
+        rebase specifically -- that step exists only to seed `$GIT_DIR/rr-cache`), but the
+        REPLAY runs with `resolvers.rerere=False` in the spec: with no rerere replay and
+        no union/regenerate rule configured, both files must still be genuinely conflicted
+        when `resolve_mechanically` is called, and the task must escalate -- never land.
+        """
+        repo, base_sha, ours, theirs = _two_file_conflict(tmp_path)
+        ours_tip = _raw_git(["rev-parse", ours], repo).strip()
+        theirs_tip = _raw_git(["rev-parse", theirs], repo).strip()
+
+        g = GitRepo(str(repo), hooks_dir=tmp_path / "hooks", rerere=True)
+        _raw_git(["checkout", "-q", ours], repo)
+        outcome = g.rebase_onto(str(repo), theirs_tip, base_sha, ours)
+        assert outcome.clean is False
+        (repo / "a.txt").write_text("resolved-a\n")
+        (repo / "b.txt").write_text("resolved-b\n")
+        g.add_all(str(repo))
+        cont = g.rebase_continue(str(repo))
+        assert cont.clean is True
+        _raw_git(["checkout", "-q", "main"], repo)
+
+        isolated = _isolated_repo_for(repo)
+        manager, _isos = _manager_for(
+            {"core": repo}, "run-1", tmp_path / "hooks", heads={isolated.key: base_sha}
+        )
+        task_iso = manager.ensure("task-a", 1, [])
+        wt = Path(task_iso.repos[0].worktree_root)
+        _raw_git(["cherry-pick", ours_tip], wt)
+        _set_integration_ref(repo, "run-1", theirs_tip)
+
+        spec = IntegrationSpec(resolvers=ResolverConfig(rerere=False))
+        escalation = _make_escalation_stub(status="conflict_resolver")
+        integrator = _integrator(
+            spec,
+            tmp_path / "hooks",
+            resolver_hook=resolve_mechanically,
+            escalation_hook=escalation,
+        )
+        result = integrator.integrate(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(),
+            1,
+            agent_id="agent-1",
+        )
+
+        assert result.status == STATUS_CONFLICT_RESOLVER
+        assert result.status != STATUS_INTEGRATED
+        assert sorted(result.conflicted_paths) == ["a.txt", "b.txt"]
+
+    def test_removing_mechanical_from_the_ladder_skips_the_hook_entirely(
+        self, tmp_path: Path
+    ) -> None:
+        """review C-3 (T-Rm2Lx7): HLD §8.4 -- "removing an entry disables that tier." A
+        union rule that WOULD resolve the conflict is configured, but with `"mechanical"`
+        absent from `integration.ladder`, the hook must never even be invoked -- the
+        conflict escalates directly with the raw rebase conflict, not
+        `resolve_mechanically`'s output, and `tier_reached` must not claim `mechanical`
+        was attempted.
+        """
+        repo, base_sha, ours, theirs = make_conflict_repo(tmp_path, "union")
+        isolated = _isolated_repo_for(repo)
+        manager, _isos = _manager_for(
+            {"core": repo}, "run-1", tmp_path / "hooks", heads={isolated.key: base_sha}
+        )
+        task_iso = manager.ensure("task-a", 1, [])
+        ours_tip = _raw_git(["rev-parse", ours], repo).strip()
+        theirs_tip = _raw_git(["rev-parse", theirs], repo).strip()
+        wt = Path(task_iso.repos[0].worktree_root)
+        _raw_git(["cherry-pick", ours_tip], wt)
+        _set_integration_ref(repo, "run-1", theirs_tip)
+
+        hook_calls: list[list[str]] = []
+
+        def spy_resolver(
+            conflicted_paths: list[str],
+            *,
+            worktree: str,
+            git: GitRepo,
+            config: ResolverConfig,
+            env: dict[str, str],
+        ) -> list[str]:
+            hook_calls.append(list(conflicted_paths))
+            return resolve_mechanically(
+                conflicted_paths, worktree=worktree, git=git, config=config, env=env
+            )
+
+        spec = IntegrationSpec(
+            ladder=[TIER_AUTO, "llm", "rerun"], resolvers=ResolverConfig(union=["f.txt"])
+        )
+        escalation = _make_escalation_stub(status="conflict_resolver")
+        integrator = _integrator(
+            spec, tmp_path / "hooks", resolver_hook=spy_resolver, escalation_hook=escalation
+        )
+        result = integrator.integrate(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(),
+            1,
+            agent_id="agent-1",
+        )
+
+        assert hook_calls == []  # never invoked -- ladder omits "mechanical"
+        assert result.status == STATUS_CONFLICT_RESOLVER
+        assert result.conflicted_paths == ["f.txt"]  # the RAW rebase conflict, unresolved
+        assert result.tier_reached != TIER_MECHANICAL
+        assert result.tier_reached == TIER_AUTO
 
 
 # ---------------------------------------------------------------------------------------

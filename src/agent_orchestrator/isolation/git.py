@@ -46,6 +46,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, NoReturn, Protocol
@@ -906,8 +907,77 @@ class GitRepo:
     def reset_hard(self, cwd: str, ref: str) -> None:
         self._run(["reset", "--hard", ref], cwd=cwd)
 
+    def fast_forward_checkout(self, cwd: str, old: str, new: str) -> bool:
+        """Ref/index-safe fast-forward of the checked-out branch at *cwd* from *old* to
+        *new* (E-Wk9Tz3 T-Wl2Bq7 R-4/R-12): a plumbing-only alternative to `git merge
+        --ff-only` -- WITHOUT ever invoking `merge`/`rebase` porcelain -- adopted as this
+        ticket's own implementation choice (not mandated by the HLD's own §12.3 text, which
+        still describes `merge --ff-only`; that wording is to be reconciled by
+        `T-Dr5Yq6`'s docs pass) after verifying, empirically against real repos, that it
+        preserves every safety property that matters here: an atomic refusal (index/tree/
+        HEAD byte-for-byte unchanged, even for a multi-path change where only one path
+        collides), no merge commit, no `MERGE_HEAD`, no merge driver/hook. Resolves the
+        `T-En8Hd4` review W-1 interface gap in a stronger form than W-1's own suggested
+        `merge_ff_only()` wrapper (which would have kept the porcelain `merge` verb).
+
+        Two plumbing calls:
+
+        1. ``git read-tree -u -m <old> <new>`` -- a 2-tree index+working-tree merge that
+           updates ONLY the paths that actually differ between *old* and *new*, leaving
+           every other path (including an untracked or locally-modified file the update
+           never touches) completely alone. It fails, leaving the working tree and index
+           byte-for-byte UNCHANGED, if a local modification (or an untracked file) would be
+           overwritten by one of those paths -- verified empirically (not merely assumed)
+           against a real repo: a colliding tracked edit is refused with the working tree
+           untouched; a non-colliding dirty file elsewhere is left exactly as it was.
+        2. ``git update-ref HEAD <new> <old>`` -- a CAS ref move that follows HEAD's
+           symbolic ref to the checked-out branch (writing its reflog), only run once step 1
+           has proven the working tree/index already match *new*.
+
+        Unlike `git merge --ff-only`, plain `read-tree -u -m` does NOT self-verify that
+        *old* is an ancestor of *new* -- given a genuinely divergent *old* it silently
+        applies a nonsensical two-way diff instead of refusing (verified empirically:
+        `T-En8Hd4`/`T-Wl2Bq7` review Investigation A, case 6). This method therefore
+        verifies ancestry itself (`is_ancestor`) BEFORE attempting step 1, so the safety
+        property holds by construction and does not depend on a caller's own gate (review
+        C-3) -- restoring genuine parity with `merge --ff-only`'s own self-check.
+
+        Returns ``False`` (never raises) when *old* is not an ancestor of *new*, or when
+        step 1 refuses because of a collision -- callers (`Orchestrator._sync_checkout`)
+        classify the cause themselves from their own precomputed dirty/incoming path sets,
+        since git's own exit code here does not distinguish "collision" from other
+        read-tree failures. Raises `GitError` only for a genuinely unexpected failure of
+        step 2 (the ref move), which by that point in the sequence should never fail on the
+        CAS's own terms since *old* was just verified as the paths' common ancestor.
+        """
+        if not self.is_ancestor(old, new):
+            return False  # not a fast-forward -- refuse before touching the working tree
+        rt_args = ["read-tree", "-u", "-m", old, new]
+        cp = self._run(rt_args, cwd=cwd, check=False)
+        if cp.returncode != 0:
+            return False  # collision (or an untracked-file conflict) -- working tree untouched
+        ref_args = ["update-ref", "HEAD", new, old]
+        cp2 = self._run(ref_args, cwd=cwd, check=False)
+        if cp2.returncode != 0:
+            self._raise(ref_args, cp2)
+        return True
+
     def diff_names(self, cwd: str, a: str, b: str) -> list[str]:
         cp = self._run(["diff", "--name-only", a, b], cwd=cwd)
+        return [line for line in _decode(cp.stdout).splitlines() if line]
+
+    def diff_names_no_renames(self, cwd: str, a: str, b: str) -> list[str]:
+        """Like `diff_names`, but with rename detection forced OFF (E-Wk9Tz3 T-Wl2Bq7
+        review C-2): a pure rename between *a* and *b* is reported as its underlying
+        delete-of-old-path + add-of-new-path pair instead of collapsing to just the new
+        path. `_sync_checkout`'s collision-set computation needs this -- a local,
+        uncommitted edit at the OLD (pre-rename) path is exactly as real a collision as one
+        at the new path, and `diff_names`'s default rename-collapsed output would silently
+        miss it (never naming it, misclassifying the refusal as a generic anomaly instead
+        of a named `dirty_checkout`). Verified empirically that `--no-renames` restores
+        both paths regardless of the installed git's `diff.renames` config.
+        """
+        cp = self._run(["diff", "--no-renames", "--name-only", a, b], cwd=cwd)
         return [line for line in _decode(cp.stdout).splitlines() if line]
 
     def grep_conflict_markers(
@@ -1080,3 +1150,47 @@ class GitRepo:
         if cp.returncode != 0:
             return None
         return cp.stdout
+
+    # --- mechanical conflict resolution (E-Wk9Tz3 T-Rm2Lx7 review C-1: routed through
+    # this single choke point -- SAFETY_ARGS, the forbidden-subcommand guard, and the
+    # forced hook-free/no-prompt env -- instead of a local subprocess call in
+    # `isolation/resolvers.py`) ----------------------------------------------------------
+
+    def checkout_stage(self, cwd: str, side: Literal["ours", "theirs"], path: str) -> None:
+        """`git checkout --ours|--theirs -- <path>`: writes ONLY the worktree file for
+        *path* from the given conflict stage. The index's three unmerged stages are left
+        untouched (verified empirically against the installed git, not assumed) -- a
+        caller can always restore the original conflict markers afterward via
+        `checkout_merge` rather than needing to cache the pre-image bytes itself.
+        """
+        self._run(["checkout", f"--{side}", "--", path], cwd=cwd, check=False)
+
+    def checkout_merge(self, cwd: str, path: str) -> None:
+        """`git checkout --merge -- <path>`: restores the original 3-way conflict markers
+        in the worktree from the index's still-present unmerged stages. Only meaningful
+        before those stages have been collapsed by a `git add` for *path*.
+        """
+        self._run(["checkout", "--merge", "--", path], cwd=cwd, check=False)
+
+    def merge_file_union(self, ours: bytes, base: bytes, theirs: bytes) -> bytes | None:
+        """`git merge-file --union -p` over three already-fetched blobs (e.g. from
+        `show_stage`), via temp files -- NFR-1: content only ever moves between git
+        subprocesses and temp files, never read back through Python file I/O. Returns the
+        merged bytes, or `None` when the merge itself cannot produce one (binary content,
+        an internal git error) -- callers treat that as "decline", never as a raised
+        error. A genuine infrastructure failure (timeout, git unavailable) still raises
+        `GitError` via `_run`, same as every other method on this class.
+        """
+        with tempfile.TemporaryDirectory(prefix="ao-git-merge-file-") as tmp_name:
+            tmp = Path(tmp_name)
+            base_path, ours_path, theirs_path = tmp / "base", tmp / "ours", tmp / "theirs"
+            base_path.write_bytes(base)
+            ours_path.write_bytes(ours)
+            theirs_path.write_bytes(theirs)
+            cp = self._run(
+                ["merge-file", "--union", "-p", str(ours_path), str(base_path), str(theirs_path)],
+                check=False,
+            )
+            if cp.returncode != 0:
+                return None
+            return cp.stdout
