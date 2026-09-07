@@ -76,6 +76,11 @@ epic owner rather than making them — that file is owned elsewhere.
 10. **R-13 / S-8 documentation duties.** The operator docs state (a) Git LFS is not handled, with the
     revisit trigger (`isolation.env` + `GIT_LFS_SKIP_SMUDGE`, and the NFR-6 disk guidance), and
     (b) `refs/heads/ao/**` and `refs/ao/**` are reserved for the engine.
+10b. **Reconcile the CLI docs to the two-flag model** (HLD §24, C-1 of T-Cx4Jf1 Part A): `--isolation`
+    / `AO_ISOLATION` / `isolation.mode` is a **fill-in default** for tasks that declare no `isolation`;
+    `--no-isolation` (env `AO_NO_ISOLATION=1`, no config layer) is the kill switch that overrides
+    explicit per-task values and logs which ones. There is no `auto` mode.
+
 11. **Verify the recovery procedure by executing it.** The T4 recovery path (retained worktree +
     branch -> hand-resolve -> `ao resume`) is walked end to end once against a real temp repo, and the
     docs are corrected wherever it does not work as written. Same for `ao prune --worktrees-only`

@@ -12,7 +12,7 @@
   user and are recorded, not re-litigated), Claude (architect role)
 - Related: **[ADR-0007](ADR-0007-parallel-task-execution.md)** (opt-in parallel execution — this ADR
   closes the write-conflict gap ADR-0007 explicitly accepted) · [ADR-0003](ADR-0003-settings-precedence-policy.md)
-  (invocation-chain precedence — `--isolation` rides it) · [ADR-0006](ADR-0006-per-agent-config-over-run-level-flags.md)
+  (invocation-chain precedence — `--isolation` rides it as a **fill-in default** for tasks that declare no `isolation`, never as an override of an explicit per-task value; the separate `--no-isolation` kill switch is the only thing that overrides authored intent, and it logs what it overrode) · [ADR-0006](ADR-0006-per-agent-config-over-run-level-flags.md)
   (run-level vs per-agent knobs) · [ADR-0011](ADR-0011-untrusted-workspace-content-rendering.md)
   (path-guard lineage) · design [`task-isolation-hld.md`](../task-isolation-hld.md) · epic
   [`E-Wk9Tz3-task-isolation`](../../meta/tickets/E-Wk9Tz3-task-isolation/EPIC.md) ·

@@ -1952,17 +1952,25 @@ command + JSON schema; (6) `load_hotspots(path)` with an empty-on-any-error fall
 **Dependencies.** M2-M8.
 
 ```
-# --- precedence (ADR-0003 §3: run-pressure settings ride the invocation chain) ---
---isolation {none,worktree,auto}  >  AO_ISOLATION  >  .ao/config.yaml: isolation.mode  >  spec default
-   "auto"  = honour the spec (the default; no override)
-   "none"  = force every task to isolation:none (a global kill switch for a bad run)
-   "worktree" = force every non-structural task to isolation:worktree
-# Rationale: an operator must be able to disable isolation without editing a spec, exactly as
-# --max-parallel can bound concurrency without editing one.
+# --- (a) the FILL-IN default (ADR-0003 §3 invocation chain; ADR-0006 fill-in, never clobber) ---
+--isolation {none,worktree}  >  AO_ISOLATION  >  .ao/config.yaml: isolation.mode  >  built-in "none"
+# This supplies the value for tasks that declare NO `isolation` of their own -- i.e. it is the
+# fill-in for `TaskSpec.isolation == "inherit"`, exactly as `models.resolve_task_isolation` already
+# resolves it, and it NEVER overrides an explicit per-task value. Same category as ADR-0006's
+# per-agent-vs-run-level rule: a run-level flag fills gaps, it does not clobber authored intent.
+# There is no "auto" mode -- "unset" already means "honour the spec".
+
+# --- (b) the EMERGENCY KILL SWITCH (separate flag, deliberately) ---
+--no-isolation            (env AO_NO_ISOLATION=1; NO config-file layer -- it is not a policy)
+# Forces EVERY task to isolation:none regardless of what the spec says, and LOGS the ids of every
+# task whose explicit `isolation` it overrode (so the override is auditable, not silent).
+# Mutually exclusive with `--isolation worktree` -> Exit(1) with a message naming both.
+# Rationale: overriding an author's explicit choice is a different act from filling in a default,
+# so it gets a different flag. An operator can still disable isolation without editing a spec.
 
 # --- .ao/config.yaml (new block; documented in _INIT_TEMPLATE) ---
 isolation:
-  mode: auto            # auto | none | worktree
+  mode: none            # none | worktree -- the FILL-IN default only; no kill switch here
   strict: false         # true => a non-git repo / old git is a hard failure, not a degrade
   state_dir: null       # override $AO_STATE_DIR for worktrees
   env:                  # per-repo env injected into isolated tasks AND verify (D7)
@@ -2019,7 +2027,8 @@ existing `consecutive_failures`/`task_failures` breaker and HALTs, rather than a
 `ao/<run_id>/<task_id>` branch as a hard error (the right failure mode), but the reservation should be
 stated, not merely enforced: the `.ao/config.yaml` template comment block and the operator docs both
 say *"`refs/heads/ao/**` and `refs/ao/**` are reserved for the engine — do not create branches there."*
-**Subtasks.** (1) `--isolation` option on `run`+`resume` + env + config + `_INIT_TEMPLATE`;
+**Subtasks.** (1) `--isolation` (fill-in) and `--no-isolation` (kill switch) options on `run`+`resume`,
+their env layers, the config `isolation.mode` layer, the mutual-exclusion guard, and `_INIT_TEMPLATE`;
 (2) `isolation.env` plumbing to `TaskContext.env`; (3) `ao prune` worktree GC + `--worktrees-only`;
 (4) event emission audit (every branch of M3-M7 emits exactly one terminal event); (5) `status.json`
 fields; (6) the dashboard column.
@@ -2321,7 +2330,8 @@ Nothing else changes: `inputs`/`outputs` stay workspace-relative strings and the
 (§7.2) sorts out what is isolated. `touches` is optional and may be wrong.
 
 **Local iteration speed.** The default verify is free, worktree creation copies tracked files only,
-and `--isolation none` is a one-flag kill switch that reproduces today's behaviour exactly. Unit-level
+and `--no-isolation` is a one-flag kill switch that reproduces today's behaviour exactly (while
+`--isolation none` merely supplies the default for tasks that did not choose). Unit-level
 work on the ladder needs no agent at all: `plan_resolution`, `rank_wave`, `effective_path`,
 `sanitize_ref_component` and the churn parser are pure functions.
 
@@ -2401,7 +2411,10 @@ Determinism rules for these tests: fixed `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE`,
 4. Verify-failure path → `integration.rerun_dispatched` then success on the fresh base.
 5. Ladder exhausted → exit code 1, task `failed`, worktree and branch retained, `ao resume` after a
    manual fix completes the run.
-6. `--isolation none` on the same spec → today's shared-checkout behaviour.
+6. `--no-isolation` on the same spec → today's shared-checkout behaviour, and the run log names every
+   task whose explicit `isolation: worktree` it overrode. `--isolation none` on a spec whose tasks
+   declare `isolation: worktree` leaves them **isolated** (fill-in, not clobber);
+   `--no-isolation --isolation worktree` exits 1.
 7. Precedence matrix for `--isolation` / `AO_ISOLATION` / `.ao/config.yaml`, mirroring
    `tests/test_e2e_cli_max_parallel.py`.
 8. **NFR-2 gate:** the entire pre-epic engine suite passes **unedited** at defaults.
@@ -2629,6 +2642,8 @@ log, so §24 stays the single record.
 |---|---|---|
 | **C-3** stale `extra_roots`-on-the-store design in downstream tickets | **Fixed.** `T-Wk3Nv6` implemented S-4 as the wrapper HLD §7.3 made normative and correctly did **not** add `extra_roots` to `LocalFsArtifactStore` (it added only a read-only `resolve_unchecked`/`root`, used solely by the view). `T-En8Hd4` and `T-Ee3Mn8` still described the pre-amendment shape — either could have reintroduced the exact widening S-4 exists to prevent, and `T-En8Hd4`'s AC-6 asserted an `_extra_roots` attribute that does not exist. Both rewritten to *consume* `isolation.view.IsolatedArtifactView`; `artifacts.py` removed from `T-En8Hd4`'s owned files; `T-Ee3Mn8`'s security AC now asserts **`resolve_unchecked` has no caller outside `isolation/view.py`** plus the S-4 sibling/cross-run/symlink property **at the engine boundary** (the unit-level cases are already covered by `T-Wk3Nv6` and are explicitly not duplicated). §7.3, §14, §21 R4, ADR-0013's Consequences, `EPIC.md` and the ai-epics page all restated to the as-built shape. | §7.3, §14, §21, `T-En8Hd4` AC-6, `T-Ee3Mn8` AC-17/AC-20 |
 | **deviation 4 / C-6** `ensure()`'s branch-collision behaviour: pseudocode and prose contradicted each other | **Fixed — decision recorded as D-ENS (§11 M3).** The pseudocode silently `delete_ref`'d a pre-existing `ao/<run>/<task>` branch; the prose in the same section said that state was a hard error. Neither is right: the `ao/` namespace is reserved (S-8), so such a branch is almost always *this run's own* leftover from a crash, and deleting it destroys work §12.1 promises to preserve. D-ENS: reuse a consistent registered worktree; **re-attach** (no `-b`) to a leftover branch, preserving its commits; **hard error** naming the branch, the owning worktree and the `ao prune` remedy when another worktree already holds it; and **never** delete a ref in `ensure()` — deletion belongs to `release()`/`reconcile()`/`gc_run()`, where ownership is established. **This changes `T-Wk3Nv6`'s shipped behaviour** (it implemented the old pseudocode's unconditional `delete_ref` + `-b`); routed to that ticket's developer as a follow-up rather than edited here, since the ticket is in review. | §11 M3 (D-ENS table + rationale), `T-Wk3Nv6` follow-up |
+
+| **C-1 (T-Cx4Jf1 Part A)** `--isolation` was specified as both a default *and* a per-task override | **Fixed — decision taken.** `--isolation {none,worktree}` / `AO_ISOLATION` / `isolation.mode` is a **fill-in default** for tasks that declare no `isolation` (i.e. the value behind `"inherit"`), consistent with ADR-0006 and with `models.resolve_task_isolation`; it never overrides an explicit per-task value. Overriding authored intent is a different act, so it gets a different flag: **`--no-isolation`** (env `AO_NO_ISOLATION=1`, **no** config-file layer) forces every task to `none`, logs the ids it overrode, and is mutually exclusive with `--isolation worktree`. The `"auto"` mode is **removed** — "unset" already means "honour the spec". `isolation.strict` and `isolation.env` stay config-file-only. | §11 M9, §16, §17.3, ADR-0013 Related-line |
 
 Also corrected in passing while syncing to as-built: §11 M3's `WorktreeManager.__init__` signature
 (`integration_heads: dict[str, str]`, not a live `RunIntegrationState` — the same NFR-3 reasoning as
