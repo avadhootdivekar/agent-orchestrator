@@ -2,7 +2,7 @@
 
 - ID: `T-Wk3Nv6-worktree-lifecycle`
 - Updated At: 2026-09-07
-- State: In Review (fix pass complete, re-submitted)
+- State: Done
 - Owner: developer-agent
 
 ## This update
@@ -177,3 +177,11 @@ stable. Coverage: `isolation/paths.py` 100%, `isolation/view.py` 100%, `isolatio
 `worktree_attach` method fully covered), TOTAL 95-96% depending on which suite slice — no regression
 against the 94% baseline.
 — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- By: coordinator · Role: manager · Date: 2026-09-07 · Comment: State -> **Done**. Review findings
+  in this ticket's `REVIEW.md` were dispositioned by the implementing agent, the gates were re-run
+  independently by the coordinator (ruff check/format clean, `mypy src` at exactly the 4 pre-existing
+  `_version.py` errors, full suite green with no regression against the pre-epic baseline of 2008
+  passed / 7 skipped / 94% coverage), and the work is committed on `ad/task-isolation` under this
+  ticket's own commit. Anything still open was re-filed against a named later ticket rather than left
+  in this one; see the epic `STATUS.md` rollup for that ticket's entry.

@@ -2,7 +2,7 @@
 
 - ID: `T-En8Hd4-engine-isolation-wiring`
 - Updated At: 2026-09-07
-- State: In Review
+- State: Done
 - Owner: developer-agent
 
 ## This update
@@ -339,3 +339,11 @@
   **TOTAL 95%** (matches baseline) — the earlier `--cov` hang report did not reproduce here either,
   consistent with the reviewer's own Investigation B finding. `tests/test_engine_isolation.py` now 57
   tests (+5), `tests/test_e2e_cli_isolation.py` unchanged at 2. No commit made per instruction.
+
+- By: coordinator · Role: manager · Date: 2026-09-07 · Comment: State -> **Done**. Review findings
+  in this ticket's `REVIEW.md` were dispositioned by the implementing agent, the gates were re-run
+  independently by the coordinator (ruff check/format clean, `mypy src` at exactly the 4 pre-existing
+  `_version.py` errors, full suite green with no regression against the pre-epic baseline of 2008
+  passed / 7 skipped / 94% coverage), and the work is committed on `ad/task-isolation` under this
+  ticket's own commit. Anything still open was re-filed against a named later ticket rather than left
+  in this one; see the epic `STATUS.md` rollup for that ticket's entry.
