@@ -140,6 +140,13 @@ _ENV_ATTEMPT = "AO_ATTEMPT"
 # it never affects the landed TREE content, which is identical either way.
 _RESUME_FALLBACK_AGENT_ID = "unknown-resume-fallback"
 
+# T-Lr6Ka3 review N-1: this commit is transient -- only its TREE is captured by the
+# immediately-following `_squash_repo` call, and the message itself never reaches the
+# integration branch -- but it still goes through a named constant rather than an inline
+# literal, for consistency with `_RESUME_FALLBACK_AGENT_ID` and this file's own
+# no-magic-literals discipline.
+_RESOLVER_FIX_COMMIT_MESSAGE = "ao: resolver fix"
+
 
 # ---------------------------------------------------------------------------------------
 # Run-scoped snapshot (R-20/NFR-3)
@@ -185,6 +192,31 @@ class IntegrationResult:
     verify_status: Literal["not_run", "passed", "failed"] = VERIFY_NOT_RUN
     reason: str | None = None
     untracked_outputs: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MaterializeResult:
+    """Result of `Integrator.materialize_conflict` (E-Wk9Tz3 T-Lr6Ka3 review C-1 rework):
+    the LIVE, just-recomputed conflict state for a T2 dispatch-prep call, never a stale
+    value carried over from a previous wave's settle.
+
+    ``status == "conflict"``: the worktree has genuinely been left mid-rebase (git's own
+    on-disk rebase state), with conflict markers on every path in ``conflicted_paths`` --
+    a resolver agent dispatched now will find real, live ground truth.
+    ``status == "clean"``: re-rebasing the durable squash onto the CURRENT integration head
+    produced no conflict this time (the head moved since the original conflict, and
+    whatever landed in between no longer collides) -- the caller skips T2 entirely and
+    lands directly via `resume_integration` (idempotent: it re-derives the identical
+    result, just without re-explaining it here -- NFR-1 "no duplicate rebase logic").
+    ``status == "failed"``: a lock timeout or git error prevented materialization; the
+    caller falls through to `resume_integration`, whose own error handling reports the
+    same failure through the existing surface (no new failure mode invented here).
+    """
+
+    status: Literal["conflict", "clean", "failed"]
+    conflicted_paths: list[str] = field(default_factory=list)  # paths only (NFR-1)
+    tier_reached: ResolverTier | None = None
+    reason: str | None = None
 
 
 # ---------------------------------------------------------------------------------------
@@ -552,6 +584,45 @@ class Integrator:
                         # `target_head == repo.base`.
                         if recorded_squash is not None:
                             restage_squash = recorded_squash
+                            # T-Lr6Ka3 (HLD §11 M7 AC-6/C-1 rework): DEFENSIVE fallback, not
+                            # the common case -- a normal T2 dispatch now calls
+                            # `Integrator.materialize_conflict` at prep time (engine.py's
+                            # `_prepare_resolver_dispatch`), which re-establishes a genuine
+                            # mid-rebase state (or lands directly if it no longer conflicts)
+                            # BEFORE the resolver agent ever runs, so `resume_integration`
+                            # ordinarily takes the `git.rebase_in_progress(wt)` branch above,
+                            # not this one. This branch still matters for a repo whose
+                            # rebase was never (re-)materialized for some other reason (e.g.
+                            # a caller that skips `materialize_conflict`, or a crash between
+                            # materialization and dispatch whose resume re-enters here) --
+                            # in which case a resolver's fix, if any, would have landed as a
+                            # plain DIRTY change on top of *recorded_squash* rather than
+                            # inside a live rebase this function could `add_all` +
+                            # `rebase_continue` through. Reusing *recorded_squash* UNCHANGED
+                            # here would silently discard that fix -- and, worse, its stale
+                            # tree can coincidentally satisfy `_rebase_onto_and_resolve`'s
+                            # `target_head == repo.base` fast path below (since `ensure()`
+                            # also refreshes `repo.base` to the CURRENT integration head on
+                            # every reuse), landing a tree that never actually contains
+                            # whatever a sibling task landed in the meantime -- originally
+                            # found via a real two-task conflict test, kept as defense in
+                            # depth. Detect the dirty fix and re-squash from it fresh,
+                            # exactly like the sibling "never staged at all" branch just
+                            # below already does for its own different reason.
+                            if git.status_porcelain(wt, untracked=True):
+                                git.add_all(wt)
+                                fresh_tip = (
+                                    git.commit(wt, _RESOLVER_FIX_COMMIT_MESSAGE, allow_empty=True)
+                                    or recorded_squash
+                                )
+                                restage_squash = self._squash_repo(
+                                    task_id,
+                                    repo,
+                                    fresh_tip,
+                                    run_integration.run_id,
+                                    attempt,
+                                    _RESUME_FALLBACK_AGENT_ID,
+                                )
                         else:
                             # Never reached by the original `integrate()` call at all --
                             # squash it fresh from its own current (auto-committed) tip.
@@ -648,6 +719,168 @@ class Integrator:
             return IntegrationResult(
                 status=STATUS_FAILED, reason=REASON_GIT_ERROR, verify_status=VERIFY_NOT_RUN
             )
+
+    def materialize_conflict(
+        self,
+        task_iso: TaskIsolation,
+        run_integration: RunIntegrationSnapshot,
+        attempt: int,
+        *,
+        base_commits: dict[str, str] | None = None,
+    ) -> MaterializeResult:
+        """E-Wk9Tz3 T-Lr6Ka3 review C-1 rework: called by the ENGINE at T2 dispatch-prep
+        time, AFTER `WorktreeManager.ensure()` has already run (and, per its own AC-10c,
+        already `git rebase --abort`ed any worktree it found mid-rebase) but BEFORE the
+        resolver agent executes. `ensure()`'s abort means the worktree is never genuinely
+        mid-rebase by the time a T2 dispatch reaches this point on its own -- this method
+        re-derives that state deterministically instead of assuming it survived.
+
+        *base_commits* (review re-review M-1, new keyword -- the only signature change):
+        ``repo_key -> the durable, HISTORICAL base this task's work was originally built
+        from`` (the engine's own ``TaskIntegrationState.base_commits``, already tracked and
+        already used identically by `escalation.write_conflict_manifest`). Required for the
+        "no squash recorded under this attempt" fallback below to be correct on a SECOND
+        (or later) T2 attempt: by then `WorktreeManager.ensure()`'s own "Reuse" branch has
+        already refreshed `task_iso.repos[*].base` to the CURRENT integration head, so
+        `repo.base` alone is no longer the task's true original base -- using it as the
+        fallback squash's parent would make the very next `<squash>^` read-back circular
+        (it would just read back the same already-refreshed value), silently reproducing
+        the class of bug this method exists to fix. ``None``/an absent key falls back to
+        `repo.base` (byte-identical to the first attempt, where `ensure()` has not yet had
+        a chance to refresh it) -- callers that don't yet track ``base_commits`` (e.g. a
+        test calling this directly with a fresh `task_iso`) are unaffected.
+
+        For each repo with a durable squash recorded for *attempt* (`paths.squash_ref`,
+        written by the ORIGINAL `integrate()`/`_squash_repo` call that first conflicted):
+        resets the worktree/branch back to that squash (idempotent -- safe regardless of
+        what `ensure()`'s abort, or a previous `materialize_conflict` call, left behind),
+        then re-rebases it onto the CURRENT integration head (read fresh, under the
+        per-repo lock -- reuses `_rebase_onto_and_resolve`, including a fresh attempt at
+        the T1 mechanical `resolver_hook`, exactly like a first-time conflict; no duplicate
+        rebase logic).
+
+        Two outcomes:
+        - Still conflicts: the worktree is left mid-rebase (git's own on-disk state) with
+          real conflict markers on every path in the returned `conflicted_paths` -- a
+          resolver agent dispatched right after this call will find live ground truth, not
+          a hardcoded assumption.
+        - No longer conflicts (the current head moved since the original conflict, and
+          whatever landed in between no longer collides): reports "clean" so the caller
+          skips T2 entirely -- `resume_integration` (called next either way) idempotently
+          re-derives the identical, already-clean result and lands it, so nothing here
+          needs to duplicate verify/CAS-landing logic.
+
+        The per-repo lock is held only for the duration of this call (released via
+        `ExitStack` before returning either way) -- exactly like `resume_integration`,
+        which re-acquires it independently for the actual land. Safe to call repeatedly
+        (idempotent `reset_hard` + deterministic `commit_tree`), including from a fresh
+        `resume` after a crash mid-T2 (nothing here depends on in-memory state from a
+        previous call).
+        """
+        task_id = task_iso.task_id
+        try:
+            env = self._base_env(run_integration.run_id, task_id, attempt)
+            conflicted: list[str] = []
+            tier_reached: ResolverTier | None = None
+            with ExitStack() as stack:
+                for repo in sorted(task_iso.repos, key=lambda r: r.key):
+                    lock = IntegrationLock(repo.common_dir)
+                    if not lock.acquire(self._spec.lock_timeout_seconds):
+                        self._log_event(
+                            task_id,
+                            EVENT_FAILED,
+                            level=logging.ERROR,
+                            reason=REASON_LOCK_TIMEOUT,
+                            repo=repo.key,
+                        )
+                        return MaterializeResult(status=STATUS_FAILED, reason=REASON_LOCK_TIMEOUT)
+                    stack.callback(lock.release)
+
+                for repo in task_iso.repos:
+                    git = self._git_for(repo)
+                    # Self-cleaning, not caller-trusting: a repeated call (or a caller
+                    # that, unlike the engine's own `WorktreeManager.ensure()`, does not
+                    # abort a pre-existing rebase first) must not attempt a fresh
+                    # `reset_hard` + `rebase_onto` while `.git/rebase-merge` from a PRIOR
+                    # `materialize_conflict` call still exists -- that leaves the reset
+                    # worktree's on-disk rebase state inconsistent with what it's about to
+                    # do next. Aborting first makes every call start from the same,
+                    # deterministic baseline regardless of what came before.
+                    if git.rebase_in_progress(repo.worktree_root):
+                        git.rebase_abort(repo.worktree_root)
+                    recorded_squash = git.rev_parse(
+                        paths.squash_ref(run_integration.run_id, task_id, attempt)
+                    )
+                    if recorded_squash is None:
+                        # M-1 (re-review): no squash recorded under THIS attempt number --
+                        # either never staged at all (a conflict earlier in repo-key order
+                        # returned before this repo's turn), OR a second+ resolve attempt
+                        # on the same conflict, whose `attempt` number (`ti.attempts`,
+                        # incremented on every settle) has drifted past the ONE squash ref
+                        # `resume_integration` itself ever allocates for a repeatedly-
+                        # conflicting repo. Either way, silently treating this repo as
+                        # "nothing to re-materialize" would risk reporting the whole task
+                        # falsely "clean" -- fall back to squashing fresh from the branch's
+                        # own CURRENT tip, exactly like `resume_integration`'s own "never
+                        # staged" fallback already does.
+                        #
+                        # CRITICAL: the fresh squash's PARENT must be the task's durable,
+                        # HISTORICAL base (`base_commits[repo.key]`), never bare `repo.base`
+                        # -- by a SECOND (or later) T2 attempt, `WorktreeManager.ensure()`'s
+                        # own "Reuse" branch has already refreshed `repo.base` to the
+                        # CURRENT integration head. Using it here would make the fast-path
+                        # check below (`true_base = <squash>^`) read back that SAME
+                        # already-refreshed value -- circular, and silently reproduces the
+                        # exact false-"clean" bug this method exists to fix, just relocated
+                        # into the fallback path (confirmed by direct reproduction: review
+                        # re-review, 2026-09-07).
+                        branch_ref = f"refs/heads/{repo.branch}"
+                        fallback_tip = git.rev_parse(branch_ref) or repo.base
+                        historical_base = (base_commits or {}).get(repo.key, repo.base)
+                        repo_for_fallback_squash = dataclasses.replace(repo, base=historical_base)
+                        recorded_squash = self._squash_repo(
+                            task_id,
+                            repo_for_fallback_squash,
+                            fallback_tip,
+                            run_integration.run_id,
+                            attempt,
+                            _RESUME_FALLBACK_AGENT_ID,
+                        )
+                    # `RepoIsolation.base` on THIS `task_iso` was just refreshed to the
+                    # CURRENT integration head by `WorktreeManager.ensure()`'s own "Reuse"
+                    # branch (it always sets `base = head` on every reuse) -- it no longer
+                    # reflects what *recorded_squash* was ACTUALLY built from. Using it for
+                    # `_rebase_onto_and_resolve`'s fast-path check (`target_head ==
+                    # repo.base`) would make the check TRIVIALLY true on every T2
+                    # redispatch (both sides trace to the same live ref), silently
+                    # skipping the real rebase attempt and reporting "clean" for a
+                    # genuinely still-conflicting repo. The squash commit's OWN recorded
+                    # parent (`commit_tree`'s `parent` argument, immutable once created) is
+                    # the one source of truth for what it was actually built from --
+                    # correct for both the "found in the durable ref" and the "freshly
+                    # squashed by the fallback above" cases alike.
+                    true_base = git.rev_parse(f"{recorded_squash}^") or repo.base
+                    repo_for_rebase = dataclasses.replace(repo, base=true_base)
+                    integration_ref = f"refs/heads/{run_integration.branch}"
+                    head_sha = git.rev_parse(integration_ref)
+                    target_head = head_sha if head_sha is not None else true_base
+                    git.reset_hard(repo.worktree_root, recorded_squash)
+                    stage = self._rebase_onto_and_resolve(
+                        task_id, repo_for_rebase, recorded_squash, target_head, env
+                    )
+                    if stage.conflict:
+                        conflicted.extend(stage.unresolved_paths)
+                        tier_reached = stage.tier
+            if conflicted:
+                return MaterializeResult(
+                    status="conflict", conflicted_paths=conflicted, tier_reached=tier_reached
+                )
+            return MaterializeResult(status="clean")
+        except GitError as exc:
+            self._log_event(
+                task_id, EVENT_FAILED, level=logging.ERROR, reason=REASON_GIT_ERROR, error=str(exc)
+            )
+            return MaterializeResult(status="failed", reason=REASON_GIT_ERROR)
 
     # --- step 1: auto-commit + S-3 denylist screen --------------------------------------
 

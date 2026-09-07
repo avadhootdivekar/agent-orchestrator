@@ -32,6 +32,7 @@ from agent_orchestrator.isolation.integrator import (
     STATUS_INTEGRATED,
     IntegrationResult,
     Integrator,
+    MaterializeResult,
     ResolverHook,
     RunIntegrationSnapshot,
 )
@@ -1901,3 +1902,214 @@ class TestResumeIntegration:
         )
         assert second.status == STATUS_FAILED
         assert second.reason == REASON_REF_RACE
+
+
+# ---------------------------------------------------------------------------------------
+# E-Wk9Tz3 T-Lr6Ka3 (additive, review C-1 rework): `Integrator.materialize_conflict` --
+# re-derives the LIVE conflict state at T2 dispatch-prep time, independent of the engine's
+# own dispatch plumbing (`tests/test_engine_conflict_escalation.py` covers that side).
+# `WorktreeManager.ensure()`'s own AC-10c abort (this file's `TestHappyPath`/etc. don't
+# exercise it -- `ensure()` is called once per test here, never a second time on a
+# still-mid-rebase worktree) is simulated directly via `GitRepo.rebase_abort` between the
+# initial conflict and the `materialize_conflict` call, matching exactly what the real
+# dispatch-prep sequence does before a T2 resolver ever runs.
+# ---------------------------------------------------------------------------------------
+
+
+class TestMaterializeConflict:
+    def test_reproduces_the_same_conflict_after_ensures_own_abort(self, tmp_path: Path) -> None:
+        repo, base_sha, ours, theirs = make_conflict_repo(tmp_path / "repo", "true_conflict")
+        manager, isos = _manager_for(
+            {"core": repo},
+            "run-1",
+            tmp_path / "hooks",
+            heads={_isolated_repo_for(repo).key: base_sha},
+        )
+        task_iso = manager.ensure("task-a", 1, [])
+        ours_tip = _raw_git(["rev-parse", ours], repo).strip()
+        theirs_tip = _raw_git(["rev-parse", theirs], repo).strip()
+
+        wt = Path(task_iso.repos[0].worktree_root)
+        _raw_git(["cherry-pick", ours_tip], wt)
+        _set_integration_ref(repo, "run-1", theirs_tip)
+
+        integrator = _integrator(IntegrationSpec(), tmp_path / "hooks")
+        run_snapshot = _run_snapshot("run-1", tmp_path / "rundir")
+        first = integrator.integrate(
+            task_iso, run_snapshot, TaskIntegrationState(), 1, agent_id="agent-1"
+        )
+        assert first.status == STATUS_CONFLICT_RESOLVER
+        assert first.conflicted_paths == ["f.txt"]
+        assert GitRepo(str(wt)).rebase_in_progress(str(wt))
+
+        # Simulate WorktreeManager.ensure()'s own AC-10c abort (unconditional on any
+        # reused worktree still mid-rebase) -- happens BEFORE a resolver would ever run.
+        GitRepo(str(wt)).rebase_abort(str(wt))
+        assert not GitRepo(str(wt)).rebase_in_progress(str(wt))
+
+        result = integrator.materialize_conflict(task_iso, run_snapshot, 1)
+        assert isinstance(result, MaterializeResult)
+        assert result.status == "conflict"
+        assert result.conflicted_paths == ["f.txt"]
+        # Live ground truth: the worktree is genuinely mid-rebase again, with real
+        # conflict markers on disk -- exactly what a resolver agent dispatched right now
+        # would find.
+        assert GitRepo(str(wt)).rebase_in_progress(str(wt))
+        assert "<<<<<<<" in (wt / "f.txt").read_text(encoding="utf-8")
+
+        # Idempotent: calling it again reproduces the identical result.
+        again = integrator.materialize_conflict(task_iso, run_snapshot, 1)
+        assert again.status == "conflict"
+        assert again.conflicted_paths == ["f.txt"]
+
+    def test_reports_clean_when_the_head_no_longer_collides(self, tmp_path: Path) -> None:
+        repo, base_sha, ours, theirs = make_conflict_repo(tmp_path / "repo", "true_conflict")
+        manager, isos = _manager_for(
+            {"core": repo},
+            "run-1",
+            tmp_path / "hooks",
+            heads={_isolated_repo_for(repo).key: base_sha},
+        )
+        task_iso = manager.ensure("task-a", 1, [])
+        ours_tip = _raw_git(["rev-parse", ours], repo).strip()
+        theirs_tip = _raw_git(["rev-parse", theirs], repo).strip()
+
+        wt = Path(task_iso.repos[0].worktree_root)
+        _raw_git(["cherry-pick", ours_tip], wt)
+        _set_integration_ref(repo, "run-1", theirs_tip)
+
+        integrator = _integrator(IntegrationSpec(), tmp_path / "hooks")
+        run_snapshot = _run_snapshot("run-1", tmp_path / "rundir")
+        first = integrator.integrate(
+            task_iso, run_snapshot, TaskIntegrationState(), 1, agent_id="agent-1"
+        )
+        assert first.status == STATUS_CONFLICT_RESOLVER
+        GitRepo(str(wt)).rebase_abort(str(wt))
+
+        # The integration head advances PAST theirs with a commit that reverts theirs' own
+        # change on f.txt -- simulating "whatever the sibling changed no longer collides by
+        # the time this resolver dispatch was prepared" (e.g. a later, unrelated task's own
+        # squash happened to restore that hunk).
+        _raw_git(["checkout", "-q", theirs], repo)
+        (repo / "f.txt").write_text("a\nb\nc\n", encoding="utf-8")
+        _raw_git(["add", "-A"], repo)
+        _raw_git(["commit", "-q", "-m", "revert theirs change"], repo)
+        reverted_tip = _raw_git(["rev-parse", "HEAD"], repo).strip()
+        _set_integration_ref(repo, "run-1", reverted_tip)
+
+        result = integrator.materialize_conflict(task_iso, run_snapshot, 1)
+        assert result.status == "clean"
+        assert result.conflicted_paths == []
+        assert not GitRepo(str(wt)).rebase_in_progress(str(wt))
+
+    def test_m1_no_recorded_squash_for_this_attempt_still_finds_the_live_conflict(
+        self, tmp_path: Path
+    ) -> None:
+        """M-1: a SECOND resolve attempt on the same conflict (`max_resolver_attempts >=
+        2`) calls `materialize_conflict` with an `attempt` number no squash was EVER
+        recorded under (`resume_integration` never allocates a new squash ref while
+        continuing to re-escalate the same conflict) -- this must NOT silently report
+        "clean" (which would incorrectly skip past a genuinely still-unresolved conflict,
+        see STATUS.md's M-1 disposition); it must fall back to squashing fresh from the
+        branch's own current tip and still find the real conflict.
+        """
+        repo, base_sha, ours, theirs = make_conflict_repo(tmp_path / "repo", "true_conflict")
+        manager, isos = _manager_for(
+            {"core": repo},
+            "run-1",
+            tmp_path / "hooks",
+            heads={_isolated_repo_for(repo).key: base_sha},
+        )
+        task_iso = manager.ensure("task-a", 1, [])
+        ours_tip = _raw_git(["rev-parse", ours], repo).strip()
+        theirs_tip = _raw_git(["rev-parse", theirs], repo).strip()
+
+        wt = Path(task_iso.repos[0].worktree_root)
+        _raw_git(["cherry-pick", ours_tip], wt)
+        _set_integration_ref(repo, "run-1", theirs_tip)
+
+        integrator = _integrator(IntegrationSpec(), tmp_path / "hooks")
+        run_snapshot = _run_snapshot("run-1", tmp_path / "rundir")
+        first = integrator.integrate(
+            task_iso, run_snapshot, TaskIntegrationState(), 1, agent_id="agent-1"
+        )
+        assert first.status == STATUS_CONFLICT_RESOLVER
+        GitRepo(str(wt)).rebase_abort(str(wt))
+
+        # Attempt 2 -- no squash was ever recorded under `squash_ref(run-1, task-a, 2)`.
+        no_squash = GitRepo(str(wt)).rev_parse(paths.squash_ref("run-1", "task-a", 2))
+        assert no_squash is None
+        result = integrator.materialize_conflict(task_iso, run_snapshot, 2)
+        assert result.status == "conflict"
+        assert result.conflicted_paths == ["f.txt"]
+        assert GitRepo(str(wt)).rebase_in_progress(str(wt))
+        # A fresh squash ref WAS allocated under the attempt-2 key this time (the fallback
+        # squashed something real, not a no-op).
+        assert GitRepo(str(wt)).rev_parse(paths.squash_ref("run-1", "task-a", 2)) is not None
+
+    def test_m1_second_ensure_refreshes_base_but_fallback_keeps_the_historical_one(
+        self, tmp_path: Path
+    ) -> None:
+        """M-1 (re-review): the REALISTIC second-T2-attempt sequence. Unlike the test
+        above, `WorktreeManager.ensure()` runs a SECOND time before the second
+        `materialize_conflict` call -- which is exactly what the engine does on every
+        dispatch prep. That second `ensure()` takes its "Reuse" branch and refreshes
+        `RepoIsolation.base` to the CURRENT integration head, so `repo.base` is no longer
+        the base this task's work was actually built from.
+
+        The "no squash recorded under this attempt" fallback must therefore parent its
+        fresh squash on the engine's durable `TaskIntegrationState.base_commits` value
+        (threaded in as *base_commits*). Parenting it on the refreshed `repo.base` instead
+        makes the `<squash>^` read-back circular -- `_rebase_onto_and_resolve`'s fast-path
+        check (`target_head == repo.base`) then trivially matches and a genuinely
+        unresolved conflict is reported "clean".
+        """
+        repo, base_sha, ours, theirs = make_conflict_repo(tmp_path / "repo", "true_conflict")
+        repo_key = _isolated_repo_for(repo).key
+        manager, isos = _manager_for(
+            {"core": repo},
+            "run-1",
+            tmp_path / "hooks",
+            heads={repo_key: base_sha},
+        )
+        task_iso = manager.ensure("task-a", 1, [])
+        original_base = task_iso.repos[0].base
+        assert original_base == base_sha
+        ours_tip = _raw_git(["rev-parse", ours], repo).strip()
+        theirs_tip = _raw_git(["rev-parse", theirs], repo).strip()
+
+        wt = Path(task_iso.repos[0].worktree_root)
+        _raw_git(["cherry-pick", ours_tip], wt)
+        _set_integration_ref(repo, "run-1", theirs_tip)
+
+        integrator = _integrator(IntegrationSpec(), tmp_path / "hooks")
+        run_snapshot = _run_snapshot("run-1", tmp_path / "rundir")
+        first = integrator.integrate(
+            task_iso, run_snapshot, TaskIntegrationState(), 1, agent_id="agent-1"
+        )
+        assert first.status == STATUS_CONFLICT_RESOLVER
+
+        # Second dispatch prep: the sibling's landing has advanced the integration head
+        # the manager reads (the engine passes `state.integration.heads` by reference), so
+        # `ensure()` reuses the worktree -- aborting the rebase (AC-10c) and refreshing
+        # `base` to the live head.
+        manager.integration_heads[repo_key] = theirs_tip
+        task_iso_2 = manager.ensure("task-a", 1, [])
+        assert task_iso_2.repos[0].base == theirs_tip != original_base
+        assert not GitRepo(str(wt)).rebase_in_progress(str(wt))
+
+        # No squash was ever recorded under attempt 2 -- the fallback path runs.
+        assert GitRepo(str(wt)).rev_parse(paths.squash_ref("run-1", "task-a", 2)) is None
+        result = integrator.materialize_conflict(
+            task_iso_2, run_snapshot, 2, base_commits={repo_key: original_base}
+        )
+        assert result.status == "conflict"
+        assert result.conflicted_paths == ["f.txt"]
+        assert GitRepo(str(wt)).rebase_in_progress(str(wt))
+        assert "<<<<<<<" in (wt / "f.txt").read_text(encoding="utf-8")
+
+        # Non-vacuous: the fallback squash really was parented on the HISTORICAL base, not
+        # on the head `ensure()` just refreshed `repo.base` to.
+        squash = GitRepo(str(wt)).rev_parse(paths.squash_ref("run-1", "task-a", 2))
+        assert squash is not None
+        assert GitRepo(str(wt)).rev_parse(f"{squash}^") == original_base

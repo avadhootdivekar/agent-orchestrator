@@ -98,6 +98,21 @@ epic owner rather than making them — that file is owned elsewhere.
     (safety-equivalent, verified empirically, approved by review), not a requirement §12.3 itself
     stated. Update §12.3's text to describe the actual shipped mechanism and record it as an
     "As-built deviation" per AC-1.
+14. **§6/§11 M7 T2 mechanism correction (from `T-Lr6Ka3` review C-1 rework).** HLD §6.2/§6.4/§11 M7
+    describe the T2 resolver as running against a worktree "left mid-rebase" by T1's own conflict --
+    that is no longer literally true as shipped: `WorktreeManager.ensure()`'s own AC-10c behavior
+    (`T-Wk3Nv6`, unedited) unconditionally aborts any reused worktree it finds mid-rebase, which fires
+    on every T2 redispatch before the resolver agent ever runs. The shipped mechanism instead
+    RE-MATERIALIZES the conflict deterministically at T2 dispatch-prep time
+    (`Integrator.materialize_conflict`, re-rebasing the durable squash onto the current integration
+    head under lock, immediately before dispatch) rather than relying on state surviving from T1.
+    Functionally equivalent (the resolver still finds a genuinely mid-rebase worktree with real
+    conflict markers when it runs) and additionally handles the case where the conflict no longer
+    reproduces (lands directly, skipping T2). Update §6.2/§6.4/§11 M7's text and sequence diagrams to
+    describe re-materialization explicitly and record it as an "As-built deviation" per AC-1; `T-Ib5Qy9`'s
+    own "left mid-rebase for T2" AC is superseded by this, not contradicted (`resume_integration`'s
+    mid-rebase-continuation code path is still what lands it, just entered from a freshly
+    re-materialized state rather than one assumed to have survived).
 
 ## Risks
 - Docs drifting from code is the failure this ticket exists to prevent — so "read the ticket and

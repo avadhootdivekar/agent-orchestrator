@@ -35,6 +35,7 @@ from .errors import (
 )
 from .estimator import TokenEstimator
 from .executors.base import Executor
+from .isolation import escalation as resolver_escalation
 from .isolation import paths as isolation_paths
 from .isolation.git import GIT_MIN_VERSION, GitRepo
 from .isolation.hotspots import load_hotspots
@@ -45,6 +46,7 @@ from .isolation.integrator import (
     ResolverHook,
     RunIntegrationSnapshot,
 )
+from .isolation.resolvers import resolve_mechanically
 from .isolation.runlock import WorkspaceRunLock
 from .isolation.view import IsolatedArtifactView
 from .isolation.worktrees import TaskIsolation, WorktreeManager, group_repos
@@ -130,6 +132,23 @@ _WORKSPACE_LOCK_REQUIRE = "require"
 _WORKSPACE_LOCK_SKIP_SYNC = "skip_sync"
 _WORKSPACE_LOCK_OFF = "off"
 
+# E-Wk9Tz3 T-Lr6Ka3 (HLD §8.4-8.6, §11 M7): `TaskIntegrationState.mode` values -- named
+# here (not in models.py, frozen for this ticket) so every comparison at a call site below
+# reads as a mode name, never a bare string literal.
+_INTEGRATION_MODE_NORMAL = "normal"
+_INTEGRATION_MODE_RESOLVE = "resolve"
+_INTEGRATION_MODE_RERUN = "rerun"
+
+# The packaged builtin T2 resolver instruction (AC-3), copied into the run dir at requeue
+# time. Resolved against engine.py's own `__file__` (not an `importlib.resources` lookup,
+# and not an import of the `templates` package) so wiring this ticket's one asset costs no
+# new module dependency -- the same "packaged path anchored on `__file__`" technique
+# `templates/__init__.py` documents for its own asset lookups, applied without actually
+# importing that (heavier, yaml/pydantic-parsing) package into the engine.
+_RESOLVER_INSTRUCTION_ASSET = str(
+    Path(__file__).resolve().parent / "templates" / "builtin" / "instructions" / "merge-resolve.md"
+)
+
 _ENV_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_]")
 
 
@@ -198,11 +217,12 @@ def _default_resolver_hook(
     config: object,  # noqa: ARG001
     env: dict[str, str],  # noqa: ARG001
 ) -> list[str]:
-    """No-op T1 mechanical resolver (`isolation.integrator.ResolverHook`): `T-Rm2Lx7`'s
-    ``isolation/resolvers.py`` has not landed yet, so nothing is resolved here -- every
+    """No-op T1 mechanical resolver (`isolation.integrator.ResolverHook`) -- every
     conflicted path comes back unresolved, exactly the "stub resolves nothing" case
-    `T-Ib5Qy9`'s own `Integrator` tests already exercise. Production callers (a future CLI
-    wiring, once `T-Rm2Lx7` lands) override via ``Orchestrator(resolver_hook=...)``.
+    `T-Ib5Qy9`'s own `Integrator` tests already exercise. No longer `Orchestrator`'s
+    default (that is now `isolation.resolvers.resolve_mechanically`, T-Rm2Lx7's real T1
+    implementation) -- kept as an explicit, deliberate opt-out a caller can still pass via
+    ``Orchestrator(resolver_hook=_default_resolver_hook)`` to disable T1 entirely.
     """
     return list(conflicted_paths)
 
@@ -212,14 +232,13 @@ def _default_escalation_hook(
     spec: IntegrationSpec,  # noqa: ARG001 -- Protocol-shaped, unused by the fail-safe stub
     cause: Literal["conflict", "verify"],
 ) -> IntegrationResult:
-    """Fail-safe T2/T3 ladder stand-in (`isolation.integrator.EscalationHook`): `T-Lr6Ka3`'s
-    ``isolation/escalation.py`` has not landed yet, so a conflict/verify-failure this pass
-    could not resolve mechanically fails straight to the operator (T4) instead of silently
-    mis-dispatching a resolver/rerun agent that does not exist yet. HOOK POINT for
-    `T-Lr6Ka3`: replace via ``Orchestrator(escalation_hook=...)`` once the real ladder
-    lands; nothing else in this file needs to change (`_settle_completed_task`'s
-    conflict_resolver/conflict_rerun switch cases are already implemented and tested
-    against an injected test-double hook).
+    """Fail-safe T2/T3 ladder stand-in (`isolation.integrator.EscalationHook`): a
+    conflict/verify-failure this pass could not resolve mechanically fails straight to the
+    operator (T4) instead of dispatching a resolver/rerun agent at all. No longer
+    `Orchestrator`'s default (that is now `isolation.escalation.escalate`, this ticket's
+    real T2/T3/T4 decision table) -- kept as an explicit, deliberate opt-out a caller can
+    still pass via ``Orchestrator(escalation_hook=_default_escalation_hook)`` to force
+    every conflict straight to the operator with zero LLM/rerun spend.
     """
     return IntegrationResult(
         status="failed",
@@ -318,12 +337,21 @@ class WorkerOutcome:
     only in the second of those (R-2). ``task_iso`` is echoed back unchanged so
     `_settle_completed_task` can drive the untracked-outputs copy-back (§7.4) without the
     main thread needing to re-derive it.
+
+    E-Wk9Tz3 T-Lr6Ka3 addition -- ``rerun_base``: repo_key -> the fresh integration head the
+    WORKER reset a T3 (mode == "rerun") dispatch's worktree to, BEFORE redispatching the
+    original agent. ``None`` for every other dispatch (NFR-2/byte-identical). The worker
+    performs the reset itself (an operation scoped to this task's own exclusively-owned
+    worktree, safe off the main thread) but cannot write `RunState` itself (NFR-3), so it
+    reports the new base back here for `_settle_completed_task` to persist onto
+    ``TaskIntegrationState.base_commits``.
     """
 
     result: TaskResult
     integration: IntegrationResult | None = None
     missing_outputs: list[str] | None = None
     task_iso: TaskIsolation | None = None
+    rerun_base: dict[str, str] | None = None
 
 
 @dataclass
@@ -512,13 +540,22 @@ class Orchestrator:
         # run_id/repos/integration heads, none of which exist yet at __init__ time.
         self._injected_worktree_manager = worktree_manager
         self._injected_integrator = integrator
-        # HOOK POINTS for T-Rm2Lx7 (resolver_hook)/T-Lr6Ka3 (escalation_hook) -- see the
-        # module-level _default_resolver_hook/_default_escalation_hook docstrings.
+        # HOOK POINTS for T-Rm2Lx7 (resolver_hook)/T-Lr6Ka3 (escalation_hook). Production
+        # default is now the REAL implementation of each (T-Rm2Lx7's `resolve_mechanically`
+        # / this ticket's `escalation.escalate`) -- neither `T-Rm2Lx7` nor this ticket
+        # touches `cli.py` (off-limits to both), so wiring the real ladder into every
+        # `Orchestrator(...)` construction that does NOT explicitly override these two
+        # params (which is every production caller today) has to happen here, at the
+        # constructor's own default-binding point. `_default_resolver_hook`/
+        # `_default_escalation_hook` (module-level, above) stay available as an explicit,
+        # deliberate "disable the ladder" stand-in (e.g. a caller that wants every conflict
+        # to fail straight to the operator with no LLM/rerun spend at all) -- pass them
+        # verbatim via `Orchestrator(resolver_hook=_default_resolver_hook, ...)`.
         self._resolver_hook: ResolverHook = (
-            resolver_hook if resolver_hook is not None else _default_resolver_hook
+            resolver_hook if resolver_hook is not None else resolve_mechanically
         )
         self._escalation_hook: EscalationHook = (
-            escalation_hook if escalation_hook is not None else _default_escalation_hook
+            escalation_hook if escalation_hook is not None else resolver_escalation.escalate
         )
         # isolation.strict (HLD §11 M9's `.ao/config.yaml: isolation.strict` / future
         # `--isolation`/`AO_ISOLATION` precedence chain is CLI-owned, M9, not yet built and
@@ -1644,6 +1681,12 @@ class Orchestrator:
         # placement, not by a second copy of that logic.
         ti = state.task_integration.get(tid)
         if ti is not None and ti.isolation != ISOLATION_NONE:
+            if outcome.rerun_base:
+                # E-Wk9Tz3 T-Lr6Ka3 (AC-8): the worker reset this task's worktree(s) to a
+                # fresh integration head before redispatching (mode == "rerun") -- applied
+                # regardless of this cycle's eventual outcome (integrated/conflict_*/
+                # failed), since the reset itself already happened either way.
+                ti.base_commits.update(outcome.rerun_base)
             if outcome.integration is None:
                 # R-23: covers BOTH a plain execution failure (retries exhausted -- never
                 # reached the worker's integration switch at all) AND R-2's worker-side
@@ -1675,6 +1718,11 @@ class Orchestrator:
                 ti.tier_reached = integ.tier_reached
                 ti.conflicted_paths = list(integ.conflicted_paths)
                 ti.verify_status = integ.verify_status
+                # E-Wk9Tz3 T-Lr6Ka3 (AC-8): durable per-repo squash shas, needed by a T3
+                # rerun's `export_previous_patch` (the superseded squash is the diff's
+                # `head`). Harmless no-op for a non-conflict settle (`integ.squash` is
+                # `{}` for a clean "integrated"/"empty" landing).
+                ti.squash_commits.update(integ.squash)
                 if integ.status in ("integrated", "empty"):
                     state.integration.heads.update(integ.heads)
                     ti.status = "integrated"
@@ -1734,6 +1782,12 @@ class Orchestrator:
                             "event": "integration.failed",
                             "task_id": tid,
                             "reason": integ.reason,
+                            # AC-10: names the conflicted paths, worktree path(s) and
+                            # branch(es) directly on the event (T-Lr6Ka3), not only inside
+                            # the `reason` string -- T-Cx4Jf1 part B observability hook.
+                            "conflicted_paths": ti.conflicted_paths,
+                            "worktrees": dict(ti.repos),
+                            "branches": dict(ti.branches),
                         },
                     )
                     self._warn_if_retention_high(state, workflow, ctx)
@@ -3157,40 +3211,121 @@ class Orchestrator:
         for a succeeded, isolated task ONLY -- `integrate()` through `_integrate_task` (the
         ONE adapter into `isolation.integrator.Integrator`). Performs NO `RunState`
         mutation and NO ``save()`` (NFR-3): everything read off *state*/*task*/*task_iso*
-        here is read-only.
+        here is read-only; a T3 worktree reset (below) is a git operation scoped to this
+        task's own exclusively-owned worktree, not a `RunState` write.
 
         *cycle* (E-Wk9Tz3 T-Ac6Vd9, R-21): this dispatch's ``TaskRunState.dispatch_cycle``,
         forwarded verbatim to `_run_with_retries` to key its capture directory -- see that
         function's own docstring.
 
-        HOOK POINT for `T-Lr6Ka3` (resolver/rerun dispatch, HLD §8.4-8.5): a task requeued
-        in "resolve"/"rerun" mode (`state.task_integration[tid].mode`, set by
-        `_settle_completed_task`'s conflict switch) is dispatched through this SAME function
-        again on its next wave -- this ticket does not branch on ``mode`` at all here. That
-        is `T-Lr6Ka3`'s scope: substituting the resolver agent/instruction/conflict-json
-        inputs for "resolve" (or the reset-to-fresh-head + previous-patch inputs for
-        "rerun"), then calling `integrator.resume_integration()` (via `_integrate_task(...,
-        resume=True)`) instead of `integrate()`. Until that lands, the DEFAULT
-        `escalation_hook` (`_default_escalation_hook`) never returns "conflict_resolver"/
-        "conflict_rerun" in the first place, so this branch is unreachable in production
-        without a custom `escalation_hook` injected (exactly what this ticket's own tests
-        do to exercise `_settle_completed_task`'s conflict switch).
+        E-Wk9Tz3 T-Lr6Ka3 (HLD §8.4-8.5): a task requeued in "resolve"/"rerun" mode
+        (``state.task_integration[tid].mode``, set by `_settle_completed_task`'s conflict
+        switch) is dispatched through this SAME function again on its next wave.
+        ``mode == "resolve"``: `_prepare_resolver_dispatch` first calls
+        `Integrator.materialize_conflict` (review C-1 rework -- `WorktreeManager.ensure()`'s
+        own AC-10c `git rebase --abort` on any reused mid-rebase worktree, run on the MAIN
+        thread before this worker ever starts, means the worktree is never genuinely
+        mid-rebase by dispatch time on its own; this re-derives that state deterministically
+        instead of assuming it survived). If a live conflict re-materializes, it substitutes
+        the resolver agent/instruction/conflict-manifest input (S-2's forced containment,
+        manifest built from the LIVE re-derived state, never `ti`'s possibly-stale one) and
+        the R-2 outputs gate is skipped (a resolver doesn't produce `task.outputs`) in favour
+        of `_integrate_task(..., resume=True)` (continues the now-genuine mid-rebase state).
+        If it no longer conflicts (the head moved since and the durable squash now applies
+        cleanly) or couldn't be re-derived (lock timeout/git error), the resolver is never
+        dispatched at all -- straight to `_integrate_task(..., resume=True)`, which
+        idempotently re-derives the same result (or surfaces the same failure) without
+        spending any LLM budget on a conflict that no longer needs a resolver.
+        ``mode == "rerun"``: `_prepare_rerun_dispatch` resets the worktree to a fresh
+        integration head + exports the superseded squash as `previous-<n>.patch`, then the
+        ORIGINAL agent is redispatched unchanged and the normal R-2 gate + a fresh (never
+        resumed) `integrate()` call apply, exactly like ``mode == "normal"``.
         """
+        ti = state.task_integration.get(task.id)
+        mode = ti.mode if ti is not None else _INTEGRATION_MODE_NORMAL
+        rerun_base: dict[str, str] | None = None
+
+        if mode == _INTEGRATION_MODE_RESOLVE and ti is not None and task_iso is not None:
+            assert integrator is not None and run_integration is not None
+            dispatch_task, dispatch_agents, dispatch_env, materialized = (
+                self._prepare_resolver_dispatch(
+                    task,
+                    agents,
+                    env_overlay,
+                    workflow.integration,
+                    ti,
+                    task_iso,
+                    integrator,
+                    run_integration,
+                )
+            )
+            if not materialized:
+                # No live conflict to hand a resolver (already clean, or couldn't be
+                # re-derived) -- skip the dispatch entirely: no agent execution, no LLM
+                # spend, straight to resume_integration to land (or report the same
+                # failure resume_integration's own error handling already covers).
+                # `attempt=ti.attempts` (NOT +1): resume_integration looks up the durable
+                # squash ref this SAME attempt number recorded originally.
+                skip_result = TaskResult(
+                    task_id=task.id, status="succeeded", attempts=0, actuals_available=False
+                )
+                integration = self._integrate_task(
+                    integrator,
+                    task_iso,
+                    run_integration,
+                    ti,
+                    agent_id=agent_id,
+                    attempt=ti.attempts,
+                    resume=True,
+                )
+                return WorkerOutcome(skip_result, integration, task_iso=task_iso)
+        elif mode == _INTEGRATION_MODE_RERUN and ti is not None and task_iso is not None:
+            assert run_integration is not None
+            dispatch_task, rerun_base = self._prepare_rerun_dispatch(
+                task, ti, task_iso, run_integration, state.run_id
+            )
+            dispatch_agents = agents
+            dispatch_env = env_overlay
+        else:
+            dispatch_task = task
+            dispatch_agents = agents
+            dispatch_env = env_overlay
+
         result = self._run_with_retries(
-            task,
+            dispatch_task,
             workflow,
-            agents,
+            dispatch_agents,
             repo_paths,
             state,
             dynamic_input_paths,
             task_manifest_path=task_manifest_path,
             gate_output_path=gate_output_path,
             store=store,
-            env_overlay=env_overlay,
+            env_overlay=dispatch_env,
             cycle=cycle,
         )
         if result.status != "succeeded" or task_iso is None:
-            return WorkerOutcome(result, None, task_iso=task_iso)
+            return WorkerOutcome(result, None, task_iso=task_iso, rerun_base=rerun_base)
+
+        if mode == _INTEGRATION_MODE_RESOLVE and ti is not None:
+            # AC-6/AC-7: a resolver dispatch never produces `task.outputs` -- the R-2 gate
+            # below is for "normal"/"rerun" mode only. `attempt=ti.attempts` (NOT +1):
+            # `resume_integration` looks up the durable squash ref this SAME attempt number
+            # recorded when the conflict first happened (`_settle_completed_task` already
+            # incremented `ti.attempts` to that value when it recorded the conflict) -- a
+            # fresh `attempt=ti.attempts + 1` would look up a squash ref that was never
+            # created, since resuming doesn't allocate a new one.
+            assert integrator is not None and run_integration is not None
+            integration = self._integrate_task(
+                integrator,
+                task_iso,
+                run_integration,
+                ti,
+                agent_id=agent_id,
+                attempt=ti.attempts,
+                resume=True,
+            )
+            return WorkerOutcome(result, integration, task_iso=task_iso)
 
         # R-2: outputs gate integration -- on the worker, through the isolated view, BEFORE
         # integrate() is called. The main-thread check in _settle_completed_task is left
@@ -3199,7 +3334,9 @@ class Orchestrator:
         st = store if store is not None else self._store
         missing = [o for o in task.outputs if not st.exists(o)]
         if missing:
-            return WorkerOutcome(result, None, missing_outputs=missing, task_iso=task_iso)
+            return WorkerOutcome(
+                result, None, missing_outputs=missing, task_iso=task_iso, rerun_base=rerun_base
+            )
 
         assert integrator is not None and run_integration is not None
         ti = state.task_integration[task.id]
@@ -3211,7 +3348,156 @@ class Orchestrator:
             agent_id=agent_id,
             attempt=ti.attempts + 1,
         )
-        return WorkerOutcome(result, integration, task_iso=task_iso)
+        return WorkerOutcome(result, integration, task_iso=task_iso, rerun_base=rerun_base)
+
+    def _prepare_resolver_dispatch(
+        self,
+        task: TaskSpec,
+        agents: dict,
+        env_overlay: dict[str, str] | None,
+        spec: IntegrationSpec,
+        ti: TaskIntegrationState,
+        task_iso: TaskIsolation,
+        integrator: Integrator,
+        run_integration: RunIntegrationSnapshot,
+    ) -> tuple[TaskSpec, dict, dict[str, str] | None, bool]:
+        """T2 (``mode == "resolve"``) dispatch-context override (AC-3/AC-4, S-2, review
+        C-1 rework). Returns ``(task, agents, env, materialized)`` -- ``materialized`` is
+        ``False`` only when a live conflict was confirmed NOT to exist (or could not be
+        re-derived); the caller then skips dispatching a resolver entirely.
+
+        Defensive fallback (checked FIRST, before touching `integrator` at all): if
+        ``spec.resolver_agent`` is unset or not a known agent id (a directly-injected
+        test-double ``escalation_hook`` can set ``mode == "resolve"`` without ever going
+        through `escalation.escalate`, whose own preconditions guarantee this can't happen
+        for a REAL ladder), dispatch the task's own agent/instruction unchanged and report
+        ``materialized=True`` (proceed normally) -- this also means `Integrator.
+        materialize_conflict` is never called for this path, so a test double that only
+        implements `integrate`/`resume_integration` (pre-existing scripted-integrator
+        tests elsewhere in this repo that never configure `resolver_agent`) is unaffected.
+
+        Otherwise, calls `Integrator.materialize_conflict` to re-derive the LIVE conflict
+        state (`WorktreeManager.ensure()`'s own AC-10c abort means nothing survives from a
+        previous wave -- see `_run_and_integrate`'s own docstring). Only when it reports a
+        genuine, live conflict does this build the conflict manifest / copy the
+        instruction / substitute the agent -- and the manifest's `conflicted_paths` /
+        `rebase_in_progress` are computed from THAT live result, never from `ti`'s
+        (possibly stale) recorded values.
+        """
+        resolver_id = spec.resolver_agent
+        if resolver_id is None or resolver_id not in agents:
+            return task, agents, env_overlay, True
+
+        materialize = integrator.materialize_conflict(
+            task_iso, run_integration, ti.attempts, base_commits=ti.base_commits
+        )
+        if materialize.status != "conflict":
+            return task, agents, env_overlay, False
+
+        n = ti.resolver_attempts
+        run_id = run_integration.run_id
+        manifest_relpath = resolver_escalation.conflict_manifest_relpath(run_id, task.id, n)
+        instruction_relpath = resolver_escalation.resolver_instruction_relpath(run_id, task.id)
+
+        # Live ti snapshot (AC-2): the manifest's conflicted_paths/rebase_in_progress
+        # reflect what `materialize_conflict` JUST confirmed on disk, not `ti`'s own
+        # (possibly stale, pre-materialization) recorded value.
+        live_ti = ti.model_copy(
+            update={
+                "conflicted_paths": materialize.conflicted_paths,
+                "tier_reached": materialize.tier_reached or ti.tier_reached,
+            }
+        )
+        resolver_escalation.write_conflict_manifest(
+            self._store.resolve(manifest_relpath),
+            run_id=run_id,
+            task_id=task.id,
+            attempt=n,
+            task_integration=live_ti,
+            task_iso=task_iso,
+            rebase_in_progress=(materialize.status == "conflict"),
+        )
+        instruction_source = (
+            self._store.resolve(spec.resolver_instruction)
+            if spec.resolver_instruction
+            else _RESOLVER_INSTRUCTION_ASSET
+        )
+        resolver_escalation.copy_resolver_instruction(
+            instruction_source, self._store.resolve(instruction_relpath)
+        )
+
+        dispatch = resolver_escalation.build_resolver_dispatch(
+            task,
+            agents,
+            env_overlay,
+            spec,
+            manifest_relpath=manifest_relpath,
+            instruction_relpath=instruction_relpath,
+        )
+        return dispatch.task, dispatch.agents, dispatch.env, True
+
+    def _prepare_rerun_dispatch(
+        self,
+        task: TaskSpec,
+        ti: TaskIntegrationState,
+        task_iso: TaskIsolation,
+        run_integration: RunIntegrationSnapshot,
+        run_id: str,
+    ) -> tuple[TaskSpec, dict[str, str]]:
+        """T3 (``mode == "rerun"``) dispatch-context override (AC-8): resets every one of
+        this task's repos' worktrees HARD to the CURRENT integration head (read live off
+        the ref -- the same race-tolerant technique `Integrator` itself already uses:
+        `integrate()` re-rebases onto whatever the head actually is at land time
+        regardless, so a reset that is a beat stale is wasted work, never a correctness
+        bug), exporting the superseded squash's diff against its old base to
+        ``previous-<n>.patch`` for the PRIMARY repo only first (``task_iso.repos[0]``,
+        deterministic -- same "one task-level artifact keyed off the primary repo"
+        convention `_run_verify_command` already uses).
+
+        Returns the task -- with the patch path appended to its inputs ONLY when the
+        export actually happened (review W-1: AC-8 pairs "exported" and "appended to
+        inputs" unconditionally; decoupling them would tell the agent an input exists
+        that doesn't) -- and the new per-repo base (the caller reports it back to the
+        main thread via `WorkerOutcome.rerun_base`, since this function itself performs no
+        `RunState` mutation -- NFR-3).
+        """
+        primary = task_iso.repos[0]
+        patch_relpath = resolver_escalation.previous_patch_relpath(run_id, task.id, ti.reruns)
+        patch_exported = False
+        new_base: dict[str, str] = {}
+        for repo in task_iso.repos:
+            git = GitRepo(repo.worktree_root)
+            fresh_head = git.rev_parse(f"refs/heads/{run_integration.branch}") or repo.base
+            if repo.key == primary.key:
+                squash = ti.squash_commits.get(repo.key)
+                if squash:
+                    old_base = ti.base_commits.get(repo.key, repo.base)
+                    resolver_escalation.export_previous_patch(
+                        self._store.resolve(patch_relpath),
+                        git,
+                        cwd=repo.worktree_root,
+                        base=old_base,
+                        head=squash,
+                    )
+                    patch_exported = True
+                else:
+                    logger.warning(
+                        "T3 rerun: no recorded squash for repo %s (task %s) -- "
+                        "previous-<n>.patch not exported, not appended to inputs",
+                        repo.key,
+                        task.id,
+                        extra={
+                            "event": "integration.rerun_patch_skipped",
+                            "task_id": task.id,
+                            "repo": repo.key,
+                        },
+                    )
+            git.reset_hard(repo.worktree_root, fresh_head)
+            new_base[repo.key] = fresh_head
+        dispatch_task = (
+            resolver_escalation.build_rerun_task(task, patch_relpath) if patch_exported else task
+        )
+        return dispatch_task, new_base
 
     def _run_with_retries(
         self,

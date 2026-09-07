@@ -596,3 +596,38 @@ def test_readme_documents_parallel_isolation_section() -> None:
     # NFR-6: cold-rebuild caveat + shared build-cache recipe, not ignored.
     assert "cold" in text.lower() and "rebuild" in text.lower()
     assert "CARGO_TARGET_DIR" in text or "sccache" in text or "ccache" in text
+
+
+# ---------------------------------------------------------------------------
+# E-Wk9Tz3 T-Lr6Ka3 (additive): the packaged T2 resolver instruction this template's
+# README already documents the `merge-resolver` agent recipe around (`resolver_agent`,
+# S-2's `disallowed_tools` requirement) now actually ships in the package. Lives OUTSIDE
+# `TEMPLATE_DIR` (`templates/builtin/instructions/`, a sibling of `routed-runner/`, not a
+# routed-runner-specific asset) -- checked here rather than left undone, per T-Lr6Ka3's
+# own TASK.md instruction to add these cases in this file.
+# ---------------------------------------------------------------------------
+
+MERGE_RESOLVE_PATH = (
+    _REPO_ROOT
+    / "src"
+    / "agent_orchestrator"
+    / "templates"
+    / "builtin"
+    / "instructions"
+    / "merge-resolve.md"
+)
+
+
+def test_merge_resolve_instruction_ships_in_the_package() -> None:
+    assert MERGE_RESOLVE_PATH.is_file()
+
+
+def test_merge_resolve_instruction_matches_the_readmes_recipe() -> None:
+    """The README's `merge-resolver` recipe (`resolver_agent`, `disallowed_tools`) only
+    makes sense once this file exists -- a minimal cross-check that the two agree on the
+    basics (never running `rebase --continue`/pushing itself)."""
+    text = MERGE_RESOLVE_PATH.read_text(encoding="utf-8").lower()
+    assert "rebase --continue" in text
+    assert "push" in text
+    readme = (TEMPLATE_DIR / "README.md").read_text(encoding="utf-8")
+    assert "merge-resolver" in readme

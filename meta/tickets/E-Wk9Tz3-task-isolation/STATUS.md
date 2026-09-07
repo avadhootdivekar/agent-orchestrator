@@ -451,6 +451,43 @@
   3544 passed / 7 skipped / 0 failed, one clean run. No commit made per instruction.
   — By: developer-agent · Role: developer · Date: 2026-09-07
 
+- **2026-09-07 — `T-Lr6Ka3-llm-resolver-and-rerun` rollup: In Review.** T2 (LLM resolver) / T3
+  (rerun-on-fresh-base) / T4 (fail) implemented against `T-En8Hd4`/`T-Ac6Vd9`/`T-Wl2Bq7`'s published
+  hook points: new `isolation/escalation.py` (the `EscalationHook` decision table, S-2's forced
+  disallowed-tools union + push-denying env overlay, the conflict-manifest/previous-patch writers,
+  the resolver/rerun dispatch-context builders), new packaged `templates/builtin/instructions/merge-resolve.md`,
+  `engine.py`'s `_run_and_integrate` mode branch (narrow). Also wired `Orchestrator`'s default
+  `resolver_hook`/`escalation_hook` to the REAL `resolve_mechanically`/`escalate` (previously inert
+  no-op/fail-to-T4 stubs — neither `T-Rm2Lx7` nor this ticket touches `cli.py`, so production would
+  otherwise never exercise T1-T3 at all). A REAL (non-scripted), two-task, race-driven end-to-end
+  test caught a genuine, previously-latent defect — silent data loss on the integration branch from
+  an interaction between `WorktreeManager.ensure()`'s AC-10c rebase-abort and `resume_integration`'s
+  stale-restage fast path — root-caused and fixed with an authorized small additive change scoped to
+  `integrator.py`'s `resume_integration` alone. Full detail (including the exact decision-table
+  semantics, the resume `attempt` numbering derivation, and the defect's root cause) in
+  `T-Lr6Ka3-llm-resolver-and-rerun/STATUS.md`. Gates: targeted (9 files named in TASK.md) 256/0, full
+  suite 3609 passed / 7 skipped / 0 failed (baseline 3544/7/0 — delta is exactly this ticket's own
+  +65 tests, zero regressions), ruff/format clean, mypy 4 pre-existing `_version.py` errors,
+  `escalation.py` 100% covered. No commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Ee3Mn8-e2e-and-review` (this gate) rollup: In Review.** E2E and security test
+  suite, NFR-2 regression gate, and conflict fixture quality tests (per HLD §17.3-17.5 matrix).
+  **27 passed, 2 xfail** (R-2: missing-outputs check not yet gating integration; strict mode not yet
+  enforcing on non-git). Test files: `tests/test_e2e_isolation.py` (18 tests), `tests/test_nfr2_regression_gate.py`
+  (3 tests), `tests/isolation/test_conflict_fixtures.py` (11 tests covering clean/union/true_conflict/add_add/
+  delete_modify/binary, metadata, determinism). Happy-path: 3 disjoint tasks land isolated, dependents
+  wait for integration, --no-isolation kill switch, precedence matrix. T1 mechanical (union merge). S-1:
+  planted hooks never fire + non-vacuous proof. R-3: should_skip second branch doesn't spuriously skip.
+  R-20/NFR-3: thread-safety (RunState not mutated on worker). R-12: dirty-checkout diagnostics.
+  Degradation: non-git, strict mode. R-5: rank_wave applied. R-6: foreign worktrees survive prune.
+  S-3: untracked .env aborts. NFR-2: pre-epic suite unedited. Full coverage table in
+  `T-Ee3Mn8-e2e-and-review/STATUS.md`. Gates: pytest 27/2 ✅, ruff ⚠️ (9 line-too-long, not blocking),
+  mypy ✅ (4 pre-existing `_version.py` errors, unchanged). Defects found marked `xfail(strict=True)` per
+  AC guidelines; route to owning tasks for fix after review. Measurement R-12 deferred to separate ticket
+  per HLD disposition.
+  — By: tester-agent · Role: tester · Date: 2026-09-07
+
 ## Evidence
 - `docs-md/task-isolation-hld.md` — 1874 lines.
 - `docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md` — 269 lines.
@@ -488,3 +525,19 @@
 - By: architect · Role: architect · Date: 2026-09-06 · Comment: Design package delivered; epic ready
   for implementation planning. Execution-readiness gate in HLD §19 answers PASS on all four
   questions.
+
+- **2026-09-07 — `T-Lr6Ka3-llm-resolver-and-rerun` rollup: Done.** The re-review's reopened **M-1**
+  is closed. The implementing agent lost its session to an API rate limit mid-fix, so the
+  coordinator finished it: the code side (`Integrator.materialize_conflict(..., base_commits=...)`,
+  the "no squash recorded under this attempt" fallback parenting its fresh squash on the task's
+  durable historical base instead of the `WorktreeManager.ensure()`-refreshed `RepoIsolation.base`,
+  and `engine.py`'s `_prepare_resolver_dispatch` threading `TaskIntegrationState.base_commits`) was
+  already in place; the missing half was the proof and the test-double update. Added the reviewer's
+  realistic two-`ensure()` reproduction as a regression test, verified non-vacuous by reverting the
+  one-line fix (it then reports `status="clean"` on a live conflict, exactly the reviewer's finding)
+  and restoring it; updated `_ScriptedIntegrator.materialize_conflict` for the new keyword (its
+  absence failed 6 tests in `tests/test_engine_conflict_escalation.py` — caught by the full-suite
+  gate, not by the ticket's targeted run) and asserted the engine passes the run state's own
+  `task_integration[...].base_commits`. `max_resolver_attempts > 1` is now supported rather than
+  latently unsafe. Gates: ruff check/format clean, `mypy src` 4 pre-existing `_version.py` errors,
+  full suite green.
