@@ -285,6 +285,27 @@
   commit made per instruction.
   — By: developer-agent · Role: developer · Date: 2026-09-07
 
+- **2026-09-07 — `T-Cx4Jf1-cli-config-prune-observability` Part A review response: fix pass
+  complete.** `REVIEW-partA.md` verdict APPROVE WITH CHANGES (must-fix C-1, C-2); both closed,
+  plus should-fix C-3/C-4/C-5. C-1 per an explicit coordinator decision: the `--isolation`/
+  `AO_ISOLATION`/`isolation.mode` fill-in chain (ADR-0006) is unchanged; a new `--no-isolation`/
+  `AO_NO_ISOLATION` (no config layer, mutually exclusive with `--isolation worktree`) is the true
+  kill switch, forcing every task to `isolation=none` and warning once with the overridden task
+  ids; `"auto"` dropped from the CLI/config surface (no `models.py`/HLD constant for it exists).
+  C-2: `_load_project_config_or_none` now propagates a malformed config's `ConfigError` instead of
+  swallowing it; a new `_load_project_config_or_exit` wrapper converts that to `typer.Exit(1)` at
+  all 6 call sites in `cli.py` (fixes the same latent gap for `max_parallel`/monitoring/templates
+  too, confirmed via their own test suites still green). C-3 (reuse `models.ISOLATION_NONE`/
+  `ISOLATION_WORKTREE`), C-4 (warn on a discovery skip, not silent), C-5 (proved via a new test
+  that `gc_run`'s git-registry-driven cleanup already reaps a manually-`rm -rf`'d worktree's
+  dangling admin entry when a sibling worktree survives to bootstrap discovery; the residual "all
+  gone" limit documented in `ao prune --help` and `STATUS.md`) also fixed. Full disposition in
+  `T-Cx4Jf1-cli-config-prune-observability/STATUS.md`. Gates: `ruff`/`format --check` clean;
+  `mypy src` unchanged at 4 pre-existing errors; targeted suite 175/0 (+templates spot-check
+  100/0); full suite **3459 passed / 7 skipped / 0 failed**, one clean run. No commit made per
+  instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
 - **2026-09-07 — `T-Ac6Vd9-requeue-accounting` rollup: In Review.** R-1a/R-1b/R-21 implemented
   narrowly against the merged `T-En8Hd4` `engine.py`, per `T-Ac6Vd9-requeue-accounting/STATUS.md`
   (full detail there). R-1a (accumulate cumulative_* before a T2/T3/self-heal requeue) was

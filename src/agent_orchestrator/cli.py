@@ -30,11 +30,22 @@ from typing import TYPE_CHECKING
 
 import typer
 
+# `models.py` is already imported transitively by `.service.cli` below (confirmed: this is
+# NOT a new eager-import cost) -- unlike `.engine`/`.artifacts`/etc, which stay lazy
+# per-function per this module's own convention, these are two plain string constants
+# needed at MODULE load time (`typer.Option(help=f"...{ISOLATION_MODE_CHOICES}...")`
+# default values are evaluated when `def run(...)`/`def resume(...)` are parsed, i.e. at
+# import time) -- so they cannot be lazily imported inside a function body. Reusing them
+# (C-3, 2026-09-07 review) avoids a third independent spelling of "none"/"worktree"
+# alongside `models.py`'s own `IsolationMode`/`WorkflowIsolation` and
+# `project_config.IsolationConfig.mode`.
+from .models import ISOLATION_NONE, ISOLATION_WORKTREE
 from .service.cli import app as service_app
 
 if TYPE_CHECKING:
     from .artifacts import ArtifactStore
     from .executors.base import Executor
+    from .isolation.worktrees import IsolatedRepo
     from .models import BudgetSpec
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
@@ -180,6 +191,40 @@ def _load_all(
     return wf, reposet_map, agent_map
 
 
+# TaskIntegrationState.status values grouped under the "conflict" count in the one-line
+# integration summary below -- mirrors runstate.py's own (private) grouping exactly
+# (_CONFLICT_INTEGRATION_STATUSES) so the two derivations can never silently drift.
+# Duplicated rather than imported: this ticket's boundary is read-only on runstate.py.
+_CLI_CONFLICT_INTEGRATION_STATUSES = ("conflict_resolver", "conflict_rerun")
+
+
+def _echo_integration_summary(
+    *,
+    active: bool,
+    branch: str | None,
+    heads: dict,
+    tier_counts: dict,
+    integrated: int,
+    conflict: int,
+    failed: int,
+) -> None:
+    """One-line-ish integration summary shared by `_print_state`/`_print_status_snapshot`
+    (E-Wk9Tz3 AC-8: per-task integration status/tier counts, integration ref/head).
+
+    No-ops when isolation never activated for this run (`active` is False -- the default
+    for every pre-epic/non-isolated run), so output stays byte-identical otherwise.
+    """
+    if not active:
+        return
+    heads_str = ", ".join(f"{repo}={sha[:12]}" for repo, sha in sorted(heads.items())) or "-"
+    tiers_str = ", ".join(f"{k}={v}" for k, v in sorted(tier_counts.items()) if v) or "-"
+    typer.echo(f"\nIntegration:  branch={branch or '-'}  head(s): {heads_str}")
+    typer.echo(
+        f"              integrated={integrated} conflict={conflict} failed={failed}  "
+        f"tiers: {tiers_str}"
+    )
+
+
 def _print_state(state) -> None:
     from .models import compute_run_usage_totals
 
@@ -208,6 +253,26 @@ def _print_state(state) -> None:
         f"cache_read={totals.cache_read_input_tokens}"
     )
     typer.echo(f"Total cost:   ${totals.cost_usd:.4f}")
+
+    # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
+    integration_counts = {"integrated": 0, "conflict": 0, "failed": 0}
+    for ti in getattr(state, "task_integration", {}).values():
+        if ti.status == "integrated":
+            integration_counts["integrated"] += 1
+        elif ti.status in _CLI_CONFLICT_INTEGRATION_STATUSES:
+            integration_counts["conflict"] += 1
+        elif ti.status == "failed":
+            integration_counts["failed"] += 1
+    integration = getattr(state, "integration", None)
+    _echo_integration_summary(
+        active=bool(integration.active) if integration else False,
+        branch=integration.branch if integration else None,
+        heads=integration.heads if integration else {},
+        tier_counts=integration.tier_counts if integration else {},
+        integrated=integration_counts["integrated"],
+        conflict=integration_counts["conflict"],
+        failed=integration_counts["failed"],
+    )
 
 
 def _print_status_snapshot(snap: dict) -> None:
@@ -245,33 +310,96 @@ def _print_status_snapshot(snap: dict) -> None:
     )
     typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
 
+    # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
+    integ = snap.get("integration") or {}
+    _echo_integration_summary(
+        active=bool(integ.get("active", False)),
+        branch=integ.get("branch"),
+        heads=integ.get("heads") or {},
+        tier_counts=integ.get("tier_counts") or {},
+        integrated=integ.get("integrated", 0),
+        conflict=integ.get("conflict", 0),
+        failed=integ.get("failed", 0),
+    )
+
 
 def _load_project_config_or_none() -> ProjectConfig | None:
-    """Discover + load the nearest project config, swallowing any error to `None`.
+    """Discover + load the nearest project config.
 
-    Shared by `_resolve_run_settings` and `_resolve_monitoring_settings` — previously each
-    had its own verbatim copy of this find-then-load-then-swallow block (late-gate reviewer
-    finding; CLAUDE.md's DRY rule: "no duplicate logic — extract to a function... if logic
-    appears twice"). Each resolver still calls this once per `ao run`/`ao resume` invocation
-    (two calls total per command, same as before) — this extraction removes the duplicated
-    *logic*, not the duplicated *call*; a single-parse-per-command optimization would need a
-    shared cache, which isn't worth the added state for a small, local config file read.
+    Returns `None` ONLY when no config file exists at all (`find_project_config` found
+    nothing) — a present-but-invalid config file now RAISES `ConfigError` instead of being
+    silently swallowed (C-2, 2026-09-07 review: this previously caught `except Exception`
+    unconditionally, so a typo'd `isolation.mode: workree` or any other malformed config
+    silently fell back to "as if the file didn't exist" instead of erroring loudly, which
+    is exactly the class of mistake a config schema exists to catch). Callers that need a
+    clean CLI exit on a malformed file should call `_load_project_config_or_exit` instead
+    of this function directly.
+
+    Shared by `_resolve_run_settings`, `_resolve_monitoring_settings`,
+    `_resolve_isolation_settings` and others — previously each had its own verbatim copy of
+    this find-then-load block (late-gate reviewer finding; CLAUDE.md's DRY rule: "no
+    duplicate logic — extract to a function... if logic appears twice"). Each resolver
+    still calls this once per `ao run`/`ao resume` invocation (multiple calls total per
+    command, same as before) — this extraction removes the duplicated *logic*, not the
+    duplicated *call*; a single-parse-per-command optimization would need a shared cache,
+    which isn't worth the added state for a small, local config file read.
     """
     from .project_config import find_project_config, load_project_config
 
     config_path = find_project_config()
     if config_path is None:
         return None
+    return load_project_config(config_path)
+
+
+def _load_project_config_or_exit() -> ProjectConfig | None:
+    """`_load_project_config_or_none`, converting a malformed (present but invalid) config
+    file's `ConfigError` into a clean `typer.Exit(1)` with the actionable message (C-2,
+    2026-09-07 review). Every CLI command that reads the project config uses this rather
+    than the raw resolver, so a real misconfiguration is always reported loudly instead of
+    silently discarded.
+    """
+    from .errors import ConfigError
+
     try:
-        return load_project_config(config_path)
-    except Exception:
-        return None
+        return _load_project_config_or_none()
+    except ConfigError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
 
 # Env var carrying the workspace-scoped general-instruction list, os.pathsep-separated
 # (":" on POSIX, ";" on Windows) — the same convention PATH/PYTHONPATH use, so shells and
 # CI systems can compose it without inventing a project-specific delimiter.
 ENV_GENERAL_INSTRUCTIONS = "AO_GENERAL_INSTRUCTIONS"
+
+# Env var for the run-level isolation-mode fill-in chain (E-Wk9Tz3 HLD §11 M9):
+# --isolation > AO_ISOLATION > .ao/config.yaml isolation.mode > unset (no override). Named
+# so it is never a bare literal at either call site, mirroring AO_MAX_PARALLEL's own
+# convention.
+ENV_ISOLATION_MODE = "AO_ISOLATION"
+
+# `--isolation`/AO_ISOLATION/isolation.mode's valid values (HLD §11 M9, amended 2026-09-07
+# per coordinator C-1 decision). No "auto" member: reviewed and confirmed neither
+# `models.py` nor the HLD define an isolation-mode "auto" constant (unlike the unrelated
+# conflict-resolver-tier "auto", `models.TIER_AUTO`/`ResolverTier`) -- "no override" is
+# represented by the resolved mode being `None`, not a third string value, so
+# `_resolve_isolation_settings`'s return type is `str | None`. `None`/unset makes no
+# change at all -- every workflow spec's own defaults/per-task isolation stands exactly as
+# authored. `ISOLATION_NONE`/`ISOLATION_WORKTREE` (imported from `models.py`, C-3) become
+# `WorkflowSpec.defaults.isolation`'s new value: a FILL-IN for tasks left at
+# `isolation="inherit"` only (ADR-0006 -- a run-level flag fills in a per-task setting, it
+# never clobbers one a task/spec author declared explicitly; `resolve_task_isolation`'s own
+# "inherit" semantics are unchanged by this). For a TRUE, loud kill switch that overrides
+# even an explicit per-task declaration, see `--no-isolation`/`AO_NO_ISOLATION` below.
+ISOLATION_MODE_CHOICES = (ISOLATION_NONE, ISOLATION_WORKTREE)
+
+# `--no-isolation`/AO_NO_ISOLATION (C-1 coordinator decision, 2026-09-07): an emergency kill
+# switch, not a setting -- deliberately NO `.ao/config.yaml` layer (a config-file default
+# that silently disabled isolation workspace-wide would defeat the "loud override" premise
+# ADR-0006 itself carves out for exactly this case). Mutually exclusive with
+# `--isolation worktree` on the same invocation (a usage error, not a precedence question).
+ENV_NO_ISOLATION = "AO_NO_ISOLATION"
 
 
 def resolve_general_instructions(
@@ -302,7 +430,7 @@ def resolve_general_instructions(
         De-duplicated, order-preserving list of instruction paths. Empty list when no layer
         declares any — which keeps every pre-epic run byte-identical.
     """
-    cfg = _load_project_config_or_none()
+    cfg = _load_project_config_or_exit()
 
     env_raw = os.environ.get(ENV_GENERAL_INSTRUCTIONS, "")
     env_paths = [p for p in env_raw.split(os.pathsep) if p.strip()]
@@ -412,7 +540,7 @@ def _resolve_run_settings(
         except ValueError:
             return None
 
-    cfg = _load_project_config_or_none()
+    cfg = _load_project_config_or_exit()
 
     resolved_max_attempts = (
         max_attempts or _int_env("AO_MAX_ATTEMPTS") or (cfg.max_attempts if cfg else None)
@@ -456,6 +584,113 @@ def _resolve_run_settings(
     )
 
 
+def _apply_isolation_state_dir_env(cfg: ProjectConfig | None) -> None:
+    """Fill `AO_STATE_DIR` in from `.ao/config.yaml`'s `isolation.state_dir`, ONLY when the
+    real env var isn't already set in this process (E-Wk9Tz3 HLD §11 M9: "override
+    $AO_STATE_DIR for worktrees"). Mirrors `apply_project_config_env`'s own "explicit env
+    always wins" rule for the top-level `env:` block.
+
+    Must run before ANY `isolation.paths` call in this process -- worktree/state-dir
+    resolution reads `AO_STATE_DIR` fresh at call time, never cached -- so every command
+    that can touch worktrees (`run`, `resume`, `prune`) calls this once, early, right after
+    discovering the project config.
+    """
+    if cfg is None or not cfg.isolation.state_dir:
+        return
+    from .isolation.paths import STATE_ENV
+
+    if STATE_ENV not in os.environ:
+        os.environ[STATE_ENV] = cfg.isolation.state_dir
+
+
+def _resolve_isolation_settings(
+    isolation: str | None,
+) -> tuple[str | None, bool, dict[str, dict[str, str]]]:
+    """Merge CLI flag, env var, and project config for the isolation-mode fill-in, plus the
+    config-file-only `strict`/`env` knobs (E-Wk9Tz3 HLD §11 M9, amended 2026-09-07 per
+    coordinator C-1 decision).
+
+    `mode` precedence (highest to lowest): `--isolation` > `AO_ISOLATION` >
+    `.ao/config.yaml isolation.mode` > unset (`None`) -- exactly mirrors `--max-parallel`'s
+    own chain (`_resolve_run_settings`), including "an empty env var falls through" (the
+    `or`-chain below is falsy-transparent, matching every other resolver in this module).
+    `None` (no layer supplies a value) means "no override": the caller leaves
+    `WorkflowSpec.defaults.isolation` untouched, matching what a since-removed `"auto"`
+    string sentinel used to mean (dropped per C-1: no `models.py`/HLD constant for an
+    isolation-mode "auto" was ever found).
+
+    `strict`/`env` have NO CLI/env surface: HLD §11 M9's own interface table states
+    `isolation.env` "comes only from `.ao/config.yaml` ... never from a workflow spec or a
+    manifest" -- the same trust boundary as the top-level `env:` block today. They are read
+    straight from the project config, defaulting to `False`/`{}` when absent.
+
+    Returns `(mode, strict, env_overlay)`. `mode is None` is the caller's cue to leave
+    `WorkflowSpec.defaults.isolation` untouched; `strict`/`env_overlay` are passed to
+    `Orchestrator(isolation_strict=, isolation_env=)` verbatim.
+
+    Raises:
+        typer.Exit: `mode` (from any layer) is not `None` and not one of
+            `ISOLATION_MODE_CHOICES`; or the discovered `.ao/config.yaml` is malformed
+            (C-2 -- `_load_project_config_or_exit` already reports and exits for that case).
+    """
+    cfg = _load_project_config_or_exit()
+    _apply_isolation_state_dir_env(cfg)
+
+    resolved_mode = (
+        isolation or os.environ.get(ENV_ISOLATION_MODE) or (cfg.isolation.mode if cfg else None)
+    )
+    if resolved_mode is not None and resolved_mode not in ISOLATION_MODE_CHOICES:
+        typer.echo(
+            f"ERROR: --isolation must be one of {ISOLATION_MODE_CHOICES}, got '{resolved_mode}'",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    resolved_strict = cfg.isolation.strict if cfg else False
+    resolved_env = {k: dict(v) for k, v in cfg.isolation.env.items()} if cfg else {}
+
+    return resolved_mode, resolved_strict, resolved_env
+
+
+def _resolve_no_isolation(no_isolation: bool) -> bool:
+    """`--no-isolation` > `AO_NO_ISOLATION` (truthy) -- deliberately NO config-file layer
+    (C-1 coordinator decision, 2026-09-07): this is an emergency kill switch, not a
+    workspace-wide setting."""
+    if no_isolation:
+        return True
+    return os.environ.get(ENV_NO_ISOLATION, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _apply_no_isolation_kill_switch(
+    wf,  # WorkflowSpec -- untyped to keep this module's lazy-import style (matches
+    # `_apply_prompt`'s own `wf` param)
+    no_isolation: bool,
+) -> None:
+    """`--no-isolation`/`AO_NO_ISOLATION`: force EVERY task's isolation to `"none"`,
+    regardless of what the task, `defaults.isolation`, or `.ao/config.yaml` declared (C-1
+    coordinator decision, 2026-09-07). Unlike `--isolation none`'s fill-in-only semantics
+    (`_resolve_isolation_settings`, ADR-0006), this is a TRUE, loud override -- an
+    emergency lever for a spec whose per-task `isolation: worktree` declarations are
+    causing a systemic failure, where the fill-in mechanism has no effect at all.
+
+    Logs exactly one WARNING naming every task whose isolation was actually changed (never
+    silent) -- a task already at `isolation: "none"` isn't reported, so the message is
+    empty/absent for a workflow the kill switch had no real effect on.
+    """
+    if not no_isolation:
+        return
+    overridden = sorted(t.id for t in wf.tasks if t.isolation != ISOLATION_NONE)
+    for t in wf.tasks:
+        t.isolation = ISOLATION_NONE
+    wf.defaults.isolation = ISOLATION_NONE
+    if overridden:
+        typer.echo(
+            f"WARNING: --no-isolation forced isolation={ISOLATION_NONE!r} for "
+            f"{len(overridden)} task(s) that declared otherwise: {', '.join(overridden)}",
+            err=True,
+        )
+
+
 def _resolve_monitoring_settings(self_heal: bool | None) -> MonitoringConfig:
     """Merge CLI flag, env var, and project config for monitoring settings (E-XyfjuZ).
 
@@ -472,7 +707,7 @@ def _resolve_monitoring_settings(self_heal: bool | None) -> MonitoringConfig:
     """
     from .project_config import MonitoringConfig
 
-    cfg = _load_project_config_or_none()
+    cfg = _load_project_config_or_exit()
     base = cfg.monitoring if cfg else MonitoringConfig()
 
     def _bool_env(name: str) -> bool | None:
@@ -735,6 +970,28 @@ def run(
             " general_instructions."
         ),
     ),
+    isolation: str | None = typer.Option(
+        None,
+        "--isolation",
+        help=(
+            f"Isolation-mode fill-in for tasks left at isolation=inherit: one of "
+            f"{ISOLATION_MODE_CHOICES} (default: unset, honours the spec/defaults.isolation"
+            " unchanged). Never overrides a task's own explicit isolation -- for a true"
+            f" kill switch see --no-isolation. Env: {ENV_ISOLATION_MODE}. Config:"
+            " isolation.mode."
+        ),
+    ),
+    no_isolation: bool = typer.Option(
+        False,
+        "--no-isolation",
+        help=(
+            "Emergency kill switch: force EVERY task to isolation=none, regardless of"
+            " task/defaults.isolation/isolation.mode (unlike --isolation none's"
+            " fill-in-only semantics). Logs one WARNING naming the overridden task ids."
+            f" Env: {ENV_NO_ISOLATION} (1/true/yes/on). No config-file layer (emergency"
+            " override, not a setting). Mutually exclusive with --isolation worktree."
+        ),
+    ),
     prompt: str | None = typer.Option(
         None,
         "--prompt",
@@ -815,6 +1072,28 @@ def run(
         for spec in agent_map.values():
             spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
 
+    # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9). Unset
+    # (None) makes no change; ISOLATION_NONE/ISOLATION_WORKTREE become the new
+    # WorkflowSpec.defaults.isolation, a fill-in only for tasks left at isolation="inherit"
+    # (never a task's own explicit isolation -- ADR-0006, resolve_task_isolation).
+    eff_no_isolation = _resolve_no_isolation(no_isolation)
+    if eff_no_isolation and isolation == ISOLATION_WORKTREE:
+        typer.echo(
+            "ERROR: --isolation worktree and --no-isolation are mutually exclusive", err=True
+        )
+        raise typer.Exit(1)
+
+    eff_isolation_mode, eff_isolation_strict, eff_isolation_env = _resolve_isolation_settings(
+        isolation
+    )
+    if eff_isolation_mode is not None:
+        wf.defaults.isolation = eff_isolation_mode
+
+    # --no-isolation/AO_NO_ISOLATION (C-1 coordinator decision): a TRUE kill switch, applied
+    # last so it always wins over the fill-in above, including a task's own explicit
+    # isolation="worktree" declaration.
+    _apply_no_isolation_kill_switch(wf, eff_no_isolation)
+
     workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
     store = LocalFsArtifactStore(workspace)
     rs_store = RunStateStore(workspace, store)
@@ -866,6 +1145,8 @@ def run(
         max_heal_retries_per_task=monitoring_cfg.max_heal_retries_per_task,
         max_parallel=eff_max_parallel,
         general_instructions=effective_general_instructions,
+        isolation_strict=eff_isolation_strict,
+        isolation_env=eff_isolation_env,
     )
 
     try:
@@ -985,6 +1266,28 @@ def resume(
             " general_instructions."
         ),
     ),
+    isolation: str | None = typer.Option(
+        None,
+        "--isolation",
+        help=(
+            f"Isolation-mode fill-in for tasks left at isolation=inherit: one of "
+            f"{ISOLATION_MODE_CHOICES} (default: unset, honours the spec/defaults.isolation"
+            " unchanged). Never overrides a task's own explicit isolation -- for a true"
+            f" kill switch see --no-isolation. Env: {ENV_ISOLATION_MODE}. Config:"
+            " isolation.mode."
+        ),
+    ),
+    no_isolation: bool = typer.Option(
+        False,
+        "--no-isolation",
+        help=(
+            "Emergency kill switch: force EVERY task to isolation=none, regardless of"
+            " task/defaults.isolation/isolation.mode (unlike --isolation none's"
+            " fill-in-only semantics). Logs one WARNING naming the overridden task ids."
+            f" Env: {ENV_NO_ISOLATION} (1/true/yes/on). No config-file layer (emergency"
+            " override, not a setting). Mutually exclusive with --isolation worktree."
+        ),
+    ),
 ) -> None:
     """Resume a previously interrupted run.
 
@@ -1062,6 +1365,22 @@ def resume(
 
         for spec in agent_map.values():
             spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
+
+    # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9) -- same
+    # chain and fill-in-only semantics as `ao run` (see there for the full rationale).
+    eff_no_isolation = _resolve_no_isolation(no_isolation)
+    if eff_no_isolation and isolation == ISOLATION_WORKTREE:
+        typer.echo(
+            "ERROR: --isolation worktree and --no-isolation are mutually exclusive", err=True
+        )
+        raise typer.Exit(1)
+
+    eff_isolation_mode, eff_isolation_strict, eff_isolation_env = _resolve_isolation_settings(
+        isolation
+    )
+    if eff_isolation_mode is not None:
+        wf.defaults.isolation = eff_isolation_mode
+    _apply_no_isolation_kill_switch(wf, eff_no_isolation)
 
     try:
         existing = rs_store.load(run_id)
@@ -1153,6 +1472,8 @@ def resume(
         max_heal_retries_per_task=monitoring_cfg.max_heal_retries_per_task,
         max_parallel=eff_max_parallel,
         general_instructions=effective_general_instructions,
+        isolation_strict=eff_isolation_strict,
+        isolation_env=eff_isolation_env,
     )
 
     try:
@@ -1364,6 +1685,204 @@ def ui_cmd(
         uvicorn.run(app_instance, host=host, port=port)
 
 
+# ---------------------------------------------------------------------------------------
+# Isolation worktree GC for `ao prune` (E-Wk9Tz3 HLD §11 M9, §14).
+#
+# `ao prune` takes only `--workspace` -- no reposets/workflow triplet -- so it has none of
+# a live run's `group_repos(repo_paths)` input to build `IsolatedRepo`s from. Every
+# worktree this codebase ever creates lives at a fully deterministic path
+# (`isolation.paths.worktree_root_prefix_for(workspace_root, run_id)/<task_id>/<repo_key>`,
+# HLD §7.1/§11 M3), so the real git repos a run touches are instead DISCOVERED by probing
+# whatever of those directories still exist on disk -- no other input needed.
+# ---------------------------------------------------------------------------------------
+
+
+def _isolation_worktree_root(workspace_root: str) -> Path:
+    """The per-workspace worktree root (no run_id component).
+
+    `isolation/paths.py` exposes no direct helper for this (only
+    `worktree_root_prefix_for`, which requires a run_id) and this ticket's concurrency
+    boundary forbids editing that module to add one. `.parent` strips exactly the run_id
+    path component `worktree_root_prefix_for` appends last, so this stays correct even if
+    that module's internal directory layout changes.
+    """
+    from .isolation.paths import worktree_root_prefix_for
+
+    # Placeholder run_id: only its PARENT (the workspace-scoped, run_id-independent root)
+    # is used below.
+    return worktree_root_prefix_for(workspace_root, "_").parent
+
+
+def _discover_run_worktree_repos(workspace_root: str, run_id: str) -> list[IsolatedRepo]:
+    """Discover the real git repositories one run's worktrees belong to, by probing the
+    physical worktree directories left on disk under that run's own worktree prefix.
+
+    Deliberately does NOT use the worktree directory itself as `IsolatedRepo.toplevel`:
+    this run's own GC pass may remove that exact directory mid-operation, and
+    `GitRepo.path` must stay a stable invocation cwd for every subsequent call made on the
+    same `GitRepo` instance. Recovered instead from `--git-common-dir`, which always
+    points at the persistent main checkout (`<main_toplevel>/.git` for every non-bare
+    layout this codebase creates) and is never itself one of the paths GC removes.
+    """
+    from .isolation.git import GitRepo
+    from .isolation.paths import worktree_root_prefix_for
+    from .isolation.worktrees import IsolatedRepo as _IsolatedRepo
+
+    prefix = worktree_root_prefix_for(workspace_root, run_id)
+    if not prefix.is_dir():
+        return []
+
+    discovered: dict[str, IsolatedRepo] = {}
+    for task_dir in sorted(p for p in prefix.iterdir() if p.is_dir()):
+        for repo_dir in sorted(p for p in task_dir.iterdir() if p.is_dir()):
+            probed = GitRepo.probe(str(repo_dir))
+            if probed is None:
+                # C-4 (2026-09-07 review): every other degrade path in this neighborhood
+                # (group_repos's worktree.non_git_repo, _gc_run_worktrees'/
+                # _preview_run_worktrees' own GitError warnings) reports what it skipped --
+                # this one must too, so `ao prune` never silently reports success while a
+                # repo's worktrees/refs were left ungc'd.
+                typer.echo(
+                    f"WARNING: skipping worktree GC for run {run_id!r}: {repo_dir} is not "
+                    "a readable git worktree",
+                    err=True,
+                )
+                continue
+            common_dir = os.path.normpath(probed.common_dir)
+            if common_dir in discovered:
+                continue
+            git_suffix = os.sep + ".git"
+            toplevel = (
+                common_dir[: -len(git_suffix)] if common_dir.endswith(git_suffix) else common_dir
+            )
+            if GitRepo.probe(toplevel) is None:
+                # The persistent checkout this worktree points back to is gone/unreadable --
+                # nothing safe to invoke git against; skip rather than guess (C-4: warn,
+                # never silently).
+                typer.echo(
+                    f"WARNING: skipping worktree GC for run {run_id!r}: the main checkout "
+                    f"{toplevel!r} this worktree points back to is gone or unreadable",
+                    err=True,
+                )
+                continue
+            discovered[common_dir] = _IsolatedRepo(
+                key=repo_dir.name, toplevel=toplevel, common_dir=common_dir
+            )
+    return list(discovered.values())
+
+
+def _gc_run_worktrees(workspace_root: str, run_id: str) -> int:
+    """`WorktreeManager.gc_run(run_id)` (R-6: routed through `WorktreeManager`/
+    `prune_worktrees_scoped` only -- never raw git) over the repos discovered for
+    *run_id*. Returns the number of repos GC'd (0 when the run never created a worktree).
+
+    A `GitError` mid-GC is reported as a warning and swallowed, never crashing the whole
+    `ao prune` invocation: the run-directory deletion this ticket wraps around is prune's
+    primary job and must still complete even when one run's worktree cleanup hiccups.
+    """
+    from .errors import GitError
+    from .isolation.worktrees import WorktreeManager
+
+    repos = _discover_run_worktree_repos(workspace_root, run_id)
+    if not repos:
+        return 0
+    manager = WorktreeManager(workspace_root, run_id, repos, integration_heads={})
+    try:
+        manager.gc_run(run_id)
+    except GitError as exc:
+        typer.echo(f"WARNING: worktree GC for run {run_id!r} failed: {exc}", err=True)
+        return 0
+    return len(repos)
+
+
+def _preview_run_worktrees(workspace_root: str, run_id: str) -> tuple[list[str], list[str]]:
+    """Read-only preview of exactly what `_gc_run_worktrees` would remove for *run_id*:
+    worktree paths under the run's own prefix, plus its `ao/`-namespaced branch and squash
+    refs. Used by `ao prune --dry-run` so a dry run touches nothing.
+
+    A `GitError` for one repo is reported as a warning and skipped (that repo's entries
+    are simply omitted from the preview), consistent with `_gc_run_worktrees`'s own
+    never-crash-the-whole-command handling.
+    """
+    from .errors import GitError
+    from .isolation.git import GitRepo
+    from .isolation.paths import AO_REF_NAMESPACE, sanitize_ref_component, worktree_root_prefix_for
+
+    repos = _discover_run_worktree_repos(workspace_root, run_id)
+    if not repos:
+        return [], []
+
+    prefix = str(worktree_root_prefix_for(workspace_root, run_id))
+    san_run = sanitize_ref_component(run_id)
+    branch_prefix = f"refs/heads/{AO_REF_NAMESPACE}/{san_run}/"
+    squash_prefix = f"refs/{AO_REF_NAMESPACE}/runs/{san_run}/"
+
+    worktree_paths: set[str] = set()
+    ref_names: set[str] = set()
+    for repo in repos:
+        git = GitRepo(repo.toplevel)
+        try:
+            for entry in git.worktree_list():
+                norm = os.path.normpath(entry.path)
+                if norm == prefix or norm.startswith(prefix + os.sep):
+                    worktree_paths.add(norm)
+            ref_names.update(git.list_refs(branch_prefix))
+            ref_names.update(git.list_refs(squash_prefix))
+        except GitError as exc:
+            typer.echo(
+                f"WARNING: could not preview worktrees for run {run_id!r} repo {repo.key!r}: {exc}",
+                err=True,
+            )
+            continue
+    return sorted(worktree_paths), sorted(ref_names)
+
+
+def _worktree_run_ids(workspace_root: str) -> list[str]:
+    """Every (sanitized) run_id with at least one worktree directory under this
+    workspace's worktree root -- the candidate set `--worktrees-only` filters down to
+    orphans (run_ids whose `.orchestrator/runs/<id>` directory no longer exists).
+
+    Run ids this codebase generates (`<workflow_id>-<UTC timestamp>`) sanitize to
+    themselves unchanged (`sanitize_ref_component`'s charset already matches), so this
+    directory name is also the real run_id in every case the ticket's own test scenarios
+    (a crashed run's leftovers) cover.
+    """
+    root = _isolation_worktree_root(workspace_root)
+    if not root.is_dir():
+        return []
+    return sorted(p.name for p in root.iterdir() if p.is_dir())
+
+
+def _prune_worktrees_only(workspace_root: str, *, dry_run: bool) -> None:
+    """`ao prune --worktrees-only`: reap worktrees/refs whose run directory no longer
+    exists, WITHOUT deleting any run directory (HLD §14) -- the leak class left by a
+    crashed run (a stray worktree plus its orphaned `ao/`-namespaced branch)."""
+    runs_dir = Path(workspace_root) / ".orchestrator" / "runs"
+    reaped = 0
+    for run_id in _worktree_run_ids(workspace_root):
+        if (runs_dir / run_id).exists():
+            continue  # owned by a run directory that still exists -- not this sweep's job
+
+        if dry_run:
+            wt_paths, refs = _preview_run_worktrees(workspace_root, run_id)
+            if not wt_paths and not refs:
+                continue
+            typer.echo(f"Would reap orphaned worktrees for run {run_id}:")
+            for wt in wt_paths:
+                typer.echo(f"  worktree: {wt}")
+            for ref in refs:
+                typer.echo(f"  ref: {ref}")
+            reaped += 1
+        else:
+            n = _gc_run_worktrees(workspace_root, run_id)
+            if n:
+                typer.echo(f"Reaped orphaned worktrees for run {run_id}: {n} repo(s)")
+                reaped += 1
+
+    action = "would be reaped" if dry_run else "reaped"
+    typer.echo(f"{reaped} orphaned run(s) {action}")
+
+
 @app.command()
 def prune(
     workspace: str = typer.Option(..., "--workspace", "-w", help="Workspace root to prune"),
@@ -1373,17 +1892,56 @@ def prune(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Print what would be deleted without deleting"
     ),
+    worktrees: bool = typer.Option(
+        True,
+        "--worktrees/--no-worktrees",
+        help=(
+            "Also garbage-collect a deleted run's isolation worktrees/branches/refs "
+            "(E-Wk9Tz3 FR-14) via WorktreeManager.gc_run, scoped to that run only -- never"
+            " a blanket `git worktree prune`. Default on; --no-worktrees opts out."
+        ),
+    ),
+    worktrees_only: bool = typer.Option(
+        False,
+        "--worktrees-only",
+        help=(
+            "Skip run-directory deletion entirely. Instead reap worktrees/ao-namespaced"
+            " refs whose run directory no longer exists (a crashed run's leftovers) --"
+            " never deletes a run directory. --older-than/--worktrees are ignored in this"
+            " mode."
+        ),
+    ),
 ) -> None:
     """Remove stale run artifacts from a workspace.
 
-    Deletes run directories under <workspace>/.orchestrator/runs/ that are
-    older than --older-than days. Use --dry-run to preview. Analogous to
-    `docker system prune` -- run periodically to reclaim disk space.
+    Deletes run directories under <workspace>/.orchestrator/runs/ that are older than
+    --older-than days, and (by default) that run's isolation worktrees/branches/refs
+    (E-Wk9Tz3 FR-14) -- never a foreign worktree, and never via raw git (routed through
+    WorktreeManager.gc_run / GitRepo.prune_worktrees_scoped only). Use --dry-run to
+    preview; --worktrees-only for a standalone worktree-only reconciliation pass that
+    touches no run directory. Analogous to `docker system prune` -- run periodically to
+    reclaim disk space.
+
+    LIMITATION: this command takes only --workspace (no reposets/workflow), so the real
+    git repo(s) a run's worktrees belong to are discovered by probing the physical
+    worktree directories still on disk. A worktree directory removed by something other
+    than `ao`/`git worktree remove` (a manual `rm -rf`, a filesystem restore) leaves a
+    dangling admin entry in the main repo that IS still reaped, as long as at least one
+    OTHER worktree directory for the same run/repo survives to bootstrap discovery. If
+    EVERY worktree directory for a run's repo is gone, that repo can no longer be
+    discovered at all, and its `ao/`-namespaced branch/refs become permanently unreapable
+    by any variant of this command -- reported as "0 orphaned run(s)" with no error.
     """
     import shutil
     import time
 
-    runs_dir = Path(workspace) / ".orchestrator" / "runs"
+    ws_root = str(Path(workspace).resolve())
+
+    if worktrees_only:
+        _prune_worktrees_only(ws_root, dry_run=dry_run)
+        return
+
+    runs_dir = Path(ws_root) / ".orchestrator" / "runs"
     if not runs_dir.exists():
         typer.echo(f"Nothing to prune: {runs_dir}")
         raise typer.Exit(0)
@@ -1395,11 +1953,22 @@ def prune(
     to_delete = [p for p in candidates if older_than == 0 or os.path.getmtime(p) < cutoff]
 
     for p in to_delete:
+        run_id = p.name
         if dry_run:
             typer.echo(f"Would delete: {p}")
+            if worktrees:
+                wt_paths, refs = _preview_run_worktrees(ws_root, run_id)
+                for wt in wt_paths:
+                    typer.echo(f"  would remove worktree: {wt}")
+                for ref in refs:
+                    typer.echo(f"  would delete ref: {ref}")
         else:
             shutil.rmtree(p)
             typer.echo(f"Deleted: {p}")
+            if worktrees:
+                n = _gc_run_worktrees(ws_root, run_id)
+                if n:
+                    typer.echo(f"  worktrees GC'd for {run_id}: {n} repo(s)")
 
     action = "would be deleted" if dry_run else "deleted"
     typer.echo(f"{len(to_delete)} run(s) {action}")
@@ -1579,7 +2148,7 @@ def templates_cmd(
     from .templates import TemplateError, discover_templates
 
     ws_root = _resolve_templates_workspace_root(workspace)
-    cfg = _load_project_config_or_none()
+    cfg = _load_project_config_or_exit()
 
     try:
         infos = discover_templates(ws_root, cfg)
@@ -1690,7 +2259,7 @@ def new_cmd(
         raise typer.Exit(1)
 
     ws_root = _resolve_templates_workspace_root(workspace)
-    cfg = _load_project_config_or_none()
+    cfg = _load_project_config_or_exit()
 
     try:
         parsed_params = _parse_param_options(param)

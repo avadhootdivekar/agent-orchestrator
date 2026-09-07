@@ -29,6 +29,7 @@ from .models import (
     DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
     DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
     DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
+    WorkflowIsolation,
 )
 from .monitoring import DEFAULT_HEAL_WAIT_SECONDS
 
@@ -85,6 +86,73 @@ class UIConfig(BaseModel):
     """P1 bind host for this workspace's dashboard (e.g. `"0.0.0.0"` to expose on all
     interfaces -- a deliberate, warned-about choice; the dashboard is unauthenticated).
     `None` defers to the service registry's `host` (P2), then the loopback default."""
+
+
+class IsolationConfig(BaseModel):
+    """Schema for the `isolation:` block of a per-project AO config file (E-Wk9Tz3,
+    per-task git worktree isolation -- HLD §11 M9).
+
+    `mode` participates in the standard CLI flag > env var > project config > unset
+    precedence chain (`cli._resolve_isolation_settings`), mirroring `max_parallel`'s own
+    chain exactly (`--isolation` > `AO_ISOLATION` > this field > unset/no override). Unlike
+    `max_parallel`, though, an override here never REPLACES a task's own explicit
+    `isolation` declaration: it is written onto `WorkflowSpec.defaults.isolation`, a pure
+    FILL-IN that only affects tasks left at `isolation="inherit"` -- the exact mechanism
+    `models.resolve_task_isolation` already implements (ADR-0006: a run-level flag fills in
+    a per-task setting; it never clobbers one the spec author declared explicitly). For a
+    TRUE kill switch that overrides even an explicit per-task declaration, see `ao run
+    --no-isolation`/`AO_NO_ISOLATION` -- deliberately NOT a field on this model at all (an
+    emergency override, not a workspace-wide setting, per the coordinator's 2026-09-07 C-1
+    decision).
+
+    `strict`/`state_dir`/`env` are config-file-ONLY surfaces -- HLD §11 M9's own interface
+    table states `isolation.env` "comes only from `.ao/config.yaml` ... never from a
+    workflow spec or a manifest" (the same trust level as the top-level `env:` block
+    today). There is deliberately no CLI flag or env-var equivalent for either.
+    """
+
+    mode: WorkflowIsolation | None = None
+    """Fill-in for `WorkflowSpec.defaults.isolation`: `models.ISOLATION_NONE`
+    (`"none"`)/`models.ISOLATION_WORKTREE` (`"worktree"`), reusing `models.py`'s own
+    `WorkflowIsolation` type rather than a third independent spelling of the same two
+    strings (2026-09-07 review C-3). `None` (the default, and the only way to represent
+    "no override" -- there is no isolation-mode `"auto"` constant anywhere in `models.py`
+    or the HLD, confirmed by review; unlike the unrelated conflict-resolver-tier
+    `models.TIER_AUTO`) makes no change at all -- every workflow spec's own defaults/
+    per-task isolation stands exactly as authored, keeping every pre-epic and non-isolated
+    run byte-identical."""
+
+    strict: bool = False
+    """Wired straight to `Orchestrator(isolation_strict=...)`: when true, a non-git repo
+    or a too-old git binary is a hard run failure instead of a logged degrade-to-`none`
+    (FR-12)."""
+
+    state_dir: str | None = None
+    """Overrides `$AO_STATE_DIR` for this workspace's worktrees, ONLY when the real env
+    var isn't already set in the process environment -- the same "explicit env always
+    wins" rule `apply_project_config_env` already applies to the top-level `env:` block."""
+
+    env: dict[str, dict[str, str]] = {}
+    """Per-repo environment injected into isolated tasks and verify commands (repo id ->
+    `{VAR: value}`), wired straight to `Orchestrator(isolation_env=...)`. E.g. a shared
+    `CARGO_TARGET_DIR` (HLD D7): cargo's own file lock on the target dir makes sharing
+    safe-but-serializing rather than a correctness risk."""
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def _env_must_be_nested_str_mapping(cls, v: object) -> dict[str, dict[str, str]]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("isolation.env must be a mapping of repo id -> {VAR: value}")
+        result: dict[str, dict[str, str]] = {}
+        for repo_id, mapping in v.items():
+            if not isinstance(mapping, dict):
+                raise ValueError(
+                    f"isolation.env[{repo_id!r}] must itself be a mapping of env var name -> value"
+                )
+            result[str(repo_id)] = {str(k): str(val) for k, val in mapping.items()}
+        return result
 
 
 class ProjectConfig(BaseModel):
@@ -161,6 +229,11 @@ class ProjectConfig(BaseModel):
     ui: UIConfig = UIConfig()
     """Dashboard settings for this workspace (E-GIytcL): `ui.port` is the P1 port pin
     consulted by the multi-workspace service's port resolution (`service.ports`)."""
+
+    isolation: IsolationConfig = IsolationConfig()
+    """Per-task git worktree isolation settings for this workspace (E-Wk9Tz3, HLD §11 M9).
+    Absent block -> `IsolationConfig()`'s all-defaults (no mode override, not strict, no env
+    overlay) -> byte-identical to pre-epic behaviour."""
 
     @field_validator("env", mode="before")
     @classmethod
@@ -334,6 +407,21 @@ _INIT_TEMPLATE = """\
 # general_instructions:
 #   - instructions/house-rules.md
 #   - instructions/coding-standards.md
+
+# --- Per-task git worktree isolation (E-Wk9Tz3, absent -> all defaults, byte-identical) ---
+# `refs/heads/ao/**` and `refs/ao/**` are RESERVED for the engine -- do not create branches
+# or refs there; an existing branch found in that namespace is treated as this run's own
+# crash-recovered worktree, never something to delete.
+# isolation:
+#   mode: null               # AO_ISOLATION / --isolation -- unset (default) | none | worktree
+#   strict: false            # true => a non-git repo / too-old git is a hard failure, not a degrade
+#   state_dir: null          # override $AO_STATE_DIR for worktrees (config-file only, no CLI/env)
+#   env:                     # per-repo env injected into isolated tasks + verify (config-file only)
+#     core:
+#       CARGO_TARGET_DIR: /abs/shared/target
+# For an emergency kill switch that forces EVERY task to isolation=none regardless of the
+# above, use `ao run/resume --no-isolation` (or AO_NO_ISOLATION=1) -- deliberately not a
+# config-file setting.
 
 # --- Agent-based monitoring & self-healing (absent -> all defaults, byte-identical) ---
 # monitoring:

@@ -3,11 +3,32 @@
 ## Metadata
 - Task ID: `T-Cx4Jf1-cli-config-prune-observability`
 - Epic ID: `E-Wk9Tz3-task-isolation`
-- Owner: unassigned (developer)
+- Owner: developer-agent
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: Split into Part A (In Review) / Part B (Pending, after T-Lr6Ka3) -- see "Coordinator split" below
 - Estimate: 2.5 days
+
+## Coordinator split (2026-09-07)
+
+The coordinator split this task into two delivery slices, tracked separately so Part A can
+land before `T-Lr6Ka3` (the conflict-resolver ladder) exists:
+
+- **Part A -- CLI flags + config chain + `ao prune` worktree GC + status surface.** No
+  `engine.py` edits. Covers AC-1 through AC-6, AC-8 (CLI/status half only -- the
+  `status.json` schema itself is `T-Sc7Rm2`'s, already shipped), AC-13 (S-8 namespace
+  reservation) and AC-14 (R-6 scoped prune). **Status: In Review** (this update).
+- **Part B -- structured event emission inside `engine.py`.** Covers AC-7 (the event
+  contract test), AC-11's `tier_counts` INCREMENT logic if not already done by
+  `T-En8Hd4`/`T-Ib5Qy9` (this ticket's own display-only surfacing of the already-shipped
+  field is Part A, done), and AC-12 (S-7's `worktree.retention_high` warning, which is an
+  `engine.py`-only emission). Assigned after `T-Lr6Ka3` lands, per the epic's fixed
+  `engine.py` edit order. **Status: Pending.**
+- **Deferred, not formally re-assigned to either slice** -- AC-9 (dashboard "Integration"
+  column + run-header line, `ui/runs.py`). The coordinator's Part A brief enumerated
+  exactly four surfaces (CLI flags, config chain, `ao prune` GC, status surface) and did
+  not include the dashboard; it is not technically blocked on anything Part A/B touches,
+  but is out of scope for this delivery. Flagged here rather than silently dropped.
 
 ## Requirements Mapping
 - Requirement IDs: FR-14, FR-15, FR-12 (config surface) · Design: HLD §11 M9
@@ -137,3 +158,40 @@ HLD §11 M9 — precedence chain, config block, prune extension, and the full ev
   one-shot `worktree.retention_high` warning with the deliberate decision **not** to hard-cap retention;
   S-8 as an explicit namespace reservation in the config template; R-6 carried into `ao prune` with a
   foreign-worktree survival test. Re-estimated 2 -> 2.5 days.
+
+---
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: Part A delivered (see
+  "Coordinator split" above and `STATUS.md` for evidence/gates). Two deliberate scope resolutions,
+  neither guessed at:
+  1. **AC-2/AC-3's literal "global kill switch"/"forces every non-structural task" text is NOT what
+     shipped.** The coordinator's own Part A brief was explicit and took precedence over this file's
+     older text: `--isolation`/`AO_ISOLATION`/`isolation.mode` is a **fill-in** for
+     `WorkflowSpec.defaults.isolation` only -- it changes the value tasks left at `isolation="inherit"`
+     resolve to, and NEVER overrides a task's own explicit `isolation: "worktree"`/`"none"` declaration
+     (ADR-0006, `resolve_task_isolation`'s existing "inherit" semantics, unchanged). AC-2's own test
+     scenario (a workflow's `defaults.isolation: worktree`, no task declaring its own isolation) is
+     satisfied exactly by this mechanism and is tested; the stronger "override an explicit per-task
+     declaration too" behavior is not implemented in Part A. Documented as a scope decision, not a bug.
+  2. **`isolation.strict`/`isolation.env` have no CLI/env surface** -- config-file only. HLD §11 M9's own
+     interface table is explicit ("isolation.env comes only from `.ao/config.yaml` ... never from a
+     workflow spec or a manifest") and no ticket anywhere defines an `--isolation-strict` flag or an
+     `AO_ISOLATION_ENV`/`AO_ISOLATION_STRICT` env var; only `mode` gets the full CLI > env > config >
+     default chain. The task-assignment message's own "Read first" paraphrase suggested a broader
+     surface; resolved in favor of the authoritative HLD/TASK.md text rather than guessed at.
+
+---
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: **Review response.** The Part A
+  review (`REVIEW-partA.md`) confirmed item 1 above was a real, must-fix gap (C-1) precisely because
+  a genuine kill switch was missing. The coordinator resolved it authoritatively (not left to this
+  agent): the fill-in-only `--isolation`/`AO_ISOLATION`/`isolation.mode` chain from item 1 stands
+  unchanged, and a new `--no-isolation`/`AO_NO_ISOLATION` flag (no config-file layer; mutually
+  exclusive with `--isolation worktree`) is the true, loud kill switch AC-2/AC-3 originally called
+  for, applied on top of the fill-in so it always wins including over an explicit per-task
+  declaration. `"auto"` was dropped from the CLI/config surface entirely per the same review (C-1):
+  confirmed, again, no `models.py`/HLD constant for an isolation-mode `"auto"` exists; "no override"
+  is `None`, not a string. C-2 (config-file `ConfigError` silently swallowed) was also fixed, at the
+  shared `_load_project_config_or_none` helper level per the coordinator's instruction, since it was
+  a systemic gap affecting every settings resolver in `cli.py`, not just isolation. Full disposition
+  of every finding (C-1 through C-5) in `STATUS.md`. Gates re-verified: targeted suite 175/0
+  (+templates spot-check 100/0), full suite **3459 passed / 7 skipped / 0 failed**. No commit made
+  per instruction.

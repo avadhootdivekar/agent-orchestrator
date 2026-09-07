@@ -2,26 +2,282 @@
 
 - ID: `T-Cx4Jf1-cli-config-prune-observability`
 - Updated At: 2026-09-07
-- State: Draft
-- Owner: unassigned
+- State: Part A -- In Review · Part B -- Pending (after `T-Lr6Ka3`)
+- Owner: developer-agent
 
 ## This update
+
+- **2026-09-07 — Review response: fix pass complete, both must-fix findings closed.**
+  `REVIEW-partA.md` verdict APPROVE WITH CHANGES (must-fix C-1, C-2; should-fix C-3/C-4/C-5).
+  Per-finding disposition:
+  - **C-1 (must-fix) — AC-2/AC-3 deviation.** Resolved by explicit coordinator decision (not a
+    developer-side reinterpretation anymore): `--isolation {none,worktree}` (+ env/config layers)
+    STAYS a fill-in default (ADR-0006, unchanged); a new **`--no-isolation`**/`AO_NO_ISOLATION`
+    flag on `run`/`resume` is a true, loud kill switch — forces EVERY task's `isolation` to
+    `"none"` regardless of task/defaults/config, logs one WARNING naming every overridden task id,
+    deliberately has NO config-file layer (an emergency override, not a setting), and is mutually
+    exclusive with an explicit `--isolation worktree` on the same invocation (usage error, exit 1).
+    Applied AFTER the fill-in so it always wins, including over an explicit per-task
+    `isolation: "worktree"` declaration. `"auto"` is DROPPED from `ISOLATION_MODE_CHOICES`
+    entirely — confirmed (again) that neither `models.py` nor the HLD define an isolation-mode
+    `"auto"` constant (the reviewer's own finding); "no override" is now represented by the
+    resolved mode being `None`, not a third string value. `IsolationConfig.mode` is now
+    `WorkflowIsolation | None = None` (was `Literal["none","worktree","auto"] = "auto"`).
+    HLD §11 M9 amendment is the architect's own action item (per the coordinator), not this
+    ticket's. New tests: `TestNoIsolationKillSwitch` (CLI flag forces every task + warns
+    naming both overridden ids; `AO_NO_ISOLATION=1` env layer has the same effect; a negative
+    control proving fill-in-ALONE still never flips an explicit task) plus two mutual-exclusivity
+    CliRunner tests (`run`/`resume`).
+  - **C-2 (must-fix) — invalid config-file `isolation.mode` silently fell back instead of exiting
+    1.** Root cause confirmed exactly as the reviewer found it: `_load_project_config_or_none`'s
+    `except Exception: return None` discarded `load_project_config`'s own correctly-raised
+    `ConfigError` before `_resolve_isolation_settings`'s own `ISOLATION_MODE_CHOICES` check ever
+    ran. Fixed at the shared-helper level (per the coordinator's explicit instruction, since this
+    is a systemic gap affecting every settings resolver, not just isolation): `_load_project_config_or_none`
+    now returns `None` ONLY for "no config file found" and lets a present-but-invalid file's
+    `ConfigError` propagate; a new `_load_project_config_or_exit()` wrapper converts that
+    `ConfigError` into the standard `typer.Exit(1)` + actionable message, and is now used at
+    **every** call site in `cli.py` (`resolve_general_instructions`, `_resolve_run_settings`,
+    `_resolve_monitoring_settings`, `_resolve_isolation_settings`, `templates_cmd`, `new_cmd`) —
+    so a malformed config now errors loudly everywhere it's read, not just for isolation. Verified:
+    the pre-existing `--max-parallel` config-layer test suite (`tests/test_e2e_cli_max_parallel.py`)
+    still passes unedited (it never exercises a malformed file). New tests: a unit-level
+    `test_invalid_config_file_mode_exits_1_with_message` and a CliRunner e2e
+    `test_run_invalid_isolation_config_mode_exits_1`.
+  - **C-3 (should-fix) — duplicated isolation-mode string literals.** Fixed: `cli.py` now imports
+    `models.ISOLATION_NONE`/`ISOLATION_WORKTREE` at module level (confirmed via
+    `sys.modules` that `models` is ALREADY loaded transitively through `.service.cli` before this
+    import — zero new eager-import cost, unlike `.engine`, which stays lazy) and derives
+    `ISOLATION_MODE_CHOICES` from them; `project_config.IsolationConfig.mode` is now typed
+    `models.WorkflowIsolation | None` instead of a third independent `Literal[...]` spelling.
+  - **C-4 (should-fix) — silent skip in `_discover_run_worktree_repos`.** Fixed: both degrade
+    branches (`GitRepo.probe(repo_dir) is None` and `GitRepo.probe(toplevel) is None`) now
+    `typer.echo(f"WARNING: ...", err=True)` naming the run id and the unreadable path, matching
+    the established convention elsewhere in this neighborhood (`_gc_run_worktrees`'s/
+    `_preview_run_worktrees`'s own `GitError` warnings). STATUS.md's prior claim that this already
+    logged was wrong (verified by re-reading the actual code, per the reviewer's own finding) —
+    corrected here, not repeated.
+  - **C-5 (should-fix) — a manually-removed worktree directory (dangling admin entry).** Verified
+    empirically (real git, this review): `git worktree list --porcelain` still lists a worktree
+    whose directory was `rm -rf`'d directly (marked `prunable`), and `git worktree remove --force`
+    on it succeeds, cleaning the dangling entry. Since `WorktreeManager.gc_run` is driven by git's
+    OWN worktree registry (`git worktree list`), not a filesystem re-scan, it ALREADY reaps a
+    dangling entry correctly — the only requirement is that `_discover_run_worktree_repos` can
+    bootstrap the repo at all, i.e. at least one OTHER worktree directory for the same run/repo
+    still exists on disk. New test
+    `TestPruneReapsDanglingAdminEntry::test_manually_removed_worktree_dir_still_reaped_via_sibling_discovery`
+    proves this directly: task-a's worktree survives, task-b's is manually `rm -rf`'d, `ao prune
+    --worktrees-only` reaps BOTH the dangling entry and its branch ref. The residual TRUE
+    structural limit (every worktree directory for a run/repo gone, nothing left to bootstrap
+    discovery from at all) is real and unfixable without a persisted repo manifest `ao prune`
+    doesn't have — now documented in `ao prune`'s own `--help` text (a new "LIMITATION:" paragraph)
+    in addition to this file's Risks section below.
+  - Suggestions (C-6/C-7/C-8/C-9) — not required by the coordinator's fix list; not actioned this
+    round, no change in disposition from the original review.
+  - Gates re-verified after the fix pass (numbers below, superseding the earlier round).
+
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
 - **2026-09-07 — Phase-2 review amendment applied.** Folded in: S-5 (surface `tier_counts`/`tier_reached` — display-only, no new mechanism), S-7 (one-shot `worktree.retention_high`; a hard cap deliberately rejected), S-8 (`ao/` namespace reservation in the config template), R-6 (`ao prune` uses the scoped prune, with a foreign-worktree survival test). **Re-estimated 2 -> 2.5 days.**
 - Per-finding dispositions: HLD §24 "Review dispositions".
 
+- **2026-09-07 — Coordinator split applied; Part A delivered.** The coordinator split this
+  task in two so Part A could land ahead of `T-Lr6Ka3`. Full mapping in `TASK.md`'s
+  "Coordinator split" section; summary:
+  - **Part A (this update): CLI flags + config chain + `ao prune` worktree GC + status
+    surface. No `engine.py` edits — confirmed via `git status`, only `cli.py` and
+    `project_config.py` touched under `src/`.**
+  - **Part B (not started): structured `worktree.*`/`integration.*` event emission inside
+    `engine.py`** — the event-contract test (AC-7) and S-7's `worktree.retention_high`
+    warning (AC-12) both require `engine.py` logic and are explicitly out of scope here.
+    Assigned after `T-Lr6Ka3` lands, per the epic's fixed `engine.py` edit order.
+  - **Deferred, unassigned:** the dashboard "Integration" column / run-header line (AC-9,
+    `ui/runs.py`) — not in the coordinator's enumerated Part A surface list, not picked up
+    by Part B either. Flagged for a follow-up ticket rather than silently dropped.
+
+### What Part A implements
+
+1. **`--isolation {none,worktree,auto}` on `run` and `resume`** (`cli.py`), resolved by a
+   new `_resolve_isolation_settings` exactly mirroring `_resolve_run_settings`'s own
+   `--max-parallel` chain: `--isolation` > `AO_ISOLATION` > `.ao/config.yaml
+   isolation.mode` > `"auto"` (no override). An empty env var falls through; an invalid
+   value at any layer exits 1 with a clear `ISOLATION_MODE_CHOICES`-naming message.
+   `ao validate` is unchanged (no `--isolation` flag added there, per the brief).
+2. **Fill-in semantics, not a global kill switch** (a deliberate, documented narrowing of
+   TASK.md's original AC-2/AC-3 text — see `TASK.md`'s developer-agent comment for the full
+   rationale). A resolved mode `!= "auto"` is written onto `WorkflowSpec.defaults.isolation`
+   directly (`wf.defaults.isolation = eff_isolation_mode`), which is exactly the value
+   `models._declared_isolation`/`resolve_task_isolation` already fall back to for any task
+   left at `isolation="inherit"` — so this needed no `models.py`/`engine.py` change at all.
+   A task with its own explicit `isolation: "worktree"`/`"none"` is never touched.
+3. **`isolation.strict`/`isolation.env` wired straight to the already-existing
+   `Orchestrator(isolation_strict=, isolation_env=)` constructor params** (added by
+   `T-En8Hd4`, previously unwired — this ticket is the "future M9 ticket" that ticket's own
+   STATUS.md named). Config-file only, no CLI/env surface, per HLD §11 M9's own interface
+   table.
+4. **`.ao/config.yaml` `isolation.state_dir`** fills `AO_STATE_DIR` in (new
+   `_apply_isolation_state_dir_env`), ONLY when the real env var isn't already set —
+   mirrors `apply_project_config_env`'s existing "explicit env always wins" rule. Applied
+   before any `isolation.paths` call, so `ao run`/`resume`/`prune` all honour it for the
+   same workspace.
+5. **`project_config.IsolationConfig`** (`mode`, `strict`, `state_dir`, `env: dict[str,
+   dict[str, str]]`) added to `ProjectConfig.isolation`. Confirmed by reading:
+   `ProjectConfig` carries no `extra="forbid"` override anywhere in `project_config.py`
+   (pydantic's default `extra="ignore"` applies), so this is additive both directions, per
+   AC-4's instruction. `_INIT_TEMPLATE` documents every key (commented) plus the S-8
+   `refs/heads/ao/**`/`refs/ao/**` reservation sentence verbatim.
+6. **`ao prune` worktree GC** (AC-5): for every run directory `ao prune` deletes, also
+   `WorktreeManager.gc_run(run_id)` — new `--worktrees/--no-worktrees` (default on) and
+   `--dry-run` extends to worktrees (a read-only preview via new `_preview_run_worktrees`,
+   which never calls a mutating method). Since `ao prune` takes only `--workspace` (no
+   reposets/workflow triplet), the real git repos a run touches are DISCOVERED by probing
+   the physical worktree directories left on disk under
+   `isolation.paths.worktree_root_prefix_for(workspace, run_id)` (new
+   `_discover_run_worktree_repos`) — recovered from each worktree's `--git-common-dir`
+   (never the worktree directory itself, which this same GC pass may remove mid-operation)
+   so the constructed `GitRepo`'s invocation cwd stays stable for the whole call.
+7. **`ao prune --worktrees-only`** (AC-6): a standalone sweep (new `_prune_worktrees_only`)
+   that reaps worktrees/`ao/`-namespaced refs whose run directory no longer exists,
+   touching zero run directories. Tested against a hand-created orphan.
+8. **R-6/AC-14**: every removal path is `WorktreeManager.gc_run` -> `GitRepo.
+   prune_worktrees_scoped`/scoped `worktree_remove`/`list_refs` calls only — no raw git
+   subprocess anywhere in `cli.py`'s new code. A user-created (foreign) worktree on the
+   same repo survives both `ao prune` and `ao prune --worktrees-only` — dedicated test.
+9. **`ao status` integration summary** (AC-8, display half): new `_echo_integration_summary`
+   shared by `_print_state` (live `RunState`, used by `run`/`resume`'s own final print and
+   `status`'s state.json fallback) and `_print_status_snapshot` (the `status.json` fast
+   path) — one-line branch/head(s)/integrated/conflict/failed/tier_counts summary,
+   no-op (byte-identical output) when `integration.active` is `False`. The `status.json`
+   schema itself (`integration` block, per-task `integration_status`/`tier_reached`/
+   `conflicted_count`) already shipped with `T-Sc7Rm2`; this ticket only adds the CLI
+   display over already-shipped fields — no new `status.json` keys.
+10. **S-5 (partial — CLI half only)**: `tier_counts` is now visible in `ao status`
+    output (`tiers: auto=2, mechanical=1` etc.). The dashboard half of S-5 is out of scope
+    (see "Deferred" above).
+
+### Deviations recorded (both explained, neither guessed at — see `TASK.md`'s
+developer-agent comment for full text)
+- AC-2/AC-3's literal "global kill switch"/"forces every task" wording is narrowed to a
+  pure `defaults.isolation` fill-in, per the coordinator's explicit Part A brief
+  ("never overwrites a task's explicit isolation... consistent with `resolve_task_isolation`").
+- `isolation.strict`/`isolation.env` are config-file-only (no `--isolation-strict` CLI flag,
+  no `AO_ISOLATION_ENV`/`AO_ISOLATION_STRICT` env var) — resolved against the authoritative
+  HLD §11 M9 interface table and `T-En8Hd4`'s own recorded interface-gap note, over a looser
+  paraphrase in the task-assignment message.
+
 ## Evidence
-- Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the
-  module section named in `TASK.md`) and
-  [`ADR-0013`](../../../../docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md).
+- Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) §11 M9,
+  §14 and
+  [`ADR-0013`](../../../../docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md)
+  D6; ADR-0003 §3 (precedence), ADR-0006 (per-agent/per-task config over run-level flags).
+- Edited source: `src/agent_orchestrator/cli.py`, `src/agent_orchestrator/project_config.py`.
+- New tests: `tests/test_cli_isolation_flags.py` (20 tests: precedence chain, fill-in
+  semantics, `AO_STATE_DIR` fill-in, two real-git worktree e2e via `CliRunner`, invalid-value
+  exit-1 on both `run`/`resume`, `ao status` degrade-cleanly, `ao resume` picking up a
+  file-level isolation default written after the initial crash);
+  `tests/test_e2e_cli_prune_worktrees.py` (7 tests: orphan reaped + foreign survives +
+  report text, dry-run touches nothing, live run directory untouched, default-prune GC +
+  `--no-worktrees` opt-out + dry-run, R-6 foreign-worktree-survives-both-variants).
+- Additive cases: `tests/test_project_config.py` (+9: `IsolationConfig` schema round-trip/
+  validation/nested-env-coercion/rejection, `load_project_config` parsing +
+  bad-mode rejection, scaffold-template content). `tests/test_config.py` — N/A, that file
+  covers `config.py` (`load_agents`/`load_reposets`), an unrelated module; no applicable
+  additive case.
+
+## Gates (exact numbers, post-review fix pass, 2026-09-07)
+- `uv run ruff check .` / `uv run ruff format --check .`: clean, repo-wide.
+- `uv run mypy src`: unchanged at exactly 4 pre-existing `_version.py` errors.
+- Targeted suite (`tests/test_cli.py tests/test_cli_isolation_flags.py tests/test_e2e_cli.py
+  tests/test_e2e_cli_prune_worktrees.py tests/test_config.py tests/test_project_config.py
+  tests/test_e2e_cli_hotspots.py tests/test_e2e_cli_isolation.py`): **175 passed / 0 failed**
+  (up from 165: +9 net new/changed isolation-mode tests in `test_cli_isolation_flags.py` and
+  `test_project_config.py`, +1 new dangling-admin-entry test in
+  `test_e2e_cli_prune_worktrees.py`). Also spot-checked `tests/test_templates.py`
+  `tests/test_e2e_cli_templates.py` `tests/ui/test_templates_api.py` (the other
+  `_load_project_config_or_exit` call sites, C-2's shared-helper fix): **100 passed / 0 failed**.
+- Full suite (`uv run pytest -q -p no:cacheprovider`): **3459 passed / 7 skipped / 0 failed**
+  in 129.0s, one clean run — the two `T-Ac6Vd9`-attributable playground-capture failures from
+  the pre-fix-pass round are gone (that sibling ticket's concurrent checkout state moved on in
+  the interim; unrelated to this fix pass, confirmed via `git status` unchanged file
+  ownership).
 
 ## Risks / Blockers
-- See `TASK.md` > Risks. Blocked only by the dependencies listed in `TASK.md` > Dependencies.
+- See `TASK.md` > Risks. Not blocked; Part A's dependencies (`T-Wk3Nv6`, `T-Ib5Qy9`,
+  `T-En8Hd4`) are all merged-in-checkout (`In Review`) and were read from source, not
+  re-derived from the design doc, per this ticket's own "Read first" instruction.
+- Part B is blocked on `T-Lr6Ka3` landing, per the coordinator's own split.
+- `_discover_run_worktree_repos`'s ".git"-suffix-stripping heuristic (recovering a repo's
+  persistent toplevel from `--git-common-dir` when only a linked worktree survives on disk)
+  assumes the standard non-bare, non-`--separate-git-dir` repo layout this codebase always
+  creates; a genuinely unusual layout degrades to "repo skipped, logged" rather than a
+  crash (`GitRepo.probe(toplevel) is None` guard), never a false GC.
+- `_worktree_run_ids`'s directory-name-is-the-run-id assumption holds for every run_id this
+  codebase generates (`sanitize_ref_component`'s charset already matches
+  `<workflow_id>-<UTC timestamp>`); documented as a scoped assumption, not asserted as a
+  general guarantee.
+- **C-5 residual limit (2026-09-07 review, confirmed real, not fixed — see disposition
+  above).** If EVERY worktree directory for a given run's repo is gone from disk (not just
+  one, with a sibling surviving to bootstrap discovery), that repo becomes permanently
+  undiscoverable to `ao prune` in any variant, and its `ao/`-namespaced branch/refs are
+  never reaped — reported as "0 orphaned run(s)" with no error. Fixing this would need a
+  persisted repo manifest `ao prune` doesn't have (it takes only `--workspace`); documented
+  in `ao prune --help`'s own text as well as here.
 
 ## Next actions
-1. Read `TASK.md`, then the HLD section it names, then the **merged code of every dependency task**
-   (do not re-derive an interface from the design doc alone).
-2. Implement, run `uv run pytest -q` plus `ruff check` / `ruff format --check` / `uv run mypy src`,
-   and record before/after counts in this file.
-3. Update `TASK.md` Status and this file together, with By/Role/Date attribution.
+1. Reviewer: verify Part A against the deviations recorded above (both are argued from the
+   coordinator's own brief / the authoritative HLD text, not guessed).
+2. Part B owner (after `T-Lr6Ka3` lands): implement the AC-7 event-contract test and AC-12's
+   `worktree.retention_high` warning inside `engine.py`, per the hook points `T-En8Hd4`'s own
+   STATUS.md published for this ticket ("T-Cx4Jf1 (event emission / observability polish)").
+3. File a follow-up ticket for AC-9 (dashboard column/run-header line) — currently
+   unassigned to either Part A or Part B.
+
+---
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: Part A implemented and
+  gated (see above); no commit made per instruction. Full pre-handoff checklist in the PR/
+  session summary.
+
+---
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: Review response complete
+  — both must-fix findings (C-1, C-2) and all three should-fix findings (C-3, C-4, C-5) closed;
+  full per-finding disposition in "This update" above. C-1 implemented exactly per the
+  coordinator's explicit decision (`--no-isolation` kill switch, `"auto"` dropped). C-2 fixed at
+  the shared-helper level, all 6 call sites in `cli.py` updated, pre-existing `--max-parallel`
+  config tests confirmed still green. Gates: `ruff`/`format --check` clean; `mypy src` unchanged
+  at 4 pre-existing errors; targeted suite 175/0 (+templates spot-check 100/0); full suite
+  **3459 passed / 7 skipped / 0 failed**, one clean run. No commit made per instruction.
+
+---
+- By: reviewer-agent · Role: reviewer · Date: 2026-09-07 · Comment: Part A code review complete
+  — full findings in
+  [`REVIEW-partA.md`](REVIEW-partA.md). **Verdict: APPROVE WITH CHANGES** (must-fix: C-1, C-2).
+  Verified live: `ruff check`/`format --check` clean on all 5 scope files; `mypy src` unchanged
+  at 4 pre-existing `_version.py` errors; targeted suite (the 8 files STATUS.md names, incl.
+  `test_e2e_cli_isolation.py`) **165 passed / 0 failed**, matching this file's own count exactly;
+  `ao init` → uncommented `isolation:` block round-trips cleanly through `ProjectConfig`; the two
+  playground-capture failures are confirmed via `git diff --stat` to be caused solely by
+  `T-Ac6Vd9`'s concurrent, uncommitted `engine.py`/`budget.py` changes, zero overlap with this
+  ticket's files.
+  - **C-1 (Major)**: AC-2/AC-3's fill-in-only implementation (vs. the HLD's literal "global kill
+    switch"/"forces every task" text) is well-argued from ADR-0006 and thoroughly tested, but is
+    currently recorded only as the developer's own comment — no architect/coordinator sign-off,
+    and `docs-md/task-isolation-hld.md` §11 M9 still contradicts the shipped behavior. Needs either
+    a formal sign-off + HLD text correction, or an explicitly-named `--force-*`-style override per
+    ADR-0006's own carve-out.
+  - **C-2 (Major)**: Empirically verified that an invalid `isolation.mode` value in
+    `.ao/config.yaml` does **not** exit 1 — `_load_project_config_or_none`'s broad
+    `except Exception: return None` (pre-existing, shared with `_resolve_run_settings`/
+    `_resolve_monitoring_settings`) swallows the `ConfigError` before `_resolve_isolation_settings`
+    ever sees it, silently falling back to `"auto"`. This contradicts both AC-1's own text ("an
+    invalid value at any layer exits 1") and this file's own claim of the same. No test covers
+    this layer. The identical gap pre-exists for `--max-parallel`'s config layer too (not
+    introduced fresh here), which is why this is Major rather than Blocking — but it needs either
+    a fix or an explicit, correctly-scoped documentation of the limitation plus a pinning test.
+  - Five further Warnings/Suggestions (C-3 through C-9: duplicated isolation-mode string literals
+    vs. `models.py`'s existing named constants; a silent no-log skip in
+    `_discover_run_worktree_repos` that also contradicts this file's own "repo skipped, logged"
+    Risks claim; an undocumented structural limit on GC-ing a manually-removed worktree directory;
+    plus three Suggestions) — see `REVIEW-partA.md` for full detail, locations, and concrete fixes.
+  - Explicitly re-confirmed both Part A/Part B splits and the AC-9 dashboard deferral are correctly
+    scoped and flagged, not silently dropped.
+  - No source/test edits made; no commit made, per instruction.
