@@ -6,7 +6,7 @@
 - Owner: unassigned (developer)
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: In Review
 - Estimate: 3 days
 
 ## Requirements Mapping
@@ -170,3 +170,19 @@ HLD §8.1 (happy-path sequence), §8.2 (exact squash mechanics), §8.3 (verify),
   `RunState`-free, and the two conflicting "Empty" definitions reconciled; S-3's auto-commit denylist
   screen specified with the deliberate carve-out that already-tracked files are not screened. Estimate
   unchanged at 3 days.
+
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: All 18 ACs implemented
+  (`isolation/locks.py`, `isolation/integrator.py`, `errors.py` addition). Full detail, the published
+  `Integrator`/`IntegrationResult`/`ResolverHook`/`EscalationHook` hook-point signatures, four
+  documented signature/design decisions beyond the HLD's schematic pseudocode (`agent_id` and
+  `task_integration: TaskIntegrationState` as explicit `integrate()` arguments; a local
+  `RunIntegrationSnapshot` carrying only `run_id`/`branch`/`run_dir`; the structural verify check
+  reaching `GitRepo._run`/`._raise` directly since `git.py` ships no public `grep`/`diff --check`
+  wrapper and is out of this ticket's ownership to extend), and gate evidence are in `STATUS.md`'s
+  2026-09-07 entry. 53 new tests (`tests/isolation/test_locks.py` 12, `tests/isolation/
+  test_integrator.py` 41); `tests/isolation` 467 passed / 0 failed; full suite 3323 passed / 7
+  skipped / 0 failed (clean run) with one transient, unrelated failure
+  (`test_wave_scheduler.py::TestParallelDispatchProof`) on a coverage-instrumented re-run, confirmed
+  non-reproducible in isolation. `ruff`/`mypy` clean (mypy unchanged at 4 pre-existing `_version.py`
+  errors). Coverage: `integrator.py` 95%, `locks.py` 100%, repo TOTAL 95% (baseline 95%, no
+  regression). Awaiting review; no commit made per instruction.

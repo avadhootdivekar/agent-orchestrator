@@ -135,6 +135,17 @@ _GIT_DIR_SUFFIX = "/.git"
 _COMMIT_TREE_DEFAULT_NAME = "ao"
 _COMMIT_TREE_DEFAULT_EMAIL = "ao@localhost"
 
+# `grep_conflict_markers` (E-Wk9Tz3 T-Ib5Qy9 review C-3): the exact literal patterns the
+# default structural verify check looks for -- a real match against a leftover conflict-
+# marker line, never a partial/regex-fuzzy one.
+_CONFLICT_MARKER_PATTERNS: tuple[str, str] = ("^<<<<<<< ", "^>>>>>>> ")
+
+# `diff_check` (review C-3): git's standard fatal-error exit code is 128 -- any `git diff
+# --check` exit below this (verified empirically: 2 for a real check failure, e.g.
+# trailing whitespace or a leftover conflict marker -- NOT 1) means "issues found", not
+# "the tool itself failed".
+_DIFF_CHECK_FATAL_THRESHOLD: int = 128
+
 
 # ---------------------------------------------------------------------------------------
 # Injectable runner (AC-2)
@@ -898,6 +909,59 @@ class GitRepo:
     def diff_names(self, cwd: str, a: str, b: str) -> list[str]:
         cp = self._run(["diff", "--name-only", a, b], cwd=cwd)
         return [line for line in _decode(cp.stdout).splitlines() if line]
+
+    def grep_conflict_markers(
+        self, cwd: str, ref: str, paths: list[str] | None = None
+    ) -> list[str]:
+        """Paths (at *ref*, optionally restricted to *paths*) containing a leftover
+        `<<<<<<< `/`>>>>>>> ` conflict-marker line (E-Wk9Tz3 T-Ib5Qy9 review C-3: the
+        default structural verify check's own conflict-marker scan, promoted from a
+        private `integrator.py` reach-across into this module's public surface -- NFR-1:
+        paths only, never file contents, into Python).
+
+        `-z` NUL-delimits matched entries so a unicode/quoted path round-trips exactly
+        (same rationale as `ls_files`/`log_name_only`). Verified empirically against the
+        installed git, not assumed: exit 0 = match found (each entry prefixed
+        `<ref>:<path>`, stripped below), exit 1 = no match (empty list), anything else is
+        a genuine error and raises.
+        """
+        args = ["grep", "-l", "-z"]
+        for pattern in _CONFLICT_MARKER_PATTERNS:
+            args += ["-e", pattern]
+        args.append(ref)
+        if paths:
+            args += ["--", *paths]
+        cp = self._run(args, cwd=cwd, check=False)
+        if cp.returncode == 1:
+            return []  # grep: no match -- clean
+        if cp.returncode != 0:
+            self._raise(args, cp)
+        prefix = f"{ref}:"
+        return [
+            entry[len(prefix) :] if entry.startswith(prefix) else entry
+            for entry in _decode(cp.stdout).split("\0")
+            if entry
+        ]
+
+    def diff_check(self, cwd: str, base: str, head: str) -> list[str]:
+        """`git diff --check` (E-Wk9Tz3 T-Ib5Qy9 review C-3): whitespace/leftover-conflict-
+        marker check messages between *base* and *head*, or `[]` when clean. Exit-code
+        only drives the outcome -- the returned lines are diagnostic text, never used for
+        anything but a truthiness check by any current caller (NFR-1: no file content is
+        read to produce them; git itself renders the message).
+
+        Verified empirically against the installed git, not assumed: a real check failure
+        exits **2**, not 1; a genuine tool error (bad refs, etc.) exits git's standard
+        fatal code, 128. `_DIFF_CHECK_FATAL_THRESHOLD` draws that line.
+        """
+        args = ["diff", "--check", f"{base}..{head}"]
+        cp = self._run(args, cwd=cwd, check=False)
+        if cp.returncode == 0:
+            return []
+        if cp.returncode < _DIFF_CHECK_FATAL_THRESHOLD:
+            return [line for line in _decode(cp.stdout).splitlines() if line]
+        self._raise(args, cp)
+        raise AssertionError("unreachable")  # pragma: no cover -- `_raise` is NoReturn
 
     def is_tracked(self, cwd: str, path: str) -> bool:
         cp = self._run(["ls-files", "--error-unmatch", "--", path], cwd=cwd, check=False)

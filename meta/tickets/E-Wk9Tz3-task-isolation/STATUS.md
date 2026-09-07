@@ -159,6 +159,35 @@
   2-arg signature. Awaiting review; no commit made per instruction.
   — By: developer-agent · Role: developer · Date: 2026-09-07
 
+- **2026-09-07 — `T-Ib5Qy9-integrator-core` rollup: In Review.** The epic's hardest ticket: all 18
+  ACs (incl. the R-20/R-7/R-8/S-3 amendments) implemented in two new modules,
+  `isolation/locks.py` (`IntegrationLock`: process-wide `threading.Lock` + cross-process `flock`,
+  bounded `.acquire(timeout) -> bool`, never raises/hangs) and `isolation/integrator.py`
+  (`Integrator.integrate`/`.resume_integration`: S-3 denylist screen → auto-commit → R-8 Empty check →
+  per-repo lock (sorted key order) → deterministic squash → rebase → injected `resolver_hook` (T1) →
+  injected `escalation_hook` (T2/T3/T4) → verify once (default: `git grep -l`/`git diff --check`,
+  paths only, NFR-1) → CAS land with R-7-scoped single retry + `is_ancestor` already-landed
+  short-circuit + `integration.partial` on a true partial land). Two documented, non-blocking
+  signature additions beyond the HLD's schematic pseudocode (`agent_id` and
+  `task_integration: TaskIntegrationState` as explicit `integrate()` arguments — full rationale in
+  `T-Ib5Qy9`'s own `STATUS.md`); no interface-change request filed against `T-Wk3Nv6` (its published
+  `TaskIsolation`/`WorktreeManager`/`group_repos` surface was consumed as-is). 53 new tests
+  (`tests/isolation/test_locks.py` 12 incl. a real second `multiprocessing` process for the
+  cross-process lock cases; `tests/isolation/test_integrator.py` 41 over real temp git repos incl.
+  every non-clean `make_conflict_repo` kind, CAS win/loss-retry/exceed-bound-partial-landing/
+  already-landed, verify pass/fail via both the grep and diff-check branches, S-3 denylist
+  fail/warn/allow, R-20 no-`RunState` proof, and `resume_integration`'s own lock-timeout/verify-
+  failure/CAS-race/multi-repo paths). `tests/isolation` 467 passed / 0 failed; full suite run twice
+  per the brief: first run (no coverage) **3323 passed / 7 skipped / 0 failed**; second run (with
+  `--cov`) had one transient, unrelated failure (`test_wave_scheduler.py`, a timing-sensitive test in
+  a file this ticket never touches) that reproduced 0/2 times run in isolation. `ruff`/`ruff format
+  --check` clean repo-wide; `mypy src` unchanged at 4 pre-existing `_version.py` errors. Coverage:
+  `isolation/integrator.py` 95%, `isolation/locks.py` 100%; repo TOTAL 95% (baseline 95%, no
+  regression). Full detail, published hook-point signatures for `T-En8Hd4`/`T-Rm2Lx7`/`T-Lr6Ka3`, and
+  the design-decision rationale are in `T-Ib5Qy9-integrator-core/STATUS.md`. Awaiting review; no
+  commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
 ## Evidence
 - `docs-md/task-isolation-hld.md` — 1874 lines.
 - `docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md` — 269 lines.

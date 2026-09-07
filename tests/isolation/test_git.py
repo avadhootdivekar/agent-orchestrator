@@ -328,6 +328,10 @@ class TestStructuralNoNetworkSurface:
             "commit": (("/wt", "msg"), {}),
             "reset_hard": (("/wt", "HEAD"), {}),
             "diff_names": (("/wt", "a", "b"), {}),
+            # E-Wk9Tz3 T-Ib5Qy9 review C-3: promoted from a private `integrator.py`
+            # reach-across into this module's public surface.
+            "grep_conflict_markers": (("/wt", "HEAD"), {"paths": ["f.txt"]}),
+            "diff_check": (("/wt", "a", "b"), {}),
             "is_tracked": (("/wt", "f.txt"), {}),
             "ls_files_untracked_ignored": (("/wt", ["f.txt"]), {}),
             # E-Wk9Tz3 T-Ov9Bt5 review W-1 follow-up: one-call tracked-path check
@@ -962,6 +966,81 @@ class TestRebase:
         assert g.show_stage(str(repo), 2, "f.txt") is not None
         assert g.show_stage(str(repo), 3, "f.txt") is None
         g.rebase_abort(str(repo))
+
+
+class TestGrepConflictMarkersAndDiffCheck:
+    """E-Wk9Tz3 T-Ib5Qy9 review C-3: public wrappers promoted out of a private
+    `integrator.py` reach-across into this module's own surface."""
+
+    def test_grep_finds_a_leftover_marker(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"f.txt": "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> b\n"})
+        g = GitRepo(str(repo))
+        head = g.rev_parse("HEAD")
+        assert head is not None
+        assert g.grep_conflict_markers(str(repo), head, paths=["f.txt"]) == ["f.txt"]
+
+    def test_grep_no_match_returns_empty(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"f.txt": "clean\n"})
+        g = GitRepo(str(repo))
+        head = g.rev_parse("HEAD")
+        assert head is not None
+        assert g.grep_conflict_markers(str(repo), head, paths=["f.txt"]) == []
+
+    def test_grep_finds_marker_in_a_unicode_named_file(self, tmp_path: Path) -> None:
+        repo = make_repo(
+            tmp_path, files={"café-résumé.txt": "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> b\n"}
+        )
+        g = GitRepo(str(repo))
+        head = g.rev_parse("HEAD")
+        assert head is not None
+        assert g.grep_conflict_markers(str(repo), head) == ["café-résumé.txt"]
+
+    def test_grep_raises_git_error_for_a_bad_ref(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"f.txt": "x\n"})
+        g = GitRepo(str(repo))
+        with pytest.raises(GitError):
+            g.grep_conflict_markers(str(repo), "not-a-real-ref")
+
+    def test_diff_check_clean_is_empty(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"f.txt": "a\nb\nc\n"})
+        g = GitRepo(str(repo))
+        base = g.rev_parse("HEAD")
+        assert base is not None
+        (repo / "f.txt").write_text("a\nb-clean\nc\n")
+        g.add_all(str(repo))
+        head = g.commit(str(repo), "clean edit")
+        assert head is not None
+        assert g.diff_check(str(repo), base, head) == []
+
+    def test_diff_check_reports_trailing_whitespace(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"f.txt": "a\nb\nc\n"})
+        g = GitRepo(str(repo))
+        base = g.rev_parse("HEAD")
+        assert base is not None
+        (repo / "f.txt").write_text("a\nb   \nc\n")
+        g.add_all(str(repo))
+        head = g.commit(str(repo), "trailing whitespace")
+        assert head is not None
+        result = g.diff_check(str(repo), base, head)
+        assert result != []
+        assert any("f.txt" in line for line in result)
+
+    def test_diff_check_reports_issue_in_a_unicode_named_file(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"café.txt": "a\nb\nc\n"})
+        g = GitRepo(str(repo))
+        base = g.rev_parse("HEAD")
+        assert base is not None
+        (repo / "café.txt").write_text("a\nb   \nc\n")
+        g.add_all(str(repo))
+        head = g.commit(str(repo), "trailing whitespace, unicode path")
+        assert head is not None
+        assert g.diff_check(str(repo), base, head) != []
+
+    def test_diff_check_raises_git_error_for_bad_refs(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"f.txt": "x\n"})
+        g = GitRepo(str(repo))
+        with pytest.raises(GitError):
+            g.diff_check(str(repo), "not-a-real-ref", "also-not-real")
 
 
 class TestMergeTreeProbeVersionGate:
