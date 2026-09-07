@@ -903,6 +903,22 @@ class GitRepo:
         cp = self._run(["ls-files", "--error-unmatch", "--", path], cwd=cwd, check=False)
         return cp.returncode == 0
 
+    def ls_files(self, cwd: str, *, paths: list[str] | None = None) -> set[str]:
+        """Every tracked path (optionally restricted to *paths*), as one `git ls-files
+        -z` call (review W-1, `T-Ov9Bt5`): `isolation.hotspots.compute_hotspots` used to
+        call `is_tracked` once per churned path -- O(N) subprocess spawns for N distinct
+        paths in the window -- this gives it the same tracked/untracked answer for any
+        number of paths in a single call, checked by in-memory set membership instead.
+        `-z` NUL-delimits (unicode-safe, no `core.quotePath` mangling -- same rationale
+        as `log_name_only`'s own docstring). `is_tracked` is unchanged and stays the
+        right tool for a genuine single-path check elsewhere.
+        """
+        args = ["ls-files", "-z"]
+        if paths:
+            args.extend(["--", *paths])
+        cp = self._run(args, cwd=cwd)
+        return {p for p in _decode(cp.stdout).split("\0") if p}
+
     def log_name_only(self, cwd: str, *, since: str | None = None, no_merges: bool = True) -> str:
         """Raw ``git log --pretty=format: --name-only -z`` stdout text (HLD §9.2's churn
         source for `isolation/hotspots.py::compute_hotspots`, `T-Ov9Bt5`). Returned as

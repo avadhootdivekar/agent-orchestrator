@@ -120,13 +120,21 @@
     `TestComputeHotspots::test_non_ascii_filename_survives_is_tracked_and_is_not_dropped` (real repo,
     asserts the path both survives in `compute_hotspots`'s output AND matches `is_tracked`) —
     confirms the "silently conflated with deleted" failure mode the review reproduced is closed.
-  - **W-1: DEFERRED, with reason.** Fix requires either (a) a new PUBLIC `GitRepo` method (e.g. one
-    `git ls-files -z` call replacing the per-path `is_tracked` loop), which needs a second additive
-    entry in `tests/isolation/test_git.py` — but this round's authorization is scoped to exactly the
-    one C-1 entry ("nothing else in it"); or (b) a new underscore-prefixed method, which would
-    reintroduce the exact test-safety-net-evasion pattern C-1 just fixed. Neither is acceptable
-    without a coordinated `test_git.py` edit alongside `T-Wk3Nv6`, which is out of scope for this
-    round. Revisit together in a future pass that includes that coordination.
+  - **W-1: FIXED (2026-09-07 follow-up, authorized by the coordinator on top of commit `40a2d3a`,
+    the second additive `test_git.py` entry now cleared to land).** Was deferred in the round above
+    for lack of that authorization; now resolved. New public `GitRepo.ls_files(cwd, *, paths:
+    list[str] | None = None) -> set[str]` (`isolation/git.py`) — one `git ls-files -z` call, through
+    `_run`/`SAFETY_ARGS` like every other method, NUL-split (unicode-safe, same rationale as
+    `log_name_only`). `compute_hotspots` (`isolation/hotspots.py`) now calls it exactly once per
+    invocation (skipped entirely when there are zero candidate paths, so it never falls back to
+    listing the whole repo) and checks membership in the returned set instead of looping
+    `is_tracked` — `is_tracked` itself is unchanged, still used elsewhere. Second additive entry
+    added to `tests/isolation/test_git.py`'s `call_args` sweep (`"ls_files": (("/wt",), {"paths":
+    ["f.txt"]})`) — nothing else in that file touched; 103/103 still green. New tests:
+    `TestGitRepoLsFiles` (4 tests, incl. a `src/café.rs` unicode path via a real repo) and
+    `TestComputeHotspotsGitCallCount::test_o1_git_calls_regardless_of_churned_path_count`
+    (parametrized 5 vs 500 synthetic churned paths via `RecordingFakeRunner` — asserts exactly 2
+    total git invocations either way, `tests/test_hotspots.py`).
   - **S-1: FIXED.** Added `test_module_contains_no_second_copy_of_resolve_overlap_preference`
     (`tests/test_overlap_ranking.py`) — an AST walk (not a substring search, so this module's own
     docstring cross-references to the real rule's name don't false-positive) asserting
@@ -157,6 +165,22 @@
     not fixed here; `ruff check` restricted to this ticket's own files is clean. Coverage on
     new modules unchanged at 100% (`scheduling/overlap.py`, `scheduling/__init__.py`,
     `isolation/hotspots.py`).
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — W-1 follow-up on top of commit `40a2d3a`, authorized separately by the
+  coordinator.** Full disposition in the "This update" entry above (now reads **FIXED**, not
+  deferred). Files touched: `src/agent_orchestrator/isolation/git.py` (new public
+  `ls_files(cwd, *, paths=None) -> set[str]`; `is_tracked` unchanged), `src/agent_orchestrator/
+  isolation/hotspots.py` (`compute_hotspots` now calls `ls_files` once instead of looping
+  `is_tracked`), `tests/isolation/test_git.py` (one additive `call_args` entry, the second
+  authorized edit to that file — nothing else touched), `tests/test_hotspots.py`
+  (`TestGitRepoLsFiles`, `TestComputeHotspotsGitCallCount`). No other file touched.
+  - Gates: `ruff check`/`ruff format --check` on the four touched files — clean. `uv run mypy src` —
+    exactly the 4 pre-existing `_version.py` errors, no new errors from these files (the coordinator
+    flagged a possible transient `isolation/worktrees.py` error from another developer's in-progress
+    edit; this run did not reproduce it — reported as observed, not fabricated).
+    `uv run pytest tests/test_hotspots.py tests/isolation/test_git.py -q -p no:cacheprovider` →
+    **138 passed**, 0 failed (35 + 103).
   — By: developer-agent · Role: developer · Date: 2026-09-07
 
 ## Evidence

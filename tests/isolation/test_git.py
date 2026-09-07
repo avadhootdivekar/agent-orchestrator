@@ -330,6 +330,9 @@ class TestStructuralNoNetworkSurface:
             "diff_names": (("/wt", "a", "b"), {}),
             "is_tracked": (("/wt", "f.txt"), {}),
             "ls_files_untracked_ignored": (("/wt", ["f.txt"]), {}),
+            # E-Wk9Tz3 T-Ov9Bt5 review W-1 follow-up: one-call tracked-path check
+            # replacing a per-path `is_tracked` subprocess loop in `compute_hotspots`.
+            "ls_files": (("/wt",), {"paths": ["f.txt"]}),
             # E-Wk9Tz3 T-Ov9Bt5 review C-1: was underscore-prefixed (evaded this sweep);
             # made public and added here so a future git-invoking method can never again
             # opt out of this test by leading-underscore naming alone.

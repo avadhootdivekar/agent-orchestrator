@@ -40,7 +40,7 @@ from agent_orchestrator.isolation.hotspots import (
     observed_conflicts,
     parse_churn,
 )
-from tests.isolation.conftest import make_repo
+from tests.isolation.conftest import RecordingFakeRunner, make_repo, ok
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _GIT_LOG_FIXTURE = _FIXTURE_DIR / "git_log_name_only.txt"
@@ -318,6 +318,62 @@ class TestComputeHotspots:
             )
         assert hotspots.repos["core"].entries == []
         assert any("git log" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# GitRepo.ls_files -- review W-1 follow-up
+# ---------------------------------------------------------------------------
+
+
+class TestGitRepoLsFiles:
+    def test_lists_every_tracked_path(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"a.txt": "a\n", "src/b.rs": "b\n"})
+        git_repo = GitRepo(str(repo))
+        assert git_repo.ls_files(str(repo)) == {"a.txt", "src/b.rs"}
+
+    def test_paths_filter_restricts_the_query(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"a.txt": "a\n", "src/b.rs": "b\n"})
+        git_repo = GitRepo(str(repo))
+        assert git_repo.ls_files(str(repo), paths=["a.txt"]) == {"a.txt"}
+
+    def test_untracked_path_in_filter_is_simply_absent(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path, files={"a.txt": "a\n"})
+        git_repo = GitRepo(str(repo))
+        result = git_repo.ls_files(str(repo), paths=["a.txt", "never-existed.rs"])
+        assert result == {"a.txt"}
+
+    def test_non_ascii_filename_survives_unmangled(self, tmp_path: Path) -> None:
+        # Review C-3/W-1: `-z` is what makes this safe -- without it, git's default
+        # quoting would return a mangled, non-matching string for this path.
+        repo = make_repo(tmp_path, files={"README.md": "hello\n"})
+        _commit_file(repo, "src/café.rs", "v1\n", date="2024-01-01T00:00:00", message="unicode")
+        git_repo = GitRepo(str(repo))
+        assert "src/café.rs" in git_repo.ls_files(str(repo))
+
+
+class TestComputeHotspotsGitCallCount:
+    @pytest.mark.parametrize("n_paths", [5, 500])
+    def test_o1_git_calls_regardless_of_churned_path_count(
+        self, tmp_path: Path, n_paths: int
+    ) -> None:
+        # Review W-1: a per-path `is_tracked` loop would spawn O(n_paths) subprocesses;
+        # the fix is exactly ONE `log` call plus ONE `ls_files` call, always, via the
+        # RecordingFakeRunner so the count is verified structurally, not inferred.
+        paths = [f"src/file{i}.rs" for i in range(n_paths)]
+        churn_text = "".join(f"{p}\0" for p in paths)
+        tracked_text = "".join(f"{p}\0" for p in paths)
+        fake = RecordingFakeRunner(
+            responses=[ok(stdout=churn_text.encode()), ok(stdout=tracked_text.encode())]
+        )
+        git_repo = GitRepo(str(tmp_path), runner=fake)
+        clock = lambda: datetime(2024, 6, 1, tzinfo=UTC)  # noqa: E731
+
+        hotspots = compute_hotspots(
+            "core", git_repo, str(tmp_path), since_days=0, top_k=n_paths + 10, clock=clock
+        )
+
+        assert len(hotspots.repos["core"].entries) == n_paths
+        assert len(fake.calls) == 2
 
 
 # ---------------------------------------------------------------------------

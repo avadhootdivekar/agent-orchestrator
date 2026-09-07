@@ -230,7 +230,9 @@ def compute_hotspots(
     `CONFLICT_WEIGHT` churn points, then drops any path that is no longer tracked at
     HEAD (a deleted or renamed-away file has nothing left to co-schedule around) BEFORE
     truncating to *top_k* -- so the result always holds the top *top_k* still-existing
-    paths, not top_k-then-filtered-to-fewer.
+    paths, not top_k-then-filtered-to-fewer. The tracked/untracked check is ONE
+    `GitRepo.ls_files` call over every candidate path (review W-1), not one `is_tracked`
+    subprocess per path.
     """
     now = (clock or _utc_now)()
     since_arg = None
@@ -250,12 +252,19 @@ def compute_hotspots(
     for path, count in conflict_counts.items():
         weight[path] = weight.get(path, 0.0) + count * CONFLICT_WEIGHT
 
+    # Review W-1: ONE `ls_files` call for every candidate path, not one `is_tracked`
+    # subprocess per path -- O(1) git invocations regardless of how many distinct paths
+    # churned in the window. Skipped entirely when there is nothing to check (an empty
+    # `weight` would otherwise make `ls_files` list the WHOLE repo via its no-paths-
+    # filter default, which is exactly the unbounded cost this fix removes).
+    tracked = git_repo.ls_files(cwd, paths=list(weight)) if weight else set()
+
     ranked_paths = sorted(weight, key=lambda p: (-weight[p], p))
     entries: list[HotspotEntry] = []
     for path in ranked_paths:
         if len(entries) >= top_k:  # checked BEFORE tracked-probe/append: top_k=0 -> []
             break
-        if not git_repo.is_tracked(cwd, path):
+        if path not in tracked:
             continue  # HLD §9.2 / AC-9: dropped, not merely deprioritized
         entries.append(
             HotspotEntry(
