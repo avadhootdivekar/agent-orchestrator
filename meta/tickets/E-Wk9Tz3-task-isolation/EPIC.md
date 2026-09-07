@@ -5,8 +5,8 @@
 - Title: Per-task git worktree isolation with squash+rebase integration and soft overlap-aware task assignment
 - Owner: architect (agent) — implementation owner TBD
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
-- Status: Draft
+- Last Updated: 2026-09-07
+- Status: Draft (design amended 2026-09-07 after two review gates; implementation started on `T-Gt4Pw8` / `T-Sc7Rm2`)
 
 ## Summary
 - **Goal**: Close the write-conflict gap ADR-0007 accepted and `meta/ROADMAP.md` §3.4/§4 carries.
@@ -72,42 +72,54 @@ Dependency order. Every task is <= 3 days and owns a disjoint file set.
 
 - [ ] `T-Gt4Pw8-git-porcelain` — `isolation/git.py`: the single typed, timeout-bounded git surface — **2 d** — deps: none
 - [ ] `T-Sc7Rm2-isolation-schema-models` — models, JSON Schema, run state, cross-validation — **2 d** — deps: none
-- [ ] `T-Wk3Nv6-worktree-lifecycle` — `isolation/paths.py` + `worktrees.py`: naming, `effective_path`, create/reuse/release/reconcile/GC — **2.5 d** — deps: T-Gt4Pw8, T-Sc7Rm2
+- [ ] `T-Wk3Nv6-worktree-lifecycle` — `isolation/paths.py` + `worktrees.py` + `view.py` + shared `xdg.py`: naming, `effective_path`, the per-task `IsolatedArtifactView`, create/reuse/release/reconcile/GC — **3 d** — deps: T-Gt4Pw8, T-Sc7Rm2
 - [ ] `T-Ib5Qy9-integrator-core` — `isolation/integrator.py` + `locks.py`: squash/rebase/verify/CAS under lock — **3 d** — deps: T-Gt4Pw8, T-Wk3Nv6
 - [ ] `T-En8Hd4-engine-isolation-wiring` — engine dispatch/worker/settle, isolated artifact view, `TaskContext.env`, barriers, checkout sync, NFR-2 gate — **3 d** — deps: T-Sc7Rm2, T-Wk3Nv6, T-Ib5Qy9
 - [ ] `T-Rm2Lx7-mechanical-resolvers` — `isolation/resolvers.py`: rerere / union / regenerate (T1) — **2.5 d** — deps: T-Gt4Pw8, T-Ib5Qy9
 - [ ] `T-Lr6Ka3-llm-resolver-and-rerun` — `isolation/escalation.py` + resolver-mode dispatch (T2/T3) — **3 d** — deps: T-En8Hd4, T-Rm2Lx7
 - [ ] `T-Ov9Bt5-overlap-scheduling-hotspots` — `scheduling/overlap.py` + `isolation/hotspots.py` + `ao hotspots` — **2.5 d** — deps: T-Sc7Rm2
-- [ ] `T-Cx4Jf1-cli-config-prune-observability` — `--isolation`, config block, `ao prune` GC, events, `status.json`, dashboard column — **2 d** — deps: T-Wk3Nv6, T-Ib5Qy9, T-En8Hd4
-- [ ] `T-Tp7Zs2-instructions-and-templates` — conflict-friendly rules, `merge-resolve.md`, `routed-runner` contract/template wiring — **1.5 d** — deps: T-Sc7Rm2
+- [ ] `T-Ac6Vd9-requeue-accounting` — cycle-keyed budget ledger + accumulate-before-requeue + cycle-keyed transcript capture (R-1, R-21) — **2 d** — deps: T-Sc7Rm2, T-En8Hd4
+- [ ] `T-Wl2Bq7-workspace-run-lock` — per-workspace isolation run lock + sync diagnostics (R-4, R-12) — **1.5 d** — deps: T-Wk3Nv6, T-En8Hd4
+- [ ] `T-Cx4Jf1-cli-config-prune-observability` — `--isolation`, config block, `ao prune` GC, events, `status.json`, dashboard column — **2.5 d** — deps: T-Wk3Nv6, T-Ib5Qy9, T-En8Hd4
+- [ ] `T-Tp7Zs2-instructions-and-templates` — conflict-friendly rules, `merge-resolve.md`, `routed-runner` contract/template wiring, removal of the `git push` directives from six instruction files — **2 d** — deps: T-Sc7Rm2
 - [ ] `T-Ee3Mn8-e2e-and-review` — git fixtures, e2e via `CliRunner`, NFR-2 gate, security review of the path-guard widening — **3 d** — deps: all above
 - [ ] `T-Dr5Yq6-docs-refresh` — reconcile `docs-md/` + ADR-0013 status against the as-built implementation — **1 d** — deps: T-Ee3Mn8
 
 ## Sprint plan
 
 **Parameters** (project standard): 2-week sprints, 5-day weeks, 40% overhead, developers with
-<4 years experience. **Team size: 3** — justified because the epic decomposes into three genuinely
-parallel lanes after the two foundation tasks (git/worktree lane, engine lane, scheduling/templates
-lane), and a smaller team would push this past three sprints for a change that is blocking ROADMAP
-§3.4.
+<4 years experience. **Team size: 3.**
 
 ```
 GrossHoursPerSprint      = 3 * 10 * 8              = 240 h
 NetFocusHoursPerSprint   = 240 * 0.60              = 144 h
 CommitmentHoursPerSprint = 144 * (0.70 .. 0.85)    = 100.8 .. 122.4 h
                                                    = 12.6 .. 15.3 developer-days @ 8 h
-Two sprints                                        = 25.2 .. 30.6 developer-days
+Three sprints                                      = 37.8 .. 45.9 developer-days
 ```
+
+**Revised after the 2026-09-07 review gates: 14 tasks, 33 developer-days, three sprints** (was 12
+tasks / 28 days / two sprints). The growth is +2 tasks carved out of `T-En8Hd4` to keep every task
+within the 3-day cap (`T-Ac6Vd9` 2 d, `T-Wl2Bq7` 1.5 d) plus +1.5 days of re-estimates
+(`T-Wk3Nv6` +0.5, `T-Cx4Jf1` +0.5, `T-Tp7Zs2` +0.5).
 
 | Sprint | Tasks | Days | Fit |
 |---|---|---|---|
-| **1 — foundation + core integration** | T-Gt4Pw8 (2), T-Sc7Rm2 (2), T-Wk3Nv6 (2.5), T-Ib5Qy9 (3), T-En8Hd4 (3) | **12.5** | Inside the 12.6-15.3 band (at the floor — deliberate: T-Ib5Qy9 and T-En8Hd4 are the two hardest tasks and should not be crowded) |
-| **2 — ladder, scheduling, surface, verification** | T-Rm2Lx7 (2.5), T-Lr6Ka3 (3), T-Ov9Bt5 (2.5), T-Cx4Jf1 (2), T-Tp7Zs2 (1.5), T-Ee3Mn8 (3), T-Dr5Yq6 (1) | **15.5** | At the top of the band. **Named descope candidates, in order: `T-Tp7Zs2` (templates can ship a sprint later without blocking anything) then `T-Ov9Bt5` (soft hints are a preference, not a correctness requirement)** |
-| | **Total** | **28.0** | vs 25.2-30.6 available — ~92% of the ceiling |
+| **1 — foundation + core integration** | T-Gt4Pw8 (2), T-Sc7Rm2 (2), T-Wk3Nv6 (3), T-Ib5Qy9 (3), T-En8Hd4 (3) | **13.0** | Inside the 12.6-15.3 band. Unchanged in shape; `T-Wk3Nv6` grew by the `IsolatedArtifactView` and the shared XDG helper |
+| **2 — ladder, accounting, multi-run, scheduling** | T-Ac6Vd9 (2), T-Wl2Bq7 (1.5), T-Rm2Lx7 (2.5), T-Lr6Ka3 (3), T-Ov9Bt5 (2.5), T-Tp7Zs2 (2) | **13.5** | Inside the band. `T-Ac6Vd9` and `T-Wl2Bq7` both depend on a merged `T-En8Hd4`, so they cannot start earlier |
+| **3 — surface, verification, docs** | T-Cx4Jf1 (2.5), T-Ee3Mn8 (3), T-Dr5Yq6 (1) | **6.5** | **Deliberately under the floor.** `T-Ee3Mn8` is the late gate over five tasks' worth of `engine.py` edits and a full security-implementation pass; the slack is the remediation budget for what that gate finds. Under-committing a verification sprint is a choice, not an oversight |
+| | **Total** | **33.0** | vs 37.8-45.9 available across three sprints |
 
-Sprint 1 exit criterion: an isolated task can run and land end to end at T0/T1-free, with the NFR-2
-gate green. Sprint 2 exit criterion: the full ladder, the soft scheduler, the operator surface, and
-the e2e/security gate.
+Sprint 1 exit criterion: an isolated task runs in its worktree (R-19 proven on the real `TaskContext`)
+and lands end to end at T0/T1, with the NFR-2 gate green. Sprint 2 exit: the full ladder, correct
+cost/token accounting across requeues, the multi-run policy enforced, and the soft scheduler wired at
+its call site. Sprint 3 exit: operator surface, the finding-driven test matrix (HLD §17.5) complete,
+and docs reconciled against as-built.
+
+**`engine.py` edit order** (five tasks, fixed sequence, each narrow):
+`T-En8Hd4` (main wiring) → `T-Ac6Vd9` (settle accounting + cycle-keyed capture) → `T-Wl2Bq7`
+(sync + run lock) → `T-Lr6Ka3` (resolver/rerun dispatch) → `T-Cx4Jf1` (event emission only). Every
+later ticket reads the **merged** file and each publishes its hook points in `STATUS.md`.
 
 ## Risks and Dependencies
 
@@ -125,10 +137,19 @@ Full register in the HLD §21. The five that shape the plan:
   `skip_if_outputs_exist: true` on every fan-out entry and keeps artifacts outside the repo, so an
   artifact can exist while the code never landed. Handled by an explicit rule (integration-aware
   `should_skip`) with its own acceptance criterion in `T-En8Hd4`.
+- **R-4 (new, from the review gate) — concurrent runs in one workspace.** Landing was always safe
+  (per-repo lock + CAS), but D5's checkout fast-forward was an unlocked working-tree mutation. Resolved
+  by ADR-0013 **D8**: a per-workspace `WorkspaceRunLock`, with `integration.workspace_lock: "require"`
+  (default) degrading a second run to `isolation: none` rather than racing. `E-Sc9Rt4` needs no change —
+  `require` is exactly what ADR-0014 assumed when it capped per-workspace concurrency at 1.
+- **R-12 (new) — the first barrier's `git merge --ff-only` on a chronically dirty checkout.** The
+  target consumer currently shows ~4106 `status --porcelain` entries. Mitigated with collision-naming
+  diagnostics and a run-start pre-flight; stash-and-restore was **declined** (it mutates the operator's
+  uncommitted work). `T-Ee3Mn8` measures the real collision rate.
 - **Concurrency with other epics.** A scheduler/cron epic owns `docs-md/scheduler-triggers-hld.md`
-  and ADR-0014 on this branch. This epic touches neither. `engine.py` is edited by exactly one task
-  (`T-En8Hd4`) plus two narrowly-scoped edits (`T-Lr6Ka3`, `T-Cx4Jf1`) that must read the merged code
-  rather than re-derive from this design.
+  and ADR-0014 on this branch. This epic touches neither. `engine.py` is now edited by **five** tasks
+  in the fixed order given in the sprint plan, each narrowly scoped and each required to read the
+  merged file rather than re-derive from this design (carried as risk R13 in the HLD).
 
 ## Decisions needed from the user
 
@@ -140,6 +161,25 @@ Recommended defaults are already applied in the design; see HLD §20 for the ful
 4. Heavy-build policy: shared build cache via `isolation.env`, unisolated heavy stages, or both
    (recommended: both, documented).
 5. Consumer adoption in `../ao-runner-finplan` — tracked in that repo, not here.
+
+## Review gates (2026-09-07)
+
+Two pre-implementation gates ran against the design package before any code was written. Both are
+recorded in this folder and neither is edited by the epic:
+[`REVIEW-design-2026-09-07.md`](REVIEW-design-2026-09-07.md) — reviewer, **APPROVE WITH CHANGES**
+(6 Blocking, 11 Major, 7 Minor); [`REVIEW-security-design-2026-09-07.md`](REVIEW-security-design-2026-09-07.md)
+— dev-security, **conditional pass** (2 Blocking, 3 Major, 3 Minor, 3 Info).
+
+**No decision in ADR-0013 D1-D7 was overturned.** The amendments are: one new decision (D8, the
+multi-run policy the reviewer found missing), three security controls made structural rather than
+advisory (hook suppression, force-injected resolver tool policy, screened auto-commit), a citation
+correction (R-10 — ADR-0013 attributed to ADR-0007 a sentence that is actually `meta/ROADMAP.md` §4's),
+two new tasks, and 32 amended or added acceptance criteria across the ticket set.
+
+Per-finding dispositions — **fixed / accepted-with-rationale / deferred**, each with the location of
+the fix — are recorded once, in [`docs-md/task-isolation-hld.md`](../../../docs-md/task-isolation-hld.md)
+§24 "Review dispositions". `T-Dr5Yq6-docs-refresh` re-verifies every *Fixed* row against the merged
+code before the epic closes.
 
 ## Links
 - Design doc: [`docs-md/task-isolation-hld.md`](../../../docs-md/task-isolation-hld.md)

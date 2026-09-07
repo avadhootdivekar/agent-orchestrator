@@ -5,12 +5,15 @@
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Owner: unassigned (developer)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-09-07
 - Status: Draft
 - Estimate: 2.5 days
 
 ## Requirements Mapping
 - Requirement IDs: FR-10, FR-11 · Design: HLD §9, §11 M8
+- Review findings folded in: **R-5 / R-18** (the engine call site is **`T-En8Hd4`'s**, not this
+  ticket's — the HLD's subtask list previously contradicted this ticket and left the call site owned by
+  nobody). Estimate unchanged at 2.5 days.
 
 ## Description
 Soft, deterministic overlap-aware co-scheduling plus the hotspot signal that feeds it and the
@@ -58,6 +61,18 @@ ship `rank_wave` standalone and flag it), `integrator.py`, `worktrees.py`, `mode
     hotspot map with **one** warning and never fails a run. Three tests.
 12. `uv run pytest -q` green with recorded counts; `ruff` clean; `uv run mypy src` zero new errors.
 
+### Amendments from the 2026-09-07 review gates
+
+13. **R-5 / R-18 — ownership, settled.** This ticket ships the **pure** `rank_wave` plus
+    `load_hotspots(path) -> Hotspots` (empty-on-any-error). The `engine.py` wave-fill call site is
+    **`T-En8Hd4` AC-18** and has its own live-dispatch test there. HLD §11 M8's subtask (6) previously
+    read "engine wiring", contradicting this ticket's own "Do NOT touch `engine.py`" — the effect was
+    that **no** ticket required the call site to exist and `rank_wave` would have shipped as dead code.
+    It now reads `load_hotspots`. Do not add the call site here; do confirm in your handoff that
+    `T-En8Hd4` has landed it (or flag it if not).
+14. `resolve_overlap_preference` lives in `models.py` (`T-Sc7Rm2`), not here — call it, do not
+    reimplement the derived default. A test asserts this module contains no second copy of that rule.
+
 ## Risks
 - **Scope creep into hard gating** (R9). Mitigation: AC-3 is a property test that a slot is never
   withheld; keep the schema description ("SOFT hint ... never a gate") verbatim.
@@ -93,3 +108,9 @@ HLD §9.1 rank_wave / overlap_score / glob_intersection; §9.2 compute_hotspots.
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Wk9Tz3-task-isolation/T-Ov9Bt5-overlap-scheduling-hotspots/`
 - Large outputs: none
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. R-5/R-18 resolved
+  in this ticket's favour: it keeps the pure function and `load_hotspots`; `T-En8Hd4` owns the engine
+  call site and now carries an AC and a live-dispatch test for it. Also pinned that the derived default
+  comes from `models.resolve_overlap_preference` rather than a local copy. Estimate unchanged.

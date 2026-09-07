@@ -5,12 +5,16 @@
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Owner: unassigned (developer)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-09-07
 - Status: Draft
-- Estimate: 2.5 days
+- Estimate: 3 days
 
 ## Requirements Mapping
 - Requirement IDs: FR-2, FR-3, FR-4, FR-14, NFR-4 · Design: HLD §7.1, §7.2, §11 M3
+- Review findings folded in: **S-4** (blocking-adjacent major: per-task path-guard scoping),
+  **R-6** (scoped prune — consume `T-Gt4Pw8`'s `prune_worktrees_scoped`, never a blanket prune),
+  **R-11** (DRY: a shared XDG helper instead of a third hand-copy), **R-8** (`declared_outputs` rides on
+  `TaskIsolation`), **S-9** (0700 directories). Re-estimated 2.5 -> 3 days.
 
 ## Description
 Deterministic naming, the `effective_path` remap rule, repo grouping, and an idempotent worktree
@@ -20,6 +24,12 @@ Files you own:
 - `src/agent_orchestrator/isolation/paths.py` (new — all pure)
 - `src/agent_orchestrator/isolation/worktrees.py` (new)
 - `tests/isolation/test_paths.py`, `tests/isolation/test_worktrees.py` (new)
+- `src/agent_orchestrator/xdg.py` (new — the shared `resolve_state_dir` helper, R-11)
+- `src/agent_orchestrator/service/paths.py` (edit — migrate `default_state_dir`/`default_registry_path`
+  onto the shared helper; **no behaviour change**, same env vars, same defaults, proven by the existing
+  `tests/service/` suite passing unedited)
+- `src/agent_orchestrator/isolation/view.py` (new — `IsolatedArtifactView`, S-4)
+- `tests/isolation/test_view.py` (new)
 
 Do NOT touch: `git.py` (read it, do not edit), `integrator.py`, `engine.py`, `models.py`, `cli.py`.
 Read the **merged** `isolation/git.py` from `T-Gt4Pw8` for the real API and reuse its
@@ -73,6 +83,36 @@ Read the **merged** `isolation/git.py` from `T-Gt4Pw8` for the real API and reus
 15. `uv run pytest -q tests/isolation/` green; full suite green with a recorded before/after count;
     `ruff` clean; `uv run mypy src` zero new errors.
 
+### Amendments from the 2026-09-07 review gates
+
+16. **R-6 — never call a blanket prune.** Every prune site in this module calls
+    `T-Gt4Pw8`'s `prune_worktrees_scoped(worktree_root_prefix_for(run_id))`. A test asserts this module
+    contains no call to a global `git worktree prune` (grep/AST assertion over the module source), and
+    the foreign-worktree survival test is repeated at **this** level: a user-created worktree, made
+    unreachable, survives `ensure()`, `reconcile()` and `gc_run()` untouched.
+17. **R-11 — one XDG helper, not a third copy.** Add `xdg.resolve_state_dir(override_env, xdg_subdir,
+    default_subdir)` and use it from `isolation/paths.py::state_dir()` **and** from
+    `service/paths.py::default_state_dir()`/`default_registry_path()`. `project_config.py` is
+    deliberately **not** migrated (its pattern is config-file anchoring, not XDG state resolution —
+    folding it in would be a false DRY). Gate: the whole existing `tests/service/` suite passes
+    **unedited**, proving the migration is behaviour-preserving.
+18. **S-4 — `IsolatedArtifactView` is per-task, and that is the security property.** Ship it in
+    `isolation/view.py`, constructed from **one** `TaskIsolation` and nothing else — never from the
+    `WorktreeManager`'s registry of every worktree in the run. Follow HLD §7.3's normative wrapper
+    shape; do **not** add an `extra_roots` parameter to `LocalFsArtifactStore` (one instance is shared
+    with `RunStateStore`, so widening it would silently widen run-state resolution).
+    Tests, all four distinct: (a) an absolute path under **task B's** worktree, submitted as an input,
+    an output, and as `cwd` for **task A**, raises `ArtifactPathError` from A's view (three cases);
+    (b) traversal (`../../etc/passwd`) still raises; (c) a symlink inside A's worktree pointing outside
+    still raises; (d) `RunStateStore`'s store is never an `IsolatedArtifactView`.
+19. **R-8 + cycle — `ensure(task_id, cycle, declared_outputs) -> TaskIsolation`.** `TaskIsolation`
+    carries `cycle: int` and `declared_outputs: list[str]` so the Integrator can decide "Empty" and do
+    the untracked-output copy-back **without ever seeing a `TaskSpec` or `RunState`** (this is what
+    keeps R-20/NFR-3 true). Test that `declared_outputs` round-trips and that `TaskIsolation` exposes
+    no reference to mutable run state.
+20. **S-9 — 0700.** Every directory this module creates under `$AO_STATE_DIR` (worktree parents
+    included) is mode 0700 on POSIX. One test asserting the mode.
+
 ## Risks
 - Path length: deep `run_id`/`task_id` can approach `PATH_MAX`. Mitigation: truncate + hash any
   component over 80 chars in `sanitize_ref_component`, tested.
@@ -80,6 +120,14 @@ Read the **merged** `isolation/git.py` from `T-Gt4Pw8` for the real API and reus
   `WorktreeManager` validates and refuses (the caller degrades) — test it.
 - Deleting a worktree while an agent grandchild holds a file open. Mitigation: `--force` plus a caught,
   logged failure; never fatal.
+- `service/paths.py` belongs to no other ticket in this epic, so migrating it here is safe — but it is
+  shared with the `ao service` subsystem. The migration must be **behaviour-identical** (same env var
+  names, same XDG fallbacks, same final subdirectories); the unedited `tests/service/` suite is the
+  gate. If the two resolutions turn out not to be genuinely the same shape, do **not** force them
+  together — report it and leave `service/paths.py` alone.
+- S-4 is easy to implement "almost right": handing the view the manager's registry instead of one
+  `TaskIsolation` looks equivalent and quietly breaks isolation between siblings. AC-18's task-A/task-B
+  test is the only thing that catches it.
 
 ## Dependencies
 - Upstream: `T-Gt4Pw8-git-porcelain` (API), `T-Sc7Rm2-isolation-schema-models` (`TaskIntegrationState`,
@@ -108,3 +156,13 @@ HLD §7.1 group_repos, §7.2 effective_path, §11 M3 WorktreeManager.ensure/rele
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Wk9Tz3-task-isolation/T-Wk3Nv6-worktree-lifecycle/`
 - Large outputs: none
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. Folded in S-4 (the
+  per-task `IsolatedArtifactView` now lives here, with the task-A-cannot-reach-task-B test that the
+  producer-restriction test does not cover), R-6 (all prune sites go through
+  `prune_worktrees_scoped`, plus a module-level assertion that no blanket prune exists), R-11 (shared
+  `xdg.resolve_state_dir`, migrating `service/paths.py` with the unedited service suite as the gate),
+  R-8 (`declared_outputs` on `TaskIsolation`, which is what lets the Integrator stay `RunState`-free
+  per R-20) and S-9 (0700). `ensure()` gains `cycle` and `declared_outputs`. Re-estimated 2.5 -> 3 days
+  for the extra module (`view.py`), the shared helper plus its migration, and five new tests.

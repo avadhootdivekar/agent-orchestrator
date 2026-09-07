@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-Tp7Zs2-instructions-and-templates`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: R-22 (six shipped instruction files tell agents to `git push`, contradicting the isolation model — plus two review files referencing "pushed commits"; a repo-wide assertion guards against a missed file), S-2 (the shipped `merge-resolver` agent declares its own `disallowed_tools` so the template never triggers V10), S-3/S-5 documentation duties. **Re-estimated 1.5 -> 2 days.**
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the

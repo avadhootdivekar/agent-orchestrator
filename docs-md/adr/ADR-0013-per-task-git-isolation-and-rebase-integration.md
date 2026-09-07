@@ -1,6 +1,12 @@
 # ADR-0013 — Per-task git worktree isolation with squash+rebase integration and soft overlap-aware assignment
 
-- Status: **Proposed** (design complete, implementation not started)
+- Status: **Proposed — amended 2026-09-07 after two pre-implementation review gates** (design complete;
+  implementation of `T-Gt4Pw8`/`T-Sc7Rm2` started 2026-09-07). Gate outcomes: reviewer *APPROVE WITH
+  CHANGES* (6 Blocking / 11 Major / 7 Minor), dev-security *conditional pass* (2 Blocking / 3 Major).
+  **No decision below was overturned by either gate**; D1-D7 stand as written. The amendments are
+  D8 (new, the multi-run policy the reviewer found missing), three security controls folded into the
+  Consequences, and the citation correction in Context. Per-finding dispositions live in
+  [`task-isolation-hld.md`](../task-isolation-hld.md) §24.
 - Date: 2026-09-06
 - Deciders: Avadhoot Divekar (user — decisions D1, D3, D8, D9 and the ladder shape were stated by the
   user and are recorded, not re-litigated), Claude (architect role)
@@ -16,10 +22,20 @@
 
 ## Context
 
-ADR-0007 shipped opt-in parallel execution with a stated, accepted gap:
+ADR-0007 shipped opt-in parallel execution **without** any write-conflict mechanism. To be precise
+about the record (R-10 — an earlier draft of this ADR presented the following as a verbatim ADR-0007
+quotation, and it is not): ADR-0007's Consequences section discusses only executor thread-safety and
+log-line interleaving; neither it nor `parallel-execution-hld.md` contains the words "overlap",
+"conflict", "collide", "disjoint" or "spec author". The characterization that keeping co-scheduled
+tasks' outputs disjoint is the spec author's responsibility is **`meta/ROADMAP.md` §4's**, written
+after the fact:
 
 > "With `max_parallel > 1`, co-scheduled tasks are not checked for overlapping outputs — keeping them
-> disjoint is the spec author's job."
+> disjoint is the spec author's job (ADR-0007). A live run has already produced real file contention."
+> — `meta/ROADMAP.md` §4
+
+The substance is unaffected: `max_parallel > 1` genuinely ships with no write-conflict detection,
+confirmed directly at `engine.py:304-305`.
 
 `engine.py:304-305` computes `repo_paths` once per run and hands the identical dict to every worker.
 There is no per-task working directory, branch, or conflict detection anywhere in `src/`.
@@ -226,6 +242,43 @@ pretending the disk question does not exist.
 
 ---
 
+---
+
+## D8 — One workspace, one isolation-active run: a per-workspace run lock, default-degrade
+
+**Decision.** A run that activates isolation claims a `WorkspaceRunLock`
+(`$AO_STATE_DIR/runlocks/<workspace_key>.lock`, `flock` + a `{run_id, pid, boot_id}` payload, reclaimed
+when the recorded pid is dead) before it creates any ref, and holds it for the life of the run.
+`integration.workspace_lock` selects what a second run does when the lock is held by a live run:
+**`require`** (default) — do not activate isolation; degrade to `isolation: none` with
+`integration.degraded reason="workspace_locked:<holder>"`; **`skip_sync`** — isolate and integrate, but
+never fast-forward the shared checkout (only correct when every task in the workflow is isolated;
+`ao validate` warns); **`off`** — no protection, warned at startup.
+
+**Why this was missing and why it matters.** `meta/ROADMAP.md` §3.4 and the sibling scheduler epic
+(ADR-0014, `scheduler-triggers-hld.md`) both explicitly defer this question *to this ADR* — "keep the
+scheduler's per-workspace cap at 1 for isolated workflows until the isolation epic states a multi-run
+policy" — and the first version of this design never stated one. The gap is narrow but real: **landing
+is already safe** under concurrency (the per-repo `IntegrationLock` plus the `update-ref` CAS serialize
+two runs' `integrate()` calls, and each run has its own integration ref), but D5's checkout sync is a
+**working-tree mutation of one shared physical checkout** with no lock, no CAS and no awareness that
+another run has a different integration branch. Two runs' barrier-time syncs can interleave partial
+checkouts, or fast-forward the tree to the other run's head under a task about to read it.
+
+**Why lock the whole run rather than the fast-forward.** Locking only the FF would make the sync atomic
+but leave the window between it and the non-isolated task that reads the tree — that task would still
+see another run's head appear mid-execution. Owning the workspace for the life of the run is the only
+granularity at which D5's guarantee is actually true.
+
+**Why degrade rather than fail.** A second run failing outright would make the isolation feature a
+foot-gun for anyone who runs two workflows in one workspace, which is legal today. Degrading gives the
+*first* run every guarantee and the second exactly today's behaviour — no silent corruption, no new
+failure mode. `strict: true` upgrades the degrade to a failure for operators who want that.
+
+**Interlock.** `E-Sc9Rt4` needs no change: `require` is precisely the behaviour ADR-0014 assumed when
+it capped per-workspace concurrency at 1. This ADR turns that assumption into enforcement, so a cap
+violation or a manual second `ao run` degrades cleanly instead of racing.
+
 ## Alternatives considered
 
 - **Hard overlap gating** (refuse to co-schedule tasks with overlapping declared files) — **rejected**
@@ -256,13 +309,29 @@ pretending the disk question does not exist.
   inspectable git state (named worktree, named branch, recorded base/squash, captured verify log)
   instead of a shared checkout in an unknown state. Conflict spend is bounded by the budget system
   that already exists.
+- **Security controls that are structural, not advisory** (added after the security gate). Three
+  controls are enforced by construction rather than by prompt or convention, because each guards a
+  place where **the engine** — not a workflow author — is the actor:
+  (1) every engine-issued git call carries `core.hooksPath=<empty dir>` plus a prompt-free,
+  signature-free environment, so a repo's bootstrapped hooks cannot fire unattended once per task
+  across a ~100-task run; (2) the T2 resolver's `disallowed_tools` are **force-injected** (unioned with
+  whatever the named agent declares) and its push path is neutralized via environment, because it is a
+  new engine-triggered dispatch fed raw conflict content that nobody reviewed — a larger input surface
+  than any existing dispatch, where the author chose the inputs; (3) the engine's auto-commit screens
+  **untracked** paths against a secret denylist and refuses by default, because "it only lands on an
+  ao-owned branch" was never the whole story — that branch is fast-forwarded into the user's real
+  checkout and is expected to be pushed by a later task.
 - **Negative / accepted.** Integration is serialized per repository and can become the bottleneck if
   `verify_command` is expensive (measured via `integration.merged duration_ms`; speculative
   integration is a named follow-on). Cold rebuilds per worktree are a real cost for heavy toolchains
   (D7 recipe). Cross-repo landing is not atomic (rebase+verify all, then CAS each; only an I/O failure
   between two CAS calls can land one repo and not another — reported as `integration.partial`).
   `rerere` learns across runs, so a bad-but-verified resolution can persist (`resolvers.rerere: false`
-  is the escape hatch). The artifact path guard is widened, which is why `T-Ee3Mn8-e2e-and-review`
+  is the escape hatch) — and with the **default** structural verify a replay is functionally
+  unreviewed, which the docs now say plainly and `tier_counts` makes visible. Two concurrent runs in one
+  workspace mean the second one silently loses isolation (D8) rather than sharing it. The first
+  non-isolated barrier can fail on a chronically dirty checkout; the design names the colliding paths
+  instead of guessing, and deliberately declines to stash the operator's uncommitted work. The artifact path guard is widened, which is why `T-Ee3Mn8-e2e-and-review`
   carries a mandatory security pass over exactly that change.
 - **Follow-ons unblocked.** `isolation: copy`; an `integration_conflicts` breaker condition (its
   counters ship with this epic); speculative integration; learning `touches` from observed diffs; a

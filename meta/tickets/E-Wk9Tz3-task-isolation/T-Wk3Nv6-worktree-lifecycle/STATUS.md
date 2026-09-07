@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-Wk3Nv6-worktree-lifecycle`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: S-4 (per-task `IsolatedArtifactView` + the task-A-cannot-reach-task-B test), R-6 (all prune sites use `prune_worktrees_scoped`), R-11 (shared `xdg.resolve_state_dir`, migrating `service/paths.py`), R-8 (`declared_outputs` on `TaskIsolation`), S-9 (0700 dirs). New files: `xdg.py`, `isolation/view.py`. **Re-estimated 2.5 -> 3 days.**
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the

@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-Ib5Qy9-integrator-core`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: R-20 (ctor settled in favour of this ticket's locked hook-based signature; the HLD was corrected), R-7 (CAS retry scoped to the losing repo, `is_ancestor` short-circuit), R-8 (declared outputs from `TaskIsolation`; the two conflicting "Empty" definitions reconciled), S-3 (auto-commit denylist screen). Estimate unchanged at 3 days.
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the

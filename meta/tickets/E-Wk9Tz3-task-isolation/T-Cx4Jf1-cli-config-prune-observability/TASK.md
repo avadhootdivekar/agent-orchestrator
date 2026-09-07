@@ -5,12 +5,15 @@
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Owner: unassigned (developer)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-09-07
 - Status: Draft
-- Estimate: 2 days
+- Estimate: 2.5 days
 
 ## Requirements Mapping
 - Requirement IDs: FR-14, FR-15, FR-12 (config surface) · Design: HLD §11 M9
+- Review findings folded in: **S-5** (surface free-tier/rerere resolution volume), **S-7**
+  (retention warning), **S-8** (`ao/` namespace reservation in the config template), **R-6** (`ao prune`
+  uses the scoped prune). Re-estimated 2 -> 2.5 days.
 
 ## Description
 The operator-facing surface: the `--isolation` override chain, the `.ao/config.yaml` `isolation:`
@@ -70,6 +73,31 @@ Do NOT touch: any `isolation/` module's logic, `models.py`, `spec.py`, `specs/*.
 10. `uv run pytest -q` fully green with recorded counts; `ruff` clean; `uv run mypy src` zero new
     errors; the NFR-2 gate still passes.
 
+### Amendments from the 2026-09-07 review gates
+
+11. **S-5 — make free-tier resolutions visible.** A `rerere` replay lands at the same zero-review tier
+    as a clean auto-merge, and with the **default** structural verify it cannot be distinguished from
+    one. Because `$GIT_DIR/rr-cache` is shared across runs, a wrong-but-syntactically-valid replay
+    recurs silently. Surface `RunIntegrationState.tier_counts` (the field ships with `T-Sc7Rm2`) in
+    `status.json` and in the dashboard run header, and show each task's existing `tier_reached` in the
+    Integration column. Display-only — **no new field, no new mechanism**. Test: `tier_counts`
+    increments for a rerere-resolved integration and appears in `status.json`.
+12. **S-7 — bound retained-worktree growth *during* a run.** `keep_worktrees: "on_failure"` retains
+    every failed task's worktree by design, so a systemic failure in a ~100-task run retains ~100 of
+    them before anyone runs cleanup. Emit `worktree.retention_high` **once** per run at a named
+    threshold constant, naming `ao prune --worktrees-only`. A hard cap is deliberately **not**
+    implemented — deleting the evidence an operator needs to diagnose a systemic failure is worse than
+    the disk cost. (`T-En8Hd4` AC-20 separately confirms a verify-failure storm trips an existing
+    breaker.)
+13. **S-8 — document the reserved namespace.** The `_INIT_TEMPLATE` comment block states:
+    *"`refs/heads/ao/**` and `refs/ao/**` are reserved for the engine — do not create branches there."*
+    `ensure()` already treats an unexpected pre-existing `ao/<run>/<task>` branch as a hard error; this
+    makes the reservation explicit rather than an implicit consequence of that error path.
+14. **R-6 — `ao prune` uses the scoped prune.** The GC path calls `WorktreeManager.gc_run(run_id)`,
+    which uses `prune_worktrees_scoped` — never a blanket `git worktree prune`. Test: a user-created
+    worktree on the same repo, made unreachable, survives both `ao prune` and
+    `ao prune --worktrees-only`.
+
 ## Risks
 - `cli.py` is shared with `T-Ov9Bt5`. Agree the split before starting: that ticket adds only the
   `hotspots` command; this one adds the option chain and the `prune` changes.
@@ -102,3 +130,10 @@ HLD §11 M9 — precedence chain, config block, prune extension, and the full ev
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Wk9Tz3-task-isolation/T-Cx4Jf1-cli-config-prune-observability/`
 - Large outputs: none
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. S-5 surfaced via
+  the already-shipping `tier_counts`/`tier_reached` fields (display-only, no new mechanism); S-7 as a
+  one-shot `worktree.retention_high` warning with the deliberate decision **not** to hard-cap retention;
+  S-8 as an explicit namespace reservation in the config template; R-6 carried into `ao prune` with a
+  foreign-worktree survival test. Re-estimated 2 -> 2.5 days.

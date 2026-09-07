@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-Cx4Jf1-cli-config-prune-observability`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: S-5 (surface `tier_counts`/`tier_reached` — display-only, no new mechanism), S-7 (one-shot `worktree.retention_high`; a hard cap deliberately rejected), S-8 (`ao/` namespace reservation in the config template), R-6 (`ao prune` uses the scoped prune, with a foreign-worktree survival test). **Re-estimated 2 -> 2.5 days.**
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the

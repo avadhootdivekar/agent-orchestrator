@@ -5,12 +5,16 @@
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Owner: unassigned (developer)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-09-07
 - Status: Draft
 - Estimate: 3 days
 
 ## Requirements Mapping
 - Requirement IDs: FR-7 (tiers T2/T3/T4), FR-8 (verify-failure path), NFR-1 · Design: HLD §8.5, §8.6, §11 M7
+- Review findings folded in: **S-2** (blocking, security — resolver tool policy must be enforced, not
+  prompted), **R-9** (major — the default `RetryPolicy` must not starve the ladder). R-1/R-21 moved to
+  `T-Ac6Vd9-requeue-accounting`; this ticket **consumes** their fixes and tests the ladder-specific
+  consequences. Estimate unchanged at 3 days.
 
 ## Description
 Tiers 2-4: a bounded LLM merge-resolver, a bounded re-run on the fresh base, and the fall-through to
@@ -73,6 +77,38 @@ Do NOT touch: `integrator.py`, `resolvers.py`, `worktrees.py`, `models.py`, `spe
 11. `uv run pytest -q` fully green with recorded counts; `ruff` clean; `uv run mypy src` zero new
     errors; the NFR-2 gate (pre-epic engine suite unedited) still passes.
 
+### Amendments from the 2026-09-07 review gates
+
+12. **S-2 — BLOCKING. The resolver's containment is structural, not textual.** `merge-resolve.md`'s
+    "do not push / do not switch branches" is prompt text, and prompt text is not a boundary. This is a
+    **new, engine-triggered** dispatch whose input is raw conflict content authored by two tasks that
+    nobody reviewed together — a strictly larger, less-audited input surface than any existing dispatch,
+    where the workflow author chose the inputs. Per ADR-0005 an `AgentSpec` defaults to allow-all tools,
+    and a worktree shares the main repo's remotes and credential helper. Two enforced controls:
+    (a) **force-inject** `spec.resolver_disallowed_tools` at the T2 dispatch, UNIONed with the named
+    agent's own `disallowed_tools` — the union wins regardless of what the agent declares (the same
+    pattern ADR-0005 §5 already uses for the background-shell set);
+    (b) when `spec.resolver_deny_push` (default true), overlay `resolver_env(spec)` onto
+    `TaskContext.env`: `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=/bin/false`, and `GIT_CONFIG_COUNT=2` with
+    `credential.helper=""` and `http.proxy=127.0.0.1:1`. Environment-only: it constrains any `git` the
+    agent itself runs without mutating the repository's config and without a new porcelain method.
+    Tests: the effective `AgentSpec.disallowed_tools` on the dispatched `TaskContext` contains
+    `WebFetch`/`WebSearch` **even when the named agent declares none**; `resolver_env` keys are present
+    on `TaskContext.env`; and a non-resolver dispatch of the same task carries neither.
+13. **R-9 — the default `RetryPolicy(max_attempts=1)` must not starve the ladder.** T2/T3 redispatches
+    are new calls to `_run_with_retries` with their own fresh internal retry budget — the same
+    relationship self-heal already has, and the engine already documents it (`engine.py:199-204`:
+    *"heal retries never consume `RetryPolicy.max_attempts` accounting (a completely separate
+    counter)"*). **Never** gate a redispatch by comparing `ti.attempts`/`dispatch_cycle` against
+    `retry.max_attempts` — that silently breaks the ladder for every workflow using the default policy.
+    Test: a full T1 -> T2 -> T3 escalation completes under the **default** `RetryPolicy` without the
+    task being marked failed by retry exhaustion.
+14. **Consume, don't duplicate, `T-Ac6Vd9`'s accounting fixes.** Your D9 cost test (AC-5) must assert
+    against `BudgetCounters` as well as `TaskRunState.cumulative_*` — if `T-Ac6Vd9` has not landed, the
+    cost test will pass on cumulative fields while the token ledger is silently wrong. Test the
+    ladder-specific consequence: a task that conflicts twice trips a `task_cost_usd` breaker set just
+    above one clean attempt's cost.
+
 ## Risks
 - **Runaway cost.** Mitigation: caps default to 1 each; the per-task budget breaker applies (AC-5);
   the counters live in `RunState` so a resume cannot reset them.
@@ -81,6 +117,9 @@ Do NOT touch: `integrator.py`, `resolvers.py`, `worktrees.py`, `models.py`, `spe
   `rerere` does **not** learn from a resolution that fails verify (verify precedes landing).
 - Editing `engine.py` after `T-En8Hd4`. Mitigation: read the merged file; keep the diff to the hook
   points that ticket published; do not refactor around them.
+- S-2's force-injection must be **unconditional**, not "validate and warn". V10 is only a warning
+  precisely because the enforcement is here; if this ticket instead trusts the agent's own spec, V10's
+  warning becomes the only control and the finding is not fixed.
 
 ## Dependencies
 - Upstream: `T-En8Hd4` (hook points, requeue signals), `T-Rm2Lx7` (the unresolved list).
@@ -108,3 +147,12 @@ HLD §11 M7 escalate(); §8.5 the T1->T2->T3 sequence diagram; §8.6 the verify-
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Wk9Tz3-task-isolation/T-Lr6Ka3-llm-resolver-and-rerun/`
 - Large outputs: none
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. S-2 fixed by
+  construction: `resolver_disallowed_tools` is force-injected (union with the agent's own, never merely
+  validated) and `resolver_deny_push` neutralizes the push path through `TaskContext.env` alone — no
+  repo-config mutation and no new porcelain method, so `T-Gt4Pw8`'s locked interface is untouched.
+  R-9's self-heal precedent cited normatively with a default-`RetryPolicy` escalation test. R-1/R-21
+  moved to `T-Ac6Vd9`; AC-14 makes this ticket assert against `BudgetCounters` so a missing accounting
+  fix cannot hide behind a passing cumulative-cost check. Estimate unchanged at 3 days.

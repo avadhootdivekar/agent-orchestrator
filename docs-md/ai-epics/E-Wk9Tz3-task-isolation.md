@@ -5,8 +5,8 @@
 - Title: Per-task git worktree isolation with squash+rebase integration and soft overlap-aware task assignment
 - Owner: architect (agent) — implementation owner TBD
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
-- Status: Draft (design complete, implementation not started)
+- Last Updated: 2026-09-07
+- Status: In Progress (design amended 2026-09-07 after two review gates; `T-Gt4Pw8` / `T-Sc7Rm2` under development)
 - Origin ask: user request, flagged as the **highest-priority** epic. The core mechanism (worktree per
   task, squash → rebase → verify → fast-forward, soft `touches` hints, the tiered conflict ladder) was
   specified by the user and is recorded in the HLD/ADR rather than re-derived here.
@@ -80,31 +80,36 @@ differentiator is the repair loop**: we attempt a bounded, budgeted repair befor
 run, instead of waiting for a human.
 
 ## Decomposition
-12 tasks under `meta/tickets/E-Wk9Tz3-task-isolation/`, each <= 3 days with a disjoint file-ownership
-boundary. `engine.py` is edited by exactly one task (`T-En8Hd4`) plus two narrowly-scoped edits
-(`T-Lr6Ka3` resolver dispatch, `T-Cx4Jf1` logging only); `cli.py` is split explicitly between
-`T-Ov9Bt5` (`ao hotspots`) and `T-Cx4Jf1` (`--isolation`, `ao prune`).
+**14 tasks / 33 developer-days / 3 sprints** (after the 2026-09-07 review gates; was 12 / 28 / 2).
+Each is <= 3 days with a disjoint file-ownership boundary. `engine.py` is the one shared file, edited
+by five tasks in a fixed order — `T-En8Hd4` -> `T-Ac6Vd9` -> `T-Wl2Bq7` -> `T-Lr6Ka3` -> `T-Cx4Jf1` —
+each narrowly scoped and each required to read the merged file rather than re-derive from the design.
+`cli.py` is split explicitly between `T-Ov9Bt5` (`ao hotspots`) and `T-Cx4Jf1` (`--isolation`,
+`ao prune`).
 
 | Task | Owns | Days | Requirements |
 |---|---|---|---|
 | `T-Gt4Pw8-git-porcelain` | `isolation/git.py` + the shared git test fixtures | 2 | FR-2, FR-6, NFR-4 |
 | `T-Sc7Rm2-isolation-schema-models` | `models.py`, `spec.py`, `workflow.schema.json`, `runstate.py` (state only) | 2 | FR-1, NFR-5 |
-| `T-Wk3Nv6-worktree-lifecycle` | `isolation/paths.py`, `isolation/worktrees.py` | 2.5 | FR-2, FR-3, FR-4, FR-14 |
+| `T-Wk3Nv6-worktree-lifecycle` | `isolation/paths.py`, `worktrees.py`, `view.py`, shared `xdg.py` | 3 | FR-2, FR-3, FR-4, FR-14 |
 | `T-Ib5Qy9-integrator-core` | `isolation/integrator.py`, `isolation/locks.py` | 3 | FR-5, FR-6, FR-8 |
 | `T-En8Hd4-engine-isolation-wiring` | `engine.py`, `artifacts.py`, `runstate.py`, `executors/` | 3 | FR-4, FR-9, FR-12, FR-13, NFR-2, NFR-3 |
 | `T-Rm2Lx7-mechanical-resolvers` | `isolation/resolvers.py` | 2.5 | FR-7 (T1) |
 | `T-Lr6Ka3-llm-resolver-and-rerun` | `isolation/escalation.py`, `merge-resolve.md` | 3 | FR-7 (T2-T4), FR-8 |
+| `T-Ac6Vd9-requeue-accounting` *(new)* | `budget.py`, narrow `engine.py` settle/cycle edits | 2 | FR-7 cost bound (R-1, R-21) |
+| `T-Wl2Bq7-workspace-run-lock` *(new)* | `isolation/runlock.py`, narrow `engine.py` sync edits | 1.5 | FR-13 (R-4, R-12) |
 | `T-Ov9Bt5-overlap-scheduling-hotspots` | `scheduling/overlap.py`, `isolation/hotspots.py`, `ao hotspots` | 2.5 | FR-10, FR-11 |
-| `T-Cx4Jf1-cli-config-prune-observability` | `cli.py`, `project_config.py`, events, `status.json`, dashboard column | 2 | FR-14, FR-15 |
-| `T-Tp7Zs2-instructions-and-templates` | conflict-friendly rules + `routed-runner` wiring | 1.5 | FR-16, NFR-6 |
+| `T-Cx4Jf1-cli-config-prune-observability` | `cli.py`, `project_config.py`, events, `status.json`, dashboard column | 2.5 | FR-14, FR-15 |
+| `T-Tp7Zs2-instructions-and-templates` | conflict-friendly rules + `routed-runner` wiring + push-directive removal | 2 | FR-16, NFR-6 |
 | `T-Ee3Mn8-e2e-and-review` | tests only + security/review passes | 3 | all, esp. NFR-1/2/3 |
 | `T-Dr5Yq6-docs-refresh` | `docs-md/` reconciliation + ticket sync | 1 | post-implementation |
 
-**Sprint plan.** Two 2-week sprints, team size 3, 40% overhead:
+**Sprint plan.** Three 2-week sprints, team size 3, 40% overhead:
 `Gross = 3*10*8 = 240 h` → `Net = 144 h` → `Commitment = 100.8-122.4 h` = **12.6-15.3 dev-days/sprint**.
-Sprint 1 (foundation + core integration) = **12.5 d**; Sprint 2 (ladder, scheduling, surface,
-verification) = **15.5 d**; total **28 d** against 25.2-30.6 available. Named descope candidates for
-Sprint 2, in order: `T-Tp7Zs2`, then `T-Ov9Bt5`.
+Sprint 1 (foundation + core integration) = **13.0 d**; Sprint 2 (ladder, accounting, multi-run,
+scheduling) = **13.5 d**; Sprint 3 (surface, verification, docs) = **6.5 d** — deliberately under the
+floor, as the remediation budget for a late gate covering five tasks' worth of `engine.py` edits plus
+a full security-implementation pass. Total **33 d** against 37.8-45.9 available.
 
 ## Acceptance Criteria (testable)
 See the epic ticket's FR-1..FR-16 / NFR-1..NFR-6 table for the traceable list, and HLD §17.4 for the
@@ -141,6 +146,39 @@ row-by-row verification matrix. The gates that decide the epic:
   already-leaked `worktree-agent-*` branches and a stray `.worktrees/full-test-*` → FR-14 (GC +
   `ao prune --worktrees-only`).
 
+## Review gates (2026-09-07)
+
+Two pre-implementation gates ran before any code was written — reviewer
+(`REVIEW-design-2026-09-07.md`, **APPROVE WITH CHANGES**: 6 Blocking, 11 Major, 7 Minor) and
+dev-security (`REVIEW-security-design-2026-09-07.md`, **conditional pass**: 2 Blocking, 3 Major,
+3 Minor, 3 Info), both in the epic ticket folder. **No ADR-0013 decision (D1-D7) was overturned.**
+
+The findings that changed the design rather than merely tightening it:
+
+- **R-19 (the one that mattered).** `_run_with_retries` computes six of the seven remappable path
+  categories *inside itself*, from the engine's single shared store — so as originally pseudocoded an
+  "isolated" task would still have read and written the **shared checkout** while ao dutifully created
+  worktrees nothing used, with every other test passing. Now `T-En8Hd4`'s first acceptance criterion,
+  asserted on the real `TaskContext` a `fake` executor receives.
+- **R-4 → ADR-0013 D8.** `meta/ROADMAP.md` §3.4 and ADR-0014 both defer the multi-run policy *to this
+  epic*, and the design was silent. Landing was already safe (per-repo lock + CAS); D5's checkout
+  fast-forward was not. Answer: a per-workspace `WorkspaceRunLock`, `workspace_lock: "require"` by
+  default, second run degrades to `isolation: none`. `E-Sc9Rt4` needs no change.
+- **R-1 / R-21.** The ladder's "cost is bounded for free" claim was not true: actuals are discarded
+  across a requeue, and the token ledger latches one-shot per task id — the same bug classes this repo
+  already fixed for in-call retries (E-9h3m7k) and for self-heal's cross-call redispatch. Split into
+  the new `T-Ac6Vd9`, which keys both the ledger and the transcript capture by dispatch cycle.
+- **S-1 / S-2 / S-3.** Three places where **the engine**, not a workflow author, is the actor and the
+  containment was advisory rather than structural: repo hooks firing unattended ~100 times per run (now
+  suppressed at the single git choke point), the T2 resolver's tool access (now force-injected, not
+  prompted), and the engine's unconditional `git add -A` (now screened against a secret denylist).
+- **R-10.** ADR-0013 presented as a verbatim ADR-0007 quotation a sentence that is actually
+  `meta/ROADMAP.md` §4's. Corrected in both documents; the substance was unaffected.
+
+Per-finding dispositions — fixed / accepted-with-rationale / deferred, each with the location of the
+fix — are recorded once, in [`task-isolation-hld.md`](../task-isolation-hld.md) §24.
+`T-Dr5Yq6-docs-refresh` re-verifies every *Fixed* row against merged code before the epic closes.
+
 ## Risks & Blockers
 - **R1 cold rebuilds** for heavy toolchains — mitigated by `isolation.env` (shared, cargo-locked
   target dir), by leaving heavy stages `isolation: none` (they are barriers anyway), and by per-repo
@@ -159,7 +197,9 @@ row-by-row verification matrix. The gates that decide the epic:
   `T-Ib5Qy9-integrator-core` merges, since they are the hardest to reverse.
 
 ## Next actions
-1. User confirms or overrides HLD §20's five decisions.
-2. Optional early gate (mirroring E-GIytcL's): `reviewer` + `dev-security` against the HLD/ADR/tickets
-   **before** any implementation, focused on §7.3 (path-guard widening) and §8 (integration protocol).
-3. Start Sprint 1 with `T-Gt4Pw8-git-porcelain` and `T-Sc7Rm2-isolation-schema-models` in parallel.
+1. Sprint 1 under way: `T-Gt4Pw8-git-porcelain` and `T-Sc7Rm2-isolation-schema-models` in development,
+   both frozen at their Phase-1 amended state. `T-Wk3Nv6` and `T-Ib5Qy9` start on their merge.
+2. User confirms or overrides HLD §20's five decisions — the integration target and the default-verify
+   behaviour before `T-Ib5Qy9` merges.
+3. The early gate is complete; the remaining verification is `T-Ee3Mn8`'s late gate, re-scoped to
+   verifying the *implementation* of S-1..S-6 against HLD §17.5's finding-driven test matrix.

@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-Lr6Ka3-llm-resolver-and-rerun`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: S-2 (resolver tool policy **force-injected**, not validated; push path neutralized via `TaskContext.env` only — no repo-config mutation, no new porcelain method), R-9 (self-heal precedent cited; default-`RetryPolicy` escalation test). AC-14 makes the D9 cost test assert against `BudgetCounters` so a missing `T-Ac6Vd9` cannot hide behind a passing cumulative-cost check. Estimate unchanged at 3 days.
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the

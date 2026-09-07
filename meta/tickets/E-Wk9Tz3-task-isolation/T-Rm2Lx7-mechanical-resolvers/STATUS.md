@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-Rm2Lx7-mechanical-resolvers`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: S-6 (regenerate subprocess uses `rule.timeout_seconds`, with a test asserting it fails fast at its own bound rather than holding the per-repo lock for 1800s). Estimate unchanged at 2.5 days.
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the

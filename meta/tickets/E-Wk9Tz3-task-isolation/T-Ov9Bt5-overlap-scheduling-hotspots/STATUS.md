@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-Ov9Bt5-overlap-scheduling-hotspots`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: R-5/R-18 (ownership settled: this ticket keeps the pure `rank_wave` + `load_hotspots`; `T-En8Hd4` owns the engine call site and now carries an AC and a live-dispatch test for it). Also pinned that the derived default comes from `models.resolve_overlap_preference`, not a local copy. Estimate unchanged at 2.5 days.
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the

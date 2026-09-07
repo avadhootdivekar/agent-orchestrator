@@ -5,13 +5,17 @@
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Owner: unassigned (tester + reviewer + dev-security)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-09-07
 - Status: Draft
 - Estimate: 3 days
 
 ## Requirements Mapping
 - Requirement IDs: all FR/NFR (cross-cutting verification), especially NFR-1, NFR-2, NFR-3, R4
 - Design: HLD §17 (test strategy), §17.4 (acceptance matrix)
+- Review findings folded in: **S-4** (the missing per-task path-guard test), **R-12** (measure the
+  dirty-checkout collision rate), **R-20** (NFR-3 assertion), plus the full finding-driven test matrix
+  in HLD §17.5. Estimate unchanged at 3 days — these replace, rather than add to, the generic
+  "security pass" bullet already scoped here.
 
 ## Description
 The epic's verification gate. End-to-end tests through the **outermost boundary** (`CliRunner`, per
@@ -78,6 +82,38 @@ with an explicit note naming the owning ticket and the reason.
 15. Coverage on new modules >= 80%, reported per module in `STATUS.md`. Full suite green; `ruff` clean;
     `uv run mypy src` zero new errors versus the recorded baseline.
 
+### Amendments from the 2026-09-07 review gates
+
+16. **HLD §17.5 is a checklist, not a suggestion.** Every row of the finding-driven test table in
+    §17.5 is either present and passing, or explicitly listed in `STATUS.md` as deferred **with the
+    owning ticket named**. A row silently absent is a failure of this gate.
+17. **S-4 — the test the original security AC did not cover.** AC-11(a) as first written only asserted
+    that `extra_roots` can be produced solely by `WorktreeManager`. The narrower and more important
+    property is **per-task scoping**: an absolute path under **task B's** worktree, submitted as an
+    input, an output, or as `cwd` for **task A**, must raise `ArtifactPathError` from task A's view.
+    Without it, a buggy or hostile task could read a sibling's uncommitted work or write into it,
+    laundering content through a task that never asked for it and whose own verify would then run
+    against tampered input. Three explicit cases (input / output / cwd), distinct from the
+    producer-restriction test.
+18. **R-20 / NFR-3 — assert the invariant, don't assume it.** A test that fails if `RunState` is
+    mutated or `save()` is called from any thread other than the main thread during a
+    `max_parallel=3` isolated run (wrap the runstate store and record
+    `threading.current_thread()` on every call), **plus** a static assertion that
+    `isolation/integrator.py` neither imports `RunState` nor calls `.save(`.
+19. **R-12 — measure, don't assume.** Against a snapshot of the consumer's real dirty-file set (~4106
+    `status --porcelain` entries), compute how often those paths would collide with a realistic run's
+    integrated changes, and record the observed collision rate in `STATUS.md` as a named
+    first-adoption risk. This is a **measurement**, not a pass/fail gate: the design deliberately
+    declined to stash the operator's uncommitted work, and this number is what would justify
+    revisiting that.
+20. **Security pass re-scoped.** The dev-security gate has already run on the design; this pass
+    verifies the **implementation** of its findings: S-1 (planted hooks never fire, fixture proven
+    non-vacuous), S-2 (force-injected tool policy present on the dispatched context even when the agent
+    declares none; `resolver_env` present), S-3 (untracked `.env` aborts naming the path; tracked file
+    not screened), S-4 (AC-17), S-6 (regenerate killed at its own timeout), plus the original
+    surfaces (ref-name sanitization against a hostile injected task id, argv-only command execution,
+    `isolation.env` provenance, auto-commit not sweeping ignored files).
+
 ## Risks
 - Flaky concurrency tests. Mitigation: use a **gated executor** with latches (the ADR-0007 T-TNleFt
   pattern) rather than sleeps or timing assertions, and fixed clocks/dates everywhere.
@@ -108,3 +144,11 @@ HLD §17.1-§17.4 is the test plan; §17.4 is the row-by-row completion checklis
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Wk9Tz3-task-isolation/T-Ee3Mn8-e2e-and-review/`
 - Large outputs: none (keep coverage HTML out of the repo; report numbers only)
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. Made HLD §17.5's
+  finding-driven test table a hard checklist for this gate; replaced the too-weak S-4 acceptance
+  criterion with the task-A-cannot-reach-task-B test (three cases); added the NFR-3 thread-identity
+  assertion for R-20; and turned R-12 into an explicit measurement with a recorded number rather than a
+  pass/fail. The security pass is re-scoped from "review the design" (already done) to "verify the
+  implementation of S-1..S-6". Estimate unchanged at 3 days.

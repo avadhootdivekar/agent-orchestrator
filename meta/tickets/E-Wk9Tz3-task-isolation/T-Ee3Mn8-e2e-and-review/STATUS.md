@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-Ee3Mn8-e2e-and-review`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: HLD §17.5's finding-driven test table is now a hard checklist for this gate; the too-weak S-4 criterion is replaced by the task-A-cannot-reach-task-B test (input/output/cwd); R-20 gains an NFR-3 thread-identity assertion; R-12 becomes an explicit measurement with a recorded number. The security pass is re-scoped from reviewing the design (already done) to verifying the implementation of S-1..S-6. Estimate unchanged at 3 days.
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the

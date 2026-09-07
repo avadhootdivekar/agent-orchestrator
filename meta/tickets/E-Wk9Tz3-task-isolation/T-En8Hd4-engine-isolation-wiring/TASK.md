@@ -5,12 +5,16 @@
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Owner: unassigned (developer)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-09-07
 - Status: Draft
 - Estimate: 3 days
 
 ## Requirements Mapping
 - Requirement IDs: FR-1, FR-4, FR-9, FR-12, FR-13, NFR-2, NFR-3 · Design: HLD §7.3, §7.4, §11 M5
+- Review findings folded in: **R-19** (blocking — the primary execution path), **R-2** (blocking),
+  **R-3** (blocking), **R-5** (blocking — the `rank_wave` call site), **R-23** (major), **S-7**
+  (minor). **Moved OUT of this ticket** to keep it <= 3 days: R-1/R-21 -> `T-Ac6Vd9-requeue-accounting`,
+  R-4/R-12 -> `T-Wl2Bq7-workspace-run-lock`. Estimate unchanged at 3 days.
 
 ## Description
 Connect worktrees + the integrator to the wave scheduler **without breaking a single ADR-0007
@@ -85,6 +89,59 @@ Do NOT touch: any `isolation/` module (read them), `models.py`, `spec.py`, `spec
 14. `uv run pytest -q` fully green with recorded counts; `ruff` clean; `uv run mypy src` zero new
     errors.
 
+### Amendments from the 2026-09-07 review gates
+
+*(These renumber nothing above; treat AC-15 as the new **first** thing to implement and test.)*
+
+15. **R-19 — BLOCKING, and the single most important criterion in this ticket. Do this first.**
+    `_run_with_retries` (`engine.py:1921-1970`) computes **six** of the seven remappable path
+    categories *inside itself*, from `self._store`: `instruction_path`,
+    `general_instruction_paths`, `input_paths`, `output_paths`, `output_manifest_path` and
+    `agent_cwd`. Only `repo_paths` is already a parameter. As the design originally read, an
+    "isolated" task would still read and write the **shared checkout** while ao dutifully created a
+    worktree nothing used — silently defeating the entire epic while every other test passed.
+    `self._store` cannot be swapped per call: one instance is shared across every concurrent worker.
+    Fix: add `store: ArtifactStore | None = None` to `_run_with_retries` (and thread it through
+    `_run_and_integrate`), defaulting to `self._store`, and route **all six** call sites through it.
+    Tests: (a) for an isolated task, assert on the real `TaskContext` a `fake` executor receives that
+    **each of the six** resolves inside the worktree — not on a helper's return value; (b) assert
+    `task_manifest_path`, `gate_output_path` and `output_dir` do **not**; (c) with `store=None` the
+    resolved paths are byte-identical to today (NFR-2).
+16. **R-2 — outputs gate integration.** `_run_and_integrate` performs the missing-outputs check itself,
+    on the worker, through the isolated view, and calls `Integrator.integrate()` **only** when it
+    passes; a failure returns `WorkerOutcome(result, None, missing_outputs=[...])`. The main-thread
+    check in `_settle_completed_task` (`engine.py:1122-1138`) is left **untouched** — it re-runs and
+    reaches the same verdict, which is what keeps the non-isolated path byte-identical.
+    Test: an isolated task that succeeds but is missing a declared output **lands nothing** (assert the
+    integration ref did not move) and then settles `failed`.
+17. **R-3 — the integration gate applies to BOTH branches of `should_skip`.** `runstate.py:156-172` has
+    two independent branches; the second (`if task.skip_if_outputs_exist and task.outputs:`) has **no
+    `ts.status` check at all**, runs on every wave (`engine.py:527`), and is the one the consumer
+    actually exercises (`skip_if_outputs_exist: true` on every fan-out entry). A task parked in
+    `conflict_resolver` has `ts.status == "pending"` and an output file that already exists, so
+    branch 2 would mark it `"skipped"`, add it to `ctx.done`, and let dependents proceed as though its
+    code had landed. **Dedicated regression test must target branch 2 by name.**
+18. **R-5 — the `rank_wave` call site is owned here.** In `run()`'s wave-fill loop, immediately after
+    `ready = self._ready_ids(...)`: compute `pref = resolve_overlap_preference(workflow)` and, when
+    `"soft"`, replace the candidate list with `rank_wave(ready, touches_of(workflow), ctx.hotspots,
+    max_parallel - len(in_flight))`. Hotspots load **once at run start** via `load_hotspots(...)` with
+    an empty-on-any-error fallback. Test: a live wave dispatch at `"soft"` actually applies the
+    ordering (assert the **dispatched** set, not the pure function, which `T-Ov9Bt5` already covers);
+    and at `"off"` / `max_parallel == 1` the dispatch order is unchanged.
+19. **R-23 — `release()` on a plain execution failure.** A task whose execution simply fails (retries
+    exhausted, integration never reached) returns `WorkerOutcome(result, None)`, which never enters the
+    integration switch — so no `release()` call was reachable, and even `keep_worktrees: "never"` would
+    leak the worktree and branch of arguably the most common failure path. Add the release on that path
+    as its own named case. Test it separately from "integration itself reported failed".
+20. **S-7 — confirm the breaker interaction, by test.** A verify-failure storm (a `verify_command` that
+    fails for every task) must trip an existing `consecutive_failures`/`task_failures` breaker and HALT
+    rather than accumulating retained worktrees silently. Confirm this **with a test**, not by
+    assertion. Emit `worktree.retention_high` once at a named threshold constant, pointing at
+    `ao prune --worktrees-only`.
+21. `ts.dispatch_cycle += 1` on every dispatch (the field ships with `T-Sc7Rm2`). This ticket only
+    increments and persists it; the capture-directory keying and the budget-cycle keying that consume
+    it are `T-Ac6Vd9`'s.
+
 ## Risks
 - Highest-blast-radius file in the repo. Mitigation: AC-1 is the gate; make the isolated path an
   additive branch around the existing code, never a rewrite of it — the same "verbatim extraction"
@@ -95,6 +152,12 @@ Do NOT touch: any `isolation/` module (read them), `models.py`, `spec.py`, `spec
   minimal and comment the invariant in code.
 - `prepare_resume` resets `TaskRunState`; integration state must be read from `RunState`, never from
   the reset object.
+- **Do AC-15 first.** Every other criterion in this ticket can pass while the epic does nothing useful
+  if R-19 is not fixed; the review called it "a gap in the primary execution path", not an edge case.
+- Five tasks now edit `engine.py`, in this order: **this one** -> `T-Ac6Vd9` -> `T-Wl2Bq7` ->
+  `T-Lr6Ka3` -> `T-Cx4Jf1`. Publish your hook points (`_run_and_integrate`'s signature, the settle
+  switch, the requeue signals, the wave-fill call site) in `STATUS.md` so the later four extend rather
+  than re-derive.
 
 ## Dependencies
 - Upstream: `T-Sc7Rm2`, `T-Wk3Nv6`, `T-Ib5Qy9`.
@@ -122,3 +185,11 @@ additions, _activate_integration, and the run-end block.
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Wk9Tz3-task-isolation/T-En8Hd4-engine-isolation-wiring/`
 - Large outputs: none
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. Added the five
+  findings that gate this ticket's merge — R-19 (now AC-15 and the first thing to implement; without it
+  isolated tasks still run in the shared checkout), R-2, R-3 (branch 2 named explicitly), R-5 (the
+  wave-fill call site, previously owned by nobody) and R-23 — plus S-7's breaker confirmation. To keep
+  the ticket at <= 3 days, R-1/R-21 moved to the new `T-Ac6Vd9-requeue-accounting` and R-4/R-12 to the
+  new `T-Wl2Bq7-workspace-run-lock`; `budget.py` and the sync lock are no longer this ticket's files.

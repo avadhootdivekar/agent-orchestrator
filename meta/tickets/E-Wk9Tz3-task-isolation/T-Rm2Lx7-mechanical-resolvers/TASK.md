@@ -5,12 +5,13 @@
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Owner: unassigned (developer)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-09-07
 - Status: Draft
 - Estimate: 2.5 days
 
 ## Requirements Mapping
 - Requirement IDs: FR-7 (tier T1), NFR-1 · Design: HLD §8.4, §11 M6
+- Review findings folded in: **S-6** (per-rule regenerate timeout). Estimate unchanged at 2.5 days.
 
 ## Description
 Tier 1 of the ladder: repair as many conflicts as possible for **free** — `rerere` replay, union merge
@@ -59,6 +60,16 @@ integrator owner already provided), `engine.py`, `models.py`, `cli.py`.
 9. `uv run pytest -q tests/isolation/` green; full suite green with recorded counts; `ruff` clean;
    `uv run mypy src` zero new errors.
 
+### Amendments from the 2026-09-07 review gates
+
+10. **S-6 — every regenerate command carries its own bound.** Pass `rule.timeout_seconds` (the field
+    ships with `T-Sc7Rm2`, default 120) to the subprocess — **never** an undefined `cfg_timeout`, and
+    never rely on `integration.lock_timeout_seconds` as the bound. The command runs while the per-repo
+    integration lock is held, so a hung regenerate (a lockfile regen that prompts for input, or reaches
+    the network) would otherwise stall **every other task touching that repository** for up to 1800s
+    before failing. Test: a deliberately hanging `regen.sh` is killed at its own `timeout_seconds` and
+    the path is marked unresolved — assert the elapsed time is near the rule's timeout, not the lock's.
+
 ## Risks
 - A wrong union merge is silent. Mitigation: verify (`T-Ib5Qy9`) runs after resolution and catches
   leftover markers; union is opt-in per glob; the instruction pack (`T-Tp7Zs2`) makes registry files
@@ -93,3 +104,8 @@ HLD §11 M6 — plan_resolution and apply_plan, verbatim.
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Wk9Tz3-task-isolation/T-Rm2Lx7-mechanical-resolvers/`
 - Large outputs: none
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. S-6 wired: the
+  regenerate subprocess uses `rule.timeout_seconds`, with a test asserting it fails fast at its own
+  bound rather than holding the per-repo integration lock for the full 1800s. Estimate unchanged.

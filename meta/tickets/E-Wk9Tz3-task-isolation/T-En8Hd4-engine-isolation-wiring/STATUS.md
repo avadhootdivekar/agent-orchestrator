@@ -1,13 +1,15 @@
 # STATUS
 
 - ID: `T-En8Hd4-engine-isolation-wiring`
-- Updated At: 2026-09-06
+- Updated At: 2026-09-07
 - State: Draft
 - Owner: unassigned
 
 ## This update
 - Ticket created by the architect as part of the `E-Wk9Tz3-task-isolation` design package. Not
   started; no code written.
+- **2026-09-07 — Phase-2 review amendment applied.** Folded in: R-19 (now AC-15 and the **first** thing to implement — without it isolated tasks still run in the shared checkout), R-2, R-3 (branch 2 of `should_skip` named explicitly), R-5 (the wave-fill call site, previously owned by no ticket), R-23, S-7. R-1/R-21 moved out to `T-Ac6Vd9`; R-4/R-12 moved out to `T-Wl2Bq7`, so `budget.py` and the sync lock are no longer this ticket's files. Estimate unchanged at 3 days.
+- Per-finding dispositions: HLD §24 "Review dispositions".
 
 ## Evidence
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) (see the
