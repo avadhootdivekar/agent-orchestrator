@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-Ov9Bt5-overlap-scheduling-hotspots`
 - Epic ID: `E-Wk9Tz3-task-isolation`
-- Owner: unassigned (developer)
+- Owner: developer-agent
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: In Review
 - Estimate: 2.5 days
 
 ## Requirements Mapping

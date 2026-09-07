@@ -10,6 +10,8 @@ Commands:
   ao ui         — Serve the browser dashboard (needs the optional `ui` extra).
   ao templates  — List discovered workflow templates (E-Tpl3x9).
   ao new        — Scaffold (and optionally validate/run) a workflow instance from a template.
+  ao hotspots   — Compute the git-churn hotspot signal for soft overlap-aware scheduling
+                  (E-Wk9Tz3 FR-11) and write it to .ao/hotspots.json.
 
 Options:
   ao --version / -V         — Show version (+ commit/build info for non-release builds).
@@ -1404,15 +1406,148 @@ def prune(
 
 
 def _resolve_templates_workspace_root(workspace: str | None) -> str:
-    """Workspace-root resolution shared by `ao templates`/`ao new` (E-Tpl3x9).
+    """Workspace-root resolution shared by `ao templates`/`ao new`/`ao hotspots`
+    (E-Tpl3x9, E-Wk9Tz3).
 
     Mirrors `ui_cmd`'s own `--workspace`/`AO_WORKSPACE_ROOT`/cwd resolution rather than
-    `_load_all`'s reposet-derived one: template discovery/scaffolding operates directly on
-    a workspace directory, with no workflow/reposets/agents triplet loaded yet (that only
-    happens afterwards, for `--validate-only`/`--run`, via the normal `_load_all` path).
+    `_load_all`'s reposet-derived one: these commands operate directly on a workspace
+    directory, with no workflow/reposets/agents triplet loaded (that only happens
+    afterwards, for `--validate-only`/`--run`, via the normal `_load_all` path).
     """
     ws = workspace or os.environ.get("AO_WORKSPACE_ROOT") or os.getcwd()
     return str(Path(ws).resolve())
+
+
+# Repo label fallback when `--repo` is omitted and the resolved workspace path has no
+# usable basename (e.g. the filesystem root) -- named so it is never a bare literal at
+# the one call site that needs it.
+_DEFAULT_HOTSPOTS_REPO_LABEL = "default"
+
+
+@app.command(name="hotspots")
+def hotspots_cmd(
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Repo/workspace root to scan for churn (default: $AO_WORKSPACE_ROOT or cwd).",
+    ),
+    repo: str | None = typer.Option(
+        None,
+        "--repo",
+        help="Label for this repo's entry under the output JSON's `repos` map "
+        "(default: the resolved workspace directory's name).",
+    ),
+    since_days: int | None = typer.Option(
+        None,
+        "--since-days",
+        help="Only count commits from this many days back (default: 180; 0 = full "
+        "history). Keeps a deleted-long-ago file's old churn from outranking what's "
+        "actually hot now.",
+    ),
+    top: int | None = typer.Option(
+        None,
+        "--top",
+        help="Keep at most this many hotspot entries, ranked by weight, highest first "
+        "(default: 40).",
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        help="Where to write the hotspots JSON (default: <workspace>/.ao/hotspots.json).",
+    ),
+    include_conflicts: bool = typer.Option(
+        True,
+        "--include-conflicts/--no-include-conflicts",
+        help="Fold in integration conflicts observed in this workspace's prior runs "
+        "(ground truth, weighted CONFLICT_WEIGHT above raw commit churn).",
+    ),
+) -> None:
+    """Compute the git-churn hotspot signal and write it to .ao/hotspots.json.
+
+    Consumed by soft overlap-aware co-scheduling (`scheduling.overlap.rank_wave`, via
+    `isolation.hotspots.load_hotspots`) and by the task-breakdown agent, which declares
+    this file as an input so decomposition can steer away from hot files instead of
+    guessing. Re-running for a different --repo accumulates into the same output file
+    rather than overwriting other repos' previously computed entries; re-running for the
+    SAME --repo against unchanged history reproduces the same file (idempotent).
+
+    LIMITATION: raw git-log churn alone is a noisy signal -- a large, frequently touched
+    but low-risk file can rank above a small, truly hot one, and a file that WAS a
+    hotspot before being deleted no longer is. Mitigated by --since-days windowing,
+    dropping paths no longer tracked at HEAD, and --include-conflicts (ground truth from
+    actual integration conflicts) -- but treat the result as a hint, never certainty.
+    """
+    from .errors import GitError
+    from .isolation.git import GitRepo
+    from .isolation.hotspots import (
+        DEFAULT_SINCE_DAYS,
+        DEFAULT_TOP_K,
+        compute_hotspots,
+        load_hotspots,
+        merge_hotspots,
+        observed_conflicts,
+    )
+    from .models import DEFAULT_HOTSPOTS_PATH
+
+    since_days = since_days if since_days is not None else DEFAULT_SINCE_DAYS
+    top = top if top is not None else DEFAULT_TOP_K
+
+    ws = Path(_resolve_templates_workspace_root(workspace))
+    if not ws.is_dir():
+        typer.echo(f"ERROR: workspace does not exist or is not a directory: {ws}", err=True)
+        raise typer.Exit(1)
+
+    probe = GitRepo.probe(str(ws))
+    if probe is None:
+        typer.echo(
+            f"ERROR: {ws} is not a git repository (or git is unavailable) -- "
+            "`ao hotspots` needs real history to compute churn.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    repo_id = repo or ws.name or _DEFAULT_HOTSPOTS_REPO_LABEL
+    output_path = Path(output).resolve() if output else ws / DEFAULT_HOTSPOTS_PATH
+
+    conflicts = observed_conflicts(str(ws)) if include_conflicts else {}
+    git_repo = GitRepo(str(ws))
+    try:
+        new_hotspots = compute_hotspots(
+            repo_id,
+            git_repo,
+            str(ws),
+            since_days=since_days,
+            top_k=top,
+            conflicts=conflicts,
+        )
+    except GitError as exc:
+        typer.echo(f"ERROR: failed to read git history in {ws}: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    existing = load_hotspots(str(output_path))
+    merged = merge_hotspots(existing, new_hotspots)
+
+    # Atomic write-then-rename (review C-2), mirroring runstate.py's own
+    # RunStateStore.save/write_status idiom: a crash/kill mid-write leaves the
+    # PREVIOUS file intact rather than a truncated/corrupt one.
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output_path.with_suffix(".tmp")
+    tmp.write_text(merged.model_dump_json(indent=2) + "\n")
+    os.replace(tmp, output_path)
+
+    this_repo = merged.repos.get(repo_id)
+    entries = this_repo.entries if this_repo else []
+    typer.echo(
+        f"Wrote {len(entries)} hotspot entr{'y' if len(entries) == 1 else 'ies'} "
+        f"for repo {repo_id!r} to {output_path}"
+    )
+    if entries:
+        top_entry = entries[0]
+        typer.echo(
+            f"  top: {top_entry.path} (weight={top_entry.weight:g}, "
+            f"churn={top_entry.churn}, conflicts={top_entry.conflicts})"
+        )
 
 
 def _parse_param_options(raw: list[str]) -> dict[str, str]:

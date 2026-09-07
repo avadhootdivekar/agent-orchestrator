@@ -310,6 +310,8 @@ class TestStructuralNoNetworkSurface:
             "is_ancestor": (("a", "b"), {}),
             "merge_tree_probe": (("a", "b"), {}),
             "worktree_add": (("/wt", "ao/x", "HEAD"), {}),
+            # E-Wk9Tz3 T-Wk3Nv6 review D-ENS: added for ensure()'s branch-reattach case.
+            "worktree_attach": (("/wt", "ao/x"), {}),
             "worktree_list": ((), {}),
             "worktree_remove": (("/wt",), {}),
             "prune_worktrees_scoped": (("/prefix",), {}),
@@ -328,6 +330,10 @@ class TestStructuralNoNetworkSurface:
             "diff_names": (("/wt", "a", "b"), {}),
             "is_tracked": (("/wt", "f.txt"), {}),
             "ls_files_untracked_ignored": (("/wt", ["f.txt"]), {}),
+            # E-Wk9Tz3 T-Ov9Bt5 review C-1: was underscore-prefixed (evaded this sweep);
+            # made public and added here so a future git-invoking method can never again
+            # opt out of this test by leading-underscore naming alone.
+            "log_name_only": (("/wt",), {}),
             "rebase_onto": (("/wt", "onto", "upstream", "branch"), {}),
             "rebase_continue": (("/wt",), {}),
             "rebase_abort": (("/wt",), {}),

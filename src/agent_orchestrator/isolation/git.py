@@ -71,6 +71,13 @@ GIT_MERGE_TREE_MIN_VERSION = (2, 38)  # `merge-tree --write-tree` (optional prob
 # `stderr_tail` truncation bound on every `GitError` (AC-3).
 GIT_STDERR_TAIL_BYTES = 4096  # 4 KiB
 
+# `log_name_only`'s own defense-in-depth cap (review C-1): `--since` already bounds a
+# windowed query, but an unwindowed one (`since=None`, e.g. `ao hotspots --since-days 0`)
+# has no bound at all otherwise -- this keeps every invocation, windowed or not, capped
+# at a generous but finite number of commits rather than ever walking a repo's entire
+# history unbounded.
+LOG_NAME_ONLY_MAX_COMMITS = 10000
+
 # Per-invocation `-c` flags applied to EVERY engine-issued call (S-1). The engine never
 # runs `git config`, so nothing here ever persists into the repo's or user's config.
 SAFETY_ARGS: list[str] = [
@@ -673,6 +680,19 @@ class GitRepo:
     def worktree_add(self, path: str, branch: str, start_point: str) -> None:
         self._run(["worktree", "add", "-b", branch, path, start_point])
 
+    def worktree_attach(self, path: str, branch: str) -> None:
+        """`git worktree add <path> <branch>` -- attach an EXISTING branch (not currently
+        checked out anywhere) to a new worktree path, preserving its history. Deliberately
+        no `-b`: unlike `worktree_add`, this never creates or resets a branch -- git checks
+        out `branch` as-is (attached, not detached, since it is a valid local branch name).
+
+        D-ENS (E-Wk9Tz3 T-Wk3Nv6, HLD §11 M3): the re-attach case for a leftover
+        `ao/<run>/<task>` branch surviving a crashed run, so `WorktreeManager.ensure()`
+        never has to delete a user-visible ref to recover from one -- deletion stays with
+        `release()`/`reconcile()`/`gc_run()`, where ownership has already been established.
+        """
+        self._run(["worktree", "add", path, branch])
+
     def worktree_list(self) -> list[WorktreeEntry]:
         common_cp = self._run(["rev-parse", "--git-common-dir"])
         common_dir = _resolve_abs(_decode(common_cp.stdout).strip(), self.path)
@@ -882,6 +902,53 @@ class GitRepo:
     def is_tracked(self, cwd: str, path: str) -> bool:
         cp = self._run(["ls-files", "--error-unmatch", "--", path], cwd=cwd, check=False)
         return cp.returncode == 0
+
+    def log_name_only(self, cwd: str, *, since: str | None = None, no_merges: bool = True) -> str:
+        """Raw ``git log --pretty=format: --name-only -z`` stdout text (HLD §9.2's churn
+        source for `isolation/hotspots.py::compute_hotspots`, `T-Ov9Bt5`). Returned as
+        decoded text, NUL-delimited (one path per NUL-terminated entry, an extra NUL
+        between consecutive commits -- mirrored by `isolation.hotspots.parse_churn`,
+        which does the actual parsing; this module stays a thin porcelain surface with no
+        domain logic). `-z` is load-bearing, not cosmetic (review C-3): without it, git's
+        default `core.quotePath` C-style-octal-escapes and double-quotes any path with a
+        non-ASCII or otherwise "unusual" byte (e.g. ``café.rs`` -> ``"caf\\303\\251.rs"``),
+        which would silently mismatch every later `is_tracked`/lookup call against that
+        same literal path; `-z` (like this module's own `status_porcelain`/
+        `_parse_status_porcelain_z` precedent) turns off quoting entirely and gives an
+        unambiguous, machine-parseable boundary instead of git's usual blank-line
+        commit separator.
+
+        `since` is any `git log --since=<...>` expression (e.g. an ISO date); omitted
+        means full history, in which case `LOG_NAME_ONLY_MAX_COMMITS` still bounds the
+        walk (review C-1: an unwindowed query must never be genuinely unbounded).
+        Tolerates an empty/unborn-HEAD repo (returns "") rather than raising, since "no
+        history yet" is a normal, expected input for a freshly-initialized repo, not a
+        failure -- callers that want a hard error for a non-git directory should check
+        `GitRepo.probe` first.
+
+        Public (not underscore-prefixed): exercised by
+        `tests/isolation/test_git.py::TestStructuralNoNetworkSurface::
+        test_public_method_surface_never_reaches_a_forbidden_verb`'s exhaustive sweep like
+        every other git-invoking method on this class, and routes through `_run`'s S-1
+        hardening (hooks-path, forbidden-subcommand guard, forced env, `SAFETY_ARGS`,
+        `--no-pager`) exactly like every other method here -- nothing about this call is
+        exempt from that surface.
+        """
+        args = [
+            "log",
+            "--pretty=format:",
+            "--name-only",
+            "-z",
+            f"--max-count={LOG_NAME_ONLY_MAX_COMMITS}",
+        ]
+        if no_merges:
+            args.append("--no-merges")
+        if since:
+            args.append(f"--since={since}")
+        cp = self._run(args, cwd=cwd, check=False)
+        if cp.returncode != 0:
+            return ""
+        return _decode(cp.stdout)
 
     def ls_files_untracked_ignored(self, cwd: str, paths: list[str]) -> set[str]:
         if not paths:
