@@ -5,7 +5,7 @@
 > [`meta/tickets/`](tickets/), and design detail in [`docs-md/`](../docs-md/). Update the
 > status table when an epic closes; revisit the horizon sections roughly quarterly.
 >
-> Last reviewed: **2026-07-24**
+> Last reviewed: **2026-09-06**
 
 ---
 
@@ -30,7 +30,7 @@ ships a browser dashboard.
 | Conditional branching / routing (multi-endpoint) | **Stable** | Route cones, `not_taken`, join policies. |
 | Quota-exhaustion handling | **Stable** | Waits per episode without consuming retry budget. |
 | Agent monitoring + opt-in self-healing | **Stable** | Rule-based default; agent monitor optional. |
-| Parallel execution (`max_parallel`) | **Stable, opt-in** | Default 1 = serial. **No write-conflict detection** — see §4. |
+| Parallel execution (`max_parallel`) | **Stable, opt-in** | Default 1 = serial. **No write-conflict detection** — see §4; per-task git isolation is designed (E-Wk9Tz3, ADR-0013), not yet built. |
 | Cost/token accounting per task and per run | **Stable** | Cumulative across retries. |
 | Benchmark harness (`ao-bench`, S/M/L tiers, SWE-bench import) | **Stable** | See `docs-md/benchmarking-framework-hld.md`. |
 | Installable CLI (`ao`, `ao-bench`) | **Stable** | `install.sh`; snapshot-install semantics. |
@@ -38,7 +38,7 @@ ships a browser dashboard.
 | **Multi-workspace service (`ao service`)** | **New** | One supervisor daemon serves every registered workspace's dashboard on its own port; boot-resume for orphaned runs; installable as a user systemd unit. Unauthenticated, same posture as `ao ui` — §2. |
 | **General instructions** | **New** | Workspace-scoped rules applied to every task. |
 | Authentication / multi-user | **Absent** | Deliberate for now — §2. |
-| Cron / event triggers | **Spec'd, not scheduled** | `Trigger` model exists; no daemon runs it — §3. |
+| Cron / event triggers | **Designed, not built** | `Trigger` model exists; no daemon runs it yet. Service-owned scheduler designed (E-Sc9Rt4, ADR-0014) — §3.2. |
 
 ### Recently delivered
 
@@ -49,6 +49,11 @@ ships a browser dashboard.
 - **E-9h3m7k — Accurate usage metrics**: true per-task/run cost and token totals.
 - **E-Ui7Kq2 — Dashboard + general instructions** (this change): see §2.
 - **E-GIytcL — Multi-workspace service** (2026-08-28): `ao service` supervisor daemon (spawn/monitor/restart per-workspace dashboards, bounded auto-resume, hub, systemd install) — see §2a.
+
+### Designed, awaiting implementation (2026-09-06)
+
+- **E-Wk9Tz3 — Per-task git isolation** (ADR-0013, `docs-md/task-isolation-hld.md`): worktree per task per repo, squash → rebase → verify → CAS-landing onto an ao-owned integration ref, tiered conflict ladder (git auto → mechanical resolvers → capped LLM resolver → re-run on fresh base → operator), soft `touches` hints that never withhold a slot. 12 tasks / ~28 d. **Top priority.**
+- **E-Sc9Rt4 — Service-owned scheduler & triggers** (ADR-0014, `docs-md/scheduler-triggers-hld.md`): `ScheduleEngine` inside `ao service`, `.ao/schedules.yaml` bindings, cron/interval + file-watch/webhook/`until` triggers, `skip|queue|allow` overlap, bounded catch-up, at-most-once fire store, `ao run --run-id`, `ao schedule` CLI + dashboard panel. 14 tasks / ~32 d.
 
 ---
 
@@ -133,7 +138,7 @@ Anything beyond single-user localhost needs:
 
 `Trigger` (manual / cron / event) is modelled and validated but nothing executes a schedule.
 
-- A scheduler daemon that owns cron triggers and materializes runs.
+- A scheduler daemon that owns cron triggers and materializes runs. *Designed: E-Sc9Rt4 / ADR-0014 — the `ao service` supervisor owns it.*
 - Event triggers (file watch, webhook) behind the same interface.
 - Dashboard surface for upcoming/recent scheduled runs.
 
@@ -153,7 +158,8 @@ Parallel execution ships opt-in with a real, documented gap (§4). To raise the 
 
 - **Write-conflict detection** between co-scheduled tasks (declared-output overlap analysis,
   and a runtime guard).
-- **Workspace isolation per task** (worktree-style) so parallel agents cannot collide.
+- **Workspace isolation per task** (worktree-style) so parallel agents cannot collide. *Designed: E-Wk9Tz3 / ADR-0013 (also covers soft overlap-aware co-scheduling in place of hard write-conflict gating).*
+- **Cross-epic note:** E-Wk9Tz3 fast-forwards the workspace's checked-out branch at barriers *per run*; two concurrent runs in one workspace (only reachable via E-Sc9Rt4 `overlap: allow` or a manual second `ao run`) would race on that FF. Keep the scheduler's per-workspace cap at 1 for isolated workflows until the isolation epic states a multi-run policy.
 - **Backpressure** tied to the budget and quota subsystems.
 
 ### 3.5 Executor and provider breadth

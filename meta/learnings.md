@@ -833,3 +833,48 @@ By: agent
 Role: developer
 Date: 2026-07-30
 ---
+
+---
+Learning-ID: LRN-20260831-launch-records-unequal-history
+Learning: `LaunchRecord`s are an append-only history of unequal quality — failed attempts write records too, and `reconcile()` returns newest-first. Recover a run's launch parameters by reducing across all its records, never from "the latest".
+Context: Boot-resume read the newest record — the information-free one its own failures had written.
+By: agent
+Role: agent
+Date: 2026-08-31
+---
+
+---
+Learning-ID: LRN-20260831-fix-must-survive-its-own-wreckage
+Learning: When a defect persists artifacts on failure, verify the fix against already-damaged production state, not just clean fixtures — prior failures can poison the very data the fix reads.
+Context: A correct-looking boot-resume fix would have silently failed on the one machine it was written to repair.
+By: agent
+Role: agent
+Date: 2026-08-31
+---
+
+---
+Learning-ID: LRN-20260831-ui-unreachable-two-distinct-gates
+Learning: "UI unreachable" has two independent gates: the socket bind and `resolve_allowed_hosts`. Binding `0.0.0.0` allowlists that literal, which browsers never send as Host — LAN clients get 421. A TCP refusal means the bind is loopback instead.
+Context: Dashboards 421'd on the LAN; the hub refused outright, its bind hardcoded.
+By: agent
+Role: agent
+Date: 2026-08-31
+---
+
+---
+Learning-ID: LRN-20260831-reconcile-stamps-dead-pids-finished
+Learning: `ProcessSupervisor.reconcile()` stamps `finished_at` on any record whose PID is dead, so a test needing a "still running" launch must use a genuinely live PID (`os.getpid()`), not a reaped one.
+Context: A liveness-suppression test passed a dead PID and silently asserted the wrong branch.
+By: agent
+Role: agent
+Date: 2026-08-31
+---
+
+---
+Learning-ID: LRN-20260906-parallel-architects-reserve-shared-ids
+Learning: When running two architect subagents concurrently, pre-assign every shared sequential identifier (ADR numbers) and fence shared files (ROADMAP, learnings, CLAUDE.md) out of both briefs; the orchestrator applies the cross-epic edits afterwards, including any interaction the two designs did not see (here: per-run checkout fast-forward vs. scheduler overlap policy).
+Context: E-Wk9Tz3 (isolation) and E-Sc9Rt4 (scheduler) were designed in parallel; both would otherwise have claimed ADR-0013 and edited ROADMAP §3 concurrently.
+By: agent
+Role: architect
+Date: 2026-09-06
+---

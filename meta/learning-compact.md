@@ -78,3 +78,7 @@
 - The reposet FILE's top-level key is `repo_sets`, not `reposets` (the flag/config spelling) — schema `additionalProperties:false` rejects it with a misleading error. (By: agent, developer, 2026-07-24)
 - Vite 8 / Vitest 4: the `test` key left Vite's config type, so a colocated `test:` block in vite.config.ts fails `tsc -b` — use a separate vitest.config.ts with `mergeConfig`. (By: agent, developer, 2026-07-24)
 - `uv tool install` has no `--extra` flag — request optional extras via package-spec brackets (`uv tool install "$DIR[ui]"`); install.sh omitted `[ui]`, so the global `ao` snapshot's `ao ui` command existed but failed at runtime. Fixed. (By: agent, developer, 2026-07-24)
+- A run's `LaunchRecord`s are unequal history — failed attempts write records too; reduce across all, never take the newest. (By: agent, agent, 2026-08-31)
+- When a defect persists artifacts on failure, test the fix against already-damaged state, not just clean fixtures. (By: agent, agent, 2026-08-31)
+- "UI unreachable" is two gates: loopback bind (TCP refused) vs Host allowlist (421) — `0.0.0.0` is never a sent Host. (By: agent, agent, 2026-08-31)
+- `reconcile()` stamps `finished_at` on dead PIDs — a fixture that must read as alive needs `os.getpid()`. (By: agent, agent, 2026-08-31)
