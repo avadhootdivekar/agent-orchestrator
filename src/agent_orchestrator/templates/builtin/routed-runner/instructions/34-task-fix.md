@@ -12,12 +12,15 @@ where the current state falls short of it.
 
 ## Output
 - `dev-pass-2.md` at the exact output path provided.
-- Fix commits pushed in the target repository.
+- Fix commits committed in the target repository — the engine integrates your work;
+  do not push.
 
 ## Branch safety (same as pass 1)
-`git -C <repo> branch --show-current` must be the non-main epic branch (`<repo>` is
-the target repository's path — see your prompt's Repos line). If not: STOP without
-writing anything.
+`git -C <repo> branch --show-current` must be a non-main branch: either the epic
+branch, or — under isolation — an ao-owned `ao/<run_id>/<task_id>` branch in your own
+worktree; both are valid (`<repo>` is the target repository's path — see your
+prompt's Repos line). If it prints `main`/`master`/empty: STOP without writing
+anything.
 
 ## Task
 1. **Resolve every MUST-FIX finding.** Implement the required change, or — only with a
@@ -35,7 +38,8 @@ writing anything.
 - Rebuild affected areas — must pass.
 - Run the task's test suites (including previously-failing tests) and existing suites
   for touched areas — report verbatim results.
-- Commit with message `[<epic-branch>][task-fix] <summary>` and push.
+- Commit with message `[<epic-branch>][task-fix] <summary>` — commit only, do not
+  push: the engine integrates your work.
 
 ## When you're stuck (use sparingly)
 Only for a genuine blocker (a MUST-FIX requires a destructive/irreversible choice, or
@@ -49,7 +53,7 @@ control/pause.flag` (if that flag already exists from an earlier pause this run,
 - Files changed (paths)
 - Build/test commands run + real results (including which previously-failing tests now
   pass)
-- Commit SHA(s) pushed
+- Commit SHA(s)
 
 ## Completion checklist (REQUIRED — end your report with it)
 Every item marked `[x]` done / `[ ]` NOT done / `NA` + one-line reason. All numbers

@@ -13,6 +13,10 @@ more than anywhere else in this workflow.
 - `breakdown-contract.md` — the EXACT paths, ids, and JSON shapes your manifest must
   use for THIS epic run. It is generated per-run and is authoritative; where this
   general instruction and the contract disagree, the contract wins.
+- `.ao/hotspots.json` — OPTIONAL workspace-level churn/conflict signal (produced by
+  `ao hotspots`). If present, use it to steer `touches` away from concentrating tasks
+  on its hottest paths; if absent, proceed without it — it is never required for
+  task-breakdown to run.
 
 ## Outputs (BOTH required)
 1. `tasks.md` — human-readable task specifications (at the output path provided)
@@ -30,9 +34,15 @@ Break the design into implementation tasks. Rules:
   developers — would produce materially the same result: no implicit assumptions, no
   unstated conventions. Reference exact `design.md` sections instead of restating them
   loosely.
-- **Minimize collision.** Prefer tasks that touch separate files/modules/packages, so
-  independent implementation passes don't conflict; where two tasks must touch the
-  same file, make one depend on the other (see cross-task dependencies below).
+- **Name `touches`, and lean on isolation rather than serialized deps.** Prefer tasks
+  that touch separate files/modules/packages, and record each task's expected files as
+  a `touches: [globs]` hint in the manifest (Part B) — best-effort, fine to be
+  incomplete, used only to let the scheduler PREFER co-scheduling non-overlapping
+  tasks; it never blocks scheduling and never gates a task. If `.ao/hotspots.json` is
+  among your inputs, avoid concentrating several tasks' `touches` on the same hotspot
+  paths. Because tasks run isolated, do NOT add a cross-task `depends_on` purely to
+  avoid a file collision — reserve `depends_on` for a genuine build-on-top-of
+  dependency (see cross-task dependencies below).
 - Give each task a short kebab-case id `<tid>` like `t01-scenario-parser`,
   `t02-api-endpoint` (pattern per the contract).
 
@@ -85,8 +95,9 @@ it is authoritative on the allowed values and field names.
    pipeline starts only after A's pipeline finished. Keep such chains minimal — they
    serialize execution.
 6. Emit nothing beyond what the contract's field allowlist defines: no extra fields
-   (`effort`/`model`/`max_turns` ARE allowed, per-entry and optional — see above), no
-   extra tasks.
+   (`effort`/`model`/`max_turns`/`touches`/`isolation` ARE allowed, per-entry and
+   optional — see above and the contract's "`touches` & `isolation` per task"
+   section), no extra tasks.
 
 ## Final self-check (do it, in this order, before finishing)
 1. Re-read `breakdown-contract.md` top to bottom.

@@ -238,6 +238,11 @@ def test_template_yaml_required_agents_exactly_match_dag() -> None:
         "git-operator",
         "manager",
         "market-surveyor",
+        # merge-resolver: T-Tp7Zs2/S-2 -- used only when a task opts into
+        # `isolation: worktree` and `integration.ladder` reaches its "llm" tier
+        # (README.md "Parallel isolation"), but declared here so the workspace's
+        # `agents:` config resolves it up front rather than at first isolated use.
+        "merge-resolver",
         "reviewer",
         "reviewer-opus",
         "tester",
@@ -377,3 +382,217 @@ def test_no_finplan_references_in_instruction_and_template_files() -> None:
     ]
     offenders = [str(p.relative_to(TEMPLATE_DIR)) for p in scanned if pattern.search(p.read_text())]
     assert not offenders, f"FinPlan-specific reference(s) found in: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# 6. E-Wk9Tz3 T-Tp7Zs2: isolation wiring -- workflow.json.tmpl stays inert by default
+# ---------------------------------------------------------------------------
+
+INSTRUCTIONS_DIR = TEMPLATE_DIR / "instructions"
+
+# Every per-task instruction that used to tell its agent to `git push` (R-22 + the
+# REVIEW.md C-1 follow-up): under isolation these run on an ao-owned, never-pushed
+# branch. The first six are the epic-fan-out/single-task-route files R-22 originally
+# named; the rest are the bug/doc/testing-route (+ single-task-route retest) files
+# C-1 identified as reachable via the README's `defaults.isolation: "worktree"`
+# opt-in, plus `35-task-retest.md` (found during the C-1 fix pass -- same bug, never
+# named by either R-22 or C-1).
+PUSH_DIRECTIVE_FILES = (
+    "08-implement-task.md",
+    "11-fix-task.md",
+    "31-task-impl.md",
+    "34-task-fix.md",
+    "09-write-tests.md",
+    "32-task-test.md",
+    "21-bug-fix.md",
+    "22-bug-test.md",
+    "41-doc-write.md",
+    "51-test-write.md",
+    "35-task-retest.md",
+)
+
+# The review instructions that used to tell the reviewer to inspect "pushed" commits.
+# `23-bug-review.md` (C-1 follow-up) had the identical pattern; `42-doc-review.md`
+# never referenced pushed commits at all (it reads the written files directly), so it
+# is not in this list.
+REVIEW_WORDING_FILES = ("10-review-task.md", "33-task-review.md", "23-bug-review.md")
+
+
+def test_workflow_json_tmpl_defaults_isolation_none() -> None:
+    raw = (TEMPLATE_DIR / "workflow.json.tmpl").read_text()
+    workflow = json.loads(_render(raw, DUMMY_VALUES))
+    assert workflow["defaults"]["isolation"] == "none"
+
+
+def test_workflow_json_tmpl_git_branch_off_pinned_isolation_none() -> None:
+    raw = (TEMPLATE_DIR / "workflow.json.tmpl").read_text()
+    workflow = json.loads(_render(raw, DUMMY_VALUES))
+    by_id = {t["id"]: t for t in workflow["tasks"]}
+    assert by_id["git-branch-off"]["isolation"] == "none"
+
+
+# The five route-terminal push tasks, all backed by 90-final-push.md (REVIEW.md C-1).
+PUSH_TERMINAL_TASK_IDS = ("bug-push", "epic-push", "task-push", "doc-push", "testing-push")
+
+
+def test_workflow_json_tmpl_push_terminal_tasks_pinned_isolation_none() -> None:
+    """REVIEW.md C-1: following the README's `defaults.isolation: "worktree"` opt-in
+    must not silently isolate a task that makes a real `git push` -- that would either
+    STOP-fail the route's actual deliverable (an `ao/<run_id>/<task_id>` branch is not
+    "the epic branch") or push a disposable, disconnected branch instead of the
+    route's real work."""
+    raw = (TEMPLATE_DIR / "workflow.json.tmpl").read_text()
+    workflow = json.loads(_render(raw, DUMMY_VALUES))
+    by_id = {t["id"]: t for t in workflow["tasks"]}
+    for tid in PUSH_TERMINAL_TASK_IDS:
+        assert by_id[tid]["isolation"] == "none", tid
+
+
+_GIT_PUSH_COMMAND_RE = re.compile(r"git\s*(-C\s+\S+\s+)?push\b", re.IGNORECASE)
+
+
+def _instruction_has_real_push_directive(path: Path) -> bool:
+    """True when *path* contains an actual `git ... push` command that is NOT sitting
+    in a negated ("never `git push`") context -- distinguishes a real directive to
+    push from a prohibition that merely names the command. Requires "git" adjacent to
+    "push" so idiomatic, non-command uses of the word ("anything the reviewer should
+    push on") never false-positive."""
+    normalized = " ".join(path.read_text().split())
+    for m in _GIT_PUSH_COMMAND_RE.finditer(normalized):
+        window = normalized[max(0, m.start() - 25) : m.end()]
+        if not _PUSH_NEGATION_RE.search(window):
+            return True
+    return False
+
+
+def test_isolation_pin_invariant_matches_real_push_directives() -> None:
+    """REVIEW.md C-1 regression: enforce the invariant, not just document it -- EVERY
+    task in the rendered workflow whose instruction file contains a real `git push`
+    directive must be pinned `isolation: "none"`. This is what actually prevents R-22
+    from reappearing for any task (present or future) that this template wires up to
+    an instruction file which pushes, regardless of whether anyone remembers to name
+    it explicitly in a hand-maintained list."""
+    raw = (TEMPLATE_DIR / "workflow.json.tmpl").read_text()
+    workflow = json.loads(_render(raw, DUMMY_VALUES))
+    offenders = []
+    for task in workflow["tasks"]:
+        instr_path = INSTRUCTIONS_DIR / Path(task["instruction"]).name
+        if instr_path.is_file() and _instruction_has_real_push_directive(instr_path):
+            if task.get("isolation") != "none":
+                offenders.append(task["id"])
+    assert not offenders, (
+        f"task(s) with a real git-push directive but no isolation:none pin: {offenders}"
+    )
+
+
+def test_final_push_instruction_documents_why_it_always_runs_unisolated() -> None:
+    text = (INSTRUCTIONS_DIR / "90-final-push.md").read_text()
+    assert "always runs unisolated" in text.lower()
+    assert "isolation" in text.lower() and "none" in text
+
+
+def test_workflow_json_tmpl_ships_no_live_integration_block() -> None:
+    """A live, non-default `integration`/`scheduling` block would trip spec.py's V5
+    ("integration configured but no task resolves to isolation=worktree") on every
+    single default render -- exactly the "no new warnings" regression this template
+    must not ship. The example lives in README.md's "Parallel isolation" section
+    instead; see test_conflict_instructions.py for a test that the documented recipe,
+    once applied by a user, actually validates clean."""
+    raw = (TEMPLATE_DIR / "workflow.json.tmpl").read_text()
+    workflow = json.loads(_render(raw, DUMMY_VALUES))
+    assert "integration" not in workflow
+    assert "scheduling" not in workflow
+
+
+_PUSH_NEGATION_RE = re.compile(
+    r"(not push|never `?git push|nothing is pushed|no push)", re.IGNORECASE
+)
+
+
+def test_no_push_directives_in_isolated_per_task_instructions() -> None:
+    """Every mention of "push" in these six files must sit in a NEGATIVE context
+    (do not push / never git push) -- markdown line-wraps mid-sentence, so this
+    normalizes whitespace first rather than checking line-by-line."""
+    offenders: list[str] = []
+    for name in PUSH_DIRECTIVE_FILES:
+        normalized = " ".join((INSTRUCTIONS_DIR / name).read_text().split())
+        for m in re.finditer(r"\bpush(ed)?\b", normalized, re.IGNORECASE):
+            window = normalized[max(0, m.start() - 25) : m.end()]
+            if not _PUSH_NEGATION_RE.search(window):
+                offenders.append(f"{name}: ...{window}...")
+    assert not offenders, "git-push directive(s) found:\n" + "\n".join(offenders)
+
+
+def test_push_directive_files_say_the_engine_integrates() -> None:
+    for name in PUSH_DIRECTIVE_FILES:
+        normalized = " ".join((INSTRUCTIONS_DIR / name).read_text().split())
+        assert "the engine integrates your work" in normalized, name
+
+
+def test_review_instructions_no_longer_reference_pushed_commits() -> None:
+    for name in REVIEW_WORDING_FILES:
+        normalized = " ".join((INSTRUCTIONS_DIR / name).read_text().split()).lower()
+        assert "pushed commits" not in normalized, name
+        assert "actual pushed" not in normalized, name
+        assert "nothing is pushed" in normalized, name
+        assert "current branch" in normalized, name
+
+
+def test_task_breakdown_declares_hotspots_as_optional_input() -> None:
+    text = (INSTRUCTIONS_DIR / "07-task-breakdown.md").read_text()
+    assert ".ao/hotspots.json" in text
+    assert "OPTIONAL" in text
+    assert "ao hotspots" in text
+
+
+def test_task_breakdown_minimize_collision_bullet_rewritten() -> None:
+    text = (INSTRUCTIONS_DIR / "07-task-breakdown.md").read_text()
+    assert "touches" in text
+    assert "avoid concentrating" in text
+    # The old bullet pushed the agent to serialize depends_on purely to dodge a file
+    # collision -- that phrasing must be gone, not merely appended to (AC-4).
+    assert "make one depend on the other" not in text
+    assert "do not add a cross-task" in text.lower()
+
+
+def test_breakdown_contract_widens_field_allowlist_with_touches_and_isolation() -> None:
+    """Hard Rule 5's field allowlist wraps across several lines -- extract the whole
+    numbered paragraph (up to the next "N. " item), not just its first line."""
+    lines = (TEMPLATE_DIR / "breakdown-contract.md.tmpl").read_text().splitlines()
+    start = next(
+        i for i, line in enumerate(lines) if line.strip().startswith("5. Do not add fields beyond")
+    )
+    end = next(i for i in range(start + 1, len(lines)) if re.match(r"^\d+\. ", lines[i].strip()))
+    hard_rule_5 = " ".join(lines[start:end])
+    assert "touches" in hard_rule_5
+    assert "isolation" in hard_rule_5
+
+
+def test_breakdown_contract_touches_guidance_sentence_present() -> None:
+    text = (TEMPLATE_DIR / "breakdown-contract.md.tmpl").read_text()
+    normalized = " ".join(text.split())
+    assert (
+        "`touches` is a best-effort glob list; being incomplete is fine and never blocks "
+        "scheduling." in normalized
+    )
+    assert (
+        "prefer NOT to add a cross-task `depends_on` purely to avoid file collisions" in normalized
+    )
+
+
+def test_template_yaml_required_agents_includes_merge_resolver() -> None:
+    manifest = _load_manifest()
+    assert "merge-resolver" in manifest["required_agents"]
+
+
+def test_readme_documents_parallel_isolation_section() -> None:
+    text = (TEMPLATE_DIR / "README.md").read_text()
+    assert "## Parallel isolation" in text
+    assert 'isolation: "worktree"' in text or "isolation: worktree" in text
+    assert "verify_command" in text
+    assert "AO_STATE_DIR" in text or "AO_WORKTREE_ROOT" in text
+    # S-5: unset verify_command makes a rerere replay functionally unreviewed.
+    assert "unreviewed" in text.lower()
+    # NFR-6: cold-rebuild caveat + shared build-cache recipe, not ignored.
+    assert "cold" in text.lower() and "rebuild" in text.lower()
+    assert "CARGO_TARGET_DIR" in text or "sccache" in text or "ccache" in text

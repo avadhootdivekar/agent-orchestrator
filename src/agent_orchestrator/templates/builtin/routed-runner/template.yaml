@@ -61,12 +61,13 @@ assets:
     keep_existing: true
 required_agents:
   - architect
-  - git-operator
-  - developer
-  - tester
-  - reviewer
-  - market-surveyor
   - architect-opus
-  - reviewer-opus
+  - developer
   - full-tester
+  - git-operator
   - manager
+  - market-surveyor
+  - merge-resolver
+  - reviewer
+  - reviewer-opus
+  - tester

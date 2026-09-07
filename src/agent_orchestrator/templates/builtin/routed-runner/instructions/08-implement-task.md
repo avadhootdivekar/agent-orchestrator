@@ -15,14 +15,25 @@ Implement ONLY that task.
 
 ## Output
 - `dev-pass-1.md` at the exact output path provided (your implementation report).
-- Production code committed and pushed in the target repository.
+- Production code committed in the target repository — the engine integrates your
+  work; do not push.
 
 ## Before writing any code — branch safety
-`git -C <repo> branch --show-current` MUST be a non-main epic branch (created by the
-git-branch-off stage; `<repo>` is the target repository's path — see your prompt's
-Repos line). If it prints `main`/`master`/empty: STOP immediately, do not write any
-file, do not write your report output — the missing output fails the task, which is
-correct.
+`git -C <repo> branch --show-current` MUST be a non-main branch: either the epic
+branch created by the git-branch-off stage, or — when this task runs under isolation
+— an ao-owned `ao/<run_id>/<task_id>` branch in your own dedicated worktree. Both are
+valid; neither is a reason to stop (`<repo>` is the target repository's path — see
+your prompt's Repos line). If it prints `main`/`master`/empty: STOP immediately, do
+not write any file, do not write your report output — the missing output fails the
+task, which is correct.
+
+## If you are in an isolated worktree
+Under isolation this task runs alone in a private git worktree on branch
+`ao/<run_id>/<task_id>` — sibling tasks cannot see your uncommitted state and you
+cannot see theirs. Commit freely; never `git checkout` another branch, never
+`git stash`, never `git push`, and never `rebase`/`reset` history the engine created.
+The engine integrates (rebases/lands) your branch after the task finishes — that is
+what "commit only, do not push" above means in practice.
 
 ## Implementation rules
 - Follow `design.md` exactly — interfaces, module paths, data model. If the design is
@@ -44,8 +55,8 @@ correct.
 - Run the *existing* test suites for the areas you touched — no regressions. If an
   existing test legitimately conflicts with newly-designed behavior, update it and
   justify in the report; never delete or weaken a test to get green.
-- Commit with message `[<epic-branch>][<tid>] <summary>` and push. Multiple logical
-  commits are fine; everything must be pushed.
+- Commit with message `[<epic-branch>][<tid>] <summary>`. Multiple logical commits are
+  fine — commit only, do not push: the engine integrates your work.
 
 ## When you're stuck (use sparingly)
 Default: make the most sensible, documented assumption and keep going — maximize
@@ -63,7 +74,7 @@ WITHOUT writing your report — the missing output is what pauses the task clean
 - Deviations from design (if any) + rationale
 - Commands run (build, tests) and their actual results — verbatim summaries, no claims
   without having run them
-- Commit SHA(s) pushed
+- Commit SHA(s)
 
 ## Completion checklist (REQUIRED — end your report with it)
 Every item marked `[x]` done / `[ ]` NOT done / `NA` + one-line reason. All numbers

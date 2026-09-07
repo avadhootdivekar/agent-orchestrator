@@ -6,7 +6,8 @@
   "prompt_path": "{{ instance_dir }}/prompt.md",
   "defaults": {
     "retries": { "max_attempts": 3, "backoff_seconds": 60 },
-    "timeout_seconds": 7200
+    "timeout_seconds": 7200,
+    "isolation": "none"
   },
   "triggers": [{ "type": "manual" }],
   "tasks": [
@@ -18,7 +19,8 @@
       "outputs": ["{{ instance_dir }}/outputs/git-go-ahead.md"],
       "depends_on": [],
       "skip_if_outputs_exist": false,
-      "timeout_seconds": 1800
+      "timeout_seconds": 1800,
+      "isolation": "none"
     },
     {
       "id": "classify",
@@ -330,7 +332,8 @@
       "outputs": ["{{ instance_dir }}/outputs/bug/push-report.md"],
       "depends_on": ["bug-review"],
       "skip_if_outputs_exist": false,
-      "timeout_seconds": 2400
+      "timeout_seconds": 2400,
+      "isolation": "none"
     },
     {
       "id": "epic-push",
@@ -340,7 +343,8 @@
       "outputs": ["{{ instance_dir }}/outputs/epic/push-report.md"],
       "depends_on": ["full-test"],
       "skip_if_outputs_exist": false,
-      "timeout_seconds": 2400
+      "timeout_seconds": 2400,
+      "isolation": "none"
     },
     {
       "id": "task-push",
@@ -350,7 +354,8 @@
       "outputs": ["{{ instance_dir }}/outputs/task/push-report.md"],
       "depends_on": ["task-retest"],
       "skip_if_outputs_exist": false,
-      "timeout_seconds": 2400
+      "timeout_seconds": 2400,
+      "isolation": "none"
     },
     {
       "id": "doc-push",
@@ -360,7 +365,8 @@
       "outputs": ["{{ instance_dir }}/outputs/doc/push-report.md"],
       "depends_on": ["doc-review"],
       "skip_if_outputs_exist": false,
-      "timeout_seconds": 2400
+      "timeout_seconds": 2400,
+      "isolation": "none"
     },
     {
       "id": "testing-push",
@@ -370,7 +376,8 @@
       "outputs": ["{{ instance_dir }}/outputs/testing/push-report.md"],
       "depends_on": ["test-run"],
       "skip_if_outputs_exist": false,
-      "timeout_seconds": 2400
+      "timeout_seconds": 2400,
+      "isolation": "none"
     }
   ],
   "branches": [

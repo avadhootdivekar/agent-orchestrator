@@ -29,10 +29,12 @@ router hook); omit `type` to auto-classify from `prompt.md`.
 ## Required agents
 
 `architect`, `architect-opus`, `developer`, `full-tester`, `git-operator`, `manager`,
-`market-surveyor`, `reviewer`, `reviewer-opus`, `tester` — the workspace's `agents:`
-config must resolve all ten (`manager` is used only by the epic route's dynamically
-injected aggregator task, never by a statically-declared task, but it is part of this
-template's contract per `breakdown-contract.md`).
+`market-surveyor`, `merge-resolver`, `reviewer`, `reviewer-opus`, `tester` — the
+workspace's `agents:` config must resolve all eleven (`manager` is used only by the
+epic route's dynamically injected aggregator task, never by a statically-declared
+task; `merge-resolver` is used only when a task opts into `isolation: worktree` and
+`integration.ladder` reaches its `"llm"` tier — see "Parallel isolation" below — but
+both are part of this template's contract per `breakdown-contract.md`/`template.yaml`).
 
 ## Params
 
@@ -120,3 +122,112 @@ The contract defaults `impl`/`test` passes to `"effort": "medium"` — a task si
 finish in roughly 10 minutes — and leaves the breakdown agent free to mark a genuinely
 larger `<tid>` `"high"`/`"xhigh"` and/or pin a different `model`, instead of forcing an
 artificial split. See the contract's "Effort & model per task" section.
+
+Each entry may also set `touches` (a best-effort glob-list hint) and `isolation`
+(`none`/`worktree`/`inherit`) — see the contract's "`touches` & `isolation` per task"
+section and "Parallel isolation" below.
+
+## Parallel isolation
+
+This template ships with isolation **off by default** — `defaults.isolation: "none"`
+in `workflow.json.tmpl`, and `git-branch-off` is pinned to `"isolation": "none"`
+explicitly (it creates the epic branch itself, so it must always run in the shared,
+synced checkout). Rendering with default params is byte-identical to a workflow with
+no isolation fields at all, and `ao validate` reports no isolation-related warnings.
+
+**What `isolation: "worktree"` does.** Setting it on a task (directly, or via
+`defaults.isolation: "worktree"`) runs that task alone in a private git worktree on
+branch `ao/<run_id>/<task_id>`, instead of the shared checkout. Sibling tasks running
+concurrently never see each other's uncommitted state. When the task finishes, the
+engine auto-commits anything left staged, then integrates (rebase + land) the branch
+back onto the run's integration head — see `docs-md/task-isolation-hld.md` §7-§9 for
+the full mechanics. Worktrees live under `$AO_STATE_DIR/worktrees/<workspace>/<run
+id>/<task id>/<repo>` (default `~/.local/state/ao`, override via `AO_STATE_DIR` or
+`AO_WORKTREE_ROOT`) — never inside your checkout.
+
+**How to opt in.** This template does not parameterize isolation (opt-in stays
+opt-in by design — see the risk note in this ticket's `TASK.md`). To use it, edit your
+own instantiated `workflow.json` after `ao new`:
+
+1. Add a top-level `integration` block (optional fields shown; omit what you don't
+   need — every field defaults sensibly per `specs/workflow.schema.json`):
+
+   ```json
+   "integration": {
+     "verify_command": ["make", "test"],
+     "resolver_agent": "merge-resolver",
+     "resolvers": { "union": ["**/*.md", "**/registrations.txt"] }
+   }
+   ```
+
+   `verify_command` is the argv (never a shell string) run in a task's worktree after
+   rebase, before landing — leaving it unset falls back to a built-in structural check.
+   `resolver_agent` names the agent used when the resolver ladder reaches its `"llm"`
+   tier (this template's `merge-resolver` entry, which must declare
+   `disallowed_tools: ["WebFetch", "WebSearch"]` in your `agents:` config — S-2; the
+   engine force-injects that pair onto the T2 dispatch regardless, but a workspace
+   agent entry that already lists them keeps `ao validate` free of the V10 warning).
+   `resolvers.union` lists append-only-registration files (see
+   `conflict-friendly-coding.md`, rule 2) that a mechanical union merge can resolve
+   without ever invoking the LLM tier.
+2. Set `"isolation": "worktree"` on the specific task ids you want isolated. This
+   template's per-task-type instructions are isolation-aware (worktree-tolerant
+   branch checks, no `git push` directive) for the epic route's dynamically-injected
+   fan-out (`impl1-<tid>`/`test1-<tid>`/`review-<tid>`/`impl2-<tid>`/`test2-<tid>`,
+   via `08`-`11-*.md`), the single-task route (`task-impl`/`task-test`/`task-review`/
+   `task-fix`/`task-retest`, via `31`-`35-*.md`), the bug route
+   (`bug-fix`/`bug-test`/`bug-review`, via `21`-`23-*.md`), the documentation route
+   (`doc-plan`/`doc-write`/`doc-review`, via `40`-`42-*.md`), and the testing route
+   (`test-gap-analysis`/`test-write`/`test-run`, via `50`-`52-*.md`).
+
+   Do **not** set a blanket `defaults.isolation: "worktree"` — two things are not
+   covered by isolating "everything": `bug-triage` (`20-bug-triage.md`) is not yet
+   isolation-aware (its branch-safety check would STOP the task on an
+   `ao/<run_id>/<task_id>` branch, a real but self-contained failure — it never
+   commits or pushes anything, so nothing is lost, but the task fails and needs a
+   follow-up before it is isolation-safe); and the five route-terminal push tasks
+   (`bug-push`/`epic-push`/`task-push`/`doc-push`/`testing-push`) are explicitly
+   pinned `"isolation": "none"` in `workflow.json.tmpl` and must stay that way —
+   `90-final-push.md` makes the route's real `git push`, which must run against the
+   shared, synced checkout (see that file's own "This task always runs unisolated"
+   note). Two tasks are code-forced to `"none"` regardless of any default —
+   `classify` (a router) and `task-breakdown` (`emit_tasks`) — because
+   `models._is_structural_task`/V4 always exclude router/`emit_tasks`/loop-gate
+   tasks; `git-branch-off` is **not** code-forced the same way — it stays `"none"`
+   solely because of the explicit pin above, a template-authoring choice, not an
+   engine guarantee.
+3. Copy the packaged `conflict-friendly-coding.md` (find it via
+   `python -c "import agent_orchestrator.templates as t, pathlib;
+   print(pathlib.Path(t.__file__).parent / 'instructions' /
+   'conflict-friendly-coding.md')"`) into your workspace, then add that
+   **workspace-relative** copy to `general_instructions` — `.ao/config.yaml`,
+   `AO_GENERAL_INSTRUCTIONS`, or `--general-instruction` — so every isolated task
+   follows the append-only/new-file/focused-diff rules that make the union resolver
+   correct. A copy, not the install path, because `general_instructions` resolves
+   through the same workspace-root path guard as every other artifact path (NFR-1) —
+   an install-tree path is never inside your workspace_root.
+
+**Unreviewed replays (S-5).** With `verify_command` unset, a `rerere`-tier conflict
+replay is functionally **unreviewed** — nothing runs to confirm the mechanical replay
+actually kept the code working. Set a real `verify_command` (build + test, or your
+project's own smoke check) on any repo where isolation is more than a convenience.
+
+**Cold rebuilds and shared caches (NFR-6).** `git worktree add` copies tracked files
+only — an ignored build-output directory (e.g. a 100+ GB Rust `target/`) is never
+duplicated — but each worktree still starts from a *cold* build cache, which can
+dominate wall-clock time on heavy-build repos. In order of preference:
+1. Point your build tool at an out-of-tree, worktree-independent cache directory
+   (e.g. Cargo's `CARGO_TARGET_DIR` via `.cargo/config.toml`, or `sccache`/`ccache`) so
+   concurrent worktrees share one warm cache; the build tool's own locking serializes
+   concurrent writers rather than corrupting the cache.
+2. Keep heavy stages (`full-test`) at `isolation: none` — they already run as
+   barriers in the shared, synced checkout, where the warm cache lives.
+3. Isolate the fast-moving repo in a multi-repo `repo_set` and leave the heavy one
+   shared.
+
+## Existing run instances keep their old contract
+
+`breakdown-contract.md` is generated **per run**, at `ao new` time. A run directory
+created before this template gained `touches`/`isolation` keeps whatever contract it
+was scaffolded with — this template does not retroactively migrate existing run
+instances.

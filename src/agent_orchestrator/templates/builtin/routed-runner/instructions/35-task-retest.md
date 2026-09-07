@@ -7,18 +7,22 @@ You are the `tester` agent giving this task's final test verdict, after the fix 
 - `plan.md` — fixtures and acceptance criteria remain ground truth
 - `dev-pass-2.md` — what the fix pass changed
 
-Your pass-1 test files are already committed on the epic branch in the target
+Your pass-1 test files are already committed on your current branch in the target
 repository — read and extend/re-run them directly rather than rewriting from scratch;
 use `dev-pass-2.md` as the map of what changed.
 
 ## Output
 - `test-pass-2.md` at the exact output path provided.
-- Test code (updates) committed and pushed in the target repository.
+- Test code (updates) committed in the target repository — the engine integrates
+  your work; do not push.
 
 ## Before writing any code — branch safety
-`git -C <repo> branch --show-current` MUST be a non-main epic branch (`<repo>` is the
-target repository's path — see your prompt's Repos line). If it prints
-`main`/`master`/empty: STOP immediately, write nothing.
+`git -C <repo> branch --show-current` MUST be a non-main branch: either the epic
+branch, or — when this task runs under isolation — an ao-owned
+`ao/<run_id>/<task_id>` branch in your own dedicated worktree. Both are valid;
+neither is a reason to stop (`<repo>` is the target repository's path — see your
+prompt's Repos line). If it prints `main`/`master`/empty: STOP immediately, write
+nothing.
 
 ## Task
 - Re-run your existing suite against the fixed code. Previously-failing tests
@@ -32,7 +36,8 @@ target repository's path — see your prompt's Repos line). If it prints
 
 ## Verify before reporting
 Actually run the suite(s) — verbatim results, never assumed. Commit with message
-`[<epic-branch>][task-retest] <summary>` and push.
+`[<epic-branch>][task-retest] <summary>` — commit only, do not push: the engine
+integrates your work.
 
 ## When you're stuck (use sparingly)
 Only for a genuine blocker — write `needs-input/task-retest.md` + `touch
@@ -44,8 +49,8 @@ control/pause.flag` (if that flag already exists from an earlier pause this run,
 - Suite(s) run + verbatim pass/fail/skip counts, with before→after for previously
   failing tests
 - **Findings**: anything still failing, with analysis (this is the last automated
-  stage before push — be explicit about what's shipping unresolved)
-- Commit SHA(s) pushed
+  stage of this task's own pipeline — be explicit about what's shipping unresolved)
+- Commit SHA(s)
 
 ## Completion checklist (REQUIRED — end your report with it)
 Every item marked `[x]` done / `[ ]` NOT done / `NA` + one-line reason. All numbers

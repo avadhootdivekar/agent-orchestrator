@@ -10,17 +10,21 @@ vague fixes, so every finding must be concrete and actionable.
 - `dev-pass-1.md` — the developer's implementation report
 - `test-pass-1.md` — the test-writer's report (including failing-test findings)
 
-Also inspect the ACTUAL pushed commits in the target repository (the reports list
-SHAs — `git -C <repo> show <sha>`, plus reading touched files in full; `<repo>` is the
-target repository's path — see your prompt's Repos line).
+Also inspect the ACTUAL commits on your current branch in the target repository
+(under isolation this is the integration head your worktree was created from, so the
+predecessor's changes are present in ordinary local history — nothing is pushed) (the
+reports list SHAs — `git -C <repo> show <sha>`, plus reading touched files in full;
+`<repo>` is the target repository's path — see your prompt's Repos line).
 
 ## Output
 - `review.md` at the exact output path provided.
 
 ## Branch safety (read-only)
-Confirm `git -C <repo> branch --show-current` is a non-main epic branch before
-reading (`<repo>` is the target repository's path — see your prompt's Repos line). If
-it prints `main`/`master`/empty: STOP, write nothing.
+Confirm `git -C <repo> branch --show-current` is a non-main branch before reading:
+either the epic branch, or — under isolation — an ao-owned `ao/<run_id>/<task_id>`
+branch in your own worktree; both are valid (`<repo>` is the target repository's path
+— see your prompt's Repos line). If it prints `main`/`master`/empty: STOP, write
+nothing.
 
 ## Review dimensions (cover all)
 1. **Plan alignment** — does the code implement `plan.md`'s interfaces and file list?

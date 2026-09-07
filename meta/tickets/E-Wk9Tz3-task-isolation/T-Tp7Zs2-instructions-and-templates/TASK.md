@@ -6,7 +6,7 @@
 - Owner: unassigned (developer)
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: In Review
 - Estimate: 2 days
 
 ## Requirements Mapping
@@ -139,3 +139,10 @@ No algorithm — content work. HLD §11 M10 lists the exact rule set and every t
   reword two review files", with a repo-wide assertion so a missed file cannot slip to the e2e pass;
   plus S-2 (the shipped `merge-resolver` agent declares its own disallowed tools so the template never
   triggers V10) and the S-3/S-5 documentation duties. Re-estimated 1.5 -> 2 days.
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: Implemented. All 13 base ACs
+  plus AC-10..13 amendments delivered; one deliberate deviation from AC-6's literal wording, documented
+  in `STATUS.md` and this ticket's handoff report (a live "commented" `integration` block cannot be
+  embedded in `workflow.json.tmpl` without either breaking JSON parsing or triggering `spec.py`'s V5
+  warning on every default render — the example moved to `README.md` instead; `T-Ov9Bt5`'s
+  `merge-resolver` disallowed-tools/V10 recipe is proven end-to-end in
+  `tests/test_conflict_instructions.py`). Status -> In Review.

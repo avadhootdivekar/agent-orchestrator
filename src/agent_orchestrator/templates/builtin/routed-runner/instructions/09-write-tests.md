@@ -15,7 +15,8 @@ The `<tid>` directory in your output path is your assigned task id.
 
 ## Output
 - `test-pass-N.md` at the exact output path provided (your test report)
-- Test code committed and pushed in the target repository
+- Test code committed in the target repository — the engine integrates your work; do
+  not push.
 
 ## The prime directive
 **Tests encode EXPECTED behavior — from the design fixtures and acceptance criteria —
@@ -48,10 +49,11 @@ make go away. Keep it in the suite, and document it as a finding.
 ## Verify before reporting
 Actually build and run the relevant suites (unit, integration, and e2e if you added
 any). Report real results — never claim green without running. Commit test code with
-message `[<epic-branch>][<tid>] tests pass N: <summary>` and push (commit even if some
-tests fail against the current implementation — that is evidence, not breakage;
-guarded/quarantined via the harness's standard mechanism ONLY if the suite must stay
-runnable for other tasks, and say so in the report).
+message `[<epic-branch>][<tid>] tests pass N: <summary>` — commit only, do not push:
+the engine integrates your work (commit even if some tests fail against the current
+implementation — that is evidence, not breakage; guarded/quarantined via the harness's
+standard mechanism ONLY if the suite must stay runnable for other tasks, and say so in
+the report).
 
 ## When you're stuck (use sparingly)
 Default: make the most sensible, documented assumption and keep going — maximize
@@ -70,7 +72,7 @@ WITHOUT writing your report — the missing output is what pauses the task clean
 - **Findings**: every failing test with your analysis — implementation bug (state the
   expected-vs-actual) or fixture/design defect (justify). These findings feed the
   reviewer (pass 1) or the aggregator (pass 2).
-- Commit SHA(s) pushed
+- Commit SHA(s)
 
 ## Completion checklist (REQUIRED — end your report with it)
 Every item marked `[x]` done / `[ ]` NOT done / `NA` + one-line reason. All numbers

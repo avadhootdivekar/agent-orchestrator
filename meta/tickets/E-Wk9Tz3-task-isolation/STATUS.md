@@ -66,6 +66,99 @@
   instruction.
   — By: developer-agent · Role: developer · Date: 2026-09-07
 
+- **2026-09-07 — `T-Ov9Bt5-overlap-scheduling-hotspots` rollup: In Review.** AC-1..AC-14 implemented:
+  pure `rank_wave`/`overlap_score`/`glob_intersection` (`scheduling/overlap.py`, new package) and
+  `compute_hotspots`/`parse_churn`/`load_hotspots`/`observed_conflicts`/`merge_hotspots`
+  (`isolation/hotspots.py`, new); `ao hotspots` CLI command (`cli.py`, isolated to that one addition);
+  one new underscore-prefixed `GitRepo._log_name_only` in `T-Gt4Pw8`'s (landed) `isolation/git.py` —
+  kept private so `tests/isolation/test_git.py`'s structural public-method sweep (a `T-Wk3Nv6`-owned
+  test file per the concurrency boundary) needed no edit and stays green (103/103, unchanged). 661
+  new tests (`test_overlap_ranking.py`, `test_hotspots.py`, `test_e2e_cli_hotspots.py`); 100%
+  coverage on all three new modules. `ruff`/`format --check` clean repo-wide; `mypy src` unchanged at
+  4 pre-existing `_version.py` errors. Targeted suite (+`test_wave_scheduler.py`/`test_cli.py`) 733
+  passed / 0 failed. Full suite **3232 passed / 7 skipped / 0 failed**, one clean run (no transient
+  failures to re-run) — the delta above this ticket's own 661 tests and the 2250 baseline is
+  `T-Wk3Nv6`/`T-Tp7Zs2`'s concurrently in-progress, uncommitted work in the same checkout, confirmed
+  via `git status` to touch none of this ticket's files. Per R-5/R-18 (HLD §24), the `engine.py`
+  wave-fill call site is explicitly **not** added here — `T-En8Hd4`'s job — and confirmed not yet
+  landed; the exact signature and insertion point (`engine.py`'s wave/barrier loop, right after
+  `ready = self._ready_ids(...)`, before `for tid in ready:`) are published in this task's own
+  `STATUS.md` "Hook points" note for `T-En8Hd4` to consume. Awaiting review; no commit made per
+  instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Ov9Bt5-overlap-scheduling-hotspots` review response: In Review (unchanged).**
+  `REVIEW.md` verdict APPROVE WITH CHANGES; all three Major findings fixed: C-1 (`GitRepo.
+  log_name_only` made public, one authorized additive entry in `tests/isolation/test_git.py`, 103/103
+  still green), C-2 (`.ao/hotspots.json` now written atomically, mirroring `runstate.py`'s
+  tmp+`os.replace` idiom; new failure-mid-write test), C-3 (`-z` + NUL-split parsing fixes a silent
+  non-ASCII-filename drop, real-git-captured fixture regenerated, two new tests). W-1 deferred with
+  reason (its fix needs a second `test_git.py` edit not authorized this round). S-1/S-2 applied
+  (structural AST guard for AC-14; lazy CLI import restored). S-3/S-4 no action, per the review's own
+  conclusion. Gates re-verified: `ruff`/`mypy` clean/unchanged; targeted suite (incl.
+  `tests/isolation/test_git.py`) 768 passed / 0 failed; full suite **3248 passed / 7 skipped / 0
+  failed**, one clean run. Full disposition in this task's own `STATUS.md`. Still awaiting re-review;
+  no commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Tp7Zs2-instructions-and-templates` rollup: In Review.** Base AC-1..AC-9 plus
+  the R-22/S-2/S-3/S-5 Phase-2 amendments (AC-10..13) all delivered: new packaged
+  `conflict-friendly-coding.md` (7 numbered rules, usable via the existing `general_instructions`
+  mechanism); `breakdown-contract.md.tmpl`'s field allowlist widened with `touches`/`isolation` +
+  the exact guidance sentence; `07-task-breakdown.md`'s "Minimize collision" bullet rewritten
+  (not appended) around `touches`/hotspots; all six per-task instructions' `git push` directives
+  replaced with "commit only — the engine integrates your work"; the two review instructions
+  reworded off "pushed commits"; `template.yaml` gained `merge-resolver` in `required_agents`;
+  `workflow.json.tmpl` gained `defaults.isolation: "none"` and a pinned `git-branch-off`. Two
+  deviations from the ticket's literal text, both traced to real code paths and flagged for
+  sign-off rather than guessed: (1) AC-6's "commented example integration block" lives in
+  `README.md` instead of live JSON in `workflow.json.tmpl` — `spec.py`'s V5 rule warns on ANY
+  non-default `integration` block while no task is isolated, which every default render of this
+  template is by design, so embedding one live would put a NEW warning on the default render; (2)
+  `.ao/hotspots.json` is a prose-only declared input in `07-task-breakdown.md`, never a
+  `workflow.json` `inputs:` entry, since the engine gates a task's dispatch on declared inputs
+  existing and most workspaces will not have run `ao hotspots` yet. `T-Ov9Bt5`'s
+  `.ao/hotspots.json` shape/`merge-resolver` `disallowed_tools`/V10 contract is consumed exactly
+  as published (own tests never invented a different shape). 12 net new tests
+  (`tests/test_conflict_instructions.py` + extensions to
+  `tests/test_builtin_routed_runner_assets.py`); targeted suite 98 passed / 0 failed; full suite
+  **3244 passed / 7 skipped / 0 failed**, run twice, stable — confirmed via `git status` that this
+  ticket's edits and `T-Wk3Nv6`'s/`T-Ov9Bt5`'s concurrently in-progress uncommitted files touch
+  disjoint file sets. `ruff`/`format --check` clean repo-wide; `mypy src` unchanged at 4
+  pre-existing `_version.py` errors. Awaiting review; no commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Wk3Nv6-worktree-lifecycle` rollup: In Review.** All 20 ACs implemented:
+  `isolation/paths.py` (new, pure, import-safe without git — `sanitize_ref_component`,
+  `task_branch`, `integration_branch`, `squash_ref`, `workspace_key`, `state_dir`, `worktree_root`,
+  `worktree_root_prefix_for`, `effective_path`, `RESERVED_SHARED_PREFIXES`,
+  `RESERVED_BRANCH_COMPONENTS`); `isolation/worktrees.py` (new — `group_repos`/`IsolatedRepo`/
+  `RepoMember`, `TaskIsolation`/`RepoIsolation`, `WorktreeManager.ensure/release/reconcile/gc_run`);
+  `isolation/view.py` (new — `IsolatedArtifactView`, S-4: built from exactly one `TaskIsolation`,
+  never a manager's registry). `service/paths.py`: only `default_state_dir` migrated onto the
+  already-landed `xdg.resolve_state_dir` (R-11) — `default_registry_path` deliberately left alone
+  (genuinely different shape: `$XDG_CONFIG_HOME`/file vs `$XDG_STATE_HOME`/dir), the unedited
+  `tests/service/test_paths.py` suite is the behaviour-preservation gate and passes unedited.
+  `artifacts.py`: added `LocalFsArtifactStore.resolve_unchecked`/`.root` (read-only) plus two shared
+  private stat helpers so `IsolatedArtifactView` doesn't duplicate the resolve-then-stat pattern; no
+  `extra_roots` param added (per the ticket's explicit instruction); `resolve()`'s existing guard
+  unchanged, `tests/test_artifacts.py` passes unedited. 298 new tests across 4 new files
+  (`tests/isolation/test_paths.py` 250 incl. a 220-string corpus pinned against real
+  `git check-ref-format`, `test_worktrees.py` 28 over real temp git repos, `test_view.py` 16 incl. the
+  S-4 task-A/task-B and symlink-escape/cross-run tests, `test_service_paths_migration.py` 4). Targeted
+  suite (`tests/isolation tests/service tests/test_artifacts.py tests/test_xdg.py`) 632 passed /
+  0 failed. Full suite run twice per the brief's transient-concurrent-edit guidance: first run 4
+  failed, all in `tests/test_builtin_routed_runner_assets.py` (a different, concurrently in-flight
+  task's file — `T-Wk3Nv6` never touches it); second run **3244 passed / 7 skipped / 0 failed**,
+  stable. `ruff check .`/`ruff format --check .` clean repo-wide; `mypy src` unchanged at 4
+  pre-existing `_version.py` errors. Coverage: `isolation/paths.py` 100%, `isolation/view.py` 100%,
+  `isolation/worktrees.py` 97%, `service/paths.py` 100%; repo TOTAL 95% (baseline 94%, no
+  regression). Five deviations logged (none blocking) in `T-Wk3Nv6-worktree-lifecycle/TASK.md`'s
+  developer-agent comment, most notably `TaskIsolation` gaining a `workspace_root: str` field beyond
+  AC-19's minimum so `effective_path`'s reserved-shared-prefix rule is computable from its locked
+  2-arg signature. Awaiting review; no commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
 ## Evidence
 - `docs-md/task-isolation-hld.md` — 1874 lines.
 - `docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md` — 269 lines.

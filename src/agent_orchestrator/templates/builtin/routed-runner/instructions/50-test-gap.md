@@ -14,8 +14,10 @@ under-tested in EXISTING behavior.
 
 ## Branch safety (read-only)
 Before reading the target repository's code, confirm `git -C <repo> branch
---show-current` is a non-main epic branch (`<repo>` is the target repository's path —
-see your prompt's Repos line). If it prints `main`/`master`/empty: STOP, write nothing.
+--show-current` is a non-main branch: either the epic branch, or — under isolation —
+an ao-owned `ao/<run_id>/<task_id>` branch in your own worktree; both are valid
+(`<repo>` is the target repository's path — see your prompt's Repos line). If it
+prints `main`/`master`/empty: STOP, write nothing.
 
 ## Task
 1. **Scope the area.** Identify the concrete files/modules/endpoints/components

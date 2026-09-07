@@ -12,9 +12,11 @@ full relevant suite, run for real, with real numbers.
 - `test-report.md` at the exact output path provided.
 
 ## Branch safety (read-only)
-Confirm `git -C <repo> branch --show-current` is a non-main epic branch before
-running anything (`<repo>` is the target repository's path — see your prompt's Repos
-line). If it prints `main`/`master`/empty: STOP, write nothing.
+Confirm `git -C <repo> branch --show-current` is a non-main branch before running
+anything: either the epic branch, or — under isolation — an ao-owned
+`ao/<run_id>/<task_id>` branch in your own worktree; both are valid (`<repo>` is the
+target repository's path — see your prompt's Repos line). If it prints
+`main`/`master`/empty: STOP, write nothing.
 
 ## Procedure
 1. **Build** the affected area(s) (backend and/or frontend as applicable) from a clean

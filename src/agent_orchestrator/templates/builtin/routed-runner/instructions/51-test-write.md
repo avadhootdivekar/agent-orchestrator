@@ -8,12 +8,16 @@ You are the `tester` agent writing the tests identified in `gaps.md`.
 
 ## Output
 - `tests-written.md` at the exact output path provided.
-- Test code committed and pushed in the target repository.
+- Test code committed in the target repository — the engine integrates your work; do
+  not push.
 
 ## Before writing any code — branch safety
-`git -C <repo> branch --show-current` MUST be a non-main epic branch (`<repo>` is the
-target repository's path — see your prompt's Repos line). If it prints
-`main`/`master`/empty: STOP immediately, write nothing.
+`git -C <repo> branch --show-current` MUST be a non-main branch: either the epic
+branch, or — when this task runs under isolation — an ao-owned
+`ao/<run_id>/<task_id>` branch in your own dedicated worktree. Both are valid;
+neither is a reason to stop (`<repo>` is the target repository's path — see your
+prompt's Repos line). If it prints `main`/`master`/empty: STOP immediately, write
+nothing.
 
 ## Task
 - Work down `gaps.md` in priority order. Write real, deterministic tests (fixed
@@ -31,7 +35,8 @@ target repository's path — see your prompt's Repos line). If it prints
 
 ## Verify before reporting
 Run every test you add — report real results. Commit with message
-`[<epic-branch>][test-write] <summary>` and push.
+`[<epic-branch>][test-write] <summary>` — commit only, do not push: the engine
+integrates your work.
 
 ## When you're stuck (use sparingly)
 Default: make the most sensible assumption from `gaps.md` and keep going. Only for a
@@ -43,7 +48,7 @@ stop without writing `tests-written.md`.
 - Gaps explicitly deferred/skipped + why
 - Suite(s) run + verbatim pass/fail results
 - Any bugs found while writing tests (report only)
-- Commit SHA(s) pushed
+- Commit SHA(s)
 
 ## Completion checklist (REQUIRED — end your report with it)
 Every item marked `[x]` done / `[ ]` NOT done / `NA` + one-line reason. All numbers

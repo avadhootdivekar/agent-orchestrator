@@ -12,9 +12,11 @@ assigned task id.
 - `dev-pass-1.md` — the developer's implementation report
 - `test-pass-1.md` — the test-writer's report (including failing-test findings)
 
-Also review the ACTUAL code, not just the reports: inspect the pushed commits on the
-epic branch in the target repository (the reports list the SHAs — `git -C <repo> show
-<sha>`, plus reading the touched files in full where needed; `<repo>` is the target
+Also review the ACTUAL code, not just the reports: inspect the commits on your current
+branch in the target repository (under isolation this is the integration head your
+worktree was created from, so the predecessor's changes are present in ordinary local
+history — nothing is pushed) (the reports list the SHAs — `git -C <repo> show <sha>`,
+plus reading the touched files in full where needed; `<repo>` is the target
 repository's path — see your prompt's Repos line).
 
 ## Output
