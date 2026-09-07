@@ -40,6 +40,32 @@
     "isolated" task would still have read and written the shared checkout while ao created worktrees
     nothing used. It is now `T-En8Hd4`'s first acceptance criterion.
 
+- **2026-09-07 — `T-Gt4Pw8-git-porcelain` rollup: In Review.** All 24 ACs implemented
+  (`src/agent_orchestrator/isolation/git.py`, `isolation/__init__.py`, `errors.py` additions, a new
+  shared `src/agent_orchestrator/xdg.py`); 88 new tests, full suite 2211 passed / 7 skipped / 0 failed,
+  `ruff`/`mypy` clean, `isolation/git.py` at 96% coverage (TOTAL 94%, no regression). One authorized
+  interface amendment (architect Phase-2 routing): `GitRepo.__init__` gained `hooks_dir: Path | None =
+  None`, and `EMPTY_HOOKS_DIR` resolves via the new `xdg.resolve_state_dir` instead of the not-yet-
+  landed `isolation/paths.py::state_dir()`. Full detail in `T-Gt4Pw8-git-porcelain/STATUS.md`
+  ("Interface confirmation for downstream tasks"). Awaiting review; no commit made per instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
+- **2026-09-07 — `T-Sc7Rm2-isolation-schema-models` rollup: In Review.** All 21 ACs implemented
+  (`models.py`, `specs/workflow.schema.json`, `spec.py`, `runstate.py` — no `engine.py`/`budget.py`/
+  `artifacts.py`/`cli.py`/`executors/`/`templates/`/`isolation/` edits, per this task's boundary);
+  115 new tests, full suite 2008 -> 2211 passed / 7 skipped (unchanged) / 0 failed (includes
+  `T-Gt4Pw8`'s concurrently-landed tests), `ruff`/`format --check` clean, `mypy src` unchanged at 4
+  pre-existing `_version.py` errors, coverage `models.py` 99% / `runstate.py` 99% / `spec.py` 94% /
+  `budget.py` 100% (TOTAL 94%, baseline). One design correction recorded against the HLD's literal
+  V1-V12 table: V1/V2/V3/V7/V8/V10/V11 are gated on "at least one task resolves to
+  isolation='worktree'" (the ladder default already includes `"llm"`, so evaluating them
+  unconditionally would fatal on `resolver_agent` for every non-isolated workflow — caught by the
+  pre-existing suite before the fix). `dispatch_cycle` confirmed to survive `prepare_resume`
+  (downstream `T-En8Hd4` dependency). Full detail in
+  `T-Sc7Rm2-isolation-schema-models/STATUS.md` and `TASK.md`. Awaiting review; no commit made per
+  instruction.
+  — By: developer-agent · Role: developer · Date: 2026-09-07
+
 ## Evidence
 - `docs-md/task-isolation-hld.md` — 1874 lines.
 - `docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md` — 269 lines.

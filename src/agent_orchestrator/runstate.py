@@ -14,6 +14,11 @@ from .models import RunState, TaskRunState, TaskSpec, WorkflowSpec, compute_run_
 
 _FMT = "%Y%m%dT%H%M%SZ"
 
+# TaskIntegrationState.status values grouped under status.json's top-level "conflict"
+# count (AC-18) -- named so the grouping is visible in one place, not re-derived at
+# every call site.
+_CONFLICT_INTEGRATION_STATUSES = ("conflict_resolver", "conflict_rerun")
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -89,6 +94,17 @@ class RunStateStore:
                 current_task = tid
                 break
 
+        # Run-wide integration counts, derived from task_integration (E-Wk9Tz3 AC-18).
+        # Zero for every pre-epic run: task_integration defaults to {} (NFR-5).
+        integration_counts = {"integrated": 0, "conflict": 0, "failed": 0}
+        for tis in state.task_integration.values():
+            if tis.status == "integrated":
+                integration_counts["integrated"] += 1
+            elif tis.status in _CONFLICT_INTEGRATION_STATUSES:
+                integration_counts["conflict"] += 1
+            elif tis.status == "failed":
+                integration_counts["failed"] += 1
+
         snapshot = {
             "run_id": state.run_id,
             "workflow_id": state.workflow_id,
@@ -109,6 +125,24 @@ class RunStateStore:
                     "input_tokens": ts.cumulative_input_tokens,
                     "output_tokens": ts.cumulative_output_tokens,
                     "cost_usd": ts.cumulative_cost_usd,
+                    # Per-task integration observability (E-Wk9Tz3 AC-18). Defaults match
+                    # a never-isolated task: "none" status, no tier reached, zero conflicts.
+                    "integration_status": (
+                        state.task_integration[tid].status
+                        if tid in state.task_integration
+                        else "none"
+                    ),
+                    "tier_reached": (
+                        state.task_integration[tid].tier_reached
+                        if tid in state.task_integration
+                        else None
+                    ),
+                    "conflicted_count": (
+                        len(state.task_integration[tid].conflicted_paths)
+                        if tid in state.task_integration
+                        else 0
+                    ),
+                    "dispatch_cycle": ts.dispatch_cycle,
                 }
                 for tid, ts in state.tasks.items()
             ],
@@ -127,6 +161,16 @@ class RunStateStore:
             # Run-wide actual usage totals (E-9h3m7k FR-3), derived — see
             # models.compute_run_usage_totals.
             "usage_totals": compute_run_usage_totals(state).model_dump(),
+            # Run-wide integration observability (E-Wk9Tz3 FR-15, AC-18).
+            "integration": {
+                "active": state.integration.active,
+                "branch": state.integration.branch,
+                "heads": state.integration.heads,
+                "tier_counts": state.integration.tier_counts,
+                "integrated": integration_counts["integrated"],
+                "conflict": integration_counts["conflict"],
+                "failed": integration_counts["failed"],
+            },
         }
 
         sp = self._status_path(state.run_id)
@@ -209,7 +253,30 @@ class RunStateStore:
                 # Keep — never reset a routing verdict (LLD §9, FR-CB5).
                 pass
             elif ts.status != "pending":
-                state.tasks[task.id] = TaskRunState(status="pending")
+                # R-21/AC-17: preserve dispatch_cycle explicitly. This branch replaces the
+                # TaskRunState wholesale with a FRESH object -- exactly the "resume wipes
+                # non-terminal TaskRunState" behavior that is why integration bookkeeping
+                # lives on RunState.task_integration instead of here (see below). But
+                # dispatch_cycle DOES live on TaskRunState (it must, to key the per-attempt
+                # transcript capture directory), so it must be carried forward by hand or a
+                # resumed requeue would silently restart its cycle counter at 0 and clobber
+                # an already-captured transcript directory.
+                state.tasks[task.id] = TaskRunState(
+                    status="pending", dispatch_cycle=ts.dispatch_cycle
+                )
+
+        # E-Wk9Tz3 AC-17: state.integration and state.task_integration are otherwise
+        # preserved VERBATIM (this is precisely why integration bookkeeping lives on
+        # RunState rather than TaskRunState -- the wholesale-replace-on-non-pending
+        # behavior just above would otherwise silently drop it). The one explicit
+        # normalization needed: a task whose integration was mid-flight when the run
+        # crashed ("integrating") goes back to "pending" so a resumed run retries
+        # integration instead of leaving it stuck forever. `mode` (what the NEXT dispatch
+        # should do -- normal/resolve/rerun) is preserved so a resumed T2/T3 retry still
+        # lands in the right dispatch mode.
+        for task_integration_state in state.task_integration.values():
+            if task_integration_state.status == "integrating":
+                task_integration_state.status = "pending"
 
         # Deterministically re-derive not_taken for any task that belongs to an
         # unselected route's cone, from the persisted state.route_decisions

@@ -44,6 +44,7 @@ from .models import (
     count_monitor_calls_made,
     count_monitor_heal_retries,
     resolve_effective_agent,
+    strip_iter_suffix,
 )
 from .monitoring import (
     SAFE_DEFAULT_BREAKER_VERDICT,
@@ -2119,18 +2120,15 @@ class Orchestrator:
     def _loop_for_gate(self, workflow: WorkflowSpec, task_id: str) -> LoopSpec | None:
         """Return the LoopSpec whose gate_task_id matches *task_id* (or its iter variant).
 
-        Handles iteration-suffixed gate task ids by stripping the ``__iter<N>`` suffix
-        before comparing against the loop's authored gate_task_id.
+        Uses `models.strip_iter_suffix` -- the single shared implementation also used by
+        `models._is_structural_task` -- so this and the isolation resolver can never
+        independently drift on what counts as "the same loop-gate task across iterations"
+        (E-Wk9Tz3 review finding C-1).
         """
+        base_id = strip_iter_suffix(task_id)
         for loop in workflow.loops:
-            # Direct match (iteration 1, un-suffixed)
-            if task_id == loop.gate_task_id:
+            if base_id == loop.gate_task_id:
                 return loop
-            # Iteration N match: task_id ends with __iter<N>
-            if "__iter" in task_id:
-                base_id = task_id.split("__iter")[0]
-                if base_id == loop.gate_task_id:
-                    return loop
         return None
 
     def _gate_path_for_iter(self, loop: LoopSpec, iteration: int) -> str:

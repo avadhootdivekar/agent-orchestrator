@@ -160,7 +160,11 @@ def _load_all(
     wf = load_workflow(workflow_path)
     reposet_map = load_reposets(rp)
     agent_map = load_agents(ap)
-    cross_validate(wf, reposet_map, agent_map)
+    # cross_validate's return is the isolation/integration/scheduling rules' non-fatal
+    # warnings (V4/V5/V7/V10, E-Wk9Tz3 C-3) -- printed the same way validate_run_control's
+    # own warnings are printed just below, so both share one visible convention.
+    for warning in cross_validate(wf, reposet_map, agent_map):
+        typer.echo(f"WARNING: {warning}", err=True)
 
     # Routing + circuit-breaker static validation (LLD §4.4, epic E-rc7k2v).
     # Must run AFTER build_dag: needs the runtime graph (declared + inferred

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 # Budget constants (NFR-7 — no magic literals in budget logic)
 WINDOW_SECONDS: dict[str, int] = {"minute": 60, "ten_minutes": 600, "hour": 3600}
@@ -46,6 +49,68 @@ MAX_CONTROL_FILE_BYTES: int = 65536
 DEFAULT_MAX_EXTENSIONS_PER_BREAKER: int = 1
 DEFAULT_MAX_HEAL_RETRIES_PER_TASK: int = 1
 DEFAULT_MAX_MONITOR_CALLS_PER_RUN: int = 10
+
+# ---------------------------------------------------------------------------
+# Per-task git isolation & rebase-based integration (E-Wk9Tz3 / HLD §10.2) —
+# named constants, no magic literals anywhere downstream (AC-1).
+# ---------------------------------------------------------------------------
+
+DEFAULT_VERIFY_TIMEOUT_SECONDS: int = 1800
+DEFAULT_INTEGRATION_LOCK_TIMEOUT_SECONDS: int = 1800
+# S-6: a regenerate command runs while the per-repo integration lock is held; without
+# its own bound a hung command stalls every other task on that repo until
+# lock_timeout_seconds.
+DEFAULT_REGENERATE_TIMEOUT_SECONDS: int = 120
+DEFAULT_HOTSPOTS_PATH: str = ".ao/hotspots.json"
+# S-2: force-injected onto the resolver dispatch, UNIONed with the named agent's own
+# disallowed_tools -- closed by construction, not by prompt text (cf. ADR-0005). Must
+# never default to [] -- an empty default would silently reopen the hole V11 exists to
+# close (a test asserts this default is non-empty).
+DEFAULT_RESOLVER_DISALLOWED_TOOLS: list[str] = ["WebFetch", "WebSearch"]
+# S-3: globs that must never be swept into an auto-commit. Matched against paths that
+# are UNTRACKED at auto-commit time only -- an already-tracked file is the repo
+# author's decision, not the engine's.
+DEFAULT_COMMIT_DENYLIST: list[str] = [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "id_rsa*",
+    "id_dsa*",
+    "id_ecdsa*",
+    "id_ed25519*",
+    "*credentials*.json",
+    "*.kdbx",
+]
+
+# Isolation mode values (task level: none|worktree|inherit; workflow-default level:
+# none|worktree). Named so comparisons never repeat a bare string literal.
+ISOLATION_NONE: Literal["none"] = "none"
+ISOLATION_WORKTREE: Literal["worktree"] = "worktree"
+ISOLATION_INHERIT: Literal["inherit"] = "inherit"
+
+# Conflict-resolution ladder tier names (HLD §8.4/§10.1), cost-ordered.
+TIER_AUTO: Literal["auto"] = "auto"
+TIER_MECHANICAL: Literal["mechanical"] = "mechanical"
+TIER_LLM: Literal["llm"] = "llm"
+TIER_RERUN: Literal["rerun"] = "rerun"
+
+# Scheduler overlap-preference values (§9.1), returned by resolve_overlap_preference.
+OVERLAP_OFF: Literal["off"] = "off"
+OVERLAP_SOFT: Literal["soft"] = "soft"
+
+# integration.on_denylisted_path actions (S-3).
+ON_DENYLISTED_FAIL: Literal["fail"] = "fail"
+ON_DENYLISTED_WARN: Literal["warn"] = "warn"
+ON_DENYLISTED_ALLOW: Literal["allow"] = "allow"
+
+IsolationMode = Literal["none", "worktree", "inherit"]  # task level
+WorkflowIsolation = Literal["none", "worktree"]  # workflow default level
+ResolverTier = Literal["auto", "mechanical", "llm", "rerun"]
+OverlapPreference = Literal["off", "soft"]
+
+DEFAULT_LADDER: list[ResolverTier] = [TIER_AUTO, TIER_MECHANICAL, TIER_LLM, TIER_RERUN]
 
 
 class RepoRef(BaseModel):
@@ -114,6 +179,22 @@ class TaskSpec(BaseModel):
     model: str | None = None
     effort: EffortLevel | None = None
     max_turns: int | None = None
+    # Per-task git isolation (E-Wk9Tz3 FR-1). "inherit" (default) takes
+    # workflow.defaults.isolation; "worktree" runs the task in a private git worktree on
+    # branch ao/<run_id>/<task_id> and integrates by squash+rebase; "none" opts a task out
+    # even when the workflow default is "worktree". A router/loop-gate/emit_tasks task is
+    # always forced to "none" regardless of this value -- see resolve_task_isolation, the
+    # ONE place this resolution happens (never re-derive it at a call site).
+    isolation: IsolationMode = ISOLATION_INHERIT
+    # SOFT hint: glob patterns (workspace-relative -- no leading '/', no '..' segment) this
+    # task is expected to modify. Used ONLY to prefer co-scheduling non-overlapping tasks
+    # (scheduling.overlap_preference); never a gate, and may be incomplete or wrong. Command/
+    # argv fields (verify_command, resolvers.regenerate[].command, commit_denylist,
+    # resolver_*) deliberately live only on WorkflowSpec.integration, never here -- so an
+    # agent-authored emit_tasks manifest (parsed into TaskSpec alone by
+    # artifacts.read_task_manifest) can contribute this mode enum and these advisory globs
+    # but nothing that executes (AC-15).
+    touches: list[str] = []
 
 
 def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
@@ -145,6 +226,10 @@ def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
 class WorkflowDefaults(BaseModel):
     retries: RetryPolicy = RetryPolicy()
     timeout_seconds: int = 1800
+    # Workflow-level default isolation mode (E-Wk9Tz3 FR-1). A task's own
+    # isolation="inherit" (the TaskSpec default) resolves to this value. Default "none"
+    # keeps every pre-epic workflow byte-identical (NFR-2).
+    isolation: WorkflowIsolation = ISOLATION_NONE
 
 
 class Trigger(BaseModel):
@@ -198,6 +283,15 @@ class BudgetCounters(BaseModel):
     window_consumed_tokens: int = 0
     charged_estimate: dict[str, int] = {}
     reconciled_tasks: list[str] = []
+    # R-1b: "<task_id>#<dispatch_cycle>" entries, one per independently-reconciled dispatch
+    # cycle. `DefaultBudgetManager.reconcile()` latches one-shot per `task_id` and runs at
+    # the FIRST settle of a completed dispatch -- before the conflict outcome is even
+    # known -- so every later T2/T3 reconcile for the SAME task_id is silently a no-op, and
+    # `reverse_estimate()` does not un-latch it. Keying by "<task_id>#<dispatch_cycle>"
+    # instead makes each redispatch independently gateable, chargeable and reconcilable.
+    # This field only adds the persisted key; the `budget.py` logic switch that consumes it
+    # is T-En8Hd4's. `reconciled_tasks` is left in place untouched (backward compat).
+    reconciled_cycles: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +399,96 @@ class MonitorDecisionRecord(BaseModel):
     detail: dict = {}  # e.g. {"extend_by_seconds": None, "reason": "..."}
 
 
+# ---------------------------------------------------------------------------
+# Per-task git isolation & rebase-based integration (E-Wk9Tz3, HLD §10.2).
+# ---------------------------------------------------------------------------
+
+
+class RegenerateRule(BaseModel):
+    """T1 mechanical resolver: regenerate a conflicted file from *command* (HLD §11 M6)."""
+
+    glob: str
+    command: list[str]
+    take: Literal["ours", "theirs"] = "theirs"
+    # S-6: this command runs while the per-repo integration lock is held (T-Ib5Qy9's
+    # locks.py), so without its own bound a hung command stalls every OTHER task on that
+    # repo until integration.lock_timeout_seconds -- a much coarser, run-wide bound.
+    # C-5: ge=1 matches specs/workflow.schema.json's minimum so pydantic -- the ONLY gate
+    # for an installed wheel, per cross_validate's packaging note -- rejects a bogus value
+    # too, not just the (unpackaged) JSON Schema.
+    timeout_seconds: int = Field(default=DEFAULT_REGENERATE_TIMEOUT_SECONDS, ge=1)
+
+
+class ResolverConfig(BaseModel):
+    """T1 mechanical resolver configuration (HLD §11 M6)."""
+
+    rerere: bool = True
+    union: list[str] = []
+    regenerate: list[RegenerateRule] = []
+
+
+class IntegrationSpec(BaseModel):
+    """Squash+rebase integration policy for isolated (worktree) tasks (HLD §8, §10.1).
+
+    Every field is optional/defaulted so a workflow that never uses ``isolation: worktree``
+    is unaffected by this block's mere presence (NFR-5); V5 warns when it IS configured but
+    no task actually resolves to worktree isolation.
+    """
+
+    strategy: Literal["rebase", "merge"] = "rebase"  # "merge" reserved; rejected by V1
+    branch: str | None = None  # default: ao/<run_id>/integration
+    verify_command: list[str] = []  # argv, never a shell string; unset = builtin structural check
+    # C-5: ge=... constraints below match specs/workflow.schema.json's `minimum` for each
+    # field -- pydantic is the ONLY gate for an installed wheel (schema not packaged), so
+    # this parity matters as much for basic numeric bounds as for the V1-V12 rules.
+    verify_timeout_seconds: int = Field(default=DEFAULT_VERIFY_TIMEOUT_SECONDS, ge=1)
+    ladder: list[ResolverTier] = DEFAULT_LADDER
+    resolvers: ResolverConfig = ResolverConfig()
+    # S-3: the engine runs `git add -A` + commit in the worktree at task end. Set false to
+    # require tasks to commit their own work (the engine then integrates whatever the
+    # branch already holds).
+    auto_commit: bool = True
+    # S-3: globs that must never be swept into an auto-commit, matched against paths that
+    # are UNTRACKED at auto-commit time only -- an already-tracked file is the repo
+    # author's decision, not this engine's.
+    commit_denylist: list[str] = DEFAULT_COMMIT_DENYLIST
+    # S-3: what the auto-commit does when an untracked path matches commit_denylist.
+    # "fail" (default) aborts integration with a structured error naming the path.
+    on_denylisted_path: Literal["fail", "warn", "allow"] = ON_DENYLISTED_FAIL
+    resolver_agent: str | None = None  # required when "llm" is in ladder (V2)
+    resolver_instruction: str | None = None  # default: builtin merge-resolve.md
+    # S-2: force-injected onto the T2 resolver dispatch, UNIONed with the named agent's own
+    # disallowed_tools. The resolver reads raw, unreviewed conflict content from two
+    # different tasks, so its egress tools are closed BY CONSTRUCTION, not by prompt text
+    # (cf. ADR-0005). Must never be emptied while "llm" is in the ladder (V11 fatal).
+    resolver_disallowed_tools: list[str] = DEFAULT_RESOLVER_DISALLOWED_TOOLS
+    # S-2: for the duration of a T2 dispatch, neutralize the resolver worktree's push path
+    # (empty credential.helper, unreachable proxy, GIT_TERMINAL_PROMPT=0) so a hijacked
+    # `git push` has nowhere to go.
+    resolver_deny_push: bool = True
+    # R-4: policy when a second run wants an isolation context in the same workspace.
+    # Semantics are fixed by T-En8Hd4; this field is RESERVED here only so the schema is
+    # not reopened later -- this ticket implements no behaviour for it. Coordinates with
+    # E-Sc9Rt4's per-workspace concurrency cap.
+    workspace_lock: Literal["require", "skip_sync", "off"] = "require"
+    max_resolver_attempts: int = Field(default=1, ge=0)
+    max_reruns_per_task: int = Field(default=1, ge=0)
+    untracked_outputs: Literal["copy", "fail", "ignore"] = "copy"
+    keep_worktrees: Literal["never", "on_failure", "always"] = "on_failure"
+    sync_checkout: Literal["on_demand", "never"] = "on_demand"
+    commit_message_template: str | None = None
+    lock_timeout_seconds: int = Field(default=DEFAULT_INTEGRATION_LOCK_TIMEOUT_SECONDS, ge=1)
+
+
+class SchedulingSpec(BaseModel):
+    """Soft overlap-aware scheduling preference (HLD §9.1, R-5)."""
+
+    # None => derived by resolve_overlap_preference: "soft" iff any task in the workflow
+    # resolves to isolation="worktree", else "off". An explicit value here always wins.
+    overlap_preference: OverlapPreference | None = None
+    hotspots_path: str = DEFAULT_HOTSPOTS_PATH
+
+
 class WorkflowSpec(BaseModel):
     version: str
     id: str
@@ -327,12 +511,125 @@ class WorkflowSpec(BaseModel):
     # workflow "promptable"; a task consumes it by listing the same path in its `inputs`.
     # Per-RUN input, deliberately distinct from `general_instructions` (per-WORKSPACE).
     prompt_path: str | None = None
+    # Squash+rebase integration policy for isolated tasks (E-Wk9Tz3 FR-6/FR-7). Absent =>
+    # every field takes its documented default, which is a byte-identical no-op for a
+    # workflow that never isolates a task (NFR-2/NFR-5).
+    integration: IntegrationSpec = IntegrationSpec()
+    # Soft overlap-aware scheduling preference (E-Wk9Tz3 FR-10). Absent =>
+    # resolve_overlap_preference derives "off" unless the workflow isolates a task.
+    scheduling: SchedulingSpec = SchedulingSpec()
 
     def task(self, task_id: str) -> TaskSpec:
         for t in self.tasks:
             if t.id == task_id:
                 return t
         raise KeyError(task_id)
+
+
+# Suffix used for loop-iteration cloning (mirrors `engine.py::_clone_body` and `spec.py`'s
+# own `_ITER_SUFFIX_MARKER`). Defined again here, not imported from either, so `models.py`
+# stays import-cycle-free (it sits below both `spec.py` and `engine.py` in the dependency
+# graph) while still being the ONE place `strip_iter_suffix` (below) implements the
+# suffix-stripping both `_is_structural_task` and `engine.py::_loop_for_gate` need --
+# review finding C-1 was exactly this logic having silently drifted between the two.
+_ITER_SUFFIX_MARKER = "__iter"
+
+
+def strip_iter_suffix(task_id: str) -> str:
+    """Return *task_id* with any ``__iter<N>`` loop-clone suffix removed.
+
+    A loop body task -- including its gate task -- is re-dispatched every iteration via
+    `engine.py::_clone_body`, which suffixes the clone's id ``__iter{N}`` for N>=2;
+    iteration 1 keeps the unsuffixed, authored id. This is the ONE place that
+    suffix-stripping logic lives: `_is_structural_task` (below) and
+    `engine.py::_loop_for_gate` both call it, so they can never again independently drift
+    on what counts as "the same loop-gate task across iterations" (C-1).
+    """
+    if _ITER_SUFFIX_MARKER in task_id:
+        return task_id.split(_ITER_SUFFIX_MARKER)[0]
+    return task_id
+
+
+def _is_structural_task(task: TaskSpec, workflow: WorkflowSpec) -> bool:
+    """True if *task* is an emit_tasks task, a router task, or a loop-gate task.
+
+    Structural tasks never touch tracked repo files themselves (they emit dynamic tasks,
+    decide routing, or gate loop continuation), so they are ALWAYS resolved to
+    isolation="none" regardless of what they (or workflow.defaults) declare (HLD §11 M2,
+    D6, cross-validation rule V4).
+
+    A loop-gate task is re-dispatched every iteration under an ``__iter<N>``-suffixed id
+    (`engine.py::_clone_body`) -- `strip_iter_suffix` is applied before comparing against
+    `gate_task_id` so a gate clone at iteration 2+ is recognized too (C-1: an earlier
+    version of this branch did a bare equality check, so a workflow with
+    `defaults.isolation="worktree"` would correctly force iteration 1's gate task to
+    "none" but silently isolate iteration 2+'s clone instead). The router branch below
+    intentionally does NOT strip the suffix: `engine.py::_router_for_task` does the same
+    bare match with no suffix-handling, so this stays consistent with existing behavior
+    (a router task is never itself a loop-body member).
+    """
+    if task.emit_tasks:
+        return True
+    if any(router.router_task_id == task.id for router in workflow.branches):
+        return True
+    base_id = strip_iter_suffix(task.id)
+    if any(loop.gate_task_id == base_id for loop in workflow.loops):
+        return True
+    return False
+
+
+def _declared_isolation(task: TaskSpec, workflow: WorkflowSpec) -> WorkflowIsolation:
+    """*task*'s isolation resolved through "inherit" only -- BEFORE the structural-task
+    override.
+
+    Shared by `resolve_task_isolation` (dispatch-time) and `spec.cross_validate`'s V4 rule
+    (validate-time) so both compute the identical "what would this resolve to if it
+    weren't structural" value from one place, never two independently-drifting copies.
+    """
+    if task.isolation == ISOLATION_INHERIT:
+        return workflow.defaults.isolation
+    return task.isolation
+
+
+def resolve_task_isolation(task: TaskSpec, workflow: WorkflowSpec) -> WorkflowIsolation:
+    """The ONE place per-task isolation is resolved (HLD §11 M2, FR-1).
+
+    A router task, a loop-gate task, or an emit_tasks task always resolves to "none" (with
+    a single warning when it explicitly asked for "worktree", either directly or via an
+    inherited workflow default -- D6/V4). Otherwise "inherit" takes
+    `workflow.defaults.isolation`; any other declared value passes through unchanged.
+
+    Callers (the engine's dispatch path, the scheduler, cross_validate) MUST route every
+    isolation decision through this function rather than re-deriving it, so a future change
+    to the resolution rule cannot silently drift between call sites.
+    """
+    if _is_structural_task(task, workflow):
+        if _declared_isolation(task, workflow) == ISOLATION_WORKTREE:
+            logger.warning(
+                "Task %s: isolation=%r (declared or inherited from defaults.isolation) has "
+                "no effect -- forced to isolation='none' because it is an emit_tasks/"
+                "router/loop-gate task",
+                task.id,
+                ISOLATION_WORKTREE,
+            )
+        return ISOLATION_NONE
+    return _declared_isolation(task, workflow)
+
+
+def resolve_overlap_preference(workflow: WorkflowSpec) -> OverlapPreference:
+    """The ONE place §9.1's derived scheduling default is computed (R-5).
+
+    An explicit `workflow.scheduling.overlap_preference` always wins; otherwise "soft" iff
+    any task in the workflow resolves (via `resolve_task_isolation`) to isolation=
+    "worktree", else "off" -- so a workflow with no isolation anywhere keeps today's exact
+    co-scheduling order (NFR-2). The engine's wave-fill call site and every test must call
+    this function rather than re-deriving the default, so they can never disagree.
+    """
+    if workflow.scheduling.overlap_preference is not None:
+        return workflow.scheduling.overlap_preference
+    if any(resolve_task_isolation(t, workflow) == ISOLATION_WORKTREE for t in workflow.tasks):
+        return OVERLAP_SOFT
+    return OVERLAP_OFF
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +667,13 @@ class TaskContext(BaseModel):
     # Resolved path where the executor writes the gate verdict for loop gate tasks (Area 2).
     # Paths only — NFR-1 safe. None when the task is not a gate task.
     gate_output_path: str | None = None
+    # Extra environment variables overlaid on os.environ by the executor (E-Wk9Tz3 FR-4):
+    # e.g. AO_ISOLATION/AO_TASK_BRANCH, or isolation.env build-cache variables. Empty dict
+    # (the default) means "inherit os.environ wholesale, unchanged" -- the executor does
+    # `env=({**os.environ, **ctx.env} if ctx.env else None)`, so the no-isolation path is
+    # byte-identical to today (NFR-2). `ClaudeCliExecutor` passes no `env=` to Popen at all
+    # today, so this field is the injection point that did not previously exist.
+    env: dict[str, str] = {}
 
 
 class TaskResult(BaseModel):
@@ -414,6 +718,56 @@ TaskStatus = Literal[
 ]
 
 
+class TaskIntegrationState(BaseModel):
+    """Per-task integration bookkeeping (E-Wk9Tz3 HLD §10.3), persisted on ``RunState``
+    (never on ``TaskRunState``).
+
+    Deliberately lives on ``RunState.task_integration`` rather than on ``TaskRunState``:
+    ``runstate.prepare_resume`` replaces every non-terminal ``TaskRunState`` with a FRESH
+    object, which would silently discard integration bookkeeping if it lived there instead.
+    """
+
+    isolation: Literal["none", "worktree"] = "none"
+    repos: dict[str, str] = {}  # repo_key -> worktree root
+    branches: dict[str, str] = {}  # repo_key -> branch name
+    base_commits: dict[str, str] = {}  # repo_key -> base sha at worktree creation
+    squash_commits: dict[str, str] = {}  # repo_key -> last squash sha
+    status: Literal[
+        "none",
+        "pending",
+        "integrating",
+        "integrated",
+        "conflict_resolver",
+        "conflict_rerun",
+        "failed",
+    ] = "none"
+    mode: Literal["normal", "resolve", "rerun"] = "normal"  # what the NEXT dispatch does
+    tier_reached: ResolverTier | None = None
+    attempts: int = 0
+    resolver_attempts: int = 0
+    reruns: int = 0
+    conflicted_paths: list[str] = []  # paths only (NFR-1)
+    verify_status: Literal["not_run", "passed", "failed"] = "not_run"
+    last_error: str | None = None
+
+
+class RunIntegrationState(BaseModel):
+    """Run-wide integration bookkeeping (E-Wk9Tz3 HLD §10.3), persisted on ``RunState``."""
+
+    active: bool = False
+    # S-5: {"auto": N, "mechanical": N, "llm": N, "rerun": N} -- makes a run's free-tier
+    # (specifically rerere) resolution volume visible without a new field later.
+    tier_counts: dict[str, int] = {}
+    # R-4: semantics fixed by T-En8Hd4; reserved here only so the schema is not reopened.
+    workspace_lock_held: bool = False
+    branch: str | None = None  # e.g. "ao/<run_id>/integration"
+    repos: dict[str, str] = {}  # repo_key -> git common dir
+    heads: dict[str, str] = {}  # repo_key -> current integration head
+    base_heads: dict[str, str] = {}  # repo_key -> sha the run branched from
+    checkout_synced_to: dict[str, str] = {}  # repo_key -> sha the main checkout holds
+    degraded_reason: str | None = None  # set when isolation fell back to none
+
+
 class TaskRunState(BaseModel):
     status: TaskStatus = "pending"
     attempts: int = 0
@@ -439,6 +793,15 @@ class TaskRunState(BaseModel):
     cumulative_cache_creation_input_tokens: int = 0
     cumulative_cache_read_input_tokens: int = 0
     cumulative_cost_usd: float = 0.0
+    # R-21: incremented by the main thread exactly once per dispatch; monotonic across
+    # requeues (T2/T3 conflict-ladder escalation, self-heal) and resumes. `attempts` cannot
+    # serve this purpose: it is ASSIGNED from `result.attempts` (the per-call retry-loop
+    # count), not accumulated, so it does not increase monotonically across separate calls
+    # to `_run_with_retries` -- a requeue's own internal loop restarts at 1, which would
+    # otherwise clobber the original dispatch's `attempt-1` transcript capture directory.
+    # Keys the capture directory as `<run_dir>/<task_id>/cycle-<dispatch_cycle>/attempt-<n>/`
+    # once the engine wiring (T-En8Hd4) adopts it.
+    dispatch_cycle: int = 0
 
 
 class RunState(BaseModel):
@@ -476,6 +839,12 @@ class RunState(BaseModel):
     # this list on demand (Design Decision D9), never separately persisted. Defaulted for
     # NFR-5 backward-compat (old state.json files predate this field).
     monitor_decisions: list[MonitorDecisionRecord] = []
+    # Run-wide + per-task git isolation/integration bookkeeping (E-Wk9Tz3 HLD §10.3).
+    # Defaulted for NFR-5 backward-compat (old state.json files predate these fields):
+    # `integration.active` is False and `task_integration` is empty, which is exactly the
+    # "isolation never happened in this run" state -- correct for every pre-epic run.
+    integration: RunIntegrationState = RunIntegrationState()
+    task_integration: dict[str, TaskIntegrationState] = {}  # keyed by task id
 
 
 class RunUsageTotals(BaseModel):

@@ -16,7 +16,12 @@
       "additionalProperties": false,
       "properties": {
         "retries": { "$ref": "#/$defs/retryPolicy" },
-        "timeout_seconds": { "type": "integer", "minimum": 1 }
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "isolation": {
+          "enum": ["none", "worktree"],
+          "default": "none",
+          "description": "Workflow-level default isolation mode. A task's own isolation='inherit' (the default) resolves to this value."
+        }
       }
     },
     "triggers": {
@@ -54,7 +59,9 @@
     "prompt_path": {
       "type": "string",
       "description": "PATH to this workflow's prompt artifact, written by `ao run --prompt`/`--prompt-file` before the run starts. A task consumes it by listing the same path in its inputs. Per-run input; distinct from general_instructions, which are per-workspace."
-    }
+    },
+    "integration": { "$ref": "#/$defs/integration" },
+    "scheduling": { "$ref": "#/$defs/scheduling" }
   },
   "$defs": {
     "retryPolicy": {
@@ -123,6 +130,17 @@
         "max_turns": {
           "type": "integer",
           "description": "Per-task override of the dispatched agent's explicit --max-turns; wins over both the agent's `max_turns` and this task's own `effort` when set."
+        },
+        "isolation": {
+          "enum": ["none", "worktree", "inherit"],
+          "default": "inherit",
+          "description": "Execution isolation for this task. 'inherit' takes defaults.isolation. 'worktree' runs the task in a private git worktree on branch ao/<run_id>/<task_id> and integrates by squash+rebase. Falls back to 'none' for non-git repos. A router/loop-gate/emit_tasks task is always forced to 'none' regardless of this value."
+        },
+        "touches": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "SOFT hint: glob patterns this task is expected to modify, workspace-relative (no leading '/' and no '..' segment). Used only to PREFER co-scheduling non-overlapping tasks. Never a gate; may be incomplete or wrong."
         }
       }
     },
@@ -287,6 +305,115 @@
           "then": { "required": ["path"] }
         }
       ]
+    },
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "enum": ["rebase", "merge"],
+          "default": "rebase",
+          "description": "MVP implements 'rebase' only; 'merge' is reserved and rejected by cross-validation."
+        },
+        "branch": { "type": "string", "description": "Integration branch name. Default: ao/<run_id>/integration." },
+        "verify_command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "argv (never a shell string) run in the task worktree after rebase, before landing. Unset = built-in structural check."
+        },
+        "verify_timeout_seconds": { "type": "integer", "minimum": 1, "default": 1800 },
+        "ladder": {
+          "type": "array",
+          "default": ["auto", "mechanical", "llm", "rerun"],
+          "items": { "enum": ["auto", "mechanical", "llm", "rerun"] }
+        },
+        "resolvers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rerere": { "type": "boolean", "default": true },
+            "union": { "type": "array", "items": { "type": "string" }, "default": [] },
+            "regenerate": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["glob", "command"],
+                "properties": {
+                  "glob": { "type": "string" },
+                  "command": { "type": "array", "items": { "type": "string" } },
+                  "take": { "enum": ["ours", "theirs"], "default": "theirs" },
+                  "timeout_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 120,
+                    "description": "S-6: a regenerate command runs while the per-repo integration lock is held; without its own bound a hung command stalls every other task on that repo until lock_timeout_seconds."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "auto_commit": {
+          "type": "boolean",
+          "default": true,
+          "description": "S-3: the engine runs `git add -A` + commit in the worktree at task end. Set false to require tasks to commit their own work (the engine then integrates whatever the branch already holds)."
+        },
+        "commit_denylist": {
+          "type": "array",
+          "default": [".env", ".env.*", "*.pem", "*.key", "*.p12", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", "*credentials*.json", "*.kdbx"],
+          "items": { "type": "string" },
+          "description": "S-3: globs that must never be swept into an auto-commit. Matched against paths that are UNTRACKED at auto-commit time (an already-tracked file is the repo author's decision, not this engine's)."
+        },
+        "on_denylisted_path": {
+          "enum": ["fail", "warn", "allow"],
+          "default": "fail",
+          "description": "What the auto-commit does when an untracked path matches commit_denylist. 'fail' aborts integration with a structured error naming the path."
+        },
+        "resolver_agent": {
+          "type": "string",
+          "description": "Agent id used for T2 merge resolution. Required when 'llm' is in the ladder."
+        },
+        "resolver_disallowed_tools": {
+          "type": "array",
+          "default": ["WebFetch", "WebSearch"],
+          "items": { "type": "string" },
+          "description": "S-2: force-injected onto the resolver dispatch, UNIONed with the named agent's own disallowed_tools. The resolver reads raw, unreviewed conflict content from two different tasks, so its egress tools are closed by construction, not by prompt text (cf. ADR-0005)."
+        },
+        "resolver_deny_push": {
+          "type": "boolean",
+          "default": true,
+          "description": "S-2: for the duration of a T2 dispatch, neutralize the resolver worktree's push path (empty credential.helper, unreachable proxy, GIT_TERMINAL_PROMPT=0) so a hijacked `git push` has nowhere to go."
+        },
+        "workspace_lock": {
+          "enum": ["require", "skip_sync", "off"],
+          "default": "require",
+          "description": "R-4: policy when a second run wants an isolation context in the same workspace. Semantics are fixed by T-En8Hd4; the field is reserved here so the schema is not reopened. Coordinated with E-Sc9Rt4's per-workspace concurrency cap."
+        },
+        "resolver_instruction": {
+          "type": "string",
+          "description": "Path override for the T2 instruction. Default: builtin merge-resolve.md copied into the run dir."
+        },
+        "max_resolver_attempts": { "type": "integer", "minimum": 0, "default": 1 },
+        "max_reruns_per_task": { "type": "integer", "minimum": 0, "default": 1 },
+        "untracked_outputs": { "enum": ["copy", "fail", "ignore"], "default": "copy" },
+        "keep_worktrees": { "enum": ["never", "on_failure", "always"], "default": "on_failure" },
+        "sync_checkout": { "enum": ["on_demand", "never"], "default": "on_demand" },
+        "commit_message_template": { "type": "string" },
+        "lock_timeout_seconds": { "type": "integer", "minimum": 1, "default": 1800 }
+      }
+    },
+    "scheduling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "overlap_preference": {
+          "enum": ["off", "soft"],
+          "description": "Default: 'soft' when the run has any isolated task, else 'off'."
+        },
+        "hotspots_path": { "type": "string", "default": ".ao/hotspots.json" }
+      }
     }
   }
 }

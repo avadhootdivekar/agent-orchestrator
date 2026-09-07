@@ -2,19 +2,43 @@
 
 from __future__ import annotations
 
+import os
+import posixpath
 import re
+import subprocess
 from collections import defaultdict
 from itertools import product
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .breakers import BREAKER_REGISTRY
 from .config import _load_file, _validate_against_schema
 from .dag import Graph, compute_cones, forward_closure
 from .errors import SpecValidationError
-from .models import BudgetSpec, TaskSpec, WorkflowSpec
+from .models import (
+    ISOLATION_WORKTREE,
+    TIER_LLM,
+    BudgetSpec,
+    IntegrationSpec,
+    TaskSpec,
+    WorkflowSpec,
+    _declared_isolation,
+    _is_structural_task,
+    resolve_task_isolation,
+)
 
 # Suffix used for loop iteration cloning — authors must not use this in task ids.
 _ITER_SUFFIX_MARKER = "__iter"
+
+# E-Wk9Tz3 V9: a task id that sanitizes to this reserved component collides with the
+# integration branch ao/<run_id>/integration. Task ids are already pattern-constrained to
+# lowercase by specs/workflow.schema.json, but that schema is NOT packaged into an
+# installed `ao` wheel (see cross_validate's packaging note below) -- lowercasing here is
+# the one normalization needed to also catch a mixed-case id when that gate is absent.
+_RESERVED_INTEGRATION_COMPONENT = "integration"
+
+# Bound on the `git rev-parse` probes V8 performs so `ao validate` can never hang on a
+# slow/blocked filesystem (safe-by-default) -- named, not a magic literal.
+_GIT_PROBE_TIMEOUT_SECONDS = 5
 
 # Router/route/breaker id pattern (mirrors specs/workflow.schema.json's task/router/
 # circuitBreaker id patterns). JSON Schema already enforces this for `router.id` and
@@ -53,7 +77,7 @@ def cross_validate(
     workflow: WorkflowSpec,
     reposets: dict,
     agents: dict,
-) -> None:
+) -> list[str]:
     """Cross-validate workflow references against loaded reposets and agents.
 
     Raises SpecValidationError for:
@@ -63,6 +87,13 @@ def cross_validate(
     - emit_tasks / task_manifest_path pairing violations (Area 2)
     - LoopSpec body/gate/max_iterations constraints (Area 2)
     - Authored task ids or loop body ids containing '__iter' (reserved suffix, ADR-006)
+
+    Returns a list of non-fatal WARNING strings (C-3): currently only from the isolation/
+    integration/scheduling rules V4/V5/V7/V10 (`_cross_validate_isolation`) -- every other
+    rule in this function is fatal-only and raises `SpecValidationError` as before. Callers
+    that don't care about warnings (nearly every existing call site/test) can simply ignore
+    the return value, exactly as they always have; `cli._load_all` prints them the same way
+    it already prints `validate_run_control`'s own warnings (`WARNING: <text>`).
     """
     if workflow.repo_set not in reposets:
         raise SpecValidationError(
@@ -172,6 +203,13 @@ def cross_validate(
     if workflow.budget is not None:
         budget_cross_validate(workflow.budget)
 
+    # Per-task git isolation & rebase-integration cross-validation (E-Wk9Tz3, HLD §10.4,
+    # rules V1-V12). Packaging note (pre-existing, inherited): specs/*.schema.json is not
+    # packaged into the wheel and config._validate_against_schema silently no-ops when the
+    # file is absent -- so for an installed `ao`, THIS function is the real gate. Every
+    # rule below must therefore exist here, not only in JSON Schema.
+    return _cross_validate_isolation(workflow, reposets, agents)
+
 
 def budget_cross_validate(budget: BudgetSpec) -> None:
     """Standalone budget cross-validation (called from CLI and cross_validate)."""
@@ -199,6 +237,335 @@ def budget_cross_validate(budget: BudgetSpec) -> None:
             "budget.estimator.pessimism_buffer must be >= 1.0",
             path="budget.estimator.pessimism_buffer",
         )
+
+
+# ---------------------------------------------------------------------------
+# Per-task git isolation & rebase-integration cross-validation (E-Wk9Tz3, HLD §10.4).
+# ---------------------------------------------------------------------------
+
+
+def _is_unsafe_relative_glob(value: str) -> bool:
+    """True if *value* is an absolute path or escapes its base via a '..' segment.
+
+    Shared by V6 (``touches``) and V12 (``commit_denylist`` / ``touches`` /
+    ``resolvers.union``) -- every glob in this epic's schema is documented as workspace/
+    worktree-RELATIVE (HLD §10.1), so either shape can only be a mistake or an attempt to
+    point outside the isolated worktree. Checked with POSIX-only semantics (`posixpath`,
+    not `os.path`) so the result is the same regardless of the HOST platform `ao validate`
+    happens to run on (C-6: `os.path.isabs` uses the host's own rules -- on Linux it does
+    not recognize a Windows-style absolute path at all, which would make the same glob
+    string pass or fail this check depending on where `ao validate` runs; `posixpath.isabs`
+    is platform-independent by construction, matching this function's own "always
+    posix-style" documented contract).
+    """
+    if not value:
+        return False
+    if posixpath.isabs(value):
+        return True
+    return ".." in PurePosixPath(value).parts
+
+
+def _git_rev_parse(path: str, *args: str) -> str | None:
+    """Best-effort ``git rev-parse <args>`` probe for V8, resolved at *path*.
+
+    Returns None (skip the check) for anything that isn't a real, on-disk git checkout --
+    "git" not installed, *path* not a git repo, or a probe that times out -- so V8 can only
+    ever fire a false POSITIVE, never a false negative that would block an otherwise-valid
+    non-git workspace.
+
+    Deliberately a small, self-contained subprocess call rather than a dependency on
+    `isolation/git.py` (T-Gt4Pw8, developed concurrently under this same epic): this rule
+    only needs a yes/no toplevel + common-dir probe at VALIDATE time, not that module's
+    full typed porcelain (which exists to serve WORKTREE/INTEGRATION operations at run
+    time) -- pulling in a hard dependency on a module still under active, independent
+    development would couple two tickets that this epic deliberately kept on disjoint file
+    sets. `isolation/git.py`'s `GitRepo._run` remains the epic's single HARDENED choke
+    point (S-1: it also suppresses git hooks via a computed empty hooks dir, which needs
+    `isolation/paths.py` machinery this probe has no reason to depend on); this function
+    replicates only the CHEAP, dependency-free part of that hardening locally (C-4):
+    `GIT_TERMINAL_PROMPT=0` so a probe against a misconfigured remote can never block on an
+    interactive credential/host-key prompt, and `LC_ALL=C` for locale-independent,
+    reliably-parseable output. Bounded by `timeout=` regardless, so a stuck child is always
+    forcibly killed even without these -- this is defense-in-depth/consistency with the
+    repo's established git-safety posture, not the only thing standing between this probe
+    and a hang.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", *args],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+            check=False,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    output = result.stdout.strip()
+    return output or None
+
+
+def _check_no_foreign_worktree_collisions(workflow: WorkflowSpec, reposets: dict) -> None:
+    """V8: fatal when two ``RepoRef``s in this workflow's reposet resolve into the SAME
+    underlying git repository (identical ``--git-common-dir``) via DIFFERENT toplevels.
+
+    That signature can only mean one of the two paths is a pre-existing, on-disk LINKED git
+    worktree of the other's repository (R-14: clarified wording -- this rule is about
+    foreign checkouts found on disk at validate time via git probing, never about ao's own
+    not-yet-created worktrees, which don't exist until dispatch). A plain nested
+    subdirectory of the SAME repo (e.g. a reposet's ``docs`` member living under its
+    ``core`` member's toplevel, HLD §7.1) shares one toplevel and is explicitly NOT a
+    violation -- that is ordinary same-repo grouping, not a worktree collision.
+
+    Only called when this workflow actually resolves at least one task to isolation=
+    "worktree" (a pre-existing foreign-worktree configuration poses no danger, and probing
+    the filesystem would only slow down every non-isolated `ao validate` for no benefit).
+    """
+    reposet = reposets.get(workflow.repo_set)
+    if reposet is None:
+        return  # unknown repo_set is reported by cross_validate's own rule, not here
+
+    probes: list[tuple[str, str, str]] = []  # (repo_id, toplevel, common_dir)
+    for repo in reposet.repos:
+        toplevel = _git_rev_parse(repo.path, "--show-toplevel")
+        if toplevel is None:
+            continue
+        common_dir = _git_rev_parse(repo.path, "--git-common-dir")
+        if common_dir is None:
+            continue
+        # --git-common-dir may be printed relative to cwd; resolve for a stable comparison.
+        common_dir = str(Path(repo.path, common_dir).resolve())
+        probes.append((repo.id, toplevel, common_dir))
+
+    for i, (repo_id_a, toplevel_a, common_dir_a) in enumerate(probes):
+        for repo_id_b, toplevel_b, common_dir_b in probes[i + 1 :]:
+            if toplevel_a == toplevel_b:
+                continue  # same repo, ordinary nested-subdirectory grouping (§7.1) -- fine
+            if common_dir_a == common_dir_b:
+                raise SpecValidationError(
+                    f"RepoRefs {repo_id_a!r} and {repo_id_b!r} resolve into the same git "
+                    f"repository (common dir {common_dir_a!r}) via different toplevels "
+                    f"({toplevel_a!r} vs {toplevel_b!r}) -- one is a pre-existing, on-disk "
+                    "git worktree of the other; reposets must point at independent "
+                    "checkouts",
+                    path=f"repo_set.{workflow.repo_set}",
+                )
+
+
+def _any_task_isolated(workflow: WorkflowSpec, tasks: list[TaskSpec]) -> bool:
+    """True if isolation is "active" for *workflow* given *tasks* (C-2).
+
+    Two ways this can be true: `workflow.defaults.isolation == "worktree"` (statically
+    known regardless of which tasks exist -- ANY inherit-defaulted task, INCLUDING one not
+    yet present, such as an `emit_tasks`-injected child, will isolate under it), or at
+    least one of *tasks* resolves (via `resolve_task_isolation`) to isolation="worktree"
+    directly.
+
+    C-2 fix: an earlier version of this gate checked only the second condition, which
+    missed a workflow whose only STATIC tasks are structural (forced to isolation="none"
+    by `resolve_task_isolation`) but whose `defaults.isolation="worktree"` isolates every
+    `emit_tasks`-injected child at runtime -- `workflow.defaults.isolation` costs nothing
+    to check directly and closes that gap for every caller of this function.
+    """
+    if workflow.defaults.isolation == ISOLATION_WORKTREE:
+        return True
+    return any(resolve_task_isolation(t, workflow) == ISOLATION_WORKTREE for t in tasks)
+
+
+def validate_isolation(workflow: WorkflowSpec, tasks: list[TaskSpec]) -> list[str]:
+    """Cross-validation rules V1, V2, V4, V5, V6, V7, V9, V11, V12 (HLD §10.4) -- every
+    isolation/integration/scheduling rule that needs NO external registry (reposet/agent
+    lookups). V3 (resolver_agent existence), V8 (foreign-worktree collision) and V10
+    (resolver agent's disallowed_tools coverage) DO need the `agents`/`reposets`
+    registries and are therefore NOT part of this function; `_cross_validate_isolation`
+    calls this function first and then adds those three.
+
+    Fatal rules raise `SpecValidationError` (naming the offending task id/field, per
+    CLAUDE.md's "actionable error messages" rule) exactly as before. Warning rules
+    (V4/V5/V7) are RETURNED, not logged (C-3): `ao validate` attaches no log handler for
+    the package logger (only `ao run`/`ao resume` do, via `attach_run_handler`), so a bare
+    `logger.warning` call there is invisible -- printed by Python's "handler of last
+    resort" with no `WARNING:` label, easy to mistake for stray output or miss entirely
+    when grepping stderr. The caller prints these the same way `cli._load_all` already
+    prints `validate_run_control`'s own warnings: ``WARNING: <text>``.
+
+    HOOK POINT for `T-En8Hd4` (documented in this ticket's STATUS.md): *tasks* is accepted
+    SEPARATELY from `workflow.tasks` precisely so a caller can validate a DIFFERENT (e.g.
+    dynamically expanded) task list without mutating `workflow` itself. Call
+    ``validate_isolation(workflow, workflow.tasks + newly_injected_tasks)`` at
+    `emit_tasks` injection time so an isolation misconfiguration that only manifests
+    through an emit_tasks-declared ``isolation: "worktree"`` (independent of
+    `workflow.defaults.isolation`) is caught the moment the manifest is read, not
+    silently deferred to the first isolated dispatch mid-run (C-2's second, harder gap --
+    accepted as a documented limitation of the STATIC `ao validate` pass alone, closed
+    only when a caller actually re-validates at injection time).
+
+    V1/V2/V7/V11 all inspect `integration.*` fields whose ONLY effect is on an isolated
+    task's landing -- and `IntegrationSpec.ladder`'s own default already includes "llm"
+    (HLD §10.2), so evaluating those rules unconditionally would fatal on `resolver_agent`
+    being unset for EVERY workflow that never isolates a single task, which would break
+    NFR-2/NFR-5 backward compatibility outright. They are therefore only evaluated when
+    `_any_task_isolated` is true; when it is not, V5 alone warns that the block has no
+    effect. V4/V6/V9/V12 are task-level/id-level/glob-hygiene checks that apply regardless
+    of whether integration ever engages, so they run unconditionally first.
+    """
+    integ = workflow.integration
+    warnings: list[str] = []
+
+    # V4: a structural task (emit_tasks/router/loop-gate) whose declared isolation
+    # (direct or inherited from defaults.isolation) would be "worktree" has no effect.
+    # This is the validate-time counterpart of resolve_task_isolation's own runtime
+    # warning -- both share `_is_structural_task`/`_declared_isolation` so they can never
+    # independently drift on what counts as "structural".
+    for task in tasks:
+        if (
+            _is_structural_task(task, workflow)
+            and _declared_isolation(task, workflow) == ISOLATION_WORKTREE
+        ):
+            warnings.append(
+                f"Task {task.id!r}: isolation={ISOLATION_WORKTREE!r} (declared or "
+                "inherited from defaults.isolation) has no effect -- it is an "
+                "emit_tasks/router/loop-gate task, always forced to isolation='none' at "
+                "dispatch"
+            )
+
+    # V6/V12: touches / commit_denylist / resolvers.union globs must be workspace/
+    # worktree-relative (no absolute path, no '..' segment).
+    for task in tasks:
+        for glob in task.touches:
+            if _is_unsafe_relative_glob(glob):
+                raise SpecValidationError(
+                    f"Task {task.id!r}: touches entry {glob!r} must be workspace-relative "
+                    "(no absolute path, no '..' segment)",
+                    path=f"tasks.{task.id}.touches",
+                )
+    for glob in integ.commit_denylist:
+        if _is_unsafe_relative_glob(glob):
+            raise SpecValidationError(
+                f"integration.commit_denylist entry {glob!r} must be workspace/worktree-"
+                "relative (no absolute path, no '..' segment)",
+                path="integration.commit_denylist",
+            )
+    for glob in integ.resolvers.union:
+        if _is_unsafe_relative_glob(glob):
+            raise SpecValidationError(
+                f"integration.resolvers.union entry {glob!r} must be workspace/worktree-"
+                "relative (no absolute path, no '..' segment)",
+                path="integration.resolvers.union",
+            )
+
+    # V9: a task id that sanitizes to the reserved component "integration".
+    for task in tasks:
+        if task.id.lower() == _RESERVED_INTEGRATION_COMPONENT:
+            raise SpecValidationError(
+                f"Task id {task.id!r} sanitizes to the reserved component "
+                f"{_RESERVED_INTEGRATION_COMPONENT!r}, which collides with the "
+                "integration branch ao/<run_id>/integration",
+                path=f"tasks.{task.id}.id",
+            )
+
+    # V5: integration.* configured but no task resolves to worktree isolation -- warn, and
+    # skip every remaining rule below: an inactive integration block cannot violate
+    # anything it never governs.
+    if not _any_task_isolated(workflow, tasks):
+        if integ != IntegrationSpec():
+            warnings.append(
+                "workflow.integration is configured but no task resolves to isolation="
+                "'worktree'; integration config has no effect"
+            )
+        return warnings
+
+    llm_in_ladder = TIER_LLM in integ.ladder
+
+    # V1: strategy == "merge" is reserved, not implemented in this version.
+    if integ.strategy == "merge":
+        raise SpecValidationError(
+            "integration.strategy='merge' is reserved and not implemented in this "
+            "version; only 'rebase' is supported",
+            path="integration.strategy",
+        )
+
+    # V2: "llm" in ladder requires resolver_agent to be set.
+    if llm_in_ladder and integ.resolver_agent is None:
+        raise SpecValidationError(
+            "integration.ladder includes 'llm' but integration.resolver_agent is not set",
+            path="integration.resolver_agent",
+        )
+
+    # V7: max_resolver_attempts > 0 while "llm" absent from ladder -- dead config.
+    if integ.max_resolver_attempts > 0 and not llm_in_ladder:
+        warnings.append(
+            f"integration.max_resolver_attempts={integ.max_resolver_attempts} has no "
+            f"effect: 'llm' is not in integration.ladder {integ.ladder!r}"
+        )
+
+    # V11: an explicit opt-out of the resolver's tool-egress guard is fatal -- handing raw,
+    # unreviewed conflict content to an agent with unrestricted egress must never be a
+    # silent default (this version offers no deliberate opt-out mechanism).
+    if llm_in_ladder and integ.resolver_disallowed_tools == []:
+        raise SpecValidationError(
+            "integration.resolver_disallowed_tools=[] while 'llm' is in "
+            "integration.ladder; an empty list hands the resolver unrestricted tool "
+            "egress over raw, unreviewed conflict content",
+            path="integration.resolver_disallowed_tools",
+        )
+
+    return warnings
+
+
+def _cross_validate_isolation(
+    workflow: WorkflowSpec,
+    reposets: dict,
+    agents: dict,
+) -> list[str]:
+    """Full isolation/integration/scheduling validation (HLD §10.4, V1-V12): calls
+    `validate_isolation` for the registry-independent rules, then adds the three that DO
+    need `agents`/`reposets` -- V3 (resolver_agent existence), V8 (foreign-worktree
+    collision), V10 (resolver agent's disallowed_tools coverage). Returns the combined
+    warning list; fatal rules raise `SpecValidationError` as always.
+    """
+    warnings = validate_isolation(workflow, workflow.tasks)
+
+    if not _any_task_isolated(workflow, workflow.tasks):
+        # V3/V8/V10 all govern an isolated task's landing; nothing left to check when
+        # isolation never engages (mirrors validate_isolation's own V5 early-return).
+        return warnings
+
+    integ = workflow.integration
+    llm_in_ladder = TIER_LLM in integ.ladder
+
+    # V3: resolver_agent, when set, must be a known agent (checked regardless of whether
+    # "llm" is currently in the ladder -- a bogus agent name is always a mistake).
+    resolver_agent_spec = None
+    if integ.resolver_agent is not None:
+        resolver_agent_spec = agents.get(integ.resolver_agent)
+        if resolver_agent_spec is None:
+            raise SpecValidationError(
+                f"integration.resolver_agent {integ.resolver_agent!r} is not a known agent",
+                path="integration.resolver_agent",
+            )
+
+    # V8: a RepoRef path that lies inside a pre-existing, on-disk git worktree of another
+    # reposet member.
+    _check_no_foreign_worktree_collisions(workflow, reposets)
+
+    # V10: the named agent's own disallowed_tools should already cover the force-injected
+    # set -- informational only; the dispatch injects the union regardless (S-2), so this
+    # is a "your spec is misleading" notice, not a hole.
+    if llm_in_ladder and resolver_agent_spec is not None:
+        agent_disallowed = set(resolver_agent_spec.disallowed_tools)
+        missing = sorted(set(integ.resolver_disallowed_tools) - agent_disallowed)
+        if missing:
+            warnings.append(
+                f"integration.resolver_agent {integ.resolver_agent!r}'s own "
+                f"disallowed_tools does not already include {missing} (force-injected "
+                "onto the resolver dispatch regardless, per S-2)"
+            )
+
+    return warnings
 
 
 # ---------------------------------------------------------------------------
