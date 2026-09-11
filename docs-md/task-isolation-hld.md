@@ -2,11 +2,17 @@
 
 - Epic: [`E-Wk9Tz3-task-isolation`](../meta/tickets/E-Wk9Tz3-task-isolation/EPIC.md)
 - Decision record: [`ADR-0013`](adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md)
-- Status: **Shipped (2026-09-07) — reconciled against the merged implementation.** See
-  [§25 As-built deviations](#25-as-built-deviations-from-design-t-dr5yq6-2026-09-07) for every place the
-  build differs from the design as first written, and §24 for the review-finding dispositions
-  re-verified against merged code rather than against the tickets that claimed them.
-- Date: 2026-09-06 (design) · 2026-09-07 (as-built reconciliation)
+- Status: **Shipped and closed (2026-09-11) — reconciled against the merged implementation in two
+  passes.** See [§25 As-built deviations](#25-as-built-deviations-from-design-t-dr5yq6-2026-09-07)
+  for every place the build differs from the design as first written, and §24 for the review-finding
+  dispositions re-verified against merged code rather than against the tickets that claimed them. Pass
+  1 (2026-09-07) reconciled everything except §11 M9's event contract and the `status.json`/dashboard
+  observability text, which were left `NOT YET RECONCILED` pending `T-Cx4Jf1` Part B; pass 2
+  (2026-09-11) closed that gap and the five "Known-defective as shipped" rows (D-6..D-10) that were
+  still open at pass 1, including a genuine code defect (D-7, the T4-resume mode bug) found by pass 1
+  and fixed only in pass 2.
+- Date: 2026-09-06 (design) · 2026-09-07 (as-built reconciliation pass 1) · 2026-09-11 (pass 2, epic
+  close-out)
 - Author: architect (agent)
 - Related: [`ADR-0007`](adr/ADR-0007-parallel-task-execution.md) (wave/barrier scheduler — this epic closes its
   documented write-conflict gap) · [`parallel-execution-hld.md`](parallel-execution-hld.md) §11/§12 ·
@@ -33,8 +39,9 @@
 > lines, `models.py` @ 586, `artifacts.py` @ 218, `runstate.py` @ 245, `cli.py` @ 1620) and are
 > historical: they name the code the design was written *against*, not the code that shipped. Treat a
 > `file.py:NNN` reference as "the function named nearby", not as a current line number. Symbol names,
-> flags, defaults, ref names, file paths and event names outside §11 M9's event list **were** re-verified
-> against merged code on 2026-09-07.
+> flags, defaults, ref names, file paths and event names **were** re-verified against merged code —
+> everything except §11 M9's event contract and the observability surface on 2026-09-07, and that
+> remainder on 2026-09-11 (pass 2, once `T-Cx4Jf1` Part B had landed).
 
 ---
 
@@ -2137,8 +2144,25 @@ integration.resolver_merge_file_error  integration.resolver_regenerate_error
 integration.resolver_regenerate_timeout
 ```
 
-Every `integration.*` line carries `run_id`, `task_id`, `repo`, and — where meaningful — `tier`,
-`resolver`, `conflicted` (count, not contents), `from`/`to` shas, `duration_ms`.
+**Field contract, corrected against the shipped emitters (was: "every `integration.*` line
+carries `run_id`, `task_id`, `repo`").** Only the `engine.py`- and `isolation/integrator.py`-
+emitted lines carry `run_id`/`task_id` — both go through the run-scoped `LoggerAdapter`. The
+three module-level-logger emitters named above (`isolation/worktrees.py`, `isolation/resolvers.py`,
+`isolation/git.py`) carry **neither** (a fast-follow logger-injection point is filed, not done —
+low impact since `run.log` is already a per-run file); `resolvers.py`'s per-path
+`integration.resolved` additionally carries no `task_id` even though it is per-task. `repo` is
+present only on genuinely per-repo lines — it is correctly absent from `integration.started`,
+`integration.empty`, the three `verify_*` lines and `integration.summary`, which are per-task or
+per-run. Where meaningful, a line also carries `tier`, `resolver`, `conflicted` — **a count on the
+engine's per-task terminal lines, but a `paths` list on `integrator.py`'s own `integration.conflict`
+/ `integration.denylisted_path`** (still never file *contents*, so NFR-1 holds; `integration.failed`
+deliberately carries both the count and the paths, so an operator can find the worktree without
+grepping). The two integration-branch shas are named `head_from`/`head_to` (not `from`/`to` — `from`
+is a Python keyword and cannot be a `**kwargs` name), and appear only on `engine.py`'s per-task
+`integration.merged` line, captured before `state.integration.heads` is updated; `duration_ms`
+likewise exists only on the engine's four per-task terminal lines, not on the integrator's per-repo
+ones. The shipped set is also a **superset** of the list above in one direction only — every event
+in the code block is real and current; nothing above was invented for this document.
 
 **Dashboard (minimal, in scope).** `status.json`'s new `integration` block and per-task
 `integration_status` are already read by `ui/runs.py`; the epic adds one column to the run task table
@@ -3045,14 +3069,14 @@ because implementation had begun against them.
 | **R-9** `RetryPolicy.max_attempts` vs the ladder | **Fixed.** The self-heal precedent (`engine.py:199-204`) is cited normatively and a default-policy T1→T2→T3 test is required. | §11 M7, §13, `T-Lr6Ka3` |
 | **R-10** ADR-0013 quotes a sentence not in ADR-0007 | **Fixed.** Both the ADR's Context and §1 now attribute the characterization to `meta/ROADMAP.md` §4 and state what ADR-0007 actually says. The blockquote is gone. | §1, ADR-0013 Context |
 | **R-11** `state_dir()` would be a third near-duplicate | **Fixed, scoped.** A shared `xdg.resolve_state_dir(...)` helper, reused by `isolation/paths.py` **and** `service/paths.py`. `project_config.py` is deliberately excluded — its pattern is config-file anchoring, not XDG state resolution, so folding it in would be a false DRY. | §11 M3, `T-Wk3Nv6` |
-| **R-12** dirty-checkout sync failure understated | **Fixed in mechanism; one evidence item outstanding (re-dispositioned 2026-09-07).** The diagnostics shipped and are stronger than designed: `_sync_checkout` precomputes the collision set and classifies the failure itself (`dirty_checkout` with `colliding_paths` + a hint, vs `sync_anomaly`, vs `not_fast_forward`), including **untracked**-file collisions and rename collisions (`GitRepo.diff_names_no_renames`, added because renames were being misclassified as anomalies). The run-start pre-flight (`worktree.checkout_dirty` with a count) shipped. **Stash-and-restore is declined, not deferred** — `T-Wl2Bq7` AC-10 records it as a decision. **Outstanding:** `T-Ee3Mn8` AC-19's measurement against the consumer's real dirty-file set was deferred to a separate ticket and has **not** been performed, so the predicted first-adoption collision rate is still a prediction. Carried as risk R12. | §12.3, §16, §21, `T-Wl2Bq7`, `T-Ee3Mn8` AC-19 |
+| **R-12** dirty-checkout sync failure understated | **Fixed in mechanism, and the evidence item is now done (re-dispositioned again 2026-09-11).** The diagnostics shipped and are stronger than designed: `_sync_checkout` precomputes the collision set and classifies the failure itself (`dirty_checkout` with `colliding_paths` + a hint, vs `sync_anomaly`, vs `not_fast_forward`), including **untracked**-file collisions and rename collisions (`GitRepo.diff_names_no_renames`, added because renames were being misclassified as anomalies). The run-start pre-flight (`worktree.checkout_dirty` with a count) shipped. **Stash-and-restore is declined, not deferred** — `T-Wl2Bq7` AC-10 records it as a decision. **AC-19's measurement was performed** (`T-Ee3Mn8` rework, gate/guard half): against `ao-runner-finplan/fin_plan`'s real 4106-entry `git status --porcelain` snapshot intersected with 873 unique paths integrated across 16 real epic runs — **0 collisions (0.00%)**. Recorded honestly as **weak evidence**, not proof of general safety: the snapshot is one degenerate bulk deletion under two directories ao work doesn't touch (`pipeline/`, `old_assets/`), and one real epic run came within one file of colliding with it. Re-measurement against a second consumer or a mid-feature-work snapshot is recommended before treating 0% as an expected rate. Carried forward as risk R12, not closed by the measurement. | §12.3, §16, §21, `T-Wl2Bq7`, `T-Ee3Mn8` AC-19 |
 | **R-20** `Integrator` ctor disagreement / NFR-3 risk | **Fixed.** The HLD now matches the ticket's locked hook-based signature; `run_state_ref` is gone and run-scoped data arrives as an immutable snapshot. An NFR-3 test asserts no `RunState` is reachable from the Integrator. | §11 M4, `T-Ib5Qy9` |
 | **R-21** requeue clobbers the original attempt's transcript | **Fixed.** `TaskRunState.dispatch_cycle` (Phase 1 field) keys the capture directory as `cycle-<n>/attempt-<m>`. The reviewer's suspicion that self-heal already has this latent gap is carried as an explicit investigation item, not assumed. | §10.3, §11 M5, `T-Ac6Vd9` |
 | **R-22** routed-runner instructions tell agents to `git push` | **Fixed.** `T-Tp7Zs2` widens to all **six** affected instruction files plus the two review instructions that reference "pushed commits"; re-estimated 1.5 → 2 days. | §11 M10, `T-Tp7Zs2` |
 | **R-23** `release()` never called on a plain execution failure | **Fixed.** Settle releases on the non-integration failure path too, as its own named case. | §11 M5, `T-En8Hd4` AC-16 |
 | **S-3** engine-forced `git add -A` sweeps secrets | **Fixed.** The auto-commit screens **untracked** paths against `commit_denylist` and, at the default `on_denylisted_path: "fail"`, aborts naming the path. Already-tracked files are deliberately not screened — that is the repo author's decision. §14's row is rewritten to stop underselling the blast radius (the branch *is* fast-forwarded into the main checkout and *is* meant to be pushed by a later task). | §8.2, §11 M4, §14, `T-Ib5Qy9`, `T-Tp7Zs2` |
 | **S-4** path-guard scoping not stated/tested as per-task | **Fixed.** §7.3 gains rule 5 making per-task scoping normative, with a test distinct from the producer-restriction one: task A cannot resolve an absolute path into task B's worktree. | §7.3, §11 M3, `T-Wk3Nv6`, `T-Ee3Mn8` |
-| **S-5** rerere replays land at the free, unreviewed tier | **Re-dispositioned 2026-09-07: DOCS FIXED, OBSERVABILITY NOT YET SHIPPED.** The documentation half landed (`T-Tp7Zs2`): the instruction pack and §11 M9 both state plainly that an unset `verify_command` makes a rerere replay functionally unreviewed. The observability half did **not**: a live-run gate found `RunIntegrationState.tier_counts` stays `{}` for an entire run — the increment is missing, not partial — and a conflicted-then-rerun task reports `tier_reached: "auto"` / `conflicted_count: 0` because the clean final attempt overwrites the conflicting one, so nothing outside `run.log` records that the task ever conflicted. The dashboard column (AC-9) is also unshipped. Assigned to `T-Cx4Jf1` **Part B**, which was still in flight when this reconciliation ran. **Open.** | §11 M9 (deferred block), §25 D-8, `T-Cx4Jf1` Part B AC-11 |
+| **S-5** rerere replays land at the free, unreviewed tier | **Fixed 2026-09-11 (both halves; re-dispositioned from the 2026-09-07 "observability not yet shipped" state).** The documentation half landed with `T-Tp7Zs2`: the instruction pack and §11 M9 both state plainly that an unset `verify_command` makes a rerere replay functionally unreviewed. The observability half landed with `T-Cx4Jf1` Part B: `tier_counts` now increments per settle (crediting `TIER_RERUN` at the T3 dispatch settle, since no `IntegrationResult` ever reports `tier_reached=="rerun"` directly); `tier_reached`/`conflicted_count` now accumulate (highest-tier/non-empty-wins) instead of being overwritten by a clean final attempt; the dashboard Integration column (AC-9) shipped. All proven against a real `status.json`/API read, independently re-verified 2026-09-11 (`tests/test_isolation_events.py::TestTierCounts`, `tests/ui/test_runs_integration_surface.py`). | §11 M9, §25 D-8, `T-Cx4Jf1` Part B AC-11 |
 
 ### Minor / Info
 
@@ -3114,7 +3138,9 @@ system; each says what changed and why. Corrections are also applied in place at
 Verification standard for this pass: every flag, default, env var, ref name, file path and symbol below
 was checked against `--help` output or merged source. Items marked **[executed]** were additionally run
 against a real temporary git repository. §11 M9's event list and the `status.json`/dashboard
-observability text are the one part **not** reconciled — see the note in §11 M9.
+observability text were reconciled in **pass 2 (2026-09-11)**, once `T-Cx4Jf1` Part B's
+observability slice and the T4-resume/stale-docstring fixes it surfaced had landed — see the
+corrected field contract in §11 M9 and the now-fixed rows in "Known-defective as shipped" below.
 
 1. **The barrier checkout sync is git plumbing, not `git merge --ff-only`.** §12.3 specified
    `git merge --ff-only <integration_branch>`. As shipped, `Orchestrator._sync_checkout` calls
@@ -3232,18 +3258,20 @@ observability text are the one part **not** reconciled — see the note in §11 
     definitions in §8.2 versus §11 M4 (reconciled by R-8 to "tip == base **and** the worktree is clean
     **and** there is no untracked declared output"). Both are recorded in §24's post-merge amendments.
 
-### Known-defective as shipped (documentation cannot fix these)
+### Known-defective as shipped at the 2026-09-07 pass — all closed by pass 2 (2026-09-11)
 
-Listed here because a reader of this document must not mistake them for described behaviour. All are
-routed; none is being papered over.
+Listed here because a reader of this document must not mistake them for described behaviour at the
+time they were found. Every row below was open when pass 1 of this reconciliation ran; none is
+open today. Kept, not deleted, because the window in which each shipped defective is part of the
+epic's history and because closing them is exactly what this document exists to record honestly.
 
-| # | Defect | Where |
+| # | Defect (as found, 2026-09-07) | Fixed by / evidence (2026-09-11) |
 |---|---|---|
-| D-6 | `ao prune` leaks every `ao/` ref of a fully **successful** run (discovery probes worktree directories the engine has already removed) | §25 item 6 · `T-Cx4Jf1` Part B |
-| D-7 | `ao resume` after T4 discards an operator's hand-resolution (`ti.mode` never reset to `"normal"`) | §25 item 7 · §12.2 |
-| D-8 | `tier_counts` never incremented; `tier_reached`/`conflicted_count` overwritten by a clean final attempt; `worktree.retention_high` and the dashboard column unshipped | §25 item 8 · §24 S-5/S-7 |
-| D-9 | The S-2 resolver containment is ineffective as shipped (forced `disallowed_tools` union discarded before reaching the CLI; `resolver_deny_push` covers https remotes only) | §14 · security audit 2026-09-07, in remediation |
-| D-10 | Stale text **in user-visible code**: `models.py::IntegrationSpec.workspace_lock` and the same field's `description` in `specs/workflow.schema.json` still read *"Semantics are fixed by T-En8Hd4; the field is reserved here so the schema is not reopened … this ticket implements no behaviour for it"*. `T-Wl2Bq7` implemented it; the schema description ships to every user who reads the spec | `models.py`, `specs/workflow.schema.json` |
+| D-6 | `ao prune` leaks every `ao/` ref of a fully **successful** run (discovery probes worktree directories the engine has already removed) | **Fixed**, same day, before merge: `T-Cx4Jf1`'s `PRUNE-FIX-NOTES.md`. Repo discovery is now the union of `RunState.integration.repos` (persisted, survives every worktree directory being removed) and the pre-existing physical probing; 6 new e2e tests reproduce the leak pre-fix and prove it closed post-fix. One honest residual limit remains (a workspace with *no* run state left at all *and* no worktree directory to probe cannot be discovered), documented in `ao prune --help`. |
+| D-7 | `ao resume` after T4 discards an operator's hand-resolution (`ti.mode` never reset to `"normal"`) | **Fixed 2026-09-11.** `_settle_completed_task`'s T4 `else: # "failed"` branch now sets `ti.mode = "normal"` alongside `ti.status = "failed"`, so a resumed dispatch redispatches as a plain retry against the worktree exactly as the operator left it instead of re-entering `_prepare_rerun_dispatch`'s unconditional `git reset --hard`. Regression test: `tests/test_e2e_isolation.py::TestOperatorHandoff::test_t4_after_rerun_escalation_resume_does_not_discard_hand_resolution` (forces the ladder through one T3 rerun via a deterministic `verify_command` failure, hand-resolves in the retained worktree, resumes, and asserts the operator's commit — not a reset-hard tree — is what lands); confirmed non-vacuous by reverting the one-line fix and re-running. §12.2 now describes the corrected behaviour. |
+| D-8 | `tier_counts` never incremented; `tier_reached`/`conflicted_count` overwritten by a clean final attempt; `worktree.retention_high` and the dashboard column unshipped | **Fixed**, `T-Cx4Jf1` Part B (landed 2026-09-07, independently re-verified 2026-09-11). `tier_counts` increments per settle (crediting `TIER_RERUN` at the T3 dispatch settle, since no `IntegrationResult` ever reports `tier_reached=="rerun"` directly); `tier_reached`/`conflicted_paths` now accumulate (highest-tier-wins, non-empty-wins) instead of being overwritten; `worktree.retention_high` fires once per run at a named threshold; the dashboard gained an Integration column + run-header line. All four proven against real `status.json`/API-payload reads in `tests/test_isolation_events.py::TestTierCounts`/`TestRetentionWarning` and `tests/ui/test_runs_integration_surface.py`, not hand-built state objects. |
+| D-9 | The S-2 resolver containment is ineffective as shipped (forced `disallowed_tools` union discarded before reaching the CLI; `resolver_deny_push` covers https remotes only) | **Fixed**, as-built security remediation (landed 2026-09-07, same branch). The forced union is no longer discardable: `executors/claude_cli.py::_apply_tool_policy` appends `AgentSpec.forced_disallowed_tools` to the real spawned argv regardless of any competing tool-policy flag the agent declares, and `RESOLVER_FORCED_DISALLOWED_TOOLS` (`models.py`) now forces `Bash`, `Task`, `WebFetch` and `WebSearch` off for every resolver dispatch — which is the actual containment (a shell that never exists cannot plant a hook, poison `rr-cache`, or push by any transport). `resolver_env`'s git-config push-denial overlay now additionally covers the ssh transport (`GIT_SSH_COMMAND`/`core.sshCommand`), with its remaining local-path/`file://` gap **honestly documented in the function's own docstring** as defence-in-depth rather than restated as a guarantee — the forced-tool denial is what actually closes this, not the env overlay. |
+| D-10 | Stale text **in user-visible code**: `models.py::IntegrationSpec.workspace_lock` and the same field's `description` in `specs/workflow.schema.json` still read *"Semantics are fixed by T-En8Hd4; the field is reserved here so the schema is not reopened … this ticket implements no behaviour for it"*. `T-Wl2Bq7` implemented it; the schema description ships to every user who reads the spec | **Fixed 2026-09-11**, both places, describing the real `require`/`skip_sync`/`off` semantics from `isolation/runlock.py` and `engine.py`'s `_activate_integration`/`_sync_checkout`. The same stale-comment pattern was also found and fixed on the adjacent `RunIntegrationState.workspace_lock_held` field, not originally named in this row. |
 *(A twelfth entry, D-11 — `sanitize_ref_component` not being injective below its 80-character bound, so
 two distinct agent-emitted task ids could collide onto one branch and one worktree — was **fixed while
 this pass was being written**: validation rule **V13** now rejects a colliding pair at validate time and
@@ -3264,5 +3292,5 @@ window in which it shipped is part of the history. See §10.4 V13.)*
 - **`TestMaterializeConflict` has no multi-repo case** — flagged by the `T-Lr6Ka3` re-review, not closed.
 - **`export_previous_patch` reaches `GitRepo._run(["diff", ...])`** because there is no public raw-diff
   method; a `GitRepo.diff_patch()` was filed as the follow-up.
-- **The R-12 collision-rate measurement against the consumer's real dirty-file set** (`T-Ee3Mn8` AC-19)
-  was deferred to a separate ticket and has not been performed.
+- ~~The R-12 collision-rate measurement against the consumer's real dirty-file set~~ — **done**, not
+  deferred after all: see §24's R-12 row (0/4106 collisions, recorded as weak evidence).

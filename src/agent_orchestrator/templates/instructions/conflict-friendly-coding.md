@@ -47,23 +47,17 @@ subcommands are rejected at the single choke point, alias spellings included.
 
 **What it does not suppress — a documented limitation, not an oversight.** The engine does
 **not** neutralize `filter.*` or `merge.*` drivers configured through git attributes. A
-repository that has `git-lfs`, `git-crypt`, `nbstripout` or any similar tool bootstrapped
-installs a `filter.<name>.clean` / `.smudge` **command into git config** plus a `filter=`
-attribute in a tracked `.gitattributes`; `git rebase` likewise honours a `merge=<driver>`
-attribute and runs `merge.<driver>.driver` from config. The engine executes those commands
-automatically — **once per task, unattended, and concurrently across worktrees**. In the
-same fixture, engine `worktree_add` ran the configured smudge filter and `add_all` ran the
-clean filter four times, while hooks stayed silent throughout.
-
-**Why this is bounded.** The command always comes from **git config**, never from tracked
-content alone, so cloning a hostile repository cannot inject one. The exposure is exactly
-the case the hook suppression was written for: a repository the operator has already
-bootstrapped by running someone's setup step.
-
-**What to do about it.** Do not run a repository under isolation if its configured filter
-or merge drivers are untrusted, or if they are expensive enough that running them once per
-task across N concurrent worktrees is a problem. If you need isolation on such a repository,
-unconfigure the driver for the duration, or keep the affected stages at
+repository with `git-lfs`, `git-crypt`, `nbstripout` or similar installs a
+`filter.<name>.clean`/`.smudge` **command in git config** plus a `filter=` attribute in a
+tracked `.gitattributes` (and `git rebase` likewise honours a `merge=<driver>` attribute);
+the engine runs those commands automatically, **once per task, unattended, and concurrently
+across worktrees**. In the same fixture used above, `worktree_add` ran the configured smudge
+filter and `add_all` ran the clean filter four times, while hooks stayed silent throughout.
+The command always comes from **git config**, never tracked content alone, so cloning a
+hostile repo cannot inject one — the exposure is the same one hook suppression targets: a
+repo the operator has already bootstrapped. **Mitigation:** do not isolate a repository
+whose filter/merge drivers are untrusted or too expensive to run once per task per
+worktree; otherwise unconfigure the driver for the duration, or keep the affected stages at
 `isolation: "none"` so they run in the shared checkout where the driver already ran once.
 
 **Two settings that are not free-form.**
@@ -73,13 +67,10 @@ unconfigure the driver for the duration, or keep the affected stages at
   a branch found in that namespace is treated as the current run's own crash-recovered
   work and is re-attached, never deleted. Use `ao prune` to reclaim them.
 - `AO_WORKTREE_ROOT` (and `.ao/config.yaml`'s `isolation.state_dir`) **must not resolve
-  inside the workspace root.** Worktrees live outside every working tree by design: that is
-  what lets the per-task artifact guard treat "inside my worktree" and "inside the shared
-  workspace" as different places. Point the worktree root inside the workspace and the
-  guard stops separating them — one task could then read another task's worktree by path,
-  and the isolation you configured would not be there. The engine now **refuses** an
-  overlapping configuration outright, with an error naming the resolved worktree root, the
-  workspace root, and which setting produced it; the reverse overlap (a worktree root that
-  *contains* the workspace, such as `AO_WORKTREE_ROOT=/`) is refused for the same reason.
-  Pick a location on a different tree — the default,
-  `~/.local/state/ao/worktrees/...`, is already correct.
+  inside the workspace root** (nor contain it, e.g. `AO_WORKTREE_ROOT=/`). Worktrees live
+  outside every working tree so the per-task artifact guard can treat "inside my worktree"
+  and "inside the shared workspace" as different places — overlap them and one task could
+  read another's worktree by path. The engine **refuses** an overlapping configuration
+  outright, naming the resolved worktree root, the workspace root and which setting
+  produced it. Pick a location on a different tree — the default,
+  `~/.local/state/ao/worktrees/...`, already qualifies.

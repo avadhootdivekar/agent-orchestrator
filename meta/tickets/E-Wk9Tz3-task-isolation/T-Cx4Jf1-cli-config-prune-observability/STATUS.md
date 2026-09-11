@@ -1,9 +1,45 @@
 # STATUS
 
 - ID: `T-Cx4Jf1-cli-config-prune-observability`
-- Updated At: 2026-09-07
-- State: Part A -- In Review · Part B -- In Review (all ACs delivered, none deferred)
+- Updated At: 2026-09-11
+- State: Done (Part A + Part B both independently re-verified; all ACs delivered, none deferred)
 - Owner: developer-agent
+
+## Close-out (2026-09-11)
+
+Independently re-verified by a fresh reviewer pass during epic close-out (no source edits made by
+that pass) since Part B had never had its own review round:
+
+- **AC-7 event contract**: `tests/test_isolation_events.py::TestEventContract` confirmed non-vacuous
+  — drives a real clean land, T1 mechanical resolution and T4 failure, asserts the full HLD §11 M9
+  event set, per-task field types (`conflicted` as `int`), `head_from`/`head_to`, NFR-1 (no conflict
+  content in `run.log`), and that every task's *last* terminal event matches its final status.
+- **AC-9 dashboard**: `tests/ui/test_runs_integration_surface.py` confirmed via mutation (nulling
+  `tier_reached` in `ui/runs.py` failed 2/6 tests, restored cleanly) to cover both the dataclass layer
+  and the real `/api/runs/{id}` payload, isolated and degraded-to-null.
+- **AC-11 tier_counts accumulation** (crediting `TIER_RERUN` at the T3 settle; highest-tier/non-empty
+  -wins accumulation instead of overwrite): confirmed exactly as this file describes, via
+  `tests/test_isolation_events.py::TestTierCounts` reading real `status.json` output.
+- **AC-12 retention warning**: confirmed via mutation (removing the `retention_warned` latch made the
+  warning fire twice, failing the test).
+
+The one code defect this ticket's own scope touches indirectly — the `ao prune` ref-leak on a fully
+successful run (`PRUNE-FIX-NOTES.md`) — was fixed same-day and is independently proven by 6 new e2e
+tests (before/after: 6 failed / 9 passed with the fix stashed, 15 passed with it applied).
+
+No further work identified. Every "Next actions" item below is closed:
+1. Part A deviations — signed off by the coordinator's own explicit decisions, recorded in `TASK.md`.
+2. Part B accounting semantics — re-verified above.
+3. The HLD §11 M9 divergence list below was folded into `docs-md/task-isolation-hld.md` §11 M9 and
+   §24/§25 by `T-Dr5Yq6` pass 2 (2026-09-11).
+4. The `WorktreeManager`/`resolve_mechanically` logger-injection follow-up (divergence 3) remains an
+   open, named, non-blocking follow-up — no ticket filed, consistent with this file's own disposition.
+
+Full gates at epic close (see `meta/tickets/E-Wk9Tz3-task-isolation/STATUS.md` for the epic-wide
+rollup): `pytest -q` 3831 passed / 8 skipped / 0 failed; `ruff check .` / `ruff format --check .`
+clean; `mypy src` 4 pre-existing `_version.py` errors, unchanged.
+— By: manager · Role: manager · Date: 2026-09-11 · Comment: Closed after independent re-verification
+(no finding required a code change beyond what T-Dr5Yq6/T-Ee3Mn8's close-out already fixed elsewhere).
 
 ## This update
 

@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-Dr5Yq6-docs-refresh`
 - Epic ID: `E-Wk9Tz3-task-isolation`
-- Owner: architect (agent)
+- Owner: architect (agent) / manager (pass 2)
 - Created: 2026-09-06
-- Last Updated: 2026-09-07
-- Status: In Review (pass 1 of 2 complete)
+- Last Updated: 2026-09-11
+- Status: Done (pass 2 of 2 complete — see `STATUS.md`'s "Pass 2 (2026-09-11)")
 - Estimate: 1 day
 
 ## Requirements Mapping

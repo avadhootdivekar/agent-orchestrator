@@ -5,8 +5,9 @@
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Owner: developer-agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-07
-- Status: Part A (In Review) + Part B (In Review) -- ALL ACs delivered, see "Coordinator split" below
+- Last Updated: 2026-09-11
+- Status: Done -- Part A + Part B both delivered and independently re-verified, see "Coordinator split"
+  below and `STATUS.md`'s "Close-out (2026-09-11)"
 - Estimate: 2.5 days
 
 ## Coordinator split (2026-09-07)

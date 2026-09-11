@@ -3,10 +3,11 @@
 ## Metadata
 - Task ID: `T-Ee3Mn8-e2e-and-review`
 - Epic ID: `E-Wk9Tz3-task-isolation`
-- Owner: unassigned (tester + reviewer + dev-security)
+- Owner: tester (+ reviewer + dev-security, per the rework/re-verification passes)
 - Created: 2026-09-06
-- Last Updated: 2026-09-07
-- Status: Draft
+- Last Updated: 2026-09-11
+- Status: Done -- see `STATUS.md`'s "Close-out (2026-09-11)" (this line previously read "Draft" while
+  `STATUS.md` read "In Review"; noted as a cross-file drift by `T-Dr5Yq6` pass 1 and corrected here)
 - Estimate: 3 days
 
 ## Requirements Mapping

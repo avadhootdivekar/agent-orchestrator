@@ -1,9 +1,9 @@
 # STATUS
 
 - ID: `E-Wk9Tz3-task-isolation`
-- Updated At: 2026-09-07
-- State: Draft
-- Owner: architect (agent)
+- Updated At: 2026-09-11
+- State: Done
+- Owner: architect (agent) / manager (close-out)
 
 ## This update
 - Architecture package complete and design-only. Written: `docs-md/task-isolation-hld.md`
@@ -678,3 +678,45 @@
   a 4106-entry dirty snapshot intersected against the 873 paths integrated across 16 real epic runs
   gives **zero collisions, 0.00%** — recorded honestly as weak evidence, since the snapshot is
   all deletions in two directories and one run came close to touching one of them.
+
+- **2026-09-11 — EPIC CLOSED.** Delivery-manager close-out of the three tasks left `In Review`. All
+  three are now `Done`; the epic is `Done`. Summary of what closing actually required:
+  - **`T-Cx4Jf1-cli-config-prune-observability`** — Part A and Part B were both feature-complete but
+    Part B had never had an independent review round. A fresh reviewer pass (mutation-testing method,
+    matching the original reviewer's technique) confirmed the AC-7 event contract, AC-9 dashboard,
+    AC-11 `tier_counts` accumulation and AC-12 retention warning all work as claimed, against the real
+    tests and a real run — not just the ticket's own narrative. No code change needed. Marked Done.
+  - **`T-Ee3Mn8-e2e-and-review`** — `REWORK-NOTES-B.md` documented only the "gate/guard half" of the
+    post-REVIEW.md rework; the other half (`tests/test_e2e_isolation.py`'s C-1/C-2/C-3/M-2/M-5/M-6/M-7
+    fixes) had landed in the same commit with no equivalent notes and a `STATUS.md` still describing
+    the pre-rework file. An independent re-review (mutation-tested, not a reading pass) confirmed every
+    Blocking and Major finding from the original `REVIEW.md` is now genuinely resolved in the current
+    tree. That re-review's own investigation surfaced one real, previously-undetected regression:
+    **`ao resume` after a T4 failure that followed a T3 escalation discarded the operator's
+    hand-resolution** (`TaskIntegrationState.mode` stayed `"rerun"` instead of resetting to `"normal"`,
+    so `_prepare_rerun_dispatch` would `git reset --hard` the retained worktree before redispatching).
+    Fixed in `engine.py` (one-line state reset plus a documented rationale), pinned by a new
+    deterministic regression test (`TestOperatorHandoff::
+    test_t4_after_rerun_escalation_resume_does_not_discard_hand_resolution`), confirmed to fail
+    pre-fix and pass post-fix. Marked Done.
+  - **`T-Dr5Yq6-docs-refresh`** — pass 2 executed: reconciled HLD §11 M9's event contract and
+    `status.json`/dashboard text against the now-shipped `T-Cx4Jf1` Part B observability (removing the
+    `NOT YET RECONCILED` banner), re-dispositioned the R-12 and S-5 rows in §24 from
+    outstanding/open to Fixed with concrete evidence, closed out all five rows in the "Known-defective
+    as shipped" table (D-6 through D-10 — the T4-resume defect above is D-7; a second stale docstring,
+    D-10, was fixed on both `models.py` and `specs/workflow.schema.json` plus one adjacent field not
+    originally named), and replaced the `meta/learnings.md`/`meta/learning-compact.md` placeholders
+    with four real, epic-specific learnings. Marked Done.
+  - **Two pre-existing gaps found and fixed independently of the three tickets above**, both in the
+    already-committed `fa52b6b` tree rather than attributable to any open ticket: the epic's own
+    blocking NFR-2 gate (`tests/test_nfr2_regression_gate.py::TestPreEpicTestsUnedited`) was failing on
+    its own tree because a later, unrelated security-remediation edit to `tests/test_executor.py`
+    (additive-only, the C-1 forced-tool-policy coverage) was never added to the gate's own declared-
+    exceptions list; and `conflict-friendly-coding.md` had grown to 85 lines against the file's own
+    80-line test budget. Both fixed and re-verified.
+  - **Final gates, one clean run, on the fully closed tree**: `pytest -q -p no:cacheprovider` **3831
+    passed / 8 skipped / 0 failed**; `ruff check .` / `ruff format --check .` clean repo-wide;
+    `mypy src` 4 pre-existing `_version.py` errors, unchanged from every prior rollup in this file.
+  — By: manager · Role: manager · Date: 2026-09-11 · Comment: All 14 tasks Done, epic Done. See each
+    task's own `STATUS.md`/`TASK.md` for full per-task evidence; `EPIC.md`'s Status line carries the
+    same summary.

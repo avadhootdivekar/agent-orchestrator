@@ -237,12 +237,18 @@ These are accepted trade-offs. They are recorded so they are chosen rather than 
   produced real file contention. **Now avoidable rather than merely accepted**: enabling
   per-task isolation (§2b) removes the shared working tree the conflict happens in. The gap
   stays recorded because isolation is opt-in and off by default.
-- **Isolation's own rough edges at first ship** (E-Wk9Tz3, all tracked, none silent): the T2
-  merge-resolver's tool/push containment is ineffective as shipped and in remediation;
-  `ao prune` leaks the `ao/` refs of a fully successful run; integration tier counters are never
-  incremented, so conflict volume shows up only in `run.log`; `ao resume` after a T4 failure
-  hard-resets the retained worktree instead of adopting an operator's manual fix; and the engine
-  suppresses repository *hooks* but not git-attribute `filter`/`merge` drivers, so a repository
+- **Isolation's rough edges at first ship, all fixed by epic close (2026-09-11)** (E-Wk9Tz3, all
+  tracked, none silent): the T2 merge-resolver's tool/push containment — fixed by forcing `Bash`/
+  `Task`/`WebFetch`/`WebSearch` off for every resolver dispatch regardless of the agent's own tool
+  policy, which is the real containment (a shell that never exists cannot plant a hook or push by any
+  transport); `ao prune` leaking the `ao/` refs of a fully successful run — fixed by discovering a
+  run's repos from its own persisted `RunState.integration.repos` record, not only by probing worktree
+  directories the engine has already removed; integration tier counters never incrementing — fixed,
+  `tier_counts`/`tier_reached`/`conflicted_count` now accumulate correctly and surface in `status.json`
+  and the dashboard; `ao resume` after a T4 failure hard-resetting the retained worktree instead of
+  adopting an operator's manual fix — fixed, `TaskIntegrationState.mode` now resets to `"normal"` on a
+  T4 failure so a resumed dispatch is a plain retry. **Still an accepted limitation, not fixed**: the
+  engine suppresses repository *hooks* but not git-attribute `filter`/`merge` drivers, so a repository
   with an expensive or untrusted driver configured should not be run under isolation. See
   `docs-md/task-isolation-hld.md` §25.
 - **Dashboard is unauthenticated.** Loopback-by-default plus a startup warning is the whole

@@ -880,18 +880,80 @@ Date: 2026-09-06
 ---
 
 ---
-Learning-ID: LRN-20260907-e-wk9tz3-process-learnings-PLACEHOLDER
-Learning: PLACEHOLDER — reserved for the E-Wk9Tz3 (per-task git isolation) execution learnings. The
-  epic owner is supplying the process learnings from this epic's execution; they will be folded in here
-  as separate, individually-marked entries. Nothing has been invented to fill this slot: per the repo's
-  own rule, learnings are added only when genuinely reusable, and this reconciliation pass deliberately
-  did not manufacture entries to look thorough. Delete this placeholder when the real entries land.
-Context: `T-Dr5Yq6-docs-refresh` closed E-Wk9Tz3's documentation. Candidate material exists (a design
-  whose stated mechanism was impossible against a sibling ticket's shipped behaviour; a "no new plumbing"
-  claim that needed two bug fixes to become true; a review disposition that recorded a fix which had
-  shipped as a blocking defect; two operator procedures that only failed when someone ran them) — but
-  which of those generalize beyond this epic is the epic owner's call, not this pass's.
-By: architect
-Role: architect
-Date: 2026-09-07
+Learning-ID: LRN-20260911-self-referential-gates-need-their-own-maintenance
+Learning: A "no pre-existing test was edited" structural gate that allows named, justified exceptions
+  must be treated as a living contract, not a one-time list — every ticket that legitimately extends a
+  pre-existing test file must add its own exception entry at the same time, or the gate will fail on
+  its own tree the next time anyone runs it (which is exactly what a regression gate is supposed to
+  catch, just aimed at the wrong target). This is a general shape, not unique to this gate: any
+  self-referential check whose exception list is a static collection needs the same discipline as the
+  invariant it protects.
+Context: E-Wk9Tz3's `tests/test_nfr2_regression_gate.py::TestPreEpicTestsUnedited` (AC-1, the epic's one
+  blocking gate) failed on its own final tree — a later, unrelated security-remediation ticket
+  additively extended `tests/test_executor.py` (a pre-epic file) with real new test coverage, but never
+  added the corresponding entry to `_EPIC_MODIFIED_PRE_EPIC_TESTS`. Caught only because the epic
+  close-out ran the full suite fresh rather than trusting the last recorded green run.
+By: manager
+Role: manager
+Date: 2026-09-11
+---
+
+---
+Learning-ID: LRN-20260911-ast-guards-need-import-binding-tracking
+Learning: An AST-based "forbidden call" guard that pattern-matches on a literal attribute access
+  (`subprocess.run(...)`) is defeated by any import alias, `from`-import, or argv-in-a-variable —
+  each is a one-line bypass. The alias-proof version either (a) resolves import bindings first
+  (`ast.Import`/`ast.ImportFrom`) before matching calls, or (b) inverts the guard to importer-set
+  equality (assert the exact set of modules that import the forbidden module at all equals a named
+  allowlist) — (b) is simpler and stronger when the guarded package is small enough to enumerate.
+Context: E-Wk9Tz3's structural "no raw `git` subprocess outside `isolation/git.py`" guard
+  (`tests/isolation/test_security_guards.py`) was defeated by 4 of 5 mutations an independent review
+  demonstrated (`import subprocess as _sp`, `from subprocess import run as _r`, a variable holding the
+  argv, and the same call from outside the swept directory entirely) before being rebuilt as an
+  alias-aware call scan plus an importer-set-equality check.
+By: manager
+Role: manager
+Date: 2026-09-11
+---
+
+---
+Learning-ID: LRN-20260911-retry-ladder-mode-must-reset-on-terminal-failure
+Learning: A state machine that tracks "which retry/escalation tier is currently in flight" (e.g. a
+  `mode` field distinguishing a plain retry from a resolver-dispatch from a rerun-on-fresh-base) must
+  explicitly reset that field to its normal/terminal value on the ladder's own terminal failure — not
+  just set a `status` field. If a resume path preserves per-task fields verbatim by design (correct for
+  a genuine mid-ladder crash-resume) but the terminal-failure branch forgot to normalize `mode` first,
+  a later resume silently re-enters the last attempted tier's special-case dispatch logic instead of a
+  plain retry — and if that logic includes a destructive step (a `git reset --hard` to re-baseline a
+  rerun), it silently destroys exactly the recovery work the terminal-failure hand-off was designed to
+  preserve. General shape: any "last attempted strategy" field needs an explicit reset in every
+  terminal-failure branch, reviewed as carefully as the `status` transition itself.
+Context: E-Wk9Tz3's T4 (ladder-exhausted) failure path retained a task's worktree and branch so an
+  operator could hand-resolve a conflict and `ao resume`, but never reset `TaskIntegrationState.mode`
+  off `"rerun"`/`"resolve"` — found by a documentation-reconciliation pass that executed the recovery
+  procedure against a real repo rather than describing it, and confirmed as a real (not theoretical)
+  data-loss defect before the epic closed.
+By: manager
+Role: manager
+Date: 2026-09-11
+---
+
+---
+Learning-ID: LRN-20260911-mega-commit-erodes-ticket-evidence-trust
+Learning: When many tickets in one epic land as a single large final commit (after each individually
+  recording "no commit made per instruction" during development), the per-ticket `STATUS.md` evidence
+  logs drift out of sync with the actual shipped code well before anyone notices — a ticket's own
+  "40 passing + 3 xfail" can describe a file that was subsequently rewritten to 60 tests with 0 xfail in
+  the very same commit, with no note connecting the two. Prefer incremental commits (or at least
+  incremental ticket-status updates) per logical unit of work close to when it lands, and treat any
+  ticket's own `STATUS.md` as untrustworthy for "is this actually still true" once a large gap opens
+  between when it was written and when the epic is being closed — re-verify against current file
+  content and a fresh mutation-tested review pass rather than the ticket's narrative.
+Context: E-Wk9Tz3's epic close-out found `T-Ee3Mn8-e2e-and-review`'s `STATUS.md` describing a stale,
+  smaller version of `tests/test_e2e_isolation.py` that predated the commit which actually superseded
+  it; an independent re-review against the live file (not the ticket text) was required to establish
+  that the original review's Blocking/Major findings were, in fact, already resolved.
+By: manager
+Role: manager
+Date: 2026-09-11
 ---

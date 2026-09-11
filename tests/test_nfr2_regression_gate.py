@@ -36,13 +36,18 @@ Files this epic legitimately had to modify are named, justified exceptions in
 
     BEFORE (base e193ead, its own code, the 104 pre-epic `.py` test files):
         2006 passed, 7 skipped, 2 failed
-    AFTER  (this branch's code, the same 104 files):
-        2045 passed, 7 skipped, 0 failed
+    AFTER  (this branch's code, the same 104 files, re-verified 2026-09-11 after a sixth
+    exception was declared -- see below):
+        2052 passed, 7 skipped, 0 failed
 
 The delta reconciles exactly, with nothing unexplained:
 
-  * +37 -- the five declared exceptions below collect 96 tests at base and 133 today; every
-    added test is new, and no pre-epic test was removed, skipped or weakened.
+  * +44 -- the six declared exceptions below collect 193 tests at base and 237 today; every
+    added test is new, and no pre-epic test was removed, skipped or weakened. (Five
+    exceptions were declared on 2026-09-07, collecting 96 -> 133; a sixth,
+    `tests/test_executor.py` (97 -> 104, +7), was found missing from the list on 2026-09-11
+    when this gate itself caught its own tree failing AC-1 -- the C-1 security fix's
+    `_apply_tool_policy` coverage had landed without a declared exception.)
   * +2  -- the two BEFORE failures are artifacts of the throwaway base worktree, not of base
     code: both are `tests/bench/test_dev_{core,medium}_suite.py::
     test_fake_subject_full_suite_run_produces_valid_run_json_and_summary`, whose pytest
@@ -51,7 +56,7 @@ The delta reconciles exactly, with nothing unexplained:
     `git diff <base> HEAD -- src/agent_orchestrator/bench/` is EMPTY, so base and HEAD run
     byte-identical grader code and neither result is attributable to this epic.
 
-  2006 + 37 + 2 = 2045.
+  2006 + 44 + 2 = 2052.
 
 =======================================================================================
 GATE 2 -- `test_isolation_subsystem_untouched_on_the_non_isolated_path`.
@@ -153,6 +158,15 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
         "T-Tp7Zs2/T-Lr6Ka3: the builtin routed-runner template gained a `merge-resolver` "
         "agent, and this file's required-agents-match-DAG test is an exact set equality, so "
         "it had to learn the new agent; the rest of the change is additive"
+    ),
+    # Additive only (one new imported name in the existing import block, two new test
+    # classes appended; no pre-existing assertion touched): the as-built security audit's
+    # C-1 fix added `_apply_tool_policy` (executors/claude_cli.py) -- the engine's
+    # non-overridable forced-disallowed-tools union, which a resolver agent's own
+    # tool-policy flag can no longer silently discard. This is the first test coverage
+    # for that function.
+    "tests/test_executor.py": (
+        "additive (as-built security fix, C-1): `_apply_tool_policy` forced-tools-union coverage"
     ),
 }
 

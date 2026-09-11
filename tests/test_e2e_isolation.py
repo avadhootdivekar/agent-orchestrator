@@ -1331,6 +1331,165 @@ class TestOperatorHandoff:
         # The hand-off is over: the worktree is released again on the success path.
         assert _worktree_paths(repo) == [str(repo.resolve())]
 
+    def test_t4_after_rerun_escalation_resume_does_not_discard_hand_resolution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression (defect found in T-Dr5Yq6's STATUS.md "Defects found" item 1):
+        `TaskIntegrationState.mode` is set to ``"rerun"`` when a conflict/verify-failure
+        escalates to T3 (`_settle_completed_task`'s ``conflict_rerun`` branch), but the T4
+        ``else: # "failed"`` branch used to leave it there instead of resetting it to
+        ``"normal"``.
+
+        `RunStateStore.prepare_resume` resets `ts.status` back to "pending" but preserves
+        `state.task_integration[tid].mode` VERBATIM (by design, for a genuine mid-ladder
+        crash-resume) -- so a task that failed at T4 *after* a T3 escalation used to resume
+        still in ``mode == "rerun"``. `_run_and_integrate` reads that mode and dispatches
+        through `_prepare_rerun_dispatch`, which unconditionally `git reset --hard`s the
+        worktree to the current integration head before redispatching -- destroying
+        exactly the hand-resolved commit the T4 hand-off contract exists to let an operator
+        create.
+
+        This test forces the ladder through T3 (rerun) before T4 via a **verify** failure
+        (``verify_command: ["test", "-f", "operator-note.txt"]``, ``ladder: ["rerun"]``,
+        ``max_reruns_per_task: 1``) on a SINGLE, non-conflicting task, deliberately unlike
+        the merge-conflict sibling test above. A real merge-conflict-based T3 retry cannot
+        be made to fail a SECOND time deterministically: `_prepare_rerun_dispatch` resets
+        the worktree to the CURRENT integration head and the agent's redispatch commits
+        directly on top of it, so the rebase is always a trivial fast-forward the second
+        time around unless a third, independently-timed writer races in between -- which
+        would make this a flaky/racy test for a fix that has nothing to do with real
+        conflict content. A verify failure has no such escape hatch: the fixed
+        `verify_command` fails identically on every attempt until the operator's file
+        actually exists, so the ladder deterministically exhausts at T4 after exactly one
+        T3 rerun, and there is no live merge conflict to worry about (the rebase itself
+        always succeeds; only the verify step fails) -- the operator's fix is a plain
+        commit, not a `rebase --continue`.
+        """
+        ws = _workspace(tmp_path)
+        repo = _create_test_repo(ws, files={"README.md": "hi\n"})
+        run_id = _freeze_run_id(monkeypatch)
+        _setup_workflow(
+            ws,
+            [{"id": "task_a", "agent": "ag", "outputs": ["output/a.txt"]}],
+            integration_config={
+                "sync_checkout": "never",
+                "ladder": ["rerun"],
+                "max_reruns_per_task": 1,
+                "verify_command": ["test", "-f", "operator-note.txt"],
+            },
+        )
+        # Written on every dispatch (initial AND the T3 rerun redispatch, since
+        # `_patch_executor`'s repo_writes apply unconditionally on every `execute()` call
+        # for this task_id) so each attempt genuinely squashes something non-empty -- the
+        # verify command is what fails, deterministically, on both attempts, since
+        # `operator-note.txt` never exists until the operator creates it by hand below.
+        _patch_executor(monkeypatch, {"task_a": {"core": {"marker.txt": "v1\n"}}})
+
+        first = runner.invoke(
+            app,
+            [
+                "run",
+                "--workflow",
+                str(ws / "workflow.json"),
+                "--reposets",
+                str(ws / "reposets.json"),
+                "--agents",
+                str(ws / "agents.json"),
+            ],
+            env=_env(ws),
+        )
+        assert first.exit_code == 1, f"ladder exhaustion must fail the run:\n{first.output}"
+
+        run_dir = _run_dir(ws, run_id)
+        state = _state(ws, run_id)
+        assert state["status"] == "failed"
+        assert state["tasks"]["task_a"]["status"] == "failed"
+        ti = state["task_integration"]["task_a"]
+        assert ti["status"] == "failed"
+        # The ladder genuinely passed through T3 before T4 -- proves this test actually
+        # exercises the "mode == rerun" path the merge-conflict sibling test cannot reach
+        # (its ladder: ["auto"] goes straight to T4 and never sets `mode` to anything but
+        # its "normal" default).
+        assert ti["reruns"] == 1, f"expected exactly one T3 rerun before T4: {ti}"
+        rerun_events = _events_named(run_dir, "integration.rerun_dispatched")
+        assert len(rerun_events) == 1 and rerun_events[0]["task_id"] == "task_a"
+        verify_failed = _events_named(run_dir, "integration.verify_failed")
+        assert len(verify_failed) == 2, (
+            f"expected a verify failure on both attempts: {verify_failed}"
+        )
+        failed_events = _events_named(run_dir, "integration.failed")
+        assert len(failed_events) == 1
+        # The fix under test: T4 must reset `mode` back to "normal" -- if it stayed
+        # "rerun", the resumed dispatch below would reset-hard the retained worktree
+        # (silently discarding the operator's hand resolution) instead of redispatching
+        # plain against the worktree exactly as it was left.
+        assert ti["mode"] == "normal", (
+            "T4 must reset TaskIntegrationState.mode to 'normal', not leave it at the "
+            f"last-attempted tier -- got {ti['mode']!r}. A resumed dispatch left in "
+            "'rerun' mode would git-reset-hard the retained worktree before redispatch, "
+            "discarding the operator's hand resolution."
+        )
+
+        # Worktree AND branch retained -- same hand-off contract as the ladder=["auto"]
+        # sibling test. No conflict markers here (this is a verify failure, not a merge
+        # conflict): the rebase itself already succeeded, so the branch just sits at the
+        # post-rebase tree with a clean working directory.
+        worktree = Path(next(iter(ti["repos"].values())))
+        branch = next(iter(ti["branches"].values()))
+        assert worktree == _expected_worktree(ws, repo, run_id, "task_a")
+        assert worktree.is_dir(), "the failed task's worktree was not retained"
+        assert f"refs/heads/{branch}" in _ao_refs(repo), (
+            "the failed task's branch was deleted despite the hand-off contract"
+        )
+        assert not (worktree / "operator-note.txt").exists()
+        assert _git(["status", "--porcelain"], worktree) == "", (
+            "a verify failure (not a merge conflict) must leave a clean working tree"
+        )
+
+        # --- the operator resolves it by hand, in that worktree, with a plain commit
+        # (satisfies the fixed verify_command from here on).
+        (worktree / "operator-note.txt").write_text("resolved by hand\n")
+        _git(["add", "-A"], worktree)
+        _git(
+            ["-c", "user.name=op", "-c", "user.email=op@x.invalid", "commit", "-q", "-m", "fix"],
+            worktree,
+        )
+
+        # --- resume: the agent makes no further repo change; only the operator's own
+        # commit can be responsible for what lands. Under the pre-fix defect,
+        # `_prepare_rerun_dispatch` would `git reset --hard` this worktree back to the
+        # current integration head BEFORE this no-op agent even runs -- wiping the
+        # operator's commit so `operator-note.txt` would never exist and the SAME verify
+        # command would fail forever.
+        _patch_executor(monkeypatch, {})
+        resumed = runner.invoke(
+            app,
+            [
+                "resume",
+                "--run-id",
+                run_id,
+                "--workflow",
+                str(ws / "workflow.json"),
+                "--reposets",
+                str(ws / "reposets.json"),
+                "--agents",
+                str(ws / "agents.json"),
+            ],
+            env=_env(ws),
+        )
+        assert resumed.exit_code == 0, f"resume after the manual fix failed:\n{resumed.output}"
+
+        final = _state(ws, run_id)
+        assert final["status"] == "succeeded"
+        assert final["tasks"]["task_a"]["status"] == "succeeded"
+        assert final["task_integration"]["task_a"]["status"] == "integrated"
+        assert final["task_integration"]["task_a"]["verify_status"] == "passed"
+        final_branch = final["integration"]["branch"]
+        # The operator's hand-resolved commit survived resume and landed -- proving the
+        # worktree was NOT reset-hard before redispatch.
+        assert _git(["show", f"{final_branch}:operator-note.txt"], repo) == "resolved by hand\n"
+        assert _worktree_paths(repo) == [str(repo.resolve())]
+
 
 # ============================================================================
 # S-1: planted hooks never fire

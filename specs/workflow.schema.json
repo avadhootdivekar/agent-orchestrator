@@ -389,7 +389,7 @@
         "workspace_lock": {
           "enum": ["require", "skip_sync", "off"],
           "default": "require",
-          "description": "R-4: policy when a second run wants an isolation context in the same workspace while another run holds it. 'require' (default) refuses to start the second run; 'skip_sync' runs isolated but never fast-forwards the shared checkout; 'off' disables the workspace lock entirely. Implemented by T-Wl2Bq7; coordinated with E-Sc9Rt4's per-workspace concurrency cap."
+          "description": "R-4/T-Wl2Bq7: policy for the per-workspace, cross-process WorkspaceRunLock that serializes fast-forwarding the shared physical checkout when a second isolated run targets the same workspace (landing itself is already safe by construction and needs no lock). 'require' (default) claims the lock before creating any integration ref; if another run already holds it, this run degrades to isolation: none (or fails outright under isolation.strict) rather than sync the checkout unprotected. 'skip_sync' still attempts the claim but isolates regardless of the outcome, since the checkout fast-forward is unconditionally skipped for this policy. 'off' never claims the lock at all -- no protection against a concurrent run's checkout sync, only a warning is logged. Coordinated with E-Sc9Rt4's per-workspace concurrency cap."
         },
         "resolver_instruction": {
           "type": "string",

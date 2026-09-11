@@ -1913,6 +1913,22 @@ class Orchestrator:
                     return SettleResult(signal="requeue")
                 else:  # "failed"
                     ti.status = "failed"
+                    # T4 ladder exhaustion is terminal for THIS run's automated escalation --
+                    # `mode` must not carry the last attempted tier ("resolve"/"rerun")
+                    # forward, or a later `ao resume` (which resets `ts.status` back to
+                    # "pending" in `RunStateStore.prepare_resume` but leaves `ti.mode`
+                    # untouched) would redispatch through `_prepare_rerun_dispatch`/
+                    # `_prepare_resolver_dispatch` again -- and `_prepare_rerun_dispatch`
+                    # unconditionally `git reset --hard`s the retained worktree to the
+                    # current integration head first, destroying exactly the hand-resolved
+                    # commit(s) the T4 hand-off contract exists to preserve. Resetting to
+                    # "normal" here makes a resumed redispatch a plain retry against the
+                    # worktree exactly as the operator left it (no reset, no resolver/rerun
+                    # special-casing) -- `_record_task_integration_pending` already re-primes
+                    # `status`/`repos`/`branches`/`base_commits` on every redispatch
+                    # regardless of mode, so `mode` is the one field that needed this
+                    # explicit reset.
+                    ti.mode = "normal"
                     ti.last_error = integ.reason
                     ts.status = "failed"
                     run_log.error(

@@ -3,10 +3,17 @@
 ## Metadata
 - Epic ID: `E-Wk9Tz3-task-isolation`
 - Title: Per-task git worktree isolation with squash+rebase integration and soft overlap-aware task assignment
-- Owner: architect (agent) — implementation owner TBD
+- Owner: architect (agent) — implementation owner TBD; manager (delivery close-out, 2026-09-11)
 - Created: 2026-09-06
-- Last Updated: 2026-09-07
-- Status: In Progress (2026-09-07 — 11 of 14 tasks Done and committed; `T-Cx4Jf1` Parts A+B delivered with prune safety guards in review, `T-Ee3Mn8` in rework after a REWORK review, `T-Dr5Yq6` in its second pass; an as-built security audit is being remediated before merge)
+- Last Updated: 2026-09-11
+- Status: **Done (2026-09-11) — all 14 tasks Done, committed, and independently re-verified.**
+  `T-Cx4Jf1` (Parts A+B) and `T-Ee3Mn8` (both rework halves) each got an independent re-verification
+  pass at close-out since their own `STATUS.md`s had gone stale relative to the merged code; one real
+  regression found by that process (`ao resume` after T4 discarding an operator's hand-resolution) was
+  fixed and pinned with a new test before closing. `T-Dr5Yq6` pass 2 reconciled the HLD's event
+  contract and closed out all five previously-open "known-defective as shipped" rows. Full-suite gates
+  at close: `pytest -q` 3831 passed / 8 skipped / 0 failed; `ruff` clean; `mypy src` 4 pre-existing
+  `_version.py` errors (unchanged baseline).
 
 ## Summary
 - **Goal**: Close the write-conflict gap ADR-0007 accepted and `meta/ROADMAP.md` §3.4/§4 carries.
@@ -82,8 +89,8 @@ Dependency order. Every task is <= 3 days and owns a disjoint file set.
 - [x] `T-Wl2Bq7-workspace-run-lock` — per-workspace isolation run lock + sync diagnostics (R-4, R-12) — **1.5 d** — deps: T-Wk3Nv6, T-En8Hd4
 - [x] `T-Cx4Jf1-cli-config-prune-observability` — `--isolation`, config block, `ao prune` GC, events, `status.json`, dashboard column — **2.5 d** — deps: T-Wk3Nv6, T-Ib5Qy9, T-En8Hd4
 - [x] `T-Tp7Zs2-instructions-and-templates` — conflict-friendly rules, `merge-resolve.md`, `routed-runner` contract/template wiring, removal of the `git push` directives from six instruction files — **2 d** — deps: T-Sc7Rm2
-- [ ] `T-Ee3Mn8-e2e-and-review` — git fixtures, e2e via `CliRunner`, NFR-2 gate, security review of the path-guard widening — **3 d** — deps: all above
-- [ ] `T-Dr5Yq6-docs-refresh` — reconcile `docs-md/` + ADR-0013 status against the as-built implementation — **1 d** — deps: T-Ee3Mn8
+- [x] `T-Ee3Mn8-e2e-and-review` — git fixtures, e2e via `CliRunner`, NFR-2 gate, security review of the path-guard widening — **3 d** — deps: all above
+- [x] `T-Dr5Yq6-docs-refresh` — reconcile `docs-md/` + ADR-0013 status against the as-built implementation — **1 d** — deps: T-Ee3Mn8
 
 ## Sprint plan
 

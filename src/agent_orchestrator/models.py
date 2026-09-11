@@ -494,10 +494,20 @@ class IntegrationSpec(BaseModel):
     # (empty credential.helper, unreachable proxy, GIT_TERMINAL_PROMPT=0) so a hijacked
     # `git push` has nowhere to go.
     resolver_deny_push: bool = True
-    # R-4: policy when a second run wants an isolation context in the same workspace.
-    # Semantics are fixed by T-En8Hd4; this field is RESERVED here only so the schema is
-    # not reopened later -- this ticket implements no behaviour for it. Coordinates with
-    # E-Sc9Rt4's per-workspace concurrency cap.
+    # R-4/T-Wl2Bq7 (HLD §12.3, ADR-0013 D8): policy for the per-workspace, cross-process
+    # `WorkspaceRunLock` (`isolation/runlock.py`) that serializes the ONE unsafe part of
+    # running two isolated `ao` runs against the same workspace concurrently -- fast-
+    # forwarding the shared physical checkout (`Orchestrator._sync_checkout`); landing onto
+    # each run's own integration ref is already safe by construction via the per-repo
+    # `IntegrationLock` + update-ref CAS and needs no help from this field.
+    # "require" (default): claim the lock before creating any integration ref; a live
+    #   holder degrades this run to `isolation: none` (or fails it outright under
+    #   `isolation.strict`) rather than risk an unprotected checkout sync.
+    # "skip_sync": still attempts the claim (best-effort, logged if denied) but isolates
+    #   regardless of the outcome -- `_sync_checkout` unconditionally skips the fast-
+    #   forward for this policy, so no lock is actually needed for correctness.
+    # "off": never calls `acquire()` at all -- no lock, no protection against a concurrent
+    #   run's checkout sync; only a warning is logged.
     workspace_lock: Literal["require", "skip_sync", "off"] = "require"
     max_resolver_attempts: int = Field(default=1, ge=0)
     max_reruns_per_task: int = Field(default=1, ge=0)
@@ -786,7 +796,10 @@ class RunIntegrationState(BaseModel):
     # S-5: {"auto": N, "mechanical": N, "llm": N, "rerun": N} -- makes a run's free-tier
     # (specifically rerere) resolution volume visible without a new field later.
     tier_counts: dict[str, int] = {}
-    # R-4: semantics fixed by T-En8Hd4; reserved here only so the schema is not reopened.
+    # R-4/T-Wl2Bq7: True while this run holds the per-workspace `WorkspaceRunLock`
+    # (`isolation/runlock.py`), claimed by `_activate_integration` per `IntegrationSpec.
+    # workspace_lock` and released in `run()`'s `finally`. Drives whether `_sync_checkout`
+    # is permitted to fast-forward the shared physical checkout at a barrier/run end.
     workspace_lock_held: bool = False
     branch: str | None = None  # e.g. "ao/<run_id>/integration"
     repos: dict[str, str] = {}  # repo_key -> git common dir

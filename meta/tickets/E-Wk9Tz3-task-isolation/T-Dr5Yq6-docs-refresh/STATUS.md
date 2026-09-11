@@ -1,9 +1,51 @@
 # STATUS
 
 - ID: `T-Dr5Yq6-docs-refresh`
-- Updated At: 2026-09-07
-- State: In Review (pass 1 of 2 complete — a second pass is scheduled and named below)
-- Owner: architect (agent)
+- Updated At: 2026-09-11
+- State: Done (pass 2 of 2 complete)
+- Owner: architect (agent) / manager (pass 2)
+
+## Pass 2 (2026-09-11, executed by the epic manager at close-out)
+
+Both items deferred at the end of pass 1 are now done:
+
+1. **HLD §11 M9's event contract table + status.json/dashboard text.** Reconciled against
+   `T-Cx4Jf1` Part B's shipped event emission (independently re-verified, not merely re-read from that
+   ticket's own claims). The `NOT YET RECONCILED` banner is replaced with a corrected field contract:
+   only `engine.py`/`isolation/integrator.py` lines carry `run_id`/`task_id` (the three module-level
+   -logger emitters carry neither); `repo` is genuinely absent from the per-task/per-run lines, not a
+   omission; `conflicted` is a count on the engine's lines but a `paths` list on the integrator's own
+   `integration.conflict`/`denylisted_path`; the two head shas are `head_from`/`head_to`, never
+   `from`/`to` (a reserved word); `duration_ms` exists only on the engine's four per-task terminal
+   lines. §24's R-12 and S-5 rows are re-dispositioned from "outstanding"/"open" to **Fixed**, each
+   with the concrete evidence (the real collision measurement; the tier_counts/dashboard tests).
+2. **`meta/learnings.md` / `meta/learning-compact.md` placeholders.** Replaced with four real,
+   individually-marked entries distilled from this epic's actual execution — the self-referential gate
+   needing its own exception-list maintenance, the alias-defeatable AST guard, the retry-ladder
+   mode-reset defect, and the mega-commit evidence-drift risk. Nothing invented beyond what actually
+   happened in this epic.
+
+Also closed during the same pass, beyond pass 2's original two deferred items, because they surfaced
+directly from re-verifying pass 1's own "Defects found" list against the merged code a second time:
+
+3. **Defect 1 (T4-resume discards hand-resolution) — fixed**, not merely documented. `engine.py`'s T4
+   branch now resets `ti.mode = "normal"`; regression test added; HLD §12.2 and the "Known-defective as
+   shipped" table (now "closed by pass 2") both updated. This was pass 1's most important finding and
+   pass 2 is what actually closed it.
+4. **Defect 2 (stale `workspace_lock` docstring) — fixed** in both `models.py` and
+   `specs/workflow.schema.json`, plus the same stale-comment pattern found and fixed on the adjacent
+   `RunIntegrationState.workspace_lock_held` field (not originally named).
+5. **Epic-level status sync** (handed to the epic owner at the end of pass 1) — performed: see the
+   epic `EPIC.md`/`STATUS.md` rollup and every task's `TASK.md`/`STATUS.md`, all now consistently
+   `Done`.
+6. **The `meta/ROADMAP.md` edits pass 1 already made** were re-checked against the final as-built state
+   (no further change needed — isolation is still opt-in/off-by-default and every §3.4/§4 wording pass
+   1 wrote still holds).
+
+Gates: `pytest -q` 3831 passed / 8 skipped / 0 failed; `ruff check .` / `ruff format --check .` clean;
+`mypy src` 4 pre-existing `_version.py` errors, unchanged. No markdown link added or removed in this
+pass; the two touched HLD sections (§11 M9, §24/§25) were spot-checked for dangling anchors.
+— By: manager · Role: manager · Date: 2026-09-11 · Comment: Pass 2 complete; epic ready to close.
 
 ## This update
 

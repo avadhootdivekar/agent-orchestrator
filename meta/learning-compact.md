@@ -82,4 +82,7 @@
 - When a defect persists artifacts on failure, test the fix against already-damaged state, not just clean fixtures. (By: agent, agent, 2026-08-31)
 - "UI unreachable" is two gates: loopback bind (TCP refused) vs Host allowlist (421) — `0.0.0.0` is never a sent Host. (By: agent, agent, 2026-08-31)
 - `reconcile()` stamps `finished_at` on dead PIDs — a fixture that must read as alive needs `os.getpid()`. (By: agent, agent, 2026-08-31)
-- PLACEHOLDER (E-Wk9Tz3 per-task git isolation): reserved for this epic's distilled execution learnings, pending the epic owner's input. Deliberately not filled with invented entries — see the matching placeholder in `meta/learnings.md`. (By: architect, architect, 2026-09-07)
+- A self-referential "no pre-existing test edited" gate with a named-exceptions list is a living contract — every ticket that extends an exempted file must add its own entry, or the gate fails on its own tree later. (By: manager, manager, 2026-09-11)
+- An AST "forbidden call" guard matching a literal `module.func(...)` is defeated by any import alias/`from`-import/variable-argv — track import bindings, or invert to importer-set equality. (By: manager, manager, 2026-09-11)
+- A retry-ladder "which tier is in flight" field must be reset to normal on the ladder's own terminal failure, not just `status` — otherwise a later resume replays stale escalation logic (e.g. a destructive reset-hard) instead of a plain retry. (By: manager, manager, 2026-09-11)
+- Many tickets landing as one late mega-commit lets each ticket's `STATUS.md` drift out of sync with the code it describes well before anyone notices — re-verify a stale-looking ticket against live file content, not its own narrative. (By: manager, manager, 2026-09-11)
