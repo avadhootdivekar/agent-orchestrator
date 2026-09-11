@@ -434,6 +434,13 @@ Per-workflow `defaults.max_parallel` (author intent; needs schema change); proce
 adaptive `N` from load/budget; per-agent concurrency; speculative/branch-parallel routing;
 throughput-oriented launch reordering (would break the deterministic tie-break).
 
+> **Follow-on delivered.** The write-conflict gap this design accepted (co-scheduled tasks are not
+> checked for overlapping outputs) is closed — opt-in — by per-task git worktree isolation:
+> [`task-isolation-hld.md`](task-isolation-hld.md) /
+> [ADR-0013](adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md). The wave/barrier scheduler
+> here is unchanged; isolation layers a soft, never-blocking co-scheduling preference on top of it and
+> makes non-isolated tasks barriers while a run has an integration context.
+
 ---
 
 ## 13. Execution readiness

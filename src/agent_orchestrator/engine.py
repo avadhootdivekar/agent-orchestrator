@@ -40,6 +40,7 @@ from .isolation import paths as isolation_paths
 from .isolation.git import GIT_MIN_VERSION, GitRepo
 from .isolation.hotspots import load_hotspots
 from .isolation.integrator import (
+    STATUS_CONFLICT_RERUN,
     EscalationHook,
     IntegrationResult,
     Integrator,
@@ -55,6 +56,7 @@ from .models import (
     BUILTIN_BUDGET_EXHAUSTED,
     BUILTIN_BUDGET_UNSATISFIABLE,
     BUILTIN_QUOTA_MAX_WAIT,
+    DEFAULT_LADDER,
     DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
     DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
     DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
@@ -64,11 +66,13 @@ from .models import (
     ISOLATION_NONE,
     ISOLATION_WORKTREE,
     OVERLAP_SOFT,
+    TIER_RERUN,
     CircuitBreakerSpec,
     EstimatorConfig,
     IntegrationSpec,
     LoopSpec,
     MonitorDecisionRecord,
+    ResolverTier,
     RouterSpec,
     RunState,
     TaskContext,
@@ -96,7 +100,7 @@ from .monitoring import (
     build_task_failure_summary,
 )
 from .runstate import RunStateStore
-from .scheduling.overlap import rank_wave
+from .scheduling.overlap import overlap_score, rank_wave
 from .spec import validate_isolation
 
 # Valid origin values for injected/loop tasks
@@ -139,6 +143,16 @@ _INTEGRATION_MODE_NORMAL = "normal"
 _INTEGRATION_MODE_RESOLVE = "resolve"
 _INTEGRATION_MODE_RERUN = "rerun"
 
+# E-Wk9Tz3 T-Cx4Jf1 Part B (S-7/AC-12): the operator remedy named on every
+# `worktree.retention_high` line -- a named constant, not a literal at the emission site,
+# so the CLI surface and the warning can never drift apart.
+_WORKTREE_RETENTION_REMEDY = "ao prune --worktrees-only"
+
+# E-Wk9Tz3 T-Cx4Jf1 Part B (S-5/AC-11, HLD §11 M9): ladder tier ordering, DERIVED from
+# `models.DEFAULT_LADDER` -- the one place the ladder order is declared -- so "which tier
+# is higher" can never drift from the ladder itself.
+_TIER_RANK: dict[str, int] = {tier: rank for rank, tier in enumerate(DEFAULT_LADDER)}
+
 # The packaged builtin T2 resolver instruction (AC-3), copied into the run dir at requeue
 # time. Resolved against engine.py's own `__file__` (not an `importlib.resources` lookup,
 # and not an import of the `templates` package) so wiring this ticket's one asset costs no
@@ -155,6 +169,67 @@ _ENV_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_]")
 def _env_safe(value: str) -> str:
     """Uppercase, env-var-safe suffix for AO_WORKTREE_ROOT_<REPO_ID> (AC-8)."""
     return _ENV_UNSAFE_RE.sub("_", value).upper()
+
+
+def _max_tier(*tiers: ResolverTier | None) -> ResolverTier | None:
+    """Highest-ranked of *tiers* per `_TIER_RANK`; ``None`` when every argument is ``None``.
+
+    S-5/AC-11: a task's `tier_reached` accumulates the HIGHEST tier any of its integration
+    attempts reached. Without this a task that conflicted, escalated and then landed
+    cleanly on a fresh base would report `tier_reached: "auto"` -- the successful final
+    attempt silently erasing the fact that it was never free.
+    """
+    known = [t for t in tiers if t is not None]
+    if not known:
+        return None
+    return max(known, key=lambda t: _TIER_RANK.get(t, -1))
+
+
+def _integration_tier_outcomes(integ: IntegrationResult) -> list[ResolverTier]:
+    """The ladder tiers ONE integration attempt actually consumed (S-5/AC-11).
+
+    ``integ.tier_reached`` is the tier the rebase itself reached (`auto`/`mechanical`, or
+    `llm` once a T2 resolver's `resume_integration` lands). No `IntegrationResult` ever
+    reports ``tier_reached == "rerun"``, though: `escalation.escalate` deliberately leaves
+    `tier_reached` unset for a T3 decision (`Integrator._merge_escalation` then fills in
+    the tier that was just *attempted*), and the rerun's own later attempt lands on a fresh
+    base at tier `auto`. So a T3 escalation is credited here explicitly -- otherwise the
+    single most expensive tier in the ladder would never appear in `tier_counts` at all.
+
+    A T2 (`conflict_resolver`) escalation is deliberately NOT credited `llm` here: that
+    tier IS reported, by the resolver's own `resume_integration` settle, so crediting it at
+    dispatch time as well would double-count one resolution.
+    """
+    tiers: list[ResolverTier] = []
+    if integ.tier_reached is not None:
+        tiers.append(integ.tier_reached)
+    if integ.status == STATUS_CONFLICT_RERUN:
+        tiers.append(TIER_RERUN)
+    return tiers
+
+
+def _integration_event_fields(
+    tid: str,
+    ti: TaskIntegrationState,
+    tier: ResolverTier | None,
+    duration_ms: int | None,
+) -> dict[str, object]:
+    """The HLD §11 M9 common field set every per-task `integration.*` line carries.
+
+    `run_id` is injected by the run-scoped `LoggerAdapter` (`logging_setup.get_run_logger`)
+    and is therefore deliberately absent here -- adding it at the call site would duplicate
+    it, not add it. `conflicted` is a COUNT, never file contents nor even paths (NFR-1);
+    the paths themselves ride only on `integration.failed`, where AC-10 requires them so an
+    operator can find the worktree without grepping the log.
+    """
+    return {
+        "task_id": tid,
+        "repo": sorted(ti.repos),
+        "tier": tier,
+        "conflicted": len(ti.conflicted_paths),
+        "attempt": ti.attempts,
+        "duration_ms": duration_ms,
+    }
 
 
 def _iso_repo_paths(task_iso: TaskIsolation) -> dict[str, str]:
@@ -352,6 +427,11 @@ class WorkerOutcome:
     missing_outputs: list[str] | None = None
     task_iso: TaskIsolation | None = None
     rerun_base: dict[str, str] | None = None
+    # E-Wk9Tz3 T-Cx4Jf1 Part B (HLD §11 M9 `duration_ms`): wall time this attempt spent
+    # inside `Integrator` (squash/rebase/resolve/verify/land), measured on the worker where
+    # the work actually happens. Observability only -- nothing reads it as a decision
+    # input. `None` whenever `integration` is `None` (integrate() was never called).
+    integration_duration_ms: int | None = None
 
 
 @dataclass
@@ -726,16 +806,25 @@ class Orchestrator:
                     # always does), so `pref == "soft"` alone is not enough to move dispatch
                     # order at N=1; both guards hold independently.
                     pref = resolve_overlap_preference(workflow)
+                    touches = {t.id: t.touches for t in workflow.tasks}
                     candidates = (
                         rank_wave(
                             ready,
-                            {t.id: t.touches for t in workflow.tasks},
+                            touches,
                             ctx.hotspots,
                             self._max_parallel - len(in_flight),
                         )
                         if pref == OVERLAP_SOFT
                         else ready
                     )
+                    if pref == OVERLAP_SOFT and candidates:
+                        # HLD §11 M9: one `scheduling.overlap_preferred` line per wave,
+                        # chosen ids + score, ONLY at `overlap_preference: soft` -- so a
+                        # workflow with no isolation anywhere emits nothing at all (NFR-2).
+                        # Purely a log of the ordering `rank_wave` just returned: the score
+                        # is recomputed with the same pure function `rank_wave` used, and
+                        # nothing here feeds back into the dispatch decision.
+                        self._log_overlap_preference(candidates, touches, ctx)
 
                     for tid in candidates:
                         if len(in_flight) >= self._max_parallel:
@@ -1711,12 +1800,45 @@ class Orchestrator:
                 ts.outputs_present = False
                 if ctx.worktree_manager is not None:
                     ctx.worktree_manager.release(tid, "failed", workflow.integration.keep_worktrees)
+                # AC-7 (T-Cx4Jf1 Part B): this branch is a TERMINAL path for the task's
+                # integration lifecycle and used to exit silently -- an isolated task could
+                # end `failed`, have its worktree released, and leave no `integration.*`
+                # line in run.log at all. `integrate()` was never called here, so there is
+                # no tier/duration to report; `reason` carries the same value `ti.last_error`
+                # just recorded.
+                run_log.error(
+                    "integration.failed",
+                    extra={
+                        **_integration_event_fields(tid, ti, None, None),
+                        "event": "integration.failed",
+                        "reason": ti.last_error,
+                        "worktrees": dict(ti.repos),
+                        "branches": dict(ti.branches),
+                    },
+                )
                 self._warn_if_retention_high(state, workflow, ctx)
             else:
                 integ = outcome.integration
+                integ_ms = outcome.integration_duration_ms
                 ti.attempts += 1
-                ti.tier_reached = integ.tier_reached
-                ti.conflicted_paths = list(integ.conflicted_paths)
+                # S-5/AC-11 (coordinator decision, 2026-09-07): accumulate rather than
+                # overwrite. A conflicted task that is rerun and then lands cleanly on a
+                # fresh base reports `tier_reached: "auto"` under last-attempt-wins, so
+                # `status.json` forgets it ever conflicted -- exactly the free-tier
+                # invisibility S-5 exists to prevent. Highest-tier-reached across attempts,
+                # and the conflicting attempt's path list survives a later clean one (an
+                # attempt that did not conflict carries no information about one that did).
+                attempt_tiers = _integration_tier_outcomes(integ)
+                ti.tier_reached = _max_tier(ti.tier_reached, *attempt_tiers)
+                if integ.conflicted_paths:
+                    ti.conflicted_paths = list(integ.conflicted_paths)
+                for tier in attempt_tiers:
+                    state.integration.tier_counts[tier] = (
+                        state.integration.tier_counts.get(tier, 0) + 1
+                    )
+                # The tier THIS attempt consumed (not the run-long accumulation above), so
+                # one event line always describes one integration attempt.
+                attempt_tier = _max_tier(*attempt_tiers)
                 ti.verify_status = integ.verify_status
                 # E-Wk9Tz3 T-Lr6Ka3 (AC-8): durable per-repo squash shas, needed by a T3
                 # rerun's `export_previous_patch` (the superseded squash is the diff's
@@ -1724,6 +1846,9 @@ class Orchestrator:
                 # `{}` for a clean "integrated"/"empty" landing).
                 ti.squash_commits.update(integ.squash)
                 if integ.status in ("integrated", "empty"):
+                    # HLD §11 M9 `from`/`to`: captured BEFORE the update, so the merged
+                    # line reports the head each repo moved FROM as well as TO.
+                    head_from = {k: state.integration.heads.get(k) for k in integ.heads}
                     state.integration.heads.update(integ.heads)
                     ti.status = "integrated"
                     ti.mode = "normal"
@@ -1740,16 +1865,22 @@ class Orchestrator:
                             tid, "integrated", workflow.integration.keep_worktrees
                         )
                     if not copy_ok:
+                        # The MERGE itself landed; only the untracked-outputs copy-back
+                        # failed (`_copy_untracked_outputs` already logged
+                        # `integration.untracked_outputs_blocked` with the offending
+                        # output). AC-7: the merged line is emitted either way, so this
+                        # terminal path is not silent -- it used to be.
                         ts.status = "failed"
-                    else:
-                        run_log.info(
-                            "integration.merged",
-                            extra={
-                                "event": "integration.merged",
-                                "task_id": tid,
-                                "heads": integ.heads,
-                            },
-                        )
+                    run_log.info(
+                        "integration.merged",
+                        extra={
+                            **_integration_event_fields(tid, ti, attempt_tier, integ_ms),
+                            "event": "integration.merged",
+                            "heads": integ.heads,
+                            "head_from": head_from,
+                            "head_to": dict(integ.heads),
+                        },
+                    )
                 elif integ.status == "conflict_resolver":
                     ti.status = "conflict_resolver"
                     ti.mode = "resolve"
@@ -1757,7 +1888,11 @@ class Orchestrator:
                     ts.status = "pending"
                     run_log.info(
                         "integration.resolver_dispatched",
-                        extra={"event": "integration.resolver_dispatched", "task_id": tid},
+                        extra={
+                            **_integration_event_fields(tid, ti, attempt_tier, integ_ms),
+                            "event": "integration.resolver_dispatched",
+                            "resolver_attempts": ti.resolver_attempts,
+                        },
                     )
                     self._runstate.save(state)
                     return SettleResult(signal="requeue")
@@ -1768,7 +1903,11 @@ class Orchestrator:
                     ts.status = "pending"
                     run_log.info(
                         "integration.rerun_dispatched",
-                        extra={"event": "integration.rerun_dispatched", "task_id": tid},
+                        extra={
+                            **_integration_event_fields(tid, ti, attempt_tier, integ_ms),
+                            "event": "integration.rerun_dispatched",
+                            "reruns": ti.reruns,
+                        },
                     )
                     self._runstate.save(state)
                     return SettleResult(signal="requeue")
@@ -1779,8 +1918,8 @@ class Orchestrator:
                     run_log.error(
                         "integration.failed",
                         extra={
+                            **_integration_event_fields(tid, ti, attempt_tier, integ_ms),
                             "event": "integration.failed",
-                            "task_id": tid,
                             "reason": integ.reason,
                             # AC-10: names the conflicted paths, worktree path(s) and
                             # branch(es) directly on the event (T-Lr6Ka3), not only inside
@@ -2295,6 +2434,38 @@ class Orchestrator:
             task_iso, run_integration, task_integration, attempt, agent_id=agent_id
         )
 
+    def _integrate_task_timed(
+        self,
+        integrator: Integrator,
+        task_iso: TaskIsolation,
+        run_integration: RunIntegrationSnapshot,
+        task_integration: TaskIntegrationState,
+        *,
+        agent_id: str,
+        attempt: int,
+        resume: bool = False,
+    ) -> tuple[IntegrationResult, int]:
+        """`_integrate_task` plus the HLD §11 M9 `duration_ms` measurement (T-Cx4Jf1 Part
+        B, observability only).
+
+        Wraps rather than extends `_integrate_task` so THE single call site into
+        `isolation.integrator.Integrator` keeps the exact signature `T-En8Hd4` pinned for
+        it. Timed off the injected `self._clock` (never `time.time()`), so a fixed-clock
+        test reports a deterministic 0 rather than an unassertable wall duration.
+        """
+        started = self._clock()
+        result = self._integrate_task(
+            integrator,
+            task_iso,
+            run_integration,
+            task_integration,
+            agent_id=agent_id,
+            attempt=attempt,
+            resume=resume,
+        )
+        elapsed_ms = int((self._clock() - started).total_seconds() * 1000)
+        return result, max(0, elapsed_ms)
+
     def _activate_integration(
         self, state: RunState, workflow: WorkflowSpec, ctx: _RunContext
     ) -> bool:
@@ -2683,6 +2854,35 @@ class Orchestrator:
             )
         return True
 
+    def _log_overlap_preference(
+        self,
+        candidates: list[str],
+        touches: dict[str, list[str]],
+        ctx: _RunContext,
+    ) -> None:
+        """HLD §11 M9 `scheduling.overlap_preferred` (R-5/FR-10 observability).
+
+        Emitted once per wave whenever `resolve_overlap_preference` is `soft`, naming the
+        ranked ids and each one's overlap score AGAINST THE IDS RANKED BEFORE IT -- the
+        exact quantity `rank_wave` minimised, so the log explains the order it produced
+        rather than restating it. `overlap_score` is the same pure, filesystem-free
+        function `rank_wave` itself calls (no second copy of the scoring rule), and a task
+        with no `touches` hint scores `0.0` -- "no hint == no opinion, never a penalty".
+        """
+        selected: list[str] = []
+        scores: dict[str, float] = {}
+        for tid in candidates:
+            scores[tid] = overlap_score(tid, selected, touches, ctx.hotspots)
+            selected.append(tid)
+        ctx.run_log.info(
+            "scheduling.overlap_preferred",
+            extra={
+                "event": "scheduling.overlap_preferred",
+                "chosen": list(candidates),
+                "scores": scores,
+            },
+        )
+
     def _warn_if_retention_high(
         self, state: RunState, workflow: WorkflowSpec, ctx: _RunContext
     ) -> None:
@@ -2706,7 +2906,7 @@ class Orchestrator:
                     "event": "worktree.retention_high",
                     "retained": retained,
                     "threshold": _WORKTREE_RETENTION_WARN_THRESHOLD,
-                    "remedy": "ao prune --worktrees-only",
+                    "remedy": _WORKTREE_RETENTION_REMEDY,
                 },
             )
 
@@ -2727,6 +2927,9 @@ class Orchestrator:
                 "integrated": integrated,
                 "conflicts": conflicts,
                 "failed": failed_count,
+                # S-5/AC-11: the per-run tier histogram, so a run whose conflicts were all
+                # absorbed by the free/mechanical tiers still says so out loud.
+                "tier_counts": dict(state.integration.tier_counts),
             },
         )
 
@@ -3269,7 +3472,7 @@ class Orchestrator:
                 skip_result = TaskResult(
                     task_id=task.id, status="succeeded", attempts=0, actuals_available=False
                 )
-                integration = self._integrate_task(
+                integration, integ_ms = self._integrate_task_timed(
                     integrator,
                     task_iso,
                     run_integration,
@@ -3278,7 +3481,12 @@ class Orchestrator:
                     attempt=ti.attempts,
                     resume=True,
                 )
-                return WorkerOutcome(skip_result, integration, task_iso=task_iso)
+                return WorkerOutcome(
+                    skip_result,
+                    integration,
+                    task_iso=task_iso,
+                    integration_duration_ms=integ_ms,
+                )
         elif mode == _INTEGRATION_MODE_RERUN and ti is not None and task_iso is not None:
             assert run_integration is not None
             dispatch_task, rerun_base = self._prepare_rerun_dispatch(
@@ -3316,7 +3524,7 @@ class Orchestrator:
             # fresh `attempt=ti.attempts + 1` would look up a squash ref that was never
             # created, since resuming doesn't allocate a new one.
             assert integrator is not None and run_integration is not None
-            integration = self._integrate_task(
+            integration, integ_ms = self._integrate_task_timed(
                 integrator,
                 task_iso,
                 run_integration,
@@ -3325,7 +3533,9 @@ class Orchestrator:
                 attempt=ti.attempts,
                 resume=True,
             )
-            return WorkerOutcome(result, integration, task_iso=task_iso)
+            return WorkerOutcome(
+                result, integration, task_iso=task_iso, integration_duration_ms=integ_ms
+            )
 
         # R-2: outputs gate integration -- on the worker, through the isolated view, BEFORE
         # integrate() is called. The main-thread check in _settle_completed_task is left
@@ -3340,7 +3550,7 @@ class Orchestrator:
 
         assert integrator is not None and run_integration is not None
         ti = state.task_integration[task.id]
-        integration = self._integrate_task(
+        integration, integ_ms = self._integrate_task_timed(
             integrator,
             task_iso,
             run_integration,
@@ -3348,7 +3558,13 @@ class Orchestrator:
             agent_id=agent_id,
             attempt=ti.attempts + 1,
         )
-        return WorkerOutcome(result, integration, task_iso=task_iso, rerun_base=rerun_base)
+        return WorkerOutcome(
+            result,
+            integration,
+            task_iso=task_iso,
+            rerun_base=rerun_base,
+            integration_duration_ms=integ_ms,
+        )
 
     def _prepare_resolver_dispatch(
         self,

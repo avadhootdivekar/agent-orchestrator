@@ -541,3 +541,140 @@
   `task_integration[...].base_commits`. `max_resolver_attempts > 1` is now supported rather than
   latently unsafe. Gates: ruff check/format clean, `mypy src` 4 pre-existing `_version.py` errors,
   full suite green.
+
+- **2026-09-07 — coordinator live-run validation (deploy/run-path gate, CLAUDE.md checklist item 5).**
+  Drove the shipped CLI against a throwaway git repo outside the test suite: two parallel isolated
+  tasks (`--max-parallel 2`, `defaults.isolation: worktree`, `integration.ladder:
+  ["auto","mechanical","rerun"]`), a real `claude_cli` agent whose command template is a shell
+  script, both tasks deliberately rewriting the SAME line of a shared file. Result: both worktrees
+  created off the same base; the first task squashed, rebased fast-path, verified and landed; the
+  second genuinely conflicted on that file, was dispatched as a T3 rerun on the fresh base
+  (`integration.rerun_dispatched`), reran and landed; the main checkout fast-forwarded to the final
+  head with both tasks' files present. **The headline feature works end to end on a real run.**
+  Two observability gaps and one GC defect found in the process, all routed rather than papered
+  over:
+  - `integration.tier_counts` stayed `{}` for the whole run — the S-5 increment is missing, not
+    partial. Routed to `T-Cx4Jf1` Part B (its AC-11).
+  - A task that conflicts and is then rerun reports `tier_reached: "auto"`, `conflicted_count: 0`,
+    `integration_status: "integrated"` in `status.json`: the clean final attempt's values overwrite
+    the conflicting attempt's, so nothing outside `run.log` records that the task ever conflicted.
+    Routed to `T-Cx4Jf1` Part B with a preferred semantics (highest tier reached across attempts).
+  - **`ao prune` leaks every `ao/` ref of a fully successful run.** Repo discovery probes physical
+    worktree directories, which the engine has already removed for every task that succeeded, so
+    the run's `refs/heads/ao/<run>/*` and `refs/ao/runs/<run>/**` are never deleted — the exact
+    leak class AC-6 exists to eliminate, occurring on the NORMAL path rather than the documented
+    edge case. Fix assigned (fall back to `RunIntegrationState.repos`, which already records each
+    repo's git common dir); notes will land in that ticket's `PRUNE-FIX-NOTES.md`.
+  Second live scenario, same setup: the same workflow (`defaults.isolation: worktree`) run twice,
+  once with `--no-isolation` and once without. With the kill switch the run took the shared-checkout
+  path and created **zero** worktrees and **zero** `ao/` refs; without it the same spec created the
+  worktree, activated the integration branch, verified, landed, fast-forward-synced the checkout and
+  removed the worktree (3 `ao/` refs left for GC). The kill switch behaves as AC-2 specifies on a
+  real run. One incidental confirmation: the deliberately mis-named output in the kill-switch run
+  was caught by the missing-declared-output gate (`task.fail`), so that check is live outside tests
+  too. One usability note, not a defect: `--no-isolation` does not bypass spec validation, so a
+  workflow whose `integration.ladder` includes `llm` without a `resolver_agent` is still rejected
+  before the run starts. Any workflow that ever ran isolated is unaffected; documented rather than
+  changed.
+
+- **2026-09-07 — `T-Ee3Mn8-e2e-and-review` review: REWORK, rework assigned.** The independent review
+  (`T-Ee3Mn8-e2e-and-review/REVIEW.md`, mutation-based rather than a reading pass) confirmed the good
+  half — all three former xfails really were test bugs (each re-proved by disabling the corresponding
+  product gate), the NFR-2 golden compare, the `resolve_unchecked` containment guard and both ladder
+  cases are non-vacuous, no `src/` change is attributable to the ticket, and the five files pass 5
+  runs across 3 orderings with no state-dir, worktree or process leakage. It also found the gate
+  itself does not verify: 13 of 32 e2e tests assert only the CLI exit code (two "ladder" tests define
+  a single task, so no conflict can occur; the "second run" test invokes the CLI once; the "symlink
+  escape" test never creates a symlink), AC-17's artifact-containment cases came back in the weaker
+  form the architect amendment had replaced, and AC-5/AC-6/AC-7 are absent at every altitude — 22 of
+  the 34 `integration.*` events the engine emits are asserted by no test at all. Rework split across
+  two agents by file ownership: e2e strengthening plus the AC-5/6/7 cases in `test_e2e_isolation.py`;
+  the blocking AC-1 gate, the alias-defeatable git-subprocess guard and the real R-12 collision
+  measurement in the other two files. The review's own `tier_counts` and `worktree.retention_high`
+  findings were routed to `T-Cx4Jf1` Part B (the ticket that owns them) rather than fixed here.
+- **2026-09-07 — coordinator disposition on review note N-3** (`WorkflowSpec` silently accepting
+  unknown top-level keys): **no action, verified not reachable through the product surface.** The
+  reviewer is right about the pydantic model, but the CLI validates every workflow against
+  `specs/workflow.schema.json` first, and that schema sets `additionalProperties: false` — confirmed
+  by running `ao validate` on a workflow carrying a bogus top-level `isolation:` block, which exits 1
+  with "Additional properties are not allowed ('isolation' was unexpected)". The failure the reviewer
+  reproduced is reachable only by calling `model_validate` directly, i.e. from a test. Defence in
+  depth on the models is still worth doing eventually; filed as a note, not an epic defect.
+
+- **2026-09-07 — as-built security audit: DO NOT MERGE AS-IS; fixes assigned.** Report:
+  `REVIEW-security-asbuilt-2026-09-07.md` (11 findings proven by executable attack scripts, the rest
+  tagged as code-read). It confirms the architecture and most design-time controls as genuinely
+  shipped and working — engine git calls fire no repo hook, the per-task artifact view is scoped to
+  the settling task's own repos and rejects traversal/cross-task/cross-run paths, regenerate commands
+  are argv-only with a timeout, no `eval`/`exec`/`shell=True` anywhere, the ref sanitizer survived 17
+  hostile ids, the CAS retry is bounded and locks release on every exception path, and conflicted
+  file CONTENTS are never logged. But the one control the design itself called blocking — structural
+  containment of the T2 resolver — is ineffective as shipped, in three compounding ways, and there is
+  one non-security data-loss defect that blocks merge on its own:
+  - **C-1** the forced tool-denial union is silently discarded by the executor whenever the agent
+    spec carries any tool-policy flag of its own, so a resolver can re-enable exactly what the union
+    strips. **C-2** the push denial covers https only and is undone by one `env -u` or `git -c`;
+    local-path, `file://` and `ssh://` pushes all succeeded — and the packaged resolver instruction
+    tells the model it has no push access, which is false. **C-3** the resolver keeps a shell tool and
+    a linked worktree shares the main repo's object store, refs, config and hooks: the auditor
+    rewrote the run's integration ref, poisoned the reuse cache so a bad resolution auto-replays in
+    every future run, planted a hook in the operator's own checkout that outlives the run, and
+    installed a shell alias in the user's repo config.
+  - **C-4 (data loss)** reconciliation compares sanitized worktree/ref components against raw task
+    ids, so any task whose id is not sanitize-identity has its live worktree force-removed and its
+    branch deleted while the task is declared and current — on resume this runs before the task, so a
+    resumed run silently destroys completed-but-unlanded work.
+  - **H-1** resume trusts the integration branch name from run state, which an isolated task can
+    write, so the CAS can land task squashes on any ref including the default branch. **H-2** the
+    untracked-output copy-back follows symlinks, so a task can exfiltrate an arbitrary host file into
+    the shared workspace (the auditor copied a private key). **H-3** the secret denylist sees a wholly
+    untracked directory as one entry and misses everything nested inside it, and is absent entirely on
+    the resume and post-resolver staging paths — the paths that sweep the least-trusted writer's work.
+  Assignment: C-1/C-2/C-3/H-1/H-3 to one agent (executor, escalation, integrator, porcelain,
+  packaged resolver instruction); C-4/M-2/M-3 to another (worktrees, paths, spec validation); H-4's
+  prune safety guards back to the agent that owns the CLI; H-2 queued for `engine.py` as soon as the
+  `T-Cx4Jf1` Part B slice releases that file. M-1 (git-attribute filter/merge drivers are NOT
+  neutralized, unlike hooks) is accepted as a documented limitation and routed to `T-Dr5Yq6`.
+
+- **2026-09-07 — `T-Cx4Jf1-cli-config-prune-observability` Part B rollup: Done (all four ACs, plus the
+  deferred dashboard).** AC-7's event contract test drives a clean integration, a T1 mechanical
+  resolution and a T4 failure and pins the HLD §11 M9 event set with field-level assertions, the
+  "conflicted is a count, never contents" rule, and one-terminal-event-per-settle. Building it found
+  three genuine emission gaps, now filled: one settle path emitted **nothing at all**, the merged
+  event was suppressed when copy-back failed, and the overlap-preference event was emitted nowhere.
+  AC-11 confirmed the coordinator's live-run finding at the source — `tier_counts` had no write site
+  anywhere in `src/` — and adds the increment, including crediting the rerun tier at the T3 settle
+  where no result object ever reports it. Per the coordinator's arbitration, `tier_reached` and
+  `conflicted_count` now accumulate across attempts (highest tier reached; the conflicting attempt's
+  count survives) instead of being overwritten by a clean final attempt; verified against the
+  coordinator's own smoke repro, which now reports `{auto: 2, mechanical: 1, rerun: 1}` and shows the
+  reran task as `tier_reached: "rerun"` with its conflict count intact. AC-12's retention warning
+  turned out to be already implemented by `T-En8Hd4` and merely untested — verified against the AC,
+  its remedy string extracted to a constant, and covered for both halves (fires once across six
+  settles; silent when retention is off). AC-9 was de-deferred and delivered: integration column plus
+  run-header fields in the dashboard, backend and React, with tests. Seven HLD-vs-shipped event
+  divergences recorded for `T-Dr5Yq6` (field names, the integrator emitting paths where the HLD says
+  a count, two module loggers carrying no run id, and the shipped set being a superset of the
+  designed one). Gates on a clean tree: 3702 passed / 7 skipped / 0 failed, ruff clean, mypy at the 4
+  pre-existing errors.
+
+- **2026-09-07 — `T-Ee3Mn8` rework, gate/guard half: complete.** The blocking AC-1 gate is real
+  again. It computes the epic's branch point in-test (merge base with `ad/multi-workspace-service`,
+  cross-checked against the first epic commit's parent) and asserts that all 109 test paths that
+  existed at that point are byte-identical to their content there, with deletions failing it too.
+  Proved live by appending one comment line to a pre-epic test (caught), then moving that file away
+  (also caught), then restoring both byte-identical. Five files are declared exceptions, each
+  justified in the test itself and in the notes: two carry a cycle-key literal change from the
+  requeue-accounting ticket with totals unchanged, three are additive. Before/after counts reconcile
+  exactly: 2006 passed / 7 skipped / 2 failed at the branch point, 2045 / 7 / 0 now, the difference
+  being the 37 tests those five exception files gained plus two base-worktree spawn failures. The
+  golden no-regression comparison was kept and renamed to say what it actually measures.
+  The git-subprocess structural guard is now genuinely alias-proof: split into an alias-aware call
+  scan across all of `src/` with a six-file justified allowlist, plus an importer-set equality check
+  for the isolation package. All five bypasses the reviewer demonstrated are now caught, including
+  the one that was previously out of scope, plus three harder cases the fixer added (alias and
+  variable-argv inside a module that legitimately imports subprocess, and a shell-mode call). The
+  R-12 collision measurement was done for real against the consumer repo rather than a fixture:
+  a 4106-entry dirty snapshot intersected against the 873 paths integrated across 16 real epic runs
+  gives **zero collisions, 0.00%** — recorded honestly as weak evidence, since the snapshot is
+  all deletions in two directories and one run came close to touching one of them.

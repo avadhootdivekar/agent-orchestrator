@@ -24,6 +24,7 @@ from agent_orchestrator.isolation.git import GitRepo
 from agent_orchestrator.isolation.integrator import (
     CAS_RETRY_BOUND,
     REASON_DENYLISTED_PATH,
+    REASON_INVALID_INTEGRATION_REF,
     REASON_LOCK_TIMEOUT,
     REASON_REF_RACE,
     STATUS_CONFLICT_RESOLVER,
@@ -1626,15 +1627,20 @@ class TestResumeIntegration:
         """C-1 multi-repo variant: two repos, only ONE of which receives a sibling landing
         during the T2 window. The untouched repo lands its own (unaffected) work
         correctly; the moved repo's sibling commit is not dropped."""
+        # `ws` (not `tmp_path`) is the workspace root: `$AO_STATE_DIR` -- and therefore the
+        # worktree prefix -- lives at `tmp_path/ao-state` (conftest), and worktrees must lie
+        # entirely OUTSIDE the workspace root (M-3 guard in `paths.worktree_root_prefix_for`).
+        ws = tmp_path / "ws"
+        ws.mkdir()
         conflict_repo, base_sha, ours, theirs = make_conflict_repo(
-            tmp_path / "repo-conflict", "true_conflict"
+            ws / "repo-conflict", "true_conflict"
         )
-        clean_repo = make_repo(tmp_path / "repo-clean", files={"c.txt": "c\n"})
+        clean_repo = make_repo(ws / "repo-clean", files={"c.txt": "c\n"})
         conflict_iso = _isolated_repo_for(conflict_repo, "conflict")
         clean_iso = _isolated_repo_for(clean_repo, "clean")
         clean_base = _raw_git(["rev-parse", "HEAD"], clean_repo).strip()
         manager = WorktreeManager(
-            workspace_root=str(tmp_path),
+            workspace_root=str(ws),
             run_id="run-1",
             repos=[conflict_iso, clean_iso],
             integration_heads={conflict_iso.key: base_sha, clean_iso.key: clean_base},
@@ -1693,15 +1699,18 @@ class TestResumeIntegration:
         """Multi-repo: one repo conflicts (mid-rebase after the first `integrate()` call),
         the other never needed a rebase at all. `resume_integration` must land BOTH --
         exercising the "not `rebase_in_progress`" branch for the second repo."""
-        clean_repo = make_repo(tmp_path / "repo-clean", files={"c.txt": "c\n"})
+        # See the sibling test above: worktrees must lie outside the workspace root (M-3).
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        clean_repo = make_repo(ws / "repo-clean", files={"c.txt": "c\n"})
         conflict_repo, base_sha, ours, theirs = make_conflict_repo(
-            tmp_path / "repo-conflict", "true_conflict"
+            ws / "repo-conflict", "true_conflict"
         )
         clean_iso = _isolated_repo_for(clean_repo, "clean")
         conflict_iso = _isolated_repo_for(conflict_repo, "conflict")
         clean_base = _raw_git(["rev-parse", "HEAD"], clean_repo).strip()
         manager = WorktreeManager(
-            workspace_root=str(tmp_path),
+            workspace_root=str(ws),
             run_id="run-1",
             repos=[clean_iso, conflict_iso],
             integration_heads={clean_iso.key: clean_base, conflict_iso.key: base_sha},
@@ -2113,3 +2122,253 @@ class TestMaterializeConflict:
         squash = GitRepo(str(wt)).rev_parse(paths.squash_ref("run-1", "task-a", 2))
         assert squash is not None
         assert GitRepo(str(wt)).rev_parse(f"{squash}^") == original_base
+
+
+# ---------------------------------------------------------------------------------------
+# As-built security review (2026-09-07) regressions: H-1 (integration-ref namespace guard),
+# H-3 (denylist screen at EVERY staging site), C-3 (the ENGINE stages the resolver's work).
+#
+# Each test reproduces the AUDITOR's attack shape against real git, not just the new branch.
+# ---------------------------------------------------------------------------------------
+
+
+def _poisoned_snapshot(run_id: str, run_dir: Path, branch: str) -> RunIntegrationSnapshot:
+    """The snapshot the engine builds from `state.integration.branch` -- a field persisted
+    in `state.json`, which lives under `paths.RESERVED_SHARED_PREFIXES` and is therefore
+    writable from inside an isolated task's own worktree (H-1)."""
+    return RunIntegrationSnapshot(run_id=run_id, branch=branch, run_dir=str(run_dir))
+
+
+class TestIntegrationRefNamespaceGuard:
+    """H-1: `RunIntegrationState.branch` is attacker-writable and the CAS lands on whatever
+    it names. Every ref this module touches must sit under `refs/heads/ao/`."""
+
+    def _prepared_task(self, tmp_path: Path) -> tuple[Path, object, Integrator]:
+        repo = make_repo(tmp_path / "repo", files={"f.txt": "a\n"})
+        manager, _isos = _manager_for({"core": repo}, "run-1", tmp_path / "hooks")
+        task_iso = manager.ensure("task-a", 1, [])
+        wt = Path(task_iso.repos[0].worktree_root)
+        (wt / "new.txt").write_text("agent work\n")
+        return repo, task_iso, _integrator(IntegrationSpec(), tmp_path / "hooks")
+
+    @pytest.mark.parametrize(
+        "poisoned_branch",
+        [
+            "main",  # the auditor's exact payload
+            "master",
+            "ao/../../../main",  # satisfies a naive prefix check, still escapes
+            "refs/heads/main",
+            "",
+        ],
+    )
+    def test_integrate_refuses_a_branch_outside_the_reserved_namespace(
+        self, tmp_path: Path, poisoned_branch: str
+    ) -> None:
+        repo, task_iso, integrator = self._prepared_task(tmp_path)
+        main_before = _raw_git(["rev-parse", "refs/heads/main"], repo).strip()
+
+        result = integrator.integrate(
+            task_iso,
+            _poisoned_snapshot("run-1", tmp_path / "rundir", poisoned_branch),
+            TaskIntegrationState(),
+            1,
+            agent_id="agent-1",
+        )
+
+        assert result.status == STATUS_FAILED
+        assert result.reason == REASON_INVALID_INTEGRATION_REF
+        # The attack's actual objective: main must not have moved.
+        assert _raw_git(["rev-parse", "refs/heads/main"], repo).strip() == main_before
+
+    def test_resume_refuses_a_branch_outside_the_reserved_namespace(self, tmp_path: Path) -> None:
+        """The report's "one check covers both entry points" -- resume is the reachable
+        path, because the engine's safe re-derivation is skipped when `active` is already
+        True in a persisted `state.json`."""
+        repo, task_iso, integrator = self._prepared_task(tmp_path)
+        main_before = _raw_git(["rev-parse", "refs/heads/main"], repo).strip()
+
+        result = integrator.resume_integration(
+            task_iso,
+            _poisoned_snapshot("run-1", tmp_path / "rundir", "main"),
+            TaskIntegrationState(),
+            1,
+        )
+
+        assert result.status == STATUS_FAILED
+        assert result.reason == REASON_INVALID_INTEGRATION_REF
+        assert _raw_git(["rev-parse", "refs/heads/main"], repo).strip() == main_before
+
+    def test_materialize_conflict_refuses_a_branch_outside_the_reserved_namespace(
+        self, tmp_path: Path
+    ) -> None:
+        repo, task_iso, integrator = self._prepared_task(tmp_path)
+        result = integrator.materialize_conflict(
+            task_iso, _poisoned_snapshot("run-1", tmp_path / "rundir", "main"), 1
+        )
+        assert result.status == "failed"
+        assert result.reason == REASON_INVALID_INTEGRATION_REF
+
+    def test_the_legitimate_ao_branch_still_lands(self, tmp_path: Path) -> None:
+        """Non-vacuous: the guard rejects only what is outside the namespace."""
+        repo, task_iso, integrator = self._prepared_task(tmp_path)
+        result = integrator.integrate(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(),
+            1,
+            agent_id="agent-1",
+        )
+        assert result.status == STATUS_INTEGRATED
+
+
+class TestDenylistNestedUntrackedDirectory:
+    """H-3: git's default `--untracked-files=normal` collapses a wholly-untracked directory
+    to a single entry whose basename is `""`, so every secret nested inside one was screened
+    as `config/` and swept in. Reproduces `exp7_denylist.py` through the real `Integrator`."""
+
+    _PLANTED = {
+        ".env": "TOP_SECRET=1\n",
+        "config/.env": "NESTED_SECRET=1\n",
+        "deploy/id_rsa": "-----BEGIN PRIVATE KEY-----\n",
+        "certs/server.pem": "-----BEGIN CERT-----\n",
+    }
+
+    def _plant(self, wt: Path, payloads: dict[str, str]) -> None:
+        for rel, body in payloads.items():
+            target = wt / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body)
+
+    def test_secrets_nested_in_a_new_directory_are_caught(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path / "repo", files={"README": "x\n"})
+        manager, _isos = _manager_for({"core": repo}, "run-1", tmp_path / "hooks")
+        task_iso = manager.ensure("task-a", 1, [])
+        wt = Path(task_iso.repos[0].worktree_root)
+        self._plant(wt, self._PLANTED)
+
+        integrator = _integrator(IntegrationSpec(), tmp_path / "hooks")
+        result = integrator.integrate(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(),
+            1,
+            agent_id="agent-1",
+        )
+
+        assert result.status == STATUS_FAILED
+        assert result.reason == REASON_DENYLISTED_PATH
+        # ALL four, not just the root-level `.env` the old screen saw.
+        assert set(result.conflicted_paths) == set(self._PLANTED)
+        # Nothing was committed onto the task branch.
+        branch_ref = f"refs/heads/{task_iso.repos[0].branch}"
+        assert (
+            _raw_git(["rev-parse", branch_ref], repo).strip()
+            == _raw_git(["rev-parse", task_iso.repos[0].base], repo).strip()
+        )
+
+    def test_match_is_case_insensitive(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path / "repo", files={"README": "x\n"})
+        manager, _isos = _manager_for({"core": repo}, "run-1", tmp_path / "hooks")
+        task_iso = manager.ensure("task-a", 1, [])
+        wt = Path(task_iso.repos[0].worktree_root)
+        self._plant(wt, {"secrets/.ENV": "x\n", "secrets/My.PEM": "y\n"})
+
+        integrator = _integrator(IntegrationSpec(), tmp_path / "hooks")
+        result = integrator.integrate(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(),
+            1,
+            agent_id="agent-1",
+        )
+        assert result.status == STATUS_FAILED
+        assert result.reason == REASON_DENYLISTED_PATH
+        assert set(result.conflicted_paths) == {"secrets/.ENV", "secrets/My.PEM"}
+
+    def test_ordinary_nested_output_still_integrates(self, tmp_path: Path) -> None:
+        """Non-vacuous: `-uall` widens what is SEEN, never what is REJECTED."""
+        repo = make_repo(tmp_path / "repo", files={"README": "x\n"})
+        manager, _isos = _manager_for({"core": repo}, "run-1", tmp_path / "hooks")
+        task_iso = manager.ensure("task-a", 1, [])
+        self._plant(Path(task_iso.repos[0].worktree_root), {"build/report.txt": "fine\n"})
+
+        integrator = _integrator(IntegrationSpec(), tmp_path / "hooks")
+        result = integrator.integrate(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(),
+            1,
+            agent_id="agent-1",
+        )
+        assert result.status == STATUS_INTEGRATED
+
+
+class TestResolverStagingPathIsScreenedAndEngineOwned:
+    """C-3 + H-3 second bypass: `resume_integration` sweeps whatever the T2 resolver agent
+    just wrote -- the least-trusted writer in the system -- and had no denylist screen at
+    all. It is also the site that stages on the model's behalf, so the resolver needs no
+    shell."""
+
+    def _conflicted_resume_setup(
+        self, tmp_path: Path
+    ) -> tuple[Path, object, Integrator, Path, IntegrationResult]:
+        repo, base_sha, ours, theirs = make_conflict_repo(tmp_path / "repo", "true_conflict")
+        isolated = _isolated_repo_for(repo)
+        manager, _isos = _manager_for(
+            {"core": repo}, "run-1", tmp_path / "hooks", heads={isolated.key: base_sha}
+        )
+        task_iso = manager.ensure("task-a", 1, [])
+        ours_tip = _raw_git(["rev-parse", ours], repo).strip()
+        theirs_tip = _raw_git(["rev-parse", theirs], repo).strip()
+        wt = Path(task_iso.repos[0].worktree_root)
+        _raw_git(["cherry-pick", ours_tip], wt)
+        _set_integration_ref(repo, "run-1", theirs_tip)
+
+        integrator = _integrator(
+            IntegrationSpec(),
+            tmp_path / "hooks",
+            escalation_hook=_make_escalation_stub(status="conflict_resolver"),
+        )
+        first = integrator.integrate(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(),
+            1,
+            agent_id="agent-1",
+        )
+        assert first.status == STATUS_CONFLICT_RESOLVER
+        return repo, task_iso, integrator, wt, first
+
+    def test_engine_stages_a_resolver_that_only_edited_the_file(self, tmp_path: Path) -> None:
+        """C-3: the resolver has no `Bash` and never runs `git add` (merge-resolve.md rule
+        4 now says so). An edit-only resolution must still land."""
+        _repo, task_iso, integrator, wt, first = self._conflicted_resume_setup(tmp_path)
+
+        (wt / "f.txt").write_text("resolved\n")  # NO `git add` -- the engine stages.
+
+        result = integrator.resume_integration(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(conflicted_paths=first.conflicted_paths),
+            1,
+        )
+        assert result.status == STATUS_INTEGRATED
+
+    def test_resolver_planted_secret_is_screened_on_the_resume_path(self, tmp_path: Path) -> None:
+        """H-3 second bypass: `integrator.py`'s resume staging had no screen and no
+        `auto_commit` gate at all."""
+        _repo, task_iso, integrator, wt, first = self._conflicted_resume_setup(tmp_path)
+
+        (wt / "f.txt").write_text("resolved\n")
+        (wt / "config").mkdir(exist_ok=True)
+        (wt / "config" / ".env").write_text("EXFIL=1\n")  # nested, as in exp7
+
+        result = integrator.resume_integration(
+            task_iso,
+            _run_snapshot("run-1", tmp_path / "rundir"),
+            TaskIntegrationState(conflicted_paths=first.conflicted_paths),
+            1,
+        )
+        assert result.status == STATUS_FAILED
+        assert result.reason == REASON_DENYLISTED_PATH
+        assert result.conflicted_paths == ["config/.env"]

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from ..errors import GitError, WorktreeCollisionError
+from ..errors import GitError, TaskIdCollisionError, WorktreeCollisionError
 from . import paths
 from .git import GitRepo, RepoProbe, Runner, WorktreeEntry
 
@@ -247,6 +247,13 @@ class WorktreeManager:
         self._runner = runner
         self._hooks_dir = hooks_dir
         self._git_repos: dict[str, GitRepo] = {}
+        # M-2 (review, 2026-09-07): sanitized task component -> the raw task id that claimed
+        # it. `paths.sanitize_ref_component` is non-injective, so two DISTINCT ids can name
+        # one worktree path and one branch; `ensure()` refuses the second rather than taking
+        # its "reuse" path and silently running two tasks in one worktree. Populated on the
+        # `ensure()` path only -- `release()`/`reconcile()`/`gc_run()` work off what is on
+        # disk and need no claim.
+        self._claimed_components: dict[str, str] = {}
 
     def _git_for(self, repo: IsolatedRepo) -> GitRepo:
         git = self._git_repos.get(repo.key)
@@ -260,6 +267,38 @@ class WorktreeManager:
 
     # --- ensure ------------------------------------------------------------------------
 
+    def _claim_component(self, task_id: str, branch: str) -> None:
+        """M-2: claim *task_id*'s sanitized ref/path component for this run, or fail loudly.
+
+        `paths.sanitize_ref_component` maps every character outside `[A-Za-z0-9._-]` onto
+        `-`, so `svc/api` and `svc-api` produce one component -- hence one worktree directory
+        and one `ao/<run>/<task>` branch. Without this claim the second `ensure()` finds a
+        registered worktree already on the expected branch and takes the *reuse* path, so two
+        tasks that the workflow declared as isolated share a checkout and a branch, with no
+        error anywhere. That is a silent isolation failure, so it is refused.
+
+        Refusing, rather than disambiguating with a hash suffix on every component, is
+        deliberate: the suffix would rename every branch and worktree path of every run (a
+        user-visible change to a shipped naming scheme, for a condition that is always an
+        authoring mistake), while `spec.validate_isolation`'s V13 rule already turns the same
+        condition into a validate-time error on both reachable paths -- `ao validate`/spec
+        load, and `emit_tasks` manifest injection. This is the runtime backstop for a caller
+        that reaches `ensure()` without having run that validation.
+
+        Re-entrant for the SAME id: `ensure()` is called once per dispatch cycle (retries,
+        rerun-on-fresh-base), and re-claiming one's own component is a no-op.
+        """
+        component = paths.sanitize_ref_component(task_id)
+        claimant = self._claimed_components.setdefault(component, task_id)
+        if claimant != task_id:
+            raise TaskIdCollisionError(
+                task_id=task_id,
+                other_task_id=claimant,
+                component=component,
+                branch=branch,
+                worktree_path=str(self._prefix() / component),
+            )
+
     def ensure(self, task_id: str, cycle: int, declared_outputs: Sequence[str]) -> TaskIsolation:
         """Create (or idempotently reuse) this task's worktree in every repo (AC-9, AC-10).
 
@@ -267,8 +306,12 @@ class WorktreeManager:
         pruning this method (or any method in this module) performs is
         `GitRepo.prune_worktrees_scoped`, scoped to this run's own worktree prefix -- never
         a global `git worktree prune`.
+
+        M-2 (review, 2026-09-07): raises `TaskIdCollisionError` when *task_id* sanitizes to a
+        component another task of this run already claimed -- see `_claim_component`.
         """
         branch = paths.task_branch(self.run_id, task_id)
+        self._claim_component(task_id, branch)
         iso = TaskIsolation(
             task_id=task_id,
             cycle=cycle,
@@ -459,12 +502,24 @@ class WorktreeManager:
     def reconcile(self, known_task_ids: set[str]) -> ReconcileReport:
         """Reap worktrees/refs whose task id is not in *known_task_ids* (run start + resume).
         Idempotent: a second call on an already-clean state changes nothing (AC-12).
+
+        C-4 (review, 2026-09-07): *known_task_ids* are RAW ids, while a worktree directory
+        name and a ref's task component are both already SANITIZED -- they came out of
+        `paths.worktree_root`/`paths.task_branch`. Comparing the two directly judged every
+        task whose id is not sanitize-identity (any id holding a `:`, `/`, a space, most
+        punctuation) to be unknown, and then force-removed its worktree and deleted its
+        branch -- destroying the uncommitted, unlanded work of a task that is live and
+        declared. On the resume path that ran BEFORE the task did, so a resumed run silently
+        lost completed-but-unlanded work. Both comparisons below now go through
+        `paths.group_by_ref_component`, which maps each sanitized component back to the raw
+        ids that produced it, so like is compared with like exactly once per call.
         """
         removed_worktrees: list[str] = []
         deleted_refs: list[str] = []
         prefix = str(self._prefix())
         san_run = paths.sanitize_ref_component(self.run_id)
         ref_prefix = f"refs/heads/{paths.AO_REF_NAMESPACE}/{san_run}/"
+        known_components = paths.group_by_ref_component(sorted(known_task_ids))
 
         for repo in self.repos:
             git = self._git_for(repo)
@@ -476,8 +531,10 @@ class WorktreeManager:
                 under_prefix = norm == prefix or norm.startswith(prefix + os.sep)
                 if under_prefix:
                     rel = os.path.relpath(norm, prefix)
-                    task_id = rel.split(os.sep)[0]
-                    if task_id not in known_task_ids:
+                    # C-4: the directory component is the SANITIZED task id, so it is only
+                    # ever compared against `known_components`, never against the raw ids.
+                    task_component = rel.split(os.sep)[0]
+                    if task_component not in known_components:
                         try:
                             git.worktree_remove(norm, force=True)
                             removed_worktrees.append(norm)
@@ -485,7 +542,7 @@ class WorktreeManager:
                                 "worktree.orphan_reaped",
                                 extra={
                                     "event": "worktree.orphan_reaped",
-                                    "task_id": task_id,
+                                    "task_id": task_component,
                                     "path": norm,
                                 },
                             )
@@ -494,7 +551,7 @@ class WorktreeManager:
                                 "worktree.remove_failed",
                                 extra={
                                     "event": "worktree.remove_failed",
-                                    "task_id": task_id,
+                                    "task_id": task_component,
                                     "path": norm,
                                     "error": str(exc),
                                 },
@@ -509,7 +566,9 @@ class WorktreeManager:
                 task_component = ref_name[len(ref_prefix) :]
                 if task_component in paths.RESERVED_BRANCH_COMPONENTS:
                     continue  # ao/<run>/integration -- run-scoped, not task-scoped
-                if task_component in known_task_ids:
+                # C-4: `ref_name` came from `paths.task_branch`, so its task component is
+                # already sanitized -- compare it against the sanitized known ids.
+                if task_component in known_components:
                     continue
                 # C-2/C-8 (review, 2026-09-07): `remaining_branches` holds `WorktreeEntry.
                 # branch`, which is always the FULL `refs/heads/...` form (verified against

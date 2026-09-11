@@ -2,10 +2,164 @@
 
 - ID: `T-Cx4Jf1-cli-config-prune-observability`
 - Updated At: 2026-09-07
-- State: Part A -- In Review · Part B -- Pending (after `T-Lr6Ka3`)
+- State: Part A -- In Review · Part B -- In Review (all ACs delivered, none deferred)
 - Owner: developer-agent
 
 ## This update
+
+- **2026-09-07 — Part B delivered: event emission, `tier_counts`, retention warning,
+  dashboard column.** Covers AC-7, AC-9, AC-10, AC-11/S-5, AC-12/S-7. Files touched:
+  `src/agent_orchestrator/engine.py` (emission + the two state-accounting fixes the
+  coordinator explicitly assigned), `src/agent_orchestrator/ui/runs.py`,
+  `ui/src/components/RunDetail.tsx`, `ui/src/types.ts`, the rebuilt
+  `src/agent_orchestrator/ui/static/` bundle, and two new test files. No `isolation/`
+  module, `models.py`, `spec.py`, `specs/*.schema.json` or `cli.py` edit.
+
+### Per-AC disposition (Part B)
+
+- **AC-7 — event contract test. DONE.** `tests/test_isolation_events.py::TestEventContract`
+  drives ONE run covering all three outcomes (a clean `auto` land, a T1 `mechanical` union
+  resolution, and a T4 `integration.failed`) and asserts: the HLD §11 M9 event set is
+  present; `integration.activated`/`integration.summary` appear exactly once; every
+  run-scoped `integration.*`/`worktree.*` line carries `run_id`; the engine's per-task lines
+  carry `task_id`, `repo`, `tier`, `conflicted` (an `int`, asserted as such), `attempt` and
+  `duration_ms`; `integration.merged` carries `head_from`/`head_to`; `run.log` contains no
+  conflict-marker text anywhere (NFR-1); and **every terminal path emits exactly one
+  terminal event**, with the LAST terminal event per task matching that task's final
+  `TaskIntegrationState.status`.
+  Emission gaps filled in `engine.py` (logging only — no control flow changed):
+  1. The `outcome.integration is None` settle branch (execution failure with retries
+     exhausted, and R-2's worker-side missing-outputs short-circuit) was **genuinely
+     silent**: `ti.status` went `failed`, the worktree was released, and not one
+     `integration.*` line was written. Now emits `integration.failed` with the same
+     `reason` it records in `ti.last_error`. Pinned by
+     `test_missing_declared_output_still_emits_one_terminal_event`.
+  2. `integration.merged` was emitted only in the `else` of `if not copy_ok:` — a task whose
+     merge landed but whose untracked-outputs copy-back failed exited with no terminal
+     event. It is now emitted unconditionally (the merge DID happen; the copy failure has
+     its own `integration.untracked_outputs_blocked` line and its own `ts.status` effect).
+  3. Full HLD §11 M9 field set added to all four engine terminal lines via one shared
+     `_integration_event_fields` helper (no four-way duplication), plus `head_from`/`head_to`
+     on `integration.merged` (captured BEFORE `state.integration.heads.update`).
+  4. `duration_ms`: measured off the **injected clock** (`self._clock`, never `time.time()`)
+     in a new `_integrate_task_timed` wrapper. Deliberately a WRAPPER, not a signature
+     change to `_integrate_task` — that adapter's exact signature is pinned by
+     `T-En8Hd4`'s own `tests/test_engine_isolation.py`, which is not this ticket's file.
+  5. `scheduling.overlap_preferred` was in HLD §11 M9's list but emitted **nowhere**. Added
+     in the wave loop, gated on `resolve_overlap_preference(workflow) == "soft"` (so a
+     workflow with no isolation emits nothing — NFR-2), scored with the same pure
+     `scheduling.overlap.overlap_score` `rank_wave` itself uses (no second copy of the
+     scoring rule). Test: `test_overlap_preference_wave_line_only_at_soft`.
+- **AC-9 — dashboard. DONE** (de-deferred into Part B by the coordinator).
+  `ui/runs.py`: `TaskStat` gains `integration_status`/`tier_reached`/`conflicted_count`
+  (read from `RunState.task_integration`, `None`/`0` when the task has no entry) and
+  `RunDetail` gains an `integration: RunIntegration | None` block (branch, heads,
+  `tier_counts`, `degraded_reason`) that is `None` unless `state.integration.active` — one
+  "is there anything to show" test for the frontend instead of two. `RunDetail.tsx` gains
+  an "Integration" column (`IntegrationCell`: status chip + tier tag + conflict count,
+  a plain `—` for a never-isolated task) and an `IntegrationHeader` line under the tiles.
+  Frontend bundle rebuilt (`make ui-build`); `npm run typecheck` and `npm run test`
+  (79 tests) both clean. Tests: `tests/ui/test_runs_integration_surface.py` (6) —
+  dataclass layer AND the real `/api/runs/{id}` JSON payload, both for an isolated run and
+  for a pre-epic run that must degrade to `null`/`0`.
+- **AC-10 — gates. DONE.** Numbers below.
+- **AC-11 / S-5 — `tier_counts` increment. DONE (the field was NEVER written).** Confirmed
+  three independent ways: a grep for any write site across `src/` + `tests/` returns none
+  (only reads in `runstate.py`/`cli.py`); the coordinator's own live `ao run` produced
+  `tier_counts: {}` after two integrations one of which conflicted and was rerun; and the
+  one pre-existing test showing a non-empty value hand-sets it on the state object before
+  saving, which proves serialization and nothing else. Implemented in `engine.py`'s settle:
+  - `_integration_tier_outcomes(integ)` returns the tiers ONE attempt consumed:
+    `integ.tier_reached` when set, **plus `TIER_RERUN` when the outcome is
+    `conflict_rerun`**. That second half is load-bearing — `escalation.escalate` leaves
+    `tier_reached` unset for a T3 decision and the rerun's own later attempt lands at
+    `auto`, so no `IntegrationResult` anywhere ever reports `tier_reached == "rerun"` and a
+    naive "count `tier_reached`" would make the ladder's most expensive tier permanently
+    invisible. A T2 (`conflict_resolver`) escalation is deliberately NOT credited `llm` at
+    dispatch: the resolver's own `resume_integration` settle reports `tier_reached: "llm"`,
+    so crediting both would double-count one resolution.
+  - `tier_counts` is also now carried on the `integration.summary` line.
+  - `_TIER_RANK` is derived from `models.DEFAULT_LADDER` (no second declaration of tier
+    order) and used by `_max_tier`.
+  - **Per-task accumulation (coordinator decision, 2026-09-07).** `ti.tier_reached` is now
+    `_max_tier(ti.tier_reached, *attempt_tiers)` and `ti.conflicted_paths` is only replaced
+    by a NON-EMPTY list, instead of both being overwritten by every settle. Rationale: a
+    task that conflicted, escalated to T3 and then landed cleanly on a fresh base reported
+    `tier_reached: "auto"`, `conflicted_count: 0` — `status.json` forgot it had ever been
+    anything but free, and only `run.log` remembered. Safe because the only consumers of
+    `ti.conflicted_paths` are (a) `escalation.escalate`'s T4 reason, which already read a
+    one-attempt-stale value by construction, and (b) the T2 resolver manifest, which
+    `_prepare_resolver_dispatch` already overrides with `materialize_conflict`'s LIVE
+    re-derived value (T-Lr6Ka3 review C-1).
+  - Tests (both drive a REAL integration and read the value back out of `status.json`, per
+    the coordinator's instruction — never a hand-built state object):
+    `test_rerere_replay_increments_tier_counts_in_status_json` primes `$GIT_DIR/rr-cache`
+    with a real taught-then-replayed resolution, asserts the replay genuinely happened
+    (`integration.conflict` with `paths == []` — git had already staged every hunk) and
+    that `status.json` reports `{"auto": 1, "mechanical": 1}`; and
+    `test_conflict_then_rerun_keeps_the_highest_tier_and_the_conflict_count` drives a real
+    conflict→T3 rerun→clean land and asserts the surviving `tier_reached == "rerun"`,
+    `conflicted_count == 1`, and `tier_counts == {"auto": 2, "mechanical": 1, "rerun": 1}`.
+- **AC-12 / S-7 — `worktree.retention_high`. Verified as shipped, one cleanup, now
+  covered.** The implementation already existed (`_WORKTREE_RETENTION_WARN_THRESHOLD = 5`
+  at module level, the `_RunContext.retention_warned` latch, `_warn_if_retention_high`
+  called from both failure settles) — it landed with `T-En8Hd4`, not with this ticket. What
+  did not exist was any test: a grep for "retention" across the whole test tree returned
+  zero hits. Verified against both halves the AC names and one literal extracted:
+  the remedy string is now the named `_WORKTREE_RETENTION_REMEDY` constant rather than an
+  inline literal at the emission site, so the CLI surface and the warning cannot drift.
+  Tests: `test_retention_high_fires_exactly_once_per_run` drives `THRESHOLD + 1` uniformly
+  failing isolated tasks in ONE wave (a task failure halts the run, and `_drain_remaining`
+  then settles every in-flight sibling, so the threshold is crossed strictly more than
+  once) and asserts **exactly one** warning carrying `threshold`/`retained`/`remedy`; and
+  `test_no_retention_warning_when_worktrees_are_never_kept` proves the
+  `keep_worktrees: "never"` guard. No hard cap was added — deliberately, per HLD §24.
+
+### Divergences: HLD §11 M9 (designed) vs the shipped event set
+
+Recorded here for `T-Dr5Yq6`'s deferred reconciliation pass rather than "fixed" in code —
+the HLD's own §11 M9 block now carries a `NOT YET RECONCILED` banner saying exactly this.
+None of the below were changed by this ticket; every one of them lives in an `isolation/`
+module this ticket does not own.
+
+1. **`from`/`to` -> `head_from`/`head_to`.** §11 M9 says "`from`/`to` shas"; `integrator.py`
+   emits `head_from`/`head_to` (and the engine's new per-task line matches it). `from` is a
+   Python keyword and cannot be a `**kwargs` name, so this reads as a deliberate rename, not
+   an omission. **The HLD text should change, not the code.**
+2. **`conflicted` as a count.** §11 M9 says "`conflicted` (count, not contents)". The
+   integrator's `integration.conflict`/`integration.denylisted_path` carry `paths` — a list
+   of PATHS (never file content, so NFR-1 holds). The engine's per-task lines now carry the
+   `conflicted` COUNT, and `integration.failed` deliberately carries BOTH (AC-10 of
+   `T-Lr6Ka3` requires the paths so an operator can find the worktree without grepping).
+   Reconciling the integrator's own field name is `T-Ib5Qy9`/`T-Rm2Lx7` territory.
+3. **"Every `integration.*` line carries `run_id`, `task_id`" is not true for two emitters.**
+   `isolation/resolvers.py`'s per-path `integration.resolved` and `isolation/worktrees.py`'s
+   / `isolation/git.py`'s `worktree.*` lines go through those modules' own module-level
+   loggers, not the run-scoped `LoggerAdapter` the engine hands `Integrator` — so they carry
+   no `run_id`, and `resolvers.py`'s carries no `task_id` either. Fixing it needs a logger
+   injection point on `WorktreeManager.__init__`/`resolve_mechanically` (neither has one),
+   i.e. an `isolation/` edit. Low impact in practice: `run.log` is a per-run file. Pinned
+   and commented in the event-contract test (`MODULE_LOGGER_SOURCES`) so the gap stays
+   visible instead of being papered over.
+4. **`repo` is absent on the genuinely non-per-repo lines** — `integration.started`,
+   `integration.empty`, `integration.verify_started`/`verify_passed`/`verify_failed`,
+   `integration.summary`. Reads as correct-by-construction (they are per-TASK or per-RUN),
+   not as an omission; §11 M9's "every line carries `repo`" is the text that is wrong.
+5. **`duration_ms` existed nowhere before this ticket.** Now on the engine's four per-task
+   terminal lines. The integrator's per-repo lines still carry none — adding it there is an
+   `isolation/` edit.
+6. **The shipped set is a superset in places.** Not in §11 M9's list but emitted today:
+   `integration.empty`, `integration.denylisted_path`, `integration.untracked_outputs_blocked`,
+   `integration.rerun_patch_skipped`, `integration.workspace_lock_off`,
+   `integration.runlock_acquired`/`runlock_denied`/`runlock_reclaimed`,
+   `integration.resolver_merge_file_error`, `integration.resolver_regenerate_timeout`,
+   `integration.resolver_regenerate_error`, `worktree.non_git_repo`,
+   `worktree.branch_reattached`, `worktree.remove_skipped`, `worktree.reconciled`,
+   `worktree.prune_scoped`, `worktree.retention_high`.
+7. **`integration.partial` and `integration.degraded` are both live** — checked explicitly
+   because both looked like candidates for "declared but never emitted"; they are not.
+
+## Earlier updates
 
 - **2026-09-07 — Review response: fix pass complete, both must-fix findings closed.**
   `REVIEW-partA.md` verdict APPROVE WITH CHANGES (must-fix C-1, C-2; should-fix C-3/C-4/C-5).
@@ -166,6 +320,28 @@ developer-agent comment for full text)
   paraphrase in the task-assignment message.
 
 ## Evidence
+
+### Part B (2026-09-07)
+- Design: HLD §11 M9 (its event list now carries a `NOT YET RECONCILED` banner naming
+  `T-Dr5Yq6`), §11 M9's S-5 and S-7 paragraphs, `ADR-0013` D5/D6.
+- Edited source: `src/agent_orchestrator/engine.py` (emission + `tier_counts` increment +
+  per-task tier accumulation; `_max_tier`, `_integration_tier_outcomes`,
+  `_integration_event_fields`, `_integrate_task_timed`, `_log_overlap_preference`,
+  `_WORKTREE_RETENTION_REMEDY`), `src/agent_orchestrator/ui/runs.py` (`TaskStat` +3 fields,
+  new `RunIntegration`, `RunDetail.integration`).
+- Edited frontend: `ui/src/types.ts`, `ui/src/components/RunDetail.tsx`
+  (`IntegrationCell`, `IntegrationHeader`, one new table column); bundle rebuilt into
+  `src/agent_orchestrator/ui/static/assets/index-M62F4OvQ.js`.
+- New tests: `tests/test_isolation_events.py` (7: the AC-7 contract test, the
+  previously-silent missing-outputs terminal path, `scheduling.overlap_preferred`, the
+  rerere `tier_counts` increment read back out of `status.json`, conflict→rerun tier/count
+  survival, and both retention-warning cases);
+  `tests/ui/test_runs_integration_surface.py` (6: dataclass + `/api/runs/{id}` payload,
+  isolated and degrades-to-null).
+- NOT edited, deliberately: any `isolation/` module, `models.py`, `spec.py`,
+  `specs/*.schema.json`, `cli.py`, `runstate.py`, or another ticket's test file.
+
+### Part A
 - Design: [`docs-md/task-isolation-hld.md`](../../../../docs-md/task-isolation-hld.md) §11 M9,
   §14 and
   [`ADR-0013`](../../../../docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md)
@@ -184,7 +360,45 @@ developer-agent comment for full text)
   covers `config.py` (`load_agents`/`load_reposets`), an unrelated module; no applicable
   additive case.
 
-## Gates (exact numbers, post-review fix pass, 2026-09-07)
+## Gates — Part B (exact numbers, 2026-09-07)
+- `./.venv/bin/ruff check .` / `ruff format --check .`: clean, repo-wide (289 files).
+- `./.venv/bin/mypy src`: unchanged at exactly **4 pre-existing `_version.py` errors**,
+  73 source files checked — no new errors.
+- Full suite `./.venv/bin/pytest -q -p no:cacheprovider`: **3702 passed / 7 skipped /
+  0 failed** in 138.7s, one clean run. Baseline on HEAD at Part B start was 3678/7/0; this
+  ticket adds **13** tests (`tests/test_isolation_events.py` 7 +
+  `tests/ui/test_runs_integration_surface.py` 6). The remaining +11 are the sibling
+  `T-Ee3Mn8` reviewer's concurrent additions under `tests/isolation/` (confirmed via
+  `git status` file ownership — zero overlap with this ticket's files).
+- Isolation-focused regression sweep (`test_engine_isolation.py test_e2e_isolation.py
+  tests/isolation test_nfr2_regression_gate.py test_isolation_models.py
+  test_e2e_cli_isolation.py test_cli_isolation_flags.py`): **843 passed / 0 failed** —
+  the NFR-2 golden-compare gate included.
+- Frontend: `npm run typecheck` clean; `npm run test` **79 passed (8 files)**;
+  `npm run build` regenerated `src/agent_orchestrator/ui/static/assets/index-M62F4OvQ.js`
+  (the CSS bundle hash is unchanged).
+- Live end-to-end verification against the coordinator's own reproduction (real `ao run`,
+  `claude_cli` executor, two conflicting parallel isolated tasks, ladder
+  `["auto","mechanical","rerun"]`): `status.json` now reports
+  `tier_counts: {"auto": 2, "mechanical": 1, "rerun": 1}` (was `{}`) and the reran task
+  reports `tier_reached: "rerun"`, `conflicted_count: 1` (was `"auto"`, `0`).
+
+**Caveat on re-running these numbers.** The full-suite figure above was measured on a clean
+tree. Shortly afterwards a concurrent security-hardening pass began landing across
+`cli.py`, `spec.py`, `models.py`, `errors.py`, `executors/claude_cli.py` and five
+`isolation/` modules, which introduced a new guard rejecting an `$AO_STATE_DIR` that lies
+INSIDE the workspace root. Every pre-existing isolation e2e fixture points `AO_STATE_DIR`
+at `<workspace>/ao-state`, so `tests/test_e2e_isolation.py` (24-30 failures) and
+`tests/test_engine_isolation.py` (27 failures) are currently red on that guard alone —
+files this ticket never touched, failing with `ConfigError: worktree root ... lies inside
+the workspace root`, i.e. entirely attributable to that in-flight pass and its not-yet-
+updated helpers. This ticket's own fixtures already point `AO_STATE_DIR` at a SIBLING of
+the workspace, so `tests/test_isolation_events.py` (7/7) and
+`tests/ui/test_runs_integration_surface.py` (6/6) stay green through it, as do
+`tests/test_isolation_models.py` and the rest of `tests/ui/`. The full-suite number needs
+one re-run once that pass settles; nothing in it is expected to change.
+
+## Gates (Part A — exact numbers, post-review fix pass, 2026-09-07)
 - `uv run ruff check .` / `uv run ruff format --check .`: clean, repo-wide.
 - `uv run mypy src`: unchanged at exactly 4 pre-existing `_version.py` errors.
 - Targeted suite (`tests/test_cli.py tests/test_cli_isolation_flags.py tests/test_e2e_cli.py
@@ -226,11 +440,15 @@ developer-agent comment for full text)
 ## Next actions
 1. Reviewer: verify Part A against the deviations recorded above (both are argued from the
    coordinator's own brief / the authoritative HLD text, not guessed).
-2. Part B owner (after `T-Lr6Ka3` lands): implement the AC-7 event-contract test and AC-12's
-   `worktree.retention_high` warning inside `engine.py`, per the hook points `T-En8Hd4`'s own
-   STATUS.md published for this ticket ("T-Cx4Jf1 (event emission / observability polish)").
-3. File a follow-up ticket for AC-9 (dashboard column/run-header line) — currently
-   unassigned to either Part A or Part B.
+2. Reviewer: verify Part B — in particular the two accounting semantics the coordinator
+   decided (credit `rerun` at the T3 escalation settle, since no `IntegrationResult` ever
+   reports that tier; accumulate `tier_reached`/`conflicted_count` instead of overwriting).
+3. `T-Dr5Yq6`: fold the "Divergences: HLD §11 M9 vs the shipped event set" list above into
+   the HLD's own §11 M9 reconciliation pass (the block already carries a `NOT YET
+   RECONCILED` banner naming that ticket).
+4. Follow-up, NOT this ticket: give `WorktreeManager`/`resolve_mechanically` a logger
+   injection point so their `worktree.*`/`integration.resolved` lines carry `run_id`
+   (divergence 3). Needs an `isolation/` edit, which this ticket is forbidden.
 
 ---
 - By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: Part A implemented and
@@ -281,3 +499,16 @@ developer-agent comment for full text)
   - Explicitly re-confirmed both Part A/Part B splits and the AC-9 dashboard deferral are correctly
     scoped and flagged, not silently dropped.
   - No source/test edits made; no commit made, per instruction.
+
+---
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: **Part B complete.**
+  AC-7 / AC-9 / AC-10 / AC-11 (S-5) / AC-12 (S-7) all delivered — no AC on this ticket is
+  now deferred or unassigned. Gates: `ruff check .` + `ruff format --check .` clean;
+  `mypy src` unchanged at 4 pre-existing `_version.py` errors; full suite **3702 passed /
+  7 skipped / 0 failed**; frontend typecheck + 79 vitest tests clean; bundle rebuilt.
+  Two coordinator-assigned behaviour changes (the `tier_counts` increment and
+  highest-tier-across-attempts accumulation) are implemented and verified against the
+  coordinator's own live reproduction, not just against tests. Seven designed-vs-shipped
+  event divergences recorded above for `T-Dr5Yq6` rather than "fixed" against stale prose;
+  none of them is in a file this ticket owns. No commit made and no epic-level `STATUS.md`
+  edit, per instruction.

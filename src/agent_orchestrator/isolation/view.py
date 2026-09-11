@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from ..artifacts import ArtifactStore, LocalFsArtifactStore, _exists_via_resolve, _size_via_resolve
 from ..errors import ArtifactPathError
-from .paths import effective_path
+from .paths import effective_path, worktree_store_root
 
 if TYPE_CHECKING:
     from .worktrees import TaskIsolation
@@ -43,6 +43,18 @@ class IsolatedArtifactView(ArtifactStore):
     run's* worktree -- raises `ArtifactPathError`, exactly like the base store's traversal
     guard. Traversal (`../..`) and symlink escapes are rejected the same way: resolution
     (abspath + symlink following) happens before either containment test.
+
+    M-3 (review, 2026-09-07): case 1's "inside the workspace root" test is NOT sufficient on
+    its own when worktree storage itself lies inside the workspace -- a supported layout (an
+    operator keeping one tree; `$AO_STATE_DIR` under the workspace, which is also what the
+    engine's own tests do). In that layout a sibling task's worktree IS an ordinary
+    in-workspace path: `effective_path` does not recognise it as one of *this* task's repo
+    toplevels, so it returned the path unchanged and task A could read and write task B's
+    uncommitted work, both absolutely and via a workspace-relative path. The whole worktree
+    store is therefore a reserved, non-resolvable region here -- the same treatment
+    `paths.RESERVED_SHARED_PREFIXES` gets, in the opposite direction -- with this task's own
+    worktree roots as the sole exception. Keying the exclusion off the STORE root rather than
+    one run's prefix also covers a *different run's* worktrees.
     """
 
     def __init__(self, base: LocalFsArtifactStore, task_isolation: TaskIsolation) -> None:
@@ -53,15 +65,32 @@ class IsolatedArtifactView(ArtifactStore):
         self._roots: tuple[str, ...] = tuple(
             sorted({os.path.normpath(r.worktree_root) for r in task_isolation.repos})
         )
+        # M-3: read fresh at construction, matching `paths`' own read-at-call-time
+        # convention. A view outlives no env change within a run: the same process resolved
+        # this task's worktrees through the same variable moments earlier.
+        self._store_root = os.path.normpath(str(worktree_store_root()))
+
+    @staticmethod
+    def _within(full: str, root: str) -> bool:
+        """Path-segment containment (never a bare string prefix, so `/ws-worktrees` is not
+        judged to be inside `/ws`)."""
+        return full == root or full.startswith(root + os.sep)
 
     def resolve(self, path: str) -> str:
         full = self._base.resolve_unchecked(path)
-        base_root = self._base.root
-        if full == base_root or full.startswith(base_root + os.sep):
-            return effective_path(full, self._iso)
+        # This task's OWN worktrees first: they are always allowed, and checking them ahead
+        # of the store-root exclusion is what makes that exclusion safe to apply at all.
         for root in self._roots:
-            if full == root or full.startswith(root + os.sep):
+            if self._within(full, root):
                 return full
+        # M-3: any other path inside the worktree store -- a sibling task's worktree, another
+        # run's, or the bookkeeping directories between them -- is out of bounds, whether or
+        # not the store happens to sit inside the workspace root.
+        if self._within(full, self._store_root):
+            raise ArtifactPathError(path)
+        base_root = self._base.root
+        if self._within(full, base_root):
+            return effective_path(full, self._iso)
         raise ArtifactPathError(path)
 
     def exists(self, path: str) -> bool:

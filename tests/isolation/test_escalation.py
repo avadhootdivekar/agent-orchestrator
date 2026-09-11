@@ -27,7 +27,13 @@ from agent_orchestrator.isolation.integrator import (
     STATUS_FAILED,
 )
 from agent_orchestrator.isolation.worktrees import RepoIsolation, TaskIsolation
-from agent_orchestrator.models import AgentSpec, IntegrationSpec, TaskIntegrationState, TaskSpec
+from agent_orchestrator.models import (
+    RESOLVER_FORCED_DISALLOWED_TOOLS,
+    AgentSpec,
+    IntegrationSpec,
+    TaskIntegrationState,
+    TaskSpec,
+)
 
 from .conftest import make_repo
 
@@ -245,19 +251,46 @@ class TestResolverAgentSpec:
         agent = AgentSpec(executor="fake")
         escalation.resolver_agent_spec(agent, _spec())
         assert agent.disallowed_tools == []
+        assert agent.forced_disallowed_tools == []
+
+    def test_union_lands_on_the_non_overridable_forced_field(self) -> None:
+        """C-1: `disallowed_tools` alone is droppable by any agent-supplied tool-policy
+        flag one layer down, so the union must ALSO reach `forced_disallowed_tools`."""
+        agent = AgentSpec(executor="fake", disallowed_tools=["KillShell"])
+        spec = _spec(resolver_disallowed_tools=["WebFetch", "WebSearch"])
+        forced = escalation.resolver_agent_spec(agent, spec)
+        assert {"KillShell", "WebFetch", "WebSearch"} <= set(forced.forced_disallowed_tools)
+
+    def test_forced_field_carries_the_non_configurable_floor(self) -> None:
+        """C-3: `Bash`/`Task` are denied regardless of `resolver_disallowed_tools`."""
+        forced = escalation.resolver_agent_spec(
+            AgentSpec(executor="fake"), _spec(resolver_disallowed_tools=["Glob"])
+        )
+        assert set(RESOLVER_FORCED_DISALLOWED_TOOLS) <= set(forced.forced_disallowed_tools)
 
 
 class TestResolverEnv:
     def test_default_deny_push_env_shape(self) -> None:
-        env = escalation.resolver_env(_spec(resolver_deny_push=True))
+        """As-built review C-2 widened this: `core.sshCommand`/`GIT_SSH_COMMAND` and
+        `https.proxy` joined the overlay, and the pair indices are now offset past whatever
+        `GIT_CONFIG_*` the operator already exported. Transport coverage and the residual
+        gap are asserted for real (a live `git push`) in `test_asbuilt_secfix.py`."""
+        env = escalation.resolver_env(_spec(resolver_deny_push=True), base_env={})
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         assert env["GIT_ASKPASS"] == "/bin/false"
-        assert env["GIT_CONFIG_COUNT"] == "2"
-        assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
-        assert env["GIT_CONFIG_VALUE_0"] == ""
-        assert env["GIT_CONFIG_KEY_1"] == "http.proxy"
-        assert env["GIT_CONFIG_VALUE_1"] == "127.0.0.1:1"
-        assert len(env) == 7
+        assert env["GIT_SSH_COMMAND"] == "/bin/false"
+        assert env["GIT_CONFIG_COUNT"] == "4"
+        pairs = {
+            env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"]
+            for n in range(int(env["GIT_CONFIG_COUNT"]))
+        }
+        assert pairs == {
+            "credential.helper": "",
+            "http.proxy": "127.0.0.1:1",
+            "https.proxy": "127.0.0.1:1",
+            "core.sshCommand": "/bin/false",
+        }
+        assert len(env) == 4 + 2 * 4
 
     def test_opt_out_returns_empty(self) -> None:
         assert escalation.resolver_env(_spec(resolver_deny_push=False)) == {}
@@ -600,8 +633,13 @@ class TestMergeResolveAsset:
         assert "both" in text
         assert "never delete" in text or "do not delete" in text
 
-    def test_git_add_each_resolved_path(self) -> None:
-        assert "`git add`" in MERGE_RESOLVE_PATH.read_text(encoding="utf-8")
+    def test_the_engine_stages_not_the_model(self) -> None:
+        """As-built review C-3: the instruction used to REQUIRE the model to run `git add`,
+        which is why the resolver kept `Bash` -- and a shell in a linked worktree has full
+        write access to the shared `.git`. The engine stages the resolved paths instead."""
+        text = MERGE_RESOLVE_PATH.read_text(encoding="utf-8")
+        assert "`git add`" not in text
+        assert "engine stages" in text.lower()
 
     def test_forbids_continue_commit_push_and_branch_switch(self) -> None:
         text = MERGE_RESOLVE_PATH.read_text(encoding="utf-8").lower()

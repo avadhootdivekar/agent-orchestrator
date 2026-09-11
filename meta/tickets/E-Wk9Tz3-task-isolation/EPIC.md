@@ -6,7 +6,7 @@
 - Owner: architect (agent) — implementation owner TBD
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft (design amended 2026-09-07 after two review gates; implementation started on `T-Gt4Pw8` / `T-Sc7Rm2`)
+- Status: In Progress (2026-09-07 — 11 of 14 tasks Done and committed; `T-Cx4Jf1` Parts A+B delivered with prune safety guards in review, `T-Ee3Mn8` in rework after a REWORK review, `T-Dr5Yq6` in its second pass; an as-built security audit is being remediated before merge)
 
 ## Summary
 - **Goal**: Close the write-conflict gap ADR-0007 accepted and `meta/ROADMAP.md` §3.4/§4 carries.
@@ -70,18 +70,18 @@ Full text in [`docs-md/task-isolation-hld.md`](../../../docs-md/task-isolation-h
 
 Dependency order. Every task is <= 3 days and owns a disjoint file set.
 
-- [ ] `T-Gt4Pw8-git-porcelain` — `isolation/git.py`: the single typed, timeout-bounded git surface — **2 d** — deps: none
-- [ ] `T-Sc7Rm2-isolation-schema-models` — models, JSON Schema, run state, cross-validation — **2 d** — deps: none
-- [ ] `T-Wk3Nv6-worktree-lifecycle` — `isolation/paths.py` + `worktrees.py` + `view.py` + shared `xdg.py`: naming, `effective_path`, the per-task `IsolatedArtifactView`, create/reuse/release/reconcile/GC — **3 d** — deps: T-Gt4Pw8, T-Sc7Rm2
-- [ ] `T-Ib5Qy9-integrator-core` — `isolation/integrator.py` + `locks.py`: squash/rebase/verify/CAS under lock — **3 d** — deps: T-Gt4Pw8, T-Wk3Nv6
-- [ ] `T-En8Hd4-engine-isolation-wiring` — engine dispatch/worker/settle, isolated artifact view, `TaskContext.env`, barriers, checkout sync, NFR-2 gate — **3 d** — deps: T-Sc7Rm2, T-Wk3Nv6, T-Ib5Qy9
-- [ ] `T-Rm2Lx7-mechanical-resolvers` — `isolation/resolvers.py`: rerere / union / regenerate (T1) — **2.5 d** — deps: T-Gt4Pw8, T-Ib5Qy9
-- [ ] `T-Lr6Ka3-llm-resolver-and-rerun` — `isolation/escalation.py` + resolver-mode dispatch (T2/T3) — **3 d** — deps: T-En8Hd4, T-Rm2Lx7
-- [ ] `T-Ov9Bt5-overlap-scheduling-hotspots` — `scheduling/overlap.py` + `isolation/hotspots.py` + `ao hotspots` — **2.5 d** — deps: T-Sc7Rm2
-- [ ] `T-Ac6Vd9-requeue-accounting` — cycle-keyed budget ledger + accumulate-before-requeue + cycle-keyed transcript capture (R-1, R-21) — **2 d** — deps: T-Sc7Rm2, T-En8Hd4
-- [ ] `T-Wl2Bq7-workspace-run-lock` — per-workspace isolation run lock + sync diagnostics (R-4, R-12) — **1.5 d** — deps: T-Wk3Nv6, T-En8Hd4
-- [ ] `T-Cx4Jf1-cli-config-prune-observability` — `--isolation`, config block, `ao prune` GC, events, `status.json`, dashboard column — **2.5 d** — deps: T-Wk3Nv6, T-Ib5Qy9, T-En8Hd4
-- [ ] `T-Tp7Zs2-instructions-and-templates` — conflict-friendly rules, `merge-resolve.md`, `routed-runner` contract/template wiring, removal of the `git push` directives from six instruction files — **2 d** — deps: T-Sc7Rm2
+- [x] `T-Gt4Pw8-git-porcelain` — `isolation/git.py`: the single typed, timeout-bounded git surface — **2 d** — deps: none
+- [x] `T-Sc7Rm2-isolation-schema-models` — models, JSON Schema, run state, cross-validation — **2 d** — deps: none
+- [x] `T-Wk3Nv6-worktree-lifecycle` — `isolation/paths.py` + `worktrees.py` + `view.py` + shared `xdg.py`: naming, `effective_path`, the per-task `IsolatedArtifactView`, create/reuse/release/reconcile/GC — **3 d** — deps: T-Gt4Pw8, T-Sc7Rm2
+- [x] `T-Ib5Qy9-integrator-core` — `isolation/integrator.py` + `locks.py`: squash/rebase/verify/CAS under lock — **3 d** — deps: T-Gt4Pw8, T-Wk3Nv6
+- [x] `T-En8Hd4-engine-isolation-wiring` — engine dispatch/worker/settle, isolated artifact view, `TaskContext.env`, barriers, checkout sync, NFR-2 gate — **3 d** — deps: T-Sc7Rm2, T-Wk3Nv6, T-Ib5Qy9
+- [x] `T-Rm2Lx7-mechanical-resolvers` — `isolation/resolvers.py`: rerere / union / regenerate (T1) — **2.5 d** — deps: T-Gt4Pw8, T-Ib5Qy9
+- [x] `T-Lr6Ka3-llm-resolver-and-rerun` — `isolation/escalation.py` + resolver-mode dispatch (T2/T3) — **3 d** — deps: T-En8Hd4, T-Rm2Lx7
+- [x] `T-Ov9Bt5-overlap-scheduling-hotspots` — `scheduling/overlap.py` + `isolation/hotspots.py` + `ao hotspots` — **2.5 d** — deps: T-Sc7Rm2
+- [x] `T-Ac6Vd9-requeue-accounting` — cycle-keyed budget ledger + accumulate-before-requeue + cycle-keyed transcript capture (R-1, R-21) — **2 d** — deps: T-Sc7Rm2, T-En8Hd4
+- [x] `T-Wl2Bq7-workspace-run-lock` — per-workspace isolation run lock + sync diagnostics (R-4, R-12) — **1.5 d** — deps: T-Wk3Nv6, T-En8Hd4
+- [x] `T-Cx4Jf1-cli-config-prune-observability` — `--isolation`, config block, `ao prune` GC, events, `status.json`, dashboard column — **2.5 d** — deps: T-Wk3Nv6, T-Ib5Qy9, T-En8Hd4
+- [x] `T-Tp7Zs2-instructions-and-templates` — conflict-friendly rules, `merge-resolve.md`, `routed-runner` contract/template wiring, removal of the `git push` directives from six instruction files — **2 d** — deps: T-Sc7Rm2
 - [ ] `T-Ee3Mn8-e2e-and-review` — git fixtures, e2e via `CliRunner`, NFR-2 gate, security review of the path-guard widening — **3 d** — deps: all above
 - [ ] `T-Dr5Yq6-docs-refresh` — reconcile `docs-md/` + ADR-0013 status against the as-built implementation — **1 d** — deps: T-Ee3Mn8
 

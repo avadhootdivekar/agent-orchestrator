@@ -14,6 +14,12 @@ from .breakers import BREAKER_REGISTRY
 from .config import _load_file, _validate_against_schema
 from .dag import Graph, compute_cones, forward_closure
 from .errors import SpecValidationError
+
+# V13's sanitizer must be the SAME one `WorktreeManager` names branches/worktree paths with,
+# never a re-derivation (R-11/DRY): `isolation/paths.py` is pure and import-safe even when
+# `git` is absent (AC-1), and `isolation/__init__.py` is deliberately import-free, so this
+# adds no git dependency and no import cycle to the spec layer.
+from .isolation import paths as isolation_paths
 from .models import (
     ISOLATION_WORKTREE,
     TIER_LLM,
@@ -465,6 +471,41 @@ def validate_isolation(workflow: WorkflowSpec, tasks: list[TaskSpec]) -> list[st
                 f"{_RESERVED_INTEGRATION_COMPONENT!r}, which collides with the "
                 "integration branch ao/<run_id>/integration",
                 path=f"tasks.{task.id}.id",
+            )
+
+    # V13 (review M-2, 2026-09-07): two DISTINCT ids among the tasks that actually resolve
+    # to worktree isolation must not sanitize to the same ref/path component -- they would
+    # share one worktree directory and one `ao/<run>/<task>` branch, and `ensure()` would
+    # take its "reuse" path for the second, running two supposedly-isolated tasks in one
+    # checkout with no error. `sanitize_ref_component` is non-injective by design (every
+    # character outside `[A-Za-z0-9._-]` becomes `-`), so `svc/api` and `svc-api` collide,
+    # as do `../../../../etc` and `etc`.
+    #
+    # Scoped to isolated tasks on purpose: a non-isolated task never gets a worktree or a
+    # branch, so a collision involving one is harmless, and failing on it would be a
+    # backward-compatibility break for workflows that never isolate anything (NFR-2).
+    # `resolve_task_isolation` is the ONE resolution rule (models.py), reused rather than
+    # re-derived, so structural tasks -- forced to isolation="none" -- are excluded here for
+    # the same reason V4 excludes them.
+    #
+    # This runs at `ao validate`/spec-load time AND, via the engine's injection-time call
+    # (see this function's HOOK POINT note above), the moment an `emit_tasks` manifest is
+    # read -- which is the reachable path for an agent-supplied id. `WorktreeManager.ensure`
+    # raises `TaskIdCollisionError` as the runtime backstop for a caller that skips both.
+    isolated_ids = [
+        t.id for t in tasks if resolve_task_isolation(t, workflow) == ISOLATION_WORKTREE
+    ]
+    for component, colliding in isolation_paths.group_by_ref_component(isolated_ids).items():
+        if len(colliding) > 1:
+            first, second = colliding[0], colliding[1]
+            raise SpecValidationError(
+                f"Task ids {first!r} and {second!r} both sanitize to the ref/path component "
+                f"{component!r}: under isolation={ISOLATION_WORKTREE!r} they would share one "
+                "worktree and one branch, so neither task would be isolated from the other. "
+                "Rename one so the two ids still differ after sanitization (a component "
+                "keeps only letters, digits, '.', '_' and '-'; every other character "
+                "becomes '-')",
+                path=f"tasks.{second}.id",
             )
 
     # V5: integration.* configured but no task resolves to worktree isolation -- warn, and

@@ -6,7 +6,7 @@
 - Owner: developer-agent
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Split into Part A (In Review) / Part B (Pending, after T-Lr6Ka3) -- see "Coordinator split" below
+- Status: Part A (In Review) + Part B (In Review) -- ALL ACs delivered, see "Coordinator split" below
 - Estimate: 2.5 days
 
 ## Coordinator split (2026-09-07)
@@ -23,12 +23,12 @@ land before `T-Lr6Ka3` (the conflict-resolver ladder) exists:
   `T-En8Hd4`/`T-Ib5Qy9` (this ticket's own display-only surfacing of the already-shipped
   field is Part A, done), and AC-12 (S-7's `worktree.retention_high` warning, which is an
   `engine.py`-only emission). Assigned after `T-Lr6Ka3` lands, per the epic's fixed
-  `engine.py` edit order. **Status: Pending.**
-- **Deferred, not formally re-assigned to either slice** -- AC-9 (dashboard "Integration"
-  column + run-header line, `ui/runs.py`). The coordinator's Part A brief enumerated
-  exactly four surfaces (CLI flags, config chain, `ao prune` GC, status surface) and did
-  not include the dashboard; it is not technically blocked on anything Part A/B touches,
-  but is out of scope for this delivery. Flagged here rather than silently dropped.
+  `engine.py` edit order. **Status: In Review** (2026-09-07) -- delivered, plus AC-9 (see
+  next bullet) folded back in, so this ticket now covers every AC with none deferred.
+- **AC-9 (dashboard "Integration" column + run-header line) -- de-deferred and delivered
+  with Part B.** It was flagged here (not silently dropped) when the coordinator's Part A
+  brief enumerated only four surfaces; the coordinator folded it back into Part B's scope
+  on 2026-09-07 so this ticket can close complete rather than spawning a follow-up.
 
 ## Requirements Mapping
 - Requirement IDs: FR-14, FR-15, FR-12 (config surface) · Design: HLD §11 M9
@@ -195,3 +195,28 @@ HLD §11 M9 — precedence chain, config block, prune extension, and the full ev
   of every finding (C-1 through C-5) in `STATUS.md`. Gates re-verified: targeted suite 175/0
   (+templates spot-check 100/0), full suite **3459 passed / 7 skipped / 0 failed**. No commit made
   per instruction.
+
+---
+- By: developer-agent · Role: developer · Date: 2026-09-07 · Comment: **Part B delivered**
+  (AC-7, AC-9, AC-10, AC-11/S-5, AC-12/S-7). Evidence, per-AC disposition and the full
+  designed-vs-shipped event divergence list are in `STATUS.md`. Three things worth
+  surfacing here because they change behaviour rather than only observability, each done
+  on explicit instruction rather than guessed at:
+  1. **`RunIntegrationState.tier_counts` was never incremented anywhere** (confirmed by the
+     coordinator's own live `ao run` and independently by the sibling review's grep for a
+     write site across `src/` + `tests/`). The field shipped with `T-Sc7Rm2` and its display
+     shipped with Part A, so `ao status`/`status.json`/the dashboard reported an empty tier
+     map on every real run. Increment added in `engine.py`'s settle, crediting `rerun`
+     explicitly (no `IntegrationResult` ever reports `tier_reached == "rerun"`, so the most
+     expensive tier in the ladder would otherwise be permanently invisible).
+  2. **Per-task `tier_reached`/`conflicted_count` now accumulate instead of being
+     overwritten** (coordinator decision, 2026-09-07): highest-tier-reached across attempts,
+     with the conflicting attempt's path count surviving a later clean one. Previously a
+     task that conflicted, escalated to T3 and then landed cleanly on a fresh base reported
+     `tier_reached: "auto"`, `conflicted_count: 0` -- `status.json` forgot it was ever
+     anything but free, which defeats S-5's entire purpose.
+  3. **AC-7's "no silent exits" found one genuinely silent terminal path** (an isolated task
+     whose declared outputs are missing / whose execution failed: `integrate()` is never
+     called, so nothing was emitted at all) and one conditional suppression (`integration.
+     merged` was skipped when the untracked-outputs copy-back failed). Both are now
+     emission-only fixes; no control flow changed.

@@ -165,6 +165,53 @@ class WorktreeCollisionError(OrchestratorError):
         self.remedy = remedy
 
 
+class TaskIdCollisionError(WorktreeCollisionError):
+    """Raised by `WorktreeManager.ensure()` (E-Wk9Tz3 T-Wk3Nv6, review M-2 2026-09-07) when
+    two DISTINCT task ids sanitize to the same ref/path component, and would therefore share
+    one worktree directory and one `ao/<run>/<task>` branch.
+
+    `paths.sanitize_ref_component` is deliberately non-injective (it maps every character
+    outside `[A-Za-z0-9._-]` onto `-`), so `svc/api` and `svc-api` produce the identical
+    branch AND worktree path. Left undetected, the second `ensure()` takes the "reuse" branch
+    and the two supposedly-isolated tasks run in one worktree on one branch -- a silent
+    isolation failure. `spec.validate_isolation`'s V13 rule is the primary gate (it fires at
+    `ao validate` time AND at `emit_tasks` injection time, so an agent-emitted manifest is
+    covered); this error is the runtime backstop for a caller that reached `ensure()` without
+    that validation.
+
+    A `WorktreeCollisionError` subclass on purpose: every existing caller already treats that
+    as "fail this task, do not guess" (the engine's dispatch path catches exactly it), which
+    is the right disposition here too -- while the distinct type and the two named ids let a
+    reader tell an id-collision apart from a leftover-worktree collision.
+    """
+
+    def __init__(
+        self, task_id: str, other_task_id: str, component: str, branch: str, worktree_path: str
+    ) -> None:
+        remedy = (
+            "rename one of them so the two ids still differ after sanitization (a component "
+            "keeps only letters, digits, '.', '_' and '-'; every other character becomes '-')."
+        )
+        # `OrchestratorError.__init__`, not `WorktreeCollisionError`'s: the parent composes a
+        # "cannot use worktree path X for branch Y: <detail>" sentence, which describes a
+        # LEFTOVER worktree, not two ids that were never distinguishable. The parent's public
+        # attributes are still populated below, so anything reading a caught
+        # `WorktreeCollisionError` keeps working.
+        OrchestratorError.__init__(
+            self,
+            f"task ids {other_task_id!r} and {task_id!r} both sanitize to the component "
+            f"{component!r}: they would share the branch {branch!r} and the worktree path "
+            f"{worktree_path!r}, so neither task would be isolated from the other. {remedy}",
+        )
+        self.expected_branch = branch
+        self.worktree_path = worktree_path
+        self.found_branch = None
+        self.remedy = remedy
+        self.task_id = task_id
+        self.other_task_id = other_task_id
+        self.component = component
+
+
 # --- Task isolation: integration (E-Wk9Tz3 T-Ib5Qy9) -------------------------------------
 
 

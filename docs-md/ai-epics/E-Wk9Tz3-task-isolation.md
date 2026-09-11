@@ -6,7 +6,10 @@
 - Owner: architect (agent) — implementation owner TBD
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: In Progress (design amended 2026-09-07 after two review gates; `T-Gt4Pw8` / `T-Sc7Rm2` under development)
+- Status: Implementation complete, epic closing (2026-09-07). 11 of 14 tasks merged; `T-Cx4Jf1` Part B
+  (observability) and `T-Ee3Mn8` (e2e + review gates) in flight, plus an as-built security remediation
+  pass. Design reconciled against the shipped code by `T-Dr5Yq6` — see
+  [`task-isolation-hld.md`](../task-isolation-hld.md) §25.
 - Origin ask: user request, flagged as the **highest-priority** epic. The core mechanism (worktree per
   task, squash → rebase → verify → fast-forward, soft `touches` hints, the tiered conflict ladder) was
   specified by the user and is recorded in the HLD/ADR rather than re-derived here.
@@ -147,12 +150,82 @@ row-by-row verification matrix. The gates that decide the epic:
   already-leaked `worktree-agent-*` branches and a stray `.worktrees/full-test-*` → FR-14 (GC +
   `ao prune --worktrees-only`).
 
+- 2026-09-07 — **Implementation landed.** Eleven task commits on `ad/task-isolation`, in the fixed
+  `engine.py` edit order the design required: `T-Gt4Pw8` (git porcelain) -> `T-Sc7Rm2` (schema/models)
+  -> `T-Wk3Nv6` (worktree lifecycle, paths, per-task artifact view) -> `T-Ov9Bt5` (overlap ranking +
+  hotspots, plus a follow-up batching fix) -> `T-Tp7Zs2` (instructions/templates) -> `T-Ib5Qy9`
+  (integrator core) -> `T-En8Hd4` (engine wiring) -> `T-Ac6Vd9` (requeue accounting) -> `T-Cx4Jf1`
+  Part A (CLI/config/prune) -> `T-Rm2Lx7` (mechanical resolvers) -> `T-Wl2Bq7` (workspace run lock,
+  safe checkout sync) -> `T-Lr6Ka3` (LLM resolver + rerun). Every one carried a code review; ten
+  reviews returned APPROVE WITH CHANGES and one (`T-Lr6Ka3`) returned REWORK first.
+- 2026-09-07 — **Live-run gate.** The shipped CLI was driven against a throwaway repository with two
+  parallel isolated tasks, a real `claude_cli` agent, and the T3 rerun path exercised. Headline result:
+  **the feature works end to end on a real run.** Three defects surfaced that no unit test had caught —
+  `tier_counts` never incremented, `tier_reached`/`conflicted_count` overwritten by a clean final
+  attempt, and `ao prune` leaking every `ao/` ref of a fully successful run. All three routed to
+  `T-Cx4Jf1` Part B rather than absorbed.
+- 2026-09-07 — **As-built security audit** (`REVIEW-security-asbuilt-2026-09-07.md`). Verdict: the
+  architecture is sound and most design-time controls landed correctly — S-1 (hook suppression), S-4
+  (the per-task `IsolatedArtifactView`), S-6, S-9, NFR-1, the CAS/lock discipline and the ref/path
+  sanitizer were each verified present and working, several by execution. **The exception is the one
+  control the design itself called blocking**: S-2, structural containment of the T2 LLM resolver, is
+  ineffective in the shipped code — both halves fail. That is in remediation, not accepted. One finding
+  (**M-1**) is accepted as a documented limitation: engine git calls suppress every repository **hook**
+  (proven — 8 hook invocations from a plain `git commit`, 0 from the engine) but do **not** neutralize
+  `filter`/`merge` drivers reached through git attributes, so a bootstrapped repo's configured filter
+  runs once per task, unattended, across worktrees. Documented for adopters in
+  `conflict-friendly-coding.md` and HLD §14. A second finding (**M-3**) produced a new hard guard: a
+  worktree root that overlaps the workspace root is now refused with a `ConfigError`, because that
+  layout silently defeats the per-task artifact containment.
+- 2026-09-07 — **Docs reconciliation (`T-Dr5Yq6`, this entry).** Every factual claim in
+  `task-isolation-hld.md` re-verified against merged code or `--help` output rather than against the
+  tickets that claimed it. Ten as-built deviations recorded in a new HLD §25; **six** §24 review-finding
+  dispositions changed (R-2 and R-3 fixed by a different mechanism than the row described — R-2's stated
+  rationale was demonstrably false and shipped as a blocking defect; S-1 and R-12 fixed with a named
+  residual; S-5 and S-7 downgraded to partially-shipped because their observability half is unshipped).
+  Two operator procedures were **executed**, not described: `ao prune --worktrees-only` against a real
+  temp repository (reaps the worktree, its registration and its `ao/` branch; `--dry-run` names both the
+  path and the ref), and the T4 -> resume recovery path, which **did not work as documented** — see
+  Risks below. ADR-0013 moved to `Accepted / shipped`.
+
+## Requirement traceability
+
+FR/NFR -> the module that implements it -> its dedicated tests. Test files marked *(in flight)* were
+uncommitted working-tree files owned by `T-Ee3Mn8` when this table was written; they are named because
+they are the dedicated coverage, not because their results are being claimed.
+
+| Req | Landed in | Dedicated tests |
+|---|---|---|
+| **FR-1** task/workflow `isolation`, backward compatible | `models.py` (`IsolationMode`, `WorkflowIsolation`, `resolve_task_isolation`), `spec.py` (V1-V13), `specs/workflow.schema.json` | `tests/test_isolation_models.py`, `tests/test_isolation_spec_validation.py`, `tests/test_nfr2_regression_gate.py` *(in flight)* |
+| **FR-2** worktree at dispatch from the integration head, outside every working tree | `isolation/paths.py`, `isolation/worktrees.py` | `tests/isolation/test_paths.py`, `tests/isolation/test_worktrees.py` |
+| **FR-3** several `RepoRef`s in one repo share one worktree | `isolation/worktrees.py::group_repos` | `tests/isolation/test_worktrees.py` |
+| **FR-4** `effective_path` remap of every handed-out path | `isolation/paths.py::effective_path`, `isolation/view.py`, `engine.py::_run_with_retries(store=...)` | `tests/isolation/test_paths.py`, `tests/isolation/test_view.py`, `tests/test_engine_isolation.py` |
+| **FR-5** engine auto-commit, ids/paths only | `isolation/integrator.py::_auto_commit_and_screen` | `tests/isolation/test_integrator.py` |
+| **FR-6** squash -> rebase -> verify -> CAS, per-repo lock | `isolation/integrator.py`, `isolation/locks.py`, `isolation/git.py::update_ref_cas` | `tests/isolation/test_integrator.py`, `tests/isolation/test_locks.py`, `tests/isolation/test_git.py` |
+| **FR-7** the T0-T4 ladder | `isolation/resolvers.py` (T1), `isolation/escalation.py` (T2/T3/T4), `isolation/integrator.py::materialize_conflict` | `tests/isolation/test_resolvers.py`, `tests/isolation/test_escalation.py`, `tests/isolation/test_ladder_e2e.py` *(in flight)*, `tests/isolation/test_conflict_fixtures.py` *(in flight)* |
+| **FR-8** verify before landing | `isolation/integrator.py::_run_verify*`, `isolation/git.py::grep_conflict_markers`/`diff_check` | `tests/isolation/test_integrator.py`, `tests/isolation/test_git.py` |
+| **FR-9** dependents wait for *integrated* | `engine.py::_settled_for_dependents` | `tests/test_engine_isolation.py`, `tests/test_e2e_isolation.py` *(in flight)* |
+| **FR-10** `touches` is a soft hint, never a gate | `scheduling/overlap.py::rank_wave` + the `engine.py` wave-fill call site | `tests/test_overlap_ranking.py`, `tests/test_engine_isolation.py` |
+| **FR-11** `ao hotspots` | `isolation/hotspots.py`, `cli.py` | `tests/test_hotspots.py`, `tests/test_e2e_cli_hotspots.py` |
+| **FR-12** non-git / old git degrades (or fails under `strict`) | `engine.py::_activate_integration`, `isolation/worktrees.py`, `project_config.py` | `tests/test_e2e_isolation.py` *(in flight)*; verified by execution during this pass |
+| **FR-13** non-isolated tasks are barriers; checkout fast-forwarded on demand | `engine.py::_is_barrier`/`_sync_checkout`, `isolation/git.py::fast_forward_checkout`, `isolation/runlock.py` | `tests/isolation/test_runlock.py`, `tests/test_e2e_isolation.py` *(in flight)* |
+| **FR-14** worktrees/branches/refs are GC'd | `isolation/worktrees.py` (`release`/`reconcile`/`gc_run`), `cli.py` (`ao prune`) | `tests/isolation/test_worktrees.py`, `tests/test_e2e_cli_prune_worktrees.py`; **executed** during this pass |
+| **FR-15** structured events / state / `status.json` traceability | `engine.py`, `isolation/*`, `runstate.py::write_status` | `tests/test_isolation_events.py` *(in flight)*, `tests/ui/test_runs_integration_surface.py` *(in flight)* — **partially unshipped, see Risks** |
+| **FR-16** conflict-friendly instructions + `routed-runner` wiring | `templates/instructions/conflict-friendly-coding.md`, `templates/builtin/instructions/merge-resolve.md`, `templates/builtin/routed-runner/` | template render + push-directive invariant tests in `tests/` |
+| **NFR-1** core never reads artifact contents | `isolation/*` (git subprocesses + temp files only); `conflict-<n>.json` is ids/paths/refs | audited by the 2026-09-07 security pass; `tests/isolation/test_escalation.py` |
+| **NFR-2** `max_parallel == 1` + `isolation: none` byte-identical | the whole opt-in construction | `tests/test_nfr2_regression_gate.py` *(in flight)* — the blocking gate |
+| **NFR-3** single-writer `RunState` | `engine.py` (workers return `WorkerOutcome`; only the main thread mutates/saves) | `tests/test_engine_isolation.py::TestNoRunStateMutationOnWorkerThread` |
+| **NFR-4** every git op bounded and re-attemptable | `isolation/git.py` (timeouts), `Integrator` (idempotent squash/rebase/CAS) | `tests/isolation/test_git.py`, `tests/isolation/test_integrator.py` |
+| **NFR-5** additive schema/state only | `models.py`, `runstate.py` | `tests/test_isolation_models.py`, `tests/isolation/test_service_paths_migration.py` |
+| **NFR-6** bounded, understood disk cost | design + docs (`isolation.env` recipe, HLD §16) | not test-covered by construction; **the first-adoption measurement is outstanding** |
+
 ## Review gates (2026-09-07)
 
 Two pre-implementation gates ran before any code was written — reviewer
 (`REVIEW-design-2026-09-07.md`, **APPROVE WITH CHANGES**: 6 Blocking, 11 Major, 7 Minor) and
 dev-security (`REVIEW-security-design-2026-09-07.md`, **conditional pass**: 2 Blocking, 3 Major,
-3 Minor, 3 Info), both in the epic ticket folder. **No ADR-0013 decision (D1-D7) was overturned.**
+3 Minor, 3 Info), both in the epic ticket folder. **No ADR-0013 decision (D1-D8) was overturned** — by
+those gates, by the implementation, or by the later as-built security audit.
 
 The findings that changed the design rather than merely tightening it:
 
@@ -191,16 +264,45 @@ fix — are recorded once, in [`task-isolation-hld.md`](../task-isolation-hld.md
 - **R4 the artifact path-guard widening** — `T-Ee3Mn8` carries a mandatory security pass over exactly
   that diff.
 - **Concurrency**: a scheduler/cron epic owns `docs-md/scheduler-triggers-hld.md` and ADR-0014 on this
-  branch. This epic touches neither, and does not edit `meta/ROADMAP.md`, `CLAUDE.md`,
-  `meta/learnings*.md`, existing ADRs, `src/`, or `../ao-runner-finplan`.
+  branch. This epic touches neither, and does not edit `CLAUDE.md`, existing ADRs, or
+  `../ao-runner-finplan`. `meta/ROADMAP.md` and `meta/learnings*.md` were explicitly re-scoped **into**
+  this epic at closing time, for `T-Dr5Yq6` — the original "do not edit" boundary applied to the
+  design and implementation phases, not to the reconciliation that closes the epic.
 - Not blocked. Five user decisions are recorded with recommended defaults already applied (HLD §20);
   the integration target and the default-verify behaviour should be confirmed before
   `T-Ib5Qy9-integrator-core` merges, since they are the hardest to reverse.
 
+## Open at closing time
+
+These are the things a reader should not assume are done.
+
+1. **S-2 resolver containment is ineffective as shipped** and is in remediation. Until it lands, a T2
+   merge-resolver dispatch does not have the tool/push containment the design calls blocking.
+2. **`ao resume` after a T4 failure discards an operator's hand-resolution** — `TaskIntegrationState.mode`
+   is never reset to `"normal"` on T4, so the resume redispatches in `"rerun"` mode and hard-resets the
+   retained worktree. Verified by executing `prepare_resume`. A code defect, not a docs gap; the
+   one-line fix and the two recoveries that do work today are in HLD §12.2 / §25 D-7.
+3. **`ao prune` leaks the `ao/` refs of a fully successful run** (discovery probes worktree directories
+   the engine has already removed). `T-Cx4Jf1` Part B.
+4. **Observability is half-shipped**: `tier_counts` is never incremented, a conflicted-then-rerun task
+   reports `tier_reached: "auto"`, and `worktree.retention_high` plus the dashboard integration column
+   do not exist. `T-Cx4Jf1` Part B. HLD §11 M9's event list is deliberately **not** reconciled yet for
+   the same reason.
+5. **Stale text in user-visible code**: `models.py` and `specs/workflow.schema.json` still describe
+   `integration.workspace_lock` as "reserved … this ticket implements no behaviour for it". `T-Wl2Bq7`
+   implemented it; the schema description ships to every user who reads the spec.
+6. **HLD §20 decisions 1 and 3** (integration target, default verify) were to be confirmed before
+   `T-Ib5Qy9` merged. It merged without a recorded confirmation, so they stand as implemented-by-default
+   rather than explicitly ratified.
+7. **The R-12 first-adoption measurement** against the consumer's real dirty-file set (`T-Ee3Mn8` AC-19)
+   has not been performed, so the predicted collision rate at the first barrier is still a prediction.
+
 ## Next actions
-1. Sprint 1 under way: `T-Gt4Pw8-git-porcelain` and `T-Sc7Rm2-isolation-schema-models` in development,
-   both frozen at their Phase-1 amended state. `T-Wk3Nv6` and `T-Ib5Qy9` start on their merge.
-2. User confirms or overrides HLD §20's five decisions — the integration target and the default-verify
-   behaviour before `T-Ib5Qy9` merges.
-3. The early gate is complete; the remaining verification is `T-Ee3Mn8`'s late gate, re-scoped to
-   verifying the *implementation* of S-1..S-6 against HLD §17.5's finding-driven test matrix.
+1. Land the security remediation (S-2 containment) and `T-Cx4Jf1` Part B; then re-run the docs pass over
+   HLD §11 M9's event contract and the `status.json`/dashboard text, which was deliberately deferred.
+2. Fix the T4 resume defect (item 2 above) — it is the only place where the shipped behaviour
+   contradicts a procedure the design promises an operator.
+3. Close `T-Ee3Mn8`'s remaining gates (security-pass record, reviewer acceptance matrix, per-module
+   coverage table) and reconcile its test-count evidence with the epic rollup, which disagree.
+4. Propose consumer adoption in `../ao-runner-finplan` as a ticket **in that repo** (HLD §20 item 7),
+   once items 1-3 are done.

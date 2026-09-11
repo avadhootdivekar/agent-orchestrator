@@ -1,13 +1,15 @@
 # ADR-0013 — Per-task git worktree isolation with squash+rebase integration and soft overlap-aware assignment
 
-- Status: **Proposed — amended 2026-09-07 after two pre-implementation review gates** (design complete;
-  implementation of `T-Gt4Pw8`/`T-Sc7Rm2` started 2026-09-07). Gate outcomes: reviewer *APPROVE WITH
-  CHANGES* (6 Blocking / 11 Major / 7 Minor), dev-security *conditional pass* (2 Blocking / 3 Major).
-  **No decision below was overturned by either gate**; D1-D7 stand as written. The amendments are
-  D8 (new, the multi-run policy the reviewer found missing), three security controls folded into the
-  Consequences, and the citation correction in Context. Per-finding dispositions live in
-  [`task-isolation-hld.md`](../task-isolation-hld.md) §24.
-- Date: 2026-09-06
+- Status: **Accepted / shipped (2026-09-07)** — implemented on `ad/task-isolation` across 11 merged
+  commits. **No decision D1-D8 was overturned by implementation**, by either pre-implementation review
+  gate, or by the as-built security audit; see *Implementation notes* below for which decisions held
+  exactly and which were refined in mechanism. Earlier status: *Proposed — amended 2026-09-07 after two
+  pre-implementation review gates* (reviewer *APPROVE WITH CHANGES*, 6 Blocking / 11 Major / 7 Minor;
+  dev-security *conditional pass*, 2 Blocking / 3 Major). Those gates added D8 (the multi-run policy the
+  reviewer found missing), three security controls in the Consequences, and the citation correction in
+  Context. Per-finding dispositions — re-verified against merged code — live in
+  [`task-isolation-hld.md`](../task-isolation-hld.md) §24; as-built deviations in §25.
+- Date: 2026-09-06 (decided) · 2026-09-07 (shipped)
 - Deciders: Avadhoot Divekar (user — decisions D1, D3, D8, D9 and the ladder shape were stated by the
   user and are recorded, not re-litigated), Claude (architect role)
 - Related: **[ADR-0007](ADR-0007-parallel-task-execution.md)** (opt-in parallel execution — this ADR
@@ -53,7 +55,8 @@ cross-task `depends_on` edges purely to avoid collisions (14 of 15 fan-out tasks
 "touch overlapping core Rust files". The prize is not "fewer conflicts" — it is letting the breakdown
 agent stop serializing work it only serialized out of fear.
 
-Six decisions were coupled enough to record together.
+Eight decisions were coupled enough to record together. (An earlier draft said "six" and was never
+updated when D7 and, after the review gate, D8 were added — corrected here as a count, not a decision.)
 
 ---
 
@@ -338,3 +341,79 @@ violation or a manual second `ao run` degrades cleanly instead of racing.
 - **Follow-ons unblocked.** `isolation: copy`; an `integration_conflicts` breaker condition (its
   counters ship with this epic); speculative integration; learning `touches` from observed diffs; a
   dashboard conflict view; adaptive `max_parallel` driven by observed conflict rate.
+
+## Implementation notes (added 2026-09-07, on shipping)
+
+Recorded on closing the epic. **The decision bodies above are not rewritten** — an ADR records what was
+decided and why, not what we would decide now. This section records only how each decision fared once
+built. Full deviation detail is in [`task-isolation-hld.md`](../task-isolation-hld.md) §25.
+
+**Held exactly as decided.**
+
+- **D1** (worktree per task per git repository, branch `ao/<run_id>/<task_id>`, created at dispatch from
+  the current integration head) — shipped verbatim, including the several-`RepoRef`s-one-repository
+  grouping the real consumer needs.
+- **D2** (opt-in per workflow and per task; non-git and old-git degrade, never fail) — shipped, with
+  `isolation.strict: true` as the opt-in to hard failure. Verified by execution: a non-git workspace
+  with `strict: true` logs `worktree.non_git_repo` then `integration.degraded reason="no_git_repos"
+  strict=true` and ends the run `failed` without dispatching; with `strict: false` the same workspace
+  degrades and the run proceeds.
+- **D3** (squash → rebase → verify → CAS fast-forward, serialized per repository) — shipped. One
+  correction *within* the decision, found by review rather than by design: `git update-ref`'s CAS is
+  pointer-equality only and performs **no ancestry check** (proved with a standalone git experiment), so
+  the resume path needed an explicit `is_ancestor` staleness check to avoid dropping a sibling's
+  already-landed commit. The decision is unchanged; its implementation is one check stronger than the
+  original pseudocode.
+- **D4** (integration branch is an ao-owned ref, never checked out, created lazily at first isolated
+  dispatch) — shipped verbatim. This decision paid for itself: it is why landing never depends on a
+  clean tree.
+- **D6** (structural tasks — `emit_tasks`, router, loop-gate — forced to `isolation: none`) — shipped,
+  with one defect found and fixed in review: the loop-gate branch did not strip the `__iter<N>` suffix,
+  so a loop-gate *clone* resolved to `worktree` from iteration 2 onward. Now routed through a shared
+  `models.strip_iter_suffix`. Note for future readers: `git-branch-off`-style tasks are **not**
+  structural and are not force-excluded — they stay unisolated only because a template pins them.
+- **D8** (one workspace, one isolation-active run; per-workspace run lock, default-degrade) — shipped as
+  decided, `workspace_lock: "require"` by default. The cross-epic consequence stated here still holds:
+  E-Sc9Rt4's per-workspace concurrency cap of 1 for isolated workflows needs no change.
+
+**Refined in mechanism, not in substance.**
+
+- **D5** (dependents wait for *integrated*; `should_skip` requires integration too; the user's checkout
+  is fast-forwarded on demand at barriers). Two refinements. The readiness and skip gates ship at the
+  engine's call sites (`_settled_for_dependents`, `_integration_allows_skip`) rather than inside
+  `runstate.py::should_skip`, which is byte-identical to pre-epic — the requirement is met and the
+  non-isolated path stays provably unchanged. And the fast-forward itself is `git read-tree -u -m` plus
+  a CAS `update-ref HEAD`, not `git merge --ff-only`: narrower, atomic on refusal, no merge commit, no
+  merge driver, with its own ancestry check. Both were reviewed and approved as implementation choices.
+- **D7** (`touches` is a soft hint; isolation isolates source, not build caches). The hint half shipped
+  exactly, including the provable no-op at `max_parallel == 1`. The build-cache half shipped as the
+  documented `isolation.env` recipe, as decided — but the **measurement** that was supposed to validate
+  it on first adoption has not been performed, so the cold-rebuild cost remains estimated rather than
+  observed.
+- **D9** (T2/T3 are extra attempts of the same task, "with zero new plumbing"). The decision holds; the
+  *"zero new plumbing"* claim did not, and had already been corrected in the HLD before implementation
+  (R-1). Two real defects had to be fixed for the decision to be true: actuals were discarded across a
+  requeue, and the budget ledger latched once per task id. Both are fixed by keying on
+  `"<task_id>#<dispatch_cycle>"`. A decision that needed plumbing it claimed not to need is worth
+  recording as such.
+
+**Changed by the build — one decision's mechanism was proved impossible as written.**
+
+- The T2 dispatch cannot inherit a mid-rebase worktree from the attempt that conflicted, because
+  `WorktreeManager.ensure()` aborts any mid-rebase state it finds on every redispatch. The shipped
+  mechanism **re-materializes** the conflict deterministically at dispatch-prep time from the durable
+  squash ref, under the per-repo lock. This does not overturn D6's ladder — T2 is still one bounded
+  agent attempt on the same task — but it does replace the mechanism D6's supporting prose assumed, and
+  it adds a genuinely better behaviour: a conflict that no longer reproduces skips T2 entirely and
+  spends no LLM budget.
+
+**Where the record must stay honest.** The security controls listed in *Consequences* above are
+described there as they were decided. As of shipping, control (1) (hook suppression) is verified working
+by execution but does **not** extend to git-attribute `filter`/`merge` drivers — accepted as a
+documented limitation, with adopter guidance in `conflict-friendly-coding.md` and in
+`task-isolation-hld.md` §14. Control (3) (auto-commit denylist) shipped and works, with known gaps in
+remediation. Control (2) — the T2 resolver's forced `disallowed_tools` union and push denial — is
+**ineffective in the shipped code**: the union is discarded before it reaches the CLI, and the push
+denial covers https remotes only. It is being fixed rather than accepted, but until that lands, the
+Consequences bullet describes an intent, not a behaviour. Recorded here so this ADR cannot be read as
+claiming a control the code does not have.

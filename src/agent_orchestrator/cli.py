@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,8 +44,11 @@ from .models import ISOLATION_NONE, ISOLATION_WORKTREE
 from .service.cli import app as service_app
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from .artifacts import ArtifactStore
     from .executors.base import Executor
+    from .isolation.git import GitRepo
     from .isolation.worktrees import IsolatedRepo
     from .models import BudgetSpec
     from .monitoring import Monitor
@@ -1689,12 +1693,87 @@ def ui_cmd(
 # Isolation worktree GC for `ao prune` (E-Wk9Tz3 HLD §11 M9, §14).
 #
 # `ao prune` takes only `--workspace` -- no reposets/workflow triplet -- so it has none of
-# a live run's `group_repos(repo_paths)` input to build `IsolatedRepo`s from. Every
-# worktree this codebase ever creates lives at a fully deterministic path
-# (`isolation.paths.worktree_root_prefix_for(workspace_root, run_id)/<task_id>/<repo_key>`,
-# HLD §7.1/§11 M3), so the real git repos a run touches are instead DISCOVERED by probing
-# whatever of those directories still exist on disk -- no other input needed.
+# a live run's `group_repos(repo_paths)` input to build `IsolatedRepo`s from. Two
+# independent sources are therefore combined to recover the real git repos a run touched:
+#
+#  1. The run's OWN persisted record: `RunState.integration.repos` (repo_key -> git common
+#     dir, written by the engine at integration activation) in
+#     `<workspace>/.orchestrator/runs/<run_id>/state.json`. Authoritative and complete --
+#     it survives every worktree directory being removed.
+#  2. Physical probing of whatever worktree directories still exist under the run's own
+#     deterministic prefix (`isolation.paths.worktree_root_prefix_for(ws, run)/<task>/
+#     <repo_key>`, HLD §7.1/§11 M3). Covers runs whose state.json is gone or predates the
+#     isolation epic.
+#
+# Source 2 alone was the original implementation and was a live defect (2026-09-07 field
+# report): a run whose tasks ALL succeed has every worktree directory removed at task end
+# by design (`worktree.removed`), which is the normal -- not the exceptional -- end state,
+# so probing discovered nothing and `ao prune` deleted the run directory while silently
+# leaving every `refs/heads/ao/<run>/*` and `refs/ao/runs/<run>/**` ref behind. That is
+# exactly the leak class AC-6/R-6 exist to eliminate. Both sources are now unioned
+# (deduplicated by git common dir); GC stays scoped to the run's own `ao/<run>/...`
+# namespace and its own worktree prefix either way.
 # ---------------------------------------------------------------------------------------
+
+# `RunStateStore`'s own on-disk filename, read directly here: `ao prune` has no
+# reposets/workflow triplet and therefore cannot construct the `ArtifactStore` a
+# `RunStateStore` requires, and it must tolerate a partial/legacy/corrupt state file
+# (`RunState` itself would refuse to validate one) rather than fail the whole prune.
+_RUN_STATE_FILENAME = "state.json"
+
+
+def _runs_dir(workspace_root: str) -> Path:
+    """`<workspace_root>/.orchestrator/runs` -- the run-directory root `ao prune` operates
+    on (same layout `RunStateStore` writes)."""
+    return Path(workspace_root) / ".orchestrator" / "runs"
+
+
+def _recorded_run_repos(workspace_root: str, run_id: str) -> dict[str, str]:
+    """`RunIntegrationState.repos` (repo_key -> git common dir) as persisted in *run_id*'s
+    own `state.json`, or `{}` when the run directory/state file is missing, unreadable,
+    corrupt, or predates isolation (`integration` defaults to an inactive block).
+
+    Read defensively and never raised from: a state file `ao prune` cannot parse must
+    degrade to physical worktree probing, never abort the prune.
+    """
+    import json
+
+    from pydantic import ValidationError
+
+    from .models import RunIntegrationState
+
+    path = _runs_dir(workspace_root) / run_id / _RUN_STATE_FILENAME
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    try:
+        integration = RunIntegrationState.model_validate(raw.get("integration") or {})
+    except ValidationError:
+        return {}
+    return dict(integration.repos)
+
+
+def _workspace_recorded_repos(workspace_root: str) -> dict[str, str]:
+    """Every git common dir recorded by ANY run state still present in this workspace,
+    keyed by repo_key -- the last-resort repo source for `--worktrees-only`.
+
+    An orphan (a run whose directory is already gone) has no state file of its own left to
+    read, so a run that leaked its refs AND had every worktree directory removed would
+    otherwise be unreapable by any variant of this command. Runs in one workspace share a
+    repo set in practice, and `WorktreeManager.gc_run` is scoped to the target run's own
+    `ao/<run>/...` ref namespace and its own worktree prefix -- so a repo the orphan never
+    actually touched is a guaranteed no-op, never a wider blast radius.
+    """
+    runs_dir = _runs_dir(workspace_root)
+    if not runs_dir.is_dir():
+        return {}
+    recorded: dict[str, str] = {}
+    for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
+        recorded.update(_recorded_run_repos(workspace_root, run_dir.name))
+    return recorded
 
 
 def _isolation_worktree_root(workspace_root: str) -> Path:
@@ -1713,128 +1792,359 @@ def _isolation_worktree_root(workspace_root: str) -> Path:
     return worktree_root_prefix_for(workspace_root, "_").parent
 
 
-def _discover_run_worktree_repos(workspace_root: str, run_id: str) -> list[IsolatedRepo]:
-    """Discover the real git repositories one run's worktrees belong to, by probing the
-    physical worktree directories left on disk under that run's own worktree prefix.
+def _isolated_repo_for_common_dir(run_id: str, key: str, common_dir: str) -> IsolatedRepo | None:
+    """Build one `IsolatedRepo` from a git common dir, or `None` (with a C-4 warning) when
+    the persistent checkout it points at is gone or unreadable.
 
-    Deliberately does NOT use the worktree directory itself as `IsolatedRepo.toplevel`:
-    this run's own GC pass may remove that exact directory mid-operation, and
-    `GitRepo.path` must stay a stable invocation cwd for every subsequent call made on the
-    same `GitRepo` instance. Recovered instead from `--git-common-dir`, which always
-    points at the persistent main checkout (`<main_toplevel>/.git` for every non-bare
-    layout this codebase creates) and is never itself one of the paths GC removes.
+    Deliberately does NOT use a worktree directory as `IsolatedRepo.toplevel`: this run's
+    own GC pass may remove that exact directory mid-operation, and `GitRepo.path` must stay
+    a stable invocation cwd for every subsequent call made on the same `GitRepo` instance.
+    The common dir always points at the persistent main checkout (`<main_toplevel>/.git`
+    for every non-bare layout this codebase creates) and is never itself one of the paths
+    GC removes.
+    """
+    from .isolation.git import GitRepo
+    from .isolation.worktrees import IsolatedRepo as _IsolatedRepo
+
+    git_suffix = os.sep + ".git"
+    toplevel = common_dir[: -len(git_suffix)] if common_dir.endswith(git_suffix) else common_dir
+    if GitRepo.probe(toplevel) is None:
+        # C-4 (2026-09-07 review): warn, never skip silently -- `ao prune` must never
+        # report success while a repo's worktrees/refs were left ungc'd.
+        typer.echo(
+            f"WARNING: skipping worktree GC for run {run_id!r}: the main checkout "
+            f"{toplevel!r} this worktree points back to is gone or unreadable",
+            err=True,
+        )
+        return None
+    return _IsolatedRepo(key=key, toplevel=toplevel, common_dir=common_dir)
+
+
+def _discover_run_worktree_repos(
+    workspace_root: str,
+    run_id: str,
+    recorded_repos: Mapping[str, str] | None = None,
+) -> list[IsolatedRepo]:
+    """The real git repositories one run's worktrees/refs belong to, deduplicated by git
+    common dir: the physical worktree directories still on disk under that run's own
+    prefix, UNIONED with the repos the run itself recorded in `state.json`.
+
+    *recorded_repos* (repo_key -> git common dir) defaults to reading the run's own
+    persisted `integration.repos`. Callers that delete the run directory before GC'ing must
+    read it BEFORE the deletion and pass it explicitly; `--worktrees-only` passes the
+    workspace-wide record instead (its runs' own state files are, by definition, gone).
+
+    The recorded half is what makes a fully successful run reapable at all: every one of
+    its worktree directories is removed at task end by design, leaving nothing to probe.
     """
     from .isolation.git import GitRepo
     from .isolation.paths import worktree_root_prefix_for
-    from .isolation.worktrees import IsolatedRepo as _IsolatedRepo
 
-    prefix = worktree_root_prefix_for(workspace_root, run_id)
-    if not prefix.is_dir():
-        return []
+    if recorded_repos is None:
+        recorded_repos = _recorded_run_repos(workspace_root, run_id)
 
     discovered: dict[str, IsolatedRepo] = {}
-    for task_dir in sorted(p for p in prefix.iterdir() if p.is_dir()):
-        for repo_dir in sorted(p for p in task_dir.iterdir() if p.is_dir()):
-            probed = GitRepo.probe(str(repo_dir))
-            if probed is None:
-                # C-4 (2026-09-07 review): every other degrade path in this neighborhood
-                # (group_repos's worktree.non_git_repo, _gc_run_worktrees'/
-                # _preview_run_worktrees' own GitError warnings) reports what it skipped --
-                # this one must too, so `ao prune` never silently reports success while a
-                # repo's worktrees/refs were left ungc'd.
-                typer.echo(
-                    f"WARNING: skipping worktree GC for run {run_id!r}: {repo_dir} is not "
-                    "a readable git worktree",
-                    err=True,
-                )
-                continue
-            common_dir = os.path.normpath(probed.common_dir)
-            if common_dir in discovered:
-                continue
-            git_suffix = os.sep + ".git"
-            toplevel = (
-                common_dir[: -len(git_suffix)] if common_dir.endswith(git_suffix) else common_dir
-            )
-            if GitRepo.probe(toplevel) is None:
-                # The persistent checkout this worktree points back to is gone/unreadable --
-                # nothing safe to invoke git against; skip rather than guess (C-4: warn,
-                # never silently).
-                typer.echo(
-                    f"WARNING: skipping worktree GC for run {run_id!r}: the main checkout "
-                    f"{toplevel!r} this worktree points back to is gone or unreadable",
-                    err=True,
-                )
-                continue
-            discovered[common_dir] = _IsolatedRepo(
-                key=repo_dir.name, toplevel=toplevel, common_dir=common_dir
-            )
+    prefix = worktree_root_prefix_for(workspace_root, run_id)
+    if prefix.is_dir():
+        for task_dir in sorted(p for p in prefix.iterdir() if p.is_dir()):
+            for repo_dir in sorted(p for p in task_dir.iterdir() if p.is_dir()):
+                probed = GitRepo.probe(str(repo_dir))
+                if probed is None:
+                    # C-4: every other degrade path in this neighborhood (group_repos's
+                    # worktree.non_git_repo, `_plan_run_gc`'/`_execute_run_gc`'s own
+                    # GitError warnings) reports what it skipped -- this one must too.
+                    typer.echo(
+                        f"WARNING: skipping worktree GC for run {run_id!r}: {repo_dir} is not "
+                        "a readable git worktree",
+                        err=True,
+                    )
+                    continue
+                common_dir = os.path.normpath(probed.common_dir)
+                if common_dir in discovered:
+                    continue
+                repo = _isolated_repo_for_common_dir(run_id, repo_dir.name, common_dir)
+                if repo is not None:
+                    discovered[common_dir] = repo
+
+    for key, raw_common_dir in sorted(recorded_repos.items()):
+        common_dir = os.path.normpath(raw_common_dir)
+        if common_dir in discovered:
+            continue
+        repo = _isolated_repo_for_common_dir(run_id, key, common_dir)
+        if repo is not None:
+            discovered[common_dir] = repo
     return list(discovered.values())
 
 
-def _gc_run_worktrees(workspace_root: str, run_id: str) -> int:
-    """`WorktreeManager.gc_run(run_id)` (R-6: routed through `WorktreeManager`/
-    `prune_worktrees_scoped` only -- never raw git) over the repos discovered for
-    *run_id*. Returns the number of repos GC'd (0 when the run never created a worktree).
+# ---------------------------------------------------------------------------------------
+# H-4 (as-built security audit, 2026-09-07): `ao prune` was too destructive by default.
+# Three guards, all evaluated BEFORE anything is removed and all lifted by --force:
+#
+#  (a) Active run: `WorkspaceRunLock.is_held_by_other()` -- a prune concurrent with a live
+#      run deletes that run's state directory and force-removes its worktrees mid-task.
+#  (b) Unlanded work: a task branch whose tip is not an ancestor of the run's integration
+#      head holds commits that never landed. `keep_worktrees: "on_failure"` retains a
+#      failed task's worktree precisely so an operator can recover that work.
+#  (c) Dirty worktree: `gc_run` removes worktrees with `--force`, which discards
+#      uncommitted AND untracked content.
+#
+# (b)/(c) are per-TASK, so a run holding one unrecoverable task still gets the rest of its
+# worktrees/refs reclaimed: with nothing protected the run takes the full-purge path
+# (`WorktreeManager.gc_run`), and with protected tasks it takes `WorktreeManager.reconcile`
+# (which reaps every task id NOT passed to it, and keeps the run's integration branch and
+# squash refs -- the anchors the retained work is recovered against). Both are
+# `WorktreeManager` entry points routed through `prune_worktrees_scoped`; this module still
+# never calls git to mutate anything.
+# ---------------------------------------------------------------------------------------
 
-    A `GitError` mid-GC is reported as a warning and swallowed, never crashing the whole
-    `ao prune` invocation: the run-directory deletion this ticket wraps around is prune's
-    primary job and must still complete even when one run's worktree cleanup hiccups.
+# Payload-only run id for the read-only lock probe: `ao prune` never ACQUIRES the workspace
+# run lock (it must neither block on nor steal it), it only asks whether someone holds it.
+_PRUNE_LOCK_PROBE_RUN_ID = "ao-prune-probe"
+
+
+def _workspace_run_lock_held(workspace_root: str) -> bool:
+    """True when another process holds this workspace's run lock (H-4a).
+
+    Best-effort by construction, and documented as such: the lock exists only while a run
+    with `integration.workspace_lock != "off"` is live, and `is_held_by_other` is a
+    point-in-time probe (its own docstring calls out the TOCTOU window). Fails OPEN on an
+    unusable state dir -- a prune must not be permanently blocked by an unreadable lock
+    path -- which is why this is a guard, not mutual exclusion.
+    """
+    from .isolation.runlock import WorkspaceRunLock
+
+    try:
+        return WorkspaceRunLock(workspace_root, _PRUNE_LOCK_PROBE_RUN_ID).is_held_by_other()
+    except OSError:
+        return False
+
+
+@dataclass(frozen=True)
+class _RunGcPlan:
+    """Exactly what `ao prune` would remove for one run, after the H-4 guards.
+
+    Built once per run and used for BOTH the `--dry-run` preview and the real GC, so the
+    two can never disagree about what the guards protected.
+    """
+
+    repos: list[IsolatedRepo]
+    # Task ids whose worktree/branch must survive (always empty under --force).
+    protected_task_ids: frozenset[str]
+    # Operator-facing reasons, one per protected task, already formatted.
+    warnings: tuple[str, ...]
+    worktree_paths: tuple[str, ...]
+    ref_names: tuple[str, ...]
+
+
+_EMPTY_GC_PLAN = _RunGcPlan(
+    repos=[], protected_task_ids=frozenset(), warnings=(), worktree_paths=(), ref_names=()
+)
+
+
+def _worktree_task_id(prefix: str, worktree_path: str) -> str | None:
+    """The task-id component of a worktree path under *prefix*, or None when the path is
+    not under it -- the same derivation `WorktreeManager.reconcile` uses to decide which
+    worktree belongs to which task."""
+    norm = os.path.normpath(worktree_path)
+    if norm != prefix and not norm.startswith(prefix + os.sep):
+        return None
+    rel = os.path.relpath(norm, prefix)
+    return rel.split(os.sep)[0] if rel != os.curdir else None
+
+
+def _worktree_is_dirty(git: GitRepo, path: str) -> bool:
+    """H-4c: would removing this worktree with `--force` destroy content?
+
+    Untracked files count -- that is exactly what `--force` discards. A path no longer on
+    disk is a dangling admin entry (nothing to lose, never "dirty"). A worktree whose
+    status cannot be read at all IS treated as dirty: declining to destroy what we cannot
+    inspect is the safe direction.
     """
     from .errors import GitError
-    from .isolation.worktrees import WorktreeManager
 
-    repos = _discover_run_worktree_repos(workspace_root, run_id)
-    if not repos:
-        return 0
-    manager = WorktreeManager(workspace_root, run_id, repos, integration_heads={})
+    if not os.path.isdir(path):
+        return False
     try:
-        manager.gc_run(run_id)
-    except GitError as exc:
-        typer.echo(f"WARNING: worktree GC for run {run_id!r} failed: {exc}", err=True)
-        return 0
-    return len(repos)
+        return bool(git.status_porcelain(path, untracked=True))
+    except (GitError, OSError):
+        return True
 
 
-def _preview_run_worktrees(workspace_root: str, run_id: str) -> tuple[list[str], list[str]]:
-    """Read-only preview of exactly what `_gc_run_worktrees` would remove for *run_id*:
-    worktree paths under the run's own prefix, plus its `ao/`-namespaced branch and squash
-    refs. Used by `ao prune --dry-run` so a dry run touches nothing.
+def _branch_is_unlanded(
+    git: GitRepo, tip: str, integration_head: str | None, outside_heads: set[str]
+) -> bool:
+    """H-4b: does this task branch hold commits that never landed?
 
-    A `GitError` for one repo is reported as a warning and skipped (that repo's entries
-    are simply omitted from the preview), consistent with `_gc_run_worktrees`'s own
-    never-crash-the-whole-command handling.
+    With the run's integration branch present that is exactly the reviewer's check
+    (`is_ancestor(branch_tip, integration_head)`). Without it -- isolation never activated,
+    or the integration ref already reaped -- the branch is still safe to delete when its
+    tip is reachable from ANY ref outside this run's own `ao/` namespace (the shared
+    checkout it was fast-forwarded onto, a tag, another branch): deleting a second name for
+    a commit some other ref already keeps alive loses nothing.
+    """
+    if integration_head is not None:
+        return not git.is_ancestor(tip, integration_head)
+    if tip in outside_heads:
+        return False  # identical sha -- reachable without spending a git call
+    return not any(git.is_ancestor(tip, head) for head in outside_heads)
+
+
+def _plan_run_gc(
+    workspace_root: str,
+    run_id: str,
+    recorded_repos: Mapping[str, str] | None = None,
+    *,
+    force: bool = False,
+) -> _RunGcPlan:
+    """Resolve *run_id*'s repos, apply the H-4b/H-4c guards, and report what would go.
+
+    *recorded_repos* is resolved exactly as `_discover_run_worktree_repos` resolves it, so
+    preview and real GC always see the same repo set -- including a run with no surviving
+    worktree directory, whose refs must still be listed.
+
+    A `GitError` for one repo is warned about and that repo skipped, consistent with the
+    rest of this command: one unreadable repo never crashes the whole `ao prune`.
     """
     from .errors import GitError
     from .isolation.git import GitRepo
-    from .isolation.paths import AO_REF_NAMESPACE, sanitize_ref_component, worktree_root_prefix_for
+    from .isolation.paths import (
+        AO_REF_NAMESPACE,
+        RESERVED_BRANCH_COMPONENTS,
+        integration_branch,
+        sanitize_ref_component,
+        worktree_root_prefix_for,
+    )
 
-    repos = _discover_run_worktree_repos(workspace_root, run_id)
+    repos = _discover_run_worktree_repos(workspace_root, run_id, recorded_repos)
     if not repos:
-        return [], []
+        return _EMPTY_GC_PLAN
 
     prefix = str(worktree_root_prefix_for(workspace_root, run_id))
     san_run = sanitize_ref_component(run_id)
     branch_prefix = f"refs/heads/{AO_REF_NAMESPACE}/{san_run}/"
     squash_prefix = f"refs/{AO_REF_NAMESPACE}/runs/{san_run}/"
+    integration_ref = f"refs/heads/{integration_branch(run_id)}"
 
-    worktree_paths: set[str] = set()
-    ref_names: set[str] = set()
+    protected: set[str] = set()
+    warnings: list[str] = []
+    # Pass 1, per repo: a task protected in ANY repo of a multi-repo run must be protected
+    # in every one of them (`reconcile` takes one task-id set covering all repos).
+    scanned: list[tuple[dict[str, str], dict[str, str], list[str]]] = []
     for repo in repos:
         git = GitRepo(repo.toplevel)
         try:
-            for entry in git.worktree_list():
-                norm = os.path.normpath(entry.path)
-                if norm == prefix or norm.startswith(prefix + os.sep):
-                    worktree_paths.add(norm)
-            ref_names.update(git.list_refs(branch_prefix))
-            ref_names.update(git.list_refs(squash_prefix))
+            branch_refs = git.list_refs(branch_prefix)
+            squash_refs = git.list_refs(squash_prefix)
+            worktrees = [
+                os.path.normpath(e.path)
+                for e in git.worktree_list()
+                if _worktree_task_id(prefix, e.path) is not None
+            ]
+            if not force:
+                for path in worktrees:
+                    task_id = _worktree_task_id(prefix, path)
+                    if task_id is not None and _worktree_is_dirty(git, path):
+                        protected.add(task_id)
+                        warnings.append(
+                            f"WARNING: keeping worktree {path} (run {run_id!r}, task "
+                            f"{task_id!r}): it holds uncommitted or untracked changes that "
+                            "`git worktree remove --force` would destroy (--force overrides)"
+                        )
+                task_refs = {
+                    name: sha
+                    for name, sha in branch_refs.items()
+                    if name[len(branch_prefix) :] not in RESERVED_BRANCH_COMPONENTS
+                }
+                integration_head = branch_refs.get(integration_ref)
+                outside_heads: set[str] = set()
+                if task_refs and integration_head is None:
+                    outside_heads = {
+                        sha
+                        for name, sha in git.list_refs("refs/").items()
+                        if not name.startswith(branch_prefix) and not name.startswith(squash_prefix)
+                    }
+                for ref_name, tip in task_refs.items():
+                    if _branch_is_unlanded(git, tip, integration_head, outside_heads):
+                        protected.add(ref_name[len(branch_prefix) :])
+                        warnings.append(
+                            f"WARNING: keeping branch {ref_name}: its commits never landed "
+                            "on the run's integration head and deleting it would lose them "
+                            "(--force overrides)"
+                        )
         except GitError as exc:
             typer.echo(
-                f"WARNING: could not preview worktrees for run {run_id!r} repo {repo.key!r}: {exc}",
+                f"WARNING: could not inspect worktrees for run {run_id!r} repo {repo.key!r}: {exc}",
                 err=True,
             )
             continue
-    return sorted(worktree_paths), sorted(ref_names)
+        scanned.append((branch_refs, squash_refs, worktrees))
+
+    # Pass 2: what actually goes, mirroring the entry point that will be used -- `gc_run`
+    # (everything, integration branch and squash refs included) when nothing is protected,
+    # `reconcile` (unprotected task worktrees + task branches only) otherwise.
+    keep_run_scoped_refs = bool(protected)
+    worktree_paths: set[str] = set()
+    ref_names: set[str] = set()
+    for branch_refs, squash_refs, worktrees in scanned:
+        worktree_paths.update(
+            path for path in worktrees if _worktree_task_id(prefix, path) not in protected
+        )
+        for ref_name in branch_refs:
+            task_id = ref_name[len(branch_prefix) :]
+            if task_id in protected:
+                continue
+            if keep_run_scoped_refs and task_id in RESERVED_BRANCH_COMPONENTS:
+                continue
+            ref_names.add(ref_name)
+        if not keep_run_scoped_refs:
+            ref_names.update(squash_refs)
+
+    return _RunGcPlan(
+        repos=repos,
+        protected_task_ids=frozenset(protected),
+        warnings=tuple(warnings),
+        worktree_paths=tuple(sorted(worktree_paths)),
+        ref_names=tuple(sorted(ref_names)),
+    )
+
+
+def _execute_run_gc(workspace_root: str, run_id: str, plan: _RunGcPlan) -> int:
+    """Carry out *plan* (R-6: `WorktreeManager` only -- never raw git, never a blanket
+    `git worktree prune`). Returns the number of repos GC'd, 0 when nothing was discovered
+    or the GC failed.
+
+    A `GitError` mid-GC is reported as a warning and swallowed, never crashing the whole
+    `ao prune` invocation: the run-directory deletion this wraps is prune's primary job and
+    must still complete even when one run's worktree cleanup hiccups.
+    """
+    from .errors import GitError
+    from .isolation.worktrees import WorktreeManager
+
+    if not plan.repos:
+        return 0
+    manager = WorktreeManager(workspace_root, run_id, plan.repos, integration_heads={})
+    try:
+        if plan.protected_task_ids:
+            manager.reconcile(set(plan.protected_task_ids))
+        else:
+            manager.gc_run(run_id)
+    except GitError as exc:
+        typer.echo(f"WARNING: worktree GC for run {run_id!r} failed: {exc}", err=True)
+        return 0
+    return len(plan.repos)
+
+
+def _gc_run_worktrees(
+    workspace_root: str,
+    run_id: str,
+    recorded_repos: Mapping[str, str] | None = None,
+    *,
+    force: bool = False,
+) -> int:
+    """Plan-then-execute, for callers that do not need the plan itself."""
+    return _execute_run_gc(
+        workspace_root, run_id, _plan_run_gc(workspace_root, run_id, recorded_repos, force=force)
+    )
 
 
 def _worktree_run_ids(workspace_root: str) -> list[str]:
@@ -1853,34 +2163,61 @@ def _worktree_run_ids(workspace_root: str) -> list[str]:
     return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
-def _prune_worktrees_only(workspace_root: str, *, dry_run: bool) -> None:
+def _echo_plan_warnings(plan: _RunGcPlan) -> None:
+    """The H-4 guard warnings for one run, on stderr -- emitted once, whether the run was
+    previewed or actually GC'd."""
+    for warning in plan.warnings:
+        typer.echo(warning, err=True)
+
+
+def _prune_worktrees_only(workspace_root: str, *, dry_run: bool, force: bool = False) -> None:
     """`ao prune --worktrees-only`: reap worktrees/refs whose run directory no longer
     exists, WITHOUT deleting any run directory (HLD §14) -- the leak class left by a
-    crashed run (a stray worktree plus its orphaned `ao/`-namespaced branch)."""
-    runs_dir = Path(workspace_root) / ".orchestrator" / "runs"
+    crashed run (a stray worktree plus its orphaned `ao/`-namespaced branch), and by a run
+    whose directory was deleted while its refs were left behind.
+
+    An orphan's own `state.json` is gone with its run directory, so the repo record here is
+    the workspace-wide one (see `_workspace_recorded_repos`) -- computed once per
+    invocation, and only when there is at least one orphan to reap.
+    """
+    runs_dir = _runs_dir(workspace_root)
+    recorded: dict[str, str] | None = None
     reaped = 0
+    protected_runs = 0
     for run_id in _worktree_run_ids(workspace_root):
         if (runs_dir / run_id).exists():
             continue  # owned by a run directory that still exists -- not this sweep's job
 
+        if recorded is None:
+            recorded = _workspace_recorded_repos(workspace_root)
+
+        plan = _plan_run_gc(workspace_root, run_id, recorded, force=force)
+        _echo_plan_warnings(plan)
+        if plan.protected_task_ids:
+            protected_runs += 1
+
         if dry_run:
-            wt_paths, refs = _preview_run_worktrees(workspace_root, run_id)
-            if not wt_paths and not refs:
+            if not plan.worktree_paths and not plan.ref_names:
                 continue
             typer.echo(f"Would reap orphaned worktrees for run {run_id}:")
-            for wt in wt_paths:
+            for wt in plan.worktree_paths:
                 typer.echo(f"  worktree: {wt}")
-            for ref in refs:
+            for ref in plan.ref_names:
                 typer.echo(f"  ref: {ref}")
             reaped += 1
         else:
-            n = _gc_run_worktrees(workspace_root, run_id)
+            n = _execute_run_gc(workspace_root, run_id, plan)
             if n:
                 typer.echo(f"Reaped orphaned worktrees for run {run_id}: {n} repo(s)")
                 reaped += 1
 
     action = "would be reaped" if dry_run else "reaped"
     typer.echo(f"{reaped} orphaned run(s) {action}")
+    if protected_runs:
+        typer.echo(
+            f"{protected_runs} run(s) kept work that prune refused to destroy "
+            "(see warnings above; --force overrides)"
+        )
 
 
 @app.command()
@@ -1897,8 +2234,9 @@ def prune(
         "--worktrees/--no-worktrees",
         help=(
             "Also garbage-collect a deleted run's isolation worktrees/branches/refs "
-            "(E-Wk9Tz3 FR-14) via WorktreeManager.gc_run, scoped to that run only -- never"
-            " a blanket `git worktree prune`. Default on; --no-worktrees opts out."
+            "(E-Wk9Tz3 FR-14) via WorktreeManager.gc_run/reconcile, scoped to that run"
+            " only -- never a blanket `git worktree prune`. Default on; --no-worktrees"
+            " opts out."
         ),
     ),
     worktrees_only: bool = typer.Option(
@@ -1909,6 +2247,18 @@ def prune(
             " refs whose run directory no longer exists (a crashed run's leftovers) --"
             " never deletes a run directory. --older-than/--worktrees are ignored in this"
             " mode."
+        ),
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "Lift every safety guard (E-Wk9Tz3 H-4). Without it, prune REFUSES to run"
+            " while another process holds this workspace's run lock; KEEPS a task branch"
+            " whose commits never landed on the run's integration head; and KEEPS a"
+            " worktree holding uncommitted or untracked changes. With --force it prunes"
+            " during a live run, deletes unlanded task branches, and force-removes dirty"
+            " worktrees -- that work is destroyed and is not recoverable."
         ),
     ),
 ) -> None:
@@ -1922,26 +2272,47 @@ def prune(
     touches no run directory. Analogous to `docker system prune` -- run periodically to
     reclaim disk space.
 
-    LIMITATION: this command takes only --workspace (no reposets/workflow), so the real
-    git repo(s) a run's worktrees belong to are discovered by probing the physical
-    worktree directories still on disk. A worktree directory removed by something other
-    than `ao`/`git worktree remove` (a manual `rm -rf`, a filesystem restore) leaves a
-    dangling admin entry in the main repo that IS still reaped, as long as at least one
-    OTHER worktree directory for the same run/repo survives to bootstrap discovery. If
-    EVERY worktree directory for a run's repo is gone, that repo can no longer be
-    discovered at all, and its `ao/`-namespaced branch/refs become permanently unreapable
-    by any variant of this command -- reported as "0 orphaned run(s)" with no error.
+    This command takes only --workspace (no reposets/workflow), so the real git repo(s) a
+    run's worktrees/refs belong to are recovered from the run's own persisted
+    state.json (`integration.repos`) unioned with whatever physical worktree directories
+    are still on disk. A run whose tasks all succeeded has NO worktree directory left (they
+    are removed at task end by design) and is reaped purely from its recorded state; a
+    worktree directory removed by something other than `ao`/`git worktree remove` (a manual
+    `rm -rf`, a filesystem restore) leaves a dangling admin entry that is reaped too.
+
+    LIMITATION: --worktrees-only reaps a run whose directory is already gone, so that run's
+    own state.json is gone with it; it falls back to the repos recorded by the OTHER run
+    states still present in the workspace. In a workspace with no run state left at all,
+    and no worktree directory left to probe, an already-orphaned run's `ao/`-namespaced
+    refs cannot be located and are reported as "0 orphaned run(s)" with no error.
+
+    SAFETY (H-4): without --force this refuses to prune while another process holds the
+    workspace run lock, keeps any task branch whose commits never landed on the run's
+    integration head, and keeps any worktree with uncommitted/untracked changes (the run
+    directory of such a run is kept too, since it is the record of what that work was).
     """
     import shutil
     import time
 
     ws_root = str(Path(workspace).resolve())
 
+    # H-4a: never delete a live run's state directory or force-remove its worktrees
+    # mid-task. Checked once, before anything is touched, for every mode of the command.
+    if not force and _workspace_run_lock_held(ws_root):
+        typer.echo(
+            f"ERROR: refusing to prune {ws_root}: another process holds this workspace's "
+            "run lock, so a run is live. Wait for it to finish, or pass --force to prune "
+            "anyway (this deletes the live run's state directory and force-removes its "
+            "worktrees mid-task).",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     if worktrees_only:
-        _prune_worktrees_only(ws_root, dry_run=dry_run)
+        _prune_worktrees_only(ws_root, dry_run=dry_run, force=force)
         return
 
-    runs_dir = Path(ws_root) / ".orchestrator" / "runs"
+    runs_dir = _runs_dir(ws_root)
     if not runs_dir.exists():
         typer.echo(f"Nothing to prune: {runs_dir}")
         raise typer.Exit(0)
@@ -1952,26 +2323,55 @@ def prune(
     candidates = [p for p in runs_dir.iterdir() if p.is_dir()]
     to_delete = [p for p in candidates if older_than == 0 or os.path.getmtime(p) < cutoff]
 
+    deleted = 0
+    kept = 0
     for p in to_delete:
         run_id = p.name
-        if dry_run:
+        # The run's own `integration.repos` record lives INSIDE the directory about to be
+        # deleted -- read it (and plan the GC) BEFORE the deletion, or a fully successful
+        # run (no worktree directory left to probe) leaves its `ao/<run>/...` refs behind
+        # forever.
+        plan = _EMPTY_GC_PLAN
+        if worktrees:
+            plan = _plan_run_gc(ws_root, run_id, _recorded_run_repos(ws_root, run_id), force=force)
+            _echo_plan_warnings(plan)
+
+        # H-4b/H-4c: a run holding work prune refuses to destroy keeps its run directory
+        # too -- that directory is the operator's map of what the retained branch/worktree
+        # was. Its unprotected worktrees/refs are still reclaimed below.
+        if plan.protected_task_ids:
+            verb = "Would keep" if dry_run else "Kept"
+            typer.echo(
+                f"{verb}: {p} ({len(plan.protected_task_ids)} task(s) hold unlanded or "
+                "uncommitted work; --force overrides)"
+            )
+            kept += 1
+        elif dry_run:
             typer.echo(f"Would delete: {p}")
-            if worktrees:
-                wt_paths, refs = _preview_run_worktrees(ws_root, run_id)
-                for wt in wt_paths:
-                    typer.echo(f"  would remove worktree: {wt}")
-                for ref in refs:
-                    typer.echo(f"  would delete ref: {ref}")
+            deleted += 1
         else:
             shutil.rmtree(p)
             typer.echo(f"Deleted: {p}")
-            if worktrees:
-                n = _gc_run_worktrees(ws_root, run_id)
-                if n:
-                    typer.echo(f"  worktrees GC'd for {run_id}: {n} repo(s)")
+            deleted += 1
+
+        if dry_run:
+            for wt in plan.worktree_paths:
+                typer.echo(f"  would remove worktree: {wt}")
+            for ref in plan.ref_names:
+                typer.echo(f"  would delete ref: {ref}")
+        elif worktrees:
+            n = _execute_run_gc(ws_root, run_id, plan)
+            if n:
+                typer.echo(f"  worktrees GC'd for {run_id}: {n} repo(s)")
 
     action = "would be deleted" if dry_run else "deleted"
-    typer.echo(f"{len(to_delete)} run(s) {action}")
+    typer.echo(f"{deleted} run(s) {action}")
+    if kept:
+        kept_action = "would be kept" if dry_run else "kept"
+        typer.echo(
+            f"{kept} run(s) {kept_action}: work prune refused to destroy "
+            "(see warnings above; --force overrides)"
+        )
 
 
 def _resolve_templates_workspace_root(workspace: str | None) -> str:

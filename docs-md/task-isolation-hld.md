@@ -2,8 +2,11 @@
 
 - Epic: [`E-Wk9Tz3-task-isolation`](../meta/tickets/E-Wk9Tz3-task-isolation/EPIC.md)
 - Decision record: [`ADR-0013`](adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md)
-- Status: **Design — approved for implementation planning; no code written yet**
-- Date: 2026-09-06
+- Status: **Shipped (2026-09-07) — reconciled against the merged implementation.** See
+  [§25 As-built deviations](#25-as-built-deviations-from-design-t-dr5yq6-2026-09-07) for every place the
+  build differs from the design as first written, and §24 for the review-finding dispositions
+  re-verified against merged code rather than against the tickets that claimed them.
+- Date: 2026-09-06 (design) · 2026-09-07 (as-built reconciliation)
 - Author: architect (agent)
 - Related: [`ADR-0007`](adr/ADR-0007-parallel-task-execution.md) (wave/barrier scheduler — this epic closes its
   documented write-conflict gap) · [`parallel-execution-hld.md`](parallel-execution-hld.md) §11/§12 ·
@@ -21,13 +24,17 @@
 > two dependency-free tasks (`T-Gt4Pw8`, `T-Sc7Rm2`) need to be implementable correctly — S-1 (git-hook
 > suppression), scoped worktree pruning (R-6), release-on-failure porcelain semantics (R-23), and the
 > schema/model fields required by the R-1 / R-3 / R-5 / R-21 / S-2 / S-3 / S-5 / S-6 fixes so the schema
-> is not reopened later. **Phase 2 (every remaining Blocking/Major finding across §§7-9, §11 M3-M11,
-> ADR-0013 and the other 10 tickets, plus the `## Review dispositions` log) is pending.** Sections not
-> yet amended still describe the pre-review design.
+> is not reopened later. Phase 2 (every remaining Blocking/Major finding) was applied before the
+> dependent tickets started. §24 records every finding's disposition, **re-verified against merged code
+> on 2026-09-07** — three rows were re-dispositioned in that pass because what shipped was not what the
+> owning ticket claimed.
 >
-> Every claim about existing code in this document was verified against the working tree on
-> **2026-09-06** (`engine.py` @ 2204 lines, `models.py` @ 586, `artifacts.py` @ 218, `runstate.py` @ 245,
-> `cli.py` @ 1620, `specs/*.schema.json`). Line references are from that snapshot.
+> Line references in the pre-`§25` body are from the **2026-09-06 design snapshot** (`engine.py` @ 2204
+> lines, `models.py` @ 586, `artifacts.py` @ 218, `runstate.py` @ 245, `cli.py` @ 1620) and are
+> historical: they name the code the design was written *against*, not the code that shipped. Treat a
+> `file.py:NNN` reference as "the function named nearby", not as a current line number. Symbol names,
+> flags, defaults, ref names, file paths and event names outside §11 M9's event list **were** re-verified
+> against merged code on 2026-09-07.
 
 ---
 
@@ -255,8 +262,14 @@ flowchart TB
   <repo paths ...>                      # main checkout(s), user-owned
 
 $AO_STATE_DIR/                          # default ~/.local/state/ao   (XDG_STATE_HOME aware)
-  worktrees/<workspace_key>/<run_id>/<task_id>/<repo_key>/   # the private checkouts
-  worktrees/<workspace_key>/index.json                       # GC bookkeeping (best effort)
+  worktrees/<workspace_key>/<run_id>/<task_id>/<repo_key>/   # the private checkouts (mode 0700)
+  runlocks/<workspace_key>.lock                              # the per-workspace run lock (§12.3)
+  empty-hooks/                                               # the always-empty core.hooksPath dir (S-1)
+  # As-built: the designed `worktrees/<workspace_key>/index.json` GC-bookkeeping file was NEVER built
+  # and is not needed. GC works off what is actually on disk plus the run's own state: `reconcile()`
+  # and `gc_run()` enumerate registered worktrees under this run's prefix, and `ao prune` discovers
+  # repos by probing the surviving worktree directories. That is also why `ao prune` has the two
+  # discovery limitations recorded in §11 M9 and §25 D-6.
 
 <git repo>/.git/
   refs/heads/ao/<run_id>/integration    # the integration ref — never checked out
@@ -303,7 +316,7 @@ stateDiagram-v2
     integrating --> conflict_resolver: conflicts remain after T1, ladder allows T2
     integrating --> conflict_rerun: T2 exhausted/disabled, or verify failed, ladder allows T3
     integrating --> failed: ladder exhausted (T4) or CAS lost twice
-    conflict_resolver --> pending: requeued — next dispatch runs the merge-resolver agent
+    conflict_resolver --> pending: requeued — next dispatch RE-MATERIALIZES the conflict<br/>(reset to the durable squash, re-rebase onto the current head)<br/>then runs the merge-resolver agent
     conflict_rerun --> pending: worktree reset to fresh head, previous diff attached
     integrated --> [*]
     failed --> [*]
@@ -454,7 +467,7 @@ Rules that keep this safe:
 | **Pre-dispatch** `should_skip` (`runstate.py:156`) | shared/main root, **with the integration gate applied to BOTH of its branches** | See R-3 below — this is the single easiest thing in the epic to half-fix. |
 | **Pre-dispatch** missing-input gate (`engine.py:552`) | through the task's `IsolatedArtifactView` | An input produced by an integrated predecessor is present in a worktree created from the post-integration head. |
 | **Post-execution** missing-output check | **on the worker thread, through the isolated view, BEFORE `Integrator.integrate()` is called** (R-2) | See R-2 below. |
-| **Post-integration** output check | shared/main root, after the checkout sync | Confirms the declared outputs are reachable from the integration branch. Outputs that are **git-ignored** never will be — see below. |
+| **Post-integration** output check | **as-built: skipped entirely for an isolated task** (deviation 3, §25). For a non-isolated task it is the pre-epic main-thread check, unchanged. | The worker's gate above is authoritative for an isolated task; see the as-built callout under R-2. |
 
 **R-2 — the missing-outputs check must gate integration, and today's code cannot do that.** The real
 check lives in `_settle_completed_task` (`engine.py:1122-1138`), which is **main-thread only** and by
@@ -467,6 +480,18 @@ task's isolated view, and calls `integrate()` **only** when it passes; a failure
 `WorkerOutcome(result, None, missing_outputs=[...])` and the main-thread check in
 `_settle_completed_task` stays exactly as it is (it will re-run and reach the same verdict, so the
 existing non-isolated path is byte-identical — NFR-2).
+
+> **As-built (deviation 3, §25) — the parenthesis above is false, and the table's ordering never
+> shipped.** "It will re-run and reach the same verdict" holds only when a task's declared outputs live
+> *outside* every isolated repo (the consumer's own convention, which is why the claim survived design
+> review). For a task that declares an **in-repo** output, the main thread resolves that path against
+> the shared checkout, where the output does not exist until the barrier sync — so the run **halted
+> `failed` on a task whose code had demonstrably landed** (`ti.status == "integrated"`, verifiable with
+> `git show`). `T-En8Hd4`'s reviewer reclassified the developer's own "documented limitation" as a
+> blocking defect and it was fixed by making the worker's gate authoritative: for an isolated task the
+> main-thread `self._store.exists()` verdict is **discarded**, not re-run. The non-isolated path is
+> untouched and still byte-identical (NFR-2). The table row's original "after the checkout sync"
+> ordering was therefore never implemented, and is corrected in the table above.
 
 **R-3 — `should_skip` has two independent branches and the consumer exercises the second one.**
 `runstate.py:156-172`:
@@ -489,6 +514,18 @@ fires, marks the task `"skipped"` (`engine.py:534`), and adds it to `ctx.done` �
 predecessor's code had landed. It never did. **The integration gate must be applied to both branches**,
 and the regression test must target branch 2 specifically, because that is the one the field-observed
 usage pattern actually exercises.
+
+> **As-built (deviation 4, §25) — the gate is at the call site, not inside `should_skip`.**
+> `runstate.py::should_skip` was **not edited**: it is byte-identical to its pre-epic form, both
+> branches included. The integration gate ships as `Orchestrator._integration_allows_skip(tid, state)`
+> and is AND-ed in at the engine's single call site
+> (`if self._runstate.should_skip(task, state) and self._integration_allows_skip(tid, state)`), which
+> is why it covers both of `should_skip`'s branches for free — the requirement R-3 states is met, by a
+> different construction than "edit `should_skip`". The rule is exactly: `ti is None` or
+> `ti.isolation == "none"` → skipping is allowed (pre-epic behaviour, NFR-2); otherwise skipping
+> requires `ti.status == "integrated"`. The sibling readiness rule (FR-9) is
+> `_settled_for_dependents`, same file, same shape.
+
 | **Untracked/ignored declared outputs** | copied back | After a successful integration, any declared output that exists in the worktree but is not tracked by git is copied to its shared path (`integration.untracked_outputs: copy \| fail \| ignore`, default `copy`), emitting `integration.artifact_copied`. Without this, a declared output under an ignored `build/` or `output/` directory would silently vanish. |
 
 ---
@@ -619,9 +656,28 @@ removing an entry disables that tier.
 |---|---|---|---|---|
 | **T0** | `auto` | free | `git rebase` succeeds; non-overlapping hunks merge themselves | `integration.rebased` |
 | **T1** | `mechanical` | free | (a) `rerere` replay — every git call carries `-c rerere.enabled=true -c rerere.autoupdate=true`, so a resolution recorded once in this repo is replayed for free forever after (never written to the user's `git config`); (b) **union** merge for `integration.resolvers.union` globs (registries: `mod.rs`, `__init__.py`, `CHANGELOG.md`, barrel files) applied per-file over index stages, not via a global `merge` driver; (c) **regenerate** for `integration.resolvers.regenerate` entries (`{glob, command}` — lockfiles) | `integration.resolved` `tier=mechanical` `resolver=<rerere\|union\|regenerate>` |
-| **T2** | `llm` | one bounded agent attempt | The task is **requeued** and its next dispatch runs `integration.resolver_agent` with the builtin `merge-resolve` instruction, inputs = `conflict-<n>.json` (paths + refs only) and the worktree left mid-rebase. On success the worker resumes `rebase --continue` → verify → CAS. Capped by `integration.max_resolver_attempts` (default 1) | `integration.resolver_dispatched` / `integration.resolved tier=llm` |
+| **T2** | `llm` | one bounded agent attempt | The task is **requeued**. At its next dispatch the engine first **re-materializes the conflict** (`Integrator.materialize_conflict` — see the callout below), then runs `integration.resolver_agent` with the builtin `merge-resolve` instruction, inputs = `conflict-<n>.json` (paths + refs only) and a genuinely mid-rebase worktree. On success the worker resumes `rebase --continue` → verify → CAS. Capped by `integration.max_resolver_attempts` (default 1) | `integration.resolver_dispatched` / `integration.resolved tier=llm` |
 | **T3** | `rerun` | one full task attempt | Worktree `reset --hard` to the fresh integration head; the superseded squash is exported to `previous-<n>.patch` and added to the task's inputs; the original agent runs again on the clean base. Capped by `integration.max_reruns_per_task` (default 1). **Also the entry point for a verify failure** | `integration.rerun_dispatched` |
 | **T4** | fail | — | `ts.status = failed`, integration state `failed`, branch + worktree retained (`keep_worktrees` forced to keep on failure), operator resolves and `ao resume` | `integration.failed` |
+
+> **As-built (deviation 2, §25) — T2 re-materializes the conflict; it does not inherit it.** This
+> table's T2 row, §6.4's state machine and §8.5's sequence originally described the resolver as
+> running against a worktree "left mid-rebase" by T1's own conflict — i.e. state that *survived*
+> from the first dispatch. That is not what ships, and could not be: `WorktreeManager.ensure()`
+> (AC-10c, `T-Wk3Nv6`) unconditionally `git rebase --abort`s any reused worktree it finds
+> mid-rebase, and it runs on the main thread before every redispatch — so it fires on every T2
+> redispatch, before the resolver agent ever starts. The shipped mechanism instead **re-derives the
+> conflict deterministically at T2 dispatch-prep time**: `Integrator.materialize_conflict` resets
+> each repo's worktree/branch to the durable squash recorded for this attempt
+> (`refs/ao/runs/<run>/<task>/squash-<n>`) and re-rebases it onto the integration head read **fresh
+> under the per-repo lock**, re-running the T1 mechanical resolvers exactly as a first-time conflict
+> would. Functionally equivalent — the resolver still finds a real mid-rebase worktree with real
+> conflict markers — and strictly better in one case the original wording could not express: if the
+> conflict **no longer reproduces** (the head moved and whatever landed in between no longer
+> collides), no resolver is dispatched at all and no LLM budget is spent; `resume_integration`
+> lands it directly. `T-Ib5Qy9`'s "left mid-rebase for T2" acceptance criterion is *superseded*,
+> not contradicted — `resume_integration`'s mid-rebase-continuation path is still what lands the
+> result, just entered from a freshly re-materialized state rather than an assumed-surviving one.
 
 **Union resolver, precisely** (no global git config mutation, deterministic, NFR-1-safe):
 
@@ -659,15 +715,23 @@ sequenceDiagram
     I->>G: merge-file --union mod.rs ; run regenerate cmd for uv.lock ; add
     I-->>W: still conflicted: [apis/accounts.rs]
     alt "llm" in ladder AND resolver_attempts < max
-        I->>I: write conflict-1.json (paths + refs), keep worktree mid-rebase
+        I->>G: record durable squash ref refs/ao/runs/<run>/<task>/squash-1
         I-->>M: IntegrationResult(status=conflict_resolver, tier_reached=mechanical)
         M->>M: reverse estimate, ts.status = pending, integration.mode = resolve, save()
         Note over M: next wave: budget gate + charge as a normal dispatch (D9)
-        M->>W: dispatch task with resolver_agent + merge-resolve.md
-        W->>I: resume_integration()
-        I->>G: add -A ; rebase --continue ; verify ; update-ref CAS
-        G-->>I: ok
-        I-->>M: IntegrationResult(status=integrated, tier=llm)
+        M->>M: ensure(): reuses worktree, aborts any leftover rebase (AC-10c)
+        M->>I: materialize_conflict(): reset to squash-1, re-rebase onto CURRENT head under lock
+        alt conflict reproduces
+            I->>I: write conflict-1.json (paths + refs) from the LIVE re-derived state
+            M->>W: dispatch task with resolver_agent + merge-resolve.md
+            W->>I: resume_integration()
+            I->>G: add -A ; rebase --continue ; verify ; update-ref CAS
+            G-->>I: ok
+            I-->>M: IntegrationResult(status=integrated, tier=llm)
+        else conflict no longer reproduces
+            Note over M,I: no resolver dispatched, no LLM spend
+            W->>I: resume_integration() lands it directly
+        end
     else ladder exhausted at llm
         I-->>M: IntegrationResult(status=conflict_rerun)
         M->>M: reset worktree to fresh head, export previous.patch, requeue original agent
@@ -1044,6 +1108,31 @@ unknown keys.
 | V10 | `"llm"` in `integration.ladder` and the named `resolver_agent`'s own `disallowed_tools` does not already contain every entry of `integration.resolver_disallowed_tools` → **warning** (the dispatch force-injects the union regardless, so this is a "your spec is misleading" notice, not a hole). S-2 | warning |
 | V11 | `integration.resolver_disallowed_tools` set to `[]` while `"llm"` is in the ladder → **fatal** (an explicit request to hand raw, unreviewed conflict content to an agent with unrestricted egress; must be a deliberate `on_denylisted_path`-style opt-out, which this version does not offer). S-2 | fatal |
 | V12 | Any `commit_denylist` / `touches` / `resolvers.union` glob that is absolute or contains `..` → fatal (all globs are workspace/worktree-relative) | fatal |
+| V13 | **Added 2026-09-07 by the security remediation pass (audit M-2), not part of the original design.** Two *distinct* task ids among the tasks that resolve to `worktree` isolation that sanitize to the **same** ref component → fatal. `sanitize_ref_component` is not injective below its 80-character bound (it maps every character outside `[A-Za-z0-9._-]` onto `-`, so `svc/api` and `svc-api` collide), and without this rule two supposedly isolated tasks would silently share one branch **and one worktree**. `WorktreeManager.ensure()` rejects the same condition as a runtime backstop. Reachable from agent-emitted task manifests, which is the threat model `paths.py` already names. | fatal |
+
+> **As-built (deviation 5, §25) — the table cannot be applied unconditionally, and `cross_validate`
+> returns its warnings instead of logging them.** Two corrections, both proved empirically during
+> `T-Sc7Rm2`:
+> 1. **Rule gating.** `IntegrationSpec.ladder`'s own default already contains `"llm"`, so evaluating
+>    V2 unconditionally would make `resolver_agent` mandatory for **every existing workflow**, isolated
+>    or not — an NFR-2/NFR-5 break for the entire corpus (caught by the suite going 118 failures → 0
+>    once gated). As shipped: **V1, V2, V3, V7, V8, V10, V11 run only when isolation is active**;
+>    **V4, V6, V9, V12** (task/id/glob hygiene) run unconditionally; **V5 alone** warns when an
+>    `integration` block is configured but no task resolves to `worktree`. "Isolation is active" is
+>    `workflow.defaults.isolation == "worktree"` OR any task resolving to `"worktree"` via
+>    `resolve_task_isolation` — the `defaults` half was a review fix (C-2), not the first cut.
+> 2. **Warning channel.** `cross_validate` returns `list[str]` (it was pseudocoded as `-> None` with
+>    `logger.warning`). `ao validate` attaches no log handler, so logged warnings printed as bare,
+>    unlabelled text; `cli.py::_load_all` now echoes each as `WARNING: <text>` on stderr.
+> 3. **V8 narrowed (R-14).** As shipped V8 is fatal only when two reposet members share a
+>    `--git-common-dir` through *different* toplevels, and only for a **pre-existing, on-disk foreign**
+>    worktree. A plain nested subdirectory of the same repo — §7.1's `docs`-inside-`core` shape, which
+>    the real consumer uses — is explicitly **not** a violation. The `git rev-parse` probe is itself
+>    gated on isolation being active, so a non-isolated `ao validate` never spawns git.
+>
+> Injected tasks are covered too: the engine re-runs `validate_isolation(workflow, [*workflow.tasks,
+> *new_specs])` at `emit_tasks` injection time, so an agent-authored manifest cannot smuggle in an
+> `isolation`/`touches` value that never faced these rules.
 
 **Packaging note (pre-existing, inherited):** `config._validate_against_schema` silently no-ops when
 `specs/*.schema.json` is missing, and the wheel does not ship `specs/` (`pyproject.toml` packages
@@ -1839,7 +1928,27 @@ FUNCTION escalate(ti: TaskIntegrationState, spec, cause: "conflict"|"verify") ->
                                  reason="verify_failed" if cause == "verify" else "conflict")
     RETURN IntegrationResult(status="failed", reason=cause + "_unresolved")
 
-# conflict-<n>.json — the ENTIRE context an LLM resolver receives from the engine (NFR-1)
+# --- As-built (deviation 2, §25): the T2 dispatch-prep step this pseudocode originally omitted.
+# `escalate` above only DECIDES; it no longer leaves live git state behind for the next dispatch to
+# inherit, because `WorktreeManager.ensure()` (AC-10c) aborts any leftover rebase before the resolver
+# would ever see it. `Orchestrator._prepare_resolver_dispatch` therefore re-derives it:
+FUNCTION materialize_conflict(task_iso, run_integration, attempt, base_commits) -> MaterializeResult:
+  ACQUIRE the per-repo IntegrationLock for every repo, in sorted repo-key order
+  FOR repo IN task_iso.repos:
+      squash = read refs/ao/runs/<run>/<task>/squash-<attempt>          # durable, written by integrate()
+      IF no squash recorded: re-create it from base_commits[repo.key]   # NOT repo.base -- ensure()
+                                                                       # has already refreshed that
+      reset_hard(worktree, squash)                                     # idempotent
+      re-rebase onto the CURRENT integration head, read fresh UNDER THE LOCK
+      run the T1 mechanical resolver_hook again, exactly as a first-time conflict would
+  RELEASE every lock
+  IF still conflicted: RETURN MaterializeResult(conflicted_paths=[...])  # worktree left mid-rebase,
+                                                                        # real markers on disk
+  RETURN MaterializeResult(status="clean")   # caller SKIPS T2 entirely -- no agent, no LLM spend;
+                                             # resume_integration lands it idempotently
+
+# conflict-<n>.json — the ENTIRE context an LLM resolver receives from the engine (NFR-1),
+# built from the LIVE re-derived state above, never from a possibly-stale TaskIntegrationState
 {
   "run_id": "...", "task_id": "...", "attempt": 2,
   "repo": {"key": "fin-plan-ab12cd34", "worktree": "/abs/path", "branch": "ao/<run>/<task>"},
@@ -1970,31 +2079,62 @@ command + JSON schema; (6) `load_hotspots(path)` with an empty-on-any-error fall
 
 # --- .ao/config.yaml (new block; documented in _INIT_TEMPLATE) ---
 isolation:
-  mode: none            # none | worktree -- the FILL-IN default only; no kill switch here
+  mode: null            # UNSET (default) | none | worktree -- the FILL-IN default only; no kill
+                        # switch here. `null` means "no override": every spec's own
+                        # defaults.isolation and per-task isolation stand exactly as authored.
   strict: false         # true => a non-git repo / old git is a hard failure, not a degrade
-  state_dir: null       # override $AO_STATE_DIR for worktrees
+  state_dir: null       # override $AO_STATE_DIR for worktrees -- fills the env var in ONLY when
+                        # $AO_STATE_DIR is not already set in the process (explicit env wins)
   env:                  # per-repo env injected into isolated tasks AND verify (D7)
     core:
       CARGO_TARGET_DIR: /abs/shared/target        # cargo file-locks this => safe, serializing
 
 # --- ao prune (extended) ---
-ao prune --workspace DIR [--older-than N] [--dry-run] [--worktrees/--no-worktrees]
-# For every run directory it deletes, also: remove that run's worktrees, `git worktree prune`,
-# delete refs/heads/ao/<run_id>/* and refs/ao/runs/<run_id>/*. Default on; --no-worktrees opts out.
-# Also grows a standalone reconciliation: `ao prune --worktrees-only` reaps worktrees whose run
-# directory is already gone (the leak class already visible in the consumer repo, where a stray
-# `.worktrees/full-test-e-sj7oim` and 14 `worktree-agent-<hex>` branches survive with no owner).
+ao prune --workspace/-w DIR [--older-than N (default 7)] [--dry-run]
+         [--worktrees/--no-worktrees (default on)] [--worktrees-only]
+# For every run directory it deletes, also: remove that run's worktrees (via
+# WorktreeManager.gc_run / GitRepo.prune_worktrees_scoped -- never a blanket `git worktree prune`,
+# never a foreign worktree), delete refs/heads/ao/<run_id>/* and refs/ao/runs/<run_id>/*.
+# `--worktrees-only` is a standalone reconciliation: it reaps worktrees and ao-namespaced refs whose
+# run directory is already gone (a crashed run's leftovers -- the leak class already visible in the
+# consumer repo, where a stray `.worktrees/full-test-e-sj7oim` and 14 `worktree-agent-<hex>` branches
+# survive with no owner). It deletes no run directory, and ignores --older-than/--worktrees.
+#
+# As-built limitation (deviation 6, §25): `ao prune` takes only --workspace, so the git repo(s) a
+# run's worktrees belong to are discovered by probing the worktree DIRECTORIES still on disk. If every
+# worktree directory for a run's repo is already gone, that repo cannot be discovered at all and its
+# ao/-namespaced refs are unreapable by any variant of this command -- reported as "0 orphaned run(s)"
+# with no error. Stated in `ao prune --help`. On the SUCCESS path this is currently a live defect, not
+# just a limitation -- see §25 D-6.
 
 # --- events (all via logging_setup's extra={"event": ...}; existing <domain>.<event> convention) ---
-integration.activated  integration.started  integration.squashed  integration.rebased
-integration.conflict   integration.resolved integration.resolver_dispatched
-integration.rerun_dispatched  integration.verify_started integration.verify_passed
-integration.verify_failed integration.merged integration.partial integration.failed
-integration.sync_ok    integration.sync_skipped integration.sync_failed integration.summary
-integration.artifact_copied  integration.degraded
-worktree.created worktree.reused worktree.removed worktree.remove_failed worktree.orphan_reaped
-worktree.checkout_dirty worktree.submodule_unsupported
+# AS-BUILT, reconciled 2026-09-07 against the emitting modules. Grouped BY EMITTER, because which
+# module emits a line determines which common fields it carries (see the field contract below).
+#
+# engine.py (run-scoped LoggerAdapter -> every line carries run_id):
+integration.activated  integration.degraded  integration.summary
+integration.merged     integration.failed    integration.resolver_dispatched
+integration.rerun_dispatched  integration.rerun_patch_skipped
+integration.sync_ok    integration.sync_skipped  integration.sync_failed
+integration.artifact_copied   integration.untracked_outputs_blocked
+integration.runlock_acquired  integration.runlock_denied  integration.runlock_reclaimed
+integration.workspace_lock_off
+worktree.checkout_dirty  worktree.reconciled  worktree.retention_high
 scheduling.overlap_preferred    # one line per wave: chosen ids + score, only at overlap_preference=soft
+#
+# isolation/integrator.py (run-scoped adapter -> run_id present; per-REPO granularity):
+integration.started    integration.squashed  integration.rebased   integration.conflict
+integration.resolved   integration.verify_started  integration.verify_passed
+integration.verify_failed  integration.merged  integration.partial  integration.failed
+integration.empty      integration.denylisted_path  integration.invalid_integration_ref
+#
+# isolation/worktrees.py, isolation/resolvers.py, isolation/git.py (MODULE-level loggers -> NO run_id):
+worktree.created  worktree.reused  worktree.branch_reattached  worktree.removed
+worktree.remove_failed  worktree.remove_skipped  worktree.orphan_reaped
+worktree.non_git_repo   worktree.submodule_unsupported  worktree.prune_scoped
+integration.resolved    # per-PATH, from resolvers.py -- distinct from the integrator's per-repo one
+integration.resolver_merge_file_error  integration.resolver_regenerate_error
+integration.resolver_regenerate_timeout
 ```
 
 Every `integration.*` line carries `run_id`, `task_id`, `repo`, and — where meaningful — `tier`,
@@ -2176,10 +2316,27 @@ workflows until the isolation epic states a multi-run policy."* This section is 
 **What is and is not already safe.** The per-repo `IntegrationLock` (thread + `flock` on the git common
 dir) plus the `update-ref` CAS already serialize two runs' `integrate()` calls correctly, and each run
 has its own distinct integration ref — so **landing is safe under concurrency by construction**. The
-unsafe part is D5's checkout sync: `git merge --ff-only <integration_branch>` is a **working-tree
-mutation of one shared physical checkout**, with no lock, no CAS, and no awareness that another run has
-a different integration branch. Two runs' barrier-time syncs racing there can interleave partial
-checkouts or fast-forward the checkout to the *other* run's head under a task that is about to read it.
+unsafe part is D5's checkout sync: fast-forwarding the shared checkout is a **working-tree mutation of
+one shared physical checkout**, with no lock, no CAS, and no awareness that another run has a different
+integration branch. Two runs' barrier-time syncs racing there can interleave partial checkouts or
+fast-forward the checkout to the *other* run's head under a task that is about to read it.
+
+> **As-built (deviation 1, §25).** This section originally specified the sync itself as
+> `git merge --ff-only <integration_branch>`. As shipped, `Orchestrator._sync_checkout` calls
+> `GitRepo.fast_forward_checkout(cwd, old, new)` (`isolation/git.py`), which never invokes `merge`
+> porcelain at all. It is two plumbing calls — `git read-tree -u -m <old> <new>` (a two-tree
+> index+working-tree merge that touches only the paths that actually differ, and refuses atomically,
+> leaving index and working tree byte-for-byte unchanged, when one of those paths would overwrite a
+> local modification or an untracked file) followed by `git update-ref HEAD <new> <old>` (a CAS ref
+> move that writes the checked-out branch's reflog). Because plain `read-tree -u -m` does **not**
+> self-verify that `old` is an ancestor of `new` — verified empirically, it will silently apply a
+> nonsensical two-way diff instead of refusing — `fast_forward_checkout` runs its own `is_ancestor`
+> check first, restoring genuine parity with `merge --ff-only`'s self-check by construction rather
+> than by a caller's discipline. No merge commit, no `MERGE_HEAD`, no merge driver, no hook. Every
+> safety property this section relies on is preserved; the R-12 collision-naming diagnostics below
+> are unchanged, except that `_sync_checkout` classifies the cause itself from its own precomputed
+> dirty/incoming path sets, because `read-tree`'s exit code does not distinguish "collision" from
+> any other failure. A `T-Wl2Bq7` implementation choice, reviewed and approved.
 
 **Decision — a per-workspace isolation run lock (`WorkspaceRunLock`).**
 
@@ -2212,7 +2369,7 @@ the *sync* atomic but not the window between it and the non-isolated task that r
 task itself would still see another run's head appear mid-execution. Owning the workspace for the life
 of the run is the only granularity that makes D5's guarantee true.
 
-**R-12 — the dirty-checkout failure mode, and better diagnostics.** `git merge --ff-only` fails when an
+**R-12 — the dirty-checkout failure mode, and better diagnostics.** The fast-forward fails when an
 incoming commit touches a path that also has uncommitted local changes. The target consumer's checkout
 currently shows **4106** `status --porcelain` entries, so a realistic run has a non-trivial chance of
 `sync_failed` at its first non-isolated barrier — undermining the very scenario this epic exists to
@@ -2232,11 +2389,63 @@ unblock. Mitigations, in order:
 
 ### 12.2 What an operator sees on T4 (failure)
 
-`ts.status = failed`, `task_integration[tid].status = failed`, the worktree and branch **retained**
-(`keep_worktrees` is forced to keep on failure regardless of policy), and `run.log` carries
-`integration.failed` with the conflicted paths, the worktree path and the branch name. Recovery:
-`cd <worktree>; git rebase --continue` (or resolve by hand and `git update-ref`), then
-`ao resume --run-id <id>`.
+**State.** `ts.status = failed`, `task_integration[tid].status = failed`, and the worktree and branch
+are **retained** — `release()` is deliberately not called on this path, so retention happens
+regardless of `keep_worktrees` (including `"never"`). `run.log` carries one `integration.failed` line
+naming, as structured fields: `reason`, `conflicted_paths`, `worktrees` (repo key → absolute worktree
+path) and `branches` (repo key → `ao/<run_id>/<task_id>`).
+
+**What is on disk to work with** (all workspace-relative, under
+`.orchestrator/runs/<run_id>/<task_id>/integration/`):
+
+| Artifact | What it is |
+|---|---|
+| `conflict-<n>.json` | The whole context the T2 resolver was given: repo key, worktree path, branch, `base`/`onto`/`squash` shas, `conflicted_paths`, `resolved_by_mechanical`, `rebase_in_progress`. Ids, paths and refs only (NFR-1). `<n>` is the integration attempt. |
+| `previous-<n>.patch` | The superseded squash's diff, exported for the T3 rerun. Primary repo only (`task_iso.repos[0]`). |
+| `merge-resolve.md` | The copy of the builtin resolver instruction the T2 dispatch used. |
+| `attempt-<n>/verify.stdout` · `.stderr` · `.exit` | The verify capture for each integration attempt, each stream capped at 1 MiB (`.exit` is empty on a timeout). |
+
+Plus the durable squash ref `refs/ao/runs/<run_id>/<task_id>/squash-<n>` — the exact commit the task
+produced, still reachable after the failure, so nothing is lost even if the worktree is deleted.
+
+**Recovery — as-built (deviation 7, §25).** The original text here said: `cd <worktree>;
+git rebase --continue`, then `ao resume --run-id <id>`. **That is not reliably what happens.** On
+resume, `prepare_resume` resets the failed task to `pending` but preserves `task_integration[tid]`
+verbatim — including `mode`, which is only ever reset to `"normal"` on a *successful* land. A task
+that reached T4 through the full ladder therefore resumes with `mode == "rerun"`, and
+`_prepare_rerun_dispatch` **`git reset --hard`s every one of that task's worktrees to the current
+integration head** before redispatching — discarding an operator's hand-resolution. `mode == "resolve"`
+similarly re-derives from the durable squash via `materialize_conflict`. Only `mode == "normal"`
+(reachable when the ladder is cut short, e.g. `max_reruns_per_task: 0`) preserves the worktree tree.
+Verified against `runstate.prepare_resume` and `engine._prepare_rerun_dispatch`; **this is a code
+defect, not a documentation gap** — see §25 D-7 for the recommended one-line fix.
+
+Until that is fixed, the two recoveries that do work:
+
+1. **Land the fix yourself, outside `ao`.** The integration branch is an ordinary ref. Resolve in the
+   retained worktree, finish the rebase, and fast-forward the integration ref by hand:
+   ```
+   cd <worktree from the integration.failed event>
+   # resolve the paths named in conflict-<n>.json, then:
+   git add -- <resolved paths> && git rebase --continue
+   git -C <repo> update-ref refs/heads/ao/<run_id>/integration <resolved-sha> <current-integration-sha>
+   ```
+   The trailing `<current-integration-sha>` makes it the same compare-and-swap the engine uses, so a
+   concurrent land cannot be clobbered. **This lands the code but does not by itself unblock
+   dependents**: `_settled_for_dependents` gates on `task_integration[tid].status == "integrated"`,
+   which a manual ref move does not touch. Follow it with `ao resume --run-id <id>` — the task is
+   re-dispatched onto a base that now already contains the fix, so its work is typically a no-op, which
+   the integrator reports as `empty` and settle records as `integrated`. That is what releases the
+   dependents.
+2. **Let the engine redo the task.** `ao resume --run-id <id>` with nothing else: the task is
+   re-dispatched, its agent runs again (against the current integration head, so it can *see* whatever
+   conflicted with it), and the result is integrated fresh. This costs another agent attempt but needs
+   no git knowledge. It is the right choice when the conflict was the agent's fault rather than a
+   genuine semantic collision.
+
+**Give up on the task instead.** `ao prune --workspace <ws> --worktrees-only` reaps the retained
+worktree and its `ao/` branch once the run directory is gone; while the run directory still exists,
+`ao prune --workspace <ws> --older-than 0` removes the run and its worktrees together.
 
 ---
 
@@ -2282,14 +2491,68 @@ unblock. Mitigations, in order:
 
 ## 14. Security considerations
 
+> **As-built security posture (audit, 2026-09-07 — `REVIEW-security-asbuilt-2026-09-07.md`).** An
+> as-built audit followed the design-time gate. Its verdict: **the architecture is sound and most
+> design-time controls landed correctly** — S-1 (hook suppression), S-4 (the per-task
+> `IsolatedArtifactView`), S-6 (regenerate timeouts), S-9 (0700 directories), NFR-1 (no file contents in
+> logs or in the conflict manifest), the CAS/lock discipline and the ref/path sanitizer were each
+> verified present and working, several by execution rather than by reading. The exception is the one
+> control the design itself called blocking: **S-2, structural containment of the T2 LLM resolver, is
+> not effective in the shipped code** — both halves of it fail — and that is being fixed in code rather
+> than accepted. The table below is the *design* analysis; where the audit changed the answer, an
+> as-built note says so. The remainder of the audit's findings are in remediation and are deliberately
+> **not** recorded here as accepted limitations. The one finding accepted *as* a documented limitation
+> is **M-1**, immediately below.
+
+**M-1 (accepted as a documented limitation) — hooks are suppressed; git-attribute `filter`/`merge`
+drivers are not.** S-1's control is real and was proven: with six hooks planted in a fixture repo, a
+plain `git commit` fired eight hook invocations while the engine's `worktree_add` + `add_all` + `commit`
+fired **zero**. It does not extend to `filter.*` / `merge.*` drivers. A repository with `git-lfs`,
+`git-crypt`, `nbstripout` or similar bootstrapped has a `filter.<name>.clean`/`.smudge` **command in git
+config** and a `filter=` attribute in a tracked `.gitattributes`; `git rebase` honours a
+`merge=<driver>` attribute the same way. The engine executes those commands **once per task,
+unattended, concurrently across worktrees** — the same amplification S-1 exists to prevent. In the same
+fixture, engine `worktree_add` ran the smudge filter and `add_all` ran the clean filter four times.
+
+*What is and is not covered.* Covered: every repository-local hook, on every engine-issued git call,
+plus the forbidden-subcommand guard that means the engine can never `push`/`fetch`/`pull`/`clone`/
+`remote`/`credential`. **Not covered:** any command reachable through `filter.*` or `merge.*` git
+config. *Bounded by:* the command always comes from **git config**, never from tracked content alone, so
+a fresh `git clone` cannot inject one — the exposure is a repository the operator has already
+bootstrapped, which is exactly the case S-1 itself cites. *Guidance:* do not run a repository under
+isolation whose configured filter/merge drivers are untrusted, or expensive enough that N concurrent
+per-task invocations matter; unconfigure the driver for the duration, or keep the affected stages at
+`isolation: "none"` so they run in the shared checkout. Stated for adopters in
+`conflict-friendly-coding.md`. A `core.attributesFile=/dev/null` neutralization behind an
+`integration.neutralize_attributes` opt-in is the recommended follow-on, deliberately not defaulted on:
+these drivers are frequently load-bearing for a repository's own correctness.
+
+**The worktree root must resolve outside the workspace root — now enforced.** `$AO_WORKTREE_ROOT`
+(and `.ao/config.yaml`'s `isolation.state_dir`, which fills `$AO_STATE_DIR`) select where worktrees
+live. Placing them **inside** the workspace root silently defeats S-4: `IsolatedArtifactView.resolve`
+classifies a path by first asking whether it is inside the workspace root, so a sibling task's worktree
+becomes an ordinary in-workspace path — admitted by the view, handed to `effective_path`, which does not
+recognise it as any of *this* task's repo toplevels and returns it unchanged. Task A then reads and
+writes task B's worktree with every S-4 check passing. Proven by the audit (M-3), which reached task B's
+`secret.txt` from task A's view both absolutely and as a workspace-relative path.
+
+As shipped, `paths.worktree_root_prefix_for` refuses this configuration: an overlapping worktree root
+raises `ConfigError` naming the resolved prefix, the workspace root, and **which setting produced it**
+(`$AO_WORKTREE_ROOT` vs `$AO_STATE_DIR` vs the resolved default state directory), because the two need
+different fixes. Both directions are refused — the worktree root inside the workspace, and the workspace
+inside the worktree root (e.g. a bare `AO_WORKTREE_ROOT=/`), since either makes the two
+indistinguishable. The comparison is lexical, consistent with the rest of that module: a symlinked
+spelling is not resolved, so the guard is a containment check, not a filesystem-identity check.
+§6.2 explains the other reasons worktrees live outside every working tree.
+
 | Surface | Analysis | Mitigation |
 |---|---|---|
 | `integration.verify_command` from a spec file | A workflow spec can already run arbitrary agents in the workspace, so this is not a new trust boundary — but it is a new *direct* code-execution surface that does not go through an agent. | argv list only (never a shell string); explicit timeout; cwd pinned to the worktree; output size-capped; `ao validate` prints the command so it is reviewable. |
 | `resolvers.regenerate[].command` | Same class. | Same treatment; additionally only runs when a matching path actually conflicted. |
 | Artifact path guard widening (§7.3) | The guard is the existing defence against path traversal into the workspace (ADR-0011 lineage). | The widening lives in a **separate wrapper** (`isolation/view.py::IsolatedArtifactView`), not in `LocalFsArtifactStore`, which gained no `extra_roots` parameter and whose `resolve()` guard is unchanged. The view's roots are producer-restricted to `WorktreeManager` and scoped to **one** task's `TaskIsolation`; abspath+symlink resolution still runs before containment; `RunStateStore` is never wrapped; `$AO_STATE_DIR` is validated absolute and outside every repo. The one new primitive, `resolve_unchecked`, must have **no caller outside `isolation/view.py`** — asserted structurally. |
 | Branch/ref names from task ids | Task ids are schema-constrained (`^[a-z0-9][a-z0-9-_]*$`) but injected ids arrive from an agent-written manifest. A crafted id could try `../` or `.lock` ref tricks. | `sanitize_ref_component` (allowlist regex + `.lock`/`..`/length handling), and refs are always created under the fixed `ao/<run>/` namespace, never at an agent-chosen path. |
-| **Repo-local git hooks (S-1)** | `worktree add` fires `post-checkout`, auto-commit fires `pre-commit`/`commit-msg`, rebase fires `post-checkout`/`post-rewrite`. Hooks are never cloned, but real projects install them via a bootstrap the operator ran **once, interactively**. This design would fire them **unattended, once per task** — dozens to ~100 times per consumer epic, concurrently, with the `ao` process's privileges. | Every engine-issued git call carries `SAFETY_ARGS` (§11 M1): `-c core.hooksPath=<always-empty dir>` so no hook is ever found, plus `-c commit.gpgsign=false` / `-c core.editor=true` / `GIT_TERMINAL_PROMPT=0` so the engine can never block on a passphrase, editor or credential prompt. Per-invocation `-c` only — nothing is written to any git config. Proven by a planted-hook fixture in `T-Gt4Pw8`. A hook the **task's own agent** chooses to run is unchanged and out of scope (same trust tier as today). |
-| **The T2 resolver agent's tool access (S-2)** | The resolver must open the conflicted files with its own tools — content authored by two different tasks, neither reviewed against the other, reaching an agent that per ADR-0005 defaults to allow-all tools (`Bash`, `WebFetch`, `WebSearch`, `Task`). This is a *new, engine-triggered* dispatch fed by unreviewed input, not a workflow-author-chosen one. `merge-resolve.md`'s "do not push" is prompt text, not a boundary — and a worktree shares the main repo's remotes and credential helper. | `integration.resolver_disallowed_tools` (default `["WebFetch","WebSearch"]`) is **force-injected** at the T2 dispatch, UNIONed with the named agent's own `disallowed_tools` — closed by construction, not by prompt (the same force-injection pattern ADR-0005 already uses). V11 makes an empty list fatal; V10 warns when the agent's own spec is misleading. `resolver_deny_push` (default true) neutralizes the push path for the duration (empty `credential.helper`, unreachable proxy, `GIT_TERMINAL_PROMPT=0`). |
+| **Repo-local git hooks (S-1)** | `worktree add` fires `post-checkout`, auto-commit fires `pre-commit`/`commit-msg`, rebase fires `post-checkout`/`post-rewrite`. Hooks are never cloned, but real projects install them via a bootstrap the operator ran **once, interactively**. This design would fire them **unattended, once per task** — dozens to ~100 times per consumer epic, concurrently, with the `ao` process's privileges. | Every engine-issued git call carries `SAFETY_ARGS` (§11 M1): `-c core.hooksPath=<always-empty dir>` so no hook is ever found, plus `-c commit.gpgsign=false` / `-c core.editor=true` / `GIT_TERMINAL_PROMPT=0` so the engine can never block on a passphrase, editor or credential prompt. Per-invocation `-c` only — nothing is written to any git config. Proven by a planted-hook fixture in `T-Gt4Pw8`, and re-proven by execution in the 2026-09-07 as-built audit (6 planted hooks: 8 invocations from a plain `git commit`, **0** from the engine). A hook the **task's own agent** chooses to run is unchanged and out of scope (same trust tier as today). **As-built gap: git-attribute `filter`/`merge` drivers are NOT suppressed — see M-1 above.** |
+| **The T2 resolver agent's tool access (S-2)** | The resolver must open the conflicted files with its own tools — content authored by two different tasks, neither reviewed against the other, reaching an agent that per ADR-0005 defaults to allow-all tools (`Bash`, `WebFetch`, `WebSearch`, `Task`). This is a *new, engine-triggered* dispatch fed by unreviewed input, not a workflow-author-chosen one. `merge-resolve.md`'s "do not push" is prompt text, not a boundary — and a worktree shares the main repo's remotes and credential helper. | `integration.resolver_disallowed_tools` (default `["WebFetch","WebSearch"]`) is **force-injected** at the T2 dispatch, UNIONed with the named agent's own `disallowed_tools` — closed by construction, not by prompt (the same force-injection pattern ADR-0005 already uses). V11 makes an empty list fatal; V10 warns when the agent's own spec is misleading. `resolver_deny_push` (default true) neutralizes the push path for the duration (empty `credential.helper`, unreachable proxy, `GIT_TERMINAL_PROMPT=0`). **As-built: this is the design, and it is what the shipped code intends — but the 2026-09-07 audit proved both halves ineffective in the shipped path (the forced union is discarded before it reaches the CLI, and the push denial covers https remotes only). In remediation; do not read this row as a description of current behaviour until the fix lands.** | 
 | Auto-commit sweeping secrets | **(S-3, upgraded)** Pre-epic, `git add`/`commit` happened only when an agent's own instructions chose to. Here the **engine** does it unconditionally at the end of every isolated task, and §14's original "only an ao-owned branch, never pushed" answer undersold the blast radius: that branch is exactly what D5 fast-forwards into the user's real checkout, and what a later `90-final-push.md`-style task is *expected* to push. An untracked, non-gitignored secret therefore reaches the main checkout and becomes a candidate for an entirely sanctioned push. | `.gitignore` is respected and run state/`.ao/` are outside the worktree by construction, but that is now the floor, not the mitigation. The auto-commit screens **untracked** paths against `integration.commit_denylist` (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `*credentials*.json`, …) and, at the default `on_denylisted_path: "fail"`, aborts integration with a structured error naming the path rather than sweeping it. Already-tracked files are deliberately not screened — that is the repo author's decision, not this engine's. `auto_commit: false` disables engine-side committing entirely. The instruction pack states plainly that tasks must not write secret material into a worktree at all, rather than relying on `.gitignore`. |
 | `isolation.env` | Injects env into agent processes and verify commands. | Comes only from `.ao/config.yaml` (workspace-owned, same trust level as `env:` today); never from a workflow spec or a manifest. |
 | Cross-process integration lock | A second `ao` run on the same repo could interleave. | `flock` on a companion `ao-integration.lock` file (never on a file `os.replace` swaps out), plus the CAS on the ref as the correctness backstop even if the lock is bypassed. |
@@ -2321,6 +2584,149 @@ unblock. Mitigations, in order:
 
 ## 16. Developer / operator experience
 
+### 16.0 Operator quick reference (as-built, verified 2026-09-07)
+
+Everything in this subsection was checked against `ao --help` output and the merged source, not
+against the design. Where a claim was executed to confirm it, that is stated.
+
+**Turning isolation on and off.** There are deliberately **two** flags, because filling in a default
+and overriding an author's explicit choice are different acts:
+
+| Surface | Layers, highest first | What it does |
+|---|---|---|
+| `--isolation {none,worktree}` on `ao run` / `ao resume` | `--isolation` > `AO_ISOLATION` > `.ao/config.yaml` `isolation.mode` > unset | A **fill-in default**. It is written onto `WorkflowSpec.defaults.isolation` and therefore only affects tasks left at `isolation: "inherit"`. It **never** overrides a task's own explicit `isolation`. Unset (the default at every layer) means "honour the spec exactly as authored". |
+| `--no-isolation` on `ao run` / `ao resume` | `--no-isolation` > `AO_NO_ISOLATION` (`1`/`true`/`yes`/`on`). **No config-file layer** — an emergency override is not a workspace setting. | The **kill switch**. Forces every task to `isolation: none` regardless of what the spec says, and logs one WARNING naming every task id it overrode, so the override is auditable rather than silent. |
+
+There is **no `auto` mode** — "unset" already means "honour the spec". Executed to confirm:
+
+```
+$ ao run ... --isolation auto
+ERROR: --isolation must be one of ('none', 'worktree'), got 'auto'
+
+$ ao run ... --isolation worktree --no-isolation
+ERROR: --isolation worktree and --no-isolation are mutually exclusive
+
+$ AO_ISOLATION=worktree ao run ... --no-isolation
+WARNING: --no-isolation forced isolation='none' for 1 task(s) that declared otherwise: t1
+```
+
+Note the asymmetry in the last two: mutual exclusion is checked against the **flag**, not the resolved
+value, so `AO_ISOLATION=worktree` plus `--no-isolation` is not an error — the kill switch simply wins
+and says so. That is the intended behaviour for an emergency override (you should not have to unset an
+env var to disable isolation), and it is recorded here because the one-line summary "mutually exclusive
+with `--isolation worktree`" does not convey it.
+
+**`.ao/config.yaml`.** `ao init` writes this block, commented out, together with the reserved-namespace
+warning:
+
+```yaml
+isolation:
+  mode: null               # AO_ISOLATION / --isolation -- unset (default) | none | worktree
+  strict: false            # true => a non-git repo / too-old git is a hard failure, not a degrade
+  state_dir: null          # override $AO_STATE_DIR for worktrees (config-file only, no CLI/env)
+  env:                     # per-repo env injected into isolated tasks + verify (config-file only)
+    core:
+      CARGO_TARGET_DIR: /abs/shared/target
+```
+
+`strict` and `env` are **config-file-only by design** — there is no `AO_ISOLATION_STRICT` or
+`AO_ISOLATION_ENV`. `isolation.env` injects environment into agent processes and into `verify_command`,
+so it is held at the same trust level as the top-level `env:` block: workspace-owned, never from a
+workflow spec and never from an agent-written manifest. `state_dir` fills `$AO_STATE_DIR` in **only
+when that variable is not already set** in the process — an explicit env var always wins.
+
+Executed to confirm `strict`: with `isolation.strict: true` in a **non-git** workspace, the run logs
+`worktree.non_git_repo`, then `integration.degraded reason="no_git_repos" strict=true` at ERROR, and
+ends `failed` without dispatching the task. With `strict: false` (the default) the same workspace
+degrades to `isolation: none` and the run proceeds — FR-12 as designed.
+
+**Reserved git namespaces.** `refs/heads/ao/**` and `refs/ao/**` belong to the engine. Do not create
+branches or refs there by hand, and do not point tooling at them for deletion: a branch found in that
+namespace is treated as *this run's own* crash-recovered work and is re-attached, never deleted
+(D-ENS, §11 M3). The three shapes ao creates:
+
+| Ref | Meaning |
+|---|---|
+| `ao/<run_id>/integration` | The run's integration branch. Never checked out (D4). |
+| `ao/<run_id>/<task_id>` | One per isolated task per repo — the branch its worktree sits on. |
+| `refs/ao/runs/<run_id>/<task_id>/squash-<n>` | The durable squash for integration attempt `n`, kept alive so a T3 rerun (and a post-mortem) can still reach the exact commit the task produced. |
+
+Run and task ids are pushed through `sanitize_ref_component` first (allowlist `[A-Za-z0-9._-]`, 80-char
+bound, over-length gets an 8-hex digest of the *original* value appended so two long ids that share a
+prefix cannot collide onto one branch). A task id that sanitizes to `integration` is rejected at
+validate time (V9), because it would collide with the integration branch.
+
+**Where worktrees live.** `<state_dir>/worktrees/<workspace_key>/<run_id>/<task_id>/<repo_key>`, where
+`state_dir` is `$AO_STATE_DIR` > `$XDG_STATE_HOME/ao` > `~/.local/state/ao`, and `workspace_key` is
+`<sanitized basename>-<sha256(abspath)[:12]>`. `$AO_WORKTREE_ROOT` overrides the `worktrees/` base
+directly. Every directory ao creates there is mode `0700`. `workspace_key` is computed **lexically** —
+two symlinked spellings of one directory produce two different keys, which matters if you pass
+`ao prune --workspace` a different spelling than the run used.
+
+**The worktree root must not overlap the workspace root, and the engine enforces it.** Pointing
+`$AO_WORKTREE_ROOT` (or `$AO_STATE_DIR`, or `isolation.state_dir`) at a directory inside the workspace
+is a natural thing to try — one tree, survives a small `$HOME` volume — and it silently removes the
+per-task containment this epic exists to provide (§14 explains the mechanism). An overlapping
+configuration now raises `ConfigError` naming the resolved worktree root, the workspace root and the
+setting that produced it, in both directions (root inside workspace, and workspace inside root). §6.2
+covers the other reasons worktrees live outside every working tree.
+
+**Reclaiming disk: `ao prune`.**
+
+```
+ao prune --workspace <ws> [--older-than N] [--dry-run] [--worktrees/--no-worktrees] [--worktrees-only]
+```
+
+- Default behaviour deletes run directories older than `--older-than` days (default 7) **and** each
+  deleted run's worktrees, `ao/` branches and `refs/ao/` refs. `--no-worktrees` opts out of the second
+  half.
+- `--worktrees-only` is the reconciliation sweep: it deletes **no** run directory and instead reaps
+  worktrees and `ao/`-namespaced refs whose run directory is already gone — a crashed run's leftovers.
+  `--older-than` and `--worktrees` are ignored in this mode.
+- Reaping is always routed through `WorktreeManager.gc_run` / `GitRepo.prune_worktrees_scoped`, scoped
+  to the run being reaped. A blanket `git worktree prune` is not in the porcelain's public API at all
+  (R-6), so a foreign worktree in the same repo is never touched.
+
+Executed end to end against a real temp repo: with a run directory absent and one live
+`ao/run-orphan/t1` worktree registered, `--worktrees-only --dry-run` printed both the worktree path and
+`ref: refs/heads/ao/run-orphan/t1`; the real run removed the directory, the registration and the branch,
+and reported `1 orphaned run(s) reaped`.
+
+Two limitations, both real: discovery probes the worktree **directories** still on disk, so if every
+worktree directory for a run's repo is gone the repo cannot be found and its refs are permanently
+unreapable — reported as `0 orphaned run(s)` with no error. And on the *success* path `ao prune`
+currently leaks refs it should reap (§25 D-6, an open defect).
+
+**The hotspot signal: `ao hotspots`.**
+
+```
+ao hotspots [--workspace <ws>] [--repo <label>] [--since-days 180] [--top 40]
+            [--output <ws>/.ao/hotspots.json] [--include-conflicts/--no-include-conflicts]
+```
+
+Writes `.ao/hotspots.json`, consumed by `rank_wave`'s soft co-scheduling preference (via
+`load_hotspots`) and declared as an input by the task-breakdown agent so decomposition can steer away
+from hot files instead of guessing. Re-running for a different `--repo` accumulates into the same file
+rather than overwriting other repos' entries; re-running for the same `--repo` against unchanged
+history is idempotent. `--include-conflicts` (on by default) folds in conflicts actually observed in
+this workspace's prior runs, weighted above raw commit churn. Treat the output as a hint: raw churn is
+noisy, and in the real consumer the top-churn file had already been deleted by an earlier epic. A
+missing or unreadable file is never fatal — it degrades to empty with one warning, which is why an
+isolated run in a workspace that has never run `ao hotspots` logs one `hotspots: could not read ...`
+line at startup.
+
+**When a task fails at T4.** See §12.2 — it names the retained worktree and branch, the conflict
+manifest and patch paths, and the two recovery routes that actually work today.
+
+**Git LFS is not handled (R-13).** `git worktree add` on an LFS-tracked repo checks out LFS blobs per
+worktree by default — a smaller but analogous disk-duplication cost to the build-cache discussion in
+D7/NFR-6 — and LFS file-locking semantics across concurrent branches are untested here. No consumer of
+`ao` uses LFS today. If one does, revisit `isolation.env` (`GIT_LFS_SKIP_SMUDGE`) and the NFR-6 disk
+guidance below **together**; they are the same problem seen twice. Recorded so the silence is a
+decision rather than an oversight.
+
+### 16.1 Notes for the workflow author
+
 **The workflow author.** Two lines opt in:
 ```json
 "defaults": { "isolation": "worktree" },
@@ -2336,8 +2742,9 @@ work on the ladder needs no agent at all: `plan_resolution`, `rank_wave`, `effec
 `sanitize_ref_component` and the churn parser are pure functions.
 
 **The one rough edge, named honestly (R-12).** The first non-isolated barrier in a run fast-forwards
-the shared checkout, and `git merge --ff-only` fails when an incoming commit touches a path that also
-has uncommitted local changes. The target consumer's checkout currently carries **4106**
+the shared checkout (as-built: `GitRepo.fast_forward_checkout`, §12.3), and that fast-forward fails
+when an incoming commit touches a path that also has uncommitted local changes. The target consumer's
+checkout currently carries **4106**
 `status --porcelain` entries, so this is a realistic first-adoption failure, not a corner case. §12.3
 adds collision-naming diagnostics, a run-start pre-flight warning, and a measurement task; a
 stash-and-restore was deliberately rejected as too invasive.
@@ -2357,7 +2764,8 @@ Mitigations, in order of preference:
    *source* collision, which isolation removes);
 2. `sccache`/`ccache` via the same env mechanism;
 3. keep heavy build/test stages (`full-test`) as `isolation: none` barriers running in the synced main
-   checkout, where the warm cache already lives — which the D5/D13 barrier rule makes correct;
+   checkout, where the warm cache already lives — which the §5 D5 barrier rule makes correct
+   (an earlier draft cited a "D13" that has never existed in either §5 or ADR-0013);
 4. per-repo opt-in: isolate the fast-moving repo, leave the heavy one shared.
 
 This is a documented recipe, not a solved problem; §20 carries it as an open decision.
@@ -2501,9 +2909,25 @@ strategy (resolvers are a config-driven table; the ladder is an ordered enum lis
 | Are all interfaces/schemas fully defined? | **Yes** (§10, §11). |
 | Are all failure scenarios handled? | **Yes** — conflict (T0-T4), verify failure, CAS race, lock timeout, crash mid-rebase, non-git/old-git degrade, worktree removal failure, multi-repo partial land, cancel-during-integration. |
 
-**Gate: PASS** for implementation planning. The six items in §20 have recommended defaults and do not
+**Gate: PASS** for implementation planning. The seven items in §20 have recommended defaults and do not
 block starting — but items 1 and 3 should be confirmed before `T-Ib5Qy9-integrator-core` merges,
 because they are the hardest to change afterwards.
+
+> **In hindsight (added 2026-09-07, on shipping).** The gate above was answered before any code
+> existed, and it was **too confident**. Three ambiguities survived it and were found only by
+> implementation or review, not by re-reading the design: (a) the primary execution path did not work
+> as pseudocoded — six of seven remappable path categories were computed from the engine's shared store,
+> so an "isolated" task would have read and written the shared checkout while worktrees were created and
+> used by nothing (R-19, caught at the review gate, not here); (b) §11 M3's `ensure()` pseudocode and
+> its own Edge Cases prose contradicted each other outright (resolved as D-ENS); (c) the T2 mechanism
+> this document specified was impossible against a sibling ticket's shipped behaviour, and had to be
+> replaced with re-materialization (§25 item 2). A fourth, R-2's disposition, asserted a behaviour that
+> was false and shipped as a blocking defect (§25 item 3). The transferable lesson is narrow and
+> specific: *"can an agent execute this without ambiguity"* is not answerable by inspecting the design
+> alone when the design's correctness depends on code it does not quote. Each of these three was a
+> claim about **existing or sibling code** that the design restated rather than re-derived. Nothing here
+> argues the gate was wasted — it caught a great deal — only that a PASS on it is not evidence of
+> executability.
 
 ---
 
@@ -2534,24 +2958,29 @@ because they are the hardest to change afterwards.
 | R9 | Scope creep into "declared file ownership" | Medium | Medium | FR-10 fixes `touches` as advisory in the schema description, the pseudocode and the tests (a test asserts a slot is never withheld) |
 | R10 | `emit_tasks` manifests never carry `touches`/`isolation` because the consumer contract forbids extra fields | High | Low | M10 widens the builtin contract; the consumer change is tracked separately; absent hints degrade to today's ordering |
 | R11 | Two concurrent runs race on the shared checkout's fast-forward (R-4) | Medium (only via a manual second `ao run` or `E-Sc9Rt4` `overlap: allow`) | High | §12.3's per-workspace `WorkspaceRunLock`; `workspace_lock: "require"` (default) degrades the second run to `isolation: none` rather than racing. Landing was already safe (per-repo lock + CAS); only the checkout sync needed this |
-| R12 | The first barrier's `git merge --ff-only` fails on the consumer's chronically dirty checkout (R-12) | Medium-High on that consumer | Medium (run halts, nothing corrupted) | §12.3: collision-naming diagnostics, run-start pre-flight warning, and a `T-Ee3Mn8` measurement against the real dirty-file set. Stash-and-restore deliberately rejected as too invasive |
+| R12 | The first barrier's fast-forward (as-built `GitRepo.fast_forward_checkout`) fails on the consumer's chronically dirty checkout (R-12) | Medium-High on that consumer | Medium (run halts, nothing corrupted) | §12.3: collision-naming diagnostics (shipped, and covering untracked and renamed paths too) plus the run-start pre-flight warning (shipped). Stash-and-restore deliberately declined as too invasive. **The `T-Ee3Mn8` measurement against the real dirty-file set has NOT been performed**, so this likelihood is still predicted rather than observed |
 | R13 | `engine.py` is edited by five tasks; a later one re-derives an interface from this doc instead of the merged code | Medium | Medium | Fixed edit order stated in §11; every dependent ticket says "read the merged file"; each publishes its hook points in `STATUS.md` |
 
 ## 22. Open questions
 
-- **OQ-1** Should `ao` ever push the integration branch, or does pushing stay entirely an agent task
-  (`90-final-push.md`)? *Recommendation: stays an agent task; the engine never pushes.*
-- **OQ-2** Should a run with `isolation` active refuse to start when the primary checkout is dirty?
-  *Recommendation: warn only (`worktree.checkout_dirty`), because the ref-based design does not need a
-  clean tree; escalate to an error only if `sync_checkout: on_demand` later fails.*
-- **OQ-3** Is one integration branch per run right, or should long epics get one per route/wave?
-  *Recommendation: one per run for MVP.*
-- **OQ-4** Should `rerere` resolutions be shared across runs (they are, via `$GIT_DIR/rr-cache`)?
-  *Recommendation: yes — that is most of T1's value — but document it, since it means a bad resolution
-  can persist. `resolvers.rerere: false` is the escape hatch.*
-- **OQ-5** Do we want `merge-tree --write-tree` pre-flight probing in MVP (a free "will this conflict"
-  oracle for telemetry and for ranking a drain order)? *Recommendation: record the probe result for
-  telemetry only; do not let it change scheduling in MVP.*
+Each carried a recommendation at design time. Their **as-built resolution**, re-verified against merged
+code on 2026-09-07:
+
+| ID | Question | Resolution as shipped |
+|---|---|---|
+| **OQ-1** | Should `ao` ever push the integration branch, or does pushing stay entirely an agent task (`90-final-push.md`)? | **Closed — the engine never pushes.** Enforced structurally, not by convention: `GitRepo.FORBIDDEN_SUBCOMMANDS` rejects `push`/`fetch`/`pull`/`clone`/`remote`/`credential` and friends at the single choke point, with an alias-resolution guard so an aliased spelling cannot slip through. `T-Tp7Zs2` additionally rewrote the instruction pack's `git push` directives to "commit only — the engine integrates your work", pinning the five route-terminal push tasks to `isolation: "none"` so they still run in the real checkout. |
+| **OQ-2** | Should an isolation-active run refuse to start when the primary checkout is dirty? | **Closed as recommended — warn only.** A run-start pre-flight emits `worktree.checkout_dirty` with a count; nothing fails until a genuine collision at a barrier sync, which then names the colliding paths (§12.3 R-12). |
+| **OQ-3** | One integration branch per run, or one per route/wave? | **Closed for MVP — one per run.** `integration.branch` overrides the name; the *cardinality* is fixed. Revisit only if a long epic's single branch is shown to be the bottleneck. |
+| **OQ-4** | Should `rerere` resolutions be shared across runs (they are, via `$GIT_DIR/rr-cache`)? | **Closed as recommended — yes, shared, documented.** Note that the `resolvers.rerere: false` escape hatch was **inert as first shipped**: `Integrator._git_for` never threaded the flag into `GitRepo`, so setting it changed nothing. Found and fixed by `T-Rm2Lx7` review C-2. The standing caveat holds: a bad resolution recorded once replays for free forever, and with `verify_command` unset a replay is functionally unreviewed. |
+| **OQ-5** | `merge-tree --write-tree` pre-flight probing in MVP? | **Closed as recommended — telemetry only.** `GitRepo.merge_tree_probe` exists and returns `None` below git 2.38; nothing consumes it for scheduling. |
+
+**HLD §20's user decisions.** All seven recommended defaults shipped as recommended and are now
+observable in the code (`defaults.isolation: none`, `strategy: rebase` with `merge` V1-rejected,
+structural-only default verify, T2 on with `max_resolver_attempts: 1`, derived `overlap_preference`,
+the documented shared-build-cache recipe, consumer adoption left to that repo). Decisions 1 and 3 were
+flagged as "confirm before `T-Ib5Qy9` merges"; `T-Ib5Qy9` merged without a recorded confirmation, so
+they stand as **implemented-by-default rather than explicitly ratified**. Carried to the epic owner,
+not silently closed.
 
 ## 23. Non-MVP follow-ons
 
@@ -2579,6 +3008,16 @@ Two pre-implementation gates ran on 2026-09-07 against the design package as fir
 is recorded below. "Fixed" means this document and the owning ticket now specify the fix and it has a
 named test; nothing is marked fixed on the strength of prose alone.
 
+> **Re-verified against merged code, 2026-09-07 (`T-Dr5Yq6`).** Every row marked *Fixed* was re-checked
+> against the implementation rather than against the ticket that claimed it. **Six rows changed**:
+> **R-2** and **R-3** were fixed by a different mechanism than the row described (and R-2's stated
+> rationale was demonstrably false — it shipped as a blocking defect and was caught in code review, not
+> here); **S-1** and **R-12** are fixed with a named residual; **S-5** and **S-7** are **downgraded to
+> partially shipped / open**, because the observability half of each is assigned to `T-Cx4Jf1` Part B,
+> which had not landed when this pass ran. Every other row holds as written. No finding shipped
+> **unfixed without a recorded rationale**, which was this pass's blocking condition for closing the
+> epic.
+
 **Phase 1** (applied before development started) covered only what the two dependency-free tasks
 needed. **Phase 2** (this pass) covers everything else. `T-Gt4Pw8`/`T-Sc7Rm2` were frozen at Phase 1
 because implementation had begun against them.
@@ -2589,11 +3028,11 @@ because implementation had begun against them.
 |---|---|---|
 | **R-19** isolated tasks resolve paths via the shared store | **Fixed.** `_run_with_retries` takes an explicit `store: ArtifactStore \| None = None` defaulting to `self._store`; all six internal resolve call sites use it. Named as `T-En8Hd4`'s first and most heavily tested AC, because this is the primary execution path — without it ao creates worktrees nothing uses. | §11 M5, §17.5, `T-En8Hd4` AC-1/AC-2 |
 | **R-1** T2/T3 requeue discards cost accounting + budget reconcile idempotency | **Fixed, split in two.** (a) settle accumulates the cycle's actuals before `"requeue"`, mirroring the self-heal fix verbatim; (b) `budget.py` keys `charged_estimate`/`reconciled_cycles` by `"<task_id>#<dispatch_cycle>"`. §13's "zero new plumbing" claim is corrected in place rather than defended. New owning task `T-Ac6Vd9-requeue-accounting`. | §13, §11 M5, `T-Ac6Vd9` |
-| **R-2** missing-outputs checked after integration lands | **Fixed.** The check moves onto the worker, through the isolated view, and **gates** `integrate()`. The main-thread check in `_settle_completed_task` is left untouched so the non-isolated path stays byte-identical. | §7.4, §11 M5, `T-En8Hd4` AC-12 |
-| **R-3** `should_skip`'s second branch has no integration gate | **Fixed.** The gate applies to **both** branches; the regression test targets branch 2 specifically, since that is the one the consumer's `skip_if_outputs_exist: true` usage actually exercises. | §7.4, `T-En8Hd4` AC-13 |
+| **R-2** missing-outputs checked after integration lands | **Fixed — but by a different mechanism than this row originally claimed (re-dispositioned 2026-09-07).** The worker-side gate shipped as designed. The rest of the original disposition — "the main-thread check … is left untouched (it will re-run and reach the same verdict)" — was **false for an in-repo declared output**, and shipped that way: the run halted `failed` on a task whose code had landed. `T-En8Hd4`'s review reclassified it as blocking; as-built, the main-thread verdict is **discarded** for an isolated task. Non-isolated path still byte-identical. | §7.4 (as-built callout), §25 D-3, `T-En8Hd4` AC-12 + review C-1 |
+| **R-3** `should_skip`'s second branch has no integration gate | **Fixed — by a different construction (re-dispositioned 2026-09-07).** `runstate.py::should_skip` was never edited; it is byte-identical to pre-epic. The gate ships as `Orchestrator._integration_allows_skip`, AND-ed in at the engine's single call site, which covers both branches by construction. The requirement is met; the location is not the one this row implied. | §7.4 (as-built callout), §25 D-4, `T-En8Hd4` AC-13 |
 | **R-4** concurrent-runs checkout-sync race | **Fixed — policy stated.** New §12.3: a per-workspace `WorkspaceRunLock` under `$AO_STATE_DIR`, with `integration.workspace_lock: require\|skip_sync\|off` (default `require` → the second run degrades to `isolation: none`). Landing was already safe; only the checkout sync needed this. Coordinated with `E-Sc9Rt4`'s per-workspace cap of 1, which needs no change. New owning task `T-Wl2Bq7-workspace-run-lock`. | §12.3, ADR-0013 D8, `T-Wl2Bq7` |
 | **R-5** `rank_wave` wiring has no owning AC | **Fixed.** `T-En8Hd4` owns the call site with its own AC and a live-dispatch test; §11 M8's contradictory subtask (6) is corrected to `load_hotspots` and the ownership is stated in a callout. | §11 M5/M8, `T-En8Hd4` AC-14 |
-| **S-1** engine git calls run repo-local hooks | **Fixed (Phase 1).** `SAFETY_ARGS` on every invocation at the single choke point, plus a hook-free/prompt-free child env; the gate test is proven non-vacuous. | §11 M1, §14, `T-Gt4Pw8` AC-4..7 |
+| **S-1** engine git calls run repo-local hooks | **Fixed at the isolation choke point, with a named residual (re-dispositioned 2026-09-07).** `isolation/git.py::GitRepo._run` injects `-c core.hooksPath=<always-empty dir>` per instance ahead of the constant `SAFETY_ARGS` (`commit.gpgsign=false`, `core.editor=true`, `gc.auto=0`) plus a prompt-free child env; two tests prove `-c core.hooksPath` beats both a repo-local hook and a hostile `GIT_CONFIG_GLOBAL`. **Residual, accepted:** `spec.py::_git_rev_parse` (V8's validate-time probe) is a **second** git call site that deliberately does not import `isolation/git.py`; review C-4 gave it `GIT_TERMINAL_PROMPT=0` + `LC_ALL=C` but **left hook suppression unimplemented**, pending a later consolidation. It runs `rev-parse` only, and only when isolation is active. | §11 M1, §14, `T-Gt4Pw8` AC-4..7, `T-Sc7Rm2` C-4 |
 | **S-2** resolver agent has allow-all tools, contained only by prompt text | **Fixed.** `resolver_disallowed_tools` is **force-injected** (union with the agent's own) rather than validated; `resolver_env` neutralizes the push path via environment only. V11 fatal / V10 warning. Schema fields landed in Phase 1. | §11 M7, §14, `T-Lr6Ka3`, `T-Tp7Zs2` |
 
 ### Major
@@ -2606,14 +3045,14 @@ because implementation had begun against them.
 | **R-9** `RetryPolicy.max_attempts` vs the ladder | **Fixed.** The self-heal precedent (`engine.py:199-204`) is cited normatively and a default-policy T1→T2→T3 test is required. | §11 M7, §13, `T-Lr6Ka3` |
 | **R-10** ADR-0013 quotes a sentence not in ADR-0007 | **Fixed.** Both the ADR's Context and §1 now attribute the characterization to `meta/ROADMAP.md` §4 and state what ADR-0007 actually says. The blockquote is gone. | §1, ADR-0013 Context |
 | **R-11** `state_dir()` would be a third near-duplicate | **Fixed, scoped.** A shared `xdg.resolve_state_dir(...)` helper, reused by `isolation/paths.py` **and** `service/paths.py`. `project_config.py` is deliberately excluded — its pattern is config-file anchoring, not XDG state resolution, so folding it in would be a false DRY. | §11 M3, `T-Wk3Nv6` |
-| **R-12** dirty-checkout sync failure understated | **Fixed as far as design can.** §12.3 adds collision-naming diagnostics, a run-start pre-flight, and a `T-Ee3Mn8` measurement against the consumer's real dirty-file set. **Stash-and-restore explicitly rejected** — it mutates the user's uncommitted work, which is the class of action this design refuses to take unprompted. Carried as risk R12. | §12.3, §16, §21 |
+| **R-12** dirty-checkout sync failure understated | **Fixed in mechanism; one evidence item outstanding (re-dispositioned 2026-09-07).** The diagnostics shipped and are stronger than designed: `_sync_checkout` precomputes the collision set and classifies the failure itself (`dirty_checkout` with `colliding_paths` + a hint, vs `sync_anomaly`, vs `not_fast_forward`), including **untracked**-file collisions and rename collisions (`GitRepo.diff_names_no_renames`, added because renames were being misclassified as anomalies). The run-start pre-flight (`worktree.checkout_dirty` with a count) shipped. **Stash-and-restore is declined, not deferred** — `T-Wl2Bq7` AC-10 records it as a decision. **Outstanding:** `T-Ee3Mn8` AC-19's measurement against the consumer's real dirty-file set was deferred to a separate ticket and has **not** been performed, so the predicted first-adoption collision rate is still a prediction. Carried as risk R12. | §12.3, §16, §21, `T-Wl2Bq7`, `T-Ee3Mn8` AC-19 |
 | **R-20** `Integrator` ctor disagreement / NFR-3 risk | **Fixed.** The HLD now matches the ticket's locked hook-based signature; `run_state_ref` is gone and run-scoped data arrives as an immutable snapshot. An NFR-3 test asserts no `RunState` is reachable from the Integrator. | §11 M4, `T-Ib5Qy9` |
 | **R-21** requeue clobbers the original attempt's transcript | **Fixed.** `TaskRunState.dispatch_cycle` (Phase 1 field) keys the capture directory as `cycle-<n>/attempt-<m>`. The reviewer's suspicion that self-heal already has this latent gap is carried as an explicit investigation item, not assumed. | §10.3, §11 M5, `T-Ac6Vd9` |
 | **R-22** routed-runner instructions tell agents to `git push` | **Fixed.** `T-Tp7Zs2` widens to all **six** affected instruction files plus the two review instructions that reference "pushed commits"; re-estimated 1.5 → 2 days. | §11 M10, `T-Tp7Zs2` |
 | **R-23** `release()` never called on a plain execution failure | **Fixed.** Settle releases on the non-integration failure path too, as its own named case. | §11 M5, `T-En8Hd4` AC-16 |
 | **S-3** engine-forced `git add -A` sweeps secrets | **Fixed.** The auto-commit screens **untracked** paths against `commit_denylist` and, at the default `on_denylisted_path: "fail"`, aborts naming the path. Already-tracked files are deliberately not screened — that is the repo author's decision. §14's row is rewritten to stop underselling the blast radius (the branch *is* fast-forwarded into the main checkout and *is* meant to be pushed by a later task). | §8.2, §11 M4, §14, `T-Ib5Qy9`, `T-Tp7Zs2` |
 | **S-4** path-guard scoping not stated/tested as per-task | **Fixed.** §7.3 gains rule 5 making per-task scoping normative, with a test distinct from the producer-restriction one: task A cannot resolve an absolute path into task B's worktree. | §7.3, §11 M3, `T-Wk3Nv6`, `T-Ee3Mn8` |
-| **S-5** rerere replays land at the free, unreviewed tier | **Fixed (observability + docs).** `tier_counts` surfaced in `status.json` and the dashboard column; the docs state plainly that an unset `verify_command` makes a rerere replay functionally unreviewed. No new mechanism. | §11 M9/M10, `T-Cx4Jf1`, `T-Tp7Zs2` |
+| **S-5** rerere replays land at the free, unreviewed tier | **Re-dispositioned 2026-09-07: DOCS FIXED, OBSERVABILITY NOT YET SHIPPED.** The documentation half landed (`T-Tp7Zs2`): the instruction pack and §11 M9 both state plainly that an unset `verify_command` makes a rerere replay functionally unreviewed. The observability half did **not**: a live-run gate found `RunIntegrationState.tier_counts` stays `{}` for an entire run — the increment is missing, not partial — and a conflicted-then-rerun task reports `tier_reached: "auto"` / `conflicted_count: 0` because the clean final attempt overwrites the conflicting one, so nothing outside `run.log` records that the task ever conflicted. The dashboard column (AC-9) is also unshipped. Assigned to `T-Cx4Jf1` **Part B**, which was still in flight when this reconciliation ran. **Open.** | §11 M9 (deferred block), §25 D-8, `T-Cx4Jf1` Part B AC-11 |
 
 ### Minor / Info
 
@@ -2627,7 +3066,7 @@ because implementation had begun against them.
 | **R-18** §11 M8 subtask contradicts `T-Ov9Bt5` | **Fixed** — subtask (6) is now `load_hotspots`; the call site is stated to be `T-En8Hd4`'s. |
 | **R-24** `RepoRef.role` load-bearing claim | **No action** — the reviewer's own re-verification withdrew it; recorded for completeness. |
 | **S-6** regenerate command has no timeout | **Fixed** — `RegenerateRule.timeout_seconds` (default 120) landed in Phase 1; wired in §11 M6 and `T-Rm2Lx7`. |
-| **S-7** no cap on retained failed worktrees within a run | **Fixed (soft)** — `worktree.retention_high` warning at a threshold, plus a `T-En8Hd4` test confirming a verify-failure storm trips an existing breaker. A hard cap was rejected: silently deleting the evidence an operator needs is worse than the disk. |
+| **S-7** no cap on retained failed worktrees within a run | **Re-dispositioned 2026-09-07: PARTIALLY SHIPPED.** The breaker half holds — a verify-failure storm trips an existing `consecutive_failures`/`task_failures` breaker and HALTs, confirmed by test. The `worktree.retention_high` warning **is not implemented** (`T-Cx4Jf1` Part B AC-12, still in flight), so within a still-running ~100-task run there is currently no signal before `ao prune --worktrees-only`. The rejection of a hard cap stands: silently deleting the evidence an operator needs is worse than the disk. **Open.** |
 | **S-8** `ao/` namespace not documented as reserved | **Fixed** — stated in the config template comment block and the operator docs; `ensure`'s hard error already enforced it. |
 | **S-9** worktree directory permissions | **Fixed** — 0700 for every directory ao creates under `$AO_STATE_DIR`. |
 | **S-10** captured verify output could echo secrets | **Accepted** — pre-existing pattern (agent transcripts already do this), size-capped, documented; no new gap introduced. |
@@ -2661,3 +3100,169 @@ R-20), and §11 M5's `IsolatedArtifactView(base=..., task_isolation=...)` constr
 - **A self-heal transcript-clobber regression fix (from R-21).** This epic fixes the ladder's own path
   and *investigates* whether self-heal has the same latent gap; fixing a pre-existing self-heal defect
   is a separate ticket if confirmed.
+
+---
+
+## 25. As-built deviations from design (T-Dr5Yq6, 2026-09-07)
+
+Reconciled against the merged `src/agent_orchestrator/isolation/*`, `engine.py`, `models.py`,
+`spec.py`, `runstate.py`, `cli.py`, `project_config.py` and `specs/workflow.schema.json` on the
+`ad/task-isolation` branch (14 tasks, 11 merged commits). The design holds — no ADR-0013 decision was
+overturned by the build. The deviations below are recorded so this document describes the **shipped**
+system; each says what changed and why. Corrections are also applied in place at the section named.
+
+Verification standard for this pass: every flag, default, env var, ref name, file path and symbol below
+was checked against `--help` output or merged source. Items marked **[executed]** were additionally run
+against a real temporary git repository. §11 M9's event list and the `status.json`/dashboard
+observability text are the one part **not** reconciled — see the note in §11 M9.
+
+1. **The barrier checkout sync is git plumbing, not `git merge --ff-only`.** §12.3 specified
+   `git merge --ff-only <integration_branch>`. As shipped, `Orchestrator._sync_checkout` calls
+   `GitRepo.fast_forward_checkout(cwd, old, new)`: `git read-tree -u -m <old> <new>` followed by
+   `git update-ref HEAD <new> <old>`, with an `is_ancestor` check first because plain `read-tree -u -m`
+   does not self-refuse a non-fast-forward (verified empirically during `T-Wl2Bq7`). Safety-equivalent
+   and narrower — it touches only the paths that actually differ, refuses atomically on collision,
+   creates no merge commit and invokes no merge driver. A `T-Wl2Bq7` implementation choice, reviewed and
+   approved; §12.3 was requiring a *behaviour*, not that specific porcelain verb. **Corrected in §12.3
+   and §16.**
+
+2. **T2 re-materializes the conflict; it does not inherit one.** §6.4, §8.4 and §8.5 described the T2
+   resolver as running against a worktree "left mid-rebase" by T1's own conflict. That could not work:
+   `WorktreeManager.ensure()` (AC-10c) unconditionally `git rebase --abort`s any reused mid-rebase
+   worktree, on the main thread, before every redispatch. As shipped,
+   `Integrator.materialize_conflict` re-derives the conflict deterministically at T2 dispatch-prep
+   time — reset each repo to the durable squash `refs/ao/runs/<run>/<task>/squash-<n>`, re-rebase onto
+   the integration head read fresh under the per-repo lock, re-run the T1 resolvers — so the resolver
+   still finds a genuinely mid-rebase worktree with real conflict markers. Strictly better in one case
+   the original wording could not express: if the conflict no longer reproduces, no resolver is
+   dispatched and no LLM budget is spent. `T-Ib5Qy9`'s "left mid-rebase for T2" AC is **superseded, not
+   contradicted** — `resume_integration`'s mid-rebase path still lands the result, entered from a
+   freshly re-materialized state. **Corrected in §6.4, §8.4, §8.5 and §11 M7.**
+
+3. **The post-integration output check is skipped for isolated tasks, and the R-2 rationale was
+   wrong.** §7.4 claimed the main-thread missing-outputs check "will re-run and reach the same verdict".
+   True only when declared outputs live outside every isolated repo. For an in-repo output the main
+   thread resolves against the shared checkout, where the file does not exist until the barrier sync —
+   so the run halted `failed` on a task whose code had demonstrably landed. Caught in `T-En8Hd4`'s code
+   review (reclassified from the developer's own "documented limitation" to blocking) and fixed by
+   discarding the main-thread verdict for isolated tasks; the worker's gate through
+   `IsolatedArtifactView` is authoritative. Non-isolated path unchanged (NFR-2). **Corrected in §7.4
+   and §24 R-2.**
+
+4. **The `should_skip` integration gate is at the call site, not inside `should_skip`.**
+   `runstate.py::should_skip` is byte-identical to pre-epic. The gate ships as
+   `Orchestrator._integration_allows_skip`, AND-ed in at the engine's single call site — which covers
+   both of `should_skip`'s branches by construction, including the `skip_if_outputs_exist: true` branch
+   the consumer actually exercises. Requirement met, location different. **Corrected in §7.4 and §24
+   R-3.**
+
+5. **V1-V12 are conditionally gated, and `cross_validate` returns warnings instead of logging them.**
+   Applying §10.4's table literally would have made `resolver_agent` mandatory for every existing
+   workflow, because the default ladder contains `"llm"` — an NFR-2/NFR-5 break for the whole corpus,
+   caught by the suite going 118 failures → 0 once gated. As shipped, V1/V2/V3/V7/V8/V10/V11 run only
+   when isolation is active; V4/V6/V9/V12 always; V5 alone warns about an inert `integration` block.
+   Separately, `logger.warning` proved to be no channel at all for `ao validate` (no handler attached),
+   so `cross_validate` returns `list[str]` and `cli.py` echoes `WARNING: ...`. V8 was also narrowed
+   (R-14) to pre-existing on-disk *foreign* worktrees sharing a common dir through different toplevels;
+   a nested subdirectory of the same repo is explicitly not a violation. **Corrected in §10.4.**
+
+6. **`ao prune`'s repo discovery is directory-probing, with a real leak on the success path.**
+   `ao prune` takes only `--workspace`, so it finds the git repos a run's worktrees belong to by probing
+   the worktree **directories** still on disk. The orphan path works: **[executed]** against a real temp
+   repo, `--worktrees-only --dry-run` named both the worktree path and `refs/heads/ao/run-orphan/t1`,
+   and the real run removed the directory, the worktree registration and the branch, reporting
+   `1 orphaned run(s) reaped`. Two problems remain. (a) *Documented limitation:* if every worktree
+   directory for a run's repo is already gone, the repo cannot be discovered and its `ao/` refs are
+   permanently unreapable — reported as `0 orphaned run(s)` with no error. (b) *Open defect:* on the
+   **success** path the engine has already removed the worktree directories, so discovery finds nothing
+   and every `ao/` ref of a fully successful run leaks — the exact leak class FR-14 exists to eliminate,
+   on the normal path. A live-run gate found this; the fix (fall back to `RunIntegrationState.repos`,
+   which records the repos independently of what is on disk) is assigned to `T-Cx4Jf1` Part B.
+   **Recorded in §11 M9 and §16.0.**
+
+7. **`ao resume` after a T4 failure does not preserve an operator's hand-resolution.** §12.2 promised
+   "resolve by hand, then `ao resume`". `prepare_resume` preserves `task_integration[tid]` verbatim and
+   `mode` is only ever reset to `"normal"` on a successful land, so a task that exhausted the ladder
+   resumes with `mode == "rerun"` — and `_prepare_rerun_dispatch` `git reset --hard`s every one of that
+   task's worktrees to the current integration head before redispatching, discarding the manual fix.
+   `mode == "resolve"` likewise re-derives from the durable squash. **[executed]** — driving
+   `prepare_resume` over all three modes confirms `ti.mode` survives unchanged in every case while
+   `ts.status` goes to `pending`. **This is a code defect, not a documentation gap.** The one-line fix
+   is to set `ti.mode = "normal"` alongside `ti.status = "failed"` on the T4 branch of
+   `_settle_completed_task`, so a resumed T4 task starts from the operator-fixed worktree instead of
+   resetting it; the retained squash ref means nothing is lost either way. Routed to the epic owner.
+   §12.2 now documents the two recoveries that **do** work today.
+
+8. **The S-5/S-7 observability half is not shipped.** `RunIntegrationState.tier_counts` exists but is
+   never incremented — it stays `{}` for a whole run — and a conflicted-then-rerun task reports
+   `tier_reached: "auto"` / `conflicted_count: 0` because the clean final attempt overwrites the
+   conflicting one, so nothing outside `run.log` records that the task ever conflicted.
+   `worktree.retention_high` (S-7) and the dashboard integration column (AC-9) are likewise unshipped.
+   All are `T-Cx4Jf1` Part B, in flight at the time of this pass. **Re-dispositioned in §24; §11 M9's
+   event/observability block is explicitly marked not-yet-reconciled rather than left asserting the
+   design.**
+
+9. **Smaller, accepted refinements**, each recorded in its owning ticket and none changing a decision:
+   `Integrator`'s constructor never takes a `run_state_ref` (R-20/NFR-3 — run-scoped data arrives as
+   the immutable `RunIntegrationSnapshot`, which deliberately omits `heads` because a snapshot head is
+   stale by lock-acquire time; the live value is read under the lock); `WorktreeManager`'s fourth
+   parameter is `integration_heads: dict[str, str]`, not a live `RunIntegrationState`, for the same
+   reason; `GitRepo` gained a `hooks_dir` parameter and sources its empty-hooks directory through a new
+   shared `xdg.resolve_state_dir` rather than the then-unlanded `paths.state_dir()`; `core.hooksPath` is
+   composed per-instance ahead of the constant `SAFETY_ARGS` rather than being a member of it;
+   `rank_wave` takes four arguments and leaves the `overlap_preference` decision to its caller;
+   `apply_plan` takes a fifth `cfg` parameter; per-attempt transcript capture keeps the **flat**
+   pre-epic `attempt-<n>/` layout for dispatch cycle 1 and only nests under `cycle-<n>/` from cycle 2
+   (uniform nesting was reverted after it broke a playground regression test);
+   `BudgetCounters.reconciled_tasks` is retained and dual-written for old-`state.json` compatibility
+   alongside the cycle-keyed `reconciled_cycles`; `WorkspaceRunLock` is constructed with the run id and
+   exposes `acquire()`, with the `require`/`skip_sync`/`off` policy interpretation living in
+   `engine.py`; the routed-runner template's example `integration` block lives in its README rather than
+   in `workflow.json.tmpl`, because the renderer validates every render and a live block would trip V5
+   on every default scaffold; and `.ao/hotspots.json` is a **prose-only** declared input in the
+   task-breakdown instruction, never a spec `inputs:` entry, because the engine has no "optional input"
+   concept and a hard entry would fail every workspace that has not yet run `ao hotspots`. §6.2's
+   `worktrees/<workspace_key>/index.json` GC-bookkeeping file was **never built** and is not needed —
+   corrected in §6.2.
+
+10. **Two decisions were proved wrong by the build and corrected before merge**, both worth keeping
+    visible: `ensure()`'s branch-collision behaviour (the §11 M3 pseudocode and its own Edge Cases prose
+    contradicted each other — resolved as **D-ENS**: never delete a ref in `ensure()`, re-attach to a
+    leftover `ao/` branch, hard-error when another worktree holds it); and the two disagreeing "Empty"
+    definitions in §8.2 versus §11 M4 (reconciled by R-8 to "tip == base **and** the worktree is clean
+    **and** there is no untracked declared output"). Both are recorded in §24's post-merge amendments.
+
+### Known-defective as shipped (documentation cannot fix these)
+
+Listed here because a reader of this document must not mistake them for described behaviour. All are
+routed; none is being papered over.
+
+| # | Defect | Where |
+|---|---|---|
+| D-6 | `ao prune` leaks every `ao/` ref of a fully **successful** run (discovery probes worktree directories the engine has already removed) | §25 item 6 · `T-Cx4Jf1` Part B |
+| D-7 | `ao resume` after T4 discards an operator's hand-resolution (`ti.mode` never reset to `"normal"`) | §25 item 7 · §12.2 |
+| D-8 | `tier_counts` never incremented; `tier_reached`/`conflicted_count` overwritten by a clean final attempt; `worktree.retention_high` and the dashboard column unshipped | §25 item 8 · §24 S-5/S-7 |
+| D-9 | The S-2 resolver containment is ineffective as shipped (forced `disallowed_tools` union discarded before reaching the CLI; `resolver_deny_push` covers https remotes only) | §14 · security audit 2026-09-07, in remediation |
+| D-10 | Stale text **in user-visible code**: `models.py::IntegrationSpec.workspace_lock` and the same field's `description` in `specs/workflow.schema.json` still read *"Semantics are fixed by T-En8Hd4; the field is reserved here so the schema is not reopened … this ticket implements no behaviour for it"*. `T-Wl2Bq7` implemented it; the schema description ships to every user who reads the spec | `models.py`, `specs/workflow.schema.json` |
+*(A twelfth entry, D-11 — `sanitize_ref_component` not being injective below its 80-character bound, so
+two distinct agent-emitted task ids could collide onto one branch and one worktree — was **fixed while
+this pass was being written**: validation rule **V13** now rejects a colliding pair at validate time and
+`WorktreeManager.ensure()` rejects it again at runtime. Recorded here rather than deleted, because the
+window in which it shipped is part of the history. See §10.4 V13.)*
+
+### Deferred with rationale, discovered during implementation
+
+- **`git worktree list --porcelain` is parsed line-based, not `-z`** (`T-Gt4Pw8` C-9). Accepted because
+  worktree paths here are engine-constructed and never contain a newline. Left as a fast-follow for
+  whoever next touches `parse_worktree_list`; **no ticket filed**.
+- **`_pid_alive` / `_read_os_boot_id` are now triplicated** across `ui/processes.py`,
+  `service/supervisor.py` and `isolation/runlock.py` (`T-Wl2Bq7` W-2). Extraction to a leaf module was
+  the reviewer's own recommendation for a fast-follow; **no ticket filed**.
+- **A three-way race during the T2 resolver's own dispatch window** (a third task landing while the
+  resolver works) is out of `T-Lr6Ka3`'s scope and filed as a follow-up for whoever next touches
+  `resume_integration`; **no ticket named**.
+- **`TestMaterializeConflict` has no multi-repo case** — flagged by the `T-Lr6Ka3` re-review, not closed.
+- **`export_previous_patch` reaches `GitRepo._run(["diff", ...])`** because there is no public raw-diff
+  method; a `GitRepo.diff_patch()` was filed as the follow-up.
+- **The R-12 collision-rate measurement against the consumer's real dirty-file set** (`T-Ee3Mn8` AC-19)
+  was deferred to a separate ticket and has not been performed.

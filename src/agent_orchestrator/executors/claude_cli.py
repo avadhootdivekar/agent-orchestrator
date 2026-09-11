@@ -146,9 +146,44 @@ def _ensure_disallowed_tools(argv: list[str], tools: tuple[str, ...]) -> list[st
     before a terminating ``--flag`` (the stream-capture flags do this) or the CLI
     parser keeps consuming following tokens as tool names.
     """
-    if not tools or _has_tool_policy(argv):
+    return _apply_tool_policy(argv, tools, ())
+
+
+def _apply_tool_policy(
+    argv: list[str], opt_in: tuple[str, ...], forced: tuple[str, ...]
+) -> list[str]:
+    """Compose an agent's OPT-IN tool-disable list with the engine's FORCED one.
+
+    Two deliberately different rules (E-Wk9Tz3 as-built security review C-1):
+
+    - *opt_in* (``AgentSpec.disallowed_tools``) keeps the long-standing "an explicit
+      ``command_template``/``extra_args`` policy flag wins" behaviour -- an agent that
+      names its own ``--allowedTools``/``--disallowedTools``/``--tools`` keeps full
+      control of its own list.
+    - *forced* (``AgentSpec.forced_disallowed_tools``) is NON-overridable: it is appended
+      unconditionally, AFTER any agent-supplied policy flag, in every spelling. This is
+      what makes the T2 merge-resolver's containment structural rather than advisory --
+      before this split, an agent spec carrying any tool-policy flag of its own made the
+      engine skip injection entirely and silently re-enabled the whole forced set.
+      ``--disallowedTools`` is additive on top of ``--allowedTools`` in the CLI, so a
+      trailing forced list is honoured regardless of what came before it.
+
+    At most ONE ao-injected ``--disallowedTools`` is emitted: when the agent supplied no
+    policy flag of its own, the two lists are merged into a single flag (order-preserving,
+    de-duplicated) rather than emitting two competing ones.
+
+    Non-mutating; returns a new list. Like `_ensure_disallowed_tools`, the injected flag is
+    variadic (``<tools...>``) and so MUST be placed before a terminating ``--flag`` -- the
+    caller appends the stream-capture flags after this.
+    """
+    if not _has_tool_policy(argv):
+        combined = tuple(dict.fromkeys((*opt_in, *forced)))
+        if not combined:
+            return list(argv)
+        return list(argv) + [_DISALLOWED_TOOLS_FLAG, *combined]
+    if not forced:
         return list(argv)
-    return list(argv) + [_DISALLOWED_TOOLS_FLAG, *tools]
+    return list(argv) + [_DISALLOWED_TOOLS_FLAG, *forced]
 
 
 def _parse_iso_to_epoch(value: str) -> float | None:
@@ -453,10 +488,16 @@ class ClaudeCliExecutor(Executor):
             if max_turns is not None:
                 argv = argv + ["--max-turns", str(max_turns)]
 
-        # Apply the agent's opt-in tool-disable list (default: none → allow all)
-        # BEFORE the stream flags, so the variadic --disallowedTools list is
-        # terminated by --output-format rather than swallowing it.
-        argv = _ensure_disallowed_tools(argv, tuple(ctx.agent.disallowed_tools))
+        # Apply the agent's opt-in tool-disable list (default: none → allow all) and
+        # the engine's non-overridable forced set, BEFORE the stream flags, so the
+        # variadic --disallowedTools list is terminated by --output-format rather than
+        # swallowing it. The forced set is appended even when the agent declares its own
+        # tool-policy flag (E-Wk9Tz3 as-built review C-1); the opt-in list is not.
+        argv = _apply_tool_policy(
+            argv,
+            tuple(ctx.agent.disallowed_tools),
+            tuple(ctx.agent.forced_disallowed_tools),
+        )
 
         # Emit a per-turn JSONL stream so all turns are captured (not just the last).
         argv = _ensure_stream_capture_flags(argv)

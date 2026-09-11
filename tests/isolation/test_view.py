@@ -227,6 +227,109 @@ class TestCrossRunIsolation:
             view.resolve(str(wt_run2 / "other-run.txt"))
 
 
+class TestWorktreeStoreIsReservedUnderBothLayouts:
+    """M-3 (security review, 2026-09-07).
+
+    The auditor proved that pointing worktree storage INSIDE the workspace root silently
+    defeats S-4: `resolve` classified a sibling task's worktree as an ordinary in-workspace
+    path, `effective_path` did not recognise it as one of *this* task's repo toplevels and
+    returned it unchanged, so task A could read and write task B's uncommitted work -- both
+    as an absolute path and as a workspace-relative one.
+
+    That layout is supported rather than refused (an operator keeping everything on one tree
+    is a reasonable choice, and the engine's own suite runs with `$AO_STATE_DIR` under the
+    workspace), so the containment property is asserted under BOTH layouts here: the whole
+    worktree store is a reserved region, with this task's own worktrees the sole exception.
+    """
+
+    @pytest.fixture(params=["outside_workspace", "inside_workspace"])
+    def layout(
+        self,
+        request: pytest.FixtureRequest,
+        tmp_path: Path,
+        workspace: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[IsolatedArtifactView, Path, Path]:
+        """Returns (task A's view, task A's worktree, task B's worktree)."""
+        store = (
+            tmp_path / "outside-store"
+            if request.param == "outside_workspace"
+            else (workspace / ".worktrees")
+        )
+        monkeypatch.setenv("AO_WORKTREE_ROOT", str(store))
+        wt_a = store / "ws-key" / "run-1" / "task-a" / "repo"
+        wt_b = store / "ws-key" / "run-1" / "task-b" / "repo"
+        wt_a.mkdir(parents=True)
+        wt_b.mkdir(parents=True)
+        (wt_b / "uncommitted.txt").write_text("task B's private work\n")
+        iso_a = _task_iso(
+            workspace, [_repo_iso(workspace / "repo", wt_a, key="core-a")], task_id="task-a"
+        )
+        return IsolatedArtifactView(LocalFsArtifactStore(str(workspace)), iso_a), wt_a, wt_b
+
+    def test_absolute_path_into_a_sibling_worktree_is_rejected(
+        self, layout: tuple[IsolatedArtifactView, Path, Path]
+    ) -> None:
+        """The auditor's first proven form."""
+        view_a, _wt_a, wt_b = layout
+        with pytest.raises(ArtifactPathError):
+            view_a.resolve(str(wt_b / "uncommitted.txt"))
+
+    def test_workspace_relative_path_into_a_sibling_worktree_is_rejected(
+        self, layout: tuple[IsolatedArtifactView, Path, Path], workspace: Path
+    ) -> None:
+        """The auditor's second proven form -- only expressible at all in the nested layout,
+        where the sibling worktree genuinely has a workspace-relative spelling.
+        """
+        view_a, _wt_a, wt_b = layout
+        try:
+            relative = str(wt_b.relative_to(workspace) / "uncommitted.txt")
+        except ValueError:
+            pytest.skip("worktrees are outside the workspace in this layout")
+        with pytest.raises(ArtifactPathError):
+            view_a.resolve(relative)
+
+    def test_sibling_worktree_directory_itself_is_rejected_as_cwd(
+        self, layout: tuple[IsolatedArtifactView, Path, Path]
+    ) -> None:
+        view_a, _wt_a, wt_b = layout
+        with pytest.raises(ArtifactPathError):
+            view_a.resolve(str(wt_b))
+
+    def test_the_store_bookkeeping_dirs_between_worktrees_are_rejected(
+        self, layout: tuple[IsolatedArtifactView, Path, Path], tmp_path: Path
+    ) -> None:
+        """Not just the sibling leaf: nothing in the store resolves except this task's own
+        worktrees, so a walk up to the run prefix is refused too."""
+        view_a, _wt_a, wt_b = layout
+        with pytest.raises(ArtifactPathError):
+            view_a.resolve(str(wt_b.parent.parent))
+
+    def test_the_tasks_own_worktree_still_resolves(
+        self, layout: tuple[IsolatedArtifactView, Path, Path]
+    ) -> None:
+        """The exclusion must not fail closed on the task's own files -- the exception for
+        `self._roots` is what keeps the guard usable."""
+        view_a, wt_a, _wt_b = layout
+        assert view_a.resolve(str(wt_a / "mine.txt")) == str(wt_a / "mine.txt")
+
+    def test_the_ordinary_remap_still_works(
+        self, layout: tuple[IsolatedArtifactView, Path, Path], workspace: Path
+    ) -> None:
+        """The repo-relative path must still remap into this task's own worktree under both
+        layouts -- the guard is an exclusion, not a general in-workspace refusal."""
+        view_a, wt_a, _wt_b = layout
+        assert view_a.resolve("repo/src.py") == str(wt_a / "src.py")
+
+    def test_shared_orchestrator_dir_still_resolves(
+        self, layout: tuple[IsolatedArtifactView, Path, Path], workspace: Path
+    ) -> None:
+        """R-15: run bookkeeping stays shared and must not be caught by the exclusion."""
+        view_a, _wt_a, _wt_b = layout
+        resolved = view_a.resolve(".orchestrator/runs/run-1/state.json")
+        assert resolved == str(workspace / ".orchestrator" / "runs" / "run-1" / "state.json")
+
+
 class TestExistsAndSize:
     def test_exists_false_on_path_error(self, tmp_path: Path, workspace: Path) -> None:
         base = LocalFsArtifactStore(str(workspace))

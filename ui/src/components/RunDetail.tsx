@@ -1,10 +1,68 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { formatCost, formatCount, formatDuration, formatTimestamp } from "../format";
-import type { RunDetail as RunDetailData } from "../types";
+import type { RunDetail as RunDetailData, RunIntegration, TaskStat } from "../types";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 
 const POLL_MS = 3000;
+
+/** Placeholder shown wherever a run carries no isolation data at all (E-Wk9Tz3 AC-9). */
+const BLANK = "—";
+
+/**
+ * One task's integration cell: the tier it reached and the state it settled in.
+ *
+ * A task that was never isolated has no `integration_status` at all, so the cell degrades
+ * to a plain dash rather than claiming a status the run never had — every pre-epic run
+ * renders exactly as it did before this column existed.
+ *
+ * S-5: `tier_reached` is shown for EVERY isolated task, not only conflicted ones, because
+ * a `mechanical`/`rerere` resolution lands at the same zero-review tier as a clean
+ * auto-merge and is otherwise indistinguishable from one.
+ */
+function IntegrationCell({ task }: { task: TaskStat }) {
+  if (!task.integration_status || task.integration_status === "none") {
+    return <span className="muted">{BLANK}</span>;
+  }
+  return (
+    <span className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+      <StatusChip status={task.integration_status} />
+      {task.tier_reached ? <span className="tag">{task.tier_reached}</span> : null}
+      {task.conflicted_count > 0 ? (
+        <span className="muted" style={{ fontSize: 11 }}>
+          {task.conflicted_count} conflicted
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** Run header line: integration branch, head(s) and the S-5 tier histogram. */
+function IntegrationHeader({ integration }: { integration: RunIntegration }) {
+  const heads = Object.entries(integration.heads);
+  const tiers = Object.entries(integration.tier_counts).filter(([, count]) => count > 0);
+  return (
+    <div className="card" style={{ fontSize: 12 }}>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <strong>Integration</strong>
+        <span className="mono">{integration.branch ?? BLANK}</span>
+        {heads.length > 0 ? (
+          <span className="mono muted">
+            {heads.map(([repo, sha]) => `${repo}=${sha.slice(0, 12)}`).join(" · ")}
+          </span>
+        ) : null}
+        {tiers.length > 0 ? (
+          <span className="muted">
+            tiers: {tiers.map(([tier, count]) => `${tier}=${count}`).join(", ")}
+          </span>
+        ) : null}
+        {integration.degraded_reason ? (
+          <span className="tag">degraded: {integration.degraded_reason}</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 /** Per-run detail: stats, task table, and the CLI log (FR-R3, FR-R5.2). */
 export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
@@ -118,6 +176,12 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
             hint="summed task execution"
           />
         </div>
+
+        {detail.integration ? (
+          <div style={{ marginTop: 12 }}>
+            <IntegrationHeader integration={detail.integration} />
+          </div>
+        ) : null}
       </div>
 
       <div>
@@ -132,6 +196,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                 <th className="num">Duration</th>
                 <th className="num">Tokens</th>
                 <th className="num">Cost</th>
+                <th>Integration</th>
                 <th>Outputs</th>
               </tr>
             </thead>
@@ -155,6 +220,9 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                     {formatCount(task.input_tokens + task.output_tokens)}
                   </td>
                   <td className="num">{formatCost(task.cost_usd)}</td>
+                  <td>
+                    <IntegrationCell task={task} />
+                  </td>
                   <td className="mono muted" style={{ fontSize: 11 }}>
                     {task.output_artifact_path ?? "—"}
                   </td>

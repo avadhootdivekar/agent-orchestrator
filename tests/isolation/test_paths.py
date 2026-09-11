@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_orchestrator.errors import ConfigError
 from agent_orchestrator.isolation import paths
 from agent_orchestrator.isolation.git import GitRepo
 
@@ -305,6 +306,144 @@ class TestWorktreeRoot:
         r2 = paths.worktree_root("/ws", "run-1", "task-b", "repo-1")
         r3 = paths.worktree_root("/ws", "run-1", "task-a", "repo-2")
         assert len({r1, r2, r3}) == 3
+
+
+# ---------------------------------------------------------------------------------------
+# M-3 (security review, 2026-09-07): worktree storage resolution. The store root may sit
+# INSIDE the workspace (a supported layout); `IsolatedArtifactView` excludes the region --
+# see `tests/isolation/test_view.py`. Only a workspace inside the STORE is refused here.
+# ---------------------------------------------------------------------------------------
+
+
+class TestWorktreeStoreRoot:
+    def test_defaults_to_worktrees_under_the_state_dir(self, tmp_path: Path) -> None:
+        assert paths.worktree_store_root() == (
+            tmp_path / "home" / ".local" / "state" / "ao" / "worktrees"
+        )
+
+    def test_ao_worktree_root_override_wins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AO_WORKTREE_ROOT", str(tmp_path / "custom"))
+        assert paths.worktree_store_root() == tmp_path / "custom"
+
+    def test_is_the_prefix_of_every_run_prefix(self, tmp_path: Path) -> None:
+        """The view excludes the STORE root, so every run's prefix must lie under it or the
+        exclusion would miss another run's worktrees."""
+        store = paths.worktree_store_root()
+        for run_id in ("run-1", "run-2"):
+            prefix = paths.worktree_root_prefix_for(str(tmp_path / "ws"), run_id)
+            assert str(prefix).startswith(str(store) + "/")
+
+    def test_store_root_inside_the_workspace_is_supported_not_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The M-3 layout an operator reasonably chooses (one tree). It must RESOLVE; the
+        containment property is held by the view's exclusion, not by refusing to run."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.setenv("AO_WORKTREE_ROOT", str(workspace / ".worktrees"))
+
+        prefix = paths.worktree_root_prefix_for(str(workspace), "run-1")
+
+        assert str(prefix).startswith(str(workspace / ".worktrees") + "/")
+
+    def test_state_dir_inside_the_workspace_is_supported_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same nesting reached through `$AO_STATE_DIR` -- the shape the engine's own
+        test suite uses (workspace `tmp_path`, state dir `tmp_path/ao-state`)."""
+        monkeypatch.setenv("AO_STATE_DIR", str(tmp_path / "ao-state"))
+        prefix = paths.worktree_root_prefix_for(str(tmp_path), "run-1")
+        assert str(prefix).startswith(str(tmp_path / "ao-state" / "worktrees") + "/")
+
+    def test_workspace_inside_the_store_root_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one genuinely unusable layout: the reserved region would swallow the whole
+        workspace, so every artifact path in the run would be unresolvable."""
+        monkeypatch.setenv("AO_WORKTREE_ROOT", str(tmp_path))
+
+        with pytest.raises(ConfigError) as excinfo:
+            paths.worktree_root_prefix_for(str(tmp_path / "workspace"), "run-1")
+
+        message = str(excinfo.value)
+        assert paths.WORKTREE_ENV in message  # names the variable...
+        assert "unresolvable" in message  # ...and why
+
+    def test_store_root_equal_to_the_workspace_root_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.setenv("AO_WORKTREE_ROOT", str(workspace))
+        with pytest.raises(ConfigError):
+            paths.worktree_root_prefix_for(str(workspace), "run-1")
+
+    def test_refusal_names_the_state_dir_when_that_is_the_cause(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No `$AO_WORKTREE_ROOT` at all -- the message must name the setting that did it."""
+        monkeypatch.setenv("AO_STATE_DIR", str(tmp_path / "state"))
+        with pytest.raises(ConfigError) as excinfo:
+            paths.worktree_root_prefix_for(str(tmp_path / "state" / "worktrees" / "ws"), "run-1")
+        assert paths.STATE_ENV in str(excinfo.value)
+        assert paths.WORKTREE_ENV not in str(excinfo.value)
+
+    def test_sibling_directory_sharing_a_name_prefix_is_not_containment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`/ws-worktrees` neither contains nor is contained by `/ws` -- the comparison is
+        path-segment aware, not a bare string prefix."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        monkeypatch.setenv("AO_WORKTREE_ROOT", str(tmp_path / "ws-worktrees"))
+        prefix = paths.worktree_root_prefix_for(str(workspace), "run-1")
+        assert str(prefix).startswith(str(tmp_path / "ws-worktrees"))
+
+    def test_traversal_spelling_is_normalized_before_comparison(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AO_WORKTREE_ROOT", str(tmp_path / "elsewhere" / ".."))
+        with pytest.raises(ConfigError):
+            paths.worktree_root_prefix_for(str(tmp_path / "workspace"), "run-1")
+
+    def test_default_layout_still_resolves(self, tmp_path: Path) -> None:
+        prefix = paths.worktree_root_prefix_for(str(tmp_path / "workspace"), "run-1")
+        assert str(prefix).startswith(str(tmp_path / "home"))
+
+
+# ---------------------------------------------------------------------------------------
+# group_by_ref_component (M-2/C-4, security review 2026-09-07)
+# ---------------------------------------------------------------------------------------
+
+
+class TestGroupByRefComponent:
+    def test_maps_each_component_back_to_the_raw_ids_that_produced_it(self) -> None:
+        grouped = paths.group_by_ref_component(["svc/api", "svc-api", "other"])
+        assert grouped == {"svc-api": ["svc/api", "svc-api"], "other": ["other"]}
+
+    def test_component_of_a_sanitize_identity_id_is_the_id_itself(self) -> None:
+        """C-4's core requirement: a raw id that needs no sanitizing must still be found
+        under its own name, so the plain case keeps behaving exactly as before."""
+        assert paths.group_by_ref_component(["plain-task"]) == {"plain-task": ["plain-task"]}
+
+    def test_repeated_id_is_recorded_once(self) -> None:
+        assert paths.group_by_ref_component(["a", "a"]) == {"a": ["a"]}
+
+    def test_empty_input(self) -> None:
+        assert paths.group_by_ref_component([]) == {}
+
+    @pytest.mark.parametrize(
+        ("id_a", "id_b"),
+        [("../../../../etc", "etc"), ("$(id)", "id"), ("a b", "a-b"), ("build:web", "build-web")],
+    )
+    def test_hostile_ids_collapsing_onto_innocuous_ones_are_reported_as_one_component(
+        self, id_a: str, id_b: str
+    ) -> None:
+        grouped = paths.group_by_ref_component([id_a, id_b])
+        assert len(grouped) == 1
+        assert sorted(next(iter(grouped.values()))) == sorted([id_a, id_b])
 
 
 # ---------------------------------------------------------------------------------------

@@ -22,19 +22,21 @@ conflicted paths, the worktree, the branch and the base/squash refs — paths an
 3. **Never delete a sibling's change just to make the file compile or look tidy.** If a
    conflict looks like it needs one side removed, that is a signal to resolve it more
    carefully (interleave, rename, or otherwise reconcile), not a license to drop content.
-4. **`git add` each path once you have resolved it** in the worktree. Do not stage a path
-   you have not actually fixed.
-5. **Do NOT run `git rebase --continue` or `git rebase --abort`.** The engine continues the
-   rebase after you finish; aborting would discard the mid-rebase state entirely.
-6. **Do NOT `git commit`, `git push`, or switch branches.** You do not have push access
-   from this worktree for the duration of this dispatch, and switching branches would
-   abandon the mid-rebase state the engine is about to resume.
-7. **Do NOT read or write outside this task's own worktree and the conflict manifest.**
-   Every input you need is already listed; do not go looking for context elsewhere on disk
-   or on the network.
+4. **Do NOT stage anything — just edit the files.** The engine stages the resolved paths
+   itself after you finish. Leave a path you could not genuinely fix conflicted; do not
+   paper over it.
+5. **Do NOT run any git command at all** — no `add`, no `commit`, no `rebase --continue`
+   or `--abort`, no branch switch, no push. This dispatch runs with no shell and no
+   subagent tool, so these are not available to you; the engine continues the rebase,
+   verifies and lands the result. Aborting or switching would discard the mid-rebase state.
+6. **Do NOT read or write outside this task's own worktree and the conflict manifest.**
+   Every input you need is already listed; do not go looking for context elsewhere on disk.
+   In particular, never write into `.git/` — a linked worktree shares the main
+   repository's object database, refs, config and hooks, so a write there escapes this
+   task entirely and persists after the run.
 
 ## When you are done
 
-Every path in `conflicted_paths` is either resolved-and-`git add`ed, or you were genuinely
-unable to resolve it (leave it as-is, still conflicted). Then stop. Do not attempt any
-further git operations — the engine takes it from here.
+Every path in `conflicted_paths` is either resolved in place, or you were genuinely unable
+to resolve it (leave it as-is, still conflicted). Then stop. Do not attempt any git
+operation — the engine stages, continues the rebase, verifies and lands from here.

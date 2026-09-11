@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.errors import WorktreeCollisionError
+from agent_orchestrator.errors import TaskIdCollisionError, WorktreeCollisionError
 from agent_orchestrator.isolation import paths, worktrees
 from agent_orchestrator.isolation.git import GitRepo
 from agent_orchestrator.isolation.worktrees import (
@@ -683,6 +683,170 @@ class TestReconcile:
         assert any("worktree.remove_failed" in r.message for r in caplog.records)
         # C-8: the branch ref survives because its worktree removal just failed above.
         assert report.deleted_refs == []
+
+
+# ---------------------------------------------------------------------------------------
+# C-4 (security review, 2026-09-07): reconcile() must compare SANITIZED components against
+# SANITIZED components. Comparing an on-disk directory/ref component against the RAW known
+# task ids judged every non-sanitize-identity id unknown and destroyed its live work.
+# ---------------------------------------------------------------------------------------
+
+
+class TestReconcileWithIdsThatNeedSanitizing:
+    # Ids that are NOT sanitize-identity: each holds a character outside `[A-Za-z0-9._-]`.
+    _NEEDS_SANITIZING = ["build:web", "svc/api", "task a", "feat(x)"]
+
+    @pytest.mark.parametrize("task_id", _NEEDS_SANITIZING)
+    def test_live_declared_task_keeps_its_worktree_branch_and_uncommitted_work(
+        self, tmp_path: Path, task_id: str
+    ) -> None:
+        """The auditor's exact attack shape (`exp10_reconcile.py`): two declared, live tasks
+        -- one whose id needs sanitizing, one that does not -- both holding uncommitted work,
+        and `reconcile()` called with BOTH raw ids known and current. Before the fix the
+        sanitizing one lost its worktree (`worktree_remove(force=True)` discards uncommitted
+        work), its branch, and therefore the only pointer to that work; on the resume path
+        that happened before the task ran.
+        """
+        repo = make_repo(tmp_path / "repo")
+        manager, iso_repo, head = _manager_for(repo, "run-1", tmp_path / "hooks")
+        known = {task_id, "plain-task"}
+
+        worktrees_by_id = {}
+        for tid in sorted(known):
+            iso = manager.ensure(tid, 1, [])
+            wt = Path(iso.repos[0].worktree_root)
+            (wt / "WORK_IN_PROGRESS.txt").write_text(f"unmerged work of {tid}\n")
+            worktrees_by_id[tid] = (wt, iso.repos[0].branch)
+
+        report = manager.reconcile(known)
+
+        assert report.removed_worktrees == []
+        assert report.deleted_refs == []
+        git = GitRepo(str(repo), hooks_dir=tmp_path / "hooks")
+        for tid, (wt, branch) in worktrees_by_id.items():
+            assert wt.exists(), f"{tid!r} lost its worktree"
+            assert (wt / "WORK_IN_PROGRESS.txt").read_text() == f"unmerged work of {tid}\n"
+            assert git.branch_exists(branch) is True, f"{tid!r} lost its branch"
+
+    @pytest.mark.parametrize("task_id", _NEEDS_SANITIZING)
+    def test_genuinely_unknown_task_with_a_sanitizing_id_is_still_reaped(
+        self, tmp_path: Path, task_id: str
+    ) -> None:
+        """The control that keeps the C-4 fix from being a weakening: an id needing
+        sanitization that is genuinely NOT known must still lose its worktree and branch.
+        """
+        repo = make_repo(tmp_path / "repo")
+        manager, iso_repo, head = _manager_for(repo, "run-1", tmp_path / "hooks")
+        iso = manager.ensure(task_id, 1, [])
+        wt = Path(iso.repos[0].worktree_root)
+        branch = iso.repos[0].branch
+
+        report = manager.reconcile({"some-other-task"})
+
+        assert not wt.exists()
+        assert str(wt) in report.removed_worktrees
+        assert f"refs/heads/{branch}" in report.deleted_refs
+        git = GitRepo(str(repo), hooks_dir=tmp_path / "hooks")
+        assert git.branch_exists(branch) is False
+
+    def test_a_raw_id_that_merely_looks_like_another_ids_component_does_not_shield_it(
+        self, tmp_path: Path
+    ) -> None:
+        """`known_task_ids` is sanitized before comparison, so knowing the RAW id
+        `build-web` legitimately covers a leftover `build:web` worktree -- the two are
+        genuinely indistinguishable on disk. This pins that consequence explicitly rather
+        than leaving it implicit, and V13/`TaskIdCollisionError` are what stop both ids from
+        ever being live in one run.
+        """
+        repo = make_repo(tmp_path / "repo")
+        manager, iso_repo, head = _manager_for(repo, "run-1", tmp_path / "hooks")
+        iso = manager.ensure("build:web", 1, [])
+        wt = Path(iso.repos[0].worktree_root)
+
+        report = manager.reconcile({"build-web"})
+
+        assert wt.exists()
+        assert report.removed_worktrees == []
+        assert report.deleted_refs == []
+
+
+# ---------------------------------------------------------------------------------------
+# M-2 (security review, 2026-09-07): two distinct ids that sanitize to one component are
+# refused at ensure() time, rather than silently sharing a worktree via the reuse path.
+# ---------------------------------------------------------------------------------------
+
+
+class TestTaskIdCollisionAtEnsure:
+    @pytest.mark.parametrize(
+        ("id_a", "id_b"),
+        [("svc/api", "svc-api"), ("../../../../etc", "etc"), ("$(id)", "id"), ("a b", "a-b")],
+    )
+    def test_second_colliding_id_is_refused_naming_both_ids(
+        self, tmp_path: Path, id_a: str, id_b: str
+    ) -> None:
+        """The auditor's M-2 shape: before the fix the second `ensure()` found a registered
+        worktree already on the expected branch and took the *reuse* path, returning the
+        IDENTICAL worktree_root and branch -- two supposedly isolated tasks in one checkout.
+        """
+        repo = make_repo(tmp_path / "repo")
+        manager, iso_repo, head = _manager_for(repo, "run-1", tmp_path / "hooks")
+        first = manager.ensure(id_a, 1, [])
+
+        with pytest.raises(TaskIdCollisionError) as excinfo:
+            manager.ensure(id_b, 1, [])
+
+        exc = excinfo.value
+        assert exc.task_id == id_b
+        assert exc.other_task_id == id_a
+        message = str(exc)
+        assert repr(id_a) in message and repr(id_b) in message
+        # And the first task's worktree is untouched -- the refusal costs it nothing.
+        assert Path(first.repos[0].worktree_root).exists()
+
+    def test_collision_error_is_a_worktree_collision_error(self, tmp_path: Path) -> None:
+        """Subclassing is load-bearing: the engine's dispatch path catches
+        `WorktreeCollisionError` and fails just that task. A brand-new unrelated exception
+        type would escape it and crash the whole run.
+        """
+        assert issubclass(TaskIdCollisionError, WorktreeCollisionError)
+        repo = make_repo(tmp_path / "repo")
+        manager, iso_repo, head = _manager_for(repo, "run-1", tmp_path / "hooks")
+        manager.ensure("svc/api", 1, [])
+        with pytest.raises(WorktreeCollisionError):
+            manager.ensure("svc-api", 1, [])
+
+    def test_re_ensuring_the_same_id_is_not_a_collision(self, tmp_path: Path) -> None:
+        """`ensure()` is called once per dispatch cycle (retry, rerun-on-fresh-base), so
+        re-claiming one's own component must stay the ordinary reuse path.
+        """
+        repo = make_repo(tmp_path / "repo")
+        manager, iso_repo, head = _manager_for(repo, "run-1", tmp_path / "hooks")
+        first = manager.ensure("svc/api", 1, [])
+        second = manager.ensure("svc/api", 2, [])
+        assert second.repos[0].worktree_root == first.repos[0].worktree_root
+        assert second.repos[0].branch == first.repos[0].branch
+
+    def test_distinct_components_do_not_collide(self, tmp_path: Path) -> None:
+        repo = make_repo(tmp_path / "repo")
+        manager, iso_repo, head = _manager_for(repo, "run-1", tmp_path / "hooks")
+        a = manager.ensure("svc/api", 1, [])
+        b = manager.ensure("svc/web", 1, [])
+        assert a.repos[0].worktree_root != b.repos[0].worktree_root
+        assert a.repos[0].branch != b.repos[0].branch
+
+    def test_collision_is_detected_before_any_git_call(self, tmp_path: Path) -> None:
+        """The claim is checked at the top of `ensure()`, so the colliding task never
+        touches the first task's worktree -- not even a prune or a `worktree list`.
+        """
+        repo = make_repo(tmp_path / "repo")
+        manager, iso_repo, head = _manager_for(repo, "run-1", tmp_path / "hooks")
+        manager.ensure("svc/api", 1, [])
+        runner = RecordingFakeRunner([])  # any git call would raise IndexError/StopIteration
+        manager._runner = runner
+        manager._git_repos.clear()
+        with pytest.raises(TaskIdCollisionError):
+            manager.ensure("svc-api", 1, [])
+        assert runner.calls == []
 
 
 # ---------------------------------------------------------------------------------------

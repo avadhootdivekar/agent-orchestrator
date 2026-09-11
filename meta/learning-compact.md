@@ -82,3 +82,4 @@
 - When a defect persists artifacts on failure, test the fix against already-damaged state, not just clean fixtures. (By: agent, agent, 2026-08-31)
 - "UI unreachable" is two gates: loopback bind (TCP refused) vs Host allowlist (421) — `0.0.0.0` is never a sent Host. (By: agent, agent, 2026-08-31)
 - `reconcile()` stamps `finished_at` on dead PIDs — a fixture that must read as alive needs `os.getpid()`. (By: agent, agent, 2026-08-31)
+- PLACEHOLDER (E-Wk9Tz3 per-task git isolation): reserved for this epic's distilled execution learnings, pending the epic owner's input. Deliberately not filled with invented entries — see the matching placeholder in `meta/learnings.md`. (By: architect, architect, 2026-09-07)

@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-Dr5Yq6-docs-refresh`
 - Epic ID: `E-Wk9Tz3-task-isolation`
-- Owner: unassigned (architect or developer)
+- Owner: architect (agent)
 - Created: 2026-09-06
 - Last Updated: 2026-09-07
-- Status: Draft
+- Status: In Review (pass 1 of 2 complete)
 - Estimate: 1 day
 
 ## Requirements Mapping
@@ -156,3 +156,33 @@ epic owner rather than making them — that file is owned elsewhere.
   the R-13/S-8 documentation items, an execute-it-don't-describe-it check on the T4 recovery procedure,
   and an explicit hand-off of the ROADMAP + ADR-0014 cross-epic note to the epic owner. Estimate
   unchanged at 1 day.
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: **Pass 1 executed.** All 14 numbered
+  reconciliation items addressed, plus deviations mined from the epic and per-task `STATUS.md`/`REVIEW.md`
+  records that had never reached this list — chiefly the R-2 disposition being false for an in-repo
+  output (it shipped as a blocking defect), `should_skip`'s gate landing at the engine call site rather
+  than in `runstate.py`, V1-V12's conditional gating, `cross_validate` returning warnings, and the
+  half-shipped S-5/S-7 observability. Recorded as HLD §25 (ten deviations + a known-defective table);
+  six §24 dispositions changed. ADR-0013 → `Accepted / shipped`.
+
+  **Scope changes vs this TASK.md as written**, all directed mid-task and recorded rather than assumed:
+  `meta/ROADMAP.md` and `meta/learnings*.md` moved from "do NOT touch / report only" to **owned**
+  (ROADMAP edits made, not merely proposed; learnings left as explicit placeholders pending the epic
+  owner's input); the epic-level `STATUS.md` and every other ticket's files moved to **do not touch**,
+  so AC-5's epic-wide status sync was **not** performed and is handed to the coordinator in `STATUS.md`
+  instead. AC-5 also assumed 12 tasks; the epic has 14. One extra file was granted for the security-audit
+  documentation duties: `src/agent_orchestrator/templates/instructions/conflict-friendly-coding.md`.
+
+  **AC status.** AC-1 done · AC-2 done · AC-3 done · AC-4 done (recovery procedure executed, and the
+  documented one did not work — recorded as a code defect, not papered over) · **AC-5 reassigned to the
+  coordinator** · AC-6 done (OQ-1..OQ-5 resolved; §20 items 1/3 carried forward with an owner) · AC-7
+  superseded — the ROADMAP edits were made rather than reported · AC-8 **partially**: markdown links
+  checked; `pytest` run but **not green**, and the 16 failures are the in-flight security remediation in
+  `src/`, not this docs-only change (evidence in `STATUS.md`) · AC-9 done · AC-10/10b done · AC-11 done
+  (`ao prune --worktrees-only` and the T4 path both executed against real temp repos) · AC-12 done, with
+  the recommendation that ADR-0014's per-workspace cap of 1 **not** be relaxed · AC-13 done · AC-14 done.
+
+  **Not done, deliberately, pending inputs:** HLD §11 M9's event contract table and all
+  `status.json`/dashboard observability text (marked `NOT YET RECONCILED` in place while `T-Cx4Jf1`
+  Part B is in flight), and the two learnings placeholders. Both are pass 2.

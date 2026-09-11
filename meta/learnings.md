@@ -878,3 +878,20 @@ By: agent
 Role: architect
 Date: 2026-09-06
 ---
+
+---
+Learning-ID: LRN-20260907-e-wk9tz3-process-learnings-PLACEHOLDER
+Learning: PLACEHOLDER — reserved for the E-Wk9Tz3 (per-task git isolation) execution learnings. The
+  epic owner is supplying the process learnings from this epic's execution; they will be folded in here
+  as separate, individually-marked entries. Nothing has been invented to fill this slot: per the repo's
+  own rule, learnings are added only when genuinely reusable, and this reconciliation pass deliberately
+  did not manufacture entries to look thorough. Delete this placeholder when the real entries land.
+Context: `T-Dr5Yq6-docs-refresh` closed E-Wk9Tz3's documentation. Candidate material exists (a design
+  whose stated mechanism was impossible against a sibling ticket's shipped behaviour; a "no new plumbing"
+  claim that needed two bug fixes to become true; a review disposition that recorded a fix which had
+  shipped as a blocking defect; two operator procedures that only failed when someone ran them) — but
+  which of those generalize beyond this epic is the epic owner's call, not this pass's.
+By: architect
+Role: architect
+Date: 2026-09-07
+---

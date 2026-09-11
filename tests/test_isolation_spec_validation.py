@@ -521,6 +521,88 @@ class TestV12CommitDenylistAndUnionUnsafeGlobs:
 
 
 # ---------------------------------------------------------------------------
+# V13 — two isolated task ids that sanitize to the same component -- fatal
+# (security review M-2, 2026-09-07).
+# ---------------------------------------------------------------------------
+
+
+class TestV13TaskIdSanitizesToSameComponent:
+    """`paths.sanitize_ref_component` maps every character outside `[A-Za-z0-9._-]` onto
+    `-`, so two distinct ids can name ONE worktree directory and ONE `ao/<run>/<task>`
+    branch. Without this rule the second `WorktreeManager.ensure()` takes its *reuse* path
+    and the two "isolated" tasks share a checkout with no error anywhere.
+    """
+
+    # The auditor's own collision pairs (REVIEW-security-asbuilt-2026-09-07.md, M-2):
+    # an innocuous-looking pair, plus two hostile ids collapsing onto innocuous ones.
+    @pytest.mark.parametrize(
+        ("id_a", "id_b"),
+        [
+            ("svc/api", "svc-api"),
+            ("../../../../etc", "etc"),
+            ("$(id)", "id"),
+            ("a b", "a-b"),
+            ("build:web", "build-web"),
+        ],
+    )
+    def test_colliding_isolated_ids_are_fatal(self, tmp_path: Path, id_a: str, id_b: str) -> None:
+        wf = _wf(
+            [_isolated_task(id=id_a), _isolated_task(id=id_b)],
+            integration={"ladder": _NO_LLM_LADDER},
+        )
+        with pytest.raises(SpecValidationError) as excinfo:
+            cross_validate(wf, _reposets(str(tmp_path)), _agents())
+        message = str(excinfo.value)
+        # Both offending ids must be named -- an operator cannot act on "some id collided".
+        assert repr(id_a) in message
+        assert repr(id_b) in message
+        assert "sanitize" in message
+
+    def test_distinct_components_ok(self, tmp_path: Path) -> None:
+        wf = _wf(
+            [_isolated_task(id="svc/api"), _isolated_task(id="svc/web")],
+            integration={"ladder": _NO_LLM_LADDER},
+        )
+        cross_validate(wf, _reposets(str(tmp_path)), _agents())  # no raise
+
+    def test_collision_between_non_isolated_tasks_is_not_fatal(self, tmp_path: Path) -> None:
+        """A task that never resolves to worktree isolation gets no worktree and no branch,
+        so it cannot collide with anything -- failing on it would break NFR-2 backward
+        compatibility for workflows that never isolate.
+        """
+        wf = _wf([_plain_task(id="svc/api"), _plain_task(id="svc-api")])
+        cross_validate(wf, _reposets(str(tmp_path)), _agents())  # no raise
+
+    def test_defaults_isolation_worktree_brings_plain_ids_under_the_rule(
+        self, tmp_path: Path
+    ) -> None:
+        """`isolation` inherited from `defaults` counts exactly as a declared one does --
+        `resolve_task_isolation` is the single resolution rule for both.
+        """
+        wf = _wf(
+            [_plain_task(id="svc/api"), _plain_task(id="svc-api")],
+            defaults={"isolation": "worktree"},
+            integration={"ladder": _NO_LLM_LADDER},
+        )
+        with pytest.raises(SpecValidationError, match="sanitize"):
+            cross_validate(wf, _reposets(str(tmp_path)), _agents())
+
+    def test_structural_task_is_excluded_like_v4_excludes_it(self, tmp_path: Path) -> None:
+        """An emit_tasks task is forced to isolation="none" by `resolve_task_isolation`, so
+        it never owns a worktree and is outside this rule -- same exclusion V4 makes.
+        """
+        wf = _wf(
+            [
+                _plain_task(id="svc/api", emit_tasks=True, task_manifest_path="m.json"),
+                _isolated_task(id="svc-api"),
+            ],
+            defaults={"isolation": "worktree"},
+            integration={"ladder": _NO_LLM_LADDER},
+        )
+        cross_validate(wf, _reposets(str(tmp_path)), _agents())  # no raise
+
+
+# ---------------------------------------------------------------------------
 # e2e: `ao validate` via CliRunner (outermost boundary per CLAUDE.md).
 # ---------------------------------------------------------------------------
 

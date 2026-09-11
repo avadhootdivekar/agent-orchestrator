@@ -67,6 +67,24 @@ DEFAULT_HOTSPOTS_PATH: str = ".ao/hotspots.json"
 # never default to [] -- an empty default would silently reopen the hole V11 exists to
 # close (a test asserts this default is non-empty).
 DEFAULT_RESOLVER_DISALLOWED_TOOLS: list[str] = ["WebFetch", "WebSearch"]
+# C-3 (as-built security review 2026-09-07): the resolver's NON-CONFIGURABLE tool floor,
+# unioned into every T2 dispatch's `AgentSpec.forced_disallowed_tools` by
+# `isolation.escalation.resolver_agent_spec` on top of whatever
+# `IntegrationSpec.resolver_disallowed_tools` adds. Unlike that (operator-editable) field
+# this one cannot be configured away, because the containment it provides is structural
+# rather than advisory:
+#   - `Bash`  -- a linked worktree shares the MAIN repository's object database, refs,
+#     config and hook directory (`--git-common-dir`). A shell in that worktree can rewrite
+#     the run's integration ref, poison `.git/rr-cache` so a bad resolution auto-replays in
+#     every future run, plant `.git/hooks/pre-commit` in the operator's own checkout, and
+#     `git push`. No environment overlay can take a shell back (see `resolver_env`).
+#   - `Task`  -- a spawned subagent would carry its own tool policy, laundering around this
+#     denial entirely.
+#   - `WebFetch`/`WebSearch` -- the egress half of S-2: the resolver reads raw, unreviewed
+#     conflict hunks authored by two tasks nobody reviewed against each other.
+# The resolver never needs any of these: it edits the conflicted files and stops, and the
+# ENGINE stages the result (`Integrator.resume_integration`) -- see merge-resolve.md.
+RESOLVER_FORCED_DISALLOWED_TOOLS: list[str] = ["Bash", "Task", "WebFetch", "WebSearch"]
 # S-3: globs that must never be swept into an auto-commit. Matched against paths that
 # are UNTRACKED at auto-commit time only -- an already-tracked file is the repo
 # author's decision, not the engine's.
@@ -152,6 +170,16 @@ class AgentSpec(BaseModel):
     # See executors.claude_cli.RECOMMENDED_HEADLESS_DISALLOWED_TOOLS for the
     # background-shell set that is meaningless under headless `claude -p`.
     disallowed_tools: list[str] = []
+    # C-1 (as-built security review 2026-09-07): a NON-OVERRIDABLE denial set, appended to
+    # the child argv unconditionally -- after, and in addition to, any tool-policy flag the
+    # agent itself supplies in `command_template`/`extra_args`. `disallowed_tools` above
+    # keeps its "an explicit agent flag wins" semantics (correct for an ordinary opt-in
+    # denial); this field is the ENGINE's own forced set and is never dropped, so a
+    # resolver AgentSpec that names its own `--allowedTools` can no longer silently
+    # re-enable what the T2 containment set exists to strip. Engine-populated only (see
+    # `isolation.escalation.resolver_agent_spec`); it is not part of the authored workflow
+    # surface, and a spec that sets it anyway can only ever ADD denials, never remove one.
+    forced_disallowed_tools: list[str] = []
 
 
 class TaskSpec(BaseModel):

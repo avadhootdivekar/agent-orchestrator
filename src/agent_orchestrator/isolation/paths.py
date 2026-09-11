@@ -15,10 +15,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Protocol
 
+from ..errors import ConfigError
 from ..xdg import resolve_state_dir
 
 # ---------------------------------------------------------------------------------------
@@ -104,6 +105,33 @@ def sanitize_ref_component(value: str) -> str:
     return out or _FALLBACK_COMPONENT
 
 
+def group_by_ref_component(values: Iterable[str]) -> dict[str, list[str]]:
+    """`sanitize_ref_component(v) -> [the distinct v's that produced it]`, first-seen order.
+
+    M-2/C-4 (review, 2026-09-07): `sanitize_ref_component` is deliberately NOT injective --
+    it maps every character outside `[A-Za-z0-9._-]` onto `-`, so `svc/api` and `svc-api`
+    share one component. Two consequences, and this one helper serves both:
+
+    - **C-4**: anything that reads a component back OFF DISK (a worktree directory name, a
+      ref's task component) must be compared against the *sanitized* form of the known ids,
+      never the raw ids -- otherwise every id that is not sanitize-identity looks unknown.
+      Because the mapping is many-to-one, "which raw ids does this component stand for" is a
+      list, not a single value, which is exactly what this returns.
+    - **M-2**: any component whose list holds >1 entry is a genuine collision -- two tasks
+      that would share one worktree and one branch. `spec.validate_isolation`'s V13 and
+      `WorktreeManager.ensure()` both reject that rather than silently merging the two.
+
+    Order-independent by construction (a plain membership map), and the per-component lists
+    preserve input order so an error message names the ids the way the caller listed them.
+    """
+    grouped: dict[str, list[str]] = {}
+    for value in values:
+        bucket = grouped.setdefault(sanitize_ref_component(value), [])
+        if value not in bucket:
+            bucket.append(value)
+    return grouped
+
+
 # ---------------------------------------------------------------------------------------
 # Branch / ref naming (AC-3, AC-4)
 # ---------------------------------------------------------------------------------------
@@ -168,6 +196,66 @@ def state_dir() -> Path:
     return resolve_state_dir(STATE_ENV, _STATE_XDG_SUBDIR, _STATE_DEFAULT_SUBDIR)
 
 
+def _worktree_root_source() -> str:
+    """Which setting produced the worktree store root -- named in M-3's error so the operator
+    knows exactly what to change (the override and the state-dir route are different fixes).
+    """
+    if os.environ.get(WORKTREE_ENV):
+        return f"${WORKTREE_ENV}"
+    if os.environ.get(STATE_ENV):
+        return f"${STATE_ENV}"
+    return f"the resolved state directory (${STATE_ENV} / $XDG_STATE_HOME / ~/.local/state)"
+
+
+def worktree_store_root() -> Path:
+    """`$AO_WORKTREE_ROOT`, else `<state_dir>/worktrees` -- the root of ALL ao worktree
+    storage, across every workspace and every run.
+
+    M-3 (review, 2026-09-07): exposed separately from `worktree_root_prefix_for` because
+    `IsolatedArtifactView` needs exactly this region, not one run's prefix. Placing the store
+    inside the workspace root is a SUPPORTED layout (an operator keeping everything on one
+    tree, which is also what the engine's own tests do with `$AO_STATE_DIR` under the
+    workspace), so it is not refused -- instead the view treats this whole subtree as
+    reserved and non-resolvable, exactly the way `RESERVED_SHARED_PREFIXES` are treated, and
+    a path into a sibling task's worktree is rejected with the ordinary containment error
+    rather than passing as an in-workspace path. The exclusion must key off the STORE root
+    rather than one run's prefix so that another run's worktrees are covered too.
+
+    Read fresh at call time (never cached), like every other env lookup in this module.
+    """
+    override = os.environ.get(WORKTREE_ENV)
+    return Path(override) if override else state_dir() / _WORKTREES_SUBDIR
+
+
+def _reject_workspace_inside_worktree_store(store_root: Path, workspace_root: str) -> None:
+    """The one worktree-root layout that is genuinely unusable, kept a loud failure.
+
+    The nested case (`store_root` inside the workspace) is supported -- see
+    `worktree_store_root`. But when the workspace root is itself inside the store root, or
+    IS the store root (`AO_WORKTREE_ROOT=<workspace>`, or `/`), the view's reserved region
+    swallows the entire workspace and no artifact anywhere would resolve. Excluding the
+    region cannot rescue that, so it fails here with an actionable message instead of
+    turning every path in the run into an opaque `ArtifactPathError`.
+
+    Lexical only, matching the rest of this module (no `Path.resolve()`, no filesystem I/O):
+    `os.path.abspath` normalizes `.`/`..` and makes a relative workspace root comparable.
+    Compared per path segment (`+ os.sep`), never as a bare string prefix, so a legitimate
+    sibling like `/ws-worktrees` next to `/ws` is never mistaken for containment.
+    """
+    store_abs = os.path.normpath(os.path.abspath(str(store_root)))
+    workspace_abs = os.path.normpath(os.path.abspath(workspace_root))
+    if not (workspace_abs == store_abs or workspace_abs.startswith(store_abs + os.sep)):
+        return
+    source = _worktree_root_source()
+    raise ConfigError(
+        f"worktree store root {store_abs!r} (from {source}) contains the workspace root "
+        f"{workspace_abs!r}. Worktree storage is a reserved region that no task artifact may "
+        "resolve into, so a workspace inside it would make every path in the run "
+        f"unresolvable. Point {source} at a directory that does not contain the workspace "
+        "(a directory INSIDE the workspace is fine)."
+    )
+
+
 def worktree_root_prefix_for(workspace_root: str, run_id: str) -> Path:
     """The directory prefix common to every worktree a given run creates -- one level above
     `worktree_root`'s task_id/repo_key components.
@@ -175,10 +263,15 @@ def worktree_root_prefix_for(workspace_root: str, run_id: str) -> Path:
     R-6 (AC-16): the sole input to every `GitRepo.prune_worktrees_scoped` call site in
     `worktrees.py`, so pruning is always scoped to this run, never global. Also honours
     `AO_WORKTREE_ROOT` (AC-5), read fresh at call time like every other env lookup here.
+
+    M-3 (review, 2026-09-07): a store root INSIDE the workspace is supported (the view
+    excludes the region -- see `worktree_store_root`); a workspace inside the STORE is not
+    -- see `_reject_workspace_inside_worktree_store`, which raises `ConfigError`. That is the
+    only failure mode in this module, and it is a config error, not a runtime condition.
     """
-    override = os.environ.get(WORKTREE_ENV)
-    base = Path(override) if override else state_dir() / _WORKTREES_SUBDIR
-    return base / workspace_key(workspace_root) / sanitize_ref_component(run_id)
+    store_root = worktree_store_root()
+    _reject_workspace_inside_worktree_store(store_root, workspace_root)
+    return store_root / workspace_key(workspace_root) / sanitize_ref_component(run_id)
 
 
 def worktree_root(workspace_root: str, run_id: str, task_id: str, repo_key: str) -> Path:

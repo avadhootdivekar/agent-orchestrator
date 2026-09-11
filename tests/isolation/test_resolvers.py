@@ -164,6 +164,10 @@ class TestUnionResolverConflictKinds:
             ("add_add", "new.txt", False),  # no common base
             ("delete_modify", "f.txt", False),  # one side has no version at all
             ("binary", "bin.dat", False),
+            # T-Ee3Mn8 AC-2 additive kind: non-additive, same key overwritten both sides
+            # (a lockfile-regeneration shape -- the intended target of `regenerate`, not
+            # `union`).
+            ("lock", "lock.json", False),
         ],
     )
     def test_kind_outcome(
@@ -203,8 +207,8 @@ class TestUnionResolverConflictKinds:
         assert outcome.paths == []
 
     def test_all_conflict_kinds_are_covered(self) -> None:
-        # Documentation guard: fails loudly if `conftest.py` grows a 7th kind this test
-        # doesn't yet have an outcome row for.
+        # Documentation guard: fails loudly if `conftest.py` grows a kind this test
+        # doesn't yet have an outcome row for (T-Ee3Mn8 AC-2 added "lock").
         assert set(CONFLICT_KINDS) == {
             "clean",
             "union",
@@ -212,6 +216,7 @@ class TestUnionResolverConflictKinds:
             "add_add",
             "delete_modify",
             "binary",
+            "lock",
         }
 
 

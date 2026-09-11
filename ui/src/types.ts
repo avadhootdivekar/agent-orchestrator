@@ -102,6 +102,19 @@ export interface TaskStat {
   route: string | null;
   output_artifact_path: string | null;
   outputs: string[];
+  /** Per-task git isolation (E-Wk9Tz3). Null/0 for a task that was never isolated. */
+  integration_status: string | null;
+  tier_reached: string | null;
+  conflicted_count: number;
+}
+
+/** Run-wide integration header (E-Wk9Tz3). Null for a run without isolation. */
+export interface RunIntegration {
+  active: boolean;
+  branch: string | null;
+  heads: Record<string, string>;
+  tier_counts: Record<string, number>;
+  degraded_reason: string | null;
 }
 
 export interface LaunchRecord {
@@ -128,6 +141,7 @@ export interface RunDetail {
   run_dir: string;
   is_live: boolean;
   launch: LaunchRecord | null;
+  integration: RunIntegration | null;
 }
 
 export interface AggregateStats {

@@ -389,7 +389,7 @@
         "workspace_lock": {
           "enum": ["require", "skip_sync", "off"],
           "default": "require",
-          "description": "R-4: policy when a second run wants an isolation context in the same workspace. Semantics are fixed by T-En8Hd4; the field is reserved here so the schema is not reopened. Coordinated with E-Sc9Rt4's per-workspace concurrency cap."
+          "description": "R-4: policy when a second run wants an isolation context in the same workspace while another run holds it. 'require' (default) refuses to start the second run; 'skip_sync' runs isolated but never fast-forwards the shared checkout; 'off' disables the workspace lock entirely. Implemented by T-Wl2Bq7; coordinated with E-Sc9Rt4's per-workspace concurrency cap."
         },
         "resolver_instruction": {
           "type": "string",

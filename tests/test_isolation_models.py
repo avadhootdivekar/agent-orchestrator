@@ -27,6 +27,7 @@ from agent_orchestrator.models import (
     DEFAULT_REGENERATE_TIMEOUT_SECONDS,
     DEFAULT_RESOLVER_DISALLOWED_TOOLS,
     DEFAULT_VERIFY_TIMEOUT_SECONDS,
+    RESOLVER_FORCED_DISALLOWED_TOOLS,
     AgentSpec,
     BudgetCounters,
     IntegrationSpec,
@@ -75,6 +76,18 @@ class TestNamedConstants:
         # An empty default would silently reopen the hole V11 exists to close.
         assert DEFAULT_RESOLVER_DISALLOWED_TOOLS
         assert set(DEFAULT_RESOLVER_DISALLOWED_TOOLS) == {"WebFetch", "WebSearch"}
+
+    def test_resolver_forced_floor_denies_shell_subagent_and_egress(self) -> None:
+        """As-built security review C-3: unlike `DEFAULT_RESOLVER_DISALLOWED_TOOLS` (an
+        operator-editable default), this floor is unioned in unconditionally by
+        `isolation.escalation.resolver_agent_spec` -- a linked worktree shares the main
+        repository's `.git`, so a shell there is a host-compromise primitive."""
+        assert set(RESOLVER_FORCED_DISALLOWED_TOOLS) >= {
+            "Bash",
+            "Task",
+            "WebFetch",
+            "WebSearch",
+        }
 
     def test_commit_denylist_default_covers_common_secret_shapes(self) -> None:
         for expected in (".env", "*.pem", "*.key", "id_rsa*", "*credentials*.json"):
@@ -192,6 +205,11 @@ class TestSecurityFields:
         integ = IntegrationSpec()
         assert integ.resolver_disallowed_tools == DEFAULT_RESOLVER_DISALLOWED_TOOLS
         assert integ.resolver_deny_push is True
+
+    def test_agent_spec_forced_disallowed_tools_defaults_to_empty(self) -> None:
+        """C-1: engine-populated only -- an ordinary agent carries no forced set, so the
+        non-isolated dispatch path stays byte-identical (NFR-2)."""
+        assert AgentSpec(executor="fake").forced_disallowed_tools == []
 
     def test_s3_auto_commit_denylist_and_action_defaults(self) -> None:
         integ = IntegrationSpec()

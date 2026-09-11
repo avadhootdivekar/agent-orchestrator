@@ -86,6 +86,9 @@ REASON_VERIFY_COMMAND_ERROR = "verify_command_error"
 REASON_VERIFY_TIMEOUT = "verify_timeout"
 REASON_VERIFY_COMMAND_FAILED = "verify_command_failed"
 REASON_GIT_ERROR = "git_error"
+# H-1 (as-built security review 2026-09-07): the run's integration branch named something
+# outside ao's own reserved ref namespace.
+REASON_INVALID_INTEGRATION_REF = "invalid_integration_ref"
 
 # HLD "Triggers / events" (TASK.md Schemas/Interface Notes) plus two natural extras this
 # module also emits: `denylisted_path` (named explicitly by AC-18/S-3) and `resolved`
@@ -103,6 +106,20 @@ EVENT_PARTIAL = "integration.partial"
 EVENT_FAILED = "integration.failed"
 EVENT_DENYLISTED_PATH = "integration.denylisted_path"
 EVENT_EMPTY = "integration.empty"
+EVENT_INVALID_INTEGRATION_REF = "integration.invalid_integration_ref"
+
+# H-1: every ref this module compare-and-swaps MUST live under ao's own reserved branch
+# namespace (`refs/heads/ao/...`). `RunIntegrationState.branch` is persisted in
+# `state.json`, which lives under `RESERVED_SHARED_PREFIXES` and is therefore WRITABLE from
+# inside an isolated task's worktree -- so on resume (where the engine's safe
+# re-derivation is skipped, because `integration.active` is already True) the branch name
+# is attacker-controllable. Without this guard, a task that rewrites the field to "main"
+# makes every subsequent task squash CAS-land directly onto the default branch, and the CAS
+# succeeds because `expected_old` is read from that same ref.
+_INTEGRATION_REF_PREFIX = f"refs/heads/{paths.AO_REF_NAMESPACE}/"
+# Ref-path components git itself rejects, plus the traversal component: a branch of
+# "ao/../../main" would otherwise satisfy the prefix check above and still escape it.
+_INVALID_REF_COMPONENTS: frozenset[str] = frozenset({"", ".", ".."})
 
 # R-7: a lost CAS is retried exactly this many times, scoped to the losing repo only.
 CAS_RETRY_BOUND: int = 1
@@ -289,18 +306,64 @@ def _render_commit_message(
     )
 
 
+class InvalidIntegrationRefError(ValueError):
+    """H-1: the run's integration branch does not name a ref inside ao's reserved
+    namespace. Raised (never swallowed) by `_integration_ref`; each public entry point
+    converts it into a `failed(reason="invalid_integration_ref")` result so a poisoned
+    `state.json` fails the task loudly instead of landing work on an arbitrary branch."""
+
+
+def _integration_ref(branch: str | None) -> str:
+    """`refs/heads/<branch>`, but only for a *branch* inside ao's reserved namespace.
+
+    The single place this module turns `RunIntegrationSnapshot.branch` into a ref, so the
+    guard cannot be forgotten at one of the five sites that need it (two of which are the
+    `update_ref_cas` landings themselves -- see `_INTEGRATION_REF_PREFIX`).
+    """
+    ref = f"refs/heads/{branch}"
+    if not branch or not ref.startswith(_INTEGRATION_REF_PREFIX):
+        raise InvalidIntegrationRefError(
+            f"integration branch {branch!r} is outside the reserved "
+            f"{paths.AO_REF_NAMESPACE}/ namespace"
+        )
+    if any(component in _INVALID_REF_COMPONENTS for component in branch.split("/")):
+        raise InvalidIntegrationRefError(
+            f"integration branch {branch!r} contains an empty or traversal component"
+        )
+    return ref
+
+
 def _matches_denylist(path: str, denylist: list[str]) -> bool:
     """S-3: match both the full (worktree-relative) path and its basename, so
     `commit_denylist: [".env"]` also catches `config/.env`, not only a root-level `.env`.
-    This is a footgun backstop, not a secrets scanner -- documented at the call site."""
-    basename = os.path.basename(path)
+    This is a footgun backstop, not a secrets scanner -- documented at the call site.
+
+    Case-INSENSITIVE (as-built review H-3): `fnmatchcase` alone let `.ENV`/`My.PEM` through,
+    and on a case-insensitive filesystem those are the same file as the denylisted name.
+    """
+    lowered = path.lower()
+    basename = os.path.basename(lowered)
     return any(
-        fnmatch.fnmatchcase(path, glob) or fnmatch.fnmatchcase(basename, glob) for glob in denylist
+        fnmatch.fnmatchcase(lowered, glob.lower()) or fnmatch.fnmatchcase(basename, glob.lower())
+        for glob in denylist
     )
 
 
 def _is_untracked(entry_index: str, entry_worktree: str) -> bool:
     return entry_index == "?" and entry_worktree == "?"
+
+
+def _untracked_paths(git: GitRepo, cwd: str) -> list[str]:
+    """Every untracked path in *cwd*, enumerated FILE BY FILE.
+
+    `--untracked-files=all` is load-bearing, not a nicety (as-built review H-3): git's
+    default collapses a wholly-untracked directory to one `config/` entry, whose basename
+    is `""` and which therefore matches no denylist glob -- so `config/.env` was screened
+    as `config/` and swept into the auto-commit undetected while a root-level `.env` was
+    correctly caught.
+    """
+    entries = git.status_porcelain(cwd, untracked=True, untracked_all=True)
+    return [e.path for e in entries if _is_untracked(e.index, e.worktree)]
 
 
 def _default_exec_runner(
@@ -453,6 +516,21 @@ class Integrator:
             return self._squash_rebase_verify_land(
                 task_iso, run_integration, task_integration, attempt, tips, agent_id
             )
+        except InvalidIntegrationRefError as exc:
+            # H-1: the branch name came off `state.json`, which an isolated task can write.
+            # Fail this task loudly rather than landing its squash on an arbitrary ref.
+            self._log_event(
+                task_id,
+                EVENT_INVALID_INTEGRATION_REF,
+                level=logging.ERROR,
+                reason=REASON_INVALID_INTEGRATION_REF,
+                error=str(exc),
+            )
+            return IntegrationResult(
+                status=STATUS_FAILED,
+                reason=REASON_INVALID_INTEGRATION_REF,
+                verify_status=VERIFY_NOT_RUN,
+            )
         except GitError as exc:
             self._log_event(
                 task_id, EVENT_FAILED, level=logging.ERROR, reason=REASON_GIT_ERROR, error=str(exc)
@@ -512,7 +590,7 @@ class Integrator:
                     git = self._git_for(repo)
                     wt = repo.worktree_root
                     branch_ref = f"refs/heads/{repo.branch}"
-                    integration_ref = f"refs/heads/{run_integration.branch}"
+                    integration_ref = _integration_ref(run_integration.branch)
                     head_sha = git.rev_parse(integration_ref)
                     expected_old = head_sha if head_sha is not None else ""
                     target_head = head_sha if head_sha is not None else repo.base
@@ -523,6 +601,14 @@ class Integrator:
                     squash[repo.key] = recorded_squash or ""
 
                     if git.rebase_in_progress(wt):
+                        # C-3: the ENGINE stages the resolver's work -- the resolver agent
+                        # has no shell and never runs `git add` itself (merge-resolve.md
+                        # rule 4). H-3: screen before the sweep, exactly like the task-end
+                        # auto-commit does; this path sweeps whatever the T2 resolver just
+                        # wrote, which is the least-trusted writer in the system.
+                        screened = self._screen_denylist(task_id, git, wt, repo.key)
+                        if screened is not None:
+                            return screened
                         git.add_all(wt)
                         cont = git.rebase_continue(wt)
                         if not cont.clean:
@@ -610,6 +696,10 @@ class Integrator:
                             # exactly like the sibling "never staged at all" branch just
                             # below already does for its own different reason.
                             if git.status_porcelain(wt, untracked=True):
+                                # H-3: same screen as every other staging site.
+                                screened = self._screen_denylist(task_id, git, wt, repo.key)
+                                if screened is not None:
+                                    return screened
                                 git.add_all(wt)
                                 fresh_tip = (
                                     git.commit(wt, _RESOLVER_FIX_COMMIT_MESSAGE, allow_empty=True)
@@ -670,7 +760,7 @@ class Integrator:
                 landed: dict[str, str] = {}
                 for repo in sorted_repos:
                     git = self._git_for(repo)
-                    ref = f"refs/heads/{run_integration.branch}"
+                    ref = _integration_ref(run_integration.branch)
                     expected_old, candidate = staged[repo.key]
                     if git.update_ref_cas(ref, candidate, expected_old):
                         landed[repo.key] = candidate
@@ -712,6 +802,21 @@ class Integrator:
                     verify_status=VERIFY_PASSED,
                     untracked_outputs=untracked,
                 )
+        except InvalidIntegrationRefError as exc:
+            # H-1: the branch name came off `state.json`, which an isolated task can write.
+            # Fail this task loudly rather than landing its squash on an arbitrary ref.
+            self._log_event(
+                task_id,
+                EVENT_INVALID_INTEGRATION_REF,
+                level=logging.ERROR,
+                reason=REASON_INVALID_INTEGRATION_REF,
+                error=str(exc),
+            )
+            return IntegrationResult(
+                status=STATUS_FAILED,
+                reason=REASON_INVALID_INTEGRATION_REF,
+                verify_status=VERIFY_NOT_RUN,
+            )
         except GitError as exc:
             self._log_event(
                 task_id, EVENT_FAILED, level=logging.ERROR, reason=REASON_GIT_ERROR, error=str(exc)
@@ -861,7 +966,7 @@ class Integrator:
                     # squashed by the fallback above" cases alike.
                     true_base = git.rev_parse(f"{recorded_squash}^") or repo.base
                     repo_for_rebase = dataclasses.replace(repo, base=true_base)
-                    integration_ref = f"refs/heads/{run_integration.branch}"
+                    integration_ref = _integration_ref(run_integration.branch)
                     head_sha = git.rev_parse(integration_ref)
                     target_head = head_sha if head_sha is not None else true_base
                     git.reset_hard(repo.worktree_root, recorded_squash)
@@ -876,11 +981,62 @@ class Integrator:
                     status="conflict", conflicted_paths=conflicted, tier_reached=tier_reached
                 )
             return MaterializeResult(status="clean")
+        except InvalidIntegrationRefError as exc:
+            # H-1, see `integrate()`'s handler.
+            self._log_event(
+                task_id,
+                EVENT_INVALID_INTEGRATION_REF,
+                level=logging.ERROR,
+                reason=REASON_INVALID_INTEGRATION_REF,
+                error=str(exc),
+            )
+            return MaterializeResult(status="failed", reason=REASON_INVALID_INTEGRATION_REF)
         except GitError as exc:
             self._log_event(
                 task_id, EVENT_FAILED, level=logging.ERROR, reason=REASON_GIT_ERROR, error=str(exc)
             )
             return MaterializeResult(status="failed", reason=REASON_GIT_ERROR)
+
+    # --- S-3 denylist screen (shared by EVERY staging site) -----------------------------
+
+    def _screen_denylist(
+        self, task_id: str, git: GitRepo, wt: str, repo_key: str
+    ) -> IntegrationResult | None:
+        """S-3: screen this worktree's untracked paths against `spec.commit_denylist`.
+
+        Returns a `failed(reason="denylisted_path")` result when the policy is `fail` and
+        something matched, otherwise None (warning already logged for `warn`).
+
+        MUST be called immediately before every `git add -A` in this module -- not only
+        before the task-end auto-commit (as-built review H-3: `resume_integration`'s two
+        staging paths had no screen at all, and those are precisely the paths that sweep
+        whatever the T2 resolver agent just wrote, i.e. the least-trusted writer in the
+        system). An already-TRACKED path matching the denylist is deliberately never
+        screened (AC-18b): that is the repo author's decision, not the engine's. This is a
+        footgun backstop, not a secrets scanner.
+        """
+        hits = [
+            path
+            for path in _untracked_paths(git, wt)
+            if _matches_denylist(path, self._spec.commit_denylist)
+        ]
+        if not hits:
+            return None
+        if self._spec.on_denylisted_path == ON_DENYLISTED_FAIL:
+            self._log_event(
+                task_id, EVENT_DENYLISTED_PATH, level=logging.ERROR, repo=repo_key, paths=hits
+            )
+            return IntegrationResult(
+                status=STATUS_FAILED,
+                reason=REASON_DENYLISTED_PATH,
+                conflicted_paths=list(hits),
+                verify_status=VERIFY_NOT_RUN,
+            )
+        if self._spec.on_denylisted_path == ON_DENYLISTED_WARN:
+            self._log_event(
+                task_id, EVENT_DENYLISTED_PATH, level=logging.WARNING, repo=repo_key, paths=hits
+            )
+        return None
 
     # --- step 1: auto-commit + S-3 denylist screen --------------------------------------
 
@@ -907,31 +1063,9 @@ class Integrator:
             wt = repo.worktree_root
             branch_ref = f"refs/heads/{repo.branch}"
 
-            entries = git.status_porcelain(wt, untracked=True)
-            untracked = [e.path for e in entries if _is_untracked(e.index, e.worktree)]
-            hits = [p for p in untracked if _matches_denylist(p, self._spec.commit_denylist)]
-            if hits and self._spec.on_denylisted_path == ON_DENYLISTED_FAIL:
-                self._log_event(
-                    task_iso.task_id,
-                    EVENT_DENYLISTED_PATH,
-                    level=logging.ERROR,
-                    repo=repo.key,
-                    paths=hits,
-                )
-                return {}, IntegrationResult(
-                    status=STATUS_FAILED,
-                    reason=REASON_DENYLISTED_PATH,
-                    conflicted_paths=list(hits),
-                    verify_status=VERIFY_NOT_RUN,
-                )
-            if hits and self._spec.on_denylisted_path == ON_DENYLISTED_WARN:
-                self._log_event(
-                    task_iso.task_id,
-                    EVENT_DENYLISTED_PATH,
-                    level=logging.WARNING,
-                    repo=repo.key,
-                    paths=hits,
-                )
+            screened = self._screen_denylist(task_iso.task_id, git, wt, repo.key)
+            if screened is not None:
+                return {}, screened
 
             if self._spec.auto_commit:
                 # HLD §11 M4 step 1, exactly: `add -A` THEN commit -- `GitRepo.commit`
@@ -1040,7 +1174,7 @@ class Integrator:
             # Step 3: squash + rebase every repo (still nothing landed).
             for repo in task_iso.repos:
                 git = self._git_for(repo)
-                integration_ref = f"refs/heads/{run_integration.branch}"
+                integration_ref = _integration_ref(run_integration.branch)
                 head_sha = git.rev_parse(integration_ref)
                 expected_old = head_sha if head_sha is not None else ""
                 target_head = head_sha if head_sha is not None else repo.base
@@ -1093,7 +1227,7 @@ class Integrator:
             cas_attempts: dict[str, int] = {}
             for repo in sorted_repos:
                 git = self._git_for(repo)
-                ref = f"refs/heads/{run_integration.branch}"
+                ref = _integration_ref(run_integration.branch)
                 expected_old, candidate = staged[repo.key]
                 while True:
                     if git.update_ref_cas(ref, candidate, expected_old):

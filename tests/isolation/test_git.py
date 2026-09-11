@@ -853,6 +853,34 @@ class TestRefsAndCommits:
         assert not any(e.path == "untracked.txt" for e in without_untracked)
         assert any(e.path == "f.txt" for e in without_untracked)
 
+    def test_status_porcelain_untracked_all_enumerates_nested_files(self, tmp_path: Path) -> None:
+        """As-built security review H-3: git's default `--untracked-files=normal` collapses
+        a wholly-untracked DIRECTORY to one entry (`config/`), hiding every file inside it
+        from any caller that screens the returned paths -- which is exactly what the S-3
+        commit denylist does. `untracked_all=True` enumerates them individually."""
+        repo = make_repo(tmp_path, files={"f.txt": "base\n"})
+        g = GitRepo(str(repo))
+        (repo / "config").mkdir()
+        (repo / "config" / ".env").write_text("SECRET=1\n")
+        (repo / "config" / "nested").mkdir()
+        (repo / "config" / "nested" / "id_rsa").write_text("key\n")
+
+        normal = {e.path for e in g.status_porcelain(str(repo), untracked=True)}
+        every = {e.path for e in g.status_porcelain(str(repo), untracked=True, untracked_all=True)}
+
+        assert normal == {"config/"}  # the bypass, still git's default
+        assert every == {"config/.env", "config/nested/id_rsa"}
+
+    def test_status_porcelain_untracked_all_is_ignored_when_untracked_is_off(
+        self, tmp_path: Path
+    ) -> None:
+        repo = make_repo(tmp_path, files={"f.txt": "base\n"})
+        g = GitRepo(str(repo))
+        (repo / "config").mkdir()
+        (repo / "config" / ".env").write_text("SECRET=1\n")
+        entries = g.status_porcelain(str(repo), untracked=False, untracked_all=True)
+        assert entries == []
+
     def test_is_dirty_ignores_untracked(self, tmp_path: Path) -> None:
         repo = make_repo(tmp_path)
         g = GitRepo(str(repo))

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -28,8 +29,28 @@ GIT_AUTHOR_NAME = "ao-test"
 GIT_AUTHOR_EMAIL = "ao-test@example.invalid"
 _FIXED_DATE = "2020-01-01T00:00:00Z"
 
-# Kinds `make_conflict_repo` understands (locked, AC-23).
-CONFLICT_KINDS = ("clean", "union", "true_conflict", "add_add", "delete_modify", "binary")
+# Kinds `make_conflict_repo` understands that produce a REAL git conflict when rebased
+# (locked, AC-23, plus additive "lock" -- T-Ee3Mn8 AC-2's `mechanical_lock`). Appended,
+# not inserted; every existing kind's branch-building logic below is untouched, so no
+# importer of the original six is affected. Kept conflict-only (deliberately) because at
+# least one existing importer (`tests/isolation/test_integrator.py`'s own
+# `_CONFLICTING_KINDS = [k for k in CONFLICT_KINDS if k != "clean"]`) assumes every
+# non-"clean" member of this tuple genuinely conflicts -- "semantic" (below) does NOT
+# (by design) and is deliberately kept OUT of this tuple so that assumption stays true.
+CONFLICT_KINDS = (
+    "clean",
+    "union",
+    "true_conflict",
+    "add_add",
+    "delete_modify",
+    "binary",
+    "lock",
+)
+
+# Additive (T-Ee3Mn8 AC-2): a `make_conflict_repo` kind that produces NO git conflict at
+# all by design (disjoint files, clean rebase) -- see `semantic_verify_argv()` below.
+# Deliberately NOT in `CONFLICT_KINDS` (see that tuple's own docstring comment).
+SEMANTIC_KIND = "semantic"
 
 
 @pytest.fixture(autouse=True)
@@ -117,8 +138,10 @@ def make_conflict_repo(tmp_path: Path, kind: str) -> tuple[Path, str, str, str]:
 
     Returns ``(repo, base_sha, ours_branch, theirs_branch)``; leaves ``main`` checked out.
     """
-    if kind not in CONFLICT_KINDS:
-        raise ValueError(f"unknown conflict kind: {kind!r} (expected one of {CONFLICT_KINDS})")
+    if kind not in CONFLICT_KINDS and kind != SEMANTIC_KIND:
+        raise ValueError(
+            f"unknown conflict kind: {kind!r} (expected one of {(*CONFLICT_KINDS, SEMANTIC_KIND)})"
+        )
 
     repo = make_repo(tmp_path, files={"f.txt": "a\nb\nc\n"})
     ours_branch, theirs_branch = "ours", "theirs"
@@ -127,6 +150,15 @@ def make_conflict_repo(tmp_path: Path, kind: str) -> tuple[Path, str, str, str]:
         (repo / "bin.dat").write_bytes(bytes(range(16)))
         _git(["add", "-A"], cwd=repo)
         _git(["commit", "-q", "-m", "add base binary"], cwd=repo, env=_commit_env())
+    elif kind == "lock":
+        (repo / "lock.json").write_text('{\n  "a": 1,\n  "b": 2\n}\n')
+        _git(["add", "-A"], cwd=repo)
+        _git(["commit", "-q", "-m", "add base lockfile"], cwd=repo, env=_commit_env())
+    elif kind == SEMANTIC_KIND:
+        (repo / "a.py").write_text("A_ENABLED = False\n")
+        (repo / "b.py").write_text("B_ENABLED = False\n")
+        _git(["add", "-A"], cwd=repo)
+        _git(["commit", "-q", "-m", "add semantic base files"], cwd=repo, env=_commit_env())
 
     base_sha = _git(["rev-parse", "HEAD"], cwd=repo).strip()
 
@@ -180,8 +212,107 @@ def make_conflict_repo(tmp_path: Path, kind: str) -> tuple[Path, str, str, str]:
         _branch_from_main(theirs_branch)
         (repo / "bin.dat").write_bytes(bytes(range(32, 48)))
         _commit("theirs: modify binary")
+    elif kind == "lock":
+        # Non-additive: both branches overwrite the SAME key -- a lockfile-regeneration
+        # shape (`ResolverConfig.regenerate`'s intended target), deliberately NOT
+        # union-resolvable (union only ever accepts a purely-additive hunk, HLD §11 M6).
+        _branch_from_main(ours_branch)
+        (repo / "lock.json").write_text('{\n  "a": 3,\n  "b": 2\n}\n')
+        _commit("ours: bump a to 3")
+        _branch_from_main(theirs_branch)
+        (repo / "lock.json").write_text('{\n  "a": 4,\n  "b": 2\n}\n')
+        _commit("theirs: bump a to 4")
+    elif kind == SEMANTIC_KIND:
+        # Disjoint files -- rebases cleanly, no git conflict at all. Pair with
+        # `semantic_verify_argv()` (below): the two INDIVIDUALLY-clean changes only break
+        # a verify check once BOTH have landed together.
+        _branch_from_main(ours_branch)
+        (repo / "a.py").write_text("A_ENABLED = True\n")
+        _commit("ours: enable A")
+        _branch_from_main(theirs_branch)
+        (repo / "b.py").write_text("B_ENABLED = True\n")
+        _commit("theirs: enable B")
 
     _git(["checkout", "-q", "main"], cwd=repo)
+    return repo, base_sha, ours_branch, theirs_branch
+
+
+def semantic_verify_argv() -> list[str]:
+    """Argv for a `verify_command`-shaped check paired with `make_conflict_repo`'s
+    ``"semantic"`` kind (T-Ee3Mn8 AC-2): reads ``a.py``/``b.py`` from the CURRENT working
+    directory and exits 1 (fail) only when BOTH ``A_ENABLED`` and ``B_ENABLED`` read
+    ``True`` -- i.e. only once both branches' individually-clean, individually-passing
+    changes have landed together. Exits 0 (pass) for either alone, or neither.
+    """
+    script = (
+        "import pathlib, sys\n"
+        "a = pathlib.Path('a.py').read_text() if pathlib.Path('a.py').exists() else ''\n"
+        "b = pathlib.Path('b.py').read_text() if pathlib.Path('b.py').exists() else ''\n"
+        "sys.exit(1 if ('True' in a and 'True' in b) else 0)\n"
+    )
+    return [sys.executable, "-c", script]
+
+
+def make_rerere_taught_repo(tmp_path: Path) -> tuple[Path, str, str, str]:
+    """A repo shaped exactly like `make_conflict_repo`'s ``"true_conflict"`` kind, with
+    git's rerere cache PRE-TAUGHT the resolution via a throwaway branch that is rebased,
+    resolved, and COMPLETED (never aborted -- rerere only remembers a completed
+    resolution) before being deleted -- T-Ee3Mn8 AC-2's ``rerere_repeat`` kind.
+
+    A caller driving the returned ``ours``/``theirs`` rebase with rerere enabled (``-c
+    rerere.enabled=true -c rerere.autoupdate=true``, the exact flags `isolation/git.py`'s
+    `RERERE_ARGS` always passes) sees git auto-replay the taught resolution and stage it
+    without ever stopping; the IDENTICAL rebase with rerere disabled stops with a genuine,
+    unresolved conflict -- both outcomes are what this fixture's own quality test proves
+    (`tests/isolation/test_conflict_fixtures.py`).
+
+    Returns ``(repo, base_sha, ours_branch, theirs_branch)`` -- same shape as
+    `make_conflict_repo`; the rerere cache is a side effect already present in
+    ``repo/.git/rr-cache`` by the time this returns. Never reuses `make_conflict_repo`
+    itself: teaching needs to drive an actual conflicting rebase to completion, which that
+    function's raw-file-write branch builders don't do.
+    """
+    repo = make_repo(tmp_path, files={"f.txt": "a\nb\nc\n"})
+    base_sha = _git(["rev-parse", "HEAD"], cwd=repo).strip()
+    ours_branch, theirs_branch = "ours", "theirs"
+
+    def _commit(message: str) -> None:
+        _git(["add", "-A"], cwd=repo)
+        _git(["commit", "-q", "-m", message], cwd=repo, env=_commit_env())
+
+    def _branch_from(name: str, start: str) -> None:
+        _git(["checkout", "-q", start], cwd=repo)
+        _git(["checkout", "-q", "-b", name], cwd=repo)
+
+    _branch_from(ours_branch, "main")
+    (repo / "f.txt").write_text("a-ours\nb\nc\n")
+    _commit("ours: edit line 1")
+    _branch_from(theirs_branch, "main")
+    (repo / "f.txt").write_text("a-theirs\nb\nc\n")
+    _commit("theirs: edit line 1 differently")
+
+    # Teach: a throwaway branch off `ours`, rebased onto `theirs` WITH rerere enabled,
+    # resolved by hand, and completed (raw subprocess -- `_git` asserts returncode == 0,
+    # which the intentionally-conflicting rebase call must NOT satisfy).
+    rerere_cfg = ["-c", "rerere.enabled=true", "-c", "rerere.autoupdate=true"]
+    _branch_from("teach", ours_branch)
+    conflict = subprocess.run(
+        ["git", *rerere_cfg, "rebase", theirs_branch], cwd=repo, capture_output=True, text=True
+    )
+    assert conflict.returncode != 0, "teach rebase should conflict (fixture is broken)"
+    (repo / "f.txt").write_text("a-resolved\nb\nc\n")
+    _git([*rerere_cfg, "add", "f.txt"], cwd=repo)
+    finish = subprocess.run(
+        ["git", *rerere_cfg, "rebase", "--continue"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **_commit_env()},
+    )
+    assert finish.returncode == 0, f"teach rebase --continue failed: {finish.stderr}"
+    _git(["checkout", "-q", "main"], cwd=repo)
+    _git(["branch", "-D", "teach"], cwd=repo)
+
     return repo, base_sha, ours_branch, theirs_branch
 
 

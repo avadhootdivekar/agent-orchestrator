@@ -877,10 +877,25 @@ class GitRepo:
     def add_all(self, cwd: str) -> None:
         self._run(["add", "-A"], cwd=cwd)
 
-    def status_porcelain(self, cwd: str, *, untracked: bool = True) -> list[StatusEntry]:
+    def status_porcelain(
+        self, cwd: str, *, untracked: bool = True, untracked_all: bool = False
+    ) -> list[StatusEntry]:
+        """`git status --porcelain -z`, parsed.
+
+        *untracked_all* selects `--untracked-files=all`. git's default (`normal`)
+        collapses a wholly-untracked DIRECTORY to a single `config/` entry, which hides
+        every file nested inside it from any caller that screens the returned paths -- the
+        S-3 commit denylist bypass found by the as-built security review (H-3). Callers
+        that make a per-FILE decision about untracked content must pass
+        ``untracked_all=True``; callers that only ask "is there anything here at all"
+        (dirty checks, the R-8 Empty check) do not need it and keep git's cheaper default.
+        Ignored when *untracked* is False.
+        """
         args = ["status", "--porcelain", "-z"]
         if not untracked:
             args.append("--untracked-files=no")
+        elif untracked_all:
+            args.append("--untracked-files=all")
         cp = self._run(args, cwd=cwd)
         return _parse_status_porcelain_z(cp.stdout)
 

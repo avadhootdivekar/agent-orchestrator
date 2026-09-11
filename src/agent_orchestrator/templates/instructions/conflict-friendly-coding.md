@@ -32,3 +32,54 @@ The engine auto-commits everything **staged** in your worktree at task end — d
 on `.gitignore` to keep something out of a commit. Do not write secret material into a
 worktree at all; `integration.commit_denylist` is a backstop against a stray untracked
 path, not a guarantee.
+
+## Before you enable isolation on a repository (read this once, per repo)
+
+This section is for whoever turns isolation **on** for a workspace, not for the task agent.
+
+**What the engine suppresses.** Every git command the engine runs carries
+`-c core.hooksPath=<an always-empty directory>`, so no repository-local hook — `pre-commit`,
+`post-checkout`, `commit-msg`, `post-rewrite` — ever fires from an engine-issued call. This
+was verified by planting six hooks in a fixture repo: a plain `git commit` fired eight hook
+invocations, and the engine's `worktree_add` + `add_all` + `commit` fired zero. The engine
+also cannot run `push`, `fetch`, `pull`, `clone`, `remote` or `credential`; those
+subcommands are rejected at the single choke point, alias spellings included.
+
+**What it does not suppress — a documented limitation, not an oversight.** The engine does
+**not** neutralize `filter.*` or `merge.*` drivers configured through git attributes. A
+repository that has `git-lfs`, `git-crypt`, `nbstripout` or any similar tool bootstrapped
+installs a `filter.<name>.clean` / `.smudge` **command into git config** plus a `filter=`
+attribute in a tracked `.gitattributes`; `git rebase` likewise honours a `merge=<driver>`
+attribute and runs `merge.<driver>.driver` from config. The engine executes those commands
+automatically — **once per task, unattended, and concurrently across worktrees**. In the
+same fixture, engine `worktree_add` ran the configured smudge filter and `add_all` ran the
+clean filter four times, while hooks stayed silent throughout.
+
+**Why this is bounded.** The command always comes from **git config**, never from tracked
+content alone, so cloning a hostile repository cannot inject one. The exposure is exactly
+the case the hook suppression was written for: a repository the operator has already
+bootstrapped by running someone's setup step.
+
+**What to do about it.** Do not run a repository under isolation if its configured filter
+or merge drivers are untrusted, or if they are expensive enough that running them once per
+task across N concurrent worktrees is a problem. If you need isolation on such a repository,
+unconfigure the driver for the duration, or keep the affected stages at
+`isolation: "none"` so they run in the shared checkout where the driver already ran once.
+
+**Two settings that are not free-form.**
+
+- `refs/heads/ao/**` and `refs/ao/**` are **reserved for the engine**. Do not create,
+  move or delete branches or refs there by hand, and do not point cleanup tooling at them:
+  a branch found in that namespace is treated as the current run's own crash-recovered
+  work and is re-attached, never deleted. Use `ao prune` to reclaim them.
+- `AO_WORKTREE_ROOT` (and `.ao/config.yaml`'s `isolation.state_dir`) **must not resolve
+  inside the workspace root.** Worktrees live outside every working tree by design: that is
+  what lets the per-task artifact guard treat "inside my worktree" and "inside the shared
+  workspace" as different places. Point the worktree root inside the workspace and the
+  guard stops separating them — one task could then read another task's worktree by path,
+  and the isolation you configured would not be there. The engine now **refuses** an
+  overlapping configuration outright, with an error naming the resolved worktree root, the
+  workspace root, and which setting produced it; the reverse overlap (a worktree root that
+  *contains* the workspace, such as `AO_WORKTREE_ROOT=/`) is refused for the same reason.
+  Pick a location on a different tree — the default,
+  `~/.local/state/ao/worktrees/...`, is already correct.
