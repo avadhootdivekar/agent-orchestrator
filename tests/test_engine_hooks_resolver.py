@@ -6,23 +6,13 @@ A companion test confirms T3 rerun dispatch DOES fire them normally.
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest import mock
-
-import pytest
-
-from agent_orchestrator.artifacts import LocalFsArtifactStore
-from agent_orchestrator.isolation.escalation import build_resolver_dispatch, build_rerun_task
+from agent_orchestrator.isolation.escalation import build_rerun_task, build_resolver_dispatch
 from agent_orchestrator.models import (
     AgentSpec,
     HookRef,
-    HookSpec,
     IntegrationSpec,
-    RepoRef,
-    RepoSet,
     TaskSpec,
 )
-from agent_orchestrator.runstate import RunStateStore
 
 
 class TestResolverDispatchHookSuppression:

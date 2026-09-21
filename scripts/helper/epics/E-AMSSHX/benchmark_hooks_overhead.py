@@ -159,8 +159,8 @@ def main() -> None:
     overhead_pct = (overhead_ms / (time_without * 1000)) * 100 if time_without > 0 else 0
 
     print()
-    print(f"Average time WITHOUT hooks: {time_without*1000:.2f} ms")
-    print(f"Average time WITH hooks:    {time_with*1000:.2f} ms")
+    print(f"Average time WITHOUT hooks: {time_without * 1000:.2f} ms")
+    print(f"Average time WITH hooks:    {time_with * 1000:.2f} ms")
     print(f"Overhead (absolute):        {overhead_ms:.2f} ms")
     print(f"Overhead (relative):        {overhead_pct:.1f}%")
     print()

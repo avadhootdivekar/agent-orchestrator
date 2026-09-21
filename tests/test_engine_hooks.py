@@ -11,38 +11,25 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 from pathlib import Path
-from typing import Literal
-from unittest import mock
-
-import pytest
 
 from agent_orchestrator.artifacts import LocalFsArtifactStore
 from agent_orchestrator.engine import Orchestrator
 from agent_orchestrator.executors.fake import FakeExecutor
 from agent_orchestrator.models import (
     AgentSpec,
-    HookOnFailure,
     HookRef,
     HookSpec,
     RepoRef,
     RepoSet,
-    RetryPolicy,
-    RunState,
     TaskContext,
     TaskResult,
-    TaskRunState,
     TaskSpec,
     WorkflowDefaults,
     WorkflowSpec,
-    resolve_hook_on_failure,
 )
 from agent_orchestrator.monitoring import Monitor, RuleBasedMonitor
 from agent_orchestrator.runstate import RunStateStore
-
 
 # ---------------------------------------------------------------------------
 # Test Fixtures
@@ -125,9 +112,7 @@ class TestPreHookDispatch:
         hook_script.write_text("exit(0)")
         hook_script.chmod(0o755)
 
-        hooks = {
-            "check": HookSpec(command=["python3", str(hook_script)])
-        }
+        hooks = {"check": HookSpec(command=["python3", str(hook_script)])}
         task = _task("t1", pre_hook=HookRef(use="check"))
         wf = _workflow([task], hooks=hooks)
 
@@ -148,10 +133,10 @@ class TestPreHookDispatch:
         hook_script.write_text("exit(1)")
         hook_script.chmod(0o755)
 
-        hooks = {
-            "check": HookSpec(command=["python3", str(hook_script)])
-        }
-        task = _task("t1", pre_hook=HookRef(use="check"))  # on_failure not set, defaults to fail_task
+        hooks = {"check": HookSpec(command=["python3", str(hook_script)])}
+        task = _task(
+            "t1", pre_hook=HookRef(use="check")
+        )  # on_failure not set, defaults to fail_task
         wf = _workflow([task], hooks=hooks)
 
         executor = FakeExecutor(behaviors={"t1": "succeed"})
@@ -175,9 +160,7 @@ class TestPreHookDispatch:
         hook_script.write_text("exit(1)")
         hook_script.chmod(0o755)
 
-        hooks = {
-            "check": HookSpec(command=["python3", str(hook_script)])
-        }
+        hooks = {"check": HookSpec(command=["python3", str(hook_script)])}
         task = _task("t1", pre_hook=HookRef(use="check", on_failure="ignore"))
         wf = _workflow([task], hooks=hooks)
 
@@ -195,9 +178,7 @@ class TestPreHookDispatch:
 
     def test_prehook_error_blocks_executor(self, tmp_path: Path) -> None:
         """AC-2: pre_hook subprocess fails to start -> task fails, executor never runs."""
-        hooks = {
-            "missing": HookSpec(command=["/nonexistent/binary"])
-        }
+        hooks = {"missing": HookSpec(command=["/nonexistent/binary"])}
         task = _task("t1", pre_hook=HookRef(use="missing"))
         wf = _workflow([task], hooks=hooks)
 

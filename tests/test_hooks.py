@@ -11,30 +11,20 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import tempfile
 from pathlib import Path
-from typing import Literal
 from unittest import mock
 
 import pytest
 
 from agent_orchestrator.artifacts import LocalFsArtifactStore
-from agent_orchestrator.errors import ControlFileError
-from agent_orchestrator.hooks import run_hook, read_stderr_tail
+from agent_orchestrator.hooks import read_stderr_tail, run_hook
 from agent_orchestrator.models import (
-    HookOnFailure,
+    DEFAULT_HOOK_TIMEOUT_SECONDS,
     HookOutcome,
     HookRef,
     HookSpec,
-    DEFAULT_HOOK_TIMEOUT_SECONDS,
-    DEFAULT_PRE_HOOK_ON_FAILURE,
-    DEFAULT_POST_HOOK_ON_FAILURE,
     resolve_hook_on_failure,
 )
-
 
 # ---------------------------------------------------------------------------
 # AC-1: HookSpec/HookRef/HookOutcome validation and resolve_hook_on_failure
@@ -217,12 +207,12 @@ class TestRunHookRealSubprocess:
         # Create a tiny hook script that writes a result file
         hook_script = tmp_path / "hook.py"
         hook_script.write_text(
-            f"""
+            """
 import json
 import os
 result_path = os.environ['AO_HOOK_RESULT_PATH']
 with open(result_path, 'w') as f:
-    json.dump({{"score": 0.9, "solved": True, "detail_other": "value"}}, f)
+    json.dump({"score": 0.9, "solved": True, "detail_other": "value"}, f)
 exit(0)
 """
         )
@@ -256,12 +246,12 @@ exit(0)
         """AC-7: Exit code wins (D3) -- even with valid JSON result, exit 1 means 'failed'."""
         hook_script = tmp_path / "hook.py"
         hook_script.write_text(
-            f"""
+            """
 import json
 import os
 result_path = os.environ['AO_HOOK_RESULT_PATH']
 with open(result_path, 'w') as f:
-    json.dump({{"solved": True, "detail": "pretend success"}}, f)
+    json.dump({"solved": True, "detail": "pretend success"}, f)
 exit(1)  # Fail despite JSON content
 """
         )
@@ -352,11 +342,11 @@ exit(1)  # Fail despite JSON content
         """AC-14, AC-9: Result file exists but contains invalid JSON -> detail={}, error set."""
         hook_script = tmp_path / "hook.py"
         hook_script.write_text(
-            f"""
+            """
 import os
 result_path = os.environ['AO_HOOK_RESULT_PATH']
 with open(result_path, 'w') as f:
-    f.write("{{invalid json")
+    f.write("{invalid json")
 exit(0)
 """
         )
@@ -389,7 +379,7 @@ exit(0)
         """AC-9: Result file is valid JSON but not an object -> detail={}, error set."""
         hook_script = tmp_path / "hook.py"
         hook_script.write_text(
-            f"""
+            """
 import os
 result_path = os.environ['AO_HOOK_RESULT_PATH']
 with open(result_path, 'w') as f:
@@ -426,12 +416,12 @@ exit(0)
         """AC-7: Score key is extracted and typed; other JSON keys stay in detail."""
         hook_script = tmp_path / "hook.py"
         hook_script.write_text(
-            f"""
+            """
 import json
 import os
 result_path = os.environ['AO_HOOK_RESULT_PATH']
 with open(result_path, 'w') as f:
-    json.dump({{"score": 0.75, "solved": False, "reason": "timeout"}}, f)
+    json.dump({"score": 0.75, "solved": False, "reason": "timeout"}, f)
 exit(0)
 """
         )
@@ -463,12 +453,12 @@ exit(0)
         """AC-7: Non-numeric score is NOT extracted, stays in detail."""
         hook_script = tmp_path / "hook.py"
         hook_script.write_text(
-            f"""
+            """
 import json
 import os
 result_path = os.environ['AO_HOOK_RESULT_PATH']
 with open(result_path, 'w') as f:
-    json.dump({{"score": "high", "detail": "ok"}}, f)
+    json.dump({"score": "high", "detail": "ok"}, f)
 exit(0)
 """
         )
