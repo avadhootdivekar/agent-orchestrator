@@ -97,13 +97,13 @@
   in `RunState`; only a UI change would be needed).
 
 ## Task List
-- [ ] `T-AHvmYR-hook-schema-models` — models.py: HookSpec/HookOutcome/constants/resolver fn +
+- [x] `T-AHvmYR-hook-schema-models` — models.py: HookSpec/HookOutcome/constants/resolver fn +
   TaskSpec/TaskResult/TaskRunState fields. (FR-1, FR-5)
-- [ ] `T-lzQEyy-engine-hook-dispatch` — engine.py: `_run_hook`, pre/post wiring in
+- [x] `T-lzQEyy-engine-hook-dispatch` — engine.py: `_run_hook`, pre/post wiring in
   `_run_with_retries`, `_settle_completed_task` mirror. (FR-2, FR-3, FR-4, FR-6)
-- [ ] `T-DgheoA-spec-schema-validation` — `specs/workflow.schema.json` `$defs/hook` +
+- [x] `T-DgheoA-spec-schema-validation` — `specs/workflow.schema.json` `$defs/hook` +
   pydantic-level validation confirmation. (FR-1)
-- [ ] `T-fbQIFX-example-workflow-and-docs` — example spec + hook scripts under
+- [x] `T-fbQIFX-example-workflow-and-docs` — example spec + hook scripts under
   `specs/examples/`. (FR-7)
 - [ ] `T-jI3P4p-unit-integration-tests` — unit + integration test suite for all of the above.
   (FR-1..FR-6)

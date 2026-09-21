@@ -63,3 +63,34 @@
    `developer`, per the Rev 2 change-scope table (HLD §10).
 2. Delegate test-writing + full-suite run (T-jI3P4p) to `tester`.
 3. `reviewer` pass on the implementation diff (T-6gR2ya), then late-gate e2e (T-FCC8mT).
+
+## Implementation landed (T-AHvmYR, T-DgheoA, T-lzQEyy, T-fbQIFX)
+- By: developer
+- Role: developer
+- Date: 2026-09-21
+- Comment: All four implementation tasks landed on `ad/cost-perf-hooks-skills` per the
+  Rev 2 change-scope table (HLD §10), each in its own commit: `316214c` (models),
+  `77b2fa2` (schema + cross_validate), `4671e3d` + `11f21e9` (hooks.py + engine wiring),
+  `6e067fc` (example spec + hook scripts). Every AC in all four task tickets is implemented
+  and independently verified (see each ticket's own STATUS.md "Implementation complete"
+  section for the exact evidence per task) -- including both BLOCKING early-gate findings
+  (AC-15 containment via the `WorkflowSpec.hooks` registry, and the T2
+  conflict-resolver-dispatch hook suppression in `isolation/escalation.py`).
+
+  `ruff check .` / `ruff format --check .` clean repo-wide. `mypy src/agent_orchestrator/`
+  has exactly 4 pre-existing errors, all in `_version.py` (untouched by this epic, unrelated
+  type-narrowing issue predating this work). Full suite (`pytest -q`): 3830 passed, 8
+  skipped, 1 failed. The 1 failure
+  (`tests/test_nfr2_regression_gate.py::TestPreEpicTestsUnedited::
+  test_every_pre_epic_test_file_is_byte_identical_to_its_pre_epic_content`) is PRE-EXISTING
+  and unrelated to this epic: it flags `tests/test_e2e_builtin_routed_runner.py` as
+  reformatted relative to the gate's base-branch reference commit, but `git diff --stat
+  b849b7c 02043ec -- tests/test_e2e_builtin_routed_runner.py` shows that reformatting was
+  introduced by commit `b0cb467` ("Ad/task isolation (#11)"), which landed on this branch
+  BEFORE this epic's ticket-scaffolding commit (`83db1fc`) and well before any of this
+  epic's 5 implementation commits -- none of which touch anything under `tests/`. Flagging
+  for `T-6gR2ya`/whoever owns branch hygiene rather than silently working around it.
+
+## Remaining scope
+- T-jI3P4p (unit/integration tests), T-FCC8mT (late-gate e2e), T-6gR2ya (review/hardening)
+  are unchanged, separately delegated tasks -- not attempted here.
