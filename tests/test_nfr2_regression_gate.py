@@ -175,6 +175,21 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
     "tests/ui/test_runs.py": (
         "additive (E-1cecSx B4): TaskStat cache-effectiveness field coverage"
     ),
+    # Found while verifying Epic D (E-Vt6Lp2) against the FULL suite -- this gate was
+    # already silently failing for this file before Epic D touched it: the bulk of the
+    # diff vs. base is pure ruff-format whitespace/line-wrap reformatting inherited from
+    # `b0cb467` (the ad/task-isolation merge this whole A/B/C/D epic thread branched
+    # from -- predates every epic in this thread), zero functional change, confirmed via
+    # `git diff <base> b0cb467 -- tests/test_e2e_builtin_routed_runner.py`. It was never
+    # declared as an exception at the time. Epic D's OWN addition on top of that
+    # pre-existing drift is purely additive: one new test method
+    # (test_agents_recommended_json_scaffolds_and_keep_existing_holds), no pre-existing
+    # assertion touched.
+    "tests/test_e2e_builtin_routed_runner.py": (
+        "mostly pre-existing ruff-format drift from `b0cb467` (predates this epic thread, "
+        "found undeclared while verifying E-Vt6Lp2); Epic D's own addition on top is "
+        "additive only -- one new test method, no pre-existing assertion touched"
+    ),
 }
 
 
