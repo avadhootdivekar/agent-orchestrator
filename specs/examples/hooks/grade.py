@@ -37,13 +37,16 @@ def main() -> int:
     missing = [p for p in output_paths if not os.path.exists(p)]
     solved = not force_fail and not missing
 
+    # NOTE: "score" is the only key the engine ever pops out into the typed
+    # `HookOutcome.score` field (hooks.py::_populate_result_file) -- every other
+    # top-level key here lands verbatim in `HookOutcome.detail`. Keep those keys flat
+    # (not nested under a "detail" key of their own) to avoid a confusing
+    # detail={"detail": {...}} double-nesting in the recorded HookOutcome.
     result = {
         "score": 1.0 if solved else 0.0,
-        "detail": {
-            "solved": solved,
-            "checked_paths": output_paths,
-            "missing_paths": missing,
-        },
+        "solved": solved,
+        "checked_paths": output_paths,
+        "missing_paths": missing,
     }
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(result, f)

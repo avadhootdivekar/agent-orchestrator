@@ -1,0 +1,11 @@
+
+Run:    hooks-example-workflow-20260921T125234Z
+Status: failed
+
+Task                           Status          Route                Attempts  Tokens (in/out)      Cost($)
+--------------------------------------------------------------------------------------------------------------
+design                         succeeded                            1         0/0                  0.0000
+implement                      failed                               1         0/0                  0.0000
+
+Total tokens: in=0 out=0 cache_creation=0 cache_read=0
+Total cost:   $0.0000

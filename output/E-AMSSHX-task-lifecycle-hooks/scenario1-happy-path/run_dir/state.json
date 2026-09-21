@@ -1,0 +1,100 @@
+{
+  "run_id": "hooks-example-workflow-20260921T125234Z",
+  "workflow_id": "hooks-example-workflow",
+  "repo_set": "default-set",
+  "started_at": "2026-09-21T12:52:34.455622+00:00",
+  "updated_at": "2026-09-21T12:52:34.487532+00:00",
+  "status": "succeeded",
+  "tasks": {
+    "design": {
+      "status": "succeeded",
+      "attempts": 1,
+      "started_at": "2026-09-21T12:52:34.456431+00:00",
+      "ended_at": "2026-09-21T12:52:34.471506+00:00",
+      "outputs_present": true,
+      "dynamic_outputs": [],
+      "output_artifact_path": "/tmp/ao-hooks-e2e-happy-1arabkrc/.orchestrator/runs/hooks-example-workflow-20260921T125234Z/design/attempt-1",
+      "origin": "static",
+      "route": null,
+      "not_taken_reason": null,
+      "cumulative_input_tokens": 0,
+      "cumulative_output_tokens": 0,
+      "cumulative_cache_creation_input_tokens": 0,
+      "cumulative_cache_read_input_tokens": 0,
+      "cumulative_cost_usd": 0.0,
+      "dispatch_cycle": 1,
+      "pre_hook_result": {
+        "kind": "pre_hook",
+        "hook_name": "check_disk_space",
+        "status": "passed",
+        "exit_code": 0,
+        "duration_ms": 13,
+        "score": null,
+        "detail": {},
+        "error": null
+      },
+      "post_hook_result": null
+    },
+    "implement": {
+      "status": "succeeded",
+      "attempts": 1,
+      "started_at": "2026-09-21T12:52:34.472059+00:00",
+      "ended_at": "2026-09-21T12:52:34.486902+00:00",
+      "outputs_present": true,
+      "dynamic_outputs": [],
+      "output_artifact_path": "/tmp/ao-hooks-e2e-happy-1arabkrc/.orchestrator/runs/hooks-example-workflow-20260921T125234Z/implement/attempt-1",
+      "origin": "static",
+      "route": null,
+      "not_taken_reason": null,
+      "cumulative_input_tokens": 0,
+      "cumulative_output_tokens": 0,
+      "cumulative_cache_creation_input_tokens": 0,
+      "cumulative_cache_read_input_tokens": 0,
+      "cumulative_cost_usd": 0.0,
+      "dispatch_cycle": 1,
+      "pre_hook_result": null,
+      "post_hook_result": {
+        "kind": "post_hook",
+        "hook_name": "grade",
+        "status": "passed",
+        "exit_code": 0,
+        "duration_ms": 13,
+        "score": 1.0,
+        "detail": {
+          "solved": true,
+          "checked_paths": [
+            "/tmp/ao-hooks-e2e-happy-1arabkrc/output/implementation.md"
+          ],
+          "missing_paths": []
+        },
+        "error": null
+      }
+    }
+  },
+  "injected_tasks": [],
+  "loop_iterations": {},
+  "budget_counters": {
+    "consumed_tokens": 0,
+    "window_start_epoch": null,
+    "window_consumed_tokens": 0,
+    "charged_estimate": {},
+    "reconciled_tasks": [],
+    "reconciled_cycles": []
+  },
+  "route_decisions": {},
+  "tripped_breakers": [],
+  "breaker_overrides": {},
+  "monitor_decisions": [],
+  "integration": {
+    "active": false,
+    "tier_counts": {},
+    "workspace_lock_held": false,
+    "branch": null,
+    "repos": {},
+    "heads": {},
+    "base_heads": {},
+    "checkout_synced_to": {},
+    "degraded_reason": null
+  },
+  "task_integration": {}
+}

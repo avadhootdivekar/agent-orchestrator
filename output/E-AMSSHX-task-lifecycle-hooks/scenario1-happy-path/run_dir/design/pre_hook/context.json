@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "run_id": "hooks-example-workflow-20260921T125234Z",
+  "task_id": "design",
+  "hook_kind": "pre_hook",
+  "hook_name": "check_disk_space",
+  "dispatch_cycle": 1,
+  "instruction_path": "/tmp/ao-hooks-e2e-happy-1arabkrc/specs/examples/instructions/design.md",
+  "general_instruction_paths": [],
+  "input_paths": [],
+  "output_paths": [
+    "/tmp/ao-hooks-e2e-happy-1arabkrc/output/design.md"
+  ],
+  "dynamic_input_paths": [],
+  "repo_paths": {
+    "core": "/tmp/ao-hooks-e2e-happy-1arabkrc",
+    "docs": "/tmp/ao-hooks-e2e-happy-1arabkrc/docs-md"
+  },
+  "output_dir": "/tmp/ao-hooks-e2e-happy-1arabkrc/.orchestrator/runs/hooks-example-workflow-20260921T125234Z/design"
+}
