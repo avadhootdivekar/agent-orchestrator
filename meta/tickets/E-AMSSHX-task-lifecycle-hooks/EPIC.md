@@ -105,8 +105,8 @@
   pydantic-level validation confirmation. (FR-1)
 - [x] `T-fbQIFX-example-workflow-and-docs` — example spec + hook scripts under
   `specs/examples/`. (FR-7)
-- [ ] `T-jI3P4p-unit-integration-tests` — unit + integration test suite for all of the above.
-  (FR-1..FR-6)
+- [x] `T-jI3P4p-unit-integration-tests` — 65 new tests across 4 files + a benchmark script;
+  dev-epic found and fixed 4 test bugs before accepting (see its STATUS.md). (FR-1..FR-6, FR-8)
 - [ ] `T-FCC8mT-e2e-verification` — late-gate: run the example workflow end-to-end via the real
   CLI, capture evidence. (FR-7)
 - [ ] `T-6gR2ya-review-and-hardening` — reviewer pass on the implementation diff + any fixes.

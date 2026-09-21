@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-jI3P4p-unit-integration-tests`
 - Epic ID: `E-AMSSHX-task-lifecycle-hooks`
-- Owner: tester (delegated)
+- Owner: tester (delegated), bug-fixed by dev-epic
 - Created: 2026-09-21
 - Last Updated: 2026-09-21
-- Status: Draft
+- Status: Done
 - Estimate: 1 day
 
 ## Requirements Mapping
