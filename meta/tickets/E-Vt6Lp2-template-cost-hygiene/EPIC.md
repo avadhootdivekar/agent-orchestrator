@@ -36,12 +36,16 @@
 ### MVP (must-ship)
 - FR-D1-1 (Functional): The `routed-runner` template ships a new `assets:` entry
   (`agents.recommended.json.tmpl` → workspace-root `agents.recommended.json`, `keep_existing:
-  true`) that seeds a recommended `command_template` (including `--autocompact <threshold>`) for
-  the subset of the template's 11 `required_agents` that do long, multi-turn agentic work.
+  true`) that seeds a recommended `extra_args: ["--autocompact", "<threshold>"]` (NOT
+  `command_template` — early-gate reviewer finding: `command_template` fully overrides the argv
+  positional list `["claude","-p","{prompt}"]`, `extra_args` is the unconditionally-appended
+  additive field per `executors/claude_cli.py:547-548`, exactly designed for a recommended
+  add-on flag that must not clobber a workspace's own `command_template` customization) for the
+  subset of the template's 11 `required_agents` that do long, multi-turn agentic work.
   Verification: extend `tests/test_builtin_routed_runner_assets.py` (manifest shape) +
   `tests/test_templates.py`-style instantiate assertions + a real `ao new` e2e test in
   `tests/test_e2e_builtin_routed_runner.py` proving the file renders AND that a second `ao new`
-  over an already-customized workspace respects `keep_existing`.
+  respects `keep_existing` (never clobbers a workspace's own edits to the seed).
 - FR-D1-2 (Functional): `routed-runner/README.md` documents the recommended `command_template`
   snippet, which roles it applies to (and why), and the mechanism (`agents.recommended.json`) a
   workspace uses to adopt it. Verification: a test asserting the README section exists with the
@@ -64,7 +68,13 @@
   literally copy fields out of it — not prose describing the shape.
 - NFR-D1-3 (Non-functional, operability): the `--autocompact` default value is chosen and
   justified from the real observed growth-curve numbers (232 turns, ~10K→~280K token growth,
-  42.5M summed `cache_read_input_tokens`), not picked arbitrarily — recorded in the design doc.
+  42.5M summed `cache_read_input_tokens`), not picked arbitrarily — recorded in the design doc,
+  disclosed honestly in real dollars (confirmed via the `claude-api` skill: Sonnet 5 cache-read
+  ≈$0.20/MTok, so 42.5M tokens ≈$8.50 on that one trajectory — a modest, not oversold, figure)
+  and explicit about why this is framed as a context-hygiene/headroom lever that DOES fire on
+  realistic complex-task trajectories (per the epic's own anchor-to-280K instruction), not a
+  near-1M "safety net" that would barely ever trigger and reproduce Claude Code's own inadequate
+  default.
 
 ### Non-MVP (deferred, with a stated later-validation method)
 - NFR-D1-4: a real `ao validate` warning (new `V`-numbered rule or a parallel mechanism) when a
@@ -107,6 +117,35 @@
   enough fidelity for a long agentic task to keep succeeding) is OUT of this epic's scope to
   validate — this epic propagates the flag's *availability* as a documented lever; a workspace
   adopting it should watch its own task success rate, per the skill's own framing.
+
+## Early-gate review — outcome
+- By: dev-epic · Role: manager · Date: 2026-09-21
+- Comment: Ran `architect` + `reviewer` early-gate passes in parallel on the concrete D1
+  mechanism (asset-based `agents.recommended.json` seed). Both returned GO-WITH-CHANGES.
+  Reconciled as follows (full reasoning also in `docs-md/template-cost-hygiene-hld.md`):
+  - **Adopted (both/either agreed or one found a real bug):** `extra_args` instead of
+    `command_template` for `--autocompact` (reviewer's finding — `command_template` fully
+    overrides argv, `extra_args` is the additive field the engine already appends
+    unconditionally; a real correctness bug in the original proposal, not a style choice).
+    Seed's top-level shape mirrors `specs/examples/agents.json` (`version`+`agents`).
+    `manager` stays included; `merge-resolver`'s exclusion rationale sharpened to cite its
+    security/unreviewed-content posture (S-2) alongside "short-lived." README gets a one-line
+    drift-check grep recipe as the cheap Non-MVP substitute for a real `ao validate` warning.
+  - **Diverged, with reasoning (reviewers disagreed with each other; I made the call):**
+    Kept `keep_existing: true` (per the epic prompt's own explicit instruction, and the
+    reviewer's "accept for MVP" assessment) rather than the architect's `keep_existing: false`
+    — mitigated the architect's real staleness concern with an in-file version marker + a
+    documented "delete and re-run `ao new`" refresh path instead. Kept workspace-root
+    placement (`agents.recommended.json`) over the architect's suggested
+    `workflows/routed-runner/` nesting — the reviewer's discoverability argument (sits beside
+    the real, path-configurable `agents.json`) is concrete and grounded in actual `cli.py`
+    agent-resolution behavior (no auto-discovery either way, so no functional collision risk).
+    Kept the `--autocompact` default framed as a context-hygiene lever that fires on realistic
+    complex-task trajectories (200,000) rather than the architect's suggested near-280K
+    "safety net" framing — a safety-net threshold would barely ever trigger on the exact
+    trajectory the epic asked to anchor against, reproducing the inadequate status quo instead
+    of fixing it; the dollar magnitude is disclosed honestly (~$8.50 on the one real example)
+    so the lever isn't oversold as a large cost saver.
 
 ## Links
 - Design doc: `docs-md/template-cost-hygiene-hld.md`

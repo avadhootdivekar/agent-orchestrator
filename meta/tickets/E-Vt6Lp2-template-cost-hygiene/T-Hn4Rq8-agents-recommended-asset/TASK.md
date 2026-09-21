@@ -21,14 +21,23 @@ Add a new `assets:` entry to `routed-runner/template.yaml`:
 so the FIRST `ao new routed-runner ...` in a fresh workspace seeds the file, and every later
 `ao new` call (same or different instance) leaves an already-materialized/edited copy alone.
 
-The seed file is a real, parseable, partial `agents.json`-shaped JSON document (not prose) naming
-`command_template` (with `--autocompact <threshold>`) for the subset of `required_agents` that do
-long, multi-turn agentic work: `architect`, `architect-opus`, `developer`, `full-tester`,
-`manager`, `market-surveyor`, `reviewer`, `reviewer-opus`, `tester` (9 of 11). Excluded:
-`git-operator`, `merge-resolver` — short-lived, few-turn mechanical dispatches per the epic
-prompt's own hint and this task's judgment (git plumbing / a bounded conflict-resolution pass,
-not open-ended agentic exploration that accumulates the kind of context growth the real 232-turn
-example shows).
+The seed file is a real, parseable, partial `agents.json`-shaped JSON document (not prose),
+mirroring `specs/examples/agents.json`'s exact top-level shape (`{"version": "1.0", "agents":
+{...}}`, plus a small metadata block of underscore-prefixed keys — `_note`,
+`_autocompact_default`, `_seeded_from_template_version` — documenting that this is a merge
+reference, not a live config; per early-gate reviewer finding, these extra top-level keys mean
+the file is deliberately NOT schema-valid to `cp` wholesale over a real `agents.json` — a
+workspace must consciously merge fields, which is disclosed and intentional, not silently
+broken). Each of 9 of the 11 `required_agents` gets `"extra_args": ["--autocompact",
+"<threshold>"]` (NOT `command_template` — early-gate reviewer correctness finding:
+`command_template` fully overrides the base argv `["claude","-p","{prompt}"]`, so recommending a
+full override array would force a workspace to discard its own tuning on merge; `extra_args` is
+the field the engine unconditionally appends after `command_template`, exactly the additive
+mechanism this calls for): `architect`, `architect-opus`, `developer`, `full-tester`, `manager`,
+`market-surveyor`, `reviewer`, `reviewer-opus`, `tester`. Excluded: `git-operator` (short-lived,
+few-turn git plumbing), `merge-resolver` (short-lived AND, per early-gate architect finding, a
+security-sensitive T2 dispatch over unreviewed content — README's existing S-2 note — where
+compaction's fidelity risk mid-conflict-resolution is a worse trade than the marginal benefit).
 
 Also add a new `README.md` section documenting the recommended `command_template` snippet, why
 these 9 roles and not the other 2, and how a workspace adopts it (copy fields from
@@ -38,9 +47,11 @@ itself).
 ## Acceptance Criteria
 1. `template.yaml`'s `assets:` list has 2 entries (was 1); the new entry's `source` is
    `agents.recommended.json.tmpl`, `target` is `agents.recommended.json`, `keep_existing: true`.
-2. `agents.recommended.json.tmpl` is valid JSON containing a `command_template` array with
-   `--autocompact` and a threshold for exactly the 9 named roles (not the other 2), each entry
-   plausibly `AgentSpec`-shaped (`executor`, `command_template` at minimum).
+2. `agents.recommended.json.tmpl` is valid JSON, top-level shape `{"version": "1.0", "agents":
+   {...}}` (plus disclosed `_`-prefixed metadata keys) matching `specs/examples/agents.json`'s
+   convention, with `extra_args: ["--autocompact", "<threshold>"]` for exactly the 9 named roles
+   (not the other 2), each entry `AgentSpec`-shaped (`executor` + `extra_args` at minimum, both
+   valid per `specs/agents.schema.json`'s per-agent `additionalProperties: false` shape).
 3. `README.md` documents this under a clearly-named section, with the chosen `--autocompact`
    value and a one-line justification (full justification lives in the design doc, linked).
 4. `tests/test_builtin_routed_runner_assets.py` extended: manifest asset-count/shape assertions
@@ -77,6 +88,18 @@ template.yaml:
     - source: agents.recommended.json.tmpl
       target: agents.recommended.json
       keep_existing: true
+
+agents.recommended.json.tmpl (shape):
+{
+  "_note": "...merge reference, not live config, written once (keep_existing)...",
+  "_autocompact_default": "200000",
+  "_seeded_from_template_version": "1.0",
+  "version": "1.0",
+  "agents": {
+    "architect": {"executor": "claude_cli", "extra_args": ["--autocompact", "200000"]},
+    ... (9 roles total)
+  }
+}
 ```
 
 ## Schemas / Interface Notes
