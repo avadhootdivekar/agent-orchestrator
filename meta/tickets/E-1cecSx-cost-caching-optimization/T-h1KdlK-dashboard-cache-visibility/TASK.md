@@ -6,7 +6,7 @@
 - Owner: delegated `developer` agent
 - Created: 2026-09-21
 - Last Updated: 2026-09-21
-- Status: `In Progress` (backend Done — see STATUS.md; frontend remaining, delegated)
+- Status: `Done` (backend Done + frontend Done — see STATUS.md)
 - Estimate: `1-2 days`
 
 ## Requirements Mapping
