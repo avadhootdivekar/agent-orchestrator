@@ -95,16 +95,22 @@ subdirectory (matching `repo-intel`'s layout); no top-level skills README/index 
 skills doesn't warrant a registry — an explicit, recorded "not needed" decision, not a silent
 skip); `CLAUDE.md`'s "Skills reference" table gained one row.
 
-## 5. Sibling-repo survey (evidence gathering, read-only)
+## 5. Sibling-repo survey (evidence gathering, read-only) — honest status: weaker than claimed above
 
-A research fork surveyed `/usr/avadhoot/mounted/ao-runner-finplan`,
-`/usr/avadhoot/mounted/ao-runner-ai-models` (read-only; `ao-runner-1` not present), treated as
-live/moving snapshots (other unrelated sessions actively run real workflows inside
-`ao-runner-finplan` concurrently on this machine). Findings folded into the skill without
-quoting sibling-repo content verbatim — summarized as structural/numeric patterns per the
-epic's own instruction. *(Fork result incorporated by whichever session's turn observed it
-first — see §6 for the concurrency note; both sessions were working from the same underlying
-survey instructions.)*
+A research fork was dispatched (read-only, `/usr/avadhoot/mounted/ao-runner-finplan`,
+`/usr/avadhoot/mounted/ao-runner-ai-models`; `ao-runner-1` not present) per the epic's
+instruction to ground task-sizing/isolation/`max_parallel` guidance in real, concrete
+spec-authoring patterns actually used in production, not guesswork. **Correction, recorded
+honestly rather than left overclaimed**: as of this epic being marked Done, no concrete
+sibling-repo-derived number or pattern (e.g., "workflow X used N tasks," "max_parallel set to
+N in practice," a real routing/`emit_tasks` usage count) actually appears anywhere in
+`SKILL.md`'s text — grepped for `ao-runner`/`sibling` across both files, confirmed absent
+except in this doc's own meta-narration. The skill's guidance is grounded in this repo's own
+schema/CLI/code and its own learnings/tickets (§3, §4), which is real, verified evidence — but
+the sibling-repo usage-evidence requirement specifically is **not substantiated with concrete
+content**, whichever session's fork ran. This does not block the epic (the skill's core
+guidance stands on its own schema/code/learnings grounding), but it is a real, disclosed gap
+against one of the epic's own explicit instructions, not a silent pass.
 
 ## 6. Operational anomaly — concurrent duplicate session (disclosed)
 

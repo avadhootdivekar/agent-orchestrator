@@ -182,7 +182,21 @@ before treating the epic as truly closeable:
   pattern and would break the same way under a non-repo-root workspace); it's why the final run
   above uses the real repo root as `workspace_root` instead.
 
+## Honest gap check (2026-09-21, this session) — sibling-repo evidence claim
+Grepped `.claude/skills/workflow-authoring/SKILL.md` and this epic's own design doc for
+`ao-runner`/`sibling`: no concrete sibling-repo-derived number or pattern (task counts,
+`max_parallel` values actually used, routing/`emit_tasks` usage in practice) appears in the
+skill's text — only in this doc's own meta-narration about a fork having been dispatched.
+Corrected in `docs-md/ai-epics/E-DOiDqE-workflow-authoring-skill.md` §5 rather than left as an
+overclaim. Does not block the epic (the skill's guidance is independently grounded in this
+repo's own schema/CLI/code + learnings), but recorded honestly as a real, disclosed shortfall
+against the epic's own explicit sibling-evidence instruction, not silently passed.
+
 ## Next actions
-1. None outstanding for Epic C's own scope. Late gate now complete; epic ready to close.
+1. None outstanding for Epic C's own functional scope (skill, restructuring, worked example,
+   early gate, late gate, tests all complete and evidenced). If anyone resumes this epic:
+   incorporate concrete sibling-repo usage evidence into `SKILL.md` if/when a fork result
+   becomes available (see the honest gap note above) — genuinely optional polish, not a
+   blocker, since the skill's core guidance does not depend on it.
 2. Downstream (other tickets, not this epic): `E-Grpp0X`, `E-hbQnU2`, `E-5I8azA` remain backlog,
    unimplemented, exactly as designed (spun off, not folded in).
