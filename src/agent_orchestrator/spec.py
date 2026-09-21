@@ -90,6 +90,7 @@ def cross_validate(
     - Unknown repo_set
     - Task referencing an unknown agent
     - Task depends_on referencing an unknown task id or an unknown loop id not resolvable
+    - Task pre_hook/post_hook referencing an unknown WorkflowSpec.hooks key (E-AMSSHX)
     - emit_tasks / task_manifest_path pairing violations (Area 2)
     - LoopSpec body/gate/max_iterations constraints (Area 2)
     - Authored task ids or loop body ids containing '__iter' (reserved suffix, ADR-006)
@@ -134,6 +135,20 @@ def cross_validate(
                     f"Task {task.id!r}: unknown depends_on {dep!r}",
                     path=f"tasks.{task.id}.depends_on",
                 )
+
+        # Task lifecycle hooks (E-AMSSHX, HLD §3): every pre_hook/post_hook.use must resolve
+        # to a WorkflowSpec.hooks registry key (same "unknown reference" shape as the agent-id
+        # check above).
+        if task.pre_hook is not None and task.pre_hook.use not in workflow.hooks:
+            raise SpecValidationError(
+                f"Task {task.id!r}: unknown hook {task.pre_hook.use!r} referenced by pre_hook",
+                path=f"tasks.{task.id}.pre_hook.use",
+            )
+        if task.post_hook is not None and task.post_hook.use not in workflow.hooks:
+            raise SpecValidationError(
+                f"Task {task.id!r}: unknown hook {task.post_hook.use!r} referenced by post_hook",
+                path=f"tasks.{task.id}.post_hook.use",
+            )
 
         # emit_tasks ⇔ task_manifest_path both set or both unset (§3.1 cross-validation)
         if task.emit_tasks and not task.task_manifest_path:
