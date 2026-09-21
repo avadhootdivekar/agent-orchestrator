@@ -6,35 +6,42 @@
 - Owner: `dev-epic` agent
 
 ## This update
-- Epic scoped from the 4-workstream request (B1 prompt-caching audit, B2 timing, B3 outcome
-  metrics, B4 dashboard). Design doc written (`docs-md/cost-caching-optimization-hld.md`)
-  covering the B1 audit with primary-source evidence, B2 feasibility confirmation, B3 MVP scope
-  decision (including a correction to Epic A HLD §7's single-call-site claim for the
-  post-settlement trigger — verified against current `engine.py`, not assumed), and B4 approach.
-  Ticket workspace created (this epic + 5 tasks). Requesting early-gate `reviewer`+`architect`
-  pass next, before implementation starts.
+- Early-gate `reviewer` + `architect` review completed (2026-09-21). Reviewer: approve with
+  changes. Architect: approve with changes overall; **needs rework** on the original in-engine
+  `settlement_hook` design specifically (B3.3). Both reviews traced claims against the actual
+  current code (not taken on faith) and the reviewer independently re-fetched Anthropic's live
+  docs.
+- Design doc revised to Rev 2 incorporating every finding (`docs-md/cost-caching-optimization-
+  hld.md` §8 has the full record). Core outcome: B3.3's in-engine mechanism was REPLACED with a
+  post-run grading pass (`ADR-0015` decision 2), eliminating `engine.py` from this epic's
+  change-scope entirely — a stronger guarantee than the original "one helper + two call sites"
+  plan.
+- B1 (prompt-caching audit + fix), B3 (outcome/accuracy metrics, all three sub-items), and the
+  backend halves of B2 and B4 are now **implemented, tested, and committed**
+  (commit `57b6469`). B2.2 (within-task activity breakdown) and B4's dashboard frontend are
+  delegated to `developer` agents, running now.
 
 ## Evidence
-- B1 finding sourced from `code.claude.com/docs/en/prompt-caching` ("Cache scope" section) and
-  `code.claude.com/docs/en/agent-sdk/modifying-system-prompts` ("Improve prompt caching across
-  users and machines"), fetched live 2026-09-21; quoted verbatim in the design doc §1.3.
-- B1 code audit: `executors/prompt.py`, `executors/claude_cli.py`, `models.py` NFR-1 comment,
-  `isolation/worktrees.py`, `isolation/escalation.py` read in full or targeted; zero ao-authored
-  leaks found (design doc §1.2).
-- B2.2 feasibility confirmed by direct inspection of real captured transcripts under
-  `playground/.tmp/bench/2026-07-22-*/.../transcript.jsonl` — `assistant`/`user` events carry
-  ISO-8601-millisecond `timestamp` fields.
-- B3.3 correction confirmed by reading `engine.py::_prepare_and_maybe_dispatch` (line 946),
-  `_settle_completed_task` (line 1380), `_run_and_integrate` (line 3420) in full.
+- Full existing suite: 3938 passed, 8 skipped, 1 pre-existing unrelated deselect, 0 failed
+  (`pytest -q`, ~164s) — no regressions from B1/B3/B2.1/B4-backend.
+- 60 new tests added across `tests/test_executor.py`, `tests/test_outcomes.py`,
+  `tests/test_reporting.py`, `tests/test_e2e_cli_cost_caching.py`, `tests/ui/test_runs.py`.
+- One real outer-CLI-boundary e2e test (`tests/test_e2e_cli_cost_caching.py`,
+  `typer.testing.CliRunner`) proves `ao run` → `ao report-timing` → `ao report-outcomes
+  [--grade]` end to end, including the load-bearing B3.3 proof: one `--grade` invocation
+  grades both a freshly-dispatched task and a `skip_if_outputs_exist`-skipped task with zero
+  per-task settlement wiring.
+- `ruff check` + `mypy src` clean on every touched/new file (one pre-existing, unrelated
+  `_version.py` mypy issue confirmed via `git diff` to be untouched by this session).
+- Disclosed: one real $0.19 API charge from an unplanned `claude` CLI connectivity check during
+  B1 research (`T-lue4Rz`'s STATUS.md has the detail); no further paid experiments run.
 
 ## Risks / Blockers
-- None blocking. B1's fix cannot be verified against a live Anthropic cache in this environment
-  without spending real API budget for pure R&D — documented as an evidence boundary in the
-  design doc §1.3, not a blocker to shipping the fix (the fix's correctness rests on citing
-  Anthropic's own documented flag semantics, not on ao re-deriving them empirically).
+- None blocking. Two delegated tasks (B2.2, B4-frontend) in progress; `T-UJElTR` (late gate)
+  blocked on them landing.
 
 ## Next actions
-1. Run early-gate `reviewer` (+`architect`) pass on the design doc's proposed end-to-end shape.
-2. Incorporate findings, then delegate implementation: B1 (self), B2+B4 (developer, parallel),
-   B3 (developer, parallel), with explicit change-scope boundaries per the design doc §7.
-3. Late-gate `tester` pass: full existing suite + new tests + e2e demonstration workflow.
+1. Await B2.2 and B4-frontend delegated developer results.
+2. Run `T-UJElTR`: full-suite re-verification after those land, plus the late-gate e2e pass via
+   `tester` per the dev-epic protocol.
+3. Final ticket sync (all to `Done`) and epic completion handoff.

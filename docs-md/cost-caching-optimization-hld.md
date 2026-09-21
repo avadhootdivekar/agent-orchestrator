@@ -312,7 +312,7 @@ exists to answer.
 
 ### 2.3 Surfacing
 
-New on-demand CLI report (`ao report timing <run_id> [--top N]`, additive to `cli.py`) prints
+New on-demand CLI report (`ao report-timing --run-id <run_id> [--top N]`, additive to `cli.py`) prints
 both the run-level top-N table and, with `--task <task_id>`, the activity breakdown for one task.
 Dashboard: an expandable per-task detail panel (§4) gains a "Timing" section, matching the
 existing expandable-detail pattern the dashboard already uses for other per-task data — **not** a
@@ -336,8 +336,8 @@ against current `models.py`):
 
 New `outcomes.py::task_outcome_summary(state) -> list[TaskOutcomeSummary]` (pure function, one row
 per task) aggregates these — same "derive, don't duplicate persisted bookkeeping" convention as
-`compute_run_usage_totals`/`compute_run_active_seconds`. Surfaced via `ao report outcomes
-<run_id>` and the dashboard (§4).
+`compute_run_usage_totals`/`compute_run_active_seconds`. Surfaced via `ao report-outcomes
+--run-id <run_id>` and the dashboard (§4).
 
 ### 3.2 Deterministic grading post-hook — MVP, direct implementation of Epic A's contract
 
@@ -345,19 +345,23 @@ Generalizes `bench/graders.py`'s `Grader`/`CommandGrader` shape into a standalon
 §7's 5-step recipe — **no engine change needed for this half** (Epic A's dispatch-scoped
 `post_hook` mechanism already fires it correctly for every freshly-(re)dispatched task):
 
-New `scripts/helper/hooks/grade_task.py`:
+New `specs/examples/hooks/grade_command.py` (Rev 2: co-located with Epic A's own example hooks —
+`specs/examples/hooks/check_disk_space.py`/`grade.py` — not under `scripts/helper/`, which is
+this repo's convention for throwaway/epic-scoped tooling, not a spec-referenced production hook
+script; an earlier draft of this doc used `scripts/helper/hooks/grade_task.py`, corrected):
 1. Reads `AO_HOOK_CONTEXT_PATH` (task id, output paths, agent status/exit_code — everything
    `hooks.py::run_hook`'s `context.json` already writes).
-2. Adapts `bench.graders.CommandGrader`/`Grader.grade(...)` against the task's declared output
-   paths (a caller-supplied verify command, mirroring `IntegrationSpec.verify_command`'s own
-   argv-command shape — deterministic, scripted, **not** LLM-based, respecting HLD §7's explicit
-   non-LLM/non-billable boundary for this mechanism).
-3. Writes `{"score": <0.0-1.0>, "detail": {"solved": bool, "reason": str}}` to
-   `AO_HOOK_RESULT_PATH`.
+2. Adapts `bench.graders.CommandGrader`/`PytestGrader` (imported directly, reused not
+   reimplemented) against a caller-supplied verify command, configured via env vars
+   (`AO_GRADE_COMMAND`/`AO_GRADE_MODE`/...) so one script instance works for every task that
+   wires it — deterministic, scripted, **not** LLM-based, respecting HLD §7's explicit
+   non-LLM/non-billable boundary for this mechanism.
+3. Writes `{"score": <0.0-1.0>, "detail": {"solved": bool, ...}}` to `AO_HOOK_RESULT_PATH`.
 4. Exits `0` if solved, `1` otherwise.
 5. Wired via `"post_hook": {"use": "grade", "on_failure": "ignore"}` (observe-only starting
-   pattern, per HLD §7) on whichever task(s) a workflow author wants graded — demonstrated in the
-   example workflow spec (§6).
+   pattern, per HLD §7) on whichever task(s) a workflow author wants graded at DISPATCH time, or
+   via `ao report-outcomes --grade grade` for POST-RUN grading (§3.3) — the same script serves
+   both call shapes unchanged.
 
 ### 3.3 Post-settlement/outcome grading — REVISED, Rev 2: a post-run pass, not a new in-engine
 hook trigger point (see ADR-0015 decision 2)
@@ -402,10 +406,10 @@ chain of real correctness and performance defects, not style preferences:
    need it.
 
 **Decision (ADR-0015 decision 2): settlement/outcome grading is a POST-RUN reporting pass, not a
-new engine hook trigger point.** New CLI: `ao report outcomes <run_id> --grade <hook-name>`.
+new engine hook trigger point.** New CLI: `ao report-outcomes --run-id <run_id> --grade <hook-name>`.
 
 ```text
-ao report outcomes <run_id> --grade grade   # resolves "grade" against WorkflowSpec.hooks
+ao report-outcomes --run-id <run_id> --grade grade   # resolves "grade" against WorkflowSpec.hooks
 ```
 
 - Resolves `<hook-name>` against the SAME `WorkflowSpec.hooks` registry Epic A already built —
@@ -448,7 +452,7 @@ ao report outcomes <run_id> --grade grade   # resolves "grade" against WorkflowS
   ignore — the entire class of "operator sets `on_failure: fail_task` and expects a gate" footgun
   (a real concern the Rev 1 in-engine design had) cannot arise, because there is no `on_failure`
   field on this path at all.
-- Re-running `ao report outcomes --grade` for the same `<run_id>` simply re-grades and
+- Re-running `ao report-outcomes --grade` for the same `<run_id>` simply re-grades and
   overwrites `settlement_grades.json` — idempotent by construction (a fresh CLI invocation, not
   an engine-internal re-fire-on-resume concern), and the operator controls exactly when it runs
   (never implicitly on every `ao resume`, resolving the Rev 1 design's "25 subprocess spawns on
@@ -507,7 +511,7 @@ existing expand affordance — never a new default column on the main task table
 | FR-B2-2 | Within-task activity-type breakdown from a real transcript | Functional | T-J1b0FN-b | Unit test against a COMMITTED fixture `transcript.jsonl` under `tests/` (Rev 2: not a `.gitignore`d `playground/.tmp/` path — architect finding B-8) |
 | FR-B3-1 | Local retry/review-loop/breakdown-frequency counts derivable and reportable | Functional | T-Ar8HJF | Unit test on a synthetic `RunState` with self-heal/T2 records |
 | FR-B3-2 | Deterministic grading hook script, wired via existing `post_hook` mechanism | Functional | T-Ar8HJF | Integration test: example workflow + `grade_command.py`, engine run, assert `HookOutcome.score` recorded |
-| FR-B3-3 | Post-run settlement/outcome grading (`ao report outcomes --grade`) covers both dispatched AND skipped tasks, including `emit_tasks`-injected ones | Functional | T-Ar8HJF | Integration test: one run with a dispatched task, a `skip_if_outputs_exist`-skipped task (pre-seeded outputs), and (if feasible within scope) an injected task, all graded by one `--grade` invocation |
+| FR-B3-3 | Post-run settlement/outcome grading (`ao report-outcomes --grade`) covers both dispatched AND skipped tasks, including `emit_tasks`-injected ones | Functional | T-Ar8HJF | Integration test: one run with a dispatched task, a `skip_if_outputs_exist`-skipped task (pre-seeded outputs), and (if feasible within scope) an injected task, all graded by one `--grade` invocation |
 | FR-B4-1 | Cache hit-rate/effectiveness surfaced on-demand (expandable), not a default column | Functional | T-h1KdlK-backend (+ T-h1KdlK-frontend, separately gated) | Backend unit test + REST contract test on `cache_effectiveness`; frontend change reviewed against existing pattern, gated separately per architect finding 4c |
 
 **Rev 2 removals (no longer applicable under ADR-0015 decision 2):** NFR-B3-1 ("settlement_hook
@@ -561,8 +565,8 @@ A new example workflow spec, `specs/examples/cost-caching-demo.json` (or similar
 - A `skip_if_outputs_exist: true` task, pre-seeded with existing outputs so the run exercises the
   skip path.
 - Run via `ao run`/the engine's own CLI entrypoint (outer-boundary e2e, per CLAUDE.md's testing
-  rule), then `ao report timing <run_id>`, `ao report outcomes <run_id>` (B2/B3.1 surfacing), and
-  `ao report outcomes <run_id> --grade grade` (B3.2/B3.3 post-run grading — graded once, covering
+  rule), then `ao report-timing --run-id <run_id>`, `ao report-outcomes --run-id <run_id>` (B2/B3.1 surfacing), and
+  `ao report-outcomes --run-id <run_id> --grade grade` (B3.2/B3.3 post-run grading — graded once, covering
   BOTH the dispatched task, via its `post_hook`, AND, separately, via the `--grade` pass, every
   task including the skipped one).
 - Evidence collected: `HookOutcome.score` present on the dispatch-scoped `post_hook` result
@@ -602,8 +606,8 @@ for recording a non-blocking suggestion it chose not to take.
 | `src/agent_orchestrator/models.py` | `AgentSpec.exclude_dynamic_system_prompt_sections: bool = False`; `HookOutcome.kind` Literal widened to include `"settlement_hook"` | Additive only; the Literal widening is the ONLY change touching an Epic A type |
 | `src/agent_orchestrator/hooks.py` | `run_hook`'s `kind` parameter Literal widened to match `HookOutcome.kind` | The ONLY change to this module; `run_hook`'s own logic is untouched |
 | `src/agent_orchestrator/reporting.py` (NEW) | Timing (`top_n_slowest_tasks`, `task_activity_breakdown`) + cache-effectiveness pure functions (B2/B4) | New file |
-| `src/agent_orchestrator/outcomes.py` (NEW) | Retry/review-loop/breakdown-frequency aggregate pure functions (B3.1), plus the post-run grading orchestration function `ao report outcomes --grade` calls into (B3.2/B3.3 — grading is an outcome/accuracy concept, the natural home) | New file — kept separate from `reporting.py`, see rationale above |
-| `src/agent_orchestrator/cli.py` | New `ao report timing`/`ao report outcomes [--grade NAME]` subcommands | Additive only; no change to existing commands |
+| `src/agent_orchestrator/outcomes.py` (NEW) | Retry/review-loop/breakdown-frequency aggregate pure functions (B3.1), plus the post-run grading orchestration function `ao report-outcomes --grade` calls into (B3.2/B3.3 — grading is an outcome/accuracy concept, the natural home) | New file — kept separate from `reporting.py`, see rationale above |
+| `src/agent_orchestrator/cli.py` | New `ao report-timing`/`ao report-outcomes [--grade NAME]` subcommands | Additive only; no change to existing commands |
 | `src/agent_orchestrator/ui/*.py`, `ui/src/*` | Expose cache-effectiveness (+ timing) on the existing per-task detail payload/view | Must reuse the existing expandable-detail pattern; no new default column |
 | `specs/examples/hooks/grade_command.py` (NEW) | Generalized deterministic grading hook script (co-located with Epic A's own example hooks, not under `scripts/helper/` — a spec-referenced script, not throwaway tooling) | New file; does not modify Epic A's own `grade.py`/`check_disk_space.py` |
 | `specs/examples/` | One new example workflow | New files only |
@@ -646,7 +650,7 @@ specifically (not the epic as a whole).
   blocking against `max_parallel`, an unguarded registry lookup risk, a silent `on_failure`
   footgun, an undefined capture-dir/context shape, and could not reach `emit_tasks`-injected
   tasks → **fixed by a full redesign, not a patch**: ADR-0015 decision 2 replaces the in-engine
-  mechanism with a post-run `ao report outcomes --grade` pass (§3.3 rewritten). This resolves
+  mechanism with a post-run `ao report-outcomes --grade` pass (§3.3 rewritten). This resolves
   every one of those findings structurally (wrong-call-site and staleness become impossible when
   grading runs after the run ends and after run-end sync; main-thread blocking and registry-crash
   risk disappear because there is no new engine call site at all; the `on_failure` footgun
