@@ -53,6 +53,11 @@
           "items": { "type": "string" },
           "default": [],
           "description": "Opt-in tools to disable for this agent (claude_cli), passed as --disallowedTools. Default [] = allow all (web/TodoWrite/subagents stay on). E.g. [\"BashOutput\",\"KillShell\",\"KillBash\"] to silence the headless -p background-shell trap."
+        },
+        "exclude_dynamic_system_prompt_sections": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt-in prompt-cache fix (E-1cecSx B1) for isolated (per-task-worktree) workflows: injects the claude CLI's own --exclude-dynamic-system-prompt-sections flag, which moves its default system prompt's per-session sections (working directory, git-repo flag, platform, shell, OS version, auto memory paths) into the first user message instead, so tasks started from different worktree directories can still share a cacheable system-prompt prefix. Default false: the flag is headless/print-mode-only and its CLI-version floor is undocumented, so this is not auto-enabled. Recommended true for every agent used in an isolation:worktree workflow."
         }
       }
     }

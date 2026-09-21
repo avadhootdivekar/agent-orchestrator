@@ -78,6 +78,83 @@ RECOMMENDED_HEADLESS_DISALLOWED_TOOLS: tuple[str, ...] = (
     "KillBash",
 )
 
+# --- Cache-scope flag (E-1cecSx B1) --------------------------------------------
+# Headless/print-mode-only flag Claude Code itself exposes to move its own default system
+# prompt's per-session sections (working directory, git-repo flag, platform, shell, OS
+# version, auto memory paths) out of `system` and into the first user message, restoring a
+# shared, cacheable system-prompt prefix across sessions started from different directories
+# (e.g. per-task isolated worktrees) -- see AgentSpec.exclude_dynamic_system_prompt_sections'
+# own docstring for the full rationale/citation. Ignored by the CLI itself whenever a custom
+# `--system-prompt`/`--system-prompt-file` is also set (documented CLI behavior) -- skipped
+# here too, for clarity, alongside the "already set" check every other injector in this file
+# performs.
+_EXCLUDE_DYNAMIC_SECTIONS_FLAG = "--exclude-dynamic-system-prompt-sections"
+_CUSTOM_SYSTEM_PROMPT_FLAGS: frozenset[str] = frozenset({"--system-prompt", "--system-prompt-file"})
+
+
+def _ensure_exclude_dynamic_sections(argv: list[str], enabled: bool) -> list[str]:
+    """Append `--exclude-dynamic-system-prompt-sections` when *enabled* (AgentSpec opt-in).
+
+    No-op when disabled (the default -- every pre-epic dispatch's argv stays byte-identical),
+    when the flag is already present, or when the agent's own `command_template`/`extra_args`
+    already sets a custom system prompt (`--system-prompt`/`--system-prompt-file`) -- the CLI
+    itself ignores this flag in that case, so injecting it would be a silent no-op rather than
+    an error, but skipping it keeps argv construction legible about why. Non-mutating.
+    """
+    if not enabled:
+        return list(argv)
+    if _EXCLUDE_DYNAMIC_SECTIONS_FLAG in argv:
+        return list(argv)
+    if any(arg.split("=", 1)[0] in _CUSTOM_SYSTEM_PROMPT_FLAGS for arg in argv):
+        return list(argv)
+    return list(argv) + [_EXCLUDE_DYNAMIC_SECTIONS_FLAG]
+
+
+# *** SINGLE SOURCE OF TRUTH for detecting a `claude` CLI too old to recognize
+# `--exclude-dynamic-system-prompt-sections` *** (E-1cecSx B1, architect early-gate finding
+# 1.5). Edit ONLY this pattern if the CLI's own "unknown option" wording changes. Verified
+# empirically against the real installed CLI (v2.1.278, 2026-09-21): `error: unknown option
+# '--some-flag'` -- an argument-parse-time failure, before any API request, so reproducing it
+# costs nothing. Matched only in combination with the flag's own literal text (see
+# `_describe_unknown_option_failure` below) so an unrelated "unknown option" error elsewhere in
+# the agent's own `extra_args` is never misattributed to this flag.
+_CLAUDE_UNKNOWN_OPTION_PATTERN: re.Pattern[str] = re.compile(r"unknown option", re.IGNORECASE)
+
+
+def _describe_unknown_option_failure(
+    combined_text: str, exclude_dynamic_sections: bool
+) -> str | None:
+    """Return a clear, attributable message when *combined_text* looks like the installed
+    `claude` CLI rejected `--exclude-dynamic-system-prompt-sections` as unrecognized (an older
+    CLI predating the flag), or None otherwise.
+
+    Only checked when `exclude_dynamic_sections` (the AgentSpec opt-in) was actually set --
+    the flag is never injected otherwise, so it cannot be the cause of an "unknown option"
+    failure in that case (some other flag in the agent's own `extra_args`/`command_template`
+    might be, which this function deliberately does NOT try to diagnose -- out of scope, not a
+    version-compat question this fix introduced).
+
+    Distinguishing this from a bare, opaque CLI failure matters (docs-md/cost-caching-
+    optimization-hld.md §1.4): an unlabeled parse error is liable to be laundered through
+    `RetryPolicy`/self-heal, burning budget retrying a failure no retry can fix. This never
+    raises and never itself decides pass/fail -- it only shapes the `TaskResult.error` message
+    the existing failed-path already builds.
+    """
+    if not exclude_dynamic_sections:
+        return None
+    if not _CLAUDE_UNKNOWN_OPTION_PATTERN.search(combined_text):
+        return None
+    if _EXCLUDE_DYNAMIC_SECTIONS_FLAG not in combined_text:
+        return None
+    return (
+        "claude CLI rejected "
+        f"{_EXCLUDE_DYNAMIC_SECTIONS_FLAG!r} as an unknown option -- the installed `claude` "
+        "binary likely predates this flag. Either upgrade the CLI, or set "
+        "AgentSpec.exclude_dynamic_system_prompt_sections=False for this agent "
+        "(docs-md/cost-caching-optimization-hld.md §1.4)."
+    )
+
+
 # --- Capture artifact filenames (named, not magic literals; FR-4/FR-5) --------
 TRANSCRIPT_FILE = "transcript.jsonl"
 STDOUT_FILE = "stdout.txt"
@@ -499,6 +576,14 @@ class ClaudeCliExecutor(Executor):
             tuple(ctx.agent.forced_disallowed_tools),
         )
 
+        # E-1cecSx B1: opt-in cache-scope fix for isolated (per-task-worktree) workflows --
+        # see AgentSpec.exclude_dynamic_system_prompt_sections and this module's own
+        # `_ensure_exclude_dynamic_sections` docstring. No-op (byte-identical argv) unless the
+        # agent explicitly opts in.
+        argv = _ensure_exclude_dynamic_sections(
+            argv, ctx.agent.exclude_dynamic_system_prompt_sections
+        )
+
         # Emit a per-turn JSONL stream so all turns are captured (not just the last).
         argv = _ensure_stream_capture_flags(argv)
 
@@ -579,12 +664,21 @@ class ClaudeCliExecutor(Executor):
             )
 
         err_tail = (stderr_text or transcript_text or "")[-500:]
+        # E-1cecSx B1 (architect early-gate finding 1.5): prepend a clear, attributable
+        # diagnosis when this failure looks like an older `claude` CLI rejecting
+        # --exclude-dynamic-system-prompt-sections -- see _describe_unknown_option_failure's
+        # own docstring for why this must not be left as a bare, opaque stderr tail.
+        unknown_option_note = _describe_unknown_option_failure(
+            stderr_text + "\n" + transcript_text,
+            ctx.agent.exclude_dynamic_system_prompt_sections,
+        )
+        error = f"{unknown_option_note}\n{err_tail}" if unknown_option_note else err_tail
         return TaskResult(
             task_id=ctx.task_id,
             status="failed",
             attempts=1,
             exit_code=returncode,
-            error=err_tail,
+            error=error,
             output_artifact_path=ctx.output_dir,
             **token_fields,
         )

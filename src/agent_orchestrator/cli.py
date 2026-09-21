@@ -12,6 +12,10 @@ Commands:
   ao new        — Scaffold (and optionally validate/run) a workflow instance from a template.
   ao hotspots   — Compute the git-churn hotspot signal for soft overlap-aware scheduling
                   (E-Wk9Tz3 FR-11) and write it to .ao/hotspots.json.
+  ao report-timing   — Run-level top-N slowest tasks + per-task cache-hit rate, on-demand
+                        (E-1cecSx B2/B4).
+  ao report-outcomes — Local retry/review-loop/breakdown-frequency counts, and an optional
+                        post-run deterministic grading pass (--grade) (E-1cecSx B3).
 
 Options:
   ao --version / -V         — Show version (+ commit/build info for non-release builds).
@@ -1556,6 +1560,170 @@ def status(
         raise typer.Exit(1)
 
     _print_state(loaded_state)
+
+
+def _resolve_workspace_root(
+    workspace: str | None, workflow: str | None, reposets: str | None, agents: str | None
+) -> str:
+    """Shared `--workspace` > `AO_WORKSPACE_ROOT` > spec-triplet fallback used by both
+    `report-timing` and `report-outcomes` -- same precedence `status()` already uses above,
+    factored out rather than copied a third time (CLAUDE.md DRY rule)."""
+    from .errors import OrchestratorError
+
+    ws_root = workspace or os.environ.get("AO_WORKSPACE_ROOT")
+    if ws_root is not None:
+        return ws_root
+    try:
+        wf, reposet_map, _ = _load_all(workflow, reposets, agents)
+    except OrchestratorError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1) from e
+    return reposet_map[wf.repo_set].workspace_root
+
+
+@app.command(name="report-timing")
+def report_timing(
+    run_id: str = typer.Option(..., "--run-id", help="Run ID to report on"),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+    top: int = typer.Option(10, "--top", help="How many of the slowest tasks to show"),
+) -> None:
+    """Run-level top-N slowest tasks + per-task prompt-cache effectiveness (E-1cecSx B2/B4).
+
+    On-demand only, per this epic's locked-in constraint -- never a default column on any
+    other command's table (`ao status`/`_print_state` are deliberately untouched by this epic).
+    """
+    from .artifacts import LocalFsArtifactStore
+    from .reporting import cache_effectiveness, top_n_slowest_tasks
+    from .runstate import RunStateStore
+
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    store = LocalFsArtifactStore(ws_root)
+    rs_store = RunStateStore(ws_root, store)
+    try:
+        state = rs_store.load(run_id)
+    except FileNotFoundError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1) from e
+
+    durations = top_n_slowest_tasks(state, top)
+    typer.echo(f"\nRun: {run_id}")
+    typer.echo(f"\nTop {top} slowest tasks:")
+    typer.echo(f"{'Task':<30} {'Seconds':>10} {'Cache hit rate':>16}")
+    typer.echo("-" * 60)
+    for d in durations:
+        eff = cache_effectiveness(state.tasks[d.task_id])
+        hit_rate_str = f"{eff.hit_rate:.1%}" if eff.hit_rate is not None else "n/a"
+        typer.echo(f"{d.task_id:<30} {d.seconds:>10.1f} {hit_rate_str:>16}")
+    if not durations:
+        typer.echo("(no settled tasks with both started_at/ended_at recorded)")
+
+
+@app.command(name="report-outcomes")
+def report_outcomes(
+    run_id: str = typer.Option(..., "--run-id", help="Run ID to report on"),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+    grade: str | None = typer.Option(
+        None,
+        "--grade",
+        help=(
+            "Name of a WorkflowSpec.hooks entry to grade every settled task with, POST-RUN "
+            "(E-1cecSx B3.2/B3.3, ADR-0015 decision 2). Requires the full workflow spec "
+            "(--workflow/--reposets/--agents, or a workspace with discoverable defaults) since "
+            "grading resolves the hook from the workflow's own `hooks` registry."
+        ),
+    ),
+) -> None:
+    """Local retry/review-loop/breakdown-frequency counts (E-1cecSx B3.1), and optionally a
+    post-run deterministic grading pass (`--grade`, B3.2/B3.3) covering every settled task --
+    dispatched AND skip_if_outputs_exist-skipped alike, uniformly, with zero engine involvement
+    (ADR-0015 decision 2)."""
+    from .artifacts import LocalFsArtifactStore
+    from .outcomes import (
+        grade_run,
+        run_breakdown_frequency,
+        settlement_grades_path,
+        task_outcome_summary,
+    )
+    from .runstate import RunStateStore
+
+    wf = None
+    ws_root: str
+    if grade is not None:
+        # --grade needs the full WorkflowSpec (workflow.hooks registry) -- always load it,
+        # never take the workspace-only shortcut `_resolve_workspace_root` allows for the
+        # plain-report path below.
+        from .errors import OrchestratorError
+
+        try:
+            wf, reposet_map, _ = _load_all(workflow, reposets, agents)
+        except OrchestratorError as e:
+            typer.echo(f"ERROR: {e}", err=True)
+            raise typer.Exit(1) from e
+        ws_root = reposet_map[wf.repo_set].workspace_root
+    else:
+        ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+
+    store = LocalFsArtifactStore(ws_root)
+    rs_store = RunStateStore(ws_root, store)
+    try:
+        state = rs_store.load(run_id)
+    except FileNotFoundError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1) from e
+
+    typer.echo(f"\nRun: {run_id}")
+    typer.echo(
+        f"\n{'Task':<30} {'Status':<12} {'Attempts':>9} {'Dispatch cycles':>16} "
+        f"{'Resolver':>9} {'Reruns':>7} {'Self-heal':>10}"
+    )
+    typer.echo("-" * 100)
+    for s in task_outcome_summary(state):
+        typer.echo(
+            f"{s.task_id:<30} {s.status:<12} {s.attempts:>9} {s.dispatch_cycle:>16} "
+            f"{s.resolver_attempts:>9} {s.reruns:>7} {s.self_heal_retry_count:>10}"
+        )
+    freq = run_breakdown_frequency(state)
+    if freq:
+        typer.echo("\nBreaker-trip frequency (run-wide):")
+        for condition, count in sorted(freq.items()):
+            typer.echo(f"  {condition}: {count}")
+
+    if grade is None:
+        return
+
+    assert wf is not None  # narrowed above -- grade is not None implies wf was loaded
+    try:
+        grades = grade_run(state, wf, grade, store, ws_root)
+    except KeyError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1) from e
+
+    typer.echo(f"\nSettlement grades (hook={grade!r}):")
+    typer.echo(f"{'Task':<30} {'Settle reason':<14} {'Status':<10} {'Score':>7}")
+    typer.echo("-" * 65)
+    for g in grades:
+        score_str = f"{g.outcome.score:.2f}" if g.outcome.score is not None else "n/a"
+        typer.echo(f"{g.task_id:<30} {g.settle_reason:<14} {g.outcome.status:<10} {score_str:>7}")
+
+    report_path = settlement_grades_path(store, run_id)
+    import json as _json
+    from pathlib import Path as _Path
+
+    _Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+    _Path(report_path).write_text(
+        _json.dumps([g.model_dump() for g in grades], indent=2), encoding="utf-8"
+    )
+    typer.echo(f"\nWritten: {report_path}")
 
 
 @app.command(name="init")

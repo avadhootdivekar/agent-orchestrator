@@ -10,6 +10,12 @@ module (a pre-hook gate before the attempt loop, and `_finalize_with_post_hook` 
 kept as its own module (not engine.py, already ~4000 lines) since this is a self-contained,
 single-responsibility chunk of logic -- an early-gate architect suggestion.
 
+`run_hook`'s `kind` parameter has a THIRD value as of E-1cecSx B3.2/B3.3 (ADR-0015 decision 2):
+`"settlement_hook"`, called from `outcomes.py`'s POST-RUN grading pass (`ao report outcomes
+--grade`), never from `engine.py`. This module's own execution logic needed no other change --
+`kind` is treated as an opaque string used solely for the returned `HookOutcome.kind` field, so
+widening the Literal (here and on `HookOutcome.kind` in `models.py`) is the entire diff.
+
 This is the FIFTH independent bounded-subprocess-with-timeout implementation in this codebase
 (`isolation/git.py`, `isolation/integrator.py` x2, `isolation/resolvers.py`,
 `bench/graders.py::_run_command`) -- a DRY trade-off recorded, not hidden (HLD §5):
@@ -117,7 +123,7 @@ def _populate_result_file(
 def _run_hook_inner(
     hook: HookSpec,
     *,
-    kind: Literal["pre_hook", "post_hook"],
+    kind: Literal["pre_hook", "post_hook", "settlement_hook"],
     hook_name: str,
     run_id: str,
     task_id: str,
@@ -205,7 +211,7 @@ def _run_hook_inner(
 def run_hook(
     hook: HookSpec,
     *,
-    kind: Literal["pre_hook", "post_hook"],
+    kind: Literal["pre_hook", "post_hook", "settlement_hook"],
     hook_name: str,
     run_id: str,
     task_id: str,

@@ -248,6 +248,23 @@ class AgentSpec(BaseModel):
     # `isolation.escalation.resolver_agent_spec`); it is not part of the authored workflow
     # surface, and a spec that sets it anyway can only ever ADD denials, never remove one.
     forced_disallowed_tools: list[str] = []
+    # E-1cecSx B1 (cost-caching-optimization HLD §1.4): opt-in cache-scope fix for isolated
+    # (per-task-worktree) workflows. Claude Code's OWN default system prompt embeds the literal
+    # working directory (+ platform/shell/OS version/auto memory paths) ahead of any content ao
+    # controls (confirmed via code.claude.com/docs/en/prompt-caching "Cache scope": "That
+    # includes worktrees of the same repository, since each worktree has its own working
+    # directory") -- so every worktree-isolated task's system prompt is byte-different from
+    # every other's, a full cache miss on every dispatch, independent of anything ao itself
+    # feeds into the prompt (ao's own content is already byte-stable -- see the HLD's audit).
+    # Setting this True makes `ClaudeCliExecutor` inject the CLI's own documented
+    # `--exclude-dynamic-system-prompt-sections` flag, which moves that per-session context
+    # into the first user message instead, restoring a shared cacheable system-prompt prefix
+    # across tasks/machines. Default False (NOT auto-enabled for isolated workflows): the flag
+    # is headless/print-mode-only and its exact CLI-version floor is undocumented -- an older
+    # `claude` binary that rejects an unrecognized flag would break EVERY dispatch, so this
+    # ships opt-in per CLAUDE.md's "safe by default" rule rather than as a silent default for
+    # `isolation: worktree` workflows. Recommended for every agent used in such a workflow.
+    exclude_dynamic_system_prompt_sections: bool = False
 
 
 class TaskSpec(BaseModel):
@@ -799,7 +816,17 @@ class HookOutcome(BaseModel):
     pass/fail.
     """
 
-    kind: Literal["pre_hook", "post_hook"]
+    # "settlement_hook" (E-1cecSx B3.2/B3.3, ADR-0015 decision 2): the ONE additive change
+    # `hooks.py`'s "reused, unchanged" execution mechanism needed -- a POST-RUN grading pass
+    # (`ao report outcomes --grade`, `outcomes.py`) calls `hooks.run_hook` with
+    # `kind="settlement_hook"` so its result is traceable and typed the same way a `pre_hook`/
+    # `post_hook` result already is. Widening a Literal is backward-compatible (existing callers
+    # keep passing the same two string literals; any already-serialized `HookOutcome` still
+    # round-trips). `resolve_hook_on_failure`'s own `kind` parameter (below) is DELIBERATELY NOT
+    # widened -- settlement grading has no `on_failure`/gating concept at all (it never touches
+    # `RunState`), so that function's Literal correctly stays scoped to the two kinds that
+    # actually resolve an on_failure policy.
+    kind: Literal["pre_hook", "post_hook", "settlement_hook"]
     # WorkflowSpec.hooks key that ran (D4) -- traceability back to the registry entry, since a
     # TaskResult alone no longer names the command.
     hook_name: str

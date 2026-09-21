@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..models import RunState, compute_run_active_seconds, compute_run_usage_totals
+from ..reporting import cache_effectiveness
 
 # Layout the engine writes; kept as named constants so the dashboard and the engine cannot
 # drift on where runs live.
@@ -59,6 +60,15 @@ class TaskStat:
     integration_status: str | None = None
     tier_reached: str | None = None
     conflicted_count: int = 0
+    # E-1cecSx B4 (design doc §4): prompt-cache effectiveness, ADDITIVE on the existing
+    # per-task detail payload -- NOT a new default table column. Locked-in constraint: the
+    # frontend must surface these inside the dashboard's existing expandable-detail pattern,
+    # never inline in the main task table (docs-md/cost-caching-optimization-hld.md §4).
+    # `cache_hit_rate` is None for the zero-denominator case (no input tokens at all yet),
+    # distinct from a genuine 0.0 rate -- see `reporting.py::cache_effectiveness`.
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cache_hit_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -254,6 +264,7 @@ class RunRepository:
             started, ended = _parse_iso(ts.started_at), _parse_iso(ts.ended_at)
             duration = (ended - started).total_seconds() if started and ended else None
             ti = state.task_integration.get(tid)
+            cache_eff = cache_effectiveness(ts)
             tasks.append(
                 TaskStat(
                     id=tid,
@@ -272,6 +283,9 @@ class RunRepository:
                     integration_status=ti.status if ti is not None else None,
                     tier_reached=ti.tier_reached if ti is not None else None,
                     conflicted_count=len(ti.conflicted_paths) if ti is not None else 0,
+                    cache_read_tokens=cache_eff.cache_read_tokens,
+                    cache_creation_tokens=cache_eff.cache_creation_tokens,
+                    cache_hit_rate=cache_eff.hit_rate,
                 )
             )
 
