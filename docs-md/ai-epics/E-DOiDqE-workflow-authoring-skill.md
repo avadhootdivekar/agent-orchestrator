@@ -1,8 +1,9 @@
 # Epic context — AO workflow-authoring skill (Epic C)
 
 - Epic: [`E-DOiDqE-workflow-authoring-skill`](../../meta/tickets/E-DOiDqE-workflow-authoring-skill/EPIC.md)
-- Status: **Done** — C0/C1/C2/C3 complete, early-gate review incorporated, final regression pass
-  clean (same 1 pre-existing unrelated failure as baseline, +1 net passed, 0 new failures).
+- Status: **Done** — C0/C1/C2/C3 complete, early-gate review incorporated, late-gate real engine
+  execution passed (§8b), final regression pass clean (same 1 pre-existing unrelated failure as
+  baseline, +1 net passed, 0 new failures).
 - Author: `dev-epic` agent, 2026-09-21
 - Thread: Epic C of the cost/perf/hooks/skills thread on `ad/cost-perf-hooks-skills` — follows
   Epic A ([`task-lifecycle-hooks-hld.md`](../task-lifecycle-hooks-hld.md)) and Epic B
@@ -182,6 +183,30 @@ new example's deliberate `touches` usage). Fixed with a named exclusion, not a w
 assertion — see `T-PLsJdO-worked-example/STATUS.md` for detail. Final suite:
 **1 failed (same pre-existing, unrelated `E-5I8azA` gate trip), 3969 passed, 1 skipped,
 7 deselected** — net +1 passed vs. baseline, 0 new failures.
+
+## 8b. Late gate — real engine execution (complete)
+
+C3's own acceptance criteria only required `ao validate` (schema-level). The `dev-epic` mandate's
+pre-close checklist separately requires exercising a representative workflow spec through the
+engine with evidence, before the epic is truly closeable — done after §8:
+
+- `ao run` against `specs/examples/workflow-dry-run-flag.json` with a throwaway `agents.json`
+  (every agent's `executor` set to `"fake"` — no network/LLM calls) → **`run.end` status
+  `succeeded`**, all 5 tasks succeeded in dependency order, both `implement-*` tasks' `pre_hook`
+  passed, `test`'s `post_hook` passed.
+- `ao report-outcomes --grade grade` against the resulting run → all 5 tasks graded `passed`,
+  demonstrating the `post_hook`-vs-`--grade` distinction the skill teaches, on a real run.
+- Evidence (`run.jsonl.txt`, `status.json`, `report-outcomes.txt`, the `agents-fake.json` used):
+  `output/E-DOiDqE-workflow-authoring-skill/late-gate/` (README explains reproduction; the
+  FakeExecutor's stub output files and full `.orchestrator/runs/<run_id>/` directory were
+  deleted after capture — regenerable, and no run-state directory has ever been committed to
+  this repo).
+- A first attempt, run against a fully isolated scratch workspace instead of the repo root,
+  correctly failed at `implement-cli`'s `pre_hook` — the hooks' argv uses a relative script path
+  (`specs/examples/hooks/check_disk_space.py`), which only resolves when the task's cwd is the
+  repo root. Not a defect in the worked example (`specs/examples/workflow-hooks.json`, the
+  pre-existing Epic A example, uses the identical pattern); recorded as why the final run uses
+  the real repo root with the real `specs/examples/reposet.json`.
 
 ## 9. Non-MVP / deferred
 

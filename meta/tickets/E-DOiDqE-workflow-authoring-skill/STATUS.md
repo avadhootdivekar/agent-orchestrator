@@ -148,7 +148,41 @@ touched by any Epic C commit (confirmed: `git diff --name-only ca23d0e~1 HEAD --
   check by an unknown margin — noted for completeness, not filed as a new ticket given this
   epic's own scope discipline and time-boxing).
 
+## Late gate (2026-09-21, this session) — real engine execution, not just `ao validate`
+
+Neither session's prior close-out had actually exercised the worked example **through the
+engine** — C3's own AC only required `ao validate` (schema-level). The `dev-epic` mandate's
+pre-close checklist requires a late-gate run with evidence beyond unit tests, so this was done
+before treating the epic as truly closeable:
+
+- `ao run --workflow specs/examples/workflow-dry-run-flag.json --reposets specs/examples/reposet.json
+  --agents <agents.json with every agent's executor set to "fake">` (repo root, so the hooks'
+  relative script paths resolve) → **`run.end` status `succeeded`**, all 5 tasks
+  (`design`→`implement-cli`+`implement-docs`→`test`→`review`) `succeeded`, both `implement-*`
+  tasks' `pre_hook check_disk_space` passed, `test`'s `post_hook grade` passed. Confirms the DAG
+  actually resolves/dispatches in the order the skill and the spec's own reasoning describe, not
+  just that it schema-validates.
+- `ao report-outcomes --run-id <run_id> --grade grade` (same fake-executor agents file) →
+  local outcome counts nominal (1 attempt, 1 dispatch cycle, 0 reruns/resolver/self-heal per
+  task) and the separate post-run grading pass: all 5 tasks graded `passed`, score `1.00` —
+  exercises the exact distinction (`post_hook` vs. `--grade`) the skill's "Hooks & grading"
+  section teaches.
+- Full evidence (`run.jsonl.txt`, `status.json`, `report-outcomes.txt`, the throwaway
+  `agents-fake.json` used) saved to `output/E-DOiDqE-workflow-authoring-skill/late-gate/`
+  (README there explains reproduction). The FakeExecutor's generic stub `output/dryrun/*.md`
+  content and the full `.orchestrator/runs/<run_id>/` directory were deleted after capturing the
+  above — throwaway, regenerable, and no prior run-state directory has ever been committed to
+  this repo (checked).
+- An earlier attempt using a fully isolated scratch workspace (different `reposets` pointing at
+  throwaway git repos, to avoid touching the real repo's working tree at all) correctly caught a
+  **real, expected** failure instead: the hooks' `["python3", "specs/examples/hooks/check_disk_space.py"]`
+  command is a relative path, resolved against the task's cwd — pointing `reposets` at a
+  workspace other than the repo root breaks it. This is not a defect in the worked example (the
+  pre-existing `specs/examples/workflow-hooks.json` from Epic A uses the identical relative-path
+  pattern and would break the same way under a non-repo-root workspace); it's why the final run
+  above uses the real repo root as `workspace_root` instead.
+
 ## Next actions
-1. None outstanding for Epic C's own scope. Epic ready to close.
+1. None outstanding for Epic C's own scope. Late gate now complete; epic ready to close.
 2. Downstream (other tickets, not this epic): `E-Grpp0X`, `E-hbQnU2`, `E-5I8azA` remain backlog,
    unimplemented, exactly as designed (spun off, not folded in).

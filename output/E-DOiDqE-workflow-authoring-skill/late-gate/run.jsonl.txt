@@ -1,0 +1,32 @@
+{"ts": "2026-09-21T14:50:42.417442+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.start", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "event": "run.start", "workflow_id": "dry-run-flag-worked-example"}
+{"ts": "2026-09-21T14:50:42.418008+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "design", "event": "task.start"}
+{"ts": "2026-09-21T14:50:42.419029+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task succeeded", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "design", "event": "task.end", "status": "succeeded", "exit_code": 0}
+{"ts": "2026-09-21T14:50:42.421429+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "implement-cli", "event": "task.start"}
+{"ts": "2026-09-21T14:50:42.421799+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Running pre_hook check_disk_space", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "implement-cli", "event": "task.pre_hook.start", "hook_name": "check_disk_space"}
+{"ts": "2026-09-21T14:50:42.435436+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "pre_hook check_disk_space passed", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "implement-cli", "event": "task.pre_hook.passed", "exit_code": 0, "hook_name": "check_disk_space"}
+{"ts": "2026-09-21T14:50:42.436328+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task succeeded", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "implement-cli", "event": "task.end", "status": "succeeded", "exit_code": 0}
+{"ts": "2026-09-21T14:50:42.437292+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "implement-docs", "event": "task.start"}
+{"ts": "2026-09-21T14:50:42.437664+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Running pre_hook check_disk_space", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "implement-docs", "event": "task.pre_hook.start", "hook_name": "check_disk_space"}
+{"ts": "2026-09-21T14:50:42.450671+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "pre_hook check_disk_space passed", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "implement-docs", "event": "task.pre_hook.passed", "exit_code": 0, "hook_name": "check_disk_space"}
+{"ts": "2026-09-21T14:50:42.451128+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task succeeded", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "implement-docs", "event": "task.end", "status": "succeeded", "exit_code": 0}
+{"ts": "2026-09-21T14:50:42.451987+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "test", "event": "task.start"}
+{"ts": "2026-09-21T14:50:42.452485+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Running post_hook grade", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "test", "event": "task.post_hook.start", "hook_name": "grade"}
+{"ts": "2026-09-21T14:50:42.465223+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "post_hook grade passed", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "test", "event": "task.post_hook.passed", "exit_code": 0, "hook_name": "grade"}
+{"ts": "2026-09-21T14:50:42.465460+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task succeeded", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "test", "event": "task.end", "status": "succeeded", "exit_code": 0}
+{"ts": "2026-09-21T14:50:42.466396+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "review", "event": "task.start"}
+{"ts": "2026-09-21T14:50:42.466975+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task succeeded", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "task_id": "review", "event": "task.end", "status": "succeeded", "exit_code": 0}
+{"ts": "2026-09-21T14:50:42.467576+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.end", "run_id": "dry-run-flag-worked-example-20260921T145042Z", "event": "run.end", "status": "succeeded"}
+
+Run:    dry-run-flag-worked-example-20260921T145042Z
+Status: succeeded
+
+Task                           Status          Route                Attempts  Tokens (in/out)      Cost($)
+--------------------------------------------------------------------------------------------------------------
+design                         succeeded                            1         0/0                  0.0000
+implement-cli                  succeeded                            1         0/0                  0.0000
+implement-docs                 succeeded                            1         0/0                  0.0000
+test                           succeeded                            1         0/0                  0.0000
+review                         succeeded                            1         0/0                  0.0000
+
+Total tokens: in=0 out=0 cache_creation=0 cache_read=0
+Total cost:   $0.0000

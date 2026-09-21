@@ -56,8 +56,18 @@ Confirmed this file postdates the NFR-2 gate's protected pre-epic file set, so n
 `_EPIC_MODIFIED_PRE_EPIC_TESTS` exception entry was needed. Independently re-ran `ao validate`
 against the spec again in this session's own turn — same exit 0 result.
 
+## Late gate (2026-09-21): real `ao run` execution, not just `ao validate`
+Went beyond this task's own AC (schema validation only) to satisfy the epic's pre-close
+checklist: ran the spec through the actual engine with a `fake`-executor `agents.json`
+(no network/LLM calls) — `ao run.end` status `succeeded`, all 5 tasks succeeded, both
+`pre_hook check_disk_space` calls passed, the `test` task's `post_hook grade` passed. Also ran
+`ao report-outcomes --grade grade` against the resulting run — all 5 tasks graded `passed`,
+score `1.00`, demonstrating the `post_hook` vs. `--grade` distinction the skill teaches on a
+real run. Full logs: `output/E-DOiDqE-workflow-authoring-skill/late-gate/` (see its README for
+exact commands and what was/wasn't kept).
+
 ## Risks / Blockers
-- None. Task complete.
+- None. Task complete, including late-gate execution evidence.
 
 ## Next actions
 1. None — task complete.
