@@ -12,7 +12,6 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -528,23 +527,9 @@ class TestReadStderrTail:
         assert tail == ""
 
 
-# ---------------------------------------------------------------------------
-# AC-5: FR-4 no-op proof
-# ---------------------------------------------------------------------------
-
-
-class TestHookNoOpWhenNone:
-    """AC-5: When a task declares no hooks, run_hook is never called."""
-
-    def test_prehook_none_means_no_subprocess(self) -> None:
-        """Verify that pre_hook=None is truly a no-op (no run_hook call)."""
-        with mock.patch("agent_orchestrator.hooks.run_hook") as mock_run:
-            # This is just a pattern test -- the actual engine integration
-            # is tested in test_engine_hooks.py (AC-2, AC-3, AC-4)
-            # This test verifies the hook module exists and is patchable
-            assert mock_run is not None
-
-    def test_posthook_none_means_no_subprocess(self) -> None:
-        """Verify that post_hook=None is truly a no-op (no run_hook call)."""
-        with mock.patch("agent_orchestrator.hooks.run_hook") as mock_run:
-            assert mock_run is not None
+# AC-5's FR-4 no-op proof (a Mock-patched call-count assertion driven through a real
+# Orchestrator.run()) lives in tests/test_engine_hooks.py::TestHookNoOpWhenNone, which already
+# has the engine/FakeExecutor fixtures this needs -- a prior version of this class lived here
+# but only patched agent_orchestrator.hooks.run_hook and asserted the mock object itself was
+# not None (trivially true, never actually exercising the engine at all; flagged by an
+# early-review pass on the test suite and moved/fixed rather than left vacuous in place).

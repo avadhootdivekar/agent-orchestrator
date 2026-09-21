@@ -4,6 +4,10 @@ Covers:
 - AC-2: pre_hook pass/fail behavior (executor invocation control)
 - AC-3: post_hook pass/fail behavior (status downgrade logic)
 - AC-4: Post-hook NOT invoked on cancelled/quota-exhausted paths
+- AC-5: FR-4 no-op proof (hooks=None never calls hooks.run_hook) -- a real Mock-patched
+  call-count assertion driven through Orchestrator.run(), not merely asserted in isolation
+  (a prior version of this proof lived in test_hooks.py but never actually exercised the
+  engine -- see that file's own note at the point it used to live).
 - AC-6: Timing benchmark (illustrative, not a pytest assertion)
 - AC-11: Self-heal interaction with hook-downgraded failures
 - AC-13: attempts=0 sanity check (pre-hook-blocked tasks)
@@ -14,6 +18,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest import mock
 
 from agent_orchestrator.artifacts import LocalFsArtifactStore
 from agent_orchestrator.engine import Orchestrator
@@ -553,3 +558,61 @@ class TestAttemptsSafetyCheck:
             assert display is not None
         # - A task with 0 attempts is valid; display could show "Blocked before execution"
         assert attempts == 0
+
+
+# ---------------------------------------------------------------------------
+# AC-5: FR-4 no-op proof (the locked-in hard requirement)
+# ---------------------------------------------------------------------------
+
+
+class TestHookNoOpWhenNone:
+    """AC-5/FR-4: a task with no declared hooks never calls `hooks.run_hook` -- proven by
+    patching the module-level function `engine.py` actually calls (`hooks.run_hook(...)`, a
+    module reference, not a bound name pulled in via `from .hooks import run_hook`) and
+    driving a REAL `Orchestrator.run()` through it, across every terminal FakeExecutor
+    behavior. `mock_run.assert_not_called()` is the actual proof; a task that merely never
+    reaches `mock_run is not None` would not catch a regression that reintroduced work on the
+    hookless path.
+    """
+
+    def test_no_hooks_declared_succeed(self, tmp_path: Path) -> None:
+        store, rs_store = _make_workspace(tmp_path)
+        task = _task("t1")  # pre_hook=None, post_hook=None (the default)
+        wf = _workflow([task])
+
+        executor = FakeExecutor(behaviors={"t1": "succeed"})
+        orch = Orchestrator(executor, store, rs_store, monitor=_NoOpMonitor())
+
+        with mock.patch("agent_orchestrator.hooks.run_hook") as mock_run:
+            state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        mock_run.assert_not_called()
+        assert state.tasks["t1"].status == "succeeded"
+
+    def test_no_hooks_declared_fail(self, tmp_path: Path) -> None:
+        store, rs_store = _make_workspace(tmp_path)
+        task = _task("t1")
+        wf = _workflow([task])
+
+        executor = FakeExecutor(behaviors={"t1": "fail"})
+        orch = Orchestrator(executor, store, rs_store, monitor=_NoOpMonitor())
+
+        with mock.patch("agent_orchestrator.hooks.run_hook") as mock_run:
+            state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        mock_run.assert_not_called()
+        assert state.tasks["t1"].status == "failed"
+
+    def test_no_hooks_declared_timeout(self, tmp_path: Path) -> None:
+        store, rs_store = _make_workspace(tmp_path)
+        task = _task("t1")
+        wf = _workflow([task])
+
+        executor = FakeExecutor(behaviors={"t1": "timeout"})
+        orch = Orchestrator(executor, store, rs_store, monitor=_NoOpMonitor())
+
+        with mock.patch("agent_orchestrator.hooks.run_hook") as mock_run:
+            state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
+
+        mock_run.assert_not_called()
+        assert state.tasks["t1"].status == "timed_out"
