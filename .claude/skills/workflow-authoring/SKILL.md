@@ -103,6 +103,12 @@ the failure-mode framing of each):
   static task list; a bad reference here degrades ungracefully rather than failing fast. (Tracked
   as a real engine gap, not something this skill can work around: see
   `meta/tickets/E-Grpp0X-injected-task-dag-validation-gap/`.)
+- **A structural task's own `isolation` setting is always ignored.** An `emit_tasks`/router/
+  loop-gate task is forced to `isolation: none` at dispatch regardless of what it declares or
+  inherits from `defaults.isolation` — `ao validate` warns about this (`spec.py`'s V4 check), it
+  does not fail. Don't set `isolation: worktree` on an emitter/router/loop-gate task expecting it
+  to take effect; isolation is a concern for the *ordinary* tasks it fans out to, not the
+  structural task itself.
 
 **Routing** (`WorkflowSpec.branches[].routes`, `router_task_id`/`verdict_path`) is a related but
 distinct mechanism — a router task writes `{"routes": [...]}` and the engine activates only the
@@ -140,22 +146,31 @@ and its conflict ladder). One caveat carried in `meta/ROADMAP.md` §4: isolation
 *hooks* but not `filter`/`merge` git-attribute drivers — don't run an isolated task against a repo
 with an expensive or untrusted driver configured.
 
-**Caching vs. parallelism — a real trade-off to weigh, not a bug to work around** (ADR-0015 §1.5):
-when `max_parallel` dispatches N tasks that share a byte-identical prompt prefix (same
-instructions/tools/static content — the common, desired case once cache-scope is set up
-correctly), only the **first response to begin streaming** can write the cache entry; every other
-concurrently-in-flight request has already been sent and cannot read what the first is still
-writing. All N pay full cache-miss cost **within that one wave**. This is structural (confirmed
-by Anthropic's own prompt-caching docs), not something to build around — serializing submission to
-"warm" the cache would fight `max_parallel`'s entire purpose. You get the caching win "for free"
-on a workflow's **second and later runs** (a fresh cache entry from run N's first-streaming
-request is readable by run N+1's tasks within the TTL window), not within one run's own parallel
-fan-out. When you *do* use `isolation: worktree` (which puts each task in a different working
-directory), also set `AgentSpec.exclude_dynamic_system_prompt_sections: true` on the agents
-involved — otherwise Claude Code's default system prompt bakes the per-worktree cwd into the
-cached prefix itself, defeating cross-task cache reuse for an unrelated reason (this is
-independent of the parallelism trade-off above; it applies even serially across different
-worktrees).
+**Caching vs. parallelism — a real trade-off to weigh, not a bug to work around**
+(`docs-md/cost-caching-optimization-hld.md` §1.5): when `max_parallel` dispatches N tasks that
+share a byte-identical prompt prefix (same instructions/tools/static content — the common,
+desired case once cache-scope is set up correctly), only the **first response to begin
+streaming** can write the cache entry; every other concurrently-in-flight request has already
+been sent and cannot read what the first is still writing. All N pay full cache-miss cost
+**within that one wave**. This is structural (confirmed by Anthropic's own prompt-caching docs),
+not something to build around — serializing submission to "warm" the cache would fight
+`max_parallel`'s entire purpose. You get the caching win "for free" on a workflow's **second and
+later runs** (a fresh cache entry from run N's first-streaming request is readable by run N+1's
+tasks within the TTL window), not within one run's own parallel fan-out.
+
+When you *do* use `isolation: worktree`, each task's per-worktree working directory is itself a
+**separate** cache-scope leak: Claude Code's default system prompt bakes the cwd (plus platform/
+shell/OS/memory-path info) into the cached prefix, so every isolated task misses cache against
+every other one for this reason alone, independent of the parallelism trade-off above (it applies
+even serially across different worktrees). `AgentSpec.exclude_dynamic_system_prompt_sections:
+true` moves that per-machine content out of the system prompt — **but only addresses one of two
+documented cache-scope determinants** (`docs-md/cost-caching-optimization-hld.md` §1.4, "Known
+limitation"): Claude Code separately tracks each conversation's git branch/recent-commits
+snapshot, and per-task worktree isolation gives every isolated task its own branch by design.
+Setting the flag **reduces, but is not proven to eliminate, the cache miss** for isolated tasks —
+say so, don't oversell it. It is also **opt-in, not a safe default to reach for automatically**:
+an older installed `claude` CLI that doesn't recognize the flag fails *every* dispatch of that
+agent with an unlabeled parse error, so only set it once you know the installed CLI supports it.
 
 ---
 
@@ -185,7 +200,10 @@ workflow's own `hooks` registry and grades every **settled** task uniformly — 
 you want an accuracy/quality signal over a whole run's outcomes *after the fact* (e.g. for a
 benchmark or an A/B comparison), rather than gating individual tasks on it during the run. A hook
 used for `--grade` doesn't need a `post_hook`/`pre_hook` reference anywhere in `tasks[]` — it only
-needs to exist in `WorkflowSpec.hooks`.
+needs to exist in `WorkflowSpec.hooks`. `--grade` resolves the hook name from the **workflow
+spec itself**, so it needs the full spec available — pass `--workflow`/`--reposets`/`--agents`
+(or run from a workspace where they're discoverable via defaults), the same requirement as
+`ao run`/`ao validate`.
 
 ---
 
@@ -207,14 +225,22 @@ calling it done:
    the spec author must keep outputs disjoint or opt into `isolation: worktree`. This is the
    single highest-value thing to double-check before shipping any spec with `max_parallel > 1`.
 5. **Accidental cycles from matching input/output paths.** `build_dag` infers edges from matching
-   `inputs`/`outputs` paths, not just `depends_on` — if you clone/template a task (e.g. per-loop
-   iteration), clear its `inputs`/`outputs` on the clone or it can wire a spurious edge back to an
-   unrelated task and produce a false `CycleError`.
+   `inputs`/`outputs` paths, not just `depends_on`. The engine's own `loops[]` construct already
+   clears an iteration clone's `inputs`/`outputs` for you (ADR-007) — the residual risk is a
+   **hand-duplicated or hand-templated task built outside `loops[]`**: clear its `inputs`/`outputs`
+   yourself or it can wire a spurious edge back to an unrelated task and produce a false
+   `CycleError`.
 6. **A hand-constructed `emit_tasks` manifest with a bad `depends_on`.** Unlike a static task
    list, this is not caught cleanly by validation today (see `E-Grpp0X-injected-task-dag-validation-gap`)
    — double-check emitted manifests' `depends_on`/`agent` references by hand.
 7. **One task doing two independently-retriable things.** See "Task sizing" — a partial failure
    re-does the whole task, including the part that already succeeded.
+8. **`max_parallel` tasks sharing a prompt prefix racing the cache, not just the filesystem.**
+   See "Isolation & parallelism" above — every task in one wave pays full cache-miss cost if they
+   share a prefix; this is a cost/latency footgun independent of #4's file-contention one.
+9. **An isolated task running against a repo with a `filter`/`merge` git-attribute driver
+   configured.** See "Isolation & parallelism" above — isolation suppresses git hooks, not these
+   drivers; don't assume it sandboxes an expensive or untrusted one.
 
 ---
 
@@ -225,11 +251,21 @@ instruction files) is a full worked decomposition following this skill's own gui
 alongside this skill to see the rules above applied to a real, moderately-complex task ("add
 `ao run --dry-run`"): five sized tasks (design → two parallel, disjoint-output implement tasks →
 test → review), a `pre_hook` precondition on each implement task, a `post_hook` grading pass on
-the test task, and an explicit choice of `isolation: none` (the default) over `worktree` because
+the test task (an inline, per-run signal — the same named `grade` hook is also a valid
+`ao report-outcomes --grade grade` argument after the run, a second, independent, whole-run
+signal over the same deterministic check; see "Hooks & grading" above for the distinction), and
+an explicit choice of `isolation: none` (the default) over `worktree` because
 the two parallel `implement-*` tasks' `outputs`/`touches` are disjoint by construction — exactly
 the "Isolation & parallelism" rule above applied, not left implicit. Schema/validation evidence
 for that example lives in its own ticket
 (`meta/tickets/E-DOiDqE-workflow-authoring-skill/T-PLsJdO-worked-example/`).
+
+**What this one example does *not* demonstrate** (disclosed, not silently assumed away): it is a
+purely static task list — it does not exercise `emit_tasks`/dynamic fan-out, routing, or
+`max_parallel > 1` in the spec itself. For those, read the dedicated examples this skill already
+cites inline: `specs/examples/workflow-dynamic-fanout.json` (unknown-N fan-out + fixed
+aggregator) and `specs/examples/workflow-hooks.json` (hooks shape) — this skill's own sections
+above point to the right example for each mechanism rather than cramming all of them into one.
 
 ---
 

@@ -43,10 +43,18 @@ to have an orchestrator-authoring skill of their own).
 - Caching/parallelism trade-off text grounded in `docs-md/cost-caching-optimization-hld.md` §1.5
   (ADR-0015) and its §1.4 `exclude_dynamic_system_prompt_sections` discussion, read in full.
 
+## Early gate complete (2026-09-21)
+Both `reviewer` and `architect` passes run against the finished skill (`approve with changes`,
+no rework needed). Actionable findings incorporated: fixed the cache-scope overclaim on
+`exclude_dynamic_system_prompt_sections` (now states it covers one of two documented
+determinants, not both — `cost-caching-optimization-hld.md` §1.4), added the structural-task
+`isolation: worktree` no-op warning, fixed a dangling doc citation, added the `--grade`
+full-spec-required note, and disclosed the worked example's static-only scope explicitly rather
+than silently. Full findings + disposition recorded in `EPIC.md`'s "Early gate" section (not
+duplicated here).
+
 ## Risks / Blockers
-- Early-gate `reviewer` pass not yet requested — next action.
+- None. Task complete, reviewed, findings incorporated.
 
 ## Next actions
-1. Request a `reviewer` pass on the skill content (early-gate per dev-epic contract).
-2. `T-PLsJdO-worked-example`: produce and validate the worked example the skill's guidance would
-   produce for a real task.
+1. None — task complete.

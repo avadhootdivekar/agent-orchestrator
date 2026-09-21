@@ -6,7 +6,7 @@
 - Owner: dev-epic
 - Created: 2026-09-21
 - Last Updated: 2026-09-21
-- Status: In Progress
+- Status: Done
 
 ## Summary
 - Goal: Author a Claude Code skill under `.claude/skills/` that teaches an agent how to decompose
@@ -97,12 +97,53 @@
   being found and edited by the other session mid-run). Reconciled by consolidating onto this
   epic (`E-DOiDqE-*`, adopted as canonical since it was found further along at the point of
   collision) and discarding the other session's duplicate epic scaffold
-  (`E-lBessP-workflow-authoring-skill`, deleted before it was ever committed — no data lost).
+  (`E-lBessP-workflow-authoring-skill`, deleted before it was ever committed — **"no data lost"
+  is not independently verifiable post-hoc** (per early-gate architect review finding): the
+  deletion happened in the other session's own working turn, not observed directly by this
+  session, so this records the other session's own account rather than first-hand confirmation.
+  No downstream evidence of lost work was found — both sessions' final output converged on one
+  consistent, complete deliverable — but that is corroborating, not conclusive).
   **This should be flagged to the user/orchestrating system as a likely accidental duplicate
   agent dispatch** — not an Epic C defect, but worth checking upstream (did two orchestrating
   sessions both kick off Epic C?). No corruption occurred because the collision was caught before
   either session wrote to the same deliverable *file* (only ticket-tree docs collided; each
   session's file-level writes, e.g. `SKILL.md`, `CLAUDE.md`, happened after reconciliation).
+  A related residual (architect finding): C0's two spin-off tickets are not two independently-
+  confirmed audits — `E-hbQnU2` was authored by the other session and *adopted* by this one after
+  content verification, not independently re-derived from scratch. Recorded honestly here rather
+  than read as double corroboration.
+
+## Early gate — reviewer/architect outcome (2026-09-21)
+
+Both requested per the `dev-epic` mandatory early-gate process, run against the finished
+SKILL.md + worked example (not before, since the deliverable itself was authored fast by the
+converged concurrent-session effort — see the anomaly note above; the gate still ran before this
+epic was declared complete, honoring the spirit of "review before close").
+
+- **`reviewer` verdict: approve with changes.** BLOCKING: "Worked example" section cited a
+  nonexistent file (`workflow-doc-audit.json`) — **found already fixed** by the time this review
+  landed (the section now correctly names `workflow-dry-run-flag.json`); no action needed.
+  WARNING: `EPIC.md` task-list checkbox for `T-PLsJdO` was stale (`[ ]` vs. the task's own `Done`)
+  — **fixed** (see Task List above). Everything else (frontmatter convention, every schema/CLI
+  claim, completeness against FR-C1-1, scope discipline) checked out clean with file:line
+  citations.
+- **`architect` verdict: approve with changes.** No design-principle violations; task-sizing
+  guidance correctly avoids conflating CLAUDE.md's "≤3 days" architect-planning ceiling with an
+  `ao`-task sizing rule. Two WARNINGs actioned in `SKILL.md`: (1) the caching section overclaimed
+  what `exclude_dynamic_system_prompt_sections` fixes — corrected to state it addresses only one
+  of two documented cache-scope determinants (branch/recent-commits is separate and NOT covered),
+  is opt-in for a real version-incompatibility reason, and "reduces, not proven to eliminate" the
+  miss — now matches `cost-caching-optimization-hld.md` §1.4's own honest accounting; (2) a
+  structural task's (`emit_tasks`/router/loop-gate) `isolation: worktree` silently has no effect
+  — added a line citing `spec.py`'s V4 validate-time warning. SUGGESTIONS actioned: fixed the
+  dangling "ADR-0015 §1.5" citation (§1.5 lives in `cost-caching-optimization-hld.md`, not the
+  ADR itself) to the correct doc; added the `--grade` requires-full-spec note; disclosed, in the
+  "Worked example" section itself, that the one example is static-only and does not exercise
+  `emit_tasks`/routing/`max_parallel > 1` (pointed at the two existing examples that do, rather
+  than building a second full worked example — proportionate to this epic's narrow scope).
+
+Neither review found a structural/design problem requiring rework; both were "approve with
+changes," and every actionable finding from both is now incorporated in `SKILL.md`.
 
 ## Links
 - Design doc: `docs-md/ai-epics/E-DOiDqE-workflow-authoring-skill.md`

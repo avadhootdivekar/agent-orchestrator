@@ -580,8 +580,31 @@ def _discover_example_workflows() -> list[Path]:
     return sorted((REPO_ROOT / "specs" / "examples").glob("workflow*.json"))
 
 
+# Example workflows that deliberately exercise non-default per-task isolation-related fields
+# (`touches`, a non-"inherit" `isolation`) as part of what they're teaching, added after this
+# module's original assumption that every specs/examples/*.json file uses only documented
+# defaults. Excluded from `test_loads_with_documented_defaults` below (which pins that
+# defaults-only assumption for the rest of the example set); still covered by
+# `test_round_trips_through_json_unchanged`, which has no such assumption.
+_EXAMPLES_WITH_NON_DEFAULT_ISOLATION_FIELDS = {
+    # E-DOiDqE-workflow-authoring-skill / T-PLsJdO: demonstrates isolation/`touches` decision
+    # rules from .claude/skills/workflow-authoring/SKILL.md.
+    "workflow-dry-run-flag.json",
+}
+
+
+def _discover_default_only_example_workflows() -> list[Path]:
+    return [
+        p
+        for p in _discover_example_workflows()
+        if p.name not in _EXAMPLES_WITH_NON_DEFAULT_ISOLATION_FIELDS
+    ]
+
+
 class TestSpecsExamplesRoundTripUnchanged:
-    @pytest.mark.parametrize("path", _discover_example_workflows(), ids=lambda p: p.name)
+    @pytest.mark.parametrize(
+        "path", _discover_default_only_example_workflows(), ids=lambda p: p.name
+    )
     def test_loads_with_documented_defaults(self, path: Path) -> None:
         wf = load_workflow(path)
         assert wf.defaults.isolation == "none"
