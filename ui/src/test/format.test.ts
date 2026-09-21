@@ -4,6 +4,7 @@ import {
   formatCost,
   formatCount,
   formatDuration,
+  formatPercent,
   formatTimestamp,
   languageFor,
   statusGlyph,
@@ -70,6 +71,22 @@ describe("formatCount", () => {
     expect(formatCount(999)).toBe("999");
     expect(formatCount(1284)).toBe("1.3K");
     expect(formatCount(2_400_000)).toBe("2.4M");
+  });
+});
+
+describe("formatPercent", () => {
+  it("renders n/a for null/undefined, never a misleading 0%", () => {
+    expect(formatPercent(null)).toBe("n/a");
+    expect(formatPercent(undefined)).toBe("n/a");
+  });
+
+  it("renders a genuine 0.0 rate as 0.0%, distinct from n/a", () => {
+    expect(formatPercent(0)).toBe("0.0%");
+  });
+
+  it("formats a fractional rate to one decimal place", () => {
+    expect(formatPercent(0.423)).toBe("42.3%");
+    expect(formatPercent(1)).toBe("100.0%");
   });
 });
 

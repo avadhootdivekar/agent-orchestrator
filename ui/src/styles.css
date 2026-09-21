@@ -793,6 +793,25 @@ pre.code {
   background: #fff;
 }
 
+/* ---------- Task cache-effectiveness detail (E-1cecSx B4) ---------- */
+
+.task-cache-details {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.task-cache-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.task-cache-body {
+  margin: 4px 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 /* ---------- ImageView ---------- */
 
 .image-view {

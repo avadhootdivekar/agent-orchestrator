@@ -49,6 +49,18 @@ export function formatCount(n: number | null | undefined): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
+/**
+ * Percentage with one decimal place (e.g. `42.3%`).
+ *
+ * `null`/`undefined` render as `"n/a"`, matching the CLI's own convention for the same
+ * figure (`cli.py::hit_rate_str`, `ao report timing`) — a real, meaningful distinction from
+ * a genuine 0% rate, never conflated with it by defaulting to "0%".
+ */
+export function formatPercent(ratio: number | null | undefined): string {
+  if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) return "n/a";
+  return `${(ratio * 100).toFixed(1)}%`;
+}
+
 /** Local date-time for an ISO-8601 string; empty/invalid input renders as an em dash. */
 export function formatTimestamp(iso: string | null | undefined): string {
   if (!iso) return "—";
