@@ -9,23 +9,57 @@
 - By: dev-epic
 - Role: manager
 - Date: 2026-09-21
-- Comment: Epic created. Explored current engine lifecycle (`engine.py`
-  `_run_with_retries`/`_run_and_integrate`/`_settle_completed_task`), the existing control-file
-  idiom (`artifacts.read_control`), and `bench/graders.py`'s grader shape. Wrote
-  `docs-md/task-lifecycle-hooks-hld.md` (design decisions D1-D3, failure-semantics table,
-  forward-compat note for Epic B, config-precedence decision, change-scope boundary table).
-  Created epic + 7 task tickets. Requesting early-gate `reviewer`+`architect` pass on the HLD
-  before implementation starts.
+- Comment: Early gate complete. Ran `reviewer` and `architect` in parallel against
+  `docs-md/task-lifecycle-hooks-hld.md` (Rev 1) + the epic ticket, cross-checked against the real
+  `engine.py`/`artifacts.py`/`bench/graders.py`/`isolation/escalation.py` code (not just the
+  design prose). Both returned **"approve with changes"**.
+
+  BLOCKING findings, all incorporated into HLD Rev 2 before any implementation code was written:
+  1. (architect) Rev 1 put the hook command directly on `TaskSpec`, breaking the documented,
+     already-reviewed AC-15 argv-containment invariant (`docs-md/task-isolation-hld.md`) — an
+     agent-authored `emit_tasks` manifest constructs `TaskSpec` with no field allowlist, so this
+     would have handed argv construction to agent-written output. Fixed: hooks moved to a
+     `WorkflowSpec.hooks` named registry; `TaskSpec.pre_hook`/`post_hook` now reference a hook by
+     name (`HookRef`), mirroring the existing `TaskSpec.agent` registry pattern.
+  2. (reviewer + architect, same interaction from two angles) A T2 conflict-resolver dispatch
+     (`mode == "resolve"`) would have silently inherited a task's hooks via the existing
+     `task.model_copy(...)` in `_prepare_resolver_dispatch` — wrong agent, wrong outputs shape.
+     Fixed: that copy now explicitly clears both hook fields; T3 rerun is confirmed unaffected.
+  3. (architect) §7's Epic B forward-compat claim overstated what a dispatch-scoped hook
+     observes (misses skipped/resumed tasks, the T2 synthetic-success path, and uncaught
+     exceptions; fires before the outputs gate). Corrected in HLD §7 with an explicit
+     fires/doesn't-fire list, a non-LLM/non-billable boundary, and a named "post-settlement
+     hook" gap Epic B is expected to add itself.
+  4. (architect) The `succeeded→failed` downgrade's second-order effects (empty self-heal
+     failure summary, integration silently skipped) were unmodelled. Fixed: HLD §6 now requires
+     the hook's exit code + bounded stderr tail folded into `result.error` (not a bare marker),
+     and states the integration-skip consequence as an explicit, deliberate row.
+
+  All non-blocking findings from both reviews (result-file exists-first read sequencing, DRY
+  trade-off recorded not hidden, budget-reconcile-not-quite-zero caveat, cancellation race
+  caveat, `attempts=0` novel-value check, `hooks.py` module extraction, `type` discriminator,
+  `version` fields, typed `score` field, `stdin=DEVNULL`/bounded capture/absolute paths,
+  landscape-survey confirmation of argv+exit-code as the right shape) were also incorporated —
+  see `docs-md/task-lifecycle-hooks-hld.md` §11 for the full mapping of finding → fix.
+
+  No finding required reworking the core D1-D3 shape (hooks live inside `_run_with_retries`,
+  argv command, exit-code verdict) — only the spec-surface location (D4, new) and two explicit
+  interaction rows.
 
 ## Evidence
-- Design doc: `docs-md/task-lifecycle-hooks-hld.md`
-- Tickets: this epic + `T-AHvmYR`, `T-lzQEyy`, `T-DgheoA`, `T-fbQIFX`, `T-jI3P4p`, `T-FCC8mT`,
-  `T-6gR2ya` (all under `meta/tickets/E-AMSSHX-task-lifecycle-hooks/`)
+- Design doc: `docs-md/task-lifecycle-hooks-hld.md` (Rev 2, §11 = review outcome)
+- Early-gate reviewer transcript: agent id `a6e2599445804af56` (background agent, "Early-gate
+  review of hooks HLD")
+- Early-gate architect transcript: agent id `a9d1cdfb1a38475ca` (background agent, "Early-gate
+  architect review of hooks HLD")
+- Tickets updated to match Rev 2: `EPIC.md` (FR-1 reshaped, FR-8 added), all 7 task tickets
 
 ## Risks / Blockers
-- None yet — pending early-gate review outcome.
+- None currently blocking. Sequencing risk noted in HLD §10: this epic should land before the
+  sibling cost/caching epic (same branch thread) touches `_settle_completed_task`/`TaskResult`.
 
 ## Next actions
-1. Run early-gate `reviewer` + `architect` pass on the HLD.
-2. Delegate implementation to `developer` per the change-scope table (HLD §10).
-3. Delegate test-writing + full-suite run to `tester`.
+1. Delegate implementation (T-AHvmYR models + T-lzQEyy engine/hooks.py + T-DgheoA schema) to
+   `developer`, per the Rev 2 change-scope table (HLD §10).
+2. Delegate test-writing + full-suite run (T-jI3P4p) to `tester`.
+3. `reviewer` pass on the implementation diff (T-6gR2ya), then late-gate e2e (T-FCC8mT).

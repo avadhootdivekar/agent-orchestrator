@@ -14,7 +14,12 @@
 
 ## Description
 Add the pydantic model surface for task lifecycle hooks to `src/agent_orchestrator/models.py`,
-additive only (see HLD §3-4, §10 change-scope table). No existing field/behavior changes.
+additive only (see HLD §3-4, §10 change-scope table — **Rev 2: hooks are a workflow-root named
+registry, NOT a field embedding the command directly on `TaskSpec`** — see AC-3/AC-4/AC-6 below;
+this shape change is a direct fix for a BLOCKING early-gate `architect` finding: putting argv
+directly on `TaskSpec` would have broken the documented AC-15 containment invariant, since
+`artifacts.read_task_manifest` builds `TaskSpec` from agent-authored JSON with no field
+allowlist).
 
 ## Acceptance Criteria
 1. `HookOnFailure = Literal["ignore", "fail_task"]`; `HookStatus = Literal["passed", "failed",
@@ -22,24 +27,33 @@ additive only (see HLD §3-4, §10 change-scope table). No existing field/behavi
 2. `DEFAULT_HOOK_TIMEOUT_SECONDS: int = 120`; `DEFAULT_PRE_HOOK_ON_FAILURE: HookOnFailure =
    "fail_task"`; `DEFAULT_POST_HOOK_ON_FAILURE: HookOnFailure = "ignore"` — named constants, no
    magic literals at call sites (CLAUDE.md rule).
-3. `HookSpec(BaseModel)`: `command: list[str] = Field(min_length=1)`,
+3. `HookSpec(BaseModel)` — the **workflow-root registry entry** (the actual argv command):
+   `type: Literal["command"] = "command"` (discriminator, reserved for a future non-argv hook
+   kind — MVP implements `"command"` only, any other value is a validation error not a silent
+   no-op), `command: list[str] = Field(min_length=1)`,
    `timeout_seconds: int = Field(default=DEFAULT_HOOK_TIMEOUT_SECONDS, ge=1)`,
-   `on_failure: HookOnFailure | None = None`.
-4. `resolve_hook_on_failure(hook: HookSpec, kind: Literal["pre_hook", "post_hook"]) ->
-   HookOnFailure` — the ONE place the kind-specific default is resolved (mirrors
-   `resolve_task_isolation`/`resolve_effective_agent`'s docstring convention: "the ONE place...").
-5. `HookOutcome(BaseModel)`: `kind: Literal["pre_hook", "post_hook"]`, `status: HookStatus`,
-   `exit_code: int | None = None`, `duration_ms: int | None = None`, `detail: dict = {}`,
-   `error: str | None = None`.
-6. `TaskSpec.pre_hook: HookSpec | None = None`, `TaskSpec.post_hook: HookSpec | None = None`.
-7. `TaskResult.pre_hook_result: HookOutcome | None = None`,
+   `on_failure: HookOnFailure | None = None` (this hook's own default, may be overridden per-use).
+4. `HookRef(BaseModel)` — the **task-level reference** (mirrors `TaskSpec.agent`'s "key into a
+   registry" pattern; this is what keeps argv OFF `TaskSpec`): `use: str` (key into
+   `WorkflowSpec.hooks`), `on_failure: HookOnFailure | None = None` (per-use override).
+5. `resolve_hook_on_failure(ref: HookRef, hook: HookSpec, kind: Literal["pre_hook",
+   "post_hook"]) -> HookOnFailure` — the ONE place the on_failure default is resolved,
+   precedence `ref.on_failure > hook.on_failure > kind-specific default`. Mirrors
+   `resolve_task_isolation`/`resolve_effective_agent`'s docstring convention: "the ONE place...".
+6. `WorkflowSpec.hooks: dict[str, HookSpec] = {}` (new registry, additive, empty default).
+   `TaskSpec.pre_hook: HookRef | None = None`, `TaskSpec.post_hook: HookRef | None = None`.
+7. `HookOutcome(BaseModel)`: `kind: Literal["pre_hook", "post_hook"]`, `hook_name: str`,
+   `status: HookStatus`, `exit_code: int | None = None`, `duration_ms: int | None = None`,
+   `score: float | None = None` (typed, promoted out of `detail` per early-gate finding — never
+   influences `status`), `detail: dict = {}`, `error: str | None = None`.
+8. `TaskResult.pre_hook_result: HookOutcome | None = None`,
    `TaskResult.post_hook_result: HookOutcome | None = None`.
-8. `TaskRunState.pre_hook_result: HookOutcome | None = None`,
+9. `TaskRunState.pre_hook_result: HookOutcome | None = None`,
    `TaskRunState.post_hook_result: HookOutcome | None = None`.
-9. Every new field defaults such that a pre-epic `WorkflowSpec`/`TaskSpec`/`TaskResult`/
-   `TaskRunState` JSON (no `pre_hook`/`post_hook`/`*_result` keys) still parses unchanged
-   (backward-compat / NFR-5-style guarantee already used elsewhere in this file).
-10. `ruff check`/`ruff format --check`/`mypy` clean on the diff.
+10. Every new field defaults such that a pre-epic `WorkflowSpec`/`TaskSpec`/`TaskResult`/
+    `TaskRunState` JSON (no `hooks`/`pre_hook`/`post_hook`/`*_result` keys) still parses unchanged
+    (backward-compat / NFR-5-style guarantee already used elsewhere in this file).
+11. `ruff check`/`ruff format --check`/`mypy` clean on the diff.
 
 ## Risks
 - `models.py` is imported everywhere; a typo/incompatible default would break unrelated tests —

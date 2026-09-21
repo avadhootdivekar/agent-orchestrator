@@ -22,9 +22,12 @@ directly.
 
 ## Acceptance Criteria
 1. `specs/examples/workflow-hooks.json` — valid against `specs/workflow.schema.json` (post
-   T-DgheoA), at least one task with `pre_hook` (a script that always passes, demonstrating the
-   no-op-adjacent happy path) and a second task with `post_hook` writing a `result.json` detail
-   payload and a script that can be pointed to pass or fail (demonstrating the
+   T-DgheoA). **Rev 2 shape**: declares a `"hooks"` registry at workflow root (e.g.
+   `check_disk_space` and `grade`), with at least one task referencing a hook via
+   `"pre_hook": {"use": "check_disk_space"}` (a script that always passes, demonstrating the
+   no-op-adjacent happy path) and a second task referencing `"post_hook": {"use": "grade",
+   "on_failure": "ignore"}` — the `grade` hook writes a `result.json` detail payload (`score` +
+   `detail`) and its script can be pointed to pass or fail (demonstrating the
    `AO_HOOK_RESULT_PATH` contract from HLD §5/§7).
 2. Hook scripts live under `specs/examples/hooks/` (or `scripts/helper/epics/E-AMSSHX/hooks/` if
    that fits repo convention better — match whatever sibling example specs already do for their

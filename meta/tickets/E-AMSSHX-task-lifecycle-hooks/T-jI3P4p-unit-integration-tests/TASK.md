@@ -10,7 +10,7 @@
 - Estimate: 1 day
 
 ## Requirements Mapping
-- Requirement IDs: FR-1..FR-6 (epic)
+- Requirement IDs: FR-1..FR-6, FR-8 (epic)
 
 ## Description
 Unit + integration tests for the new hook-dispatch mechanism, following this repo's existing
@@ -47,13 +47,30 @@ pass/fail counts — no regressions.
 9. Malformed/oversized `AO_HOOK_RESULT_PATH` content → `HookOutcome.detail == {}`,
    `HookOutcome.error` set, still no uncaught exception (mirrors `read_control`'s
    `ControlFileError` handling).
-10. `specs/workflow.schema.json` validation test: a workflow with `pre_hook`/`post_hook` passes
-    schema validation; one with an empty `command` array or unknown `on_failure` fails it.
+10. `specs/workflow.schema.json` validation test: a workflow with a `hooks` registry +
+    `pre_hook`/`post_hook` references passes schema validation + cross-validation; one with an
+    empty `command` array, unknown `on_failure` value, OR (new, Rev 2) a `pre_hook`/`post_hook`
+    referencing an undeclared hook name fails it with a clear `SpecValidationError`.
 11. Self-heal interaction: a `fail_task` post_hook downgrading a succeeded result to failed is
     picked up by the existing self-heal consult path (`self_heal_enabled=True`) with NO changes
     needed to `_consult_task_failure_heal` — a regression test proving this "falls out for free"
-    claim in HLD §6.
-12. Full existing suite run (`pytest -q`) — report exact pass/fail/skip counts, zero regressions
+    claim in HLD §6 — AND asserts `build_task_failure_summary`'s derived summary is non-empty
+    (i.e. the hook's exit code + stderr tail were actually folded into `result.error`, not a bare
+    marker string — this is the specific gap early-gate `architect` review flagged as BLOCKING).
+12. **(NEW, BLOCKING early-gate finding, both reviews independently)** T2 conflict-resolver
+    dispatch (`mode == "resolve"`) test: a task with `pre_hook`/`post_hook` declared that reaches
+    a genuine merge conflict → assert hooks do NOT fire for the resolver's substituted dispatch
+    (`hooks.run_hook` call count reflects only the ORIGINAL task's own dispatch cycles, never the
+    resolver one). A companion T3 rerun-mode test confirms hooks DO fire normally there (no
+    suppression).
+13. **(NEW)** `attempts == 0` sanity check: a pre_hook-blocked `TaskResult` has `attempts=0` —
+    grep/assert nothing downstream (self-heal summary formatting, any `attempts - 1` style
+    indexing) breaks on this previously-impossible value.
+14. **(NEW)** Result-file sequencing: `exists()`-false path (no result file written) yields
+    `HookOutcome(detail={}, error=None)`; a result file present but malformed/oversized yields
+    `HookOutcome(detail={}, error=<set>)` — these two cases must be distinguishable, not both
+    silently folded into the same `detail={}` outcome (early-gate review Warning).
+15. Full existing suite run (`pytest -q`) — report exact pass/fail/skip counts, zero regressions
     vs. the pre-epic baseline. `ruff check .`, `ruff format --check .`, `mypy .` all clean.
 
 ## Risks

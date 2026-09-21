@@ -13,31 +13,45 @@
 - Requirement IDs: FR-1 (epic)
 
 ## Description
-Add `$defs/hook` to `specs/workflow.schema.json` and reference it from the task definition's
-`pre_hook`/`post_hook` properties, so `ao validate` catches a malformed hook spec the same way it
-catches every other malformed task field. Confirm (do not duplicate) that pydantic is the
-authoritative gate for an installed wheel (per this schema file's own existing convention — see
-e.g. `RegenerateRule.timeout_seconds`'s `ge=1` comment in `models.py` about schema/pydantic
-parity).
+Add `$defs/hook` (the workflow-root registry entry) + `$defs/hookRef` (the task-level reference —
+**Rev 2 shape, see HLD §3**) to `specs/workflow.schema.json`, add a `"hooks"` property to the
+workflow-root schema, and reference `hookRef` from the task definition's `pre_hook`/`post_hook`
+properties — so `ao validate` catches a malformed hook spec or an unresolvable hook name the same
+way it catches every other malformed field. Also add the new `spec.py::cross_validate` rule this
+Rev 2 shape requires (every `pre_hook.use`/`post_hook.use` must resolve to a `WorkflowSpec.hooks`
+key) — **this cross-validation rule is new in Rev 2**; Rev 1 of this ticket assumed no
+cross-validation change would be needed, which was corrected by early-gate `architect` review
+once the registry design was adopted.
 
 ## Acceptance Criteria
-1. `$defs/hook`: `{"type": "object", "additionalProperties": false, "required": ["command"],
-   "properties": {"command": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-   "timeout_seconds": {"type": "integer", "minimum": 1}, "on_failure": {"enum": ["ignore",
-   "fail_task"]}}}`.
-2. Task def's `properties` gains `"pre_hook": {"$ref": "#/$defs/hook"}`,
-   `"post_hook": {"$ref": "#/$defs/hook"}` — same pattern as the existing `"retries": {"$ref":
+1. `$defs/hook` (the command): `{"type": "object", "additionalProperties": false, "required":
+   ["command"], "properties": {"type": {"const": "command"}, "command": {"type": "array",
+   "items": {"type": "string"}, "minItems": 1}, "timeout_seconds": {"type": "integer",
+   "minimum": 1}, "on_failure": {"enum": ["ignore", "fail_task"]}}}`.
+2. `$defs/hookRef` (the task-level reference): `{"type": "object", "additionalProperties": false,
+   "required": ["use"], "properties": {"use": {"type": "string"}, "on_failure": {"enum":
+   ["ignore", "fail_task"]}}}`.
+3. Workflow-root `properties` gains `"hooks": {"type": "object", "additionalProperties": {"$ref":
+   "#/$defs/hook"}, "default": {}}` (same shape convention as how `agents`/`reposets` registries
+   are declared in their own schema files — check `specs/agents.schema.json` for the exact
+   registry-property idiom to mirror).
+4. Task def's `properties` gains `"pre_hook": {"$ref": "#/$defs/hookRef"}`,
+   `"post_hook": {"$ref": "#/$defs/hookRef"}` — same pattern as the existing `"retries": {"$ref":
    "#/$defs/retryPolicy"}` line.
-3. Numeric/enum bounds in the JSON schema match `HookSpec`'s pydantic bounds exactly (same
-   min/ge, same enum values) — parity is a repo convention (see `models.py`'s "C-5" comments on
-   `RegenerateRule`/`IntegrationSpec` re: schema/pydantic parity).
-4. `python -m json.tool specs/workflow.schema.json` (or equivalent) confirms the file is still
-   valid JSON; `ao validate` (or the repo's schema-validation test) accepts a workflow with
-   `pre_hook`/`post_hook` and rejects one with an empty `command` array / unknown `on_failure`
-   value.
+5. Numeric/enum bounds in the JSON schema match `HookSpec`/`HookRef`'s pydantic bounds exactly —
+   parity is a repo convention (see `models.py`'s "C-5" comments on `RegenerateRule`/
+   `IntegrationSpec` re: schema/pydantic parity).
+6. `spec.py::cross_validate`: new rule — every `TaskSpec.pre_hook.use`/`post_hook.use` value
+   must be a key in `WorkflowSpec.hooks`, else `SpecValidationError` naming the task id and the
+   unresolved hook name (same shape as the existing "unknown agent id" check).
+7. `python -m json.tool specs/workflow.schema.json` (or equivalent) confirms the file is still
+   valid JSON; `ao validate` (or the repo's schema-validation test) accepts a workflow with a
+   `hooks` registry + `pre_hook`/`post_hook` references and rejects: an empty `command` array, an
+   unknown `on_failure` value, AND (the new cross-validation case) a `pre_hook`/`post_hook` that
+   references a hook name not present in `hooks`.
 
 ## Risks
-- Low — additive JSON schema change only.
+- Low — additive JSON schema change + one new, narrowly-scoped cross-validation rule.
 
 ## Dependencies
 - T-AHvmYR (models) — bounds must match exactly.
