@@ -6,7 +6,7 @@
 - Owner: dev-epic
 - Created: 2026-09-21
 - Last Updated: 2026-09-21
-- Status: In Progress
+- Status: Done
 
 ## Summary
 - Goal: This repo ships exactly one shared workflow template (`routed-runner`) and one
@@ -96,13 +96,14 @@
   listing already surfaces this — a stretch item would be a more prominent, dedicated callout).
 
 ## Task List
-- [ ] `T-Hn4Rq8-agents-recommended-asset` — D1: `agents.recommended.json.tmpl` asset,
-  `template.yaml` wiring, README section, extended tests.
-- [ ] `T-Kd2Wp5-skill-cost-hygiene-section` — D2: "Cost & context hygiene" section in
-  `workflow-authoring/SKILL.md`.
-- [ ] `T-Zb8Fx3-design-doc-and-e2e-evidence` — D3: design doc under `docs-md/` (mechanism choice +
+- [x] `T-Hn4Rq8-agents-recommended-asset` — D1: `agents.recommended.json.tmpl` asset,
+  `template.yaml` wiring, README section, extended tests. Done.
+- [x] `T-Kd2Wp5-skill-cost-hygiene-section` — D2: "Cost & context hygiene" section in
+  `workflow-authoring/SKILL.md`. Done.
+- [x] `T-Zb8Fx3-design-doc-and-e2e-evidence` — D3: design doc under `docs-md/` (mechanism choice +
   `--autocompact` default justification), real `ao new` scratch-workspace evidence, full suite
-  regression run.
+  regression run. Done — also found and closed a pre-existing, undeclared NFR-2 gate gap
+  unrelated to this epic's own changes (see `docs-md/template-cost-hygiene-hld.md` §7).
 
 ## Risks and Dependencies
 - Depends on Epics A/B/C already landed on this branch (`git log b0cb467..HEAD`) — this epic reads
@@ -146,6 +147,19 @@
     trajectory the epic asked to anchor against, reproducing the inadequate status quo instead
     of fixing it; the dollar magnitude is disclosed honestly (~$8.50 on the one real example)
     so the lever isn't oversold as a large cost saver.
+
+## Closure summary
+- By: dev-epic · Role: manager · Date: 2026-09-21
+- Comment: All 3 tasks Done with evidence (see each `STATUS.md`). Final full-suite run:
+  **3977 passed, 1 skipped, 7 deselected, 0 failed** (`.venv/bin/python -m pytest -q -m "not
+  real_llm and not swebench"`). `ruff check`/`ruff format --check` clean and `mypy` error count
+  unchanged from pre-epic baseline (confirmed via clean content-swap comparisons, not
+  assumption) on every one of this epic's 3 touched Python files. Epic's entire Python footprint
+  confirmed via `git diff --stat 7114e37..HEAD -- '*.py'`: exactly `tests/
+  test_builtin_routed_runner_assets.py`, `tests/test_e2e_builtin_routed_runner.py`, `tests/
+  test_nfr2_regression_gate.py` — no engine/core/spec/schema code touched, honoring the
+  change-scope boundary. Did not read, write, or run any git command in any `ao-runner-*`
+  sibling workspace.
 
 ## Links
 - Design doc: `docs-md/template-cost-hygiene-hld.md`

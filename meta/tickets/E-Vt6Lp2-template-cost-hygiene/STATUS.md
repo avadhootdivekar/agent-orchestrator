@@ -2,31 +2,29 @@
 
 - ID: `E-Vt6Lp2-template-cost-hygiene`
 - Updated At: 2026-09-21
-- State: In Progress
+- State: Done
 - Owner: dev-epic
 
 ## This update
-- Epic scaffolded: EPIC.md + STATUS.md + 3 task folders. Requirements categorized MVP/Non-MVP/
-  Stretch with traceability. Investigated `templates/__init__.py` rendering mechanics
-  (`assets:` entries are workspace-root-relative and materialized once per workspace with
-  `keep_existing` semantics — exactly the seed/merge mechanism D1 needs), `models.py`'s
-  `AgentSpec.command_template`/`extra_args` (confirmed `--autocompact` needs zero engine code
-  changes, it is opaque argv), and `spec.py`'s V1-V13 rules (confirmed they are a cohesive
-  isolation/integration-specific module, informing the decision to defer the `ao validate`
-  warning to Non-MVP).
+- By: dev-epic · Role: manager · Date: 2026-09-21
+- Comment: Epic complete. All 3 tasks Done with evidence. Early-gate `architect`+`reviewer` pass
+  run and incorporated (real correctness fix adopted: `extra_args` not `command_template`; two
+  points of reviewer disagreement resolved with recorded reasoning — see EPIC.md "Early-gate
+  review — outcome"). D1 (asset mechanism), D2 (skill section), D3 (design doc + late-gate real
+  `ao new` e2e evidence + full-suite regression) all shipped. Also found and closed a
+  pre-existing, undeclared NFR-2 gate gap (predates this epic, from `b0cb467`) surfaced only by
+  running the FULL suite rather than just the 4 target template suites.
 
 ## Evidence
-- `git log b0cb467..HEAD` confirms Epics A/B/C already landed on this branch.
-- No `--autocompact` usage anywhere in `src/agent_orchestrator/` or any `agents*.json` in this
-  repo (`grep -rn autocompact`), confirming the epic's premise.
+- 5 commits on `ad/cost-perf-hooks-skills`: `00cd383`, `9b09e76`, `f08816f`, `ae5f5e9`, `244ca49`.
+- Full suite: 3977 passed, 1 skipped, 7 deselected, 0 failed (final run).
+- Design doc: `docs-md/template-cost-hygiene-hld.md`.
 
 ## Risks / Blockers
-- None yet — see EPIC.md Risks for disclosed estimation risk on the `--autocompact` default.
+- None outstanding. Disclosed, not blocking: the `--autocompact=200000` default is an informed
+  estimate from aggregate (not per-turn) real data (design doc §3); compaction-fidelity impact on
+  long-task success rate is explicitly out of this epic's scope to validate.
 
 ## Next actions
-1. Early-gate architect + reviewer pass on the concrete D1 mechanism proposal (asset-based seed
-   file vs. validator-warning-only) before implementing.
-2. Implement D1 (template asset + README + tests), D2 (skill section), D3 (design doc + e2e
-   evidence + full suite run).
-3. Late-gate: real `ao new` instantiation into a scratch workspace, full `pytest` regression run,
-   ruff/mypy on touched files.
+1. None — epic complete. A human may want to review the `--autocompact` default and the NFR-2
+   gate exception entry (both disclosed, reasoned, not silent).
