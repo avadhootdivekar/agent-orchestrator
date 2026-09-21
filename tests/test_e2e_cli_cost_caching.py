@@ -6,7 +6,10 @@ Outermost-boundary coverage (CLAUDE.md's e2e rule): drives `ao run`, `ao report-
 `tests/test_e2e_cli_isolation.py`'s own `_write_specs`/`_env` pattern.
 
 Exercises, in one real run:
-- B2 (`ao report-timing`): a real multi-task run's timing report is non-empty and sensible.
+- B2.1 (`ao report-timing`): a real multi-task run's timing report is non-empty and sensible.
+- B2.2 (`ao report-timing --task`): the graceful "no transcript" path for a real `fake`-executor
+  task (which never writes one), then the full activity-breakdown pipeline wired end-to-end by
+  placing the committed fixture transcript at that task's real `output_artifact_path`.
 - B3.1 (`ao report-outcomes`): the local outcome-count report is non-empty.
 - B3.2 (`post_hook`, Epic A's existing mechanism): a dispatched task graded at dispatch time.
 - B3.3 (`ao report-outcomes --grade`, ADR-0015 decision 2): the SAME run's post-run grading
@@ -30,6 +33,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from agent_orchestrator.cli import app
+from agent_orchestrator.executors.claude_cli import TRANSCRIPT_FILE
 
 runner = CliRunner()
 
@@ -155,6 +159,72 @@ class TestCostCachingE2E:
         assert "dispatched_task" in timing_result.output
         assert "Top 10 slowest tasks" in timing_result.output
 
+        # --- B2.2: ao report-timing --task (within-task activity breakdown) ---
+        # FakeExecutor sets a real `output_artifact_path` (ctx.output_dir) and writes a
+        # capture-parity transcript.jsonl stub (FR-4/FR-5), but -- unlike a real `claude` CLI
+        # capture -- that stub's events carry no top-level `timestamp` field. This first
+        # invocation exercises the CLI's/`task_activity_breakdown`'s graceful zero-timestamped-
+        # events path against that REAL (stub) file, not a synthetic one.
+        no_timestamps_result = runner.invoke(
+            app,
+            [
+                "report-timing",
+                "--run-id",
+                run_id,
+                "--task",
+                "dispatched_task",
+                *_spec_args(tmp_path),
+            ],
+            env=_env(tmp_path),
+        )
+        assert no_timestamps_result.exit_code == 0, (
+            f"ao report-timing --task failed:\n{no_timestamps_result.output}"
+        )
+        assert "no timestamped events found in transcript" in no_timestamps_result.output.lower()
+
+        # Now wire the full activity-breakdown pipeline end-to-end: place the committed,
+        # redacted fixture transcript (tests/fixtures/transcript_activity_breakdown.jsonl) at
+        # dispatched_task's REAL output_artifact_path, exactly where a genuine `claude_cli`
+        # dispatch would have written its own transcript.jsonl.
+        dispatched_output_dir = Path(state["tasks"]["dispatched_task"]["output_artifact_path"])
+        fixture_text = (
+            Path(__file__).parent / "fixtures" / "transcript_activity_breakdown.jsonl"
+        ).read_text()
+        (dispatched_output_dir / TRANSCRIPT_FILE).write_text(fixture_text)
+
+        breakdown_result = runner.invoke(
+            app,
+            [
+                "report-timing",
+                "--run-id",
+                run_id,
+                "--task",
+                "dispatched_task",
+                *_spec_args(tmp_path),
+            ],
+            env=_env(tmp_path),
+        )
+        assert breakdown_result.exit_code == 0, (
+            f"ao report-timing --task failed:\n{breakdown_result.output}"
+        )
+        assert "Activity breakdown for task 'dispatched_task'" in breakdown_result.output
+        assert "build-or-test" in breakdown_result.output
+        assert "file-edit" in breakdown_result.output
+        assert "search-or-read" in breakdown_result.output
+
+        # skip_task never dispatched (skip_if_outputs_exist took the skip path) -- it has no
+        # output_artifact_path at all, exercising the OTHER graceful missing-transcript case.
+        assert state["tasks"]["skip_task"]["output_artifact_path"] is None
+        skip_task_result = runner.invoke(
+            app,
+            ["report-timing", "--run-id", run_id, "--task", "skip_task", *_spec_args(tmp_path)],
+            env=_env(tmp_path),
+        )
+        assert skip_task_result.exit_code == 0, (
+            f"ao report-timing --task failed:\n{skip_task_result.output}"
+        )
+        assert "no output_artifact_path recorded" in skip_task_result.output.lower()
+
         # --- B3.1: ao report-outcomes (no --grade) ---
         outcomes_result = runner.invoke(
             app,
@@ -187,13 +257,7 @@ class TestCostCachingE2E:
         assert "skipped" in grade_result.output  # settle_reason column
 
         # The written report artifact itself carries both tasks, graded.
-        report_path = (
-            tmp_path
-            / ".orchestrator"
-            / "runs"
-            / run_id
-            / "settlement_grades.json"
-        )
+        report_path = tmp_path / ".orchestrator" / "runs" / run_id / "settlement_grades.json"
         assert report_path.exists()
         grades = json.loads(report_path.read_text())
         by_id = {g["task_id"]: g for g in grades}

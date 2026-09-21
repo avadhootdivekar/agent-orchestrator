@@ -12,8 +12,8 @@ Commands:
   ao new        — Scaffold (and optionally validate/run) a workflow instance from a template.
   ao hotspots   — Compute the git-churn hotspot signal for soft overlap-aware scheduling
                   (E-Wk9Tz3 FR-11) and write it to .ao/hotspots.json.
-  ao report-timing   — Run-level top-N slowest tasks + per-task cache-hit rate, on-demand
-                        (E-1cecSx B2/B4).
+  ao report-timing   — Run-level top-N slowest tasks + per-task cache-hit rate, plus an
+                        optional --task activity-type breakdown, on-demand (E-1cecSx B2/B4).
   ao report-outcomes — Local retry/review-loop/breakdown-frequency counts, and an optional
                         post-run deterministic grading pass (--grade) (E-1cecSx B3).
 
@@ -1591,14 +1591,26 @@ def report_timing(
     reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     top: int = typer.Option(10, "--top", help="How many of the slowest tasks to show"),
+    task: str | None = typer.Option(
+        None,
+        "--task",
+        help=(
+            "Task ID to additionally show a within-task activity-type breakdown for "
+            "(E-1cecSx B2.2) -- an APPROXIMATE, turn-level view of where that task's wall "
+            "time went (edits/tests/shell/search/other-tool/thinking), parsed from its "
+            "captured transcript.jsonl. Not exact per-call profiling."
+        ),
+    ),
 ) -> None:
-    """Run-level top-N slowest tasks + per-task prompt-cache effectiveness (E-1cecSx B2/B4).
+    """Run-level top-N slowest tasks + per-task prompt-cache effectiveness (E-1cecSx B2/B4),
+    and optionally one task's activity-type breakdown (`--task`, B2.2).
 
     On-demand only, per this epic's locked-in constraint -- never a default column on any
     other command's table (`ao status`/`_print_state` are deliberately untouched by this epic).
     """
     from .artifacts import LocalFsArtifactStore
-    from .reporting import cache_effectiveness, top_n_slowest_tasks
+    from .executors.claude_cli import TRANSCRIPT_FILE
+    from .reporting import cache_effectiveness, task_activity_breakdown, top_n_slowest_tasks
     from .runstate import RunStateStore
 
     ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
@@ -1621,6 +1633,43 @@ def report_timing(
         typer.echo(f"{d.task_id:<30} {d.seconds:>10.1f} {hit_rate_str:>16}")
     if not durations:
         typer.echo("(no settled tasks with both started_at/ended_at recorded)")
+
+    if task is None:
+        return
+
+    ts = state.tasks.get(task)
+    if ts is None:
+        typer.echo(f"\nActivity breakdown for task {task!r}: no such task in run {run_id!r}.")
+        return
+    if not ts.output_artifact_path:
+        typer.echo(
+            f"\nActivity breakdown for task {task!r}: no output_artifact_path recorded "
+            "(task never dispatched, e.g. a fake-executor run, or not_taken/skipped without "
+            "an artifact dir) -- no transcript to break down."
+        )
+        return
+    transcript_path = os.path.join(ts.output_artifact_path, TRANSCRIPT_FILE)
+    try:
+        breakdown = task_activity_breakdown(transcript_path)
+    except OSError:
+        typer.echo(
+            f"\nActivity breakdown for task {task!r}: no {TRANSCRIPT_FILE} found at "
+            f"{transcript_path!r} -- nothing to break down."
+        )
+        return
+
+    typer.echo(f"\nActivity breakdown for task {task!r} (approximate, turn-level -- see --help):")
+    typer.echo(f"{'Category':<20} {'Seconds':>10} {'% of total':>12}")
+    typer.echo("-" * 44)
+    for row in breakdown.by_category:
+        pct_str = (
+            f"{(row.seconds / breakdown.total_seconds):.1%}"
+            if breakdown.total_seconds > 0
+            else "n/a"
+        )
+        typer.echo(f"{row.category:<20} {row.seconds:>10.1f} {pct_str:>12}")
+    if not breakdown.by_category:
+        typer.echo("(no timestamped events found in transcript)")
 
 
 @app.command(name="report-outcomes")
