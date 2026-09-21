@@ -11,6 +11,8 @@ Covers:
 
 from __future__ import annotations
 
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_orchestrator.artifacts import LocalFsArtifactStore
@@ -316,7 +318,21 @@ class TestPostHookNotOnCancelledOrQuota:
     """AC-4: Post-hook does NOT fire on cancelled or quota-exhausted returns."""
 
     def test_posthook_not_fired_on_cancelled(self, tmp_path: Path) -> None:
-        """AC-4: Task cancelled -> post_hook does NOT fire."""
+        """AC-4: Task cancelled -> post_hook does NOT fire.
+
+        `cancel_fn() == True` unconditionally cancels the whole run at run()'s own
+        top-of-loop check (engine.py ~line 789) BEFORE any task is ever dispatched --
+        that only proves the RUN never got to the task, not that a task's OWN in-flight
+        cancellation skips its post_hook. To exercise the actual code path this epic's
+        HLD documents (`_run_with_retries`'s attempt-loop-top cancel check,
+        ~line 3991), cancel_fn must stay False through the dispatch, then flip True on
+        its SECOND call -- reached only once the worker thread has begun `_run_with_
+        retries` for "t1". With max_parallel=1 (serial) and no budget manager/quota/
+        self-heal configured, cancel_fn is called at exactly two sites in this
+        scenario: once at run()'s loop top (call 1, main thread, before dispatch) and
+        once at the attempt loop's top (call 2, worker thread) -- deterministic by
+        construction, not a timing-dependent race.
+        """
         store, rs_store = _make_workspace(tmp_path)
         hook_script = tmp_path / "grade.py"
         hook_script.write_text("exit(0)")
@@ -326,10 +342,15 @@ class TestPostHookNotOnCancelledOrQuota:
         task = _task("t1", post_hook=HookRef(use="grade"))
         wf = _workflow([task], hooks=hooks)
 
-        # Use FakeExecutor with cancel_fn set to cancel immediately
+        calls = [0]
+
+        def _cancel_after_dispatch() -> bool:
+            calls[0] += 1
+            return calls[0] >= 2
+
         executor = FakeExecutor(behaviors={"t1": "succeed"})
         orch = Orchestrator(
-            executor, store, rs_store, monitor=_NoOpMonitor(), cancel_fn=lambda: True
+            executor, store, rs_store, monitor=_NoOpMonitor(), cancel_fn=_cancel_after_dispatch
         )
 
         state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
@@ -339,32 +360,47 @@ class TestPostHookNotOnCancelledOrQuota:
         assert state.tasks["t1"].post_hook_result is None
 
     def test_posthook_not_fired_on_quota_exhausted(self, tmp_path: Path) -> None:
-        """AC-4: Task quota-exhausted -> post_hook does NOT fire."""
+        """AC-4: Task quota-exhausted -> post_hook does NOT fire.
+
+        Uses this repo's own established deterministic pattern for indefinite quota
+        exhaustion (mirrors tests/test_engine.py::test_quota_exhausted_indefinitely):
+        FakeExecutor's `quota_exhausted_tasks` scripting + a fast-advancing fake `clock`
+        + a no-op-recording `sleeper`, so the run resolves in milliseconds instead of
+        waiting on the engine's real default 15-minute poll / 6-hour max-wait (this repo's
+        own CLAUDE.md determinism rule: fixed clocks/sleepers for anything scheduled).
+        """
         store, rs_store = _make_workspace(tmp_path)
 
-        hooks = {}
+        hooks = {"grade": HookSpec(command=["python3", "-c", "exit(0)"])}
         task = _task("t1", post_hook=HookRef(use="grade"))
         wf = _workflow([task], hooks=hooks)
 
-        # Create a custom executor that returns quota-exhausted
-        class QuotaExhaustedExecutor:
-            def execute(self, ctx: TaskContext) -> TaskResult:
-                return TaskResult(
-                    task_id=ctx.task_id,
-                    status="failed",
-                    attempts=1,
-                    error="quota exhausted",
-                    claude_quota_exhausted=True,
-                )
+        sleeps: list[float] = []
+        _calls = [0]
+        _start = time.time()
 
-        executor = QuotaExhaustedExecutor()
-        orch = Orchestrator(executor, store, rs_store, monitor=_NoOpMonitor())  # type: ignore[arg-type]
+        def _fast_clock():
+            _calls[0] += 1
+            return datetime.fromtimestamp(_start + _calls[0] * 1000, tz=UTC)
+
+        executor = FakeExecutor(quota_exhausted_tasks={"t1": 99})  # exhausted indefinitely
+        orch = Orchestrator(
+            executor,
+            store,
+            rs_store,
+            monitor=_NoOpMonitor(),
+            sleeper=sleeps.append,
+            clock=_fast_clock,
+            quota_max_wait_seconds=500,  # expires after the first 1000s clock advance
+            quota_poll_seconds=10,
+        )
 
         state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
 
-        # Task should be failed due to quota
-        assert state.tasks["t1"].claude_quota_exhausted
-        # post_hook_result should be None (not fired)
+        # The run gives up once quota_max_wait_seconds is exceeded (builtin.quota_max_wait
+        # breaker) -- the task itself never reaches a terminal succeeded/failed dispatch
+        # result, so post_hook must never have been dispatched for it.
+        assert state.status == "failed"
         assert state.tasks["t1"].post_hook_result is None
 
 
@@ -485,11 +521,13 @@ class TestAttemptsSafetyCheck:
 
         state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
 
-        result = state.tasks["t1"].result
-        assert result.attempts == 0
+        # TaskRunState carries attempts directly (no nested .result -- that's TaskResult,
+        # the per-dispatch-call object; TaskRunState is the persisted RunState projection).
+        attempts = state.tasks["t1"].attempts
+        assert attempts == 0
         # Verify this is a valid value (no crashes in downstream code)
-        assert isinstance(result.attempts, int)
-        assert result.attempts >= 0
+        assert isinstance(attempts, int)
+        assert attempts >= 0
 
     def test_dashboard_code_handles_attempts_zero(self, tmp_path: Path) -> None:
         """AC-13: Verify that common dashboard patterns don't break on attempts==0."""
@@ -507,11 +545,11 @@ class TestAttemptsSafetyCheck:
 
         state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
 
-        result = state.tasks["t1"].result
+        attempts = state.tasks["t1"].attempts
         # Patterns that should not crash:
         # - "Attempt N/M" display
-        if result.attempts > 0:
-            display = f"Attempt 1/{result.attempts}"  # This should work fine
+        if attempts > 0:
+            display = f"Attempt 1/{attempts}"  # This should work fine
             assert display is not None
         # - A task with 0 attempts is valid; display could show "Blocked before execution"
-        assert result.attempts == 0
+        assert attempts == 0
