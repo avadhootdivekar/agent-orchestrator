@@ -32,6 +32,7 @@ field list, read `specs/workflow.schema.json` directly; for CLI flags, `ao --hel
 | Where does `pre_hook`/`post_hook` fit? | `pre_hook` for a cheap, fast-failing precondition gate (fail the task, don't waste an agent dispatch). `post_hook` for deterministic post-processing/scoring that shouldn't cost an LLM turn. See "Hooks & grading". |
 | Where does grading fit? | Post-run, via `ao report-outcomes --grade <hook-name>` — not wired into the run itself. See "Hooks & grading". |
 | My run has file contention between parallel tasks | Either make `outputs`/`touches` genuinely disjoint, or opt into `isolation: worktree`. `ao` does **not** detect or prevent this for you at `isolation: none`. See "Common failure modes" #4. |
+| Our cache hit rate looks great, are we fine on cost/context? | Not necessarily — a high ratio can still hide tens of millions of re-billed tokens on one long task. Set `--autocompact` explicitly; don't rely on Claude Code's default. See "Cost & context hygiene". |
 
 ---
 
@@ -171,6 +172,59 @@ Setting the flag **reduces, but is not proven to eliminate, the cache miss** for
 say so, don't oversell it. It is also **opt-in, not a safe default to reach for automatically**:
 an older installed `claude` CLI that doesn't recognize the flag fails *every* dispatch of that
 agent with an unlabeled parse error, so only set it once you know the installed CLI supports it.
+
+---
+
+## Cost & context hygiene
+
+Four practical levers, grounded in real production evidence, not a restatement of Epic B's own
+caching audit (`docs-md/cost-caching-optimization-hld.md` — read that for the full audit; this
+section is what to actually DO when authoring a workflow/agent config).
+
+| You're deciding... | Rule of thumb |
+|---|---|
+| "Our cache hit rate is 98%+, are we fine?" | Not necessarily — see #1. A high ratio can still mean tens of millions of re-billed tokens on one long task. |
+| Should agents set `--autocompact`? | Yes, explicitly, in `command_template`/`extra_args` — don't rely on Claude Code's own default. See #2. |
+| Instruction says "find the relevant design doc" vs. names the exact path | Name the exact path. See #3. |
+| One big workspace-root `CLAUDE.md`, or several package-scoped ones? | Package-scoped, if your codebase has real bounded-context packages. See #4. |
+
+1. **Cache hit rate is a ratio, not a cost measure.** A real production transcript: one task
+   attempt, 232 assistant turns, conversation grew from ~10K to ~280K tokens, and the
+   `cache_read_input_tokens` summed across those 232 turns totaled **42.5 million** — the
+   same growing prefix gets re-billed (cheaply, at the cache-read rate, but at real volume)
+   every single turn, and context never got remotely close to Sonnet 5's ~1M window. A 98%+
+   cache hit rate on that same task would still be true and would still hide this. **What
+   actually matters is absolute context growth per task, not the hit-rate percentage** — watch
+   `cache_read_input_tokens` volume and turn count, not just the ratio.
+2. **Set `--autocompact` explicitly**, rather than relying on Claude Code's own default (`auto`,
+   which scales to the model's full context window and, confirmed against the transcript above,
+   essentially never triggers for realistic task lengths — a ~280K-token task is nowhere near a
+   ~1M-token auto-threshold). The `routed-runner` template ships a concrete, copy-pasteable
+   mechanism for this: `agents.recommended.json` (materialized at your workspace root on first
+   `ao new`) seeds `"extra_args": ["--autocompact", "200000"]` for the roles that do long,
+   multi-turn agentic work — see that template's README ("Recommended agent command_template
+   hygiene") and `docs-md/template-cost-hygiene-hld.md` for the full growth-curve justification
+   of `200000`. Use `extra_args`, not `command_template`, for this flag — `command_template`
+   fully overrides the base argv, so adding a flag there means replacing your whole array instead
+   of merging one flag into what you already have.
+3. **Front-load stable, static reference content over letting the agent discover it.** Static
+   content shared across a task's turns (and across tasks/runs, once cache-scope is set up
+   correctly per Epic B's audit) caches at roughly 0.1x cost; exploratory tool-call turns
+   (grep/search/read-to-find) are turn-unique and never get that relief — every such turn pays
+   full price and adds wall-clock latency. A task instruction that NAMES the specific design
+   doc/file paths to read ("read `docs-md/foo-hld.md` §3 and `src/bar/baz.py`") is cheaper AND
+   faster than one that tells the agent to go find the relevant context itself. This is a task-
+   instruction-authoring habit, not a new mechanism — apply it when writing `instructions/*.md`
+   files for a workflow.
+4. **Package/context-boundary hygiene.** Claude Code loads the nearest `CLAUDE.md` up the
+   directory tree from wherever it's invoked. A monolithic, ever-growing workspace-root
+   `CLAUDE.md` (real example: 45KB in production) gets pulled into EVERY task's context
+   regardless of that task's actual scope — a task touching one narrow subsystem still pays for
+   context about the whole repo. If your target codebase is organized into bounded-context
+   packages/modules, prefer package-scoped `CLAUDE.md` files over one growing root file, so a
+   task's context stays proportional to what it actually touches. This is a **target-codebase
+   architecture decision**, not something `ao` itself enforces or scaffolds — this skill's job is
+   to make a workflow author aware of the lever, not to build tooling for it.
 
 ---
 
