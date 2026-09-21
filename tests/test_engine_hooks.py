@@ -465,10 +465,26 @@ class TestPostHookSelfHealInteraction:
 
         state = orch.run(wf, _fake_reposets(str(tmp_path)), _fake_agents())
 
-        # The task should have been healed and recovered, succeeding on retry
-        # (The hook still fails on the second attempt too, but RuleBasedMonitor will
-        # eventually give up and the task will be marked as failed. This test documents
-        # that self-heal is INVOKED when a hook downgrades, not whether it succeeds.)
+        # The hook fails on every dispatch cycle (its script always exits 1). Confirmed by
+        # running this test with logging: `RuleBasedMonitor` genuinely CONSULTS on this
+        # hook-downgraded failure (a real "monitor.consult"/"task_failure" event fires) but
+        # its own heuristics then decide "accept_failure" rather than "retry" for this
+        # particular error shape -- a legitimate, pre-existing RuleBasedMonitor decision,
+        # not something this epic controls or should assert past. So the meaningful,
+        # actually-true claim to prove is "self-heal was CONSULTED" (this test's own
+        # docstring), via the one persisted signal a real consult leaves behind
+        # (`RunState.monitor_decisions` -- models.py's own docstring: "One record is
+        # appended per ACTUAL consult"). This is FALSE (empty) whenever self-heal is never
+        # invoked at all -- unlike a bare `post_hook_result is not None` assertion, which is
+        # set on the very first dispatch regardless of self-heal and would pass identically
+        # even with self_heal_enabled=False (verified with a negative control: flipping
+        # self_heal_enabled to False makes this exact assertion fail, as expected).
+        heal_consults = [
+            d
+            for d in state.monitor_decisions
+            if d.consult_point == "task_failure" and d.subject_id == "t1"
+        ]
+        assert heal_consults, "expected at least one real self-heal consult record for t1"
         assert state.tasks["t1"].post_hook_result is not None
 
     def test_hook_downgrade_error_summary_nonempty(self, tmp_path: Path) -> None:
