@@ -10,8 +10,8 @@ Run: python scripts/helper/epics/E-AMSSHX/benchmark_hooks_overhead.py
 
 from __future__ import annotations
 
-import time
 import tempfile
+import time
 from pathlib import Path
 
 from agent_orchestrator.artifacts import LocalFsArtifactStore
