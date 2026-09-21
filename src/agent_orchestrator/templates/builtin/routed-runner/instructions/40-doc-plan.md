@@ -12,8 +12,10 @@ No code behavior changes in this route — scope strictly to docs/comments.
 
 ## Branch safety (read-only)
 Before reading the target repository, confirm `git -C <repo> branch --show-current`
-is a non-main epic branch (`<repo>` is the target repository's path — see your
-prompt's Repos line). If it prints `main`/`master`/empty: STOP, write nothing.
+is a non-main branch: either the epic branch, or — under isolation — an ao-owned
+`ao/<run_id>/<task_id>` branch in your own worktree; both are valid (`<repo>` is the
+target repository's path — see your prompt's Repos line). If it prints
+`main`/`master`/empty: STOP, write nothing.
 
 ## Task
 Read `prompt.md` and the relevant real code/existing docs, then write `plan.md` with:

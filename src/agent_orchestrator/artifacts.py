@@ -54,11 +54,33 @@ class LocalFsArtifactStore(ArtifactStore):
     def __init__(self, workspace_root: str) -> None:
         self._root = str(Path(workspace_root).resolve())
 
-    def resolve(self, path: str) -> str:
+    @property
+    def root(self) -> str:
+        """The resolved workspace root every relative path is anchored to.
+
+        Read-only by design (E-Wk9Tz3 T-Wk3Nv6, HLD §7.3): `IsolatedArtifactView` reads this
+        to decide whether a resolved path is inside the shared workspace root at all, but
+        nothing may ever construct a `LocalFsArtifactStore` with a widened root -- the
+        widening for isolated tasks is a wrapper (`IsolatedArtifactView`), never a mutation
+        of this store (rule 3, §7.3: `RunStateStore` keeps this exact, un-widened instance).
+        """
+        return self._root
+
+    def resolve_unchecked(self, path: str) -> str:
+        """Absolute-path + symlink resolution only -- NO containment check.
+
+        Building block for `IsolatedArtifactView.resolve` (HLD §7.3), which layers its own
+        multi-root containment test on top of this. Every other caller in this codebase must
+        keep using `resolve()`, which still enforces workspace-root containment exactly as
+        before -- this method exists only so that check can be composed with additional
+        roots elsewhere, not duplicated.
+        """
         if os.path.isabs(path):
-            full = str(Path(path).resolve())
-        else:
-            full = str((Path(self._root) / path).resolve())
+            return str(Path(path).resolve())
+        return str((Path(self._root) / path).resolve())
+
+    def resolve(self, path: str) -> str:
+        full = self.resolve_unchecked(path)
 
         # Guard against path traversal
         if not (full.startswith(self._root + os.sep) or full == self._root):
@@ -67,18 +89,33 @@ class LocalFsArtifactStore(ArtifactStore):
         return full
 
     def exists(self, path: str) -> bool:
-        try:
-            return os.path.exists(self.resolve(path))
-        except ArtifactPathError:
-            return False
+        return _exists_via_resolve(self, path)
 
     def size(self, path: str) -> int:
         """Return file size in bytes via os.stat. Returns 0 if missing or invalid path."""
-        try:
-            resolved = self.resolve(path)
-            return os.stat(resolved).st_size
-        except (ArtifactPathError, FileNotFoundError, OSError):
-            return 0
+        return _size_via_resolve(self, path)
+
+
+def _exists_via_resolve(store: ArtifactStore, path: str) -> bool:
+    """Shared `exists()` body: resolve through *store*, then `os.path.exists`.
+
+    Factored out so `LocalFsArtifactStore` and `isolation.view.IsolatedArtifactView` (which
+    also resolves-then-stats) don't duplicate this try/except (never read file content --
+    NFR-1 -- only stat).
+    """
+    try:
+        return os.path.exists(store.resolve(path))
+    except ArtifactPathError:
+        return False
+
+
+def _size_via_resolve(store: ArtifactStore, path: str) -> int:
+    """Shared `size()` body -- see `_exists_via_resolve`. Returns 0 if missing/invalid."""
+    try:
+        resolved = store.resolve(path)
+        return os.stat(resolved).st_size
+    except (ArtifactPathError, FileNotFoundError, OSError):
+        return 0
 
 
 def read_manifest(artifact_store: ArtifactStore, path: str) -> list[str]:

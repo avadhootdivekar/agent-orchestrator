@@ -287,3 +287,27 @@ type: convention
 ---
 
 Three spellings coexist: the CLI flag is `--reposets`, the `.ao/config.yaml` key is `reposets`, but the reposet FILE's own top-level key is **`repo_sets`** (underscore). **Why**: `specs/reposet.schema.json` sets `additionalProperties: false`, so writing `reposets` inside the file fails with a non-obvious "Additional properties are not allowed ('reposets' was unexpected)" that reads like a flag problem rather than a key-name problem. **Apply**: when hand-writing reposet fixtures or specs, copy the shape from `specs/examples/reposet.json` rather than inferring the key from the flag name.
+
+---
+name: launch-records-are-unequal-history
+description: A run's LaunchRecords are an append-only history of unequal quality; never recover launch parameters from "the latest" one
+type: pitfall
+---
+
+A run accumulates one `LaunchRecord` per launch attempt (the original `ao run`, then one per resume), and **a FAILED attempt writes a record too**. Those records do not carry equal information: a resume spawned without spec paths persists `workflow_path=None` and a bare argv. `ProcessSupervisor.reconcile()`/`load_records()` return newest-first. **Why**: reading "the latest record" to recover a run's launch parameters is wrong by construction — on any workspace that already hit a bug, the newest record is precisely the information-free one that bug just wrote. Boot-resume shipped exactly this defect: the fix that recovered `workflow_path`/`--reposets`/`--agents` from a record would still have failed on the machine it was written to repair. **Apply**: when reading `LaunchRecord`s for anything other than display, group by `run_id` and reduce across all of a run's records (first non-None per field wins), and evaluate liveness as a whole-run property (`any(finished_at is None)`) rather than per record. See `service/boot_resume.py`'s `_recover_spec_paths` and `tests/service/test_boot_resume_record_merge.py`.
+
+---
+name: ui-unreachable-has-two-independent-gates
+description: A dashboard/hub that won't answer is either a loopback bind (TCP refused) or the Host allowlist (421) — different fixes
+type: pitfall
+---
+
+Reachability of `ao ui` and the service hub is gated twice, independently. (1) The **socket bind**: per-workspace dashboards take their host from `.ao/config.yaml`'s `ui.host` (P1), but the hub binds `--hub-host` (default `127.0.0.1`, since it is unauthenticated and reports every workspace's state). (2) The **Host allowlist**: `ui/security.py`'s `resolve_allowed_hosts` permits `localhost`/`127.0.0.1`/`::1` plus `bound_host` — and `bound_host` is the *literal* bind address, so binding `0.0.0.0` allowlists the string `"0.0.0.0"`, which no browser ever sends as a `Host`. **Why**: the two failures look nothing alike and get misdiagnosed as each other — gate 1 gives a flat TCP connection-refused (reads as a dead daemon), gate 2 gives HTTP 421 Misdirected Request from a perfectly healthy server. Binding wider without widening the allowlist changes nothing for LAN clients. **Apply**: diagnose with `ss -ltnp` first (is it bound where you think?), then `curl -H 'Host: localhost' http://<lan-ip>:<port>/` — a 200 there proves the bind is fine and the allowlist is the blocker. Widen via `AO_UI_ALLOWED_HOSTS` (comma-separated, or `*` to disable the check — no DNS-rebinding protection, trusted networks only).
+
+---
+name: reconcile-stamps-dead-pids-finished
+description: ProcessSupervisor.reconcile() marks any dead-PID record finished, so tests needing a "still running" launch must use a live PID
+type: pitfall
+---
+
+`ProcessSupervisor.reconcile()` sets `finished_at` on every persisted record whose PID is no longer alive, and persists that. **Why**: a test that fabricates a "still running" launch with a reaped PID (the usual `_dead_pid()` helper) has it silently marked finished before the code under test ever sees it — so the test exercises the opposite branch from the one it names and passes for the wrong reason. This bit a boot-resume liveness-suppression test that was asserting no-candidate for the wrong reason entirely. **Apply**: when a fixture record must read as genuinely alive, give it a real live PID (`os.getpid()`); reserve `_dead_pid()` for records that should be treated as finished. See `tests/service/test_boot_resume_record_merge.py`'s `_persist(..., pid=os.getpid())`.

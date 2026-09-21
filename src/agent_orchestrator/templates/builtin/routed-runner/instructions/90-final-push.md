@@ -7,6 +7,17 @@ instruction serves all five per-route push tasks (`bug-push` / `epic-push` /
 executes; the rest are `not_taken` and never run. Whichever one you are, the job is
 identical.
 
+## This task always runs unisolated
+All five push tasks are pinned `"isolation": "none"` in `workflow.json.tmpl`,
+deliberately — never `"inherit"`. This is the one instruction in the template that
+makes a REAL `git push`, so it must run against the shared, synced checkout (not a
+disposable `ao/<run_id>/<task_id>` worktree branch): any isolated predecessor's work
+has already been fast-forwarded into that shared checkout by the time this task runs,
+and the real remote is what a route's actual deliverable must reach. Do not remove
+the pin, and do not "fix" the branch check below to tolerate a worktree branch — an
+`ao/...` branch here would mean pushing a disposable, disconnected branch instead of
+the route's real work.
+
 ## Inputs
 - The terminal report of whichever route ran (the bug route's `review.md`, the epic
   route's `integration-test-report.md`, the task route's `test-pass-2.md`, the doc

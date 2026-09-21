@@ -37,8 +37,8 @@
           "description": "Claude model id passed as --model (e.g. claude-haiku-4-5-20251001). Omit to use the CLI default."
         },
         "effort": {
-          "enum": ["low", "medium", "high"],
-          "description": "Effort level mapped to --max-turns (low=15, medium=30, high=60)."
+          "enum": ["low", "medium", "high", "xhigh"],
+          "description": "Effort level mapped to --max-turns (low=15, medium=30, high=60, xhigh=120)."
         },
         "max_turns": {
           "type": "integer",

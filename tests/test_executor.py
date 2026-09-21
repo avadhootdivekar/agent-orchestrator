@@ -11,6 +11,7 @@ from agent_orchestrator.executors.base import Executor
 from agent_orchestrator.executors.claude_cli import (
     RECOMMENDED_HEADLESS_DISALLOWED_TOOLS,
     ClaudeCliExecutor,
+    _apply_tool_policy,
     _ensure_disallowed_tools,
     _ensure_stream_capture_flags,
     extract_result_event,
@@ -508,6 +509,100 @@ class TestClaudeCliExecutorDisallowedToolsWiring:
 
 
 # ---------------------------------------------------------------------------
+# _apply_tool_policy — the engine's NON-overridable forced denial set (E-Wk9Tz3
+# as-built security review C-1). `disallowed_tools` keeps "explicit flag wins";
+# `forced_disallowed_tools` is appended regardless.
+# ---------------------------------------------------------------------------
+
+
+class TestApplyToolPolicy:
+    def test_forced_survives_every_tool_policy_spelling(self) -> None:
+        for flag_argv in (
+            ["--allowedTools", "Read,Bash"],
+            ["--allowed-tools", "Read,Bash"],
+            ["--disallowedTools", "Glob"],
+            ["--disallowed-tools", "Glob"],
+            ["--tools", "default"],
+            ["--allowed-tools=Read,Bash"],
+        ):
+            argv = _apply_tool_policy(["claude", "-p", *flag_argv], ("WebSearch",), ("Bash",))
+            assert argv[-2:] == ["--disallowedTools", "Bash"], flag_argv
+            # The agent's own opt-in list is still skipped — that rule is unchanged.
+            assert "WebSearch" not in argv, flag_argv
+
+    def test_merges_into_one_flag_when_the_agent_declares_no_policy(self) -> None:
+        argv = _apply_tool_policy(["claude", "-p"], ("WebSearch",), ("Bash", "WebSearch"))
+        assert argv.count("--disallowedTools") == 1
+        assert argv[argv.index("--disallowedTools") + 1 :] == ["WebSearch", "Bash"]
+
+    def test_no_forced_and_no_opt_in_is_a_noop(self) -> None:
+        assert _apply_tool_policy(["claude", "-p"], (), ()) == ["claude", "-p"]
+
+    def test_returns_a_new_list(self) -> None:
+        argv = ["claude", "-p"]
+        assert _apply_tool_policy(argv, (), ("Bash",)) is not argv
+        assert argv == ["claude", "-p"]
+
+    def test_variadic_forced_list_is_terminated_by_the_stream_flags(self) -> None:
+        argv = _apply_tool_policy(["claude", "-p", "--allowedTools", "Read"], (), ("Bash", "Task"))
+        argv = _ensure_stream_capture_flags(argv)
+        di = argv.index("--disallowedTools")
+        of = argv.index("--output-format")
+        assert di < of
+        assert argv[di + 1 : of] == ["Bash", "Task"]
+
+
+class TestClaudeCliExecutorForcedDisallowedToolsWiring:
+    """execute() forwards AgentSpec.forced_disallowed_tools into the real spawned argv
+    even when the agent's own extra_args carry a competing tool policy."""
+
+    def _capture_argv(self, monkeypatch, tmp_path, agent: AgentSpec) -> list[str]:
+        captured: dict[str, list[str]] = {}
+
+        class _FakePopen:
+            def __init__(self, argv: list[str], **kwargs: object) -> None:
+                captured["argv"] = argv
+                self.returncode = 0
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                pass
+
+        monkeypatch.setattr("agent_orchestrator.executors.claude_cli.subprocess.Popen", _FakePopen)
+        ctx = TaskContext(
+            run_id="r1",
+            task_id="t1",
+            agent=agent,
+            instruction_path="/i.md",
+            input_paths=[],
+            output_paths=[],
+            repo_paths={},
+            timeout_seconds=60,
+            output_dir=str(tmp_path),
+        )
+        assert ClaudeCliExecutor().execute(ctx).status == "succeeded"
+        return captured["argv"]
+
+    def test_forced_set_reaches_argv_despite_an_agent_allowlist(self, monkeypatch, tmp_path):
+        agent = AgentSpec(
+            executor="claude_cli",
+            extra_args=["--allowedTools", "Read,Edit,Bash"],
+            forced_disallowed_tools=["Bash", "Task"],
+        )
+        argv = self._capture_argv(monkeypatch, tmp_path, agent)
+        di = argv.index("--disallowedTools")
+        of = argv.index("--output-format")
+        assert argv[di + 1 : of] == ["Bash", "Task"]
+        assert di > argv.index("--allowedTools")
+
+    def test_default_agent_has_no_forced_set(self, monkeypatch, tmp_path) -> None:
+        argv = self._capture_argv(monkeypatch, tmp_path, AgentSpec(executor="claude_cli"))
+        assert "--disallowedTools" not in argv
+
+
+# ---------------------------------------------------------------------------
 # FakeExecutor — token_outputs and rate_limit_tasks (T-1m9744, AC-7)
 # ---------------------------------------------------------------------------
 
@@ -688,6 +783,30 @@ class TestClaudeCliArgBuilding:
         assert "--max-turns" in argv
         idx = argv.index("--max-turns")
         assert argv[idx + 1] == str(EFFORT_MAX_TURNS["medium"])
+
+    def test_effort_xhigh_injects_max_turns_from_constant(self, tmp_path) -> None:
+        from agent_orchestrator.models import EFFORT_MAX_TURNS
+
+        agent = _claude_agent(effort="xhigh")
+        ctx = _make_ctx(agent, tmp_path)
+        argv = self._execute_capturing_argv(ctx)["argv"]
+        assert "--max-turns" in argv
+        idx = argv.index("--max-turns")
+        assert argv[idx + 1] == str(EFFORT_MAX_TURNS["xhigh"])
+
+    def test_resolved_effective_agent_reaches_argv(self, tmp_path) -> None:
+        """task > agent precedence (ADR-0003 decision 2), exercised through the SAME merge
+        the engine performs (`resolve_effective_agent`) and then the real argv-building
+        code path -- proves the executor needs no per-task-aware logic of its own."""
+        from agent_orchestrator.models import TaskSpec, resolve_effective_agent
+
+        agent = _claude_agent(model="agent-model", effort="low")
+        task = TaskSpec(id="t1", agent="ag", instruction="i.md", model="task-model", effort="xhigh")
+        effective = resolve_effective_agent(task, agent)
+        ctx = _make_ctx(effective, tmp_path)
+        argv = self._execute_capturing_argv(ctx)["argv"]
+        assert argv[argv.index("--model") + 1] == "task-model"
+        assert argv[argv.index("--max-turns") + 1] == "120"
 
     def test_explicit_max_turns_overrides_effort(self, tmp_path) -> None:
         # Explicit max_turns wins over the effort-derived value.

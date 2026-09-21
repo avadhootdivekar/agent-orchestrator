@@ -102,9 +102,7 @@ def _write_verdict(tmp_path: Path, route: str) -> None:
     test_engine_routing.py and is consistent with how ao-runner-finplan's
     "Dry-run the DAG" section documents testing routing.
     """
-    verdict_dir = (
-        tmp_path / "workflows" / "routed-runner" / "runs" / "default" / "outputs"
-    )
+    verdict_dir = tmp_path / "workflows" / "routed-runner" / "runs" / "default" / "outputs"
     verdict_path = verdict_dir / "route-verdict.json"
     verdict_path.parent.mkdir(parents=True, exist_ok=True)
     verdict_path.write_text(json.dumps({"routes": [route]}))
@@ -179,11 +177,19 @@ class TestRoutedRunnerE2E:
         referenced_agents = {task["agent"] for task in wf["tasks"]}
         # Manager is declared as required in template.yaml but not used in the workflow DAG
         expected_agents = {
-            "architect", "git-operator", "developer", "tester", "reviewer",
-            "market-surveyor", "architect-opus", "reviewer-opus", "full-tester"
+            "architect",
+            "git-operator",
+            "developer",
+            "tester",
+            "reviewer",
+            "market-surveyor",
+            "architect-opus",
+            "reviewer-opus",
+            "full-tester",
         }
-        assert expected_agents.issubset(referenced_agents), \
+        assert expected_agents.issubset(referenced_agents), (
             f"Missing agents: {expected_agents - referenced_agents}"
+        )
 
     def test_prompt_file_injection_lands_in_prompt_md(self, tmp_path: Path) -> None:
         """Verify --prompt-file writes to the scaffolded prompt.md."""
@@ -354,9 +360,7 @@ class TestRoutedRunnerE2EExecution:
         instance_dir = runs[0]
 
         # Verify the forced type is written (proves parametrization worked)
-        assert (instance_dir / "outputs" / "forced-type.txt").read_text() == (
-            "documentation\n"
-        )
+        assert (instance_dir / "outputs" / "forced-type.txt").read_text() == ("documentation\n")
 
         # Step 2: Run the workflow via ao run (the full engine execution path).
         # With type=documentation forced, the classify task will still run but the
@@ -382,8 +386,7 @@ class TestRoutedRunnerE2EExecution:
         # This test extends coverage to "the workflow actually starts execution"
         # even if routing doesn't complete due to FakeExecutor limitations.
         assert run_result.exit_code in (0, 1), (
-            f"Expected exit 0 or 1 (success or routing failure); got "
-            f"{run_result.exit_code}"
+            f"Expected exit 0 or 1 (success or routing failure); got {run_result.exit_code}"
         )
 
         # Step 3: At minimum, verify the workflow was loaded and attempted.

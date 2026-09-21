@@ -53,6 +53,32 @@ class TaskStat:
     route: str | None
     output_artifact_path: str | None
     outputs: list[str] = field(default_factory=list)
+    # E-Wk9Tz3 T-Cx4Jf1 AC-9/S-5: the "Integration" column. `None`/0 for a task that was
+    # never isolated (no `task_integration` entry), so a pre-epic run renders blank rather
+    # than inventing a status it never had.
+    integration_status: str | None = None
+    tier_reached: str | None = None
+    conflicted_count: int = 0
+
+
+@dataclass(frozen=True)
+class RunIntegration:
+    """Run-wide integration header line (E-Wk9Tz3 T-Cx4Jf1 AC-9/S-5).
+
+    Present on `RunDetail` only when the run actually activated isolation; `None`
+    otherwise, so the dashboard has a single "is there anything to show" test rather than
+    having to distinguish "no isolation" from "isolation with an empty branch".
+
+    `tier_counts` is the S-5 signal: a `rerere`/`mechanical` resolution lands at the same
+    zero-review tier as a clean auto-merge, so the only way an operator can see how much of
+    a run was absorbed by the non-free tiers is this histogram.
+    """
+
+    active: bool
+    branch: str | None
+    heads: dict[str, str]
+    tier_counts: dict[str, int]
+    degraded_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -84,6 +110,9 @@ class RunDetail:
     route_decisions: dict[str, list[str]]
     monitor_decisions: list[dict]
     run_dir: str
+    # `None` for every run without isolation (E-Wk9Tz3 NFR-2: a pre-epic run's payload
+    # gains one null key and renders exactly as it did before).
+    integration: RunIntegration | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +253,7 @@ class RunRepository:
         for tid, ts in state.tasks.items():
             started, ended = _parse_iso(ts.started_at), _parse_iso(ts.ended_at)
             duration = (ended - started).total_seconds() if started and ended else None
+            ti = state.task_integration.get(tid)
             tasks.append(
                 TaskStat(
                     id=tid,
@@ -239,9 +269,13 @@ class RunRepository:
                     route=ts.route,
                     output_artifact_path=ts.output_artifact_path,
                     outputs=list(ts.dynamic_outputs),
+                    integration_status=ti.status if ti is not None else None,
+                    tier_reached=ti.tier_reached if ti is not None else None,
+                    conflicted_count=len(ti.conflicted_paths) if ti is not None else 0,
                 )
             )
 
+        integration = state.integration
         return RunDetail(
             summary=summary,
             tasks=tasks,
@@ -249,6 +283,17 @@ class RunRepository:
             route_decisions=dict(state.route_decisions),
             monitor_decisions=[asdict_safe(md) for md in state.monitor_decisions],
             run_dir=str(self.run_dir(run_id)),
+            integration=(
+                RunIntegration(
+                    active=integration.active,
+                    branch=integration.branch,
+                    heads=dict(integration.heads),
+                    tier_counts=dict(integration.tier_counts),
+                    degraded_reason=integration.degraded_reason,
+                )
+                if integration.active
+                else None
+            ),
         )
 
     def aggregate(self) -> AggregateStats:

@@ -1,0 +1,188 @@
+# TASK: T-Dr5Yq6-docs-refresh
+
+## Metadata
+- Task ID: `T-Dr5Yq6-docs-refresh`
+- Epic ID: `E-Wk9Tz3-task-isolation`
+- Owner: architect (agent) / manager (pass 2)
+- Created: 2026-09-06
+- Last Updated: 2026-09-11
+- Status: Done (pass 2 of 2 complete — see `STATUS.md`'s "Pass 2 (2026-09-11)")
+- Estimate: 1 day
+
+## Requirements Mapping
+- Requirement IDs: post-implementation reconciliation for all FR/NFR · Design: HLD (whole document)
+- Review findings folded in: **R-13** (LFS non-goal), **S-8** (reserved `ao/` namespace), plus
+  reconciliation of HLD §24 "Review dispositions" against what actually shipped. Estimate unchanged at
+  1 day.
+
+## Description
+**Post-implementation reconciliation.** Bring `docs-md/` into line with what was actually built,
+including every deviation from this design, and close the epic's paperwork. Mark complete **only**
+after confirming each claim against the merged code — read the source, do not trust the tickets.
+
+Files you own:
+- `docs-md/task-isolation-hld.md` (edit — add an "As-built deviations" section, mirroring
+  `parallel-execution-hld.md` §14; correct any statement the implementation contradicted)
+- `docs-md/adr/ADR-0013-per-task-git-isolation-and-rebase-integration.md` (edit — status
+  `Proposed` → `Accepted / shipped` + an implementation-notes addendum; **do not rewrite the
+  decisions**)
+- `docs-md/ai-epics/E-Wk9Tz3-task-isolation.md` (edit — final evidence log + traceability table)
+- `docs-md/hld-agent-orchestrator.md` (edit — one line in the feature-design-docs list pointing at
+  this HLD/ADR, matching how `parallel-execution-hld.md` is referenced)
+- `docs-md/parallel-execution-hld.md` (edit — **one** cross-reference note in §12 saying the
+  write-conflict follow-on shipped as ADR-0013; no other change)
+- `meta/tickets/E-Wk9Tz3-task-isolation/EPIC.md` + `STATUS.md` and every task's `TASK.md` + `STATUS.md`
+  (status sync)
+
+Do NOT touch: `meta/ROADMAP.md`, `CLAUDE.md`, `meta/learnings*.md`, other ADRs, `src/`, or
+`../ao-runner-finplan`. **Report** the ROADMAP edits that are needed (§1 table row, §3.4, §4) to the
+epic owner rather than making them — that file is owned elsewhere.
+
+## Acceptance Criteria
+1. Every factual claim in `task-isolation-hld.md` is re-verified against the merged source, with
+   file:line references refreshed. Anything the implementation changed is corrected **in place** and
+   also listed in a new "As-built deviations" section that says *what* changed and *why*, in the style
+   of `parallel-execution-hld.md` §14.
+2. ADR-0013's status header becomes `Accepted / shipped (<date>)`, with an "Implementation notes"
+   section recording: which decisions held exactly, which were refined, and any decision the build
+   proved wrong. The decision bodies themselves are **not** rewritten (an ADR records what was decided
+   and why, not what we wish we had decided).
+3. `docs-md/ai-epics/E-Wk9Tz3-task-isolation.md` carries the final evidence log (baseline → final test
+   counts at each task boundary, ruff/mypy deltas, the security-pass outcome) and a **requirement
+   traceability table** mapping every FR/NFR to the landed module and its dedicated tests.
+4. Operator documentation exists and is accurate: how to opt in, where worktrees live, how to set
+   `verify_command` and `resolvers`, what each `integration.*` event means, how to recover from a T4
+   failure (retained worktree + branch + `ao resume`), how `ao prune --worktrees-only` reaps orphans,
+   and the cold-rebuild / shared-build-cache guidance (NFR-6). Verified by **actually following** the
+   recovery procedure once against a real temp repo.
+5. Every ticket in the epic (12 tasks + the epic) has `Status` consistent across `TASK.md`,
+   `STATUS.md` and the epic's checkbox list, each with `By/Role/Date/Comment` attribution — no item
+   marked done in one file and open in another.
+6. Open questions OQ-1..OQ-5 and HLD §20's user decisions are each resolved, re-scoped, or explicitly
+   carried forward with a named owner. Deferred non-MVP items (§23) are restated as a clean follow-on
+   list for the epic owner to consider for the roadmap.
+7. A short, explicit list of **needed edits this ticket did not make** (`meta/ROADMAP.md` §1 table row,
+   §2 "Recently delivered", §3.4 and §4 gap removal) is handed to the epic owner in `STATUS.md`.
+8. `uv run pytest -q` still green (docs-only change, but run it to prove nothing was disturbed);
+   markdown links resolve (a link-check pass over the edited files).
+
+### Amendments from the 2026-09-07 review gates
+
+9. **Reconcile HLD §24 "Review dispositions" against reality.** Every finding marked *Fixed* must be
+   re-verified against the merged code, not against the ticket that claimed it. Anything that shipped
+   differently is re-dispositioned in place (Fixed -> Accepted-with-rationale / Deferred, with the
+   reason), so §24 remains a truthful record rather than an aspiration. Any finding that shipped
+   **unfixed** without a recorded rationale is a blocker for closing the epic.
+10. **R-13 / S-8 documentation duties.** The operator docs state (a) Git LFS is not handled, with the
+    revisit trigger (`isolation.env` + `GIT_LFS_SKIP_SMUDGE`, and the NFR-6 disk guidance), and
+    (b) `refs/heads/ao/**` and `refs/ao/**` are reserved for the engine.
+10b. **Reconcile the CLI docs to the two-flag model** (HLD §24, C-1 of T-Cx4Jf1 Part A): `--isolation`
+    / `AO_ISOLATION` / `isolation.mode` is a **fill-in default** for tasks that declare no `isolation`;
+    `--no-isolation` (env `AO_NO_ISOLATION=1`, no config layer) is the kill switch that overrides
+    explicit per-task values and logs which ones. There is no `auto` mode.
+
+11. **Verify the recovery procedure by executing it.** The T4 recovery path (retained worktree +
+    branch -> hand-resolve -> `ao resume`) is walked end to end once against a real temp repo, and the
+    docs are corrected wherever it does not work as written. Same for `ao prune --worktrees-only`
+    reaping an orphan.
+12. **Report, do not make, the `meta/ROADMAP.md` edits.** §1's capability-table row, §2 "Recently
+    delivered", and the §3.4 / §4 gap removal all need updating — hand the exact proposed text to the
+    epic owner in `STATUS.md`. Also report whether ADR-0014 / `scheduler-triggers-hld.md`'s
+    "per-workspace cap of 1 until the isolation epic states a multi-run policy" note can now be
+    relaxed, given ADR-0013 D8 states that policy (recommendation: **no** — `workspace_lock: require`
+    makes a cap violation degrade safely, but the cap is still the better default).
+13. **§12.3 mechanism correction (from `T-Wl2Bq7` review C-1).** HLD §12.3's own text describes the
+    checkout-sync fast-forward as `git merge --ff-only <integration_branch>`; the shipped
+    `Orchestrator._sync_checkout` instead calls a new `GitRepo.fast_forward_checkout` (`git read-tree
+    -u -m` + `git update-ref HEAD`, self-verifying ancestry) — a `T-Wl2Bq7` implementation choice
+    (safety-equivalent, verified empirically, approved by review), not a requirement §12.3 itself
+    stated. Update §12.3's text to describe the actual shipped mechanism and record it as an
+    "As-built deviation" per AC-1.
+14. **§6/§11 M7 T2 mechanism correction (from `T-Lr6Ka3` review C-1 rework).** HLD §6.2/§6.4/§11 M7
+    describe the T2 resolver as running against a worktree "left mid-rebase" by T1's own conflict --
+    that is no longer literally true as shipped: `WorktreeManager.ensure()`'s own AC-10c behavior
+    (`T-Wk3Nv6`, unedited) unconditionally aborts any reused worktree it finds mid-rebase, which fires
+    on every T2 redispatch before the resolver agent ever runs. The shipped mechanism instead
+    RE-MATERIALIZES the conflict deterministically at T2 dispatch-prep time
+    (`Integrator.materialize_conflict`, re-rebasing the durable squash onto the current integration
+    head under lock, immediately before dispatch) rather than relying on state surviving from T1.
+    Functionally equivalent (the resolver still finds a genuinely mid-rebase worktree with real
+    conflict markers when it runs) and additionally handles the case where the conflict no longer
+    reproduces (lands directly, skipping T2). Update §6.2/§6.4/§11 M7's text and sequence diagrams to
+    describe re-materialization explicitly and record it as an "As-built deviation" per AC-1; `T-Ib5Qy9`'s
+    own "left mid-rebase for T2" AC is superseded by this, not contradicted (`resume_integration`'s
+    mid-rebase-continuation code path is still what lands it, just entered from a freshly
+    re-materialized state rather than one assumed to have survived).
+
+## Risks
+- Docs drifting from code is the failure this ticket exists to prevent — so "read the ticket and
+  believe it" is the anti-pattern. Every claim is checked against source.
+- Editing `parallel-execution-hld.md` risks scope creep into a shipped document. Keep it to the single
+  cross-reference note.
+- Two sources of truth: the HLD and the ai-epics page. The HLD is the design of record; the ai-epics
+  page is the narrative/evidence log. Do not duplicate content between them.
+
+## Dependencies
+- Upstream: `T-Ee3Mn8-e2e-and-review` (its evidence is this ticket's input).
+- Downstream: none — this closes the epic.
+
+## Pseudocode / Algorithm
+```text
+1. git diff <epic base>..HEAD --stat  -> the authoritative list of what actually changed
+2. For each HLD section, open the named source file and confirm or correct.
+3. Record deviations; refresh line references; update ADR status + implementation notes.
+4. Fill the traceability table from the real test names.
+5. Walk the T4 recovery procedure end to end against a temp repo; fix the docs where it does not work.
+6. Sync every ticket's status; hand the ROADMAP edits to the epic owner.
+```
+
+## Schemas / Interface Notes
+- Interface / API: none.
+- Spec / data schema: none.
+- Triggers / events: none.
+- Artifacts: docs only.
+
+## Handoff Boundary
+- Upstream: the merged epic + `T-Ee3Mn8`'s evidence.
+- Downstream: the epic owner applies the reported `meta/ROADMAP.md` edits.
+
+## Artifacts
+- Docs/comments: `meta/tickets/E-Wk9Tz3-task-isolation/T-Dr5Yq6-docs-refresh/`
+- Large outputs: none
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: Phase-2 amendment. Added the duty to
+  re-verify HLD §24's dispositions against merged code (so the review record cannot rot into a claim),
+  the R-13/S-8 documentation items, an execute-it-don't-describe-it check on the T4 recovery procedure,
+  and an explicit hand-off of the ROADMAP + ADR-0014 cross-epic note to the epic owner. Estimate
+  unchanged at 1 day.
+
+---
+- By: architect · Role: architect · Date: 2026-09-07 · Comment: **Pass 1 executed.** All 14 numbered
+  reconciliation items addressed, plus deviations mined from the epic and per-task `STATUS.md`/`REVIEW.md`
+  records that had never reached this list — chiefly the R-2 disposition being false for an in-repo
+  output (it shipped as a blocking defect), `should_skip`'s gate landing at the engine call site rather
+  than in `runstate.py`, V1-V12's conditional gating, `cross_validate` returning warnings, and the
+  half-shipped S-5/S-7 observability. Recorded as HLD §25 (ten deviations + a known-defective table);
+  six §24 dispositions changed. ADR-0013 → `Accepted / shipped`.
+
+  **Scope changes vs this TASK.md as written**, all directed mid-task and recorded rather than assumed:
+  `meta/ROADMAP.md` and `meta/learnings*.md` moved from "do NOT touch / report only" to **owned**
+  (ROADMAP edits made, not merely proposed; learnings left as explicit placeholders pending the epic
+  owner's input); the epic-level `STATUS.md` and every other ticket's files moved to **do not touch**,
+  so AC-5's epic-wide status sync was **not** performed and is handed to the coordinator in `STATUS.md`
+  instead. AC-5 also assumed 12 tasks; the epic has 14. One extra file was granted for the security-audit
+  documentation duties: `src/agent_orchestrator/templates/instructions/conflict-friendly-coding.md`.
+
+  **AC status.** AC-1 done · AC-2 done · AC-3 done · AC-4 done (recovery procedure executed, and the
+  documented one did not work — recorded as a code defect, not papered over) · **AC-5 reassigned to the
+  coordinator** · AC-6 done (OQ-1..OQ-5 resolved; §20 items 1/3 carried forward with an owner) · AC-7
+  superseded — the ROADMAP edits were made rather than reported · AC-8 **partially**: markdown links
+  checked; `pytest` run but **not green**, and the 16 failures are the in-flight security remediation in
+  `src/`, not this docs-only change (evidence in `STATUS.md`) · AC-9 done · AC-10/10b done · AC-11 done
+  (`ao prune --worktrees-only` and the T4 path both executed against real temp repos) · AC-12 done, with
+  the recommendation that ADR-0014's per-workspace cap of 1 **not** be relaxed · AC-13 done · AC-14 done.
+
+  **Not done, deliberately, pending inputs:** HLD §11 M9's event contract table and all
+  `status.json`/dashboard observability text (marked `NOT YET RECONCILED` in place while `T-Cx4Jf1`
+  Part B is in flight), and the two learnings placeholders. Both are pass 2.

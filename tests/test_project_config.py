@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from agent_orchestrator.cli import app
 from agent_orchestrator.errors import ConfigError
 from agent_orchestrator.project_config import (
+    IsolationConfig,
     ProjectConfig,
     find_project_config,
     load_project_config,
@@ -86,6 +87,93 @@ class TestProjectConfigSchema:
         (byte-identical to pre-task behavior for every existing config file)."""
         cfg = ProjectConfig()
         assert cfg.max_parallel is None
+
+    def test_isolation_absent_is_all_defaults(self) -> None:
+        """E-Wk9Tz3 AC-4: an absent `isolation:` block (every pre-epic config) loads with
+        IsolationConfig()'s all-defaults -- byte-identical to pre-epic behavior."""
+        cfg = ProjectConfig()
+        assert cfg.isolation == IsolationConfig()
+        assert cfg.isolation.mode is None
+        assert cfg.isolation.strict is False
+        assert cfg.isolation.state_dir is None
+        assert cfg.isolation.env == {}
+
+
+# ---------------------------------------------------------------------------
+# IsolationConfig schema tests (E-Wk9Tz3 HLD §11 M9, AC-4)
+# ---------------------------------------------------------------------------
+
+
+class TestIsolationConfigSchema:
+    def test_round_trips_every_field(self) -> None:
+        cfg = IsolationConfig(
+            mode="worktree",
+            strict=True,
+            state_dir="/tmp/ao-state",
+            env={"core": {"CARGO_TARGET_DIR": "/abs/shared/target"}},
+        )
+        assert cfg.mode == "worktree"
+        assert cfg.strict is True
+        assert cfg.state_dir == "/tmp/ao-state"
+        assert cfg.env == {"core": {"CARGO_TARGET_DIR": "/abs/shared/target"}}
+
+    def test_mode_rejects_unknown_literal(self) -> None:
+        with pytest.raises(Exception):
+            IsolationConfig(mode="bogus")  # type: ignore[arg-type]
+
+    def test_mode_rejects_auto_dropped_2026_09_07(self) -> None:
+        """C-1 (2026-09-07 review): "auto" was removed from the valid values -- no
+        `models.py`/HLD constant for an isolation-mode "auto" was ever found; "no override"
+        is now represented by `mode=None`, not a third string value."""
+        with pytest.raises(Exception):
+            IsolationConfig(mode="auto")  # type: ignore[arg-type]
+
+    def test_mode_none_is_the_default_and_a_valid_explicit_value(self) -> None:
+        assert IsolationConfig().mode is None
+        assert IsolationConfig(mode=None).mode is None
+
+    def test_env_none_becomes_empty_dict(self) -> None:
+        cfg = IsolationConfig(env=None)  # type: ignore[arg-type]
+        assert cfg.env == {}
+
+    def test_env_coerces_nested_values_to_str(self) -> None:
+        cfg = IsolationConfig(env={"core": {"MAX": 4}})  # type: ignore[arg-type]
+        assert cfg.env == {"core": {"MAX": "4"}}
+
+    def test_env_non_mapping_raises(self) -> None:
+        with pytest.raises(Exception):
+            IsolationConfig(env="not-a-dict")  # type: ignore[arg-type]
+
+    def test_env_non_nested_mapping_raises(self) -> None:
+        """Each repo id's value must itself be a mapping (VAR -> value), not a bare
+        scalar -- `isolation.env: {core: not-a-dict}` is a config error, not silently
+        coerced."""
+        with pytest.raises(Exception):
+            IsolationConfig(env={"core": "not-a-dict"})  # type: ignore[arg-type]
+
+    def test_load_project_config_parses_full_isolation_block(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".ao" / "config.yaml"
+        _write_config(
+            config_path,
+            "isolation:\n"
+            "  mode: worktree\n"
+            "  strict: true\n"
+            "  state_dir: /tmp/custom-state\n"
+            "  env:\n"
+            "    core:\n"
+            "      CARGO_TARGET_DIR: /abs/shared/target\n",
+        )
+        cfg = load_project_config(config_path)
+        assert cfg.isolation.mode == "worktree"
+        assert cfg.isolation.strict is True
+        assert cfg.isolation.state_dir == "/tmp/custom-state"
+        assert cfg.isolation.env == {"core": {"CARGO_TARGET_DIR": "/abs/shared/target"}}
+
+    def test_load_project_config_rejects_bad_isolation_mode(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".ao" / "config.yaml"
+        _write_config(config_path, "isolation:\n  mode: bogus\n")
+        with pytest.raises(ConfigError):
+            load_project_config(config_path)
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +314,19 @@ class TestScaffoldInit:
         content = (tmp_path / ".ao" / "config.yaml").read_text()
         assert "max_parallel" in content
         assert "AO_MAX_PARALLEL" in content
+
+    def test_file_documents_isolation_block_and_reserved_namespace(self, tmp_path: Path) -> None:
+        """E-Wk9Tz3 AC-4/S-8: the scaffolded template documents every `isolation:` key and
+        states the `ao/` ref-namespace reservation explicitly."""
+        scaffold_init(tmp_path)
+        content = (tmp_path / ".ao" / "config.yaml").read_text()
+        assert "isolation:" in content
+        assert "mode" in content and "AO_ISOLATION" in content
+        assert "strict" in content
+        assert "state_dir" in content
+        assert "env" in content
+        assert "refs/heads/ao/" in content and "reserved" in content.lower()
+        assert "--no-isolation" in content
 
     def test_raises_if_file_already_exists(self, tmp_path: Path) -> None:
         scaffold_init(tmp_path)  # create once

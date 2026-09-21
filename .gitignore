@@ -226,6 +226,11 @@ playground/.tmp/
 # provenance for `ao --version`) — never hand-edited, never committed.
 src/agent_orchestrator/_build_info.py
 
+# Task-isolation worktrees (E-Wk9Tz3): per-task git worktree checkouts created under
+# .claude/worktrees/ at run time (full nested .git, .venv, caches). Runtime state, never
+# committed.
+.claude/worktrees/
+
 # Dashboard frontend (ui/). node_modules is never committed; the BUILT output at
 # src/agent_orchestrator/ui/static/ IS committed on purpose, so that `pip install`
 # and the wheel ship a working dashboard without requiring node at install time.

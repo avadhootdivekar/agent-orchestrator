@@ -77,3 +77,13 @@ markers = [
     "perf: performance envelope checks",
     "swebench: opt-in real network/HF/git SWE-bench tier; set AO_E2E_SWEBENCH=1 to run",
 ]
+
+[tool.coverage.run]
+# E-Wk9Tz3/T-En8Hd4 review (2026-09-07), Investigation B: no [tool.coverage] config
+# existed at all, so `coverage.py` ran with its default (non-thread-aware) tracer even
+# though `engine.py` is `ThreadPoolExecutor`-heavy and this epic adds many concurrent
+# git-subprocess call sites. Not confirmed as the root cause of a reported (and, on
+# re-attempt, non-reproduced) `--cov` slowdown/hang in an unrelated test file -- added as
+# defense-in-depth per the review's own recommendation, verified not to regress the full
+# `--cov` run (still green; see that ticket's STATUS.md for timings).
+concurrency = ["thread"]

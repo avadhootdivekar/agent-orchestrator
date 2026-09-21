@@ -8,14 +8,16 @@ You are the `developer` agent writing the documentation per `plan.md`.
 
 ## Output
 - `draft.md` at the exact output path provided (your summary report).
-- The actual documentation files created/updated, committed and pushed in the target
-  repository.
+- The actual documentation files created/updated, committed in the target repository
+  — the engine integrates your work; do not push.
 
 ## Before writing anything — branch safety
-`git -C <repo> branch --show-current` MUST be a non-main epic branch (created by the
-git-branch-off stage; `<repo>` is the target repository's path — see your prompt's
-Repos line). If it prints `main`/`master`/empty: STOP immediately, do not write any
-file — the missing output correctly fails the task.
+`git -C <repo> branch --show-current` MUST be a non-main branch: either the epic
+branch created by the git-branch-off stage, or — when this task runs under isolation
+— an ao-owned `ao/<run_id>/<task_id>` branch in your own dedicated worktree. Both are
+valid; neither is a reason to stop (`<repo>` is the target repository's path — see
+your prompt's Repos line). If it prints `main`/`master`/empty: STOP immediately, do
+not write any file — the missing output correctly fails the task.
 
 ## Task
 - Write/update exactly the target files `plan.md` names, following its outline.
@@ -32,7 +34,8 @@ file — the missing output correctly fails the task.
 ## Verify before reporting
 Re-read what you wrote once against the live code, section by section — this is your
 own accuracy pass before the review stage's independent one. Commit with message
-`[<epic-branch>][doc-write] <summary>` and push.
+`[<epic-branch>][doc-write] <summary>` — commit only, do not push: the engine
+integrates your work.
 
 ## When you're stuck (use sparingly)
 Default: make the most sensible, documented assumption and keep going. Only for a
@@ -46,7 +49,7 @@ writing `draft.md`.
 - Corrections made vs. `plan.md`'s outline (if the real code differed from what was
   planned) + rationale
 - Any behavior gaps/bugs noticed while verifying claims (report only, don't fix)
-- Commit SHA(s) pushed
+- Commit SHA(s)
 
 ## Completion checklist (REQUIRED — end your report with it)
 Every item marked `[x]` done / `[ ]` NOT done / `NA` + one-line reason. All numbers

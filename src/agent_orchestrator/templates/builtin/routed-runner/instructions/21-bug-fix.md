@@ -10,13 +10,17 @@ cause it identified, not to redesign the surrounding code.
 
 ## Output
 - `fix.md` at the exact output path provided (your report).
-- The fix committed and pushed in the target repository.
+- The fix committed in the target repository — the engine integrates your work; do
+  not push.
 
 ## Before writing any code — branch safety
-`git -C <repo> branch --show-current` MUST be a non-main epic branch (created by the
-git-branch-off stage; `<repo>` is the target repository's path — see your prompt's
-Repos line). If it prints `main`/`master`/empty: STOP immediately — do not write any
-file, do not write your report — the missing output correctly fails the task.
+`git -C <repo> branch --show-current` MUST be a non-main branch: either the epic
+branch created by the git-branch-off stage, or — when this task runs under isolation
+— an ao-owned `ao/<run_id>/<task_id>` branch in your own dedicated worktree. Both are
+valid; neither is a reason to stop (`<repo>` is the target repository's path — see
+your prompt's Repos line). If it prints `main`/`master`/empty: STOP immediately — do
+not write any file, do not write your report — the missing output correctly fails
+the task.
 
 ## Implementation rules
 - Follow `triage.md`'s fix plan. If it's wrong or incomplete once you're in the code,
@@ -33,7 +37,8 @@ file, do not write your report — the missing output correctly fails the task.
 ## Verify before reporting
 - Build the affected area(s) — the build must pass.
 - Run the existing test suites for the areas you touched — no regressions.
-- Commit with message `[<epic-branch>][bug-fix] <summary>` and push.
+- Commit with message `[<epic-branch>][bug-fix] <summary>` — commit only, do not
+  push: the engine integrates your work.
 
 ## When you're stuck (use sparingly)
 Default: make the most sensible, documented assumption and keep going. Only for a
@@ -48,7 +53,7 @@ control/pause.flag` (if that flag already exists from an earlier pause this run,
 - How this resolves the root cause from `triage.md`
 - Deviations from the triage's fix plan (if any) + rationale
 - Build/test commands run and their real results
-- Commit SHA(s) pushed
+- Commit SHA(s)
 
 ## Completion checklist (REQUIRED — end your report with it)
 Every item marked `[x]` done / `[ ]` NOT done / `NA` + one-line reason. All numbers
