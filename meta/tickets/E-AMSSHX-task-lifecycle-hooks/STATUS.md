@@ -59,10 +59,47 @@
   sibling cost/caching epic (same branch thread) touches `_settle_completed_task`/`TaskResult`.
 
 ## Next actions
-1. Delegate implementation (T-AHvmYR models + T-lzQEyy engine/hooks.py + T-DgheoA schema) to
-   `developer`, per the Rev 2 change-scope table (HLD §10).
+1. ~~Delegate implementation~~ DONE — see update below.
 2. Delegate test-writing + full-suite run (T-jI3P4p) to `tester`.
 3. `reviewer` pass on the implementation diff (T-6gR2ya), then late-gate e2e (T-FCC8mT).
+
+## Update 2 — implementation landed (T-AHvmYR, T-DgheoA, T-lzQEyy, T-fbQIFX)
+- By: dev-epic
+- Role: manager
+- Date: 2026-09-21
+- Comment: Delegated the 4 implementation tasks to one `developer` agent (tightly coupled,
+  same small file set — see the change-scope table). Landed as 6 commits: `316214c` (models),
+  `77b2fa2` (schema+cross_validate), `4671e3d` (new `hooks.py`), `11f21e9` (engine.py wiring +
+  T2 suppression in `isolation/escalation.py`), `6e067fc` (example spec+scripts), `edb39c0`
+  (ticket sync). T2 conflict-resolver suppression (the BLOCKING early-gate finding) implemented
+  inside `isolation/escalation.py::build_resolver_dispatch`'s existing `task.model_copy(...)`
+  — the smallest correct location, confirmed by direct read.
+
+  **Independently re-verified (not just trusting the developer's report — read every diff
+  hunk and re-ran the checks myself):**
+  - `git diff --stat 02043ec..HEAD` — 19 files changed, matches the Rev 2 change-scope
+    boundary table exactly (no out-of-scope file touched).
+  - Read `hooks.py` in full, the `engine.py`/`models.py`/`spec.py`/`isolation/escalation.py`
+    diff hunks in full, and both example hook scripts in full — all match the reviewed design
+    (D1-D4, §5-6 failure semantics, the exact 2-of-4 early-return wrapping, the T2 suppression,
+    exit-code-is-truth with exists()-first result-file sequencing).
+  - Re-ran myself (not reusing the developer's numbers): `uv run ruff check .` → "All checks
+    passed!"; `uv run ruff format --check .` → "293 files already formatted"; `uv run python -c
+    "from agent_orchestrator import models, hooks, engine, spec"` → ok; `uv run ao validate
+    --workflow specs/examples/workflow-hooks.json --reposets specs/examples/reposet.json
+    --agents specs/examples/agents.json` → `OK: all specs valid`; `uv run mypy
+    src/agent_orchestrator/` → 4 pre-existing errors, all in untouched `_version.py`, zero in
+    any file this epic touched.
+  - Independently confirmed the one pre-existing full-suite failure
+    (`test_nfr2_regression_gate.py`) predates this epic: `git diff b849b7c b0cb467 --stat --
+    tests/test_e2e_builtin_routed_runner.py` shows commit `b0cb467` ("Ad/task isolation
+    (#11)", the branch's own starting point, landed before `83db1fc` — this epic's first
+    commit) already reformatted that pre-epic test file. Not a regression introduced by this
+    epic.
+  - Full-suite `pytest -q` re-run by dev-epic is in progress; result recorded once complete.
+
+## Risks / Blockers (updated)
+- None found in review of the diff. Full-suite pass count to be confirmed in the next update.
 
 ## Implementation landed (T-AHvmYR, T-DgheoA, T-lzQEyy, T-fbQIFX)
 - By: developer
