@@ -1,0 +1,11 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.1.0, pluggy-1.6.0 -- /usr/avadhoot/mounted/agent-orchestrator/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /usr/avadhoot/mounted/agent-orchestrator
+configfile: pyproject.toml
+plugins: anyio-4.14.2, cov-7.1.0
+collecting ... collected 1 item
+
+tests/test_e2e_cli_cost_caching.py::TestCostCachingE2E::test_run_then_report_timing_and_graded_outcomes PASSED [100%]
+
+============================== 1 passed in 0.77s ===============================
