@@ -75,7 +75,9 @@
   `.claude/skills/workflow-authoring/SKILL.md`.
 - [x] `T-0qMDfU-skills-restructure` — C2 `.claude/skills/` layout + CLAUDE.md table update.
   **Done.**
-- [ ] `T-PLsJdO-worked-example` — C3 worked example spec + real schema validation
+- [x] `T-PLsJdO-worked-example` — C3 worked example spec + real schema validation. **Done** —
+  `specs/examples/workflow-dry-run-flag.json`, `ao validate` exit 0 (twice: module + console
+  entrypoint).
 
 ## Risks and Dependencies
 - Sibling repos (`ao-runner-finplan` etc.) are live, concurrently-modified by other sessions —

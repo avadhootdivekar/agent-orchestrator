@@ -220,10 +220,15 @@ calling it done:
 
 ## Worked example
 
-`specs/examples/workflow-doc-audit.json` (with `specs/examples/instructions/`) is a full worked
-decomposition following this skill's own guidance — read it alongside this skill to see the
-rules above applied to a real, moderately-complex task. Schema/validation evidence for that
-example lives in its own ticket
+`specs/examples/workflow-dry-run-flag.json` (with its `specs/examples/instructions/dryrun-*.md`
+instruction files) is a full worked decomposition following this skill's own guidance — read it
+alongside this skill to see the rules above applied to a real, moderately-complex task ("add
+`ao run --dry-run`"): five sized tasks (design → two parallel, disjoint-output implement tasks →
+test → review), a `pre_hook` precondition on each implement task, a `post_hook` grading pass on
+the test task, and an explicit choice of `isolation: none` (the default) over `worktree` because
+the two parallel `implement-*` tasks' `outputs`/`touches` are disjoint by construction — exactly
+the "Isolation & parallelism" rule above applied, not left implicit. Schema/validation evidence
+for that example lives in its own ticket
 (`meta/tickets/E-DOiDqE-workflow-authoring-skill/T-PLsJdO-worked-example/`).
 
 ---
