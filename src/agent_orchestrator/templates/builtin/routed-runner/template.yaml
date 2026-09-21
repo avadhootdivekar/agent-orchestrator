@@ -59,6 +59,9 @@ assets:
   - source: instructions/
     target: workflows/routed-runner/instructions/
     keep_existing: true
+  - source: agents.recommended.json.tmpl
+    target: agents.recommended.json
+    keep_existing: true
 required_agents:
   - architect
   - architect-opus

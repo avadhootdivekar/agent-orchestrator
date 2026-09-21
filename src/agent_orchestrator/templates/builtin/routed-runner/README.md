@@ -103,6 +103,57 @@ path-generic: each agent gets its concrete paths from its prompt's `Repos`/input
 rather than from anything hardcoded here, so the same instruction set works regardless
 of which repo(s) `repo_set` points at.
 
+## Recommended agent command_template hygiene (`agents.recommended.json`)
+
+This template ships a second workspace-scoped asset, `agents.recommended.json` (materialized at
+the workspace root, `keep_existing: true` — same one-time-seed semantics as `instructions/`
+above). It is a **merge reference, not a live config**: `ao` never reads it directly, and its
+partial, 9-of-11-role coverage would fail `ao validate`'s agent cross-checks if used wholesale.
+Copy the `extra_args` fields you want from its `agents` map into your own `agents.json` (the file
+your `.ao/config.yaml`'s `agents:` field, or `AO_AGENTS`, actually points at).
+
+**What it recommends, and why.** The Claude Code CLI (`ao`'s `claude_cli` executor) has a real
+`--autocompact <auto|tokens>` flag (range `100k`-`1M`) that no `ao-runner-*` workspace currently
+sets — every agent runs on Claude Code's own default `auto` threshold, which scales to the
+model's full context window (~1M for Sonnet 5) and, confirmed against a real 232-turn production
+transcript (context grew ~10K→~280K tokens, cache-read tokens re-billed across those turns summed
+to 42.5M), essentially never fires for realistic task lengths. `agents.recommended.json` seeds
+`"extra_args": ["--autocompact", "200000"]` — **`extra_args`, not `command_template`**: the
+latter fully overrides the base argv `["claude", "-p", "{prompt}"]`, so a recommended
+`command_template` array would force you to discard your own tuning (permission mode, other
+flags) to adopt it; `extra_args` is the field the engine always appends *after*
+`command_template` (`executors/claude_cli.py`), so it merges additively with whatever you already
+have. See `docs-md/template-cost-hygiene-hld.md` for the full growth-curve reasoning behind the
+`200000` default — in short, it fires meaningfully within a realistic complex-task trajectory
+(long before Claude Code's own ~1M-scaled default would), while leaving ample headroom under the
+context window for tasks that never approach it.
+
+**Which roles, and why.** 9 of this template's 11 `required_agents` — `architect`,
+`architect-opus`, `developer`, `full-tester`, `manager`, `market-surveyor`, `reviewer`,
+`reviewer-opus`, `tester` — do long, open-ended, multi-turn agentic work where context genuinely
+grows unbounded. Excluded: `git-operator` (short, few-turn git plumbing, unlikely to ever
+approach the threshold) and `merge-resolver` (short-lived for the same reason, AND a
+security-sensitive T2 dispatch over unreviewed conflict content per this README's own "Parallel
+isolation" S-2 note — compaction's summarization-fidelity risk mid-conflict-resolution is a worse
+trade there than the marginal benefit).
+
+**Drift check (Non-MVP: no `ao validate` warning yet).** A real `ao validate` warning for
+"`agents.json` entries this template's `required_agents` reference are missing `--autocompact`"
+was considered and deliberately deferred — `spec.py`'s `V1`-`V13` cross-validation rules are a
+cohesive, isolation/integration-specific module, and bolting an unrelated agents.json lint onto
+it is exactly the kind of cross-cutting shared-validation change to avoid absent a hard
+requirement. Until/unless that lands, check for drift by hand — point this at whatever your
+`.ao/config.yaml`'s `agents:` field (or `$AO_AGENTS`) actually names:
+
+```bash
+grep -q -- '--autocompact' agents.json \
+  && echo "OK: --autocompact appears somewhere in agents.json" \
+  || echo "MISSING: no --autocompact found -- diff against agents.recommended.json"
+```
+
+(a substring check, not a per-role one — for full coverage, confirm each of the 9 roles above
+carries `--autocompact` somewhere in its own `command_template`/`extra_args`).
+
 ## Task-breakdown contract
 
 The epic route's `task-breakdown` stage (`07-task-breakdown.md`) doesn't know the

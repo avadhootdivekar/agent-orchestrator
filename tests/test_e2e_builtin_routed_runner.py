@@ -191,6 +191,102 @@ class TestRoutedRunnerE2E:
             f"Missing agents: {expected_agents - referenced_agents}"
         )
 
+    def test_agents_recommended_json_scaffolds_and_keep_existing_holds(
+        self, tmp_path: Path
+    ) -> None:
+        """D1 (E-Vt6Lp2): a real `ao new` renders `agents.recommended.json` at the
+        workspace root, and a SECOND real `ao new` (a different instance in the same
+        workspace) never clobbers a hand-edit made to it in between -- proving
+        `keep_existing` end-to-end, not just at the templates-module unit level
+        (test_templates.py's TestAssets already covers that mechanism generically; this
+        proves the real shipped routed-runner asset behaves the same way)."""
+        ws, rs, ag = _make_workspace_for_routed_runner(tmp_path)
+
+        result1 = runner.invoke(
+            app,
+            [
+                "new",
+                "routed-runner",
+                "first-instance",
+                "--param",
+                "repo_set=main",
+                "--param",
+                "type=documentation",
+                "--workspace",
+                str(ws),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+                "--validate-only",
+            ],
+        )
+        assert result1.exit_code == 0, result1.output
+
+        seed_path = ws / "agents.recommended.json"
+        assert seed_path.is_file(), "agents.recommended.json was not scaffolded by ao new"
+        seed_data = json.loads(seed_path.read_text())
+        assert seed_data["version"] == "1.0"
+        assert set(seed_data["agents"]) == {
+            "architect",
+            "architect-opus",
+            "developer",
+            "full-tester",
+            "manager",
+            "market-surveyor",
+            "reviewer",
+            "reviewer-opus",
+            "tester",
+        }
+        for role, spec in seed_data["agents"].items():
+            assert "--autocompact" in spec["extra_args"], role
+            assert "command_template" not in spec, role
+
+        # Hand-edit the seed, as a workspace author tuning it for their own project.
+        seed_data["agents"]["architect"]["extra_args"] = ["--autocompact", "999999"]
+        seed_path.write_text(json.dumps(seed_data))
+        edited_mtime = seed_path.stat().st_mtime
+
+        # A second, real `ao new` call -- a different instance, same workspace.
+        result2 = runner.invoke(
+            app,
+            [
+                "new",
+                "routed-runner",
+                "second-instance",
+                "--param",
+                "repo_set=main",
+                "--param",
+                "type=documentation",
+                "--workspace",
+                str(ws),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+                "--validate-only",
+            ],
+        )
+        assert result2.exit_code == 0, result2.output
+
+        # keep_existing held: the hand-edit survives, byte-for-byte, untouched.
+        reread = json.loads(seed_path.read_text())
+        assert reread["agents"]["architect"]["extra_args"] == ["--autocompact", "999999"]
+        assert seed_path.stat().st_mtime == edited_mtime
+
+        # And the CLI reported it as skipped (already present), not created, on the
+        # second call -- proving the reason it survived is keep_existing, not luck.
+        assert "skipped" in result2.output
+        skipped_line = next(
+            line for line in result2.output.splitlines() if line.strip().startswith("skipped")
+        )
+        assert "agents.recommended.json" in skipped_line
+        created_line = next(
+            (line for line in result2.output.splitlines() if line.strip().startswith("created")),
+            "",
+        )
+        assert "agents.recommended.json" not in created_line
+
     def test_prompt_file_injection_lands_in_prompt_md(self, tmp_path: Path) -> None:
         """Verify --prompt-file writes to the scaffolded prompt.md."""
         ws, rs, ag = _make_workspace_for_routed_runner(tmp_path)
