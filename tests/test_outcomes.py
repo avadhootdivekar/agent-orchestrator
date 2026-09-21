@@ -212,18 +212,14 @@ class TestGradeRun:
         # value grade_run ever produces, but proves the discriminator is genuinely wired
         # through to the hook's own context.json rather than silently dropped.
         workflow = _make_workflow(tmp_path, [sys.executable, "-c", _SIMPLE_HOOK_SCRIPT])
-        state = RunState(
-            **_BASE_KWARGS, tasks={"dispatched": TaskRunState(status="succeeded")}
-        )
+        state = RunState(**_BASE_KWARGS, tasks={"dispatched": TaskRunState(status="succeeded")})
         store = LocalFsArtifactStore(str(tmp_path))
         grades = grade_run(state, workflow, "grade", store, str(tmp_path))
         assert grades[0].outcome.status == "passed"  # settle_reason was "dispatched", not forced
 
     def test_capture_dir_is_run_scoped_not_cycle_nested(self, tmp_path) -> None:
         workflow = _make_workflow(tmp_path, [sys.executable, "-c", _SIMPLE_HOOK_SCRIPT])
-        state = RunState(
-            **_BASE_KWARGS, tasks={"dispatched": TaskRunState(status="succeeded")}
-        )
+        state = RunState(**_BASE_KWARGS, tasks={"dispatched": TaskRunState(status="succeeded")})
         store = LocalFsArtifactStore(str(tmp_path))
         grade_run(state, workflow, "grade", store, str(tmp_path))
         expected = tmp_path / ".orchestrator" / "runs" / "r1" / "dispatched" / "settlement_hook"
