@@ -7,8 +7,7 @@
 - Created: 2026-09-21
 - Last Updated: 2026-09-21 (post early-gate redesign — see `docs-md/adr/
   ADR-0015-prompt-cache-scope-and-post-run-grading.md`)
-- Status: `In Progress` (B1/B3 Done; B2/B4 backend Done, frontend/activity-breakdown delegated
-  and in progress)
+- Status: `In Progress` (all four implementation tasks Done; late-gate `T-UJElTR` running)
 
 ## Summary
 - Goal: (1) Audit and, if real, fix Claude prompt-caching leaks across per-task isolated
@@ -34,15 +33,15 @@ table. Summary:
 
 ## Task List
 - [x] `T-lue4Rz-prompt-caching-audit` — B1: audit + opt-in fix + tests — **Done**
-- [ ] `T-J1b0FN-timing-profiling` — B2: top-N slowest (Done) + activity breakdown (delegated,
-      in progress)
+- [x] `T-J1b0FN-timing-profiling` — B2: top-N slowest + activity breakdown (delegated,
+      landed `9eb4e12`) — **Done**
 - [x] `T-Ar8HJF-outcome-accuracy-metrics` — B3: local counts + grading script + post-run
       settlement grading (redesigned per ADR-0015 decision 2, zero `engine.py` changes) —
       **Done**
-- [ ] `T-h1KdlK-dashboard-cache-visibility` — B4: backend (Done) + frontend (delegated, in
-      progress)
+- [x] `T-h1KdlK-dashboard-cache-visibility` — B4: backend + frontend (delegated, landed
+      `35cffaf`/`9edc02b`) — **Done**
 - [ ] `T-UJElTR-e2e-verification` — late-gate e2e demonstration + full suite + ruff/mypy —
-      blocked on the two in-progress tasks above
+      all four implementation tasks landed; running this gate now
 
 ## Risks and Dependencies
 - Depends on Epic A (`E-AMSSHX-task-lifecycle-hooks`), already landed on this branch — `post_hook`

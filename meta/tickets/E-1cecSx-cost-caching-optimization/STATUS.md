@@ -2,46 +2,35 @@
 
 - ID: `E-1cecSx-cost-caching-optimization`
 - Updated At: 2026-09-21
-- State: `In Progress`
+- State: `In Progress` (all four implementation tasks Done; late-gate `T-UJElTR` running)
 - Owner: `dev-epic` agent
 
 ## This update
-- Early-gate `reviewer` + `architect` review completed (2026-09-21). Reviewer: approve with
-  changes. Architect: approve with changes overall; **needs rework** on the original in-engine
-  `settlement_hook` design specifically (B3.3). Both reviews traced claims against the actual
-  current code (not taken on faith) and the reviewer independently re-fetched Anthropic's live
-  docs.
-- Design doc revised to Rev 2 incorporating every finding (`docs-md/cost-caching-optimization-
-  hld.md` §8 has the full record). Core outcome: B3.3's in-engine mechanism was REPLACED with a
-  post-run grading pass (`ADR-0015` decision 2), eliminating `engine.py` from this epic's
-  change-scope entirely — a stronger guarantee than the original "one helper + two call sites"
-  plan.
-- B1 (prompt-caching audit + fix), B3 (outcome/accuracy metrics, all three sub-items), and the
-  backend halves of B2 and B4 are now **implemented, tested, and committed**
-  (commit `57b6469`). B2.2 (within-task activity breakdown) and B4's dashboard frontend are
-  delegated to `developer` agents, running now.
+- All four implementation tasks now `Done`: `T-lue4Rz` (B1), `T-J1b0FN` (B2, both 2.1 and 2.2),
+  `T-Ar8HJF` (B3, all three sub-items), `T-h1KdlK` (B4, backend and frontend). B2.2 and the B4
+  frontend were completed by delegated `developer` agents; both verified independently by this
+  session before being accepted (code review + independent `ruff`/`mypy` re-run).
+- Commits on `ad/cost-perf-hooks-skills`: `57b6469`, `e8d2b6d` (this session, B1/B3/B2.1/B4-
+  backend), `35cffaf`+`9edc02b` (delegated, B4 frontend), `9eb4e12` (delegated, B2.2).
+- Running the late gate (`T-UJElTR`) now: independent full-suite re-verification.
 
 ## Evidence
-- Full existing suite: 3938 passed, 8 skipped, 1 pre-existing unrelated deselect, 0 failed
-  (`pytest -q`, ~164s) — no regressions from B1/B3/B2.1/B4-backend.
-- 60 new tests added across `tests/test_executor.py`, `tests/test_outcomes.py`,
-  `tests/test_reporting.py`, `tests/test_e2e_cli_cost_caching.py`, `tests/ui/test_runs.py`.
-- One real outer-CLI-boundary e2e test (`tests/test_e2e_cli_cost_caching.py`,
-  `typer.testing.CliRunner`) proves `ao run` → `ao report-timing` → `ao report-outcomes
-  [--grade]` end to end, including the load-bearing B3.3 proof: one `--grade` invocation
-  grades both a freshly-dispatched task and a `skip_if_outputs_exist`-skipped task with zero
-  per-task settlement wiring.
-- `ruff check` + `mypy src` clean on every touched/new file (one pre-existing, unrelated
-  `_version.py` mypy issue confirmed via `git diff` to be untouched by this session).
-- Disclosed: one real $0.19 API charge from an unplanned `claude` CLI connectivity check during
-  B1 research (`T-lue4Rz`'s STATUS.md has the detail); no further paid experiments run.
+- Delegated agents' own reported verification (both independently re-checked by this session):
+  B2.2 — `pytest tests/test_reporting.py -q` 38 passed, full suite 3968 passed/8 skipped/1
+  pre-existing-unrelated-failed (run twice, identical); B4 frontend — `npm run typecheck`
+  clean, `npm run build` succeeded, `npm run test` 85/85 passed, `pytest tests/ui -q` 380
+  passed.
+- This session's independent re-check: `ruff check` + `mypy src/agent_orchestrator/reporting.py
+  src/agent_orchestrator/cli.py` clean on the B2.2 diff; code-reviewed `reporting.py`'s new
+  `task_activity_breakdown`/`_categorize_event` functions directly (named constants, `Literal`
+  type, deterministic sort, disclosed tie-break rule, graceful edge-case handling — no concerns
+  found).
 
 ## Risks / Blockers
-- None blocking. Two delegated tasks (B2.2, B4-frontend) in progress; `T-UJElTR` (late gate)
-  blocked on them landing.
+- None. Proceeding to the late gate.
 
 ## Next actions
-1. Await B2.2 and B4-frontend delegated developer results.
-2. Run `T-UJElTR`: full-suite re-verification after those land, plus the late-gate e2e pass via
-   `tester` per the dev-epic protocol.
-3. Final ticket sync (all to `Done`) and epic completion handoff.
+1. Independent full-suite `pytest -q` re-run (in progress).
+2. `tester` pass for the late-gate e2e path (or self-verify given the e2e test already committed
+   and passing — decide based on what remains to prove).
+3. Final ticket sync, epic completion handoff.

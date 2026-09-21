@@ -168,6 +168,13 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
     "tests/test_executor.py": (
         "additive (as-built security fix, C-1): `_apply_tool_policy` forced-tools-union coverage"
     ),
+    # Additive only (two new test methods appended to the existing TestDetail class; no
+    # pre-existing assertion touched): E-1cecSx B4 wired TaskStat.cache_read_tokens/
+    # .cache_creation_tokens/.cache_hit_rate into RunRepository.detail() (ui/runs.py) --
+    # this is the first backend contract-test coverage for those fields.
+    "tests/ui/test_runs.py": (
+        "additive (E-1cecSx B4): TaskStat cache-effectiveness field coverage"
+    ),
 }
 
 
