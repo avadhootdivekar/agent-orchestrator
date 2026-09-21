@@ -957,3 +957,37 @@ By: manager
 Role: manager
 Date: 2026-09-11
 ---
+
+---
+Learning-ID: LRN-20260921-claude-code-cache-scope-two-mechanisms
+Learning: Claude Code's prompt cache is invalidated by TWO independent per-session mechanisms —
+  (1) working-directory/environment-info/memory-paths embedded in the default system prompt
+  (mitigated by the `--exclude-dynamic-system-prompt-sections` CLI flag / `excludeDynamicSections`
+  SDK option), and (2) a separate "git status snapshot" (branch + recent commits) carried by
+  sequential sessions. Fixing (1) does NOT fix (2); a per-task-worktree isolation scheme that
+  also gives each task its own git branch (common for squash/rebase integration models) still
+  misses the cache via mechanism (2) even after opting into the flag.
+Context: E-1cecSx (cost-caching-optimization) audited a suspected ao-side prompt-cache leak
+  across `isolation: worktree` tasks, found ao's own fed content byte-stable, and traced the
+  real cause to Claude Code's own docs (`code.claude.com/docs/en/prompt-caching` "Cache scope"
+  section) — which name both mechanisms in the same paragraph as genuinely separate causes.
+By: agent
+Role: agent
+Date: 2026-09-21
+---
+
+---
+Learning-ID: LRN-20260921-post-run-pass-beats-in-engine-settlement-hook
+Learning: A "grade/observe every task regardless of skip/resume" feature is usually safer and
+  simpler as a POST-RUN pass over already-persisted run state than as a new in-engine trigger
+  point threaded into the dispatch/settle functions. An in-engine version risks firing before
+  the task's truly final status is set, grading a stale/already-released isolated workspace,
+  and blocking the main dispatch thread against parallel execution — a post-run pass structurally
+  avoids all three since it runs once, after everything (including any end-of-run sync) settles.
+Context: E-1cecSx's original `TaskSpec.settlement_hook` design (two new engine.py call sites)
+  got a "needs rework" verdict at early-gate architect review for exactly these three defects;
+  replaced with `ao report-outcomes --grade`, a CLI-only pass with zero engine.py changes.
+By: agent
+Role: agent
+Date: 2026-09-21
+---

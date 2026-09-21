@@ -311,3 +311,19 @@ type: pitfall
 ---
 
 `ProcessSupervisor.reconcile()` sets `finished_at` on every persisted record whose PID is no longer alive, and persists that. **Why**: a test that fabricates a "still running" launch with a reaped PID (the usual `_dead_pid()` helper) has it silently marked finished before the code under test ever sees it — so the test exercises the opposite branch from the one it names and passes for the wrong reason. This bit a boot-resume liveness-suppression test that was asserting no-candidate for the wrong reason entirely. **Apply**: when a fixture record must read as genuinely alive, give it a real live PID (`os.getpid()`); reserve `_dead_pid()` for records that should be treated as finished. See `tests/service/test_boot_resume_record_merge.py`'s `_persist(..., pid=os.getpid())`.
+
+---
+name: claude-code-cache-scope-two-mechanisms
+description: Claude Code's prompt cache misses across per-session directories via TWO separate mechanisms; fixing one doesn't fix the other
+type: constraint
+---
+
+Claude Code's default system prompt embeds per-session working-directory/environment-info/memory-paths (moved out of the cached prefix by `--exclude-dynamic-system-prompt-sections` / SDK `excludeDynamicSections`), and SEPARATELY, sequential sessions only share a cache entry when a "git status snapshot" (branch + recent commits) also matches. **Why**: these are named as two distinct cache-scope determinants in Claude Code's own docs (`code.claude.com/docs/en/prompt-caching` "Cache scope") — opting into the dynamic-sections flag does not address the branch/commit component at all. **Apply**: before claiming a prompt-cache fix "restores sharing" across per-task git worktrees (or any per-session-distinct-branch scheme), check whether the fix addresses BOTH mechanisms or only the first — a per-task-isolated workflow that also gives each task its own branch (common for squash/rebase integration) likely still misses the cache via the second mechanism even with the flag on. Confirming which requires a real, paid A/B `claude` CLI dispatch; don't assert either way without one.
+
+---
+name: post-run-pass-over-in-engine-settlement-hook
+description: Prefer a post-run reporting pass over a new in-engine dispatch/settle hook for "observe every task regardless of skip/resume" features
+type: decision
+---
+
+For a feature that must observe/grade every task in a run regardless of whether it was freshly dispatched, skipped (`skip_if_outputs_exist`), or resumed, prefer a POST-RUN pass over already-persisted run state (reading `RunState`, resolving needed context from the task spec, e.g. a CLI report/grading command) over threading a new trigger point into the engine's dispatch/settle functions. **Why**: an in-engine version risks firing before a task's TRULY final status is set (later code paths — e.g. dynamic-injection/loop-gate failures — can still downgrade success to failure after an early "settled" checkpoint), risks grading an isolated task's already-released/unsynced worktree (stale content), and blocks the dispatching thread against parallel execution (unlike per-worker-thread hooks). A post-run pass runs once, after everything (including any end-of-run artifact sync) has genuinely settled, avoiding all three structurally rather than by careful placement. **Apply**: when scoping a new "fires for every task, including skipped ones" hook/observer feature, default to a post-run/report-time design; only justify an in-engine trigger point if a genuinely live, mid-run signal is required (and then budget real engine-review time for exactly these three failure modes).
