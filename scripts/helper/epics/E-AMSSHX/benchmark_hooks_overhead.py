@@ -27,7 +27,7 @@ from agent_orchestrator.models import (
     WorkflowDefaults,
     WorkflowSpec,
 )
-from agent_orchestrator.monitoring import Monitor
+from agent_orchestrator.monitoring import HealVerdict, Monitor
 from agent_orchestrator.runstate import RunStateStore
 
 
@@ -40,7 +40,7 @@ class _NoOpMonitor(Monitor):
         raise AssertionError("not used")
 
     def decide_task_failure(self, summary, *, run_id):  # type: ignore[no-untyped-def]
-        return self.AcceptanceDecision(action="accept_failure")
+        return HealVerdict(decision="accept_failure")
 
 
 def _make_workspace(tmp_path: str) -> tuple[LocalFsArtifactStore, RunStateStore]:
