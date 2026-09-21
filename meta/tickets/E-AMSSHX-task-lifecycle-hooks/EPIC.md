@@ -6,7 +6,7 @@
 - Owner: dev-epic (this agent), implementation delegated to developer/tester/reviewer subagents
 - Created: 2026-09-21
 - Last Updated: 2026-09-21
-- Status: In Progress
+- Status: Done
 
 ## Summary
 - Goal: give the orchestrator engine a config-driven, opt-in `pre_hook` / `post_hook` per task —
@@ -109,7 +109,9 @@
   dev-epic found and fixed 4 test bugs before accepting (see its STATUS.md). (FR-1..FR-6, FR-8)
 - [x] `T-FCC8mT-e2e-verification` — late-gate: 2 real scenarios run via the real `ao` binary
   (happy path + a post_hook gating downgrade), evidence under `output/`. (FR-7)
-- [ ] `T-6gR2ya-review-and-hardening` — reviewer pass on the implementation diff + any fixes.
+- [x] `T-6gR2ya-review-and-hardening` — reviewer approved production code outright; found 1
+  BLOCKING + 1 non-blocking test-suite gap (both fixed by dev-epic with negative-control
+  verification). (cross-cutting)
 
 ## Risks and Dependencies
 - engine.py is a large (~4000-line), heavily-conventioned file with many existing invariants

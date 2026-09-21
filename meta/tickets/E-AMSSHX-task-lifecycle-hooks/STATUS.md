@@ -131,3 +131,54 @@
 ## Remaining scope
 - T-jI3P4p (unit/integration tests), T-FCC8mT (late-gate e2e), T-6gR2ya (review/hardening)
   are unchanged, separately delegated tasks -- not attempted here.
+
+## Update 3 — reviewer pass complete, all findings fixed, epic DONE
+- By: dev-epic
+- Role: manager
+- Date: 2026-09-21
+- Comment: `reviewer` (T-6gR2ya) ran against the full implementation + test diff, independently
+  re-reading every touched hunk and re-running the specified pytest subset (201 passed). Verdict:
+  production code (`hooks.py`, `engine.py`, `models.py`, `spec.py`, `isolation/escalation.py`)
+  sound with no BLOCKING defects across all 6 ACs (byte-identical hookless behavior, HLD §6
+  early-return wiring, never-raises contract, NFR-1 paths-only, T2/T3 suppression, no magic
+  literals/duplication). One BLOCKING finding, test-suite only: the FR-4 no-op proof
+  (`TestHookNoOpWhenNone`) was vacuous — patched `hooks.run_hook` but never actually ran any
+  orchestrator code inside the `with` block, so it passed unconditionally. One non-blocking
+  finding: an AC-11 self-heal test asserted a field that's set regardless of whether self-heal
+  ever fired.
+
+  Both fixed directly by dev-epic (commits `2032e3d`, `c447526`), each verified with a genuine
+  negative control (temporarily broke the invariant the test claims to protect, confirmed the
+  test fails, reverted, confirmed green again) — not just "it passes now." One process note: the
+  first attempt at the non-blocking fix was accidentally discarded by a `git checkout --` used to
+  clean up an unrelated negative-control script edit (uncommitted work, not yet staged) — caught
+  immediately, redone, and committed right away this time rather than leaving fixes uncommitted
+  across cleanup commands.
+
+  Full suite re-verified one final time after every fix in this epic: `pytest -q -m "not
+  real_llm and not swebench"` → **3898 passed, 1 failed (the same pre-existing,
+  epic-unrelated `test_nfr2_regression_gate.py` failure, independently confirmed to predate this
+  epic in an earlier update), 1 skipped, 7 deselected**. `ruff check .`/`ruff format --check .`
+  clean; `mypy src` (the actual CI gate) clean except 4 pre-existing `_version.py` errors.
+
+  **All 7 tasks now Done. Epic complete.**
+
+## Evidence (epic-level summary)
+- Design: `docs-md/task-lifecycle-hooks-hld.md` (Rev 2, reviewed).
+- Tickets: `meta/tickets/E-AMSSHX-task-lifecycle-hooks/` (epic + 7 tasks, all Done).
+- Production code: `src/agent_orchestrator/{models.py,hooks.py,engine.py,spec.py,
+  isolation/escalation.py}`, `specs/workflow.schema.json`.
+- Example: `specs/examples/workflow-hooks.json` + `specs/examples/hooks/*.py`.
+- Tests: `tests/{test_hooks.py,test_engine_hooks.py,test_engine_hooks_resolver.py,
+  test_hooks_schema_validation.py}` (66 new tests, all independently verified genuine).
+- Benchmark: `scripts/helper/epics/E-AMSSHX/benchmark_hooks_overhead.py`.
+- Late-gate e2e: `scripts/helper/epics/E-AMSSHX/e2e_hooks_demo.py` +
+  `output/E-AMSSHX-task-lifecycle-hooks/{scenario1-happy-path,scenario2-gating-post-hook}/`.
+- Final full-suite result: 3898 passed / 1 pre-existing unrelated failure / 1 skipped /
+  7 deselected.
+
+## Risks / Blockers
+- None outstanding.
+
+## Next actions
+- None — epic complete. See final dev-epic handoff message for the full pre-close checklist.

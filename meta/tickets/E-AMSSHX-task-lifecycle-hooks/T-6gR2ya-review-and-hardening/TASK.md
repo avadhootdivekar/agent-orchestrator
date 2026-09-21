@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-6gR2ya-review-and-hardening`
 - Epic ID: `E-AMSSHX-task-lifecycle-hooks`
-- Owner: reviewer (delegated)
+- Owner: reviewer (delegated), fixes applied by dev-epic
 - Created: 2026-09-21
 - Last Updated: 2026-09-21
-- Status: Draft
+- Status: Done
 - Estimate: < 1 day
 
 ## Requirements Mapping
