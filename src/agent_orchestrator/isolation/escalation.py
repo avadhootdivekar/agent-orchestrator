@@ -401,6 +401,15 @@ def build_resolver_dispatch(
     ladder never reaches this function without both being true. `engine.py`'s call site
     still guards defensively (a directly-injected test-double `escalation_hook` could set
     ``mode == "resolve"`` without going through `escalate()` at all).
+
+    E-AMSSHX (task lifecycle hooks) BLOCKING early-gate finding, both reviews independently:
+    the resolver's copy explicitly clears ``pre_hook``/``post_hook`` -- a resolver dispatch
+    runs a DIFFERENT agent doing conflict resolution, not the task's own work, and by design
+    never produces ``task.outputs`` (AC-6/AC-7), so a task's declared hooks must never fire
+    against it (a grading post_hook would grade a merge resolution as the task's output; a
+    ``fail_task`` policy could stall the ladder). T3 rerun (`build_rerun_task` below) is
+    deliberately NOT touched -- it redispatches the ORIGINAL agent doing the task's real work
+    again, so hooks must fire normally there.
     """
     resolver_id = spec.resolver_agent
     assert resolver_id is not None and resolver_id in agents
@@ -411,6 +420,8 @@ def build_resolver_dispatch(
             "agent": resolver_id,
             "instruction": instruction_relpath,
             "inputs": [*task.inputs, manifest_relpath],
+            "pre_hook": None,
+            "post_hook": None,
         }
     )
     merged_env = {**(env_overlay or {}), **resolver_env(spec)}
