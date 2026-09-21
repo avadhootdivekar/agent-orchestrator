@@ -2,7 +2,7 @@
 
 - ID: `T-buzXEz-author-skill`
 - Updated At: `2026-09-21`
-- State: In Progress (content drafted; early-gate review pending)
+- State: Done
 - Owner: dev-epic
 
 ## This update

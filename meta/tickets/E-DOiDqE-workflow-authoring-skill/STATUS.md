@@ -2,7 +2,7 @@
 
 - ID: `E-DOiDqE-workflow-authoring-skill`
 - Updated At: `2026-09-21`
-- State: In Progress
+- State: Done
 - Owner: dev-epic
 
 ## This update
