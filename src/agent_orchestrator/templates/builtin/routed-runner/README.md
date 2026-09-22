@@ -115,24 +115,32 @@ your `.ao/config.yaml`'s `agents:` field, or `AO_AGENTS`, actually points at).
 **What it recommends, and why.** The Claude Code CLI (`ao`'s `claude_cli` executor) has a real
 `--autocompact <auto|tokens>` flag (range `100k`-`1M`) that no `ao-runner-*` workspace currently
 sets — every agent runs on Claude Code's own default `auto` threshold, which scales to the
-model's full context window (~1M for Sonnet 5) and, confirmed against a real 232-turn production
-transcript (context grew ~10K→~280K tokens, cache-read tokens re-billed across those turns summed
-to 42.5M), essentially never fires for realistic task lengths. `agents.recommended.json` seeds
-`"extra_args": ["--autocompact", "200000"]` — **`extra_args`, not `command_template`**: the
+model's full context window (~1M for Sonnet 5) and essentially never fires for realistic task
+lengths (confirmed against real production transcripts — see
+`docs-md/template-cost-hygiene-hld.md` §3 for the full growth-curve data). `agents.recommended.json`
+seeds `"extra_args": ["--autocompact", "<value>"]` — **`extra_args`, not `command_template`**: the
 latter fully overrides the base argv `["claude", "-p", "{prompt}"]`, so a recommended
 `command_template` array would force you to discard your own tuning (permission mode, other
 flags) to adopt it; `extra_args` is the field the engine always appends *after*
 `command_template` (`executors/claude_cli.py`), so it merges additively with whatever you already
-have. See `docs-md/template-cost-hygiene-hld.md` for the full growth-curve reasoning behind the
-`200000` default — in short, it fires meaningfully within a realistic complex-task trajectory
-(long before Claude Code's own ~1M-scaled default would), while leaving ample headroom under the
-context window for tasks that never approach it.
+have.
 
-**Which roles, and why.** 9 of this template's 11 `required_agents` — `architect`,
-`architect-opus`, `developer`, `full-tester`, `manager`, `market-surveyor`, `reviewer`,
-`reviewer-opus`, `tester` — do long, open-ended, multi-turn agentic work where context genuinely
-grows unbounded. Excluded: `git-operator` (short, few-turn git plumbing, unlikely to ever
-approach the threshold) and `merge-resolver` (short-lived for the same reason, AND a
+**Two thresholds, split by role (Rev 2).** A broader real-data sample (§3.4 of the design doc)
+found that ordinary 25–60 minute dev-cycle tasks routinely reach 290K–424K peak context, not just
+a rare long-tail outlier — so a single uniform threshold isn't the right shape:
+
+- `architect`, `architect-opus`, `reviewer-opus` → **`500000`**. These are the architecture/design
+  roles (`reviewer-opus` is dispatched only at `design-review`, i.e. reviewing the design, not a
+  code diff) — genuinely broader-context synthesis work, so they get more headroom before
+  compaction risks losing load-bearing design detail.
+- `developer`, `full-tester`, `manager`, `market-surveyor`, `reviewer` (plain — code review, at
+  `bug-review`/`task-review`/`doc-review`), `tester` → **`180000`**. Narrower, more
+  repetitive-shaped dev-cycle work, where the broader sample shows the threshold will fire on most
+  substantive tasks regardless of the exact value — set more assertively since each individual
+  compaction is lower-stakes.
+
+Excluded from both groups: `git-operator` (short, few-turn git plumbing, unlikely to ever
+approach either threshold) and `merge-resolver` (short-lived for the same reason, AND a
 security-sensitive T2 dispatch over unreviewed conflict content per this README's own "Parallel
 isolation" S-2 note — compaction's summarization-fidelity risk mid-conflict-resolution is a worse
 trade there than the marginal benefit).

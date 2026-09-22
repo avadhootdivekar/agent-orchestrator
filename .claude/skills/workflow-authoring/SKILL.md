@@ -184,7 +184,7 @@ section is what to actually DO when authoring a workflow/agent config).
 | You're deciding... | Rule of thumb |
 |---|---|
 | "Our cache hit rate is 98%+, are we fine?" | Not necessarily — see #1. A high ratio can still mean tens of millions of re-billed tokens on one long task. |
-| Should agents set `--autocompact`? | Yes, explicitly, in `command_template`/`extra_args` — don't rely on Claude Code's own default. See #2. |
+| Should agents set `--autocompact`? | Yes, explicitly, via `extra_args` (never `command_template`, which overrides rather than merges) — don't rely on Claude Code's own default. See #2. |
 | Instruction says "find the relevant design doc" vs. names the exact path | Name the exact path. See #3. |
 | One big workspace-root `CLAUDE.md`, or several package-scoped ones? | Package-scoped, if your codebase has real bounded-context packages. See #4. |
 
@@ -201,10 +201,15 @@ section is what to actually DO when authoring a workflow/agent config).
    essentially never triggers for realistic task lengths — a ~280K-token task is nowhere near a
    ~1M-token auto-threshold). The `routed-runner` template ships a concrete, copy-pasteable
    mechanism for this: `agents.recommended.json` (materialized at your workspace root on first
-   `ao new`) seeds `"extra_args": ["--autocompact", "200000"]` for the roles that do long,
-   multi-turn agentic work — see that template's README ("Recommended agent command_template
-   hygiene") and `docs-md/template-cost-hygiene-hld.md` for the full growth-curve justification
-   of `200000`. Use `extra_args`, not `command_template`, for this flag — `command_template`
+   `ao new`) seeds `"extra_args": ["--autocompact", "<value>"]`, split by role rather than one
+   uniform number — `500000` for the architecture/design roles (`architect`, `architect-opus`,
+   `reviewer-opus`), `180000` for dev-cycle roles (`developer`, `full-tester`, `manager`,
+   `market-surveyor`, `reviewer`, `tester`), since a broader real-data sample showed ordinary
+   dev-cycle tasks (25-60 min) routinely reaching 290K-424K peak context — not just the rare
+   long-tail task — while design-synthesis work genuinely needs more headroom before compaction
+   risks losing load-bearing detail. See that template's README ("Recommended agent
+   command_template hygiene") and `docs-md/template-cost-hygiene-hld.md` §3.4 for the full
+   justification. Use `extra_args`, not `command_template`, for this flag — `command_template`
    fully overrides the base argv, so adding a flag there means replacing your whole array instead
    of merging one flag into what you already have.
 3. **Front-load stable, static reference content over letting the agent discover it.** Static

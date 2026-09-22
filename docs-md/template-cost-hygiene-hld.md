@@ -113,11 +113,28 @@ workspace to discard its own tuning (`--permission-mode`, other flags) to adopt 
 recommendation. `extra_args` is the field the engine unconditionally appends *after*
 `command_template`, designed exactly for this additive case.
 
-### 2.3 Role split: 9 of 11
+### 2.3 Role split: 9 of 11, then split again by threshold (Rev 2)
 
 Included (long, open-ended, multi-turn agentic work where context genuinely grows unbounded):
 `architect`, `architect-opus`, `developer`, `full-tester`, `manager`, `market-surveyor`,
 `reviewer`, `reviewer-opus`, `tester`.
+
+**Rev 2 (post-launch refinement, see §3.4): these 9 do not share one threshold.** Split into two
+groups by what the role's task actually does in `workflow.json.tmpl`:
+
+- **Architecture/design roles → `500,000`**: `architect`, `architect-opus`, `reviewer-opus`. The
+  `reviewer-opus` role is dispatched exclusively at the `design-review` task — reviewing the
+  *architecture/design*, not a code diff — which is why it sits in this group despite the generic
+  "reviewer" name. These stages (`design-draft`, `design-review`, `design-final`,
+  `task-breakdown`) synthesize across the widest span of context the template asks any role to
+  hold at once (requirements, prior design iterations, survey findings), so they get materially
+  more headroom before compaction.
+- **Dev-cycle roles → `180,000`**: `developer`, `full-tester`, `manager`, `market-surveyor`,
+  `reviewer` (plain — dispatched at `bug-review`/`task-review`/`doc-review`, i.e. code review, not
+  design review), `tester`. §3.4's broader real-data sample shows these roles' actual tasks
+  commonly exceed 200K–400K peak context even at ordinary (25–60 min) durations — not just in a
+  rare long-tail outlier — which is the direct evidence for setting their threshold more
+  assertively than the original single-anchor `200,000`.
 
 Excluded:
 - `git-operator` — short, few-turn git plumbing, unlikely to ever approach a 200K-token
@@ -164,9 +181,9 @@ actual `ao` behavior; the architect's collision concern is hypothetical for a si
 repo, and this epic's own mandate is explicitly "consolidate to one template," not "prepare for
 a second one." If/when the template library grows, naming should be revisited then.
 
-## 3. The `--autocompact` default: `200000`, justified in real numbers
+## 3. The `--autocompact` default: `500000` / `180000` split, justified in real numbers
 
-### 3.1 The anchor data
+### 3.1 The anchor data (original, single-task)
 
 One real production task attempt: 232 assistant turns, conversation grew from ~10,000 to
 ~280,000 tokens, and `cache_read_input_tokens` summed across those 232 turns totaled **42.5
@@ -203,24 +220,63 @@ lever** (fires often on realistic tasks, carries the epic-scoped-out compaction-
 a **safety net** (set near/above the observed ~280K peak, rarely fires, near-zero risk and
 near-zero savings) — and recommended safety-net framing for MVP.
 
-**Decision: kept the hygiene-lever framing, `200,000`.** A safety-net threshold near 280K would
-barely ever trigger on the *exact* trajectory this epic was asked to anchor against (per the
-epic's own instruction: "a value in the range the real 232-turn/280K-token example suggests is a
-reasonable anchor" and "essentially never triggers for realistic task lengths" was explicitly
-named as the problem with Claude Code's own current default). A near-280K threshold would
-reproduce that exact inadequate status quo rather than fix it. `200,000` triggers at ~70% through
-a realistic complex-task trajectory — well past the point where a task is clearly still a normal,
-smaller one (so short/typical tasks essentially never trigger it — no compaction overhead or
-detail loss on the common case), but early enough on a genuinely long trajectory to meaningfully
-reduce the accumulating cache-read volume in the (disproportionately expensive) tail of the task.
-It stays comfortably inside the documented `100k`-`1M` valid range and leaves ample headroom
-below Sonnet 5's ~1M window for a workspace that wants to raise it per-role.
+**Decision (original): kept the hygiene-lever framing, `200,000`.** A safety-net threshold near
+280K would barely ever trigger on the *exact* trajectory this epic was asked to anchor against
+(per the epic's own instruction: "a value in the range the real 232-turn/280K-token example
+suggests is a reasonable anchor" and "essentially never triggers for realistic task lengths" was
+explicitly named as the problem with Claude Code's own current default). A near-280K threshold
+would reproduce that exact inadequate status quo rather than fix it. `200,000` stays comfortably
+inside the documented `100k`-`1M` valid range and leaves ample headroom below Sonnet 5's ~1M
+window for a workspace that wants to raise it per-role — which §3.4 below does.
 
-**Disclosed risk (already recorded in `EPIC.md`, restated here for completeness):** whether
-Claude Code's compaction summary preserves enough fidelity for a long agentic task to keep
-succeeding is explicitly OUT of this epic's scope to validate. This epic propagates the flag's
-*availability* as a documented, easily-adopted lever — a workspace adopting it should watch its
-own task success rate, per the skill's own framing (D2, "Cost & context hygiene" §2).
+### 3.4 Rev 2: broader real-data sample overturns the "long tail only" framing, motivates the role split
+
+The original §3.1 anchor was ONE task's transcript, picked because it was the run's single
+longest task (401.5 min total, 232-turn/280K-token attempt analyzed). Framed as the long-tail
+case autocompact exists to catch. A follow-up sample across the FULL duration distribution of
+real `ao-runner-finplan` production tasks (peak context per task, not just the one outlier)
+overturned that framing:
+
+| task | duration | peak context (max single-turn `cache_read_input_tokens`) |
+|---|---|---|
+| `classify` (router) | 1.0 min | 39,045 |
+| `test2-t01-feature-flags-config` | 25.7 min | 291,353 |
+| `test2-t14-fits-backtest` | 41.6 min (~median) | 424,056 |
+| `test1-t18-category-rules-crud` | 56.7 min | 417,345 |
+| `test1-t15-schedule-cash-path` (the original §3.1 anchor) | 401.5 min | 280,188 |
+
+**This is not a rare long-tail pattern.** Ordinary 25–60 minute dev-cycle tasks (a large share of
+all real tasks — duration-distribution sampling across two full production runs put 30–48% of
+all settled tasks in the 30–60 min bucket alone) already reach 290K–424K peak context, exceeding
+even the original 280K anchor. A single uniform `200,000` threshold was already a reasonable
+middle value under this fuller picture, but two things follow from it directly:
+
+1. **The savings are bigger than §3.2 estimated** — capping context growth is not a rare-outlier
+   fix, it applies to the bulk of substantive tasks, so the aggregate re-read-token reduction
+   compounds across most of a workspace's real task volume, not a handful of long-pole tasks.
+2. **A uniform threshold stops being the right shape.** Architecture/design roles
+   (`architect`/`architect-opus`/`reviewer-opus`) do genuinely broader-context synthesis work
+   (holding requirements + prior design iterations + survey findings at once) where premature
+   compaction risks losing load-bearing design detail — these get a higher, more conservative
+   `500,000`. Dev-cycle roles' tasks are typically narrower, more repetitive-shaped work
+   (implement/test/review one change) where the broader sample shows the threshold will fire on
+   most substantive tasks regardless of the exact value chosen — these get the more assertive
+   `180,000`, since the compaction "tax" (fidelity risk + the mechanical cost of the compaction
+   itself) is paid more often but on lower-stakes, narrower-context work.
+
+**Decision (Rev 2): `500,000` for architecture/design roles, `180,000` for dev-cycle roles** (§2.3
+lists exactly which role is in which group and why). Both values stay inside the documented
+`100k`-`1M` range.
+
+**Disclosed risk, unchanged from Rev 1:** whether Claude Code's compaction summary preserves
+enough fidelity for a long agentic task to keep succeeding — at EITHER threshold — is explicitly
+OUT of this epic's scope to empirically validate. This epic propagates the flag's *availability*
+as a documented, easily-adopted, role-differentiated lever — a workspace adopting it should watch
+its own task success rate (`ao report-outcomes --grade`, per `E-1cecSx`) before treating either
+number as final, per the skill's own framing (D2, "Cost & context hygiene" §2). The broader
+sample in this section is itself still a small, non-exhaustive read of one workspace's history —
+not a claim that `500,000`/`180,000` are provably optimal, only that they're better-evidenced
+than the original single-anchor `200,000`.
 
 ## 4. Early-gate review
 

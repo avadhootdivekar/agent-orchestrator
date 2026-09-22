@@ -655,20 +655,15 @@ def test_merge_resolve_instruction_matches_the_readmes_recipe() -> None:
 AGENTS_RECOMMENDED_PATH = TEMPLATE_DIR / "agents.recommended.json.tmpl"
 
 # The 9 of 11 required_agents roles judged to do long, multi-turn agentic work (early-gate
-# architect+reviewer reviewed choice -- see EPIC.md "Early-gate review -- outcome").
-LONG_MULTI_TURN_ROLES = frozenset(
-    {
-        "architect",
-        "architect-opus",
-        "developer",
-        "full-tester",
-        "manager",
-        "market-surveyor",
-        "reviewer",
-        "reviewer-opus",
-        "tester",
-    }
+# architect+reviewer reviewed choice -- see EPIC.md "Early-gate review -- outcome"), split (Rev
+# 2, docs-md/template-cost-hygiene-hld.md sec 3.4) by what the role's task actually does:
+# architecture/design synthesis (wider context, higher threshold) vs. narrower dev-cycle work
+# (threshold fires on most substantive tasks regardless of exact value -- set more assertively).
+ARCHITECTURE_ROLES = frozenset({"architect", "architect-opus", "reviewer-opus"})
+DEV_CYCLE_ROLES = frozenset(
+    {"developer", "full-tester", "manager", "market-surveyor", "reviewer", "tester"}
 )
+LONG_MULTI_TURN_ROLES = ARCHITECTURE_ROLES | DEV_CYCLE_ROLES
 
 # Deliberately excluded: short-lived/mechanical (git-operator) or security-sensitive over
 # unreviewed content where compaction fidelity risk outweighs the benefit (merge-resolver).
@@ -710,14 +705,18 @@ def test_agents_recommended_uses_extra_args_not_command_template() -> None:
 
 
 def test_agents_recommended_autocompact_threshold_matches_documented_default() -> None:
-    """The design doc (docs-md/template-cost-hygiene-hld.md) is the single source of the
-    chosen --autocompact value; this test pins the seed file to stay in sync with it."""
+    """The design doc (docs-md/template-cost-hygiene-hld.md sec 3.4) is the single source of
+    the chosen --autocompact values; this test pins the seed file to stay in sync with it."""
     data = _load_agents_recommended()
-    assert data["_autocompact_default"] == "200000"
+    assert data["_autocompact_defaults"] == {
+        "architecture_roles": "500000",
+        "dev_cycle_roles": "180000",
+    }
     for role, spec in data["agents"].items():
         extra_args = spec["extra_args"]
         idx = extra_args.index("--autocompact")
-        assert extra_args[idx + 1] == "200000", role
+        expected = "500000" if role in ARCHITECTURE_ROLES else "180000"
+        assert extra_args[idx + 1] == expected, role
 
 
 def test_agents_recommended_every_entry_valid_against_agents_schema_shape() -> None:
