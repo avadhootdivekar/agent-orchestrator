@@ -1,0 +1,3 @@
+{"type": "system", "subtype": "init", "task_id": "design"}
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "fake stdout for design"}]}}
+{"type": "result", "subtype": "success", "is_error": false, "result": "fake output for design", "usage": {"input_tokens": 0, "output_tokens": 0}}

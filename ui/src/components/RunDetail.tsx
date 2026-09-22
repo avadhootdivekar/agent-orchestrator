@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import { formatCost, formatCount, formatDuration, formatTimestamp } from "../format";
+import {
+  formatCost,
+  formatCount,
+  formatDuration,
+  formatPercent,
+  formatTimestamp,
+} from "../format";
 import type { RunDetail as RunDetailData, RunIntegration, TaskStat } from "../types";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 
@@ -34,6 +40,27 @@ function IntegrationCell({ task }: { task: TaskStat }) {
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * Per-task prompt-cache effectiveness (E-1cecSx B4, design doc §4).
+ *
+ * On-demand only, per the epic's locked-in constraint ("never a new default column on the
+ * main task table") — reuses the SAME native `<details>`/`<summary>` disclosure mechanism
+ * `HtmlPreview.tsx` already uses for other on-demand content in this dashboard, collapsed by
+ * default, nested inside the existing Task cell rather than a new column/row.
+ */
+function CacheDetails({ task }: { task: TaskStat }) {
+  return (
+    <details className="task-cache-details">
+      <summary>cache</summary>
+      <div className="task-cache-body muted">
+        <div>hit rate: {formatPercent(task.cache_hit_rate)}</div>
+        <div>cache read: {formatCount(task.cache_read_tokens)}</div>
+        <div>cache creation: {formatCount(task.cache_creation_tokens)}</div>
+      </div>
+    </details>
   );
 }
 
@@ -210,6 +237,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                         {task.origin}
                       </span>
                     ) : null}
+                    <CacheDetails task={task} />
                   </td>
                   <td>
                     <StatusChip status={task.status} />

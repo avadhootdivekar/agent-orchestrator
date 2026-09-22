@@ -238,3 +238,6 @@ src/agent_orchestrator/_build_info.py
 ui/node_modules/
 ui/.vite/
 ui/tsconfig.tsbuildinfo
+
+# repo-intel (ri) build index — local cache, rebuilt from the repo tree, never committed.
+meta/index/

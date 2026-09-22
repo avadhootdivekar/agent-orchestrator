@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from . import hooks
 from .artifacts import (
     ArtifactStore,
     LocalFsArtifactStore,
@@ -69,6 +70,7 @@ from .models import (
     TIER_RERUN,
     CircuitBreakerSpec,
     EstimatorConfig,
+    HookOutcome,
     IntegrationSpec,
     LoopSpec,
     MonitorDecisionRecord,
@@ -85,6 +87,7 @@ from .models import (
     count_monitor_calls_made,
     count_monitor_heal_retries,
     resolve_effective_agent,
+    resolve_hook_on_failure,
     resolve_overlap_preference,
     resolve_task_isolation,
     strip_iter_suffix,
@@ -1692,6 +1695,12 @@ class Orchestrator:
         # Record captured output path (FR-5); engine never reads the files.
         if result.output_artifact_path:
             ts.output_artifact_path = result.output_artifact_path
+        # Mirror of TaskResult.pre_hook_result/post_hook_result (E-AMSSHX, HLD §4) -- same
+        # "most recent dispatch cycle only" caveat as output_artifact_path above.
+        if result.pre_hook_result is not None:
+            ts.pre_hook_result = result.pre_hook_result
+        if result.post_hook_result is not None:
+            ts.post_hook_result = result.post_hook_result
         # Cumulative actual usage across every attempt (E-9h3m7k FR-2) — result's
         # token/cost fields already sum all attempts (_run_with_retries). `_accumulate_
         # actuals` uses `+=` (not `=`) so a prior, healed-and-discarded cycle's
@@ -3832,6 +3841,141 @@ class Orchestrator:
         )
         output_dir = self._store.resolve(_cycle_relpath)
 
+        # Task lifecycle hooks (E-AMSSHX, HLD §5-6). Two small closures (not extra methods)
+        # since both need the exact same already-resolved locals below -- capturing them
+        # guarantees `context.json`'s field set (HLD §5) can never independently drift
+        # between the pre_hook and post_hook call sites, and avoids a ~12-parameter round
+        # trip through `self.<helper>(...)`.
+        def _hook_context_fields(
+            kind: Literal["pre_hook", "post_hook"], hook_name: str, result: TaskResult | None
+        ) -> dict:
+            fields: dict = {
+                "run_id": state.run_id,
+                "task_id": task.id,
+                "hook_kind": kind,
+                "hook_name": hook_name,
+                "dispatch_cycle": cycle,
+                "instruction_path": instruction_path,
+                "general_instruction_paths": general_instruction_paths,
+                "input_paths": input_paths,
+                "output_paths": output_paths,
+                "dynamic_input_paths": dynamic_input_paths or [],
+                "repo_paths": repo_paths,
+                "output_dir": output_dir,
+            }
+            if result is not None:
+                fields.update(
+                    status=result.status,
+                    attempts=result.attempts,
+                    exit_code=result.exit_code,
+                    error=result.error,
+                    output_artifact_path=result.output_artifact_path,
+                )
+            return fields
+
+        def _dispatch_hook(
+            kind: Literal["pre_hook", "post_hook"],
+            ref,  # HookRef
+            hook,  # HookSpec
+            capture_dir: str,
+            result: TaskResult | None,
+        ) -> HookOutcome:
+            hook_log = get_run_logger(state.run_id, task.id)
+            hook_log.info(
+                "Running %s %s",
+                kind,
+                ref.use,
+                extra={"event": f"task.{kind}.start", "task_id": task.id, "hook_name": ref.use},
+            )
+            outcome = hooks.run_hook(
+                hook,
+                kind=kind,
+                hook_name=ref.use,
+                run_id=state.run_id,
+                task_id=task.id,
+                cycle=cycle,
+                capture_dir=capture_dir,
+                context_fields=_hook_context_fields(kind, ref.use, result),
+                env_overlay=dict(env_overlay or {}),
+                cwd=agent_cwd,
+                artifact_store=self._store,
+            )
+            if outcome.status == "passed":
+                hook_log.info(
+                    "%s %s passed",
+                    kind,
+                    ref.use,
+                    extra={
+                        "event": f"task.{kind}.passed",
+                        "task_id": task.id,
+                        "hook_name": ref.use,
+                        "exit_code": outcome.exit_code,
+                    },
+                )
+            else:
+                hook_log.warning(
+                    "%s %s failed: status=%s exit=%s",
+                    kind,
+                    ref.use,
+                    outcome.status,
+                    outcome.exit_code,
+                    extra={
+                        "event": f"task.{kind}.failed",
+                        "task_id": task.id,
+                        "hook_name": ref.use,
+                        "status": outcome.status,
+                        "exit_code": outcome.exit_code,
+                    },
+                )
+            return outcome
+
+        # Pre-hook gate: runs exactly once per dispatch cycle, before the executor is ever
+        # invoked. `task.pre_hook is None` is a TRUE no-op (FR-4) -- no WorkflowSpec.hooks
+        # lookup, no dict/dir/subprocess work whatsoever.
+        pre_hook_result: HookOutcome | None = None
+        if task.pre_hook is not None:
+            pre_hook_hook_spec = workflow.hooks[task.pre_hook.use]
+            pre_capture_dir = os.path.join(output_dir, "pre_hook")
+            pre_hook_result = _dispatch_hook(
+                "pre_hook", task.pre_hook, pre_hook_hook_spec, pre_capture_dir, None
+            )
+            if pre_hook_result.status != "passed":
+                on_failure = resolve_hook_on_failure(task.pre_hook, pre_hook_hook_spec, "pre_hook")
+                if on_failure == "fail_task":
+                    return TaskResult(
+                        task_id=task.id,
+                        status="failed",
+                        attempts=0,
+                        error=(
+                            f"pre_hook {task.pre_hook.use!r} failed: "
+                            f"exit={pre_hook_result.exit_code}\n"
+                            f"{hooks.read_stderr_tail(pre_capture_dir)}"
+                        ),
+                        pre_hook_result=pre_hook_result,
+                    )
+
+        def _finalize_with_post_hook(result: TaskResult) -> TaskResult:
+            """Run `task.post_hook` (if declared) against *result* and fold the verdict in
+            (HLD §5-6). A hook can only make a result STRICTER, never LAXER: an already-
+            failed/timed_out result is left as-is beyond recording `post_hook_result`."""
+            if task.post_hook is None:
+                return result
+            hook = workflow.hooks[task.post_hook.use]
+            post_capture_dir = os.path.join(output_dir, "post_hook")
+            outcome = _dispatch_hook("post_hook", task.post_hook, hook, post_capture_dir, result)
+            result.post_hook_result = outcome
+            if outcome.status == "passed":
+                return result
+            on_failure = resolve_hook_on_failure(task.post_hook, hook, "post_hook")
+            if on_failure != "fail_task" or result.status != "succeeded":
+                return result
+            result.status = "failed"
+            result.error = (
+                f"post_hook {task.post_hook.use!r} failed: exit={outcome.exit_code}\n"
+                f"{hooks.read_stderr_tail(post_capture_dir)}"
+            )
+            return result
+
         last_result: TaskResult | None = None
         # Running sums across every attempt of THIS call (E-9h3m7k FR-2): a task that
         # fails on attempt 1 and succeeds on attempt 2 must report the actual cost of
@@ -3845,10 +3989,14 @@ class Orchestrator:
 
         for attempt in range(1, retry.max_attempts + 1):
             if self._cancel_fn():
+                # Post-hook deliberately does NOT fire here (HLD §6): nothing meaningful
+                # completed. pre_hook_result IS attached -- it already ran, unconditionally,
+                # before this loop started.
                 return TaskResult(
                     task_id=task.id,
                     status="cancelled",
                     attempts=attempt,
+                    pre_hook_result=pre_hook_result,
                 )
 
             # Attempt-suffixed capture dir (E-9h3m7k): each retry gets its own
@@ -3878,6 +4026,10 @@ class Orchestrator:
 
             result = self._executor.execute(ctx)
             result.attempts = attempt
+            # Task lifecycle hooks (E-AMSSHX): pre_hook already ran once, above the loop --
+            # attach its outcome to whichever TaskResult this call eventually returns. A
+            # no-pre_hook task carries pre_hook_result=None here, identical to today.
+            result.pre_hook_result = pre_hook_result
 
             if result.actuals_available:
                 any_actuals = True
@@ -3902,10 +4054,11 @@ class Orchestrator:
             last_result = result
 
             if result.status == "succeeded":
-                return result
+                return _finalize_with_post_hook(result)
 
             # Quota exhaustion is handled by the engine's outer loop (wait + re-run);
-            # don't burn retry attempts on it.
+            # don't burn retry attempts on it. Post-hook deliberately does NOT fire here
+            # (HLD §6): this is an outer-loop "not done yet" signal, not a terminal outcome.
             if result.claude_quota_exhausted:
                 return result
 
@@ -3922,7 +4075,7 @@ class Orchestrator:
 
         # All attempts exhausted
         assert last_result is not None
-        return last_result
+        return _finalize_with_post_hook(last_result)
 
     # -------------------------------------------------------------------------
     # Dynamic-expansion helpers (Area 2)

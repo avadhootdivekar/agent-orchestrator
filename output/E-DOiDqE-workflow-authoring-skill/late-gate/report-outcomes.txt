@@ -1,0 +1,21 @@
+
+Run: dry-run-flag-worked-example-20260921T145042Z
+
+Task                           Status        Attempts  Dispatch cycles  Resolver  Reruns  Self-heal
+----------------------------------------------------------------------------------------------------
+design                         succeeded            1                1         0       0          0
+implement-cli                  succeeded            1                1         0       0          0
+implement-docs                 succeeded            1                1         0       0          0
+review                         succeeded            1                1         0       0          0
+test                           succeeded            1                1         0       0          0
+
+Settlement grades (hook='grade'):
+Task                           Settle reason  Status       Score
+-----------------------------------------------------------------
+design                         dispatched     passed        1.00
+implement-cli                  dispatched     passed        1.00
+implement-docs                 dispatched     passed        1.00
+review                         dispatched     passed        1.00
+test                           dispatched     passed        1.00
+
+Written: /usr/avadhoot/mounted/agent-orchestrator/.orchestrator/runs/dry-run-flag-worked-example-20260921T145042Z/settlement_grades.json

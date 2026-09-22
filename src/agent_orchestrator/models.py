@@ -51,6 +51,21 @@ DEFAULT_MAX_HEAL_RETRIES_PER_TASK: int = 1
 DEFAULT_MAX_MONITOR_CALLS_PER_RUN: int = 10
 
 # ---------------------------------------------------------------------------
+# Task lifecycle hooks (E-AMSSHX, HLD `docs-md/task-lifecycle-hooks-hld.md` §3-4) — named
+# constants, no magic literals downstream.
+# ---------------------------------------------------------------------------
+
+# Matches DEFAULT_REGENERATE_TIMEOUT_SECONDS / bench's _DEFAULT_GRADER_TIMEOUT_SECONDS -- one
+# bounded-subprocess convention, reused not re-invented (HLD §3).
+DEFAULT_HOOK_TIMEOUT_SECONDS: int = 120
+HookOnFailure = Literal["ignore", "fail_task"]
+DEFAULT_PRE_HOOK_ON_FAILURE: HookOnFailure = "fail_task"  # safe-by-default: a broken
+# precondition blocks dispatch.
+DEFAULT_POST_HOOK_ON_FAILURE: HookOnFailure = "ignore"  # safe-by-default: observational
+# unless a workflow author opts in.
+HookStatus = Literal["passed", "failed", "error", "timed_out"]
+
+# ---------------------------------------------------------------------------
 # Per-task git isolation & rebase-based integration (E-Wk9Tz3 / HLD §10.2) —
 # named constants, no magic literals anywhere downstream (AC-1).
 # ---------------------------------------------------------------------------
@@ -148,6 +163,59 @@ class RetryPolicy(BaseModel):
     backoff_seconds: float = 0.0
 
 
+class HookSpec(BaseModel):
+    """Workflow-root registry entry (`WorkflowSpec.hooks[name]`) -- the actual argv command.
+
+    Deliberately NOT embeddable on `TaskSpec` directly (HLD §3, D4): a task references a hook
+    by name via `HookRef` instead, mirroring `TaskSpec.agent`'s "key into a registry" pattern.
+    This keeps argv construction OFF `TaskSpec`, since `artifacts.read_task_manifest` builds
+    `TaskSpec` from agent-authored `emit_tasks` JSON with no field allowlist (see `TaskSpec.
+    touches`'s own AC-15 comment) -- an injected task can only pick an already-declared hook
+    name, never invent new argv.
+    """
+
+    # Discriminator, reserved for a future non-argv hook kind (e.g. a built-in grader) without
+    # a breaking schema change. MVP implements "command" only; any other value is a pydantic/
+    # schema validation error, never a silent no-op.
+    type: Literal["command"] = "command"
+    command: list[str] = Field(min_length=1)
+    timeout_seconds: int = Field(default=DEFAULT_HOOK_TIMEOUT_SECONDS, ge=1)
+    # This hook's own default when a task-level HookRef.on_failure doesn't override it; None ->
+    # resolve_hook_on_failure falls through to the kind-specific default.
+    on_failure: HookOnFailure | None = None
+
+
+class HookRef(BaseModel):
+    """Task-level reference to a named `WorkflowSpec.hooks` entry (HLD §3, D4).
+
+    Mirrors `TaskSpec.agent`'s "key into a registry" pattern -- this is what keeps argv OFF
+    `TaskSpec`/`read_task_manifest` entirely (AC-15 containment). An emit_tasks-injected task
+    can only pick an ALREADY-DECLARED hook name, never construct new argv.
+    """
+
+    use: str  # key into WorkflowSpec.hooks
+    # Per-use override; None -> the referenced HookSpec's own on_failure; still None -> the
+    # kind-specific default (pre_hook="fail_task", post_hook="ignore").
+    on_failure: HookOnFailure | None = None
+
+
+def resolve_hook_on_failure(
+    ref: HookRef, hook: HookSpec, kind: Literal["pre_hook", "post_hook"]
+) -> HookOnFailure:
+    """The ONE place a hook's on_failure default is resolved (HLD §3).
+
+    Mirrors `resolve_task_isolation`/`resolve_effective_agent`'s own "one place" convention.
+    Precedence: `ref.on_failure` (per-use override) > `hook.on_failure` (the hook's own
+    default) > kind-specific default. This is what lets the SAME named hook (e.g. "grade") be
+    wired as observe-only on one task and gating on another, without declaring it twice.
+    """
+    if ref.on_failure is not None:
+        return ref.on_failure
+    if hook.on_failure is not None:
+        return hook.on_failure
+    return DEFAULT_PRE_HOOK_ON_FAILURE if kind == "pre_hook" else DEFAULT_POST_HOOK_ON_FAILURE
+
+
 class AgentSpec(BaseModel):
     executor: Literal["claude_cli", "fake"]
     command_template: list[str] = ["claude", "-p", "{prompt}"]
@@ -180,6 +248,23 @@ class AgentSpec(BaseModel):
     # `isolation.escalation.resolver_agent_spec`); it is not part of the authored workflow
     # surface, and a spec that sets it anyway can only ever ADD denials, never remove one.
     forced_disallowed_tools: list[str] = []
+    # E-1cecSx B1 (cost-caching-optimization HLD §1.4): opt-in cache-scope fix for isolated
+    # (per-task-worktree) workflows. Claude Code's OWN default system prompt embeds the literal
+    # working directory (+ platform/shell/OS version/auto memory paths) ahead of any content ao
+    # controls (confirmed via code.claude.com/docs/en/prompt-caching "Cache scope": "That
+    # includes worktrees of the same repository, since each worktree has its own working
+    # directory") -- so every worktree-isolated task's system prompt is byte-different from
+    # every other's, a full cache miss on every dispatch, independent of anything ao itself
+    # feeds into the prompt (ao's own content is already byte-stable -- see the HLD's audit).
+    # Setting this True makes `ClaudeCliExecutor` inject the CLI's own documented
+    # `--exclude-dynamic-system-prompt-sections` flag, which moves that per-session context
+    # into the first user message instead, restoring a shared cacheable system-prompt prefix
+    # across tasks/machines. Default False (NOT auto-enabled for isolated workflows): the flag
+    # is headless/print-mode-only and its exact CLI-version floor is undocumented -- an older
+    # `claude` binary that rejects an unrecognized flag would break EVERY dispatch, so this
+    # ships opt-in per CLAUDE.md's "safe by default" rule rather than as a silent default for
+    # `isolation: worktree` workflows. Recommended for every agent used in such a workflow.
+    exclude_dynamic_system_prompt_sections: bool = False
 
 
 class TaskSpec(BaseModel):
@@ -223,6 +308,11 @@ class TaskSpec(BaseModel):
     # artifacts.read_task_manifest) can contribute this mode enum and these advisory globs
     # but nothing that executes (AC-15).
     touches: list[str] = []
+    # Task lifecycle hooks (E-AMSSHX, HLD §3, D4): references into WorkflowSpec.hooks by name,
+    # never an inline command -- keeps argv OFF TaskSpec/read_task_manifest (AC-15 containment,
+    # same reasoning as `touches` above). None (the default) is a true no-op (FR-4).
+    pre_hook: HookRef | None = None
+    post_hook: HookRef | None = None
 
 
 def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
@@ -556,6 +646,10 @@ class WorkflowSpec(BaseModel):
     # Soft overlap-aware scheduling preference (E-Wk9Tz3 FR-10). Absent =>
     # resolve_overlap_preference derives "off" unless the workflow isolates a task.
     scheduling: SchedulingSpec = SchedulingSpec()
+    # Task lifecycle hooks registry (E-AMSSHX, HLD §3, D4): named argv commands, referenced by
+    # a task's `pre_hook`/`post_hook: HookRef`. Empty default is a byte-identical no-op for
+    # every pre-epic workflow (NFR-2/NFR-5) -- mirrors the `agents`/`reposets` registry pattern.
+    hooks: dict[str, HookSpec] = {}
 
     def task(self, task_id: str) -> TaskSpec:
         for t in self.tasks:
@@ -714,6 +808,44 @@ class TaskContext(BaseModel):
     env: dict[str, str] = {}
 
 
+class HookOutcome(BaseModel):
+    """Result of one `hooks.run_hook` invocation (E-AMSSHX, HLD §4).
+
+    `status` is derived SOLELY from the subprocess exit code (D3) -- `score`/`detail` (from the
+    optional `AO_HOOK_RESULT_PATH` JSON file) are additive, informational, and never override
+    pass/fail.
+    """
+
+    # "settlement_hook" (E-1cecSx B3.2/B3.3, ADR-0015 decision 2): the ONE additive change
+    # `hooks.py`'s "reused, unchanged" execution mechanism needed -- a POST-RUN grading pass
+    # (`ao report outcomes --grade`, `outcomes.py`) calls `hooks.run_hook` with
+    # `kind="settlement_hook"` so its result is traceable and typed the same way a `pre_hook`/
+    # `post_hook` result already is. Widening a Literal is backward-compatible (existing callers
+    # keep passing the same two string literals; any already-serialized `HookOutcome` still
+    # round-trips). `resolve_hook_on_failure`'s own `kind` parameter (below) is DELIBERATELY NOT
+    # widened -- settlement grading has no `on_failure`/gating concept at all (it never touches
+    # `RunState`), so that function's Literal correctly stays scoped to the two kinds that
+    # actually resolve an on_failure policy.
+    kind: Literal["pre_hook", "post_hook", "settlement_hook"]
+    # WorkflowSpec.hooks key that ran (D4) -- traceability back to the registry entry, since a
+    # TaskResult alone no longer names the command.
+    hook_name: str
+    status: HookStatus
+    exit_code: int | None = None
+    duration_ms: int | None = None
+    # Promoted out of `detail` (early-gate finding): a typed, queryable field for a later
+    # grading epic. Populated from the optional result file's "score" key when present and
+    # numeric; None otherwise. NEVER influences `status` (D3 still holds).
+    score: float | None = None
+    # Remaining verbatim JSON the hook wrote to AO_HOOK_RESULT_PATH (informational only); {}
+    # when no result file was written, OR when read_control raised (see `error` below to
+    # distinguish the two).
+    detail: dict = {}
+    # Engine-side note: timeout, spawn failure, or a result file that WAS written but failed
+    # read_control's bounded-JSON-object checks (missing/oversized/invalid-JSON/non-object).
+    error: str | None = None
+
+
 class TaskResult(BaseModel):
     task_id: str
     status: Literal["succeeded", "failed", "cancelled", "timed_out"]
@@ -739,6 +871,10 @@ class TaskResult(BaseModel):
     # Set when the Claude CLI output matches _CLAUDE_QUOTA_PATTERN (usage-quota exhaustion).
     # Distinct from provider_rate_limited (API 429) — quota is a session/time-based limit.
     claude_quota_exhausted: bool = False
+    # Task lifecycle hooks (E-AMSSHX, HLD §4). Both None for a task with no declared hooks --
+    # byte-identical serialization for every pre-epic run.
+    pre_hook_result: HookOutcome | None = None
+    post_hook_result: HookOutcome | None = None
 
 
 TaskStatus = Literal[
@@ -843,6 +979,13 @@ class TaskRunState(BaseModel):
     # Keys the capture directory as `<run_dir>/<task_id>/cycle-<dispatch_cycle>/attempt-<n>/`
     # once the engine wiring (T-En8Hd4) adopts it.
     dispatch_cycle: int = 0
+    # Mirror of TaskResult.pre_hook_result/post_hook_result for traceability (E-AMSSHX, HLD
+    # §4), the same way output_artifact_path is mirrored above. Reflects only the MOST RECENT
+    # dispatch cycle, not a history across self-heal/T2/T3 redispatches -- not a new gap
+    # (output_artifact_path already works this way); full per-cycle history stays on disk under
+    # <output_dir>/pre_hook|post_hook/ regardless.
+    pre_hook_result: HookOutcome | None = None
+    post_hook_result: HookOutcome | None = None
 
 
 class RunState(BaseModel):

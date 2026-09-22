@@ -162,6 +162,39 @@ class TestDetail:
         with pytest.raises(RunNotFoundError):
             repo.detail("no-such-run")
 
+    def test_cache_effectiveness_fields_populated(
+        self, workspace: Path, repo: RunRepository
+    ) -> None:
+        """E-1cecSx B4: TaskStat carries cache-hit-rate fields, additive on the existing
+        per-task detail payload (design doc §4) -- backend contract test."""
+        write_run(
+            workspace,
+            make_run_state(
+                tasks={
+                    "t": TaskRunState(
+                        status="succeeded",
+                        cumulative_input_tokens=10,
+                        cumulative_cache_creation_input_tokens=20,
+                        cumulative_cache_read_input_tokens=70,
+                    )
+                }
+            ),
+        )
+        stat = repo.detail("demo-20260724T100000Z").tasks[0]
+        assert stat.cache_read_tokens == 70
+        assert stat.cache_creation_tokens == 20
+        assert stat.cache_hit_rate == pytest.approx(0.7)
+
+    def test_cache_hit_rate_none_when_no_usage_at_all(
+        self, workspace: Path, repo: RunRepository
+    ) -> None:
+        write_run(
+            workspace,
+            make_run_state(tasks={"t": TaskRunState(status="succeeded")}),
+        )
+        stat = repo.detail("demo-20260724T100000Z").tasks[0]
+        assert stat.cache_hit_rate is None
+
 
 class TestAggregate:
     def test_totals_across_runs(self, workspace: Path, repo: RunRepository) -> None:

@@ -117,6 +117,7 @@ def _all_template_files() -> list[Path]:
         TEMPLATE_DIR / "workflow.json.tmpl",
         TEMPLATE_DIR / "prompt.md.tmpl",
         TEMPLATE_DIR / "breakdown-contract.md.tmpl",
+        TEMPLATE_DIR / "agents.recommended.json.tmpl",
     ]
     files.extend(sorted((TEMPLATE_DIR / "instructions").glob("*.md")))
     return files
@@ -221,11 +222,20 @@ def test_template_yaml_files_shape() -> None:
 def test_template_yaml_assets_shape() -> None:
     manifest = _load_manifest()
     assets = manifest["assets"]
-    assert isinstance(assets, list) and len(assets) == 1
-    asset = assets[0]
-    assert asset["source"] == "instructions/"
-    assert asset["target"] == "workflows/routed-runner/instructions/"
-    assert asset.get("keep_existing") is True
+    assert isinstance(assets, list) and len(assets) == 2
+    by_target = {a["target"]: a for a in assets}
+    assert set(by_target) == {
+        "workflows/routed-runner/instructions/",
+        "agents.recommended.json",
+    }
+
+    instructions_asset = by_target["workflows/routed-runner/instructions/"]
+    assert instructions_asset["source"] == "instructions/"
+    assert instructions_asset.get("keep_existing") is True
+
+    agents_seed_asset = by_target["agents.recommended.json"]
+    assert agents_seed_asset["source"] == "agents.recommended.json.tmpl"
+    assert agents_seed_asset.get("keep_existing") is True
 
 
 def test_template_yaml_required_agents_exactly_match_dag() -> None:
@@ -265,9 +275,13 @@ def test_every_manifest_referenced_file_exists() -> None:
             assert (TEMPLATE_DIR / source).is_file(), source
 
     for asset in manifest["assets"]:
-        source_dir = TEMPLATE_DIR / asset["source"]
-        assert source_dir.is_dir(), asset["source"]
-        assert any(source_dir.glob("*.md")), "instructions/ asset dir has no content"
+        # Asset sources may be a directory (instructions/) or a single file
+        # (agents.recommended.json.tmpl) -- `_materialize_asset` in templates/__init__.py
+        # handles both; mirror that here rather than assuming every asset is a directory.
+        source_path = TEMPLATE_DIR / asset["source"]
+        assert source_path.is_dir() or source_path.is_file(), asset["source"]
+        if source_path.is_dir():
+            assert any(source_path.glob("*.md")), f"{asset['source']} asset dir has no content"
 
 
 def test_instructions_dir_has_all_31_stage_files() -> None:
@@ -631,3 +645,99 @@ def test_merge_resolve_instruction_matches_the_readmes_recipe() -> None:
     assert "push" in text
     readme = (TEMPLATE_DIR / "README.md").read_text(encoding="utf-8")
     assert "merge-resolver" in readme
+
+
+# ---------------------------------------------------------------------------
+# 7. `agents.recommended.json.tmpl` content (D1, E-Vt6Lp2-template-cost-hygiene): the
+# recommended --autocompact seed a workspace merges into its own agents.json.
+# ---------------------------------------------------------------------------
+
+AGENTS_RECOMMENDED_PATH = TEMPLATE_DIR / "agents.recommended.json.tmpl"
+
+# The 9 of 11 required_agents roles judged to do long, multi-turn agentic work (early-gate
+# architect+reviewer reviewed choice -- see EPIC.md "Early-gate review -- outcome"), split (Rev
+# 2, docs-md/template-cost-hygiene-hld.md sec 3.4) by what the role's task actually does:
+# architecture/design synthesis (wider context, higher threshold) vs. narrower dev-cycle work
+# (threshold fires on most substantive tasks regardless of exact value -- set more assertively).
+ARCHITECTURE_ROLES = frozenset({"architect", "architect-opus", "reviewer-opus"})
+DEV_CYCLE_ROLES = frozenset(
+    {"developer", "full-tester", "manager", "market-surveyor", "reviewer", "tester"}
+)
+LONG_MULTI_TURN_ROLES = ARCHITECTURE_ROLES | DEV_CYCLE_ROLES
+
+# Deliberately excluded: short-lived/mechanical (git-operator) or security-sensitive over
+# unreviewed content where compaction fidelity risk outweighs the benefit (merge-resolver).
+SHORT_LIVED_EXCLUDED_ROLES = frozenset({"git-operator", "merge-resolver"})
+
+
+def _load_agents_recommended() -> dict[str, Any]:
+    return json.loads(AGENTS_RECOMMENDED_PATH.read_text(encoding="utf-8"))
+
+
+def test_agents_recommended_is_valid_json_with_agents_json_shaped_top_level() -> None:
+    data = _load_agents_recommended()
+    # Mirrors specs/examples/agents.json's top-level shape (version + agents), plus disclosed
+    # underscore-prefixed metadata keys -- deliberately NOT wholesale-loadable as a real
+    # agents.json (additionalProperties: false would reject the metadata keys), which is the
+    # point: a workspace must consciously merge fields, not `cp` this file over its own.
+    assert data["version"] == "1.0"
+    assert isinstance(data["agents"], dict)
+    assert data["_note"], "must document that this is a merge reference, not a live config"
+    assert "keep_existing" in data["_note"] or "once" in data["_note"].lower()
+
+
+def test_agents_recommended_covers_exactly_the_long_multi_turn_roles() -> None:
+    data = _load_agents_recommended()
+    assert set(data["agents"]) == LONG_MULTI_TURN_ROLES
+    assert set(data["agents"]).isdisjoint(SHORT_LIVED_EXCLUDED_ROLES)
+
+
+def test_agents_recommended_uses_extra_args_not_command_template() -> None:
+    """Early-gate reviewer finding: `command_template` fully overrides the base argv, so a
+    recommended `command_template` array would clobber a workspace's own tuning on merge.
+    `extra_args` is the additive field the engine always appends after `command_template`
+    (executors/claude_cli.py) -- this is what makes the recommendation safely mergeable."""
+    data = _load_agents_recommended()
+    for role, spec in data["agents"].items():
+        assert "command_template" not in spec, role
+        assert spec.get("executor") == "claude_cli", role
+        assert "--autocompact" in spec.get("extra_args", []), role
+
+
+def test_agents_recommended_autocompact_threshold_matches_documented_default() -> None:
+    """The design doc (docs-md/template-cost-hygiene-hld.md sec 3.4) is the single source of
+    the chosen --autocompact values; this test pins the seed file to stay in sync with it."""
+    data = _load_agents_recommended()
+    assert data["_autocompact_defaults"] == {
+        "architecture_roles": "500000",
+        "dev_cycle_roles": "180000",
+    }
+    for role, spec in data["agents"].items():
+        extra_args = spec["extra_args"]
+        idx = extra_args.index("--autocompact")
+        expected = "500000" if role in ARCHITECTURE_ROLES else "180000"
+        assert extra_args[idx + 1] == expected, role
+
+
+def test_agents_recommended_every_entry_valid_against_agents_schema_shape() -> None:
+    """Each individual agent entry (not the whole file) must be a valid partial AgentSpec --
+    only fields specs/agents.schema.json's per-agent additionalProperties:false allows."""
+    schema_path = _REPO_ROOT / "specs" / "agents.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    allowed_fields = set(schema["$defs"]["agent"]["properties"])
+    data = _load_agents_recommended()
+    for role, spec in data["agents"].items():
+        unknown = set(spec) - allowed_fields
+        assert not unknown, f"{role}: unknown AgentSpec field(s) {unknown}"
+        assert "executor" in spec, role  # the schema's one required field
+
+
+def test_readme_documents_agents_recommended_section() -> None:
+    text = (TEMPLATE_DIR / "README.md").read_text()
+    assert "agents.recommended.json" in text
+    assert "--autocompact" in text
+    assert "extra_args" in text
+    assert "merge reference" in text.lower() or "not a live config" in text.lower()
+    # The 9-vs-2 role split rationale must be documented, not just implemented.
+    assert "git-operator" in text
+    assert "merge-resolver" in text

@@ -61,7 +61,13 @@
       "description": "PATH to this workflow's prompt artifact, written by `ao run --prompt`/`--prompt-file` before the run starts. A task consumes it by listing the same path in its inputs. Per-run input; distinct from general_instructions, which are per-workspace."
     },
     "integration": { "$ref": "#/$defs/integration" },
-    "scheduling": { "$ref": "#/$defs/scheduling" }
+    "scheduling": { "$ref": "#/$defs/scheduling" },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/hook" },
+      "default": {},
+      "description": "Named registry of task lifecycle hook commands, referenced by a task's pre_hook/post_hook (by name, never inline argv -- keeps command construction off TaskSpec, see task.pre_hook/post_hook)."
+    }
   },
   "$defs": {
     "retryPolicy": {
@@ -70,6 +76,39 @@
       "properties": {
         "max_attempts": { "type": "integer", "minimum": 1, "default": 1 },
         "backoff_seconds": { "type": "number", "minimum": 0, "default": 0 }
+      }
+    },
+    "hook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "description": "Workflow-root registry entry (WorkflowSpec.hooks[name]) -- the argv command a task's pre_hook/post_hook references by name.",
+      "properties": {
+        "type": { "const": "command" },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "argv, never a shell string."
+        },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "default": 120 },
+        "on_failure": {
+          "enum": ["ignore", "fail_task"],
+          "description": "This hook's own default when a task-level HookRef.on_failure doesn't override it."
+        }
+      }
+    },
+    "hookRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["use"],
+      "description": "Task-level reference to a named WorkflowSpec.hooks entry.",
+      "properties": {
+        "use": { "type": "string", "description": "Key into WorkflowSpec.hooks." },
+        "on_failure": {
+          "enum": ["ignore", "fail_task"],
+          "description": "Per-use override; unset falls through to the referenced hook's own on_failure, then the kind-specific default (pre_hook=fail_task, post_hook=ignore)."
+        }
       }
     },
     "trigger": {
@@ -141,7 +180,9 @@
           "items": { "type": "string" },
           "default": [],
           "description": "SOFT hint: glob patterns this task is expected to modify, workspace-relative (no leading '/' and no '..' segment). Used only to PREFER co-scheduling non-overlapping tasks. Never a gate; may be incomplete or wrong."
-        }
+        },
+        "pre_hook": { "$ref": "#/$defs/hookRef" },
+        "post_hook": { "$ref": "#/$defs/hookRef" }
       }
     },
     "loop": {

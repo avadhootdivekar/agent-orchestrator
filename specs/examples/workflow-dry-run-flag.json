@@ -1,0 +1,65 @@
+{
+  "version": "1.0",
+  "id": "dry-run-flag-worked-example",
+  "name": "Worked example: add `ao run --dry-run` — decomposition per .claude/skills/workflow-authoring",
+  "repo_set": "default-set",
+  "hooks": {
+    "check_disk_space": {
+      "type": "command",
+      "command": ["python3", "specs/examples/hooks/check_disk_space.py"],
+      "timeout_seconds": 60,
+      "on_failure": "fail_task"
+    },
+    "grade": {
+      "type": "command",
+      "command": ["python3", "specs/examples/hooks/grade.py"],
+      "timeout_seconds": 120,
+      "on_failure": "ignore"
+    }
+  },
+  "tasks": [
+    {
+      "id": "design",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/dryrun-design.md",
+      "outputs": ["output/dryrun/design.md"]
+    },
+    {
+      "id": "implement-cli",
+      "agent": "developer",
+      "instruction": "specs/examples/instructions/dryrun-implement-cli.md",
+      "depends_on": ["design"],
+      "inputs": ["output/dryrun/design.md"],
+      "outputs": ["output/dryrun/cli-impl-report.md"],
+      "touches": ["src/agent_orchestrator/cli.py", "src/agent_orchestrator/engine.py"],
+      "pre_hook": { "use": "check_disk_space" }
+    },
+    {
+      "id": "implement-docs",
+      "agent": "developer",
+      "instruction": "specs/examples/instructions/dryrun-implement-docs.md",
+      "depends_on": ["design"],
+      "inputs": ["output/dryrun/design.md"],
+      "outputs": ["output/dryrun/docs-impl-report.md"],
+      "touches": ["docs-md/cli-reference.md"],
+      "pre_hook": { "use": "check_disk_space" }
+    },
+    {
+      "id": "test",
+      "agent": "tester",
+      "instruction": "specs/examples/instructions/dryrun-test.md",
+      "depends_on": ["implement-cli", "implement-docs"],
+      "inputs": ["output/dryrun/cli-impl-report.md", "output/dryrun/docs-impl-report.md"],
+      "outputs": ["output/dryrun/test-report.md"],
+      "post_hook": { "use": "grade" }
+    },
+    {
+      "id": "review",
+      "agent": "reviewer",
+      "instruction": "specs/examples/instructions/dryrun-review.md",
+      "depends_on": ["test"],
+      "inputs": ["output/dryrun/test-report.md"],
+      "outputs": ["output/dryrun/review.md"]
+    }
+  ]
+}

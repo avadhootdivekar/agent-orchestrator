@@ -1,0 +1,102 @@
+=== Scratch workspace: /tmp/tmp.YXfNVO8Z71 ===
+
+=== ao run ===
+{"ts": "2026-09-21T14:19:53.701706+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.start", "run_id": "cost-caching-demo-wf-20260921T141953Z", "event": "run.start", "workflow_id": "cost-caching-demo-wf"}
+{"ts": "2026-09-21T14:19:53.702179+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "cost-caching-demo-wf-20260921T141953Z", "task_id": "dispatched_task", "event": "task.start"}
+{"ts": "2026-09-21T14:19:53.702904+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Running post_hook grade", "run_id": "cost-caching-demo-wf-20260921T141953Z", "task_id": "dispatched_task", "event": "task.post_hook.start", "hook_name": "grade"}
+{"ts": "2026-09-21T14:19:53.716550+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "post_hook grade passed", "run_id": "cost-caching-demo-wf-20260921T141953Z", "task_id": "dispatched_task", "event": "task.post_hook.passed", "exit_code": 0, "hook_name": "grade"}
+{"ts": "2026-09-21T14:19:53.716841+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task succeeded", "run_id": "cost-caching-demo-wf-20260921T141953Z", "task_id": "dispatched_task", "event": "task.end", "status": "succeeded", "exit_code": 0}
+{"ts": "2026-09-21T14:19:53.717385+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Skipping task (already succeeded with outputs present)", "run_id": "cost-caching-demo-wf-20260921T141953Z", "task_id": "skip_task", "event": "task.skip"}
+{"ts": "2026-09-21T14:19:53.717976+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.end", "run_id": "cost-caching-demo-wf-20260921T141953Z", "event": "run.end", "status": "succeeded"}
+
+Run:    cost-caching-demo-wf-20260921T141953Z
+Status: succeeded
+
+Task                           Status          Route                Attempts  Tokens (in/out)      Cost($)
+--------------------------------------------------------------------------------------------------------------
+dispatched_task                succeeded                            1         0/0                  0.0000
+skip_task                      skipped                              0         0/0                  0.0000
+
+Total tokens: in=0 out=0 cache_creation=0 cache_read=0
+Total cost:   $0.0000
+
+=== run_id: cost-caching-demo-wf-20260921T141953Z ===
+
+=== ao report-timing --run-id cost-caching-demo-wf-20260921T141953Z ===
+
+Run: cost-caching-demo-wf-20260921T141953Z
+
+Top 10 slowest tasks:
+Task                              Seconds   Cache hit rate
+------------------------------------------------------------
+dispatched_task                       0.0              n/a
+
+=== ao report-outcomes --run-id cost-caching-demo-wf-20260921T141953Z ===
+
+Run: cost-caching-demo-wf-20260921T141953Z
+
+Task                           Status        Attempts  Dispatch cycles  Resolver  Reruns  Self-heal
+----------------------------------------------------------------------------------------------------
+dispatched_task                succeeded            1                1         0       0          0
+skip_task                      skipped              0                0         0       0          0
+
+=== ao report-outcomes --run-id cost-caching-demo-wf-20260921T141953Z --grade grade (B3.2/B3.3, ADR-0015 decision 2) ===
+
+Run: cost-caching-demo-wf-20260921T141953Z
+
+Task                           Status        Attempts  Dispatch cycles  Resolver  Reruns  Self-heal
+----------------------------------------------------------------------------------------------------
+dispatched_task                succeeded            1                1         0       0          0
+skip_task                      skipped              0                0         0       0          0
+
+Settlement grades (hook='grade'):
+Task                           Settle reason  Status       Score
+-----------------------------------------------------------------
+dispatched_task                dispatched     passed        1.00
+skip_task                      skipped        passed        1.00
+
+Written: /tmp/tmp.YXfNVO8Z71/.orchestrator/runs/cost-caching-demo-wf-20260921T141953Z/settlement_grades.json
+
+=== settlement_grades.json (written report artifact) ===
+[
+  {
+    "task_id": "dispatched_task",
+    "settle_reason": "dispatched",
+    "outcome": {
+      "kind": "settlement_hook",
+      "hook_name": "grade",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 13,
+      "score": 1.0,
+      "detail": {
+        "solved": true,
+        "checked_paths": [
+          "/tmp/tmp.YXfNVO8Z71/output/dispatched.txt"
+        ],
+        "missing_paths": []
+      },
+      "error": null
+    }
+  },
+  {
+    "task_id": "skip_task",
+    "settle_reason": "skipped",
+    "outcome": {
+      "kind": "settlement_hook",
+      "hook_name": "grade",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 13,
+      "score": 1.0,
+      "detail": {
+        "solved": true,
+        "checked_paths": [
+          "/tmp/tmp.YXfNVO8Z71/output/skip.txt"
+        ],
+        "missing_paths": []
+      },
+      "error": null
+    }
+  }
+]

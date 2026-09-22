@@ -106,6 +106,15 @@ export interface TaskStat {
   integration_status: string | null;
   tier_reached: string | null;
   conflicted_count: number;
+  /**
+   * Prompt-cache effectiveness (E-1cecSx B4, design doc §4) — additive on this existing
+   * per-task payload, surfaced on-demand in the dashboard (never a default table column).
+   * `cache_hit_rate` is `null` for the zero-denominator case (no input tokens recorded yet
+   * at all), distinct from a genuine 0.0 rate — see `reporting.py::cache_effectiveness`.
+   */
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_hit_rate: number | null;
 }
 
 /** Run-wide integration header (E-Wk9Tz3). Null for a run without isolation. */

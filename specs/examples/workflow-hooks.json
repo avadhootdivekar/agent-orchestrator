@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "id": "hooks-example-workflow",
+  "name": "Design -> implement pipeline demonstrating task lifecycle hooks",
+  "repo_set": "default-set",
+  "hooks": {
+    "check_disk_space": {
+      "type": "command",
+      "command": ["python3", "specs/examples/hooks/check_disk_space.py"],
+      "timeout_seconds": 60,
+      "on_failure": "fail_task"
+    },
+    "grade": {
+      "type": "command",
+      "command": ["python3", "specs/examples/hooks/grade.py"],
+      "timeout_seconds": 120
+    }
+  },
+  "tasks": [
+    {
+      "id": "design",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "outputs": ["output/design.md"],
+      "pre_hook": { "use": "check_disk_space" }
+    },
+    {
+      "id": "implement",
+      "agent": "developer",
+      "instruction": "specs/examples/instructions/implement.md",
+      "depends_on": ["design"],
+      "outputs": ["output/implementation.md"],
+      "post_hook": { "use": "grade", "on_failure": "ignore" }
+    }
+  ]
+}

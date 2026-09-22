@@ -1,0 +1,10 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "result": "fake output for implement",
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0
+  }
+}

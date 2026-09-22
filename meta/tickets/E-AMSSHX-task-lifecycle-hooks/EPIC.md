@@ -1,0 +1,129 @@
+# EPIC: E-AMSSHX-task-lifecycle-hooks
+
+## Metadata
+- Epic ID: `E-AMSSHX-task-lifecycle-hooks`
+- Title: Task lifecycle hooks (engine-level pre_hook / post_hook)
+- Owner: dev-epic (this agent), implementation delegated to developer/tester/reviewer subagents
+- Created: 2026-09-21
+- Last Updated: 2026-09-21
+- Status: Done
+
+## Summary
+- Goal: give the orchestrator engine a config-driven, opt-in `pre_hook` / `post_hook` per task —
+  an argv command (declared once at workflow root, referenced by name per task — see Rev 2 below)
+  the engine runs immediately before a task dispatch begins and immediately after it concludes —
+  with a true no-op default (zero overhead when undeclared), documented failure semantics, and an
+  interface honest about what it does/doesn't observe for a later epic (Epic B, cost/caching +
+  outcome metrics) that wants to plug a grading post-hook in (generalizing `bench/graders.py`).
+- **Rev 2 (post early-gate review, 2026-09-21)**: the original design put the hook command
+  directly on `TaskSpec`; early-gate `architect` review found this breaks a documented,
+  already-reviewed containment invariant (AC-15 — command/argv fields must stay off `TaskSpec`
+  because `artifacts.read_task_manifest` builds `TaskSpec` from agent-authored JSON with no
+  allowlist). Fixed: hooks are now declared in a `WorkflowSpec.hooks` registry, referenced by
+  name per task (`HookRef`) — mirrors the existing `TaskSpec.agent` "key into a registry"
+  pattern. See `docs-md/task-lifecycle-hooks-hld.md` §3, §11 for the full review outcome.
+- Scope In: `WorkflowSpec.hooks` registry + `TaskSpec.pre_hook`/`post_hook` references
+  (models.py + JSON schema + spec.py cross-validation), a new `hooks.py` module for the
+  subprocess mechanics, engine dispatch inside `Orchestrator._run_with_retries` (+ one required
+  suppression in `_prepare_resolver_dispatch` for T2 conflict-resolver dispatches), failure-
+  semantics policy (`on_failure: ignore|fail_task`), capture-directory/context-file/result-file
+  contract, example workflow spec + hook scripts, unit + integration + e2e tests, HLD design doc.
+- Scope Out (explicitly, see HLD §9): workflow-level default hooks applied to every task; a
+  `--no-hooks`/`AO_DISABLE_HOOKS` CLI/env kill switch; hook-level retry policy independent of the
+  task's `RetryPolicy`; token/cost accounting for a hook's own execution; dashboard rendering of
+  hook results; the actual Epic B grading-hook script (only the interface it will plug into).
+
+## Design doc
+- `docs-md/task-lifecycle-hooks-hld.md` — full design, forward-compat note for Epic B (§7),
+  failure-semantics decision table (§6), config-precedence decision (§8), change-scope boundary
+  table (§10).
+
+## Requirements
+
+### MVP (must-have; each maps to ≥1 task below)
+- FR-1 (MVP, **Rev 2 shape**): `WorkflowSpec.hooks: dict[str, HookSpec] = {}` registry (argv
+  command, `type: "command"` discriminator) + `TaskSpec.pre_hook`/`post_hook: HookRef | None`
+  (`{use: <hook name>, on_failure?}`) referencing it by name — mirrors the `TaskSpec.agent`
+  registry pattern, keeps argv off `TaskSpec` itself (AC-15 containment, see HLD §3/§11). Opt-in,
+  validated by pydantic + `specs/workflow.schema.json` + a new `spec.py::cross_validate` rule
+  (every `HookRef.use` must resolve to a `WorkflowSpec.hooks` key).
+  Verification: unit tests in T-jI3P4p; schema + cross-validation validated by `ao validate`.
+- FR-2 (MVP): engine runs `pre_hook` once per dispatch cycle before the agent executor is
+  invoked; on failure with the (default) `on_failure="fail_task"` policy, the task fails without
+  ever invoking the executor (zero agent spend).
+  Verification: unit test asserting executor `call_count == 0` when a pre_hook fails with
+  `fail_task` (T-jI3P4p).
+- FR-3 (MVP): engine runs `post_hook` once per dispatch cycle after the agent executor produces a
+  terminal result (succeeded, or exhausted-retries failed/timed_out) — NOT on cancelled or
+  quota-exhausted early-return. Default `on_failure="ignore"` never changes the agent's own
+  status; `on_failure="fail_task"` can downgrade succeeded→failed but never upgrade.
+  Verification: unit tests for both policies × both underlying statuses (T-jI3P4p).
+- FR-4 (MVP, locked-in hard requirement): default (no hooks declared) is a true no-op — no env
+  dict built, no capture dir created, no subprocess spawned.
+  Verification: unit test patching `hooks.run_hook` with a `Mock`, asserting `call_count == 0`
+  for a hookless task across succeeded/failed/timed_out outcomes; a timing micro-benchmark
+  script recorded as evidence (T-jI3P4p / T-FCC8mT).
+- FR-5 (MVP): hook verdict = process exit code (0 = passed); an optional JSON file at
+  `AO_HOOK_RESULT_PATH`, bounded via the existing `artifacts.read_control`, is recorded verbatim
+  as `HookOutcome.detail` but never overrides the exit-code verdict.
+  Verification: unit tests with a hook script that writes a result file + exits both 0 and
+  nonzero (T-jI3P4p).
+- FR-6 (MVP): hook context handed to the subprocess is paths-only (NFR-1) — `context.json` +
+  env vars (`AO_RUN_ID`, `AO_TASK_ID`, `AO_HOOK_KIND`, `AO_DISPATCH_CYCLE`,
+  `AO_HOOK_CONTEXT_PATH`, `AO_HOOK_RESULT_PATH`), reusing the task's own resolved instruction/
+  input/output/repo paths and `env_overlay` (isolation-aware for free).
+  Verification: unit test asserting `context.json` shape + no file-content reads (T-jI3P4p).
+- FR-7 (MVP): end-to-end demonstration — an example workflow spec under `specs/examples/`
+  exercising both hooks through the real CLI (`ao validate` + `ao run`), with captured
+  `pre_hook`/`post_hook` directories and a passing/failing hook scenario.
+  Verification: e2e test + manual run transcript (T-FCC8mT).
+- FR-8 (MVP, **new — early-gate BLOCKING finding**): a T2 conflict-resolver dispatch
+  (`mode == "resolve"`) never inherits a task's declared hooks — `_prepare_resolver_dispatch`
+  explicitly clears `pre_hook`/`post_hook` on the resolver's task copy. T3 rerun dispatches are
+  explicitly confirmed unaffected (hooks fire normally).
+  Verification: dedicated integration test exercising a resolve-mode dispatch with hooks
+  declared on the original task (T-jI3P4p).
+
+### Non-MVP (deferred; see HLD §9 for how each would be validated later)
+- NFR-1: workflow-level default hooks (validated the same way `general_instructions`/
+  `resolve_effective_agent` fill-in patterns are tested today).
+- NFR-2: `--no-hooks`/`AO_DISABLE_HOOKS` kill switch (validated the same way
+  `test_cli_isolation_flags.py` validates `--no-isolation`).
+- NFR-3: hook-level retry policy (validated with a dedicated `hook.retries` field + retry-loop
+  test once designed).
+
+### Stretch (nice-to-have; not required to ship)
+- S-1: dashboard/UI rendering of `pre_hook_result`/`post_hook_result` (data is already persisted
+  in `RunState`; only a UI change would be needed).
+
+## Task List
+- [x] `T-AHvmYR-hook-schema-models` — models.py: HookSpec/HookOutcome/constants/resolver fn +
+  TaskSpec/TaskResult/TaskRunState fields. (FR-1, FR-5)
+- [x] `T-lzQEyy-engine-hook-dispatch` — engine.py: `_run_hook`, pre/post wiring in
+  `_run_with_retries`, `_settle_completed_task` mirror. (FR-2, FR-3, FR-4, FR-6)
+- [x] `T-DgheoA-spec-schema-validation` — `specs/workflow.schema.json` `$defs/hook` +
+  pydantic-level validation confirmation. (FR-1)
+- [x] `T-fbQIFX-example-workflow-and-docs` — example spec + hook scripts under
+  `specs/examples/`. (FR-7)
+- [x] `T-jI3P4p-unit-integration-tests` — 65 new tests across 4 files + a benchmark script;
+  dev-epic found and fixed 4 test bugs before accepting (see its STATUS.md). (FR-1..FR-6, FR-8)
+- [x] `T-FCC8mT-e2e-verification` — late-gate: 2 real scenarios run via the real `ao` binary
+  (happy path + a post_hook gating downgrade), evidence under `output/`. (FR-7)
+- [x] `T-6gR2ya-review-and-hardening` — reviewer approved production code outright; found 1
+  BLOCKING + 1 non-blocking test-suite gap (both fixed by dev-epic with negative-control
+  verification). (cross-cutting)
+
+## Risks and Dependencies
+- engine.py is a large (~4000-line), heavily-conventioned file with many existing invariants
+  (NFR-1 paths-only, NFR-3 no-worker-RunState-mutation, R-21 dispatch-cycle keying) — mitigated
+  by keeping the entire hook mechanism inside `_run_with_retries` (D1 in the HLD) so no other
+  subsystem's call sites change.
+- Ambiguity: exact env var / context.json field naming is this agent's own design choice (no
+  prior "hook" precedent in the repo to match) — flagged as a design decision, not a blocker;
+  documented explicitly in the HLD so Epic B doesn't have to guess.
+
+## Links
+- Design doc: `docs-md/task-lifecycle-hooks-hld.md`
+- Example spec: `specs/examples/workflow-hooks.json` (added by T-fbQIFX)
+- Output artifacts (if any): `output/E-AMSSHX-task-lifecycle-hooks/` (e2e run evidence, added by
+  T-FCC8mT)

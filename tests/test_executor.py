@@ -12,7 +12,9 @@ from agent_orchestrator.executors.claude_cli import (
     RECOMMENDED_HEADLESS_DISALLOWED_TOOLS,
     ClaudeCliExecutor,
     _apply_tool_policy,
+    _describe_unknown_option_failure,
     _ensure_disallowed_tools,
+    _ensure_exclude_dynamic_sections,
     _ensure_stream_capture_flags,
     extract_result_event,
     parse_transcript_events,
@@ -506,6 +508,192 @@ class TestClaudeCliExecutorDisallowedToolsWiring:
     def test_empty_field_is_allow_all(self, monkeypatch, tmp_path) -> None:
         argv = self._capture_argv(monkeypatch, tmp_path, ())
         assert "--disallowedTools" not in argv
+
+
+# ---------------------------------------------------------------------------
+# _ensure_exclude_dynamic_sections — E-1cecSx B1 opt-in prompt-cache-scope fix for
+# isolated (per-task-worktree) workflows. Default off (NFR-B1-1): every pre-epic dispatch's
+# argv must stay byte-identical.
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureExcludeDynamicSections:
+    def test_disabled_is_noop_byte_identical(self) -> None:
+        argv = ["claude", "-p", "hi"]
+        result = _ensure_exclude_dynamic_sections(argv, False)
+        assert result == argv
+        assert result is not argv  # still returns a new list (non-mutating contract)
+
+    def test_enabled_injects_flag(self) -> None:
+        argv = ["claude", "-p", "hi"]
+        result = _ensure_exclude_dynamic_sections(argv, True)
+        assert "--exclude-dynamic-system-prompt-sections" in result
+
+    def test_enabled_does_not_double_inject(self) -> None:
+        argv = ["claude", "-p", "hi", "--exclude-dynamic-system-prompt-sections"]
+        result = _ensure_exclude_dynamic_sections(argv, True)
+        assert result.count("--exclude-dynamic-system-prompt-sections") == 1
+
+    def test_skips_when_custom_system_prompt_set(self) -> None:
+        argv = ["claude", "-p", "hi", "--system-prompt", "custom"]
+        result = _ensure_exclude_dynamic_sections(argv, True)
+        assert "--exclude-dynamic-system-prompt-sections" not in result
+
+    def test_skips_when_custom_system_prompt_file_set(self) -> None:
+        argv = ["claude", "-p", "hi", "--system-prompt-file", "prompt.txt"]
+        result = _ensure_exclude_dynamic_sections(argv, True)
+        assert "--exclude-dynamic-system-prompt-sections" not in result
+
+    def test_skips_when_custom_system_prompt_eq_form_set(self) -> None:
+        argv = ["claude", "-p", "hi", "--system-prompt=custom"]
+        result = _ensure_exclude_dynamic_sections(argv, True)
+        assert "--exclude-dynamic-system-prompt-sections" not in result
+
+    def test_returns_new_list(self) -> None:
+        argv = ["claude", "-p", "hi"]
+        result = _ensure_exclude_dynamic_sections(argv, True)
+        assert result is not argv
+        assert argv == ["claude", "-p", "hi"]
+
+
+class TestClaudeCliExecutorExcludeDynamicSectionsWiring:
+    """execute() forwards AgentSpec.exclude_dynamic_system_prompt_sections into real argv."""
+
+    def _capture_argv(self, monkeypatch, tmp_path, *, enabled: bool) -> list[str]:
+        captured: dict[str, list[str]] = {}
+
+        class _FakePopen:
+            def __init__(self, argv: list[str], **kwargs: object) -> None:
+                captured["argv"] = argv
+                self.returncode = 0
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                pass
+
+        monkeypatch.setattr("agent_orchestrator.executors.claude_cli.subprocess.Popen", _FakePopen)
+        agent = AgentSpec(executor="claude_cli", exclude_dynamic_system_prompt_sections=enabled)
+        ctx = TaskContext(
+            run_id="r1",
+            task_id="t1",
+            agent=agent,
+            instruction_path="/i.md",
+            input_paths=[],
+            output_paths=[],
+            repo_paths={},
+            timeout_seconds=60,
+            output_dir=str(tmp_path),
+        )
+        result = ClaudeCliExecutor().execute(ctx)
+        assert result.status == "succeeded"
+        return captured["argv"]
+
+    def test_default_false_is_byte_identical_argv(self, monkeypatch, tmp_path) -> None:
+        """NFR-B1-1 regression gate: the default (unset) AgentSpec produces argv identical
+        to a pre-epic dispatch -- no new flag anywhere in the command."""
+        argv = self._capture_argv(monkeypatch, tmp_path, enabled=False)
+        assert "--exclude-dynamic-system-prompt-sections" not in argv
+
+    def test_enabled_true_injects_flag_before_stream_flags(self, monkeypatch, tmp_path) -> None:
+        argv = self._capture_argv(monkeypatch, tmp_path, enabled=True)
+        assert "--exclude-dynamic-system-prompt-sections" in argv
+        ei = argv.index("--exclude-dynamic-system-prompt-sections")
+        of = argv.index("--output-format")
+        assert ei < of
+
+
+# ---------------------------------------------------------------------------
+# _describe_unknown_option_failure — E-1cecSx B1, architect early-gate finding 1.5: a clear,
+# attributable diagnosis when an older `claude` CLI rejects the new flag as unrecognized.
+# ---------------------------------------------------------------------------
+
+
+class TestDescribeUnknownOptionFailure:
+    def test_none_when_flag_was_not_enabled(self) -> None:
+        text = "error: unknown option '--exclude-dynamic-system-prompt-sections'"
+        assert _describe_unknown_option_failure(text, False) is None
+
+    def test_none_when_enabled_but_no_unknown_option_text(self) -> None:
+        assert _describe_unknown_option_failure("some other failure", True) is None
+
+    def test_none_when_unknown_option_text_present_but_not_this_flag(self) -> None:
+        # A DIFFERENT unrecognized flag (e.g. a typo in the agent's own extra_args) must not
+        # be misattributed to this one.
+        text = "error: unknown option '--some-other-flag'"
+        assert _describe_unknown_option_failure(text, True) is None
+
+    def test_matches_real_cli_error_text(self) -> None:
+        # Verified empirically against the real installed CLI (v2.1.278): argument-parse-time
+        # failure, `error: unknown option '<flag>'`.
+        text = "error: unknown option '--exclude-dynamic-system-prompt-sections'"
+        note = _describe_unknown_option_failure(text, True)
+        assert note is not None
+        assert "--exclude-dynamic-system-prompt-sections" in note
+        assert "predates this flag" in note
+
+    def test_case_insensitive_match(self) -> None:
+        text = "Error: Unknown Option '--exclude-dynamic-system-prompt-sections'"
+        assert _describe_unknown_option_failure(text, True) is not None
+
+
+class TestClaudeCliExecutorUnknownOptionWiring:
+    """execute() folds the unknown-option diagnosis into TaskResult.error when applicable."""
+
+    def _run_with_stderr(self, monkeypatch, tmp_path, *, stderr: str, enabled: bool) -> TaskResult:
+        class _FakePopen:
+            def __init__(self, argv: list[str], **kwargs: object) -> None:
+                self.returncode = 1
+                Path(kwargs["stderr"].name).write_text(stderr, encoding="utf-8")
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 1
+
+            def kill(self) -> None:
+                pass
+
+        monkeypatch.setattr("agent_orchestrator.executors.claude_cli.subprocess.Popen", _FakePopen)
+        agent = AgentSpec(executor="claude_cli", exclude_dynamic_system_prompt_sections=enabled)
+        ctx = TaskContext(
+            run_id="r1",
+            task_id="t1",
+            agent=agent,
+            instruction_path="/i.md",
+            input_paths=[],
+            output_paths=[],
+            repo_paths={},
+            timeout_seconds=60,
+            output_dir=str(tmp_path),
+        )
+        return ClaudeCliExecutor().execute(ctx)
+
+    def test_unknown_option_note_prepended_when_enabled(self, monkeypatch, tmp_path) -> None:
+        result = self._run_with_stderr(
+            monkeypatch,
+            tmp_path,
+            stderr="error: unknown option '--exclude-dynamic-system-prompt-sections'",
+            enabled=True,
+        )
+        assert result.status == "failed"
+        assert "predates this flag" in (result.error or "")
+
+    def test_no_note_when_disabled(self, monkeypatch, tmp_path) -> None:
+        result = self._run_with_stderr(
+            monkeypatch,
+            tmp_path,
+            stderr="error: unknown option '--exclude-dynamic-system-prompt-sections'",
+            enabled=False,
+        )
+        assert result.status == "failed"
+        assert "predates this flag" not in (result.error or "")
+
+    def test_ordinary_failure_unaffected(self, monkeypatch, tmp_path) -> None:
+        result = self._run_with_stderr(
+            monkeypatch, tmp_path, stderr="some ordinary tool error", enabled=True
+        )
+        assert result.status == "failed"
+        assert result.error == "some ordinary tool error"
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,9 @@
+{
+  "version": "1.0",
+  "agents": {
+    "architect": { "executor": "fake" },
+    "developer": { "executor": "fake" },
+    "tester": { "executor": "fake" },
+    "reviewer": { "executor": "fake" }
+  }
+}
