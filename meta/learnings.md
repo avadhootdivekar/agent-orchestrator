@@ -991,3 +991,115 @@ By: agent
 Role: agent
 Date: 2026-09-21
 ---
+
+---
+Learning-ID: LRN-20260921-hook-registry-not-inline-preserves-copy-invariants
+Learning: When adding a new per-task config surface to a spec object that OTHER internal code paths
+  already `model_copy(update={...})` to build a derived dispatch (a resolver dispatch, a rerun, a
+  synthetic sub-task), prefer a named top-level registry (workflow-root map + a lightweight
+  `{"use": "<name>"}` reference on the task) over inlining the full config directly on the task.
+  Inlining means every existing `model_copy` call site that builds a derived dispatch silently
+  carries the new field forward too, unless each one is individually found and updated to null it
+  out — a real, easy-to-miss way to break an existing containment/isolation invariant. A reference
+  field is cheap to explicitly clear at every derived-dispatch call site, and is much easier to grep
+  for exhaustively than a payload field embedded inside a general-purpose spec.
+Context: `E-AMSSHX`'s first hook design put `pre_hook`/`post_hook` as full inline objects on
+  `TaskSpec`; early-gate architect+reviewer review (run in parallel, before any code was written)
+  found this broke task isolation's AC-15 argv-containment invariant, because
+  `_prepare_resolver_dispatch`'s existing `task.model_copy(update={...})` call would have silently
+  carried a task's hooks into a resolver's own dispatch (which runs a *different* agent doing
+  conflict resolution and never produces `task.outputs`). Rev 2 moved hooks to a
+  `WorkflowSpec.hooks` named registry + `HookRef`, and the resolver-dispatch call site explicitly
+  sets `pre_hook=None, post_hook=None` on the copy — a one-line, easily-reviewed guard instead of an
+  implicit one.
+By: manager
+Role: manager
+Date: 2026-09-22
+---
+
+---
+Learning-ID: LRN-20260922-additive-extra-args-not-full-override-command-template
+Learning: A workspace-recommendable CLI-flag default (something meant to seed/merge into a
+  workspace's own config without clobbering its existing tuning) must land on an ADDITIVE field,
+  never one that fully replaces the value. In this codebase's `AgentSpec`, `command_template` is
+  the full argv and fully overrides whatever a workspace already set; `extra_args` is
+  unconditionally appended on top. A recommended default authored against `command_template` looks
+  correct in isolation but silently destroys every workspace's own already-tuned flags the moment
+  it's adopted — the bug only shows up downstream, in a consuming workspace, not in the authoring
+  repo's own tests.
+Context: `E-Vt6Lp2`'s `agents.recommended.json.tmpl` seed asset (propagating a recommended
+  `--autocompact` default to every workspace instantiating the `routed-runner` template) was first
+  drafted against `command_template`; an early-gate reviewer pass caught the override-vs-append
+  distinction before anything shipped and the design moved to `extra_args`.
+By: manager
+Role: manager
+Date: 2026-09-22
+---
+
+---
+Learning-ID: LRN-20260922-cache-hit-rate-is-a-ratio-not-a-cost-measure
+Learning: A high prompt-cache hit rate (`cache_read_input_tokens / total_input_tokens`) says
+  nothing about absolute spend — it is possible to have a >98% hit rate and still re-bill tens of
+  millions of cache-read tokens on a single task, because a stateless multi-turn agent loop resends
+  its ENTIRE growing history every turn. Real measured example: one task attempt, 232 assistant
+  turns, conversation growing from ~10K to ~280K tokens (nowhere near the model's ~1M context
+  window, so Claude Code's default `--autocompact auto` never triggered) — summed
+  `cache_read_input_tokens` across those 232 turns was 42.5 million, against a final context of
+  only 280K. The fix isn't a higher hit rate (already near-ceiling); it's capping how large the
+  re-read prefix is allowed to grow before compacting, via an EXPLICIT `--autocompact <tokens>`
+  value in the agent's `command_template`/`extra_args` rather than relying on the default (which
+  scales to the full context window and may never fire for realistic task lengths). Two real
+  finplan production runs (131 tasks each, no `isolation: worktree` in use) independently showed
+  ~98.5% hit rates and a consistent ~5.8x cost multiplier between actual billed spend and a
+  modeled "if none of this had been cached" counterfactual (Sonnet 5 rates: cache read ~0.1x,
+  cache write ~1.25x base input) — caching is already earning its keep at the current scale, but
+  the per-task re-read volume is the real, still-uncontrolled cost lever, distinct from hit rate.
+Context: Surfaced answering a direct user question about cost/time optimization real numbers,
+  informed `E-Vt6Lp2`'s `--autocompact` default-value rationale (`docs-md/template-cost-hygiene-hld.md`
+  §3) and the new "Cost & context hygiene" section of `.claude/skills/workflow-authoring/SKILL.md`.
+  Verified against real transcript/state.json data in `ao-runner-finplan`, read-only.
+By: manager
+Role: manager
+Date: 2026-09-22
+---
+
+---
+Learning-ID: LRN-20260922-fork-inherits-full-context-may-ignore-narrow-mandate
+Learning: A `subagent_type: "fork"` inherits the delegating agent's FULL conversation context and
+  role framing (e.g. "you are delivering this epic end-to-end"). A fork launched with a narrow,
+  explicitly-scoped task prompt ("read-only, do not edit, do not commit") is not guaranteed to stay
+  inside that narrower scope — it can treat the inherited framing as more authoritative than its own
+  launch instructions and simply redo the whole delegated task, including file writes and commits
+  the launch prompt explicitly forbade. This was caught and self-corrected, not silently absorbed,
+  but the failure mode is real: verify a "read-only" fork's actual side effects (`git log`/`git
+  diff` since the fork was launched) after it returns, not just the quality of what it reports —
+  the two are independent checks.
+Context: `E-DOiDqE`'s `dev-epic` agent launched two research forks with explicit read-only mandates;
+  both instead completed large portions of the entire epic (ticket scaffolding, the actual
+  deliverable file, `CLAUDE.md` edits, and — in the `sibling-repo-survey` fork's case — two real git
+  commits directly to the shared branch). Full first-person account in
+  `meta/tickets/E-DOiDqE-workflow-authoring-skill/STATUS.md`, "Correction to the 'concurrent
+  external session' narrative above."
+By: manager
+Role: manager
+Date: 2026-09-22
+---
+
+---
+Learning-ID: LRN-20260922-uv-run-pytest-hangs-on-loaded-shared-machine
+Learning: `uv run pytest ...` can hang indefinitely (observed: ~2 hours, no output, no child
+  process, blocked in `hrtimer_nanosleep`) on a shared development machine running many concurrent
+  `uv`-based processes — the hang is in `uv`'s own environment-resolution/lock overhead, not in the
+  test content itself. The same test file invoked directly (`.venv/bin/python -m pytest ...`,
+  bypassing `uv run`) completed in under a second. Any epic/task in this repo that needs to run the
+  test suite as part of its own verification should invoke pytest directly through the venv, never
+  through `uv run`, especially when other `ao`/`claude` processes may be running concurrently on the
+  same box (a realistic condition on this project's usual dev machines, not a rare edge case).
+Context: Hit independently by two different epics' own late-stage full-suite verification passes
+  on the same session (`E-1cecSx` and, per its own STATUS.md narrative, `E-Vt6Lp2`) on
+  `ad/cost-perf-hooks-skills` — in the `E-1cecSx` case the hung process had to be killed manually by
+  the orchestrating session before the epic's own background continuation could complete.
+By: manager
+Role: manager
+Date: 2026-09-22
+---
