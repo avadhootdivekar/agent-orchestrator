@@ -96,7 +96,14 @@ Sprint 2 (120 h above the cut + 16 h below, of 144 h committed)
   by dev-epic with primary evidence (real on-disk digest sequence, engine.py's `actuals_available`
   gating). Full suite 4449 passed/8 skipped/0 failed, ruff/mypy/pyright clean. See
   `T-WruPiv-e2e-harness-core-scenarios/STATUS.md`.
-- [ ] `T-vmI0jI-e2e-failure-scenarios` — e2e (e)–(h): backstop+G5+unit gate, signal response, cancel, `max_parallel=2` (3 d).
+- [x] `T-vmI0jI-e2e-failure-scenarios` — e2e (e)–(h): backstop+G5+unit gate, signal response, cancel,
+  `max_parallel=2` (3 d). **Done**: all 6 scenarios (e/e1/e2/f/g/h) pass 3x consecutive against the
+  real engine/checkers. dev-epic independently re-verified every claim and found + fixed 3 real
+  defects in scenario (f) that the implementing subagent's own "passing" report missed (an
+  unscripted checkpoint masking the intended `OV-R12` sub-case behind a loose assertion, a wrong
+  `instance_dir`/`run_id` path, an incompletely-answered multi-signal digest). Full suite 4455
+  passed/8 skipped/0 failed, ruff/mypy/pyright clean. See
+  `T-vmI0jI-e2e-failure-scenarios/STATUS.md`.
 - [x] `T-3FlD46-security-review-hardening` — dev-security code review of tool/hooks/checkers + fixes (1 d). **Done**: all 6 design-level findings verified-implemented (traced by hand, not docstring-only); 1 new HIGH-equivalent gap found and fixed (unbounded `read_ledger_lines`, a DoS-shaped size-cap bypass); 2 LOW follow-ups filed, no open CRITICAL/HIGH. See `T-3FlD46-security-review-hardening/STATUS.md`.
 - [ ] `T-23yMMB-live-smoke-run` — FR-17 real-LLM smoke, ≤ $25 (1 d).
 - [ ] `T-gbccdr-docs-refresh` — post-implementation reconciliation of `docs-md/` and the skill (1 d).

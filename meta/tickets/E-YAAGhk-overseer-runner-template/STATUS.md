@@ -154,9 +154,29 @@
   mechanism in full (approved 4/4 of its own flagged judgment calls) and its 3 remaining findings
   are now fixed exactly as specified, verified with primary evidence stronger than a typical
   re-review rubber-stamp; documented in `T-WruPiv-e2e-harness-core-scenarios/STATUS.md`.
-- Rollup: MVP tasks 10/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
-  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`, `T-WruPiv`) · MVP-Should 0/1 (deferred, see below)
-  · design 1/1.
+- `T-vmI0jI` (e2e failure scenarios e-h) is **Done**: all 6 scenarios (e-core, e1, e2, f, g, h)
+  pass 3/3 consecutive runs against the real engine, hooks, and checkers. Two subagent passes
+  drafted the scenarios; dev-epic independently re-verified every claim against the real repo
+  state rather than trusting either report, and found + fixed real gaps in both passes: an
+  `OV-R4` budget-projection issue (the stage machine's projection uses the CONFIGURED `wave_size`
+  regardless of actual emitted units, requiring `wave_size=1` for small `run_budget_usd` values), a
+  `state.injected_tasks`-has-no-`status`-field test bug, an `OV-R14`/`OV-R6` gap in scenario (h),
+  two entirely-missing AC assertions (the plain-resume BUDGET refusal for (e), the dispatch-ordering
+  check for (h) — both proven via a new harness feature, `ScriptedOverseerExecutor.CALL_LOG`), and
+  three real defects in scenario (f): an unscripted `ck-02` masking the intended `OV-R12` sub-case
+  behind a loose "something failed" assertion, a wrong `instance_dir`/`run_id` path substitution
+  that would have raised `FileNotFoundError` the moment it was exercised, and an
+  incompletely-answered multi-signal digest (the real detector fires `attempt_cap` alongside the
+  scenario's intended `period_repeat`, and `OV-R12` requires every fired signal to be answered).
+  Full suite **4455 passed, 8 skipped, 0 failed** (+6 over the 4449 baseline, no regressions);
+  ruff/ruff format/mypy/pyright all clean. Judgment call: no separate `reviewer`-agent pass
+  requested (documented rationale in `T-vmI0jI-e2e-failure-scenarios/STATUS.md`, consistent with
+  the precedent set by `T-3FlD46`). Deviation for `T-gbccdr`: the design narrative's "OV-R8" for
+  dangling next-checkpoint references is actually shipped as `OV-R10` (`OV-R8` is unit-entry-only)
+  — first found in `T-WruPiv`'s scenario (c), reconfirmed here.
+- Rollup: MVP tasks 11/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
+  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`, `T-WruPiv`, `T-vmI0jI`) · MVP-Should 0/1
+  (deferred, see below) · design 1/1.
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -229,14 +249,14 @@ budget trip cannot reach close-out on its own.
   list is in design doc §23.
 
 ## Next actions
-1. All of S1 + all 3 checker tasks + `T-3FlD46` + `T-WruPiv` are Done — 10/13 MVP tasks. Next:
-   `T-vmI0jI` (e2e failure scenarios (e)-(h), deps: T-WruPiv only, now unblocked — the harness it
-   reuses is solid, including the now-real budget/stage machinery), `T-23yMMB` (needs explicit user
-   spend authorization, <=$25, before running), `T-gbccdr` (last — carries the AC6/rollback
-   engine-gap note from T-eGXqXH's review, the R12 checkpoint/stage deferral note from T-tAKBBB's
-   review, the N2/N3 follow-up notes from T-3FlD46's review, and a note that any FUTURE scenario
-   reusing `ScriptedOverseerExecutor` must set `actuals_available=True` alongside `cost_usd` or
-   budget staging silently no-ops, for the deviations section). `T-zLHc7Q` stays deferred
-   (MVP-Should, below cut line per its own ticket status) unless told otherwise.
+1. All of S1 + all 3 checker tasks + `T-3FlD46` + `T-WruPiv` + `T-vmI0jI` are Done — 11/13 MVP
+   tasks. Next: `T-23yMMB` (live smoke run, real `claude_cli` spend, ≤$25 — **needs explicit user
+   spend authorization before running, will not run unprompted**), then `T-gbccdr` (docs
+   refresh/closeout — carries the AC6/rollback engine-gap note from T-eGXqXH's review, the R12
+   checkpoint/stage deferral note from T-tAKBBB's review, the N2/N3 follow-up notes from
+   T-3FlD46's review, the `actuals_available` harness gotcha and the OV-R8/R10 rule-id
+   doc-vs-implementation drift from T-WruPiv/T-vmI0jI's reviews, for the deviations section).
+   `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status) unless told
+   otherwise.
 2. When ready to open a PR for this epic, flag commit `2387503` (G5 fix) separately in the
    description per the note above.
