@@ -6,7 +6,9 @@
 - Owner: tester
 - Created: 2026-09-26
 - Last Updated: 2026-09-26
-- Status: Draft
+- Status: Done (see STATUS.md — all 5 tests pass 3x consecutive; reviewer pass found 1 critical +
+  2 warnings, all 3 fixed and independently re-verified by dev-epic with primary evidence: real
+  on-disk digest.json stage sequence, engine.py's `actuals_available` gating, full suite, lint/types)
 - Estimate: 3 days (24 h). The harness can start on S2 day 1; the scenarios need the checkers by day 4.
 
 ## Requirements Mapping
