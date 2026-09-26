@@ -80,12 +80,21 @@ class ScriptedOverseerExecutor(FakeExecutor):
 
     SCRIPT: ClassVar[dict[str, ScriptEntry]] = {}
 
+    #: Chronological record of every `execute()` call's `task_id`, in call order -- a scenario
+    #: asserting dispatch ORDERING (e.g. "ck-01 strictly after both parallel units") reads this
+    #: instead of wall-clock timestamps, which the engine's own scheduler doesn't guarantee are
+    #: monotonically distinguishable under `max_parallel`. Reset per test via
+    #: `ScriptedOverseerExecutor.CALL_LOG = []`, mirroring the existing `SCRIPT` reset pattern.
+    CALL_LOG: ClassVar[list[str]] = []
+
     def __init__(self) -> None:
         super().__init__()
         self._attempt_counter: dict[str, int] = {}
 
     def execute(self, ctx: TaskContext) -> TaskResult:
         """Intercept and augment the fake executor's output with scripted data."""
+        self.CALL_LOG.append(ctx.task_id)
+
         # Snapshot any tool-owned digest.json BEFORE calling the parent FakeExecutor: its own
         # stub-writing pass unconditionally overwrites EVERY declared `ctx.output_paths` entry
         # (including digest.json) with generic "fake output for <task_id>" text -- clobbering
@@ -190,6 +199,26 @@ class ScriptedOverseerExecutor(FakeExecutor):
         result.actuals_available = True
 
         return result
+
+
+class ScriptedOverseerExecutorWithHaltFlag(ScriptedOverseerExecutor):
+    """Extended executor that writes halt.flag as a side effect for scenario (g).
+
+    Usage: set halt_flag_task_id to the task that should trigger the halt.
+    """
+
+    halt_flag_task_id: ClassVar[str | None] = None
+    halt_flag_path: ClassVar[Path | None] = None
+
+    def execute(self, ctx: TaskContext) -> TaskResult:
+        """Execute the task and write halt.flag if this is the trigger task."""
+        # If this is the trigger task, write the halt flag before/during execution
+        if self.halt_flag_task_id == ctx.task_id and self.halt_flag_path is not None:
+            self.halt_flag_path.parent.mkdir(parents=True, exist_ok=True)
+            self.halt_flag_path.write_text("")
+
+        # Call parent execute
+        return super().execute(ctx)
 
 
 # ============================================================================================
@@ -545,4 +574,15 @@ def build_hold_request(
         "created_at": "2026-01-01T00:00:00Z",
         "questions": questions,
         "needs_input_path": needs_input_path,
+    }
+
+
+def build_budget_override(
+    run_budget_usd: float,
+    reason: str = "override",
+) -> dict[str, Any]:
+    """Build a budget-override.json for extending the run budget."""
+    return {
+        "run_budget_usd": run_budget_usd,
+        "reason": reason,
     }

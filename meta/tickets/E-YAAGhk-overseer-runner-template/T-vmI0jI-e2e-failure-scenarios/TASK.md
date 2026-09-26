@@ -6,7 +6,8 @@
 - Owner: tester
 - Created: 2026-09-26
 - Last Updated: 2026-09-26
-- Status: Draft
+- Status: Done (see STATUS.md — all 6 scenarios (e/e1/e2/f/g/h) pass 3x consecutive; full suite
+  4455 passed/8 skipped/0 failed; ruff/mypy/pyright clean)
 - Estimate: 3 days (24 h)
 
 ## Requirements Mapping
