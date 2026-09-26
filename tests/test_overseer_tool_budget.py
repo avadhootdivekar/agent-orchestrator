@@ -99,7 +99,11 @@ def write_config(inst: Path, **overrides: object) -> None:
 
 def _derive(**kwargs: object):
     """`derive_budget` with sane defaults for every param a given test doesn't care about."""
-    defaults = dict(
+    # Explicitly widened to dict[str, object] (matching **kwargs' own inferred type) so
+    # `.update(kwargs)` below doesn't narrow `defaults` to the literal types of the
+    # defaults alone (float | bool | str), which `.update()` would then reject `kwargs`
+    # against (Pyright/strict-mypy finding, T-ABDjSj follow-up).
+    defaults: dict[str, object] = dict(
         spent=0.0,
         run_budget_usd=2000.0,
         wave_size=6,
