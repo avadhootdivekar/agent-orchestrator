@@ -6,6 +6,15 @@
 - Owner: architect → dev-epic
 
 ## This update
+- `T-ABDjSj` (tool M1: config/state/ledger/budget/hold/charter-lock/unit-gate/request-closeout) is
+  **Done**: `src/agent_orchestrator/templates/builtin/overseer-runner/tools/overseer_tool.py` (new
+  file/dir, stdlib only) plus 124 new tests across 3 files, 99% coverage on the tool's own source,
+  full repo suite 4107 passed/8 skipped/0 failed (no regressions), ruff/mypy clean. Full evidence
+  and judgment-call log in `T-ABDjSj-tool-state-ledger-budget/STATUS.md`. This unblocks `T-eGXqXH`
+  (parallel, no cross-dep) and `T-C6uQJW` (M2 detectors, reads the ledger/path-history formats
+  frozen by this task) to proceed next.
+- Rollup: MVP tasks 2/13 done (`T-pYt478`, `T-ABDjSj`) · MVP-Should 0/1 (deferred, see below) ·
+  design 1/1.
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -19,7 +28,13 @@
   skipped/0 failed), and the epic branch pushed to `origin/ad/overseer-runner-workflow`. Full
   evidence in `T-pYt478-emit-settle-atomicity/STATUS.md`.
 - dev-epic execution log / decomposition: `docs-md/ai-epics/overseer-runner-template.md`.
-- Rollup: MVP tasks 1/13 done (`T-pYt478`) · MVP-Should 0/1 (deferred, see below) · design 1/1.
+- (Rollup superseded by the current one at the top of this update — see above.)
+
+By: developer · Role: developer · Date: 2026-09-26 · Comment: T-ABDjSj (tool M1) done and verified
+end-to-end (tests run, coverage measured, full suite re-run, lint/types checked) — see this epic's
+`T-ABDjSj-tool-state-ledger-budget/STATUS.md` for the complete evidence log and judgment calls
+made where the design doc was silent (rule-id prefix formatting, `prep-result.json` placement,
+`request-closeout`'s run-id resolution, path-history scope, the new `BC-2` rule id).
 
 By: architect · Role: architect · Date: 2026-09-26 · Comment: The design stays within existing engine
 primitives (recursive `emit_tasks` waves, pre/post hooks, breakers, `state.json`), with **one**

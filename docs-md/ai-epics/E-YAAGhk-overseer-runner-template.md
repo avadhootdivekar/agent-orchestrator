@@ -69,8 +69,8 @@ criteria.
 | # | Task | Owner | Depends on | Status |
 |---|---|---|---|---|
 | 0 | `T-pYt478` emit-settle-atomicity (G5, engine) | developer | — | **Done, landed on epic branch** |
-| 1a | `T-ABDjSj` tool M1 (config/state/ledger/budget/hold/unit-gate) | developer | — | Not started |
-| 1b | `T-eGXqXH` template scaffold | developer | — | Not started |
+| 1a | `T-ABDjSj` tool M1 (config/state/ledger/budget/hold/unit-gate) | developer | — | **Done, reviewed** |
+| 1b | `T-eGXqXH` template scaffold | developer | — | In progress (next) |
 | 2 | `T-C6uQJW` tool M2 (loop/progress detectors) | developer | T-ABDjSj | Not started |
 | 3 | `T-ltBLUY` contract.md.tmpl + README | developer | T-eGXqXH | Not started |
 | 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | Not started |
@@ -83,9 +83,18 @@ criteria.
 | 11 | `T-gbccdr` docs refresh | architect | everything above except T-zLHc7Q | Not started |
 | — | `T-zLHc7Q` nested expander sub-DAG (FR-15) | developer | — | **Deferred** (below cut line, not blocking) |
 
-Rows 1a/1b have no cross-dependency and can be delegated concurrently. Row 8 can start as soon as
-its deps merge, in parallel with rows 7/9 (per the architect's own sequencing note — security
-should not be left to the very end).
+Rows 1a/1b have no cross-dependency in the design's own terms and were intended as a parallel pair
+(one developer each). **Sequencing deviation (dev-epic's own call, not a design change)**: run
+them SEQUENTIALLY (1a then 1b) rather than concurrently, because both would otherwise race on the
+same file — `T-eGXqXH`'s own ticket says to "commit a placeholder [`tools/overseer_tool.py`] that
+compiles and contains no `{{`... until [T-ABDjSj] lands", i.e. the two tasks share ownership of
+one file at the scaffold boundary. Running them one after another in a single shared working
+directory (no worktree-per-task isolation was used, since only these two tasks in the whole graph
+have this overlap) avoids any race, and running `T-ABDjSj` FIRST means `T-eGXqXH` scaffolds around
+the REAL M1 tool content from the start instead of a throwaway placeholder that would need
+replacing later — strictly better, not just safer. Row 8 can start as soon as its deps merge, in
+parallel with rows 7/9 (per the architect's own sequencing note — security should not be left to
+the very end).
 
 ### G5 / `T-pYt478` sequencing note (superseded — resolved)
 `T-pYt478` was first implemented in isolation on `fix/emit-settle-atomicity` (cut from `main`@
@@ -139,7 +148,36 @@ correctness fix (also protects `routed-runner`) rather than attribute it only to
   eventual PR to `main`, called out separately in that PR's description.
 - Full detail: `meta/tickets/E-YAAGhk-overseer-runner-template/T-pYt478-emit-settle-atomicity/STATUS.md`.
 
-### Remaining 14 tasks
+### T-ABDjSj (Done, reviewed)
+- New `src/agent_orchestrator/templates/builtin/overseer-runner/tools/overseer_tool.py` (stdlib
+  only, ~1700 lines) implementing module M1: config validation (CFG-0..3), the `state.json` loader
+  (pinned to real `models.RunState`/`TaskRunState` fields, not invented), hash-chained ledger
+  (`append_chained`/`verify_ledger_chain`/idempotent `ingest_ledger`), the budget stage machine
+  (`derive_budget` pure function + `compute_budget` I/O orchestrator, matching HLD §8.2 exactly,
+  including the monotonic latch and the FR-16 override), cadence math, hold gate (D6), charter-lock
+  verify (INT-1), `unit-gate` (FR-18), `request-closeout` (FR-19), plus M2-stub/M3-reservation
+  scaffolding for the three tasks that add to this same file next.
+- 127 new tests across 3 files (124 original + 3 dev-epic-added regression tests), 99% coverage
+  (761 statements, 9 missed, all defensive/real-clock branches).
+- dev-epic independently re-verified before requesting review (read ~400 of 1694 lines covering
+  the trickiest logic, re-ran all tests/full-suite/ruff/mypy myself — all matched exactly), then
+  requested a `reviewer` pass which closely read the remaining ~840 lines dev-epic hadn't checked.
+- Reviewer verdict: **approve with nits**. Independently traced the hash chain by hand, proved
+  render-safety via the actual `_render` function (not just a grep for `{{`), reproduced the
+  coverage numbers exactly, and cross-checked every field name against the real `models.py`/
+  `hooks.py`. One substantive non-blocking Warning: three call sites bypassed the rule-id path on
+  malformed JSON input (`hold_gate`, `verify_charter_lock`, `resolve_run_id_for_instance`) —
+  exactly on the tamper/corruption paths where a diagnosable failure matters most. dev-epic fixed
+  all three (consistent with `load_config`'s own error-wrapping pattern) and added one regression
+  test per site. Re-verified post-fix: 127 passed, 99% coverage (line numbers shifted only), full
+  suite **4110 passed, 8 skipped, 0 failed**, ruff/mypy clean.
+- One real latent bug the developer found and fixed while writing tests (not from review): a
+  `dry_run` flag wasn't threaded from `ckpt_prep` into `effective_budget`/`compute_budget`, so a
+  `ckpt-prep --dry-run` with a newly-honorable override would have written a real ledger line
+  despite `--dry-run`.
+- Full detail: `meta/tickets/E-YAAGhk-overseer-runner-template/T-ABDjSj-tool-state-ledger-budget/STATUS.md`.
+
+### Remaining 13 tasks
 Not started. Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition
 (this document's sequencing table above reflects that read) — no task will be implemented from a
 guess at scope.
@@ -163,10 +201,11 @@ guess at scope.
   already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. Proceed into the remaining 14 tasks (go-ahead confirmed) — parallel track `T-ABDjSj` +
-   `T-eGXqXH` first (no cross-deps), then down the sequencing table.
-2. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
-3. At the next natural milestone (or the spend-authorization point, whichever comes first): report
+1. Delegate `T-eGXqXH` (template scaffold) — now unblocked, building on `T-ABDjSj`'s real tool
+   content rather than a placeholder.
+2. Continue down the sequencing table.
+3. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
+4. At the next natural milestone (or the spend-authorization point, whichever comes first): report
    back with evidence.
 
 ## Pre-close checklist (tracked against `.claude/agents/dev-epic.md`'s mandatory list — epic is
@@ -179,9 +218,9 @@ guess at scope.
 - [x] Early gate run: satisfied at design time (HLD §23.3), recorded above, not re-run.
 - [x] Every delegated agent given an explicit change-scope boundary — `T-pYt478`'s `developer` and
       `reviewer` subagent prompts both stated exact allowed/forbidden files.
-- [x] Quantifiable checkpoints tracked this iteration: `T-pYt478` evidence above (test counts,
-      pass/fail, coverage of named regression-risk files).
-- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 1/15
+- [x] Quantifiable checkpoints tracked this iteration: `T-ABDjSj` evidence above (127 tests, 99%
+      coverage, full suite 4110 passed/8 skipped/0 failed, ruff/mypy clean).
+- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 2/15
       tasks in.
 - [x] Ticket status synced consistently across `TASK.md`/`STATUS.md` and the epic
       `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, for everything done so far.

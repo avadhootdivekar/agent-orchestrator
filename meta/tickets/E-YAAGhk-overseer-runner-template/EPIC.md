@@ -76,7 +76,7 @@ a `reviewer`-agent review step is part of each task's ACs.
 Sprint 1 (128 h of 144 h committed)
 - [x] `T-kD6L76-design-package` — HLD/LLD, ADR-0016, tickets, Phase-4 consultations (architect). Done.
 - [x] `T-pYt478-emit-settle-atomicity` — G5 engine fix + regression tests + NFR-2 allowlist. **Own PR to `main` first** (3 d). **Done**: implemented, independently re-verified, and reviewed (approve with nits, addressed) on branch `fix/emit-settle-atomicity` (commit `3692eac`, off `main`@`8c13320`, local/unpushed pending user confirmation to open the PR). Full suite 3983 passed/8 skipped/0 failed; ruff/mypy clean.
-- [ ] `T-ABDjSj-tool-state-ledger-budget` — tool M1: config, hook context, `state.json` loader, hash-chained ledger, path history, budget stages + override, cadence, hold gate, charter-lock verify, unit gate (3 d).
+- [x] `T-ABDjSj-tool-state-ledger-budget` — tool M1: config, hook context, `state.json` loader, hash-chained ledger, path history, budget stages + override, cadence, hold gate, charter-lock verify, unit gate (3 d). **Done**: `tools/overseer_tool.py` (new file) + 124 tests (3 files), 99% coverage, full suite 4107 passed/8 skipped/0 failed, ruff/mypy clean. See `T-ABDjSj-tool-state-ledger-budget/STATUS.md`.
 - [ ] `T-C6uQJW-tool-loop-progress-detectors` — tool M2: §8.3 detectors + progress metrics; content_oscillation is trim-first (3 d).
 - [ ] `T-eGXqXH-template-scaffold` — `template.yaml`, `workflow.json.tmpl`, `overseer-config.json.tmpl`, `prompt.md.tmpl`, hooks, breakers, assets tests (2 d).
 - [ ] `T-ltBLUY-contract-and-readme` — `overseer-contract.md.tmpl` (shapes + OV-R1..R16) + `README.md` (2 d).
