@@ -401,10 +401,11 @@ Full detail: `T-3FlD46-security-review-hardening/STATUS.md`.
 architect's own sequencing note that security should not be left to the very end.
 
 ### Remaining 4 tasks (T-WruPiv onward)
-`T-WruPiv` is in progress (second fix-pass; see Risks & blockers below for why the first attempt's
-completion claim was rejected). The other 3 (`T-vmI0jI`, `T-23yMMB`, `T-gbccdr`) are not started.
-Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition (this document's
-sequencing table above reflects that read) — no task will be implemented from a guess at scope.
+`T-WruPiv`: all 4 scenarios now genuinely pass (see Risks & blockers below for the full
+back-and-forth); a `reviewer`-agent pass is in flight (AC6) before closing the ticket. The other 3
+(`T-vmI0jI`, `T-23yMMB`, `T-gbccdr`) are not started. Full `TASK.md` acceptance criteria read for
+all 15 tickets during decomposition (this document's sequencing table above reflects that read) —
+no task will be implemented from a guess at scope.
 
 ## Risks & blockers
 - **Resolved:** `T-pYt478` is no longer a blocker for anything — it's live on
@@ -438,8 +439,30 @@ sequencing table above reflects that read) — no task will be implemented from 
     emitted wave (a continue must emit ≥1 unit); (d) `hold-request.json` is written AFTER the hold
     verdict rather than atomically with it, contradicting the ticket's own pseudocode ("ck-01
     decides hold: it writes the request AND emits ck-02" — same attempt, same step). Sent back
-    again with targeted guidance per bug; awaiting the next completion, still to be independently
-    re-verified before acceptance — no claim accepted on a self-report alone.
+    again with targeted guidance per bug.
+  - **Final update — resolved directly by dev-epic**: the agent's third pass fixed (b) fully
+    (kind-driven instruction default, matching the request) and reported "token constraints,"
+    correctly declining to overclaim on (c)/(d) rather than rounding up. dev-epic independently
+    re-ran and confirmed: scenario (b) now genuinely passes, (c)/(d) still genuinely fail. Rather
+    than grow that agent's context further, dev-epic debugged and fixed the last two itself (same
+    `--basetemp`/`check-result.json` technique): (d)'s real root cause was NOT the write-ordering
+    theory — it was that `ScriptedOverseerExecutor.execute()` only ever wrote `output_map` entries
+    matching a task's own declared `ctx.output_paths`, so `control/hold-request.json` (a
+    side-channel file, never a declared checkpoint output) was silently never written at all;
+    fixed by adding a second write pass for absolute-path `output_map` keys outside
+    `ctx.output_paths`. (c) had two bugs: the design narrative's "OV-R8" is actually implemented as
+    `OV-R10` for next-checkpoint shape (R8 only applies to unit entries — a pre-existing, reviewed
+    T-HPJcc6/T-tAKBBB distinction, not something to change now), so `bad_manifest` was rebuilt from
+    the same `build_checkpoint_task()` helper with only `depends_on` wrong (an isolated violation)
+    and the assertion targets `OV-R10`; and a `w02-01-impl` `ScriptEntry` was entirely missing,
+    leaving its breadcrumb an empty/unreadable stub. Also restructured scenario (c) into two CLI
+    invocations (`ao run` then `ao resume --run-id`), since the engine does not auto-retry a failed
+    post_hook within one `ao run` call — mirroring scenario (d)'s existing pattern. **Result,
+    independently verified**: all 5 tests (a×2, b, c, d) pass 3/3 consecutive runs (~3.8s total);
+    full suite **4449 passed, 8 skipped, 0 failed** (no regressions); `ruff check`/
+    `ruff format --check` (auto-fixed 54 pre-existing line-length violations via `ruff format`,
+    then re-verified all 5 tests still pass)/`mypy`/`pyright --pythonpath .venv/bin/python` all
+    clean. A `reviewer`-agent pass (AC6) is in flight before the ticket is marked Done.
 - `T-23yMMB` (live smoke run) spends real money against a real LLM (`claude_cli`), capped at $25
   per the architect's design. Per the epic owner's explicit instruction, **dev-epic will not run
   this without first flagging it back for explicit spend authorization** — this is a real-money
