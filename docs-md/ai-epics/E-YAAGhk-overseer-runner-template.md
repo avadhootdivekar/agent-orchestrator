@@ -68,7 +68,7 @@ criteria.
 
 | # | Task | Owner | Depends on | Status |
 |---|---|---|---|---|
-| 0 | `T-pYt478` emit-settle-atomicity (G5, engine) | developer | — | **Done** (own branch, see below) |
+| 0 | `T-pYt478` emit-settle-atomicity (G5, engine) | developer | — | **Done, landed on epic branch** |
 | 1a | `T-ABDjSj` tool M1 (config/state/ledger/budget/hold/unit-gate) | developer | — | Not started |
 | 1b | `T-eGXqXH` template scaffold | developer | — | Not started |
 | 2 | `T-C6uQJW` tool M2 (loop/progress detectors) | developer | T-ABDjSj | Not started |
@@ -78,7 +78,7 @@ criteria.
 | 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | Not started |
 | 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | Not started |
 | 8 | `T-3FlD46` security review + hardening | dev-security | T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB (can run parallel with #7/#9 once checkers merge) | Not started |
-| 9 | `T-vmI0jI` e2e failure scenarios (e)-(h) | tester | T-WruPiv, **T-pYt478 merged to `main`**, T-ABDjSj, T-tAKBBB | Not started (blocked on G5 PR) |
+| 9 | `T-vmI0jI` e2e failure scenarios (e)-(h) | tester | T-WruPiv, T-ABDjSj, T-tAKBBB | Not started (**no longer blocked on G5** — fix is live on this branch, see below) |
 | 10 | `T-23yMMB` live smoke run, real `claude_cli`, ≤$25 | tester | T-WruPiv + all impl tasks | Not started (**needs explicit user spend authorization**) |
 | 11 | `T-gbccdr` docs refresh | architect | everything above except T-zLHc7Q | Not started |
 | — | `T-zLHc7Q` nested expander sub-DAG (FR-15) | developer | — | **Deferred** (below cut line, not blocking) |
@@ -87,20 +87,20 @@ Rows 1a/1b have no cross-dependency and can be delegated concurrently. Row 8 can
 its deps merge, in parallel with rows 7/9 (per the architect's own sequencing note — security
 should not be left to the very end).
 
-### G5 / `T-pYt478` sequencing note (critical-path decision, already executed)
-Per the epic owner's explicit instruction, `T-pYt478` was implemented on its **own branch cut from
-`main`** (`fix/emit-settle-atomicity`, not `ad/overseer-runner-workflow`), independently of the
-rest of this epic, so it can merge to `main` as its own PR ahead of the template. It is **Done**:
-implemented, independently re-verified, and reviewed. It is committed locally
-(`3692eac`) but **not pushed and no PR opened** — that requires the user's explicit go-ahead.
+### G5 / `T-pYt478` sequencing note (superseded — resolved)
+`T-pYt478` was first implemented in isolation on `fix/emit-settle-atomicity` (cut from `main`@
+`8c13320`), independently re-verified, and reviewed (approve with nits, addressed). **Update: the
+user decided against a standalone PR to `main`.** Commit `3692eac` was cherry-picked onto
+`ad/overseer-runner-workflow` as commit `2387503`; the full suite was re-run clean on the epic
+branch post-cherry-pick (3983 passed/8 skipped/0 failed, identical); the epic branch (fix
+included) was **pushed to `origin/ad/overseer-runner-workflow`** — push only, no PR opened, and
+dev-epic will not open one. `fix/emit-settle-atomicity` is now an orphaned local branch (unpushed,
+no PR) — the fix ships as part of this epic's own eventual PR to `main` instead, and that PR
+description should call out commit `2387503` as a distinct, independently-justified engine
+correctness fix (also protects `routed-runner`) rather than attribute it only to this template.
 
-Because only `T-vmI0jI` scenario (e) genuinely exercises the G5 ordering fix, the fix was
-**deliberately not cherry-picked** onto `ad/overseer-runner-workflow`. All other 10 remaining
-implementation/test/security/docs tasks are template/tool/checker/doc work independent of the
-engine change and can proceed on the unmodified epic branch. `T-vmI0jI` alone is sequenced last
-(row 9) and blocks on `fix/emit-settle-atomicity` actually merging to `main` (or, if the epic
-reaches that point first, a reconsidered local cherry-pick — re-evaluated at that time, not
-pre-decided now, since the reconciliation cost/benefit depends on how close the PR is to merging).
+**Consequence: `T-vmI0jI` is no longer blocked.** Its only real remaining dependency is
+`T-WruPiv` (the e2e harness).
 
 ## Evidence log
 
@@ -130,8 +130,13 @@ pre-decided now, since the reconciliation cost/benefit depends on how close the 
   condition like `stop_file`, already covered by a different test in the same file. dev-epic
   corrected both docstrings in place to state accurately what they verify (latch semantics /
   consult fall-through), re-ran (still 6 passed, ruff clean), and committed.
-- Committed locally: `3692eac` on `fix/emit-settle-atomicity`, **not pushed, no PR** (per explicit
-  instruction — waiting on user confirmation).
+- Committed locally: `3692eac` on `fix/emit-settle-atomicity`.
+- **Landed (update):** user decided against a standalone PR to `main`. Cherry-picked as commit
+  `2387503` onto `ad/overseer-runner-workflow`, full suite re-verified clean post-cherry-pick
+  (3983 passed/8 skipped/0 failed, identical), branch pushed to
+  `origin/ad/overseer-runner-workflow` (push only, no PR). `fix/emit-settle-atomicity` is now
+  orphaned (unpushed, no PR, superseded by the cherry-pick) — the fix ships as part of this epic's
+  eventual PR to `main`, called out separately in that PR's description.
 - Full detail: `meta/tickets/E-YAAGhk-overseer-runner-template/T-pYt478-emit-settle-atomicity/STATUS.md`.
 
 ### Remaining 14 tasks
@@ -140,8 +145,9 @@ Not started. Full `TASK.md` acceptance criteria read for all 15 tickets during d
 guess at scope.
 
 ## Risks & blockers
-- `T-pYt478`'s fix is not yet on `main` — see the sequencing note above for how the rest of the
-  epic proceeds without it, and which single task (`T-vmI0jI`) is genuinely blocked.
+- **Resolved:** `T-pYt478` is no longer a blocker for anything — it's live on
+  `ad/overseer-runner-workflow` (commit `2387503`, pushed to origin). No task in the remaining 14
+  depends on a separate merge to `main` any more.
 - `T-23yMMB` (live smoke run) spends real money against a real LLM (`claude_cli`), capped at $25
   per the architect's design. Per the epic owner's explicit instruction, **dev-epic will not run
   this without first flagging it back for explicit spend authorization** — this is a real-money
@@ -152,17 +158,16 @@ guess at scope.
 - Design-level risks (LLM overseer ignoring stages, holds rendering as `failed`, tamper-evident
   vs. tamper-proof governance, G5 blast radius) are catalogued in HLD §23 and were not
   re-litigated; `T-pYt478`'s specific blast-radius risk is closed (evidence above).
-- No blockers on starting the next two parallel tasks (`T-ABDjSj`, `T-eGXqXH`) once given the
-  go-ahead.
+- Repo-wide constraint carried forward: dev-epic does not push any branch or open/create any PR
+  for the rest of this epic — everything stays local except the epic branch itself, which the user
+  already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. Report `T-pYt478` ready-for-PR to the user with full evidence; **stop here for their input**
-   before starting the other 14 tasks, per explicit instruction.
-2. On go-ahead: delegate `T-ABDjSj` and `T-eGXqXH` concurrently (no cross-deps), each with an
-   explicit change-scope boundary, then proceed down the sequencing table.
-3. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
-4. Before `T-vmI0jI`: confirm `fix/emit-settle-atomicity`'s merge status and decide the
-   reconciliation approach at that time.
+1. Proceed into the remaining 14 tasks (go-ahead confirmed) — parallel track `T-ABDjSj` +
+   `T-eGXqXH` first (no cross-deps), then down the sequencing table.
+2. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
+3. At the next natural milestone (or the spend-authorization point, whichever comes first): report
+   back with evidence.
 
 ## Pre-close checklist (tracked against `.claude/agents/dev-epic.md`'s mandatory list — epic is
 **not** closed; this is a running scorecard, updated every iteration)
