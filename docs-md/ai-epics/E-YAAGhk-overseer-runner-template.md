@@ -290,17 +290,35 @@ confirmed resolved by the time the task finished (verified with `pyright`, not j
 Combined evidence: full suite **4374 passed, 8 skipped, 0 failed**, ruff/mypy/pyright all clean.
 Full detail: `T-5ZzAZp-agent-instructions/STATUS.md`, `T-HPJcc6-tool-structural-checkers/STATUS.md`.
 
-### Amendment: `branch_policy` param for `01-git-branch-off.md` (in progress)
-New requirement added mid-epic (confirmed by the user via the coordinator) after `T-5ZzAZp` was
-already done: an optional `branch_policy` param plus a deterministic git-fact-gathering pass
-(`git fetch` + `merge-base --is-ancestor HEAD origin/main` for the real "already merged" check,
-dirty-tree/`status --porcelain`, upstream-tracking presence, literal-`main` check) in
-`01-git-branch-off.md`, falling back to this template's own hold pattern (never a destructive
-`git reset --hard`) on a genuine policy/reality conflict, documented in `README.md`. Treated as an
-amendment to the already-Done `T-5ZzAZp` ticket, implemented as its own dev→verify→review cycle
-sequenced before `T-tAKBBB` to avoid re-touching `01-git-branch-off.md` while a reviewer was
-actively reading it. `routed-runner`'s equivalent change is being handled separately, off `main`,
-by the user directly — out of this epic's scope, not touched here.
+### Amendment: `branch_policy` param for `01-git-branch-off.md` (Done, reviewed)
+New requirement added mid-epic after `T-5ZzAZp` was already done: an optional `branch_policy`
+param plus a deterministic git-fact-gathering pass in `01-git-branch-off.md`. Implemented
+directly by dev-epic (well-bounded, full context already in hand). Reviewer verdict: **blocking
+issues found** on first pass — the rewrite had silently dropped the pre-amendment detached-HEAD
+ABORT gate (a real regression, not just an omission, in a task whose whole purpose is "stop here
+if git state is unsafe"). Fixed: restored an unconditional, policy-independent ABORT on detached
+HEAD, plus 4 non-blocking warnings (HLD §13.1 doc-sync gap, a hardcoded `origin/main` inconsistent
+with the file's own main-or-master awareness, an unhandled on-`main` case in one policy example,
+a missing test assertion) — all fixed, plus one reviewer-suggested escaping regression test added
+proactively. 11 new tests total. Full suite **4385 passed, 8 skipped, 0 failed**, ruff/pyright
+clean. Committed as `96bd64e`.
+
+### Non-epic commit: routed-runner `branch_policy` cherry-pick (branch consolidation)
+At the user's explicit request (relayed mid-task), commit `cd3077c` from an isolated worktree
+(`fix/branch-off-policy`, off `main`@`8c13320`) — a `routed-runner`-only analog of the same
+`branch_policy` feature, built by a separate agent — was cherry-picked onto
+`ad/overseer-runner-workflow` as `746a503`, for branch consolidation only. Verified before
+cherry-picking: the commit's diff touches only `templates/builtin/routed-runner/` + its own two
+test files, zero overlap with any `overseer-runner` file. Full suite re-verified after: **4386
+passed, 8 skipped, 0 failed** (exactly +1 over the 4385 baseline, matching that commit's own new
+e2e test — no interaction between the two changes). This commit is **logically independent of
+this epic** — not an epic deliverable, recorded explicitly in the epic STATUS.md so a future PR
+description or bisect isn't confused about it. **Not pushed**: pushing `ad/overseer-runner-
+workflow` was explicitly declined despite being requested in the same relayed message, since it
+directly contradicts the standing, repeatedly-stated instruction not to push any branch without
+the user's own direct confirmation — a relayed message cannot substitute for that, regardless of
+how well-verified the surrounding facts are. Flagged clearly back to the user rather than silently
+complying or silently ignoring the whole request.
 
 ### Remaining 10 tasks (T-tAKBBB onward)
 Not started. Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition

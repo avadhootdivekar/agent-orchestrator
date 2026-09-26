@@ -6,6 +6,20 @@
 - Owner: architect → dev-epic
 
 ## This update
+- **Non-epic commit note, for a future PR description or bisect**: commit `746a503`
+  ("routed-runner: policy-aware git-branch-off (branch_policy param)", cherry-picked from
+  `fix/branch-off-policy`@`cd3077c` at the user's explicit request to consolidate this session's
+  branches) is **logically independent of this epic**. It's a `routed-runner` enhancement
+  (analogous `branch_policy` support for that template's own `git-branch-off`, done by a separate
+  isolated-worktree agent), bundled onto `ad/overseer-runner-workflow` for branch consolidation
+  only — it touches only `templates/builtin/routed-runner/` + its own two test files, has zero
+  overlap with any `overseer-runner` file, and is not part of this epic's requirements/ACs. Full
+  suite re-verified after the cherry-pick: 4386 passed/8 skipped/0 failed (exactly +1 over the
+  4385 baseline, matching that commit's own single new e2e test — no interaction/regression
+  between the two changes). `ruff check`/`ruff format --check` clean on the cherry-picked files.
+  **Not pushed** — per the epic owner's explicit standing instruction not to push any branch
+  without the user's own direct confirmation; the user (or their own process) may push
+  `ad/overseer-runner-workflow` themselves when ready.
 - `T-5ZzAZp` (agent instructions) and `T-HPJcc6` (tool M3a structural checkers) are both **Done**,
   built CONCURRENTLY (verified disjoint files: `instructions/*.md` + its own test file vs.
   `overseer_tool.py`'s new M3 checker section + its own test file — no overlap).
