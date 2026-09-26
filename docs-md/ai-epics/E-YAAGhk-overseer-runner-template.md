@@ -73,9 +73,9 @@ criteria.
 | 1b | `T-eGXqXH` template scaffold | developer | — | **Done, reviewed** |
 | 2 | `T-C6uQJW` tool M2 (loop/progress detectors) | developer | T-ABDjSj | **Done, reviewed** |
 | 3 | `T-ltBLUY` contract.md.tmpl + README | developer | T-eGXqXH | **Done, reviewed** |
-| 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | In progress (next) |
-| 5 | `T-HPJcc6` tool M3a structural checkers | developer | T-ABDjSj, T-ltBLUY | Not started |
-| 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | Not started |
+| 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | **Done, reviewed** (+ branch_policy amendment pending) |
+| 5 | `T-HPJcc6` tool M3a structural checkers | developer | T-ABDjSj, T-ltBLUY | **Done, reviewed** |
+| 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | In progress (next, after the branch_policy amendment) |
 | 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | Not started |
 | 8 | `T-3FlD46` security review + hardening | dev-security | T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB (can run parallel with #7/#9 once checkers merge) | Not started |
 | 9 | `T-vmI0jI` e2e failure scenarios (e)-(h) | tester | T-WruPiv, T-ABDjSj, T-tAKBBB | Not started (**no longer blocked on G5** — fix is live on this branch, see below) |
@@ -266,7 +266,43 @@ README) -- all confirmed accurate. Two Warnings, both fixed by dev-epic:
 
 Full detail: `T-ltBLUY-contract-and-readme/STATUS.md`.
 
-### Remaining 10 tasks
+### T-5ZzAZp and T-HPJcc6 (Done, reviewed — built concurrently)
+Deviated from the originally-planned strict sequence: `T-HPJcc6` only depends on `T-ABDjSj`+
+`T-ltBLUY` (both done), not on `T-5ZzAZp`, and the two tasks touch disjoint files (`instructions/`
+markdown + its test file vs. `overseer_tool.py`'s new M3 section + its test file) — so they were
+run in parallel rather than sequentially, same pattern as `T-eGXqXH`/`T-C6uQJW`.
+
+**T-5ZzAZp**: 8 MVP instruction files, 65 new tests. Reviewer caught a real citation defect in
+`00-intake.md` (attributed the charter schema to `overseer-contract.md`, which explicitly disclaims
+it) — fixed, now cites HLD §13.4, plus added the missing `acceptance[].id` shape (`A<n>.<m>`) to
+both `00-intake.md` and `20-checkpoint.md`.
+
+**T-HPJcc6**: `intake-check`/`ckpt-check` structural half (OV-R1-R10/R15), a new
+collect-all-violations rule engine extensible for `T-tAKBBB`, new rule id `CHR-1`. 100 new tests,
+99% coverage. Reviewer verdict: approve, 3 non-blocking nits (one trivial comment fix applied).
+
+**Coordinator-flagged Pyright findings, both resolved**: (1) a real type-narrowing issue in the
+already-merged `T-ABDjSj`'s `test_overseer_tool_budget.py` (a test helper's `.update()` call) —
+fixed and verified with an actual `pyright` run, not just `mypy`, since this repo's `strict=false`
+mypy config didn't catch it; (2) a finding in `T-HPJcc6`'s test file, flagged mid-development —
+confirmed resolved by the time the task finished (verified with `pyright`, not just trusted).
+
+Combined evidence: full suite **4374 passed, 8 skipped, 0 failed**, ruff/mypy/pyright all clean.
+Full detail: `T-5ZzAZp-agent-instructions/STATUS.md`, `T-HPJcc6-tool-structural-checkers/STATUS.md`.
+
+### Amendment: `branch_policy` param for `01-git-branch-off.md` (in progress)
+New requirement added mid-epic (confirmed by the user via the coordinator) after `T-5ZzAZp` was
+already done: an optional `branch_policy` param plus a deterministic git-fact-gathering pass
+(`git fetch` + `merge-base --is-ancestor HEAD origin/main` for the real "already merged" check,
+dirty-tree/`status --porcelain`, upstream-tracking presence, literal-`main` check) in
+`01-git-branch-off.md`, falling back to this template's own hold pattern (never a destructive
+`git reset --hard`) on a genuine policy/reality conflict, documented in `README.md`. Treated as an
+amendment to the already-Done `T-5ZzAZp` ticket, implemented as its own dev→verify→review cycle
+sequenced before `T-tAKBBB` to avoid re-touching `01-git-branch-off.md` while a reviewer was
+actively reading it. `routed-runner`'s equivalent change is being handled separately, off `main`,
+by the user directly — out of this epic's scope, not touched here.
+
+### Remaining 10 tasks (T-tAKBBB onward)
 Not started. Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition
 (this document's sequencing table above reflects that read) — no task will be implemented from a
 guess at scope.
@@ -290,9 +326,9 @@ guess at scope.
   already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. Delegate `T-5ZzAZp` (agent instructions, depends on `T-ltBLUY`, done).
-2. Continue down the sequencing table — `T-HPJcc6`, `T-tAKBBB` (carrying the W2 signal-re-fire
-   handoff note), `T-WruPiv`, `T-3FlD46`/`T-vmI0jI`.
+1. Implement the `branch_policy` amendment (own dev→verify→review cycle).
+2. Continue down the sequencing table — `T-tAKBBB` (carrying the W2 signal-re-fire handoff note),
+   `T-WruPiv`, `T-3FlD46`/`T-vmI0jI`.
 3. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
 4. At the next natural milestone (or the spend-authorization point, whichever comes first): report
    back with evidence.
@@ -307,10 +343,10 @@ guess at scope.
 - [x] Early gate run: satisfied at design time (HLD §23.3), recorded above, not re-run.
 - [x] Every delegated agent given an explicit change-scope boundary — `T-pYt478`'s `developer` and
       `reviewer` subagent prompts both stated exact allowed/forbidden files.
-- [x] Quantifiable checkpoints tracked this iteration: `T-ltBLUY` evidence above (19 net new
-      tests, 47 total in the asset suite, full suite 4209 passed/8 skipped/0 failed, ruff/mypy
-      clean).
-- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 5/15
+- [x] Quantifiable checkpoints tracked this iteration: `T-5ZzAZp` + `T-HPJcc6` evidence above (65
+      + 100 new tests, 99% coverage, combined full suite 4374 passed/8 skipped/0 failed,
+      ruff/mypy/pyright clean throughout).
+- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 7/15
       tasks in.
 - [x] Ticket status synced consistently across `TASK.md`/`STATUS.md` and the epic
       `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, for everything done so far.
