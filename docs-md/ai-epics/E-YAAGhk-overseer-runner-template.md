@@ -75,8 +75,8 @@ criteria.
 | 3 | `T-ltBLUY` contract.md.tmpl + README | developer | T-eGXqXH | **Done, reviewed** |
 | 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | **Done, reviewed** (+ branch_policy amendment pending) |
 | 5 | `T-HPJcc6` tool M3a structural checkers | developer | T-ABDjSj, T-ltBLUY | **Done, reviewed** |
-| 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | In progress (next, after the branch_policy amendment) |
-| 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | Not started |
+| 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | **Done, reviewed** |
+| 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | In progress (next) |
 | 8 | `T-3FlD46` security review + hardening | dev-security | T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB (can run parallel with #7/#9 once checkers merge) | Not started |
 | 9 | `T-vmI0jI` e2e failure scenarios (e)-(h) | tester | T-WruPiv, T-ABDjSj, T-tAKBBB | Not started (**no longer blocked on G5** — fix is live on this branch, see below) |
 | 10 | `T-23yMMB` live smoke run, real `claude_cli`, ≤$25 | tester | T-WruPiv + all impl tasks | Not started (**needs explicit user spend authorization**) |
@@ -320,7 +320,39 @@ the user's own direct confirmation — a relayed message cannot substitute for t
 how well-verified the surrounding facts are. Flagged clearly back to the user rather than silently
 complying or silently ignoring the whole request.
 
-### Remaining 10 tasks (T-tAKBBB onward)
+### T-tAKBBB (Done, reviewed)
+OV-R11/R12/R13/R13c/R14/R16 added to the same rule engine `T-HPJcc6` built (appended to the
+existing extension-point lists, no restructuring), plus AC3's idempotent ledger events. 53 new
+tests, 98% coverage combined. Hand-verified R13c's Jaccard similarity against the ticket's own
+worked example before requesting review.
+
+**Real gap found and fixed by dev-epic** (via direct `engine.py` tracing, not a review finding):
+the developer's own design choice — every R12/R14/R16 check gates on `ctx.verdict is not None` and
+returns no violations when absent, to avoid breaking `T-HPJcc6`'s pre-existing structural fixtures
+(none of which ever write a `verdict.json`) — left `ckpt_check` reusing an M2 tolerant reader
+("missing/malformed means no data, never a Violation") for its own CURRENT verdict read. Traced
+`engine.py`'s actual hook/output-check ordering: `_finalize_with_post_hook` runs post_hook on the
+executor's own exit status BEFORE `_settle_completed_task`'s existence-only `missing_outputs`
+check — so a genuinely MISSING verdict.json is already safely caught by the engine (redundant, not
+a gap), but a verdict.json that EXISTS yet is malformed slips past that existence check entirely.
+Fixed with a narrow check scoped to exactly the malformed-but-present case (touches no existing
+fixture, since none of them create the file at all).
+
+Reviewer verdict: approve with nits. Independently reproduced everything, including writing a
+standalone script proving the new malformed-verdict check composes correctly with a simultaneous
+structural violation (never short-circuits). Three Warnings: (1) a stale hold-request from a
+DIFFERENT checkpoint would still validate — fixed, `_valid_hold_request` now checks the request's
+own `checkpoint` field; (2) R12 omits `checkpoint`/`stage` from its schema-valid check — deferred,
+out of this ticket's literal scope; (3) a DRY duplication (`_charter_ask_ids`) — fixed.
+
+Full suite after all fixes: **4439 passed, 8 skipped, 0 failed**, ruff/mypy/pyright clean.
+Full detail: `T-tAKBBB-tool-semantic-checkers/STATUS.md`.
+
+**Milestone: all of S1 plus all three M3 checker tasks (T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB)
+are now Done — 8/13 MVP tasks.** `T-WruPiv` (e2e harness, the first task exercising the full
+template end-to-end via `CliRunner`) is unblocked and next.
+
+### Remaining 5 tasks (T-WruPiv onward)
 Not started. Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition
 (this document's sequencing table above reflects that read) — no task will be implemented from a
 guess at scope.
@@ -344,12 +376,13 @@ guess at scope.
   already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. Implement the `branch_policy` amendment (own dev→verify→review cycle).
-2. Continue down the sequencing table — `T-tAKBBB` (carrying the W2 signal-re-fire handoff note),
-   `T-WruPiv`, `T-3FlD46`/`T-vmI0jI`.
+1. Delegate `T-WruPiv` (e2e harness + core scenarios a-d) — the first task exercising the full
+   template end-to-end via `CliRunner`.
+2. Then `T-3FlD46` (security review, parallel-eligible with e2e), `T-vmI0jI` (e2e failure
+   scenarios, deps: T-WruPiv only).
 3. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
-4. At the next natural milestone (or the spend-authorization point, whichever comes first): report
-   back with evidence.
+4. `T-gbccdr` last (docs refresh — carries the AC6/rollback and R12 checkpoint/stage deferral
+   notes for its deviations section).
 
 ## Pre-close checklist (tracked against `.claude/agents/dev-epic.md`'s mandatory list — epic is
 **not** closed; this is a running scorecard, updated every iteration)
@@ -361,11 +394,10 @@ guess at scope.
 - [x] Early gate run: satisfied at design time (HLD §23.3), recorded above, not re-run.
 - [x] Every delegated agent given an explicit change-scope boundary — `T-pYt478`'s `developer` and
       `reviewer` subagent prompts both stated exact allowed/forbidden files.
-- [x] Quantifiable checkpoints tracked this iteration: `T-5ZzAZp` + `T-HPJcc6` evidence above (65
-      + 100 new tests, 99% coverage, combined full suite 4374 passed/8 skipped/0 failed,
-      ruff/mypy/pyright clean throughout).
-- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 7/15
-      tasks in.
+- [x] Quantifiable checkpoints tracked this iteration: `T-tAKBBB` evidence above (53 new tests,
+      98% coverage, full suite 4439 passed/8 skipped/0 failed, ruff/mypy/pyright clean).
+- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 8/15
+      tasks in — `T-WruPiv` next is the first step toward it.
 - [x] Ticket status synced consistently across `TASK.md`/`STATUS.md` and the epic
       `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, for everything done so far.
 - [ ] Final handoff (done vs. not-done vs. next steps vs. artifact pointers) — **N/A yet**, epic in
