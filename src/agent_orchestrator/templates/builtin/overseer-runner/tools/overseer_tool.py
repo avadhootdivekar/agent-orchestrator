@@ -52,6 +52,15 @@ from typing import Any, Final
 
 JSON_MAX_BYTES: Final[int] = 1_048_576  # 1 MiB -- every AGENT-authored JSON the tool reads (NFR-6).
 STATE_MAX_BYTES: Final[int] = 16 * 1024 * 1024  # state.json is a full RunState dump (A-2).
+LEDGER_MAX_BYTES: Final[int] = 32 * 1024 * 1024  # NFR-6: bounds `read_ledger_lines` the same way
+# `read_json_bounded` bounds a single JSON file (stat-before-read) -- `ledger.jsonl` lives in the
+# shared, fully agent-writable workspace (NFR-X11: no inter-task trust boundary), so nothing stops
+# a rogue/buggy unit from appending an oversized line (or many lines) directly, bypassing the
+# per-line JSON parser entirely and exhausting memory before a single `json.loads` call ever
+# fails. 32 MiB is generous headroom over any real run's ledger (bounded by `max_injected_tasks`,
+# itself CFG-3-validated against wave/expander math) while still capping worst-case memory use
+# (security review finding, T-3FlD46).
+
 MAX_TRACKED_PATHS: Final[int] = 200  # NFR-6 / HLD S8.3.
 HASH_SKIP_BYTES: Final[int] = 50 * 1024 * 1024  # NFR-6: skip content-hashing files > 50 MiB.
 GIT_TIMEOUT_S: Final[int] = 30  # Reserved for T-C6uQJW's bounded `git diff`/`git status` calls.
@@ -790,6 +799,15 @@ def read_ledger_lines(inst: Path) -> list[dict[str, Any]]:
     path = ledger_path(inst)
     if not path.is_file():
         return []
+    size = path.stat().st_size
+    if size > LEDGER_MAX_BYTES:
+        # Security review finding (T-3FlD46): stat-before-read, mirroring `read_json_bounded`.
+        # Every other caller of this bounded pattern reads a single JSON document; this one
+        # reads a JSONL file line-by-line, so a per-file check is what actually bounds memory --
+        # an oversized ledger is exactly the tamper/corruption case INT-3 already exists to catch.
+        raise Violation(
+            "INT-3", detail=f"ledger.jsonl is {size} bytes, exceeds {LEDGER_MAX_BYTES} byte cap"
+        )
     lines: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line_no, raw in enumerate(fh, start=1):

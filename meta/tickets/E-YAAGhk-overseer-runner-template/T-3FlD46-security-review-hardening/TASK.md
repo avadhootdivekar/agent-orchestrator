@@ -6,7 +6,7 @@
 - Owner: dev-security
 - Created: 2026-09-26
 - Last Updated: 2026-09-26
-- Status: Draft
+- Status: Done (see STATUS.md — all 6 design-level findings verified-implemented, 1 new HIGH-equivalent gap found and fixed, 2 LOW follow-ups filed, no open CRITICAL/HIGH)
 - Estimate: 1 day (8 h). Starts as soon as T-HPJcc6 and T-tAKBBB merge.
 
 ## Requirements Mapping
