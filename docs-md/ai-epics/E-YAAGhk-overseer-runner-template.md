@@ -70,9 +70,9 @@ criteria.
 |---|---|---|---|---|
 | 0 | `T-pYt478` emit-settle-atomicity (G5, engine) | developer | — | **Done, landed on epic branch** |
 | 1a | `T-ABDjSj` tool M1 (config/state/ledger/budget/hold/unit-gate) | developer | — | **Done, reviewed** |
-| 1b | `T-eGXqXH` template scaffold | developer | — | In progress (next) |
-| 2 | `T-C6uQJW` tool M2 (loop/progress detectors) | developer | T-ABDjSj | Not started |
-| 3 | `T-ltBLUY` contract.md.tmpl + README | developer | T-eGXqXH | Not started |
+| 1b | `T-eGXqXH` template scaffold | developer | — | **Done, reviewed** |
+| 2 | `T-C6uQJW` tool M2 (loop/progress detectors) | developer | T-ABDjSj | **Done, reviewed** |
+| 3 | `T-ltBLUY` contract.md.tmpl + README | developer | T-eGXqXH | In progress (next) |
 | 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | Not started |
 | 5 | `T-HPJcc6` tool M3a structural checkers | developer | T-ABDjSj, T-ltBLUY | Not started |
 | 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | Not started |
@@ -177,7 +177,63 @@ correctness fix (also protects `routed-runner`) rather than attribute it only to
   despite `--dry-run`.
 - Full detail: `meta/tickets/E-YAAGhk-overseer-runner-template/T-ABDjSj-tool-state-ledger-budget/STATUS.md`.
 
-### Remaining 13 tasks
+### T-eGXqXH and T-C6uQJW (Done, reviewed — built concurrently)
+Ran these two genuinely in parallel (verified disjoint file ownership first: `template.yaml`/
+`workflow.json.tmpl`/`overseer-config.json.tmpl`/`prompt.md.tmpl`/its own test file vs.
+`overseer_tool.py`'s M2 section + its own test file — no overlap). Both subagents were briefed
+explicitly about the concurrency and told not to run `git add -A`/commit/stash.
+
+**T-eGXqXH**: `template.yaml`, `workflow.json.tmpl`, `overseer-config.json.tmpl`, `prompt.md.tmpl`
+matching HLD §13.1/§13.2/§13.4 field-for-field (verified by dev-epic reading all 4 files in full
+against the design), plus 28 new tests. Reviewer verdict: approve with nits.
+- **Warning #1 (tracked, not fixed here)**: `template.yaml` omits an `overseer-contract.md.tmpl`
+  `files:` entry that HLD §13.1 and this ticket's own AC2 call for, even as a stub — real but
+  harmless today (rendering already fails earlier at the missing `instructions/` asset).
+  **Resolution**: handed to `T-ltBLUY` (the very next task, which authors that file's content
+  anyway) to also add the `files:` entry, so it lands together rather than lingering unowned.
+- **Warning #2 (tracked as a known limitation, correctly out of scope)**: confirmed by the
+  reviewer reading `instantiate()`/`cli.new_cmd` directly — there is NO rollback-on-failure path
+  anywhere in the engine for ANY template (pre-existing, generic, not introduced here). AC6's "no
+  half-written instance is left" is therefore not fully verifiable yet. **Not fixed** — this would
+  mean touching shared `templates/__init__.py`, which every builtin template depends on, well
+  outside this epic's narrow-change-scope. Recorded here as a candidate follow-up ticket
+  (`templates.instantiate()`: stage writes atomically, or track-and-rollback on failure) for
+  whoever owns the templates module next; `T-gbccdr`'s deviations section should also note it.
+
+**T-C6uQJW**: all 10 MVP detectors (`period_repeat`, `mirror_flipflop`, `content_oscillation`,
+`breadcrumb_integrity`, `stall`, `repeated_failure`, `attempt_cap`, `ask_starvation`,
+`blocked_units`, `prompt_changed`) plus `compute_progress`, extending M1's path-history stub with
+real git-derived tracking (`repo_heads`, bounded `git diff`/`git status`). dev-epic hand-traced
+`detect_period`/`detect_mirror` against every AC1/AC2 table row by manual execution before
+requesting review (including the two "smallest period/mirror wins" trick cases) — correct. 52
+new tests (51 + 1 dev-epic regression test), 99% coverage. Reviewer independently reproduced
+AC7's determinism via an adversarial shuffle/reverse script and hand-traced AC3's git-diff-union
+mechanism against a real fixture. Verdict: approve with nits.
+- **W1 (fixed by dev-epic)**: the path-history trim's union order placed breadcrumb-DECLARED
+  paths before git-DERIVED ones, so a busy wave whose declared paths alone reached
+  `MAX_TRACKED_PATHS` would silently drop exactly the undeclared/evasive paths this whole feature
+  exists to catch — inverting its intended security-relevant priority. Fixed (git-derived paths
+  now ordered first in the union) and regression-tested with a real git fixture.
+- **W2 (handed off, not fixed)**: oscillation/period/mirror/repeated-failure signals re-fire at
+  every subsequent checkpoint once triggered, with no expiry or acknowledgement-suppression —
+  could waste overseer budget re-litigating an already-`accept`ed signal indefinitely. Doesn't
+  violate any stated AC; handed to `T-tAKBBB` (which owns `signal_responses`/OV-R12 enforcement)
+  to consider whether an accepted signal should suppress re-emission until its condition changes.
+- Also fixed W3 (a DRY nit, duplicated `unit_lines` filter logic) by extracting a shared
+  `_unit_lines_through(inst, k)` helper.
+
+**Cross-task issue found and fixed by dev-epic (not a review finding from either task)**:
+T-C6uQJW's new git-subprocess calls tripped `tests/isolation/test_security_guards.py`'s
+repo-wide guard (every git shell-out must route through `isolation/git.py`'s `GitRepo` or carry a
+justified allowlist entry). Added a justified entry — the tool is deliberately standalone
+(stdlib-only, zero repo-internal imports, NFR-5) and structurally cannot import `GitRepo`
+(ADR-0016 D4). Re-verified that guard's own suite (11 passed).
+
+Combined evidence after both tasks + all fixes: full suite **4190 passed, 8 skipped, 0 failed**,
+coverage 99% (1075 stmts/10 miss), ruff/mypy clean throughout.
+Full detail: `T-eGXqXH-template-scaffold/STATUS.md`, `T-C6uQJW-tool-loop-progress-detectors/STATUS.md`.
+
+### Remaining 11 tasks
 Not started. Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition
 (this document's sequencing table above reflects that read) — no task will be implemented from a
 guess at scope.
@@ -201,9 +257,10 @@ guess at scope.
   already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. Delegate `T-eGXqXH` (template scaffold) — now unblocked, building on `T-ABDjSj`'s real tool
-   content rather than a placeholder.
-2. Continue down the sequencing table.
+1. Delegate `T-ltBLUY` (contract + README), explicitly scoped to also add the
+   `overseer-contract.md.tmpl` `files:` entry to `template.yaml` (T-eGXqXH review handoff).
+2. Continue down the sequencing table — `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB` (carrying the W2
+   signal-re-fire handoff note), `T-WruPiv`, `T-3FlD46`/`T-vmI0jI`.
 3. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
 4. At the next natural milestone (or the spend-authorization point, whichever comes first): report
    back with evidence.
@@ -218,9 +275,10 @@ guess at scope.
 - [x] Early gate run: satisfied at design time (HLD §23.3), recorded above, not re-run.
 - [x] Every delegated agent given an explicit change-scope boundary — `T-pYt478`'s `developer` and
       `reviewer` subagent prompts both stated exact allowed/forbidden files.
-- [x] Quantifiable checkpoints tracked this iteration: `T-ABDjSj` evidence above (127 tests, 99%
-      coverage, full suite 4110 passed/8 skipped/0 failed, ruff/mypy clean).
-- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 2/15
+- [x] Quantifiable checkpoints tracked this iteration: `T-eGXqXH` + `T-C6uQJW` evidence above (28
+      + 52 new tests, 99% coverage, combined full suite 4190 passed/8 skipped/0 failed, ruff/mypy
+      clean throughout).
+- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 4/15
       tasks in.
 - [x] Ticket status synced consistently across `TASK.md`/`STATUS.md` and the epic
       `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, for everything done so far.

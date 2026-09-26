@@ -10,11 +10,21 @@
   **Done**: `src/agent_orchestrator/templates/builtin/overseer-runner/tools/overseer_tool.py` (new
   file/dir, stdlib only) plus 124 new tests across 3 files, 99% coverage on the tool's own source,
   full repo suite 4107 passed/8 skipped/0 failed (no regressions), ruff/mypy clean. Full evidence
-  and judgment-call log in `T-ABDjSj-tool-state-ledger-budget/STATUS.md`. This unblocks `T-eGXqXH`
-  (parallel, no cross-dep) and `T-C6uQJW` (M2 detectors, reads the ledger/path-history formats
-  frozen by this task) to proceed next.
-- Rollup: MVP tasks 2/13 done (`T-pYt478`, `T-ABDjSj`) · MVP-Should 0/1 (deferred, see below) ·
-  design 1/1.
+  and judgment-call log in `T-ABDjSj-tool-state-ledger-budget/STATUS.md`.
+- `T-eGXqXH` (template scaffold) and `T-C6uQJW` (M2 detectors) are **Done**, built CONCURRENTLY
+  (verified disjoint file ownership: scaffold `.tmpl`/`template.yaml` files vs. `overseer_tool.py`'s
+  M2 section — no race). Both reviewed (approve with nits): T-eGXqXH's two warnings are tracked
+  (the missing `overseer-contract.md.tmpl` files-entry handed to `T-ltBLUY`; the engine-wide "no
+  rollback on failed `ao new`" gap recorded as a known limitation, out of scope for this epic).
+  T-C6uQJW's one real finding (W1: the path-history trim was prioritizing declared paths over
+  undeclared/evasive git-derived ones, inverting the anti-evasion guarantee this feature exists
+  for) was fixed by dev-epic and regression-tested; its other finding (W2: signals re-fire
+  indefinitely with no expiry) is handed off to `T-tAKBBB` to consider. dev-epic also found and
+  fixed a real cross-task issue: T-C6uQJW's new git-subprocess calls tripped a repo-wide security
+  guard (`tests/isolation/test_security_guards.py`); added a justified allowlist entry. Combined
+  full suite: **4190 passed, 8 skipped, 0 failed**.
+- Rollup: MVP tasks 4/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`) · MVP-Should 0/1
+  (deferred, see below) · design 1/1.
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -87,13 +97,14 @@ budget trip cannot reach close-out on its own.
   list is in design doc §23.
 
 ## Next actions
-1. Proceed into the remaining 14 tasks (user go-ahead given) — parallel track: `T-ABDjSj` (tool M1)
-   and `T-eGXqXH` (template scaffold), no cross-deps. Then `T-C6uQJW` (deps: T-ABDjSj), `T-ltBLUY`
-   (deps: T-eGXqXH), `T-5ZzAZp` (deps: T-ltBLUY), `T-HPJcc6` (deps: T-ABDjSj, T-ltBLUY), `T-tAKBBB`
-   (deps: T-ABDjSj, T-C6uQJW, T-HPJcc6), `T-WruPiv` (deps: all of the above), `T-3FlD46` (parallel
-   with e2e once checkers merge), `T-vmI0jI` (deps: T-WruPiv only, now that G5 is live on-branch),
-   `T-23yMMB` (needs explicit user spend authorization, <=$25, before running), `T-gbccdr` (last).
-   `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status) unless told
-   otherwise.
+1. `T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW` all Done. Next: `T-ltBLUY` (deps: T-eGXqXH,
+   done — also now scoped to add the `overseer-contract.md.tmpl` files-entry), then `T-5ZzAZp`
+   (deps: T-ltBLUY), `T-HPJcc6` (deps: T-ABDjSj done + T-ltBLUY), `T-tAKBBB` (deps: T-ABDjSj/
+   T-C6uQJW done + T-HPJcc6 — also now carries the W2 signal-re-fire handoff note from
+   T-C6uQJW's review), `T-WruPiv` (deps: all of the above), `T-3FlD46` (parallel with e2e once
+   checkers merge), `T-vmI0jI` (deps: T-WruPiv only), `T-23yMMB` (needs explicit user spend
+   authorization, <=$25, before running), `T-gbccdr` (last — also now carries the AC6/rollback
+   engine-gap note from T-eGXqXH's review for the deviations section). `T-zLHc7Q` stays deferred
+   (MVP-Should, below cut line per its own ticket status) unless told otherwise.
 2. When ready to open a PR for this epic, flag commit `2387503` (G5 fix) separately in the
    description per the note above.
