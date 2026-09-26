@@ -1990,6 +1990,80 @@ class Orchestrator:
                 },
             )
 
+        # ---- Dynamic expansion hooks (Area 2), part 2a: emit_tasks ----
+        # T-pYt478 (emit-settle atomicity): moved BEFORE the first
+        # `self._runstate.save(state)` and BEFORE circuit-breaker evaluation, so a
+        # successful emitter's manifest injection persists in the SAME save as its
+        # "succeeded" status. Previously this block ran AFTER the first save and
+        # after breaker evaluation, so a breaker trip (or a crash) landing between
+        # that save and this block could persist a "succeeded" emitter WITHOUT ever
+        # injecting its manifest -- `prepare_resume` leaves a succeeded,
+        # outputs-present task alone (never re-run), so the manifest would then be
+        # silently and permanently lost. Every error path below keeps its EXACT
+        # prior behavior (log line, fields set, save-then-halt sequencing) -- only
+        # the block's position relative to the save/breaker-eval moved; the actual
+        # "reshaped" return (on success) now happens further down, after breaker
+        # evaluation, so a breaker that trips at this same boundary (e.g.
+        # injected_task_count, now evaluated one boundary earlier than before) can
+        # still halt the run instead of reshaping it.
+        injected = False
+        new_specs: list[TaskSpec] = []
+        graph: Graph | None = None
+        order: list[str] = []
+        cursor = 0
+        if task.emit_tasks and ts.status == "succeeded":
+            try:
+                new_specs = read_task_manifest(self._store, task.task_manifest_path)  # type: ignore[arg-type]
+            except ValueError as exc:
+                task_log.error(
+                    "task_manifest_path read failed: %s",
+                    exc,
+                    extra={"event": "task.fail", "reason": "manifest_error"},
+                )
+                ts.status = "failed"
+                ts.outputs_present = False
+                state.status = "failed"
+                self._runstate.save(state)
+                return SettleResult(signal="halt")
+            # E-Wk9Tz3: an emit_tasks-declared `isolation: "worktree"` (independent of
+            # `workflow.defaults.isolation`) only exists once the manifest is read -- the
+            # static `ao validate` pass at spec-load time can never see it. Re-validate the
+            # would-be-expanded task list at injection time (spec.py's own HOOK POINT
+            # docstring) so a misconfiguration fails fast here rather than at first isolated
+            # dispatch mid-run.
+            try:
+                for warning in validate_isolation(workflow, [*workflow.tasks, *new_specs]):
+                    task_log.warning(
+                        "isolation validation: %s",
+                        warning,
+                        extra={"event": "isolation.validation_warning"},
+                    )
+            except SpecValidationError as exc:
+                task_log.error(
+                    "Injected tasks fail isolation validation: %s",
+                    exc,
+                    extra={"event": "task.fail", "reason": "isolation_validation_error"},
+                )
+                ts.status = "failed"
+                state.status = "failed"
+                self._runstate.save(state)
+                return SettleResult(signal="halt")
+            try:
+                self._inject(new_specs, workflow, state, origin="injected", route=ts.route)
+            except InjectionError as exc:
+                task_log.error(
+                    "Task injection failed: %s",
+                    exc,
+                    extra={"event": "task.fail", "reason": "injection_error"},
+                )
+                ts.status = "failed"
+                state.status = "failed"
+                self._runstate.save(state)
+                return SettleResult(signal="halt")
+            graph = build_dag(workflow)
+            order, cursor = self._recompute_order(graph, ctx.done)
+            injected = True
+
         self._runstate.save(state)
 
         # ---- Circuit-breaker evaluation (T-x8v4d3, LLD §6.1) ----
@@ -2052,67 +2126,14 @@ class Orchestrator:
             state.status = "failed"
             return SettleResult(signal="halt")
 
-        # ---- Dynamic expansion hooks (Area 2) ----
-
-        # 2a: emit_tasks — read manifest, inject new tasks, rebuild DAG + order
-        if task.emit_tasks and ts.status == "succeeded":
-            try:
-                new_specs = read_task_manifest(self._store, task.task_manifest_path)  # type: ignore[arg-type]
-            except ValueError as exc:
-                task_log.error(
-                    "task_manifest_path read failed: %s",
-                    exc,
-                    extra={"event": "task.fail", "reason": "manifest_error"},
-                )
-                ts.status = "failed"
-                ts.outputs_present = False
-                state.status = "failed"
-                self._runstate.save(state)
-                return SettleResult(signal="halt")
-            # E-Wk9Tz3: an emit_tasks-declared `isolation: "worktree"` (independent of
-            # `workflow.defaults.isolation`) only exists once the manifest is read -- the
-            # static `ao validate` pass at spec-load time can never see it. Re-validate the
-            # would-be-expanded task list at injection time (spec.py's own HOOK POINT
-            # docstring) so a misconfiguration fails fast here rather than at first isolated
-            # dispatch mid-run.
-            try:
-                for warning in validate_isolation(workflow, [*workflow.tasks, *new_specs]):
-                    task_log.warning(
-                        "isolation validation: %s",
-                        warning,
-                        extra={"event": "isolation.validation_warning"},
-                    )
-            except SpecValidationError as exc:
-                task_log.error(
-                    "Injected tasks fail isolation validation: %s",
-                    exc,
-                    extra={"event": "task.fail", "reason": "isolation_validation_error"},
-                )
-                ts.status = "failed"
-                state.status = "failed"
-                self._runstate.save(state)
-                return SettleResult(signal="halt")
-            try:
-                self._inject(new_specs, workflow, state, origin="injected", route=ts.route)
-            except InjectionError as exc:
-                task_log.error(
-                    "Task injection failed: %s",
-                    exc,
-                    extra={"event": "task.fail", "reason": "injection_error"},
-                )
-                ts.status = "failed"
-                state.status = "failed"
-                self._runstate.save(state)
-                return SettleResult(signal="halt")
-            graph = build_dag(workflow)
-            order, cursor = self._recompute_order(graph, ctx.done)
+        if injected:
+            assert graph is not None
             task_log.info(
                 "Injected %d tasks; order recomputed (%d remaining)",
                 len(new_specs),
                 len(order) - cursor,
                 extra={"event": "task.injected"},
             )
-            self._runstate.save(state)
             return SettleResult(signal="reshaped", graph=graph, order=order)
 
         # 2b/2c: loop gate — check if a completed task is a gate task
