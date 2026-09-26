@@ -1,8 +1,10 @@
 # STATUS
 
 - ID: `E-YAAGhk-overseer-runner-template`
-- Updated At: 2026-09-26
-- State: In Progress (design complete; implementation started)
+- Updated At: 2026-09-27
+- State: **Done** — 13/13 MVP tasks complete, all with independently-verified real evidence.
+  `T-zLHc7Q` (FR-15, nested expanders) remains deferred (MVP-Should, below the sprint cut line per
+  its own ticket status) — not required for epic completion.
 - Owner: architect → dev-epic
 
 ## This update
@@ -204,9 +206,32 @@
   `test_scenario_b_stage_escalation` against the same real `derive_budget` formula. Full
   findings, exhaustive budget-math tables, and artifacts:
   `output/E-YAAGhk-overseer-runner-template/smoke/summary.md`.
-- Rollup: MVP tasks 12/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
-  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`, `T-WruPiv`, `T-vmI0jI`, `T-23yMMB`) ·
-  MVP-Should 0/1 (deferred, see below) · design 1/1.
+- `T-gbccdr` (docs refresh, the epic's final task) is **Done**: `docs-md/overseer-runner-hld.md`
+  set to "Implemented" with a new §26 "Deviations from design" (15 entries, each with real
+  file:line citations independently re-verified by dev-epic directly against the merged code, not
+  trusted from the report) — headline entry DV-1 records that `default_unit_cost_usd=8`/
+  `default_ckpt_cost_usd=5` are hardcoded, not configurable, and set an undocumented `run_budget_usd`
+  floor that makes this very epic's own suggested small budget test values infeasible. `ADR-0016`
+  set to "Accepted (implemented)" with 10 follow-ups; `workflow-templates-hld.md`,
+  `guide-dynamic-task-injection.md` (G5 ordering + resume consequence), `workflow-authoring/SKILL.md`
+  (recursive-wave pattern, breaker-latch caution, budget-floor failure mode), and
+  `routed-runner/README.md` all updated. A real, independently-confirmed NEW finding surfaced during
+  this ticket: `workflow.json.tmpl` declares an `ov-expander-check` hook with no matching
+  `expander-check` subcommand in `overseer_tool.py`'s real argument parser — dormant while
+  `max_expanders_per_wave=0` (its safe default) but would fail at run time, not validation time, if
+  ever enabled; correctly scoped to FR-15/`T-zLHc7Q`'s deferral. dev-epic additionally fixed 3 stale
+  "not yet implemented" spots this ticket found but was scoped not to edit: `README.md`'s Preflight
+  section, `overseer-contract.md.tmpl`'s "Forthcoming"/"Self-check" sections (rendered into every
+  run and **read by the real agents** — a genuine risk of misleading a live agent into skipping a
+  now-working self-check step), and this very `EPIC.md`'s own stale FR-6 line (dropped
+  `wave_signature_repeat`, which was never shipped; added `breadcrumb_integrity`, which is). Full
+  suite re-verified after every fix: **4455 passed, 8 skipped, 0 failed**, unchanged throughout. No
+  separate reviewer-agent pass requested for this docs-only ticket (consistent with the
+  `T-3FlD46`/`T-vmI0jI` precedent) — dev-epic's own citation-by-citation re-verification plus the
+  DV-15 fixes constitute the review. See `T-gbccdr-docs-refresh/STATUS.md`.
+- Rollup: MVP tasks **13/13 done** (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
+  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`, `T-WruPiv`, `T-vmI0jI`, `T-23yMMB`, `T-gbccdr`) ·
+  MVP-Should 0/1 (`T-zLHc7Q` deferred, below cut line, not required) · design 1/1. **Epic complete.**
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -279,16 +304,14 @@ budget trip cannot reach close-out on its own.
   list is in design doc §23.
 
 ## Next actions
-1. All 12 of 13 MVP tasks are Done. Only `T-gbccdr` (docs refresh/closeout) remains — it
-   carries: the AC6/rollback engine-gap note from T-eGXqXH's review, the R12
-   checkpoint/stage deferral note from T-tAKBBB's review, the N2/N3 follow-up notes from
-   T-3FlD46's review, the `actuals_available` harness gotcha and the OV-R8/R10 rule-id
-   doc-vs-implementation drift from T-WruPiv/T-vmI0jI's reviews, and — the headline item —
-   T-23yMMB's real-LLM finding that `default_unit_cost_usd`/`default_ckpt_cost_usd` are
-   hardcoded ~20-25x above real observed costs, making the ticket's own suggested small
-   `run_budget_usd` values (25, and its own 12 fallback) unconditionally infeasible, plus
-   the `overseer_effort` sizing recommendation and the AC3 deviation note.
-   `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status) unless
-   told otherwise.
-2. When ready to open a PR for this epic, flag commit `2387503` (G5 fix) separately in the
-   description per the note above.
+**Epic is complete — 13/13 MVP tasks Done.** Nothing further is required to close this epic.
+Remaining items are explicitly out-of-epic-scope follow-ups, not blockers:
+1. `T-zLHc7Q` (FR-15, nested expanders) stays deferred (MVP-Should, below the sprint cut line per
+   its own ticket status) unless the user asks to pick it up as a separate, future piece of work.
+2. ADR-0016's own "Implementation outcome and follow-ups" section lists 10 items (mostly the DV-*
+   entries above: exposing/lowering the default cost constants, the `overseer_effort` sizing,
+   security N2/N3, R12 completeness, etc.) for whoever picks up post-epic hardening.
+3. When ready to open a PR for this epic (or push the branch — **not done by dev-epic**, see the
+   epic's own standing refusal on pushing without the user's own direct word), flag commit
+   `2387503` (G5 fix) separately in the PR description per the note above — it's an independently
+   justified engine correctness fix, not specific to this template.

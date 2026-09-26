@@ -6,8 +6,9 @@
 - Owner: architect (design) → dev-epic (decomposition + delivery)
 - Created: 2026-09-26
 - Last Updated: 2026-09-26
-- Status: In Progress (design complete Rev 2; implementation started — T-pYt478 done, 14 tasks
-  remain; execution log: `docs-md/ai-epics/overseer-runner-template.md`)
+- Status: **Done** (13/13 MVP tasks complete — see below; `T-zLHc7Q` remains deferred, MVP-Should,
+  below the sprint cut line per its own ticket status, not required for epic completion; execution
+  log: `docs-md/ai-epics/E-YAAGhk-overseer-runner-template.md`)
 
 ## Summary
 - Goal: a generic, reusable `ao new overseer-runner` template. It takes one open-ended `prompt.md`
@@ -43,7 +44,7 @@ Full table with verification methods: design doc §1.2. Summary:
 - FR-3 Wave/checkpoint recursion: each `ck-K` emits exactly one of {wave+`ck-(K+1)`, hold, close-out tail}, mechanically checked.
 - FR-4 Cadence: wave size ≤ min(`wave_size`, time cap from `wave_max_minutes`, budget cap).
 - FR-5 Engine-enforced per-unit breadcrumbs folded into an idempotent, tool-owned `ledger.jsonl`.
-- FR-6 Deterministic loop/rework/progress signals (period_repeat, mirror_flipflop, content_oscillation, wave_signature_repeat, stall, attempt_cap, repeated_failure, ask_starvation, blocked_units, prompt_changed); every signal must be answered.
+- FR-6 Deterministic loop/rework/progress signals, as shipped (period_repeat, mirror_flipflop, content_oscillation, stall, attempt_cap, repeated_failure, ask_starvation, blocked_units, prompt_changed, breadcrumb_integrity); every signal must be answered. `wave_signature_repeat` is deferred — see NFR-X10 below, not part of this list.
 - FR-7 Alignment: every unit cites charter ask ids; the charter hash is locked.
 - FR-8 Budget stages from projected spend, latched, restricting allowed decisions.
 - FR-9 Graceful degradation: stabilize-only work in `stabilize`; forced close-out tail in `closeout`/`must_close`.
@@ -116,7 +117,17 @@ Sprint 2 (120 h above the cut + 16 h below, of 144 h committed)
   14.8-16.8% of total (above the ≤~10% target). AC3 (stage transition beyond explore) not
   organically achievable within budget — diagnosed and documented, not forced. See
   `T-23yMMB-live-smoke-run/STATUS.md` and `output/E-YAAGhk-overseer-runner-template/smoke/summary.md`.
-- [ ] `T-gbccdr-docs-refresh` — post-implementation reconciliation of `docs-md/` and the skill (1 d).
+- [x] `T-gbccdr-docs-refresh` — post-implementation reconciliation of `docs-md/` and the skill (1 d).
+  **Done**: HLD set to "Implemented" with a new §26 "Deviations from design" (15 entries, DV-1..DV-15,
+  each with real file:line citations independently re-verified by dev-epic), ADR-0016 set to
+  "Accepted (implemented)", `workflow-templates-hld.md`/`guide-dynamic-task-injection.md`/
+  `workflow-authoring/SKILL.md`/`routed-runner/README.md` all updated. Headline finding (DV-1):
+  hardcoded default cost constants set an undocumented `run_budget_usd` floor, making this epic's
+  own suggested small budget values infeasible. dev-epic additionally fixed 3 stale
+  "not yet implemented" spots the ticket found but was scoped not to edit (README.md,
+  `overseer-contract.md.tmpl` — read by real agents at render time — and this file's own FR-6
+  line). Full suite re-verified after every fix: 4455 passed/8 skipped/0 failed, unchanged. See
+  `T-gbccdr-docs-refresh/STATUS.md`.
 - — cut line —
 - [ ] `T-zLHc7Q-nested-expander-subdag` — FR-15 (2 d).
 
