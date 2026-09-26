@@ -1,0 +1,189 @@
+{
+  "version": "1.0",
+  "id": "{{ id }}",
+  "name": "overseer-runner: {{ id }}",
+  "repo_set": "{{ params.repo_set }}",
+  "prompt_path": "{{ instance_dir }}/prompt.md",
+  "defaults": {
+    "retries": { "max_attempts": 3, "backoff_seconds": 60 },
+    "timeout_seconds": 7200,
+    "isolation": "none"
+  },
+  "triggers": [{ "type": "manual" }],
+  "hooks": {
+    "ov-intake-prep": {
+      "command": [
+        "{{ params.python_bin }}",
+        "{{ workspace_root }}/{{ instance_dir }}/tools/overseer_tool.py",
+        "intake-prep",
+        "--workspace-root", "{{ workspace_root }}",
+        "--instance-dir", "{{ instance_dir }}"
+      ],
+      "timeout_seconds": 120,
+      "on_failure": "fail_task"
+    },
+    "ov-intake-check": {
+      "command": [
+        "{{ params.python_bin }}",
+        "{{ workspace_root }}/{{ instance_dir }}/tools/overseer_tool.py",
+        "intake-check",
+        "--workspace-root", "{{ workspace_root }}",
+        "--instance-dir", "{{ instance_dir }}"
+      ],
+      "timeout_seconds": 120,
+      "on_failure": "fail_task"
+    },
+    "ov-ckpt-prep": {
+      "command": [
+        "{{ params.python_bin }}",
+        "{{ workspace_root }}/{{ instance_dir }}/tools/overseer_tool.py",
+        "ckpt-prep",
+        "--workspace-root", "{{ workspace_root }}",
+        "--instance-dir", "{{ instance_dir }}"
+      ],
+      "timeout_seconds": 300,
+      "on_failure": "fail_task"
+    },
+    "ov-ckpt-check": {
+      "command": [
+        "{{ params.python_bin }}",
+        "{{ workspace_root }}/{{ instance_dir }}/tools/overseer_tool.py",
+        "ckpt-check",
+        "--workspace-root", "{{ workspace_root }}",
+        "--instance-dir", "{{ instance_dir }}"
+      ],
+      "timeout_seconds": 120,
+      "on_failure": "fail_task"
+    },
+    "ov-expander-check": {
+      "command": [
+        "{{ params.python_bin }}",
+        "{{ workspace_root }}/{{ instance_dir }}/tools/overseer_tool.py",
+        "expander-check",
+        "--workspace-root", "{{ workspace_root }}",
+        "--instance-dir", "{{ instance_dir }}"
+      ],
+      "timeout_seconds": 120,
+      "on_failure": "fail_task"
+    },
+    "ov-unit-gate": {
+      "command": [
+        "{{ params.python_bin }}",
+        "{{ workspace_root }}/{{ instance_dir }}/tools/overseer_tool.py",
+        "unit-gate",
+        "--workspace-root", "{{ workspace_root }}",
+        "--instance-dir", "{{ instance_dir }}"
+      ],
+      "timeout_seconds": 60,
+      "on_failure": "fail_task"
+    }
+  },
+  "tasks": [
+    {
+      "id": "git-branch-off",
+      "agent": "git-operator",
+      "instruction": "workflows/overseer-runner/instructions/01-git-branch-off.md",
+      "inputs": ["{{ instance_dir }}/prompt.md"],
+      "outputs": ["{{ instance_dir }}/outputs/git-go-ahead.md"],
+      "depends_on": [],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 1800,
+      "isolation": "none"
+    },
+    {
+      "id": "intake",
+      "agent": "architect",
+      "instruction": "workflows/overseer-runner/instructions/00-intake.md",
+      "inputs": [
+        "{{ instance_dir }}/prompt.md",
+        "{{ instance_dir }}/overseer-contract.md",
+        "{{ instance_dir }}/overseer-config.json",
+        "{{ instance_dir }}/outputs/git-go-ahead.md"
+      ],
+      "outputs": [
+        "{{ instance_dir }}/outputs/charter.json",
+        "{{ instance_dir }}/outputs/charter.md"
+      ],
+      "emit_tasks": true,
+      "task_manifest_path": "{{ instance_dir }}/outputs/manifests/intake.json",
+      "pre_hook": { "use": "ov-intake-prep" },
+      "post_hook": { "use": "ov-intake-check", "on_failure": "fail_task" },
+      "depends_on": ["git-branch-off"],
+      "skip_if_outputs_exist": false,
+      "timeout_seconds": 3600,
+      "effort": "high"
+    }
+  ],
+  "circuit_breakers": [
+    {
+      "id": "human-input-gate",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/pause.flag",
+      "action": "pause"
+    },
+    {
+      "id": "human-input-gate-2",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/pause-2.flag",
+      "action": "pause"
+    },
+    {
+      "id": "human-input-gate-3",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/pause-3.flag",
+      "action": "pause"
+    },
+    {
+      "id": "operator-kill",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/halt.flag",
+      "action": "stop"
+    },
+    {
+      "id": "operator-kill-2",
+      "condition": "stop_file",
+      "path": "{{ instance_dir }}/control/halt-2.flag",
+      "action": "stop"
+    },
+    {
+      "id": "run-deadline",
+      "condition": "run_wall_clock_seconds",
+      "threshold": 432000,
+      "action": "stop",
+      "mode": "recommend"
+    },
+    {
+      "id": "run-active-cap",
+      "condition": "run_active_seconds",
+      "threshold": 432000,
+      "action": "stop",
+      "mode": "recommend"
+    },
+    {
+      "id": "systemic-breakage",
+      "condition": "consecutive_failures",
+      "threshold": 3,
+      "action": "fail",
+      "mode": "recommend"
+    },
+    {
+      "id": "runaway-fanout",
+      "condition": "injected_task_count",
+      "threshold": {{ params.max_injected_tasks }},
+      "action": "fail"
+    },
+    {
+      "id": "task-budget-cap",
+      "condition": "task_cost_usd",
+      "threshold": {{ params.task_budget_usd }},
+      "action": "fail",
+      "mode": "recommend"
+    },
+    {
+      "id": "run-budget-backstop",
+      "condition": "run_cost_usd",
+      "threshold": {{ params.run_budget_usd }},
+      "action": "stop"
+    }
+  ]
+}
