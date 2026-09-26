@@ -76,8 +76,8 @@ criteria.
 | 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | **Done, reviewed** (+ branch_policy amendment pending) |
 | 5 | `T-HPJcc6` tool M3a structural checkers | developer | T-ABDjSj, T-ltBLUY | **Done, reviewed** |
 | 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | **Done, reviewed** |
-| 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | In progress (next) |
-| 8 | `T-3FlD46` security review + hardening | dev-security | T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB (can run parallel with #7/#9 once checkers merge) | Not started |
+| 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | In progress (second fix-pass, first attempt's claims falsified by independent testing) |
+| 8 | `T-3FlD46` security review + hardening | dev-security | T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB (can run parallel with #7/#9 once checkers merge) | **Done, independently verified** |
 | 9 | `T-vmI0jI` e2e failure scenarios (e)-(h) | tester | T-WruPiv, T-ABDjSj, T-tAKBBB | Not started (**no longer blocked on G5** — fix is live on this branch, see below) |
 | 10 | `T-23yMMB` live smoke run, real `claude_cli`, ≤$25 | tester | T-WruPiv + all impl tasks | Not started (**needs explicit user spend authorization**) |
 | 11 | `T-gbccdr` docs refresh | architect | everything above except T-zLHc7Q | Not started |
@@ -352,15 +352,81 @@ Full detail: `T-tAKBBB-tool-semantic-checkers/STATUS.md`.
 are now Done — 8/13 MVP tasks.** `T-WruPiv` (e2e harness, the first task exercising the full
 template end-to-end via `CliRunner`) is unblocked and next.
 
-### Remaining 5 tasks (T-WruPiv onward)
-Not started. Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition
-(this document's sequencing table above reflects that read) — no task will be implemented from a
-guess at scope.
+### T-3FlD46 (Done, independently verified — no separate reviewer-agent pass delegated)
+dev-security review of the shipped tool against HLD §23.3 row 5 (the design-level findings list)
+and §8.3 (the integrity model). Every one of the 6 design-level findings was traced by hand in the
+actual shipped code (post T-HPJcc6/T-tAKBBB) rather than accepted from docstrings, each with an
+exact file:line citation and test reference: `_check_entry_r6_brief`'s exact `kind_map` string-equality
+pin (OV-R6, was the design's own CRITICAL finding), `hold_gate`'s fail-closed INT-2/INT-4 handling,
+the `append_chained`/`verify_ledger_chain` hash chain (verified by hand-tracing that editing line N
+invalidates N's own hash which N+1 references — tamper-evident, not tamper-proof, matching the
+accepted NFR-X11 residual), `effective_budget`'s override coupling to the engine-owned
+`state.json`'s `breaker_overrides`, `classify_path_entry`/`_confine_repo_relative`'s symlink/`..`/
+absolute/unknown-`repo_id` confinement, and `templates/__init__.py`'s `escape_json=True` JSON-render
+argv safety.
+
+**One new HIGH-equivalent gap found and fixed**: `read_ledger_lines` was the one agent-touchable
+JSON read in the whole tool with no size cap — every other one goes through `read_json_bounded`'s
+stat-before-read discipline. Fixed with `LEDGER_MAX_BYTES` (32 MiB) plus a `path.stat().st_size`
+guard raising `Violation("INT-3")`, fail-closed and consistent with the existing malformed-ledger-line
+semantics. 3 new regression tests, plus 1 previously-missing real-1.5-MiB-breadcrumb test (the
+existing test only monkeypatched `JSON_MAX_BYTES` down to 1 byte and never exercised the real
+threshold) — 5 new tests total in `tests/test_overseer_tool_security.py`.
+
+Two LOW/MEDIUM follow-ups filed, not fixed (both are instances of the already-accepted NFR-X11
+residual — no inter-task trust boundary — not new privilege boundaries): N2 (`kind_map` itself isn't
+integrity-locked the way `charter.json` is, so a workspace-write-capable task could rewrite the R6
+pin's own source rather than defeat the manifest-entry comparison, which is correctly implemented);
+N3 (`_git_changed_paths` passes a workspace-derived revision string to git with no `--` separator or
+hex-SHA format check — cheap hygiene, not a new capability since any task able to write
+`path-history.json` already has equal-or-greater direct execution capability).
+
+`grep` evidence: no `shell=True`/`eval(`/`exec(`/`pickle`/`os.system` anywhere in the tool.
+`pip-audit` not applicable (stdlib only, no third-party deps).
+
+dev-epic independently verified rather than accepted the subagent's self-report: re-ran
+`.venv/bin/pytest` across the 6 pre-existing checker/gate/budget/ledger/detector files plus the new
+security file — **337 passed** (332 pre-existing + 5 new, zero regressions); re-ran `ruff check`,
+`ruff format --check`, `mypy`, and `pyright` on both touched files (`overseer_tool.py`,
+`test_overseer_tool_security.py`) — all clean; read the actual diff (a minimal, well-scoped
+constant + guard); read the full findings table and grep evidence in STATUS.md directly rather than
+trusting a summary. No separate `reviewer`-agent pass was delegated for this task — judgment call:
+it's a small, single-fix-scope task where the dev-security review was itself the review, dev-epic
+did the independent verification directly, and the ticket's own ACs don't mandate a separate
+reviewer-agent pass the way other tickets in this epic did.
+
+Full detail: `T-3FlD46-security-review-hardening/STATUS.md`.
+
+**Milestone: 9/13 MVP tasks now Done.** Security review is complete ahead of the late gate, per the
+architect's own sequencing note that security should not be left to the very end.
+
+### Remaining 4 tasks (T-WruPiv onward)
+`T-WruPiv` is in progress (second fix-pass; see Risks & blockers below for why the first attempt's
+completion claim was rejected). The other 3 (`T-vmI0jI`, `T-23yMMB`, `T-gbccdr`) are not started.
+Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition (this document's
+sequencing table above reflects that read) — no task will be implemented from a guess at scope.
 
 ## Risks & blockers
 - **Resolved:** `T-pYt478` is no longer a blocker for anything — it's live on
   `ad/overseer-runner-workflow` (commit `2387503`, pushed to origin). No task in the remaining 14
   depends on a separate merge to `main` any more.
+- **Process finding, being corrected — T-WruPiv's first attempt self-reported "production-ready"
+  but was falsified by dev-epic's own independent test run**: the harness failed at the very first
+  task. dev-epic diagnosed 3 exact root causes by reading the real `check-result.json` (preserved
+  via `pytest --basetemp=<dir>`): (1) every manifest path was missing the `instance_dir` prefix,
+  (2) `build_charter`'s `prompt_sha256` wasn't hashing the actually-rendered `prompt.md`, (3)
+  `usable_bar` was passed as a string instead of the required list. A second, precisely-scoped
+  fix-pass fixed all 3 root causes; dev-epic independently re-ran the tests and confirmed the
+  agent's second report was accurate this time (not overclaiming): scenario (a) genuinely passes
+  (2/2), scenarios (b)/(c)/(d) genuinely still fail, exactly as disclosed. dev-epic then debugged
+  those 3 remaining failures itself (via the same `--basetemp` + `check-result.json` technique) and
+  found: (b)/(c) share one root cause — `build_brief()` in the harness is never actually called/
+  written to disk for units in emitted (non-wave-1) waves, so the checker's OV-R6 correctly flags
+  a missing brief file; (d) is unrelated — the test's `ao resume` call omits the required
+  `--run-id` flag (the repo's own convention, per `tests/test_e2e_cli.py`, is to regex the run id
+  out of the first `ao run` call's stdout and pass it explicitly). Sent back to the same agent
+  (not a fresh duplicate) with this exact diagnosis; awaiting its next completion, which will again
+  be independently re-verified before acceptance.
 - `T-23yMMB` (live smoke run) spends real money against a real LLM (`claude_cli`), capped at $25
   per the architect's design. Per the epic owner's explicit instruction, **dev-epic will not run
   this without first flagging it back for explicit spend authorization** — this is a real-money
@@ -376,13 +442,15 @@ guess at scope.
   already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. Delegate `T-WruPiv` (e2e harness + core scenarios a-d) — the first task exercising the full
-   template end-to-end via `CliRunner`.
-2. Then `T-3FlD46` (security review, parallel-eligible with e2e), `T-vmI0jI` (e2e failure
-   scenarios, deps: T-WruPiv only).
-3. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
-4. `T-gbccdr` last (docs refresh — carries the AC6/rollback and R12 checkpoint/stage deferral
-   notes for its deviations section).
+1. Await the resumed `T-WruPiv` agent's next completion (scenarios b/c/d fixes) and independently
+   re-verify with a real `pytest -v` run myself — do not accept a self-report, exactly as before.
+2. Once all 4 scenarios genuinely pass 3x: get a `reviewer` pass (per the ticket's own AC6), sync
+   `T-WruPiv`'s TASK.md/STATUS.md + the epic rollup, commit.
+3. Then `T-vmI0jI` (e2e failure scenarios, deps: T-WruPiv only).
+4. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
+5. `T-gbccdr` last (docs refresh — carries the AC6/rollback note from T-eGXqXH's review, the R12
+   checkpoint/stage deferral note from T-tAKBBB's review, and the N2/N3 follow-up notes from
+   T-3FlD46's review, for its deviations section).
 
 ## Pre-close checklist (tracked against `.claude/agents/dev-epic.md`'s mandatory list — epic is
 **not** closed; this is a running scorecard, updated every iteration)
@@ -394,10 +462,13 @@ guess at scope.
 - [x] Early gate run: satisfied at design time (HLD §23.3), recorded above, not re-run.
 - [x] Every delegated agent given an explicit change-scope boundary — `T-pYt478`'s `developer` and
       `reviewer` subagent prompts both stated exact allowed/forbidden files.
-- [x] Quantifiable checkpoints tracked this iteration: `T-tAKBBB` evidence above (53 new tests,
-      98% coverage, full suite 4439 passed/8 skipped/0 failed, ruff/mypy/pyright clean).
-- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 8/15
-      tasks in — `T-WruPiv` next is the first step toward it.
+- [x] Quantifiable checkpoints tracked this iteration: `T-3FlD46` evidence above (5 new security
+      tests, 337 passed combined/0 failed/0 regressions, ruff/mypy/pyright clean, no open
+      CRITICAL/HIGH); `T-WruPiv` in-progress evidence (independently re-run: scenario (a) 2/2
+      passed, scenarios (b)/(c)/(d) 3/3 failed with exact root causes diagnosed and handed back).
+- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 9/13 MVP
+      tasks in — `T-WruPiv` (in progress, scenario (a) passing, b/c/d fix-pass in flight) is the
+      first step toward it.
 - [x] Ticket status synced consistently across `TASK.md`/`STATUS.md` and the epic
       `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, for everything done so far.
 - [ ] Final handoff (done vs. not-done vs. next steps vs. artifact pointers) — **N/A yet**, epic in
