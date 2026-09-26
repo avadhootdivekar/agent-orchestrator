@@ -40,6 +40,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -2147,9 +2148,1171 @@ def compute_progress(cfg: Config, inst: Path, k: int) -> dict[str, Any]:
 
 
 # =============================================================================================
-# ===== M3 reservation: intake-check / ckpt-check / expander-check (T-HPJcc6, T-tAKBBB) ======
-# ===== New subcommands + dispatch entries only -- nothing to implement here yet. ============
+# ===== M3: contract checkers -- intake-check / ckpt-check (T-HPJcc6, structural half only) ==
+# ===== HLD S8.4 M3 / S13.3. Semantic rules R11-R14/R16/R13c are T-tAKBBB's job -- see the ====
+# ===== EXTENSION POINT comments below for exactly where they plug into this same engine. ====
 # =============================================================================================
+
+# ----- M3-owned schema-version constants (S13.4). BREADCRUMB_SCHEMA already lives in the -----
+# ----- M1 constants block above; these two are new artifacts this checker validates. ---------
+BRIEF_SCHEMA: Final[str] = "ao.overseer.brief/v1"
+CHARTER_SCHEMA: Final[str] = "ao.overseer.charter/v1"
+CHECK_RESULT_SCHEMA: Final[str] = "ao.overseer.check/v1"
+
+# Id patterns (contract "Id patterns" section). `_CK_TASK_ID_RE` (M1, `^ck-(\d+)$`) is reused
+# as-is for classification -- no new near-duplicate regex for that half.
+_UNIT_ID_FULL_RE: Final[re.Pattern[str]] = re.compile(
+    r"^w(?P<wave>\d{2})-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$"
+)
+_FIXED_TAIL_IDS: Final[frozenset[str]] = frozenset({"final-verify", "closeout", "final-push"})
+
+_CHECKPOINT_INSTRUCTION: Final[str] = "workflows/overseer-runner/instructions/20-checkpoint.md"
+_FINAL_VERIFY_INSTRUCTION: Final[str] = "workflows/overseer-runner/instructions/40-final-verify.md"
+_CLOSEOUT_INSTRUCTION: Final[str] = "workflows/overseer-runner/instructions/41-closeout.md"
+_FINAL_PUSH_INSTRUCTION: Final[str] = "workflows/overseer-runner/instructions/90-final-push.md"
+
+# R2 field whitelists per entry class (contract "Emitted-entry shapes"). Unit's R9-only fields
+# are deliberately excluded from its allowed/required sets -- their presence is R9's job to
+# report (by name), not a generic "unexpected field" R2 finding; see `_check_r2_field_whitelist`.
+_UNIT_REQUIRED_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "id",
+        "agent",
+        "instruction",
+        "depends_on",
+        "inputs",
+        "outputs",
+        "pre_hook",
+        "timeout_seconds",
+        "skip_if_outputs_exist",
+        "effort",
+    }
+)
+_UNIT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"touches", "isolation"})
+_UNIT_ALLOWED_FIELDS: Final[frozenset[str]] = _UNIT_REQUIRED_FIELDS | _UNIT_OPTIONAL_FIELDS
+_UNIT_R9_ONLY_FIELDS: Final[frozenset[str]] = frozenset({"post_hook", "model", "max_turns"})
+_UNIT_EFFORT_ENUM: Final[frozenset[str]] = frozenset({"low", "medium", "high"})
+
+_NEXT_CKPT_REQUIRED_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "id",
+        "agent",
+        "instruction",
+        "depends_on",
+        "inputs",
+        "outputs",
+        "emit_tasks",
+        "task_manifest_path",
+        "pre_hook",
+        "post_hook",
+        "timeout_seconds",
+        "skip_if_outputs_exist",
+        "effort",
+    }
+)
+_NEXT_CKPT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"model"})
+_NEXT_CKPT_ALLOWED_FIELDS: Final[frozenset[str]] = (
+    _NEXT_CKPT_REQUIRED_FIELDS | _NEXT_CKPT_OPTIONAL_FIELDS
+)
+
+_TAIL_REQUIRED_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "id",
+        "agent",
+        "instruction",
+        "depends_on",
+        "inputs",
+        "outputs",
+        "timeout_seconds",
+        "skip_if_outputs_exist",
+    }
+)
+_TAIL_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"isolation"})
+_TAIL_ALLOWED_FIELDS: Final[frozenset[str]] = _TAIL_REQUIRED_FIELDS | _TAIL_OPTIONAL_FIELDS
+
+
+@dataclass(frozen=True)
+class RuleViolation:
+    """One rule violation found by the M3 rule engine.
+
+    Unlike M1/M2's single-shot `Violation` exception (raise on the FIRST problem found), the
+    M3 checkers must collect EVERY violation across every rule before reporting once (ticket
+    AC1: the failing case's `check-result.json`/stderr must contain the exact rule id, and a
+    real manifest can break more than one rule at a time) -- rule-check functions below
+    RETURN a `list[RuleViolation]` and never raise; `CheckViolations` (below) is the single
+    exception that turns a completed list into one exit-2 report.
+    """
+
+    rule_id: str  # bare, e.g. "R6" or "CHR-1" -- printed/serialized with the "OV-" prefix.
+    message: str
+    path: str | None = None
+
+    @property
+    def formatted_rule(self) -> str:
+        return f"OV-{self.rule_id}"
+
+    def stderr_line(self) -> str:
+        suffix = f" ({self.path})" if self.path else ""
+        return f"{self.formatted_rule}: {self.message}{suffix}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"rule": self.formatted_rule, "message": self.message, "path": self.path}
+
+
+class CheckViolations(ToolError):
+    """Raised once by `intake_check`/`ckpt_check` after the rule engine finishes, carrying
+    EVERY `RuleViolation` found. `main()` has a dedicated `except CheckViolations` clause
+    (checked ahead of the generic `Exception` branch) that prints one stderr line per
+    violation -- this task's own AC ("one stderr line per violation prefixed with its OV-
+    rule id"), as opposed to `Violation`'s single-message contract used everywhere else in
+    this file.
+    """
+
+    def __init__(self, violations: list[RuleViolation]) -> None:
+        assert violations, "CheckViolations must never be raised with an empty list"
+        self.violations = violations
+        super().__init__(f"{len(violations)} contract violation(s)")
+
+
+@dataclass(frozen=True)
+class ClassifiedEntry:
+    """One `tasks[]` entry from an emitted manifest, tagged with its structural class.
+
+    Classification is purely id-pattern-based (contract "Id patterns"), plus the `emit_tasks`
+    marker distinguishing a unit from an (FR-15, deferred) expander -- never the brief's own
+    `kind` field, which R6 alone reads (a brief's absence/malformedness must never block
+    classification of the manifest entry that references it).
+    """
+
+    raw: dict[str, Any]
+    index: int
+    entry_id: str | None
+    entry_class: str  # "unit" | "expander" | "next_checkpoint" | "tail" | "unknown"
+
+
+def _classify_entry(raw: Any, index: int) -> ClassifiedEntry:
+    if not isinstance(raw, dict):
+        return ClassifiedEntry(raw={}, index=index, entry_id=None, entry_class="unknown")
+    entry_id = raw.get("id")
+    entry_id_str = entry_id if isinstance(entry_id, str) else None
+    entry_class = "unknown"
+    if entry_id_str in _FIXED_TAIL_IDS:
+        entry_class = "tail"
+    elif entry_id_str is not None and _CK_TASK_ID_RE.match(entry_id_str):
+        entry_class = "next_checkpoint"
+    elif entry_id_str is not None and _UNIT_ID_FULL_RE.match(entry_id_str):
+        entry_class = "expander" if raw.get("emit_tasks") is True else "unit"
+    return ClassifiedEntry(raw=raw, index=index, entry_id=entry_id_str, entry_class=entry_class)
+
+
+@dataclass(frozen=True)
+class ManifestCheckContext:
+    """Shared, read-only inputs the manifest-level R2/R3/R4/R5/R10 checks need. Built once per
+    `intake_check`/`ckpt_check` call.
+    """
+
+    cfg: Config
+    inst: Path
+    instance_dir: str
+    emitter_id: str  # "intake" or "ck-KK"
+    next_wave: int  # the wave number this manifest's units/expanders belong to
+    existing_ids: frozenset[str]  # state.json task ids (R3 collision check)
+    allowed_wave_size: int  # R4 cap -- from the digest (ckpt) or derive_budget (intake)
+    charter: dict[str, Any] | None  # None => unreadable/absent; R6's ask-subset check skips
+    tasks: list[Any]  # the manifest's raw, parsed `tasks[]` list
+
+
+@dataclass(frozen=True)
+class WaveEntryCheckContext:
+    """Shared, read-only inputs the per-unit/expander R6/R7/R8/R9 checks need."""
+
+    cfg: Config
+    inst: Path
+    instance_dir: str
+    emitter_id: str
+    next_wave: int
+    manifest_ids: frozenset[str]
+    charter_ask_ids: frozenset[str] | None
+
+
+ManifestCheckFn = Callable[[ManifestCheckContext, list[ClassifiedEntry]], list["RuleViolation"]]
+WaveEntryCheckFn = Callable[[WaveEntryCheckContext, ClassifiedEntry], list["RuleViolation"]]
+
+
+def _check_r2_field_whitelist(
+    ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    violations: list[RuleViolation] = []
+    for entry in entries:
+        if entry.entry_class == "unknown":
+            continue  # R3 already flags this; there is no whitelist to check without a class
+        if entry.entry_class in ("unit", "expander"):
+            required, allowed, extra_allowed = (
+                _UNIT_REQUIRED_FIELDS,
+                _UNIT_ALLOWED_FIELDS,
+                _UNIT_R9_ONLY_FIELDS,
+            )
+        elif entry.entry_class == "next_checkpoint":
+            required, allowed, extra_allowed = (
+                _NEXT_CKPT_REQUIRED_FIELDS,
+                _NEXT_CKPT_ALLOWED_FIELDS,
+                frozenset(),
+            )
+        else:  # tail
+            required, allowed, extra_allowed = (
+                _TAIL_REQUIRED_FIELDS,
+                _TAIL_ALLOWED_FIELDS,
+                frozenset(),
+            )
+
+        label = entry.entry_id or f"tasks[{entry.index}]"
+        path = f"tasks[{entry.index}]"
+        missing = required - set(entry.raw)
+        if missing:
+            violations.append(
+                RuleViolation("R2", f"{label} missing required field(s): {sorted(missing)}", path)
+            )
+        extra = set(entry.raw) - allowed - extra_allowed
+        if extra:
+            violations.append(
+                RuleViolation("R2", f"{label} has unexpected field(s): {sorted(extra)}", path)
+            )
+    return violations
+
+
+def _check_r3_ids(ctx: ManifestCheckContext, entries: list[ClassifiedEntry]) -> list[RuleViolation]:
+    violations: list[RuleViolation] = []
+    seen: set[str] = set()
+    for entry in entries:
+        path = f"tasks[{entry.index}].id"
+        if entry.entry_id is None:
+            violations.append(
+                RuleViolation("R3", f"tasks[{entry.index}] has a missing/non-string id", path)
+            )
+            continue
+        if entry.entry_class == "unknown":
+            violations.append(
+                RuleViolation(
+                    "R3", f"id {entry.entry_id!r} does not match any known id pattern", path
+                )
+            )
+        if entry.entry_class in ("unit", "expander"):
+            match = _UNIT_ID_FULL_RE.match(entry.entry_id)
+            if match and int(match.group("wave")) != ctx.next_wave:
+                violations.append(
+                    RuleViolation(
+                        "R3",
+                        f"id {entry.entry_id!r} embeds wave {match.group('wave')} but this "
+                        f"manifest emits wave {ctx.next_wave:02d}",
+                        path,
+                    )
+                )
+        if entry.entry_id in seen:
+            violations.append(
+                RuleViolation("R3", f"duplicate id {entry.entry_id!r} within this manifest", path)
+            )
+        seen.add(entry.entry_id)
+        if entry.entry_id in ctx.existing_ids:
+            violations.append(
+                RuleViolation("R3", f"id {entry.entry_id!r} already exists in state.json", path)
+            )
+    return violations
+
+
+def _check_r4_r5_counts(
+    ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    violations: list[RuleViolation] = []
+    units = [e for e in entries if e.entry_class == "unit"]
+    expanders = [e for e in entries if e.entry_class == "expander"]
+    wave_total = len(units) + len(expanders)
+    if wave_total > ctx.allowed_wave_size:
+        violations.append(
+            RuleViolation(
+                "R4",
+                f"manifest emits {wave_total} unit(s)/expander(s), exceeds "
+                f"allowed_wave_size={ctx.allowed_wave_size}",
+                "tasks",
+            )
+        )
+    if len(expanders) > ctx.cfg.max_expanders_per_wave:
+        violations.append(
+            RuleViolation(
+                "R5",
+                f"manifest emits {len(expanders)} expander(s), exceeds "
+                f"max_expanders_per_wave={ctx.cfg.max_expanders_per_wave}",
+                "tasks",
+            )
+        )
+    return violations
+
+
+def _ids_match(actual: Any, expected_sorted_unique: list[str]) -> bool:
+    """Order-independent, duplicate-sensitive equality for a `depends_on`-shaped field --
+    the contract's own DAG semantics never care about list order, only membership.
+    """
+    if not isinstance(actual, list):
+        return False
+    if len(actual) != len(set(actual)):
+        return False
+    return sorted(actual) == expected_sorted_unique
+
+
+def _check_next_checkpoint_shape(
+    ctx: ManifestCheckContext, entry: ClassifiedEntry, wave_entry_ids: list[str]
+) -> list[RuleViolation]:
+    violations: list[RuleViolation] = []
+    raw = entry.raw
+    path = f"tasks[{entry.index}]"
+    expected_id = f"ck-{ctx.next_wave:02d}"
+    if entry.entry_id != expected_id:
+        violations.append(
+            RuleViolation(
+                "R10", f"next checkpoint id must be {expected_id!r}, got {entry.entry_id!r}", path
+            )
+        )
+    if raw.get("agent") != "manager":
+        violations.append(
+            RuleViolation(
+                "R10", f"next checkpoint agent must be 'manager', got {raw.get('agent')!r}", path
+            )
+        )
+    if raw.get("instruction") != _CHECKPOINT_INSTRUCTION:
+        violations.append(
+            RuleViolation(
+                "R10", f"next checkpoint instruction must be {_CHECKPOINT_INSTRUCTION!r}", path
+            )
+        )
+    expected_pre_hook = {"use": "ov-ckpt-prep"}
+    if raw.get("pre_hook") != expected_pre_hook:
+        violations.append(
+            RuleViolation(
+                "R10",
+                f"next checkpoint pre_hook must be exactly {expected_pre_hook!r}, got "
+                f"{raw.get('pre_hook')!r}",
+                path,
+            )
+        )
+    expected_post_hook = {"use": "ov-ckpt-check", "on_failure": "fail_task"}
+    if raw.get("post_hook") != expected_post_hook:
+        violations.append(
+            RuleViolation(
+                "R10",
+                f"next checkpoint post_hook must be exactly {expected_post_hook!r}, got "
+                f"{raw.get('post_hook')!r}",
+                path,
+            )
+        )
+    if raw.get("emit_tasks") is not True:
+        violations.append(RuleViolation("R10", "next checkpoint must set emit_tasks: true", path))
+    expected_manifest_path = f"{ctx.instance_dir}/outputs/manifests/{expected_id}.json"
+    if raw.get("task_manifest_path") != expected_manifest_path:
+        violations.append(
+            RuleViolation(
+                "R10",
+                f"next checkpoint task_manifest_path must be {expected_manifest_path!r}",
+                path,
+            )
+        )
+    expected_outputs = [
+        f"{ctx.instance_dir}/outputs/checkpoints/{expected_id}/digest.json",
+        f"{ctx.instance_dir}/outputs/checkpoints/{expected_id}/verdict.json",
+        f"{ctx.instance_dir}/outputs/checkpoints/{expected_id}/report.md",
+    ]
+    if raw.get("outputs") != expected_outputs:
+        violations.append(
+            RuleViolation(
+                "R10", f"next checkpoint outputs must be exactly {expected_outputs}", path
+            )
+        )
+    if raw.get("effort") != ctx.cfg.overseer_effort:
+        violations.append(
+            RuleViolation(
+                "R10", f"next checkpoint effort must be {ctx.cfg.overseer_effort!r}", path
+            )
+        )
+    if ctx.cfg.overseer_model:
+        if raw.get("model") != ctx.cfg.overseer_model:
+            violations.append(
+                RuleViolation(
+                    "R10",
+                    f"next checkpoint model must be {ctx.cfg.overseer_model!r} "
+                    "(overseer_model is set)",
+                    path,
+                )
+            )
+    elif "model" in raw:
+        violations.append(
+            RuleViolation(
+                "R10", "next checkpoint must not set model (overseer_model is empty)", path
+            )
+        )
+
+    expected_depends_on = wave_entry_ids if wave_entry_ids else [ctx.emitter_id]
+    if not _ids_match(raw.get("depends_on"), sorted(expected_depends_on)):
+        violations.append(
+            RuleViolation(
+                "R10",
+                f"next checkpoint depends_on must contain exactly {expected_depends_on} "
+                "(all unit/expander ids in this manifest, or just the emitter if none)",
+                path,
+            )
+        )
+
+    inputs = raw.get("inputs")
+    required_inputs = {
+        f"{ctx.instance_dir}/overseer-contract.md",
+        f"{ctx.instance_dir}/overseer-config.json",
+        f"{ctx.instance_dir}/outputs/charter.json",
+    }
+    required_inputs.update(
+        f"{ctx.instance_dir}/outputs/progress/{uid}.json" for uid in wave_entry_ids
+    )
+    inputs_set = set(inputs) if isinstance(inputs, list) else set()
+    if not required_inputs.issubset(inputs_set):
+        violations.append(
+            RuleViolation(
+                "R10",
+                f"next checkpoint inputs missing required path(s): "
+                f"{sorted(required_inputs - inputs_set)}",
+                path,
+            )
+        )
+    return violations
+
+
+def _check_tail_shape(
+    ctx: ManifestCheckContext, tails: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    """*tails* are already guaranteed `entry_id in _FIXED_TAIL_IDS` by `_classify_entry` (a
+    "tail"-classified entry can never carry any other id) -- a genuinely unrecognized id never
+    reaches here at all; it is caught upstream by R3 ("does not match any known id pattern").
+    A duplicate fixed-tail id (e.g. two `closeout` entries) is also an R3 duplicate-id finding;
+    `by_id` below simply keeps the last one for this function's own exact-shape checks.
+    """
+    violations: list[RuleViolation] = []
+    by_id = {e.entry_id: e for e in tails}
+
+    expected_ids = (
+        ["final-verify", "closeout", "final-push"]
+        if ctx.cfg.final_push
+        else ["final-verify", "closeout"]
+    )
+    present_ids = [eid for eid in ("final-verify", "closeout", "final-push") if eid in by_id]
+    if present_ids != expected_ids:
+        violations.append(
+            RuleViolation(
+                "R10",
+                f"tail must emit exactly {expected_ids} (final_push={ctx.cfg.final_push}), "
+                f"got {present_ids}",
+                "tasks",
+            )
+        )
+
+    charter_input = f"{ctx.instance_dir}/outputs/charter.json"
+
+    if "final-verify" in by_id:
+        entry = by_id["final-verify"]
+        raw = entry.raw
+        path = f"tasks[{entry.index}]"
+        if raw.get("agent") != "tester":
+            violations.append(RuleViolation("R10", "final-verify agent must be 'tester'", path))
+        if raw.get("instruction") != _FINAL_VERIFY_INSTRUCTION:
+            violations.append(
+                RuleViolation(
+                    "R10", f"final-verify instruction must be {_FINAL_VERIFY_INSTRUCTION!r}", path
+                )
+            )
+        if raw.get("depends_on") != [ctx.emitter_id]:
+            violations.append(
+                RuleViolation(
+                    "R10", f"final-verify depends_on must be exactly [{ctx.emitter_id!r}]", path
+                )
+            )
+        expected_inputs = {charter_input}
+        if _CK_TASK_ID_RE.match(ctx.emitter_id):
+            expected_inputs.add(
+                f"{ctx.instance_dir}/outputs/checkpoints/{ctx.emitter_id}/verdict.json"
+            )
+        verify_inputs = raw.get("inputs")
+        inputs_set = set(verify_inputs) if isinstance(verify_inputs, list) else set()
+        if not expected_inputs.issubset(inputs_set):
+            missing_inputs = sorted(expected_inputs - inputs_set)
+            violations.append(
+                RuleViolation(
+                    "R10", f"final-verify inputs missing required path(s): {missing_inputs}", path
+                )
+            )
+        expected_outputs = [f"{ctx.instance_dir}/outputs/final/verify.md"]
+        if raw.get("outputs") != expected_outputs:
+            violations.append(
+                RuleViolation(
+                    "R10", f"final-verify outputs must be exactly {expected_outputs}", path
+                )
+            )
+
+    if "closeout" in by_id:
+        entry = by_id["closeout"]
+        raw = entry.raw
+        path = f"tasks[{entry.index}]"
+        if raw.get("agent") != "manager":
+            violations.append(RuleViolation("R10", "closeout agent must be 'manager'", path))
+        if raw.get("instruction") != _CLOSEOUT_INSTRUCTION:
+            violations.append(
+                RuleViolation(
+                    "R10", f"closeout instruction must be {_CLOSEOUT_INSTRUCTION!r}", path
+                )
+            )
+        if raw.get("depends_on") != ["final-verify"]:
+            violations.append(
+                RuleViolation("R10", "closeout depends_on must be exactly ['final-verify']", path)
+            )
+        expected_inputs = {charter_input, f"{ctx.instance_dir}/outputs/final/verify.md"}
+        closeout_inputs = raw.get("inputs")
+        inputs_set = set(closeout_inputs) if isinstance(closeout_inputs, list) else set()
+        if not expected_inputs.issubset(inputs_set):
+            missing_inputs = sorted(expected_inputs - inputs_set)
+            violations.append(
+                RuleViolation(
+                    "R10", f"closeout inputs missing required path(s): {missing_inputs}", path
+                )
+            )
+        expected_outputs = [f"{ctx.instance_dir}/outputs/final/closeout.md"]
+        if raw.get("outputs") != expected_outputs:
+            violations.append(
+                RuleViolation("R10", f"closeout outputs must be exactly {expected_outputs}", path)
+            )
+
+    if "final-push" in by_id:
+        entry = by_id["final-push"]
+        raw = entry.raw
+        path = f"tasks[{entry.index}]"
+        if raw.get("agent") != "git-operator":
+            violations.append(RuleViolation("R10", "final-push agent must be 'git-operator'", path))
+        if raw.get("instruction") != _FINAL_PUSH_INSTRUCTION:
+            violations.append(
+                RuleViolation(
+                    "R10", f"final-push instruction must be {_FINAL_PUSH_INSTRUCTION!r}", path
+                )
+            )
+        if raw.get("depends_on") != ["closeout"]:
+            violations.append(
+                RuleViolation("R10", "final-push depends_on must be exactly ['closeout']", path)
+            )
+        expected_inputs = {f"{ctx.instance_dir}/outputs/final/closeout.md"}
+        push_inputs = raw.get("inputs")
+        inputs_set = set(push_inputs) if isinstance(push_inputs, list) else set()
+        if not expected_inputs.issubset(inputs_set):
+            missing_inputs = sorted(expected_inputs - inputs_set)
+            violations.append(
+                RuleViolation(
+                    "R10", f"final-push inputs missing required path(s): {missing_inputs}", path
+                )
+            )
+        expected_outputs = [f"{ctx.instance_dir}/outputs/final/push-report.md"]
+        if raw.get("outputs") != expected_outputs:
+            violations.append(
+                RuleViolation("R10", f"final-push outputs must be exactly {expected_outputs}", path)
+            )
+        if raw.get("isolation") != "none":
+            violations.append(RuleViolation("R10", "final-push isolation must be 'none'", path))
+
+    return violations
+
+
+def _check_r10_terminal_shape(
+    ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    next_ckpts = [e for e in entries if e.entry_class == "next_checkpoint"]
+    tails = [e for e in entries if e.entry_class == "tail"]
+
+    if next_ckpts and tails:
+        return [RuleViolation("R10", "manifest emits both a next checkpoint and the tail", "tasks")]
+    if not next_ckpts and not tails:
+        return [
+            RuleViolation(
+                "R10", "manifest must emit exactly one of {next checkpoint, tail}", "tasks"
+            )
+        ]
+
+    if next_ckpts:
+        violations: list[RuleViolation] = []
+        if len(next_ckpts) > 1:
+            violations.append(
+                RuleViolation(
+                    "R10",
+                    f"manifest emits {len(next_ckpts)} next-checkpoint entries, expected exactly 1",
+                    "tasks",
+                )
+            )
+        wave_entry_ids = sorted(
+            e.entry_id for e in entries if e.entry_class in ("unit", "expander") and e.entry_id
+        )
+        violations.extend(_check_next_checkpoint_shape(ctx, next_ckpts[0], wave_entry_ids))
+        return violations
+
+    return _check_tail_shape(ctx, tails)
+
+
+# EXTENSION POINT (T-tAKBBB): append manifest/verdict-level SEMANTIC checks here -- R12
+# (verdict answers every digest signal), R14 (decision <-> manifest consistency, including
+# verified early closeout), R16 (must_close => closeout). Each is a `ManifestCheckFn` (same
+# signature as the three below); T-tAKBBB will likely also thread `verdict.json`/`digest.json`
+# into `ManifestCheckContext` as new optional fields for these checks to read -- structural
+# checks above never touch the verdict at all.
+_MANIFEST_STRUCTURAL_CHECKS: Final[list[ManifestCheckFn]] = [
+    _check_r2_field_whitelist,
+    _check_r3_ids,
+    _check_r4_r5_counts,
+    _check_r10_terminal_shape,
+]
+
+
+def _read_brief_for_check(
+    inst: Path, wave: int, unit_id: str
+) -> tuple[dict[str, Any] | None, RuleViolation | None]:
+    """Non-raising brief reader for the R6 check -- mirrors M1's `read_brief` exactly (same
+    `brief_path`/`read_json_bounded`/`OversizeInputError` helpers), but RETURNS a violation
+    instead of raising, since the M3 engine collects every violation before reporting.
+    """
+    path = brief_path(inst, wave, unit_id)
+    try:
+        data = read_json_bounded(path, JSON_MAX_BYTES)
+    except FileNotFoundError:
+        return None, RuleViolation("R6", f"unit {unit_id} brief missing: {path}", str(path))
+    except OversizeInputError as exc:
+        return None, RuleViolation("R15", str(exc), str(path))
+    except json.JSONDecodeError as exc:
+        return None, RuleViolation("R6", f"unit {unit_id} brief unreadable: {exc}", str(path))
+    if not isinstance(data, dict):
+        return None, RuleViolation(
+            "R6", f"unit {unit_id} brief root must be a JSON object", str(path)
+        )
+    return data, None
+
+
+def _check_entry_r6_brief(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    unit_id = entry.entry_id
+    assert unit_id is not None  # only unit/expander-classified entries reach this check
+    brief_data, brief_violation = _read_brief_for_check(ctx.inst, ctx.next_wave, unit_id)
+    if brief_violation is not None:
+        return [brief_violation]
+    assert brief_data is not None
+    path = str(brief_path(ctx.inst, ctx.next_wave, unit_id))
+    violations: list[RuleViolation] = []
+
+    if brief_data.get("schema") != BRIEF_SCHEMA:
+        violations.append(
+            RuleViolation("R15", f"brief for {unit_id} schema must be {BRIEF_SCHEMA!r}", path)
+        )
+
+    kind = brief_data.get("kind")
+    kind_entry = ctx.cfg.kind_map.get(kind) if isinstance(kind, str) else None
+    if not isinstance(kind_entry, dict):
+        violations.append(
+            RuleViolation("R6", f"unit {unit_id} brief kind {kind!r} is not in kind_map", path)
+        )
+    else:
+        expected_agent = kind_entry.get("agent")
+        expected_instruction = kind_entry.get("instruction")
+        if entry.raw.get("agent") != expected_agent:
+            violations.append(
+                RuleViolation(
+                    "R6",
+                    f"unit {unit_id} agent must be exactly {expected_agent!r} for kind "
+                    f"{kind!r}, got {entry.raw.get('agent')!r}",
+                    path,
+                )
+            )
+        if entry.raw.get("instruction") != expected_instruction:
+            violations.append(
+                RuleViolation(
+                    "R6",
+                    f"unit {unit_id} instruction must be exactly {expected_instruction!r} for "
+                    f"kind {kind!r}, got {entry.raw.get('instruction')!r}",
+                    path,
+                )
+            )
+
+    if ctx.charter_ask_ids is not None:
+        ask_ids = brief_data.get("ask_ids")
+        if not isinstance(ask_ids, list) or not ask_ids:
+            violations.append(
+                RuleViolation("R6", f"unit {unit_id} brief ask_ids must be a non-empty list", path)
+            )
+        else:
+            unknown = [a for a in ask_ids if a not in ctx.charter_ask_ids]
+            if unknown:
+                violations.append(
+                    RuleViolation(
+                        "R6", f"unit {unit_id} brief ask_ids {unknown} are not in the charter", path
+                    )
+                )
+    return violations
+
+
+def _check_entry_r7_outputs_inputs(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    raw = entry.raw
+    unit_id = entry.entry_id
+    path = f"tasks[{entry.index}]"
+    violations: list[RuleViolation] = []
+    expected_outputs = [
+        f"{ctx.instance_dir}/outputs/waves/w{ctx.next_wave:02d}/{unit_id}.md",
+        f"{ctx.instance_dir}/outputs/progress/{unit_id}.json",
+    ]
+    if raw.get("outputs") != expected_outputs:
+        got_outputs = raw.get("outputs")
+        violations.append(
+            RuleViolation(
+                "R7",
+                f"unit {unit_id} outputs must be exactly {expected_outputs}, got {got_outputs!r}",
+                path,
+            )
+        )
+    expected_brief = f"{ctx.instance_dir}/outputs/waves/w{ctx.next_wave:02d}/briefs/{unit_id}.json"
+    inputs = raw.get("inputs")
+    if not isinstance(inputs, list) or expected_brief not in inputs:
+        violations.append(
+            RuleViolation(
+                "R7",
+                f"unit {unit_id} inputs must include its own brief path {expected_brief}",
+                path,
+            )
+        )
+    return violations
+
+
+def _check_entry_r8_depends_on(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    raw = entry.raw
+    unit_id = entry.entry_id
+    path = f"tasks[{entry.index}]"
+    depends_on = raw.get("depends_on")
+    if not isinstance(depends_on, list):
+        return [RuleViolation("R8", f"unit {unit_id} depends_on must be a list", path)]
+    violations: list[RuleViolation] = []
+    if ctx.emitter_id not in depends_on:
+        violations.append(
+            RuleViolation(
+                "R8", f"unit {unit_id} depends_on must include the emitter {ctx.emitter_id!r}", path
+            )
+        )
+    allowed = ctx.manifest_ids | {ctx.emitter_id}
+    dangling = sorted(d for d in depends_on if d not in allowed)
+    if dangling:
+        violations.append(
+            RuleViolation(
+                "R8",
+                f"unit {unit_id} depends_on references id(s) not equal to the emitter "
+                f"({ctx.emitter_id!r}) and not present in this manifest: {dangling}",
+                path,
+            )
+        )
+    return violations
+
+
+def _check_entry_r9_pre_hook_and_effort(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    raw = entry.raw
+    path = f"tasks[{entry.index}]"
+    violations: list[RuleViolation] = []
+    expected_pre_hook = {"use": "ov-unit-gate"}
+    if raw.get("pre_hook") != expected_pre_hook:
+        violations.append(
+            RuleViolation(
+                "R9",
+                f"unit {entry.entry_id} pre_hook must be exactly {expected_pre_hook!r}, "
+                f"got {raw.get('pre_hook')!r}",
+                path,
+            )
+        )
+    forbidden_present = sorted(f for f in _UNIT_R9_ONLY_FIELDS if f in raw)
+    if forbidden_present:
+        violations.append(
+            RuleViolation(
+                "R9",
+                f"unit {entry.entry_id} must not carry field(s) {forbidden_present} "
+                "(post_hook/model/max_turns are checkpoint-only)",
+                path,
+            )
+        )
+    if raw.get("effort") not in _UNIT_EFFORT_ENUM:
+        violations.append(
+            RuleViolation(
+                "R9",
+                f"unit {entry.entry_id} effort must be one of {sorted(_UNIT_EFFORT_ENUM)}, "
+                f"got {raw.get('effort')!r}",
+                path,
+            )
+        )
+    return violations
+
+
+# EXTENSION POINT (T-tAKBBB): append per-unit SEMANTIC checks here -- R11 (stage
+# restrictions: converge existing-work-items-only, stabilize kind-restricted), R13 (attempt
+# cap: `approach_change` required at cap, forbidden above cap+1), R13c (rename-dodge). Each is
+# a `WaveEntryCheckFn` (same signature as the three below) -- `check_manifest`'s existing loop
+# over `units + expanders` picks up anything appended here with no other code change.
+_WAVE_ENTRY_STRUCTURAL_CHECKS: Final[list[WaveEntryCheckFn]] = [
+    _check_entry_r6_brief,
+    _check_entry_r7_outputs_inputs,
+    _check_entry_r8_depends_on,
+    _check_entry_r9_pre_hook_and_effort,
+]
+
+
+def check_manifest(ctx: ManifestCheckContext) -> list[RuleViolation]:
+    """Runs the full M3 structural rule engine (R1's shape precondition is already handled by
+    the caller before this is invoked; R2-R10, R15) over one emitter's manifest -- shared by
+    `intake_check` and `ckpt_check` (HLD S8.4 M3). Never raises; always returns the complete
+    list of violations found (possibly empty).
+    """
+    entries = [_classify_entry(raw, idx) for idx, raw in enumerate(ctx.tasks)]
+    violations: list[RuleViolation] = []
+    for manifest_check in _MANIFEST_STRUCTURAL_CHECKS:
+        violations.extend(manifest_check(ctx, entries))
+
+    wave_entries = [e for e in entries if e.entry_class in ("unit", "expander")]
+    manifest_ids = frozenset(e.entry_id for e in entries if e.entry_id is not None)
+    charter_ask_ids: frozenset[str] | None = None
+    if ctx.charter is not None:
+        asks = ctx.charter.get("asks")
+        charter_ask_ids = frozenset(
+            a["ask_id"]
+            for a in (asks if isinstance(asks, list) else [])
+            if isinstance(a, dict) and isinstance(a.get("ask_id"), str)
+        )
+    entry_ctx = WaveEntryCheckContext(
+        cfg=ctx.cfg,
+        inst=ctx.inst,
+        instance_dir=ctx.instance_dir,
+        emitter_id=ctx.emitter_id,
+        next_wave=ctx.next_wave,
+        manifest_ids=manifest_ids,
+        charter_ask_ids=charter_ask_ids,
+    )
+    for entry in wave_entries:
+        for entry_check in _WAVE_ENTRY_STRUCTURAL_CHECKS:
+            violations.extend(entry_check(entry_ctx, entry))
+    return violations
+
+
+def _load_manifest_tasks(path: Path) -> tuple[list[Any] | None, list[RuleViolation]]:
+    """R1 (strict JSON `{"tasks": [...]}`) plus R15's 1 MiB cap on the manifest file itself.
+    Returns `(None, [violation])` when nothing downstream can be checked at all (unparseable
+    or wrong-shaped), or `(tasks, [])` on success.
+    """
+    try:
+        data = read_json_bounded(path, JSON_MAX_BYTES)
+    except FileNotFoundError:
+        return None, [RuleViolation("R1", f"manifest not found: {path}", str(path))]
+    except OversizeInputError as exc:
+        return None, [RuleViolation("R15", str(exc), str(path))]
+    except json.JSONDecodeError as exc:
+        return None, [RuleViolation("R1", f"{path} is not valid JSON: {exc}", str(path))]
+    if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
+        return None, [
+            RuleViolation(
+                "R1",
+                f"{path} must be a JSON object with a 'tasks' list field (strict JSON, no "
+                "trailing commas/comments)",
+                str(path),
+            )
+        ]
+    return data["tasks"], []
+
+
+def _intake_allowed_wave_size(cfg: Config) -> int:
+    """OV-R4's cap at `intake-check` time: no ledger/digest exists yet (intake is this run's
+    very first emission), so this mirrors `compute_budget`'s own "no data yet" defaults
+    (`DEFAULT_TIME_CAP_TASKS` / `cfg.default_*_cost_usd`) with `spent=0` and
+    `prev_stage="explore"`, fed through the SAME pure `derive_budget` M1 already built --
+    never re-deriving `compute_allowed_wave_size`'s formula by hand (this task's own
+    instruction).
+    """
+    result = derive_budget(
+        spent=0.0,
+        run_budget_usd=cfg.run_budget_usd,
+        wave_size=cfg.wave_size,
+        time_cap=time_cap_from_median_duration(None, cfg.wave_max_minutes),
+        est_unit_cost_usd=cfg.default_unit_cost_usd,
+        est_ckpt_cost_usd=cfg.default_ckpt_cost_usd,
+        final_push=cfg.final_push,
+        prev_stage="explore",
+        converge_pct=cfg.converge_pct,
+        stabilize_pct=cfg.stabilize_pct,
+        closeout_pct=cfg.closeout_pct,
+        stabilize_wave_size=cfg.stabilize_wave_size,
+        # k/stabilize_passes_before/max_waves/forced_closeout below only feed
+        # `must_close`/`allowed_decisions`, both discarded (we return only
+        # `.allowed_wave_size`) -- k=1 is an arbitrary but harmless placeholder, not "wave
+        # 1" in any semantic sense (reviewer finding, T-HPJcc6 review).
+        k=1,
+        max_waves=cfg.max_waves,
+        stabilize_passes_before=0,
+        max_stabilize_passes=cfg.max_stabilize_passes,
+        forced_closeout=False,
+    )
+    return result.allowed_wave_size
+
+
+def _load_digest_for_check(inst: Path, k: int) -> dict[str, Any]:
+    """The CURRENT checkpoint's own `digest.json`, written by `ckpt_prep`'s pre_hook before
+    the checkpoint agent (and this post_hook) ever runs. Its absence/malformedness means
+    `ckpt_prep` itself never completed -- a wiring problem this raises as a plain `ToolError`
+    (internal error, exit 1), not an `R4` rule violation, mirroring `read_hook_context`'s own
+    treatment of a missing hook context.
+    """
+    path = digest_path(inst, k)
+    try:
+        data = read_json_bounded(path, JSON_MAX_BYTES)
+    except FileNotFoundError as exc:
+        raise ToolError(
+            f"digest.json not found at {path} (ckpt-prep must run before ckpt-check)"
+        ) from exc
+    except (OversizeInputError, json.JSONDecodeError) as exc:
+        raise ToolError(f"digest.json at {path} is unreadable: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ToolError(f"digest.json at {path} root must be a JSON object")
+    return data
+
+
+def _allowed_wave_size_from_digest(digest: dict[str, Any]) -> int:
+    cadence = digest.get("cadence")
+    if isinstance(cadence, dict) and isinstance(cadence.get("allowed_wave_size"), int):
+        return int(cadence["allowed_wave_size"])
+    raise ToolError("digest.json cadence.allowed_wave_size is missing or not an int")
+
+
+def _check_charter(inst: Path) -> tuple[dict[str, Any] | None, list[RuleViolation]]:
+    """Charter checks run only at `intake-check` (ticket's own scope -- a narrower slice of
+    the full `ao.overseer.charter/v1` schema in HLD S13.4): schema-valid enough to trust
+    `ask_ids` for R6, within the R15 size/version cap, `prompt_sha256` matching
+    `sha256(prompt.md)`, and 1-12 asks each with >=1 acceptance criterion and >=1 usable_bar
+    entry.
+
+    New rule id `CHR-1` (judgment call, see this task's report): `INT-1` (M1) already exists
+    but only verifies charter/prompt hashes AFTER `charter.lock.json` exists -- it structurally
+    cannot cover the forward check that GATES writing that lock file in the first place, so a
+    new bucket is used here, mirroring how M1 added `BC-2` beyond the HLD's own normative list.
+
+    Returns `(charter_dict_or_None, violations)`; `charter_dict` is `None` whenever the file
+    itself cannot be trusted at all (missing/oversize/malformed/not an object), so R6's
+    ask_ids-subset check downstream knows to skip itself rather than crash.
+    """
+    path = inst / "outputs" / "charter.json"
+    try:
+        data = read_json_bounded(path, JSON_MAX_BYTES)
+    except FileNotFoundError:
+        return None, [RuleViolation("CHR-1", f"charter.json not found: {path}", str(path))]
+    except OversizeInputError as exc:
+        return None, [RuleViolation("R15", str(exc), str(path))]
+    except json.JSONDecodeError as exc:
+        return None, [RuleViolation("CHR-1", f"{path} is not valid JSON: {exc}", str(path))]
+    if not isinstance(data, dict):
+        return None, [RuleViolation("CHR-1", "charter.json root must be a JSON object", str(path))]
+
+    violations: list[RuleViolation] = []
+    if data.get("schema") != CHARTER_SCHEMA:
+        violations.append(
+            RuleViolation("R15", f"charter.json schema must be {CHARTER_SCHEMA!r}", str(path))
+        )
+
+    prompt_path = inst / "prompt.md"
+    if prompt_path.is_file():
+        expected_sha256 = hashlib.sha256(prompt_path.read_bytes()).hexdigest()
+        if data.get("prompt_sha256") != expected_sha256:
+            violations.append(
+                RuleViolation(
+                    "CHR-1",
+                    "charter.json prompt_sha256 does not match sha256(prompt.md)",
+                    str(path),
+                )
+            )
+    else:
+        violations.append(
+            RuleViolation("CHR-1", f"prompt.md not found: {prompt_path}", str(prompt_path))
+        )
+
+    asks = data.get("asks")
+    if not isinstance(asks, list) or not (1 <= len(asks) <= 12):
+        violations.append(
+            RuleViolation("CHR-1", "charter.json asks must be a list of 1-12 entries", str(path))
+        )
+        asks = []
+    for idx, ask in enumerate(asks):
+        if not isinstance(ask, dict):
+            violations.append(
+                RuleViolation("CHR-1", f"asks[{idx}] must be a JSON object", str(path))
+            )
+            continue
+        acceptance = ask.get("acceptance")
+        if not isinstance(acceptance, list) or len(acceptance) < 1:
+            violations.append(
+                RuleViolation(
+                    "CHR-1",
+                    f"asks[{idx}] ({ask.get('ask_id')!r}) must have >=1 acceptance criterion",
+                    str(path),
+                )
+            )
+        usable_bar = ask.get("usable_bar")
+        if not isinstance(usable_bar, list) or len(usable_bar) < 1:
+            violations.append(
+                RuleViolation(
+                    "CHR-1",
+                    f"asks[{idx}] ({ask.get('ask_id')!r}) must have >=1 usable_bar entry",
+                    str(path),
+                )
+            )
+
+    return data, violations
+
+
+def _lock_charter(inst: Path, now: datetime) -> None:
+    """Writes `outputs/overseer/charter.lock.json` and appends the `charter_locked` ledger
+    event -- idempotent (mirrors `effective_budget`'s own dedup-by-content pattern): a second
+    call with the SAME charter sha256 does not append a second event, though it harmlessly
+    rewrites the lock file with identical content either way.
+    """
+    charter_path = inst / "outputs" / "charter.json"
+    prompt_path = inst / "prompt.md"
+    charter_sha256 = hashlib.sha256(charter_path.read_bytes()).hexdigest()
+    prompt_sha256 = hashlib.sha256(prompt_path.read_bytes()).hexdigest()
+    write_json_atomic(
+        inst / "outputs" / "overseer" / "charter.lock.json",
+        {"sha256": charter_sha256, "prompt_sha256": prompt_sha256, "locked_at": now_iso(now)},
+    )
+    already_recorded = any(
+        line.get("type") == "event"
+        and line.get("event") == "charter_locked"
+        and line.get("sha256") == charter_sha256
+        for line in read_ledger_lines(inst)
+    )
+    if not already_recorded:
+        append_chained(
+            inst,
+            {
+                "type": "event",
+                "event": "charter_locked",
+                "sha256": charter_sha256,
+                "prompt_sha256": prompt_sha256,
+            },
+            now,
+        )
+
+
+def _finish_check(
+    *,
+    result_dir: Path,
+    task_id: str,
+    violations: list[RuleViolation],
+    dry_run: bool,
+) -> None:
+    """Shared tail of `intake_check`/`ckpt_check`: writes `check-result.json` into the
+    caller's own output dir on every NON-dry run (pass or fail; ticket's own spec), then
+    raises `CheckViolations` iff any were found. `--dry-run` writes nothing at all.
+    """
+    if not dry_run:
+        write_json_atomic(
+            result_dir / "check-result.json",
+            {
+                "schema": CHECK_RESULT_SCHEMA,
+                "task_id": task_id,
+                "ok": not violations,
+                "violations": [v.to_dict() for v in violations],
+            },
+        )
+    if violations:
+        raise CheckViolations(violations)
+
+
+def intake_check(args: argparse.Namespace) -> None:
+    """HLD S8.4 M3 `intake_check` (post_hook of `intake`) -- the shared structural rule
+    engine (`check_manifest`) plus charter validation (`_check_charter`). On success (never
+    under `--dry-run`) it locks the charter (`_lock_charter`: `charter.lock.json` plus the
+    idempotent `charter_locked` ledger event).
+    """
+    ws, inst = confine_workspace(args.workspace_root, args.instance_dir)
+    now = parse_now(args.now)
+    ctx_hook = read_hook_context(args)
+    cfg = load_config(inst)
+    state = load_state(state_path(ws, cfg, ctx_hook.run_id))
+
+    charter, charter_violations = _check_charter(inst)
+    tasks, load_violations = _load_manifest_tasks(inst / "outputs" / "manifests" / "intake.json")
+
+    violations: list[RuleViolation] = [*charter_violations, *load_violations]
+    if tasks is not None:
+        check_ctx = ManifestCheckContext(
+            cfg=cfg,
+            inst=inst,
+            instance_dir=args.instance_dir,
+            emitter_id="intake",
+            next_wave=1,
+            existing_ids=frozenset(state.tasks),
+            allowed_wave_size=_intake_allowed_wave_size(cfg),
+            charter=charter,
+            tasks=tasks,
+        )
+        violations.extend(check_manifest(check_ctx))
+
+    if not violations and not args.dry_run:
+        _lock_charter(inst, now)
+
+    _finish_check(
+        result_dir=inst / "outputs",
+        task_id=ctx_hook.task_id,
+        violations=violations,
+        dry_run=args.dry_run,
+    )
+
+
+def ckpt_check(args: argparse.Namespace) -> None:
+    """HLD S8.4 M3 `ckpt_check` (post_hook of `ck-K`, `on_failure: fail_task`) -- THIS task's
+    scope is the structural half only (R1-R10, R15); T-tAKBBB adds the semantic rules
+    (R11-R14, R16, R13c) to the SAME `_MANIFEST_STRUCTURAL_CHECKS`/`_WAVE_ENTRY_STRUCTURAL_
+    CHECKS` lists above (see their EXTENSION POINT comments). Unlike M1's hooks, this never
+    raises on the first violation found -- it collects every one across every rule and
+    reports them all together via `CheckViolations` (ticket AC1).
+    """
+    ws, inst = confine_workspace(args.workspace_root, args.instance_dir)
+    ctx_hook = read_hook_context(args)
+    k = parse_ck_task_id(ctx_hook.task_id)
+    cfg = load_config(inst)
+    state = load_state(state_path(ws, cfg, ctx_hook.run_id))
+
+    manifest_path = inst / "outputs" / "manifests" / f"ck-{k:02d}.json"
+    tasks, load_violations = _load_manifest_tasks(manifest_path)
+
+    violations: list[RuleViolation] = list(load_violations)
+    if tasks is not None:
+        digest = _load_digest_for_check(inst, k)
+        charter = _read_optional_json(inst / "outputs" / "charter.json")
+        check_ctx = ManifestCheckContext(
+            cfg=cfg,
+            inst=inst,
+            instance_dir=args.instance_dir,
+            emitter_id=f"ck-{k:02d}",
+            next_wave=k + 1,
+            existing_ids=frozenset(state.tasks),
+            allowed_wave_size=_allowed_wave_size_from_digest(digest),
+            charter=charter,
+            tasks=tasks,
+        )
+        violations.extend(check_manifest(check_ctx))
+
+    _finish_check(
+        result_dir=checkpoint_dir(inst, k),
+        task_id=ctx_hook.task_id,
+        violations=violations,
+        dry_run=args.dry_run,
+    )
 
 
 # =============================================================================================
@@ -2385,7 +3548,14 @@ def request_closeout(args: argparse.Namespace) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="overseer_tool.py")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
-    for name in ("intake-prep", "ckpt-prep", "unit-gate", "request-closeout"):
+    for name in (
+        "intake-prep",
+        "intake-check",
+        "ckpt-prep",
+        "ckpt-check",
+        "unit-gate",
+        "request-closeout",
+    ):
         sub = subparsers.add_parser(name)
         sub.add_argument("--workspace-root", required=True)
         sub.add_argument("--instance-dir", required=True)
@@ -2401,7 +3571,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 _DISPATCH: Final[dict[str, Any]] = {
     "intake-prep": intake_prep,
+    "intake-check": intake_check,
     "ckpt-prep": ckpt_prep,
+    "ckpt-check": ckpt_check,
     "unit-gate": unit_gate,
     "request-closeout": request_closeout,
 }
@@ -2410,11 +3582,19 @@ _DISPATCH: Final[dict[str, Any]] = {
 def main(argv: list[str] | None = None) -> int:
     """HLD S8.4 M1 `main()` skeleton: 0 pass, 2 contract violation/hold/budget refusal
     (rule id + message on stderr), 1 internal error (any uncaught exception, never silent).
+
+    `CheckViolations` (M3, T-HPJcc6) gets its own except clause -- ahead of the generic
+    `Exception` branch -- since it carries a LIST of violations to print one-per-line, unlike
+    `Violation`'s single-message contract used by every other subcommand.
     """
     args = _build_parser().parse_args(argv)
     try:
         _DISPATCH[args.subcommand](args)
         return 0
+    except CheckViolations as check_violations:
+        for rule_violation in check_violations.violations:
+            print(rule_violation.stderr_line(), file=sys.stderr)
+        return 2
     except Violation as violation:
         print(str(violation), file=sys.stderr)
         return 2
