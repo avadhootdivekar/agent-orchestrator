@@ -80,7 +80,7 @@ criteria.
 | 8 | `T-3FlD46` security review + hardening | dev-security | T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB (can run parallel with #7/#9 once checkers merge) | **Done, independently verified** |
 | 9 | `T-vmI0jI` e2e failure scenarios (e)-(h) | tester | T-WruPiv, T-ABDjSj, T-tAKBBB | **Done, independently re-verified with primary evidence** |
 | 10 | `T-23yMMB` live smoke run, real `claude_cli`, ≤$25 | tester | T-WruPiv + all impl tasks | **Done, AC3 deviation recorded** — user authorized real spend, $8.4752 total used |
-| 11 | `T-gbccdr` docs refresh | architect | everything above except T-zLHc7Q | Not started |
+| 11 | `T-gbccdr` docs refresh | architect | everything above except T-zLHc7Q | **Done, independently re-verified with primary evidence** |
 | — | `T-zLHc7Q` nested expander sub-DAG (FR-15) | developer | — | **Deferred** (below cut line, not blocking) |
 
 Rows 1a/1b have no cross-dependency in the design's own terms and were intended as a parallel pair
@@ -509,10 +509,44 @@ Full findings, exhaustive budget-math tables, and all real artifacts:
 
 **Milestone: 12/13 MVP tasks now Done.** Only `T-gbccdr` (docs refresh/closeout) remains.
 
-### Remaining 1 task
-`T-gbccdr` is not started. Full `TASK.md` acceptance criteria read for all 15 tickets during
-decomposition (this document's sequencing table above reflects that read) — no task will be
-implemented from a guess at scope.
+### T-gbccdr (Done, independently re-verified with primary evidence — the epic's final task)
+`docs-md/overseer-runner-hld.md` set to "Implemented" with a new §26 "Deviations from design" — 15
+entries (DV-1 through DV-15), each stating what the design said, what shipped, the evidence, and
+what to do about it, with real file:line citations. dev-epic independently re-derived the key
+citations directly against the current code before accepting any of them (not trusted from the
+report): the G5 ordering (`_inject` at `engine.py:2052`, `injected = True` at `:2065`, the single
+`save()` at `:2067` — BEFORE `evaluate_breakers()` at `:2088`, confirming the fix's actual ordering),
+the real `OV-R8`/`OV-R10` call sites (`_check_entry_r8_depends_on:3342` unit-only,
+`_check_next_checkpoint_shape:2490` next-checkpoint-only), the `period_repeat` signal type location
+(`overseer_tool.py:1598`), and the hardcoded cost defaults
+(`overseer-config.json.tmpl:26-27`). Also independently confirmed a NEW finding the ticket
+surfaced: `workflow.json.tmpl` declares an `ov-expander-check` hook, but `overseer_tool.py`'s real
+`_build_parser()` has no matching `expander-check` subcommand at all (only `intake-prep`,
+`intake-check`, `ckpt-prep`, `ckpt-check`, `unit-gate`, `request-closeout` exist) — dormant while
+`max_expanders_per_wave=0` (its safe default), correctly scoped to `T-zLHc7Q`'s deferral, but a
+real runtime (not validation-time) failure waiting to happen if that param were ever raised without
+`T-zLHc7Q` landing first.
+
+Beyond DV-1 through DV-14 (folding in every prior task's deferred note — T-3FlD46's N2/N3 security
+residuals, T-tAKBBB's R12 incompleteness, T-eGXqXH's engine-wide rollback gap, the `--extend-by-*`
+flag requirement, the intake-stage-not-latched clarification, the `branch_policy` amendment), DV-15
+flagged 3 stale "not yet implemented" spots the ticket found but was scoped not to edit — dev-epic
+fixed all 3 directly in the same commit: `README.md`'s Preflight section (was "not yet runnable end
+to end"), `overseer-contract.md.tmpl`'s "Forthcoming"/"Self-check" sections (rendered into every run
+and **read by the real agents themselves** — genuinely risked misleading a live agent into skipping
+a self-check step that now works), and this epic's own `EPIC.md` FR-6 line (dropped the never-shipped
+`wave_signature_repeat`, added the actually-shipped `breadcrumb_integrity`).
+
+Full suite re-verified after every fix (both the subagent's own and dev-epic's additional ones):
+**4455 passed, 8 skipped, 0 failed**, unchanged throughout — a purely additive/corrective
+documentation task, exactly as scoped.
+
+**Milestone: 13/13 MVP tasks now Done. Epic complete.**
+
+### Remaining tasks: none
+Every MVP task is Done. `T-zLHc7Q` (FR-15, nested expanders) remains deferred per its own
+below-cut-line ticket status — not required for epic completion, and not picked up unless the user
+asks for it as separate future work.
 
 ## Risks & blockers
 - **Resolved:** `T-pYt478` is no longer a blocker for anything — it's live on
@@ -621,40 +655,81 @@ implemented from a guess at scope.
   already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. `T-gbccdr` (docs refresh/closeout, the last remaining task) — folds in every accumulated
-   deviation note: T-eGXqXH's AC6/rollback engine-gap, T-tAKBBB's R12 checkpoint/stage deferral,
-   T-3FlD46's N2/N3 follow-ups, T-WruPiv's `actuals_available` harness gotcha, the OV-R8/R10
-   doc-vs-implementation drift (T-WruPiv/T-vmI0jI), and — the headline item — T-23yMMB's real-LLM
-   finding that `default_unit_cost_usd`/`default_ckpt_cost_usd` are hardcoded ~20-25x above real
-   observed costs (making the ticket's own suggested small `run_budget_usd` values infeasible),
-   plus the `overseer_effort` sizing recommendation and the AC3 deviation note.
-2. Final epic completion handoff once `T-gbccdr` lands.
+**None required to close this epic — it is Done.** Possible future, explicitly out-of-epic-scope
+follow-ups only:
+1. `T-zLHc7Q` (FR-15, nested expanders) if the user wants it picked up as separate future work.
+2. ADR-0016's own "Implementation outcome and follow-ups" list (10 items — mostly the DV-* entries
+   in HLD §26): exposing/lowering the hardcoded default cost constants, `overseer_effort` sizing
+   for small runs, the two LOW security follow-ups (N2 `kind_map` integrity lock, N3 git argv
+   hygiene), R12 checkpoint/stage field completeness, and implementing `expander-check` alongside
+   `T-zLHc7Q` if that ever lands.
+3. Pushing the branch and/or opening a PR — **not done by dev-epic**; the standing refusal to push
+   without the user's own direct word (not a relayed message) remains in force. All ~38 commits are
+   local on `ad/overseer-runner-workflow`.
 
-## Pre-close checklist (tracked against `.claude/agents/dev-epic.md`'s mandatory list — epic is
-**not** closed; this is a running scorecard, updated every iteration)
+## Pre-close checklist (tracked against `.claude/agents/dev-epic.md`'s mandatory list)
 - [x] Epic context doc created under `docs-md/ai-epics/`, mirrored into `meta/tickets/<EpicID>/`
-      (this document + `EPIC.md`/`STATUS.md` updated in the same pass).
+      (this document + `EPIC.md`/`STATUS.md` updated in the same pass, every iteration).
 - [x] Requirements categorized MVP/Non-MVP/Stretch with traceability (inherited from the design's
       own HLD §1.2 table + EPIC.md; every MVP requirement maps to a task in the sequencing table
-      above).
+      above — all 13 MVP tasks are Done, `T-zLHc7Q`/FR-15 correctly stayed below the cut line).
 - [x] Early gate run: satisfied at design time (HLD §23.3), recorded above, not re-run.
-- [x] Every delegated agent given an explicit change-scope boundary — `T-pYt478`'s `developer` and
-      `reviewer` subagent prompts both stated exact allowed/forbidden files.
-- [x] Quantifiable checkpoints tracked this iteration: `T-23yMMB` final evidence — 3 real live runs
-      with real `claude_cli` agents, $8.4752 total real spend (of $25 authorized); 2/3 runs
-      succeeded end to end with independently-reverified real code+doc changes (real `pytest` 2/2
-      passed both times); 1 run's real failure fully diagnosed with exhaustive budget-math tables;
-      overseer cost % measured at 14.8%/16.8% (both above the ≤~10% target, recorded as a tuning
-      finding); 1 real signal fired and was correctly handled end to end.
-- [x] Late gate (end-to-end path via `tester` with real evidence) — **now includes a real-LLM live
-      run, not just scripted e2e**: `T-WruPiv` (happy-path scenarios a-d) and `T-vmI0jI`
-      (failure-path scenarios e-h) both run the full `overseer-runner` template through the real
-      engine/hooks/checkers with a scripted executor; `T-23yMMB` adds the final layer — the same
-      template run with REAL `claude_cli` agents making real decisions, producing real working code,
-      real docs, a real signal, and a real, well-quantified structural finding. The late gate's
-      evidence base is now complete; only `T-gbccdr` (docs/closeout, no further evidence-gathering)
-      remains before the epic itself is called complete.
-- [x] Ticket status synced consistently across `TASK.md`/`STATUS.md` and the epic
-      `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, for everything done so far.
-- [ ] Final handoff (done vs. not-done vs. next steps vs. artifact pointers) — **N/A yet**, epic in
-      progress; see "Next actions" above for the current-iteration equivalent.
+- [x] Every delegated agent given an explicit change-scope boundary — every subagent dispatch in
+      this document's Evidence log states exact allowed/forbidden files.
+- [x] Quantifiable checkpoints tracked every iteration — see the Evidence log above for each task's
+      real numbers (test counts, pass/fail, coverage %, real dollar spend, real citations).
+- [x] Late gate (end-to-end path via `tester` with real evidence) — **complete**: `T-WruPiv`
+      (happy-path scenarios a-d) and `T-vmI0jI` (failure-path scenarios e-h) both run the full
+      `overseer-runner` template through the real engine/hooks/checkers with a scripted executor;
+      `T-23yMMB` adds the final layer — the same template run with REAL `claude_cli` agents making
+      real decisions, producing real working code, real docs, a real signal, and a real,
+      well-quantified structural finding (independently re-verified: real branch checkouts, real
+      `pytest` runs, not just the agents' own claims).
+- [x] Ticket status synced consistently across every task's `TASK.md`/`STATUS.md` and the epic
+      `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, throughout.
+- [x] Final handoff — see below.
+
+## Final handoff
+
+**Done, with evidence:**
+- All 13 MVP tasks complete. Design (HLD + ADR-0016 + 15 task tickets, Rev 2, Phase-4-consulted) →
+  G5 engine fix (`T-pYt478`, live on this branch as `2387503`) → the tool's 4 modules
+  (`T-ABDjSj`/`T-C6uQJW`/`T-HPJcc6`/`T-tAKBBB`, ~4400 lines, stdlib-only, 99% coverage) → the
+  template scaffold/contract/README/instructions (`T-eGXqXH`/`T-ltBLUY`/`T-5ZzAZp`) → a dev-security
+  review (`T-3FlD46`, no open CRITICAL/HIGH) → both e2e task families against the real engine
+  (`T-WruPiv` a-d, `T-vmI0jI` e-h, 11 scenarios total, all passing 3/3 consecutive runs) → a live
+  smoke run with real `claude_cli` agents and real spend (`T-23yMMB`, $8.4752 of $25 authorized) →
+  documentation reconciliation recording every real deviation (`T-gbccdr`, HLD §26, 15 entries).
+  Full repo suite at epic close: **4455 passed, 8 skipped, 0 failed**. Every claim in this document
+  and in every task's own `STATUS.md` was independently re-verified by dev-epic against the real
+  repo state, real test output, or real running code — never accepted from a subagent's self-report
+  alone (this discipline caught and corrected 2 false-positive "done" claims and found ~10 real
+  bugs/gaps across the epic that subagents' own reports missed).
+- **Not done / explicitly deferred**: `T-zLHc7Q` (FR-15, nested `expand`-kind sub-DAGs) — correctly
+  scoped below the MVP cut line from the start, not attempted. Its dormant `ov-expander-check` hook
+  wiring (declared but unimplemented) is documented in HLD §26 DV-7 and this epic's own EPIC.md.
+- **Real, load-bearing findings for whoever operates this template next** (full detail in HLD §26
+  and `output/E-YAAGhk-overseer-runner-template/smoke/summary.md`): (1) `default_unit_cost_usd=8`/
+  `default_ckpt_cost_usd=5` are hardcoded and set an undocumented `run_budget_usd` floor
+  (~$59-96 depending on `wave_size`/`final_push`) — pick a budget above this floor, or lower these
+  constants before a real run; (2) `overseer_effort=medium` is recommended for small runs (measured
+  14.8-16.8% overseer cost share at `high`, above the ~10% NFR-8 target); (3) a plain `ao resume`
+  after a budget-backstop trip does NOT reach close-out on its own — use `request-closeout` or
+  `--extend-breaker` + a budget override.
+- **Exact artifact/script/result pointers**: design — `docs-md/overseer-runner-hld.md` (now
+  "Implemented", §26 has every deviation), `docs-md/adr/ADR-0016-…md` ("Accepted (implemented)").
+  Tool — `src/agent_orchestrator/templates/builtin/overseer-runner/tools/overseer_tool.py`. Template
+  assets — `src/agent_orchestrator/templates/builtin/overseer-runner/{template.yaml,workflow.json.tmpl,
+  overseer-config.json.tmpl,overseer-contract.md.tmpl,README.md,instructions/*.md}`. Tests —
+  `tests/test_overseer_tool_*.py`, `tests/test_e2e_builtin_overseer_runner*.py`,
+  `tests/test_e2e_overseer_runner_failures.py`, `tests/overseer_runner_harness.py`. Live-run
+  evidence — `output/E-YAAGhk-overseer-runner-template/smoke/` (real `state.json`/digests/verdicts/
+  ledger for all 3 attempts, plus `summary.md`). Ticket trail — every task under
+  `meta/tickets/E-YAAGhk-overseer-runner-template/`. All work is committed locally on
+  `ad/overseer-runner-workflow` (not pushed — see the standing refusal above); nothing is staged
+  for a PR by dev-epic.
+- **What to re-run next, and why**: nothing is required for this epic to be considered complete.
+  If/when the hardcoded cost-constant fix (HLD §26 DV-1's recommendation) ships, re-running
+  `T-23yMMB`'s live smoke scenario would then likely demonstrate AC3's stage-transition-beyond-explore
+  organically, closing that one recorded gap with live evidence instead of the current split
+  (live run for real-agent fidelity, `T-WruPiv`'s scripted test for stage-machine correctness).
