@@ -462,7 +462,34 @@ no task will be implemented from a guess at scope.
     full suite **4449 passed, 8 skipped, 0 failed** (no regressions); `ruff check`/
     `ruff format --check` (auto-fixed 54 pre-existing line-length violations via `ruff format`,
     then re-verified all 5 tests still pass)/`mypy`/`pyright --pythonpath .venv/bin/python` all
-    clean. A `reviewer`-agent pass (AC6) is in flight before the ticket is marked Done.
+    clean.
+  - **Reviewer pass (AC6) — changes needed, not a rubber stamp.** Independently re-verified the 4
+    prior judgment calls (R8-vs-R10, the run/resume split, the `w02-01-impl` wiring, AC5's
+    no-wall-clock check) and approved all 4 with concrete cross-references. But found ONE new
+    CRITICAL gap the review checklist hadn't specifically asked about: `build_digest()` writes
+    `stage` as a TOP-LEVEL key, while the real tool's `_digest_stage()` (`overseer_tool.py:2880-2886`)
+    reads ONLY `digest["budget"]["stage"]` — and `ScriptedOverseerExecutor` overwrites the
+    pre_hook's REAL, correctly-shaped digest.json with the flat fake one (confirmed empirically: a
+    real run's on-disk digest.json has no `budget` key at all). Consequence: R11 (the
+    stage-restriction rule that is AC3's whole point, and one of the epic's two headline
+    architecture pillars per the HLD) never actually fires in ANY scenario using `build_digest()` —
+    scenario (b)'s "stage escalation" currently passes because the test author hand-picked stage
+    labels, not because the SUT's real `derive_budget`/`compute_budget` machinery computed them.
+    This is a fidelity gap in the harness, not a scenario-(b)-only issue. Two WARNING-level findings
+    also filed: scenario (d) is missing its own TASK.md-promised idempotency assertions (ledger
+    `unit`-line count unchanged across resume; `hold_requested`/`hold_answered` events present);
+    and the harness's new side-channel write pass (this session's own `control/hold-request.json`
+    fix) is unscoped, silently absorbing ANY absolute-path `output_map` key rather than a named
+    allowlist, risking masking a genuine "forgot to declare this output" bug in a later scenario.
+    dev-epic judged the CRITICAL finding as real, epic-relevant, and NOT something to defer given
+    the late-gate mandate requires real (not fictional) evidence the orchestration works — dispatched
+    a `developer` subagent with the exact diagnosis (digest.json shape mismatch, the real
+    `derive_budget` formula and config defaults `converge_pct=80`/`stabilize_pct=90`/
+    `closeout_pct=95`/`wave_size=6`) to: (1) stop the executor clobbering `digest.json`, (2)
+    redesign scenario (b)'s scripted costs so the REAL stage machine escalates
+    explore->converge->stabilize->closeout for real, verified empirically against the actual
+    on-disk digest, (3) fix both warnings. In progress; will independently re-verify (not trust the
+    report) before closing T-WruPiv, exactly as with every other task this epic.
 - `T-23yMMB` (live smoke run) spends real money against a real LLM (`claude_cli`), capped at $25
   per the architect's design. Per the epic owner's explicit instruction, **dev-epic will not run
   this without first flagging it back for explicit spend authorization** — this is a real-money
