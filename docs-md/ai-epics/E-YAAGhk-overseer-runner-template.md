@@ -425,8 +425,21 @@ sequencing table above reflects that read) — no task will be implemented from 
   a missing brief file; (d) is unrelated — the test's `ao resume` call omits the required
   `--run-id` flag (the repo's own convention, per `tests/test_e2e_cli.py`, is to regex the run id
   out of the first `ao run` call's stdout and pass it explicitly). Sent back to the same agent
-  (not a fresh duplicate) with this exact diagnosis; awaiting its next completion, which will again
-  be independently re-verified before acceptance.
+  (not a fresh duplicate) with this exact diagnosis.
+  - **Update**: the agent fixed all 3 original root causes plus the missing-brief-write gap
+    (confirmed: scenario (a) still passes 3/3 consecutive runs after the change). That surfaced 3
+    NEW, scenario-specific bugs beyond the original diagnosis: (b) a hardcoded instruction path in
+    `build_unit_task()` doesn't vary by unit `kind`, so `stabilize`-kind units got
+    `10-work-unit.md` instead of the `kind_map`-correct `11-stabilize-unit.md` (dev-epic confirmed
+    the exact `kind_map` mapping directly from `overseer-config.json.tmpl` and asked for a
+    kind-driven default inside the helper, not a one-off override, so T-vmI0jI's harness reuse
+    doesn't repeat the bug); (c) the scripted emitted-`ck-02` manifest has malformed
+    outputs/depends_on/inputs shapes plus a `decision: "continue"` verdict paired with an empty
+    emitted wave (a continue must emit ≥1 unit); (d) `hold-request.json` is written AFTER the hold
+    verdict rather than atomically with it, contradicting the ticket's own pseudocode ("ck-01
+    decides hold: it writes the request AND emits ck-02" — same attempt, same step). Sent back
+    again with targeted guidance per bug; awaiting the next completion, still to be independently
+    re-verified before acceptance — no claim accepted on a self-report alone.
 - `T-23yMMB` (live smoke run) spends real money against a real LLM (`claude_cli`), capped at $25
   per the architect's design. Per the epic owner's explicit instruction, **dev-epic will not run
   this without first flagging it back for explicit spend authorization** — this is a real-money
