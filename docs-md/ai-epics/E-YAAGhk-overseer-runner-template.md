@@ -72,8 +72,8 @@ criteria.
 | 1a | `T-ABDjSj` tool M1 (config/state/ledger/budget/hold/unit-gate) | developer | — | **Done, reviewed** |
 | 1b | `T-eGXqXH` template scaffold | developer | — | **Done, reviewed** |
 | 2 | `T-C6uQJW` tool M2 (loop/progress detectors) | developer | T-ABDjSj | **Done, reviewed** |
-| 3 | `T-ltBLUY` contract.md.tmpl + README | developer | T-eGXqXH | In progress (next) |
-| 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | Not started |
+| 3 | `T-ltBLUY` contract.md.tmpl + README | developer | T-eGXqXH | **Done, reviewed** |
+| 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | In progress (next) |
 | 5 | `T-HPJcc6` tool M3a structural checkers | developer | T-ABDjSj, T-ltBLUY | Not started |
 | 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | Not started |
 | 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | Not started |
@@ -233,7 +233,40 @@ Combined evidence after both tasks + all fixes: full suite **4190 passed, 8 skip
 coverage 99% (1075 stmts/10 miss), ruff/mypy clean throughout.
 Full detail: `T-eGXqXH-template-scaffold/STATUS.md`, `T-C6uQJW-tool-loop-progress-detectors/STATUS.md`.
 
-### Remaining 11 tasks
+### T-ltBLUY (Done, reviewed)
+`overseer-contract.md.tmpl` (332 lines) and `README.md` (253 lines), plus the one `files:` entry
+in `template.yaml` that `T-eGXqXH`'s review deliberately deferred here. The contract's "Hard
+rules" section is grounded in the actual shipped tool (grepped for every rule id it really
+raises) rather than retyped from the design doc, split honestly into "currently enforced" (17
+ids) vs. "forthcoming" (`OV-R1`-`OV-R16`+`OV-R13c`, for `T-HPJcc6`/`T-tAKBBB` to implement against
+verbatim). 19 net new tests (28 pre-existing -> 47 total, one pre-existing test renamed as part of
+the disclosed boundary update below).
+
+**Disclosed, accepted boundary deviation**: two of `T-eGXqXH`'s own pre-existing tests explicitly
+named `T-ltBLUY` as their own trigger for an update (their docstrings literally said "not yet --
+that's T-ltBLUY"). Landing this ticket's mandatory `files:`-entry requirement necessarily flips
+both assertions (4->5 files; drop the now-obsolete "contract doesn't exist yet" check). dev-epic
+reviewed this before accepting it: it's a correctly-anticipated, minimal, disclosed update to a
+scope-boundary test's "not yet" clause, not scope creep or a hidden violation of the "don't touch
+existing tests" instruction.
+
+Reviewer verdict: approve with nits. Independently grepped the tool to confirm the "currently
+enforced" vs. "forthcoming" rule-id split is accurate; verified every README factual claim against
+real code rather than the design doc (the re-render/no-`--force`-flag claim, the
+`--extend-breaker --extend-by-same`/`--extend-by-seconds` CLI syntax, the `breakers.py:603` latch
+citation, the `--autocompact` 180000/500000 numbers cross-read against `routed-runner`'s own
+README) -- all confirmed accurate. Two Warnings, both fixed by dev-epic:
+- **W1**: the README didn't disclose that the template isn't runnable end-to-end yet (`intake`'s
+  `post_hook` wires to `ov-intake-check`, which doesn't exist as a subcommand until the M3 checker
+  tasks land) -- the contract's own "Self-check" section already said this, but the README (what
+  an operator reads first) didn't. Fixed: added a "Current epic status" note to Preflight.
+- **W2**: `STATUS.md` claimed "27 new tests"; the actual count (verified by the reviewer via
+  `git diff`/`grep -c`) is 19 net new (28 pre-existing -> 47 total). Fixed: corrected in both the
+  task and epic STATUS.md.
+
+Full detail: `T-ltBLUY-contract-and-readme/STATUS.md`.
+
+### Remaining 10 tasks
 Not started. Full `TASK.md` acceptance criteria read for all 15 tickets during decomposition
 (this document's sequencing table above reflects that read) — no task will be implemented from a
 guess at scope.
@@ -257,10 +290,9 @@ guess at scope.
   already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. Delegate `T-ltBLUY` (contract + README), explicitly scoped to also add the
-   `overseer-contract.md.tmpl` `files:` entry to `template.yaml` (T-eGXqXH review handoff).
-2. Continue down the sequencing table — `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB` (carrying the W2
-   signal-re-fire handoff note), `T-WruPiv`, `T-3FlD46`/`T-vmI0jI`.
+1. Delegate `T-5ZzAZp` (agent instructions, depends on `T-ltBLUY`, done).
+2. Continue down the sequencing table — `T-HPJcc6`, `T-tAKBBB` (carrying the W2 signal-re-fire
+   handoff note), `T-WruPiv`, `T-3FlD46`/`T-vmI0jI`.
 3. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
 4. At the next natural milestone (or the spend-authorization point, whichever comes first): report
    back with evidence.
@@ -275,10 +307,10 @@ guess at scope.
 - [x] Early gate run: satisfied at design time (HLD §23.3), recorded above, not re-run.
 - [x] Every delegated agent given an explicit change-scope boundary — `T-pYt478`'s `developer` and
       `reviewer` subagent prompts both stated exact allowed/forbidden files.
-- [x] Quantifiable checkpoints tracked this iteration: `T-eGXqXH` + `T-C6uQJW` evidence above (28
-      + 52 new tests, 99% coverage, combined full suite 4190 passed/8 skipped/0 failed, ruff/mypy
-      clean throughout).
-- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 4/15
+- [x] Quantifiable checkpoints tracked this iteration: `T-ltBLUY` evidence above (19 net new
+      tests, 47 total in the asset suite, full suite 4209 passed/8 skipped/0 failed, ruff/mypy
+      clean).
+- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 5/15
       tasks in.
 - [x] Ticket status synced consistently across `TASK.md`/`STATUS.md` and the epic
       `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, for everything done so far.
