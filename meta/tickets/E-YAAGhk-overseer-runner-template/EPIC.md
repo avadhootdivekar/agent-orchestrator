@@ -88,7 +88,7 @@ Sprint 1 (128 h of 144 h committed)
 
 Sprint 2 (120 h above the cut + 16 h below, of 144 h committed)
 - [x] `T-HPJcc6-tool-structural-checkers` — tool M3a: R1–R10, R15, charter lock, `--dry-run` (3 d). **Done**: 100 new tests, 99% coverage, reviewed (approve, 3 non-blocking nits, one fixed). See `T-HPJcc6-tool-structural-checkers/STATUS.md`.
-- [ ] `T-tAKBBB-tool-semantic-checkers` — tool M3b: R11–R14, R16, R13c, verdict/deferral checks, ledger events (3 d).
+- [x] `T-tAKBBB-tool-semantic-checkers` — tool M3b: R11–R14, R16, R13c, verdict/deferral checks, ledger events (3 d). **Done**: 53 new tests, 98% coverage (combined), reviewed (approve with nits — a real gap dev-epic found via engine.py tracing, a malformed-but-present verdict.json silently passing, was fixed; 2 of 3 reviewer warnings fixed, 1 explicitly deferred). See `T-tAKBBB-tool-semantic-checkers/STATUS.md`.
 - [ ] `T-WruPiv-e2e-harness-core-scenarios` — scripted-executor harness + e2e (a)–(d) (3 d).
 - [ ] `T-vmI0jI-e2e-failure-scenarios` — e2e (e)–(h): backstop+G5+unit gate, signal response, cancel, `max_parallel=2` (3 d).
 - [ ] `T-3FlD46-security-review-hardening` — dev-security code review of tool/hooks/checkers + fixes (1 d).

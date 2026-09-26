@@ -87,8 +87,18 @@
   fixed a real cross-task issue: T-C6uQJW's new git-subprocess calls tripped a repo-wide security
   guard (`tests/isolation/test_security_guards.py`); added a justified allowlist entry. Combined
   full suite: **4190 passed, 8 skipped, 0 failed**.
-- Rollup: MVP tasks 7/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
-  `T-5ZzAZp`, `T-HPJcc6`) · MVP-Should 0/1 (deferred, see below) · design 1/1.
+- `T-tAKBBB` (tool M3b semantic checkers) is **Done**: OV-R11-R14/R16/R13c added to the same rule
+  engine `T-HPJcc6` built, plus AC3's ledger events. dev-epic found and fixed a real gap via direct
+  `engine.py` tracing (a malformed-but-present `verdict.json` would have silently passed
+  `ckpt_check` with zero violations — a genuinely missing one is already caught by the engine's own
+  existence-only check, so the fix is narrowly scoped to the malformed case only, touching no
+  existing fixture). Reviewed (approve with nits): 2 of 3 warnings fixed (a stale
+  hold-request-from-a-different-checkpoint gap; a DRY duplication), 1 explicitly deferred
+  (R12 omitting `checkpoint`/`stage` fields — out of this ticket's literal scope). Full suite
+  **4439 passed, 8 skipped, 0 failed**. All three checker tasks (`T-HPJcc6`, `T-tAKBBB`) plus every
+  S1 task are now Done — `T-WruPiv` (e2e harness) is unblocked.
+- Rollup: MVP tasks 8/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
+  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`) · MVP-Should 0/1 (deferred, see below) · design 1/1.
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -161,15 +171,12 @@ budget trip cannot reach close-out on its own.
   list is in design doc §23.
 
 ## Next actions
-1. `T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`, `T-5ZzAZp`, `T-HPJcc6` all Done.
-   Immediate next: implement the `branch_policy` amendment to `T-5ZzAZp` (its own dev→verify→review
-   cycle) before starting `T-tAKBBB`, to avoid re-touching `01-git-branch-off.md` mid-checker-work.
-   Then: `T-tAKBBB` (deps: T-ABDjSj/T-C6uQJW/T-HPJcc6, all done — also now carries the W2
-   signal-re-fire handoff note from T-C6uQJW's review), `T-WruPiv` (deps: all of the above),
-   `T-3FlD46` (parallel with e2e once checkers merge), `T-vmI0jI` (deps: T-WruPiv only), `T-23yMMB`
-   (needs explicit user spend authorization, <=$25, before running), `T-gbccdr` (last — also now
-   carries the AC6/rollback engine-gap note from T-eGXqXH's review for the deviations section).
-   `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status) unless told
-   otherwise.
+1. All of S1 + all 3 checker tasks (`T-HPJcc6`, `T-tAKBBB`) are Done — 8/13 MVP tasks. Next:
+   `T-WruPiv` (e2e harness, deps: everything above, all done), then `T-3FlD46` (parallel with e2e
+   once checkers merge — already true), `T-vmI0jI` (deps: T-WruPiv only), `T-23yMMB` (needs
+   explicit user spend authorization, <=$25, before running), `T-gbccdr` (last — carries the
+   AC6/rollback engine-gap note from T-eGXqXH's review, and the R12 checkpoint/stage deferral note
+   from T-tAKBBB's review, for the deviations section). `T-zLHc7Q` stays deferred (MVP-Should,
+   below cut line per its own ticket status) unless told otherwise.
 2. When ready to open a PR for this epic, flag commit `2387503` (G5 fix) separately in the
    description per the note above.
