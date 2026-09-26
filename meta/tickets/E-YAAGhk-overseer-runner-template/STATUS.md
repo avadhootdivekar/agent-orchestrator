@@ -174,9 +174,39 @@
   the precedent set by `T-3FlD46`). Deviation for `T-gbccdr`: the design narrative's "OV-R8" for
   dangling next-checkpoint references is actually shipped as `OV-R10` (`OV-R8` is unit-entry-only)
   — first found in `T-WruPiv`'s scenario (c), reconfirmed here.
-- Rollup: MVP tasks 11/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
-  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`, `T-WruPiv`, `T-vmI0jI`) · MVP-Should 0/1
-  (deferred, see below) · design 1/1.
+- `T-23yMMB` (live smoke run, real LLM spend) is **Done, one deviation recorded**: run
+  with explicit user spend authorization (≤$25 cap). 3 real attempts with real
+  `claude_cli` agents (all 6 required roles), total real spend **$8.4752**. Headline
+  finding: the ticket's own literal `run_budget_usd=25` param — and its own suggested
+  `run_budget_usd=12` fallback for the stabilize/closeout contingency — are BOTH
+  unconditionally infeasible with the template's hardcoded `default_unit_cost_usd=8`/
+  `default_ckpt_cost_usd=5` (not configurable template params), for every
+  `wave_size`/`final_push` combination checked exhaustively; the real `intake` agent
+  independently derived and reported this exact math itself before dev-epic
+  cross-verified it against `derive_budget`/`compute_allowed_wave_size`. Two corrected
+  runs (`run_budget_usd=62` and `=57`) succeeded end to end; both asks (a `--shout` CLI
+  flag + test, a README doc update) independently re-verified by dev-epic — checked out
+  the real git branch and ran the toy repo's real `pytest` suite (2/2 passed both times)
+  plus a real functional CLI check, not just accepting the agent's own claim. Overseer
+  (checkpoint) cost was 14.8-16.8% of total run cost in both successful runs, above the
+  NFR-8 ≤~10% target (tuning recommendation: `overseer_effort=medium` for small runs,
+  handed to `T-gbccdr`). One real signal fired and was handled correctly (`breadcrumb_integrity`,
+  a unit mislabeling its own repo id, correctly diagnosed and accepted by the real
+  checkpoint with a full rationale) — a clean positive result for the signal-response
+  design working end to end with a real LLM. **AC3 deviation**: "at least one run
+  exercised a stage transition beyond explore" could not be organically satisfied within
+  a responsible smoke-test budget — once real (much cheaper, ~20-25x below the hardcoded
+  defaults) per-unit costs exist, the stage machine correctly self-corrects back to
+  "explore" for a task this small, and no `run_budget_usd` value can simultaneously
+  survive intake's hardcoded-default-cost gate and make real spend a high percentage of
+  it. Diagnosed and documented with full reasoning, not forced or fabricated; the stage
+  machine's own correctness is separately and thoroughly covered by `T-WruPiv`'s scripted
+  `test_scenario_b_stage_escalation` against the same real `derive_budget` formula. Full
+  findings, exhaustive budget-math tables, and artifacts:
+  `output/E-YAAGhk-overseer-runner-template/smoke/summary.md`.
+- Rollup: MVP tasks 12/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
+  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`, `T-WruPiv`, `T-vmI0jI`, `T-23yMMB`) ·
+  MVP-Should 0/1 (deferred, see below) · design 1/1.
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -249,14 +279,16 @@ budget trip cannot reach close-out on its own.
   list is in design doc §23.
 
 ## Next actions
-1. All of S1 + all 3 checker tasks + `T-3FlD46` + `T-WruPiv` + `T-vmI0jI` are Done — 11/13 MVP
-   tasks. Next: `T-23yMMB` (live smoke run, real `claude_cli` spend, ≤$25 — **needs explicit user
-   spend authorization before running, will not run unprompted**), then `T-gbccdr` (docs
-   refresh/closeout — carries the AC6/rollback engine-gap note from T-eGXqXH's review, the R12
+1. All 12 of 13 MVP tasks are Done. Only `T-gbccdr` (docs refresh/closeout) remains — it
+   carries: the AC6/rollback engine-gap note from T-eGXqXH's review, the R12
    checkpoint/stage deferral note from T-tAKBBB's review, the N2/N3 follow-up notes from
    T-3FlD46's review, the `actuals_available` harness gotcha and the OV-R8/R10 rule-id
-   doc-vs-implementation drift from T-WruPiv/T-vmI0jI's reviews, for the deviations section).
-   `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status) unless told
-   otherwise.
+   doc-vs-implementation drift from T-WruPiv/T-vmI0jI's reviews, and — the headline item —
+   T-23yMMB's real-LLM finding that `default_unit_cost_usd`/`default_ckpt_cost_usd` are
+   hardcoded ~20-25x above real observed costs, making the ticket's own suggested small
+   `run_budget_usd` values (25, and its own 12 fallback) unconditionally infeasible, plus
+   the `overseer_effort` sizing recommendation and the AC3 deviation note.
+   `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status) unless
+   told otherwise.
 2. When ready to open a PR for this epic, flag commit `2387503` (G5 fix) separately in the
    description per the note above.

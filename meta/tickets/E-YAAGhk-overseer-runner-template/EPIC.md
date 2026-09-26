@@ -105,7 +105,17 @@ Sprint 2 (120 h above the cut + 16 h below, of 144 h committed)
   passed/8 skipped/0 failed, ruff/mypy/pyright clean. See
   `T-vmI0jI-e2e-failure-scenarios/STATUS.md`.
 - [x] `T-3FlD46-security-review-hardening` — dev-security code review of tool/hooks/checkers + fixes (1 d). **Done**: all 6 design-level findings verified-implemented (traced by hand, not docstring-only); 1 new HIGH-equivalent gap found and fixed (unbounded `read_ledger_lines`, a DoS-shaped size-cap bypass); 2 LOW follow-ups filed, no open CRITICAL/HIGH. See `T-3FlD46-security-review-hardening/STATUS.md`.
-- [ ] `T-23yMMB-live-smoke-run` — FR-17 real-LLM smoke, ≤ $25 (1 d).
+- [x] `T-23yMMB-live-smoke-run` — FR-17 real-LLM smoke, ≤ $25 (1 d). **Done, AC3 deviation
+  recorded**: 3 real runs with real `claude_cli` agents, $8.4752 total real spend (of $25
+  authorized). Headline finding: the template's hardcoded `default_unit_cost_usd=8`/
+  `default_ckpt_cost_usd=5` make the ticket's own literal `run_budget_usd=25` (and its
+  suggested `run_budget_usd=12` fallback) unconditionally infeasible for any
+  `wave_size`/`final_push` combination — real evidence, independently re-verified against
+  `derive_budget`. Two corrected runs succeeded end to end with real, independently
+  re-verified working code + docs (real `pytest` 2/2 passed both times). Overseer cost
+  14.8-16.8% of total (above the ≤~10% target). AC3 (stage transition beyond explore) not
+  organically achievable within budget — diagnosed and documented, not forced. See
+  `T-23yMMB-live-smoke-run/STATUS.md` and `output/E-YAAGhk-overseer-runner-template/smoke/summary.md`.
 - [ ] `T-gbccdr-docs-refresh` — post-implementation reconciliation of `docs-md/` and the skill (1 d).
 - — cut line —
 - [ ] `T-zLHc7Q-nested-expander-subdag` — FR-15 (2 d).
