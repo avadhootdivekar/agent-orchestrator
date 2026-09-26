@@ -362,13 +362,25 @@ def test_template_yaml_files_shape() -> None:
     assert by_target["tools/overseer_tool.py"]["source"] == "tools/overseer_tool.py"
 
 
-def test_no_instructions_dir_created_yet() -> None:
-    """Guards T-5ZzAZp's own remaining scope boundary: `instructions/*.md` must NOT be
-    created by this task. (Formerly also guarded `overseer-contract.md.tmpl` on behalf of
-    T-eGXqXH; T-ltBLUY's ticket explicitly requires that file to exist now -- see
-    `test_template_yaml_files_shape` and the new `test_overseer_contract_tmpl_*` tests below.)
+def test_instructions_dir_has_the_8_mvp_files() -> None:
+    """T-5ZzAZp landed `instructions/` (this function formerly guarded that it did NOT
+    exist yet, mirroring `test_overseer_contract_tmpl_*` below doing the same for
+    `overseer-contract.md.tmpl` on behalf of T-ltBLUY). Content-marker/no-hardcoded-path
+    checks for these files live in `test_builtin_overseer_runner_instructions.py`; this
+    is just the on-disk-shape guard, matching this file's own established pattern.
+    `30-expander.md`/`31-sub-aggregate.md` (FR-15) are explicitly out of scope here.
     """
-    assert not (TEMPLATE_DIR / "instructions").exists()
+    instruction_files = {p.name for p in (TEMPLATE_DIR / "instructions").glob("*.md")}
+    assert instruction_files == {
+        "00-intake.md",
+        "01-git-branch-off.md",
+        "10-work-unit.md",
+        "11-stabilize-unit.md",
+        "20-checkpoint.md",
+        "40-final-verify.md",
+        "41-closeout.md",
+        "90-final-push.md",
+    }
 
 
 def test_template_yaml_assets_shape() -> None:

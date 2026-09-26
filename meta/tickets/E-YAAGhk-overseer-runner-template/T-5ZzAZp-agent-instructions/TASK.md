@@ -6,7 +6,7 @@
 - Owner: developer
 - Created: 2026-09-26
 - Last Updated: 2026-09-26
-- Status: Draft
+- Status: Done (see STATUS.md — reviewed, approve with nits, the one Warning fixed)
 - Estimate: 3 days (24 h)
 
 ## Requirements Mapping
