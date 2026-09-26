@@ -87,6 +87,21 @@ _GIT_CALL_ALLOWED: dict[Path, str] = {
     # Pre-epic SWE-bench import/grade harness: clones and diffs third-party subject repos.
     _SRC_ROOT / "bench" / "swebench_provider.py": "pre-epic SWE-bench subject checkout",
     _SRC_ROOT / "bench" / "swebench_grader.py": "pre-epic SWE-bench patch extraction",
+    # E-YAAGhk (overseer-runner template), T-C6uQJW: the template's own governance tool
+    # computes `repo_heads`/git-derived "tracked paths" for its content_oscillation
+    # detector (HLD S8.3) via bounded `git rev-parse HEAD` / `git diff --name-only` /
+    # `git status --porcelain` (argv list, `shell=False`, `timeout=GIT_TIMEOUT_S`, every
+    # failure/timeout degrades to "no data" rather than raising -- a diagnostic detector,
+    # never an integrity gate). This tool is deliberately standalone (NFR-5: stdlib only,
+    # zero repo-internal imports, so it can run under whatever bare `python3` is on a
+    # hook's PATH) and is copied byte-for-byte into each rendered template instance --
+    # it structurally cannot import `isolation/git.py`'s `GitRepo` (ADR-0016 D4).
+    _SRC_ROOT
+    / "templates"
+    / "builtin"
+    / "overseer-runner"
+    / "tools"
+    / "overseer_tool.py": "overseer-runner template tool: bounded git probes (T-C6uQJW)",
 }
 
 # The complete set of modules INSIDE the isolation package that may import `subprocess`

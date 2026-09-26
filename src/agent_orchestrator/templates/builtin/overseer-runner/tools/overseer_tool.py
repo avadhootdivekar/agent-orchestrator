@@ -15,8 +15,9 @@ schemas). Ticket: `meta/tickets/E-YAAGhk-overseer-runner-template/`
 `T-ABDjSj-tool-state-ledger-budget/`.
 
 Module map (kept additive on purpose -- three LATER tasks add to this same file):
-  M1  Config/state/ledger/budget/hold/charter-lock/unit-gate/request-closeout (THIS task).
-  M2  Signal detectors (T-C6uQJW) -- stubbed below (`detect_signals_stub`/`compute_progress_stub`).
+  M1  Config/state/ledger/budget/hold/charter-lock/unit-gate/request-closeout.
+  M2  Signal detectors (T-C6uQJW, THIS task): `detect_period`/`detect_mirror`/`detect_signals`/
+      `compute_progress`, plus `update_path_history`'s repo_heads/git-diff/trim extensions.
   M3  Contract checkers `intake-check`/`ckpt-check`/`expander-check` (T-HPJcc6/T-tAKBBB) --
       NOT implemented here; a future task adds new subcommands + dispatch entries only.
 
@@ -36,6 +37,7 @@ import math
 import os
 import re
 import statistics
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -988,15 +990,15 @@ def update_path_history(
     *,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Minimal M1-scope path history (HLD S8.3/S13.4): hashes breadcrumb-reported
-    `changed_paths` for this checkpoint's wave, classified via `classify_path_entry` (AC6).
+    """HLD S8.3/S13.4 path history: hashes the UNION of breadcrumb-reported `changed_paths`
+    (classified via `classify_path_entry`, AC6) and git-derived tracked paths (T-C6uQJW --
+    `git diff --name-only <head_at_ck(K-1)>` plus `git status --porcelain` per repo, both
+    bounded), so a unit that omits a reverted path from its own `changed_paths` can no longer
+    hide it (HLD S8.3 Rev 2 reviewer #6).
 
-    Rejected entries are recorded (not hashed) for the future `breadcrumb_integrity` signal.
-    Git-derived tracked paths and `repo_heads` (the OTHER half of HLD S8.3's "tracked paths")
-    are intentionally deferred to T-C6uQJW: this task's own AC6 narrows scope to "the path-
-    confinement helper... classifies/rejects... you are not required to wire them into a
-    signal yet", and wiring a bounded `git diff`/`git status` subprocess is a materially
-    bigger, separately-risked piece of work (see this ticket's own Risks section).
+    Rejected breadcrumb entries are recorded (not hashed) for the `breadcrumb_integrity`
+    signal. `repo_heads` (this checkpoint's `git rev-parse HEAD` per repo) is stored so the
+    NEXT checkpoint's git-diff base is known.
     """
     accepted: list[str] = []
     rejected: list[dict[str, Any]] = []
@@ -1013,25 +1015,64 @@ def update_path_history(
                     {"unit_id": unit_id, "entry": raw_entry, "reason": classification.reason}
                 )
 
-    # TODO(T-C6uQJW): "most recently changed" ordering for the MAX_TRACKED_PATHS trim (HLD
-    # S8.3 M2 edge cases). This MVP keeps a stable, deterministic order instead.
-    trimmed = accepted[:MAX_TRACKED_PATHS]
-    entries = {abs_path: _hash_path(Path(abs_path)) for abs_path in trimmed}
-
     path = path_history_path(inst)
     history: dict[str, Any] = {}
     if path.is_file():
         loaded = read_json_bounded(path, JSON_MAX_BYTES)
         if isinstance(loaded, dict):
             history = loaded
+
+    # The PREVIOUS checkpoint's recorded repo_heads is the git-diff base (skip the diff for a
+    # repo with no prior head -- e.g. the first checkpoint).
+    prev_entry = history.get(f"{k - 1:02d}") if k >= 2 else None
+    prev_repo_heads = (prev_entry.get("repo_heads") if isinstance(prev_entry, dict) else None) or {}
+
+    repo_heads: dict[str, str] = {}
+    git_derived: list[str] = []
+    for repo_id, repo_path_str in sorted(repo_paths.items()):
+        repo_root = Path(repo_path_str).resolve()
+        head = _git_rev_parse_head(str(repo_root))
+        if head is not None:
+            repo_heads[repo_id] = head
+        prev_head = prev_repo_heads.get(repo_id) if isinstance(prev_repo_heads, dict) else None
+        for rel_path in _git_changed_paths(str(repo_root), prev_head):
+            confined = _confine_repo_relative(repo_root, rel_path)
+            if confined is not None:
+                git_derived.append(confined)
+
+    # Union, de-duplicated, GIT-DERIVED paths first (reviewer finding, T-C6uQJW review): if a
+    # busy wave's breadcrumb-declared paths alone reach MAX_TRACKED_PATHS (plausible --
+    # wave_size * MAX_CHANGED_PATHS_PER_UNIT can exceed it), a declared-first order would let
+    # the trim below silently drop exactly the git-derived, UNDECLARED paths this whole
+    # feature exists to catch (HLD S8.3 Rev 2 reviewer #6: "a unit that omits a reverted path
+    # can't hide it"). Prioritizing git-derived paths means the trim sacrifices paths a unit
+    # already truthfully declared before it ever sacrifices ones it didn't.
+    seen: set[str] = set()
+    all_current: list[str] = []
+    for abs_path in git_derived + accepted:
+        if abs_path not in seen:
+            seen.add(abs_path)
+            all_current.append(abs_path)
+
+    trimmed, dropped_count = _trim_tracked_paths(history, k, all_current, seen)
+    entries = {abs_path: _hash_path(Path(abs_path)) for abs_path in trimmed}
+
     entry_key = f"{k:02d}"
-    history[entry_key] = {
+    new_entry: dict[str, Any] = {
         "generated_at": now_iso(now),
         "paths": entries,
         "rejected": rejected,
-        # TODO(T-C6uQJW): populate from `git -C <repo> rev-parse HEAD` per repo_paths.
-        "repo_heads": {},
+        "repo_heads": repo_heads,
     }
+    if dropped_count:
+        # Judgment call (T-C6uQJW, see task report): no existing "info" channel elsewhere in
+        # this file, so a simple list field on the checkpoint's own path-history entry is the
+        # most visible, lowest-risk place for this note (digest assembly can surface it later).
+        new_entry["info"] = [
+            f"path-history trim dropped {dropped_count} path(s) beyond "
+            f"MAX_TRACKED_PATHS={MAX_TRACKED_PATHS}"
+        ]
+    history[entry_key] = new_entry
     if not dry_run:
         write_json_atomic(path, history)
     result: dict[str, Any] = history[entry_key]
@@ -1405,31 +1446,703 @@ def verify_charter_lock(inst: Path) -> None:
 
 
 # =============================================================================================
-# ===== M2 stub (T-C6uQJW replaces this with the real signal detectors, HLD S8.3) ============
+# ===== M2: signal detectors (T-C6uQJW, HLD S8.3 rule table / S8.4 M2 pseudocode) =============
+# =============================================================================================
+
+# Named thresholds (HLD S8.3) -- never inline literals (reviewer #7).
+MAX_PERIOD: Final[int] = 4
+MIRROR_HALF_LENGTHS: Final[tuple[int, ...]] = (2, 3)
+MIN_REPS_PERIODIC: Final[int] = 2
+MIN_REPS_SINGLE: Final[int] = 3
+
+_DONE_VERDICTS: Final[frozenset[str]] = frozenset({"pass", "na"})
+_MET_OR_DEFERRED: Final[frozenset[str]] = frozenset({"met", "deferred"})
+
+
+# =============================================================================================
+# ===== PURE functions -- no I/O (ADR-0016 D4): period/mirror detection, ledger grouping =====
 # =============================================================================================
 
 
-def detect_signals_stub(cfg: Config, inst: Path, k: int) -> list[dict[str, Any]]:
-    """Placeholder for M2's `detect_signals` (HLD S8.4). Always an empty list until
-    T-C6uQJW lands -- `ckpt_prep` calls this exact stub so swapping it in later is a
-    one-function change, not a `ckpt_prep` rewrite.
+def detect_period(seq: list[str], max_p: int = MAX_PERIOD) -> tuple[int, int] | None:
+    """HLD S8.4 M2 `detect_period`, exactly: for period `p` in 1..max_p, the largest `r`
+    such that the trailing `p*r` tokens of *seq* are `r` copies of one `p`-token block.
+    Flags `(p >= 2 and r >= MIN_REPS_PERIODIC) or (p == 1 and r >= MIN_REPS_SINGLE)`; the
+    smallest qualifying period wins (loop order is ascending `p`, first hit kept). Table
+    tests are the spec (ticket AC1).
     """
-    del cfg, inst, k  # unused until the real implementation
-    return []
+    best: tuple[int, int] | None = None
+    n = len(seq)
+    for p in range(1, max_p + 1):
+        r = 0
+        while n >= p * (r + 1) and seq[n - p * (r + 1) : n - p * r] == seq[n - p :]:
+            r += 1
+        if (p >= 2 and r >= MIN_REPS_PERIODIC) or (p == 1 and r >= MIN_REPS_SINGLE):
+            best = best or (p, r)
+    return best
 
 
-def compute_progress_stub(cfg: Config, inst: Path, k: int) -> dict[str, Any]:
-    """Placeholder for M2's `progress` (HLD S8.4/S13.4 digest schema). Always zeroed until
-    T-C6uQJW lands.
+def detect_mirror(seq: list[str]) -> int | None:
+    """HLD S8.4 M2 `detect_mirror`: for `m` in `MIRROR_HALF_LENGTHS`, the trailing `2*m`
+    tokens form a palindrome whose first half has >= 2 distinct tokens; smallest qualifying
+    `m` wins (ticket AC2).
     """
-    del cfg, inst, k
+    for m in MIRROR_HALF_LENGTHS:
+        tail = seq[-2 * m :]
+        if len(tail) == 2 * m and tail == list(reversed(tail)) and len(set(tail[:m])) >= 2:
+            return m
+    return None
+
+
+def returns_to_earlier(hist: list[str]) -> list[int]:
+    """Ticket pseudocode `returns_to_earlier`: every index `k` (0-based) in *hist* where
+    `hist[k] == hist[j]` for some `j <= k-2`, and `hist[k-1] != hist[k]` -- i.e. the tracked
+    value changed away and then returned to a state seen at least 2 steps earlier. Returns
+    ALL qualifying indices (not just whether any exist), so `content_oscillation`'s severity
+    rule ("high if ... >= 2 returns total") can count them across paths.
+    """
+    hits: list[int] = []
+    for idx in range(2, len(hist)):
+        if hist[idx - 1] == hist[idx]:
+            continue
+        if any(hist[j] == hist[idx] for j in range(idx - 1)):
+            hits.append(idx)
+    return hits
+
+
+def _work_item_sequences(unit_lines: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Group ledger `unit` lines by `work_item`, each group ordered by `(wave, unit_id)`
+    (HLD S8.3's per-work-item sequence `S[w]`). Lines with a missing/blank `work_item` are
+    excluded -- a malformed brief is BR-1's problem (M1), not a detector's.
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for line in unit_lines:
+        work_item = line.get("work_item")
+        if isinstance(work_item, str) and work_item:
+            groups.setdefault(work_item, []).append(line)
+    for lines in groups.values():
+        lines.sort(key=lambda ln: (ln.get("wave") or 0, str(ln.get("unit_id") or "")))
+    return groups
+
+
+def _done_work_items(unit_lines: list[dict[str, Any]]) -> set[str]:
+    """Distinct `work_item`s with at least one unit reporting `outcome: done` and
+    `verdict` in `_DONE_VERDICTS` (HLD S8.3 `stall` / `progress.work_items_done`).
+    """
     return {
-        "work_items_total": 0,
-        "work_items_done": 0,
-        "newly_done": 0,
-        "stall_waves": 0,
-        "criteria_met_prev": 0,
-        "per_ask": [],
+        str(line["work_item"])
+        for line in unit_lines
+        if line.get("outcome") == "done"
+        and line.get("verdict") in _DONE_VERDICTS
+        and isinstance(line.get("work_item"), str)
+        and line.get("work_item")
+    }
+
+
+def _signal_sort_key(sig: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    """Ticket AC7's ordering key `(type, work_item, path)`, widened with two more fully
+    deterministic tiebreakers (`ask_id`, `evidence.unit_id`) so two candidates that tie on
+    the primary 3-tuple (e.g. two `ask_starvation` signals, both with no `work_item`/`path`)
+    still sort identically regardless of input ledger line order (AC7's own shuffle test).
+    """
+    evidence = sig.get("evidence") or {}
+    return (
+        str(sig.get("type") or ""),
+        str(sig.get("work_item") or ""),
+        str(sig.get("path") or ""),
+        str(sig.get("ask_id") or ""),
+        str(evidence.get("unit_id") or ""),
+        str(sig.get("message") or ""),
+    )
+
+
+def _assign_signal_ids(candidates: list[dict[str, Any]], k: int) -> list[dict[str, Any]]:
+    """Assigns stable `S-<KK>-<NN>` ids in the deterministic order of `_signal_sort_key`."""
+    ordered = sorted(candidates, key=_signal_sort_key)
+    signals: list[dict[str, Any]] = []
+    for idx, sig in enumerate(ordered, start=1):
+        finalized = dict(sig)
+        finalized["id"] = f"S-{k:02d}-{idx:02d}"
+        signals.append(finalized)
+    return signals
+
+
+def _period_mirror_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
+    for work_item, lines in _work_item_sequences(unit_lines).items():
+        seq = [f"{ln.get('kind')}:{ln.get('verdict')}" for ln in lines]
+        period = detect_period(seq)
+        if period is not None:
+            p, r = period
+            signals.append(
+                {
+                    "type": "period_repeat",
+                    "severity": "high" if r >= 3 else "medium",
+                    "work_item": work_item,
+                    "ask_id": None,
+                    "path": None,
+                    "evidence": {"period": p, "repeats": r, "sequence": seq},
+                    "message": f"work item {work_item} repeats a {p}-token pattern {r} times",
+                }
+            )
+        mirror = detect_mirror(seq)
+        if mirror is not None:
+            signals.append(
+                {
+                    "type": "mirror_flipflop",
+                    "severity": "medium",
+                    "work_item": work_item,
+                    "ask_id": None,
+                    "path": None,
+                    "evidence": {"half_length": mirror, "sequence": seq},
+                    "message": (
+                        f"work item {work_item} flip-flops in a mirrored "
+                        f"pattern (half-length {mirror})"
+                    ),
+                }
+            )
+    return signals
+
+
+def _repeated_failure_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
+    for work_item, lines in _work_item_sequences(unit_lines).items():
+        if len(lines) < 2:
+            continue
+        if lines[-1].get("verdict") == "fail" and lines[-2].get("verdict") == "fail":
+            signals.append(
+                {
+                    "type": "repeated_failure",
+                    "severity": "medium",
+                    "work_item": work_item,
+                    "ask_id": None,
+                    "path": None,
+                    "evidence": {
+                        "last_two_unit_ids": [lines[-2].get("unit_id"), lines[-1].get("unit_id")]
+                    },
+                    "message": f"work item {work_item}'s last 2 units both have verdict=fail",
+                }
+            )
+    return signals
+
+
+def _attempt_cap_signals(cfg: Config, unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
+    for work_item, lines in _work_item_sequences(unit_lines).items():
+        if len(lines) >= cfg.max_attempts_per_item:
+            signals.append(
+                {
+                    "type": "attempt_cap",
+                    "severity": "high",
+                    "work_item": work_item,
+                    "ask_id": None,
+                    "path": None,
+                    "evidence": {
+                        "attempts": len(lines),
+                        "max_attempts_per_item": cfg.max_attempts_per_item,
+                    },
+                    "message": (
+                        f"work item {work_item} has {len(lines)} units >= "
+                        f"max_attempts_per_item={cfg.max_attempts_per_item}"
+                    ),
+                }
+            )
+    return signals
+
+
+def _blocked_units_signals(unit_lines: list[dict[str, Any]], k: int) -> list[dict[str, Any]]:
+    """HLD S8.3 `blocked_units`: any unit in the CURRENT wave K with `outcome: blocked` or
+    `needs_input: true`.
+    """
+    signals: list[dict[str, Any]] = []
+    for line in unit_lines:
+        if line.get("wave") != k:
+            continue
+        if line.get("outcome") == "blocked" or bool(line.get("needs_input")):
+            signals.append(
+                {
+                    "type": "blocked_units",
+                    "severity": "medium",
+                    "work_item": line.get("work_item"),
+                    "ask_id": None,
+                    "path": None,
+                    "evidence": {
+                        "unit_id": line.get("unit_id"),
+                        "outcome": line.get("outcome"),
+                        "needs_input": bool(line.get("needs_input")),
+                    },
+                    "message": f"unit {line.get('unit_id')} is blocked or needs input",
+                }
+            )
+    return signals
+
+
+# =============================================================================================
+# ===== I/O helpers: bounded git subprocess calls, tolerant JSON reads =======================
+# =============================================================================================
+
+
+def _read_optional_json(path: Path) -> dict[str, Any] | None:
+    """Tolerant JSON reader for M2: a MISSING or malformed file means "no data yet" (e.g. a
+    verdict for a checkpoint that hasn't happened, or charter.json before intake ever ran),
+    never a `Violation` -- M2 detectors are diagnostics over history, not integrity gates
+    (that boundary is `verify_charter_lock`/`verify_ledger_chain`, M1).
+    """
+    try:
+        data = read_json_bounded(path, JSON_MAX_BYTES)
+    except (FileNotFoundError, OversizeInputError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _git_rev_parse_head(repo_abs_path: str) -> str | None:
+    """Bounded `git -C <repo> rev-parse HEAD` (HLD S8.3 `repo_heads`). `None` for a
+    directory that isn't a git work tree, or any subprocess error/timeout -- a repo this
+    call can't read is simply invisible to `repo_heads`/git-derived tracked paths this
+    checkpoint, never a fatal error (this is a diagnostic detector, not an integrity gate).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_abs_path, "rev-parse", "HEAD"],
+            timeout=GIT_TIMEOUT_S,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    head = result.stdout.strip()
+    return head or None
+
+
+def _git_changed_paths(repo_abs_path: str, prev_head: str | None) -> list[str]:
+    """Bounded `git diff --name-only <prev_head>` (skipped when *prev_head* is `None` -- no
+    prior checkpoint recorded a head for this repo yet) plus `git status --porcelain`,
+    repo-relative paths (HLD S8.3 Rev 2 reviewer #6: "tracked paths" also covers what a unit
+    changed but omitted from its own breadcrumb). Any subprocess failure/timeout, or a
+    directory that isn't a git work tree, yields an empty list -- never raises.
+    """
+
+    def _run(cmd: list[str]) -> list[str]:
+        try:
+            result = subprocess.run(
+                cmd, timeout=GIT_TIMEOUT_S, capture_output=True, text=True, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        if result.returncode != 0:
+            return []
+        return [line for line in result.stdout.splitlines() if line.strip()]
+
+    rel_paths: set[str] = set()
+    if prev_head:
+        for line in _run(["git", "-C", repo_abs_path, "diff", "--name-only", prev_head]):
+            candidate = line.strip()
+            if candidate:
+                rel_paths.add(candidate)
+
+    for line in _run(["git", "-C", repo_abs_path, "status", "--porcelain"]):
+        if len(line) < 4:
+            continue
+        candidate = line[3:]  # "XY <path>" (porcelain v1); "XY <old> -> <new>" for renames
+        if "->" in candidate:
+            candidate = candidate.split("->", 1)[1]
+        candidate = candidate.strip().strip('"')
+        if candidate:
+            rel_paths.add(candidate)
+
+    return sorted(rel_paths)
+
+
+def _confine_repo_relative(repo_root: Path, rel_path: str) -> str | None:
+    """Confines a git-reported relative path to *repo_root* -- defense in depth mirroring
+    `classify_path_entry`'s own confinement discipline (NFR-1). Git itself only ever reports
+    paths inside the worktree it was invoked on, but this path didn't come through
+    `classify_path_entry`'s own `repo_paths`-keyed validation, so it gets the same treatment
+    before being hashed.
+    """
+    posix_rel = PurePosixPath(rel_path)
+    if posix_rel.is_absolute() or ".." in posix_rel.parts:
+        return None
+    candidate = (repo_root / rel_path).resolve()
+    if candidate != repo_root and not candidate.is_relative_to(repo_root):
+        return None
+    return str(candidate)
+
+
+def _trim_tracked_paths(
+    history: dict[str, Any], k: int, all_current: list[str], seen: set[str]
+) -> tuple[list[str], int]:
+    """Keeps the `MAX_TRACKED_PATHS` MOST RECENTLY CHANGED paths (HLD S8.4 M2 edge cases),
+    replacing M1's stable-input-order-only trim.
+
+    Judgment call (T-C6uQJW, see task report) -- "recency": this wave's own tracked paths
+    (*all_current*, git-derived paths prioritized ahead of breadcrumb-declared ones -- see the
+    caller's ordering comment) are always the most recent by definition. If they alone already
+    reach the cap, they are kept in their existing (git-derived-first) order and nothing else
+    is considered (there is no meaningful "more recent than this wave" ranking to apply among
+    ties within the SAME wave). Otherwise, the remaining capacity is filled
+    from paths recorded in prior checkpoints, ranked by the highest checkpoint number they
+    were last seen at (ties broken alphabetically for determinism). Returns
+    ``(trimmed_paths, dropped_count)``.
+    """
+    if len(all_current) >= MAX_TRACKED_PATHS:
+        trimmed = all_current[:MAX_TRACKED_PATHS]
+        return trimmed, len(all_current) - len(trimmed)
+
+    last_seen_at: dict[str, int] = {}
+    for key in sorted(history.keys()):
+        if not key.isdigit() or int(key) >= k:
+            continue
+        entry = history[key]
+        if not isinstance(entry, dict):
+            continue
+        paths = entry.get("paths")
+        if not isinstance(paths, dict):
+            continue
+        ck_num = int(key)
+        for older_path in paths:
+            last_seen_at[older_path] = ck_num  # ascending key order -> most recent wins
+
+    remaining_slots = MAX_TRACKED_PATHS - len(all_current)
+    older_candidates = sorted(
+        (p for p in last_seen_at if p not in seen),
+        key=lambda p: (-last_seen_at[p], p),
+    )
+    carried = older_candidates[:remaining_slots]
+    dropped = max(0, len(older_candidates) - len(carried))
+    return all_current + carried, dropped
+
+
+def verdict_path(inst: Path, k: int) -> Path:
+    return checkpoint_dir(inst, k) / "verdict.json"
+
+
+def _criteria_met_count(inst: Path, k: int) -> int | None:
+    """Number of `criteria[].status == "met"` entries in ck-K's `verdict.json`, or `None`
+    when that checkpoint has no verdict yet -- e.g. the CURRENT checkpoint, whose verdict the
+    overseer writes only AFTER this digest is generated -- or the file is missing/malformed.
+    """
+    if k < 1:
+        return None
+    data = _read_optional_json(verdict_path(inst, k))
+    if data is None:
+        return None
+    criteria = data.get("criteria")
+    if not isinstance(criteria, list):
+        return None
+    return sum(1 for c in criteria if isinstance(c, dict) and c.get("status") == "met")
+
+
+# =============================================================================================
+# ===== I/O orchestrators: detect_signals / compute_progress (replace M1's stubs) ============
+# =============================================================================================
+
+
+def _content_oscillation_signals(inst: Path, k: int) -> list[dict[str, Any]]:
+    """HLD S8.3 `content_oscillation`, across ALL recorded checkpoints (not just this one):
+    a tracked path whose hash returned to a state seen >= 2 checkpoints earlier. Severity is
+    uniform across every signal emitted this checkpoint: high if >= 2 qualifying paths or
+    >= 2 total returns, else medium (ticket AC3).
+    """
+    history = _read_optional_json(path_history_path(inst)) or {}
+    per_path: dict[str, list[str]] = {}
+    for key in sorted(history.keys()):
+        if not key.isdigit() or int(key) > k:
+            continue
+        entry = history[key]
+        if not isinstance(entry, dict):
+            continue
+        paths = entry.get("paths")
+        if not isinstance(paths, dict):
+            continue
+        for abs_path, digest in paths.items():
+            per_path.setdefault(abs_path, []).append(str(digest))
+
+    qualifying: list[tuple[str, int]] = []
+    for abs_path, hist in per_path.items():
+        hits = returns_to_earlier(hist)
+        if hits:
+            qualifying.append((abs_path, len(hits)))
+    if not qualifying:
+        return []
+
+    total_returns = sum(count for _, count in qualifying)
+    severity = "high" if len(qualifying) >= 2 or total_returns >= 2 else "medium"
+    return [
+        {
+            "type": "content_oscillation",
+            "severity": severity,
+            "work_item": None,
+            "ask_id": None,
+            "path": abs_path,
+            "evidence": {"returns": count},
+            "message": f"{abs_path} returned to a content state seen at an earlier checkpoint",
+        }
+        for abs_path, count in qualifying
+    ]
+
+
+def _breadcrumb_integrity_signals(inst: Path, k: int) -> list[dict[str, Any]]:
+    """HLD S8.3 `breadcrumb_integrity`: surfaces each entry M1's `update_path_history`
+    already rejected for the CURRENT checkpoint (via `classify_path_entry`) as a `high`
+    signal -- this does not re-implement the rejection logic (ticket AC6).
+    """
+    history = _read_optional_json(path_history_path(inst)) or {}
+    entry = history.get(f"{k:02d}")
+    if not isinstance(entry, dict):
+        return []
+    rejected = entry.get("rejected")
+    if not isinstance(rejected, list):
+        return []
+    signals: list[dict[str, Any]] = []
+    for item in rejected:
+        if not isinstance(item, dict):
+            continue
+        entry_text = item.get("entry")
+        signals.append(
+            {
+                "type": "breadcrumb_integrity",
+                "severity": "high",
+                "work_item": None,
+                "ask_id": None,
+                "path": entry_text,
+                "evidence": {"unit_id": item.get("unit_id"), "reason": item.get("reason")},
+                "message": f"breadcrumb changed_paths entry {entry_text!r} rejected: "
+                f"{item.get('reason')}",
+            }
+        )
+    return signals
+
+
+def _consecutive_stall_waves(
+    cfg: Config, inst: Path, k: int, unit_lines: list[dict[str, Any]]
+) -> int:
+    """Judgment call (T-C6uQJW, see task report) for HLD S8.3's `stall` rule ("no work item
+    reached outcome:done with verdict in {pass,na}, AND the verdict-reported criteria_met
+    count did not rise, for stall_waves consecutive waves"): the CURRENT checkpoint's own
+    verdict doesn't exist yet when `ckpt-prep` runs, so criteria_met can only ever be known
+    from a PAST checkpoint's `verdict.json`.
+
+    Walks waves that have at least one ingested unit in ascending order through K (hold
+    waves -- zero units -- are invisible per this ticket's own AC4: skipped, not counted as
+    stalled or not), carrying the last-known criteria_met count forward across any wave whose
+    own verdict isn't available yet. A wave is "productive" (resets the streak to 0) if it
+    has a done+pass/na unit OR its carried-forward criteria_met is higher than the highest
+    seen at any earlier non-hold wave. Returns the number of consecutive non-productive
+    non-hold waves trailing wave K.
+    """
+    waves_with_units = sorted(
+        {
+            int(line["wave"])
+            for line in unit_lines
+            if isinstance(line.get("wave"), int) and line["wave"] <= k
+        }
+    )
+    streak = 0
+    last_criteria_met: int | None = None
+    for wave in waves_with_units:
+        wave_units = [line for line in unit_lines if line.get("wave") == wave]
+        done = any(
+            u.get("outcome") == "done" and u.get("verdict") in _DONE_VERDICTS for u in wave_units
+        )
+        cmet = _criteria_met_count(inst, wave)
+        rose = False
+        if cmet is not None:
+            if last_criteria_met is not None and cmet > last_criteria_met:
+                rose = True
+            last_criteria_met = cmet if last_criteria_met is None else max(last_criteria_met, cmet)
+        streak = 0 if (done or rose) else streak + 1
+    return streak
+
+
+def _ask_starvation_signals(
+    cfg: Config, inst: Path, k: int, unit_lines: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """HLD S8.3 `ask_starvation`: a charter ask with zero units touching it in the last
+    `cfg.stall_waves` waves, and not already `met`/`deferred` per the LATEST verdict's
+    `alignment` (ck-(K-1) -- the most recent verdict written before this checkpoint's own
+    digest is generated). No `charter.json` yet means no asks to starve, not an error.
+    """
+    charter = _read_optional_json(inst / "outputs" / "charter.json")
+    if charter is None:
+        return []
+    asks = charter.get("asks")
+    if not isinstance(asks, list):
+        return []
+
+    alignment_status: dict[str, str | None] = {}
+    if k >= 2:
+        verdict = _read_optional_json(verdict_path(inst, k - 1))
+        if verdict is not None and isinstance(verdict.get("alignment"), list):
+            for item in verdict["alignment"]:
+                if isinstance(item, dict) and isinstance(item.get("ask_id"), str):
+                    alignment_status[item["ask_id"]] = item.get("status")
+
+    window_start = max(1, k - cfg.stall_waves + 1)
+    touched_recent: set[str] = set()
+    for line in unit_lines:
+        wave = line.get("wave")
+        if isinstance(wave, int) and window_start <= wave <= k:
+            for ask_id in line.get("ask_ids") or []:
+                touched_recent.add(str(ask_id))
+
+    signals: list[dict[str, Any]] = []
+    for ask in asks:
+        if not isinstance(ask, dict):
+            continue
+        ask_id = ask.get("ask_id")
+        if not isinstance(ask_id, str) or not ask_id:
+            continue
+        if alignment_status.get(ask_id) in _MET_OR_DEFERRED:
+            continue
+        if ask_id in touched_recent:
+            continue
+        signals.append(
+            {
+                "type": "ask_starvation",
+                "severity": "medium",
+                "work_item": None,
+                "ask_id": ask_id,
+                "path": None,
+                "evidence": {"window_start_wave": window_start, "window_end_wave": k},
+                "message": (f"ask {ask_id} has had no units in the last {cfg.stall_waves} wave(s)"),
+            }
+        )
+    return signals
+
+
+def _prompt_changed_signal(inst: Path) -> list[dict[str, Any]]:
+    """HLD S8.3 `prompt_changed`: `sha256(prompt.md) != charter.json.prompt_sha256`. Both
+    missing, or both present and matching, is not a signal.
+    """
+    prompt_path = inst / "prompt.md"
+    prompt_sha256 = (
+        hashlib.sha256(prompt_path.read_bytes()).hexdigest() if prompt_path.is_file() else None
+    )
+    charter = _read_optional_json(inst / "outputs" / "charter.json")
+    charter_sha256 = charter.get("prompt_sha256") if charter is not None else None
+    if prompt_sha256 == charter_sha256:
+        return []
+    return [
+        {
+            "type": "prompt_changed",
+            "severity": "high",
+            "work_item": None,
+            "ask_id": None,
+            "path": "prompt.md",
+            "evidence": {"prompt_sha256": prompt_sha256, "charter_prompt_sha256": charter_sha256},
+            "message": "prompt.md sha256 no longer matches charter.json's prompt_sha256",
+        }
+    ]
+
+
+def _unit_lines_through(inst: Path, k: int) -> list[dict[str, Any]]:
+    """Every ledger `type:"unit"` line ingested through wave *k* inclusive (reviewer finding,
+    T-C6uQJW review: extracted so `detect_signals`/`compute_progress` share one definition of
+    "the unit lines this checkpoint sees" instead of two copies of the same filter)."""
+    return [
+        line
+        for line in read_ledger_lines(inst)
+        if line.get("type") == "unit" and isinstance(line.get("wave"), int) and line["wave"] <= k
+    ]
+
+
+def detect_signals(cfg: Config, inst: Path, k: int) -> list[dict[str, Any]]:
+    """HLD S8.4 M2 `detect_signals`: turns ledger + path history + previous verdicts +
+    charter into the digest's `signals[]` (ticket ACs 1-7). Ids are assigned last, in a
+    deterministic order independent of ledger line order on disk (AC7).
+    """
+    unit_lines = _unit_lines_through(inst, k)
+
+    candidates: list[dict[str, Any]] = []
+    candidates.extend(_period_mirror_signals(unit_lines))
+    candidates.extend(_repeated_failure_signals(unit_lines))
+    candidates.extend(_attempt_cap_signals(cfg, unit_lines))
+    candidates.extend(_content_oscillation_signals(inst, k))
+    candidates.extend(_breadcrumb_integrity_signals(inst, k))
+
+    stall_count = _consecutive_stall_waves(cfg, inst, k, unit_lines)
+    if stall_count >= cfg.stall_waves:
+        candidates.append(
+            {
+                "type": "stall",
+                "severity": "high",
+                "work_item": None,
+                "ask_id": None,
+                "path": None,
+                "evidence": {"stall_waves": stall_count, "threshold": cfg.stall_waves},
+                "message": (
+                    f"no work item finished and criteria_met has not risen for "
+                    f"{stall_count} consecutive wave(s)"
+                ),
+            }
+        )
+
+    candidates.extend(_ask_starvation_signals(cfg, inst, k, unit_lines))
+    candidates.extend(_blocked_units_signals(unit_lines, k))
+    candidates.extend(_prompt_changed_signal(inst))
+
+    return _assign_signal_ids(candidates, k)
+
+
+def compute_progress(cfg: Config, inst: Path, k: int) -> dict[str, Any]:
+    """HLD S8.4 M2 `progress` (digest schema S13.4): work-item totals/done/newly-done,
+    the current consecutive stall count, the previous checkpoint's `criteria_met`, and a
+    per-ask breakdown (ticket AC8).
+    """
+    unit_lines = _unit_lines_through(inst, k)
+
+    done_through_k = _done_work_items(unit_lines)
+    done_before_k = _done_work_items([line for line in unit_lines if line.get("wave") != k])
+    work_items_all = {
+        str(line["work_item"])
+        for line in unit_lines
+        if isinstance(line.get("work_item"), str) and line.get("work_item")
+    }
+
+    charter = _read_optional_json(inst / "outputs" / "charter.json")
+    if charter is not None and isinstance(charter.get("asks"), list):
+        ask_ids = [
+            ask["ask_id"]
+            for ask in charter["asks"]
+            if isinstance(ask, dict) and isinstance(ask.get("ask_id"), str)
+        ]
+    else:
+        # No charter yet (or a unit test calling this in isolation): fall back to whatever
+        # ask_ids the ledger itself has already seen, so per_ask is never silently empty.
+        ask_ids = sorted({str(a) for line in unit_lines for a in (line.get("ask_ids") or [])})
+
+    per_ask: list[dict[str, Any]] = []
+    for ask_id in ask_ids:
+        touching = [line for line in unit_lines if ask_id in (line.get("ask_ids") or [])]
+        done_items_for_ask = {
+            str(line["work_item"])
+            for line in touching
+            if line.get("outcome") == "done"
+            and line.get("verdict") in _DONE_VERDICTS
+            and isinstance(line.get("work_item"), str)
+            and line.get("work_item")
+        }
+        per_ask.append(
+            {
+                "ask_id": ask_id,
+                "units": len(touching),
+                "cost_usd": sum(float(line.get("cost_usd") or 0.0) for line in touching),
+                "done_items": len(done_items_for_ask),
+                "last_wave_touched": max((line["wave"] for line in touching), default=None),
+            }
+        )
+
+    return {
+        "work_items_total": len(work_items_all),
+        "work_items_done": len(done_through_k),
+        "newly_done": len(done_through_k - done_before_k),
+        "stall_waves": _consecutive_stall_waves(cfg, inst, k, unit_lines),
+        "criteria_met_prev": _criteria_met_count(inst, k - 1) or 0,
+        "per_ask": per_ask,
     }
 
 
@@ -1509,8 +2222,8 @@ def ckpt_prep(args: argparse.Namespace) -> None:
         ingest_ledger(inst, units, state, k, now, dry_run=args.dry_run)
         update_path_history(inst, k, ctx.repo_paths, units, now, dry_run=args.dry_run)
         budget = compute_budget(cfg, state, inst, k, now, dry_run=args.dry_run)
-        signals = detect_signals_stub(cfg, inst, k)
-        progress = compute_progress_stub(cfg, inst, k)
+        signals = detect_signals(cfg, inst, k)
+        progress = compute_progress(cfg, inst, k)
 
         digest = {
             "schema": DIGEST_SCHEMA,
