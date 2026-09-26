@@ -97,8 +97,37 @@
   (R12 omitting `checkpoint`/`stage` fields — out of this ticket's literal scope). Full suite
   **4439 passed, 8 skipped, 0 failed**. All three checker tasks (`T-HPJcc6`, `T-tAKBBB`) plus every
   S1 task are now Done — `T-WruPiv` (e2e harness) is unblocked.
-- Rollup: MVP tasks 8/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
-  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`) · MVP-Should 0/1 (deferred, see below) · design 1/1.
+- `T-3FlD46` (dev-security review of tool/hooks/checkers) is **Done**: every HLD §23.3 row 5
+  design-level finding traced by hand in the shipped code (not docstring-only) — `_check_entry_r6_brief`'s
+  exact `kind_map` pin, `hold_gate`'s INT-2/INT-4 fail-closed handling, the `append_chained`/
+  `verify_ledger_chain` hash-chain (tamper-evident, not tamper-proof — NFR-X11 accepted residual),
+  `effective_budget`'s override-to-`state.json`-`breaker_overrides` coupling, `classify_path_entry`/
+  `_confine_repo_relative`'s symlink/`..`/absolute/unknown-`repo_id` confinement, and
+  `templates/__init__.py`'s `escape_json=True` JSON-render argv safety — all verified-implemented,
+  all with test citations. One new HIGH-equivalent gap found and fixed: `read_ledger_lines` had no
+  size cap (every other agent-touchable JSON read in the tool is bounded; the ledger was not),
+  fixed with a `LEDGER_MAX_BYTES` (32 MiB) stat-before-read guard raising `Violation("INT-3")`,
+  fail-closed and consistent with existing malformed-ledger semantics. 3 new regression tests for
+  the fix plus 1 previously-missing real-1.5-MiB-breadcrumb test (the existing test only
+  monkeypatched the size constant down, never exercised the real threshold) — 5 new tests total in
+  `tests/test_overseer_tool_security.py`. Two LOW/MEDIUM follow-ups filed, not fixed here (both
+  instances of the already-accepted NFR-X11 residual, not new privilege boundaries): N2
+  (`overseer-config.json`'s `kind_map` isn't integrity-locked the way `charter.json` is — a
+  workspace-write-capable task could rewrite the R6 pin source itself), N3 (`_git_changed_paths`
+  passes a workspace-derived revision string to git with no `--` separator or hex-SHA format
+  check — cheap hygiene, not a new privilege escalation since any task able to write
+  `path-history.json` already has equal-or-greater Bash execution capability). `grep` evidence: no
+  `shell=True`/`eval(`/`exec(`/`pickle`/`os.system` anywhere in the tool. `pip-audit` not
+  applicable (stdlib only). dev-epic independently re-ran and confirmed (not just accepted the
+  subagent's self-report): full checker+security suite **337 passed** (332 pre-existing + 5 new,
+  zero regressions), `ruff check`/`ruff format --check`/`mypy`/`pyright` all clean on both touched
+  files. No separate reviewer-agent pass was delegated for this task (judgment call: small,
+  single-fix scope; the dev-security review was itself the review; dev-epic independently verified
+  the diff/tests/lint/types directly; the ticket's ACs don't mandate a separate reviewer pass the
+  way other tickets did). Full findings table, `grep` evidence, and follow-up tickets in
+  `T-3FlD46-security-review-hardening/STATUS.md`.
+- Rollup: MVP tasks 9/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
+  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`) · MVP-Should 0/1 (deferred, see below) · design 1/1.
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -171,12 +200,14 @@ budget trip cannot reach close-out on its own.
   list is in design doc §23.
 
 ## Next actions
-1. All of S1 + all 3 checker tasks (`T-HPJcc6`, `T-tAKBBB`) are Done — 8/13 MVP tasks. Next:
-   `T-WruPiv` (e2e harness, deps: everything above, all done), then `T-3FlD46` (parallel with e2e
-   once checkers merge — already true), `T-vmI0jI` (deps: T-WruPiv only), `T-23yMMB` (needs
-   explicit user spend authorization, <=$25, before running), `T-gbccdr` (last — carries the
-   AC6/rollback engine-gap note from T-eGXqXH's review, and the R12 checkpoint/stage deferral note
-   from T-tAKBBB's review, for the deviations section). `T-zLHc7Q` stays deferred (MVP-Should,
-   below cut line per its own ticket status) unless told otherwise.
+1. All of S1 + all 3 checker tasks (`T-HPJcc6`, `T-tAKBBB`) + `T-3FlD46` (security review) are
+   Done — 9/13 MVP tasks. Next: `T-WruPiv` (e2e harness — first attempt's "production-ready" claim
+   was falsified by dev-epic's own test run, diagnosed 3 exact root causes, second fix-pass
+   in flight, not yet independently re-verified), `T-vmI0jI` (deps: T-WruPiv only), `T-23yMMB`
+   (needs explicit user spend authorization, <=$25, before running), `T-gbccdr` (last — carries the
+   AC6/rollback engine-gap note from T-eGXqXH's review, the R12 checkpoint/stage deferral note from
+   T-tAKBBB's review, and the N2/N3 follow-up notes from T-3FlD46's review, for the deviations
+   section). `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status)
+   unless told otherwise.
 2. When ready to open a PR for this epic, flag commit `2387503` (G5 fix) separately in the
    description per the note above.
