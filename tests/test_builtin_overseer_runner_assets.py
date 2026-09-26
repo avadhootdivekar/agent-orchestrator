@@ -81,6 +81,7 @@ ALLOWED_VARIABLES = frozenset(
         "params.overseer_effort",
         "params.overseer_model",
         "params.python_bin",
+        "params.branch_policy",
     }
 )
 
@@ -102,6 +103,7 @@ EXPECTED_PARAM_NAMES = frozenset(
         "overseer_effort",
         "overseer_model",
         "python_bin",
+        "branch_policy",
     }
 )
 
@@ -202,6 +204,7 @@ DUMMY_VALUES: dict[str, str] = {
     "params.overseer_effort": "high",
     "params.overseer_model": "",
     "params.python_bin": "python3",
+    "params.branch_policy": "",
 }
 
 
@@ -282,7 +285,7 @@ def test_template_yaml_params_shape_matches_hld_13_1() -> None:
     params = manifest["params"]
     assert isinstance(params, dict)
     assert set(params) == EXPECTED_PARAM_NAMES
-    assert len(params) == 16
+    assert len(params) == 17
 
     allowed_param_keys = {"description", "required", "enum", "default"}
     for name, spec in params.items():
@@ -309,6 +312,7 @@ def test_template_yaml_params_shape_matches_hld_13_1() -> None:
         "overseer_effort": "high",
         "overseer_model": "",
         "python_bin": "python3",
+        "branch_policy": "",
     }
     for name, default in expected_defaults.items():
         assert params[name].get("default") == default, name
@@ -714,6 +718,18 @@ def test_overseer_config_json_tmpl_scalar_defaults() -> None:
     assert config["overseer_effort"] == "high"
     assert config["overseer_model"] == ""
     assert config["python_bin"] == "python3"
+    assert config["branch_policy"] == ""
+
+
+def test_overseer_config_json_tmpl_branch_policy_free_text_is_escaped_safely() -> None:
+    """`branch_policy` is free operator text (unlike the other rendered params, which are
+    all controlled enums/numbers) -- prove a quote/backslash can't break out of the JSON
+    string it's substituted into, rather than relying only on the generic escaping
+    coverage in test_templates.py."""
+    overrides = dict(DUMMY_VALUES)
+    overrides["params.branch_policy"] = 'a "policy" with a \\ backslash and \n newline'
+    config = _render_config(overrides)
+    assert config["branch_policy"] == 'a "policy" with a \\ backslash and \n newline'
     assert config["stall_waves"] == 2
     assert config["stabilize_wave_size"] == 4
     assert config["max_stabilize_passes"] == 2

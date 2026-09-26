@@ -824,6 +824,7 @@ params:
   overseer_effort:       {default: "high", enum: [medium, high, xhigh]}
   overseer_model:        {default: ""}       # optional per-ck model override (critic #5); "" = inherit manager's
   python_bin:            {default: "python3"}
+  branch_policy:         {default: ""}       # free-text git-branch-off guidance (mid-epic amendment, T-5ZzAZp); "" = auto-detect
 # Tunable vs fixed (reviewer #5). Params = knobs an operator plausibly sets per run at `ao new`.
 # Constants in overseer-config.json.tmpl (stall_waves, stabilize_wave_size, max_stabilize_passes,
 # sub_wave_size, default_*_cost_usd, kind_map) are detector/heuristic internals. They are still
@@ -859,8 +860,11 @@ required_agents: [architect, developer, git-operator, manager, reviewer, tester]
   },
   "tasks": [
     {"id": "git-branch-off", "agent": "git-operator", "instruction": "workflows/overseer-runner/instructions/01-git-branch-off.md",
-     "inputs": ["{{ instance_dir }}/prompt.md"], "outputs": ["{{ instance_dir }}/outputs/git-go-ahead.md"],
+     "inputs": ["{{ instance_dir }}/prompt.md", "{{ instance_dir }}/overseer-config.json"],
+     "outputs": ["{{ instance_dir }}/outputs/git-go-ahead.md"],
      "depends_on": [], "skip_if_outputs_exist": false, "timeout_seconds": 1800, "isolation": "none"},
+     # inputs gained overseer-config.json in the branch_policy mid-epic amendment (T-5ZzAZp):
+     # the git-operator agent reads its branch_policy field before deciding how to branch off.
     {"id": "intake", "agent": "architect", "instruction": "workflows/overseer-runner/instructions/00-intake.md",
      "inputs": ["{{ instance_dir }}/prompt.md", "{{ instance_dir }}/overseer-contract.md",
                 "{{ instance_dir }}/overseer-config.json", "{{ instance_dir }}/outputs/git-go-ahead.md"],

@@ -2,10 +2,66 @@
 
 - ID: `T-5ZzAZp-agent-instructions`
 - Updated At: 2026-09-26
-- State: Done — reviewed (approve with nits), the one Warning fixed
+- State: Done — including the `branch_policy` amendment below, reviewed (approve with nits /
+  blocking issues fixed)
 - Owner: developer
 
-## This update
+## Amendment: `branch_policy` param (mid-epic, added after this ticket's initial Done)
+
+New requirement confirmed by the user: an optional `branch_policy` free-text param plus a
+deterministic git-fact-gathering pass in `01-git-branch-off.md`, so the `git-operator` agent
+never guesses at git state before applying policy text. Implemented by dev-epic directly (small,
+well-bounded change, full context already in hand from the initial implementation):
+- `template.yaml`: new optional `branch_policy` param (free text, default `""`).
+- `overseer-config.json.tmpl`: renders it as `"branch_policy": "{{ params.branch_policy }}"`.
+- `workflow.json.tmpl`: added `overseer-config.json` to `git-branch-off`'s `inputs` (consistent
+  with how `intake` already lists it, despite neither being task-produced).
+- `01-git-branch-off.md`: new "Step 0" — mandatory fact pass (`fetch`, `merge-base
+  --is-ancestor HEAD origin/<mainline>` for the real "already merged" check, `status
+  --porcelain`, upstream presence, mainline-branch identity) run BEFORE any policy text is
+  applied; combines facts + 3 illustrative (not exhaustive) policy readings to decide
+  branch-fresh / continue / ask-a-human; never destructive under any reading. A genuine
+  policy/reality conflict reuses this task's own existing `git-abort.md`-and-don't-write-
+  `git-go-ahead.md` pattern (not the overseer's checkpoint hold, which doesn't structurally
+  exist yet at this pre-`intake` point in the DAG).
+- `README.md`: new "Branch policy" section + Params table entry.
+- 11 new tests total (9 initial + 2 post-review fixes) across
+  `tests/test_builtin_overseer_runner_assets.py`/`tests/test_builtin_overseer_runner_instructions.py`.
+
+By: reviewer · Role: reviewer · Date: 2026-09-26 · Comment: **Verdict: Blocking issues found**
+(pre-fix). Verified the plumbing by reading the actual code, not trusting claims: `_render`'s
+`escape_json`/`_json_escape_value` genuinely prevents a free-text policy value from breaking out
+of its JSON string; `load_config` only reads named fields and tolerates the extra
+`branch_policy` key without error; the new `workflow.json.tmpl` input is consistent with
+`intake`'s existing pattern. Found the core Step 0 design (mandatory deterministic facts before
+any policy text, reusing the existing abort pattern instead of inventing one) architecturally
+sound. **Critical (blocking)**: the rewrite silently DROPPED the pre-amendment detached-HEAD
+ABORT gate — the new Step 0 recorded the fact but never mandated acting on it, and neither
+Procedure branch (main-or-master / non-main) covers an empty branch name, reopening exactly the
+"guess at git state" failure mode this section exists to eliminate. **Warnings**: (2) `docs-md/
+overseer-runner-hld.md` §13.1 and its embedded `git-branch-off` inputs snippet went stale (still
+16 params, still missing the new input); (3) the merge-base check hardcoded `origin/main`,
+inconsistent with the file's own main-or-master awareness; (4) the "keep working... unless
+already merged" policy example never addressed starting on `main` itself; (5)
+`test_overseer_config_json_tmpl_scalar_defaults` wasn't extended for the new field even though
+`DUMMY_VALUES` was. All reproduction claims (121/400/4383 passed, ruff, pyright) confirmed exact.
+
+By: dev-epic · Role: manager · Date: 2026-09-26 · Comment: Fixed all 5 findings. (1) Restored an
+unconditional, policy-independent detached-HEAD ABORT in Step 0, with Procedure step 1 now
+explicitly noting it already fired if reached; added a regression test asserting the ABORT
+directive is on the same line as "detached HEAD", not just present somewhere in the file. (3)
+Introduced a single `<mainline>` fact (`main` if `origin/main` exists else `master`) and used it
+consistently in both the branch-identity check and the merge-base check, replacing the hardcoded
+literal. (4) Added the missing "if currently on `<mainline>` itself, do Procedure step 3 as
+usual" clause to the second policy example. (5) Added the missing `branch_policy` assertion, plus
+(per the reviewer's own Suggestion) a dedicated quote/backslash escaping regression test rather
+than relying only on generic coverage. (2) Updated HLD §13.1's params block and the embedded
+`git-branch-off` inputs snippet — a mechanical doc-sync fix, not a design re-litigation. Re-ran
+everything: `pytest tests/test_builtin_overseer_runner_assets.py
+tests/test_builtin_overseer_runner_instructions.py -q` → 123 passed; full suite → **4385 passed,
+8 skipped, 0 failed**; `ruff`/`pyright` clean.
+
+## Original implementation (this update)
 - Ticket created by the architect design pass (Rev 2, after the Phase-4 consultations). Sprint: S1 (after T-ltBLUY).
 
 By: architect · Role: architect · Date: 2026-09-26 · Comment: Created from `docs-md/overseer-runner-hld.md` Rev 2. The ACs are pass/fail and agent-executable, and the task is sized ≤3 days. Not started.
@@ -55,7 +111,14 @@ table; left for `T-zLHc7Q`).
   1**` as the file's first line, contract-wins clause as the next paragraph), matching the
   established convention rather than introducing a new one.
 
-## Evidence
+## Evidence (branch_policy amendment, post-review-fix)
+- `.venv/bin/pytest -q tests/test_builtin_overseer_runner_assets.py tests/test_builtin_overseer_runner_instructions.py`
+  → `123 passed` (47+74 baseline + 2 new regression tests from the review fix).
+- Full repo suite: `.venv/bin/pytest -q` → `4385 passed, 8 skipped, 0 failed`.
+- `ruff check`/`ruff format --check` clean. Real `pyright` run on both touched test files → 0
+  real errors (only known/ignorable pytest-import and yaml-source-resolution noise).
+
+## Evidence (original implementation)
 - `.venv/bin/pytest -q tests/test_builtin_overseer_runner_instructions.py` → `65 passed`.
 - `.venv/bin/pytest -q tests/test_builtin_overseer_runner_assets.py` → `47 passed` (unchanged
   count from T-ltBLUY's own baseline — one test renamed/repointed, none added/removed in this

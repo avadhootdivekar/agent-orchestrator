@@ -211,6 +211,93 @@ def test_workflow_json_tmpl_pause_flags_match_what_final_push_references() -> No
 
 
 # ---------------------------------------------------------------------------
+# branch_policy amendment: 01-git-branch-off.md's deterministic fact-gathering pass and
+# never-destructive guarantee (mid-epic requirement added after T-5ZzAZp's initial land).
+# ---------------------------------------------------------------------------
+
+
+def test_git_branch_off_reads_branch_policy_from_config() -> None:
+    text = _read("01-git-branch-off.md")
+    assert "branch_policy" in text
+    assert "overseer-config.json" in text
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "fetch origin --prune",
+        "merge-base --is-ancestor",
+        "origin/main",
+        "status --porcelain",
+        "@{u}",
+    ],
+)
+def test_git_branch_off_deterministic_fact_gathering(marker: str) -> None:
+    """The fact pass must be run before any policy text is applied -- these are the exact
+    commands, not a paraphrase, since the whole point is not letting the LLM guess."""
+    assert marker in _read("01-git-branch-off.md")
+
+
+def test_git_branch_off_detached_head_still_aborts_unconditionally() -> None:
+    """Regression for a reviewer finding on this amendment's own review: the Step 0
+    rewrite must not silently drop the pre-amendment detached-HEAD ABORT gate -- it must
+    fire regardless of branch_policy, since a detached HEAD has no branch identity for any
+    policy to reason about."""
+    text = _read("01-git-branch-off.md")
+    assert "detached HEAD" in text
+    assert "ABORT" in text
+    # The detached-HEAD sentence itself must say ABORT, not just mention detached HEAD
+    # somewhere unrelated in the file.
+    detached_head_line = next(line for line in text.splitlines() if "detached HEAD" in line)
+    assert "ABORT" in detached_head_line
+
+
+def test_git_branch_off_never_destructive() -> None:
+    """`reset --hard` legitimately appears IN the instruction -- as an explicit
+    prohibition ("No `git reset --hard`..."), not as something to run. Check the
+    prohibition is present and clearly framed as such, not that the phrase is absent."""
+    text = _read("01-git-branch-off.md")
+    assert "No `git reset --hard`" in text or "no `git reset --hard`" in text.lower()
+    assert "Never destructive" in text or "never destructive" in text.lower()
+    assert "discarding" in text.lower()
+
+
+def test_git_branch_off_illustrative_policy_examples_present() -> None:
+    text = _read("01-git-branch-off.md")
+    for phrase in (
+        "always branch fresh off main",
+        "keep working on the current branch unless it's",
+        "never create a branch, fail if dirty",
+    ):
+        assert phrase in text
+
+
+def test_template_yaml_declares_branch_policy_param() -> None:
+    """Cross-check against the actual param declaration, not just this instruction's own
+    prose -- guards against the two ever silently drifting apart."""
+    manifest_text = (
+        _REPO_ROOT
+        / "src"
+        / "agent_orchestrator"
+        / "templates"
+        / "builtin"
+        / "overseer-runner"
+        / "template.yaml"
+    ).read_text(encoding="utf-8")
+    assert "branch_policy" in manifest_text
+    config_tmpl_text = (
+        _REPO_ROOT
+        / "src"
+        / "agent_orchestrator"
+        / "templates"
+        / "builtin"
+        / "overseer-runner"
+        / "overseer-config.json.tmpl"
+    ).read_text(encoding="utf-8")
+    assert "branch_policy" in config_tmpl_text
+
+
+# ---------------------------------------------------------------------------
 # Kind coverage sanity: every non-stabilize, non-expand kind from the contract's
 # kind->agent/instruction map is at least named somewhere in 10-work-unit.md's own
 # per-kind playbook table.

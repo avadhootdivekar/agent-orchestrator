@@ -41,7 +41,7 @@ whichever checkpoint decides `closeout`, not a fixed node in the graph.
 
 ## Params
 
-All 16 are declared in `template.yaml`, which is the source of truth for current defaults/enums
+All 17 are declared in `template.yaml`, which is the source of truth for current defaults/enums
 (duplicating every value here would drift) — `ao new overseer-runner --help`-style inspection is
 `ao templates show overseer-runner` (or just read `template.yaml`).
 
@@ -61,6 +61,31 @@ All 16 are declared in `template.yaml`, which is the source of truth for current
 | `overseer_effort` | effort level the checkpoint task itself dispatches at |
 | `overseer_model` | optional per-checkpoint model override (see "The `overseer_model` rule" in the contract) |
 | `python_bin` | interpreter every hook uses to invoke `tools/overseer_tool.py` |
+| `branch_policy` | optional free-text guidance for `git-branch-off`'s branch decision (see "Branch policy" below) |
+
+## Branch policy
+
+`branch_policy` (default empty) is free text the `git-branch-off` task's `git-operator` agent
+reads from `overseer-config.json` and applies alongside a **deterministic fact-gathering pass it
+always runs first, regardless of policy text**: `git fetch` + `git merge-base --is-ancestor HEAD
+origin/main` (the correct "is this branch's work already merged" check — comparing commit hashes
+or branch names is unreliable and the instruction explicitly forbids it), a `git status
+--porcelain` dirty-tree check, an upstream-tracking check, and a check for whether the current
+branch is literally `main`. The agent never guesses at git state from the policy text alone.
+
+Empty (the default) means the **auto-detect policy**: branch fresh off `main` when starting from
+`main`, otherwise sync and continue on the current non-main branch — this is exactly the
+template's original, unconditional behavior before this param existed. A non-empty value is
+illustrative free text, not a fixed enum the tool parses mechanically — for example
+`"always branch fresh off main"`, `"keep working on the current branch unless it's already
+merged"`, or `"never create a branch, fail if dirty"` — the agent combines the gathered facts with
+the policy's intent to decide. **Never destructive**: if honoring the policy would require
+discarding uncommitted or unpushed work (a genuine policy/reality conflict), the agent writes
+`git-abort.md` and stops rather than forcing it — since `git-branch-off` runs before `intake` ever
+locks a charter, there is no checkpoint yet for the overseer's own hold mechanism to gate through,
+so this task's existing abort-and-halt path (already resumable, already a human-in-the-loop pause
+point) is reused instead of the checkpoint hold pattern. See
+`instructions/01-git-branch-off.md` for the exact procedure.
 
 ## Tunable vs fixed
 

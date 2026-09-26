@@ -78,6 +78,14 @@ params:
       Interpreter used to invoke tools/overseer_tool.py from every hook. Must be Python >=
       3.11 on the service's PATH.
     default: "python3"
+  branch_policy:
+    description: >-
+      Optional free-text operator guidance for git-branch-off's branch decision (e.g.
+      "always branch fresh off main", "keep working on the current branch unless it's
+      already merged", "never create a branch, fail if dirty"). Empty (default) means the
+      auto-detect policy: branch fresh off main when starting from main, otherwise sync
+      and continue on the current non-main branch. See README.md's "Branch policy" section.
+    default: ""
 dirs:
   - outputs
   - outputs/overseer
