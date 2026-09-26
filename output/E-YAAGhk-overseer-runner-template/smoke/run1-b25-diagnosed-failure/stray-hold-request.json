@@ -1,0 +1,10 @@
+{
+  "schema": "ao.overseer.hold/v1",
+  "checkpoint": "ck-01",
+  "created_at": "2026-09-26T18:59:47Z",
+  "questions": [
+    "This run's budget config cannot fund any wave: with run_budget_usd=25, default_unit_cost_usd=8 and default_ckpt_cost_usd=5, projected spend for one 3-unit wave is 3x8 + 5 + 3x8 tail reserve = $53 (212% of budget). That puts the stage in `closeout` with allowed_wave_size=0. Which fix do you want: (a) raise run_budget_usd to at least 70 (and the run-budget-backstop breaker to match), or (b) lower default_unit_cost_usd/default_ckpt_cost_usd to realistic toy-repo values (e.g. 2 and 1)? Either lets a full 3-unit wave through.",
+    "Once budget is fixed, approve the proposed wave plan in needs-input/ck-01.md (implement A1 --shout flag + test, document A2 README Options, then verify both)?"
+  ],
+  "needs_input_path": "workflows/overseer-runner/runs/o-3mjumg-smoke1/needs-input/ck-01.md"
+}

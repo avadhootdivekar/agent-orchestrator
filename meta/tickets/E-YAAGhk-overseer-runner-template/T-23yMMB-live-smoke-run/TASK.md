@@ -6,7 +6,9 @@
 - Owner: tester
 - Created: 2026-09-26
 - Last Updated: 2026-09-26
-- Status: Draft (MVP since Rev 2)
+- Status: Done, AC3 deviation recorded (see STATUS.md — 4/5 ACs met with real evidence;
+  AC3 "stage transition beyond explore" not organically achievable within budget, root
+  cause diagnosed and documented, not fabricated)
 - Estimate: 1 day (8 h). The real spend is capped at $25.
 
 ## Requirements Mapping

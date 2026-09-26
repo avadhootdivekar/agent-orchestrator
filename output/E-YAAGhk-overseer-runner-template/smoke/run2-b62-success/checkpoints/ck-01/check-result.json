@@ -1,0 +1,6 @@
+{
+  "schema": "ao.overseer.check/v1",
+  "task_id": "ck-01",
+  "ok": true,
+  "violations": []
+}
