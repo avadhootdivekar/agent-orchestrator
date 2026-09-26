@@ -2,11 +2,16 @@
 
 - ID: `T-pYt478-emit-settle-atomicity`
 - Updated At: 2026-09-26
-- State: **Done** (implemented, tested, reviewed; committed locally on `fix/emit-settle-atomicity`,
-  **not yet pushed / no PR opened** — per explicit epic-owner instruction, this waits for the
-  user's confirmation before a PR is opened; see the epic STATUS.md and
-  `docs-md/ai-epics/overseer-runner-template.md`)
-- Owner: developer (implementation) → reviewer (review) → dev-epic (verification, ticket sync)
+- State: **Done, landed on the epic branch.** User decided against a standalone PR to `main` for
+  this fix in isolation — instead, commit `3692eac` was cherry-picked from `fix/emit-settle-atomicity`
+  onto `ad/overseer-runner-workflow` as commit `2387503`, the full suite was re-run on the epic
+  branch post-cherry-pick (**3983 passed, 8 skipped, 0 failed**, identical to the isolated-branch
+  numbers below), and `ad/overseer-runner-workflow` (fix included) was pushed to
+  `origin/ad/overseer-runner-workflow`. `fix/emit-settle-atomicity` itself is left as-is, local,
+  unpushed, unopened as a PR — the fix now ships as part of this epic's own eventual PR to `main`
+  instead of separately. See epic STATUS.md.
+- Owner: developer (implementation) → reviewer (review) → dev-epic (verification, ticket sync) →
+  user (branch/ship decision)
 
 ## This update
 - Implemented on a standalone branch `fix/emit-settle-atomicity`, cut from `main`@`8c13320` (NOT
@@ -84,22 +89,17 @@ exactly as found (no stash left behind, nothing committed by the reviewer itself
   assumptions in the wave/barrier scheduler were traced by the reviewer (the caller only branches
   on `settle.signal`, unaffected); the monitor consult path's "extend" fallthrough was confirmed
   working end to end.
-- **Not yet pushed / no PR.** Per the epic owner's instruction, `dev-epic` does not push this
-  branch or open a PR — that step needs explicit user confirmation. See epic STATUS.md.
-- Sequencing decision (dev-epic, recorded here and in the epic STATUS.md): the fix was
-  **deliberately NOT cherry-picked onto `ad/overseer-runner-workflow`**. Of the remaining 14 tasks,
-  only `T-vmI0jI` scenario (e) genuinely exercises the G5 boundary; every other task
-  (`T-ABDjSj, T-C6uQJW, T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-HPJcc6, T-tAKBBB, T-WruPiv, T-3FlD46,
-  T-23yMMB, T-gbccdr`) is pure template/tool/checker/doc work that does not depend on the engine
-  ordering fix being live. Sequencing those 10-11 tasks first (per the epic's dependency order)
-  and deferring only `T-vmI0jI` avoids carrying an unmerged, not-yet-approved engine change on a
-  long-lived feature branch and avoids all reconciliation/rebase debt. By the time `T-vmI0jI` is
-  reached, `fix/emit-settle-atomicity` should either already be merged to `main` for real (pending
-  the user's PR decision), or — if not yet — it is cherry-picked onto the epic branch at that
-  point, as a last resort, with the reconciliation noted explicitly then.
+- **Superseded — resolved by user decision.** The fix is cherry-picked onto
+  `ad/overseer-runner-workflow` (commit `2387503`) and that branch is pushed to origin. `T-vmI0jI`
+  is therefore **no longer blocked** on a separate PR/merge — the fix is live on the same branch
+  the rest of the epic builds on. `fix/emit-settle-atomicity` remains an orphaned local branch
+  (unpushed, no PR) and can be deleted once the epic branch's eventual PR to `main` carries this
+  same commit; note this explicitly in that PR description so the fix isn't attributed only to the
+  epic feature when it's a standalone engine correctness fix that also protects `routed-runner`.
 
 ## Next actions
-1. User confirms → push `fix/emit-settle-atomicity` and open a PR to `main` (not done by dev-epic
-   per explicit instruction).
-2. `T-vmI0jI` (last-but-one in the epic sequence) is blocked on this PR merging (or a deliberate
-   local cherry-pick decision, re-evaluated at that time) — tracked in the epic STATUS.md.
+1. None outstanding for this task — done, landed, pushed as part of `ad/overseer-runner-workflow`.
+2. When the epic branch is ready for a PR to `main`, call out commit `2387503` (G5 fix) as a
+   distinct, cleanly-revertable/cherry-pickable unit in the PR description, since it is logically
+   independent of the rest of the epic and fixes a pre-existing bug that also affects
+   `routed-runner` today.
