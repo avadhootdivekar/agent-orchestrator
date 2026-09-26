@@ -126,8 +126,37 @@
   the diff/tests/lint/types directly; the ticket's ACs don't mandate a separate reviewer pass the
   way other tickets did). Full findings table, `grep` evidence, and follow-up tickets in
   `T-3FlD46-security-review-hardening/STATUS.md`.
-- Rollup: MVP tasks 9/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
-  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`) · MVP-Should 0/1 (deferred, see below) · design 1/1.
+- `T-WruPiv` (e2e harness + core scenarios a-d) is **Done**: the first task exercising the full
+  `overseer-runner` template end to end via `CliRunner` on the real CLI, with the real
+  `overseer_tool.py` checkers/hooks running as subprocesses. All 4 scenarios: (a) two waves then
+  early verified closeout, (b) budget-stage escalation, (c) a checker rejection that self-corrects
+  via `ao resume`, (d) human-in-the-loop hold/resume with idempotency assertions. Went through two
+  rounds: harness bugs (instance_dir prefixes, real `prompt_sha256`, kind-driven instruction
+  defaults, a side-channel write path for `control/hold-request.json`, an `OV-R8`→`OV-R10`
+  rule-id correction, a missing script entry, a real run+resume control-flow fix) resolved across
+  two subagent fix-passes plus dev-epic's own direct fixes; then a reviewer pass found ONE
+  CRITICAL gap beyond that scope — `ScriptedOverseerExecutor` was clobbering the real,
+  tool-computed `digest.json` with a flat test-authored shape lacking the nested `budget.stage`
+  the checker actually reads, silently disabling `OV-R11`'s stage-gated enforcement (and, found
+  during the fix, `OV-R14`'s early-closeout evidence check) in every scenario — plus 2 warnings
+  (scenario (d)'s missing idempotency assertions; an unscoped side-channel write allowlist). A
+  follow-up developer pass fixed all three and found a second latent bug in the same area:
+  scripted `cost_usd` was never folded into `state.spent` because `TaskResult.actuals_available`
+  was never set, so budget staging was a silent no-op throughout the harness's whole life until
+  now. Scenario (b) now drives a real, SUT-derived stage sequence, independently reproduced by
+  dev-epic from raw on-disk `digest.json` files (not trusted from the report): explore
+  (pct_used=15.0) → converge (35.0) → stabilize (45.0) → closeout (60.0), `run_budget_usd=100`.
+  dev-epic independently re-verified every claim with primary evidence (real digest files, engine
+  source for `actuals_available`'s gating semantics) rather than accepting either subagent's
+  self-report: all 5 tests pass 3/3 consecutive runs; full suite **4449 passed, 8 skipped, 0
+  failed** (no regressions); ruff/ruff format/mypy/pyright all clean. Judgment call: did not
+  request a second reviewer round after the fix — the original review already covered the harness
+  mechanism in full (approved 4/4 of its own flagged judgment calls) and its 3 remaining findings
+  are now fixed exactly as specified, verified with primary evidence stronger than a typical
+  re-review rubber-stamp; documented in `T-WruPiv-e2e-harness-core-scenarios/STATUS.md`.
+- Rollup: MVP tasks 10/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
+  `T-5ZzAZp`, `T-HPJcc6`, `T-tAKBBB`, `T-3FlD46`, `T-WruPiv`) · MVP-Should 0/1 (deferred, see below)
+  · design 1/1.
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -200,14 +229,14 @@ budget trip cannot reach close-out on its own.
   list is in design doc §23.
 
 ## Next actions
-1. All of S1 + all 3 checker tasks (`T-HPJcc6`, `T-tAKBBB`) + `T-3FlD46` (security review) are
-   Done — 9/13 MVP tasks. Next: `T-WruPiv` (e2e harness — first attempt's "production-ready" claim
-   was falsified by dev-epic's own test run, diagnosed 3 exact root causes, second fix-pass
-   in flight, not yet independently re-verified), `T-vmI0jI` (deps: T-WruPiv only), `T-23yMMB`
-   (needs explicit user spend authorization, <=$25, before running), `T-gbccdr` (last — carries the
-   AC6/rollback engine-gap note from T-eGXqXH's review, the R12 checkpoint/stage deferral note from
-   T-tAKBBB's review, and the N2/N3 follow-up notes from T-3FlD46's review, for the deviations
-   section). `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status)
-   unless told otherwise.
+1. All of S1 + all 3 checker tasks + `T-3FlD46` + `T-WruPiv` are Done — 10/13 MVP tasks. Next:
+   `T-vmI0jI` (e2e failure scenarios (e)-(h), deps: T-WruPiv only, now unblocked — the harness it
+   reuses is solid, including the now-real budget/stage machinery), `T-23yMMB` (needs explicit user
+   spend authorization, <=$25, before running), `T-gbccdr` (last — carries the AC6/rollback
+   engine-gap note from T-eGXqXH's review, the R12 checkpoint/stage deferral note from T-tAKBBB's
+   review, the N2/N3 follow-up notes from T-3FlD46's review, and a note that any FUTURE scenario
+   reusing `ScriptedOverseerExecutor` must set `actuals_available=True` alongside `cost_usd` or
+   budget staging silently no-ops, for the deviations section). `T-zLHc7Q` stays deferred
+   (MVP-Should, below cut line per its own ticket status) unless told otherwise.
 2. When ready to open a PR for this epic, flag commit `2387503` (G5 fix) separately in the
    description per the note above.

@@ -89,7 +89,13 @@ Sprint 1 (128 h of 144 h committed)
 Sprint 2 (120 h above the cut + 16 h below, of 144 h committed)
 - [x] `T-HPJcc6-tool-structural-checkers` — tool M3a: R1–R10, R15, charter lock, `--dry-run` (3 d). **Done**: 100 new tests, 99% coverage, reviewed (approve, 3 non-blocking nits, one fixed). See `T-HPJcc6-tool-structural-checkers/STATUS.md`.
 - [x] `T-tAKBBB-tool-semantic-checkers` — tool M3b: R11–R14, R16, R13c, verdict/deferral checks, ledger events (3 d). **Done**: 53 new tests, 98% coverage (combined), reviewed (approve with nits — a real gap dev-epic found via engine.py tracing, a malformed-but-present verdict.json silently passing, was fixed; 2 of 3 reviewer warnings fixed, 1 explicitly deferred). See `T-tAKBBB-tool-semantic-checkers/STATUS.md`.
-- [ ] `T-WruPiv-e2e-harness-core-scenarios` — scripted-executor harness + e2e (a)–(d) (3 d).
+- [x] `T-WruPiv-e2e-harness-core-scenarios` — scripted-executor harness + e2e (a)–(d) (3 d). **Done**:
+  all 5 tests (scenario a x2 variants, b, c, d) pass 3x consecutive; drives the real CLI + real
+  checkers/hooks end to end. Reviewer pass found 1 critical (digest.json clobbered, silently
+  disabling OV-R11 stage-gated enforcement) + 2 warnings, all fixed and independently re-verified
+  by dev-epic with primary evidence (real on-disk digest sequence, engine.py's `actuals_available`
+  gating). Full suite 4449 passed/8 skipped/0 failed, ruff/mypy/pyright clean. See
+  `T-WruPiv-e2e-harness-core-scenarios/STATUS.md`.
 - [ ] `T-vmI0jI-e2e-failure-scenarios` — e2e (e)–(h): backstop+G5+unit gate, signal response, cancel, `max_parallel=2` (3 d).
 - [x] `T-3FlD46-security-review-hardening` — dev-security code review of tool/hooks/checkers + fixes (1 d). **Done**: all 6 design-level findings verified-implemented (traced by hand, not docstring-only); 1 new HIGH-equivalent gap found and fixed (unbounded `read_ledger_lines`, a DoS-shaped size-cap bypass); 2 LOW follow-ups filed, no open CRITICAL/HIGH. See `T-3FlD46-security-review-hardening/STATUS.md`.
 - [ ] `T-23yMMB-live-smoke-run` — FR-17 real-LLM smoke, ≤ $25 (1 d).
