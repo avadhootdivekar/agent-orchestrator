@@ -2307,8 +2307,15 @@ def _classify_entry(raw: Any, index: int) -> ClassifiedEntry:
 
 @dataclass(frozen=True)
 class ManifestCheckContext:
-    """Shared, read-only inputs the manifest-level R2/R3/R4/R5/R10 checks need. Built once per
-    `intake_check`/`ckpt_check` call.
+    """Shared, read-only inputs the manifest-level R2/R3/R4/R5/R10/R12/R14/R16 checks need.
+    Built once per `intake_check`/`ckpt_check` call.
+
+    `verdict`/`digest`/`ledger_lines` (T-tAKBBB) are `None`/empty at `intake_check` (there is
+    no checkpoint decision, and no ledger history, before wave 1 has ever run) -- every R12/
+    R14/R16 check below gates on `verdict is not None` first and returns no violations
+    otherwise, exactly mirroring how `charter is None` already makes R6's ask-subset check
+    skip itself above. This keeps `intake_check` (T-HPJcc6's own function, not touched here)
+    correct with zero code changes on its side.
     """
 
     cfg: Config
@@ -2320,6 +2327,10 @@ class ManifestCheckContext:
     allowed_wave_size: int  # R4 cap -- from the digest (ckpt) or derive_budget (intake)
     charter: dict[str, Any] | None  # None => unreadable/absent; R6's ask-subset check skips
     tasks: list[Any]  # the manifest's raw, parsed `tasks[]` list
+    # ----- T-tAKBBB additions (R12/R14/R16 -- semantic, verdict-level checks) -----------------
+    verdict: dict[str, Any] | None = None  # ck-K's own verdict.json; None at intake_check
+    digest: dict[str, Any] | None = None  # ck-K's own digest.json; None at intake_check
+    ledger_lines: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -2754,17 +2765,441 @@ def _check_r10_terminal_shape(
     return _check_tail_shape(ctx, tails)
 
 
-# EXTENSION POINT (T-tAKBBB): append manifest/verdict-level SEMANTIC checks here -- R12
-# (verdict answers every digest signal), R14 (decision <-> manifest consistency, including
-# verified early closeout), R16 (must_close => closeout). Each is a `ManifestCheckFn` (same
-# signature as the three below); T-tAKBBB will likely also thread `verdict.json`/`digest.json`
-# into `ManifestCheckContext` as new optional fields for these checks to read -- structural
-# checks above never touch the verdict at all.
+# =============================================================================================
+# ===== T-tAKBBB: manifest/verdict-level SEMANTIC checks -- R12, R14, R16 ====================
+# =============================================================================================
+#
+# Unlike R2-R10/R15 above (pure manifest SHAPE, never touching the verdict), these three read
+# `ctx.verdict`/`ctx.digest`/`ctx.ledger_lines` (new `ManifestCheckContext` fields, threaded in
+# only by `ckpt_check` -- `intake_check`, T-HPJcc6's own function, is never touched and leaves
+# them at their `None`/`[]` defaults). Every one of the three gates on `ctx.verdict is not
+# None` and returns zero violations otherwise: a checkpoint's `verdict.json` is a declared
+# task OUTPUT the engine's own missing-output check already enforces exists in a real run, so
+# "verdict.json is simply absent" is a wiring problem for that gate, not an OV- rule this
+# checker should invent a violation for (mirrors R6's own `charter is None => skip` stance).
+
+VERDICT_SCHEMA: Final[str] = "ao.overseer.verdict/v1"
+HOLD_SCHEMA: Final[str] = "ao.overseer.hold/v1"
+
+_ALLOWED_DEFERRED_REASONS: Final[frozenset[str]] = frozenset(
+    {"out_of_budget", "blocked_needs_input", "human_descoped", "infeasible"}
+)
+_MIN_HIGH_SIGNAL_RATIONALE_LEN: Final[int] = 40  # contract: accept on a `high` signal needs >= 40.
+_MIN_DEFERRED_EVIDENCE_LEN: Final[int] = 40  # contract: a `deferred` alignment needs >= 40.
+# R12's own "verdict is schema-valid" sub-clause (TASK.md): required top-level fields and the
+# Python type each must have. `hold_questions` is checked separately (required IFF decision ==
+# "hold", not unconditionally -- S13.4).
+_VERDICT_REQUIRED_FIELD_TYPES: Final[tuple[tuple[str, type], ...]] = (
+    ("decision", str),
+    ("rationale", str),
+    ("next_wave_goal", str),
+    ("alignment", list),
+    ("criteria", list),
+    ("signal_responses", list),
+)
+# R14: decisions that must be paired with a next checkpoint emitting >= 1 unit (contract's
+# "Budget stages" table -- `hold`/`closeout` each have their own, different, R14 shape).
+_DECISIONS_REQUIRING_NEXT_WAVE: Final[frozenset[str]] = frozenset(
+    {"continue", "redirect", "stabilize"}
+)
+# R14: stages at which a `closeout` decision is "early" and therefore needs per-ask verify
+# evidence (contract: "closeout before the stabilize stage is allowed only when...").
+_EARLY_CLOSEOUT_STAGES: Final[frozenset[str]] = frozenset({"explore", "converge"})
+# R14 early-closeout pseudocode (ticket): kinds that count as "a change" to an ask, whose LAST
+# occurrence a later `verify`+`pass` unit must follow.
+_ASK_CHANGE_KINDS: Final[frozenset[str]] = frozenset({"implement", "fix", "stabilize", "document"})
+
+
+def _ck_wave_of_verdict_context(ctx: ManifestCheckContext) -> int:
+    """`ctx.verdict is not None` is only ever true when `ckpt_check` built this context (never
+    `intake_check`, HLD S8.4: no checkpoint decision exists before wave 1 runs), so
+    `ctx.emitter_id` is guaranteed `ck-KK` here -- an invariant of construction, not of data.
+    """
+    match = _CK_TASK_ID_RE.match(ctx.emitter_id)
+    assert match is not None, "verdict is only ever threaded into the context by ckpt_check"
+    return int(match.group(1))
+
+
+def _charter_ask_ids(charter: dict[str, Any] | None) -> frozenset[str] | None:
+    """`None` when the charter can't be trusted at all -- CHR-1 already reports that
+    separately (mirrors `check_manifest`'s own `charter_ask_ids` computation for R6, which
+    can't be reused directly since it's local to that function, not module-level)."""
+    if charter is None:
+        return None
+    asks = charter.get("asks")
+    if not isinstance(asks, list):
+        return None
+    return frozenset(
+        a["ask_id"] for a in asks if isinstance(a, dict) and isinstance(a.get("ask_id"), str)
+    )
+
+
+def _charter_criteria_ids(charter: dict[str, Any] | None) -> frozenset[str] | None:
+    if charter is None:
+        return None
+    asks = charter.get("asks")
+    if not isinstance(asks, list):
+        return None
+    ids: set[str] = set()
+    for ask in asks:
+        if not isinstance(ask, dict):
+            continue
+        acceptance = ask.get("acceptance")
+        if isinstance(acceptance, list):
+            ids.update(
+                c["id"] for c in acceptance if isinstance(c, dict) and isinstance(c.get("id"), str)
+            )
+    return frozenset(ids)
+
+
+def _has_hold_answered_event(ledger_lines: list[dict[str, Any]]) -> bool:
+    return any(
+        line.get("type") == "event" and line.get("event") == "hold_answered"
+        for line in ledger_lines
+    )
+
+
+def _digest_stage(digest: dict[str, Any] | None) -> str | None:
+    if not isinstance(digest, dict):
+        return None
+    budget = digest.get("budget")
+    if isinstance(budget, dict) and isinstance(budget.get("stage"), str):
+        return str(budget["stage"])
+    return None
+
+
+def _valid_hold_request(inst: Path, checkpoint_id: str) -> bool:
+    """R14's hold branch: `control/hold-request.json` must currently exist and be schema-valid
+    per the contract's `ao.overseer.hold/v1` shape (S13.4) -- reuses `_read_optional_json`
+    (M2) exactly as-is, never raising for a missing/malformed file (that is what THIS function
+    reports, as an R14 violation, not a fresh Violation/exit-1 path).
+
+    Reviewer finding (T-tAKBBB review): also requires the request's own `checkpoint` field to
+    equal *checkpoint_id* -- without this, a stale request left over from an EARLIER
+    checkpoint's hold (e.g. ck-01's) would still validate as "currently valid" for a LATER
+    checkpoint (ck-05) deciding hold independently. The caller already has its own checkpoint
+    id on hand, so this is a cheap, low-risk strengthening.
+    """
+    data = _read_optional_json(inst / "control" / "hold-request.json")
+    if data is None or data.get("schema") != HOLD_SCHEMA:
+        return False
+    questions = data.get("questions")
+    if not isinstance(questions, list) or len(questions) < 1:
+        return False
+    return data.get("checkpoint") == checkpoint_id and isinstance(data.get("needs_input_path"), str)
+
+
+def _check_early_closeout_evidence(
+    ctx: ManifestCheckContext, verdict: dict[str, Any], path: str
+) -> list[RuleViolation]:
+    """R14's early-closeout clause: for EVERY non-deferred charter ask, a `verify`-kind ledger
+    unit with `verdict: pass` must be recorded (by ledger `seq`, which is already a strictly
+    increasing global order -- HLD S8.4 `append_chained`) after that ask's own LAST
+    `implement`/`fix`/`stabilize`/`document` unit (ticket pseudocode `early_closeout_ok`).
+    """
+    charter_ask_ids = _charter_ask_ids(ctx.charter)
+    if charter_ask_ids is None:
+        return []  # CHR-1 already reports an untrustworthy charter; nothing more to check here
+
+    alignment = verdict.get("alignment")
+    deferred_asks: set[str] = set()
+    if isinstance(alignment, list):
+        deferred_asks = {
+            a["ask_id"]
+            for a in alignment
+            if isinstance(a, dict)
+            and a.get("status") == "deferred"
+            and isinstance(a.get("ask_id"), str)
+        }
+
+    unit_lines = [line for line in ctx.ledger_lines if line.get("type") == "unit"]
+    violations: list[RuleViolation] = []
+    for ask_id in sorted(charter_ask_ids - deferred_asks):
+        ask_lines = [
+            line
+            for line in unit_lines
+            if isinstance(line.get("ask_ids"), list) and ask_id in line["ask_ids"]
+        ]
+        last_change_seq = max(
+            (
+                int(line["seq"])
+                for line in ask_lines
+                if line.get("kind") in _ASK_CHANGE_KINDS and isinstance(line.get("seq"), int)
+            ),
+            default=-1,
+        )
+        verified_after = any(
+            line.get("kind") == "verify"
+            and line.get("verdict") == "pass"
+            and isinstance(line.get("seq"), int)
+            and int(line["seq"]) > last_change_seq
+            for line in ask_lines
+        )
+        if not verified_after:
+            violations.append(
+                RuleViolation(
+                    "R14",
+                    f"early closeout (stage={_digest_stage(ctx.digest)!r}) requires a passing "
+                    f"verify-kind ledger unit for ask {ask_id!r} recorded after its last "
+                    "implement/fix/stabilize/document unit, but none was found",
+                    path,
+                )
+            )
+    return violations
+
+
+def _check_r12_verdict(
+    ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    """OV-R12 (TASK.md's own sub-clause list, verbatim): verdict schema-valid; `decision` in
+    `digest.allowed_decisions`; every digest signal id answered exactly once;
+    `accept`+`high` needs a rationale >= 40 chars; every charter ask in `alignment[]` and
+    every acceptance criterion in `criteria[]`; `deferred` needs `deferred_reason` plus
+    evidence >= 40 chars; `human_descoped` needs a prior `hold_answered` ledger event; `hold`
+    needs `hold_questions`.
+    """
+    if ctx.verdict is None:
+        return []
+    verdict = ctx.verdict
+    path = str(verdict_path(ctx.inst, _ck_wave_of_verdict_context(ctx)))
+    violations: list[RuleViolation] = []
+
+    if verdict.get("schema") != VERDICT_SCHEMA:
+        violations.append(RuleViolation("R12", f"verdict schema must be {VERDICT_SCHEMA!r}", path))
+    for field_name, field_type in _VERDICT_REQUIRED_FIELD_TYPES:
+        if not isinstance(verdict.get(field_name), field_type):
+            violations.append(
+                RuleViolation("R12", f"verdict.{field_name} must be a {field_type.__name__}", path)
+            )
+
+    decision = verdict.get("decision")
+    allowed_decisions = (
+        ctx.digest.get("allowed_decisions") if isinstance(ctx.digest, dict) else None
+    )
+    if isinstance(allowed_decisions, list) and decision not in allowed_decisions:
+        violations.append(
+            RuleViolation(
+                "R12",
+                f"verdict decision {decision!r} is not one of digest.allowed_decisions="
+                f"{allowed_decisions}",
+                path,
+            )
+        )
+
+    signal_responses = verdict.get("signal_responses")
+    responses_by_signal: dict[str, list[dict[str, Any]]] = {}
+    if isinstance(signal_responses, list):
+        for resp in signal_responses:
+            if isinstance(resp, dict) and isinstance(resp.get("signal_id"), str):
+                responses_by_signal.setdefault(resp["signal_id"], []).append(resp)
+    digest_signals = ctx.digest.get("signals") if isinstance(ctx.digest, dict) else None
+    if isinstance(digest_signals, list):
+        for sig in digest_signals:
+            if not isinstance(sig, dict) or not isinstance(sig.get("id"), str):
+                continue
+            sig_id = sig["id"]
+            matches = responses_by_signal.get(sig_id, [])
+            if not matches:
+                violations.append(
+                    RuleViolation(
+                        "R12",
+                        f"verdict has no signal_responses entry answering signal {sig_id!r}",
+                        path,
+                    )
+                )
+            elif len(matches) > 1:
+                violations.append(
+                    RuleViolation(
+                        "R12",
+                        f"verdict has {len(matches)} signal_responses entries answering signal "
+                        f"{sig_id!r}, expected exactly 1",
+                        path,
+                    )
+                )
+            elif matches[0].get("response") == "accept" and sig.get("severity") == "high":
+                rationale = matches[0].get("rationale")
+                if (
+                    not isinstance(rationale, str)
+                    or len(rationale) < _MIN_HIGH_SIGNAL_RATIONALE_LEN
+                ):
+                    violations.append(
+                        RuleViolation(
+                            "R12",
+                            f"signal {sig_id!r} is high-severity and accepted but its rationale "
+                            f"is not a string of >= {_MIN_HIGH_SIGNAL_RATIONALE_LEN} chars",
+                            path,
+                        )
+                    )
+
+    alignment = verdict.get("alignment")
+    alignment_by_ask: dict[str, dict[str, Any]] = {}
+    if isinstance(alignment, list):
+        for entry in alignment:
+            if isinstance(entry, dict) and isinstance(entry.get("ask_id"), str):
+                alignment_by_ask.setdefault(entry["ask_id"], entry)
+    charter_ask_ids = _charter_ask_ids(ctx.charter)
+    if charter_ask_ids is not None:
+        missing_asks = charter_ask_ids - set(alignment_by_ask)
+        if missing_asks:
+            violations.append(
+                RuleViolation(
+                    "R12",
+                    f"verdict alignment[] is missing charter ask(s): {sorted(missing_asks)}",
+                    path,
+                )
+            )
+    for ask_id, align_entry in alignment_by_ask.items():
+        if align_entry.get("status") != "deferred":
+            continue
+        deferred_reason = align_entry.get("deferred_reason")
+        evidence = align_entry.get("evidence")
+        if deferred_reason not in _ALLOWED_DEFERRED_REASONS:
+            violations.append(
+                RuleViolation(
+                    "R12",
+                    f"alignment[{ask_id!r}] status=deferred needs deferred_reason in "
+                    f"{sorted(_ALLOWED_DEFERRED_REASONS)}, got {deferred_reason!r}",
+                    path,
+                )
+            )
+        if not isinstance(evidence, str) or len(evidence) < _MIN_DEFERRED_EVIDENCE_LEN:
+            violations.append(
+                RuleViolation(
+                    "R12",
+                    f"alignment[{ask_id!r}] status=deferred needs evidence of >= "
+                    f"{_MIN_DEFERRED_EVIDENCE_LEN} chars",
+                    path,
+                )
+            )
+        if deferred_reason == "human_descoped" and not _has_hold_answered_event(ctx.ledger_lines):
+            violations.append(
+                RuleViolation(
+                    "R12",
+                    f"alignment[{ask_id!r}] deferred_reason=human_descoped requires a prior "
+                    "hold_answered ledger event",
+                    path,
+                )
+            )
+
+    criteria = verdict.get("criteria")
+    criteria_ids = (
+        {c.get("id") for c in criteria if isinstance(c, dict)}
+        if isinstance(criteria, list)
+        else set()
+    )
+    charter_criteria_ids = _charter_criteria_ids(ctx.charter)
+    if charter_criteria_ids is not None:
+        missing_criteria = charter_criteria_ids - criteria_ids
+        if missing_criteria:
+            violations.append(
+                RuleViolation(
+                    "R12",
+                    f"verdict criteria[] is missing charter acceptance criterion id(s): "
+                    f"{sorted(missing_criteria)}",
+                    path,
+                )
+            )
+
+    if decision == "hold":
+        hold_questions = verdict.get("hold_questions")
+        if not isinstance(hold_questions, list) or len(hold_questions) < 1:
+            violations.append(
+                RuleViolation(
+                    "R12", "verdict decision=hold requires hold_questions with >= 1 entries", path
+                )
+            )
+
+    return violations
+
+
+def _check_r14_decision_manifest_consistency(
+    ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    """OV-R14: the verdict's `decision` must be paired with the RIGHT manifest shape (structural
+    R10 already enforces each shape's own internals -- this is the decision<->shape PAIRING).
+    """
+    if ctx.verdict is None:
+        return []
+    k = _ck_wave_of_verdict_context(ctx)
+    decision = ctx.verdict.get("decision")
+    path = str(verdict_path(ctx.inst, k))
+
+    wave_entries = [e for e in entries if e.entry_class in ("unit", "expander")]
+    has_next_ckpt = any(e.entry_class == "next_checkpoint" for e in entries)
+    has_tail = any(e.entry_class == "tail" for e in entries)
+    n_units = len(wave_entries)
+
+    violations: list[RuleViolation] = []
+    if decision in _DECISIONS_REQUIRING_NEXT_WAVE:
+        if not has_next_ckpt or n_units < 1:
+            violations.append(
+                RuleViolation(
+                    "R14",
+                    f"decision={decision!r} requires a next checkpoint with >= 1 unit, got "
+                    f"has_next_checkpoint={has_next_ckpt} units={n_units}",
+                    path,
+                )
+            )
+    elif decision == "hold":
+        if not has_next_ckpt or n_units != 0:
+            violations.append(
+                RuleViolation(
+                    "R14",
+                    f"decision=hold requires a next checkpoint with 0 units, got "
+                    f"has_next_checkpoint={has_next_ckpt} units={n_units}",
+                    path,
+                )
+            )
+        if not _valid_hold_request(ctx.inst, ctx.emitter_id):
+            violations.append(
+                RuleViolation(
+                    "R14",
+                    "decision=hold requires a currently-valid control/hold-request.json",
+                    path,
+                )
+            )
+    elif decision == "closeout":
+        if not has_tail:
+            violations.append(
+                RuleViolation(
+                    "R14", "decision=closeout requires the manifest to emit the tail", path
+                )
+            )
+        if _digest_stage(ctx.digest) in _EARLY_CLOSEOUT_STAGES:
+            violations.extend(_check_early_closeout_evidence(ctx, ctx.verdict, path))
+
+    return violations
+
+
+def _check_r16_must_close(
+    ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    """OV-R16: `digest.must_close == true` forces `decision == "closeout"`."""
+    if ctx.verdict is None or not isinstance(ctx.digest, dict):
+        return []
+    if not ctx.digest.get("must_close"):
+        return []
+    decision = ctx.verdict.get("decision")
+    if decision != "closeout":
+        path = str(verdict_path(ctx.inst, _ck_wave_of_verdict_context(ctx)))
+        return [
+            RuleViolation(
+                "R16",
+                f"digest.must_close is true but verdict decision is {decision!r}, not 'closeout'",
+                path,
+            )
+        ]
+    return []
+
+
 _MANIFEST_STRUCTURAL_CHECKS: Final[list[ManifestCheckFn]] = [
     _check_r2_field_whitelist,
     _check_r3_ids,
     _check_r4_r5_counts,
     _check_r10_terminal_shape,
+    _check_r12_verdict,
+    _check_r14_decision_manifest_consistency,
+    _check_r16_must_close,
 ]
 
 
@@ -2954,16 +3389,298 @@ def _check_entry_r9_pre_hook_and_effort(
     return violations
 
 
-# EXTENSION POINT (T-tAKBBB): append per-unit SEMANTIC checks here -- R11 (stage
-# restrictions: converge existing-work-items-only, stabilize kind-restricted), R13 (attempt
-# cap: `approach_change` required at cap, forbidden above cap+1), R13c (rename-dodge). Each is
-# a `WaveEntryCheckFn` (same signature as the three below) -- `check_manifest`'s existing loop
-# over `units + expanders` picks up anything appended here with no other code change.
+# =============================================================================================
+# ===== T-tAKBBB: per-unit SEMANTIC checks -- R11, R13, R13c =================================
+# =============================================================================================
+#
+# `WaveEntryCheckContext` carries no ledger/digest fields (unlike `ManifestCheckContext` above)
+# -- these three read what they need directly off `ctx.inst`/`ctx.emitter_id`, via the SAME
+# module-level helpers R6 already calls per-entry for its own brief (`_read_brief_for_check`,
+# `brief_path`) plus M1/M2's `_load_digest_for_check`/`_unit_lines_through`/
+# `_work_item_sequences` -- never new context fields, and never touching those functions'
+# bodies (only calling them), per this task's own change-scope boundary. Each re-reads its
+# small inputs once per manifest ENTRY rather than once per manifest (like R6's own brief
+# read); for this tool's bounded wave sizes that is a deliberate simplicity-over-micro-
+# optimization trade-off, not a correctness concern.
+
+# R11: stabilize-stage kind restriction (TASK.md: "the kind must be stabilize, verify, or
+# document").
+_STABILIZE_STAGE_ALLOWED_KINDS: Final[frozenset[str]] = frozenset(
+    {"stabilize", "verify", "document"}
+)
+
+# R13: how far past the cap a work item may go before a new unit on it is forbidden outright,
+# regardless of `approach_change` (TASK.md: "above max_attempts_per_item + 1 forbids any new
+# unit on it outright").
+_ATTEMPT_CAP_HARD_STOP_OFFSET: Final[int] = 1
+
+# R13c (HLD S8.3, "the rename dodge"): a new work-item key whose brief `goal` is too similar
+# to a CAPPED item's latest goal is rejected. Jaccard = |tokens_a n tokens_b| / |tokens_a u
+# tokens_b|, tokens = lowercase alphanumeric words len >= 3, minus STOPWORDS (ticket
+# pseudocode). Named constants, never inline literals (reviewer #7 precedent, HLD S8.3).
+GOAL_SIMILARITY_REJECT: Final[float] = 0.6
+STOPWORDS: Final[frozenset[str]] = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "to",
+        "in",
+        "for",
+        "with",
+        "on",
+        "at",
+        "is",
+        "are",
+        "this",
+        "that",
+    }
+)
+_GOAL_TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+")
+_GOAL_TOKEN_MIN_LEN: Final[int] = 3
+
+
+def _goal_tokens(text: str) -> frozenset[str]:
+    return frozenset(
+        tok
+        for tok in _GOAL_TOKEN_RE.findall(text.lower())
+        if len(tok) >= _GOAL_TOKEN_MIN_LEN and tok not in STOPWORDS
+    )
+
+
+def _jaccard_similarity(tokens_a: frozenset[str], tokens_b: frozenset[str]) -> float:
+    union = tokens_a | tokens_b
+    return len(tokens_a & tokens_b) / len(union) if union else 0.0
+
+
+def _ck_wave_of_emitter(emitter_id: str) -> int | None:
+    """`None` at `intake_check` (id `"intake"`, no `^ck-(\\d+)$` match) -- R11/R13/R13c all have
+    nothing to check there: intake's wave is the run's very first, so no digest/stage machine
+    (R11) and no ledger history for any work item (R13/R13c) can exist yet.
+    """
+    match = _CK_TASK_ID_RE.match(emitter_id)
+    return int(match.group(1)) if match else None
+
+
+def _capped_work_item_lines(
+    cfg: Config, unit_lines: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
+    """Work items whose ledger-recorded unit count is already >= `max_attempts_per_item`
+    ("capped", HLD S8.3's own `attempt_cap` threshold) -- reuses `_work_item_sequences` (M2,
+    T-C6uQJW) exactly as-is rather than re-grouping the ledger by hand.
+    """
+    return {
+        work_item: lines
+        for work_item, lines in _work_item_sequences(unit_lines).items()
+        if len(lines) >= cfg.max_attempts_per_item
+    }
+
+
+def _check_entry_r11_stage_restrictions(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    """OV-R11 (TASK.md, verbatim): in `converge`, a unit's `work_item` must already exist in
+    the ledger (no new scope); in `stabilize`, every unit's `kind` must be
+    stabilize/verify/document. Keyed purely on `digest.budget.stage` (not the checkpoint's
+    `decision` -- TASK.md states both restrictions stage-first, and `explore`/`closeout` carry
+    no R11 restriction at all).
+    """
+    k = _ck_wave_of_emitter(ctx.emitter_id)
+    if k is None:
+        return []
+    stage = _digest_stage(_load_digest_for_check(ctx.inst, k))
+    if stage not in ("converge", "stabilize"):
+        return []
+
+    unit_id = entry.entry_id
+    assert unit_id is not None  # only unit/expander-classified entries reach this check
+    brief_data, brief_violation = _read_brief_for_check(ctx.inst, ctx.next_wave, unit_id)
+    if brief_violation is not None:
+        return []  # R6 already reports an unreadable/missing brief
+    assert brief_data is not None
+    path = str(brief_path(ctx.inst, ctx.next_wave, unit_id))
+
+    if stage == "stabilize":
+        kind = brief_data.get("kind")
+        if kind not in _STABILIZE_STAGE_ALLOWED_KINDS:
+            return [
+                RuleViolation(
+                    "R11",
+                    f"unit {unit_id} kind {kind!r} is not allowed in the stabilize stage (must "
+                    f"be one of {sorted(_STABILIZE_STAGE_ALLOWED_KINDS)})",
+                    path,
+                )
+            ]
+        return []
+
+    # stage == "converge"
+    work_item = brief_data.get("work_item")
+    existing_work_items = frozenset(_work_item_sequences(_unit_lines_through(ctx.inst, k)))
+    if not isinstance(work_item, str) or work_item not in existing_work_items:
+        return [
+            RuleViolation(
+                "R11",
+                f"unit {unit_id} targets work_item {work_item!r}, which is not an existing work "
+                "item in the ledger -- the converge stage may not open new scope",
+                path,
+            )
+        ]
+    return []
+
+
+def _check_entry_r13_attempt_cap(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    """OV-R13 (TASK.md, verbatim): a work item's ledger-recorded unit count reaching
+    `max_attempts_per_item` requires a non-empty `approach_change` on the new unit; a work item
+    already above `max_attempts_per_item + 1` forbids any new unit on it outright.
+    """
+    k = _ck_wave_of_emitter(ctx.emitter_id)
+    if k is None:
+        return []
+    unit_id = entry.entry_id
+    assert unit_id is not None
+    brief_data, brief_violation = _read_brief_for_check(ctx.inst, ctx.next_wave, unit_id)
+    if brief_violation is not None:
+        return []
+    assert brief_data is not None
+    work_item = brief_data.get("work_item")
+    if not isinstance(work_item, str) or not work_item:
+        return []  # a malformed work_item isn't R13's problem to report
+
+    groups = _work_item_sequences(_unit_lines_through(ctx.inst, k))
+    count = len(groups.get(work_item, []))
+    path = str(brief_path(ctx.inst, ctx.next_wave, unit_id))
+
+    if count > ctx.cfg.max_attempts_per_item + _ATTEMPT_CAP_HARD_STOP_OFFSET:
+        return [
+            RuleViolation(
+                "R13",
+                f"unit {unit_id} targets work_item {work_item!r}, which already has {count} "
+                f"ledger-recorded attempt(s) -- more than max_attempts_per_item="
+                f"{ctx.cfg.max_attempts_per_item} + {_ATTEMPT_CAP_HARD_STOP_OFFSET}, so no "
+                "further units are allowed on it",
+                path,
+            )
+        ]
+    if count >= ctx.cfg.max_attempts_per_item:
+        approach_change = brief_data.get("approach_change")
+        if not isinstance(approach_change, str) or not approach_change.strip():
+            return [
+                RuleViolation(
+                    "R13",
+                    f"unit {unit_id} targets work_item {work_item!r} at/above its attempt cap "
+                    f"({count} >= max_attempts_per_item={ctx.cfg.max_attempts_per_item}) but its "
+                    "brief has no non-empty approach_change",
+                    path,
+                )
+            ]
+    return []
+
+
+def _r13c_violation(
+    unit_id: str, new_work_item: str, capped_work_item: str, path: str, reason: str
+) -> RuleViolation:
+    return RuleViolation(
+        "R13c",
+        f"unit {unit_id} opens new work_item {new_work_item!r} ({reason}), too similar to "
+        f"capped work item {capped_work_item!r}: reuse {capped_work_item!r} with "
+        "approach_change, descope it, or hold instead",
+        path,
+    )
+
+
+def _check_entry_r13c_rename_dodge(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    """OV-R13c (HLD S8.3 "the rename dodge", TASK.md verbatim): a NEW work_item key (not yet in
+    the ledger) is rejected when its brief `goal` has Jaccard similarity >=
+    `GOAL_SIMILARITY_REJECT` against the LATEST brief's `goal` of any CAPPED work item, or when
+    its `prior_attempts`/`touches` overlap a capped item's own (judgment call, see task report:
+    "overlap" is exact-string set intersection -- `prior_attempts` against the capped item's
+    own recorded ledger unit ids, `touches` against the union of `touches` across every brief
+    the capped item has ever had).
+    """
+    k = _ck_wave_of_emitter(ctx.emitter_id)
+    if k is None:
+        return []
+    unit_id = entry.entry_id
+    assert unit_id is not None
+    brief_data, brief_violation = _read_brief_for_check(ctx.inst, ctx.next_wave, unit_id)
+    if brief_violation is not None:
+        return []
+    assert brief_data is not None
+    work_item = brief_data.get("work_item")
+    if not isinstance(work_item, str) or not work_item:
+        return []
+
+    groups = _work_item_sequences(_unit_lines_through(ctx.inst, k))
+    if work_item in groups:
+        return []  # not a NEW key -- R13 already governs a continuing work item
+
+    capped_items = _capped_work_item_lines(ctx.cfg, _unit_lines_through(ctx.inst, k))
+    if not capped_items:
+        return []
+
+    path = str(brief_path(ctx.inst, ctx.next_wave, unit_id))
+    new_goal_tokens = _goal_tokens(str(brief_data.get("goal", "")))
+    new_prior_attempts = {u for u in brief_data.get("prior_attempts", []) if isinstance(u, str)}
+    new_touches = {t for t in brief_data.get("touches", []) if isinstance(t, str)}
+
+    for capped_item, lines in sorted(capped_items.items()):
+        capped_unit_ids = {
+            str(line["unit_id"]) for line in lines if isinstance(line.get("unit_id"), str)
+        }
+        if new_prior_attempts & capped_unit_ids:
+            return [
+                _r13c_violation(unit_id, work_item, capped_item, path, "prior_attempts overlap")
+            ]
+
+        capped_touches: set[str] = set()
+        for line in lines:
+            wave, line_unit_id = line.get("wave"), line.get("unit_id")
+            if isinstance(wave, int) and isinstance(line_unit_id, str):
+                capped_brief, _violation = _read_brief_for_check(ctx.inst, wave, line_unit_id)
+                if capped_brief is not None:
+                    capped_touches.update(
+                        t for t in capped_brief.get("touches", []) if isinstance(t, str)
+                    )
+        if new_touches & capped_touches:
+            return [_r13c_violation(unit_id, work_item, capped_item, path, "touches overlap")]
+
+        latest = lines[-1]
+        latest_wave, latest_unit_id = latest.get("wave"), latest.get("unit_id")
+        if isinstance(latest_wave, int) and isinstance(latest_unit_id, str):
+            latest_brief, _violation = _read_brief_for_check(ctx.inst, latest_wave, latest_unit_id)
+            if latest_brief is not None:
+                similarity = _jaccard_similarity(
+                    new_goal_tokens, _goal_tokens(str(latest_brief.get("goal", "")))
+                )
+                if similarity >= GOAL_SIMILARITY_REJECT:
+                    return [
+                        _r13c_violation(
+                            unit_id,
+                            work_item,
+                            capped_item,
+                            path,
+                            f"goal similarity {similarity:.2f}",
+                        )
+                    ]
+
+    return []
+
+
 _WAVE_ENTRY_STRUCTURAL_CHECKS: Final[list[WaveEntryCheckFn]] = [
     _check_entry_r6_brief,
     _check_entry_r7_outputs_inputs,
     _check_entry_r8_depends_on,
     _check_entry_r9_pre_hook_and_effort,
+    _check_entry_r11_stage_restrictions,
+    _check_entry_r13_attempt_cap,
+    _check_entry_r13c_rename_dodge,
 ]
 
 
@@ -2980,14 +3697,11 @@ def check_manifest(ctx: ManifestCheckContext) -> list[RuleViolation]:
 
     wave_entries = [e for e in entries if e.entry_class in ("unit", "expander")]
     manifest_ids = frozenset(e.entry_id for e in entries if e.entry_id is not None)
-    charter_ask_ids: frozenset[str] | None = None
-    if ctx.charter is not None:
-        asks = ctx.charter.get("asks")
-        charter_ask_ids = frozenset(
-            a["ask_id"]
-            for a in (asks if isinstance(asks, list) else [])
-            if isinstance(a, dict) and isinstance(a.get("ask_id"), str)
-        )
+    # Reviewer finding (T-tAKBBB review, DRY): reuse the module-level `_charter_ask_ids`
+    # (added for R11/R14's own use) instead of a second, functionally-identical inline
+    # computation -- the two were written before `_charter_ask_ids` existed at module
+    # scope.
+    charter_ask_ids = _charter_ask_ids(ctx.charter)
     entry_ctx = WaveEntryCheckContext(
         cfg=ctx.cfg,
         inst=ctx.inst,
@@ -3273,15 +3987,67 @@ def intake_check(args: argparse.Namespace) -> None:
     )
 
 
+def _record_checkpoint_events(
+    inst: Path, k: int, now: datetime, *, manifest_path: Path, verdict: dict[str, Any]
+) -> None:
+    """T-tAKBBB AC3: on a SUCCESSFUL (zero-violation), non-dry-run `ckpt_check`, records this
+    checkpoint's own decision into the ledger -- `checkpoint` always, plus `hold_requested` iff
+    the decision is `hold`. Idempotent by this checkpoint's own id (mirrors `_lock_charter`'s
+    own check-before-append pattern): a `ck-KK` decides exactly once, so a resumed re-run of an
+    already-succeeded checkpoint must not duplicate either event. Only ever called with a
+    verdict that was just read successfully from disk (never under `--dry-run`, and never when
+    `ctx.verdict` was `None`), so hashing `verdict_path(inst, k)`'s bytes here is safe.
+    """
+    checkpoint_id = f"ck-{k:02d}"
+    decision = verdict.get("decision")
+
+    already_checkpointed = any(
+        line.get("type") == "event"
+        and line.get("event") == "checkpoint"
+        and line.get("checkpoint") == checkpoint_id
+        for line in read_ledger_lines(inst)
+    )
+    if not already_checkpointed:
+        append_chained(
+            inst,
+            {
+                "type": "event",
+                "event": "checkpoint",
+                "checkpoint": checkpoint_id,
+                "decision": decision,
+                "verdict_sha256": hashlib.sha256(verdict_path(inst, k).read_bytes()).hexdigest(),
+                "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            },
+            now,
+        )
+
+    if decision == "hold":
+        already_hold_requested = any(
+            line.get("type") == "event"
+            and line.get("event") == "hold_requested"
+            and line.get("checkpoint") == checkpoint_id
+            for line in read_ledger_lines(inst)
+        )
+        if not already_hold_requested:
+            append_chained(
+                inst,
+                {"type": "event", "event": "hold_requested", "checkpoint": checkpoint_id},
+                now,
+            )
+
+
 def ckpt_check(args: argparse.Namespace) -> None:
-    """HLD S8.4 M3 `ckpt_check` (post_hook of `ck-K`, `on_failure: fail_task`) -- THIS task's
-    scope is the structural half only (R1-R10, R15); T-tAKBBB adds the semantic rules
-    (R11-R14, R16, R13c) to the SAME `_MANIFEST_STRUCTURAL_CHECKS`/`_WAVE_ENTRY_STRUCTURAL_
-    CHECKS` lists above (see their EXTENSION POINT comments). Unlike M1's hooks, this never
-    raises on the first violation found -- it collects every one across every rule and
-    reports them all together via `CheckViolations` (ticket AC1).
+    """HLD S8.4 M3 `ckpt_check` (post_hook of `ck-K`, `on_failure: fail_task`) -- structural
+    rules R1-R10/R15 (T-HPJcc6) plus the semantic rules R11-R14/R16/R13c (T-tAKBBB), via the
+    SAME `_MANIFEST_STRUCTURAL_CHECKS`/`_WAVE_ENTRY_STRUCTURAL_CHECKS` lists above. Unlike M1's
+    hooks, this never raises on the first violation found -- it collects every one across every
+    rule and reports them all together via `CheckViolations` (ticket AC1/AC4). On success
+    (zero violations, never under `--dry-run`) it also records this checkpoint's decision into
+    the ledger (`_record_checkpoint_events`, ticket AC3) -- mirrors `intake_check`'s own
+    "on success, never under --dry-run" placement of `_lock_charter`, ahead of `_finish_check`.
     """
     ws, inst = confine_workspace(args.workspace_root, args.instance_dir)
+    now = parse_now(args.now)
     ctx_hook = read_hook_context(args)
     k = parse_ck_task_id(ctx_hook.task_id)
     cfg = load_config(inst)
@@ -3291,6 +4057,30 @@ def ckpt_check(args: argparse.Namespace) -> None:
     tasks, load_violations = _load_manifest_tasks(manifest_path)
 
     violations: list[RuleViolation] = list(load_violations)
+
+    # dev-epic finding (post-T-tAKBBB review, verified against engine.py directly): a
+    # GENUINELY MISSING verdict.json is already caught engine-side --
+    # `_settle_completed_task`'s `missing_outputs` check (engine.py ~L1738,
+    # `self._store.exists(o)` over every declared `task.outputs` path) runs AFTER post_hook
+    # folds in (post_hook fires on the executor's own exit status, before that check), and
+    # fails the task regardless of what `ckpt_check` itself reports. That check is
+    # EXISTENCE-only, though, so a verdict.json that EXISTS but is malformed/unparseable
+    # slips past it -- `_read_optional_json` (M2's tolerant reader, "missing/malformed
+    # means no data yet, never a Violation" -- correct for a HISTORICAL verdict a detector
+    # reads, wrong for THIS checkpoint's own current one) would otherwise silently treat
+    # that as "nothing to check" and report zero violations. Only the "exists but
+    # unreadable" case needs an explicit violation here; a truly absent file is left to the
+    # engine's own check (and doesn't touch any existing fixture, none of which create this
+    # file at all for structural-only tests).
+    verdict_p = verdict_path(inst, k)
+    verdict: dict[str, Any] | None = _read_optional_json(verdict_p)
+    if verdict is None and verdict_p.exists():
+        violations.append(
+            RuleViolation(
+                "R12", f"verdict.json is unreadable or malformed: {verdict_p}", str(verdict_p)
+            )
+        )
+
     if tasks is not None:
         digest = _load_digest_for_check(inst, k)
         charter = _read_optional_json(inst / "outputs" / "charter.json")
@@ -3304,8 +4094,14 @@ def ckpt_check(args: argparse.Namespace) -> None:
             allowed_wave_size=_allowed_wave_size_from_digest(digest),
             charter=charter,
             tasks=tasks,
+            verdict=verdict,
+            digest=digest,
+            ledger_lines=read_ledger_lines(inst),
         )
         violations.extend(check_manifest(check_ctx))
+
+    if not violations and not args.dry_run and verdict is not None:
+        _record_checkpoint_events(inst, k, now, manifest_path=manifest_path, verdict=verdict)
 
     _finish_check(
         result_dir=checkpoint_dir(inst, k),
