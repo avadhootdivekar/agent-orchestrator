@@ -5,8 +5,9 @@
 - Epic ID: `E-YAAGhk-overseer-runner-template`
 - Owner: architect
 - Created: 2026-09-26
-- Last Updated: 2026-09-26
-- Status: Draft (post-implementation, mandatory)
+- Last Updated: 2026-09-27
+- Status: Done. All 6 docs were reconciled against `ad/overseer-runner-workflow` @ `0fb60aa`, with
+  file:line evidence in STATUS.md. AC1-AC3 are met. AC4 (the epic rollup) is owned by dev-epic.
 - Estimate: 1 day (8 h)
 
 ## Requirements Mapping

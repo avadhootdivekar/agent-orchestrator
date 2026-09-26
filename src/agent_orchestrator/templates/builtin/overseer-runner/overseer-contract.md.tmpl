@@ -281,9 +281,10 @@ can `grep` for them directly.
 - **OV-RUNNING** — `request-closeout` was invoked while the run's `state.json` status is not
   `failed`/`cancelled` (it refuses to race in-flight dispatch).
 
-**Forthcoming** (the manifest/verdict checker, `intake-check`/`ckpt-check`/`expander-check` —
-not implemented yet in this epic; document your manifest and verdict against these now, since
-the checker that enforces them will match these ids exactly):
+**Implemented** (the manifest/verdict checker — `intake-check`/`ckpt-check` are real, shipped
+subcommands; run them yourself in dry-run mode before you finish, per "Self-check" below.
+**Exception**: `expander-check` does NOT exist — `expand`-kind units / `max_expanders_per_wave >
+0` are not implemented in this epic; leave `max_expanders_per_wave` at its default `0`):
 
 - **OV-R1** — strict JSON `{"tasks": [...]}`.
 - **OV-R2** — field whitelist per entry class.
@@ -321,11 +322,10 @@ reports:
   --workspace-root {{ workspace_root }} --instance-dir {{ instance_dir }}
 ```
 
-(`intake` runs `intake-check --dry-run` the same way, in place of `ckpt-check`.) **Note:**
-`ckpt-check`/`intake-check` do not exist as subcommands yet in this epic (a later task, M3,
-adds them) — this section describes what the contract requires once they land; until then,
-re-read the "Hard rules" above by hand before you emit your manifest and verdict. If a
-`check-result.json` from a previous attempt already exists in your checkpoint directory
+(`intake` runs `intake-check --dry-run` the same way, in place of `ckpt-check`.) Both
+subcommands are real and shipped — actually run this before you finish, don't just re-read the
+"Hard rules" above by hand. If a `check-result.json` from a previous attempt already exists in
+your checkpoint directory
 (`{{ instance_dir }}/outputs/checkpoints/<your-checkpoint-id>/check-result.json`), read it
 first — it names exactly which rule failed last time.
 

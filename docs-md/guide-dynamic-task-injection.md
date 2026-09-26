@@ -272,6 +272,60 @@ To bound nesting depth and prevent runaway fan-out, track `injected_task_count` 
 file and use the builtin breaker (see the `circuit_breakers` section in the next epic task) to
 halt if the count exceeds a threshold.
 
+**Recursive emission (a chain of emitters of unknown length).** An emitter can inject the *next*
+emitter along with its own work, and so on for as many rounds as the run needs. The builtin
+`overseer-runner` template does this: each checkpoint `ck-K` emits wave K+1's units plus
+`ck-(K+1)`, and the last checkpoint emits the close-out tail instead. With recursion you **cannot
+author a static tail task**. It could only `depends_on` the first emitter, because later ids don't
+exist yet. It would become ready right after that emitter and fail on `missing_inputs`, because its
+input's producer is injected K levels later. Put the terminal tasks inside the final emission. The
+single-level fixed-aggregator trick above works only because the aggregator is injected by the
+static task's *direct* predecessor.
+
+---
+
+## Settle ordering: injection is persisted before circuit breakers are evaluated (G5)
+
+When an `emit_tasks` task succeeds, the engine reads its manifest and injects the tasks **before**
+it saves run state and **before** it evaluates circuit breakers. The success and the injection land
+in one `state.json` save. The code is `engine.py::_settle_completed_task`: the injection block
+(manifest read, isolation re-validation, `_inject`, order recompute) is at L2014-2065, the single
+`self._runstate.save(state)` is at L2067, and `evaluate_breakers` is at L2088. Commit `2387503`,
+ADR-0016 D7.
+
+**Why it matters.** Before this fix the order was save → breakers → inject. A breaker that tripped
+at an emitter's boundary (a cost cap, a `stop_file`, `injected_task_count`), or a crash between the
+save and the injection, persisted the emitter as `succeeded` **without** its injected tasks. On
+resume, `prepare_resume` never re-runs a succeeded task whose outputs exist, so the manifest was
+never read again. The resumed run could then finish `succeeded` with the whole fan-out silently
+missing. This affected any emitter, including `routed-runner`'s `task-breakdown`.
+
+**What you see now**
+- A breaker that trips at an emitter's boundary still halts the run before any injected task
+  dispatches, so containment is unchanged. The injected tasks are already in
+  `state.json.injected_tasks` (their runtime status is `pending` in `state.json.tasks`).
+- `injected_task_count` now counts an emission at the emitter's own boundary, one boundary earlier
+  than before.
+- A manifest-read, isolation-validation, or injection error still fails the emitter and halts,
+  exactly as before. Breakers are not evaluated on that boundary.
+- The `task.injected` `run.log` line is still written only *after* breakers pass (L2129-2137). If a
+  breaker trips at the emitter's boundary, the injection is persisted but that log line is **not**
+  written. Check `state.json` to see what was injected.
+
+**Resume consequence: resume finds the tasks, but it does not override the breaker's reason.** A
+plain `ao resume` after such a trip sees the previously injected tasks as `pending` and dispatches
+them. Breakers **latch** (an id already in `tripped_breakers` is never recorded again,
+`breakers.py:603`), so the engine does not re-halt for the same breaker. That does **not** mean the
+pending work goes through. If the tasks have their own guard, such as `overseer-runner`'s
+`ov-unit-gate` pre-hook, which refuses at $0 while spend ≥ budget, each one re-fails for as long as
+the condition holds, and the run halts again. A plain resume only retries them. To get past a real
+budget trip you must change the condition. In `overseer-runner` that means either
+`overseer_tool.py request-closeout --reason …` (skip the pending units and force close-out), or
+`control/budget-override.json` plus
+`ao resume --extend-breaker run-budget-backstop --extend-by-same` (or `--extend-by-seconds <usd>`).
+Without such a guard, a plain resume after a latched trip will simply run the pending tasks with no
+engine-side wall. Keep that in mind when you rely on a breaker as a budget stop.
+
 ---
 
 ## Gotchas
@@ -293,8 +347,9 @@ halt if the count exceeds a threshold.
   cleanly (`InjectionError`, not a crash). Namespace by something the emitting agent controls and
   knows is unique, e.g. `subreview-<module-name>` or `fix-<finding-id>`, not a bare counter that
   could collide across re-runs or nested emitters.
-- **There's no built-in cap on fan-out width or nesting depth.** If runaway fan-out is a concern,
-  bound it in the instruction file itself (e.g. "emit at most 8 sub-review tasks; if more than 8
+- **There's no schema-level cap on fan-out width or nesting depth.** The only built-in bound is on
+  the *total* count, the `injected_task_count` circuit-breaker condition (see "Nested emission"
+  above). If runaway fan-out is a concern, also bound each manifest in the instruction file itself (e.g. "emit at most 8 sub-review tasks; if more than 8
   modules qualify, pick the 8 highest-risk ones and note the rest were skipped").
 - **Token/rate budgets apply to injected tasks exactly like static ones.** If `workflow.json`
   declares a `budget` block, a wide fan-out consumes it proportionally and can trip
@@ -302,7 +357,9 @@ halt if the count exceeds a threshold.
   fan-out width is agent-decided.
 - **Resume works correctly with partially-completed fan-outs.** Injected tasks are persisted in run
   state, so if a run is interrupted with 2 of 3 sub-reviews done, `ao resume` skips the completed
-  ones and continues from there — you don't lose the fan-out on resume.
+  ones and continues from there — you don't lose the fan-out on resume. Since the G5 settle-ordering
+  fix, this also holds when a breaker trips, or the process crashes, at the emitter's own boundary
+  (see "Settle ordering" above). Before that fix, that case could silently drop the whole emission.
 
 ---
 

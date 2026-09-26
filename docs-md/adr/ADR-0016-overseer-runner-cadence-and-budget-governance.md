@@ -1,6 +1,10 @@
 # ADR-0016 — Overseer-runner: structural cadence, agent-level budget governance, template-shipped deterministic tool, and emit-before-breakers settle ordering
 
-- Status: **Accepted (design)** (2026-09-26). Implementation is tracked in `E-YAAGhk-overseer-runner-template`
+- Status: **Accepted (implemented)**. Accepted as a design on 2026-09-26. Implemented in
+  `E-YAAGhk-overseer-runner-template` on `ad/overseer-runner-workflow` and reconciled on 2026-09-27
+  (`T-gbccdr-docs-refresh`; see "Implementation outcome and follow-ups" at the end and
+  `docs-md/overseer-runner-hld.md` §26). D1-D9 shipped as decided. FR-15's nested expanders (under
+  D1) did not ship.
 - Deciders: `architect`, with Phase-4 consultations (manager, developer, reviewer, tester,
   dev-security, dev-critic). The record is in `docs-md/overseer-runner-hld.md` §23.3
 - Related: ADR-0004 (guardrail modes `hard|recommend`), ADR-0007 (barrier scheduling for
@@ -51,6 +55,8 @@ rejected (ADR-0015 D2). The user fixed three scoping decisions: same-run recursi
   `overseer_effort` param don't give.
 - **Consequences**: the overseer shares `manager`'s executor/model config. Workspaces that want a
   different model for it can change `manager`, or a future param can add a per-checkpoint `model`.
+  (**Implemented:** the `overseer_model` param shipped in Rev 2. OV-R10 requires `model` on `ck-*`
+  exactly when it is set.)
 
 ## D4 — Deterministic logic lives in a stdlib tool shipped *per run instance* by the template, invoked via `pre_hook`/`post_hook`
 
@@ -117,10 +123,12 @@ rejected (ADR-0015 D2). The user fixed three scoping decisions: same-run recursi
   that the halt is now resumable *with* the emission.
 - **Consequences**:
   - `injected_task_count` sees an emission at the same boundary, so a runaway is detected one
-    boundary earlier. Two named tests change, and the release note says so.
+    boundary earlier. Two named tests change, and the release note says so. (**As shipped:** no
+    existing test changed; see follow-ups.)
   - A manifest-read error halts that boundary without evaluating breakers.
   - `routed-runner`'s latent exposure at `task-breakdown` is fixed too.
-  - This change ships as its own PR ahead of the template.
+  - This change ships as its own PR ahead of the template. (**As shipped:** it is commit `2387503`
+    on the epic branch, by user decision; see follow-ups.)
   - **Latch semantics are unchanged.** A plain resume after a trip now dispatches the persisted
     injected tasks, where before it dispatched nothing (because the emission was lost). Re-arming a
     tripped hard breaker on a plain resume would change resume semantics for every workflow.
@@ -156,3 +164,49 @@ rejected (ADR-0015 D2). The user fixed three scoping decisions: same-run recursi
   That is accepted (NFR-X11). The engine-side backstop and per-task cap remain the only hard cost
   containment. The design aims to make honest-but-confused LLM behavior fail loudly and
   deliberate tampering visible, not impossible.
+
+## Implementation outcome and follow-ups (2026-09-27, T-gbccdr)
+
+All MVP tasks are Done. The decisions held, and the code matches D1-D9. The full list of deviations,
+with file:line evidence, is in `docs-md/overseer-runner-hld.md` §26. The ones that bear on this ADR:
+
+- **D2, confirmed by e2e**: after a `run-budget-backstop` trip, a plain `ao resume` does **not**
+  reach close-out. Every pending unit re-fails `ov-unit-gate` with `BUDGET:` at $0. Close-out needs
+  `overseer_tool.py request-closeout --reason …`, or continuing needs `control/budget-override.json`
+  plus `ao resume --extend-breaker run-budget-backstop --extend-by-same` (or `--extend-by-seconds
+  <usd>`; the CLI requires one of the two).
+- **D2, field finding (T-23yMMB live smoke run)**: the stage machine's intake projection uses the
+  hardcoded `default_unit_cost_usd=8`/`default_ckpt_cost_usd=5` and the configured `wave_size`.
+  That creates a hard floor: intake cannot emit wave 1 unless
+  `run_budget_usd > (wave_size*8 + 5 + tail*8) * 100 / closeout_pct`, which is about $81 at the
+  defaults. Real toy-task unit cost was about $0.3-0.4. The decision stands. The constants are the
+  problem.
+- **D3, field finding**: checkpoint cost was 14.8-16.8% of run spend at `overseer_effort=high` on a
+  toy run, above the ~10% NFR-8 target. Use `overseer_effort=medium` for small runs.
+- **D4**: the rule ids shipped as specified, with one naming correction. A dangling `depends_on` on
+  the *next checkpoint* is **OV-R10** (`_check_next_checkpoint_shape`). OV-R8 covers unit entries
+  only. The operator-facing refusals print bare `HOLD:`/`BUDGET:`/`FANOUT:` prefixes.
+- **D7**: the ordering shipped as decided (`engine.py::_settle_completed_task`: inject at
+  L2014-2065, single save at L2067, `evaluate_breakers` at L2088). It was delivered as commit
+  `2387503` on the epic branch, not as a separate PR. No existing test changed. The `task.injected`
+  log line is still written only after breakers pass (L2129-2137), so a trip at the emitter boundary
+  persists the injection without logging it.
+
+**Follow-ups (not in this epic):**
+1. Expose `default_unit_cost_usd`/`default_ckpt_cost_usd` as template params, or lower them to about
+   $1-2, so small budgets can run (D2).
+2. Re-measure the overseer cost share on a real epic-scale run. Consider defaulting
+   `overseer_effort` to `medium` (D3).
+3. Integrity-lock `overseer-config.json`'s `kind_map` at intake, as `charter.lock.json` locks the
+   charter (security N2, D9).
+4. Add `--` (or hex-SHA validation) before the revision argument in `_git_changed_paths`'s
+   `git diff` (security N3).
+5. Make OV-R12 also validate the verdict's `checkpoint`/`stage` echo fields.
+6. Add `--extend-by-same|--extend-by-seconds` to `unit-gate`'s `BUDGET:` message.
+7. Fix the stale "not yet implemented" text in the template README "Preflight" and in
+   `overseer-contract.md.tmpl` "Forthcoming".
+8. FR-15 nested expanders (`T-zLHc7Q`). Until then, keep `max_expanders_per_wave: 0`, because the
+   `ov-expander-check` hook points at a subcommand that does not exist yet.
+9. Carried forward from D7: `ao resume` should refuse when a tripped `mode: hard` breaker has not
+   been extended (engine-wide). NFR-X6: a first-class `paused` run status for holds (D6).
+10. Engine-wide: `ao new` has no rollback on a partial scaffolding failure (pre-existing).

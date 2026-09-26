@@ -84,6 +84,11 @@ Generous by policy — the run should stop on real problems, not on tight defaul
   deliberately: a *skipped* `emit_tasks` task never re-injects its manifest, which
   would strand the aggregator and fail the run on any re-run; the final verdict tasks
   must always re-verify rather than trust a stale report from an earlier attempt.
+  The engine's G5 settle-ordering fix (E-YAAGhk, ADR-0016 D7) also closed a latent gap at
+  this emitter boundary. A breaker trip, or a crash, at `task-breakdown`'s own settle used to
+  persist it as `succeeded` without its injected per-task fan-out, which a resume then silently
+  lost. Now the injection is saved before breakers are evaluated, so resume sees those tasks as
+  pending (see `docs-md/guide-dynamic-task-injection.md`, "Settle ordering").
   `git-branch-off` and `classify` are `skip_if_outputs_exist: false` for the same
   reason — a skipped router never routes, and branch state must be re-verified on
   every run.

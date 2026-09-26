@@ -240,14 +240,29 @@ to change already-locked facts about the run in progress (the charter lock only 
 
 ## Preflight
 
-**Current epic status: not yet runnable end to end.** `intake`'s `post_hook` and every
-checkpoint's `pre_hook`/`post_hook` wire to `ov-intake-check`/`ov-ckpt-check` (and
-`ov-expander-check`), but the `intake-check`/`ckpt-check`/`expander-check` subcommands they
-invoke don't exist in `tools/overseer_tool.py` yet — they land with the M3 checker tasks
-(`T-HPJcc6`/`T-tAKBBB`). Until then, `ao run` on a freshly-scaffolded instance will fail
-`intake`'s post_hook immediately. `intake-prep`, `ckpt-prep`, and `unit-gate` (the pre_hooks) are
-real today. See `overseer-contract.md`'s own "Self-check" section for the same caveat from the
-emitting agent's point of view.
+**Current epic status: implemented and runnable end to end.** `intake-prep`/`intake-check`,
+`ckpt-prep`/`ckpt-check`, and `unit-gate` are all real and shipped (`T-ABDjSj`/`T-C6uQJW`/
+`T-HPJcc6`/`T-tAKBBB`). The full intake → wave → checkpoint → (hold | budget-stage | close-out
+tail) cycle is proven both by scripted e2e tests exercising the real checker/hook subprocesses
+(`tests/test_e2e_builtin_overseer_runner.py`, `tests/test_e2e_overseer_runner_failures.py`) and
+by a live run with real `claude_cli` agents (`T-23yMMB`; see
+`output/E-YAAGhk-overseer-runner-template/smoke/summary.md`). The one exception: **`expand`-kind
+units and `max_expanders_per_wave > 0` are NOT implemented** — `workflow.json.tmpl` declares an
+`ov-expander-check` hook, but no `expander-check` subcommand exists in `tools/overseer_tool.py`
+(FR-15 is deferred, MVP-Should, below this epic's cut line). Leave `max_expanders_per_wave` at
+its default `0`; setting it higher will fail at run time, not at `ao validate` time.
+
+**Budget floor caveat (from the live smoke run, `T-23yMMB`)**: `default_unit_cost_usd`/
+`default_ckpt_cost_usd` (in `overseer-config.json.tmpl`, not exposed as `ao new --param`
+overrides) set a real, non-obvious floor on viable `run_budget_usd` — intake's own
+projected-cost gate uses these hardcoded defaults (not real per-unit cost, which may be far
+cheaper) before any wave is emitted, and `compute_allowed_wave_size` returns 0 (no wave at all)
+if the projection lands in the `closeout` band. For `wave_size=3`/`final_push=true`, this floor
+is ~$67 for `run_budget_usd` to reach `explore` at all (~$59 for `converge`); scale down
+proportionally for smaller `wave_size`/`final_push=false`. A too-small `run_budget_usd` (e.g.
+picked to match a tiny toy task's real expected cost) will block `intake` from emitting any wave,
+regardless of how cheap the real work turns out to be. See `overseer-runner-hld.md` §26
+"Deviations from design" for the full derivation.
 
 `python_bin` (default `python3`) must resolve to Python ≥ 3.11 on the PATH the `ao`
 service's hooks inherit — every hook (`ov-intake-prep`, `ov-ckpt-prep`, `ov-unit-gate`, …)

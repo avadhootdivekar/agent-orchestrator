@@ -2,8 +2,16 @@
 
 - Epic: [`E-YAAGhk-overseer-runner-template`](../meta/tickets/E-YAAGhk-overseer-runner-template/EPIC.md)
 - ADR: [`ADR-0016`](adr/ADR-0016-overseer-runner-cadence-and-budget-governance.md)
-- Status: **Design Rev 2 (after the Phase-4 consultations recorded in §23.3); not yet implemented**
-- Author: `architect` · Date: 2026-09-26 · Branch: `ad/overseer-runner-workflow` (cut from `main` @ `8c13320`)
+- Status: **Implemented** (MVP; reconciled against the code on `ad/overseer-runner-workflow` @ `0fb60aa`
+  on 2026-09-27 by `T-gbccdr-docs-refresh`). The design text is **Design Rev 2** (after the Phase-4
+  consultations recorded in §23.3). Where the shipped code differs, the difference is recorded in
+  **§26 Deviations from design** and not silently rewritten. FR-15 (nested expanders, `T-zLHc7Q`) is
+  **not implemented** (MVP-Should, below the cut line; see §26 DV-7).
+- Author: `architect` · Date: 2026-09-26 (design) / 2026-09-27 (reconciliation) · Branch: `ad/overseer-runner-workflow` (cut from `main` @ `8c13320`)
+
+> **Read §26 first if you are operating this template.** The most important field finding is that
+> the hardcoded `default_unit_cost_usd=8`/`default_ckpt_cost_usd=5` put a hard floor on a viable
+> `run_budget_usd` (about $81 at the default `wave_size=6`); below it intake cannot emit wave 1 (§26 DV-1).
 
 > Every engine claim below was checked against source at `8c13320`. The one engine defect this
 > design depends on fixing (§7.4, **G5**) was **reproduced empirically**. The repro is at
@@ -63,7 +71,7 @@ trip at a checkpoint silently truncates the run on resume.
 | FR-12 | **Close-out report**: `outputs/final/closeout.md` states per ask what is done, what is usable, what is not done, and how to continue. `outputs/final/verify.md` gives the honest verification status | instruction content + e2e presence |
 | FR-13 | **Engine fix (G5)**: an `emit_tasks` task's manifest injection is persisted in the same `RunState` save as its success, *before* circuit-breaker evaluation. A breaker trip at an emitter's boundary never loses the emission | engine unit test (the repro above flips to pass) |
 | FR-14 | README documents the route, params, breaker rationale, budget stages, hold workflow, the three engine gaps and how the design avoids them, and isolation guidance | README-section tests |
-| FR-16 | **Budget override (Rev 2: promoted to MVP, per manager)**: `control/budget-override.json` (`{"run_budget_usd": <n>, "reason": ...}`) re-bases stage computation and un-latches the stage. It is **honored only if** `state.json.breaker_overrides["run-budget-backstop"] ≥ n`, so the operator must also have run `ao resume --extend-breaker run-budget-backstop` (an engine-recorded operator act; dev-security #4). Every application is recorded in the hash-chained ledger | tool tests (honored / refused-without-extension / lower budget) |
+| FR-16 | **Budget override (Rev 2: promoted to MVP, per manager)**: `control/budget-override.json` (`{"run_budget_usd": <n>, "reason": ...}`) re-bases stage computation and un-latches the stage. It is **honored only if** `state.json.breaker_overrides["run-budget-backstop"] ≥ n`, so the operator must also have run `ao resume --extend-breaker run-budget-backstop` plus exactly one of `--extend-by-same`/`--extend-by-seconds <usd>` (the CLI requires one; §26 DV-12) (an engine-recorded operator act; dev-security #4). Every application is recorded in the hash-chained ledger | tool tests (honored / refused-without-extension / lower budget) |
 | FR-17 | **Live smoke run (Rev 2: promoted to MVP, per manager and critic)**: real `claude_cli`, a toy two-ask prompt, `run_budget_usd` about $25, scaled-down stage thresholds. The evidence (ledger, digests, verdicts, closeout, cost split overseer vs work) goes under `output/`. This is the only validation of NFR-8 and of real-LLM contract adherence | evidence files + recorded numbers |
 | FR-19 | **Operator close-out on demand (Rev 2, found while specifying e2e (e))**: `overseer_tool.py request-closeout --workspace-root … --instance-dir … --reason <text>`. It refuses unless `state.json.status ∈ {failed, cancelled}` (the run must be halted, so it can't race in-flight dispatch). For every **pending** wave unit it writes a `no_op` report and breadcrumb ("skipped: operator requested close-out"), and it appends the chained ledger event `forced_closeout`. On `ao resume` the engine **skips** those units at dispatch ($0; `skip_if_outputs_exist: true` + outputs present, `engine.py:1007` / `runstate.should_skip`) *before* their unit-gate pre-hook. The next checkpoint's digest has `must_close` (reason `forced_closeout`), so only the close-out tail runs. It serves two cases: the post-backstop close-out without more work, and "stop now, but leave it usable" at any time | tool test + e2e (e) |
 | FR-18 | **Unit budget gate (Rev 2, from the critic's latch finding)**: every wave unit carries `pre_hook: ov-unit-gate`, which fails at $0 if `spent ≥ effective budget` (config budget or an honored override). Breakers **latch** (`breakers.py:603`, which records each id at most once), so after a backstop trip a *plain* `ao resume` would otherwise run the pending wave with no wall. With the gate, a plain resume refuses the first pending work unit at $0 (`BUDGET:` failure → halt). The operator then chooses FR-19 close-out or extend+override | tool test + e2e (e) |
@@ -72,7 +80,7 @@ trip at a checkpoint silently truncates the run on resume.
 
 | ID | Requirement |
 |----|-------------|
-| FR-15 | **Nested sub-DAGs (depth 2)**: a wave unit of kind `expand` (`emit_tasks: true`) emits ≤ `sub_wave_size` leaf units plus one fixed-id sub-aggregator `<unit>--done`. The checkpoint waits on it through a pre-declared input path (inferred edge). Leaves may not expand (depth cap). `max_expanders_per_wave: 0` disables it |
+| FR-15 | **Not implemented (T-zLHc7Q still Draft at epic close; §26 DV-7). Keep `max_expanders_per_wave: 0`.** Design: **Nested sub-DAGs (depth 2)**: a wave unit of kind `expand` (`emit_tasks: true`) emits ≤ `sub_wave_size` leaf units plus one fixed-id sub-aggregator `<unit>--done`. The checkpoint waits on it through a pre-declared input path (inferred edge). Leaves may not expand (depth cap). `max_expanders_per_wave: 0` disables it |
 
 **Non-MVP (deferred, with reasoning)**
 
@@ -101,7 +109,7 @@ trip at a checkpoint silently truncates the run on resume.
 | NFR-5 | **Stdlib only**, Python ≥ 3.11 (matching `requires-python`). No `{{ ident }}` sequences in the tool source, because it is rendered through `_render` |
 | NFR-6 | **Bounded input**: every agent-authored JSON the tool reads has a 1 MiB cap (mirrors `MAX_CONTROL_FILE_BYTES`). Content hashing covers ≤ 200 paths and skips files > 50 MiB |
 | NFR-7 | **Backward compatibility**: `routed-runner` and every existing workflow behave byte-identically, *except* for the intended G5 ordering fix |
-| NFR-8 | **Cost overhead**: overseer checkpoints cost ≤ ~10% of run spend at defaults (target, measured in the FR-17 smoke run) |
+| NFR-8 | **Cost overhead**: overseer checkpoints cost ≤ ~10% of run spend at defaults (target, measured in the FR-17 smoke run). **Measured (T-23yMMB): 14.8% and 16.8%** on a toy 1-wave/3-unit run with the default `overseer_effort=high`, so the target was **not met at toy scale**. Tuning note: use `--param overseer_effort=medium` for small runs; re-measure at real-epic scale, where more units per checkpoint should amortize the fixed per-checkpoint cost (§26 DV-2) |
 | NFR-9 | **Legibility**: a reviewer or operator can reconstruct "why did the run do X" from `ledger.jsonl` + `checkpoints/ck-*/{digest,verdict,report}` alone |
 
 ---
@@ -228,7 +236,7 @@ We will:
 | **G2** | **Breaker actions are flat**: `fail/stop/pause` all map to "halt, resumable `failed`" (`breakers.map_action`), with no "run X then halt" | Graceful degradation is **agent-level self-governance**. The overseer reads projected spend at every checkpoint and moves explore→converge→stabilize→closeout *before* the budget is exhausted. The single `run_cost_usd` breaker at 100% is `mode: "hard"`, only a backstop for when self-governance fails (for example a crash or runaway unit) | None |
 | **G3** | **Monitor ABC is shallow**: it sees only trip/failure summaries, has a fixed verdict space, cannot inject, and has no pulse | The overseer is a **plain author-defined agent task** (`manager` role) with an explicit contract. It reads a digest built from `state.json`, the ledger, and git hashes by a deterministic tool running as its `pre_hook` | None |
 | **G4** | **Grading is post-run only** (ADR-0015 D2 rejected an in-engine mid-run settlement hook) | Mid-run evaluation happens in the checkpoint task itself (`pre_hook` digest → LLM judgment → `post_hook` check), which is the sanctioned pattern. Nothing from the rejected design comes back. Hooks run inside the checkpoint's own dispatch, in the checkpoint's own shared checkout (checkpoints are forced `isolation: none`) | None |
-| **G5** | **Emission lost on a breaker trip or crash at the emitter's settle** (new finding). `Orchestrator._settle` saves the emitter as `succeeded` (engine.py ~L1992), evaluates breakers (~L2008), and returns `halt` **before** the `emit_tasks` block (~L2057). `prepare_resume` keeps a succeeded task with its outputs present, so the manifest is **never read again**. The resumed run ends **`succeeded`** with the recursion silently truncated. The same happens on a process crash between the two saves | Unavoidable at template level. Every wave boundary in this design is an emitter settle, and the $ backstop is most likely to trip exactly near budget exhaustion, which is when graceful close-out matters most. A template-only workaround (a `recommend`-mode backstop) would let spend reach 2× the budget. **Fix (T-pYt478):** run the `emit_tasks` injection *before* the save+breaker block, so success and injection persist in one save. A breaker then halts with the injected tasks `pending`, and resume runs them. This also fixes a latent `routed-runner` bug (a trip at `task-breakdown`'s settle) | **Yes, small and separately scoped** (§8.6) |
+| **G5** | **Emission lost on a breaker trip or crash at the emitter's settle** (new finding). `Orchestrator._settle` saves the emitter as `succeeded` (engine.py ~L1992), evaluates breakers (~L2008), and returns `halt` **before** the `emit_tasks` block (~L2057). (These are the pre-fix line numbers at `8c13320`. For the shipped ordering, see §26 DV-5.) `prepare_resume` keeps a succeeded task with its outputs present, so the manifest is **never read again**. The resumed run ends **`succeeded`** with the recursion silently truncated. The same happens on a process crash between the two saves | Unavoidable at template level. Every wave boundary in this design is an emitter settle, and the $ backstop is most likely to trip exactly near budget exhaustion, which is when graceful close-out matters most. A template-only workaround (a `recommend`-mode backstop) would let spend reach 2× the budget. **Fix (T-pYt478):** run the `emit_tasks` injection *before* the save+breaker block, so success and injection persist in one save. A breaker then halts with the injected tasks `pending`, and resume runs them. This also fixes a latent `routed-runner` bug (a trip at `task-breakdown`'s settle) | **Yes, small and separately scoped** (§8.6) |
 
 ---
 
@@ -268,7 +276,7 @@ anomalous).
 ### 8.2 Budget self-governance (the stage machine)
 
 ```
-Inputs:  B = run_budget_usd (or budget-override), spent = status.usage_totals.cost_usd,
+Inputs:  B = run_budget_usd (or budget-override), spent = Σ state.json tasks[*].cumulative_cost_usd (A-2),
          pct = {converge: c, stabilize: s, closeout: x}   (validated 0 < c < s < x < 100)
          est_unit = median(cost of settled wave units in the last 2 waves) else default_unit_cost_usd
          est_ckpt = median(cost of settled ck-*) else default_ckpt_cost_usd
@@ -589,7 +597,7 @@ Specified concretely in §13–§15 and the task tickets. Instruction set (mater
 | `10-work-unit.md` | every `w*` unit of kind research/design/implement/test/review/fix/document/verify | architect/developer/tester/reviewer per kind map |
 | `11-stabilize-unit.md` | kind `stabilize` | developer |
 | `20-checkpoint.md` | `ck-*` | manager |
-| `30-expander.md` / `31-sub-aggregate.md` | kind `expand` / `<unit>--done` (FR-15) | architect / manager |
+| `30-expander.md` / `31-sub-aggregate.md` | kind `expand` / `<unit>--done` (FR-15) | architect / manager — **not shipped** (T-zLHc7Q; §26 DV-7) |
 | `40-final-verify.md` | `final-verify` | tester |
 | `41-closeout.md` | `closeout` | manager |
 | `90-final-push.md` | `final-push` | git-operator |
@@ -661,6 +669,12 @@ loop-gate hook (unchanged; emit tasks are never loop gates per spec.py rule)
 - **Delivery (manager #6).** T-pYt478 merges to `main` as its **own PR ahead of the template PR**,
   so `routed-runner` gets the fix independently of template review churn. The release note says the
   `injected_task_count` trip now happens one boundary earlier (critic #6).
+  **As shipped (§26 DV-5):** the user decided against a standalone PR. The fix is commit `2387503`
+  on the epic branch (cherry-picked from `3692eac`), to be called out as a separately revertable
+  unit in the epic PR. No existing test needed changing, so no NFR-2 allowlist entry was added.
+  The implemented ordering is in `engine.py::_settle_completed_task` (L1380): the injection block
+  at L2014-2065, one `self._runstate.save(state)` at L2067, then `evaluate_breakers` at L2088
+  (halt at L2117), and the `task.injected` log line plus `reshaped` return at L2129-2137.
 
 ### 8.5 Error / idempotency / versioning model
 
@@ -670,7 +684,7 @@ loop-gate hook (unchanged; emit tasks are never loop gates per spec.py rule)
 | Unit forgets its breadcrumb/report | Engine `missing_outputs` → task failed → retry/halt (FR-5 enforcement) |
 | Emitter writes a malformed manifest | Its own post-hook check fails → task `failed` (no injection) → halt. Resume re-runs the emitter (a failed task goes back to `pending`), and the agent sees `check-result.json` in its checkpoint dir (the instruction tells it to read the previous result if present) |
 | Tool internal error | exit 1 → the pre/post hook fails the task → halt (fail-closed) |
-| Budget backstop trips mid-wave | Run halts `failed` (resumable). With G5, pending emitted tasks survive. Because breakers latch, a **plain** `ao resume` has no engine wall any more. The FR-18 unit gate refuses the first pending unit at $0 with a `BUDGET:` failure, which halts the run again. The checkpoint depends on those units, so it is **not** reached (corrected in Rev 2; e2e (e) pins it). The `BUDGET:` message names the operator's two options: **(1) close out without more work**: `overseer_tool.py request-closeout` (FR-19), then `ao resume`, which skips the pending units at $0 and forces the next checkpoint to emit the tail; or **(2) continue working**: write `control/budget-override.json` **and** run `ao resume --extend-breaker run-budget-backstop` (the override is honored only when both are present) |
+| Budget backstop trips mid-wave | Run halts `failed` (resumable). With G5, pending emitted tasks survive. Because breakers latch, a **plain** `ao resume` has no engine wall any more. The FR-18 unit gate refuses the first pending unit at $0 with a `BUDGET:` failure, which halts the run again. The checkpoint depends on those units, so it is **not** reached (corrected in Rev 2; e2e (e) pins it). The `BUDGET:` message names the operator's two options: **(1) close out without more work**: `overseer_tool.py request-closeout` (FR-19), then `ao resume`, which skips the pending units at $0 and forces the next checkpoint to emit the tail; or **(2) continue working**: write `control/budget-override.json` **and** run `ao resume --extend-breaker run-budget-backstop --extend-by-same` (or `--extend-by-seconds <usd>`; the CLI requires one of the two) (the override is honored only when both are present). **A plain `ao resume` never reaches close-out on its own** while spend ≥ the effective budget: it re-fails the pending unit's `ov-unit-gate` every time (verified by e2e `test_scenario_e_backstop_g5_unit_gate`) |
 | Hold | `ck-(K+1)` pre-hook exits 2 with a `HOLD:`-prefixed message → the task shows failed, attempts=0, $0 (it also adds 1 to the `consecutive_failures` streak). Answer, then `ao resume` |
 | Re-running `ao new` on an existing instance | Per `routed-runner`: the rendered contract/config/tool are overwritten (`files`), `prompt.md` is kept. **Do not re-render mid-run**, because the charter lock detects a changed prompt and the tool/contract version would change under a live run. README warning |
 | Versioning | Artifact schemas `…/v1`. Template `version: "1.0"`. The contract and tool carry `contract_version: 1` and cross-check it (VER-1) |
@@ -782,8 +796,8 @@ sequenceDiagram
   participant E as Engine
   participant T as tool
   participant C as ck-K
-  C-->>E: manifest with dangling depends_on
-  E->>T: ckpt-check → exit 2 (R8)
+  C-->>E: manifest whose next-checkpoint entry has a dangling depends_on
+  E->>T: ckpt-check → exit 2 (OV-R10; a UNIT entry's dangling depends_on is OV-R8, see §26 DV-4)
   E->>E: ck-K failed, no injection, run failed (resumable)
   Note over E: ao resume → ck-K re-dispatched; reads previous check-result.json; fixes
   C-->>E: verdict(hold) + ck-(K+1) empty wave + control/hold-request.json
@@ -792,7 +806,7 @@ sequenceDiagram
   E->>E: run_cost_usd ≥ budget at ck-K settle → (G5) injection already saved → halt
   Note over E: plain resume → first pending unit fails ov-unit-gate (BUDGET:, $0) → halt
   Note over E: operator: request-closeout → resume → pending units skipped ($0) → ck forced closeout → tail
-  Note over E: OR operator: budget-override + --extend-breaker → resume continues real work
+  Note over E: OR operator: budget-override + --extend-breaker … --extend-by-same → resume continues real work
   Note over E: cancel (ao cancel / halt.flag): halt at next boundary; resume continues
 ```
 
@@ -809,7 +823,8 @@ id_pattern: "o-{rand6}-{slug}"
 instance_dir: "workflows/overseer-runner/runs/{id}"
 params:
   repo_set:              {required: true}
-  run_budget_usd:        {default: "2000"}   # total USD; 100% = hard backstop
+  run_budget_usd:        {default: "2000"}   # total USD; 100% = hard backstop. Floor: > (wave_size*8 + 5 + tail*8)*100/closeout_pct
+                                             # with the shipped default_*_cost_usd, e.g. > ~$81 at wave_size=6 (§26 DV-1)
   task_budget_usd:       {default: "75"}     # per-task cap (recommend, as routed-runner)
   converge_pct:          {default: "80"}
   stabilize_pct:         {default: "90"}
@@ -821,7 +836,7 @@ params:
   max_expanders_per_wave: {default: "0"}     # FR-15 opt-in (MVP-Should); T-zLHc7Q documents enabling it (e.g. 1)
   max_injected_tasks:    {default: "160"}    # ≥ max_waves*(wave_size+1+exp*(4+1))+3 = 87 at exp=0, 147 at exp=1
   final_push:            {default: "true", enum: ["true", "false"]}
-  overseer_effort:       {default: "high", enum: [medium, high, xhigh]}
+  overseer_effort:       {default: "high", enum: [medium, high, xhigh]}   # measured 14.8-16.8% of spend on a toy run; prefer medium for small runs (§26 DV-2)
   overseer_model:        {default: ""}       # optional per-ck model override (critic #5); "" = inherit manager's
   python_bin:            {default: "python3"}
   branch_policy:         {default: ""}       # free-text git-branch-off guidance (mid-epic amendment, T-5ZzAZp); "" = auto-detect
@@ -959,7 +974,12 @@ consistency, including verified early closeout · R15 all JSON within 1 MiB, sch
 R16 `must_close` ⇒ `closeout`.
 
 **Namespacing (critic #3).** The checker prints every rule id with the `OV-` prefix (`OV-R8`,
-`OV-INT-2`, `OV-HOLD`), and the contract uses the same prefix, so these ids never collide with
+`OV-INT-2`), and the contract uses the same prefix. **As shipped (§26 DV-11):** the three
+operator-facing refusals print a bare, machine-matchable prefix instead (`HOLD:`, `BUDGET:`,
+`FANOUT:`), not `OV-HOLD`. `ckpt-prep`'s `prep-result.json` carries the bare `rule_id` (for example
+`HOLD`, `INT-4`). `unit-gate` writes no result file at all (`overseer_tool.py::unit_gate`, "writes
+NOTHING"), so a `BUDGET:`/`FANOUT:` refusal is visible only in the hook's stderr and task error,
+not in `state.json`. These ids never collide with
 engine rule ids (V1–V13, R-21, …). The `ao.overseer.*` schemas and `OV-*` ids are **internal to this
 template**, with no stability promise to other templates or tools (ADR-0016 D4).
 
@@ -1015,9 +1035,14 @@ hold-request (control/hold-request.json, ao.overseer.hold/v1)
   schema, checkpoint, created_at, questions: [str] (≥1), needs_input_path
 
 config (overseer-config.json, ao.overseer.config/v1) — rendered from params plus constants:
-  stall_waves 2, stabilize_wave_size 4, max_stabilize_passes 2, sub_wave_size 4,
-  default_unit_cost_usd 8, default_ckpt_cost_usd 5, runs_root ".orchestrator/runs", contract_version 1,
-  overseer_model (param), final_push (param, bool),
+  schema, contract_version 1,
+  params copied verbatim (as shipped): run_budget_usd, task_budget_usd, converge_pct, stabilize_pct,
+  closeout_pct, wave_size, max_waves, wave_max_minutes, max_attempts_per_item, max_expanders_per_wave,
+  max_injected_tasks, final_push (bool), overseer_effort, overseer_model, python_bin, branch_policy,
+  constants: stall_waves 2, stabilize_wave_size 4, max_stabilize_passes 2, sub_wave_size 4,
+  default_unit_cost_usd 8, default_ckpt_cost_usd 5, runs_root ".orchestrator/runs",
+  # default_*_cost_usd are NOT `ao new` params; they set the intake budget floor (§26 DV-1).
+  # Edit them in the rendered overseer-config.json before the first `ao run` if needed.
   kind_map: { research|design|expand: {agent: architect, instruction: .../10-work-unit.md | 30-expander.md},
               implement|fix|document: {agent: developer, instruction: .../10-work-unit.md},
               stabilize: {agent: developer, instruction: .../11-stabilize-unit.md},
@@ -1047,12 +1072,17 @@ config (overseer-config.json, ao.overseer.config/v1) — rendered from params pl
 - **Internal "events"** (closed enums, versioned with the artifact schemas): decisions
   `{continue, redirect, hold, stabilize, closeout}`; stages `{explore, converge, stabilize,
   closeout}`; signal types (§8.3); tool rule ids `CFG-*, ST-*, INT-*, BR-*, BC-*, VER-*, HOLD, R1–R16`.
-- Engine `run.log` events are unchanged. The G5 fix emits the existing `task.injected` event at the
-  same settle, before any `breaker.trip`.
+- Engine `run.log` events are unchanged. **Corrected in reconciliation (§26 DV-5):** the G5 fix
+  persists the injection *before* breaker evaluation, but the existing `task.injected` log line is
+  still written only *after* breakers pass (`engine.py` L2129-2137, next to the `reshaped` return).
+  When a breaker trips at an emitter's settle, the injection is in `state.json.injected_tasks` but
+  no `task.injected` line is logged for that boundary. Use `state.json`, not `run.log`, as the
+  evidence of what was injected.
 
 ## 16. Deployment / rollout / upgrade
 
-1. **G5 engine fix first** (T-pYt478), shipped independently. It is behavior-visible only when a
+1. **G5 engine fix first** (T-pYt478), shipped independently. (**As shipped:** on the epic branch as
+   commit `2387503`, not as a separate PR; see §26 DV-5.) It is behavior-visible only when a
    breaker trips or a crash happens at an emitter's settle, and it makes `routed-runner` safer. Tests
    are in the NFR-2 regression gate.
 2. **Template** ships as a new builtin (additive). `install.sh` users must re-run it (memory:
@@ -1084,9 +1114,9 @@ config (overseer-config.json, ao.overseer.config/v1) — rendered from params pl
 | Unit (tool) | Config validation (CFG-0..3), budget math as a table-driven matrix whose rows include: the $2000 example (§12.2), zero-cost first wave (defaults used), all-zero settled costs (zeros are real data), projection crossing a threshold, latch, honored/refused override, lower override. Also: cadence caps, each detector (scripted sequences for A→B→A→B, A→B→B→A, ABCD×2, oscillation via fake files and a git fixture repo, stall, starvation, breadcrumb_integrity incl. symlink escape + unknown repo_id), ledger idempotency + hash chain (INT-3), hold gate (HOLD / INT-2 deleted request / INT-4 stray request), unit gate (BUDGET/FANOUT), charter lock (INT-1), every rule R1–R16 + R13c pass+fail, size caps, **byte-reproducible digest** for fixed fixture + `--now`, and a `state.json` field contract test against `models.RunState` | `tests/test_overseer_tool_*.py`. The tool is imported from its **source path** `src/agent_orchestrator/templates/builtin/overseer-runner/tools/overseer_tool.py` via `importlib.util.spec_from_file_location` | ≥90% line coverage, measured with `pytest --cov=src/agent_orchestrator/templates/builtin/overseer-runner/tools` (path-based source, tester #5) |
 | Unit (engine) | G5: the repro inverted (injection survives a trip; resume runs children), crash-window single save, runaway detected at the same boundary, manifest-error path unchanged, documented plain-resume-after-trip behavior (latch unchanged) | `tests/test_emit_settle_atomicity.py` + updated suites listed in M5 | all new branches |
 | Template | Manifest params/defaults, rendered JSON validity + `ao validate` clean, breaker set/modes, hooks argv absolute, **render-then-`py_compile`** of the tool plus an assertion that `_VAR_RE` finds no match in its source (developer #5), contract kind-map table == config `kind_map` (reviewer #3), README sections present, wheel contains the tool | `tests/test_builtin_overseer_runner_assets.py` | — |
-| E2E core (T-WruPiv) | `CliRunner`: `ao new overseer-runner --param python_bin=<sys.executable>` → `ao run` / `ao resume`, with the scripted executor harness (below): (a) 2 waves + early verified closeout; (b) cost-scripted stage escalation explore→converge→stabilize→closeout; (c) malformed manifest with a **dangling `depends_on` (OV-R8)** → failed, no injection → corrected on resume; (d) hold → `HOLD:` failure at $0 → answer → resume, **asserting the ledger `unit` line count is unchanged across the re-run prep** (idempotency, tester #4) | `tests/test_e2e_builtin_overseer_runner.py` | all four |
-| E2E failure (T-vmI0jI) | (e) backstop trip at a checkpoint settle → injected tasks persisted (G5) → plain resume → the first pending unit fails `ov-unit-gate` with `BUDGET:` at $0 → `request-closeout` → resume → units skipped at $0 → the next checkpoint is forced to closeout → tail → `closeout.md` exists (G5 + FR-18 + FR-19 end to end); a variant runs extend+override instead and continues work; (f) scripted `period_repeat` → the verdict must answer it, an unanswered variant fails OV-R12; (g) cancel via `control/halt.flag` mid-wave → halt → resume continues without re-running settled units; (h) `max_parallel=2` (via `.ao/config.yaml` or the CLI flag) with two independent units in one wave → both settle before the checkpoint dispatches (the checkpoint is a barrier) | `tests/test_e2e_overseer_runner_failures.py` | all four |
-| Live (T-23yMMB, MVP) | FR-17 smoke (real claude, ≤$25) | evidence under `output/` | recorded, not CI |
+| E2E core (T-WruPiv) | `CliRunner`: `ao new overseer-runner --param python_bin=<sys.executable>` → `ao run` / `ao resume`, with the scripted executor harness (below): (a) 2 waves + early verified closeout; (b) cost-scripted stage escalation explore→converge→stabilize→closeout; (c) malformed manifest with a **dangling `depends_on` on the next-checkpoint entry (shipped rule: OV-R10, `_check_next_checkpoint_shape`; Rev 2 said OV-R8, which covers unit entries only, §26 DV-4)** → failed, no injection → corrected on resume; (d) hold → `HOLD:` failure at $0 → answer → resume, **asserting the ledger `unit` line count is unchanged across the re-run prep** (idempotency, tester #4) | `tests/test_e2e_builtin_overseer_runner.py` | all four |
+| E2E failure (T-vmI0jI) | (e) backstop trip at a checkpoint settle → injected tasks persisted (G5) → plain resume → the first pending unit fails `ov-unit-gate` with `BUDGET:` at $0 → `request-closeout` → resume → units skipped at $0 → the next checkpoint is forced to closeout → tail → `closeout.md` exists (G5 + FR-18 + FR-19 end to end); a variant runs extend+override instead and continues work; (f) scripted `period_repeat` → the verdict must answer it, an unanswered variant fails OV-R12; (g) cancel via `control/halt.flag` mid-wave → halt → resume continues without re-running settled units; (h) `max_parallel=2` (via `.ao/config.yaml` or the CLI flag) with two independent units in one wave → both settle before the checkpoint dispatches (the checkpoint is a barrier) | `tests/test_e2e_overseer_runner_failures.py` | all four. **As shipped:** (e) is split into three tests, `test_scenario_e_backstop_g5_unit_gate` (trip → plain resume → `BUDGET:` refusal), `test_scenario_e1_closeout_path` (`request-closeout`) and `test_scenario_e2_continue_override_path` (override + `--extend-breaker … --extend-by-seconds`). (e) had to render with `wave_size=1` because of the DV-1 projection floor |
+| Live (T-23yMMB, MVP) | FR-17 smoke (real claude, ≤$25) | evidence under `output/` | recorded, not CI. **Result:** 2 of 3 attempts reached `closeout.md`; $8.48 total spend; no organic stage transition beyond `explore` (§26 DV-1..DV-3; `output/E-YAAGhk-overseer-runner-template/smoke/summary.md`) |
 
 Determinism: `--now` injected, costs scripted, no network. All suites run under `pytest -q`, with
 `ruff`/`mypy` clean on new `.py` files (the tool included).
@@ -1104,7 +1134,12 @@ builds `FakeExecutor()` from its module global. The e2e therefore
 `monkeypatch.setattr(agent_orchestrator.executors, "FakeExecutor", ScriptedOverseerExecutor)`. That
 is a **test-local** subclass that calls `super().execute`, then overwrites the declared outputs,
 briefs, and the task manifest with scripted valid JSON keyed by task id, and returns a `TaskResult`
-with a scripted `cost_usd`. The CLI (`CliRunner` `ao new` → `ao run`/`ao resume`) stays the outer
+with a scripted `cost_usd`. **As shipped (harness gotcha, T-WruPiv):** it must also set
+`TaskResult.actuals_available = True` (`tests/overseer_runner_harness.py` L190-199). The engine only
+records a result's cost into run state when that flag is true (`models.py:868`; `engine.py:1613`,
+`engine.py:3015`), so without it `spent` stays 0 and budget staging silently does nothing. The
+harness also snapshots and restores the tool-written `digest.json` around `super().execute()`, so the
+stock stub never overwrites it. The CLI (`CliRunner` `ao new` → `ao run`/`ao resume`) stays the outer
 boundary. The e2e renders with `--param python_bin=<sys.executable>` so the hooks run under the test
 interpreter. No production executor change is needed.
 
@@ -1125,7 +1160,7 @@ interpreter. No production executor change is needed.
 | FR-12 | T-5ZzAZp | instruction content test; e2e presence |
 | FR-13 | T-pYt478 | `test_emit_settle_atomicity.py`; e2e (e) |
 | FR-14 | T-ltBLUY | README section tests |
-| FR-15 | T-zLHc7Q | expander-check tests; e2e variant |
+| FR-15 | T-zLHc7Q | expander-check tests; e2e variant. **Not delivered** (ticket still Draft; §26 DV-7) |
 | FR-16 | T-ABDjSj | override tests (honored / refused / lower) |
 | FR-17 | T-23yMMB | `output/E-YAAGhk-overseer-runner-template/smoke/` |
 | FR-18 | T-ABDjSj, T-HPJcc6 (R9), T-vmI0jI | unit-gate tests; e2e (e) |
@@ -1150,6 +1185,11 @@ interpreter. No production executor change is needed.
 | Are all failure scenarios handled? | **Yes** (§8.5, §12.3), with residual risks listed in §23 |
 
 **Verdict: ready for dev-epic decomposition and implementation**, with T-pYt478 (G5) scheduled first.
+
+*Post-implementation note (T-gbccdr, 2026-09-27):* the gate held for the MVP. Every MVP task was
+implemented without a blocking ambiguity. The gaps that showed up later (§26) are about **tuning
+and field behavior** (the default cost constants, overseer cost share) and **doc precision** (rule-id
+narratives, log-event timing), not about missing contracts.
 
 ## 22. Sprint plan
 
@@ -1200,8 +1240,9 @@ reviewer checks; the task keeps a single owner (manager #5).
 | LLM overseer ignores the stage and keeps exploring | M / H | Mechanical R11/R14/R16 checks; hard 100% backstop |
 | In-flight overshoot past 100% with `max_parallel > 1` | M / M | Projection + reserve; README: overshoot ≲ P × unit cost; per-task cap |
 | Detector false positives cause needless redirects | M / M | Severity levels; `accept` with rationale allowed; thresholds constant in config (tunable later) |
-| Overseer cost overhead > 10% | L / M | `overseer_effort` param; measured in FR-17 |
-| G5 blast radius: ≥2 named test files change (`test_mvp_breaker_conditions`, `test_resume_replay`) and ~10 suites need inspection | H / M | 3-day estimate; NFR-2 allowlist in the same commit; own PR ahead of the template |
+| Overseer cost overhead > 10% | ~~L~~ **Materialized at toy scale** (14.8-16.8%, T-23yMMB) / M | `overseer_effort=medium` for small runs; re-measure at real-epic scale (§26 DV-2) |
+| Hardcoded `default_*_cost_usd` set a hidden `run_budget_usd` floor (new, T-23yMMB) | H for small budgets / H (run cannot start) | Documented floor formula (§26 DV-1); edit the rendered config before `ao run`; follow-up to expose them as params or lower them |
+| G5 blast radius: ≥2 named test files change (`test_mvp_breaker_conditions`, `test_resume_replay`) and ~10 suites need inspection | H / M | 3-day estimate; NFR-2 allowlist in the same commit; own PR ahead of the template. **Outcome:** no existing test changed, so no allowlist entry; shipped on the epic branch, not as its own PR (§26 DV-5) |
 | Breaker latch: after any trip, a plain `ao resume` has no engine-side wall | H / H (pre-existing, engine-wide) | Template: FR-18 unit gate re-arms budget/fan-out at $0. Engine-wide re-arm is out of scope, recorded as a follow-up candidate in ADR-0016 D7 |
 | Hold shows as `failed`, bumps `consecutive_failures`, and counts as a failure in outcome/ao-bench grading | M / M | `HOLD:` error prefix (a machine-matchable convention); README; NFR-X6 (first-class paused status) planned as the replacement |
 | Governance artifacts are forgeable by any task (no inter-task trust boundary) | M / M | Tamper-evident (hash chain, charter lock, hold/override events, override coupled to the engine-recorded `--extend-breaker`); cost containment is engine-side (NFR-X11) |
@@ -1214,7 +1255,7 @@ reviewer checks; the task keeps a single owner (manager #5).
 required, because the checker covers this template.
 
 **Open questions** (none blocking; defaults chosen):
-- OPEN_QUESTION-1: Should `run_budget_usd` be *required* (forcing a conscious choice) instead of defaulting to 2000? *Default kept at the user's example; revisit after FR-17.*
+- OPEN_QUESTION-1: Should `run_budget_usd` be *required* (forcing a conscious choice) instead of defaulting to 2000? *Default kept at the user's example; revisit after FR-17.* **FR-17 answer (2026-09-27):** keep the default, but the real problem is the *lower* bound. A small `run_budget_usd` cannot start at all with the shipped cost constants (§26 DV-1). This is now tracked as a follow-up, not an open question.
 - OPEN_QUESTION-2: Should the final push be skipped automatically when the run ends in forced closeout with failing verification? *MVP pushes (the branch is not `main`) and marks the state in the push report and closeout.*
 
 ### 23.3 Phase-4 consultation record
@@ -1252,3 +1293,231 @@ read-only.
 ordering), `.claude/skills/workflow-authoring/SKILL.md` (recursive-wave pattern plus G5 note in
 "common failure modes"), and the `routed-runner` README's note on emitter boundary semantics. Mark it
 done only after checking the docs against the merged code.
+
+**Done 2026-09-27.** File:line evidence for every claim added here is in
+`meta/tickets/E-YAAGhk-overseer-runner-template/T-gbccdr-docs-refresh/STATUS.md`. The deviations it
+found are in §26.
+
+## 26. Deviations from design (post-implementation reconciliation)
+
+Recorded by `T-gbccdr-docs-refresh` on 2026-09-27 against `ad/overseer-runner-workflow` @ `0fb60aa`.
+Each entry states what the design said, what shipped, the evidence, and what to do about it. Line
+numbers are from that commit. The design sections above keep their Rev 2 text, with inline pointers
+to the entry that supersedes them.
+
+| ID | Area | Kind |
+|---|---|---|
+| DV-1 | Hardcoded default costs set a `run_budget_usd` floor | Field finding, tuning gap (**most important**) |
+| DV-2 | Overseer cost share above NFR-8 | Field finding, tuning |
+| DV-3 | No organic live stage transition beyond `explore` | Evidence split (live vs scripted) |
+| DV-4 | OV-R8 vs OV-R10 in narratives | Doc error, corrected |
+| DV-5 | G5 delivery, blast radius, and log-event timing | Delivery + doc error, corrected |
+| DV-6 | Plain resume after the backstop | Confirmation (no drift in the code) |
+| DV-7 | FR-15 nested expanders not shipped | Scope cut |
+| DV-8 | Security residuals N2/N3 (and N1 fixed) | Security follow-ups |
+| DV-9 | OV-R12 verdict schema check is partial | Incompleteness |
+| DV-10 | `ao new` has no rollback | Pre-existing engine limitation |
+| DV-11 | `HOLD:`/`BUDGET:`/`FANOUT:` prefixes are bare | Doc error, corrected |
+| DV-12 | `--extend-breaker` needs `--extend-by-*` | Doc omission, corrected |
+| DV-13 | The intake stage is not latched | Clarification |
+| DV-14 | `branch_policy` param and extra config fields | Mid-epic amendment |
+| DV-15 | Stale "not yet implemented" text inside the shipped template | Doc follow-up, fixed by dev-epic |
+
+### DV-1 — Hardcoded `default_unit_cost_usd=8` / `default_ckpt_cost_usd=5` set a hard `run_budget_usd` floor
+
+- **Design**: §8.2 uses `default_unit_cost_usd` only "when no settled units exist", and §13.1
+  treats it as a detector internal. No lower bound on `run_budget_usd` was stated.
+- **Shipped**: the two constants are literals in `overseer-config.json.tmpl` (L26-27) and are
+  **not** `ao new --param`s. `intake-check` computes OV-R4's cap with `_intake_allowed_wave_size`
+  (`overseer_tool.py` L3763-3794). That function calls the same `derive_budget` (L324) with
+  `spent=0`, the default costs, and the configured `wave_size` (not the number of units actually
+  emitted). `compute_allowed_wave_size` (L259-272) returns 0 when the stage is `closeout`, so
+  intake cannot emit wave 1 whenever
+  `(wave_size*8 + 5 + TAIL_TASKS*8) * 100 / run_budget_usd >= closeout_pct`.
+- **Floor at default thresholds (80/90/95)**, computed by calling the shipped `derive_budget`:
+
+  | `wave_size` | `final_push` | projection | no wave at or below | `explore` at intake needs more than |
+  |---|---|---|---|---|
+  | 1 | false | $29 | $30.53 | $36.25 |
+  | 1 | true | $37 | $38.95 | $46.25 |
+  | 3 | true | $53 | $55.79 | $66.25 |
+  | 6 (default) | false | $69 | $72.63 | $86.25 |
+  | 6 (default) | true (default) | $77 | $81.05 | $96.25 |
+
+  Between the floor and the `explore` threshold, intake still emits at least one unit, but its
+  projected stage is `converge` or `stabilize`.
+- **Evidence**: the live smoke run (T-23yMMB) with `run_budget_usd=25`, `wave_size=3` was blocked at
+  intake. The real intake agent wrote a `control/hold-request.json` explaining the math, which
+  `ck-01` then rejected as OV-INT-4. The retries at $62 and $57 succeeded. The scripted e2e (e) also
+  had to use `wave_size=1`. Full table: `output/E-YAAGhk-overseer-runner-template/smoke/summary.md`
+  (Finding 1). That summary's "below ~$36 no wave" for `wave_size=1`/`final_push=false` is the
+  `explore` threshold. The true no-wave floor is $30.53. Real per-unit cost on that toy task was
+  about $0.3-0.4, roughly 20-25x below the $8 default.
+- **Operator guidance now**: choose `run_budget_usd` above the floor for your `wave_size`/`final_push`,
+  or lower `default_unit_cost_usd`/`default_ckpt_cost_usd` in the rendered `overseer-config.json`
+  **before the first `ao run`**. A later `ao new` re-render overwrites that file. Never suggest a
+  budget below the floor (for example $25 or $12 at `wave_size=3`) in a ticket or runbook.
+- **Follow-up**: expose the two constants as template params, or lower them to about $1-2, or both.
+
+### DV-2 — Overseer (checkpoint) cost is above the NFR-8 ~10% target at toy scale
+
+- **Measured**: `ck-01` was 14.8% ($0.52 of $3.52) and 16.8% ($0.55 of $3.29) of total run cost in
+  the two successful live runs, with the default `overseer_effort=high`
+  (`template.yaml` `overseer_effort.default: "high"`).
+- **Interpretation**: a single checkpoint has a fixed cost floor that a 1-wave/3-unit toy run can't
+  amortize. At epic scale (more units per checkpoint) the share should fall, but that is unmeasured.
+- **Guidance**: `--param overseer_effort=medium` for small runs. The default stays `high` until a
+  larger live run is measured. `GOAL_SIMILARITY_REJECT` and `stall_waves` were not exercised live,
+  so there is no tuning data for them.
+
+### DV-3 — AC3 (a stage transition beyond `explore`) was not shown by a live run
+
+- **Why**: at `ck-01` the digest uses **real** settled-unit costs, which were far below the $8 default.
+  Both successful live runs therefore settled at `stage=explore` (3.3% and 5.8% real spend). This is
+  the intended self-correction (see DV-13), not a stage-machine defect. Forcing a live transition
+  would have needed roughly 100-200 real unit executions.
+- **Coverage split**: the live run shows real-agent fidelity to the contract, including a real
+  `breadcrumb_integrity` signal (`S-01-01`) answered `accept` and accepted by OV-R12. The stage
+  machine itself is covered by the scripted e2e
+  `tests/test_e2e_builtin_overseer_runner.py::test_scenario_b_stage_escalation` (L521). It runs the
+  real `derive_budget` end to end with scripted costs (`run_budget_usd=100`, `wave_size=1`) and reads
+  the on-disk digests: `ck-01 explore (15%)` → `ck-02 converge (35%)` → `ck-03 stabilize (45%)` →
+  `ck-04 closeout (60%)`.
+
+### DV-4 — Dangling `depends_on` on the *next checkpoint* is OV-R10, not OV-R8
+
+- **Design narratives** (§12.3, §18 scenario (c), §23.3 row 4, and the TASK.md files of T-WruPiv and
+  T-vmI0jI) said scenario (c)'s dangling `depends_on` produces OV-R8.
+- **Shipped**: OV-R8 is `_check_entry_r8_depends_on` (`overseer_tool.py` L3342-3369), applied only to
+  **unit/expander** entries. A next-checkpoint entry's `depends_on` is checked by
+  `_check_next_checkpoint_shape` (L2490; the `depends_on` check is at L2580-2589) under **OV-R10**,
+  called from `_check_r10_terminal_shape` (L2780). Scenario (c) injects the defect on the
+  next-checkpoint entry, so it asserts `OV-R10`
+  (`tests/test_e2e_builtin_overseer_runner.py` L1374). The rule catalogue in §13.3 was already
+  correct. §12.3 and §18 are corrected in place. §23.3 is left as the historical record.
+
+### DV-5 — G5 delivery, blast radius, and `task.injected` timing
+
+- **Ordering (as designed, verified)**: in `engine.py::_settle_completed_task` (L1380) the
+  `emit_tasks` block (L2014-2065: `read_task_manifest` L2016, `_inject` L2052, `injected = True`
+  L2065) runs **before** the single `self._runstate.save(state)` at L2067 and before
+  `evaluate_breakers` (L2088; halt return at L2117).
+- **Delivery (deviation)**: not its own PR to `main`. Commit `3692eac` was cherry-picked onto the
+  epic branch as `2387503` by user decision. The epic PR must call it out as a separately
+  revertable fix that also protects `routed-runner`.
+- **Blast radius (deviation, favorable)**: the HLD expected `test_mvp_breaker_conditions.py` and
+  `test_resume_replay.py` to change. **No existing test changed**, so no NFR-2 allowlist entry was
+  added. The new tests are in `tests/test_emit_settle_atomicity.py` (6 tests).
+- **Log timing (doc error, corrected in §15)**: `task.injected` is still logged only after breakers
+  pass (L2129-2137). On a trip at an emitter's settle, the injection is persisted but not logged.
+  `_inject` (L4105) itself logs nothing.
+
+### DV-6 — Plain `ao resume` after a backstop trip does **not** reach close-out (confirmed, no drift)
+
+The code matches Rev 2 §8.5. After `run-budget-backstop` trips, breakers latch
+(`breakers.py:603`: `if spec.id in already_tripped: continue`). A plain `ao resume` dispatches the
+persisted pending units. Each unit's `ov-unit-gate` (`overseer_tool.py::unit_gate` L4232-4259) raises
+`BUDGET:` at $0 while `spent ≥ effective budget`, and the run halts again **without** reaching a
+checkpoint. Close-out needs **either** `overseer_tool.py request-closeout --reason …` (L4301-4354:
+refuses unless the run is `failed`/`cancelled`, writes `no_op` report+breadcrumb for pending `wNN-`
+units, appends `forced_closeout`) **or** `control/budget-override.json` plus
+`ao resume --extend-breaker run-budget-backstop --extend-by-same|--extend-by-seconds <usd>`. The
+e2e tests are `test_scenario_e_backstop_g5_unit_gate`, `test_scenario_e1_closeout_path`, and
+`test_scenario_e2_continue_override_path` in `tests/test_e2e_overseer_runner_failures.py`.
+
+### DV-7 — FR-15 nested expanders are not shipped
+
+`T-zLHc7Q` is still Draft (MVP-Should, below the cut line). As shipped:
+- `overseer_tool.py`'s subcommands are `intake-prep`, `intake-check`, `ckpt-prep`, `ckpt-check`,
+  `unit-gate`, and `request-closeout` (`_build_parser`, L4362-4383). There is **no
+  `expander-check`**, although `workflow.json.tmpl` still declares the `ov-expander-check` hook
+  (L58-68).
+- `instructions/30-expander.md` and `31-sub-aggregate.md` do not exist, although `kind_map.expand`
+  points at `30-expander.md`.
+- OV-R10 does not require `<expander>--done` breadcrumbs in the next checkpoint's inputs, and the
+  wave-unit selector has an open `TODO(T-zLHc7Q)` for `--` leaves (L781).
+- **Keep `max_expanders_per_wave: 0`** (the default). With a value ≥1, OV-R5 would admit an
+  expander whose post-hook calls a subcommand that does not exist. It would fail closed at run time
+  and not at `ao new`/`ao validate`.
+
+### DV-8 — Security review results (T-3FlD46)
+
+All six design-level findings in §23.3 row 5 were verified as implemented. New findings:
+- **N1 (HIGH-equivalent, fixed)**: `read_ledger_lines` had no size cap. It now enforces
+  `LEDGER_MAX_BYTES` = 32 MiB (`overseer_tool.py` L55; check at L803-809 → `OV-INT-3`). This adds a
+  third bound to NFR-6.
+- **N2 (LOW, follow-up)**: `overseer-config.json`'s `kind_map`, the OV-R6 pin source, is not
+  integrity-locked the way `charter.json`/`prompt.md` are (`verify_charter_lock`, L1433, OV-INT-1). A
+  task with workspace write access could rewrite `kind_map` between checkpoints and defeat the R6 pin
+  at its source. Follow-up: extend the charter lock to cover the config (or `kind_map`) at intake.
+- **N3 (LOW, hygiene follow-up)**: `_git_changed_paths` runs `git -C <repo> diff --name-only
+  <prev_head>` (L1760). `prev_head` comes from the workspace-writable `path-history.json`, with no
+  `--` separator and no hex-SHA validation. Follow-up: add `--` or validate `^[0-9a-f]{4,64}$`.
+- N2 and N3 are further instances of the accepted **NFR-X11** residual (no inter-task trust
+  boundary). They are not new privilege boundaries, because any task that can write those files can
+  already execute code as the same user.
+
+### DV-9 — OV-R12's "verdict is schema-valid" check omits `checkpoint`/`stage`
+
+`_check_r12_verdict` (L2969) validates the schema id and the typed fields named in T-tAKBBB's rule
+list, but not the verdict's `checkpoint`/`stage` echo fields (§13.4). This was deferred as outside
+that ticket's literal scope. It is not a correctness or security gap, because the digest is the
+authority for stage. It is a follow-up candidate for whoever next touches R12.
+
+### DV-10 — `ao new` has no rollback on partial scaffolding failure (pre-existing, engine-wide)
+
+`templates.instantiate()` and `cli.new_cmd` do not roll back a half-written instance when rendering
+fails partway (T-eGXqXH AC6). This applies to every template, not just this one, and is outside this
+epic's scope. If `ao new` fails, delete the partial instance dir before retrying.
+
+### DV-11 — Operator-facing refusal prefixes are bare
+
+Rev 2 §13.3 used `OV-HOLD` as an example. As shipped, `Violation` defaults to `OV-<id>: <detail>`
+(`overseer_tool.py` L151-159), and checker `RuleViolation`s print `OV-<id>` (`formatted_rule`, L2269-2270). `HOLD`
+(L1402-1408), `BUDGET`, and `FANOUT` (L4244-4259) pass explicit messages that start with bare
+`HOLD:`/`BUDGET:`/`FANOUT:`, the machine-matchable prefixes D6/FR-18 asked for. §13.3 is corrected.
+
+### DV-12 — `--extend-breaker` requires an amount flag
+
+`ao resume --extend-breaker <id>` requires exactly one of `--extend-by-same` or
+`--extend-by-seconds <amount>` (`cli.py` L1237-1257; the amount is USD for cost breakers). Rev 2 text
+(FR-16, §8.5, §12.3) omitted it and is corrected. The tool's own `BUDGET:` message (L4247-4249) also
+omits it, and a later code change should add it. The template README already gives the full form.
+
+### DV-13 — The intake-time stage is computed but not latched
+
+`intake-check` computes a stage only to cap wave 1 (DV-1). It writes no digest, so `ck-01`'s
+`prev_stage` falls back to `explore` (`read_prev_stage`, L1124-1131, when there is no `ck-00`
+digest). `ck-01` then recomputes the stage from real costs. `intake-check` also does not apply OV-R11
+stage restrictions to wave 1 (only OV-R4's size cap). In live run 3 ($57), the intake projection was
+93% (`stabilize`, 3 units allowed), and `ck-01` computed `explore` from real spend. This is the
+"self-correcting" behavior in DV-3. It is consistent with §8.2, because the latch is defined over
+checkpoint digests, but Rev 2 never said so explicitly.
+
+### DV-14 — `branch_policy` param and extra config fields (mid-epic amendment)
+
+`branch_policy` (default `""` = auto-detect) was added to both builtins during T-5ZzAZp.
+`overseer-runner` copies it into `overseer-config.json`, and `git-branch-off` gained that file as an
+input. `routed-runner` renders it to `outputs/branch-policy.txt`. The shipped config also copies
+`task_budget_usd`, `overseer_effort`, `python_bin`, and `branch_policy`. §13.1, §13.2, and §13.4
+reflect this.
+
+### DV-15 — Stale "not yet implemented" text inside the shipped template (fixed by dev-epic,
+outside this ticket's own six-file edit scope)
+
+`T-gbccdr`'s own change scope was limited to six doc files, so it found but did not edit these
+three stale spots. dev-epic fixed all three directly after reviewing this ticket's findings:
+- `src/agent_orchestrator/templates/builtin/overseer-runner/README.md`'s "Preflight" section said
+  "**Current epic status: not yet runnable end to end**" — corrected to state the template is
+  implemented and runnable, with the real `expander-check` gap (FR-15) called out explicitly, plus
+  the DV-1 budget-floor caveat added for operators.
+- `src/agent_orchestrator/templates/builtin/overseer-runner/overseer-contract.md.tmpl` (rendered
+  into every run and **read by the agents**) said the checker was "**Forthcoming** … not
+  implemented yet" — corrected to "**Implemented**", with the same `expander-check` exception
+  noted; the "Self-check" section's matching stale note (telling the agent `ckpt-check`/
+  `intake-check` "do not exist as subcommands yet") was also corrected, since it would otherwise
+  mislead a real agent into skipping a self-check step that now genuinely works.
+- `meta/tickets/E-YAAGhk-overseer-runner-template/EPIC.md`'s FR-6 line listed `wave_signature_repeat`
+  among the shipped signals (it is deferred, NFR-X10) and omitted the real, shipped
+  `breadcrumb_integrity` signal — corrected to match the actual signal set
+  (`_period_mirror_signals`/`overseer_tool.py` L1589-1623 and the other real signal emitters).
