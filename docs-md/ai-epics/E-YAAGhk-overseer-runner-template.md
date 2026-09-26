@@ -76,7 +76,7 @@ criteria.
 | 4 | `T-5ZzAZp` agent instructions | developer | T-ltBLUY | **Done, reviewed** (+ branch_policy amendment pending) |
 | 5 | `T-HPJcc6` tool M3a structural checkers | developer | T-ABDjSj, T-ltBLUY | **Done, reviewed** |
 | 6 | `T-tAKBBB` tool M3b semantic checkers | developer | T-ABDjSj, T-C6uQJW, T-HPJcc6 | **Done, reviewed** |
-| 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | In progress (second fix-pass, first attempt's claims falsified by independent testing) |
+| 7 | `T-WruPiv` e2e harness + core scenarios (a)-(d) | tester | T-eGXqXH, T-ltBLUY, T-5ZzAZp, T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB | **Done, independently re-verified with primary evidence** |
 | 8 | `T-3FlD46` security review + hardening | dev-security | T-ABDjSj, T-C6uQJW, T-HPJcc6, T-tAKBBB (can run parallel with #7/#9 once checkers merge) | **Done, independently verified** |
 | 9 | `T-vmI0jI` e2e failure scenarios (e)-(h) | tester | T-WruPiv, T-ABDjSj, T-tAKBBB | Not started (**no longer blocked on G5** — fix is live on this branch, see below) |
 | 10 | `T-23yMMB` live smoke run, real `claude_cli`, ≤$25 | tester | T-WruPiv + all impl tasks | Not started (**needs explicit user spend authorization**) |
@@ -400,12 +400,31 @@ Full detail: `T-3FlD46-security-review-hardening/STATUS.md`.
 **Milestone: 9/13 MVP tasks now Done.** Security review is complete ahead of the late gate, per the
 architect's own sequencing note that security should not be left to the very end.
 
-### Remaining 4 tasks (T-WruPiv onward)
-`T-WruPiv`: all 4 scenarios now genuinely pass (see Risks & blockers below for the full
-back-and-forth); a `reviewer`-agent pass is in flight (AC6) before closing the ticket. The other 3
-(`T-vmI0jI`, `T-23yMMB`, `T-gbccdr`) are not started. Full `TASK.md` acceptance criteria read for
-all 15 tickets during decomposition (this document's sequencing table above reflects that read) —
-no task will be implemented from a guess at scope.
+### T-WruPiv (Done, reviewer pass + dev-epic's own independent re-verification with primary evidence)
+All 5 tests (scenario a x2 variants, b, c, d) pass 3/3 consecutive runs, driving the real CLI and
+the real `overseer_tool.py` checkers/hooks as subprocesses — the first task in this epic that
+exercises the full template end to end rather than at the unit/component level. Full back-and-forth
+recorded in "Risks & blockers" below (two subagent fix-passes for harness bugs, a reviewer pass
+that found one CRITICAL gap — `ScriptedOverseerExecutor` was silently disabling `OV-R11`'s
+stage-gated enforcement by clobbering the real `digest.json` — plus 2 warnings, and a follow-up
+developer pass that fixed all three and found a second latent bug, `TaskResult.actuals_available`
+never being set, meaning scripted costs never reached `state.spent`). Final, independently
+reproduced evidence: scenario (b)'s real on-disk digest sequence explore(15%) → converge(35%) →
+stabilize(45%) → closeout(60%) with `run_budget_usd=100`; full suite **4449 passed, 8 skipped, 0
+failed**; ruff/ruff format/mypy/pyright all clean. dev-epic's own judgment call: no second reviewer
+round requested after the fix (documented rationale in `T-WruPiv-e2e-harness-core-scenarios/STATUS.md`)
+since dev-epic's own re-verification used primary evidence (raw digest files, engine source) rather
+than trusting either agent's report.
+
+**Milestone: 10/13 MVP tasks now Done.** This is the epic's first genuine end-to-end proof point —
+the template runs through the real engine, real hooks, and real checkers and produces a correct
+result, including real (not fixture-faked) budget-stage governance. This substantially de-risks the
+remaining late-gate work (`T-vmI0jI`, `T-23yMMB`).
+
+### Remaining 3 tasks
+`T-vmI0jI`, `T-23yMMB`, `T-gbccdr` are not started. Full `TASK.md` acceptance criteria read for all
+15 tickets during decomposition (this document's sequencing table above reflects that read) — no
+task will be implemented from a guess at scope.
 
 ## Risks & blockers
 - **Resolved:** `T-pYt478` is no longer a blocker for anything — it's live on
@@ -505,15 +524,15 @@ no task will be implemented from a guess at scope.
   already pushed (push only, no PR) as recorded above.
 
 ## Next actions
-1. Await the resumed `T-WruPiv` agent's next completion (scenarios b/c/d fixes) and independently
-   re-verify with a real `pytest -v` run myself — do not accept a self-report, exactly as before.
-2. Once all 4 scenarios genuinely pass 3x: get a `reviewer` pass (per the ticket's own AC6), sync
-   `T-WruPiv`'s TASK.md/STATUS.md + the epic rollup, commit.
-3. Then `T-vmI0jI` (e2e failure scenarios, deps: T-WruPiv only).
-4. Before `T-23yMMB`: explicitly ask for spend authorization, don't just run it.
-5. `T-gbccdr` last (docs refresh — carries the AC6/rollback note from T-eGXqXH's review, the R12
-   checkpoint/stage deferral note from T-tAKBBB's review, and the N2/N3 follow-up notes from
-   T-3FlD46's review, for its deviations section).
+1. `T-vmI0jI` (e2e failure scenarios (e)-(h), deps: T-WruPiv only, now unblocked) — delegate to a
+   `tester`, reusing `tests/overseer_runner_harness.py` as-is (including its `actuals_available`
+   gating requirement, now documented for future scenarios).
+2. Before `T-23yMMB`: explicitly ask for spend authorization (<=$25, real `claude_cli` spend),
+   don't just run it.
+3. `T-gbccdr` last (docs refresh — carries the AC6/rollback note from T-eGXqXH's review, the R12
+   checkpoint/stage deferral note from T-tAKBBB's review, the N2/N3 follow-up notes from
+   T-3FlD46's review, and a note about the `actuals_available` harness gotcha from T-WruPiv's
+   review, for its deviations section).
 
 ## Pre-close checklist (tracked against `.claude/agents/dev-epic.md`'s mandatory list — epic is
 **not** closed; this is a running scorecard, updated every iteration)
@@ -525,13 +544,16 @@ no task will be implemented from a guess at scope.
 - [x] Early gate run: satisfied at design time (HLD §23.3), recorded above, not re-run.
 - [x] Every delegated agent given an explicit change-scope boundary — `T-pYt478`'s `developer` and
       `reviewer` subagent prompts both stated exact allowed/forbidden files.
-- [x] Quantifiable checkpoints tracked this iteration: `T-3FlD46` evidence above (5 new security
-      tests, 337 passed combined/0 failed/0 regressions, ruff/mypy/pyright clean, no open
-      CRITICAL/HIGH); `T-WruPiv` in-progress evidence (independently re-run: scenario (a) 2/2
-      passed, scenarios (b)/(c)/(d) 3/3 failed with exact root causes diagnosed and handed back).
-- [ ] Late gate (end-to-end path via `tester` with real evidence) — **not yet**, epic is 9/13 MVP
-      tasks in — `T-WruPiv` (in progress, scenario (a) passing, b/c/d fix-pass in flight) is the
-      first step toward it.
+- [x] Quantifiable checkpoints tracked this iteration: `T-WruPiv` final evidence — all 5 tests pass
+      3/3 consecutive runs; full suite **4449 passed, 8 skipped, 0 failed** (no regressions);
+      scenario (b)'s real, SUT-derived digest stage sequence (explore 15% → converge 35% →
+      stabilize 45% → closeout 60%) independently reproduced by dev-epic from raw on-disk files;
+      ruff/ruff format/mypy/pyright all clean.
+- [x] Late gate (end-to-end path via `tester` with real evidence) — **first proof point landed**:
+      `T-WruPiv` runs the full `overseer-runner` template through the real engine, real hooks, and
+      real checkers (not mocked), and produces a correct result including genuine budget-stage
+      governance. `T-vmI0jI` (failure-path scenarios) and `T-23yMMB` (live smoke run) remain to
+      round out the late gate's evidence base before the epic itself is called complete.
 - [x] Ticket status synced consistently across `TASK.md`/`STATUS.md` and the epic
       `EPIC.md`/`STATUS.md` rollup, with `By/Role/Date` attribution, for everything done so far.
 - [ ] Final handoff (done vs. not-done vs. next steps vs. artifact pointers) — **N/A yet**, epic in
