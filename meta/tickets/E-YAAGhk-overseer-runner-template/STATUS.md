@@ -2,15 +2,22 @@
 
 - ID: `E-YAAGhk-overseer-runner-template`
 - Updated At: 2026-09-26
-- State: Draft (design complete; implementation not started)
+- State: In Progress (design complete; implementation started)
 - Owner: architect → dev-epic
 
 ## This update
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
-  ADR-0016 (D1–D9), and 15 task tickets. 1 is Done (design); 14 are Draft (13 MVP + 1 MVP-Should
-  below the cut line).
-- Phase-4 consultations were done with all six roles. The record is in the design doc §23.3.
-- Rollup: MVP tasks 0/13 done · MVP-Should 0/1 · design 1/1.
+  ADR-0016 (D1–D9), and 15 task tickets.
+- Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
+  is treated as the epic's **early gate** (reviewer + architect pass on the end-to-end orchestration
+  flow) — not re-run by dev-epic, per explicit instruction not to re-litigate the design.
+- `T-pYt478` (G5 engine fix) is **Done**: implemented on its own branch off `main`
+  (`fix/emit-settle-atomicity`, commit `3692eac`, local/unpushed), independently re-verified by
+  dev-epic (not just the implementer's self-report), and reviewed (approve with nits, addressed).
+  Full evidence in `T-pYt478-emit-settle-atomicity/STATUS.md`. **Not pushed and no PR opened** —
+  waiting on the user's explicit confirmation, per instruction.
+- dev-epic execution log / decomposition: `docs-md/ai-epics/overseer-runner-template.md`.
+- Rollup: MVP tasks 1/13 done (`T-pYt478`) · MVP-Should 0/1 (deferred, see below) · design 1/1.
 
 By: architect · Role: architect · Date: 2026-09-26 · Comment: The design stays within existing engine
 primitives (recursive `emit_tasks` waves, pre/post hooks, breakers, `state.json`), with **one**
@@ -43,15 +50,33 @@ budget trip cannot reach close-out on its own.
 
 ## Evidence
 - Design: `docs-md/overseer-runner-hld.md`; ADR: `docs-md/adr/ADR-0016-overseer-runner-cadence-and-budget-governance.md`
-- G5 repro: `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py`
+- G5 repro (reproduced independently by dev-epic on unmodified `main`@`8c13320` before any code
+  was written): `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py`
+- `T-pYt478` full evidence (commands + exact output): `T-pYt478-emit-settle-atomicity/STATUS.md`.
+  Headline numbers: 6/6 new tests, full suite 3983 passed/8 skipped/0 failed, ruff clean, mypy
+  clean net of 4 pre-existing unrelated errors.
+- dev-epic execution/decomposition log: `docs-md/ai-epics/overseer-runner-template.md`.
 
 ## Risks / Blockers
-- No blockers.
-- Top risks: G5 test blast radius (named suites); an LLM overseer ignoring stages (mitigated
-  mechanically); holds rendering as `failed` (NFR-X6); governance being tamper-evident only
-  (NFR-X11). The full list is in design doc §23.
+- No blockers on `T-pYt478` (resolved; see its STATUS.md).
+- `T-pYt478`'s fix is **not yet merged to `main`** (local commit only, pending user confirmation to
+  push/PR). Sequencing decision: it was deliberately NOT cherry-picked onto this epic branch. Of
+  the remaining 14 tasks, only `T-vmI0jI` (e2e failure scenario (e)) genuinely needs the fix live;
+  every other task is template/tool/checker/doc work independent of the engine ordering change.
+  `T-vmI0jI` is scheduled near the end of the sequence and blocks on the PR merging (or a
+  reconsidered cherry-pick at that time) — see its own ticket once created/updated.
+- Top risks (unchanged from design): an LLM overseer ignoring stages (mitigated mechanically);
+  holds rendering as `failed` (NFR-X6); governance being tamper-evident only (NFR-X11). The full
+  list is in design doc §23.
 
 ## Next actions
-1. dev-epic: confirm the decomposition; start `T-pYt478` (G5) and the S1 parallel tasks (`T-ABDjSj`, `T-eGXqXH`, then `T-C6uQJW`, `T-ltBLUY`, `T-5ZzAZp`).
-2. Merge G5 to `main` as its own PR before the template PR.
-3. After S2: `T-23yMMB` smoke evidence → `T-gbccdr` docs reconciliation → epic closure.
+1. Report `T-pYt478` ready-for-PR to the user; stop for their input before starting the other 14
+   tasks (per explicit instruction) — this is the current point.
+2. On go-ahead: parallel track — `T-ABDjSj` (tool M1) and `T-eGXqXH` (template scaffold), no
+   cross-deps. Then `T-C6uQJW` (deps: T-ABDjSj), `T-ltBLUY` (deps: T-eGXqXH), `T-5ZzAZp` (deps:
+   T-ltBLUY), `T-HPJcc6` (deps: T-ABDjSj, T-ltBLUY), `T-tAKBBB` (deps: T-ABDjSj, T-C6uQJW,
+   T-HPJcc6), `T-WruPiv` (deps: all of the above), `T-3FlD46` (parallel with e2e once checkers
+   merge), `T-vmI0jI` (deps: T-WruPiv + T-pYt478 merged), `T-23yMMB` (needs explicit user spend
+   authorization, <=$25, before running), `T-gbccdr` (last). `T-zLHc7Q` stays deferred
+   (MVP-Should, below cut line per its own ticket status) unless told otherwise.
+3. Merge G5 to `main` as its own PR before the template PR (user action).

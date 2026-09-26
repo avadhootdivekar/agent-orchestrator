@@ -6,7 +6,8 @@
 - Owner: architect (design) → dev-epic (decomposition + delivery)
 - Created: 2026-09-26
 - Last Updated: 2026-09-26
-- Status: Draft (design complete Rev 2, implementation not started)
+- Status: In Progress (design complete Rev 2; implementation started — T-pYt478 done, 14 tasks
+  remain; execution log: `docs-md/ai-epics/overseer-runner-template.md`)
 
 ## Summary
 - Goal: a generic, reusable `ao new overseer-runner` template. It takes one open-ended `prompt.md`
@@ -74,7 +75,7 @@ a `reviewer`-agent review step is part of each task's ACs.
 
 Sprint 1 (128 h of 144 h committed)
 - [x] `T-kD6L76-design-package` — HLD/LLD, ADR-0016, tickets, Phase-4 consultations (architect). Done.
-- [ ] `T-pYt478-emit-settle-atomicity` — G5 engine fix + regression tests + NFR-2 allowlist. **Own PR to `main` first** (3 d).
+- [x] `T-pYt478-emit-settle-atomicity` — G5 engine fix + regression tests + NFR-2 allowlist. **Own PR to `main` first** (3 d). **Done**: implemented, independently re-verified, and reviewed (approve with nits, addressed) on branch `fix/emit-settle-atomicity` (commit `3692eac`, off `main`@`8c13320`, local/unpushed pending user confirmation to open the PR). Full suite 3983 passed/8 skipped/0 failed; ruff/mypy clean.
 - [ ] `T-ABDjSj-tool-state-ledger-budget` — tool M1: config, hook context, `state.json` loader, hash-chained ledger, path history, budget stages + override, cadence, hold gate, charter-lock verify, unit gate (3 d).
 - [ ] `T-C6uQJW-tool-loop-progress-detectors` — tool M2: §8.3 detectors + progress metrics; content_oscillation is trim-first (3 d).
 - [ ] `T-eGXqXH-template-scaffold` — `template.yaml`, `workflow.json.tmpl`, `overseer-config.json.tmpl`, `prompt.md.tmpl`, hooks, breakers, assets tests (2 d).

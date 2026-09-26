@@ -6,7 +6,8 @@
 - Owner: developer
 - Created: 2026-09-26
 - Last Updated: 2026-09-26
-- Status: Draft
+- Status: **Done** (implemented + tested + reviewed on branch `fix/emit-settle-atomicity`, commit
+  `3692eac`, local/unpushed — see STATUS.md for full evidence)
 - Estimate: 3 days (24 h). This includes the test blast radius.
 
 ## Requirements Mapping
