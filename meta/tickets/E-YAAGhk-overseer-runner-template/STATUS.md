@@ -6,6 +6,40 @@
 - Owner: architect → dev-epic
 
 ## This update
+- `T-5ZzAZp` (agent instructions) and `T-HPJcc6` (tool M3a structural checkers) are both **Done**,
+  built CONCURRENTLY (verified disjoint files: `instructions/*.md` + its own test file vs.
+  `overseer_tool.py`'s new M3 checker section + its own test file — no overlap).
+  - `T-5ZzAZp`: all 8 MVP instruction files (`01-git-branch-off.md`, `00-intake.md`,
+    `10-work-unit.md`, `11-stabilize-unit.md`, `20-checkpoint.md`, `40-final-verify.md`,
+    `41-closeout.md`, `90-final-push.md`) ship under
+    `src/agent_orchestrator/templates/builtin/overseer-runner/instructions/`, each opening with the
+    `instructions-version: 1` header and the "contract wins" clause, pointing at
+    `overseer-contract.md` for shapes rather than restating them. Pause/halt flag names in
+    `90-final-push.md` cross-checked against `workflow.json.tmpl`'s real `circuit_breakers` and
+    match. 65 new tests. Reviewed (approve with nits): `00-intake.md` mis-cited the contract for
+    the charter schema (the contract explicitly disclaims it) — fixed, now cites HLD §13.4, plus
+    added the missing `acceptance[].id` shape sentence (`A<n>.<m>`) to both `00-intake.md` and
+    `20-checkpoint.md` so `criteria[]` has a stable id to key against.
+  - `T-HPJcc6`: `intake-check`/`ckpt-check` (structural half, OV-R1-R10/R15) implemented with a new
+    collect-all-violations rule engine (`RuleViolation`/`CheckViolations`), extensible for
+    `T-tAKBBB`'s semantic rules via two additive check-fn lists. New rule id `CHR-1` for charter
+    validity. 100 new tests, 99% coverage. Reviewed (**approve**, 3 non-blocking nits, one trivial
+    comment fix applied).
+  - Combined full suite after both + all fixes: **4374 passed, 8 skipped, 0 failed**.
+  - Also independently confirmed (via a real `pyright` run, not just `mypy`) that a
+    coordinator-flagged mid-development finding in `test_overseer_tool_checker_structural.py` was
+    resolved by the time the task finished; separately fixed one real Pyright finding in the
+    already-merged `T-ABDjSj`'s `test_overseer_tool_budget.py` (a type-narrowing issue on a test
+    helper's `.update()` call).
+  - **New requirement (branch_policy amendment, tracked here, not yet implemented)**: an optional
+    `branch_policy` param plus a deterministic git-fact-gathering pass
+    (`git fetch`+`merge-base --is-ancestor`, dirty-tree check, upstream-tracking check, `main`
+    check) in `01-git-branch-off.md`, documented in `README.md`. Confirmed as an amendment to this
+    now-Done `T-5ZzAZp` ticket rather than a new one, to be implemented as its own follow-up
+    dev→verify→review cycle before `T-tAKBBB` starts. `routed-runner`'s equivalent change is being
+    handled separately, off `main`, with no file overlap with this epic's branch.
+  See `T-5ZzAZp-agent-instructions/STATUS.md` and `T-HPJcc6-tool-structural-checkers/STATUS.md`
+  for full evidence and disclosed judgment calls.
 - `T-ltBLUY` (checkpoint contract + README) is **Done, reviewed**: `overseer-contract.md.tmpl`
   (paths, id patterns, the Unit/Next-checkpoint/Tail/Expander shapes, the kind→agent/instruction
   table kept byte-identical to the config's `kind_map`, the four agent-authored artifact schemas,
@@ -39,8 +73,8 @@
   fixed a real cross-task issue: T-C6uQJW's new git-subprocess calls tripped a repo-wide security
   guard (`tests/isolation/test_security_guards.py`); added a justified allowlist entry. Combined
   full suite: **4190 passed, 8 skipped, 0 failed**.
-- Rollup: MVP tasks 5/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`) ·
-  MVP-Should 0/1 (deferred, see below) · design 1/1.
+- Rollup: MVP tasks 7/13 done (`T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`,
+  `T-5ZzAZp`, `T-HPJcc6`) · MVP-Should 0/1 (deferred, see below) · design 1/1.
 - The architecture package is complete (Rev 2): `docs-md/overseer-runner-hld.md` (sections 1–25),
   ADR-0016 (D1–D9), and 15 task tickets.
 - Phase-4 consultations were done with all six roles. The record is in the design doc §23.3. This
@@ -113,15 +147,15 @@ budget trip cannot reach close-out on its own.
   list is in design doc §23.
 
 ## Next actions
-1. `T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY` all Done. Next: `T-5ZzAZp` (deps:
-   T-ltBLUY, done), `T-HPJcc6` (deps: T-ABDjSj + T-ltBLUY, both done — build the checker's rule
-   ids/messages to match the contract's "Hard rules" section exactly), `T-tAKBBB` (deps:
-   T-ABDjSj/T-C6uQJW done + T-HPJcc6 — also now carries the W2 signal-re-fire handoff note from
-   T-C6uQJW's review),
-   `T-WruPiv` (deps: all of the above), `T-3FlD46` (parallel with e2e once checkers merge),
-   `T-vmI0jI` (deps: T-WruPiv only), `T-23yMMB` (needs explicit user spend authorization, <=$25,
-   before running), `T-gbccdr` (last — also now carries the AC6/rollback engine-gap note from
-   T-eGXqXH's review for the deviations section). `T-zLHc7Q` stays deferred (MVP-Should, below cut
-   line per its own ticket status) unless told otherwise.
+1. `T-pYt478`, `T-ABDjSj`, `T-eGXqXH`, `T-C6uQJW`, `T-ltBLUY`, `T-5ZzAZp`, `T-HPJcc6` all Done.
+   Immediate next: implement the `branch_policy` amendment to `T-5ZzAZp` (its own dev→verify→review
+   cycle) before starting `T-tAKBBB`, to avoid re-touching `01-git-branch-off.md` mid-checker-work.
+   Then: `T-tAKBBB` (deps: T-ABDjSj/T-C6uQJW/T-HPJcc6, all done — also now carries the W2
+   signal-re-fire handoff note from T-C6uQJW's review), `T-WruPiv` (deps: all of the above),
+   `T-3FlD46` (parallel with e2e once checkers merge), `T-vmI0jI` (deps: T-WruPiv only), `T-23yMMB`
+   (needs explicit user spend authorization, <=$25, before running), `T-gbccdr` (last — also now
+   carries the AC6/rollback engine-gap note from T-eGXqXH's review for the deviations section).
+   `T-zLHc7Q` stays deferred (MVP-Should, below cut line per its own ticket status) unless told
+   otherwise.
 2. When ready to open a PR for this epic, flag commit `2387503` (G5 fix) separately in the
    description per the note above.

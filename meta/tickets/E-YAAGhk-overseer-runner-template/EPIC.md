@@ -80,10 +80,14 @@ Sprint 1 (128 h of 144 h committed)
 - [x] `T-C6uQJW-tool-loop-progress-detectors` — tool M2: §8.3 detectors + progress metrics; content_oscillation is trim-first (3 d). **Done**: all 10 MVP detectors + progress digest, 52 new tests, 99% coverage, reviewed (approve with nits — one real gap found and fixed: path-history trim was prioritizing declared paths over undeclared/evasive git-derived ones, inverted and regression-tested). See `T-C6uQJW-tool-loop-progress-detectors/STATUS.md`.
 - [x] `T-eGXqXH-template-scaffold` — `template.yaml`, `workflow.json.tmpl`, `overseer-config.json.tmpl`, `prompt.md.tmpl`, hooks, breakers, assets tests (2 d). **Done**: 28 tests, reviewed (approve with nits — `overseer-contract.md.tmpl` files-entry handed to T-ltBLUY, engine-wide "no rollback on failed `ao new`" gap recorded as a known limitation, out of this epic's scope). See `T-eGXqXH-template-scaffold/STATUS.md`.
 - [x] `T-ltBLUY-contract-and-readme` — `overseer-contract.md.tmpl` (shapes + OV-R1..R16) + `README.md` (2 d). **Done**: also added the `overseer-contract.md.tmpl` `files:` entry to `template.yaml` (T-eGXqXH review finding), 19 net new tests (47 total), reviewed (approve with nits — README runnability caveat added, a test-count doc error corrected). See `T-ltBLUY-contract-and-readme/STATUS.md`.
-- [ ] `T-5ZzAZp-agent-instructions` — 8 MVP instruction files (3 d).
+- [x] `T-5ZzAZp-agent-instructions` — 8 MVP instruction files (3 d). **Done**: all 8 files land
+  under `instructions/`, 65 new tests, reviewed (approve with nits — a charter-schema
+  mis-citation in `00-intake.md` fixed). `30-expander.md`/`31-sub-aggregate.md` correctly left out
+  (FR-15, `T-zLHc7Q`). A separate amendment (`branch_policy` param) is tracked as a follow-up — see
+  epic STATUS.md. See `T-5ZzAZp-agent-instructions/STATUS.md`.
 
 Sprint 2 (120 h above the cut + 16 h below, of 144 h committed)
-- [ ] `T-HPJcc6-tool-structural-checkers` — tool M3a: R1–R10, R15, charter lock, `--dry-run` (3 d).
+- [x] `T-HPJcc6-tool-structural-checkers` — tool M3a: R1–R10, R15, charter lock, `--dry-run` (3 d). **Done**: 100 new tests, 99% coverage, reviewed (approve, 3 non-blocking nits, one fixed). See `T-HPJcc6-tool-structural-checkers/STATUS.md`.
 - [ ] `T-tAKBBB-tool-semantic-checkers` — tool M3b: R11–R14, R16, R13c, verdict/deferral checks, ledger events (3 d).
 - [ ] `T-WruPiv-e2e-harness-core-scenarios` — scripted-executor harness + e2e (a)–(d) (3 d).
 - [ ] `T-vmI0jI-e2e-failure-scenarios` — e2e (e)–(h): backstop+G5+unit gate, signal response, cancel, `max_parallel=2` (3 d).
