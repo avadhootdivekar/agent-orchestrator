@@ -157,6 +157,12 @@ class TestRoutedRunnerE2E:
         assert (instance_dir / "prompt.md").is_file()
         assert (instance_dir / "breakdown-contract.md").is_file()
         assert (instance_dir / "outputs" / "forced-type.txt").read_text() == "documentation\n"
+        # branch_policy wasn't passed -- the auto-detect default must render (unlike
+        # forced-type.txt, this file always renders; there is no `when:` gate on it).
+        assert (instance_dir / "outputs" / "branch-policy.txt").read_text() == (
+            "reuse the current branch unless it is already merged into main, in "
+            "which case start fresh from latest main\n"
+        )
 
         # Parse and verify the rendered workflow structure
         wf = json.loads((instance_dir / "workflow.json").read_text())
@@ -190,6 +196,50 @@ class TestRoutedRunnerE2E:
         assert expected_agents.issubset(referenced_agents), (
             f"Missing agents: {expected_agents - referenced_agents}"
         )
+
+    def test_branch_policy_param_renders_into_git_branch_off_input(self, tmp_path: Path) -> None:
+        """A caller-supplied `branch_policy` param renders verbatim into
+        `outputs/branch-policy.txt`, which `git-branch-off` declares as an input --
+        proving the param is actually threaded to the stage that reads it, the same
+        pattern `type`/`forced-type.txt` already uses."""
+        ws, rs, ag = _make_workspace_for_routed_runner(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "new",
+                "routed-runner",
+                "policy-work",
+                "--param",
+                "repo_set=main",
+                "--param",
+                "branch_policy=always branch fresh off main",
+                "--workspace",
+                str(ws),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+                "--validate-only",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        runs = list((ws / "workflows" / "routed-runner" / "runs").glob("*"))
+        assert len(runs) == 1
+        instance_dir = runs[0]
+
+        assert (
+            instance_dir / "outputs" / "branch-policy.txt"
+        ).read_text() == "always branch fresh off main\n"
+
+        wf = json.loads((instance_dir / "workflow.json").read_text())
+        tasks_by_id = {t["id"]: t for t in wf["tasks"]}
+        # inputs are workspace-relative paths -- match on suffix rather than
+        # reconstructing the exact instance_dir prefix.
+        assert any(
+            p.endswith("outputs/branch-policy.txt") for p in tasks_by_id["git-branch-off"]["inputs"]
+        ), tasks_by_id["git-branch-off"]["inputs"]
 
     def test_agents_recommended_json_scaffolds_and_keep_existing_holds(
         self, tmp_path: Path

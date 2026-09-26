@@ -20,6 +20,20 @@ params:
       Key into this workspace's reposet config -- the repo(s) every stage of
       the run operates on. No default: every workspace must name its own.
     required: true
+  branch_policy:
+    description: >-
+      Free-text policy for how the git-branch-off stage should choose between
+      reusing the current branch and starting fresh off latest main -- e.g.
+      "always branch fresh off main", "keep working on the current branch
+      unless it's already merged", or "never create a branch, fail if the
+      tree is dirty". git-operator combines this stated intent with the
+      actual git state (merged-into-base / dirty / no-upstream / already-on-
+      base) to decide; a genuine conflict between policy and reality pauses
+      for human input instead of guessing or forcing it.
+    required: false
+    default: >-
+      reuse the current branch unless it is already merged into main, in
+      which case start fresh from latest main
   task_budget_usd:
     description: >-
       Per-task real-spend USD cap (task_cost_usd circuit breaker threshold;
@@ -55,6 +69,8 @@ files:
   - content: "{{ params.type }}\n"
     target: outputs/forced-type.txt
     when: type
+  - content: "{{ params.branch_policy }}\n"
+    target: outputs/branch-policy.txt
 assets:
   - source: instructions/
     target: workflows/routed-runner/instructions/

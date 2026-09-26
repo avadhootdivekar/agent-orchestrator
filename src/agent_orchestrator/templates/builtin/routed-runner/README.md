@@ -43,6 +43,15 @@ both are part of this template's contract per `breakdown-contract.md`/`template.
 - `repo_set` (**required**, no default) — key into the workspace's reposet config; the
   repo(s) every stage operates on. Every workspace names its own; there is no sensible
   cross-workspace default.
+- `branch_policy` (optional, free text, default `"reuse the current branch unless it is
+  already merged into main, in which case start fresh from latest main"`) — plain-English
+  guidance for the `git-branch-off` head stage, e.g. `"always branch fresh off main"`,
+  `"keep working on the current branch unless it's already merged"`, or `"never create a
+  branch, fail if the tree is dirty"`. Rendered into the run's `outputs/branch-policy.txt`
+  and combined by the `git-operator` agent with the actual git state (already-merged /
+  dirty / no-upstream / already-on-base) — see `instructions/01-git-branch-off.md`. A
+  genuine conflict between the stated policy and reality pauses for human input rather
+  than guessing.
 - `task_budget_usd` (optional, default `75`) — per-task real-spend USD cap.
 - `run_budget_usd` (optional, default `1500`) — per-run real-spend USD cap.
 
