@@ -43,7 +43,7 @@ import pytest
 import yaml
 
 from agent_orchestrator.dag import build_dag
-from agent_orchestrator.models import AgentSpec, RepoRef, RepoSet
+from agent_orchestrator.models import AgentSpec, RepoRef, RepoSet, TaskSpec
 from agent_orchestrator.spec import cross_validate, load_workflow, validate_run_control
 from agent_orchestrator.templates import _VAR_RE, TemplateError, _render, load_template
 
@@ -335,31 +335,39 @@ def test_template_yaml_dirs() -> None:
 
 
 def test_template_yaml_files_shape() -> None:
+    # NOTE (T-ltBLUY): this test's own former comment/assertion pinned T-eGXqXH's scope
+    # boundary ("no overseer-contract.md.tmpl entry yet -- that's T-ltBLUY"), i.e. it named
+    # THIS task as the one that would cross it. T-ltBLUY's own ticket (Review handoff section)
+    # requires adding exactly that `files:` entry, so the boundary this test pins is updated
+    # here accordingly (5 entries now, contract entry included) -- not a change to any
+    # currently-shipped/permanent behavior this file otherwise guards.
     manifest = _load_manifest()
     files = manifest["files"]
-    assert isinstance(files, list) and len(files) == 4
+    assert isinstance(files, list) and len(files) == 5
 
     by_target = {f["target"]: f for f in files}
     assert set(by_target) == {
         "workflow.json",
         "prompt.md",
+        "overseer-contract.md",
         "overseer-config.json",
         "tools/overseer_tool.py",
     }
     assert by_target["workflow.json"]["source"] == "workflow.json.tmpl"
     assert by_target["prompt.md"]["source"] == "prompt.md.tmpl"
     assert by_target["prompt.md"].get("keep_existing") is True
+    assert by_target["overseer-contract.md"]["source"] == "overseer-contract.md.tmpl"
+    assert not by_target["overseer-contract.md"].get("keep_existing")
     assert by_target["overseer-config.json"]["source"] == "overseer-config.json.tmpl"
     assert by_target["tools/overseer_tool.py"]["source"] == "tools/overseer_tool.py"
 
-    # No overseer-contract.md.tmpl entry yet -- that's T-ltBLUY (explicit scope boundary).
-    assert "overseer-contract.md" not in by_target
 
-
-def test_no_overseer_contract_tmpl_or_instructions_dir_created_yet() -> None:
-    """Guards this task's own scope boundary: `overseer-contract.md.tmpl` (T-ltBLUY) and
-    `instructions/*.md` (T-5ZzAZp) must NOT be created by this task."""
-    assert not (TEMPLATE_DIR / "overseer-contract.md.tmpl").exists()
+def test_no_instructions_dir_created_yet() -> None:
+    """Guards T-5ZzAZp's own remaining scope boundary: `instructions/*.md` must NOT be
+    created by this task. (Formerly also guarded `overseer-contract.md.tmpl` on behalf of
+    T-eGXqXH; T-ltBLUY's ticket explicitly requires that file to exist now -- see
+    `test_template_yaml_files_shape` and the new `test_overseer_contract_tmpl_*` tests below.)
+    """
     assert not (TEMPLATE_DIR / "instructions").exists()
 
 
@@ -791,3 +799,303 @@ def test_load_template_then_reject_unknown_param() -> None:
                 slug_or_id="demo",
                 params={"repo_set": "default-set", "not_a_real_param": "x"},
             )
+
+
+# ---------------------------------------------------------------------------
+# 11. overseer-contract.md.tmpl (T-ltBLUY AC1-AC3)
+# ---------------------------------------------------------------------------
+
+CONTRACT_TEMPLATE_REL_PATH = "overseer-contract.md.tmpl"
+
+# HLD S13.3's "Namespacing" paragraph plus this task's own build instructions: every rule id
+# is printed OV-prefixed EXCEPT HOLD/BUDGET/FANOUT (the tool's own literal, un-prefixed
+# messages -- see `overseer_tool.Violation`'s docstring). Grepped directly against the shipped
+# tool (`grep -oE '"(CFG|ST|INT|BC|BR)-[0-9]+"|"HOLD"|"BUDGET"|"FANOUT"|"RUNNING"'
+# tools/overseer_tool.py`) rather than retyped from the HLD, per this task's own instructions.
+_CURRENTLY_ENFORCED_OV_RULE_IDS = (
+    "OV-CFG-0",
+    "OV-CFG-1",
+    "OV-CFG-2",
+    "OV-CFG-3",
+    "OV-ST-1",
+    "OV-ST-2",
+    "OV-INT-1",
+    "OV-INT-2",
+    "OV-INT-3",
+    "OV-INT-4",
+    "OV-BC-1",
+    "OV-BC-2",
+    "OV-BR-1",
+    "OV-RUNNING",
+)
+_BARE_PREFIX_RULE_IDS = ("HOLD", "BUDGET", "FANOUT")
+# HLD S13.3 "Hard rules R1-R16" (M3 checker, T-HPJcc6/T-tAKBBB -- not implemented yet).
+_FORTHCOMING_OV_RULE_IDS = tuple(f"OV-R{i}" for i in range(1, 17)) + ("OV-R13c",)
+
+
+def _render_contract(variables: dict[str, str] | None = None) -> str:
+    return _render_file(
+        CONTRACT_TEMPLATE_REL_PATH, dict(DUMMY_VALUES if variables is None else variables)
+    )
+
+
+def test_overseer_contract_tmpl_source_exists_and_uses_only_allowed_variables() -> None:
+    """AC1's "no unrendered `{{`" guarantee starts here: every `{{ }}` token in the SOURCE
+    must be one `_render` can actually resolve with this template's own declared params
+    (mirrors `test_all_template_tokens_within_allowed_variable_set`, which does not cover this
+    file since `_all_template_content_files()` predates it)."""
+    path = TEMPLATE_DIR / CONTRACT_TEMPLATE_REL_PATH
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    offenders = [m.group(1) for m in _VAR_RE.finditer(text) if m.group(1) not in ALLOWED_VARIABLES]
+    assert not offenders, (
+        f"unknown template variable(s) in {CONTRACT_TEMPLATE_REL_PATH}: {offenders}"
+    )
+
+
+def test_overseer_contract_tmpl_renders_with_no_unrendered_tokens_and_version_marker() -> None:
+    rendered = _render_contract()
+    assert "{{" not in rendered
+    assert "}}" not in rendered
+    assert "contract_version: 1" in rendered
+
+
+def test_overseer_contract_tmpl_substitutes_instance_dir_and_overseer_effort() -> None:
+    """Per this task's own build instructions: the emitted-entry shapes substitute
+    `{{ instance_dir }}` and `{{ params.overseer_effort }}` (not left as literal params.* text)."""
+    rendered = _render_contract()
+    assert DUMMY_INSTANCE_DIR in rendered
+    assert '"effort": "high"' in rendered  # DUMMY_VALUES["params.overseer_effort"]
+    assert "params.overseer_effort" not in rendered
+    assert "{{ instance_dir }}" not in rendered
+
+
+def test_overseer_contract_tmpl_contains_every_forthcoming_hard_rule_id() -> None:
+    """AC1: every rule id from OV-R1 to OV-R16 plus OV-R13c is present."""
+    rendered = _render_contract()
+    missing = [rid for rid in _FORTHCOMING_OV_RULE_IDS if f"**{rid}**" not in rendered]
+    assert not missing, f"missing forthcoming rule ids: {missing}"
+
+
+def test_overseer_contract_tmpl_contains_every_currently_enforced_rule_id() -> None:
+    """Grounds the contract in the ALREADY-SHIPPED tool's real rule ids (this task's own
+    instructions), not just the design doc's forward-looking list."""
+    rendered = _render_contract()
+    missing = [rid for rid in _CURRENTLY_ENFORCED_OV_RULE_IDS if f"**{rid}**" not in rendered]
+    assert not missing, f"missing currently-enforced rule ids: {missing}"
+    missing_bare = [rid for rid in _BARE_PREFIX_RULE_IDS if f"**{rid}**" not in rendered]
+    assert not missing_bare, f"missing bare (non-OV-prefixed) rule ids: {missing_bare}"
+
+
+def _extract_fenced_json_block(text: str, heading_prefix: str) -> Any:
+    """Locate the first `### <heading_prefix>...` heading, then parse the next fenced
+    ` ```json ... ``` ` block after it -- substituting the contract's one bracket placeholder
+    (`<slug>`) with a sample value first, per this ticket's AC3."""
+    start = text.index(heading_prefix)
+    fence_start = text.index("```json", start) + len("```json")
+    fence_end = text.index("```", fence_start)
+    raw = text[fence_start:fence_end].replace("<slug>", "sample-slug")
+    return json.loads(raw)
+
+
+def test_overseer_contract_tmpl_unit_shape_is_valid_task_spec_with_wired_hook() -> None:
+    """AC3: the unit shape parses, passes `TaskSpec(**entry)`, and its hook name exists in
+    the rendered `workflow.json` `hooks` map."""
+    rendered = _render_contract()
+    entry = _extract_fenced_json_block(rendered, "### Unit (kind")
+    task = TaskSpec(**entry)
+    assert task.pre_hook is not None
+    assert task.pre_hook.use == "ov-unit-gate"
+    workflow = _render_workflow()
+    assert task.pre_hook.use in workflow["hooks"]
+
+
+def test_overseer_contract_tmpl_next_checkpoint_shape_is_valid_task_spec_with_wired_hooks() -> None:
+    rendered = _render_contract()
+    entry = _extract_fenced_json_block(rendered, "### Next checkpoint")
+    task = TaskSpec(**entry)
+    assert task.emit_tasks is True
+    assert task.pre_hook is not None and task.pre_hook.use == "ov-ckpt-prep"
+    assert task.post_hook is not None and task.post_hook.use == "ov-ckpt-check"
+    assert task.effort == DUMMY_VALUES["params.overseer_effort"]
+    workflow = _render_workflow()
+    assert task.pre_hook.use in workflow["hooks"]
+    assert task.post_hook.use in workflow["hooks"]
+
+
+def test_overseer_contract_tmpl_tail_shapes_are_valid_task_specs() -> None:
+    rendered = _render_contract()
+    entries = _extract_fenced_json_block(rendered, "### Tail (terminal")
+    assert isinstance(entries, list)
+    assert [e["id"] for e in entries] == ["final-verify", "closeout", "final-push"]
+    for entry in entries:
+        TaskSpec(**entry)
+    assert entries[0]["depends_on"] == ["ck-01"]
+    assert entries[1]["depends_on"] == ["final-verify"]
+    assert entries[2]["depends_on"] == ["closeout"]
+
+
+# ---------------------------------------------------------------------------
+# 12. Contract kind-map drift guard (T-ltBLUY AC2)
+# ---------------------------------------------------------------------------
+
+
+def _parse_markdown_kind_map(text: str, heading: str) -> dict[str, dict[str, str]]:
+    """Parse the 3-column `| kind | agent | instruction |` table under *heading* (up to the
+    next `## ` heading), skipping the header/separator rows."""
+    start = text.index(heading)
+    end = text.index("\n## ", start + 1)
+    section = text[start:end]
+    result: dict[str, dict[str, str]] = {}
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cols = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cols) != 3:
+            continue
+        kind, agent, instruction = cols
+        if kind.lower() == "kind" or set(kind) <= {"-"}:
+            continue
+        result[kind] = {"agent": agent, "instruction": instruction}
+    return result
+
+
+def test_overseer_contract_tmpl_kind_map_table_matches_rendered_config_kind_map() -> None:
+    """AC2 drift guard: the contract's kind-to-agent/instruction table must equal the
+    rendered `overseer-config.json`'s own `kind_map`, kind for kind."""
+    rendered_contract = _render_contract()
+    parsed = _parse_markdown_kind_map(rendered_contract, "## Kind → agent/instruction map")
+    assert parsed == EXPECTED_KIND_MAP
+    assert parsed == _render_config()["kind_map"]
+
+
+# ---------------------------------------------------------------------------
+# 13. README.md section presence + breaker-table drift guard (T-ltBLUY AC4-AC5)
+# ---------------------------------------------------------------------------
+
+README_PATH = TEMPLATE_DIR / "README.md"
+
+REQUIRED_README_HEADINGS = (
+    "## Summary",
+    "## The DAG shape",
+    "## Required agents",
+    "## Params",
+    "## Tunable vs fixed",
+    "## Budget stages and graceful degradation",
+    "## Limits & breaker rationale",
+    "## Human-in-the-loop (hold)",
+    "## Resuming after a budget trip",
+    "## Engine gaps designed around",
+    "## Completion marker",
+    "## Parallelism & isolation",
+    "## Re-rendering the tool for a fix",
+    "## Preflight",
+    "## Recommended `--autocompact`",
+    "## A note on global `--model`/`AO_MODEL`",
+)
+
+
+def test_readme_exists() -> None:
+    assert README_PATH.is_file()
+
+
+def test_readme_documents_every_required_section_heading() -> None:
+    """AC4: one assertion per section heading (mirrors
+    `test_readme_documents_parallel_isolation_section` in the routed-runner sibling suite)."""
+    text = README_PATH.read_text(encoding="utf-8")
+    for heading in REQUIRED_README_HEADINGS:
+        assert heading in text, f"missing README heading: {heading!r}"
+
+
+def test_readme_documents_dag_shape_no_static_tail_rationale() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+    assert "missing_inputs" in text
+    assert "git-branch-off" in text and "intake" in text
+
+
+def test_readme_documents_hold_and_resume_mechanics() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+    assert "HOLD:" in text
+    assert "control/hold-answer.md" in text
+    assert "consecutive_failures" in text
+    assert "BUDGET:" in text
+    assert "request-closeout" in text
+    assert "--extend-breaker" in text
+    assert "control/budget-override.json" in text
+
+
+def test_readme_documents_breaker_latch_and_unit_gate() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+    assert "latch" in text.lower()
+    assert "breakers.py:603" in text
+    assert "ov-unit-gate" in text
+
+
+def test_readme_documents_engine_gaps_g1_through_g5() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+    for gap in ("G1", "G2", "G3", "G4", "G5"):
+        assert f"**{gap}**" in text, f"missing engine gap {gap}"
+    assert "ADR-0016-overseer-runner-cadence-and-budget-governance.md" in text
+
+
+def test_readme_documents_completion_marker() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+    assert "outputs/final/closeout.md" in text
+
+
+def test_readme_documents_model_clobber_caveat() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+    assert "--model" in text and "AO_MODEL" in text
+    assert "ADR-0003" in text
+
+
+def _parse_readme_breaker_ids(text: str) -> set[str]:
+    """Parse the "Limits & breaker rationale" markdown table's id column, expanding this
+    README's `` `base` / `-2` / `-3` `` shorthand back into full breaker ids."""
+    start = text.index("## Limits & breaker rationale")
+    end = text.index("\n## ", start + 1)
+    section = text[start:end]
+    ids: set[str] = set()
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        first_col = stripped.strip("|").split("|")[0].strip().replace("`", "")
+        if not first_col or first_col.lower() == "id" or set(first_col) <= {"-"}:
+            continue
+        parts = [p.strip() for p in first_col.split("/")]
+        base = parts[0]
+        ids.add(base)
+        for suffix in parts[1:]:
+            ids.add(base + suffix if suffix.startswith("-") else suffix)
+    return ids
+
+
+def test_readme_breaker_table_ids_match_rendered_workflow_breakers() -> None:
+    """AC5: the README's breaker table ids must equal the rendered `workflow.json`'s
+    `circuit_breakers` ids exactly."""
+    text = README_PATH.read_text(encoding="utf-8")
+    readme_ids = _parse_readme_breaker_ids(text)
+    workflow = _render_workflow()
+    workflow_ids = {b["id"] for b in workflow["circuit_breakers"]}
+    assert readme_ids == workflow_ids
+
+
+def test_readme_breaker_table_thresholds_match_rendered_defaults() -> None:
+    """AC5 (thresholds, beyond the "at minimum" id check): the three param-driven breaker
+    thresholds the README calls out by number must match this template's own rendered
+    defaults."""
+    text = README_PATH.read_text(encoding="utf-8")
+    config = _render_config()
+    workflow = _render_workflow()
+    breakers_by_id = {b["id"]: b for b in workflow["circuit_breakers"]}
+
+    assert breakers_by_id["run-budget-backstop"]["threshold"] == config["run_budget_usd"] == 2000
+    assert "$2,000" in text
+
+    assert breakers_by_id["task-budget-cap"]["threshold"] == config["task_budget_usd"] == 75
+    assert "$75" in text
+
+    assert breakers_by_id["runaway-fanout"]["threshold"] == config["max_injected_tasks"] == 160
+    assert "160" in text

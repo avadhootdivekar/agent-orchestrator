@@ -1,0 +1,332 @@
+# Overseer checkpoint contract — {{ id }}
+
+This file is generated per-run and is AUTHORITATIVE for every emitting task in this workflow
+(`intake` and every `ck-JJ` checkpoint). Copy ids, paths, and shapes from here LITERALLY,
+substituting only `<slug>` (a short kebab-case description you choose) and the numeric wave/
+checkpoint segments shown as concrete examples below. Every rule in "Hard rules" below applies
+to the manifest and verdict you emit — a violation fails your checkpoint task and halts the run
+(resumable). This is a forward-looking contract: the checkpoint's manifest and verdict must
+satisfy every rule below, whether or not the checker that enforces a given rule has landed yet
+(see "Hard rules" for which are enforced by the shipped tool today versus forthcoming).
+
+## Paths for this run
+
+- Instance dir (workspace-relative): `{{ instance_dir }}`
+- Instance dir (absolute):           `{{ workspace_root }}/{{ instance_dir }}`
+- Outputs dir:                       `{{ instance_dir }}/outputs`
+- Control dir (hold/override files): `{{ instance_dir }}/control`
+- Tool path (absolute, every hook invokes this): `{{ workspace_root }}/{{ instance_dir }}/tools/overseer_tool.py`
+- Config:                            `{{ instance_dir }}/overseer-config.json`
+- Charter (locked at intake):        `{{ instance_dir }}/outputs/charter.json`
+- Ledger (tool-owned, append-only):  `{{ instance_dir }}/outputs/ledger.jsonl`
+
+## Id patterns
+
+- **Wave units**: `wJJ-NN-<slug>` — `JJ` is the zero-padded wave number, `NN` the zero-padded
+  unit number within that wave, `<slug>` a short kebab-case description of the unit's work.
+- **Checkpoints**: `ck-JJ` — zero-padded, `ck-JJ` reviews wave `JJ` (e.g. `ck-01` reviews
+  wave 1's units).
+- **Fixed tail ids** (never reused, never renamed): `final-verify`, `closeout`, `final-push`.
+- **Expander patterns** (FR-15 — only relevant if `max_expanders_per_wave` > 0; this run's
+  `max_expanders_per_wave` is `{{ params.max_expanders_per_wave }}`, and FR-15 is off by
+  default and **not yet implemented in this epic** — see `T-zLHc7Q`, deferred; do not emit a
+  `kind: expand` unit while it reads 0): expander leaves are `<unit-id>--NN-<slug>`, and the
+  fixed sub-aggregator is `<unit-id>--done`.
+
+## Emitted-entry shapes
+
+Every entry you emit is a `tasks[]` item in your `task_manifest_path` JSON (strict JSON,
+`{"tasks": [...]}`, no comments, no trailing commas). The examples below follow one run's story
+end to end: `intake` emits wave 1 (`w01-*`) plus `ck-01`; `ck-01` in turn either continues with
+another wave, or emits the close-out tail. Substitute `<slug>` with your own short kebab-case
+token; every other field is copied literally.
+
+### Unit (kind ∈ `{research, design, implement, test, review, fix, document, verify, stabilize}`)
+
+```json
+{"id": "w01-01-<slug>", "agent": "developer",
+ "instruction": "workflows/overseer-runner/instructions/10-work-unit.md",
+ "depends_on": ["intake"],
+ "inputs": ["{{ instance_dir }}/overseer-contract.md", "{{ instance_dir }}/outputs/charter.json",
+            "{{ instance_dir }}/outputs/waves/w01/briefs/w01-01-<slug>.json"],
+ "outputs": ["{{ instance_dir }}/outputs/waves/w01/w01-01-<slug>.md",
+             "{{ instance_dir }}/outputs/progress/w01-01-<slug>.json"],
+ "pre_hook": {"use": "ov-unit-gate"},
+ "timeout_seconds": 7200, "skip_if_outputs_exist": true, "effort": "medium"}
+```
+
+`agent` and `instruction` come from the kind→agent/instruction map below and must match it
+**exactly** (OV-R6) — the example above shows `kind: implement` → `developer`. `depends_on` must
+include the emitter (`intake`, or the previous `ck-JJ` for a later wave) and may otherwise only
+reference other ids in this same manifest (OV-R8). A unit may also carry optional
+`"touches": [...]` (best-effort glob hints) and/or `"isolation": "none"|"worktree"|"inherit"`
+(both omitted by default) — see `TaskSpec` for the full optional-field set; do not add fields
+beyond `id, agent, instruction, depends_on, inputs, outputs, pre_hook, timeout_seconds,
+skip_if_outputs_exist, effort, touches, isolation` (OV-R2/OV-R9 — no `post_hook`, no `model`, no
+`max_turns` on a unit).
+
+### Next checkpoint
+
+```json
+{"id": "ck-01", "agent": "manager", "instruction": "workflows/overseer-runner/instructions/20-checkpoint.md",
+ "depends_on": ["w01-01-<slug>", "w01-02-<slug>"],
+ "inputs": ["{{ instance_dir }}/overseer-contract.md", "{{ instance_dir }}/overseer-config.json",
+            "{{ instance_dir }}/outputs/charter.json",
+            "{{ instance_dir }}/outputs/progress/w01-01-<slug>.json",
+            "{{ instance_dir }}/outputs/progress/w01-02-<slug>.json"],
+ "outputs": ["{{ instance_dir }}/outputs/checkpoints/ck-01/digest.json",
+             "{{ instance_dir }}/outputs/checkpoints/ck-01/verdict.json",
+             "{{ instance_dir }}/outputs/checkpoints/ck-01/report.md"],
+ "emit_tasks": true, "task_manifest_path": "{{ instance_dir }}/outputs/manifests/ck-01.json",
+ "pre_hook": {"use": "ov-ckpt-prep"}, "post_hook": {"use": "ov-ckpt-check", "on_failure": "fail_task"},
+ "timeout_seconds": 3600, "skip_if_outputs_exist": false, "effort": "{{ params.overseer_effort }}"}
+```
+
+`depends_on` must list **every** unit id in this manifest (or expander `--done` ids), or `[<the
+emitter's own id>]` when the wave is empty — that is exactly the **hold** shape: decision `hold`
+emits the next checkpoint with zero wave units and `depends_on` set to only the emitter. `inputs`
+must include every unit's (and every expander's `--done`) breadcrumb path. See "The
+`overseer_model` rule" below for when this entry must also carry `"model"`.
+
+### Tail (terminal emission only — emitted instead of a next checkpoint, never alongside one)
+
+```json
+[
+  {"id": "final-verify", "agent": "tester", "instruction": "workflows/overseer-runner/instructions/40-final-verify.md",
+   "depends_on": ["ck-01"],
+   "inputs": ["{{ instance_dir }}/outputs/charter.json", "{{ instance_dir }}/outputs/checkpoints/ck-01/verdict.json"],
+   "outputs": ["{{ instance_dir }}/outputs/final/verify.md"], "timeout_seconds": 7200, "skip_if_outputs_exist": false},
+  {"id": "closeout", "agent": "manager", "instruction": "workflows/overseer-runner/instructions/41-closeout.md",
+   "depends_on": ["final-verify"],
+   "inputs": ["{{ instance_dir }}/outputs/charter.json", "{{ instance_dir }}/outputs/final/verify.md"],
+   "outputs": ["{{ instance_dir }}/outputs/final/closeout.md"], "timeout_seconds": 3600, "skip_if_outputs_exist": false},
+  {"id": "final-push", "agent": "git-operator", "instruction": "workflows/overseer-runner/instructions/90-final-push.md",
+   "depends_on": ["closeout"],
+   "inputs": ["{{ instance_dir }}/outputs/final/closeout.md"],
+   "outputs": ["{{ instance_dir }}/outputs/final/push-report.md"], "timeout_seconds": 2400,
+   "skip_if_outputs_exist": false, "isolation": "none"}
+]
+```
+
+Emit all three ids exactly as shown, with `depends_on` chained `final-verify → closeout →
+final-push` and the first entry's `depends_on` set to the emitting checkpoint's own id.
+`final-push` is included **iff** `final_push` is true for this run (this run's `final_push` is
+`{{ params.final_push }}`); when it is false, emit only `final-verify` and `closeout`. There is
+no static tail task in this workflow — see this template's `README.md` ("The DAG shape") for why.
+
+### Expander (FR-15 — deferred, do not emit while `max_expanders_per_wave` reads 0 above)
+
+A unit whose brief sets `"kind": "expand"` is itself `"emit_tasks": true` with its own
+`"task_manifest_path": "{{ instance_dir }}/outputs/manifests/<unit-id>.json"` and
+`"post_hook": {"use": "ov-expander-check", "on_failure": "fail_task"}`, `agent: "architect"`,
+`instruction: "workflows/overseer-runner/instructions/30-expander.md"`. Its own manifest holds
+at most `sub_wave_size` leaves (`<unit-id>--NN-<slug>`, the ordinary unit shape, never
+`emit_tasks`) plus exactly one `<unit-id>--done` (agent `manager`, instruction
+`31-sub-aggregate.md`, `depends_on` every leaf, outputs
+`{{ instance_dir }}/outputs/waves/wJJ/<unit-id>--done.md` and
+`{{ instance_dir }}/outputs/progress/<unit-id>--done.json`). **This kind is not yet wired up in
+this epic — leave `max_expanders_per_wave` at 0 and never emit `kind: expand` until a later
+task documents enabling it.**
+
+## Kind → agent/instruction map
+
+Every unit's `agent`/`instruction` must match this table exactly for its `kind` (OV-R6). This
+table is identical, kind for kind, to `overseer-config.json`'s own `kind_map` — the checker
+reads only that rendered file, never this prose, so the two must never drift.
+
+| kind | agent | instruction |
+|---|---|---|
+| research | architect | workflows/overseer-runner/instructions/10-work-unit.md |
+| design | architect | workflows/overseer-runner/instructions/10-work-unit.md |
+| implement | developer | workflows/overseer-runner/instructions/10-work-unit.md |
+| fix | developer | workflows/overseer-runner/instructions/10-work-unit.md |
+| document | developer | workflows/overseer-runner/instructions/10-work-unit.md |
+| stabilize | developer | workflows/overseer-runner/instructions/11-stabilize-unit.md |
+| test | tester | workflows/overseer-runner/instructions/10-work-unit.md |
+| verify | tester | workflows/overseer-runner/instructions/10-work-unit.md |
+| review | reviewer | workflows/overseer-runner/instructions/10-work-unit.md |
+| expand | architect | workflows/overseer-runner/instructions/30-expander.md |
+
+## Agent-authored artifact schemas
+
+These are the files YOU (the emitting agent) write. `charter.json` is written once, by
+`intake`, and is out of scope for a checkpoint (it is read-only after intake locks it).
+
+**brief** — `outputs/waves/wJJ/briefs/<unit-id>.json`, `schema: "ao.overseer.brief/v1"` — one
+per unit you emit, written before the unit dispatches:
+- `schema`, `unit_id`, `wave` (int), `ask_ids` (≥1, must cite a real charter `ask_id`),
+  `work_item` (pattern `^A\d+/[a-z0-9-]{1,40}$`, e.g. `A2/parser` — the stable loop-detection key)
+- `kind` (enum, from the table above), `goal` (≤1500 chars), `acceptance` (≥1, each ≤300 chars)
+- `approach_change` (≤600 chars, or `null` — required when this unit re-attempts a work item at
+  its attempt cap)
+- `prior_attempts` (list of earlier unit ids on this work item), `context_paths`, `touches`
+
+**breadcrumb** — `outputs/progress/<unit-id>.json`, `schema: "ao.overseer.breadcrumb/v1"` —
+written by the unit itself, a declared output the engine enforces exists:
+- `schema`, `unit_id` (must equal the unit's own id), `outcome` (`done|partial|blocked|no_op`),
+  `verdict` (`pass|fail|na`), `summary` (≤300 chars)
+- `changed_paths` (≤50, each `"<repo_id>:<rel path>"`), `acceptance_met` (list of ints indexing
+  the brief's `acceptance`), `followups` (≤5, each ≤200 chars), `needs_input` (bool)
+
+**verdict** — `outputs/checkpoints/ck-JJ/verdict.json`, `schema: "ao.overseer.verdict/v1"` —
+written by the checkpoint (you), once per checkpoint:
+- `schema`, `checkpoint` (`ck-JJ`), `stage` (echo of the digest's stage),
+  `decision` (`continue|redirect|hold|stabilize|closeout`), `rationale` (≤2000 chars),
+  `next_wave_goal` (≤400 chars)
+- `alignment` — one entry per charter ask: `{ask_id, status: on_track|at_risk|drifted|met|deferred,
+  evidence (≤600 chars), deferred_reason?: out_of_budget|blocked_needs_input|human_descoped|infeasible}`
+- `criteria` — one entry per charter acceptance criterion: `{id, status: met|unmet|deferred}`
+- `signal_responses` — one entry per digest signal id: `{signal_id, response: redirect|descope|accept|hold, rationale}`
+- `hold_questions` (list of strings; required, ≥1, iff `decision == "hold"`)
+
+**hold-request** — `control/hold-request.json`, `schema: "ao.overseer.hold/v1"` — written only
+when `decision == "hold"`:
+- `schema`, `checkpoint`, `created_at`, `questions` (≥1 strings), `needs_input_path`
+
+## Budget stages and allowed decisions
+
+The digest (`outputs/checkpoints/ck-JJ/digest.json`, tool-written, read-only to you) reports a
+`stage` computed from actual **and projected** spend against this run's `converge_pct` /
+`stabilize_pct` / `closeout_pct` of `run_budget_usd`. The stage only ever moves forward
+(latched) and fixes which decisions your verdict may pick:
+
+| stage | allowed decisions |
+|---|---|
+| explore | `continue`, `redirect`, `hold`, `stabilize`, `closeout`* |
+| converge | `continue`†, `redirect`†, `hold`, `stabilize`, `closeout`* |
+| stabilize | `stabilize`, `closeout`, `hold` |
+| closeout / `must_close` | `closeout` |
+
+\* `closeout` before the `stabilize` stage is allowed **only** when the ledger already shows,
+for every non-deferred ask, a `verify`-kind unit with `verdict: pass` after that ask's last
+`implement`/`fix`/`stabilize`/`document` unit (OV-R14) — "done early" must be verified, not
+merely claimed.
+
+† In `converge`, `continue`/`redirect` units may only target **existing** work items — no new
+scope (OV-R11).
+
+`must_close` (the digest tells you this directly) forces `decision: closeout` regardless of
+stage (OV-R16) — it is set once the run's `max_waves`/`max_stabilize_passes` cap is hit, once
+stage reaches `closeout`, or once an operator has run `overseer_tool.py request-closeout`.
+
+## Signal types and response rules
+
+The digest's `signals[]` is a deterministic list computed from the ledger, path history, and
+previous verdicts. Your verdict's `signal_responses[]` must answer **every** signal id the
+digest reports, `response ∈ {redirect, descope, accept, hold}`; `accept` on a `high`-severity
+signal requires a `rationale` of at least 40 characters.
+
+| signal | meaning | severity |
+|---|---|---|
+| `period_repeat` | a work item's kind/verdict sequence is a repeating block (e.g. review-fail, fix-pass, review-fail, fix-pass, or A→B→C→D→A→B→C→D) | high if repeated ≥3 times, else medium |
+| `mirror_flipflop` | a work item's sequence mirrors itself (A→B→B→A, A→B→C→C→B→A) | medium |
+| `content_oscillation` | a tracked file's content hash returned to an earlier state after changing | high if ≥2 paths or ≥2 returns, else medium |
+| `breadcrumb_integrity` | a breadcrumb `changed_paths` entry is malformed, out of its repo root, or names an unknown repo | high |
+| `stall` | no work item finished (`outcome: done`, `verdict ∈ {pass, na}`) and criteria-met did not rise, for `stall_waves` consecutive waves | high |
+| `repeated_failure` | the same work item's last 2 units both have `verdict: fail` | medium |
+| `attempt_cap` | a work item reached `max_attempts_per_item` | high |
+| `ask_starvation` | a non-met, non-deferred ask got zero units in the last `stall_waves` waves | medium |
+| `blocked_units` | a unit in the last wave reported `outcome: blocked` or `needs_input: true` | medium |
+| `prompt_changed` | `prompt.md`'s hash no longer matches the locked charter | high |
+
+## The `overseer_model` rule
+
+This run's `overseer_model` is `"{{ params.overseer_model }}"`. When it is **non-empty**, every
+`ck-*` entry you emit (the "Next checkpoint" shape above) must additionally carry
+`"model": "{{ params.overseer_model }}"`. When it is empty (the default), omit `model` entirely
+and the checkpoint inherits the `manager` agent's own model.
+
+## Hard rules (a violation fails the checkpoint and halts the run)
+
+Every rule below is printed with an `OV-` prefix by the tool, **except** `HOLD`, `BUDGET`, and
+`FANOUT`, whose messages start with that literal word verbatim (no `OV-` prefix) so an operator
+can `grep` for them directly.
+
+**Currently enforced** (by the shipped `tools/overseer_tool.py`):
+
+- **OV-CFG-0** — `overseer-config.json` is missing, unreadable, not valid JSON, not a JSON
+  object, or a required numeric field is not numeric.
+- **OV-CFG-1** — `converge_pct` / `stabilize_pct` / `closeout_pct` are not strictly increasing
+  between 0 and 100.
+- **OV-CFG-2** — `wave_size` or `max_waves` is below 1, or `run_budget_usd` is not positive.
+- **OV-CFG-3** — `max_injected_tasks` is too low for this run's own
+  `max_waves`/`wave_size`/`max_expanders_per_wave`/`sub_wave_size` math.
+- **OV-ST-1** — the run's `state.json` does not exist at the expected path.
+- **OV-ST-2** — `state.json` is unreadable, not valid JSON, not an object, or missing a
+  required field (`tasks`, a task's `status`/`cumulative_cost_usd`, `injected_tasks[].id`,
+  `breaker_overrides`).
+- **OV-INT-1** — `charter.json`'s hash, or `prompt.md`'s hash, no longer matches
+  `outputs/overseer/charter.lock.json` (the charter was rewritten, or the prompt changed after
+  intake locked it).
+- **OV-INT-2** — the ledger's last checkpoint decided `hold`, but `control/hold-request.json`
+  is missing or unreadable.
+- **OV-INT-3** — the ledger's hash chain is broken (a line's `prev_sha256` does not match the
+  recomputed hash of the previous line).
+- **OV-INT-4** — `control/hold-request.json` exists but the ledger shows no un-answered `hold`
+  decision backing it (a forged/stray hold request).
+- **OV-BC-1** — a unit's breadcrumb is unreadable/malformed, or its `unit_id` field does not
+  match the unit that produced it.
+- **OV-BC-2** — a settled unit (any status other than `failed`) has no breadcrumb at all (this
+  template's own extension of the `BC-*` bucket, beyond the design doc's normative list —
+  fail-closed rather than fabricate data for a unit that should have written its own
+  breadcrumb).
+- **OV-BR-1** — a unit's brief (`outputs/waves/wJJ/briefs/<unit-id>.json`) is missing,
+  unreadable, or not a JSON object.
+- **HOLD** — a checkpoint's pre-hook refuses to run because the previous checkpoint decided
+  `hold` and no `control/hold-answer.md` newer than `control/hold-request.json` exists yet.
+- **BUDGET** — a wave unit's pre-hook refuses to dispatch because spend already meets or
+  exceeds the effective budget.
+- **FANOUT** — a wave unit's pre-hook refuses to dispatch because the run's injected-task
+  count already exceeds `max_injected_tasks`.
+- **OV-RUNNING** — `request-closeout` was invoked while the run's `state.json` status is not
+  `failed`/`cancelled` (it refuses to race in-flight dispatch).
+
+**Forthcoming** (the manifest/verdict checker, `intake-check`/`ckpt-check`/`expander-check` —
+not implemented yet in this epic; document your manifest and verdict against these now, since
+the checker that enforces them will match these ids exactly):
+
+- **OV-R1** — strict JSON `{"tasks": [...]}`.
+- **OV-R2** — field whitelist per entry class.
+- **OV-R3** — id patterns, unique, not pre-existing.
+- **OV-R4** — units ≤ `allowed_wave_size`.
+- **OV-R5** — expanders ≤ `max_expanders_per_wave`, leaves never emit.
+- **OV-R6** — brief exists and is valid, `ask_ids ⊆ charter`, `agent` and `instruction` exactly
+  as `kind_map[kind]`.
+- **OV-R7** — unit outputs exactly [report, breadcrumb], inputs include the brief.
+- **OV-R8** — `depends_on` ∋ E (the emitter) and ⊆ {E} ∪ this manifest.
+- **OV-R9** — units carry exactly `pre_hook: {"use": "ov-unit-gate"}`, no
+  `post_hook`/`model`/`max_turns`, `effort ∈ {low, medium, high}`.
+- **OV-R10** — exactly one of {next checkpoint, tail}, exact shapes (`model` on `ck-*` iff
+  `overseer_model` is set).
+- **OV-R11** — stage restrictions (converge: existing work items only; stabilize:
+  stabilize/verify/document only).
+- **OV-R12** — the verdict answers every signal id; `accept` on high needs a rationale ≥40
+  chars; `deferred` needs `deferred_reason` plus evidence ≥40 chars.
+- **OV-R13** — attempt cap (`approach_change` required at the cap; forbidden above cap+1).
+- **OV-R13c** — rename dodge: a new work-item whose brief goal is too similar to, or whose
+  prior attempts/touches intersect, a capped item's — reuse the capped key with
+  `approach_change`, descope it, or hold instead.
+- **OV-R14** — decision ↔ manifest consistency, including verified early closeout.
+- **OV-R15** — all JSON within 1 MiB, schema version `v1`.
+- **OV-R16** — `must_close` ⇒ `closeout`.
+
+## Self-check before you exit
+
+Before you finish, run this template's own checker in dry-run mode and fix every violation it
+reports:
+
+```bash
+{{ params.python_bin }} {{ workspace_root }}/{{ instance_dir }}/tools/overseer_tool.py \
+  ckpt-check --dry-run --task-id <your-checkpoint-id> \
+  --workspace-root {{ workspace_root }} --instance-dir {{ instance_dir }}
+```
+
+(`intake` runs `intake-check --dry-run` the same way, in place of `ckpt-check`.) **Note:**
+`ckpt-check`/`intake-check` do not exist as subcommands yet in this epic (a later task, M3,
+adds them) — this section describes what the contract requires once they land; until then,
+re-read the "Hard rules" above by hand before you emit your manifest and verdict. If a
+`check-result.json` from a previous attempt already exists in your checkpoint directory
+(`{{ instance_dir }}/outputs/checkpoints/<your-checkpoint-id>/check-result.json`), read it
+first — it names exactly which rule failed last time.
+
+## contract_version: 1

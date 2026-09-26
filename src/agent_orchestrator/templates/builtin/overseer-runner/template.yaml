@@ -95,6 +95,8 @@ files:
   - source: prompt.md.tmpl
     target: prompt.md
     keep_existing: true
+  - source: overseer-contract.md.tmpl
+    target: overseer-contract.md
   - source: overseer-config.json.tmpl
     target: overseer-config.json
   - source: tools/overseer_tool.py
