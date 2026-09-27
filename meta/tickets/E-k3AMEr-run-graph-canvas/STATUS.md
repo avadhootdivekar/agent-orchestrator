@@ -13,10 +13,10 @@
 | T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | **Done** — Gate G1 PASS (1 SHOULD-FIX + 1 NIT resolved) |
 | T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | **Done** |
 | T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | **Done** |
-| T-M4qboy-run-graph-builder | MVP | S2 | 14 h | In Progress (dispatched to `developer`, worktree isolation) |
-| T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft (blocked on T-M4qboy) |
-| T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | In Progress (dispatched to `developer`, worktree isolation) |
-| T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | Draft |
+| T-M4qboy-run-graph-builder | MVP | S2 | 14 h | **Done** |
+| T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft (unblocked — T-M4qboy is Done) |
+| T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | **Done** |
+| T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | In Progress (dispatched to `developer`, worktree isolation) |
 | T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | Draft |
 | T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft |
 | T-VcN4pt-task-title-field | Non-MVP | S2 stretch | 6 h | Draft |
@@ -24,10 +24,53 @@
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). **5 Done**, 2 In Progress, 0 Blocked, 8 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **7 Done**, 1 In Progress, 0 Blocked, 7 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-M4qboy-run-graph-builder
+  merged and independently re-verified — Done.** Clean merge, no conflicts. Re-verified myself
+  (not just the implementer's STATUS.md claims):
+  - `pytest -q` → **4573 passed** (+42 exactly, matching the new test file), 8 skipped, 0 failed.
+  - `ruff check .`/`ruff format --check .`/`mypy src` → 0 new findings (same 2 pre-existing).
+  - Independently re-ran the 3 structural grep checks myself rather than trusting them: no
+    `fastapi` import, no file-I/O calls (`open`/`read_text`/`write_text`/`.stat()`), and no
+    reimplemented `depends_on`/`output_to_task` logic anywhere in `ui/graph.py` — all 3 confirmed
+    empty.
+  - Re-ran the coverage command myself: `pytest --cov=agent_orchestrator.ui.graph --cov-branch`
+    → **99% (195 stmts/0 missed, 36 branches/1 partial)**, exactly reproducing the claim.
+  - Read the AC-3(b) "overseer-shape" test directly (the epic's core U-4 requirement) and
+    confirmed it explicitly asserts `dep_pairs(g) != spawn_pairs(g)` — the dependency-order and
+    spawn-tree edge sets are provably different, not just assumed.
+  - This task wasn't in Gate G1's original scope (that gate covered only the 3 S1 engine tasks);
+    my own independent re-verification here stands in for a dedicated review pass, consistent
+    with the epic's gate plan (G2 dev-security and G3 final reviewer still cover the accumulated
+    Sprint 2 work before close).
+
+  `T-AsQ77e-run-graph-endpoint` is now unblocked (depends on `T-M4qboy`, `T-l7t6TT`, `T-adVpTj`,
+  all Done) — dispatching next. Still waiting on `T-pAi0Cv-task-detail-panel` (agent
+  `ad04a5412524b76ba`, frontend).
+
+## Prior update (T-aHktGB merge)
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-aHktGB-graph-toolbar-and-legend
+  merged and independently re-verified — Done.** Merge commit had no conflicts (fully disjoint
+  from the in-flight T-M4qboy backend work). Re-verified myself:
+  - `npm run typecheck` clean.
+  - `npm test` → **192 passed (192), 19 files** (+41 vs. the 151-test baseline).
+  - `grep -r dangerouslySetInnerHTML ui/src/graph/` and a hex-color grep on `ui/src/graph/*` →
+    both empty (D-5 / theme-token discipline confirmed, not just claimed).
+  - `npm run build` reproduces the committed bundle byte-for-byte (clean `git status` after a
+    from-scratch rebuild). Main JS 121.40 KB gzip (+0.14 KB), main CSS 3.94 KB gzip (+0.38 KB),
+    lazy `RunGraph` chunk 77.71 KB gzip (+2.23 KB) — combined lazy total 79.74 KB gzip, still
+    under the ≤90 KB NFR-4 budget.
+  - `pytest -q` sanity re-run (frontend-only merge): still 4531 passed, 8 skipped, 0 failed.
+
+  `T-pAi0Cv-task-detail-panel` is now unblocked (depends on `T-aHktGB`'s `useSelectAndCenter`
+  hook and `T-OjTS8O`'s node events, both Done) — dispatched (agent `ad04a5412524b76ba`,
+  worktree isolation, branched from `ad/run-graph-canvas` with T-aHktGB's merged foundation).
+  Still waiting on `T-M4qboy-run-graph-builder` (agent `a03c5d909ea622938`, backend).
+
+## Prior update (Gate G1 closure)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **Gate G1 CLOSED, PASS on all 3
   engine-touching tasks. Sprint 1 is fully DONE (5/5 tasks).** The reviewer pass (agent
   `aa890ce0c3801c441`) came back after the tester pass (recorded below) with: 0 MUST-FIX; 2
