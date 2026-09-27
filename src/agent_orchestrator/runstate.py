@@ -275,6 +275,13 @@ class RunStateStore:
                 # (`RunState.budget_counters.consumed_tokens`, used by breakers/rate-window
                 # gating) was never affected by this gap -- it is never rebuilt here -- so this
                 # fix is purely restoring the per-task DISPLAY/observability view to match it.
+                #
+                # ADR-0017 D1 (T-AZzgT8): `origin` is carried forward the same way, so an
+                # injected/loop task's provenance KIND survives resume (previously reset to
+                # the TaskRunState default "static"). `spawned_by` itself needs no code here
+                # -- it lives on RunState, not TaskRunState, so it is preserved verbatim by
+                # this function simply never touching it. `route` is deliberately NOT
+                # carried -- that is a separate, already-logged finding (F-2).
                 state.tasks[task.id] = TaskRunState(
                     status="pending",
                     dispatch_cycle=ts.dispatch_cycle,
@@ -283,6 +290,7 @@ class RunStateStore:
                     cumulative_cache_creation_input_tokens=ts.cumulative_cache_creation_input_tokens,
                     cumulative_cache_read_input_tokens=ts.cumulative_cache_read_input_tokens,
                     cumulative_cost_usd=ts.cumulative_cost_usd,
+                    origin=ts.origin,
                 )
 
         # E-Wk9Tz3 AC-17: state.integration and state.task_integration are otherwise
