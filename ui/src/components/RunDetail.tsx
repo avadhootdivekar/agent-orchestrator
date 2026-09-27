@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import {
   formatCost,
@@ -7,8 +7,13 @@ import {
   formatPercent,
   formatTimestamp,
 } from "../format";
+import { readPrefs, writePrefs, type GraphTab } from "../graph/model";
 import type { RunDetail as RunDetailData, RunIntegration, TaskStat } from "../types";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
+
+// React Flow/dagre (and this task's own graph CSS) download only once the Graph tab is
+// opened -- the initial dashboard load is unaffected (NFR-4, TASK.md item 5).
+const RunGraph = lazy(() => import("../graph/RunGraph"));
 
 const POLL_MS = 3000;
 
@@ -97,6 +102,13 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
   const [log, setLog] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Table is the default (TASK.md item 5); persisted globally, not per-run.
+  const [activeTab, setActiveTab] = useState<GraphTab>(() => readPrefs().tab);
+
+  const selectTab = (tab: GraphTab) => {
+    setActiveTab(tab);
+    writePrefs({ ...readPrefs(), tab });
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -213,52 +225,87 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
 
       <div>
         <h2>Tasks</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Task</th>
-                <th>Status</th>
-                <th className="num">Attempts</th>
-                <th className="num">Duration</th>
-                <th className="num">Tokens</th>
-                <th className="num">Cost</th>
-                <th>Integration</th>
-                <th>Outputs</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detail.tasks.map((task) => (
-                <tr key={task.id}>
-                  <td className="mono">
-                    {task.id}
-                    {task.origin !== "static" ? (
-                      <span className="tag" style={{ marginLeft: 6 }}>
-                        {task.origin}
-                      </span>
-                    ) : null}
-                    <CacheDetails task={task} />
-                  </td>
-                  <td>
-                    <StatusChip status={task.status} />
-                  </td>
-                  <td className="num">{task.attempts}</td>
-                  <td className="num">{formatDuration(task.duration_seconds)}</td>
-                  <td className="num">
-                    {formatCount(task.input_tokens + task.output_tokens)}
-                  </td>
-                  <td className="num">{formatCost(task.cost_usd)}</td>
-                  <td>
-                    <IntegrationCell task={task} />
-                  </td>
-                  <td className="mono muted" style={{ fontSize: 11 }}>
-                    {task.output_artifact_path ?? "—"}
-                  </td>
+        {/* Feature-detected against the backend (HLD §8.6): an older backend has no
+            graph_version, and the Tasks section renders exactly as it always has (AC-6, FR-8). */}
+        {detail.graph_version ? (
+          <div className="tabs" role="tablist" aria-label="Tasks view">
+            <button
+              type="button"
+              role="tab"
+              className="tab"
+              aria-selected={activeTab === "table"}
+              onClick={() => selectTab("table")}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className="tab"
+              aria-selected={activeTab === "graph"}
+              onClick={() => selectTab("graph")}
+            >
+              Graph
+            </button>
+          </div>
+        ) : null}
+
+        {detail.graph_version && activeTab === "graph" ? (
+          <Suspense fallback={<Empty>Loading graph…</Empty>}>
+            <RunGraph
+              runId={runId}
+              tasks={detail.tasks}
+              graphVersion={detail.graph_version}
+            />
+          </Suspense>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Status</th>
+                  <th className="num">Attempts</th>
+                  <th className="num">Duration</th>
+                  <th className="num">Tokens</th>
+                  <th className="num">Cost</th>
+                  <th>Integration</th>
+                  <th>Outputs</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {detail.tasks.map((task) => (
+                  <tr key={task.id}>
+                    <td className="mono">
+                      {task.id}
+                      {task.origin !== "static" ? (
+                        <span className="tag" style={{ marginLeft: 6 }}>
+                          {task.origin}
+                        </span>
+                      ) : null}
+                      <CacheDetails task={task} />
+                    </td>
+                    <td>
+                      <StatusChip status={task.status} />
+                    </td>
+                    <td className="num">{task.attempts}</td>
+                    <td className="num">{formatDuration(task.duration_seconds)}</td>
+                    <td className="num">
+                      {formatCount(task.input_tokens + task.output_tokens)}
+                    </td>
+                    <td className="num">{formatCost(task.cost_usd)}</td>
+                    <td>
+                      <IntegrationCell task={task} />
+                    </td>
+                    <td className="mono muted" style={{ fontSize: 11 }}>
+                      {task.output_artifact_path ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {detail.tripped_breakers.length > 0 ? (
