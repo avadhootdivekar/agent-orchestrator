@@ -982,6 +982,41 @@ class SpawnRecord(BaseModel):
     iteration: int | None = None  # set iff origin == SPAWN_ORIGIN_LOOP; by convention >= 2
 
 
+class SpecSession(BaseModel):
+    """One run-session's static-spec identity (ADR-0017 D2, HLD §8.2).
+
+    Appended to ``RunState.spec_sessions`` -- an append-only log -- at the start of
+    EVERY run session (fresh run or resume), before the run's first ``save()``. This
+    is the source of truth for which static spec a session executed, independent of
+    how the run was launched (`ao ui` / bare `ao run` / `ao resume` / a cron/event
+    trigger). Never mutated or removed once appended.
+    """
+
+    session: int  # 1-based; = len(spec_sessions) + 1 at append time
+    started_at: str  # ISO-8601 UTC, engine clock
+    # sha256 hex digest of runstate.canonical_spec_json() of the STATIC spec (every
+    # state.injected_tasks id filtered out of workflow.tasks first).
+    spec_sha256: str
+
+
+class WorkflowSnapshot(BaseModel):
+    """File body for ``<run_dir>/workflow.snapshot.<sha12>.json`` (ADR-0017 D2, HLD
+    §8.2/§13.1).
+
+    Write-once per distinct static-spec sha within a run dir; never rewritten (see
+    ``RunStateStore.record_spec_session``). Carries the same sensitivity as the spec
+    file already in the workspace (instructions, hook argv) -- no redaction, by design,
+    since that would break reproducibility.
+    """
+
+    # Keep numerically in sync with runstate.WORKFLOW_SNAPSHOT_SCHEMA_VERSION.
+    schema_version: int = 1
+    run_id: str
+    spec_sha256: str  # must equal the sha embedded in the file name and a SpecSession
+    written_at: str  # ISO-8601 UTC
+    workflow: WorkflowSpec  # STATIC tasks only -- every injected task id filtered out
+
+
 class TaskRunState(BaseModel):
     status: TaskStatus = "pending"
     attempts: int = 0
@@ -1071,6 +1106,11 @@ class RunState(BaseModel):
     # method). Default {} keeps every pre-epic state.json loadable (NFR-1) -- an old run
     # reports as "not recorded" rather than inferring provenance.
     spawned_by: dict[str, SpawnRecord] = {}
+    # Append-only log of every run-session's static-spec identity (ADR-0017 D2, HLD
+    # §8.2) -- the source of truth for which spec a session ran, independent of how the
+    # run was launched. Defaulted for NFR-5 backward-compat: a pre-epic state.json loads
+    # with spec_sessions == [], which the dashboard reports as source "unavailable".
+    spec_sessions: list[SpecSession] = []
 
 
 class RunUsageTotals(BaseModel):

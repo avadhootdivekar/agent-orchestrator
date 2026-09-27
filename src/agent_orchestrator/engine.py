@@ -681,6 +681,25 @@ class Orchestrator:
         order = graph.topological_order()
 
         state = run_state or self._runstate.new_run(workflow)
+
+        # Record this run-session's static-spec identity BEFORE the run's first save
+        # (ADR-0017 D2, HLD §8.2, T-l7t6TT): makes the run's dependency structure
+        # reconstructible from its own run directory regardless of how it was
+        # launched (`ao ui`, bare `ao run`, `ao resume`, or a cron/event trigger).
+        # `get_run_logger` is used directly here (not the `run_log` var below, which
+        # is only bound after `attach_run_handler`) -- it only wraps the package
+        # logger, so it works before the per-run file handler is attached. A write
+        # failure never fails the run: the SpecSession is already appended to `state`
+        # by the time record_spec_session's file write could raise.
+        try:
+            self._runstate.record_spec_session(state, workflow)
+        except OSError as exc:
+            get_run_logger(state.run_id).warning(
+                "workflow snapshot not written: %s",
+                exc,
+                extra={"event": "run.snapshot_failed"},
+            )
+
         self._runstate.save(state)
 
         # Derive run directory: <workspace>/.orchestrator/runs/<run_id>

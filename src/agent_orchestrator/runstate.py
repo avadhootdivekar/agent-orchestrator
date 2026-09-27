@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -10,7 +12,17 @@ from pathlib import Path
 
 from .artifacts import ArtifactStore
 from .dag import build_dag, compute_cones
-from .models import RunState, TaskRunState, TaskSpec, WorkflowSpec, compute_run_usage_totals
+from .models import (
+    RunState,
+    SpecSession,
+    TaskRunState,
+    TaskSpec,
+    WorkflowSnapshot,
+    WorkflowSpec,
+    compute_run_usage_totals,
+)
+
+logger = logging.getLogger(__name__)
 
 _FMT = "%Y%m%dT%H%M%SZ"
 
@@ -18,6 +30,94 @@ _FMT = "%Y%m%dT%H%M%SZ"
 # count (AC-18) -- named so the grouping is visible in one place, not re-derived at
 # every call site.
 _CONFLICT_INTEGRATION_STATUSES = ("conflict_resolver", "conflict_rerun")
+
+# Workflow-snapshot file naming + bounds (ADR-0017 D2, HLD §8.2, NFR-5). Named
+# constants -- never magic literals at call sites (T-l7t6TT AC-1).
+WORKFLOW_SNAPSHOT_PREFIX = "workflow.snapshot."
+WORKFLOW_SNAPSHOT_SUFFIX = ".json"
+WORKFLOW_SNAPSHOT_SHA_CHARS = 12
+WORKFLOW_SNAPSHOT_SCHEMA_VERSION = 1
+# Read cap for a workflow snapshot file, checked via stat() BEFORE the file is parsed
+# (HLD §8.2) -- a dashboard/engine reader must never buffer an unbounded file into memory.
+WORKFLOW_SNAPSHOT_MAX_BYTES = 20_000_000
+
+
+def canonical_spec_json(static: WorkflowSpec) -> str:
+    """Canonical JSON serialization of *static* used to compute its identity sha.
+
+    Sorted keys + compact separators so two logically-equal ``WorkflowSpec`` objects
+    built with a different field/key order hash identically (ADR-0017 D2, T-l7t6TT AC-2).
+    """
+    return json.dumps(static.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+
+
+def _workflow_snapshot_filename(sha: str) -> str:
+    """Filename for the write-once snapshot of the static spec identified by *sha*."""
+    sha_prefix = sha[:WORKFLOW_SNAPSHOT_SHA_CHARS]
+    return f"{WORKFLOW_SNAPSHOT_PREFIX}{sha_prefix}{WORKFLOW_SNAPSHOT_SUFFIX}"
+
+
+def load_workflow_snapshot_at(run_dir: Path, sha: str) -> WorkflowSnapshot | None:
+    """Load and validate the workflow snapshot for *sha* under *run_dir*.
+
+    Tolerant by design (HLD §8.2, T-l7t6TT AC-7): a missing file, an oversized file
+    (checked via ``stat()`` BEFORE any read), invalid JSON, a schema-invalid body, or a
+    body whose ``spec_sha256`` doesn't match *sha* (name/body mismatch -- tampered or
+    corrupt) each log a warning and return ``None``. Never raises.
+
+    This is the ONE shared parser + size cap for both the engine
+    (``RunStateStore.load_workflow_snapshot``) and the dashboard (T-AsQ77e), per
+    T-l7t6TT AC-10 -- there is exactly one place that parses this file format.
+    """
+    path = run_dir / _workflow_snapshot_filename(sha)
+
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        logger.warning(
+            "workflow snapshot unavailable (stat failed): %s: %s",
+            path,
+            exc,
+            extra={"event": "run.workflow_snapshot_unavailable"},
+        )
+        return None
+
+    if stat.st_size > WORKFLOW_SNAPSHOT_MAX_BYTES:
+        logger.warning(
+            "workflow snapshot unavailable (%d bytes exceeds cap of %d): %s",
+            stat.st_size,
+            WORKFLOW_SNAPSHOT_MAX_BYTES,
+            path,
+            extra={"event": "run.workflow_snapshot_unavailable"},
+        )
+        return None
+
+    try:
+        body = path.read_text(encoding="utf-8")
+        snapshot = WorkflowSnapshot.model_validate_json(body)
+    except (OSError, ValueError) as exc:
+        # ValueError also covers json.JSONDecodeError and pydantic's ValidationError,
+        # both of which subclass it -- invalid JSON and a schema-invalid body share one
+        # tolerant branch, per the pseudocode's EXCEPT (OSError, ValueError).
+        logger.warning(
+            "workflow snapshot unavailable (unreadable or invalid): %s: %s",
+            path,
+            exc,
+            extra={"event": "run.workflow_snapshot_unavailable"},
+        )
+        return None
+
+    if snapshot.spec_sha256 != sha:
+        logger.warning(
+            "workflow snapshot unavailable (sha mismatch: file name %s, body %s): %s",
+            sha,
+            snapshot.spec_sha256,
+            path,
+            extra={"event": "run.workflow_snapshot_unavailable"},
+        )
+        return None
+
+    return snapshot
 
 
 def _utc_now() -> datetime:
@@ -189,6 +289,82 @@ class RunStateStore:
         os.replace(tmp, p)
         # Derive and write the snapshot immediately after state.json (ADR-002 / R4).
         self.write_status(state)
+
+    def record_spec_session(self, state: RunState, workflow: WorkflowSpec) -> SpecSession:
+        """Append a ``SpecSession`` for this run-session's static-spec identity, and
+        write-once the corresponding ``workflow.snapshot.<sha12>.json`` (ADR-0017 D2,
+        HLD §8.2, T-l7t6TT AC-3/4/5/6).
+
+        The caller (``Orchestrator.run``) invokes this BEFORE the run's first
+        ``state`` save, so the appended ``SpecSession`` is durable even if the file
+        write below raises ``OSError`` -- the caller is expected to catch that and
+        log a warning rather than fail the run (never lose the session record because
+        an observability file could not be written).
+
+        Injected task ids (``state.injected_tasks``) are filtered out of
+        *workflow*.tasks before hashing/snapshotting: only the STATIC spec is
+        captured, so a resumed session that re-attaches previously injected tasks
+        (``prepare_resume``) still hashes to the same sha as the session that first
+        ran them (no spurious new snapshot file).
+        """
+        injected_ids = {t.id for t in state.injected_tasks}
+        static = workflow.model_copy(
+            update={"tasks": [t for t in workflow.tasks if t.id not in injected_ids]}
+        )
+        body = canonical_spec_json(static)
+        sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+        prev = state.spec_sessions[-1] if state.spec_sessions else None
+        session = SpecSession(
+            session=len(state.spec_sessions) + 1,
+            started_at=self._clock().isoformat(),
+            spec_sha256=sha,
+        )
+        state.spec_sessions.append(session)
+
+        run_dir = self._root / state.run_id
+        path = run_dir / _workflow_snapshot_filename(sha)
+        if not path.exists():
+            # Write-once: an identical static spec means the file is already there
+            # from an earlier session and is never rewritten (ADR-0017 D2).
+            snapshot = WorkflowSnapshot(
+                run_id=state.run_id,
+                spec_sha256=sha,
+                written_at=session.started_at,
+                workflow=static,
+            )
+            self._write_snapshot_atomic(path, snapshot)
+
+        if prev is not None and prev.spec_sha256 != sha:
+            logger.warning(
+                "workflow spec changed on resume: session=%d old_sha=%s new_sha=%s",
+                session.session,
+                prev.spec_sha256[:WORKFLOW_SNAPSHOT_SHA_CHARS],
+                sha[:WORKFLOW_SNAPSHOT_SHA_CHARS],
+                extra={"event": "run.spec_changed_on_resume"},
+            )
+
+        return session
+
+    def _write_snapshot_atomic(self, path: Path, snapshot: WorkflowSnapshot) -> None:
+        """Write *snapshot* to *path* via tmp-file + ``os.replace`` (same idiom as
+        ``save()``/``write_status()``). Isolated as its own method so a snapshot-write
+        failure (T-l7t6TT AC-8) can be monkeypatched in tests without touching
+        ``save()``'s own ``state.json`` write.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(snapshot.model_dump_json(indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+
+    def load_workflow_snapshot(self, run_id: str, sha: str) -> WorkflowSnapshot | None:
+        """Load the workflow snapshot for *run_id*/*sha*, tolerantly (never raises).
+
+        Delegates to the shared module-level ``load_workflow_snapshot_at`` so there is
+        exactly one parser and one size cap for both the engine and the dashboard
+        (T-l7t6TT AC-10).
+        """
+        return load_workflow_snapshot_at(self._root / run_id, sha)
 
     def load(self, run_id: str) -> RunState:
         """Load a previously saved RunState from disk."""
