@@ -371,6 +371,36 @@ class TestGraphBrowserSmoke:
                     proc.kill()
                     pytest.fail("server did not start")
 
+                # AC-1 HTTP-level assertion: GET /api/runs/{id}/graph and verify snapshot is readable
+                graph_response = httpx.get(f"{base_url}/api/runs/synth-run-001/graph", timeout=10.0)
+                assert graph_response.status_code == 200, f"graph endpoint returned {graph_response.status_code}"
+                graph_data = graph_response.json()
+
+                # Verify snapshot is readable (not degraded)
+                assert graph_data.get("source") == "snapshot", (
+                    f"Expected source='snapshot' (readable), got source='{graph_data.get('source')}' "
+                    "(likely means snapshot sha validation failed)"
+                )
+
+                # Verify spawn and dependency edges exist in the graph response
+                dependency_edges = graph_data.get("dependency_edges", [])
+                spawn_edges = graph_data.get("spawn_edges", [])
+
+                # Verify snapshot is truly readable (produces real edges, not empty)
+                assert len(spawn_edges) > 0, (
+                    f"No spawn edges in readable snapshot. Dependency: {len(dependency_edges)}, "
+                    f"Spawn: {len(spawn_edges)}. This indicates snapshot.spec_sha256 is still invalid."
+                )
+
+                # Verify dependency edges also exist (since fixture wires dependencies)
+                assert len(dependency_edges) > 0, (
+                    f"No dependency edges in fixture graph. Expected dependencies between checkpoints. "
+                    f"Spawn: {len(spawn_edges)}, Dependency: {len(dependency_edges)}"
+                )
+
+                # Verify they differ (U-4 requirement)
+                assert spawn_edges != dependency_edges, "Spawn and dependency edge sets should differ"
+
                 async with async_playwright() as p:
                     browser = await p.chromium.launch(channel="chrome")
                     page = await browser.new_page()

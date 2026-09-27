@@ -138,9 +138,10 @@ def write_synthetic_run(root: Path, waves: int, fanout: int, *, clock: datetime)
 
     # Write the spec snapshot
     spec_json = json.dumps(minimal_workflow_spec, sort_keys=True)
-    spec_sha = hashlib.sha256(spec_json.encode()).hexdigest()[:12]
+    spec_sha = hashlib.sha256(spec_json.encode()).hexdigest()  # Full 64-char digest
 
-    snapshot_path = run_dir / f"workflow.snapshot.{spec_sha}.json"
+    # Filename uses only 12-char truncation (internal to the path layer)
+    snapshot_path = run_dir / f"workflow.snapshot.{spec_sha[:12]}.json"
     snapshot_data = {
         "schema_version": 1,
         "run_id": run_id,
