@@ -359,13 +359,15 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
    `ad/run-graph-canvas` currently stands at 4614 backend tests passed / 8 skipped / 0 failed
    (plus 2 opt-in browser tests passing under `-m browser`), 224 frontend tests passed, 93.91%
    UI coverage, clean ruff/mypy/typecheck, and a byte-reproducible frontend build.
-2. **Next: Gate G2 (`dev-security`).** Corrected my own sequencing error here: I had listed
-   `T-oroE5f` before the gates, but its own TASK.md is explicit — "Dependencies: All MVP tasks
-   Done, plus Gate G3" — matching the epic's documented order (G2 → G3 → docs refresh → close).
-   Dispatch `dev-security` to review the frontend rendering surface (label sanitization,
-   text-only rendering, no `dangerouslySetInnerHTML`), the graph endpoint's no-leakage
-   guarantees (already tested in T-AsQ77e but worth an independent security pass), the
-   sha-format path-construction guard from Gate G1, and the T-F1caAt browser-CSP evidence.
+2. **IN PROGRESS: Gate G2 (`dev-security`, agent `ac7267577595d6a7a`).** Corrected my own
+   sequencing error here: I had listed `T-oroE5f` before the gates, but its own TASK.md is
+   explicit — "Dependencies: All MVP tasks Done, plus Gate G3" — matching the epic's documented
+   order (G2 → G3 → docs refresh → close). Dispatched `dev-security` (read-only review) to
+   independently re-verify: the sha-format path-construction guard from Gate G1, the frontend
+   XSS/text-only-rendering surface, the `display_text` label sanitizer (bidi/zero-width/length
+   cap), the graph endpoint's no-leakage guarantees, supply-chain scope of the 2 new frontend
+   deps + 1 new optional `playwright` test dep, the T-F1caAt CSP evidence, and the
+   `GRAPH_MAX_NODES`/`WORKFLOW_SNAPSHOT_MAX_BYTES` DoS caps.
 3. Then Gate G3 (final `reviewer` sign-off on the accumulated epic, including the T-pAi0Cv
    deviation flagged earlier — toolbar search-select also opens the panel).
 4. Then dispatch `T-oroE5f-docs-refresh` (mandatory, last) to reconcile `docs-md/` (the HLD,
