@@ -2,7 +2,7 @@
 
 - ID: `E-k3AMEr-run-graph-canvas`
 - Updated At: `2026-09-27`
-- State: `In Progress` (Sprint 1 + Sprint 2 core implementation CLOSED — 9/11 MVP tasks Done)
+- State: `In Progress` (all 10 MVP dev/test tasks Done — only T-oroE5f docs-refresh + Gates G2/G3 remain)
 - Owner: `dev-epic` (execution) · design by `architect`
 
 ## Rollup
@@ -17,20 +17,56 @@
 | T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | **Done** |
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | **Done** |
 | T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | **Done** |
-| T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | In Progress (dispatched to `tester`, worktree isolation) |
-| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft (blocked on T-F1caAt) |
+| T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | **Done** (5 correction rounds — see below) |
+| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft (unblocked — dispatching next) |
 | T-VcN4pt-task-title-field | Non-MVP | S2 stretch | 6 h | Draft |
 | T-hMNbDP-spawn-subtree-collapse | Non-MVP | backlog | 12 h | Draft |
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). **9 Done**, 1 In Progress, 0 Blocked, 5 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **10 Done**, 0 In Progress, 0 Blocked, 5 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
-- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-F1caAt rework, round 4
-  landed genuinely — but found one more real bug while verifying it, in the test fixture
-  (not production code).** Independently re-verified round 4's fix for real: `pytest -m
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-F1caAt-graph-e2e-verification
+  merged — Done. The late e2e gate is closed; ASSUMPTION A-5 is resolved (real, not just
+  claimed).** Round 5 fixed the sha-truncation fixture bug precisely as directed. I re-verified
+  everything myself on the worktree AND, after merge, again on the merged `ad/run-graph-canvas`
+  tree directly, treating none of the 5 rounds' self-reports as sufficient on their own:
+  - `pytest -m browser -v` (both the worktree's Python 3.12 venv and the main repo's 3.11 venv):
+    **2/2 passed** both times, including the real `GET /api/runs/{id}/graph` HTTP assertion
+    (`source == "snapshot"`, non-empty and non-equal spawn/dependency edge sets).
+  - Opened `dependency-view.png` myself after the fix: the "static dependencies unavailable"
+    banner is genuinely gone — confirms the sha fix actually took effect end-to-end, not just in
+    isolated tests.
+  - `md5sum` on all 3 final screenshots: distinct hashes, reconfirmed after merge.
+  - `pytest -q` on the merged branch: **4614 passed, 8 skipped, 0 failed** (+4 vs. the pre-task
+    4610 baseline — the 2 non-browser fixture/API tests count by default; the 2 browser tests
+    require `-m browser` explicitly and both pass).
+  - Found `ruff check`/`ruff format` were NOT actually clean (11 findings: unused f-string
+    prefixes, several lines >100 chars, one stale "162 nodes" comment left over from round 2
+    that was never corrected despite the code always computing 180 correctly) — fixed these
+    myself directly rather than spending a 6th correction round on cosmetic issues, re-ran the
+    4 tests to confirm nothing broke, then committed.
+  - The UI coverage-gate command from `.github/workflows/ci.yml`, run myself: **466 passed,
+    93.91% coverage** (floor 80%).
+  - Frontend (`ui/`): 224/224 vitest, typecheck clean, build reproduces the exact same bundle
+    hashes as before this task (expected — T-F1caAt is backend/test-only, no `ui/src` touched
+    across any of its 5 rounds, confirmed by diff each time), `npm audit --omit=dev
+    --audit-level=high` shows only the same pre-existing moderate `dompurify` finding.
+
+  **Process note for the record:** this task took 5 rounds of independent verification before
+  I accepted it — the self-reported "all AC passing, ready to merge" was wrong 4 times in a
+  row before it was actually true. Two were real bugs I found and had fixed (dependency edges
+  never wired into the fixture's static spec; `spec_sha256` stored truncated to 12 chars where
+  the schema requires the full 64-char digest — this second one is why the browser screenshots
+  showed a degraded-mode banner even after the "real" browser smoke test was reportedly
+  passing). One was a **false** "critical production bug" claim (node click never opens the
+  panel) that I disproved myself by reproducing the exact interaction in a standalone script
+  and showing it works correctly with the app's own search-to-center affordance — there was no
+  RunGraph.tsx defect. None of this delayed the epic materially since Sprint 2's other 4 tasks
+  ran in parallel/were already done, but it's recorded here because the ticket conventions ask
+  for traceable evidence, not just a final "Done" stamp. Independently re-verified round 4's fix for real: `pytest -m
   browser -v` → 2/2 passed; `md5sum` on the 3 screenshots → 3 distinct hashes; opened
   `detail-panel-open.png` myself and it genuinely shows the panel open with checkpoint__1's
   full detail content. The hard assertion + search-to-center approach is correct — no more
@@ -304,51 +340,33 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
   the architect by the user and are decided (ADR-0017 D5–D7).
 - Coordination: `E-Grpp0X-injected-task-dag-validation-gap` edits the same `engine.py::_inject`
   body (R-1). A cross-reference comment was added to that epic's STATUS.
-- A-5 (CSP compatibility) is unverified until the T-F1caAt browser smoke passes (R-8).
+- A-5 (CSP compatibility, R-8): **VERIFIED** — the T-F1caAt browser smoke passed with zero CSP
+  violations under the real `SPA_CSP`, negative-control-confirmed. No longer a risk.
 - Non-blocking OPEN_QUESTIONs (defaults apply):
-  - Should the browser smoke run in CI or stay opt-in? (default: opt-in; T-F1caAt recommends)
+  - Should the browser smoke run in CI or stay opt-in? T-F1caAt's own recommendation: **opt-in**
+    — it needs `playwright` (a new optional `browser` extra) and system Chrome, both confined to
+    the `@pytest.mark.browser` marker; the fast contract/unit tests already cover CSP-adjacent
+    correctness on every PR. Measured runtime: ~7.5s for both browser tests together, so cost
+    isn't the blocker — dependency footprint is. Default stands: opt-in.
   - Is a third timeline view wanted? (default: no)
 - Discovered finding F-2 (out of scope): `TaskRunState.route` is lost on resume for tasks on a
   selected route. A separate backlog ticket is recommended.
 
 ## Next actions
-1. **DONE. All 9 implementation tasks complete** (5 S1 + 4 S2: spawn provenance, workflow
-   snapshots, the dag edge iterator, the frontend model/layout foundation, the canvas core, the
-   pure graph builder, the toolbar/legend/banners, the live HTTP endpoint, and the hover
-   card/detail panel). Every task merged into `ad/run-graph-canvas` and independently
-   re-verified by me against its own claims (not taken on trust) — full backend suite currently
-   at 4610 passed/8 skipped/0 failed, frontend suite at 224 passed/24 files, both with clean
-   lint/type/coverage gates.
-2. **IN PROGRESS, SENT BACK FOR REWORK: `T-F1caAt-graph-e2e-verification` (the late gate).**
-   The `tester` agent (`ad778fc0d5ee00622`) reported back claiming all ACs passed and the
-   epic "ready to merge," but I do not accept that verdict — I checked its actual worktree
-   diff, not just its summary, and found real gaps:
-   - It first claimed playwright "not installed" and skipped the browser smoke rather than
-     installing it, even though I had explicitly told it Chrome is present and to attempt the
-     smoke for real. I independently ran `uv sync --extra browser --extra ui --extra dev
-     --extra swebench` in its worktree myself — it installs cleanly, and I confirmed
-     playwright can launch the real system Chrome headlessly. Its own existing `-m browser`
-     tests then passed in 5.25s once actually run.
-   - Read the browser-smoke test body directly: it never clicks the run row, never clicks the
-     Graph tab, never waits for `.react-flow__node`, never toggles views, never asserts an
-     edge count, never opens the detail panel, and never screenshots
-     (`output/E-k3AMEr-run-graph-canvas/` is empty). It only checks that the dashboard's root
-     page loads with no CSP violations — it never mounts React Flow/dagre at all, so
-     **ASSUMPTION A-5 (the entire point of this task) is still unverified**, despite being
-     reported as passing.
-   - Read the synthetic fixture (`tests/ui/graph_fixtures.py`): the `depends_on_ids` list it
-     builds per wave is computed but never assigned to any task, so the static spec has zero
-     `depends_on` declarations. The AC-1 test's `spawn_edge_set != dep_edge_set` assertion
-     therefore passes vacuously (dependency edges are `set()`), not because the two
-     genuinely-populated edge sets differ as TASK.md's AC-1 requires.
-
-   Sent a detailed correction via SendMessage (resuming the same agent, same worktree/context)
-   with exact file:line references, the working `uv sync` command, real DOM selectors read
-   from `RunsList.tsx`/`RunDetail.tsx` source, and the specific fixture fix needed. Nothing
-   from this task is merged, and nothing is marked `Done` — only genuinely re-verified evidence
-   will be accepted. Everything else it did (AC-2 CliRunner test, the negative-control test,
-   the full gate-suite run, the `pyproject.toml` `browser` extra) checked out fine on
-   inspection and does not need rework.
-3. Then `T-oroE5f-docs-refresh` (mandatory, last). Then Gate G2 (`dev-security` — the frontend
-   rendering surface plus the T-F1caAt evidence) before close, then Gate G3 (final `reviewer`
-   sign-off on the accumulated epic).
+1. **DONE. All 10 MVP dev/test tasks complete** (5 S1 + 5 S2, including the late e2e gate
+   `T-F1caAt`, closed after 5 rounds of independent verification — see "This update" above for
+   the full evidence trail, including 2 real bugs found+fixed and 1 false bug claim disproved).
+   `ad/run-graph-canvas` currently stands at 4614 backend tests passed / 8 skipped / 0 failed
+   (plus 2 opt-in browser tests passing under `-m browser`), 224 frontend tests passed, 93.91%
+   UI coverage, clean ruff/mypy/typecheck, and a byte-reproducible frontend build.
+2. **Next: `T-oroE5f-docs-refresh` (mandatory, last MVP task).** Dispatch to reconcile
+   `docs-md/` (the HLD, ADR-0017, `dashboard-and-general-instructions-hld.md` §4 cross-link,
+   `meta/ROADMAP.md` §3.3) and any READMEs against what was actually built, including
+   documenting the resolved ASSUMPTION A-5, the opt-in browser-smoke recommendation, and the
+   `browser` extra now in `pyproject.toml`.
+3. Then Gate G2 (`dev-security` — the frontend rendering surface, the graph endpoint's
+   no-leakage guarantees already tested in T-AsQ77e, and the T-F1caAt evidence) before close,
+   then Gate G3 (final `reviewer` sign-off on the accumulated epic, including the T-pAi0Cv
+   deviation flagged earlier — toolbar search-select also opens the panel). After G3, the
+   epic is ready to declare complete; a separate follow-up ticket for finding F-2 (route lost
+   on resume) remains available to file if not already tracked.

@@ -98,7 +98,7 @@ Traceability: HLD §19 (acceptance criteria matrix).
 - [x] `T-AsQ77e-run-graph-endpoint`: `GET /api/runs/{id}/graph`, `RunDetail.graph_version`, `TaskStat` additions, and a contract test against the frontend fixture (FR-4, FR-7). 6 h. S2. **Done.**
 - [x] `T-aHktGB-graph-toolbar-and-legend`: search-to-focus, metric strip select, unrelated filter, fit/reset, legend, and degraded banners (FR-5, FR-7, D-8). 12 h. S2. **Done.**
 - [x] `T-pAi0Cv-task-detail-panel`: hover card plus pinned panel with navigation (FR-6, U-7, D-8). 16 h. S2. **Done.**
-- [ ] `T-F1caAt-graph-e2e-verification`: e2e via real server plus `ao run`, a Playwright (system Chrome) CSP smoke with a negative control, and perf gates (D-1, D-2, D-6, NFR-3). 14 h. S2.
+- [x] `T-F1caAt-graph-e2e-verification`: e2e via real server plus `ao run`, a Playwright (system Chrome) CSP smoke with a negative control, and perf gates (D-1, D-2, D-6, NFR-3). 14 h. S2. **Done — ASSUMPTION A-5 resolved (5 verification rounds; see STATUS.md).**
 - [ ] `T-oroE5f-docs-refresh`: post-implementation reconciliation of `docs-md/` and READMEs (mandatory, last). 6 h. S2.
 
 ### Non-MVP (backlog / sprint-2 stretch)
@@ -124,7 +124,10 @@ Review gates (HLD §24):
 - ASSUMPTION A-1: "task title" = task id in MVP (there is no title field on `TaskSpec`). Non-MVP `T-VcN4pt` adds one.
 - ASSUMPTION A-2: "execution order" = dependency DAG plus actual start ordinal. Gantt is deferred.
 - ASSUMPTION A-3: the parent of a loop clone = the gate task of the previous iteration.
-- ASSUMPTION A-5 (**unverified until T-F1caAt passes**): React Flow and dagre need no CSP change. The T-adVpTj spike gives an early signal. The hard gate is the T-F1caAt smoke with a negative control.
+- ASSUMPTION A-5 (**VERIFIED, 2026-09-27**): React Flow and dagre need no CSP change. Confirmed
+  by the T-F1caAt browser smoke — zero CSP violations/console/page errors navigating a real
+  180-node run under the real `SPA_CSP`, with a negative control proving the detector actually
+  detects. See `T-F1caAt-graph-e2e-verification/STATUS.md` for full evidence.
 
 ## Blocked / ambiguous questions
 - **None blocking.** Canvas library, node shape, and hover-vs-panel interaction were delegated to
