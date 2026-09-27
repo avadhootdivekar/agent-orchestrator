@@ -206,6 +206,175 @@ export function waitSeconds(
   return Math.max(0, (started - latestEnded) / MS_PER_SECOND);
 }
 
+// ---- Detail panel model (T-pAi0Cv, HLD §8.7, ADR-0017 D6) -----------------------------------
+
+/** Status shown when a task has no stat yet -- mirrors `TaskNode.tsx`'s own `PENDING_STATUS`. */
+const PANEL_PENDING_STATUS = "pending";
+
+export interface PanelHeader {
+  label: string;
+  sanitized: boolean;
+  status: string;
+  origin: string;
+  route: string | null;
+  /** True for a phantom node materialized from an unknown `depends_on` id (`GraphNode.missing`). */
+  missing: boolean;
+}
+
+export interface PanelTiming {
+  started: string | null;
+  ended: string | null;
+  duration: number | null;
+  /** Seconds waited before this task started (`waitSeconds`); `null` when it can't be known yet. */
+  wait: number | null;
+  ordinal: number | null;
+}
+
+export interface PanelUsage {
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheHitRate: number | null;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+export interface PanelRetries {
+  attempts: number | null;
+  retries: number;
+  dispatches: number | null;
+}
+
+export interface PanelSpawn {
+  parent: string | null;
+  /** Every spawned child id, unbounded -- the caller (`TaskDetailPanel`) applies the "show all" cap. */
+  children: string[];
+  loopId: string | null;
+  iteration: number | null;
+}
+
+export interface PanelDependencies {
+  dependsOn: string[];
+  dependents: string[];
+}
+
+export interface PanelOutcome {
+  notTakenReason: string | null;
+  integrationStatus: string | null;
+  tierReached: string | null;
+  conflictedCount: number | null;
+  outputArtifactPath: string | null;
+  outputs: string[];
+}
+
+export interface PanelModel {
+  id: string;
+  /** `false` when `stat` is `null` -- the caller renders "Stats pending" for every stat-derived section. */
+  hasStat: boolean;
+  header: PanelHeader;
+  timing: PanelTiming;
+  usage: PanelUsage;
+  retries: PanelRetries;
+  spawn: PanelSpawn;
+  deps: PanelDependencies;
+  outcome: PanelOutcome;
+}
+
+const DEFAULT_PANEL_USAGE: PanelUsage = {
+  cost: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheHitRate: null,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+};
+
+const DEFAULT_PANEL_OUTCOME: PanelOutcome = {
+  notTakenReason: null,
+  integrationStatus: null,
+  tierReached: null,
+  conflictedCount: null,
+  outputArtifactPath: null,
+  outputs: [],
+};
+
+/**
+ * Assembles the detail panel's full data shape for one node (HLD §8.7 table, ADR-0017 D6).
+ * Pure -- every link field (`spawn.parent`/`children`, `deps.dependsOn`/`dependents`) is a bare
+ * node id, exactly as `relatedIds` returns them; resolving an id to a display label/status is
+ * the caller's job (`TaskDetailPanel.tsx`), the same division of labor `selectAndCenter` already
+ * uses for navigation.
+ *
+ * `id` is expected to name a node present in `graph.nodes` -- the only way to open the panel is
+ * clicking/Entering an actual rendered node. A lookup miss still returns a well-formed (if
+ * mostly empty) model rather than throwing, since a pure function must never crash on a bad key.
+ */
+export function panelModel(
+  id: string,
+  graph: RunGraph,
+  statsById: Map<string, TaskStat>,
+): PanelModel {
+  const node = graph.nodes.find((n) => n.id === id);
+  const stat = statsById.get(id) ?? null;
+  const rel = relatedIds(graph, id);
+  const hasStat = stat !== null;
+
+  return {
+    id,
+    hasStat,
+    header: {
+      label: node?.label ?? id,
+      sanitized: node?.label_sanitized ?? false,
+      status: stat?.status ?? PANEL_PENDING_STATUS,
+      origin: node?.origin ?? "unknown",
+      route: node?.route ?? null,
+      missing: node?.missing ?? true,
+    },
+    timing: {
+      started: stat?.started_at ?? null,
+      ended: stat?.ended_at ?? null,
+      duration: stat?.duration_seconds ?? null,
+      wait: waitSeconds(id, graph, statsById),
+      ordinal: node?.exec_ordinal ?? null,
+    },
+    usage: stat
+      ? {
+          cost: stat.cost_usd,
+          inputTokens: stat.input_tokens,
+          outputTokens: stat.output_tokens,
+          cacheHitRate: stat.cache_hit_rate,
+          cacheReadTokens: stat.cache_read_tokens,
+          cacheCreationTokens: stat.cache_creation_tokens,
+        }
+      : DEFAULT_PANEL_USAGE,
+    retries: {
+      attempts: stat?.attempts ?? null,
+      retries: Math.max(0, (stat?.attempts ?? 0) - 1),
+      dispatches: stat?.dispatch_cycle ?? null,
+    },
+    spawn: {
+      parent: rel.parent,
+      children: rel.children,
+      loopId: node?.loop_id ?? null,
+      iteration: node?.iteration ?? null,
+    },
+    deps: {
+      dependsOn: rel.dependsOn,
+      dependents: rel.dependents,
+    },
+    outcome: stat
+      ? {
+          notTakenReason: stat.not_taken_reason,
+          integrationStatus: stat.integration_status,
+          tierReached: stat.tier_reached,
+          conflictedCount: stat.conflicted_count,
+          outputArtifactPath: stat.output_artifact_path,
+          outputs: stat.outputs,
+        }
+      : DEFAULT_PANEL_OUTCOME,
+  };
+}
+
 // ---- Preferences (HLD §8.5) -------------------------------------------------------------------
 
 /** Which top-level dashboard tab is active. "graph" is the tab this epic adds (FR-8). */

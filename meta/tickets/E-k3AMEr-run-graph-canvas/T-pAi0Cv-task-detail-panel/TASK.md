@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev B, frontend)
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `16 focus hours (2 days)`
 
 ## Requirements Mapping

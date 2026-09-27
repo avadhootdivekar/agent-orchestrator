@@ -11,8 +11,22 @@
  * Loaded via `React.lazy` from `RunDetail.tsx`, so `@xyflow/react`/`@dagrejs/dagre` (and this
  * file's own CSS, including the `@xyflow/react/dist/base.css` import below) only download when
  * the Graph tab is opened (NFR-4).
+ *
+ * `T-pAi0Cv` extends this file with the detail reveal (hover card + pinned panel, HLD §8.7,
+ * ADR-0017 D6): pointer-hover/keyboard-focus delay timers, click/Enter-to-pin (reusing the
+ * existing `selectedNodeId`, which already drives `TaskNode`'s `selected` styling), and
+ * Esc/×/pane-click to close. `TaskHoverCard.tsx`/`TaskDetailPanel.tsx` stay presentational; all
+ * of that wiring lives here, next to every other node interaction this file already owns.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+} from "react";
 import {
   Background,
   BackgroundVariant,
@@ -47,6 +61,8 @@ import { computeLayout } from "./layout";
 import {
   EDGE_LABEL_MIN_ZOOM,
   edgesForView,
+  HOVER_CLOSE_DELAY_MS,
+  HOVER_OPEN_DELAY_MS,
   joinNodes,
   LARGE_GRAPH_NODES,
   type MetricMaxima,
@@ -66,6 +82,8 @@ import {
   type TaskNodeType,
 } from "./TaskNode";
 import { Legend } from "./Legend";
+import { TaskDetailPanel } from "./TaskDetailPanel";
+import { TaskHoverCard } from "./TaskHoverCard";
 
 export interface RunGraphProps {
   runId: string;
@@ -249,10 +267,19 @@ function RunGraphCanvas({
   const [draggedPositions, setDraggedPositions] = useState<Map<string, { x: number; y: number }>>(
     () => new Map(),
   );
+  // ---- Detail reveal (T-pAi0Cv, HLD §8.7): the node whose hover card is actually visible, once
+  // the open delay has elapsed. The pinned panel reuses `selectedNodeId` above -- it already
+  // drives `TaskNode`'s `selected` styling, and "drives ... a future detail panel" is literally
+  // what `useSelectAndCenter`'s own `onSelect` doc comment calls it out for (`hooks.ts`).
+  const [visibleHoverNodeId, setVisibleHoverNodeId] = useState<string | null>(null);
 
   const lastFetchedVersionRef = useRef<string | null>(null);
   const layoutRequestRef = useRef(0);
   const recenterPendingRef = useRef(false);
+  const openHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPanningRef = useRef(false);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const reactFlow = useReactFlow();
 
   // ---- Fetch / refetch, gated on graphVersion only (D-3, AC-5) ----------------------------
@@ -402,14 +429,124 @@ function RunGraphCanvas({
     [onNodeClick],
   );
 
-  const handleNodeMouseEnter: NodeMouseHandler<TaskNodeType> = useCallback(
-    (_event, node) => {
-      onNodeMouseEnter?.(node.id);
+  // ---- Hover card open/close delay (T-pAi0Cv, HLD §8.7 item 1) ----------------------------
+  // Single shared timer slots: only one card is ever pending/visible at a time, so a fresh
+  // hover/focus always supersedes whatever was scheduled for a previous target.
+  const clearOpenHoverTimer = useCallback(() => {
+    if (openHoverTimerRef.current !== null) {
+      clearTimeout(openHoverTimerRef.current);
+      openHoverTimerRef.current = null;
+    }
+  }, []);
+  const clearCloseHoverTimer = useCallback(() => {
+    if (closeHoverTimerRef.current !== null) {
+      clearTimeout(closeHoverTimerRef.current);
+      closeHoverTimerRef.current = null;
+    }
+  }, []);
+
+  /** Shared entry path for pointer hover AND keyboard focus (TASK.md item 1). */
+  const beginHover = useCallback(
+    (id: string) => {
+      if (isPanningRef.current) return; // suppressed while panning (Description item 1)
+      clearOpenHoverTimer();
+      clearCloseHoverTimer();
+      if (visibleHoverNodeId === id) return; // already showing this one -- nothing to schedule
+      if (visibleHoverNodeId !== null) setVisibleHoverNodeId(null); // hide a stale card at once
+      openHoverTimerRef.current = setTimeout(() => {
+        openHoverTimerRef.current = null;
+        setVisibleHoverNodeId(id);
+      }, HOVER_OPEN_DELAY_MS);
     },
-    [onNodeMouseEnter],
+    [visibleHoverNodeId, clearOpenHoverTimer, clearCloseHoverTimer],
   );
 
-  // ---- Search-to-focus (AC-3) / future detail-panel links (T-pAi0Cv) share this behavior --
+  /** Shared leave path for pointer leave AND keyboard blur. */
+  const endHover = useCallback(
+    (id: string) => {
+      clearOpenHoverTimer();
+      clearCloseHoverTimer();
+      closeHoverTimerRef.current = setTimeout(() => {
+        closeHoverTimerRef.current = null;
+        setVisibleHoverNodeId((current) => (current === id ? null : current));
+      }, HOVER_CLOSE_DELAY_MS);
+    },
+    [clearOpenHoverTimer, clearCloseHoverTimer],
+  );
+
+  const handleNodeMouseEnter: NodeMouseHandler<TaskNodeType> = useCallback(
+    (_event, node) => {
+      beginHover(node.id);
+      onNodeMouseEnter?.(node.id);
+    },
+    [beginHover, onNodeMouseEnter],
+  );
+
+  const handleNodeMouseLeave: NodeMouseHandler<TaskNodeType> = useCallback(
+    (_event, node) => {
+      endHover(node.id);
+    },
+    [endHover],
+  );
+
+  // Keyboard focus/blur delegated from a single listener on the canvas wrapper (`data-id` is the
+  // real React Flow node wrapper's own attribute) -- TaskNode.tsx stays untouched, and this keeps
+  // "focusing a node also opens the hover card" working without a per-node handler.
+  const handleCanvasFocus = useCallback(
+    (event: FocusEvent<HTMLDivElement>) => {
+      const nodeEl = (event.target as HTMLElement).closest<HTMLElement>(".react-flow__node");
+      if (nodeEl?.dataset.id) beginHover(nodeEl.dataset.id);
+    },
+    [beginHover],
+  );
+  const handleCanvasBlur = useCallback(
+    (event: FocusEvent<HTMLDivElement>) => {
+      const nodeEl = (event.target as HTMLElement).closest<HTMLElement>(".react-flow__node");
+      if (nodeEl?.dataset.id) endHover(nodeEl.dataset.id);
+    },
+    [endHover],
+  );
+
+  /** Looks up a node's real DOM wrapper by id -- used to return focus to it on panel close. */
+  const focusNodeById = useCallback((id: string) => {
+    const root = canvasWrapRef.current;
+    if (!root) return;
+    const nodeEl = Array.from(root.querySelectorAll<HTMLElement>(".react-flow__node")).find(
+      (el) => el.dataset.id === id,
+    );
+    nodeEl?.focus();
+  }, []);
+
+  /** Closes the pinned panel (AC-3): Esc/× return focus to the node that was open; a pane click
+   * (mouse action elsewhere) does not force focus back anywhere. */
+  const handleClosePanel = useCallback(
+    (options?: { returnFocus?: boolean }) => {
+      const idToFocus = selectedNodeId;
+      setSelectedNodeId(null);
+      if (options?.returnFocus && idToFocus) focusNodeById(idToFocus);
+    },
+    [selectedNodeId, focusNodeById],
+  );
+
+  const handlePaneClick = useCallback(() => {
+    setSelectedNodeId(null);
+    setVisibleHoverNodeId(null);
+    clearOpenHoverTimer();
+    clearCloseHoverTimer();
+  }, [clearOpenHoverTimer, clearCloseHoverTimer]);
+
+  const handleMoveStart = useCallback(() => {
+    isPanningRef.current = true;
+  }, []);
+  const handleMoveEnd = useCallback(() => {
+    isPanningRef.current = false;
+  }, []);
+
+  // ---- Live stat lookup for the detail reveal (T-pAi0Cv) -- same shape `waitSeconds`/
+  // `panelModel` already take, built once per `tasks` change (mirrors `model.ts::joinNodes`). --
+  const statsById = useMemo(() => new Map(tasks.map((t) => [t.id, t] as const)), [tasks]);
+
+  // ---- Search-to-focus (AC-3) / detail-panel links (T-pAi0Cv) share this behavior ---------
   const selectAndCenter = useSelectAndCenter({
     layout,
     isHidden,
@@ -502,31 +639,58 @@ function RunGraphCanvas({
           ))}
         </div>
       ) : null}
-      <div className="graph-canvas-wrap">
-        {graph && layout ? (
-          <ReactFlow
-            nodes={rfNodes}
-            edges={rfEdges}
-            nodeTypes={NODE_TYPES}
-            onNodeClick={handleNodeClick}
-            onNodeMouseEnter={handleNodeMouseEnter}
-            onNodesChange={handleNodesChange}
-            fitView
-            minZoom={MIN_ZOOM}
-            maxZoom={MAX_ZOOM}
-            nodesDraggable
-            nodesConnectable={false}
-            elementsSelectable
-            onlyRenderVisibleElements={rfNodes.length > LARGE_GRAPH_NODES}
-            defaultMarkerColor="var(--text-secondary)"
-          >
-            <MiniMap pannable zoomable nodeColor={statusToken} />
-            <Controls showInteractive={false} />
-            <Background variant={BackgroundVariant.Dots} />
-          </ReactFlow>
-        ) : (
-          <Empty>Loading graph…</Empty>
-        )}
+      <div className="graph-canvas-row">
+        <div
+          className="graph-canvas-wrap"
+          ref={canvasWrapRef}
+          onFocus={handleCanvasFocus}
+          onBlur={handleCanvasBlur}
+        >
+          {graph && layout ? (
+            <ReactFlow
+              nodes={rfNodes}
+              edges={rfEdges}
+              nodeTypes={NODE_TYPES}
+              onNodeClick={handleNodeClick}
+              onNodeMouseEnter={handleNodeMouseEnter}
+              onNodeMouseLeave={handleNodeMouseLeave}
+              onNodesChange={handleNodesChange}
+              onPaneClick={handlePaneClick}
+              onMoveStart={handleMoveStart}
+              onMoveEnd={handleMoveEnd}
+              fitView
+              minZoom={MIN_ZOOM}
+              maxZoom={MAX_ZOOM}
+              nodesDraggable
+              nodesConnectable={false}
+              elementsSelectable
+              onlyRenderVisibleElements={rfNodes.length > LARGE_GRAPH_NODES}
+              defaultMarkerColor="var(--text-secondary)"
+            >
+              <MiniMap pannable zoomable nodeColor={statusToken} />
+              <Controls showInteractive={false} />
+              <Background variant={BackgroundVariant.Dots} />
+              <TaskHoverCard
+                nodeId={visibleHoverNodeId}
+                isVisible={visibleHoverNodeId !== null}
+                graph={graph}
+                statsById={statsById}
+                direction={layout.direction}
+              />
+            </ReactFlow>
+          ) : (
+            <Empty>Loading graph…</Empty>
+          )}
+        </div>
+        {graph ? (
+          <TaskDetailPanel
+            nodeId={selectedNodeId}
+            graph={graph}
+            statsById={statsById}
+            onClose={() => handleClosePanel({ returnFocus: true })}
+            onNavigate={selectAndCenter}
+          />
+        ) : null}
       </div>
       {graph ? (
         <Legend
