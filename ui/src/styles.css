@@ -1286,3 +1286,209 @@ pre.code {
   border-top-style: dotted;
   border-top-color: var(--graph-edge-loop);
 }
+
+/* ---------- Run graph detail reveal (E-k3AMEr, T-pAi0Cv) ---------- */
+
+/* Canvas + pinned panel side by side; `flex-wrap` plus the sheet variant's `width: 100%` (below)
+   is what forces the sheet onto its own line under the canvas -- no `:has()` needed. */
+.graph-canvas-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.graph-canvas-row .graph-canvas-wrap {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+/* Hover preview card (`TaskHoverCard`, a React Flow NodeToolbar). */
+.task-hover-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+  max-width: 240px;
+  padding: 8px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text-primary) 15%, transparent);
+}
+
+.task-hover-card-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.task-hover-card-note {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.task-hover-card-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0;
+}
+
+.task-hover-card-stats div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-hover-card-stats dt {
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.task-hover-card-stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-hover-card-retries {
+  color: var(--text-secondary);
+}
+
+.task-hover-card-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* Pinned detail panel (`TaskDetailPanel`) -- 360px side panel >= 720px, a full-width sheet
+   (which the row above wraps onto its own line) under it. */
+.task-detail-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  font-size: 13px;
+  overflow-y: auto;
+}
+
+/* A programmatic focus target (tabIndex=-1), not an interactive control -- no visible ring. */
+.task-detail-panel:focus {
+  outline: none;
+}
+
+.task-detail-panel--side {
+  flex: 0 0 360px;
+  width: 360px;
+  max-height: 70vh;
+}
+
+.task-detail-panel--sheet {
+  flex: 1 1 100%;
+  width: 100%;
+  max-height: 50vh;
+}
+
+.task-detail-panel-head {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.task-detail-close {
+  border: none;
+  background: none;
+  padding: 2px 6px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.task-detail-close:hover {
+  color: var(--text-primary);
+}
+
+.task-detail-label {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.task-detail-missing-note {
+  margin: 0 0 6px;
+  color: var(--status-critical);
+  font-size: 12px;
+}
+
+.task-detail-panel section h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.task-detail-panel section h4 {
+  margin: 8px 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.task-detail-panel dl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.task-detail-panel dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-detail-panel dt {
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.task-detail-panel dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-detail-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-detail-link-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.task-detail-copy {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.task-detail-outputs {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+}
