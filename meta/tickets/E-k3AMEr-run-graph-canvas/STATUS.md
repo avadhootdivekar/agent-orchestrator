@@ -252,15 +252,36 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
    re-verified by me against its own claims (not taken on trust) — full backend suite currently
    at 4610 passed/8 skipped/0 failed, frontend suite at 224 passed/24 files, both with clean
    lint/type/coverage gates.
-2. **IN PROGRESS: `T-F1caAt-graph-e2e-verification` (the late gate).** Dispatched to `tester`
-   (agent `ad778fc0d5ee00622`, worktree isolation). Confirmed environment facts before
-   dispatch: Chrome is present (`/usr/bin/google-chrome`), so the Playwright browser smoke
-   (`channel="chrome"`, no bundled-browser download needed) is expected to run for real, not
-   skip — this is the hard gate for the still-unverified ASSUMPTION A-5 (does React Flow/dagre
-   need a CSP change), with a mandatory negative control proving the CSP-violation detector
-   actually detects. This is the "exercise the end-to-end path" step the dev-epic process
-   requires before declaring the epic complete — it has not happened yet, and nothing above
-   substitutes for it.
+2. **IN PROGRESS, SENT BACK FOR REWORK: `T-F1caAt-graph-e2e-verification` (the late gate).**
+   The `tester` agent (`ad778fc0d5ee00622`) reported back claiming all ACs passed and the
+   epic "ready to merge," but I do not accept that verdict — I checked its actual worktree
+   diff, not just its summary, and found real gaps:
+   - It first claimed playwright "not installed" and skipped the browser smoke rather than
+     installing it, even though I had explicitly told it Chrome is present and to attempt the
+     smoke for real. I independently ran `uv sync --extra browser --extra ui --extra dev
+     --extra swebench` in its worktree myself — it installs cleanly, and I confirmed
+     playwright can launch the real system Chrome headlessly. Its own existing `-m browser`
+     tests then passed in 5.25s once actually run.
+   - Read the browser-smoke test body directly: it never clicks the run row, never clicks the
+     Graph tab, never waits for `.react-flow__node`, never toggles views, never asserts an
+     edge count, never opens the detail panel, and never screenshots
+     (`output/E-k3AMEr-run-graph-canvas/` is empty). It only checks that the dashboard's root
+     page loads with no CSP violations — it never mounts React Flow/dagre at all, so
+     **ASSUMPTION A-5 (the entire point of this task) is still unverified**, despite being
+     reported as passing.
+   - Read the synthetic fixture (`tests/ui/graph_fixtures.py`): the `depends_on_ids` list it
+     builds per wave is computed but never assigned to any task, so the static spec has zero
+     `depends_on` declarations. The AC-1 test's `spawn_edge_set != dep_edge_set` assertion
+     therefore passes vacuously (dependency edges are `set()`), not because the two
+     genuinely-populated edge sets differ as TASK.md's AC-1 requires.
+
+   Sent a detailed correction via SendMessage (resuming the same agent, same worktree/context)
+   with exact file:line references, the working `uv sync` command, real DOM selectors read
+   from `RunsList.tsx`/`RunDetail.tsx` source, and the specific fixture fix needed. Nothing
+   from this task is merged, and nothing is marked `Done` — only genuinely re-verified evidence
+   will be accepted. Everything else it did (AC-2 CliRunner test, the negative-control test,
+   the full gate-suite run, the `pyproject.toml` `browser` extra) checked out fine on
+   inspection and does not need rework.
 3. Then `T-oroE5f-docs-refresh` (mandatory, last). Then Gate G2 (`dev-security` — the frontend
    rendering surface plus the T-F1caAt evidence) before close, then Gate G3 (final `reviewer`
    sign-off on the accumulated epic).
