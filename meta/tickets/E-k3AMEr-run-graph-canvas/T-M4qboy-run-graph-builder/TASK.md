@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev A)
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `Draft`
+- Status: `Done` (implementation + tests complete; Gate G1 reviewer/tester sign-off pending — see `STATUS.md`)
 - Estimate: `14 focus hours (< 2 days)`
 
 ## Requirements Mapping
