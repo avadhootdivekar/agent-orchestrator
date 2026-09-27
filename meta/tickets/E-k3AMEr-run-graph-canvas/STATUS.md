@@ -125,9 +125,12 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
 ## Next actions
 1. **DONE.** S1 executed: T-AZzgT8, T-l7t6TT, T-mzT3BW, T-adVpTj, T-OjTS8O all implemented,
    merged into `ad/run-graph-canvas`, and independently re-verified (see "This update" above).
-2. **Next: Gate G1.** Dispatch `reviewer` and `tester` for sign-off on the 3 engine-touching
-   tasks (T-AZzgT8, T-l7t6TT, T-mzT3BW) before Sprint 2's T-M4qboy builds on `spawned_by`,
-   the snapshot files, and `iter_dependency_edges`.
+2. **IN PROGRESS: Gate G1.** Dispatched `reviewer` (agent `a05b286c36c34d83e`, design/code-
+   quality review, read-only) and `tester` (agent `aa890ce0c3801c441`, independent empirical
+   verification, may add tests but not touch production code) in parallel on the current
+   `ad/run-graph-canvas` checkout, for sign-off on the 3 engine-touching tasks (T-AZzgT8,
+   T-l7t6TT, T-mzT3BW) before Sprint 2's T-M4qboy builds on `spawned_by`, the snapshot files,
+   and `iter_dependency_edges`.
 3. After G1 passes: begin Sprint 2 with T-M4qboy-run-graph-builder (the pure `ui/graph.py`
    builder), then T-AsQ77e-run-graph-endpoint, then T-aHktGB and T-pAi0Cv (can parallelize
    once the endpoint contract is stable), then T-F1caAt (late gate, real e2e evidence), then
