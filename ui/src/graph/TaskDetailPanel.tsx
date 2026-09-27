@@ -20,7 +20,7 @@ import {
   formatTimestamp,
 } from "../format";
 import type { RunGraph as RunGraphData, TaskStat } from "../types";
-import { panelModel } from "./model";
+import { PANEL_PENDING_STATUS, panelModel } from "./model";
 
 export interface TaskDetailPanelProps {
   /** Node id to show, or `null` to render nothing. */
@@ -60,7 +60,7 @@ function labelFor(graph: RunGraphData, id: string): string {
 }
 
 function statusFor(statsById: Map<string, TaskStat>, id: string): string {
-  return statsById.get(id)?.status ?? "pending";
+  return statsById.get(id)?.status ?? PANEL_PENDING_STATUS;
 }
 
 function RelatedLink({
