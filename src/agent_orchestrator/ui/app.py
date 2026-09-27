@@ -221,6 +221,13 @@ def create_app(
         except DashboardError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/graph")
+    def run_graph(run_id: str) -> dict:
+        try:
+            return service.run_graph(run_id)
+        except DashboardError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get(f"{API_PREFIX}/runs/{{run_id}}/log")
     def run_log(run_id: str, max_bytes: int = Query(200_000, ge=1, le=5_000_000)) -> dict:
         return service.run_log(run_id, max_bytes=max_bytes)
