@@ -95,9 +95,9 @@ Traceability: HLD §19 (acceptance criteria matrix).
 - [x] `T-adVpTj-graph-model-and-layout`: npm deps, TS types, pure `model.ts`/`layout.ts` (async layout seam), jsdom shims, contract fixture, bundle measurement, and a 2 h spike (FR-5 foundation, NFR-3, NFR-4). 16 h. S1. **Done.**
 - [x] `T-OjTS8O-run-graph-canvas`: canvas core, i.e. React Flow, `TaskNode`, edge styles, view toggle, Graph tab (lazy), and version-gated live refetch (FR-5, FR-8, U-5, U-6, D-3, D-5, D-7). 14 h. S1. **Done.**
 - [x] `T-M4qboy-run-graph-builder`: pure `ui/graph.py` builder, `display_text`, early cap, and `compute_graph_version` (FR-3, FR-7, NFR-2). 14 h. S2. **Done.**
-- [ ] `T-AsQ77e-run-graph-endpoint`: `GET /api/runs/{id}/graph`, `RunDetail.graph_version`, `TaskStat` additions, and a contract test against the frontend fixture (FR-4, FR-7). 6 h. S2.
+- [x] `T-AsQ77e-run-graph-endpoint`: `GET /api/runs/{id}/graph`, `RunDetail.graph_version`, `TaskStat` additions, and a contract test against the frontend fixture (FR-4, FR-7). 6 h. S2. **Done.**
 - [x] `T-aHktGB-graph-toolbar-and-legend`: search-to-focus, metric strip select, unrelated filter, fit/reset, legend, and degraded banners (FR-5, FR-7, D-8). 12 h. S2. **Done.**
-- [ ] `T-pAi0Cv-task-detail-panel`: hover card plus pinned panel with navigation (FR-6, U-7, D-8). 16 h. S2.
+- [x] `T-pAi0Cv-task-detail-panel`: hover card plus pinned panel with navigation (FR-6, U-7, D-8). 16 h. S2. **Done.**
 - [ ] `T-F1caAt-graph-e2e-verification`: e2e via real server plus `ao run`, a Playwright (system Chrome) CSP smoke with a negative control, and perf gates (D-1, D-2, D-6, NFR-3). 14 h. S2.
 - [ ] `T-oroE5f-docs-refresh`: post-implementation reconciliation of `docs-md/` and READMEs (mandatory, last). 6 h. S2.
 

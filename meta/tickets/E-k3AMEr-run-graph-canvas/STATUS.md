@@ -2,7 +2,7 @@
 
 - ID: `E-k3AMEr-run-graph-canvas`
 - Updated At: `2026-09-27`
-- State: `In Progress` (Sprint 1 CLOSED — all 5 tasks Done, Gate G1 PASSED; Sprint 2 started)
+- State: `In Progress` (Sprint 1 + Sprint 2 core implementation CLOSED — 9/11 MVP tasks Done)
 - Owner: `dev-epic` (execution) · design by `architect`
 
 ## Rollup
@@ -14,20 +14,50 @@
 | T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | **Done** |
 | T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | **Done** |
 | T-M4qboy-run-graph-builder | MVP | S2 | 14 h | **Done** |
-| T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | In Progress (dispatched to `developer`, worktree isolation) |
+| T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | **Done** |
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | **Done** |
-| T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | In Progress (dispatched to `developer`, worktree isolation) |
-| T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | Draft |
-| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft |
+| T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | **Done** |
+| T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | Draft (unblocked — all implementation tasks Done) |
+| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft (blocked on T-F1caAt) |
 | T-VcN4pt-task-title-field | Non-MVP | S2 stretch | 6 h | Draft |
 | T-hMNbDP-spawn-subtree-collapse | Non-MVP | backlog | 12 h | Draft |
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). **7 Done**, 2 In Progress, 0 Blocked, 6 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **9 Done**, 0 In Progress, 0 Blocked, 6 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-pAi0Cv-task-detail-panel and
+  T-AsQ77e-run-graph-endpoint both merged and independently re-verified — Done. All 9 backend
+  and frontend implementation tasks (5 S1 + 4 S2) are now complete.** Both merges had zero
+  conflicts (fully disjoint file sets: frontend-only vs. backend-only).
+
+  T-pAi0Cv (hover card + pinned detail panel): `npm run typecheck` clean; `npm test` → **224
+  passed (224), 24 files** (+32 vs. the 192-test baseline); `npm run build` reproduces the
+  committed bundle byte-for-byte (main JS 122.10 KB gzip, main CSS 4.35 KB gzip, lazy `RunGraph`
+  chunk 82.55 KB gzip combined — still under the ≤90 KB NFR-4 budget); no
+  `dangerouslySetInnerHTML`/hardcoded hex introduced; backend sanity re-run unaffected (4573
+  passed, 8 skipped, 0 failed). One deviation worth flagging for the later reviewer pass: the
+  implementer reused the existing `selectedNodeId` state for the pinned panel's target, which
+  means the toolbar's search-select (from `T-aHktGB`) now also opens the detail panel — a small
+  behavior expansion beyond what `T-aHktGB`'s own AC-3 specified, verified non-breaking against
+  the full existing toolbar test suite but not something I designed — noted for Gate G3.
+
+  T-AsQ77e (`GET /api/runs/{id}/graph`): `pytest -q` → **4610 passed** (+37 exactly), 8 skipped,
+  0 failed. `ruff`/`mypy` → 0 new findings. Independently ran the EXACT CI coverage-gate command
+  from `.github/workflows/ci.yml` myself (`pytest tests/ui tests/test_general_instructions.py
+  tests/test_e2e_cli_prompt_and_instructions.py --cov=agent_orchestrator.ui --cov-fail-under=80`)
+  and reproduced **462 passed, 93.24% coverage** exactly. Read the AC-6 no-leakage test directly
+  (asserts 3 sentinel secrets never appear in either the raw dataclass or the actual HTTP
+  response text/body) and ran the full `tests/ui/test_run_graph_endpoint.py` +
+  `tests/ui/test_graph_contract.py` files verbosely myself: **37/37 passed**, covering every one
+  of the 8 documented acceptance criteria by name.
+
+  **Only `T-F1caAt-graph-e2e-verification` (the late gate) and `T-oroE5f-docs-refresh` (mandatory,
+  last) remain before Gate G2/G3 and epic close.**
+
+## Prior update (T-M4qboy merge)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-M4qboy-run-graph-builder
   merged and independently re-verified — Done.** Clean merge, no conflicts. Re-verified myself
   (not just the implementer's STATUS.md claims):
@@ -215,17 +245,19 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
   selected route. A separate backlog ticket is recommended.
 
 ## Next actions
-1. **DONE. Sprint 1 fully closed.** All 5 S1 tasks `Done`, Gate G1 `PASS`.
-2. **IN PROGRESS: Sprint 2 wave 1.** Checked each remaining task's own `Dependencies` section
-   (not just the epic's S1→S2 framing) and found `T-aHktGB` depends only on `T-OjTS8O`/
-   `T-adVpTj` (both Done) — it does NOT need the live backend endpoint, same as `T-OjTS8O` did,
-   since it builds and tests against the existing fixture + mocked `api.runGraph`. So dispatched
-   **both** `T-M4qboy-run-graph-builder` (agent `a03c5d909ea622938`, backend, blocks
-   `T-AsQ77e`) and `T-aHktGB-graph-toolbar-and-legend` (agent `a8f9cb819952273db`, frontend,
-   blocks `T-pAi0Cv`) in parallel, in isolated worktrees — fully disjoint file sets (Python
-   `src/agent_orchestrator/ui/graph.py` vs. new `ui/src/graph/GraphToolbar.tsx`/`Legend.tsx`/
-   `hooks.ts` + edits to the already-merged `RunGraph.tsx`), zero expected conflict.
-3. Once T-M4qboy lands: dispatch `T-AsQ77e-run-graph-endpoint`. Once T-aHktGB lands: dispatch
-   `T-pAi0Cv-task-detail-panel`. Then `T-F1caAt` (late gate — real e2e evidence via `tester`),
-   then `T-oroE5f` (docs refresh, mandatory last). Gate G2 (`dev-security`) before close, Gate
-   G3 (final `reviewer` sign-off) after.
+1. **DONE. All 9 implementation tasks complete** (5 S1 + 4 S2: spawn provenance, workflow
+   snapshots, the dag edge iterator, the frontend model/layout foundation, the canvas core, the
+   pure graph builder, the toolbar/legend/banners, the live HTTP endpoint, and the hover
+   card/detail panel). Every task merged into `ad/run-graph-canvas` and independently
+   re-verified by me against its own claims (not taken on trust) — full backend suite currently
+   at 4610 passed/8 skipped/0 failed, frontend suite at 224 passed/24 files, both with clean
+   lint/type/coverage gates.
+2. **Next: `T-F1caAt-graph-e2e-verification` (the late gate).** Real e2e evidence via `tester` —
+   a live server plus `ao run`, a Playwright (system Chrome) CSP smoke with a negative control
+   (this is the hard gate for the still-unverified ASSUMPTION A-5: does React Flow/dagre need a
+   CSP change), and the NFR-3 perf gates at scale. This is the "exercise the end-to-end path"
+   step the dev-epic process requires before declaring the epic complete — it has not happened
+   yet, and nothing above substitutes for it.
+3. Then `T-oroE5f-docs-refresh` (mandatory, last). Then Gate G2 (`dev-security` — the frontend
+   rendering surface plus the T-F1caAt evidence) before close, then Gate G3 (final `reviewer`
+   sign-off on the accumulated epic).
