@@ -10,6 +10,7 @@ import type {
   HtmlPreview,
   LaunchRecord,
   RunDetail,
+  RunGraph,
   RunOptions,
   RunSummary,
   TemplateInfo,
@@ -87,6 +88,8 @@ export const api = {
   runs: () => request<RunSummary[]>("/runs"),
   runStats: () => request<AggregateStats>("/runs/stats"),
   run: (runId: string) => request<RunDetail>(`/runs/${encodeURIComponent(runId)}`),
+  /** Run graph topology (E-k3AMEr, HLD §14.2). Fetch on mount and on `graph_version` change. */
+  runGraph: (runId: string) => request<RunGraph>(`/runs/${encodeURIComponent(runId)}/graph`),
   runLog: (runId: string) =>
     request<{ run_id: string; launch_id: string | null; text: string }>(
       `/runs/${encodeURIComponent(runId)}/log`,
