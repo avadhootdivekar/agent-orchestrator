@@ -6,7 +6,7 @@
 - Owner: `dev-epic` (execution) · design by `architect`
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `In Progress` (all 11 MVP tasks Done; Gates G1/G2/G3 all CLOSED PASS; docs refreshed — see `STATUS.md` for final epic-close handoff)
+- Status: `MVP Complete` (all 11 MVP tasks Done; Gates G1/G2/G3 all CLOSED PASS; docs refreshed; ready for PR into `main` — see `STATUS.md` for the final epic-close handoff)
 
 ## Summary
 - **Goal:** Let an operator *see* a workflow run in `ao ui` on a pannable, zoomable,

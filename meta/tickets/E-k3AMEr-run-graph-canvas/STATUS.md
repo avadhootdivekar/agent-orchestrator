@@ -2,7 +2,7 @@
 
 - ID: `E-k3AMEr-run-graph-canvas`
 - Updated At: `2026-09-27`
-- State: `In Progress` (all 11 MVP tasks Done; Gates G1/G2/G3 all CLOSED PASS; ready for final handoff)
+- State: `MVP Complete` (all 11 MVP tasks Done; Gates G1/G2/G3 all CLOSED PASS; docs reconciled; ready for PR into `main`)
 - Owner: `dev-epic` (execution) · design by `architect`
 
 ## Rollup
@@ -27,7 +27,86 @@
 Counts: **15 tasks** (11 MVP, 4 non-MVP). **11 Done** (all MVP), 0 In Progress, 0 Blocked, 4 Draft (all Non-MVP backlog).
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
-## This update
+## FINAL HANDOFF (dev-epic, 2026-09-27)
+
+**Epic is MVP-complete and ready for a PR from `ad/run-graph-canvas` into `main`.**
+
+### Done, with evidence
+- **All 11 MVP tasks `Done`**: 5 Sprint 1 (spawn provenance, workflow snapshots, dependency-edge
+  iterator, frontend model/layout foundation, canvas core) + 5 Sprint 2 (pure graph builder,
+  HTTP endpoint, toolbar/legend/banners, hover card/detail panel, late e2e gate) + docs refresh.
+- **All 3 review gates `CLOSED, PASS`**: G1 (engine, 2 SHOULD-FIX + 1 NIT found/fixed), G2
+  (security, 1 MEDIUM + 2 LOW found/fixed same-day, 2 LOW deferred), G3 (final reviewer, 1
+  Warning found/fixed same-day, 2 Warnings + 4 Suggestions deferred; explicit "ready for a PR"
+  verdict).
+- **ASSUMPTION A-5 verified** (React Flow/dagre need no CSP change) via a real Playwright
+  browser smoke test with a negative control — not just assumed.
+- **U-4's core requirement** (dependency-order and spawn-tree edges genuinely differ) proven
+  directly in code, not just asserted: `tests/test_ui_graph.py::TestFixtureScenarios::
+  test_b_overseer_shape_dependency_and_spawn_edges_differ`.
+- **Final verification on the fully merged branch** (run by dev-epic, not taken from any task's
+  self-report): `pytest -q` → 4621 passed, 8 skipped, 0 failed. `pytest -m browser` → 2/2
+  passed. UI coverage gate → 466 passed, 93.91% (floor 80%). `ruff check`/`ruff format --check`/
+  `mypy src` → 0 new findings (2 pre-existing, out-of-scope ones only, present since before this
+  epic started). Frontend: `npm run typecheck` clean, `npm test` → 224/224, `npm run build`
+  succeeds (main chunk +1.32 KB gzip vs. ≤5 KB budget; lazy graph chunk 82.55 KB gzip vs. ≤90 KB
+  NFR-4 budget), `npm audit --omit=dev --audit-level=high` → 0 new (1 pre-existing moderate
+  `dompurify` finding, unrelated to this epic's 2 added deps).
+- **Docs reconciled**: `docs-md/run-graph-canvas-hld.md` (status Implemented + a 16-row
+  deviation table + 13-row follow-up table, each cited `path:line`), ADR-0017 (status Accepted),
+  the dashboard HLD, `meta/ROADMAP.md`, the dynamic-injection guide, root `README.md`,
+  `ui/README.md`, and ADR-0011's sensitivity inventory — all with a 67-row claim→citation
+  evidence table, itself reviewer-checked (22/67 spot-checked, 0 wrong).
+- **Ticket docs internally consistent**: `EPIC.md`/`STATUS.md` and every task's own
+  `TASK.md`/`STATUS.md` now agree on status words and counts (5 stale spots found by T-oroE5f
+  and fixed by dev-epic in commit `9adcad4`).
+
+### Not done / explicitly out of scope
+- **4 Non-MVP tasks** remain `Draft` in the backlog, as designed (never in this epic's MVP
+  scope): `T-VcN4pt` (task title field), `T-hMNbDP` (spawn subtree collapse), `T-ydMbJN`
+  (critical-path edge timing), `T-N8scZK` (layout persistence).
+- **F-2** (`TaskRunState.route` lost on resume for tasks on a selected route) — pre-existing,
+  explicitly out of scope per the original ask. Logged in `EPIC.md` Risks; not filed as a
+  separate ticket yet (the user's instructions said this was optional — "you may file that
+  ticket if you want it tracked").
+- **3 design features silently dropped during implementation**, found by T-oroE5f, never
+  caught by any gate because they were never in any task's acceptance criteria: the
+  dependency-cycle warning in the graph builder, a live "+N tasks appeared" notice, and
+  failed-edge dimming/selection emphasis. Logged as follow-ups FU-6–FU-8 in the HLD. None is a
+  safety issue; shipped behavior is safe without them.
+- **Gate G2 deferred (backlog)**: a client-side `model.ts::displayText` mirror was never
+  implemented (`TaskDetailPanel.tsx`'s `labelFor` falls back to a raw, unsanitized id for ids
+  not in the current node set — bounded risk, React still escapes it as text); no explicit size
+  bound/justification comment on `compute_graph_version`.
+- **Gate G3 deferred (backlog)**: `TaskHoverCard`/`TaskDetailPanel` take the raw `RunGraph` prop
+  instead of the `ViewNode` view-model type the architecture doc names as the boundary —
+  relevant once the deferred DAG-editor roadmap half starts, not before; `RunGraph.tsx` is
+  growing multi-concern ahead of the 3 non-MVP tasks that would add to it.
+- **E-Grpp0X coordination**: still just a coordination note, no action taken (by design — see
+  EPIC.md Risks). Whichever of the two epics lands second on `engine.py::_inject` rebases.
+
+### Next actions for whoever picks this up
+1. Open a PR from `ad/run-graph-canvas` into `main`. All evidence above is the PR's test-plan
+   basis; no further verification should be needed before merge review.
+2. Optional: file a separate ticket for F-2 if the team wants it tracked (recommended by the
+   epic's own design, not required by this epic).
+3. Optional, not urgent: pick up the Gate G2/G3 deferred backlog items (`docs-md/run-graph-
+   canvas-hld.md`'s follow-up table has the full list with ticket/backlog notes) opportunistically,
+   or bundle them into whichever epic picks up the deferred DAG-editor roadmap half.
+4. The 4 non-MVP tasks are ready to pick up independently whenever prioritized — each has its
+   own complete `TASK.md` already.
+
+### Key artifact pointers (all absolute paths)
+- Epic docs: `/usr/avadhoot/mounted/agent-orchestrator/meta/tickets/E-k3AMEr-run-graph-canvas/EPIC.md`, `.../STATUS.md` (this file)
+- HLD: `/usr/avadhoot/mounted/agent-orchestrator/docs-md/run-graph-canvas-hld.md`
+- ADR: `/usr/avadhoot/mounted/agent-orchestrator/docs-md/adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md`
+- Branch: `ad/run-graph-canvas` (final commit at time of this handoff: `9adcad4`)
+- Screenshots (from the real browser smoke test): `/usr/avadhoot/mounted/agent-orchestrator/output/E-k3AMEr-run-graph-canvas/{dependency-view,spawn-view,detail-panel-open}.png`
+- New backend module: `/usr/avadhoot/mounted/agent-orchestrator/src/agent_orchestrator/ui/graph.py`
+- New frontend module: `/usr/avadhoot/mounted/agent-orchestrator/ui/src/graph/`
+- New e2e test infra: `/usr/avadhoot/mounted/agent-orchestrator/tests/ui/test_e2e_graph.py`, `.../tests/ui/graph_fixtures.py`
+
+## Update history (chronological, newest first)
 - By: reviewer · Role: reviewer · Date: 2026-09-27 · Comment: **Gate G3 review complete — PASS
   WITH FOLLOW-UPS. Verdict: ready for a PR into `main`.** Holistic whole-epic pass, explicitly
   scoped away from re-litigating G1 (engine)/G2 (security) and toward the frontend
