@@ -17,14 +17,14 @@
 | T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | **Done** |
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | **Done** |
 | T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | **Done** |
-| T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | Draft (unblocked — all implementation tasks Done) |
+| T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | In Progress (dispatched to `tester`, worktree isolation) |
 | T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft (blocked on T-F1caAt) |
 | T-VcN4pt-task-title-field | Non-MVP | S2 stretch | 6 h | Draft |
 | T-hMNbDP-spawn-subtree-collapse | Non-MVP | backlog | 12 h | Draft |
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). **9 Done**, 0 In Progress, 0 Blocked, 6 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **9 Done**, 1 In Progress, 0 Blocked, 5 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
@@ -252,12 +252,15 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
    re-verified by me against its own claims (not taken on trust) — full backend suite currently
    at 4610 passed/8 skipped/0 failed, frontend suite at 224 passed/24 files, both with clean
    lint/type/coverage gates.
-2. **Next: `T-F1caAt-graph-e2e-verification` (the late gate).** Real e2e evidence via `tester` —
-   a live server plus `ao run`, a Playwright (system Chrome) CSP smoke with a negative control
-   (this is the hard gate for the still-unverified ASSUMPTION A-5: does React Flow/dagre need a
-   CSP change), and the NFR-3 perf gates at scale. This is the "exercise the end-to-end path"
-   step the dev-epic process requires before declaring the epic complete — it has not happened
-   yet, and nothing above substitutes for it.
+2. **IN PROGRESS: `T-F1caAt-graph-e2e-verification` (the late gate).** Dispatched to `tester`
+   (agent `ad778fc0d5ee00622`, worktree isolation). Confirmed environment facts before
+   dispatch: Chrome is present (`/usr/bin/google-chrome`), so the Playwright browser smoke
+   (`channel="chrome"`, no bundled-browser download needed) is expected to run for real, not
+   skip — this is the hard gate for the still-unverified ASSUMPTION A-5 (does React Flow/dagre
+   need a CSP change), with a mandatory negative control proving the CSP-violation detector
+   actually detects. This is the "exercise the end-to-end path" step the dev-epic process
+   requires before declaring the epic complete — it has not happened yet, and nothing above
+   substitutes for it.
 3. Then `T-oroE5f-docs-refresh` (mandatory, last). Then Gate G2 (`dev-security` — the frontend
    rendering surface plus the T-F1caAt evidence) before close, then Gate G3 (final `reviewer`
    sign-off on the accumulated epic).
