@@ -13,13 +13,23 @@ to ``state.json``), with ``state.json`` as the authoritative fallback.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ..models import RunState, compute_run_active_seconds, compute_run_usage_totals
+from ..models import (
+    RunState,
+    WorkflowSnapshot,
+    compute_run_active_seconds,
+    compute_run_usage_totals,
+)
 from ..reporting import cache_effectiveness
+from ..runstate import load_workflow_snapshot_at
+from .graph import RunGraph, build_run_graph, compute_graph_version
+
+logger = logging.getLogger(__name__)
 
 # Layout the engine writes; kept as named constants so the dashboard and the engine cannot
 # drift on where runs live.
@@ -69,6 +79,12 @@ class TaskStat:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     cache_hit_rate: float | None = None
+    # T-AsQ77e (HLD §14.2, additive): mirrors of TaskRunState.dispatch_cycle/
+    # not_taken_reason, straight through -- both already existed on the engine model
+    # (dispatch-cycle capture-directory keying, router "not selected" reason) but were
+    # never surfaced on the dashboard's own per-task view.
+    dispatch_cycle: int = 0
+    not_taken_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +139,10 @@ class RunDetail:
     # `None` for every run without isolation (E-Wk9Tz3 NFR-2: a pre-epic run's payload
     # gains one null key and renders exactly as it did before).
     integration: RunIntegration | None = None
+    # T-AsQ77e (HLD §14.2/§8.4, additive, reviewer MUST-FIX): computed by the SAME
+    # `ui.graph.compute_graph_version` the `/graph` endpoint uses, from the SAME loaded
+    # `state` -- so the two endpoints can never independently derive different values.
+    graph_version: str = ""
 
 
 @dataclass(frozen=True)
@@ -286,6 +306,8 @@ class RunRepository:
                     cache_read_tokens=cache_eff.cache_read_tokens,
                     cache_creation_tokens=cache_eff.cache_creation_tokens,
                     cache_hit_rate=cache_eff.hit_rate,
+                    dispatch_cycle=ts.dispatch_cycle,
+                    not_taken_reason=ts.not_taken_reason,
                 )
             )
 
@@ -308,7 +330,36 @@ class RunRepository:
                 if integration.active
                 else None
             ),
+            graph_version=compute_graph_version(state),
         )
+
+    def load_graph(self, run_id: str) -> RunGraph:
+        """Build the run graph for *run_id* (T-AsQ77e, HLD §8.4).
+
+        The ONE place that does I/O for this feature: loads ``state.json`` through the
+        existing ``load_state``/``run_dir`` guard (``RunNotFoundError`` for an unknown
+        run, a traversal-shaped id, or an unreadable file -- 404 at the service/route
+        layer), then loads the latest session's workflow snapshot via the SHARED
+        bounded parser ``runstate.load_workflow_snapshot_at``. This dashboard reads the
+        run dir it already resolved rather than constructing an engine
+        ``RunStateStore`` -- there is deliberately no launch-record fallback (removed
+        after the security review). A missing, oversized, corrupt, or sha-mismatched
+        snapshot degrades tolerantly through ``build_run_graph`` (``source=
+        "unavailable"`` plus a warning) rather than raising; only a genuinely missing
+        or unreadable run bubbles up as ``RunNotFoundError``.
+        """
+        state = self.load_state(run_id)
+        snapshot: WorkflowSnapshot | None = None
+        if state.spec_sessions:
+            sha = state.spec_sessions[-1].spec_sha256
+            snapshot = load_workflow_snapshot_at(self.run_dir(run_id), sha)
+            if snapshot is None:
+                logger.warning(
+                    "run graph degraded: workflow snapshot missing or invalid for run %s",
+                    run_id,
+                    extra={"event": "ui.graph.degraded"},
+                )
+        return build_run_graph(state, snapshot)
 
     def aggregate(self) -> AggregateStats:
         """Totals across every readable run in the workspace (FR-R5.1)."""

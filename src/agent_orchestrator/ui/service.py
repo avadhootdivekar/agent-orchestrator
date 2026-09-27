@@ -420,6 +420,23 @@ class DashboardService:
         payload["launch"] = record.to_dict() if record else None
         return payload
 
+    def run_graph(self, run_id: str) -> dict:
+        """The run's dependency/spawn graph for the Graph tab (T-AsQ77e, HLD §8.4/§14.2).
+
+        ``RunRepository.load_graph`` already turns every degraded case short of "no
+        such run" into a 200-shaped ``RunGraph`` (``source="unavailable"`` plus
+        ``warnings``) -- this method's only job is the same ``RunNotFoundError`` ->
+        ``DashboardError`` translation every other run-scoped method here does
+        (``run_detail``, ``delete_run``), so `app.py` maps it to 404 exactly like them.
+        There is no launch-record fallback here; an unreadable/missing run is a 404,
+        never a 5xx.
+        """
+        try:
+            graph = self._repo.load_graph(run_id)
+        except RunNotFoundError as exc:
+            raise DashboardError(f"run not found: {run_id}") from exc
+        return asdict(graph)
+
     def run_stats(self) -> dict:
         """Aggregate stats across all runs (FR-R5.1)."""
         return asdict(self._repo.aggregate())
