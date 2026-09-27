@@ -39,6 +39,21 @@ scope" instruction rather than fixed inline. Cross-referenced from the workflow-
 ## Risks / Blockers
 - None blocking — no evidence this has manifested in a real captured run in this repo's own
   history; a real, verified code-path gap, not an observed production incident.
+- Coordination note (no status change):
+  - By: architect
+  - Role: architect
+  - Date: 2026-09-27
+  - Comment: `E-k3AMEr-run-graph-canvas` (T-AZzgT8) also edits the body of `engine.py::_inject`.
+    - It adds a keyword-only required `parent_task_id` (plus `loop_id`/`iteration`), and writes
+      `state.spawned_by[spec.id]` in the **same per-spec step** as `state.injected_tasks.append`.
+    - Your validate-before-append fix therefore composes cleanly: validate the whole batch first,
+      then the existing loop appends both. Whichever epic lands second rebases.
+    - T-AZzgT8 pins "a rejected injected id has no spawn record".
+    - Also verified on main @ 191da69: `_inject` has exactly **two** callers, emit (`~2052`) and the
+      loop gate (`~2162`). Router activation does not inject, which resolves this epic's "possibly
+      router expansion" note.
+    - The run-graph canvas renders an unresolvable injected `depends_on` as a visible
+      "missing" node, a useful symptom display until this epic's fix lands.
 
 ## Next actions
 1. Prioritize against other backlog epics.

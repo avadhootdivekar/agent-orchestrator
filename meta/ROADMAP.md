@@ -182,6 +182,13 @@ Anything beyond single-user localhost needs:
 
 - **UI-driven workflow construction** — build and edit a DAG visually and emit a valid
   spec. *(Explicitly deferred from the current epic; the highest-value next dashboard step.)*
+  - *Read-only half being addressed: `E-k3AMEr-run-graph-canvas` (designed 2026-09-27, pending
+    execution).* It adds a run-graph canvas with toggleable execution-order and spawned-by views
+    and a task-detail panel. See [`docs-md/run-graph-canvas-hld.md`](../docs-md/run-graph-canvas-hld.md)
+    and [ADR-0017](../docs-md/adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md). Building
+    or editing a DAG in the browser remains deferred.
+  - *Natural follow-on:* a **timeline/Gantt view** of a run. It needs per-dispatch interval
+    history, which is deliberately not recorded by E-k3AMEr (HLD R-10).
 - **Live updates** — stream run/task state and agent transcripts instead of polling.
 - **In-browser editing** — edit instruction and spec files, with validation before save.
 - **Run comparison** — diff two runs' cost, duration, and outputs.

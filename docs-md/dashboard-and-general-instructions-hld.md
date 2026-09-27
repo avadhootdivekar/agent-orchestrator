@@ -290,6 +290,18 @@ a live run cannot be deleted.
 
 - **UI-based dynamic workflow generation** — build/edit a DAG in the browser. Explicitly
   out of scope here; the highest-value next dashboard step.
+  - **Being addressed (read-only half), by `E-k3AMEr-run-graph-canvas` (designed 2026-09-27, not
+    yet implemented).** It adds a *Graph* tab to the run detail view: a pannable/zoomable canvas of
+    a run's tasks with two toggleable edge sets.
+    - **Execution order**: the dependency DAG, plus the actual start order.
+    - **Spawned by**: which task created which dynamically injected task.
+
+    It also adds a hover preview plus a pinned task-detail panel (cost, duration, retries,
+    dispatches, wait time). Design: [`run-graph-canvas-hld.md`](run-graph-canvas-hld.md) ·
+    [ADR-0017](adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md).
+  - **Still deferred:** building or *editing* a DAG in the browser. The new `/graph` endpoint is a
+    run read model, not a spec round-trip format, so an editor needs its own spec-shaped API. The
+    canvas components and layout seam are reusable.
 - Authentication and configurable secrets.
 - Live streaming instead of polling; in-browser editing; run comparison.
 - Cancelling runs the dashboard did not launch.
