@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev A). **Pair with `reviewer`**: this touches core injection and resume.
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `Done` (implementation complete, all 12 acceptance criteria verified; see `STATUS.md` for evidence; Gate G1 reviewer/tester sign-off still pending)
+- Status: `Done` (all 12 acceptance criteria verified; Gate G1 reviewer + tester sign-off both PASS, no MUST-FIX; see `STATUS.md`)
 - Estimate: `14 focus hours (< 2 days)`
 
 ## Requirements Mapping

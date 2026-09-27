@@ -2,7 +2,7 @@
 
 - ID: `T-mzT3BW-dag-edge-iterator`
 - Updated At: `2026-09-27`
-- State: `Implemented — Reviewer sign-off required before merge`
+- State: `Done` (Gate G1 reviewer + tester sign-off both PASS)
 - Owner: `Dev A (developer) + reviewer sign-off`
 - Scope: `MVP` · Sprint: `S1` · Estimate: `8 h`
 
@@ -86,14 +86,34 @@
 
 ## Risks / Blockers
 
-- Blockers: **none for implementation**, but per the Owner note this task **requires reviewer
-  sign-off before merge** (scheduling-order risk, ADR-0017 Risk R-2) — that gate is not yet
-  exercised; state is `Implemented`, not `Done`.
-- Dependencies: none upstream. Downstream: blocks `T-M4qboy` (consumes `iter_dependency_edges`)
-  at Gate G1.
+- Blockers: none. Gate G1 sign-off obtained (below).
+- Dependencies: none upstream. Downstream: `T-M4qboy` may now consume `iter_dependency_edges`.
 
 ## Next actions
 
-1. Reviewer sign-off on the diff (`src/agent_orchestrator/dag.py`,
-   `tests/test_dag_edge_iterator_oracle.py`) per the Owner note — Gate G1.
-2. On sign-off, move state to `Done` and unblock `T-M4qboy`.
+1. ~~Reviewer sign-off on the diff, per the Owner note — Gate G1.~~ **CLOSED** — see below.
+
+## Gate G1 closure
+- By: reviewer · Role: reviewer · Date: 2026-09-27 · Comment: **PASS**, with one SHOULD-FIX and
+  one NIT. SHOULD-FIX: `output_to_task` was computed twice (once inside `iter_dependency_edges`,
+  again in `build_dag`) for the same feature — a real DRY seam, notable given this task's whole
+  purpose (ADR-0017 D3) is "one edge-derivation implementation." NIT: the oracle/synthetic tests
+  didn't cover minimal shapes (empty workflow, single task, fully disconnected) — by inspection
+  both old and new code degenerate to a no-op identically, but it was reviewer-asserted rather
+  than test-pinned. Independently traced `iter_dependency_edges` against the frozen oracle
+  line-by-line and confirmed the refactor preserves identical dedup, order, phantom-key, and
+  warning-message behavior — not just trusting the passing test.
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **Both resolved.** Extracted
+  `_build_output_to_task(tasks)` in `dag.py`, called once by each of `iter_dependency_edges` and
+  `build_dag` — exactly one computation now. Added 3 new synthetic tests
+  (`test_empty_workflow_yields_no_edges`, `test_single_task_no_deps_yields_no_edges`,
+  `test_fully_disconnected_tasks_yield_no_edges`) to `TestSyntheticEdgeKinds`, each asserting
+  both `iter_dependency_edges` and `build_dag`'s `adjacency()`/`topological_order()`.
+  `pytest -q tests/test_dag_edge_iterator_oracle.py`: 35/35 passed (32 + 3 new). Full suite:
+  4531 passed, 8 skipped, 0 failed. `ruff`/`mypy`: 0 new findings.
+- By: tester · Role: tester · Date: 2026-09-27 · Comment: **PASS** on test coverage
+  independently — oracle equality across 12 specs re-verified by direct inspection of
+  `_discover_oracle_cases()`, plus 156 adjacent regression tests (loop/dynamic-injection/dag/
+  wave-scheduler/routed-runner/max-parallel/engine-routing suites) all green.
+- **Gate G1: CLOSED, PASS.** `T-M4qboy-run-graph-builder` may safely consume
+  `iter_dependency_edges`.

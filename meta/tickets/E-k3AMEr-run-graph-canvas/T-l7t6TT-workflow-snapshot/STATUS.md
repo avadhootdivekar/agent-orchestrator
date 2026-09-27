@@ -110,3 +110,25 @@
    load_workflow_snapshot_at`.
 2. Epic-level `EPIC.md`/top-level `STATUS.md` rollup is owned by the epic coordinator, not this
    task (per instruction) -- not updated here.
+
+## Gate G1 closure
+- By: reviewer · Role: reviewer · Date: 2026-09-27 · Comment: **PASS**, with one SHOULD-FIX:
+  `spec_sha256` had no format validation before being spliced into a path segment in
+  `load_workflow_snapshot_at`/`_workflow_snapshot_filename`, even though the HLD's own §13.2
+  JSON Schema declares `^[0-9a-f]{64}$` for it — a real gap given `T-AsQ77e` (Sprint 2) will
+  read this value straight out of `state.json` (agent-writable workspace) and hand it to this
+  exact helper. Confirmed write-once + fail-closed behavior by code + test inspection.
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **SHOULD-FIX resolved.** Added
+  `_WORKFLOW_SNAPSHOT_SHA_PATTERN` and a guard at the top of `load_workflow_snapshot_at` that
+  rejects any sha not matching `^[0-9a-f]{64}$` tolerantly (warn + `None`, never raises), before
+  any path construction. 8 new parametrized regression tests in
+  `tests/test_workflow_snapshot.py::TestLoadWorkflowSnapshotAtTolerant.
+  test_malformed_sha_returns_none_and_warns_before_touching_disk`, including an explicit
+  path-traversal-shaped value, each asserting nothing was created outside the run dir.
+  `pytest -q`: 4531 passed (+11 total for this Gate G1 pass, of which 8 are this task's),
+  8 skipped, 0 failed. `ruff`/`mypy`: 0 new findings.
+- By: tester · Role: tester · Date: 2026-09-27 · Comment: **PASS** on test coverage
+  independently — full suite + this task's 19 tests + regression suites all green before the
+  SHOULD-FIX; the fix's own 8 new tests re-verified after (see dev-epic entry above).
+- **Gate G1: CLOSED, PASS.** `T-M4qboy` and `T-AsQ77e` may safely consume `spec_sessions` /
+  `load_workflow_snapshot` / `load_workflow_snapshot_at`.

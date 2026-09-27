@@ -2,17 +2,17 @@
 
 - ID: `E-k3AMEr-run-graph-canvas`
 - Updated At: `2026-09-27`
-- State: `In Progress` (Sprint 1 fully implemented and merged on `ad/run-graph-canvas`; Gate G1 next)
+- State: `In Progress` (Sprint 1 CLOSED — all 5 tasks Done, Gate G1 PASSED; Sprint 2 next)
 - Owner: `dev-epic` (execution) · design by `architect`
 
 ## Rollup
 | Task | Scope | Sprint | Est | State |
 |------|-------|--------|-----|-------|
-| T-AZzgT8-spawn-provenance | MVP | S1 | 14 h | Implemented, merged — Gate G1 sign-off pending |
-| T-l7t6TT-workflow-snapshot | MVP | S1 | 12 h | Implemented, merged — Gate G1 sign-off pending |
-| T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | Implemented, merged — Gate G1 sign-off pending |
-| T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | Implemented, merged — Gate G1 sign-off pending |
-| T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | Implemented, merged — Gate G1 sign-off pending |
+| T-AZzgT8-spawn-provenance | MVP | S1 | 14 h | **Done** — Gate G1 PASS |
+| T-l7t6TT-workflow-snapshot | MVP | S1 | 12 h | **Done** — Gate G1 PASS (1 SHOULD-FIX resolved) |
+| T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | **Done** — Gate G1 PASS (1 SHOULD-FIX + 1 NIT resolved) |
+| T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | **Done** |
+| T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | **Done** |
 | T-M4qboy-run-graph-builder | MVP | S2 | 14 h | Draft |
 | T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft |
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | Draft |
@@ -24,10 +24,37 @@
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). 0 Done, 0 In Progress, 5 Implemented (pending G1), 0 Blocked, 10 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **5 Done**, 0 In Progress, 0 Blocked, 10 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **Gate G1 CLOSED, PASS on all 3
+  engine-touching tasks. Sprint 1 is fully DONE (5/5 tasks).** The reviewer pass (agent
+  `aa890ce0c3801c441`) came back after the tester pass (recorded below) with: 0 MUST-FIX; 2
+  SHOULD-FIX (T-l7t6TT: `spec_sha256` had no format check before being spliced into a
+  filesystem path — real risk since `T-AsQ77e` will read it straight out of `state.json`,
+  an agent-writable file, in Sprint 2; T-mzT3BW: `output_to_task` was computed twice for the
+  same feature, a DRY gap); 2 NIT (a pre-existing `assert`-in-production-path convention this
+  change merely extends, no action; missing minimal-shape DAG test coverage).
+
+  Both SHOULD-FIX and the actionable NIT were resolved directly (commit `e724567`), not
+  deferred — they sit on the exact seam Sprint 2 builds against next, so leaving them open
+  would just relocate the fix into T-M4qboy/T-AsQ77e's blast radius instead of closing it here:
+  - `runstate.py::load_workflow_snapshot_at` now rejects any sha not matching
+    `^[0-9a-f]{64}$` (HLD §13.2's own documented pattern) tolerantly — warn + `None`, before
+    any path construction, never raises even for a path-traversal-shaped input. 8 new
+    parametrized regression tests, including an explicit traversal attempt.
+  - `dag.py` gained `_build_output_to_task(tasks)`, called once each by `iter_dependency_edges`
+    and `build_dag` — exactly one computation, matching that function's own stated purpose.
+  - 3 new synthetic tests pin the empty/single-task/fully-disconnected DAG shapes.
+  - Re-verified myself after the fix: `pytest -q` → **4531 passed** (+11 vs. pre-fix), 8
+    skipped, 0 failed. `ruff check .`/`ruff format --check .`/`mypy src` → 0 new findings (same
+    2 pre-existing, out-of-scope findings as the whole epic's baseline).
+
+  **All 5 Sprint 1 tasks are now `Done`** in their own `TASK.md`/`STATUS.md` (see each task's
+  "Gate G1 closure" section) and in `EPIC.md`'s task-list checkboxes. Sprint 1 is closed.
+
+## Prior update (Gate G1 tester pass)
 - By: tester · Role: tester · Date: 2026-09-27 · Comment: Gate G1 independent test-verification
   pass on the 3 engine-touching S1 tasks (agent `a05b286c36c34d83e`, read-mostly — no production
   code touched, confirmed by a clean `git status` after the run). **Verdict: PASS all three.**
@@ -145,16 +172,15 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
   selected route. A separate backlog ticket is recommended.
 
 ## Next actions
-1. **DONE.** S1 executed: T-AZzgT8, T-l7t6TT, T-mzT3BW, T-adVpTj, T-OjTS8O all implemented,
-   merged into `ad/run-graph-canvas`, and independently re-verified (see "This update" above).
-2. **IN PROGRESS: Gate G1.** Dispatched `reviewer` (agent `aa890ce0c3801c441`, design/code-
-   quality review, read-only) and `tester` (agent `a05b286c36c34d83e`, independent empirical
-   verification, may add tests but not touch production code) in parallel on the current
-   `ad/run-graph-canvas` checkout, for sign-off on the 3 engine-touching tasks (T-AZzgT8,
-   T-l7t6TT, T-mzT3BW) before Sprint 2's T-M4qboy builds on `spawned_by`, the snapshot files,
-   and `iter_dependency_edges`.
-3. After G1 passes: begin Sprint 2 with T-M4qboy-run-graph-builder (the pure `ui/graph.py`
-   builder), then T-AsQ77e-run-graph-endpoint, then T-aHktGB and T-pAi0Cv (can parallelize
-   once the endpoint contract is stable), then T-F1caAt (late gate, real e2e evidence), then
-   T-oroE5f (docs refresh, mandatory last). Gate G2 (dev-security) before close, Gate G3
-   (final reviewer sign-off) after.
+1. **DONE. Sprint 1 fully closed.** All 5 S1 tasks `Done`, Gate G1 `PASS` (0 MUST-FIX, 2
+   SHOULD-FIX + 1 NIT found and resolved same-day). `ad/run-graph-canvas` @ latest commit has
+   4531 backend tests passing (8 skipped, 0 failed) and 151 frontend tests passing, with clean
+   ruff/mypy/typecheck and a byte-reproducible frontend build.
+2. **Next: begin Sprint 2.** Dispatch `T-M4qboy-run-graph-builder` first (the pure `ui/graph.py`
+   builder — it is the one task every other S2 task depends on: it consumes `spawned_by`,
+   `spec_sessions`/`load_workflow_snapshot`, and `iter_dependency_edges`, all now Gate-G1-clean).
+3. After T-M4qboy lands: `T-AsQ77e-run-graph-endpoint` (contract-tests against the T-adVpTj
+   fixture), then `T-aHktGB` and `T-pAi0Cv` (can parallelize once the endpoint contract is
+   stable), then `T-F1caAt` (late gate — real e2e evidence via `tester`), then `T-oroE5f`
+   (docs refresh, mandatory last). Gate G2 (`dev-security`) before close, Gate G3 (final
+   `reviewer` sign-off) after.

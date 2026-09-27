@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev B, frontend)
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `Draft`
+- Status: `Done` (all 8 acceptance criteria verified; does not require Gate G1 — frontend-only, no engine touch — see `STATUS.md`)
 - Estimate: `14 focus hours (< 2 days)`
 
 ## Requirements Mapping

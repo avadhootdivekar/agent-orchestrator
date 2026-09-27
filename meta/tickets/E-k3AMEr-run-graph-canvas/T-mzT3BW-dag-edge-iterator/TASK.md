@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev A). **Reviewer sign-off required before merge** (scheduling-order risk).
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `Draft`
+- Status: `Done` (all 6 acceptance criteria verified; Gate G1 reviewer + tester sign-off both PASS — 1 reviewer SHOULD-FIX + 1 NIT resolved post-gate, see `STATUS.md`)
 - Estimate: `8 focus hours (1 day)`
 
 ## Requirements Mapping

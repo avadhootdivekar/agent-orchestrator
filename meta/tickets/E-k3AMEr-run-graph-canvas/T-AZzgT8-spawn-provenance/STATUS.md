@@ -208,5 +208,24 @@ sits in the same per-spec loop step as `injected_tasks.append` (R-1 coordination
   `injected_tasks.append`, as instructed.
 
 ## Next actions
-1. Reviewer + tester sign-off (Gate G1).
+1. ~~Reviewer + tester sign-off (Gate G1).~~ **CLOSED** — see below.
+
+## Gate G1 closure
+- By: reviewer · Role: reviewer · Date: 2026-09-27 · Comment: **PASS.** No MUST-FIX. Confirmed
+  the `mypy` call-arg enforcement for real (temporarily stripped `parent_task_id=tid` from the
+  emit call site, got the expected `mypy` error, restored). Confirmed `spawned_by[spec.id] = ...`
+  is written in the same per-spec `for spec in new:` loop iteration as
+  `injected_tasks.append(spec)` (the E-Grpp0X R-1 coordination contract is honored
+  structurally, not just by comment). Confirmed by diff inspection of all three reset sites that
+  `route` is never carried alongside `origin` (F-2 neither fixed nor silently masked). One NIT
+  noted as a pre-existing convention this change extends, not a new defect (a production-path
+  `assert` in `_inject`, matching 8+ other uses of the same pattern elsewhere in `engine.py`) —
+  no action taken.
+- By: tester · Role: tester · Date: 2026-09-27 · Comment: **PASS.** Independently re-ran the
+  full suite (4520 passed/8 skipped at the time) plus this task's 14 tests plus 156 adjacent
+  regression tests, all passing. Manually drove real emit/loop/resume/worktree-collision/
+  max_parallel=4 scenarios beyond what the existing tests already assert, and confirmed the
+  invariant `spawned_by[id].origin == tasks[id].origin` holds after both a fresh run and a
+  failed-then-resumed run. No production code touched.
+- **Gate G1: CLOSED, PASS.** `T-M4qboy-run-graph-builder` may safely consume `state.spawned_by`.
 2. `dev-epic` rolls up `EPIC.md`/epic `STATUS.md` and unblocks `T-M4qboy-run-graph-builder`.

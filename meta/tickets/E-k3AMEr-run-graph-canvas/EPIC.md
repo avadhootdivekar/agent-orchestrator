@@ -89,11 +89,11 @@ Traceability: HLD §19 (acceptance criteria matrix).
 ## Task List
 
 ### MVP (sprint 1 → sprint 2)
-- [~] `T-AZzgT8-spawn-provenance`: `RunState.spawned_by` plus `_inject` keyword-only `parent_task_id` (emit and loop sites), and `origin` carry-forward at 3 reset sites (FR-1, NFR-1). 14 h. S1. **Implemented & merged, Gate G1 pending.**
-- [~] `T-l7t6TT-workflow-snapshot`: `RunState.spec_sessions` plus write-once `workflow.snapshot.<sha12>.json` (FR-2, D-2). 12 h. S1. **Implemented & merged, Gate G1 pending.**
-- [~] `T-mzT3BW-dag-edge-iterator`: `dag.iter_dependency_edges` with a behavior-identical `build_dag` and an oracle test (FR-3 foundation, R-2). 8 h. S1. **Implemented & merged, Gate G1 pending.**
-- [~] `T-adVpTj-graph-model-and-layout`: npm deps, TS types, pure `model.ts`/`layout.ts` (async layout seam), jsdom shims, contract fixture, bundle measurement, and a 2 h spike (FR-5 foundation, NFR-3, NFR-4). 16 h. S1. **Implemented & merged.**
-- [~] `T-OjTS8O-run-graph-canvas`: canvas core, i.e. React Flow, `TaskNode`, edge styles, view toggle, Graph tab (lazy), and version-gated live refetch (FR-5, FR-8, U-5, U-6, D-3, D-5, D-7). 14 h. S1. **Implemented & merged.**
+- [x] `T-AZzgT8-spawn-provenance`: `RunState.spawned_by` plus `_inject` keyword-only `parent_task_id` (emit and loop sites), and `origin` carry-forward at 3 reset sites (FR-1, NFR-1). 14 h. S1. **Done — Gate G1 PASS.**
+- [x] `T-l7t6TT-workflow-snapshot`: `RunState.spec_sessions` plus write-once `workflow.snapshot.<sha12>.json` (FR-2, D-2). 12 h. S1. **Done — Gate G1 PASS (1 SHOULD-FIX resolved: sha format validated before path use).**
+- [x] `T-mzT3BW-dag-edge-iterator`: `dag.iter_dependency_edges` with a behavior-identical `build_dag` and an oracle test (FR-3 foundation, R-2). 8 h. S1. **Done — Gate G1 PASS (1 SHOULD-FIX resolved: deduped `output_to_task`; 1 NIT resolved: minimal-shape tests).**
+- [x] `T-adVpTj-graph-model-and-layout`: npm deps, TS types, pure `model.ts`/`layout.ts` (async layout seam), jsdom shims, contract fixture, bundle measurement, and a 2 h spike (FR-5 foundation, NFR-3, NFR-4). 16 h. S1. **Done.**
+- [x] `T-OjTS8O-run-graph-canvas`: canvas core, i.e. React Flow, `TaskNode`, edge styles, view toggle, Graph tab (lazy), and version-gated live refetch (FR-5, FR-8, U-5, U-6, D-3, D-5, D-7). 14 h. S1. **Done.**
 - [ ] `T-M4qboy-run-graph-builder`: pure `ui/graph.py` builder, `display_text`, early cap, and `compute_graph_version` (FR-3, FR-7, NFR-2). 14 h. S2.
 - [ ] `T-AsQ77e-run-graph-endpoint`: `GET /api/runs/{id}/graph`, `RunDetail.graph_version`, `TaskStat` additions, and a contract test against the frontend fixture (FR-4, FR-7). 6 h. S2.
 - [ ] `T-aHktGB-graph-toolbar-and-legend`: search-to-focus, metric strip select, unrelated filter, fit/reset, legend, and degraded banners (FR-5, FR-7, D-8). 12 h. S2.
@@ -114,7 +114,9 @@ infeasible regardless of team size.
 
 Review gates (HLD §24):
 - **G1** (end of S1): reviewer and tester sign off on engine-touching T-AZzgT8, T-l7t6TT, and
-  T-mzT3BW before T-M4qboy builds on them.
+  T-mzT3BW before T-M4qboy builds on them. **CLOSED 2026-09-27, PASS on all 3** (0 MUST-FIX;
+  2 SHOULD-FIX + 1 NIT found and resolved same-day — see each task's `STATUS.md` "Gate G1
+  closure" section).
 - **G2**: dev-security review before close.
 - **G3**: final reviewer sign-off, then the docs refresh.
 
