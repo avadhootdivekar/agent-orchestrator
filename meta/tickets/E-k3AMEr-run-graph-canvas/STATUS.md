@@ -18,13 +18,13 @@
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | **Done** |
 | T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | **Done** |
 | T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | **Done** (5 correction rounds — see below) |
-| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft (blocked on Gate G3, per its own TASK.md) |
+| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | In Progress (dispatched to `architect`, worktree isolation) |
 | T-VcN4pt-task-title-field | Non-MVP | S2 stretch | 6 h | Draft |
 | T-hMNbDP-spawn-subtree-collapse | Non-MVP | backlog | 12 h | Draft |
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). **10 Done**, 0 In Progress, 0 Blocked, 5 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **10 Done**, 1 In Progress, 0 Blocked, 4 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
@@ -463,12 +463,13 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
    backend tests passed / 8 skipped / 0 failed (plus 2 opt-in browser tests passing under
    `-m browser`), 224 frontend tests passed, clean ruff/mypy/typecheck, and a byte-reproducible
    frontend build. Reviewer's own verdict: ready for a PR into `main`.
-2. **Next: dispatch `T-oroE5f-docs-refresh`** (mandatory, last MVP task) to reconcile `docs-md/`
-   (the HLD, ADR-0017, `dashboard-and-general-instructions-hld.md` §4 cross-link,
-   `meta/ROADMAP.md` §3.3) and READMEs against what was actually built — including the resolved
-   ASSUMPTION A-5, the opt-in browser-smoke recommendation, the new `browser` extra in
-   `pyproject.toml`, the T-pAi0Cv/T-aHktGB search-select-opens-panel note, and the Gate G3
-   Warnings #1/#3 deferred as backlog items (worth a line each so they aren't lost).
+2. **IN PROGRESS: `T-oroE5f-docs-refresh`** (mandatory, last MVP task, agent
+   `a66f5e88cf89e0919`, worktree isolation, dispatched to `architect`). Briefed with every fact
+   needed for reconciliation (ASSUMPTION A-5 resolution, the opt-in browser-smoke decision +
+   `browser` extra, the T-pAi0Cv/T-aHktGB deviation, all deferred Gate G2/G3 backlog items,
+   F-2) so it verifies rather than rediscovers from scratch — but still must cite its own
+   `path:line` evidence per AC-1, not just copy what I told it. Also asked it to either arrange
+   its own AC-5 `reviewer` sign-off or explicitly hand that step back to me.
 3. After `T-oroE5f`, the epic is ready to declare complete. Two follow-ups remain available to
    file as separate tickets if wanted, not blocking this epic: the `route`-lost-on-resume defect
    (F-2, pre-existing, out of scope per the original ask) and the Gate G3 Warning #1 architecture
