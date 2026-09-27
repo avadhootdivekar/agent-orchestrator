@@ -2,7 +2,7 @@
 
 - ID: `E-k3AMEr-run-graph-canvas`
 - Updated At: `2026-09-27`
-- State: `In Progress` (Sprint 1 execution started on branch `ad/run-graph-canvas`)
+- State: `In Progress` (Sprint 1 fully implemented and merged on `ad/run-graph-canvas`; Gate G1 next)
 - Owner: `dev-epic` (execution) · design by `architect`
 
 ## Rollup
@@ -12,7 +12,7 @@
 | T-l7t6TT-workflow-snapshot | MVP | S1 | 12 h | Implemented, merged — Gate G1 sign-off pending |
 | T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | Implemented, merged — Gate G1 sign-off pending |
 | T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | Implemented, merged — Gate G1 sign-off pending |
-| T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | In Progress (dispatched to `developer`, worktree isolation) |
+| T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | Implemented, merged — Gate G1 sign-off pending |
 | T-M4qboy-run-graph-builder | MVP | S2 | 14 h | Draft |
 | T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft |
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | Draft |
@@ -24,10 +24,32 @@
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). 0 Done, 1 In Progress, 4 Implemented (pending G1), 0 Blocked, 10 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). 0 Done, 0 In Progress, 5 Implemented (pending G1), 0 Blocked, 10 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: Sprint 1 is fully implemented
+  and merged into `ad/run-graph-canvas`. T-OjTS8O-run-graph-canvas (canvas core, the first
+  visible UI in this epic) landed cleanly with no conflicts (merge commit `8379a21`'s
+  successor) and was independently re-verified by me:
+  - `npm ci` clean, `npm run typecheck` clean, `npm test` → **151 passed (151), 14 files**
+    (up from 129 after T-adVpTj — net +22 new tests for the canvas core).
+  - `grep -r dangerouslySetInnerHTML ui/src/graph/` → empty (AC-3, XSS-safety confirmed).
+  - The 3 new `--graph-edge-*` tokens are each defined in all 3 theme blocks in `styles.css`
+    (light `:root`, dark-media, `:root[data-theme="dark"]`) — confirmed by grep (AC-7).
+  - `npm run build` reproduces the exact committed `src/agent_orchestrator/ui/static/`
+    bundle byte-for-byte (`git status` clean after a from-scratch rebuild) — main chunk
+    121.26 KB gzip (+1.32 KB vs. the T-adVpTj-era 119.94 KB baseline, budget ≤5 KB), graph
+    code split into its own lazy chunk at 75.48 KB JS + 2.03 KB CSS gzip (budget ≤90 KB total).
+  - `pytest -q` re-run after this frontend-only merge (sanity): still **4520 passed, 8
+    skipped, 0 failed** — unaffected, as expected.
+
+  **All 5 Sprint 1 MVP tasks (T-AZzgT8, T-l7t6TT, T-mzT3BW, T-adVpTj, T-OjTS8O) are now
+  implemented, merged, and independently verified.** None are marked `Done` yet — Gate G1
+  (reviewer + tester sign-off on the 3 engine-touching tasks, per the epic's own gate
+  definition) is the next step before Sprint 2's T-M4qboy builds on this foundation.
+
+## Prior update (Sprint 1 wave 1 merge)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: Sprint 1 wave 1 complete and
   merged into `ad/run-graph-canvas`. All four parallel subagents finished, were merged one at
   a time (only `models.py` conflicted — both sides purely additive, resolved by keeping both
@@ -101,8 +123,13 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
   selected route. A separate backlog ticket is recommended.
 
 ## Next actions
-1. **`dev-epic` executes this epic.** Start S1 with T-AZzgT8, T-l7t6TT, and T-mzT3BW (Dev A) and
-   T-adVpTj then T-OjTS8O (Dev B) in parallel.
-2. Gate G1 at the end of S1: reviewer and tester sign off on the engine-touching tasks before T-M4qboy.
-3. Gate G2: dev-security review of the frontend rendering plus the T-F1caAt evidence. Gate G3: final
-   review, then T-oroE5f docs refresh, then close.
+1. **DONE.** S1 executed: T-AZzgT8, T-l7t6TT, T-mzT3BW, T-adVpTj, T-OjTS8O all implemented,
+   merged into `ad/run-graph-canvas`, and independently re-verified (see "This update" above).
+2. **Next: Gate G1.** Dispatch `reviewer` and `tester` for sign-off on the 3 engine-touching
+   tasks (T-AZzgT8, T-l7t6TT, T-mzT3BW) before Sprint 2's T-M4qboy builds on `spawned_by`,
+   the snapshot files, and `iter_dependency_edges`.
+3. After G1 passes: begin Sprint 2 with T-M4qboy-run-graph-builder (the pure `ui/graph.py`
+   builder), then T-AsQ77e-run-graph-endpoint, then T-aHktGB and T-pAi0Cv (can parallelize
+   once the endpoint contract is stable), then T-F1caAt (late gate, real e2e evidence), then
+   T-oroE5f (docs refresh, mandatory last). Gate G2 (dev-security) before close, Gate G3
+   (final reviewer sign-off) after.

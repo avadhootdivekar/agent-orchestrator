@@ -6,7 +6,7 @@
 - Owner: `dev-epic` (execution) · design by `architect`
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `Draft` (design complete, ready for execution; no code written)
+- Status: `In Progress` (Sprint 1 implemented and merged on `ad/run-graph-canvas`; Gate G1 next — see `STATUS.md`)
 
 ## Summary
 - **Goal:** Let an operator *see* a workflow run in `ao ui` on a pannable, zoomable,
@@ -89,11 +89,11 @@ Traceability: HLD §19 (acceptance criteria matrix).
 ## Task List
 
 ### MVP (sprint 1 → sprint 2)
-- [ ] `T-AZzgT8-spawn-provenance`: `RunState.spawned_by` plus `_inject` keyword-only `parent_task_id` (emit and loop sites), and `origin` carry-forward at 3 reset sites (FR-1, NFR-1). 14 h. S1.
-- [ ] `T-l7t6TT-workflow-snapshot`: `RunState.spec_sessions` plus write-once `workflow.snapshot.<sha12>.json` (FR-2, D-2). 12 h. S1.
-- [ ] `T-mzT3BW-dag-edge-iterator`: `dag.iter_dependency_edges` with a behavior-identical `build_dag` and an oracle test (FR-3 foundation, R-2). 8 h. S1.
-- [ ] `T-adVpTj-graph-model-and-layout`: npm deps, TS types, pure `model.ts`/`layout.ts` (async layout seam), jsdom shims, contract fixture, bundle measurement, and a 2 h spike (FR-5 foundation, NFR-3, NFR-4). 16 h. S1.
-- [ ] `T-OjTS8O-run-graph-canvas`: canvas core, i.e. React Flow, `TaskNode`, edge styles, view toggle, Graph tab (lazy), and version-gated live refetch (FR-5, FR-8, U-5, U-6, D-3, D-5, D-7). 14 h. S1.
+- [~] `T-AZzgT8-spawn-provenance`: `RunState.spawned_by` plus `_inject` keyword-only `parent_task_id` (emit and loop sites), and `origin` carry-forward at 3 reset sites (FR-1, NFR-1). 14 h. S1. **Implemented & merged, Gate G1 pending.**
+- [~] `T-l7t6TT-workflow-snapshot`: `RunState.spec_sessions` plus write-once `workflow.snapshot.<sha12>.json` (FR-2, D-2). 12 h. S1. **Implemented & merged, Gate G1 pending.**
+- [~] `T-mzT3BW-dag-edge-iterator`: `dag.iter_dependency_edges` with a behavior-identical `build_dag` and an oracle test (FR-3 foundation, R-2). 8 h. S1. **Implemented & merged, Gate G1 pending.**
+- [~] `T-adVpTj-graph-model-and-layout`: npm deps, TS types, pure `model.ts`/`layout.ts` (async layout seam), jsdom shims, contract fixture, bundle measurement, and a 2 h spike (FR-5 foundation, NFR-3, NFR-4). 16 h. S1. **Implemented & merged.**
+- [~] `T-OjTS8O-run-graph-canvas`: canvas core, i.e. React Flow, `TaskNode`, edge styles, view toggle, Graph tab (lazy), and version-gated live refetch (FR-5, FR-8, U-5, U-6, D-3, D-5, D-7). 14 h. S1. **Implemented & merged.**
 - [ ] `T-M4qboy-run-graph-builder`: pure `ui/graph.py` builder, `display_text`, early cap, and `compute_graph_version` (FR-3, FR-7, NFR-2). 14 h. S2.
 - [ ] `T-AsQ77e-run-graph-endpoint`: `GET /api/runs/{id}/graph`, `RunDetail.graph_version`, `TaskStat` additions, and a contract test against the frontend fixture (FR-4, FR-7). 6 h. S2.
 - [ ] `T-aHktGB-graph-toolbar-and-legend`: search-to-focus, metric strip select, unrelated filter, fit/reset, legend, and degraded banners (FR-5, FR-7, D-8). 12 h. S2.
