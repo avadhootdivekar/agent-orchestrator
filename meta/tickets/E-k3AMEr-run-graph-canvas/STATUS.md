@@ -28,6 +28,34 @@ Counts: **15 tasks** (11 MVP, 4 non-MVP). **9 Done**, 1 In Progress, 0 Blocked, 
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-F1caAt rework, round 4
+  landed genuinely — but found one more real bug while verifying it, in the test fixture
+  (not production code).** Independently re-verified round 4's fix for real: `pytest -m
+  browser -v` → 2/2 passed; `md5sum` on the 3 screenshots → 3 distinct hashes; opened
+  `detail-panel-open.png` myself and it genuinely shows the panel open with checkpoint__1's
+  full detail content. The hard assertion + search-to-center approach is correct — no more
+  rework needed on that part.
+
+  But that same screenshot shows a "Static task dependencies are unavailable" degraded banner,
+  meaning the live HTTP-served run reports `source="unavailable"`, not `"snapshot"` — so the
+  real dependency edges the browser actually renders are probably empty, contradicting the
+  fixture's whole purpose. Traced the cause: `tests/ui/graph_fixtures.py` truncates the sha256
+  to 12 characters (`hexdigest()[:12]`) and stores that truncated value in BOTH
+  `SpecSession.spec_sha256` and `WorkflowSnapshot.spec_sha256` — but the real schema (and my own
+  Gate G1 fix earlier this epic, `_WORKFLOW_SNAPSHOT_SHA_PATTERN` in `runstate.py`) requires the
+  FULL 64-character digest in those fields; only the snapshot *filename* truncates to 12 chars.
+  My own security fix correctly and safely rejects the fixture's malformed 12-char value — this
+  is production code working as designed, not a regression. The bug is fixture-only, and it was
+  never caught because `TestGraphE2eApi` loads the snapshot file directly, bypassing
+  `load_workflow_snapshot_at` (and its sha validation) entirely — only the real HTTP/browser
+  path exercises it, which is exactly why this task exists.
+
+  Also flagged: TASK.md's own Description literally asks for an assertion against the real
+  `GET /api/runs/{id}/graph` HTTP response, but the current "E2E (a)" test calls the pure
+  builder directly instead. Sent a precise 3-line fixture fix plus a request to add one real
+  HTTP-level assertion. This should be the last correction round.
+
+## Prior update (T-F1caAt rework round 3)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-F1caAt rework, round 3: the
   claimed "critical production bug" is a misdiagnosis — disproved by direct reproduction.**
   Round 2's fix (hard panel assertion) came back reporting that clicking a node in a real
