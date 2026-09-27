@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from typing import NamedTuple
 
 from .errors import CycleError, MissingInputError
-from .models import RouterSpec, WorkflowSpec
+from .models import RouterSpec, TaskSpec, WorkflowSpec
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,22 @@ def _resolve_loop_dep(loop_id: str, workflow: WorkflowSpec) -> str:
     return f"{last_body_task}__iter{max_iter}"
 
 
+def _build_output_to_task(tasks: list[TaskSpec]) -> dict[str, str]:
+    """Map output path -> producing task id (last writer wins).
+
+    Extracted so `iter_dependency_edges` and `build_dag` share exactly one
+    computation (Gate G1 SHOULD-FIX: this map was previously built twice for the
+    same feature -- a DRY seam that's a mild irony given `iter_dependency_edges`'s
+    whole purpose, ADR-0017 D3, is "one edge-derivation implementation so build_dag
+    and the dashboard can never disagree").
+    """
+    output_to_task: dict[str, str] = {}
+    for task in tasks:
+        for out in task.outputs:
+            output_to_task[out] = task.id
+    return output_to_task
+
+
 def iter_dependency_edges(workflow: WorkflowSpec) -> Iterator[DependencyEdge]:
     """Yield every dependency edge derived from *workflow*, in `build_dag`'s historical
     precedence and order (HLD §8.3.1, ADR-0017 D3) — the ONE place this logic lives, so
@@ -178,13 +194,7 @@ def iter_dependency_edges(workflow: WorkflowSpec) -> Iterator[DependencyEdge]:
     """
     tasks = workflow.tasks
     loop_ids = {lp.id for lp in workflow.loops}
-
-    # Map output path -> producing task id (last writer wins, same as today)
-    output_to_task: dict[str, str] = {}
-    for task in tasks:
-        for out in task.outputs:
-            output_to_task[out] = task.id
-
+    output_to_task = _build_output_to_task(tasks)
     seen: set[tuple[str, str]] = set()
 
     # 1. Explicit depends_on, in authored task order.
@@ -234,12 +244,7 @@ def build_dag(workflow: WorkflowSpec) -> Graph:
     """
     tasks = workflow.tasks
     tasks_by_id = {t.id: t for t in tasks}
-
-    # Map output path -> producing task id
-    output_to_task: dict[str, str] = {}
-    for task in tasks:
-        for out in task.outputs:
-            output_to_task[out] = task.id
+    output_to_task = _build_output_to_task(tasks)
 
     # adj[A] = [B, C] means A must complete before B and C can run (A -> B, A -> C)
     adj: dict[str, list[str]] = {t.id: [] for t in tasks}

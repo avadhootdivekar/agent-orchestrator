@@ -299,6 +299,31 @@ class TestSyntheticEdgeKinds:
         edges = list(iter_dependency_edges(wf))
         assert edges == [DependencyEdge("a", "b", EDGE_KIND_EXPLICIT, None)]
 
+    # Gate G1 NIT (reviewer): minimal-shape cases weren't covered by either the real
+    # specs (AC-2) or the synthetic cases above. Both the iterator and build_dag
+    # degenerate to a no-op identically for these -- pinned here rather than left as
+    # a reviewer-asserted claim.
+    def test_empty_workflow_yields_no_edges(self) -> None:
+        wf = _wf([])
+        assert list(iter_dependency_edges(wf)) == []
+        graph = build_dag(wf)
+        assert graph.adjacency() == {}
+        assert graph.topological_order() == []
+
+    def test_single_task_no_deps_yields_no_edges(self) -> None:
+        wf = _wf([_task("a")])
+        assert list(iter_dependency_edges(wf)) == []
+        graph = build_dag(wf)
+        assert graph.adjacency() == {"a": []}
+        assert graph.topological_order() == ["a"]
+
+    def test_fully_disconnected_tasks_yield_no_edges(self) -> None:
+        wf = _wf([_task("a"), _task("b"), _task("c")])
+        assert list(iter_dependency_edges(wf)) == []
+        graph = build_dag(wf)
+        assert graph.adjacency() == {"a": [], "b": [], "c": []}
+        assert set(graph.topological_order()) == {"a", "b", "c"}
+
 
 # ---------------------------------------------------------------------------
 # AC-4: the inferred-but-undeclared warning text is byte-identical to the oracle's

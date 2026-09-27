@@ -511,6 +511,38 @@ class TestLoadWorkflowSnapshotAtTolerant:
         assert result is not None
         assert result.spec_sha256 == sha
 
+    @pytest.mark.parametrize(
+        "malformed_sha",
+        [
+            "",
+            "too-short",
+            "A" * 64,  # uppercase -- HLD §13.2 pattern is lowercase-only
+            "g" * 64,  # non-hex character
+            "0" * 63,  # one char short
+            "0" * 65,  # one char long
+            "../../../etc/passwd",  # Gate G1 SHOULD-FIX: path-traversal attempt
+            "0" * 12 + "/../../evil",
+        ],
+    )
+    def test_malformed_sha_returns_none_and_warns_before_touching_disk(
+        self,
+        malformed_sha: str,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Gate G1 SHOULD-FIX (reviewer): a caller-supplied sha that doesn't match
+        HLD §13.2's ``^[0-9a-f]{64}$`` pattern -- e.g. read back out of a
+        ``state.json`` living in the agent-writable workspace -- must never reach
+        path construction. Rejected tolerantly (warn + None), same as any other
+        invalid input, and never raises even for a path-traversal-shaped value.
+        """
+        with caplog.at_level(logging.WARNING, logger="agent_orchestrator.runstate"):
+            result = load_workflow_snapshot_at(tmp_path, malformed_sha)
+        assert result is None
+        assert len(_events(caplog, "run.workflow_snapshot_unavailable")) == 1
+        # Nothing was created/escaped outside tmp_path as a side effect of the attempt.
+        assert list(tmp_path.iterdir()) == []
+
 
 # ---------------------------------------------------------------------------
 # AC-8: a snapshot write failure never fails the run

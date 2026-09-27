@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,6 +42,17 @@ WORKFLOW_SNAPSHOT_SCHEMA_VERSION = 1
 # (HLD §8.2) -- a dashboard/engine reader must never buffer an unbounded file into memory.
 WORKFLOW_SNAPSHOT_MAX_BYTES = 20_000_000
 
+# HLD §13.2's own JSON Schema for `spec_sha256` (`"pattern": "^[0-9a-f]{64}$"`) --
+# enforced HERE, at the one place an externally-supplied sha (e.g. read back out of a
+# `state.json` that lives in the agent-writable workspace -- ADR-0017's own trust note)
+# is spliced into a filesystem path segment (`_workflow_snapshot_filename`). Every
+# INTERNAL caller (`record_spec_session`) computes `sha` itself via
+# `hashlib.sha256(...).hexdigest()` and always satisfies this; only a value read back
+# from disk (this module, and later the T-AsQ77e dashboard endpoint) needs the check.
+# Gate G1 SHOULD-FIX (reviewer): validate before path construction, tolerantly -- treat
+# a malformed sha the same as any other invalid input (log + return None, never raise).
+_WORKFLOW_SNAPSHOT_SHA_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
 
 def canonical_spec_json(static: WorkflowSpec) -> str:
     """Canonical JSON serialization of *static* used to compute its identity sha.
@@ -67,8 +79,20 @@ def load_workflow_snapshot_at(run_dir: Path, sha: str) -> WorkflowSnapshot | Non
 
     This is the ONE shared parser + size cap for both the engine
     (``RunStateStore.load_workflow_snapshot``) and the dashboard (T-AsQ77e), per
-    T-l7t6TT AC-10 -- there is exactly one place that parses this file format.
+    T-l7t6TT AC-10 -- there is exactly one place that parses this file format. It is
+    also the one place a caller-supplied *sha* is validated against HLD §13.2's
+    ``^[0-9a-f]{64}$`` pattern BEFORE being spliced into a path segment (Gate G1
+    SHOULD-FIX): a malformed sha (wrong length, uppercase, non-hex, path separators,
+    ``..``) is treated as just another invalid-input case -- warn and return ``None``.
     """
+    if not _WORKFLOW_SNAPSHOT_SHA_PATTERN.fullmatch(sha):
+        logger.warning(
+            "workflow snapshot unavailable (malformed sha, expected 64 lowercase hex chars): %r",
+            sha,
+            extra={"event": "run.workflow_snapshot_unavailable"},
+        )
+        return None
+
     path = run_dir / _workflow_snapshot_filename(sha)
 
     try:
