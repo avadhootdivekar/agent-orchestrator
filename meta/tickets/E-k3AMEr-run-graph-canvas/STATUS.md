@@ -28,6 +28,28 @@ Counts: **15 tasks** (11 MVP, 4 non-MVP). 0 Done, 0 In Progress, 5 Implemented (
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: tester · Role: tester · Date: 2026-09-27 · Comment: Gate G1 independent test-verification
+  pass on the 3 engine-touching S1 tasks (agent `a05b286c36c34d83e`, read-mostly — no production
+  code touched, confirmed by a clean `git status` after the run). **Verdict: PASS all three.**
+  - Full suite: `pytest -q` → 4520 passed, 8 skipped, 0 failed (unchanged from my own count).
+  - Named task-test files: `test_spawn_provenance.py` 14/14, `test_workflow_snapshot.py` 19/19,
+    `test_dag_edge_iterator_oracle.py` 32/32 — all passing (65 tests total).
+  - Regression check across 8 adjacent suites (loop, dynamic injection, dag, wave scheduler,
+    routed-runner e2e, max-parallel e2e, engine routing): 156/156 passing, 0 regressions.
+  - Manually verified (not just re-reading claims) T-AZzgT8 AC-7/AC-9 (resume + max_parallel=4
+    give byte-identical `spawned_by`), T-l7t6TT AC-5/AC-6/AC-7 (unchanged-vs-changed-spec resume,
+    tolerant load of a corrupted snapshot), and T-mzT3BW AC-2 (oracle equality across 12 specs,
+    including 2 rendered from builtin templates) — plus the 3 flagged concurrency/resume risk
+    scenarios (max_parallel>1 concurrent settle, resume with unchanged/changed spec, and an
+    edge-iterator run against an orphaned-task/cycle spec of the tester's own construction).
+  - `ruff`/`ruff format`/`mypy`: same 2 pre-existing, out-of-scope findings as baseline, 0 new.
+  - **T-M4qboy-run-graph-builder is confirmed safe to consume `spawned_by`, `spec_sessions`/
+    `load_workflow_snapshot`, and `iter_dependency_edges`.**
+
+  Still waiting on the `reviewer` pass (agent `aa890ce0c3801c441`) before Gate G1 is fully
+  closed and these 3 tasks are marked `Done`.
+
+## Prior update (Sprint 1 complete, S1 in full)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: Sprint 1 is fully implemented
   and merged into `ad/run-graph-canvas`. T-OjTS8O-run-graph-canvas (canvas core, the first
   visible UI in this epic) landed cleanly with no conflicts (merge commit `8379a21`'s
@@ -125,8 +147,8 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
 ## Next actions
 1. **DONE.** S1 executed: T-AZzgT8, T-l7t6TT, T-mzT3BW, T-adVpTj, T-OjTS8O all implemented,
    merged into `ad/run-graph-canvas`, and independently re-verified (see "This update" above).
-2. **IN PROGRESS: Gate G1.** Dispatched `reviewer` (agent `a05b286c36c34d83e`, design/code-
-   quality review, read-only) and `tester` (agent `aa890ce0c3801c441`, independent empirical
+2. **IN PROGRESS: Gate G1.** Dispatched `reviewer` (agent `aa890ce0c3801c441`, design/code-
+   quality review, read-only) and `tester` (agent `a05b286c36c34d83e`, independent empirical
    verification, may add tests but not touch production code) in parallel on the current
    `ad/run-graph-canvas` checkout, for sign-off on the 3 engine-touching tasks (T-AZzgT8,
    T-l7t6TT, T-mzT3BW) before Sprint 2's T-M4qboy builds on `spawned_by`, the snapshot files,
