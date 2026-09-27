@@ -111,19 +111,29 @@ def write_synthetic_run(root: Path, waves: int, fanout: int, *, clock: datetime)
             cumulative_cost_usd=0.01,
         )
 
-    # Create a minimal valid workflow spec for the snapshot
+    # Create a minimal valid workflow spec for the snapshot with proper dependencies
+    tasks_spec = []
+    for wave in range(1, waves + 1):
+        checkpoint_id = f"checkpoint__{wave}"
+        task_dict = {
+            "id": checkpoint_id,
+            "agent": "test",
+            "instruction": "test.md",
+        }
+
+        # Each checkpoint (except the first) depends on the previous wave's units
+        if wave > 1:
+            task_dict["depends_on"] = [
+                f"unit__{wave - 1}_{i}" for i in range(1, fanout + 1)
+            ]
+
+        tasks_spec.append(task_dict)
+
     minimal_workflow_spec = {
         "version": "1.0",
         "id": "synthetic-graph-test",
         "repo_set": "main",
-        "tasks": [
-            {
-                "id": f"checkpoint__{wave}",
-                "agent": "test",
-                "instruction": "test.md",
-            }
-            for wave in range(1, waves + 1)
-        ],
+        "tasks": tasks_spec,
     }
 
     # Write the spec snapshot
