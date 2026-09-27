@@ -28,6 +28,64 @@ Counts: **15 tasks** (11 MVP, 4 non-MVP). **10 Done**, 0 In Progress, 0 Blocked,
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: reviewer · Role: reviewer · Date: 2026-09-27 · Comment: **Gate G3 review complete — PASS
+  WITH FOLLOW-UPS. Verdict: ready for a PR into `main`.** Holistic whole-epic pass, explicitly
+  scoped away from re-litigating G1 (engine)/G2 (security) and toward the frontend
+  (`ui/src/graph/*`), which hadn't had a dedicated design/quality read yet. Read every graph
+  component in full, independently re-grepped for injection sinks/magic literals rather than
+  trusting prior gates, and traced `origin`'s real possible values through `models.py`/
+  `engine.py` to confirm the "unknown origin" degraded UI path is intentional forward-compat
+  (ADR-0017 D1), not dead code. 0 Critical (no goal misalignment, layering breach, swallowed
+  error, non-determinism, or resume-corruption risk found — this is a read-only feature with no
+  run-state mutation surface, so that risk class is structurally absent).
+  - **Warning #1** (architecture debt, deferred): `TaskHoverCard`/`TaskDetailPanel` take the
+    raw `RunGraph` prop, not the `ViewNode`/view-model types `types.ts:267-268` explicitly
+    documents as the boundary ("components never receive the raw `RunGraph`... keeps the canvas
+    reusable by a future editor"). Real gap against a stated goal, but that goal is about a
+    DAG-editor half of the roadmap item this epic explicitly defers (`EPIC.md` Scope Out) — not
+    a current defect.
+  - **Warning #2** (DRY, resolved same-day): `"pending"` redeclared 3x, and a duplicated
+    `retries = max(0, attempts-1)` formula (`TaskHoverCard` computed it inline instead of
+    calling `model.ts`'s `panelModel`, which already has it). Reviewer noted the epic already
+    demonstrates the correct fix pattern elsewhere (`BADGE_LABELS`, defined once, imported by
+    `Legend.tsx`).
+  - **Warning #3** (file-size growth, deferred): `RunGraph.tsx` (718 lines, ~15 pieces of local
+    state) isn't a defect today (SRP already holds internally), but 3 of the 4 non-MVP backlog
+    tasks would plausibly add more state to the same file — worth extracting hover-timer/drag
+    logic into hooks before the next one lands, not before this epic closes.
+  - **4 Suggestions** (all nice-to-have, none acted on): move 3 pure edge-formatting helpers
+    from `RunGraph.tsx` into `model.ts`; one inline `* 100` literal outside `model.ts`'s
+    zero-literal rule; the "spec changed" legend note is regex-matched from warning text rather
+    than a typed field (low-risk, already pinned by an exact-string test); confirmed the
+    "unknown origin"/`spawn-other` paths are unreachable today by design, not a gap.
+  - **T-pAi0Cv deviation, independently judged**: traced the actual `useSelectAndCenter` →
+    `setSelectedNodeId` → `TaskDetailPanel` wiring and found `hooks.ts`'s own doc comment
+    already anticipated this reuse before T-pAi0Cv existed ("a future detail panel"), that a
+    second independent "panel target" state would be MORE confusing (a node visually selected
+    while a different node's panel is open), and that it composes correctly under Arrow-key
+    match-cycling (reads as intentional match-preview, not a glitch). Verdict: reasonable,
+    coherent design, not a defect — only a paperwork gap (T-aHktGB's own AC-3 predates it) for
+    `T-oroE5f` to note.
+  - Requirement traceability spot-checks against merged code (not self-reports): D-3, D-5, D-7,
+    U-6, FR-8 all confirmed to hold by direct reading.
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **Gate G3 Warning #2 resolved.**
+  Exported `PANEL_PENDING_STATUS` and a new `retriesFromAttempts()` from `model.ts` (the pure
+  module); `TaskNode.tsx` and `TaskHoverCard.tsx` now import both instead of keeping their own
+  "mirrored" copies. Re-verified: `npm run typecheck`/`test`/`build` all clean, **224/224**
+  passing, `model.ts` still has zero React imports (purity constraint intact via re-grep),
+  bundle size unchanged (pure reorganization). Backend sanity re-run (frontend-only change):
+  **4621 passed, 8 skipped, 0 failed**, unaffected as expected.
+
+  Warnings #1 and #3 are deferred to backlog, per the reviewer's own framing — both are about
+  reusability for the explicitly out-of-scope future DAG-editor half of this roadmap item, not
+  current defects. The 4 Suggestions are noted here for the record but not acted on (nice-to-
+  have). The T-pAi0Cv paperwork note (search-select also opens the panel, undocumented in
+  `T-aHktGB`'s own AC-3) is queued for `T-oroE5f`'s docs pass.
+
+  **Gate G3: CLOSED, PASS.** This epic is reviewer-confirmed ready for a PR into `main`, pending
+  only `T-oroE5f-docs-refresh` (mandatory, last MVP task).
+
+## Prior update (Gate G2 closure)
 - By: dev-security · Role: dev-security · Date: 2026-09-27 · Comment: **Gate G2 review complete
   — PASS WITH FOLLOW-UPS.** Independent, adversarial re-verification (not re-reading claims):
   the Gate G1 sha guard broke on none of a dozen traversal/null/malformed inputs tried live
@@ -400,20 +458,18 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
   selected route. A separate backlog ticket is recommended.
 
 ## Next actions
-1. **DONE. All 10 MVP dev/test tasks complete**, and **Gate G2 (dev-security) CLOSED, PASS.**
-   `ad/run-graph-canvas` currently stands at 4621 backend tests passed / 8 skipped / 0 failed
-   (plus 2 opt-in browser tests passing under `-m browser`), 224 frontend tests passed, clean
-   ruff/mypy/typecheck, and a byte-reproducible frontend build.
-2. **IN PROGRESS: Gate G3 (final `reviewer` sign-off, agent `aa76da70021711b69`).** Dispatched
-   for a holistic pass over the accumulated epic diff — explicitly scoped to NOT re-litigate
-   what Gate G1 (engine)/G2 (security) already covered in depth, and instead focus on the
-   frontend code quality (`ui/src/graph/*`), which hasn't had a dedicated SOLID/DRY/architecture
-   read yet (only test/build/lint results were verified by me). Also asked for an independent
-   judgment on the T-pAi0Cv deviation (toolbar search-select also opens the panel) and spot
-   checks against the HLD's own U-1..U-7/D-1..D-8 requirement list.
-3. Then dispatch `T-oroE5f-docs-refresh` (mandatory, last) to reconcile `docs-md/` (the HLD,
-   ADR-0017, `dashboard-and-general-instructions-hld.md` §4 cross-link, `meta/ROADMAP.md` §3.3)
-   and READMEs against what was actually built — including the resolved ASSUMPTION A-5, the
-   opt-in browser-smoke recommendation, and the new `browser` extra in `pyproject.toml`. After
-   that, the epic is ready to declare complete; a separate follow-up ticket for finding F-2
-   (route lost on resume) remains available to file if not already tracked.
+1. **DONE. All 10 MVP dev/test tasks complete. Gate G1 (engine review), Gate G2 (security), and
+   Gate G3 (final reviewer) all CLOSED, PASS.** `ad/run-graph-canvas` currently stands at 4621
+   backend tests passed / 8 skipped / 0 failed (plus 2 opt-in browser tests passing under
+   `-m browser`), 224 frontend tests passed, clean ruff/mypy/typecheck, and a byte-reproducible
+   frontend build. Reviewer's own verdict: ready for a PR into `main`.
+2. **Next: dispatch `T-oroE5f-docs-refresh`** (mandatory, last MVP task) to reconcile `docs-md/`
+   (the HLD, ADR-0017, `dashboard-and-general-instructions-hld.md` §4 cross-link,
+   `meta/ROADMAP.md` §3.3) and READMEs against what was actually built — including the resolved
+   ASSUMPTION A-5, the opt-in browser-smoke recommendation, the new `browser` extra in
+   `pyproject.toml`, the T-pAi0Cv/T-aHktGB search-select-opens-panel note, and the Gate G3
+   Warnings #1/#3 deferred as backlog items (worth a line each so they aren't lost).
+3. After `T-oroE5f`, the epic is ready to declare complete. Two follow-ups remain available to
+   file as separate tickets if wanted, not blocking this epic: the `route`-lost-on-resume defect
+   (F-2, pre-existing, out of scope per the original ask) and the Gate G3 Warning #1 architecture
+   debt (raw-`RunGraph`-prop, relevant only once the deferred DAG-editor roadmap half starts).

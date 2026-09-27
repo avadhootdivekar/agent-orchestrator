@@ -122,7 +122,12 @@ Review gates (HLD §24):
   — 1 resolved same-day (negative-control CSP-string drift), 1 resolved same-day (defense-in-
   depth sha guard), 2 deferred to backlog: client-side `displayText` mirror, `compute_graph_version`
   cost justification — see `STATUS.md`).
-- **G3**: final reviewer sign-off, then the docs refresh.
+- **G3**: final reviewer sign-off, then the docs refresh. **CLOSED 2026-09-27, PASS WITH
+  FOLLOW-UPS** (0 Critical; 3 Warnings — 1 resolved same-day (duplicated "pending"/retries-
+  formula constants), 2 deferred to backlog (raw-`RunGraph`-prop architecture debt, `RunGraph.tsx`
+  file-size growth ahead of non-MVP tasks); 4 Suggestions, all deferred as nice-to-have. The
+  T-pAi0Cv toolbar-search-also-opens-panel deviation was independently judged a reasonable,
+  coherent design choice, not a defect — see `STATUS.md`). Verdict: ready for a PR into `main`.
 
 ## Assumptions (full log: HLD §3)
 - ASSUMPTION A-1: "task title" = task id in MVP (there is no title field on `TaskSpec`). Non-MVP `T-VcN4pt` adds one.
