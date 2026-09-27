@@ -223,8 +223,21 @@ breaker share one definition and cannot drift.
 
 ### 2.5 Frontend
 
-React + TypeScript + Vite, no runtime dependencies beyond React. Built output is committed
-into the package so `pip install` ships a working dashboard without node.
+React + TypeScript + Vite. The original release had no runtime dependencies beyond React. Two
+later epics each added a small, justified set, and all of them are bundled into the committed
+build:
+
+- `E-Fp7Qv2` (file preview, ADR-0011) added `dompurify`, `marked`, and `highlight.js`.
+- `E-k3AMEr` (run graph, ADR-0017 D5) added `@xyflow/react` and `@dagrejs/dagre`, both MIT.
+
+Built output is committed into the package so `pip install` ships a working dashboard without node.
+
+**Run graph (E-k3AMEr).** The run detail view's Tasks section has a **Table | Graph** tab switch.
+Table stays the default, and the chosen tab persists in `localStorage`. The tab switch appears only
+when the backend returns a non-empty `graph_version`. The Graph tab (`ui/src/graph/RunGraph.tsx`)
+is loaded with `React.lazy` + `Suspense`, so the React Flow and dagre chunk (≈ 82.5 KB gzip)
+downloads only when the tab is first opened, and the initial dashboard load is unchanged. The
+design and as-shipped deviations are in [`run-graph-canvas-hld.md`](run-graph-canvas-hld.md) §0.
 
 Visual system follows the project's data-viz guidance: a validated palette, light and dark
 both explicitly stepped (OS setting *and* an in-app toggle, toggle wins either way), one
@@ -247,7 +260,8 @@ through to the SPA, so a typo'd endpoint is a clear error and not a confusing HT
 | GET | `/api/workflows` | discovered specs (+ `prompt_path`) |
 | GET | `/api/runs` | run list with per-run stats and liveness |
 | GET | `/api/runs/stats` | workspace-wide totals |
-| GET | `/api/runs/{id}` | per-run detail (tasks, breakers, routing) |
+| GET | `/api/runs/{id}` | per-run detail (tasks, breakers, routing, `graph_version`) |
+| GET | `/api/runs/{id}/graph` | run graph (topology only): nodes, dependency edges, spawn edges, loops, routers, `warnings[]` (E-k3AMEr) |
 | GET | `/api/runs/{id}/log` | captured CLI output |
 | POST | `/api/runs` | start a run (workflow + prompt + options) |
 | POST | `/api/runs/{id}/resume` | resume |
@@ -258,6 +272,20 @@ through to the SPA, so a typo'd endpoint is a clear error and not a confusing HT
 Status codes: `403` traversal · `404` missing · `409` wrong state (delete a live run, resume
 a running one, cancel a run the dashboard did not launch) · `400` bad request (prompt for a
 workflow with no `prompt_path`) · `422` schema violation.
+
+**Run graph additions (E-k3AMEr, all additive).**
+- `GET /api/runs/{id}/graph` returns `200` with a `RunGraph` for every run whose `state.json` is
+  readable, including degraded ones. `source: "unavailable"` and `spawn_data: "not_recorded"` come
+  with human-readable `warnings[]`. It returns `404` for an unknown run, a traversal-shaped id, or
+  an unreadable `state.json`. It never returns hook argv, instructions, integration commands, or
+  file contents.
+- `RunDetail.graph_version` is a 16-hex-char fingerprint of the run's topology, computed by the
+  same function (`ui/graph.py::compute_graph_version`) from the same `state.json` as the graph
+  itself. The client refetches `/graph` only when it changes, so status and cost come from the
+  existing 3 s detail poll.
+- `TaskStat` gains `dispatch_cycle: int` and `not_taken_reason: str | null`.
+
+Full contract: [`run-graph-canvas-hld.md`](run-graph-canvas-hld.md) §14.2.
 
 ### 2.7 Security posture — explicitly deferred
 
@@ -290,9 +318,9 @@ a live run cannot be deleted.
 
 - **UI-based dynamic workflow generation** — build/edit a DAG in the browser. Explicitly
   out of scope here; the highest-value next dashboard step.
-  - **Being addressed (read-only half), by `E-k3AMEr-run-graph-canvas` (designed 2026-09-27, not
-    yet implemented).** It adds a *Graph* tab to the run detail view: a pannable/zoomable canvas of
-    a run's tasks with two toggleable edge sets.
+  - **Read-only half: delivered by [`E-k3AMEr-run-graph-canvas`](../meta/tickets/E-k3AMEr-run-graph-canvas/EPIC.md)
+    (implemented 2026-09-27).** It adds a *Graph* tab to the run detail view: a pannable/zoomable
+    canvas of a run's tasks with two toggleable edge sets.
     - **Execution order**: the dependency DAG, plus the actual start order.
     - **Spawned by**: which task created which dynamically injected task.
 
@@ -301,7 +329,9 @@ a live run cannot be deleted.
     [ADR-0017](adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md).
   - **Still deferred:** building or *editing* a DAG in the browser. The new `/graph` endpoint is a
     run read model, not a spec round-trip format, so an editor needs its own spec-shaped API. The
-    canvas components and layout seam are reusable.
+    canvas and layout seam are reusable. First, though, the hover card and detail panel need to
+    move from the raw `RunGraph` prop to view-model props (Gate G3 Warning #1, run-graph HLD
+    §0.4 FU-3).
 - Authentication and configurable secrets.
 - Live streaming instead of polling; in-browser editing; run comparison.
 - Cancelling runs the dashboard did not launch.

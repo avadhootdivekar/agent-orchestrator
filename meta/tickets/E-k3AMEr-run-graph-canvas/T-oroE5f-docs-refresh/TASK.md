@@ -6,7 +6,7 @@
 - Owner: `architect` (or `developer`), with review by `reviewer`
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `Draft` (**mandatory post-implementation task, runs last**)
+- Status: `In Review` (**mandatory post-implementation task, runs last**). All 8 docs are reconciled and AC-1 to AC-4 evidence is in `STATUS.md`. The AC-5 reviewer sign-off is pending.
 - Estimate: `6 focus hours (< 1 day)`
 
 ## Requirements Mapping

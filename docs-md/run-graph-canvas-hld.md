@@ -1,7 +1,9 @@
 # Run graph canvas: HLD and LLD (E-k3AMEr)
 
-**Status:** **Design, not implemented.** Hardened by Phase-4 consultations (§23.1) and pending
-execution by `dev-epic` · **Date:** 2026-09-27
+**Status:** **Implemented** (all 10 MVP dev/test tasks Done; review gates G1, G2, and G3 closed
+PASS on 2026-09-27; merged on `ad/run-graph-canvas` @ `dbd3657`). The body below is the design as
+hardened by the Phase-4 consultations (§23.1). **Where the shipped code differs, §0 wins**:
+read it first. · **Date:** 2026-09-27 (design) · 2026-09-27 (reconciled by `T-oroE5f`)
 **Epic:** [`meta/tickets/E-k3AMEr-run-graph-canvas/`](../meta/tickets/E-k3AMEr-run-graph-canvas/EPIC.md)
 **ADR:** [ADR-0017](adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md)
 **Builds on:** [ADR-0010](adr/ADR-0010-dashboard-architecture-and-general-instructions.md) ·
@@ -10,7 +12,7 @@ execution by `dev-epic` · **Date:** 2026-09-27
 [`guide-dynamic-task-injection.md`](guide-dynamic-task-injection.md) ·
 [`overseer-runner-hld.md`](overseer-runner-hld.md) (the largest real spawn trees)
 **Roadmap item touched:** `meta/ROADMAP.md` §3.3 "UI-driven workflow construction" and
-`dashboard-and-general-instructions-hld.md` §4. This epic delivers the **read-only**
+`dashboard-and-general-instructions-hld.md` §4. This epic delivered the **read-only**
 half: seeing a run's graph. **Editing** a DAG in the browser remains deferred (see §2.2).
 
 The dashboard shows a run as a flat task table. A workflow's actual shape is invisible there:
@@ -22,6 +24,97 @@ This epic adds a **Graph** tab to the run detail page. The tab is a pannable, zo
 with no pagination. It has two toggleable edge sets over the same nodes, plus a task-detail
 reveal. Two small, additive engine changes are included, because today the data needed for one
 of the views is not recorded and the data needed for the other is not reliably reachable.
+
+---
+
+## 0. Implementation outcome and deviations (post-implementation, `T-oroE5f`)
+
+Reconciled against the merged code at `ad/run-graph-canvas` @ `dbd3657`. Every claim here is
+cited as `path:line` in `meta/tickets/E-k3AMEr-run-graph-canvas/T-oroE5f-docs-refresh/STATUS.md`.
+Line anchors elsewhere in this document that say "as of 191da69" are **design-time** anchors;
+§0.3 lists where the shipped code now lives.
+
+### 0.1 What shipped (as designed)
+
+- **Engine.** `RunState.spawned_by` / `SpawnRecord` (with `origin` as an open `str`) and
+  `RunState.spec_sessions` / `SpecSession` / `WorkflowSnapshot` in `models.py`. `_inject` takes a
+  keyword-only, required `parent_task_id` (plus `loop_id` / `iteration`). It has exactly 2 call
+  sites (emit, loop gate). `origin` is carried across the 3 wholesale `TaskRunState` replacements,
+  and `route` deliberately is not (F-2). `record_spec_session` runs before the run's first save, and
+  a snapshot write `OSError` only warns (`run.snapshot_failed`).
+- **`dag.py`.** `iter_dependency_edges` plus `DependencyEdge` / `EDGE_KIND_*`. `build_dag` consumes
+  it, and the oracle test proves behavior identity.
+- **Backend.** `ui/graph.py` is the pure builder (`build_run_graph`, `compute_graph_version`,
+  `display_text`, `label_for`). `RunRepository.load_graph` and `DashboardService.run_graph` do the
+  I/O, and `GET /api/runs/{run_id}/graph` serves the result. `RunDetail.graph_version` and
+  `TaskStat.{dispatch_cycle, not_taken_reason}` are additive.
+- **Frontend.** `ui/src/graph/*` (see the `ui/README.md` layout). The Graph tab is lazy-loaded in
+  `RunDetail.tsx`, and Table stays the default. The new runtime deps are `@xyflow/react` `^12.12.0`
+  and `@dagrejs/dagre` `^3.1.0`, both MIT.
+- **Measured outcomes.**
+  - Lazy `RunGraph` chunk: ≈ 79.4 KB JS + 2.0 KB CSS gzip (`gzip -9`), or 82.55 KB as Vite reports
+    it. Both are under the NFR-4 ≤ 90 KB budget.
+  - Perf: `build_run_graph` took 0.89 ms and `computeLayout` 136 ms for 200 nodes / 500 edges
+    (NFR-3 targets are 150 ms and 300 ms).
+  - Tests: pytest 4621 passed, 8 skipped. UI coverage 93.91%. vitest 224 passed.
+
+### 0.2 Resolved assumptions and open questions
+
+- **ASSUMPTION A-5: VERIFIED.** React Flow and dagre run under the unchanged `SPA_CSP`. The
+  `T-F1caAt` real-browser smoke navigated a 180-node run and recorded zero
+  `securitypolicyviolation` events, console errors, and page errors. The negative control imports
+  the live `SPA_CSP` and proves the detector fires. `ui/security.py` is untouched by this epic.
+  R-8 is closed.
+- **OPEN_QUESTION (browser smoke in CI?): RESOLVED as opt-in.** The smoke test sits behind
+  `@pytest.mark.browser` and a new optional `browser` extra (`playwright>=1.45`) in
+  `pyproject.toml`. It drives the **system** Chrome (`channel="chrome"`, no bundled-browser
+  download) and skips cleanly when playwright or `/usr/bin/google-chrome` is missing. Run it with
+  `uv sync --extra ui --extra browser` and then `pytest -m browser`. The reason is its dependency
+  footprint, not its runtime (≈ 7.5–10 s). A CI step is proposed in `T-F1caAt` STATUS if it is
+  adopted later.
+- The "third timeline view" question keeps its default: no. It is still the next roadmap step
+  (R-10).
+
+### 0.3 Deviations from this design
+
+| # | Design said | Shipped | Why / status |
+|---|---|---|---|
+| DV-1 | §8.7 / FR-6: the pinned panel opens on node click or Enter. §8.6 item 4: search centers the match. | Toolbar search-select **also opens the detail panel**. The panel reuses the existing `selectedNodeId` state that `useSelectAndCenter`'s `onSelect` sets. | Intentional (T-pAi0Cv deviation #3). `hooks.ts` documented `onSelect` as driving "a future detail panel" before T-pAi0Cv existed. **Gate G3 judged it coherent, not a defect**: a second "panel target" state would let one node be selected while another node's panel is open. `T-aHktGB`'s own AC-3 predates this and does not mention it. |
+| DV-2 | §7.5 / `types.ts`: "components receive view-models (`ViewNode`/`ViewEdge`), never the raw `RunGraph`". | `TaskHoverCard` and `TaskDetailPanel` take the raw `RunGraph` as their `graph` prop. | **Gate G3 Warning #1, deferred.** It is not a current defect. It matters once the deferred DAG-editor half reuses these components (FU-3). |
+| DV-3 | §8.5: `model.ts::displayText`, a client mirror of the server sanitizer for ids reached via panel links. | **Not implemented.** `TaskDetailPanel.tsx::labelFor` uses the node's server-sanitized `label` when the id is a node, and otherwise falls back to the **raw id**, still rendered as a React text node. | **Gate G2 L-1, deferred.** Not independently exploitable: React escapes markup. Bidi and zero-width characters could reach the screen only for an id absent from `graph.nodes`, which engine-written state does not produce (FU-4). |
+| DV-4 | §8.3.2: `_INVISIBLE_OR_BIDI`, a compiled regex over an enumerated Cc/Cf range. | `_INVISIBLE_OR_BIDI_TRANSLATION`: a `str.translate` table built at import from `unicodedata.category(ch) in ("Cc", "Cf")` over all codepoints. It costs ≈ 70 ms once, and only when `ui.graph` is imported. | **Gate G2 M-1, fixed.** The enumerated range missed 150 real Cc/Cf codepoints, including U+200E/U+200F and the Tags block. An exhaustive regression test now pins 0 misses. |
+| DV-5 | §8.2 / §13.2: the `^[0-9a-f]{64}$` sha pattern is schema documentation only. | `load_workflow_snapshot_at` rejects a malformed sha (warn, return `None`) **before** building a path. `_workflow_snapshot_filename` independently raises `ValueError` as a second layer. | **Gate G1 SHOULD-FIX plus Gate G2 L-3, both fixed.** The sha is read back from the agent-writable `state.json` and spliced into a filename. |
+| DV-6 | §15 log events: `run.snapshot_failed`, `run.spec_changed_on_resume`, and `ui.graph.degraded`. | Adds `run.workflow_snapshot_unavailable`, emitted by the shared snapshot reader for a malformed sha, a stat failure, an oversize file, invalid content, or a name/body sha mismatch. | Additive observability. §15 is updated. |
+| DV-7 | §8.3.2 edge cases: "a warning is added when a cheap iterative DFS finds a back edge" in the dependency edges. | **Not implemented.** The builder emits cyclic dependency edges as-is and never topo-sorts, so it cannot fail on them. dagre's acyclic pass lays them out (`graph-layout.test.ts` "tolerates a cycle"). No cycle warning reaches `warnings[]`. | This was never carried into a task AC. Backlog note FU-6. A cycle is only possible in hand-edited or legacy state. |
+| DV-8 | §8.5 refetch rule: when new nodes arrive, "a small '+N tasks' notice appears". | **Not implemented.** Layout recomputes and the viewport is kept, but there is no "+N" notice. | This was never carried into a task AC. Backlog note FU-7. (The non-MVP `T-hMNbDP` "+N tasks" chip is a different feature: subtree collapse.) |
+| DV-9 | §8.6 Edges: the dependency edge dims when the upstream task is `failed`/`not_taken`. With a selection, edges touching the selected node are emphasized and the others dim to 35%. | **Not implemented.** Edges are styled only by set and kind (the §8.6 table), plus an arrow marker on every edge kind. | T-OjTS8O deviation #2 scoped these out (the prose sits below the table the task was scoped to), and no later task picked them up. Backlog note FU-8. |
+| DV-10 | §8.6 Node: a bottom 3 px metric strip inside `TaskNode`. | The strip is rendered by a wrapper, `TaskNodeWithMetric` in `RunGraph.tsx`, around an unchanged `TaskNode`. Metric maxima are computed over the **visible** node set. | T-OjTS8O deviation #1 and T-aHktGB deviations #1/#2. Behavior matches the design, and the strip is proportional to `metricFraction`. |
+| DV-11 | §8.6 Edges table: the inferred-edge artifact path appears "in tooltip `title`". | It is an on-path text label, gated by the same `EDGE_LABEL_MIN_ZOOM` as the other labels, and truncated to its tail (`EDGE_LABEL_PATH_MAX_CHARS = 24`). | T-OjTS8O deviation #4. One label mechanism for the whole Label column. |
+| DV-12 | §7.5: React Flow's exit cost is bounded to `RunGraph.tsx`, `TaskNode.tsx`, and the hover card. | React Flow is imported by **4** files: those 3 plus the new `hooks.ts` (`useReactFlow`, for `useSelectAndCenter`). dagre is imported only by `layout.ts`. `model.ts` stays React-free. | Shared-hook extraction (T-aHktGB). The exit cost is still bounded to `ui/src/graph/`. |
+| DV-13 | A-3: "the UI labels the [loop spawn] edge `loop <id> · iter N`". | The spawn-view loop edge label is `iter N` (as in the §8.6 table). The loop id and iteration appear in the detail panel's Spawn section as `loop: <id> · iteration N`. | Resolves an internal inconsistency in this document. The A-3 parent semantics themselves hold as designed. |
+| DV-14 | §8.6: the Legend and every toolbar toggle persist in prefs. | View, metric, show-unrelated, and the Table/Graph tab persist (`ao.runGraph.prefs.v1`). The Legend's collapsed state is local and not persisted. "Reset layout" clears the drag-override map instead of re-running dagre, with an identical result. | T-aHktGB deviations #3/#5. |
+| DV-15 | §17: `write_synthetic_run(root, waves, fanout)`. | `write_synthetic_run(root, waves, fanout, *, clock)`. It takes a keyword-only fixed clock, for deterministic timestamps. | Signature drift only. |
+
+Everything else in §8 and §14 held as designed, including the §14.2 wire contract (field names,
+order, and enums), which the `T-AsQ77e` contract test pins against the shared fixture.
+
+### 0.4 Follow-ups (not done in this epic)
+
+| ID | Follow-up | Source | Tracking |
+|---|---|---|---|
+| FU-1 | `TaskRunState.route` is lost on resume and on the 2 engine failure resets for tasks on a *selected* route. | Pre-existing defect, finding F-2 (§23) | **Backlog, no ticket yet.** A separate ticket is recommended (EPIC Risks). Explicitly out of this epic's scope. |
+| FU-2 | Dispatch-interval history for a future timeline/Gantt view | R-10 (§23), dev-critic | **Accepted residual.** It belongs to a timeline epic (`meta/ROADMAP.md` §3.3). |
+| FU-3 | `TaskHoverCard`/`TaskDetailPanel` should take `ViewNode`/view-model props instead of the raw `RunGraph` (DV-2). | Gate G3 Warning #1 | **Backlog note.** Do this before, or as the first step of, the deferred DAG-editor half. |
+| FU-4 | Add the client-side `model.ts::displayText` mirror and use it in `TaskDetailPanel.tsx::labelFor`'s raw-id fallback (DV-3). | Gate G2 L-1 | **Backlog note.** Opportunistic, not independently exploitable. |
+| FU-5 | Add an explicit size-bound justification comment (or bound) to `compute_graph_version`. It hashes every id in `state.tasks`/`spawned_by`/`injected_tasks` with no cap analogous to `GRAPH_MAX_NODES`. | Gate G2 L-4 | **Backlog note.** It reuses collections already iterated linearly elsewhere, so it is not a new DoS surface. |
+| FU-6 | Dependency-cycle back-edge warning in `build_run_graph` (DV-7) | This reconciliation | **Backlog note.** |
+| FU-7 | "+N tasks" notice on live topology growth (DV-8) | This reconciliation | **Backlog note.** It pairs naturally with `T-N8scZK` (incremental stable layout). |
+| FU-8 | Edge dimming from a failed/`not_taken` upstream task, and selection-based edge emphasis (DV-9) | This reconciliation, T-OjTS8O deviation #2 | **Backlog note.** It pairs naturally with `T-ydMbJN` (critical path). |
+| FU-9 | Extract the hover-timer and drag logic out of `RunGraph.tsx` (≈ 717 lines, ≈ 15 pieces of local state) into hooks, **before** the next non-MVP task adds state there. | Gate G3 Warning #3 | **Backlog note.** It precedes `T-hMNbDP`/`T-ydMbJN`/`T-N8scZK`. |
+| FU-10 | Gate G3's 4 Suggestions: move the 3 pure edge-formatting helpers from `RunGraph.tsx` into `model.ts`; replace one inline `* 100` literal; give "spec changed" a typed field instead of regex-matching `warnings[]` in `Legend.tsx`; (the fourth confirmed that the `spawn-other` path is unreachable today by design). Also, `TaskDetailPanel.tsx::statusFor` still uses a literal `"pending"` instead of `PANEL_PENDING_STATUS`, a residue of the resolved Warning #2. | Gate G3 | **Nice-to-have.** Not acted on. |
+| FU-11 | Non-MVP feature tickets | §2.3 | `T-VcN4pt-task-title-field`, `T-hMNbDP-spawn-subtree-collapse`, `T-ydMbJN-critical-path-edge-timing`, and `T-N8scZK-layout-persistence` (all Draft, backlog). |
+| FU-12 | Wire the browser smoke into CI, if wanted (§0.2) | T-F1caAt AC-6 | **Optional.** The proposed step is in `T-F1caAt` STATUS. |
+| FU-13 | `E-Grpp0X-injected-task-dag-validation-gap` edits the same `_inject` body. | R-1 | Coordination only. `spawned_by` is written in the same per-spec step, so validate-before-append composes. |
 
 ---
 
@@ -143,7 +236,7 @@ Non-functional:
 | A-2 | "Execution-order view" means the **dependency DAG** (what must precede what), annotated with the **actual start ordinal** (`#n`) to show what happened. | The user wanted a strict timeline. | The ordinal badge shows actual order. Gantt is the documented next step (§23). |
 | A-3 | The "parent" of a loop clone is the **gate task of the previous iteration** (the task whose verdict caused the clone). | The user expects "the loop" as parent. | `SpawnRecord` also stores `loop_id`/`iteration`. The UI labels the edge `loop <id> · iter N`. |
 | A-4 | `@xyflow/react` 12.x is compatible with React 19 without `--legacy-peer-deps`. Verified 2026-09-27: `12.12.0` peerDeps `react >=17`, MIT. | Install conflict. | T-adVpTj AC-1 requires a clean `npm ci`. Fallback: pin the last compatible 12.x. |
-| A-5 | **UNVERIFIED until T-F1caAt passes.** The SPA CSP (`default-src 'self'`, so no `unsafe-eval`; `style-src 'self' 'unsafe-inline'`) permits React Flow and dagre: inline style attributes are allowed, and neither library is expected to use `eval`/`new Function`/workers. | Canvas renders blank in production only. | Early signal from the T-adVpTj spike (week 1). Hard gate: T-F1caAt real-browser smoke under the real CSP, with a console scan **and a negative control**. |
+| A-5 | **VERIFIED 2026-09-27 by T-F1caAt** (see §0.2). The SPA CSP (`default-src 'self'`, so no `unsafe-eval`; `style-src 'self' 'unsafe-inline'`) permits React Flow and dagre: inline style attributes are allowed, and neither library is expected to use `eval`/`new Function`/workers. | Canvas renders blank in production only. | Early signal from the T-adVpTj spike (week 1). Hard gate: T-F1caAt real-browser smoke under the real CSP, with a console scan **and a negative control**. |
 | A-6 | Nothing but `ui/runs.py` reads `TaskRunState.origin` behaviorally (verified by grep: one read site). | Carrying `origin` across resets changes engine behavior. | Grep re-verified in T-AZzgT8, plus a regression test that engine scheduling is unchanged on resume. |
 | A-7 | Run directories live under `<workspace>/.orchestrator/runs/<run_id>/`, and no task id equals a snapshot file name. | A collision with a per-task capture dir. | File names are `workflow.snapshot.<12 hex>.json`. Task-capture dirs are bare ids, and a test pins that a snapshot write never targets an existing directory. |
 | A-8 | The dashboard's single-user, loopback trust model (ADR-0010 D7) is unchanged. | Exposure of the graph API off-loopback. | The graph exposes nothing new beyond what `/api/runs/{id}` plus the file browser already expose. No hook argv or instructions are returned (§8.3). |
@@ -206,10 +299,11 @@ detail panel, and the provenance and snapshot persistence. "Obsidian Canvas feel
 the infinite pannable/zoomable surface, minimap, and draggable nodes. Legibility at 160 nodes
 comes from auto-layout.
 
-**Convention deviation, recorded:** `ui/README.md` says "no runtime dependencies beyond React".
+**Convention deviation, recorded:** `ui/README.md` said "no runtime dependencies beyond React".
 That convention was already relaxed for `dompurify`/`marked`/`highlight.js` (E-Fp7Qv2, which
 accepted 66→120 KB gzip). This epic adds two more MIT deps. It is justified in ADR-0017 D5, and
-the budget is NFR-4 (≤ 90 KB). The README line is updated by the docs-refresh task.
+the budget is NFR-4 (≤ 90 KB). The README line was updated by `T-oroE5f` to name every runtime
+dep and link ADR-0017 D5.
 
 ### 5.3 Data persistence
 
@@ -340,7 +434,7 @@ flowchart TB
 | `ui/graph.py` | new | Pure `build_run_graph` plus `compute_graph_version`. No I/O. |
 | `ui/runs.py` | changed | `load_graph(run_id)` does the I/O (state plus snapshot). `RunDetail.graph_version` (same `compute_graph_version`), `TaskStat` additive fields. |
 | `ui/service.py`, `ui/app.py` | changed | `run_graph()` service method and route. |
-| `ui/src/graph/*` | new | Canvas, node, toolbar/legend, hover card, panel, pure model and layout. Lazy-loaded chunk. |
+| `ui/src/graph/*` | new | Canvas, node, toolbar/legend, hover card, panel, pure model and layout, and (as shipped) `hooks.ts` with the shared `useSelectAndCenter`. Lazy-loaded chunk. |
 | `ui/src/components/RunDetail.tsx` | changed | Table/Graph tab switch. Passes `detail.tasks` and `graph_version` down. |
 
 ### 7.4 Integration points
@@ -368,12 +462,14 @@ flowchart TB
   derives from the returned `direction`, not from the view name (dev-critic).
 - **React Flow is a firm dependency** (dev-critic). Only the layout algorithm is swappable, and
   React Flow's exit cost is bounded to `RunGraph.tsx`, `TaskNode.tsx`, and the hover card. The pure
-  model and builder never import it.
+  model and builder never import it. *(As shipped, the new `hooks.ts` also imports it: see §0.3
+  DV-12.)*
 - `label_for(spec, id)` is the single seam for the non-MVP `title` field.
 - Components receive **view-models** (`ViewNode`/`ViewEdge`), never the raw `RunGraph`, so a future
-  editor could reuse the canvas with its own data. `/graph` is a *read model* of a run (static
-  plus injected merged) and is **not** a spec round-trip format. The deferred editor needs its own
-  spec-shaped API.
+  editor could reuse the canvas with its own data. *(As shipped, `TaskHoverCard` and
+  `TaskDetailPanel` still take the raw `RunGraph`: see §0.3 DV-2 and follow-up FU-3.)* `/graph` is a
+  *read model* of a run (static plus injected merged) and is **not** a spec round-trip format. The
+  deferred editor needs its own spec-shaped API.
 
 ---
 
@@ -391,7 +487,10 @@ created each injected task. The record must survive resume and failure resets.
 across resets.
 **Dependencies.** `models.py`, `engine.py`, `runstate.py`, and the engine clock (`self._clock`).
 
-**Verified call-site inventory (main @ 191da69).** This corrects the epic brief.
+**Verified call-site inventory (main @ 191da69).** This corrects the epic brief. *As shipped
+(`dbd3657`): the emit call is at `engine.py:2084`, the loop call at `engine.py:2201`, `_inject` at
+`engine.py:4153`, the resets at `engine.py:1075` / `engine.py:1142` / `runstate.py:498`, and
+`_on_router_success` at `engine.py:3155`.*
 
 | # | Call site | Origin | `parent_task_id` | `loop_id` / `iteration` |
 |---|---|---|---|---|
@@ -599,8 +698,14 @@ FUNCTION RunStateStore.load_workflow_snapshot(run_id, sha) -> WorkflowSnapshot |
   IF snap.spec_sha256 != sha: log warning; RETURN None                             # name/body mismatch = tampered or corrupt
   RETURN snap
   # Tolerant by design: the dashboard must degrade, never 500, on a bad snapshot.
+  # AS SHIPPED (§0.3 DV-5/DV-6): the shared reader is runstate.load_workflow_snapshot_at(run_dir, sha).
+  # It FIRST rejects any sha not matching ^[0-9a-f]{64}$ (warn + None, before any path is built),
+  # uses stat() failure as "missing", and logs every tolerant-None branch with
+  # event="run.workflow_snapshot_unavailable". _workflow_snapshot_filename(sha) independently
+  # raises ValueError on a malformed sha (defense in depth, never reached by the tolerant path).
 
-ENGINE (Orchestrator.run at engine.py ~656). Insert IMMEDIATELY AFTER
+ENGINE (Orchestrator.run at engine.py ~656; as shipped, new_run is at engine.py:683,
+record_spec_session at :695, and the first save at :703). Insert IMMEDIATELY AFTER
 `state = run_state or self._runstate.new_run(workflow)` (~680) and BEFORE the existing
 `self._runstate.save(state)` (~681), which is the run's FIRST save. (Corrected per developer
 review: an earlier draft said "after the merge guard at ~705-715", but that guard runs after the
@@ -628,8 +733,8 @@ the shas differ.
 - The dashboard **never returns it raw**. `/graph` projects only ids, edges, loop/router ids, and
   task flags (§8.3). No new file endpoint is added. The existing file browser could already read
   the run dir.
-- The docs-refresh task adds the file to ADR-0011's sensitivity inventory and notes it for
-  benchmark bundles that copy run dirs.
+- The file is listed in ADR-0011's run-directory sensitivity inventory (added by `T-oroE5f`),
+  with a note for benchmark bundles that copy run dirs.
 
 **Subtasks.**
 (a) models plus constants plus `canonical_spec_json`.
@@ -723,7 +828,10 @@ Constants (NFR-5):
 - `GRAPH_SOURCE_SNAPSHOT = "snapshot"` and `GRAPH_SOURCE_UNAVAILABLE = "unavailable"`
 - `GRAPH_VERSION_HEX_CHARS = 16`
 - `_INVISIBLE_OR_BIDI`: a compiled regex covering Unicode categories Cc/Cf (bidi overrides
-  U+202A–U+202E and U+2066–U+2069, zero-width U+200B–U+200D, U+FEFF, and other controls)
+  U+202A–U+202E and U+2066–U+2069, zero-width U+200B–U+200D, U+FEFF, and other controls).
+  **As shipped** this is `_INVISIBLE_OR_BIDI_TRANSLATION`, a `str.translate` table derived from
+  `unicodedata.category` over every codepoint (§0.3 DV-4, Gate G2 M-1).
+- *(As shipped, also:)* `SPAWN_DATA_RECORDED` / `SPAWN_DATA_NOT_RECORDED` / `SPAWN_DATA_NONE`.
 
 There are **only two sources**. The launch-record fallback from the first draft was **removed**:
 - **dev-security, HIGH:** a launch record lives in the agent-writable workspace, so its
@@ -811,6 +919,8 @@ FUNCTION display_text(raw) -> (str, bool):   # dev-security LOW: anti-spoofing, 
   RETURN cleaned, cleaned != raw
   # `id` stays RAW in the payload (it is the join key); every place that DISPLAYS an id uses `label`
   # (or the same sanitizer re-implemented in model.ts::displayText for ids reached via links).
+  # AS SHIPPED: cleaned = raw.translate(_INVISIBLE_OR_BIDI_TRANSLATION); the model.ts mirror was
+  # NOT built (§0.3 DV-3, FU-4).
 
 FUNCTION compute_graph_version(state) -> str:   # THE ONLY version derivation (reviewer MUST-FIX)
   latest_sha = state.spec_sessions[-1].spec_sha256 if state.spec_sessions else None
@@ -850,7 +960,7 @@ each dispatch (engine `:1349`), so the ordinal reflects the **latest** dispatch.
 | Case | Result |
 |---|---|
 | Empty workflow | `nodes=[]`, no error. The frontend shows the empty state. |
-| Cyclic deps (only possible in a hand-edited or legacy state) | Edges are emitted as-is. The builder never topo-sorts. dagre handles cycles (its acyclic pass). A warning is added when a cheap iterative DFS finds a back edge. |
+| Cyclic deps (only possible in a hand-edited or legacy state) | Edges are emitted as-is. The builder never topo-sorts. dagre handles cycles (its acyclic pass). A warning is added when a cheap iterative DFS finds a back edge. **As shipped, no back-edge warning is emitted** (§0.3 DV-7, FU-6). |
 | Unknown `depends_on` (E-Grpp0X scenario) | Phantom node with `missing=true` and a warning. No exception. |
 | Spawn record whose parent or child is not a node | The edge is dropped. This is impossible for engine-written state, and for forged state it is test-pinned as "no crash". |
 | Forged spawn cycle | The BFS visited-set terminates it, and depth is `None` for the cycle members. |
@@ -952,13 +1062,17 @@ FUNCTION relatedIds(graph, id) -> {parent, children[], dependsOn[], dependents[]
 FUNCTION waitSeconds(id, graph, statsById) -> number | null:  # started_at - max(ended_at of dependency sources); null if any missing
 FUNCTION readPrefs()/writePrefs(): localStorage wrapped in try/catch, validated against the enum, else defaults
 FUNCTION displayText(raw) -> string:   # mirror of ui/graph.py display_text for ids shown via panel links (strip Cc/Cf, cap)
+                                       # NOT BUILT as shipped (§0.3 DV-3, FU-4)
+# AS SHIPPED, model.ts also exports PANEL_PENDING_STATUS, retriesFromAttempts, panelModel (the
+# pure view-model behind TaskDetailPanel), RelatedIds/MetricMaxima, and GraphTab/GraphPrefs/
+# DEFAULT_GRAPH_PREFS. computeLayout lives in layout.ts (the only dagre importer).
 ```
 
 **Refetch rule (live runs).** `RunDetail` polls every `POLL_MS` (3 s, existing). `RunGraph`
 fetches `/graph` on mount and whenever `detail.graph_version` differs from the last fetched
 graph's `graph_version`. Node stats always come from the latest `detail.tasks`. When the graph
 arrives with new nodes, layout recomputes. Viewport and selection are kept, and a small
-"+N tasks" notice appears.
+"+N tasks" notice appears. *(As shipped, there is no "+N tasks" notice: §0.3 DV-8, FU-7.)*
 
 ### 8.6 Module M6: canvas component (`ui/src/graph/RunGraph.tsx`, `TaskNode.tsx`) and toolbar/legend (`GraphToolbar.tsx`, `Legend.tsx`)
 
@@ -1012,7 +1126,8 @@ circles.
 | spawn | loop | dotted, loop-token color | `iter N` |
 
 When the upstream task is `failed` or `not_taken`, the dependency edge is dimmed. With a selection,
-edges touching the selected node are emphasized and others are dimmed to 35%.
+edges touching the selected node are emphasized and others are dimmed to 35%. *(As shipped,
+neither is implemented, and every edge kind carries an arrow marker: §0.3 DV-9, FU-8.)*
 
 **Legend.** A collapsible card in the bottom-left. It shows the edge styles for the *current* view, node
 badges (with the same `BADGE_LABELS` text used for aria), status glyphs, and source/degraded notes
@@ -1056,7 +1171,10 @@ on a focused node and closes with ×, Esc, or a click on empty canvas. Sections:
 | Outcome | `not_taken_reason`, integration status/tier/conflicts, output artifact path (copy button), outputs | stat |
 
 Every link calls `selectAndCenter(id)`, which works across views. If the target is hidden in the
-spawn view, the "Show unrelated" filter is switched on automatically. The panel shows "Stats pending" when
+spawn view, the "Show unrelated" filter is switched on automatically. **As shipped**, the panel's
+target is the canvas's existing `selectedNodeId`. The toolbar's search-select sets the same state
+through `useSelectAndCenter`, so **selecting a search result also opens the panel** (§0.3 DV-1,
+judged intentional at Gate G3). The panel shows "Stats pending" when
 `stat` is null, which happens when graph and detail are one poll apart.
 
 ---
@@ -1334,8 +1452,9 @@ Orchestrator._inject(new: list[TaskSpec], workflow: WorkflowSpec, state: RunStat
 
 RunStateStore.record_spec_session(state: RunState, workflow: WorkflowSpec) -> SpecSession  # appends; file write may raise OSError
 RunStateStore.load_workflow_snapshot(run_id: str, sha: str) -> WorkflowSnapshot | None    # never raises on bad content
-runstate.load_workflow_snapshot_at(run_dir: Path, sha: str) -> WorkflowSnapshot | None     # shared bounded parser (engine + dashboard)
+runstate.load_workflow_snapshot_at(run_dir: Path, sha: str) -> WorkflowSnapshot | None     # shared bounded parser (engine + dashboard); validates sha first
 runstate.canonical_spec_json(static: WorkflowSpec) -> str
+runstate._workflow_snapshot_filename(sha: str) -> str   # private; raises ValueError on a malformed sha (as shipped, DV-5)
 
 dag.iter_dependency_edges(workflow: WorkflowSpec) -> Iterator[DependencyEdge]
 
@@ -1424,6 +1543,7 @@ a contract, for operators):
 | `run.snapshot_failed` | engine, snapshot write `OSError` | warning |
 | `run.spec_changed_on_resume` | runstate, sha differs on resume | warning |
 | `ui.graph.degraded` | dashboard, snapshot missing/invalid for a run with `spec_sessions` | warning |
+| `run.workflow_snapshot_unavailable` | shared snapshot reader (`runstate.load_workflow_snapshot_at`): malformed sha, stat failure, oversize, unreadable/invalid, or name/body sha mismatch. *Added in implementation* (§0.3 DV-6) | warning |
 
 Cron- and event-triggered runs (`ao service`, ADR-0014) need no special handling once they are
 wired. They will launch `ao run`, which executes through `Orchestrator.run`, so the snapshot and
@@ -1451,6 +1571,9 @@ Streaming (SSE) remains roadmap §3.3 "Live updates".
 - **Rollback.** Revert the commits. New fields and files are simply ignored by old code. There is
   no data migration.
 - **Feature flag.** None needed. The tab is additive and the table remains the default.
+- **New optional extra (as shipped).** `pyproject.toml` gains `browser = ["playwright>=1.45"]` and a
+  `browser` pytest marker. It is used only by the opt-in smoke test and is never imported by
+  `src/`, so neither the runtime install nor the `ui` extra changes (§0.2).
 
 ## 17. Developer and operator experience
 
@@ -1459,7 +1582,7 @@ Streaming (SSE) remains roadmap §3.3 "Live updates".
 - **Workflow authors** get immediate visual feedback on emit manifests: a bad `depends_on`
   appears as a dashed ⚑ missing node, which pairs with the E-Grpp0X fix.
 - **Local iteration.** `make ui-dev` (Vite HMR proxying to `make ui`) works unchanged. A fixture
-  generator (`tests/ui/graph_fixtures.py::write_synthetic_run(root, waves, fanout)`) creates a
+  generator (`tests/ui/graph_fixtures.py::write_synthetic_run(root, waves, fanout, *, clock)`) creates a
   160-node run dir without running agents. It is also useful for manual UI work via `ao ui --workspace`.
 - **Debuggability.** `curl /api/runs/<id>/graph | jq` shows exactly what the canvas renders. The builder
   is pure, so a bug report is reproducible from `state.json` plus the snapshot alone.
@@ -1494,7 +1617,7 @@ Every row is pass/fail. "Evidence" names the test or gate that must be green.
 | D-2, FR-2 | T-l7t6TT, T-F1caAt | bare `ao run` e2e: `spec_sessions` length 1 and the snapshot file exists |
 | D-3 | T-OjTS8O | test: `/graph` fetched once for N polls with an unchanged version, and again after a version change |
 | D-4, FR-7 | T-AsQ77e, T-aHktGB | API tests per degraded mode; banner tests |
-| D-5 | T-OjTS8O, T-pAi0Cv | `grep -r dangerouslySetInnerHTML ui/src/graph` is empty (test); markup-in-id renders literally |
+| D-5 | T-OjTS8O, T-pAi0Cv | `grep -r dangerouslySetInnerHTML ui/src/graph` is empty (test); markup-in-id renders literally. *As shipped, the grep is a gate-time check run at each merge and at G2/G3, not an automated test. The literal-render tests exist (`task-detail-panel.test.tsx`, `graph-banners.test.tsx`).* |
 | D-6 | T-F1caAt | CSP smoke: zero violations, and the negative control detects one |
 | D-7, D-8 | T-OjTS8O, T-aHktGB, T-pAi0Cv | aria-name tests; keyboard tests (Tab/Enter/Esc/arrow keys) |
 | FR-4 | T-AsQ77e | API integration tests, including version equality |
@@ -1594,7 +1717,7 @@ against the live API only in T-F1caAt and in manual `make ui-dev` checks once T-
 | R-5 | Layout jumps on live injection disorient users | M/L | Viewport and selection kept, "+N" notice. Stable incremental layout is non-MVP (T-N8scZK). |
 | R-6 | Someone later adds `extra="forbid"` to `RunState`, which breaks old readers of new state | L/M | Verified today: no `model_config`, default `ignore` (§16). A regression test in T-AZzgT8 pins forward compatibility. |
 | R-7 | Agent-authored ids with pathological length, bidi controls, or zero-width characters spoof or break the display | M/L | Server-side `display_text` strips Cc/Cf and caps at 200 characters (`label`, `label_sanitized`), plus CSS ellipsis. Test with a 1,000-char RTL-override id (dev-security LOW). |
-| R-8 | A-5 (CSP compatibility) is **unverified** until the real-browser smoke passes | L/H | T-F1caAt gate with a negative control. The T-adVpTj spike gives an early signal in week 1 (dev-security LOW). |
+| R-8 | A-5 (CSP compatibility) is **unverified** until the real-browser smoke passes | L/H | T-F1caAt gate with a negative control. The T-adVpTj spike gives an early signal in week 1 (dev-security LOW). **CLOSED 2026-09-27:** A-5 verified (§0.2). |
 | R-9 | Snapshot and `spawned_by` are agent-writable (workspace), so they can be forged | L/M | Documented as observability data, not a security boundary (§8.1 trust note). The dashboard bounds parsing (size cap before parse, early node cap) and renders text only. Integrity relies on the task-isolation posture. |
 | R-10 | Dispatch-interval history is not recorded, so a future timeline view could only show the latest attempt for runs from this era (dev-critic) | M/L | **Accepted residual.** Recording per-dispatch intervals is an additive field on `RunState` and belongs with the timeline epic. It is not built speculatively here. |
 
@@ -1606,7 +1729,9 @@ against the live API only in T-F1caAt and in manual `make ui-dev` checks once T-
   `TaskRunState.route`, so a resumed task on a *selected* route loses its route tag. `route` feeds
   observability and possibly per-route breaker counting. **Recommend a separate backlog ticket.** It is not
   folded in, because carrying `route` has behavioral reach this epic shouldn't own. `origin` has no
-  behavioral reader (A-6), so it *is* carried here.
+  behavioral reader (A-6), so it *is* carried here. **Still open after implementation** (§0.4 FU-1).
+  As shipped, the three reset sites (`runstate.py:498`, `engine.py:1075`, `engine.py:1142`) carry
+  `origin` and deliberately still drop `route`.
 
 **Dependencies.** No blocking external dependencies. `@xyflow/react` and `@dagrejs/dagre` come from the npm
 registry. The tester agent needs Chrome for the opt-in smoke test (present locally at
@@ -1615,7 +1740,8 @@ registry. The tester agent needs Chrome for the opt-in smoke test (present local
 **Open questions (non-blocking; the default is used if unanswered).**
 
 - `OPEN_QUESTION`: Should the smoke test run in CI (the `frontend` job) or stay opt-in? **Default:** opt-in
-  marker, and T-F1caAt records a recommendation after measuring its runtime.
+  marker, and T-F1caAt records a recommendation after measuring its runtime. **RESOLVED: opt-in**
+  (§0.2). Wiring it into CI remains optional (FU-12).
 - `OPEN_QUESTION`: Is a third **timeline/Gantt** view wanted? **Default:** no, and it is recorded as the next
   roadmap step. The `exec_ordinal` plus wait time cover "how it was executed" for now.
 
@@ -1665,3 +1791,7 @@ Task **`T-oroE5f-docs-refresh`** reconciles this HLD, ADR-0017,
 `ui/README.md` (layout plus the dependency-policy line) against the **implemented** code. That
 includes every deviation from this design. It is marked Done only after each claim is checked against
 code (file:line cited in its STATUS).
+
+**Outcome:** done against `dbd3657`. The deviations and follow-ups are in §0, and the claim-to-citation
+evidence table is in the task's `STATUS.md`. ADR-0011 also gained a run-directory sensitivity
+inventory for `workflow.snapshot.<sha12>.json` and the text-only rendering of agent-authored ids.

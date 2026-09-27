@@ -182,11 +182,17 @@ Anything beyond single-user localhost needs:
 
 - **UI-driven workflow construction** — build and edit a DAG visually and emit a valid
   spec. *(Explicitly deferred from the current epic; the highest-value next dashboard step.)*
-  - *Read-only half being addressed: `E-k3AMEr-run-graph-canvas` (designed 2026-09-27, pending
-    execution).* It adds a run-graph canvas with toggleable execution-order and spawned-by views
-    and a task-detail panel. See [`docs-md/run-graph-canvas-hld.md`](../docs-md/run-graph-canvas-hld.md)
-    and [ADR-0017](../docs-md/adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md). Building
-    or editing a DAG in the browser remains deferred.
+  - **Read-only half: delivered** by `E-k3AMEr-run-graph-canvas` (implemented 2026-09-27). The
+    run detail view has a lazy-loaded **Graph** tab with a run-graph canvas, toggleable
+    **Execution order** and **Spawned by** views, a hover card, and a pinned task-detail panel.
+    The engine now records spawn provenance (`RunState.spawned_by`) and a write-once per-session
+    workflow snapshot. See [`docs-md/run-graph-canvas-hld.md`](../docs-md/run-graph-canvas-hld.md)
+    (§0 lists the as-shipped deviations and follow-ups) and
+    [ADR-0017](../docs-md/adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md).
+  - **Editor half: still deferred.** Building or editing a DAG in the browser. Prerequisite debt
+    from the run-graph epic: the hover card and detail panel take the raw `RunGraph` rather than
+    view-models (Gate G3 Warning #1), and `RunGraph.tsx` should have its hover/drag state split
+    out into hooks first (Gate G3 Warning #3). Both are listed in the run-graph HLD §0.4.
   - *Natural follow-on:* a **timeline/Gantt view** of a run. It needs per-dispatch interval
     history, which is deliberately not recorded by E-k3AMEr (HLD R-10).
 - **Live updates** — stream run/task state and agent transcripts instead of polling.
