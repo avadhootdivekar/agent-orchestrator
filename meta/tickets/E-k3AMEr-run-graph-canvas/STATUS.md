@@ -14,7 +14,7 @@
 | T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | **Done** |
 | T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | **Done** |
 | T-M4qboy-run-graph-builder | MVP | S2 | 14 h | **Done** |
-| T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft (unblocked — T-M4qboy is Done) |
+| T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | In Progress (dispatched to `developer`, worktree isolation) |
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | **Done** |
 | T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | In Progress (dispatched to `developer`, worktree isolation) |
 | T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | Draft |
@@ -24,7 +24,7 @@
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). **7 Done**, 1 In Progress, 0 Blocked, 7 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **7 Done**, 2 In Progress, 0 Blocked, 6 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
@@ -48,8 +48,8 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
     Sprint 2 work before close).
 
   `T-AsQ77e-run-graph-endpoint` is now unblocked (depends on `T-M4qboy`, `T-l7t6TT`, `T-adVpTj`,
-  all Done) — dispatching next. Still waiting on `T-pAi0Cv-task-detail-panel` (agent
-  `ad04a5412524b76ba`, frontend).
+  all Done) — dispatched (agent `a1518b6187ab96b12`, worktree isolation). Still waiting on
+  `T-pAi0Cv-task-detail-panel` (agent `ad04a5412524b76ba`, frontend).
 
 ## Prior update (T-aHktGB merge)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-aHktGB-graph-toolbar-and-legend
