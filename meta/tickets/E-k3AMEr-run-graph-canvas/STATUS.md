@@ -51,11 +51,12 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
   Merged (in order): T-mzT3BW (`0d5861d`) → T-AZzgT8 (`7e4c69c`) → T-adVpTj (`1455730`) →
   T-l7t6TT (`e4ded03`, conflict-resolved as `b0bd03d`).
 
-  Dispatched next: **T-OjTS8O-run-graph-canvas** (agent to be recorded once launched), now
-  that its dependency T-adVpTj has landed. Gate G1 (reviewer + tester sign-off on the 3
-  engine-touching tasks) is queued for once T-OjTS8O also lands, so both S1 review passes
-  (engine + a working canvas-foundation smoke) can happen together before Sprint 2's
-  T-M4qboy builds on `spawned_by`/snapshots/`iter_dependency_edges`.
+  Dispatched next: **T-OjTS8O-run-graph-canvas** (agent `a1876924213ef8ed8`, worktree
+  isolation, branched from `ad/run-graph-canvas` @ `67fd97a` so it has T-adVpTj's merged
+  foundation), now that its dependency T-adVpTj has landed. Gate G1 (reviewer + tester
+  sign-off on the 3 engine-touching tasks) is queued for once T-OjTS8O also lands, so both
+  S1 review passes (engine + a working canvas-foundation smoke) can happen together before
+  Sprint 2's T-M4qboy builds on `spawned_by`/snapshots/`iter_dependency_edges`.
 
 ## Prior update
 - By: architect · Role: architect · Date: 2026-09-27 · Comment: Full design package produced
