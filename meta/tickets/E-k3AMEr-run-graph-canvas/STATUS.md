@@ -404,12 +404,13 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
    `ad/run-graph-canvas` currently stands at 4621 backend tests passed / 8 skipped / 0 failed
    (plus 2 opt-in browser tests passing under `-m browser`), 224 frontend tests passed, clean
    ruff/mypy/typecheck, and a byte-reproducible frontend build.
-2. **Next: Gate G3 (final `reviewer` sign-off).** Dispatch `reviewer` for a holistic pass over
-   the accumulated epic diff (`191da69..ad/run-graph-canvas`) — not re-litigating what Gate G1/
-   G2 already covered in depth, but checking overall coherence, the T-pAi0Cv deviation flagged
-   earlier (toolbar search-select also opens the panel — a small, undocumented UX expansion
-   beyond `T-aHktGB`'s original spec), and the 2 deferred Gate G2 LOW findings (confirm they're
-   reasonably backlogged, not silently dropped).
+2. **IN PROGRESS: Gate G3 (final `reviewer` sign-off, agent `aa76da70021711b69`).** Dispatched
+   for a holistic pass over the accumulated epic diff — explicitly scoped to NOT re-litigate
+   what Gate G1 (engine)/G2 (security) already covered in depth, and instead focus on the
+   frontend code quality (`ui/src/graph/*`), which hasn't had a dedicated SOLID/DRY/architecture
+   read yet (only test/build/lint results were verified by me). Also asked for an independent
+   judgment on the T-pAi0Cv deviation (toolbar search-select also opens the panel) and spot
+   checks against the HLD's own U-1..U-7/D-1..D-8 requirement list.
 3. Then dispatch `T-oroE5f-docs-refresh` (mandatory, last) to reconcile `docs-md/` (the HLD,
    ADR-0017, `dashboard-and-general-instructions-hld.md` §4 cross-link, `meta/ROADMAP.md` §3.3)
    and READMEs against what was actually built — including the resolved ASSUMPTION A-5, the
