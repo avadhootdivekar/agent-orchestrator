@@ -441,40 +441,37 @@ class TestGraphBrowserSmoke:
                     await dep_view_radio.click()
 
                     # AC-3d: Click a node and verify detail panel opens
-                    # BLOCKING BUG FOUND: Node click handler is not being called in real browser.
-                    # Evidence documented below - test continues to AC-3e to capture screenshots
-                    # even though AC-3d assertion is blocked.
-                    #
-                    # BUG DETAILS:
-                    # Symptom: TaskDetailPanel never renders after clicking a node
-                    # Root cause: RunGraph's onNodeClick handler -> handleNodeClick -> setSelectedNodeId
-                    #             is not being invoked by React Flow
-                    #
-                    # What works:
-                    # - Node elements render correctly (180 nodes visible)
-                    # - View toggle works (edge count changes from 152 to 160 when toggling to spawn view)
-                    # - React Flow canvas is fully operational
-                    #
-                    # What fails:
-                    # - Node click/Enter events do not trigger the onNodeClick handler
-                    # - selectedNodeId state is never updated
-                    # - TaskDetailPanel conditional render (line 686 of RunGraph.tsx) never executes
-                    # - role="complementary" DOM element never appears
-                    #
-                    # This must be fixed before AC-3 can pass. Proceeding to AC-3e (screenshots).
-                    # NOTE: This bug was discovered during E2E testing - unit tests for T-pAi0Cv
-                    # (run-graph-detail-reveal.test.tsx) passed, so the issue is in real-browser
-                    # event handling or React Flow integration, not the component logic.
+                    # Note: At fitView zoom for 180 nodes (~0.05 zoom), nodes are sub-3-pixel targets.
+                    # Use search-to-center (T-aHktGB toolbar feature) to zoom to usable level first.
+                    search_box = page.locator("#graph-search")
+                    await search_box.fill("checkpoint__1")
+                    await search_box.press("Enter")
+                    await page.wait_for_timeout(600)  # Let zoom animation settle
 
-                    # AC-3e: Take screenshots (showing different views, since AC-3d panel is blocked)
+                    # Now click the node at full size (should be ~184x48 px)
+                    node = page.locator('[data-id="checkpoint__1"]')
+                    await node.click(timeout=5000)
+                    await page.wait_for_timeout(500)
+
+                    # Hard assertion: panel must open and show the clicked node's details
+                    panel = page.get_by_role("complementary")
+                    await panel.wait_for(state="visible", timeout=5000)
+                    assert await panel.is_visible(), "detail panel did not open after clicking node"
+
+                    panel_text = await panel.inner_text()
+                    assert "checkpoint__1" in panel_text, (
+                        f"panel does not show checkpoint__1, got: {panel_text[:200]}"
+                    )
+
+                    # AC-3e: Take screenshots
                     # Use a consistent output directory for the repo
                     import inspect
                     repo_root = Path(inspect.getfile(inspect.currentframe())).parent.parent.parent
                     screenshot_dir = repo_root / "output" / "E-k3AMEr-run-graph-canvas"
                     screenshot_dir.mkdir(parents=True, exist_ok=True)
 
-                    # AC-3e-1: Dependency view screenshot (180 nodes, dependency edges)
-                    await page.screenshot(path=str(screenshot_dir / "dependency-view.png"))
+                    # AC-3e-1: Detail panel open screenshot (in dependency view with panel visible)
+                    await page.screenshot(path=str(screenshot_dir / "detail-panel-open.png"))
 
                     # AC-3e-2: Toggle to spawn view and screenshot
                     await spawn_view_radio.click()
@@ -484,7 +481,7 @@ class TestGraphBrowserSmoke:
                     # AC-3e-3: Toggle back to dependency view for a third distinct screenshot
                     await dep_view_radio.click()
                     await page.wait_for_timeout(500)
-                    await page.screenshot(path=str(screenshot_dir / "dependency-view-2.png"))
+                    await page.screenshot(path=str(screenshot_dir / "dependency-view.png"))
 
                     # AC-3f: Check for CSP violations and errors
                     csp_violations = await page.evaluate("window.__cspViolations")
