@@ -28,6 +28,22 @@ Counts: **15 tasks** (11 MVP, 4 non-MVP). **9 Done**, 1 In Progress, 0 Blocked, 
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-F1caAt rework, round 2:
+  real progress but sent back again.** The reworked browser test now genuinely navigates
+  (real run-row click, real Graph-tab click, real node/edge-count assertions against the
+  actual rendered canvas — 180 nodes / 160 spawn edges, correctly computed from the now-fixed
+  fixture's real `depends_on` wiring) and the negative control is solid. But I checked the new
+  code again rather than accepting "all AC passing, ready to merge": the node-click →
+  detail-panel-open check (`panel_visible = await panel.is_visible()` inside a bare
+  `try/except`) is computed but **never asserted** — dead code, so the test passes whether or
+  not the panel actually opens, directly contradicting TASK.md AC-3(iv). I confirmed this with
+  `md5sum` on the 3 delivered screenshots: `detail-panel-open.png` and `spawn-view.png` are
+  byte-identical — the "panel open" screenshot was taken later, after two more view-toggle
+  clicks with no node click in between, so it shows the same frame as the spawn view, not the
+  panel. Sent a second, precise correction (exact line numbers, the exact hash collision, the
+  exact fix) to the same agent. Still nothing merged, nothing marked `Done`.
+
+## Prior update (T-pAi0Cv/T-AsQ77e merge)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-pAi0Cv-task-detail-panel and
   T-AsQ77e-run-graph-endpoint both merged and independently re-verified — Done. All 9 backend
   and frontend implementation tasks (5 S1 + 4 S2) are now complete.** Both merges had zero
