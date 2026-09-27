@@ -14,6 +14,7 @@
 import { memo } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { statusGlyph, statusTone, type StatusTone } from "../format";
+import { PANEL_PENDING_STATUS } from "./model";
 import type { ViewNode } from "../types";
 
 /**
@@ -36,9 +37,6 @@ const KNOWN_ORIGINS = new Set(["static", "injected", "loop"]);
 
 /** Statuses rendered dimmed + dashed (HLD §8.6: "not_taken or skipped ... reduced opacity ... dashed"). */
 const DASHED_DIMMED_STATUSES = new Set(["not_taken", "skipped"]);
-
-/** Status shown for a node with no stat yet ("stats pending" — HLD §8.5 `joinNodes`). */
-const PENDING_STATUS = "pending";
 
 /**
  * Text alternative for every glyph badge (reviewer finding, HLD §8.6). The legend (`T-aHktGB`)
@@ -117,7 +115,7 @@ function toneToken(tone: StatusTone): string {
  */
 export function statusToken(node: Node): string {
   const data = node.data as Partial<TaskNodeData>;
-  const status = data.node?.stat?.status ?? PENDING_STATUS;
+  const status = data.node?.stat?.status ?? PANEL_PENDING_STATUS;
   return toneToken(statusTone(status));
 }
 
@@ -130,7 +128,7 @@ export function statusToken(node: Node): string {
  * labeled inner one.
  */
 export function accessibleNodeName(node: ViewNode): string {
-  const status = node.stat?.status ?? PENDING_STATUS;
+  const status = node.stat?.status ?? PANEL_PENDING_STATUS;
   const badgeText = badgesFor(node)
     .map((badge) => badge.text)
     .join(", ");
@@ -139,7 +137,7 @@ export function accessibleNodeName(node: ViewNode): string {
 
 function TaskNodeComponent({ data, selected }: NodeProps<TaskNodeType>) {
   const { node, direction } = data;
-  const status = node.stat?.status ?? PENDING_STATUS;
+  const status = node.stat?.status ?? PANEL_PENDING_STATUS;
   const tone = statusTone(status);
   const isDashedDimmed = DASHED_DIMMED_STATUSES.has(status);
   const dashed = node.missing || isDashedDimmed;

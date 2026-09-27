@@ -208,8 +208,17 @@ export function waitSeconds(
 
 // ---- Detail panel model (T-pAi0Cv, HLD §8.7, ADR-0017 D6) -----------------------------------
 
-/** Status shown when a task has no stat yet -- mirrors `TaskNode.tsx`'s own `PENDING_STATUS`. */
-const PANEL_PENDING_STATUS = "pending";
+/** Status shown when a task has no stat yet. The one shared constant for this -- Gate G3
+ * Warning #2 found it independently redeclared in `TaskNode.tsx`/`TaskHoverCard.tsx` too;
+ * both now import this instead of keeping their own "mirrored" copy. */
+export const PANEL_PENDING_STATUS = "pending";
+
+/** `max(0, attempts - 1)` -- the shared "retries" formula (T-pAi0Cv AC-2, HLD §8.7). Gate G3
+ * Warning #2 found `TaskHoverCard.tsx` computing this inline instead of calling `panelModel`;
+ * both now use this one function. */
+export function retriesFromAttempts(attempts: number | null | undefined): number {
+  return Math.max(0, (attempts ?? 0) - 1);
+}
 
 export interface PanelHeader {
   label: string;
@@ -349,7 +358,7 @@ export function panelModel(
       : DEFAULT_PANEL_USAGE,
     retries: {
       attempts: stat?.attempts ?? null,
-      retries: Math.max(0, (stat?.attempts ?? 0) - 1),
+      retries: retriesFromAttempts(stat?.attempts),
       dispatches: stat?.dispatch_cycle ?? null,
     },
     spawn: {

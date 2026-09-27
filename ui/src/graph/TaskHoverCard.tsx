@@ -13,6 +13,7 @@
 import { NodeToolbar, Position } from "@xyflow/react";
 import { StatusChip } from "../components/common";
 import { formatCost, formatDuration } from "../format";
+import { PANEL_PENDING_STATUS, retriesFromAttempts } from "./model";
 import type { RunGraph as RunGraphData, TaskStat } from "../types";
 
 export interface TaskHoverCardProps {
@@ -26,9 +27,6 @@ export interface TaskHoverCardProps {
   direction: "LR" | "TB";
 }
 
-/** Status shown when a task has no stat yet -- mirrors `TaskNode.tsx`'s own `PENDING_STATUS`. */
-const HOVER_PENDING_STATUS = "pending";
-
 export function TaskHoverCard({
   nodeId,
   isVisible,
@@ -40,7 +38,9 @@ export function TaskHoverCard({
   const node = graph.nodes.find((n) => n.id === nodeId);
   if (!node) return null;
   const stat = statsById.get(nodeId) ?? null;
-  const retries = stat ? Math.max(0, stat.attempts - 1) : null;
+  // Gate G3 Warning #2: this used to compute Math.max(0, attempts - 1) inline, duplicating
+  // panelModel's identical formula -- both now share retriesFromAttempts.
+  const retries = stat ? retriesFromAttempts(stat.attempts) : null;
 
   return (
     <NodeToolbar
@@ -53,7 +53,7 @@ export function TaskHoverCard({
       {node.label_sanitized ? (
         <div className="task-hover-card-note">hidden characters removed</div>
       ) : null}
-      <StatusChip status={stat?.status ?? HOVER_PENDING_STATUS} />
+      <StatusChip status={stat?.status ?? PANEL_PENDING_STATUS} />
       <dl className="task-hover-card-stats">
         <div>
           <dt>Duration</dt>
