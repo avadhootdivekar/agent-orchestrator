@@ -2,17 +2,17 @@
 
 - ID: `E-k3AMEr-run-graph-canvas`
 - Updated At: `2026-09-27`
-- State: `Draft` (design complete and hardened; ready for execution; **no code written**)
-- Owner: `dev-epic` (next: execution) · design by `architect`
+- State: `In Progress` (Sprint 1 execution started on branch `ad/run-graph-canvas`)
+- Owner: `dev-epic` (execution) · design by `architect`
 
 ## Rollup
 | Task | Scope | Sprint | Est | State |
 |------|-------|--------|-----|-------|
-| T-AZzgT8-spawn-provenance | MVP | S1 | 14 h | Draft |
-| T-l7t6TT-workflow-snapshot | MVP | S1 | 12 h | Draft |
-| T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | Draft |
-| T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | Draft |
-| T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | Draft |
+| T-AZzgT8-spawn-provenance | MVP | S1 | 14 h | In Progress (dispatched to `developer`, worktree isolation) |
+| T-l7t6TT-workflow-snapshot | MVP | S1 | 12 h | In Progress (dispatched to `developer`, worktree isolation) |
+| T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | In Progress (dispatched to `developer`, worktree isolation) |
+| T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | In Progress (dispatched to `developer`, worktree isolation) |
+| T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | Draft (blocked on T-adVpTj; dispatch after it lands) |
 | T-M4qboy-run-graph-builder | MVP | S2 | 14 h | Draft |
 | T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft |
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | Draft |
@@ -24,10 +24,29 @@
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). 0 Done, 0 In Progress, 0 Blocked, 15 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). 0 Done, 4 In Progress, 0 Blocked, 11 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: Started execution. Created
+  branch `ad/run-graph-canvas` off `main` @ `191da69` and committed the architect's design
+  package as the baseline commit (`66c4625`, design docs only, no source change). Dispatched
+  Sprint 1's first four tasks as parallel `developer` subagents, each in its own isolated git
+  worktree (to avoid concurrent-edit collisions — two of them touch `models.py` in different
+  classes, per the tickets' own risk notes) branched from `ad/run-graph-canvas` @ `66c4625`:
+  - T-AZzgT8-spawn-provenance (agent `a5d58425e0b06195a`)
+  - T-l7t6TT-workflow-snapshot (agent `a80d3a1c040e76bda`)
+  - T-mzT3BW-dag-edge-iterator (agent `a6e232188a71487b3`)
+  - T-adVpTj-graph-model-and-layout (agent `acb81d6aed33292f8`)
+
+  T-OjTS8O-run-graph-canvas depends on T-adVpTj's exports and will be dispatched once that
+  lands. Each agent was given an explicit change-scope boundary (which files it may/must not
+  touch) to keep the parallel worktrees non-overlapping, and was told to update its own
+  task-level STATUS.md and commit locally (no push, no PR) — results will be merged into
+  `ad/run-graph-canvas` and verified (full `pytest -q`/`ruff`/`mypy` re-run after each merge)
+  before Gate G1.
+
+## Prior update
 - By: architect · Role: architect · Date: 2026-09-27 · Comment: Full design package produced
   (design + tickets only; no implementation):
   - HLD/LLD `docs-md/run-graph-canvas-hld.md` (sections 1–25)
