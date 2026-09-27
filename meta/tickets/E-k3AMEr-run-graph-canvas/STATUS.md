@@ -8,11 +8,11 @@
 ## Rollup
 | Task | Scope | Sprint | Est | State |
 |------|-------|--------|-----|-------|
-| T-AZzgT8-spawn-provenance | MVP | S1 | 14 h | In Progress (dispatched to `developer`, worktree isolation) |
-| T-l7t6TT-workflow-snapshot | MVP | S1 | 12 h | In Progress (dispatched to `developer`, worktree isolation) |
-| T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | In Progress (dispatched to `developer`, worktree isolation) |
-| T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | In Progress (dispatched to `developer`, worktree isolation) |
-| T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | Draft (blocked on T-adVpTj; dispatch after it lands) |
+| T-AZzgT8-spawn-provenance | MVP | S1 | 14 h | Implemented, merged — Gate G1 sign-off pending |
+| T-l7t6TT-workflow-snapshot | MVP | S1 | 12 h | Implemented, merged — Gate G1 sign-off pending |
+| T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | Implemented, merged — Gate G1 sign-off pending |
+| T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | Implemented, merged — Gate G1 sign-off pending |
+| T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | In Progress (dispatched to `developer`, worktree isolation) |
 | T-M4qboy-run-graph-builder | MVP | S2 | 14 h | Draft |
 | T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft |
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | Draft |
@@ -24,27 +24,38 @@
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). 0 Done, 4 In Progress, 0 Blocked, 11 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). 0 Done, 1 In Progress, 4 Implemented (pending G1), 0 Blocked, 10 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
-- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: Started execution. Created
-  branch `ad/run-graph-canvas` off `main` @ `191da69` and committed the architect's design
-  package as the baseline commit (`66c4625`, design docs only, no source change). Dispatched
-  Sprint 1's first four tasks as parallel `developer` subagents, each in its own isolated git
-  worktree (to avoid concurrent-edit collisions — two of them touch `models.py` in different
-  classes, per the tickets' own risk notes) branched from `ad/run-graph-canvas` @ `66c4625`:
-  - T-AZzgT8-spawn-provenance (agent `a5d58425e0b06195a`)
-  - T-l7t6TT-workflow-snapshot (agent `a80d3a1c040e76bda`)
-  - T-mzT3BW-dag-edge-iterator (agent `a6e232188a71487b3`)
-  - T-adVpTj-graph-model-and-layout (agent `acb81d6aed33292f8`)
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: Sprint 1 wave 1 complete and
+  merged into `ad/run-graph-canvas`. All four parallel subagents finished, were merged one at
+  a time (only `models.py` conflicted — both sides purely additive, resolved by keeping both
+  new classes/fields — commit `b0bd03d`), and were independently re-verified by me (not just
+  taken on the agents' word):
+  - `pytest -q`: **4520 passed, 8 skipped, 0 failed** (baseline before this epic: 4455 passed,
+    8 skipped — net +65 new tests, 0 regressions).
+  - `ruff check .` / `ruff format --check .`: 0 new findings. One pre-existing, out-of-scope
+    finding remains in `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py`
+    (present before this epic; I ran `ruff check --fix` once, saw it land only in that
+    unrelated file, and reverted it — not this epic's scope to fix).
+  - `mypy src`: 0 new findings; the 4 pre-existing `_version.py` errors are unchanged from baseline.
+  - Frontend (`ui/`): `npm ci` clean, `npm audit --omit=dev --audit-level=high` exit 0 (one
+    pre-existing moderate `dompurify` advisory, below the `high` gate and unrelated to the two
+    deps this epic added). `npm run typecheck` clean. `npm test`: **129 passed (129), 11 files**
+    (baseline 85; net +44 new tests). `npm run build` succeeds; verification rebuild of
+    `src/agent_orchestrator/ui/static/` was reverted afterward since nothing wires the new
+    graph code into the UI yet (correct — that lands with T-OjTS8O), so it stays out of this
+    commit.
 
-  T-OjTS8O-run-graph-canvas depends on T-adVpTj's exports and will be dispatched once that
-  lands. Each agent was given an explicit change-scope boundary (which files it may/must not
-  touch) to keep the parallel worktrees non-overlapping, and was told to update its own
-  task-level STATUS.md and commit locally (no push, no PR) — results will be merged into
-  `ad/run-graph-canvas` and verified (full `pytest -q`/`ruff`/`mypy` re-run after each merge)
-  before Gate G1.
+  Merged (in order): T-mzT3BW (`0d5861d`) → T-AZzgT8 (`7e4c69c`) → T-adVpTj (`1455730`) →
+  T-l7t6TT (`e4ded03`, conflict-resolved as `b0bd03d`).
+
+  Dispatched next: **T-OjTS8O-run-graph-canvas** (agent to be recorded once launched), now
+  that its dependency T-adVpTj has landed. Gate G1 (reviewer + tester sign-off on the 3
+  engine-touching tasks) is queued for once T-OjTS8O also lands, so both S1 review passes
+  (engine + a working canvas-foundation smoke) can happen together before Sprint 2's
+  T-M4qboy builds on `spawned_by`/snapshots/`iter_dependency_edges`.
 
 ## Prior update
 - By: architect · Role: architect · Date: 2026-09-27 · Comment: Full design package produced
