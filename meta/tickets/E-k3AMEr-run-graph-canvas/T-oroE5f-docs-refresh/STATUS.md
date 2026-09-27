@@ -2,7 +2,7 @@
 
 - ID: `T-oroE5f-docs-refresh`
 - Updated At: `2026-09-27`
-- State: `In Review` (doc reconciliation complete; AC-5 reviewer sign-off in progress)
+- State: `Done` (AC-1 to AC-5 met; reviewer PASS, and its 1 SHOULD-FIX resolved)
 - Owner: `architect` (execution) · `reviewer` (AC-5 sign-off)
 - Scope: `MVP (mandatory, last)` · Sprint: `S2` · Estimate: `6 h`
 
@@ -13,7 +13,8 @@
   or `tests/`, so every `path:line` below holds at both `dbd3657` and this task's own commit. The
   worktree started on `main` @ `191da69`, so I first fast-forwarded it to `dbd3657`, with no merge
   commit and no conflicts.
-  - **Deviations found:** 15 (DV-1 to DV-15, HLD §0.3). Three of them were **never carried into
+  - **Deviations found:** 16 (DV-1 to DV-16, HLD §0.3; DV-16 was added after the reviewer's
+    SHOULD-FIX). Three of them were **never carried into
     any task AC** and were silently dropped between design and implementation, so they were not in
     any gate report:
     - DV-7: the dependency-cycle back-edge warning
@@ -34,7 +35,7 @@
 
 | # | Document | Change |
 |---|---|---|
-| 1 | `docs-md/run-graph-canvas-hld.md` | Status → **Implemented**. New **§0 "Implementation outcome and deviations"**: §0.1 what shipped, plus measured outcomes; §0.2 A-5 VERIFIED and browser-smoke OPEN_QUESTION RESOLVED (opt-in); §0.3 a 15-row deviation table; §0.4 a 13-row follow-up table. Inline "as shipped" corrections in §3 A-5, §5.2 (README line), §7.3 (`hooks.ts`), §7.5 (DV-2/DV-12), §8.1 (shipped anchors), §8.2 (shipped reader behavior and anchors; ADR-0011 inventory now done), §8.3.2 (translation table, spawn-data constants, `display_text`, the cycle-warning edge case), §8.5 (`displayText` not built; extra `model.ts` exports; the "+N" notice), §8.6 (edge dimming), §8.7 (search-select opens the panel), §14.1 (`_workflow_snapshot_filename`), §15 (a new `run.workflow_snapshot_unavailable` event), §16 (the `browser` extra), §17 (`write_synthetic_run` signature), §19 D-5 (grep is a gate check, not a test), §23 R-8 closed, OPEN_QUESTION resolved, F-2 still open, and §25 outcome. |
+| 1 | `docs-md/run-graph-canvas-hld.md` | Status → **Implemented**. New **§0 "Implementation outcome and deviations"**: §0.1 what shipped, plus measured outcomes; §0.2 A-5 VERIFIED and browser-smoke OPEN_QUESTION RESOLVED (opt-in); §0.3 a 16-row deviation table; §0.4 a 13-row follow-up table. Inline "as shipped" corrections in §3 A-5, §5.2 (README line), §7.3 (`hooks.ts`), §7.5 (DV-2/DV-12), §8.1 (shipped anchors), §8.2 (shipped reader behavior and anchors; ADR-0011 inventory now done), §8.3.2 (translation table, spawn-data constants, `display_text`, the cycle-warning edge case), §8.5 (`displayText` not built; extra `model.ts` exports; the "+N" notice), §8.6 (edge dimming), §8.7 (search-select opens the panel), §14.1 (`_workflow_snapshot_filename`), §15 (a new `run.workflow_snapshot_unavailable` event), §16 (the `browser` extra), §17 (`write_synthetic_run` signature), §19 D-5 (grep is a gate check, not a test), §23 R-8 closed, OPEN_QUESTION resolved, F-2 still open, and §25 outcome. |
 | 2 | `docs-md/adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md` | Status → **Accepted (implemented)**. New "Implementation note" covering D1–D7 as shipped: the G1/G2 hardening, the D4 client-mirror gap, D5 measurements and the exit-cost correction (4 React Flow importers), the D6 search-opens-panel expansion, and the G3 Warning #1 consequence debt. |
 | 3 | `docs-md/dashboard-and-general-instructions-hld.md` | §2.5: the runtime-deps line corrected (it was already stale since E-Fp7Qv2), plus a run-graph paragraph on the Table/Graph tab, lazy chunk, and gating on `graph_version`. §2.6: the `/runs/{id}/graph` row, the `graph_version` note on `/runs/{id}`, and a "Run graph additions" block (status codes, `graph_version`, `TaskStat` fields). §4: the read-only half marked **delivered**, with a link to the epic, and the editor half still deferred with its G3 W#1 prerequisite. |
 | 4 | `meta/ROADMAP.md` §3.3 | The read-only half is marked **delivered**. The editor half stays **deferred**, with G3 Warnings #1/#3 named as prerequisite debt. |
@@ -115,9 +116,10 @@
 | 64 | Test totals: 4621 passed / 8 skipped; UI coverage 93.91%; vitest 224 | `meta/tickets/E-k3AMEr-run-graph-canvas/STATUS.md:74-77,129-131,156-158` |
 | 65 | Guide "Settle ordering" anchors: injection block L2046-2104, save L2106, `evaluate_breakers` L2127, `task.injected` L2168-2176 | `src/agent_orchestrator/engine.py:2046,2104,2106,2127,2168-2176` |
 | 66 | Legend "spec changed" is regex-matched from `warnings[]` (FU-10) | `ui/src/graph/Legend.tsx:104-110` |
+| 67 | Two recenter paths with different zoom policies (DV-16, added after reviewer SHOULD-FIX) | `ui/src/graph/hooks.ts:19,53-55` (floor of 1); `ui/src/graph/RunGraph.tsx:351-360` (current zoom) |
 
 ### AC-2: HLD "Implementation outcome" section
-- `docs-md/run-graph-canvas-hld.md` §0.3 lists 15 deviations (DV-1 to DV-15), and §0.4 lists 13
+- `docs-md/run-graph-canvas-hld.md` §0.3 lists 16 deviations (DV-1 to DV-16), and §0.4 lists 13
   follow-ups (FU-1 to FU-13). The follow-ups include F-2 route-on-resume (FU-1), R-10 (FU-2), the
   4 non-MVP tickets by ID (FU-11), Gate G2 L-1/L-4 (FU-4/FU-5), Gate G3 W#1/W#3/Suggestions
   (FU-3/FU-9/FU-10), and the CI-vs-opt-in resolution (§0.2 + FU-12).
@@ -138,7 +140,22 @@ and the implementation note.
   Risks / Blockers for `dev-epic` to reconcile. I did not change it (out of scope).
 
 ### AC-5: reviewer sign-off
-- Pending. Dispatched to `reviewer` against this task's commit (see "Next actions").
+- By: reviewer · Role: reviewer · Date: 2026-09-27 · Comment: **PASS.** This was a read-only
+  review of commit `1e7d856`.
+  - I spot-checked 22 of the 66 evidence rows against the code, weighted toward DV-1 to DV-15 and
+    the ADR-0011 security claims. **0 wrong.** The gzip sizes matched to the byte (79361/2037), and
+    the ui/README → ADR-0017 D5 anchor slug was independently recomputed and resolves.
+  - AC-3 grep: no output, exit 1.
+  - Findings:
+    - 0 MUST-FIX.
+    - 1 SHOULD-FIX: T-aHktGB deviation #4 (two recenter paths with different zoom policies) was
+      missing from §0.3.
+    - 2 NITs, informational only: the §0 table deliberately duplicates the inline notes; and
+      `dev-epic` should act on the listed ticket inconsistencies before closure.
+  - Code bugs: none.
+- By: architect · Role: architect · Date: 2026-09-27 · Comment: **SHOULD-FIX resolved.** Added
+  DV-16 to HLD §0.3, verified against `hooks.ts:19,53-55` and `RunGraph.tsx:351-360`, and added
+  evidence row 67. Both NITs need no doc change. AC-5 is met, so the task is **Done**.
 
 ## Risks / Blockers
 - **Ticket-doc inconsistencies found and NOT fixed** (outside this task's boundary; for
@@ -167,7 +184,6 @@ and the implementation note.
   `components/TemplateLaunch.tsx` and `components/viewer/`, which predate this epic.
 
 ## Next actions
-1. `reviewer` signs off on the reconciled docs (AC-5). Record the outcome here, then set
-   `Done` in both this file and `TASK.md`.
+1. DONE: the `reviewer` signed off (AC-5).
 2. `dev-epic` reconciles the ticket inconsistencies above, rolls this task up into `EPIC.md` and
    the epic `STATUS.md`, and closes the epic.
