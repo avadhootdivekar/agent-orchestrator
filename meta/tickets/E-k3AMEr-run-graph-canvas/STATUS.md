@@ -2,7 +2,7 @@
 
 - ID: `E-k3AMEr-run-graph-canvas`
 - Updated At: `2026-09-27`
-- State: `In Progress` (Sprint 1 CLOSED — all 5 tasks Done, Gate G1 PASSED; Sprint 2 next)
+- State: `In Progress` (Sprint 1 CLOSED — all 5 tasks Done, Gate G1 PASSED; Sprint 2 started)
 - Owner: `dev-epic` (execution) · design by `architect`
 
 ## Rollup
@@ -13,9 +13,9 @@
 | T-mzT3BW-dag-edge-iterator | MVP | S1 | 8 h | **Done** — Gate G1 PASS (1 SHOULD-FIX + 1 NIT resolved) |
 | T-adVpTj-graph-model-and-layout | MVP | S1 | 16 h | **Done** |
 | T-OjTS8O-run-graph-canvas | MVP | S1 | 14 h | **Done** |
-| T-M4qboy-run-graph-builder | MVP | S2 | 14 h | Draft |
-| T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft |
-| T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | Draft |
+| T-M4qboy-run-graph-builder | MVP | S2 | 14 h | In Progress (dispatched to `developer`, worktree isolation) |
+| T-AsQ77e-run-graph-endpoint | MVP | S2 | 6 h | Draft (blocked on T-M4qboy) |
+| T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | In Progress (dispatched to `developer`, worktree isolation) |
 | T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | Draft |
 | T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | Draft |
 | T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft |
@@ -24,7 +24,7 @@
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). **5 Done**, 0 In Progress, 0 Blocked, 10 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **5 Done**, 2 In Progress, 0 Blocked, 8 Draft.
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
@@ -172,15 +172,17 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
   selected route. A separate backlog ticket is recommended.
 
 ## Next actions
-1. **DONE. Sprint 1 fully closed.** All 5 S1 tasks `Done`, Gate G1 `PASS` (0 MUST-FIX, 2
-   SHOULD-FIX + 1 NIT found and resolved same-day). `ad/run-graph-canvas` @ latest commit has
-   4531 backend tests passing (8 skipped, 0 failed) and 151 frontend tests passing, with clean
-   ruff/mypy/typecheck and a byte-reproducible frontend build.
-2. **Next: begin Sprint 2.** Dispatch `T-M4qboy-run-graph-builder` first (the pure `ui/graph.py`
-   builder — it is the one task every other S2 task depends on: it consumes `spawned_by`,
-   `spec_sessions`/`load_workflow_snapshot`, and `iter_dependency_edges`, all now Gate-G1-clean).
-3. After T-M4qboy lands: `T-AsQ77e-run-graph-endpoint` (contract-tests against the T-adVpTj
-   fixture), then `T-aHktGB` and `T-pAi0Cv` (can parallelize once the endpoint contract is
-   stable), then `T-F1caAt` (late gate — real e2e evidence via `tester`), then `T-oroE5f`
-   (docs refresh, mandatory last). Gate G2 (`dev-security`) before close, Gate G3 (final
-   `reviewer` sign-off) after.
+1. **DONE. Sprint 1 fully closed.** All 5 S1 tasks `Done`, Gate G1 `PASS`.
+2. **IN PROGRESS: Sprint 2 wave 1.** Checked each remaining task's own `Dependencies` section
+   (not just the epic's S1→S2 framing) and found `T-aHktGB` depends only on `T-OjTS8O`/
+   `T-adVpTj` (both Done) — it does NOT need the live backend endpoint, same as `T-OjTS8O` did,
+   since it builds and tests against the existing fixture + mocked `api.runGraph`. So dispatched
+   **both** `T-M4qboy-run-graph-builder` (agent `a03c5d909ea622938`, backend, blocks
+   `T-AsQ77e`) and `T-aHktGB-graph-toolbar-and-legend` (agent `a8f9cb819952273db`, frontend,
+   blocks `T-pAi0Cv`) in parallel, in isolated worktrees — fully disjoint file sets (Python
+   `src/agent_orchestrator/ui/graph.py` vs. new `ui/src/graph/GraphToolbar.tsx`/`Legend.tsx`/
+   `hooks.ts` + edits to the already-merged `RunGraph.tsx`), zero expected conflict.
+3. Once T-M4qboy lands: dispatch `T-AsQ77e-run-graph-endpoint`. Once T-aHktGB lands: dispatch
+   `T-pAi0Cv-task-detail-panel`. Then `T-F1caAt` (late gate — real e2e evidence via `tester`),
+   then `T-oroE5f` (docs refresh, mandatory last). Gate G2 (`dev-security`) before close, Gate
+   G3 (final `reviewer` sign-off) after.
