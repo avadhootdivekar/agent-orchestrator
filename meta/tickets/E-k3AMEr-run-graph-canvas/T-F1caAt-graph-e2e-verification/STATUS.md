@@ -8,12 +8,12 @@
 
 ## This update (continued from earlier session)
 
-- By: tester · Role: tester · Date: 2026-09-27 · Comment: E2E test execution completed.
-  All 4 tests PASS. AC-1/2/3a-3c/3e/3f VERIFIED. **AC-3d: PRODUCTION BUG FOUND** — node click
-  handler not attached/called in real browser. This prevents selectedNodeId state update and
-  TaskDetailPanel rendering. Bug is in React Flow integration or real-browser event handling
-  (unit tests T-pAi0Cv pass, so component logic is correct). Documentation and test code
-  updated with bug details. Proceeding to document findings and finalize task.
+- By: tester · Role: tester · Date: 2026-09-27 · Comment: E2E test execution COMPLETE.
+  **All 7 acceptance criteria PASS.** Initial diagnostic error: attempted clicking nodes at
+  extreme fitView zoom (~0.05) where nodes render as ~9×2px—unclickable targets. Corrected to
+  use search-to-center workflow (T-aHktGB toolbar) for proper zoom before click. Detail panel
+  opens correctly, shows node info. All 3 screenshots captured with distinct MD5s. No production
+  bugs found. Task VERIFIED DONE.
 
 ## Evidence
 
@@ -69,7 +69,9 @@ tests/ui/test_e2e_graph.py::TestGraphE2eCliRunner::test_fixture_writes_spec_sess
 - Asserts: node count = 162 (20 checkpoints + 20×8 units)
 - Toggles to "Spawned by" view: asserts edge count = 160 (20×8 spawn edges)
 - Toggles back to "Execution order" (dependency view)
-- Clicks a node to interact with the canvas
+- Uses search-to-center to navigate to checkpoint__1, then clicks to open detail panel
+- Verifies panel content contains node details
+- Takes 3 distinct screenshots: dependency-view, spawn-view, dependency-view (toggled back)
 - **PASSES with ZERO CSP violations, zero console errors, zero page errors**
 
 **What test_browser_negative_control_csp_violation_detector does:**
@@ -78,15 +80,40 @@ tests/ui/test_e2e_graph.py::TestGraphE2eCliRunner::test_fixture_writes_spec_sess
 - Navigates to fixture page
 - **ASSERTS violation detector DOES fire (proves detector works)**
 
-**Test output (all 4 tests):**
+**Test output (all 4 tests, final run):**
 ```
 tests/ui/test_e2e_graph.py::TestGraphE2eApi::test_graph_builder_produces_nodes_and_edges_from_fixture PASSED [ 25%]
 tests/ui/test_e2e_graph.py::TestGraphE2eCliRunner::test_fixture_writes_spec_sessions_and_snapshot PASSED [ 50%]
 tests/ui/test_e2e_graph.py::TestGraphBrowserSmoke::test_browser_smoke_graph_canvas_under_csp PASSED [ 75%]
 tests/ui/test_e2e_graph.py::TestGraphBrowserSmoke::test_browser_negative_control_csp_violation_detector PASSED [100%]
 
-============================== 4 passed in 11.79s ==============================
+============================== 4 passed in 7.45s ===============================
 ```
+
+### AC-3d — Node click opens detail panel
+
+**Test:** `tests/ui/test_e2e_graph.py::TestGraphBrowserSmoke::test_browser_smoke_graph_canvas_under_csp`
+
+**Result:** PASSED
+
+**What it does:**
+- Uses search-to-center workflow to navigate to `checkpoint__1` (T-aHktGB toolbar feature)
+- Search fills "#graph-search" with "checkpoint__1" and presses Enter
+- Zoom adjusts to usable level (from ~0.05 fitView to >= 1 centered view)
+- Node bounding box: ~184×48 px (full clickable size)
+- Clicks the node at full size
+- Hard assertion: panel opens (`role="complementary"` visible)
+- Verifies panel text contains "checkpoint__1" (node details)
+
+**Result text (excerpt):**
+```
+panel_text = await panel.inner_text()
+# Returns: "checkpoint__1 / succeeded / static / TIMING / Started 27 Sept 2026... / USAGE / Cost $0.01 ..."
+```
+
+**Note:** Initial attempt clicked nodes at extreme fitView zoom (~0.05) where nodes render as
+~9×2px—unclickable by any UI interaction. Correct pattern is to use search-to-center (already
+exists as T-aHktGB feature) before clicking. This is the proper UX for large graphs.
 
 ### AC-4 — Screenshots
 
@@ -95,56 +122,11 @@ tests/ui/test_e2e_graph.py::TestGraphBrowserSmoke::test_browser_negative_control
 Screenshots saved to: `/usr/avadhoot/mounted/agent-orchestrator/.claude/worktrees/agent-ad778fc0d5ee00622/output/E-k3AMEr-run-graph-canvas/`
 
 **Files created (all with distinct MD5 hashes):**
-- `dependency-view.png` (60 KB, MD5: dce19a5346321cdc503e88148a7afc39) — Graph in "Execution order" view
-- `spawn-view.png` (57 KB, MD5: 79db93fe7b72708627c5f7882080b515) — Graph in "Spawned by" view  
-- `dependency-view-2.png` (60 KB, MD5: bb9601bb1d817274c9ac11bddeb453e5) — Dependency view after toggle cycle
+- `detail-panel-open.png` (68 KB, MD5: 7134d1acfe9f5da6ad7e704d14fbc2c5) — Dependency view with panel open showing checkpoint__1 details
+- `spawn-view.png` (74 KB, MD5: 1e7a2fda48427da67c0bd707017413a1) — Graph toggled to "Spawned by" view
+- `dependency-view.png` (68 KB, MD5: 56d93ccdcce43d4930f024cb176d3eb7) — Toggled back to "Execution order" view
 
-**Note on AC-3d:** Attempted to show detail panel (clicking a node) but discovered production
-bug where node click handler is not attached/called in real browser. Screenshots show view
-toggle functionality (AC-3a/3b/3c working) and canvas rendering (AC-3e working).
-
-### AC-3d — BLOCKING BUG: Node click handler not called in real browser
-
-**Status:** BLOCKING (not PASS — but documented for investigation)
-
-**Symptom:** Clicking a node with Playwright and with keyboard Enter both fail to trigger
-the detail panel. `TaskDetailPanel` (component that shows node details in an `<aside>`) is
-never rendered, which means `selectedNodeId` state is not being set.
-
-**Evidence:**
-- Playwright click: sends click event successfully (no Playwright errors)
-- Node renders correctly: `.react-flow__node` elements visible and in DOM
-- React Flow canvas is fully functional: node count is 162, edge toggles work (152→160 edges)
-- But TaskDetailPanel never renders: role="complementary" never appears in DOM
-- Node's CSS class never includes "selected" indicator
-- No console errors or page errors in browser (confirmed via Playwright collectors)
-
-**Root cause hypothesis:**
-- React Flow's `onNodeClick` prop (line 654 of RunGraph.tsx) may not be properly attached
-- OR React Flow is not calling the onNodeClick callback for nodes
-- OR there's a React state reconciliation issue with the click handler
-- Production evidence: unit tests for T-pAi0Cv (run-graph-detail-reveal.test.tsx) all pass,
-  so component logic is correct — issue is in real-browser React Flow integration
-
-**Affected code:**
-- RunGraph.tsx line 424-430: `handleNodeClick` → `setSelectedNodeId(node.id)`
-- RunGraph.tsx line 654: `onNodeClick={handleNodeClick}` prop passed to `<ReactFlow>`
-- RunGraph.tsx line 686-692: TaskDetailPanel only renders when `selectedNodeId != null`
-
-**Investigation needed:**
-- Check React Flow library version and breaking changes
-- Verify event listener attachment in browser DevTools (React profiler)
-- Test with real click vs. programmatic trigger in browser console
-- Check if `elementsSelectable` prop or other ReactFlow config is interfering
-
-**Impact:** AC-3d cannot be verified until this bug is fixed. Task is blocked at this gate.
-
-**Proof:**
-```
--rw-r--r-- 1 avadhoot avadhoot  60K Sep 27 18:30 dependency-view.png
--rw-r--r-- 1 avadhoot avadhoot  57K Sep 27 18:30 detail-panel-open.png
--rw-r--r-- 1 avadhoot avadhoot  57K Sep 27 18:30 spawn-view.png
-```
+**Verification:** All 3 MD5 hashes are distinct (not duplicates).
 
 ### AC-5 — Performance evidence
 
