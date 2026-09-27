@@ -35,6 +35,7 @@ ALLOWED_VARIABLES = frozenset(
         "workspace_root",
         "params.type",
         "params.repo_set",
+        "params.branch_policy",
         "params.task_budget_usd",
         "params.run_budget_usd",
     }
@@ -151,7 +152,13 @@ def test_template_yaml_params_shape() -> None:
     manifest = _load_manifest()
     params = manifest["params"]
     assert isinstance(params, dict)
-    assert set(params) == {"type", "repo_set", "task_budget_usd", "run_budget_usd"}
+    assert set(params) == {
+        "type",
+        "repo_set",
+        "branch_policy",
+        "task_budget_usd",
+        "run_budget_usd",
+    }
 
     allowed_param_keys = {"description", "required", "enum", "default"}
     for name, spec in params.items():
@@ -166,6 +173,13 @@ def test_template_yaml_params_shape() -> None:
     repo_set_param = params["repo_set"]
     assert repo_set_param["required"] is True
     assert "default" not in repo_set_param  # no sensible cross-workspace default (HLD §2.8)
+
+    branch_policy_param = params["branch_policy"]
+    assert branch_policy_param["required"] is False
+    assert branch_policy_param["default"] == (
+        "reuse the current branch unless it is already merged into main, in "
+        "which case start fresh from latest main"
+    )
 
     task_budget = params["task_budget_usd"]
     assert task_budget["required"] is False
@@ -194,7 +208,7 @@ def test_template_yaml_dirs_mirror_bash_mkdir_list() -> None:
 def test_template_yaml_files_shape() -> None:
     manifest = _load_manifest()
     files = manifest["files"]
-    assert isinstance(files, list) and len(files) == 4
+    assert isinstance(files, list) and len(files) == 5
 
     by_target = {f["target"]: f for f in files}
     assert set(by_target) == {
@@ -202,6 +216,7 @@ def test_template_yaml_files_shape() -> None:
         "prompt.md",
         "breakdown-contract.md",
         "outputs/forced-type.txt",
+        "outputs/branch-policy.txt",
     }
 
     for entry in files:
@@ -217,6 +232,13 @@ def test_template_yaml_files_shape() -> None:
     forced_type = by_target["outputs/forced-type.txt"]
     assert forced_type["content"] == "{{ params.type }}\n"
     assert forced_type.get("when") == "type"
+
+    branch_policy_file = by_target["outputs/branch-policy.txt"]
+    assert branch_policy_file["content"] == "{{ params.branch_policy }}\n"
+    # Unlike forced-type.txt, this file always renders -- branch_policy has a
+    # sensible default (unlike `type`, whose absence is itself meaningful), so
+    # there is no `when:` gate on it.
+    assert "when" not in branch_policy_file
 
 
 def test_template_yaml_assets_shape() -> None:
@@ -336,6 +358,11 @@ def test_workflow_json_tmpl_valid_after_dummy_substitution() -> None:
     tasks_by_id = {t["id"]: t for t in workflow["tasks"]}
     assert prompt_path in tasks_by_id["git-branch-off"]["inputs"]
     assert prompt_path in tasks_by_id["classify"]["inputs"]
+
+    # branch-policy.txt is a declared input of git-branch-off only -- it's this
+    # stage's own decision input, not needed by any other task.
+    branch_policy_path = f"{DUMMY_VALUES['instance_dir']}/outputs/branch-policy.txt"
+    assert branch_policy_path in tasks_by_id["git-branch-off"]["inputs"]
 
     # budget breaker thresholds substituted as bare numbers, not strings.
     breakers_by_id = {b["id"]: b for b in workflow["circuit_breakers"]}

@@ -15,7 +15,10 @@
       "id": "git-branch-off",
       "agent": "git-operator",
       "instruction": "workflows/routed-runner/instructions/01-git-branch-off.md",
-      "inputs": ["{{ instance_dir }}/prompt.md"],
+      "inputs": [
+        "{{ instance_dir }}/prompt.md",
+        "{{ instance_dir }}/outputs/branch-policy.txt"
+      ],
       "outputs": ["{{ instance_dir }}/outputs/git-go-ahead.md"],
       "depends_on": [],
       "skip_if_outputs_exist": false,

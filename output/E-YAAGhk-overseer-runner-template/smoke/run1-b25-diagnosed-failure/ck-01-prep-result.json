@@ -1,0 +1,7 @@
+{
+  "schema": "ao.overseer.prep-result/v1",
+  "ok": false,
+  "rule_id": "INT-4",
+  "message": "OV-INT-4: stray hold-request.json not backed by a hold decision",
+  "generated_at": "2026-09-26T19:00:14.325458+00:00"
+}

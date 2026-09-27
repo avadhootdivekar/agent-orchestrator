@@ -1,0 +1,154 @@
+# EPIC: E-YAAGhk-overseer-runner-template
+
+## Metadata
+- Epic ID: `E-YAAGhk-overseer-runner-template`
+- Title: `overseer-runner` builtin template: recursive wave decomposition, periodic overseer checkpoints (alignment / loops / progress), and budget-staged graceful degradation to a usable deliverable
+- Owner: architect (design) → dev-epic (decomposition + delivery)
+- Created: 2026-09-26
+- Last Updated: 2026-09-26
+- Status: **Done** (13/13 MVP tasks complete — see below; `T-zLHc7Q` remains deferred, MVP-Should,
+  below the sprint cut line per its own ticket status, not required for epic completion; execution
+  log: `docs-md/ai-epics/E-YAAGhk-overseer-runner-template.md`)
+
+## Summary
+- Goal: a generic, reusable `ao new overseer-runner` template. It takes one open-ended `prompt.md`
+  (possibly several distinct asks), decomposes it at run time into bounded **waves** of emitted
+  sub-DAGs, and closes every wave with an **overseer checkpoint**. The checkpoint checks alignment
+  with the original ask, loops/cycles (A→B→B→A, A→B→C→D×2), and real progress versus rework, then
+  emits the next wave, a stabilization wave, a human hold, or the close-out tail. At 80/90/95% of a
+  fixed `run_budget_usd` (projected, latched) the overseer moves explore → converge → stabilize →
+  closeout, so the deliverable ends **usable** (buildable/actionable, code or not) rather than
+  half-finished. A hard `run_cost_usd` breaker at 100% is only the backstop.
+- Scope In: the new builtin at `src/agent_orchestrator/templates/builtin/overseer-runner/`
+  (`template.yaml`, `workflow.json.tmpl`, `overseer-contract.md.tmpl`, `overseer-config.json.tmpl`,
+  `prompt.md.tmpl`, `tools/overseer_tool.py`, `instructions/*.md`, `README.md`); **one small engine
+  correctness fix (G5, `engine.py::_settle` ordering)**; tests (tool unit, engine unit, template
+  assets, CliRunner e2e); `docs-md/overseer-runner-hld.md`; ADR-0016; a post-implementation docs
+  refresh.
+- Scope Out (user decisions, not re-litigated): independent child `ao run`s; any new engine
+  cadence/drain/pause primitive; Monitor ABC changes; mid-run grading (ADR-0015 D2 stands);
+  `routed-runner` behavior changes (it benefits passively from G5); dashboard UI work; `E-Grpp0X`
+  (the checker makes this template independent of it).
+
+## Design
+- HLD+LLD (sections 1–25): [`docs-md/overseer-runner-hld.md`](../../../docs-md/overseer-runner-hld.md)
+- ADR: [`docs-md/adr/ADR-0016-overseer-runner-cadence-and-budget-governance.md`](../../../docs-md/adr/ADR-0016-overseer-runner-cadence-and-budget-governance.md)
+- G5 reproduction: [`output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py`](../../../output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py)
+
+## Requirements
+Full table with verification methods: design doc §1.2. Summary:
+
+### MVP
+- FR-1 Builtin template renders and passes `ao validate` (`ao new overseer-runner`).
+- FR-2 Intake → immutable, hash-locked charter (asks, acceptance criteria, per-ask usable bar); emits wave 1 + `ck-01`.
+- FR-3 Wave/checkpoint recursion: each `ck-K` emits exactly one of {wave+`ck-(K+1)`, hold, close-out tail}, mechanically checked.
+- FR-4 Cadence: wave size ≤ min(`wave_size`, time cap from `wave_max_minutes`, budget cap).
+- FR-5 Engine-enforced per-unit breadcrumbs folded into an idempotent, tool-owned `ledger.jsonl`.
+- FR-6 Deterministic loop/rework/progress signals, as shipped (period_repeat, mirror_flipflop, content_oscillation, stall, attempt_cap, repeated_failure, ask_starvation, blocked_units, prompt_changed, breadcrumb_integrity); every signal must be answered. `wave_signature_repeat` is deferred — see NFR-X10 below, not part of this list.
+- FR-7 Alignment: every unit cites charter ask ids; the charter hash is locked.
+- FR-8 Budget stages from projected spend, latched, restricting allowed decisions.
+- FR-9 Graceful degradation: stabilize-only work in `stabilize`; forced close-out tail in `closeout`/`must_close`.
+- FR-10 Hard `run_cost_usd` backstop at 100% (`mode: "hard"`).
+- FR-11 Zero-cost, re-armable human hold via the next checkpoint's pre-hook.
+- FR-12 Honest close-out report (done / usable / not done / how to continue) and final verify report.
+- FR-13 Engine fix G5: emission is persisted before breaker evaluation (never lost on a trip or crash).
+- FR-14 README (params, breaker rationale, stages, hold, gaps, isolation).
+- FR-16 Budget override file re-bases stages. It is honored only with a matching engine-recorded `--extend-breaker` (promoted to MVP in Rev 2).
+- FR-17 Live smoke run (real `claude_cli`, ≤ $25) with evidence under `output/` (promoted to MVP in Rev 2; the only NFR-8 validation).
+- FR-18 Unit budget gate (`ov-unit-gate` pre-hook on every wave unit) re-arms budget/fan-out containment at $0, because breakers latch (Rev 2).
+- FR-19 Operator close-out on demand (`overseer_tool.py request-closeout`): pending units are skipped at $0 on resume, and the next checkpoint is forced to close out. It covers the post-backstop close-out and "stop now but leave it usable" (Rev 2).
+### MVP-Should (below the sprint cut line)
+- FR-15 Nested depth-2 sub-DAGs via `expand` units + fixed `<unit>--done` sub-aggregator.
+### Non-MVP (deferred, reasons in the design doc §1.2)
+- NFR-X1 preemptive time checkpoints · NFR-X2 child runs · NFR-X3 per-ask repo routing ·
+  NFR-X4 engine `drain` action · NFR-X5 Monitor pulse · NFR-X6 first-class paused status ·
+  NFR-X7 legacy re-inject on resume · NFR-X8 embedding similarity · NFR-X9 agents.recommended asset ·
+  NFR-X10 `wave_signature_repeat` detector · NFR-X11 tamper-proof (vs tamper-evident) governance.
+### Non-functional
+- NFR-1 path confinement · NFR-2 determinism (injectable clock) · NFR-3 idempotent prep/ledger ·
+  NFR-4 fail-closed · NFR-5 stdlib-only, py ≥3.11, no `{{ ident }}` in the tool · NFR-6 bounded
+  inputs · NFR-7 backward compatibility except G5 · NFR-8 overseer overhead ≤ ~10% ·
+  NFR-9 legibility from ledger + checkpoint artifacts.
+
+## Task List
+Team: 4 developers × 2 sprints (capacity math in design doc §22). Every task has a single owner, and
+a `reviewer`-agent review step is part of each task's ACs.
+
+Sprint 1 (128 h of 144 h committed)
+- [x] `T-kD6L76-design-package` — HLD/LLD, ADR-0016, tickets, Phase-4 consultations (architect). Done.
+- [x] `T-pYt478-emit-settle-atomicity` — G5 engine fix + regression tests + NFR-2 allowlist. **Own PR to `main` first** (3 d). **Done**: implemented, independently re-verified, and reviewed (approve with nits, addressed) on branch `fix/emit-settle-atomicity` (commit `3692eac`, off `main`@`8c13320`, local/unpushed pending user confirmation to open the PR). Full suite 3983 passed/8 skipped/0 failed; ruff/mypy clean.
+- [x] `T-ABDjSj-tool-state-ledger-budget` — tool M1: config, hook context, `state.json` loader, hash-chained ledger, path history, budget stages + override, cadence, hold gate, charter-lock verify, unit gate (3 d). **Done**: `tools/overseer_tool.py` (new file) + 124 tests (3 files), 99% coverage, full suite 4107 passed/8 skipped/0 failed, ruff/mypy clean. See `T-ABDjSj-tool-state-ledger-budget/STATUS.md`.
+- [x] `T-C6uQJW-tool-loop-progress-detectors` — tool M2: §8.3 detectors + progress metrics; content_oscillation is trim-first (3 d). **Done**: all 10 MVP detectors + progress digest, 52 new tests, 99% coverage, reviewed (approve with nits — one real gap found and fixed: path-history trim was prioritizing declared paths over undeclared/evasive git-derived ones, inverted and regression-tested). See `T-C6uQJW-tool-loop-progress-detectors/STATUS.md`.
+- [x] `T-eGXqXH-template-scaffold` — `template.yaml`, `workflow.json.tmpl`, `overseer-config.json.tmpl`, `prompt.md.tmpl`, hooks, breakers, assets tests (2 d). **Done**: 28 tests, reviewed (approve with nits — `overseer-contract.md.tmpl` files-entry handed to T-ltBLUY, engine-wide "no rollback on failed `ao new`" gap recorded as a known limitation, out of this epic's scope). See `T-eGXqXH-template-scaffold/STATUS.md`.
+- [x] `T-ltBLUY-contract-and-readme` — `overseer-contract.md.tmpl` (shapes + OV-R1..R16) + `README.md` (2 d). **Done**: also added the `overseer-contract.md.tmpl` `files:` entry to `template.yaml` (T-eGXqXH review finding), 19 net new tests (47 total), reviewed (approve with nits — README runnability caveat added, a test-count doc error corrected). See `T-ltBLUY-contract-and-readme/STATUS.md`.
+- [x] `T-5ZzAZp-agent-instructions` — 8 MVP instruction files (3 d). **Done**: all 8 files land
+  under `instructions/`, 65 new tests, reviewed (approve with nits — a charter-schema
+  mis-citation in `00-intake.md` fixed). `30-expander.md`/`31-sub-aggregate.md` correctly left out
+  (FR-15, `T-zLHc7Q`). A separate amendment (`branch_policy` param) is tracked as a follow-up — see
+  epic STATUS.md. See `T-5ZzAZp-agent-instructions/STATUS.md`.
+
+Sprint 2 (120 h above the cut + 16 h below, of 144 h committed)
+- [x] `T-HPJcc6-tool-structural-checkers` — tool M3a: R1–R10, R15, charter lock, `--dry-run` (3 d). **Done**: 100 new tests, 99% coverage, reviewed (approve, 3 non-blocking nits, one fixed). See `T-HPJcc6-tool-structural-checkers/STATUS.md`.
+- [x] `T-tAKBBB-tool-semantic-checkers` — tool M3b: R11–R14, R16, R13c, verdict/deferral checks, ledger events (3 d). **Done**: 53 new tests, 98% coverage (combined), reviewed (approve with nits — a real gap dev-epic found via engine.py tracing, a malformed-but-present verdict.json silently passing, was fixed; 2 of 3 reviewer warnings fixed, 1 explicitly deferred). See `T-tAKBBB-tool-semantic-checkers/STATUS.md`.
+- [x] `T-WruPiv-e2e-harness-core-scenarios` — scripted-executor harness + e2e (a)–(d) (3 d). **Done**:
+  all 5 tests (scenario a x2 variants, b, c, d) pass 3x consecutive; drives the real CLI + real
+  checkers/hooks end to end. Reviewer pass found 1 critical (digest.json clobbered, silently
+  disabling OV-R11 stage-gated enforcement) + 2 warnings, all fixed and independently re-verified
+  by dev-epic with primary evidence (real on-disk digest sequence, engine.py's `actuals_available`
+  gating). Full suite 4449 passed/8 skipped/0 failed, ruff/mypy/pyright clean. See
+  `T-WruPiv-e2e-harness-core-scenarios/STATUS.md`.
+- [x] `T-vmI0jI-e2e-failure-scenarios` — e2e (e)–(h): backstop+G5+unit gate, signal response, cancel,
+  `max_parallel=2` (3 d). **Done**: all 6 scenarios (e/e1/e2/f/g/h) pass 3x consecutive against the
+  real engine/checkers. dev-epic independently re-verified every claim and found + fixed 3 real
+  defects in scenario (f) that the implementing subagent's own "passing" report missed (an
+  unscripted checkpoint masking the intended `OV-R12` sub-case behind a loose assertion, a wrong
+  `instance_dir`/`run_id` path, an incompletely-answered multi-signal digest). Full suite 4455
+  passed/8 skipped/0 failed, ruff/mypy/pyright clean. See
+  `T-vmI0jI-e2e-failure-scenarios/STATUS.md`.
+- [x] `T-3FlD46-security-review-hardening` — dev-security code review of tool/hooks/checkers + fixes (1 d). **Done**: all 6 design-level findings verified-implemented (traced by hand, not docstring-only); 1 new HIGH-equivalent gap found and fixed (unbounded `read_ledger_lines`, a DoS-shaped size-cap bypass); 2 LOW follow-ups filed, no open CRITICAL/HIGH. See `T-3FlD46-security-review-hardening/STATUS.md`.
+- [x] `T-23yMMB-live-smoke-run` — FR-17 real-LLM smoke, ≤ $25 (1 d). **Done, AC3 deviation
+  recorded**: 3 real runs with real `claude_cli` agents, $8.4752 total real spend (of $25
+  authorized). Headline finding: the template's hardcoded `default_unit_cost_usd=8`/
+  `default_ckpt_cost_usd=5` make the ticket's own literal `run_budget_usd=25` (and its
+  suggested `run_budget_usd=12` fallback) unconditionally infeasible for any
+  `wave_size`/`final_push` combination — real evidence, independently re-verified against
+  `derive_budget`. Two corrected runs succeeded end to end with real, independently
+  re-verified working code + docs (real `pytest` 2/2 passed both times). Overseer cost
+  14.8-16.8% of total (above the ≤~10% target). AC3 (stage transition beyond explore) not
+  organically achievable within budget — diagnosed and documented, not forced. See
+  `T-23yMMB-live-smoke-run/STATUS.md` and `output/E-YAAGhk-overseer-runner-template/smoke/summary.md`.
+- [x] `T-gbccdr-docs-refresh` — post-implementation reconciliation of `docs-md/` and the skill (1 d).
+  **Done**: HLD set to "Implemented" with a new §26 "Deviations from design" (15 entries, DV-1..DV-15,
+  each with real file:line citations independently re-verified by dev-epic), ADR-0016 set to
+  "Accepted (implemented)", `workflow-templates-hld.md`/`guide-dynamic-task-injection.md`/
+  `workflow-authoring/SKILL.md`/`routed-runner/README.md` all updated. Headline finding (DV-1):
+  hardcoded default cost constants set an undocumented `run_budget_usd` floor, making this epic's
+  own suggested small budget values infeasible. dev-epic additionally fixed 3 stale
+  "not yet implemented" spots the ticket found but was scoped not to edit (README.md,
+  `overseer-contract.md.tmpl` — read by real agents at render time — and this file's own FR-6
+  line). Full suite re-verified after every fix: 4455 passed/8 skipped/0 failed, unchanged. See
+  `T-gbccdr-docs-refresh/STATUS.md`.
+- — cut line —
+- [ ] `T-zLHc7Q-nested-expander-subdag` — FR-15 (2 d).
+
+## Risks and Dependencies
+- G5 is an engine behavior change (the settle ordering). It is intended and small, but
+  `test_mvp_breaker_conditions` and `test_resume_replay` are known to change (NFR-2 allowlist in the
+  same commit). About 10 more suites need inspection. It ships as its own PR first.
+- Breakers latch, so after any trip a plain `ao resume` has no engine-side wall. This is covered for
+  this template by the FR-18 unit gate. An engine-wide fix is a follow-up candidate (ADR-0016 D7).
+- Governance artifacts are tamper-evident, not tamper-proof (no inter-task trust boundary; NFR-X11).
+- The LLM overseer may disregard stages. This is mitigated mechanically (R11/R14/R16) plus the hard
+  backstop.
+- In-flight overshoot past 100% at `max_parallel > 1` is bounded by ≈P × unit cost (documented).
+- Detector false positives are mitigated by severities and `accept` with a rationale.
+- The hold renders as a `failed` task (NFR-X6), which is documented.
+- `keep_existing` instructions can drift from the per-run contract. Mitigations: the "contract
+  wins" clause and an `instructions-version` header.
+- Dependency: `python3` ≥ 3.11 on the hook PATH (`python_bin` param).
+- Related but not required: `E-Grpp0X-injected-task-dag-validation-gap`.
+
+## Links
+- Design doc: `docs-md/overseer-runner-hld.md`
+- Sprint plan: design doc §22
+- Output artifacts: `output/E-YAAGhk-overseer-runner-template/`

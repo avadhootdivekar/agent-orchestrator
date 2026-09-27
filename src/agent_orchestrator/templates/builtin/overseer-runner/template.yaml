@@ -1,0 +1,122 @@
+version: "1.0"
+name: overseer-runner
+description: >-
+  One open-ended prompt.md (which may hold several separate asks) worked to completion in
+  bounded waves. Each wave is a dynamically injected sub-DAG; a periodic overseer checkpoint
+  reads a deterministic digest of run state, judges alignment and progress, and emits the next
+  wave, a stabilization pass, a human-input hold, or the fixed close-out tail. Budget is staged
+  (explore -> converge -> stabilize -> closeout) so the deliverable ends usable, not
+  half-finished, well before the hard run_cost_usd backstop trips. See this template's README
+  for the checkpoint contract and breaker rationale.
+id_pattern: "o-{rand6}-{slug}"
+instance_dir: "workflows/overseer-runner/runs/{id}"
+params:
+  repo_set:
+    description: >-
+      Key into this workspace's reposet config -- the repo(s) every stage of the run operates
+      on. No default: every workspace must name its own.
+    required: true
+  run_budget_usd:
+    description: >-
+      Total per-run real-spend USD cap (run_cost_usd circuit breaker threshold, hard stop at
+      100%). The overseer stages explore/converge/stabilize/closeout at converge_pct/
+      stabilize_pct/closeout_pct of this budget.
+    default: "2000"
+  task_budget_usd:
+    description: >-
+      Per-task real-spend USD cap (task_cost_usd circuit breaker threshold, mode "recommend").
+    default: "75"
+  converge_pct:
+    description: Percent of run_budget_usd at which the overseer moves explore -> converge.
+    default: "80"
+  stabilize_pct:
+    description: Percent of run_budget_usd at which the overseer moves converge -> stabilize.
+    default: "90"
+  closeout_pct:
+    description: Percent of run_budget_usd at which the overseer forces stabilize -> closeout.
+    default: "95"
+  wave_size:
+    description: Target number of work-unit tasks injected per wave ("every N tasks" cadence).
+    default: "6"
+  max_waves:
+    description: Hard cap on the number of explore/converge waves before a forced closeout.
+    default: "12"
+  wave_max_minutes:
+    description: >-
+      Time-approximate cadence: a wave's task count is also capped so it fits this many
+      minutes, based on the observed median unit duration.
+    default: "90"
+  max_attempts_per_item:
+    description: Hard cap on rework attempts for the same work item before it must be deferred.
+    default: "3"
+  max_expanders_per_wave:
+    description: >-
+      Opt-in sub-DAG expansion per wave (FR-15). 0 (default) disables it; the expand kind's
+      instruction file ships in a later task, so leave this at 0 until then.
+    default: "0"
+  max_injected_tasks:
+    description: >-
+      Hard structural cap on total dynamically-injected tasks this run (runaway-fanout circuit
+      breaker threshold). Must stay >= the run's own max_waves/wave_size/expander-fanout math;
+      the tool's CFG-3 check rejects a value that is too low for the other params.
+    default: "160"
+  final_push:
+    description: Whether the fixed close-out tail includes a final git push task.
+    default: "true"
+    enum: ["true", "false"]
+  overseer_effort:
+    description: Effort level (max-turns budget) the checkpoint task itself dispatches at.
+    default: "high"
+    enum: [medium, high, xhigh]
+  overseer_model:
+    description: >-
+      Optional per-checkpoint model override. Empty string inherits the manager agent's own
+      model.
+    default: ""
+  python_bin:
+    description: >-
+      Interpreter used to invoke tools/overseer_tool.py from every hook. Must be Python >=
+      3.11 on the service's PATH.
+    default: "python3"
+  branch_policy:
+    description: >-
+      Optional free-text operator guidance for git-branch-off's branch decision (e.g.
+      "always branch fresh off main", "keep working on the current branch unless it's
+      already merged", "never create a branch, fail if dirty"). Empty (default) means the
+      auto-detect policy: branch fresh off main when starting from main, otherwise sync
+      and continue on the current non-main branch. See README.md's "Branch policy" section.
+    default: ""
+dirs:
+  - outputs
+  - outputs/overseer
+  - outputs/manifests
+  - outputs/progress
+  - outputs/waves
+  - outputs/checkpoints
+  - outputs/final
+  - control
+  - needs-input
+  - tools
+files:
+  - source: workflow.json.tmpl
+    target: workflow.json
+  - source: prompt.md.tmpl
+    target: prompt.md
+    keep_existing: true
+  - source: overseer-contract.md.tmpl
+    target: overseer-contract.md
+  - source: overseer-config.json.tmpl
+    target: overseer-config.json
+  - source: tools/overseer_tool.py
+    target: tools/overseer_tool.py
+assets:
+  - source: instructions/
+    target: workflows/overseer-runner/instructions/
+    keep_existing: true
+required_agents:
+  - architect
+  - developer
+  - git-operator
+  - manager
+  - reviewer
+  - tester

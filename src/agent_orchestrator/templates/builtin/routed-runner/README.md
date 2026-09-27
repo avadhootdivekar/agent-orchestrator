@@ -43,6 +43,15 @@ both are part of this template's contract per `breakdown-contract.md`/`template.
 - `repo_set` (**required**, no default) — key into the workspace's reposet config; the
   repo(s) every stage operates on. Every workspace names its own; there is no sensible
   cross-workspace default.
+- `branch_policy` (optional, free text, default `"reuse the current branch unless it is
+  already merged into main, in which case start fresh from latest main"`) — plain-English
+  guidance for the `git-branch-off` head stage, e.g. `"always branch fresh off main"`,
+  `"keep working on the current branch unless it's already merged"`, or `"never create a
+  branch, fail if the tree is dirty"`. Rendered into the run's `outputs/branch-policy.txt`
+  and combined by the `git-operator` agent with the actual git state (already-merged /
+  dirty / no-upstream / already-on-base) — see `instructions/01-git-branch-off.md`. A
+  genuine conflict between the stated policy and reality pauses for human input rather
+  than guessing.
 - `task_budget_usd` (optional, default `75`) — per-task real-spend USD cap.
 - `run_budget_usd` (optional, default `1500`) — per-run real-spend USD cap.
 
@@ -75,6 +84,11 @@ Generous by policy — the run should stop on real problems, not on tight defaul
   deliberately: a *skipped* `emit_tasks` task never re-injects its manifest, which
   would strand the aggregator and fail the run on any re-run; the final verdict tasks
   must always re-verify rather than trust a stale report from an earlier attempt.
+  The engine's G5 settle-ordering fix (E-YAAGhk, ADR-0016 D7) also closed a latent gap at
+  this emitter boundary. A breaker trip, or a crash, at `task-breakdown`'s own settle used to
+  persist it as `succeeded` without its injected per-task fan-out, which a resume then silently
+  lost. Now the injection is saved before breakers are evaluated, so resume sees those tasks as
+  pending (see `docs-md/guide-dynamic-task-injection.md`, "Settle ordering").
   `git-branch-off` and `classify` are `skip_if_outputs_exist: false` for the same
   reason — a skipped router never routes, and branch state must be re-verified on
   every run.

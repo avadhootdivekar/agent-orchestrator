@@ -35,8 +35,9 @@ run/resume/status machinery — CLI and dashboard both — operates on unchanged
      - my-templates/                      # or a dir of template dirs (scanned 1 level)
    ```
    Paths resolved relative to the config file, same as `workflow:`/`agents:`.
-2. **Built-in** — package data under `src/agent_orchestrator/templates/<name>/`
-   (shipped in the wheel; v1 ships `routed-runner`).
+2. **Built-in** — package data under `src/agent_orchestrator/templates/builtin/<name>/`
+   (shipped in the wheel). v1 shipped `routed-runner`. `overseer-runner` was added by
+   E-YAAGhk (see §2.10). Current builtins: `routed-runner`, `overseer-runner`.
 3. **Ad-hoc path** — `ao new <path-to-template-dir> …` accepts a directory directly.
 
 Name collisions: workspace templates shadow built-ins of the same name.
@@ -163,7 +164,7 @@ required marked) → prompt textarea (prefilled with `prompt_skeleton`) → slug
 
 ### 2.8 Built-in `routed-runner` template (finplan-free)
 
-`src/agent_orchestrator/templates/routed-runner/`: the full routed multi-type DAG from
+`src/agent_orchestrator/templates/builtin/routed-runner/`: the full routed multi-type DAG from
 the finplan epic-runner (shared head git-branch-off → classify router; bug / epic / task /
 documentation / testing routes; per-route push sinks; breakers incl. budget/time/fan-out;
 breakdown contract for the epic route's dynamic fan-out) with **all FinPlan context
@@ -182,6 +183,35 @@ passes to `"effort": "medium"` (a ~10-minute task grain), and the breakdown agen
 a genuinely larger `<tid>` `"high"`/`"xhigh"` and/or set an explicit `model` instead of
 forcing an artificial split — see the contract's "Effort & model per task" section and
 `instructions/07-task-breakdown.md`.
+
+**`branch_policy` param (added in E-YAAGhk):** optional free text (default `""` = auto-detect) that
+guides `git-branch-off`'s branch-or-continue decision. `routed-runner` renders it to
+`<instance>/outputs/branch-policy.txt`. `overseer-runner` copies it into `overseer-config.json`,
+which its `git-branch-off` task declares as an input.
+
+### 2.10 Built-in `overseer-runner` template (E-YAAGhk)
+
+`src/agent_orchestrator/templates/builtin/overseer-runner/` (`ao new overseer-runner`). It takes one
+open-ended `prompt.md`, which may hold several asks, and works through it in bounded waves of
+dynamically injected units. Each wave is closed by an overseer checkpoint (`ck-KK`, an `emit_tasks`
+task in the `manager` role). The checkpoint reads a deterministic digest from the per-instance stdlib
+tool `tools/overseer_tool.py`, which runs as a `pre_hook`/`post_hook`. It then emits the next wave, a
+stabilization pass, a human-input hold, or the fixed close-out tail. Budget is staged (explore →
+converge → stabilize → closeout on projected spend), with one hard `run_cost_usd` backstop at 100%.
+Only `git-branch-off` and `intake` are static, and the run's completion marker is
+`outputs/final/closeout.md`.
+
+- **Operator reference**: the template's own
+  [`README.md`](../src/agent_orchestrator/templates/builtin/overseer-runner/README.md) (params,
+  breaker rationale, hold workflow, resuming after a budget trip).
+- **Design**: [`overseer-runner-hld.md`](overseer-runner-hld.md), and read **§26 Deviations from
+  design** first. ADR: [`ADR-0016`](adr/ADR-0016-overseer-runner-cadence-and-budget-governance.md).
+- **Before your first run**: with the shipped cost constants, `run_budget_usd` must exceed about
+  $81 at the default `wave_size=6` (or lower `default_*_cost_usd` in the rendered
+  `overseer-config.json`), or intake cannot emit wave 1 (HLD §26 DV-1). Keep
+  `max_expanders_per_wave: 0`, because nested expanders (FR-15) did not ship.
+- It relies on the G5 engine fix (emit-before-breakers settle ordering, ADR-0016 D7), which also
+  protects `routed-runner`'s `task-breakdown` emitter.
 
 ### 2.9 ao-runner-finplan wiring (kept out of the engine repo)
 
@@ -212,5 +242,8 @@ forcing an artificial split — see the contract's "Effort & model per task" sec
 - Service/API integration: endpoints against a temp workspace with a stub supervisor
   (same harness as E-Ui7Kq2 tests), incl. 400/404/409 paths.
 - Frontend: vitest for the template form logic.
+- Built-in `overseer-runner`: `tests/test_builtin_overseer_runner_assets.py` (render/assets),
+  `tests/test_e2e_builtin_overseer_runner.py` and `tests/test_e2e_overseer_runner_failures.py`
+  (`CliRunner` `ao new` → `ao run`/`ao resume` with a scripted executor).
 - Built-in template: `ao new routed-runner … --validate-only` in a temp workspace with
   fake agents must pass `ao validate`.

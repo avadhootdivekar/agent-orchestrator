@@ -1,0 +1,42 @@
+{
+  "schema": "ao.overseer.config/v1",
+  "contract_version": 1,
+
+  "run_budget_usd": {{ params.run_budget_usd }},
+  "task_budget_usd": {{ params.task_budget_usd }},
+  "converge_pct": {{ params.converge_pct }},
+  "stabilize_pct": {{ params.stabilize_pct }},
+  "closeout_pct": {{ params.closeout_pct }},
+  "wave_size": {{ params.wave_size }},
+  "max_waves": {{ params.max_waves }},
+  "wave_max_minutes": {{ params.wave_max_minutes }},
+  "max_attempts_per_item": {{ params.max_attempts_per_item }},
+  "max_expanders_per_wave": {{ params.max_expanders_per_wave }},
+  "max_injected_tasks": {{ params.max_injected_tasks }},
+  "final_push": {{ params.final_push }},
+  "overseer_effort": "{{ params.overseer_effort }}",
+  "overseer_model": "{{ params.overseer_model }}",
+  "python_bin": "{{ params.python_bin }}",
+  "branch_policy": "{{ params.branch_policy }}",
+
+  "stall_waves": 2,
+  "stabilize_wave_size": 4,
+  "max_stabilize_passes": 2,
+  "sub_wave_size": 4,
+  "default_unit_cost_usd": 8,
+  "default_ckpt_cost_usd": 5,
+  "runs_root": ".orchestrator/runs",
+
+  "kind_map": {
+    "research": {"agent": "architect", "instruction": "workflows/overseer-runner/instructions/10-work-unit.md"},
+    "design": {"agent": "architect", "instruction": "workflows/overseer-runner/instructions/10-work-unit.md"},
+    "implement": {"agent": "developer", "instruction": "workflows/overseer-runner/instructions/10-work-unit.md"},
+    "fix": {"agent": "developer", "instruction": "workflows/overseer-runner/instructions/10-work-unit.md"},
+    "document": {"agent": "developer", "instruction": "workflows/overseer-runner/instructions/10-work-unit.md"},
+    "stabilize": {"agent": "developer", "instruction": "workflows/overseer-runner/instructions/11-stabilize-unit.md"},
+    "test": {"agent": "tester", "instruction": "workflows/overseer-runner/instructions/10-work-unit.md"},
+    "verify": {"agent": "tester", "instruction": "workflows/overseer-runner/instructions/10-work-unit.md"},
+    "review": {"agent": "reviewer", "instruction": "workflows/overseer-runner/instructions/10-work-unit.md"},
+    "expand": {"agent": "architect", "instruction": "workflows/overseer-runner/instructions/30-expander.md"}
+  }
+}

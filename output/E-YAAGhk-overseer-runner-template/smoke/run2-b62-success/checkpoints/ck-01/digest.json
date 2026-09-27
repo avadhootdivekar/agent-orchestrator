@@ -1,0 +1,71 @@
+{
+  "schema": "ao.overseer.digest/v1",
+  "contract_version": 1,
+  "checkpoint": "ck-01",
+  "wave": 1,
+  "run_id": "o-c1we9t-smoke2-20260926T190338Z",
+  "generated_at": "2026-09-26T19:07:42.427162+00:00",
+  "budget": {
+    "run_budget_usd": 62.0,
+    "override_applied": {
+      "honored": false,
+      "run_budget_usd": null,
+      "reason": null
+    },
+    "spent_usd": 2.0536057999999997,
+    "pct_used": 3.3122674193548383,
+    "est_unit_cost_usd": 0.3855208,
+    "est_ckpt_cost_usd": 5.0,
+    "reserve_tail_usd": 1.1565623999999999,
+    "stage_raw": "explore",
+    "stage_projected": "explore",
+    "stage": "explore",
+    "thresholds": {
+      "converge": 80.0,
+      "stabilize": 90.0,
+      "closeout": 95.0
+    }
+  },
+  "cadence": {
+    "wave_size": 3,
+    "time_cap": 131,
+    "budget_cap": 3,
+    "allowed_wave_size": 3,
+    "median_unit_duration_s": 41.092464
+  },
+  "must_close": false,
+  "must_close_reasons": [],
+  "allowed_decisions": [
+    "continue",
+    "redirect",
+    "hold",
+    "stabilize",
+    "closeout"
+  ],
+  "stabilize_passes": 0,
+  "progress": {
+    "work_items_total": 3,
+    "work_items_done": 3,
+    "newly_done": 3,
+    "stall_waves": 0,
+    "criteria_met_prev": 0,
+    "per_ask": [
+      {
+        "ask_id": "A1",
+        "units": 2,
+        "cost_usd": 0.7932018000000001,
+        "done_items": 2,
+        "last_wave_touched": 1
+      },
+      {
+        "ask_id": "A2",
+        "units": 2,
+        "cost_usd": 0.657437,
+        "done_items": 2,
+        "last_wave_touched": 1
+      }
+    ]
+  },
+  "capped_work_items": [],
+  "signals": []
+}

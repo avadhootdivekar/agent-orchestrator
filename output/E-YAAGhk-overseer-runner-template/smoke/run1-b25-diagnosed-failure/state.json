@@ -1,0 +1,162 @@
+{
+  "run_id": "o-3mjumg-smoke1-20260926T185513Z",
+  "workflow_id": "o-3mjumg-smoke1",
+  "repo_set": "toy",
+  "started_at": "2026-09-26T18:55:13.671536+00:00",
+  "updated_at": "2026-09-26T19:00:14.332720+00:00",
+  "status": "failed",
+  "tasks": {
+    "git-branch-off": {
+      "status": "succeeded",
+      "attempts": 1,
+      "started_at": "2026-09-26T18:56:37.829427+00:00",
+      "ended_at": "2026-09-26T18:57:13.385179+00:00",
+      "outputs_present": true,
+      "dynamic_outputs": [],
+      "output_artifact_path": "/tmp/claude-1000/-usr-avadhoot-mounted-agent-orchestrator/6e214e6d-d154-4369-8b0d-fc4a9ce7d5ba/scratchpad/smoke-run/workspace/.orchestrator/runs/o-3mjumg-smoke1-20260926T185513Z/git-branch-off/cycle-2/attempt-1",
+      "origin": "static",
+      "route": null,
+      "not_taken_reason": null,
+      "cumulative_input_tokens": 28,
+      "cumulative_output_tokens": 6850,
+      "cumulative_cache_creation_input_tokens": 35287,
+      "cumulative_cache_read_input_tokens": 336877,
+      "cumulative_cost_usd": 0.4867834000000001,
+      "dispatch_cycle": 2,
+      "pre_hook_result": null,
+      "post_hook_result": null
+    },
+    "intake": {
+      "status": "succeeded",
+      "attempts": 1,
+      "started_at": "2026-09-26T18:57:13.387878+00:00",
+      "ended_at": "2026-09-26T19:00:14.269576+00:00",
+      "outputs_present": true,
+      "dynamic_outputs": [],
+      "output_artifact_path": "/tmp/claude-1000/-usr-avadhoot-mounted-agent-orchestrator/6e214e6d-d154-4369-8b0d-fc4a9ce7d5ba/scratchpad/smoke-run/workspace/.orchestrator/runs/o-3mjumg-smoke1-20260926T185513Z/intake/attempt-1",
+      "origin": "static",
+      "route": null,
+      "not_taken_reason": null,
+      "cumulative_input_tokens": 46,
+      "cumulative_output_tokens": 16218,
+      "cumulative_cache_creation_input_tokens": 72947,
+      "cumulative_cache_read_input_tokens": 1328853,
+      "cumulative_cost_usd": 1.1738906,
+      "dispatch_cycle": 1,
+      "pre_hook_result": {
+        "kind": "pre_hook",
+        "hook_name": "ov-intake-prep",
+        "status": "passed",
+        "exit_code": 0,
+        "duration_ms": 62,
+        "score": null,
+        "detail": {},
+        "error": null
+      },
+      "post_hook_result": {
+        "kind": "post_hook",
+        "hook_name": "ov-intake-check",
+        "status": "passed",
+        "exit_code": 0,
+        "duration_ms": 61,
+        "score": null,
+        "detail": {},
+        "error": null
+      }
+    },
+    "ck-01": {
+      "status": "failed",
+      "attempts": 0,
+      "started_at": "2026-09-26T19:00:14.270889+00:00",
+      "ended_at": "2026-09-26T19:00:14.331776+00:00",
+      "outputs_present": false,
+      "dynamic_outputs": [],
+      "output_artifact_path": null,
+      "origin": "injected",
+      "route": null,
+      "not_taken_reason": null,
+      "cumulative_input_tokens": 0,
+      "cumulative_output_tokens": 0,
+      "cumulative_cache_creation_input_tokens": 0,
+      "cumulative_cache_read_input_tokens": 0,
+      "cumulative_cost_usd": 0.0,
+      "dispatch_cycle": 1,
+      "pre_hook_result": {
+        "kind": "pre_hook",
+        "hook_name": "ov-ckpt-prep",
+        "status": "failed",
+        "exit_code": 2,
+        "duration_ms": 57,
+        "score": null,
+        "detail": {},
+        "error": null
+      },
+      "post_hook_result": null
+    }
+  },
+  "injected_tasks": [
+    {
+      "id": "ck-01",
+      "agent": "manager",
+      "instruction": "workflows/overseer-runner/instructions/20-checkpoint.md",
+      "inputs": [
+        "workflows/overseer-runner/runs/o-3mjumg-smoke1/overseer-contract.md",
+        "workflows/overseer-runner/runs/o-3mjumg-smoke1/overseer-config.json",
+        "workflows/overseer-runner/runs/o-3mjumg-smoke1/outputs/charter.json"
+      ],
+      "outputs": [
+        "workflows/overseer-runner/runs/o-3mjumg-smoke1/outputs/checkpoints/ck-01/digest.json",
+        "workflows/overseer-runner/runs/o-3mjumg-smoke1/outputs/checkpoints/ck-01/verdict.json",
+        "workflows/overseer-runner/runs/o-3mjumg-smoke1/outputs/checkpoints/ck-01/report.md"
+      ],
+      "output_manifest": null,
+      "depends_on": [
+        "intake"
+      ],
+      "retries": null,
+      "timeout_seconds": 3600,
+      "skip_if_outputs_exist": false,
+      "emit_tasks": true,
+      "task_manifest_path": "workflows/overseer-runner/runs/o-3mjumg-smoke1/outputs/manifests/ck-01.json",
+      "join": "all",
+      "model": null,
+      "effort": "high",
+      "max_turns": null,
+      "isolation": "inherit",
+      "touches": [],
+      "pre_hook": {
+        "use": "ov-ckpt-prep",
+        "on_failure": null
+      },
+      "post_hook": {
+        "use": "ov-ckpt-check",
+        "on_failure": "fail_task"
+      }
+    }
+  ],
+  "loop_iterations": {},
+  "budget_counters": {
+    "consumed_tokens": 0,
+    "window_start_epoch": null,
+    "window_consumed_tokens": 0,
+    "charged_estimate": {},
+    "reconciled_tasks": [],
+    "reconciled_cycles": []
+  },
+  "route_decisions": {},
+  "tripped_breakers": [],
+  "breaker_overrides": {},
+  "monitor_decisions": [],
+  "integration": {
+    "active": false,
+    "tier_counts": {},
+    "workspace_lock_held": false,
+    "branch": null,
+    "repos": {},
+    "heads": {},
+    "base_heads": {},
+    "checkout_synced_to": {},
+    "degraded_reason": null
+  },
+  "task_integration": {}
+}

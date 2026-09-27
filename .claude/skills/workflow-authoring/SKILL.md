@@ -31,6 +31,7 @@ field list, read `specs/workflow.schema.json` directly; for CLI flags, `ao --hel
 | `isolation: worktree` or `none`? | `none` (the default) unless tasks run with `max_parallel > 1` AND their declared outputs can genuinely overlap, or you want per-task git isolation for other reasons (rebase-safe parallel dev). See "Isolation & parallelism". |
 | Where does `pre_hook`/`post_hook` fit? | `pre_hook` for a cheap, fast-failing precondition gate (fail the task, don't waste an agent dispatch). `post_hook` for deterministic post-processing/scoring that shouldn't cost an LLM turn. See "Hooks & grading". |
 | Where does grading fit? | Post-run, via `ao report-outcomes --grade <hook-name>` — not wired into the run itself. See "Hooks & grading". |
+| Unknown task count *and* unknown number of rounds, open-ended prompt? | A recursive wave chain (each emitter emits the next), with no static tail, or just `ao new overseer-runner`. See "Recursive waves". |
 | My run has file contention between parallel tasks | Either make `outputs`/`touches` genuinely disjoint, or opt into `isolation: worktree`. `ao` does **not** detect or prevent this for you at `isolation: none`. See "Common failure modes" #4. |
 | Our cache hit rate looks great, are we fine on cost/context? | Not necessarily — a high ratio can still hide tens of millions of re-billed tokens on one long task. Set `--autocompact` explicitly; don't rely on Claude Code's default. See "Cost & context hygiene". |
 
@@ -110,6 +111,39 @@ the failure-mode framing of each):
   does not fail. Don't set `isolation: worktree` on an emitter/router/loop-gate task expecting it
   to take effect; isolation is a concern for the *ordinary* tasks it fans out to, not the
   structural task itself.
+
+**Recursive waves (an emitter that emits the next emitter).** When even the *number of rounds*
+is unknown ("keep working in bounded batches until the ask is done or the budget runs low"), each
+emitter can inject its batch **plus the next emitter**, which `depends_on` every unit in the batch.
+The last emitter injects the terminal tasks instead. Rules:
+- **No static tail after recursion.** A static final task can only `depends_on` the first emitter,
+  because later ids don't exist at authoring time. It becomes ready immediately and fails on
+  `missing_inputs`. The terminal chain (verify → report → push) must be part of the **final
+  emission**, and the run's completion marker is that chain's output, not the run status. The
+  fixed-aggregator trick above works only when the aggregator is injected by the static task's
+  *direct* predecessor.
+- Make every emitter in the chain `skip_if_outputs_exist: false`, give each one a fixed id pattern
+  (e.g. `ck-01`, `ck-02`, …), and bound the chain with an `injected_task_count` breaker plus a
+  max-rounds rule the emitter's instruction or a `post_hook` checker enforces.
+- **Validate each emitted manifest mechanically** with a `post_hook` (`on_failure: "fail_task"`)
+  that checks ids, `depends_on`, agent/instruction, and shape. A failing post-hook blocks the
+  injection, and the emitter re-runs on resume. This is the practical workaround for the
+  injected-task validation gap below.
+
+**When to reach for a builtin template instead of hand-authoring** (`ao new <template>`):
+- **`routed-runner`**: you know the *kind* of work up front (bug / epic / task / docs / testing),
+  and an epic breaks into a *single* level of tasks with a fixed per-task pipeline. One classify
+  router, one `task-breakdown` fan-out, fixed aggregator.
+- **`overseer-runner`**: one open-ended `prompt.md`, possibly with several asks, where neither the
+  task count nor the number of rounds is knowable up front, and you want periodic alignment/loop/
+  progress checks plus budget-staged graceful degradation to a *usable* result. It is the recursive
+  wave pattern above, with a deterministic checker tool. Two cautions: (1) with the shipped cost
+  constants, `run_budget_usd` must exceed about `(wave_size*8 + 5 + tail*8) / 0.95`, which is about
+  $81 at defaults, or intake cannot emit wave 1 (`docs-md/overseer-runner-hld.md` §26 DV-1); (2) for
+  small runs use `--param overseer_effort=medium`, because checkpoints cost 15-17% of spend at
+  `high` on a toy run.
+- **Hand-author** when the DAG is fully known (static), or the shape is simpler than both
+  templates.
 
 **Routing** (`WorkflowSpec.branches[].routes`, `router_task_id`/`verdict_path`) is a related but
 distinct mechanism — a router task writes `{"routes": [...]}` and the engine activates only the
@@ -300,6 +334,24 @@ calling it done:
 9. **An isolated task running against a repo with a `filter`/`merge` git-attribute driver
    configured.** See "Isolation & parallelism" above — isolation suppresses git hooks, not these
    drivers; don't assume it sandboxes an expensive or untrusted one.
+10. **A static tail after a recursive emitter chain.** See "Recursive waves" above. The static
+    final task becomes ready too early and fails on `missing_inputs`. Put the tail in the final
+    emission.
+11. **Assuming a plain `ao resume` re-applies a tripped breaker.** Breakers **latch**: each breaker
+    id is recorded at most once per run (`breakers.py`, `evaluate_breakers`), so after a trip a plain
+    `ao resume` has **no engine-side wall** for that breaker. Since the G5 settle-ordering fix
+    (`docs-md/guide-dynamic-task-injection.md`, "Settle ordering"), an emitter's injected tasks
+    survive a trip at its boundary, and a plain resume dispatches them. If a breaker is your budget
+    stop, re-arm it per task with a cheap `pre_hook` gate. `overseer-runner`'s `ov-unit-gate`
+    refuses at $0 while spend ≥ budget. A plain resume then only re-fails the pending work; it does
+    not push it through, and it never reaches a graceful close-out on its own. Moving on needs an
+    explicit operator act: `ao resume --extend-breaker <id> --extend-by-same|--extend-by-seconds <n>`
+    (plus whatever the gate reads, e.g. `overseer-runner`'s `control/budget-override.json`), or a
+    template-specific close-out command.
+12. **Budget params below the template's own projection floor.** A stage machine that projects
+    "next batch + tail" from *default* per-unit cost estimates can refuse to start at all when the
+    budget is small. This is `overseer-runner`'s DV-1. Check the template's documented floor before
+    choosing a small test budget.
 
 ---
 
