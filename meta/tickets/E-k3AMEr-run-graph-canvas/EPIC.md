@@ -6,7 +6,7 @@
 - Owner: `dev-epic` (execution) · design by `architect`
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `In Progress` (Sprint 1 implemented and merged on `ad/run-graph-canvas`; Gate G1 next — see `STATUS.md`)
+- Status: `In Progress` (all 11 MVP tasks Done; Gates G1/G2/G3 all CLOSED PASS; docs refreshed — see `STATUS.md` for final epic-close handoff)
 
 ## Summary
 - **Goal:** Let an operator *see* a workflow run in `ao ui` on a pannable, zoomable,
@@ -141,8 +141,11 @@ Review gates (HLD §24):
 ## Blocked / ambiguous questions
 - **None blocking.** Canvas library, node shape, and hover-vs-panel interaction were delegated to
   the architect by the user and are decided (ADR-0017 D5–D7).
-- OPEN_QUESTION (non-blocking, default applies): should the headless-Chrome smoke run in CI or stay
-  opt-in? Default: opt-in, and T-F1caAt records a recommendation.
+- **RESOLVED** (was OPEN_QUESTION): should the headless-Chrome smoke run in CI or stay opt-in?
+  T-F1caAt's recommendation, taken: **opt-in**. It needs a new optional `browser` extra
+  (`playwright>=1.45` in `pyproject.toml`) and system Chrome; confined to `@pytest.mark.browser`,
+  run via `uv sync --extra browser && pytest -m browser`. Measured runtime ≈7.5s for both
+  browser tests, so cost wasn't the blocker — dependency footprint was.
 - OPEN_QUESTION (non-blocking, default applies): is a third timeline/Gantt view wanted? Default: no.
   It is recorded as the next roadmap step.
 

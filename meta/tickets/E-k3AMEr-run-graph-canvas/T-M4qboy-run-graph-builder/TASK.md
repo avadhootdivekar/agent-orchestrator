@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev A)
 - Created: `2026-09-27`
 - Last Updated: `2026-09-27`
-- Status: `Done` (implementation + tests complete; Gate G1 reviewer/tester sign-off pending — see `STATUS.md`)
+- Status: `Done` (implementation + tests complete; not in Gate G1's scope — that gate covered only the 3 S1 engine tasks; independently re-verified by dev-epic instead, and later covered by Gate G3's whole-epic pass — see `STATUS.md`)
 - Estimate: `14 focus hours (< 2 days)`
 
 ## Requirements Mapping

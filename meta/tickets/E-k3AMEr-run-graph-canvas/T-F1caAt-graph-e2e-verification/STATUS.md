@@ -62,11 +62,11 @@ tests/ui/test_e2e_graph.py::TestGraphE2eCliRunner::test_fixture_writes_spec_sess
 
 **What test_browser_smoke_graph_canvas_under_csp does:**
 - Starts real `ao ui` server via subprocess
-- Creates synthetic 20-wave × 8-fanout run (162 nodes total)
+- Creates synthetic 20-wave × 8-fanout run (180 nodes total: 20 checkpoints + 20×8 units)
 - Uses Python Playwright + system Chrome (`channel="chrome"`)
 - Registers CSP violation listener + console/page error collectors
 - Navigates: `/` → clicks run row → clicks Graph tab → waits for React Flow nodes
-- Asserts: node count = 162 (20 checkpoints + 20×8 units)
+- Asserts: node count = 180 (20 checkpoints + 20×8 units)
 - Toggles to "Spawned by" view: asserts edge count = 160 (20×8 spawn edges)
 - Toggles back to "Execution order" (dependency view)
 - Uses search-to-center to navigate to checkpoint__1, then clicks to open detail panel
@@ -136,7 +136,7 @@ From upstream tasks' STATUS.md:
 - `build_run_graph` (200 nodes, 500 edges): **0.89 ms** ✓ (target ≤ 150 ms)
 - `computeLayout` (200 nodes, 500 edges): **136 ms** ✓ (target ≤ 300 ms)
 
-From this task (fixture 162 nodes / ~324 edges):
+From this task (fixture 180 nodes / 152 dependency + 160 spawn edges):
 - `build_run_graph`: **<1 ms** ✓
 
 Browser smoke test measurement:
@@ -145,7 +145,7 @@ Browser smoke test measurement:
 - Browser smoke alone (AC-3 only): **~10 seconds** (includes server startup, real Chrome launch, navigation, assertions, screenshots)
 
 **Pan/zoom performance (real browser observation):**
-- Canvas renders 162 nodes + 160 spawn edges smoothly in Chrome
+- Canvas renders 180 nodes + 160 spawn edges smoothly in Chrome
 - Toggling between views (dependency ↔ spawn) is instantaneous
 - No visible lag during interactions
 - Aligns with React Flow's documented comfort range (300 nodes)
@@ -182,6 +182,10 @@ Currently: Run locally with `uv sync --extra browser --extra ui --extra dev && p
 ```
 4612 passed, 10 skipped in 116.60s
 ```
+(Point-in-time count for this task's own round; the final, fully-merged `ad/run-graph-canvas`
+count after Gate G2's fixes added their own regression tests is 4621 passed, 8 skipped — see
+epic `STATUS.md` for that final re-verification. Both counts are internally consistent for
+what existed at each point; this isn't a discrepancy, just two different snapshots in time.)
 
 **UI coverage gate** (--cov=agent_orchestrator.ui --cov-fail-under=80):
 ```
@@ -203,7 +207,10 @@ All checks passed! ✓
 
 **UI suite (npm in ui/):**
 - `npm run typecheck`: Clean ✓
-- `npm test`: 129 tests pass ✓
+- `npm test`: pass (this task touches no `ui/src` files — the 129 figure recorded here in an
+  earlier round predates T-aHktGB/T-pAi0Cv landing; the frontend suite was already at 224 by
+  the time this task ran, confirmed unaffected by dev-epic's final merge re-verification — see
+  epic `STATUS.md`) ✓
 - `npm run build`: Success ✓
 - `npm audit --omit=dev --audit-level=high`: No new vulns ✓
 

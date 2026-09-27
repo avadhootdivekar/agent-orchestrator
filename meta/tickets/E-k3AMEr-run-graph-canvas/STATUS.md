@@ -2,7 +2,7 @@
 
 - ID: `E-k3AMEr-run-graph-canvas`
 - Updated At: `2026-09-27`
-- State: `In Progress` (all 10 MVP dev/test tasks Done — only T-oroE5f docs-refresh + Gates G2/G3 remain)
+- State: `In Progress` (all 11 MVP tasks Done; Gates G1/G2/G3 all CLOSED PASS; ready for final handoff)
 - Owner: `dev-epic` (execution) · design by `architect`
 
 ## Rollup
@@ -18,13 +18,13 @@
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | **Done** |
 | T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | **Done** |
 | T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | **Done** (5 correction rounds — see below) |
-| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | In Progress (dispatched to `architect`, worktree isolation) |
+| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | **Done** — reviewer PASS (AC-5) |
 | T-VcN4pt-task-title-field | Non-MVP | S2 stretch | 6 h | Draft |
 | T-hMNbDP-spawn-subtree-collapse | Non-MVP | backlog | 12 h | Draft |
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
 | T-N8scZK-layout-persistence | Non-MVP | backlog | 10 h | Draft |
 
-Counts: **15 tasks** (11 MVP, 4 non-MVP). **10 Done**, 1 In Progress, 0 Blocked, 4 Draft.
+Counts: **15 tasks** (11 MVP, 4 non-MVP). **11 Done** (all MVP), 0 In Progress, 0 Blocked, 4 Draft (all Non-MVP backlog).
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
