@@ -351,3 +351,39 @@ percent-decode-once resisted double-encoded traversal; excluding `data:image/svg
 inline allowlist held; and browsers proved unable to construct a bodyless cross-origin
 state-changing request without an `Origin` header, which is what makes D3's Content-Type
 bodyless exemption a safe scoping decision rather than a bypass (HLD §10.4).
+
+---
+
+## Addendum (2026-09-27, E-k3AMEr): run-directory sensitivity inventory, and agent-authored identifiers in the run graph
+
+The run graph epic ([ADR-0017](ADR-0017-run-graph-provenance-snapshot-and-canvas.md),
+[`run-graph-canvas-hld.md`](../run-graph-canvas-hld.md)) added a new run-directory file and a new
+surface that displays agent-authored strings. It changes none of D1–D3. It sits entirely on this
+ADR's premise that **workspace bytes are unreviewed provenance** (Context, fact 1).
+`<workspace>/.orchestrator/runs/<run_id>/` is inside the workspace, and a task that can write
+there can write anything this table lists.
+
+### Inventory
+
+| Item | Where | Sensitivity | Trust | How the dashboard handles it |
+|---|---|---|---|---|
+| `workflow.snapshot.<sha12>.json` | Run dir, one write-once file per distinct static spec used by the run | **The same as the workflow spec file it copies**: task instructions and hook argv. `WorkflowSpec`/`HookSpec` have no secret or env fields by design, and there is no redaction, because that would break reproducibility. | Agent-writable. It is observability data, not a security boundary. | It is read only through the one bounded parser, `runstate.load_workflow_snapshot_at`. The `spec_sha256` is validated as 64 lowercase hex **before** it names a path, and the file size is capped with `stat()` **before** parsing. Any failure degrades to `source: "unavailable"` plus a warning. It is **never served raw by a new endpoint**. `/graph` projects only ids, edges, loop/router ids, and task flags, never instructions or hook argv. The existing file browser can already open it, like `state.json`, and shows `.json` as highlighted **code text** (`CodeView`), never as HTML. It is deleted with the run dir. **Benchmark bundles or any tooling that copies run dirs** carry it too, and should treat it with the same care as the spec. |
+| `state.json` → `spawned_by`, `spec_sessions` | Run dir (existing file, new fields) | Low: task ids, timestamps, spec hashes | Agent-writable and forgeable, like `status`/`cost` today | It is parsed through the existing pydantic model. The graph builder caps node count (`GRAPH_MAX_NODES`) **before** edge derivation, and a forged spawn cycle terminates through a visited set. |
+| Agent-authored task ids and labels (from `emit_tasks` manifests) | Rendered on the canvas, in the hover card, and in the detail panel | Spoofing only: bidi overrides, zero-width characters, and pathological length | Untrusted | The server-side `ui/graph.py::display_text` strips **every** Unicode Cc/Cf codepoint (from a `unicodedata`-derived table) and caps the label at 200 characters, setting `label_sanitized` when it changed anything. The raw `id` stays byte-exact as the join key. **Every id, label, and warning is rendered as a React text node**: `ui/src/graph/` contains no `dangerouslySetInnerHTML`/`innerHTML`, which was verified by grep at every gate. Tests pin that a `<b>x</b>` id or warning renders literally (`task-detail-panel.test.tsx`, `graph-banners.test.tsx`). So an id never enters the HTML sanitize pipeline or the preview `srcdoc` at all. The SPA CSP is unchanged. |
+
+### Relation to D1–D3
+
+- This is **not** a new rendering path for untrusted *markup*. Nothing in the graph feature parses
+  or renders HTML, Markdown, or SVG from the workspace, so D1's sanitize-and-sandbox pipeline is
+  not involved.
+- The protection is simpler than D2's layering: **never interpret the string as markup at all**.
+  That is consistent with this ADR's rejection of rendering into the page DOM via
+  `dangerouslySetInnerHTML` (Alternatives considered). With no markup layer, there is no sanitizer
+  to bypass.
+- The display sanitizer is **anti-spoofing, not anti-injection**. It exists because text-only
+  rendering does not stop a right-to-left override from making one id look like another.
+- **Known gap** (Gate G2 L-1, deferred): the client-side mirror of `display_text` was not built.
+  `TaskDetailPanel`'s related-id label falls back to the **raw** id, still as a text node, for an
+  id that is not a graph node. Engine-written state does not produce that case. The consequence is
+  limited to possible bidi or zero-width display spoofing of that one label, never markup
+  execution. It is tracked as run-graph HLD §0.4 FU-4.

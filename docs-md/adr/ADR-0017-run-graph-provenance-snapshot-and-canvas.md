@@ -1,6 +1,8 @@
 # ADR-0017: Run graph: spawn provenance on RunState, per-session workflow snapshot, shared edge derivation, and a React Flow + dagre canvas
 
-- Status: **Proposed** (design accepted for execution on 2026-09-27, revised after the Phase-4 consultations; not implemented). Epic
+- Status: **Accepted (implemented)** on 2026-09-27. Merged on `ad/run-graph-canvas` @ `dbd3657`,
+  with review gates G1 (engine), G2 (security), and G3 (final) all closed PASS. D1–D7 held. See the
+  implementation note at the end for what changed in the shipped code. Epic
   `E-k3AMEr-run-graph-canvas`.
 - Deciders: `architect`, with Phase-4 consultations (manager, developer, reviewer, tester,
   dev-security, dev-critic). The record is in `docs-md/run-graph-canvas-hld.md` §9 and the epic
@@ -181,3 +183,52 @@ strict CSP.
   - layout persistence
   - a possible timeline view. It would need per-dispatch interval history, an additive field
     **declined** here (see the HLD R-10).
+
+## Implementation note (2026-09-27, `T-oroE5f` reconciliation)
+
+All seven decisions shipped as decided. The full deviation list and follow-ups are in
+[`run-graph-canvas-hld.md`](../run-graph-canvas-hld.md) §0, and the claim-to-citation evidence is in
+`meta/tickets/E-k3AMEr-run-graph-canvas/T-oroE5f-docs-refresh/STATUS.md`. The points that touch
+this ADR's decisions:
+
+- **D1 held.** `SpawnRecord.origin` is an open `str`. The engine writes only the typed constants
+  `SPAWN_ORIGIN_INJECTED` / `SPAWN_ORIGIN_LOOP`. `_inject` takes a keyword-only, required
+  `parent_task_id`, with exactly 2 call sites. `route` is still not carried across resets
+  (finding F-2 remains an open follow-up).
+- **D2 held, and was hardened.**
+  - The session is recorded before the run's first save.
+  - The snapshot file is write-once.
+  - The `spec_sha256` read back from the agent-writable `state.json` is validated against
+    `^[0-9a-f]{64}$` before it is spliced into a filename. This was the Gate G1 SHOULD-FIX.
+  - The filename helper re-checks the sha as a second layer (Gate G2 L-3).
+  - Every tolerant read failure logs `run.workflow_snapshot_unavailable`.
+  - The launch-record fallback stays removed. Nothing reads launch records for the graph.
+- **D3 held.** `iter_dependency_edges` is the one edge implementation. `build_dag` consumes it, and
+  an oracle test proves identical adjacency, including order. `output_to_task` is computed once
+  (the Gate G1 DRY fix).
+- **D4 held**, with one gap in the anti-spoofing layer.
+  - The server-side `display_text` strips **every** Unicode Cc/Cf codepoint through a
+    `unicodedata`-derived table. It replaced an enumerated regex that missed 150 codepoints
+    (Gate G2 M-1, fixed).
+  - The **client-side mirror (`model.ts::displayText`) was not built** (Gate G2 L-1, deferred).
+    `TaskDetailPanel`'s label fallback shows a raw id, still as a React text node, only for an id
+    that is not a graph node.
+  - `compute_graph_version` has no explicit size-bound justification yet (Gate G2 L-4, deferred).
+- **D5 held.**
+  - Runtime deps: `@xyflow/react` `^12.12.0` and `@dagrejs/dagre` `^3.1.0`, both MIT.
+  - The lazy `RunGraph` chunk is about 82.5 KB gzip, under the ≤ 90 KB budget.
+  - `SPA_CSP` is unchanged. ASSUMPTION A-5 was **verified** by a real-Chrome smoke test with a
+    negative control.
+  - The smoke test stays **opt-in**, behind `@pytest.mark.browser` and the new optional `browser`
+    extra (`playwright>=1.45`, system Chrome).
+  - Exit cost: React Flow is imported by 4 files, all inside `ui/src/graph/`: `RunGraph.tsx`,
+    `TaskNode.tsx`, `TaskHoverCard.tsx`, and `hooks.ts`. dagre is imported only by `layout.ts`.
+  - The consequence above that "only `RunGraph.tsx`/`TaskNode.tsx` touch React Flow APIs" was
+    already inaccurate at design time, because the hover card uses `NodeToolbar`.
+- **D6 held, with one intentional expansion.** Selecting a toolbar search result also opens the
+  pinned panel, because both share one `selectedNodeId`. Gate G3 judged this coherent.
+- **D7 held.** Nodes are draggable, and "Reset layout" clears drag offsets. Nothing is persisted
+  (non-MVP `T-N8scZK`).
+- **Consequence debt (Gate G3 Warning #1, deferred):** the "components take generic view-models"
+  claim in the overall consequences is only partly true as shipped. `TaskHoverCard` and
+  `TaskDetailPanel` take the raw `RunGraph`. Fix this before the deferred DAG-editor reuses them.
