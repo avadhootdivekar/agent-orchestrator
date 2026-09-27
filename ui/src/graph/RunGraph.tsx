@@ -25,7 +25,10 @@ import {
   useReactFlow,
   type Edge as RFEdge,
   type Node as RFNode,
+  type NodeChange,
   type NodeMouseHandler,
+  type NodePositionChange,
+  type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import { api, ApiError } from "../api";
@@ -38,12 +41,16 @@ import type {
   TaskStat,
   ViewEdge,
 } from "../types";
+import { GraphToolbar } from "./GraphToolbar";
+import { useSelectAndCenter } from "./hooks";
 import { computeLayout } from "./layout";
 import {
   EDGE_LABEL_MIN_ZOOM,
   edgesForView,
   joinNodes,
   LARGE_GRAPH_NODES,
+  type MetricMaxima,
+  metricFraction,
   nodesForView,
   NODE_HEIGHT,
   NODE_WIDTH,
@@ -58,6 +65,7 @@ import {
   type TaskNodeData,
   type TaskNodeType,
 } from "./TaskNode";
+import { Legend } from "./Legend";
 
 export interface RunGraphProps {
   runId: string;
@@ -82,8 +90,45 @@ const EDGE_LABEL_PATH_MAX_CHARS = 24;
  */
 const NO_TASKS: TaskStat[] = [];
 
+/**
+ * The only `RunGraph.schema_version` this build understands (HLD §14.2 "Versioning"). A
+ * mismatch is a hard stop -- "the frontend shows 'unsupported graph schema' rather than
+ * mis-rendering" -- never an attempt to interpret a payload shaped for a different version.
+ */
+const SUPPORTED_GRAPH_SCHEMA_VERSION = 1;
+
+/** `TaskNode`'s own data, plus the metric-strip fraction this task adds (T-OjTS8O Deviation #1). */
+interface TaskNodeWithMetricData extends TaskNodeData {
+  /** `null` renders no strip element at all (mode "none", or nothing to compare against). */
+  metricFraction: number | null;
+}
+
+type TaskNodeWithMetricType = RFNode<TaskNodeWithMetricData, "task">;
+
+/**
+ * Composes `TaskNode` (untouched, per the change boundary) with the bottom metric strip HLD
+ * §8.6 calls for. A wrapper rather than a `TaskNode.tsx` edit: `TaskNode`'s own render has no
+ * slot for extra content, and this keeps the strip's on/off-ness (driven by the toolbar's
+ * metric select) entirely this file's concern.
+ */
+function TaskNodeWithMetric(props: NodeProps<TaskNodeWithMetricType>) {
+  const { metricFraction: fraction } = props.data;
+  return (
+    <div className="task-node-metric-wrap">
+      <TaskNode {...props} />
+      {fraction !== null ? (
+        <span
+          className="task-node-metric-strip"
+          aria-hidden="true"
+          style={{ width: `${fraction * 100}%` }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 /** Stable across renders — a fresh object here would make React Flow re-diff node types. */
-const NODE_TYPES = { task: TaskNode };
+const NODE_TYPES = { task: TaskNodeWithMetric };
 
 const VIEW_OPTIONS: { value: GraphView; label: string }[] = [
   { value: "dependency", label: "Execution order" },
@@ -199,6 +244,11 @@ function RunGraphCanvas({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   // Edge labels hide below EDGE_LABEL_MIN_ZOOM; the default view starts at zoom 1 (>= 0.6).
   const [showEdgeLabels, setShowEdgeLabels] = useState(true);
+  // Positions dragged away from the last computeLayout result, keyed by node id (AC-4). Cleared
+  // by "Reset layout"; never fed back into computeLayout itself (layout stays pure/reproducible).
+  const [draggedPositions, setDraggedPositions] = useState<Map<string, { x: number; y: number }>>(
+    () => new Map(),
+  );
 
   const lastFetchedVersionRef = useRef<string | null>(null);
   const layoutRequestRef = useRef(0);
@@ -228,17 +278,29 @@ function RunGraphCanvas({
     };
   }, [runId, graphVersion]);
 
+  // ---- Schema gate (D-4, AC-5): a version this build doesn't understand is a hard stop, never
+  // an attempt to run the view-model / layout / canvas against a differently-shaped payload.
+  const isSupportedSchema = !graph || graph.schema_version === SUPPORTED_GRAPH_SCHEMA_VERSION;
+
   // ---- View-model (cheap; recomputes on every `tasks` change, but never triggers layout) --
-  const viewNodes = useMemo(() => (graph ? joinNodes(graph, tasks) : []), [graph, tasks]);
-  const edges = useMemo(() => (graph ? edgesForView(graph, prefs.view) : []), [graph, prefs.view]);
-  const visible = useMemo(
-    () => nodesForView(viewNodes, edges, prefs.view, prefs.showUnrelated).visible,
+  const viewNodes = useMemo(
+    () => (graph && isSupportedSchema ? joinNodes(graph, tasks) : []),
+    [graph, tasks, isSupportedSchema],
+  );
+  const edges = useMemo(
+    () => (graph && isSupportedSchema ? edgesForView(graph, prefs.view) : []),
+    [graph, prefs.view, isSupportedSchema],
+  );
+  const { visible, hiddenCount } = useMemo(
+    () => nodesForView(viewNodes, edges, prefs.view, prefs.showUnrelated),
     [viewNodes, edges, prefs.view, prefs.showUnrelated],
   );
+  const visibleIds = useMemo(() => new Set(visible.map((node) => node.id)), [visible]);
+  const isHidden = useCallback((id: string) => !visibleIds.has(id), [visibleIds]);
 
   // ---- Layout: depends on graph/view/showUnrelated ONLY, never on `tasks` (AC-5) ----------
   useEffect(() => {
-    if (!graph) return;
+    if (!graph || !isSupportedSchema) return;
     const requestId = ++layoutRequestRef.current;
     const structuralEdges = edgesForView(graph, prefs.view);
     const structuralNodes = nodesForView(
@@ -256,7 +318,7 @@ function RunGraphCanvas({
         /* computeLayout has no documented failure mode today; a defensive no-op keeps a
            future async layout engine (ADR-0017 D5) from surfacing an unhandled rejection. */
       });
-  }, [graph, prefs.view, prefs.showUnrelated]);
+  }, [graph, prefs.view, prefs.showUnrelated, isSupportedSchema]);
 
   // ---- Keep the selection centered across a view toggle (Description item 2) --------------
   useEffect(() => {
@@ -281,9 +343,53 @@ function RunGraphCanvas({
 
   const handleViewChange = useCallback((nextView: GraphView) => {
     recenterPendingRef.current = true;
+    // A dragged offset belongs to the layout it was dragged in; the other view's dagre pass
+    // places the same node id somewhere unrelated, so a carried-over offset would misplace it.
+    setDraggedPositions(new Map());
     setPrefs((current) => {
       const next = { ...current, view: nextView };
       writePrefs(next);
+      return next;
+    });
+  }, []);
+
+  const handleShowUnrelatedChange = useCallback((value: boolean) => {
+    setPrefs((current) => {
+      const next = { ...current, showUnrelated: value };
+      writePrefs(next);
+      return next;
+    });
+  }, []);
+
+  const handleMetricChange = useCallback((value: GraphPrefs["metric"]) => {
+    setPrefs((current) => {
+      const next = { ...current, metric: value };
+      writePrefs(next);
+      return next;
+    });
+  }, []);
+
+  const handleFit = useCallback(() => {
+    void reactFlow.fitView();
+  }, [reactFlow]);
+
+  /** "Reset layout" (TASK.md item 1.5): discard drag offsets, falling back to the cached
+   * computeLayout positions -- computeLayout is a pure function of the unchanged nodes/edges/
+   * view, so recomputing it would only reproduce the SAME positions already held in `layout`. */
+  const handleReset = useCallback(() => {
+    setDraggedPositions(new Map());
+  }, []);
+
+  const handleNodesChange = useCallback((changes: NodeChange<TaskNodeWithMetricType>[]) => {
+    const positionChanges = changes.filter(
+      (change): change is NodePositionChange => change.type === "position",
+    );
+    if (positionChanges.length === 0) return;
+    setDraggedPositions((prev) => {
+      const next = new Map(prev);
+      for (const change of positionChanges) {
+        if (change.position) next.set(change.id, change.position);
+      }
       return next;
     });
   }, []);
@@ -303,15 +409,44 @@ function RunGraphCanvas({
     [onNodeMouseEnter],
   );
 
-  const rfNodes = useMemo<RFNode<TaskNodeData, "task">[]>(() => {
+  // ---- Search-to-focus (AC-3) / future detail-panel links (T-pAi0Cv) share this behavior --
+  const selectAndCenter = useSelectAndCenter({
+    layout,
+    isHidden,
+    setShowUnrelated: handleShowUnrelatedChange,
+    onSelect: setSelectedNodeId,
+  });
+
+  // ---- Metric strip (AC-2): maxima over the VISIBLE set, so the costliest/longest task on
+  // screen right now reads as 100%, not diluted by a task the unrelated filter is hiding. ----
+  const maxima = useMemo<MetricMaxima>(() => {
+    let duration = 0;
+    let cost = 0;
+    for (const node of visible) {
+      if (!node.stat) continue;
+      if (node.stat.duration_seconds !== null) {
+        duration = Math.max(duration, node.stat.duration_seconds);
+      }
+      cost = Math.max(cost, node.stat.cost_usd);
+    }
+    return { duration, cost };
+  }, [visible]);
+
+  const rfNodes = useMemo<RFNode<TaskNodeWithMetricData, "task">[]>(() => {
     if (!layout) return [];
+    const fallbackPosition = { x: 0, y: 0 };
     return visible.map((node) => {
-      const position = layout.positions.get(node.id) ?? { x: 0, y: 0 };
+      const position =
+        draggedPositions.get(node.id) ?? layout.positions.get(node.id) ?? fallbackPosition;
       return {
         id: node.id,
         type: "task",
         position,
-        data: { node, direction: layout.direction },
+        data: {
+          node,
+          direction: layout.direction,
+          metricFraction: metricFraction(node.stat, prefs.metric, maxima),
+        },
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
         selected: node.id === selectedNodeId,
@@ -320,16 +455,53 @@ function RunGraphCanvas({
         ariaLabel: accessibleNodeName(node),
       };
     });
-  }, [visible, layout, selectedNodeId]);
+  }, [visible, layout, selectedNodeId, draggedPositions, prefs.metric, maxima]);
 
   const rfEdges = useMemo(() => toRfEdges(edges, showEdgeLabels), [edges, showEdgeLabels]);
+
+  if (graph && !isSupportedSchema) {
+    // D-4: an old dashboard build talking to a newer graph payload degrades honestly with a
+    // clear reason, never a best-effort render of a shape it doesn't understand.
+    return (
+      <div className="graph-root">
+        <div className="banner error" role="alert">
+          Unsupported graph schema (schema_version {graph.schema_version}); this dashboard build
+          only supports schema_version {SUPPORTED_GRAPH_SCHEMA_VERSION}. Reload after upgrading
+          the dashboard.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="graph-root">
       <ErrorBanner message={graphError} />
       <div className="graph-toolbar-row">
         <ViewToggle value={prefs.view} onChange={handleViewChange} />
+        <GraphToolbar
+          view={prefs.view}
+          showUnrelated={prefs.showUnrelated}
+          onShowUnrelatedChange={handleShowUnrelatedChange}
+          hiddenCount={hiddenCount}
+          metric={prefs.metric}
+          onMetricChange={handleMetricChange}
+          searchableNodes={graph?.nodes ?? []}
+          onSearchSelect={selectAndCenter}
+          onFit={handleFit}
+          onReset={handleReset}
+        />
       </div>
+      {/* Degraded banners (FR-7, D-4): one line per warnings[] entry, as literal text only --
+          never HTML, since these strings can come from an agent-authored id/path (D-5). */}
+      {graph && graph.warnings.length > 0 ? (
+        <div className="graph-banners">
+          {graph.warnings.map((warning, index) => (
+            <div className="banner info" key={`${index}-${warning}`}>
+              {warning}
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="graph-canvas-wrap">
         {graph && layout ? (
           <ReactFlow
@@ -338,6 +510,7 @@ function RunGraphCanvas({
             nodeTypes={NODE_TYPES}
             onNodeClick={handleNodeClick}
             onNodeMouseEnter={handleNodeMouseEnter}
+            onNodesChange={handleNodesChange}
             fitView
             minZoom={MIN_ZOOM}
             maxZoom={MAX_ZOOM}
@@ -355,6 +528,15 @@ function RunGraphCanvas({
           <Empty>Loading graph…</Empty>
         )}
       </div>
+      {graph ? (
+        <Legend
+          view={prefs.view}
+          source={graph.source}
+          spawnData={graph.spawn_data}
+          truncated={graph.truncated}
+          warnings={graph.warnings}
+        />
+      ) : null}
     </div>
   );
 }
