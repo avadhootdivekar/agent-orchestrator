@@ -18,7 +18,7 @@
 | T-aHktGB-graph-toolbar-and-legend | MVP | S2 | 12 h | **Done** |
 | T-pAi0Cv-task-detail-panel | MVP | S2 | 16 h | **Done** |
 | T-F1caAt-graph-e2e-verification | MVP | S2 | 14 h | **Done** (5 correction rounds — see below) |
-| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft (unblocked — dispatching next) |
+| T-oroE5f-docs-refresh | MVP (mandatory, last) | S2 | 6 h | Draft (blocked on Gate G3, per its own TASK.md) |
 | T-VcN4pt-task-title-field | Non-MVP | S2 stretch | 6 h | Draft |
 | T-hMNbDP-spawn-subtree-collapse | Non-MVP | backlog | 12 h | Draft |
 | T-ydMbJN-critical-path-edge-timing | Non-MVP | backlog | 12 h | Draft |
@@ -359,14 +359,18 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
    `ad/run-graph-canvas` currently stands at 4614 backend tests passed / 8 skipped / 0 failed
    (plus 2 opt-in browser tests passing under `-m browser`), 224 frontend tests passed, 93.91%
    UI coverage, clean ruff/mypy/typecheck, and a byte-reproducible frontend build.
-2. **Next: `T-oroE5f-docs-refresh` (mandatory, last MVP task).** Dispatch to reconcile
-   `docs-md/` (the HLD, ADR-0017, `dashboard-and-general-instructions-hld.md` §4 cross-link,
-   `meta/ROADMAP.md` §3.3) and any READMEs against what was actually built, including
-   documenting the resolved ASSUMPTION A-5, the opt-in browser-smoke recommendation, and the
-   `browser` extra now in `pyproject.toml`.
-3. Then Gate G2 (`dev-security` — the frontend rendering surface, the graph endpoint's
-   no-leakage guarantees already tested in T-AsQ77e, and the T-F1caAt evidence) before close,
-   then Gate G3 (final `reviewer` sign-off on the accumulated epic, including the T-pAi0Cv
-   deviation flagged earlier — toolbar search-select also opens the panel). After G3, the
-   epic is ready to declare complete; a separate follow-up ticket for finding F-2 (route lost
-   on resume) remains available to file if not already tracked.
+2. **Next: Gate G2 (`dev-security`).** Corrected my own sequencing error here: I had listed
+   `T-oroE5f` before the gates, but its own TASK.md is explicit — "Dependencies: All MVP tasks
+   Done, plus Gate G3" — matching the epic's documented order (G2 → G3 → docs refresh → close).
+   Dispatch `dev-security` to review the frontend rendering surface (label sanitization,
+   text-only rendering, no `dangerouslySetInnerHTML`), the graph endpoint's no-leakage
+   guarantees (already tested in T-AsQ77e but worth an independent security pass), the
+   sha-format path-construction guard from Gate G1, and the T-F1caAt browser-CSP evidence.
+3. Then Gate G3 (final `reviewer` sign-off on the accumulated epic, including the T-pAi0Cv
+   deviation flagged earlier — toolbar search-select also opens the panel).
+4. Then dispatch `T-oroE5f-docs-refresh` (mandatory, last) to reconcile `docs-md/` (the HLD,
+   ADR-0017, `dashboard-and-general-instructions-hld.md` §4 cross-link, `meta/ROADMAP.md` §3.3)
+   and READMEs against what was actually built — including the resolved ASSUMPTION A-5, the
+   opt-in browser-smoke recommendation, and the new `browser` extra in `pyproject.toml`. After
+   that, the epic is ready to declare complete; a separate follow-up ticket for finding F-2
+   (route lost on resume) remains available to file if not already tracked.
