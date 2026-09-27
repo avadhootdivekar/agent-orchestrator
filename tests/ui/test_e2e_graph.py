@@ -238,18 +238,14 @@ class TestGraphE2eApi:
         )
 
         # Verify spawn edges: checkpoint__1 -> unit__1_*
-        expected_spawn_edges = {
-            (f"checkpoint__1", f"unit__1_{i}") for i in range(1, fanout + 1)
-        }
+        expected_spawn_edges = {("checkpoint__1", f"unit__1_{i}") for i in range(1, fanout + 1)}
         assert expected_spawn_edges.issubset(spawn_edge_set), (
             f"expected spawn edges {expected_spawn_edges} in {spawn_edge_set}"
         )
 
         # Verify dependency edges: unit__1_* -> checkpoint__2
         if waves > 1:
-            expected_dep_edges = {
-                (f"unit__1_{i}", f"checkpoint__2") for i in range(1, fanout + 1)
-            }
+            expected_dep_edges = {(f"unit__1_{i}", "checkpoint__2") for i in range(1, fanout + 1)}
             assert expected_dep_edges.issubset(dep_edge_set), (
                 f"expected dependency edges {expected_dep_edges} in {dep_edge_set}"
             )
@@ -371,15 +367,17 @@ class TestGraphBrowserSmoke:
                     proc.kill()
                     pytest.fail("server did not start")
 
-                # AC-1 HTTP-level assertion: GET /api/runs/{id}/graph and verify snapshot is readable
+                # AC-1 HTTP-level assertion: GET /api/runs/{id}/graph, verify snapshot readable
                 graph_response = httpx.get(f"{base_url}/api/runs/synth-run-001/graph", timeout=10.0)
-                assert graph_response.status_code == 200, f"graph endpoint returned {graph_response.status_code}"
+                assert graph_response.status_code == 200, (
+                    f"graph endpoint returned {graph_response.status_code}"
+                )
                 graph_data = graph_response.json()
 
                 # Verify snapshot is readable (not degraded)
                 assert graph_data.get("source") == "snapshot", (
-                    f"Expected source='snapshot' (readable), got source='{graph_data.get('source')}' "
-                    "(likely means snapshot sha validation failed)"
+                    f"Expected source='snapshot' (readable), got "
+                    f"source='{graph_data.get('source')}' (snapshot sha validation may have failed)"
                 )
 
                 # Verify spawn and dependency edges exist in the graph response
@@ -388,18 +386,20 @@ class TestGraphBrowserSmoke:
 
                 # Verify snapshot is truly readable (produces real edges, not empty)
                 assert len(spawn_edges) > 0, (
-                    f"No spawn edges in readable snapshot. Dependency: {len(dependency_edges)}, "
-                    f"Spawn: {len(spawn_edges)}. This indicates snapshot.spec_sha256 is still invalid."
+                    f"No spawn edges in readable snapshot (dependency={len(dependency_edges)}, "
+                    f"spawn={len(spawn_edges)}) -- snapshot.spec_sha256 may still be invalid"
                 )
 
                 # Verify dependency edges also exist (since fixture wires dependencies)
                 assert len(dependency_edges) > 0, (
-                    f"No dependency edges in fixture graph. Expected dependencies between checkpoints. "
-                    f"Spawn: {len(spawn_edges)}, Dependency: {len(dependency_edges)}"
+                    f"No dependency edges; expected checkpoint->checkpoint deps "
+                    f"(spawn={len(spawn_edges)}, dependency={len(dependency_edges)})"
                 )
 
                 # Verify they differ (U-4 requirement)
-                assert spawn_edges != dependency_edges, "Spawn and dependency edge sets should differ"
+                assert spawn_edges != dependency_edges, (
+                    "Spawn and dependency edge sets should differ"
+                )
 
                 async with async_playwright() as p:
                     browser = await p.chromium.launch(channel="chrome")
@@ -442,12 +442,12 @@ class TestGraphBrowserSmoke:
                     # Wait for React Flow nodes to render
                     await page.wait_for_selector(".react-flow__node", timeout=10000)
 
-                    # AC-3a: Assert node count matches expected (162 nodes: 20 checkpoints + 20*8 units)
+                    # AC-3a: node count == 180 (20 checkpoints + 20*8 units)
                     node_count = await page.locator(".react-flow__node").count()
                     expected_node_count = 20 + (20 * 8)  # checkpoints + units
-                    assert (
-                        node_count == expected_node_count
-                    ), f"expected {expected_node_count} nodes, got {node_count}"
+                    assert node_count == expected_node_count, (
+                        f"expected {expected_node_count} nodes, got {node_count}"
+                    )
 
                     # AC-3b: Toggle to "Spawned by" view and check edge count changes
                     spawn_view_radio = page.get_by_role("radio", name="Spawned by")
@@ -455,24 +455,24 @@ class TestGraphBrowserSmoke:
 
                     # Node set should be unchanged
                     spawn_node_count = await page.locator(".react-flow__node").count()
-                    assert (
-                        spawn_node_count == node_count
-                    ), f"spawn view should have same nodes, got {spawn_node_count} vs {node_count}"
+                    assert spawn_node_count == node_count, (
+                        f"spawn view should have same nodes, got {spawn_node_count} vs {node_count}"
+                    )
 
                     # Edge count should change to spawn edge count (20*8 = 160 spawn edges)
                     spawn_edge_count = await page.locator(".react-flow__edge").count()
                     expected_spawn_edges = 20 * 8  # checkpoint -> 8 units per wave
-                    assert (
-                        spawn_edge_count == expected_spawn_edges
-                    ), f"expected {expected_spawn_edges} spawn edges, got {spawn_edge_count}"
+                    assert spawn_edge_count == expected_spawn_edges, (
+                        f"expected {expected_spawn_edges} spawn edges, got {spawn_edge_count}"
+                    )
 
                     # AC-3c: Toggle back to dependency view
                     dep_view_radio = page.get_by_role("radio", name="Execution order")
                     await dep_view_radio.click()
 
-                    # AC-3d: Click a node and verify detail panel opens
-                    # Note: At fitView zoom for 180 nodes (~0.05 zoom), nodes are sub-3-pixel targets.
-                    # Use search-to-center (T-aHktGB toolbar feature) to zoom to usable level first.
+                    # AC-3d: Click a node and verify detail panel opens.
+                    # At fitView zoom for 180 nodes (~0.05 zoom), nodes are sub-3-pixel targets --
+                    # use search-to-center (T-aHktGB toolbar) to zoom to a usable level first.
                     search_box = page.locator("#graph-search")
                     await search_box.fill("checkpoint__1")
                     await search_box.press("Enter")
@@ -496,6 +496,7 @@ class TestGraphBrowserSmoke:
                     # AC-3e: Take screenshots
                     # Use a consistent output directory for the repo
                     import inspect
+
                     repo_root = Path(inspect.getfile(inspect.currentframe())).parent.parent.parent
                     screenshot_dir = repo_root / "output" / "E-k3AMEr-run-graph-canvas"
                     screenshot_dir.mkdir(parents=True, exist_ok=True)

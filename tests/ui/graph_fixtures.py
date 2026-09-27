@@ -123,9 +123,7 @@ def write_synthetic_run(root: Path, waves: int, fanout: int, *, clock: datetime)
 
         # Each checkpoint (except the first) depends on the previous wave's units
         if wave > 1:
-            task_dict["depends_on"] = [
-                f"unit__{wave - 1}_{i}" for i in range(1, fanout + 1)
-            ]
+            task_dict["depends_on"] = [f"unit__{wave - 1}_{i}" for i in range(1, fanout + 1)]
 
         tasks_spec.append(task_dict)
 
