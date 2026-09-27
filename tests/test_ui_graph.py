@@ -518,6 +518,23 @@ class TestDisplayTextSanitizer:
         assert node.label == "leaf"
         assert node.label_sanitized is True
 
+    def test_strips_every_unicode_cc_and_cf_codepoint(self) -> None:
+        """Gate G2 M-1 regression: an earlier explicit-range regex missed 150 real Cc/Cf
+        codepoints (e.g. U+200E/U+200F LRM/RLM and the U+E0000-E007F Tags block). The
+        sanitizer now derives its removal set from `unicodedata.category` itself, so every
+        Cc/Cf codepoint in the current Unicode database must be stripped -- not just the
+        ones an earlier explicit range happened to enumerate.
+        """
+        import unicodedata
+
+        missed = [
+            cp
+            for cp in range(0x110000)
+            if unicodedata.category(chr(cp)) in ("Cc", "Cf")
+            and display_text(f"a{chr(cp)}b") != ("ab", True)
+        ]
+        assert missed == [], f"{len(missed)} Cc/Cf codepoints were not stripped: {missed[:10]}"
+
 
 # ---------------------------------------------------------------------------
 # AC-5: early size cap.

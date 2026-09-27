@@ -64,7 +64,20 @@ def canonical_spec_json(static: WorkflowSpec) -> str:
 
 
 def _workflow_snapshot_filename(sha: str) -> str:
-    """Filename for the write-once snapshot of the static spec identified by *sha*."""
+    """Filename for the write-once snapshot of the static spec identified by *sha*.
+
+    Gate G2 L-3 (defense in depth): both current callers already guarantee a valid
+    64-char lowercase hex *sha* before reaching here (``load_workflow_snapshot_at``
+    validates it explicitly; ``record_spec_session`` always computes it itself via
+    ``hashlib.sha256(...).hexdigest()``) -- this assertion is a second, independent
+    layer so a future third call site can never silently reintroduce the Gate G1 path-
+    construction bug by skipping validation. Raises, rather than tolerating, because an
+    invalid *sha* reaching this internal helper is a programmer error, not user input.
+    """
+    if not _WORKFLOW_SNAPSHOT_SHA_PATTERN.fullmatch(sha):
+        raise ValueError(
+            f"invalid workflow snapshot sha (expected 64 lowercase hex chars): {sha!r}"
+        )
     sha_prefix = sha[:WORKFLOW_SNAPSHOT_SHA_CHARS]
     return f"{WORKFLOW_SNAPSHOT_PREFIX}{sha_prefix}{WORKFLOW_SNAPSHOT_SUFFIX}"
 

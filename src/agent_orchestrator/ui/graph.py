@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -76,20 +76,22 @@ _WARNING_SPAWN_NOT_RECORDED = (
     "Spawn relationships were not recorded for this run (it predates spawn tracking)."
 )
 
-# Cc (control) and the specific Cf (format) characters call out by HLD §8.3.2's constant
-# list: bidi embedding/override/isolate controls and zero-width characters -- the ones an
+# Every Unicode Cc (control) and Cf (format) codepoint -- bidi embedding/override/isolate
+# controls, zero-width characters, the invisible "Tags" block, etc -- the categories an
 # agent-authored task id could smuggle in to spoof another id or hide content in the UI
-# (ADR-0017 D4, dev-security LOW). Python's stdlib `re` has no `\p{Cf}` property class, so
-# these are enumerated explicitly rather than derived from `unicodedata` at import time.
-_INVISIBLE_OR_BIDI = re.compile(
-    "["
-    "\x00-\x1f\x7f-\x9f"  # Cc: C0/C1 control characters ("other controls")
-    "​-‍"  # Cf: zero-width space / ZWNJ / ZWJ
-    "﻿"  # Cf: zero-width no-break space (BOM)
-    "‪-‮"  # Cf: bidi embedding/override controls (LRE/RLE/PDF/LRO/RLO)
-    "⁦-⁩"  # Cf: bidi isolate controls (LRI/RLI/FSI/PDI)
-    "]"
-)
+# (ADR-0017 D4, dev-security LOW/M-1 at Gate G2). Derived from `unicodedata.category`
+# itself, once at import time, rather than an explicit enumerated range: a prior explicit
+# range missed 150 real Cc/Cf codepoints (Gate G2 M-1), including U+200E/U+200F (LRM/RLM --
+# the same bidi-spoofing class as the LRE/RLE/LRO/RLO it did cover) and the U+E0000-E007F
+# "Tags" block (a documented invisible-payload-smuggling range). Deriving from unicodedata
+# guarantees every current (and future, on a Python upgrade) Cc/Cf codepoint is covered,
+# not just the ones an author happened to enumerate. One-time cost (~70ms) at import, off
+# the engine hot path (NFR-7) -- `ui.graph` is only imported when the dashboard starts.
+_INVISIBLE_OR_BIDI_TRANSLATION = {
+    codepoint: None
+    for codepoint in range(0x110000)
+    if unicodedata.category(chr(codepoint)) in ("Cc", "Cf")
+}
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +194,7 @@ def display_text(raw: str) -> tuple[str, bool]:
     field itself -- it is the join key and must stay byte-exact; only ``label`` (or the
     mirrored ``model.ts::displayText``, for ids reached via links) is sanitized.
     """
-    cleaned = _INVISIBLE_OR_BIDI.sub("", raw)
+    cleaned = raw.translate(_INVISIBLE_OR_BIDI_TRANSLATION)
     if len(cleaned) > GRAPH_LABEL_MAX_CHARS:
         cleaned = cleaned[: GRAPH_LABEL_MAX_CHARS - 1] + "…"
     return cleaned, cleaned != raw

@@ -544,6 +544,27 @@ class TestLoadWorkflowSnapshotAtTolerant:
         assert list(tmp_path.iterdir()) == []
 
 
+class TestWorkflowSnapshotFilenameDefenseInDepth:
+    """Gate G2 L-3: ``_workflow_snapshot_filename`` no longer trusts its caller. Both
+    real callers (``load_workflow_snapshot_at``, ``record_spec_session``) already
+    guarantee a valid sha before reaching it -- this is a second, independent layer so
+    a future third call site can't silently reintroduce the Gate G1 path-construction
+    bug by skipping validation.
+    """
+
+    def test_valid_sha_still_works(self) -> None:
+        sha = "0" * 64
+        assert runstate._workflow_snapshot_filename(sha) == f"workflow.snapshot.{'0' * 12}.json"
+
+    @pytest.mark.parametrize(
+        "malformed_sha",
+        ["", "too-short", "A" * 64, "../../../etc/passwd", "0" * 12 + "/../../evil"],
+    )
+    def test_malformed_sha_raises_instead_of_building_a_path(self, malformed_sha: str) -> None:
+        with pytest.raises(ValueError, match="invalid workflow snapshot sha"):
+            runstate._workflow_snapshot_filename(malformed_sha)
+
+
 # ---------------------------------------------------------------------------
 # AC-8: a snapshot write failure never fails the run
 # ---------------------------------------------------------------------------

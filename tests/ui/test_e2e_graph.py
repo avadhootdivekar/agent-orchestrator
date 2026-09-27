@@ -24,6 +24,7 @@ from typer.testing import CliRunner
 
 from agent_orchestrator.ui.graph import build_run_graph
 from agent_orchestrator.ui.runs import RunRepository
+from agent_orchestrator.ui.security import SPA_CSP
 from tests.ui.graph_fixtures import write_synthetic_run
 
 pytest.importorskip("fastapi", reason="dashboard needs the optional [ui] extra")
@@ -553,12 +554,9 @@ class TestGraphBrowserSmoke:
             """Serves a page with SPA_CSP + inline script to trigger a violation."""
 
             def do_GET(self):
-                # Use the exact SPA_CSP from security.py
-                spa_csp = (
-                    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-                    "font-src 'self' data:; connect-src 'self'; frame-src 'self' data:; "
-                    "object-src 'none'; base-uri 'none'; form-action 'none'"
-                )
+                # Gate G2 L-2: import the real policy rather than a copied string, so
+                # this negative control can never silently drift from the live SPA_CSP.
+                spa_csp = SPA_CSP
                 html = f"""
                 <html>
                 <head>
