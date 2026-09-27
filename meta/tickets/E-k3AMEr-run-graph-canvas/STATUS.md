@@ -28,6 +28,29 @@ Counts: **15 tasks** (11 MVP, 4 non-MVP). **9 Done**, 1 In Progress, 0 Blocked, 
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-F1caAt rework, round 3: the
+  claimed "critical production bug" is a misdiagnosis — disproved by direct reproduction.**
+  Round 2's fix (hard panel assertion) came back reporting that clicking a node in a real
+  browser never opens the detail panel, blaming a broken `onNodeClick` wire-up in
+  `RunGraph.tsx`, and recommending the task be blocked on a production fix. I did not accept
+  this without reproducing it myself, given the ticket's poor track record so far this task.
+  I wrote a standalone Playwright script (kept in the session scratchpad, not committed) against
+  the exact same merged code (confirmed via diff: no `ui/src` file has been touched by any
+  T-F1caAt commit) and found the real cause: at `fitView` zoom for a 180-node graph (near the
+  `minZoom=0.05` floor), each node renders as a ~9x2 pixel target — physically unclickable by
+  anything, agent or human. Playwright's own diagnostic said exactly this ("element ... intercepts
+  pointer events" / a toolbar or wrapper div capturing the click at that sub-pixel location) but
+  the previous attempt didn't read it and guessed a wiring bug instead. I then used the app's own
+  search-to-center feature (`#graph-search` + Enter, T-aHktGB's own spec: centers the match at
+  `zoom = max(current, 1)`) to zoom into `checkpoint__1` first, then clicked it: the panel opened
+  immediately, `role="complementary"` visible, full correct content (label, status, timing, cost).
+  **There is no production bug.** T-pAi0Cv's click-to-pin panel works exactly as designed; the
+  test just needs to use the zoom-to-node affordance before clicking, matching realistic
+  interaction with a graph at this scale. Sent the exact working repro code back to the agent with
+  instructions to retract the false bug claim, fix the test the same way, and stop softening
+  assertions with try/except.
+
+## Prior update (T-F1caAt rework round 2)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-F1caAt rework, round 2:
   real progress but sent back again.** The reworked browser test now genuinely navigates
   (real run-row click, real Graph-tab click, real node/edge-count assertions against the
