@@ -28,6 +28,53 @@ Counts: **15 tasks** (11 MVP, 4 non-MVP). **10 Done**, 0 In Progress, 0 Blocked,
 MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity math in HLD §22).
 
 ## This update
+- By: dev-security · Role: dev-security · Date: 2026-09-27 · Comment: **Gate G2 review complete
+  — PASS WITH FOLLOW-UPS.** Independent, adversarial re-verification (not re-reading claims):
+  the Gate G1 sha guard broke on none of a dozen traversal/null/malformed inputs tried live
+  against the real function; `dangerouslySetInnerHTML`/`href=`/`eval(`/`innerHTML` all absent
+  from `ui/src/graph/`; the `/graph` HTTP response was read field-by-field against the actual
+  dataclasses (no hook argv, instruction text, or integration commands reach it); supply chain
+  scoping confirmed (`playwright` never imported by `src/`, confined to a new `pyproject.toml`
+  `browser` extra; `npm audit`/`pip-audit` show nothing new); `GRAPH_MAX_NODES`/
+  `WORKFLOW_SNAPSHOT_MAX_BYTES` caps confirmed enforced before the expensive work, by code
+  order. 0 CRITICAL, 0 HIGH. 1 MEDIUM: `display_text()`'s bidi/zero-width stripping was an
+  explicit enumerated regex range that — verified by enumerating all 1.1M Unicode codepoints
+  against the live function — missed 150 real Cc/Cf codepoints, including U+200E/U+200F
+  (LRM/RLM, the same spoofing class as the LRE/RLE/LRO/RLO it did cover) and the invisible
+  "Tags" block. 4 LOW: a negative-control test hardcoded a copy of `SPA_CSP` instead of
+  importing it (drift risk); `_workflow_snapshot_filename` had no independent guard of its own
+  (safe only because both callers already validate); a client-side `TaskDetailPanel.tsx` label
+  fallback bypasses the server sanitizer when a referenced id isn't a full node (ADR-0017 D4
+  names a "mirrored `model.ts::displayText`" that was never implemented); `compute_graph_version`
+  has no size bound analogous to the builder's early cap, though it reuses collections already
+  iterated elsewhere and isn't a new standalone DoS vector.
+- By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **Gate G2 findings resolved.**
+  Fixed the MEDIUM and 2 of the 4 LOW findings directly (small, well-specified, on the exact
+  control this gate exists to verify — not worth a round-trip):
+  - **M-1**: replaced the explicit regex range with a translation table derived from
+    `unicodedata.category(ch) in ("Cc", "Cf")` at import time (~70ms one-time cost, off the
+    engine hot path — `ui.graph` only loads when the dashboard starts). Re-verified myself by
+    enumerating all 1,114,112 codepoints against the fixed function: **0 missed**. New
+    exhaustive regression test pins this (`tests/test_ui_graph.py::
+    TestDisplayTextSanitizer::test_strips_every_unicode_cc_and_cf_codepoint`).
+  - **L-2**: `tests/ui/test_e2e_graph.py`'s negative control now imports the real `SPA_CSP`
+    from `security.py` instead of a copied string.
+  - **L-3**: `_workflow_snapshot_filename` now independently validates its `sha` argument
+    (raises `ValueError` — an internal programmer-error boundary, not the tolerant public API)
+    as a second, defense-in-depth layer. 6 new regression tests
+    (`tests/test_workflow_snapshot.py::TestWorkflowSnapshotFilenameDefenseInDepth`).
+  - **L-1** (client-side `displayText` mirror) and **L-4** (`compute_graph_version` cost
+    justification) are deferred to backlog, per the review's own characterization — neither is
+    independently exploitable (L-1: React text-interpolation still escapes markup even
+    unsanitized; L-4: reuses collections already linear-iterated elsewhere, not a new DoS
+    surface). Worth picking up opportunistically, not blocking.
+  - Re-verified after the fixes: `pytest -q` → **4621 passed** (+7 new tests), 8 skipped, 0
+    failed. `ruff`/`ruff format`/`mypy` → 0 new findings (same 2 pre-existing, out-of-scope
+    ones as the whole epic's baseline).
+  - **Gate G2: CLOSED, PASS.** Nothing here changes the epic's accepted trust model (agent-
+    writable workspace = observability data, not a security boundary — R-9, already accepted).
+
+## Prior update (T-F1caAt-graph-e2e-verification merge)
 - By: dev-epic · Role: developer · Date: 2026-09-27 · Comment: **T-F1caAt-graph-e2e-verification
   merged — Done. The late e2e gate is closed; ASSUMPTION A-5 is resolved (real, not just
   claimed).** Round 5 fixed the sha-truncation fixture bug precisely as directed. I re-verified
@@ -353,24 +400,17 @@ MVP total **132 focus hours**: S1 64 h + S2 68 h, with 2 developers (capacity ma
   selected route. A separate backlog ticket is recommended.
 
 ## Next actions
-1. **DONE. All 10 MVP dev/test tasks complete** (5 S1 + 5 S2, including the late e2e gate
-   `T-F1caAt`, closed after 5 rounds of independent verification — see "This update" above for
-   the full evidence trail, including 2 real bugs found+fixed and 1 false bug claim disproved).
-   `ad/run-graph-canvas` currently stands at 4614 backend tests passed / 8 skipped / 0 failed
-   (plus 2 opt-in browser tests passing under `-m browser`), 224 frontend tests passed, 93.91%
-   UI coverage, clean ruff/mypy/typecheck, and a byte-reproducible frontend build.
-2. **IN PROGRESS: Gate G2 (`dev-security`, agent `ac7267577595d6a7a`).** Corrected my own
-   sequencing error here: I had listed `T-oroE5f` before the gates, but its own TASK.md is
-   explicit — "Dependencies: All MVP tasks Done, plus Gate G3" — matching the epic's documented
-   order (G2 → G3 → docs refresh → close). Dispatched `dev-security` (read-only review) to
-   independently re-verify: the sha-format path-construction guard from Gate G1, the frontend
-   XSS/text-only-rendering surface, the `display_text` label sanitizer (bidi/zero-width/length
-   cap), the graph endpoint's no-leakage guarantees, supply-chain scope of the 2 new frontend
-   deps + 1 new optional `playwright` test dep, the T-F1caAt CSP evidence, and the
-   `GRAPH_MAX_NODES`/`WORKFLOW_SNAPSHOT_MAX_BYTES` DoS caps.
-3. Then Gate G3 (final `reviewer` sign-off on the accumulated epic, including the T-pAi0Cv
-   deviation flagged earlier — toolbar search-select also opens the panel).
-4. Then dispatch `T-oroE5f-docs-refresh` (mandatory, last) to reconcile `docs-md/` (the HLD,
+1. **DONE. All 10 MVP dev/test tasks complete**, and **Gate G2 (dev-security) CLOSED, PASS.**
+   `ad/run-graph-canvas` currently stands at 4621 backend tests passed / 8 skipped / 0 failed
+   (plus 2 opt-in browser tests passing under `-m browser`), 224 frontend tests passed, clean
+   ruff/mypy/typecheck, and a byte-reproducible frontend build.
+2. **Next: Gate G3 (final `reviewer` sign-off).** Dispatch `reviewer` for a holistic pass over
+   the accumulated epic diff (`191da69..ad/run-graph-canvas`) — not re-litigating what Gate G1/
+   G2 already covered in depth, but checking overall coherence, the T-pAi0Cv deviation flagged
+   earlier (toolbar search-select also opens the panel — a small, undocumented UX expansion
+   beyond `T-aHktGB`'s original spec), and the 2 deferred Gate G2 LOW findings (confirm they're
+   reasonably backlogged, not silently dropped).
+3. Then dispatch `T-oroE5f-docs-refresh` (mandatory, last) to reconcile `docs-md/` (the HLD,
    ADR-0017, `dashboard-and-general-instructions-hld.md` §4 cross-link, `meta/ROADMAP.md` §3.3)
    and READMEs against what was actually built — including the resolved ASSUMPTION A-5, the
    opt-in browser-smoke recommendation, and the new `browser` extra in `pyproject.toml`. After

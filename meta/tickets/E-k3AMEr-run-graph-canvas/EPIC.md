@@ -117,7 +117,11 @@ Review gates (HLD §24):
   T-mzT3BW before T-M4qboy builds on them. **CLOSED 2026-09-27, PASS on all 3** (0 MUST-FIX;
   2 SHOULD-FIX + 1 NIT found and resolved same-day — see each task's `STATUS.md` "Gate G1
   closure" section).
-- **G2**: dev-security review before close.
+- **G2**: dev-security review before close. **CLOSED 2026-09-27, PASS WITH FOLLOW-UPS** (0
+  CRITICAL/HIGH; 1 MEDIUM resolved same-day — incomplete Cc/Cf label-sanitizer coverage; 3 LOW
+  — 1 resolved same-day (negative-control CSP-string drift), 1 resolved same-day (defense-in-
+  depth sha guard), 2 deferred to backlog: client-side `displayText` mirror, `compute_graph_version`
+  cost justification — see `STATUS.md`).
 - **G3**: final reviewer sign-off, then the docs refresh.
 
 ## Assumptions (full log: HLD §3)
