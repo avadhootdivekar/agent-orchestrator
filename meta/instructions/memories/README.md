@@ -327,3 +327,35 @@ type: decision
 ---
 
 For a feature that must observe/grade every task in a run regardless of whether it was freshly dispatched, skipped (`skip_if_outputs_exist`), or resumed, prefer a POST-RUN pass over already-persisted run state (reading `RunState`, resolving needed context from the task spec, e.g. a CLI report/grading command) over threading a new trigger point into the engine's dispatch/settle functions. **Why**: an in-engine version risks firing before a task's TRULY final status is set (later code paths — e.g. dynamic-injection/loop-gate failures — can still downgrade success to failure after an early "settled" checkpoint), risks grading an isolated task's already-released/unsynced worktree (stale content), and blocks the dispatching thread against parallel execution (unlike per-worker-thread hooks). A post-run pass runs once, after everything (including any end-of-run artifact sync) has genuinely settled, avoiding all three structurally rather than by careful placement. **Apply**: when scoping a new "fires for every task, including skipped ones" hook/observer feature, default to a post-run/report-time design; only justify an in-engine trigger point if a genuinely live, mid-run signal is required (and then budget real engine-review time for exactly these three failure modes).
+
+---
+name: reinstall-doesnt-reach-running-service
+description: uv tool install/install.sh doesn't affect an already-running ao.service process; it must be restarted to serve the new build
+type: constraint
+---
+
+Reinstalling the global `ao` package (`install.sh`, `uv tool install`) only replaces the files in the tool venv — it has no effect on a process that already loaded the old code into memory. **Why**: the systemd `ao.service` multi-workspace daemon (hub + one `ao ui` child per registered workspace) is exactly this kind of long-lived process; on a shared dev box it can easily be running from days before the latest reinstall. **Apply**: after any `install.sh`/`uv tool install` targeting the global `ao`, if `systemctl --user status ao.service` shows it active, run `systemctl --user restart ao.service` and re-verify (e.g. check the served frontend bundle or `/api/...` response shape) before concluding a new feature is "live" for any workspace the service manages.
+
+---
+name: taskrunstate-wholesale-replaced-on-resume
+description: TaskRunState is replaced wholesale on resume/failure paths, not merged — new per-task tracking fields must live on RunState instead
+type: pitfall
+---
+
+`TaskRunState` objects get wholesale-replaced (not field-merged) on resume, and on some engine failure paths. **Why**: a field added to `TaskRunState` to track something across a task's lifetime — even with a correct pydantic default — can be silently reset to that default the next time the object is replaced, losing the actual recorded value across a resume. **Apply**: new per-task data that must survive resume belongs in a `RunState`-level map keyed by task id (the pattern `RunState.spawned_by: dict[str, SpawnRecord]` uses), never as a plain field added directly to `TaskRunState`. Verify against the object's actual write sites (`runstate.py`, engine failure branches) before assuming a new `TaskRunState` field will persist.
+
+---
+name: merge-base-ancestor-check-blind-to-squash-merge
+description: git merge-base --is-ancestor reports false for a branch already merged via squash — diff main..origin/main for the squash commit instead
+type: convention
+---
+
+`git merge-base --is-ancestor <feature-branch> origin/main` answers "is this branch's exact commit history contained in main," not "has this branch's work landed in main." **Why**: a squash-merged PR creates a brand-new commit on `main` with different parentage than the feature branch, so the ancestor check returns false even though every line of the branch's content is now on `main` — and the feature branch's remote ref typically shows `[gone]` after `git fetch --prune`, which is the real signal a squash-merge happened. **Apply**: to check "is my branch's work already merged," look at `git log main..origin/main` (or `origin/main..HEAD` from the branch) for the actual merge/squash commit, don't rely on `merge-base --is-ancestor` alone — this repo's PRs are squash-merged by default.
+
+---
+name: agent-writable-record-as-path-source-is-a-traversal-risk
+description: Never resolve a file path to read from an agent-writable record (launch record, task output, etc.) without treating it as untrusted input
+type: pitfall
+---
+
+A design that recovers some file's path (e.g. "what spec did this run use") by reading it back out of a record the running agent itself can write (a dashboard launch record, a task's own declared output, etc.) is a path-traversal vector — nothing stops that record's path field from pointing anywhere the process can read. **Why**: caught at security review, not authorship time, in `E-k3AMEr-run-graph-canvas` — the original design's "recover an old run's spec via its launch record" fallback would have let an agent-writable value control which file the dashboard reads. **Apply**: when a feature needs to reliably recover something about how a run/task was launched, snapshot the needed data explicitly at the trustworthy moment (e.g. write it into `state.json` when the run starts) rather than reconstructing it later from a path stored in writable state; degrade to an explicit "unavailable" signal for data that predates the snapshot mechanism, rather than adding a path-following fallback.
