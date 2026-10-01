@@ -289,9 +289,9 @@ static task's *direct* predecessor.
 When an `emit_tasks` task succeeds, the engine reads its manifest and injects the tasks **before**
 it saves run state and **before** it evaluates circuit breakers. The success and the injection land
 in one `state.json` save. The code is `engine.py::_settle_completed_task`: the injection block
-(manifest read, isolation re-validation, `_inject`, order recompute) is at L2014-2065, the single
-`self._runstate.save(state)` is at L2067, and `evaluate_breakers` is at L2088. Commit `2387503`,
-ADR-0016 D7.
+(manifest read, isolation re-validation, `_inject`, order recompute) is at L2046-2104, the single
+`self._runstate.save(state)` is at L2106, and `evaluate_breakers` is at L2127 (anchors as of
+`dbd3657`). Commit `2387503`, ADR-0016 D7.
 
 **Why it matters.** Before this fix the order was save → breakers → inject. A breaker that tripped
 at an emitter's boundary (a cost cap, a `stop_file`, `injected_task_count`), or a crash between the
@@ -308,7 +308,7 @@ missing. This affected any emitter, including `routed-runner`'s `task-breakdown`
   than before.
 - A manifest-read, isolation-validation, or injection error still fails the emitter and halts,
   exactly as before. Breakers are not evaluated on that boundary.
-- The `task.injected` `run.log` line is still written only *after* breakers pass (L2129-2137). If a
+- The `task.injected` `run.log` line is still written only *after* breakers pass (L2168-2176). If a
   breaker trips at the emitter's boundary, the injection is persisted but that log line is **not**
   written. Check `state.json` to see what was injected.
 
@@ -325,6 +325,61 @@ budget trip you must change the condition. In `overseer-runner` that means eithe
 `ao resume --extend-breaker run-budget-backstop --extend-by-same` (or `--extend-by-seconds <usd>`).
 Without such a guard, a plain resume after a latched trip will simply run the pending tasks with no
 engine-side wall. Keep that in mind when you rely on a breaker as a budget stop.
+
+---
+
+## Seeing who spawned what: spawn provenance (`spawned_by`)
+
+The engine records **which task created each injected task** (E-k3AMEr, ADR-0017 D1). It is kept in
+`state.json` as `spawned_by`, a map from child task id to a record:
+
+```json
+"spawned_by": {
+  "subreview-auth": {
+    "parent_task_id": "scope-review",
+    "parent_dispatch_cycle": 1,
+    "origin": "injected",
+    "injected_at": "2026-09-27T10:15:02+00:00",
+    "loop_id": null,
+    "iteration": null
+  }
+}
+```
+
+- **Emit (`origin: "injected"`).** The parent is the emitting task. Nested emission builds a tree:
+  an injected emitter is the parent of whatever *it* emits. `parent_dispatch_cycle` records which
+  dispatch of the parent produced the child.
+- **Loop clones (`origin: "loop"`).** The parent of a loop clone is the **gate task of the previous
+  iteration**, meaning the task whose "continue" verdict caused the clone. For example, iteration-3
+  clones have parent `gate__iter2`, and iteration-2 clones have the authored `gate`. `loop_id` and
+  `iteration` are set, and `iteration` is always ≥ 2. The iteration-1 body is authored, not
+  injected, so it has no record.
+- **Router activation is not a spawn.** A router only tags `route` on tasks that already exist in the
+  spec. Route membership shows as a node attribute, not a spawn edge.
+- **It survives resume and retries.** The record is written in the same step as
+  `injected_tasks`, lives on `RunState` (not on the per-task state that resume replaces), and is
+  never rewritten. A task's `origin` is also carried across resume and failure resets.
+- **Old runs** (from before this was recorded) have an empty map. The dashboard says so rather than
+  guessing: "Spawn relationships were not recorded for this run (it predates spawn tracking)."
+
+**How to view it.**
+1. Open `ao ui`, pick the run, and switch the **Tasks** section from **Table** to **Graph**.
+2. Choose the **Spawned by** view. It lays the spawn tree out top to bottom. By default it hides
+   static tasks that neither spawned nor were spawned. Tick **Show N unrelated tasks** to bring
+   them back.
+3. **Execution order**, the other view, shows the dependency DAG (who waits on whom) over the same
+   nodes. For recursive emitters like `overseer-runner`, the two graphs are genuinely different.
+   For example, `ck-2` is a spawn *sibling* of wave 1's units but a dependency *successor* of them.
+4. Click a node, or pick it in the search box, to pin the detail panel. Its **Spawn** section links
+   to the parent and children, and shows `loop: <id> · iteration N` for loop clones.
+
+The same data comes back from `GET /api/runs/<run_id>/graph` as `spawn_edges` plus per-node
+`parent_task_id`/`origin`/`loop_id`/`iteration`, for example
+`curl -s localhost:8765/api/runs/<run_id>/graph | jq .spawn_edges`.
+
+`spawned_by` lives in the agent-writable workspace. Treat it as observability data, not a
+security boundary. A task that can write `.orchestrator/` could forge it, just as it could forge
+status or cost.
 
 ---
 

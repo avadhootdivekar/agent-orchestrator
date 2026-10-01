@@ -290,6 +290,15 @@ ao ui --port 9000 --workspace /path/to/repo --open
 - **New run** — pick a workflow, type a prompt, optionally override model / effort /
   parallelism / budget, and start it.  The prompt is written to the workflow's declared
   `prompt_path`, exactly as `ao run --prompt` does.
+- **Run graph** — in a run's detail view, switch the Tasks section from **Table** to **Graph**
+  for a pannable, zoomable canvas of every task, including dynamically injected ones. Toggle
+  between **Execution order** (the dependency DAG, with each task's actual start order `#n`) and
+  **Spawned by** (which task created which, for `emit_tasks` and loop clones). Hover or focus a
+  node for a quick card with status, duration, cost, and retries. Click a node, or pick a search
+  result, to pin a detail panel with timing, token usage, dispatches, and navigable
+  parent/children/dependency links. Live runs refresh in place. Runs from before this feature
+  still render, with a banner explaining which data is missing. See
+  [`docs-md/run-graph-canvas-hld.md`](docs-md/run-graph-canvas-hld.md).
 - **Run control** — resume an interrupted run, cancel a running one, delete old runs.
 - **Workspace** — the effective [general instructions](#general-instructions), with a flag
   showing whether each path actually resolves.
@@ -302,8 +311,8 @@ dashboard) does not stop them.
 > bind another interface on a network you trust.  Authentication and configurable secrets
 > are the top item on the [roadmap](meta/ROADMAP.md).
 
-**Deferred:** UI-based dynamic workflow generation (building a DAG in the browser) is on the
-roadmap, not in this release.
+**Deferred:** UI-based dynamic workflow generation (building or editing a DAG in the browser) is
+on the roadmap, not in this release. The run graph above is read-only.
 
 ---
 

@@ -47,13 +47,35 @@ src/
     NewRun.tsx        workflow picker + prompt box + override fields
     FileBrowser.tsx   directory tree + code viewer
     Settings.tsx      workspace config + effective general instructions
-  test/               vitest suites (jsdom, mocked fetch)
+  graph/              run graph canvas (E-k3AMEr) — lazy-loaded chunk, see docs-md/run-graph-canvas-hld.md
+    model.ts          PURE (no React, no fetch): named constants, joinNodes/edgesForView/nodesForView,
+                      metricFraction, searchNodes, relatedIds, waitSeconds, panelModel, prefs
+    layout.ts         PURE async computeLayout() — the only dagre import (swap seam, ADR-0017 D5)
+    hooks.ts          useSelectAndCenter — shared "jump to node" for search and panel links
+    RunGraph.tsx      React Flow canvas: view toggle, fetch-on-graph_version, banners, wiring
+    TaskNode.tsx      memoized node: label (text only), status glyph + stripe, badges
+    GraphToolbar.tsx  show-unrelated, metric select, search, fit, reset layout
+    Legend.tsx        edge styles for the current view, badges, source/degraded notes
+    TaskHoverCard.tsx hover/focus preview (React Flow NodeToolbar)
+    TaskDetailPanel.tsx pinned side panel (bottom sheet under 720 px)
+  test/               vitest suites (jsdom, mocked fetch; React Flow jsdom shims in setup.ts)
 ```
 
 ## Conventions
 
-- **No runtime dependencies beyond React.** Everything else is a devDependency. Keeping the
-  bundle self-contained is what lets the dashboard work offline and ship inside a wheel.
+- **Runtime dependencies are few, and each one is justified by an ADR.** Anything else is a
+  devDependency. All of it is bundled into the committed build, which is what lets the dashboard
+  work offline and ship inside a wheel. The current runtime set is:
+  - `react` / `react-dom`
+  - `dompurify`, `marked`, and `highlight.js`, for file preview
+    ([ADR-0011](../docs-md/adr/ADR-0011-untrusted-workspace-content-rendering.md))
+  - `@xyflow/react` and `@dagrejs/dagre` (both MIT), for the run graph canvas and its layout
+    ([ADR-0017 D5](../docs-md/adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md#d5-frontend-canvas--xyflowreact-12--dagrejsdagre-3-layered-auto-layout)).
+    They are code-split into the lazy `RunGraph` chunk, so they don't load until the Graph tab
+    opens.
+
+  Adding one means a recorded rationale, a measured gzip budget, and a clean
+  `npm audit --omit=dev --audit-level=high`.
 - **Status is never color-alone.** `StatusChip` renders a glyph *and* the status word;
   color reinforces. This keeps the UI readable in grayscale, under `forced-colors`, and for
   colorblind users.

@@ -30,6 +30,8 @@ const BASE_TASK: TaskStat = {
   cache_read_tokens: 0,
   cache_creation_tokens: 0,
   cache_hit_rate: null,
+  dispatch_cycle: 1,
+  not_taken_reason: null,
 };
 
 function makeDetail(tasks: TaskStat[]): RunDetailData {
@@ -59,6 +61,7 @@ function makeDetail(tasks: TaskStat[]): RunDetailData {
     is_live: false,
     launch: null,
     integration: null,
+    graph_version: null,
   };
 }
 

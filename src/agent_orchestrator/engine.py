@@ -67,6 +67,8 @@ from .models import (
     ISOLATION_NONE,
     ISOLATION_WORKTREE,
     OVERLAP_SOFT,
+    SPAWN_ORIGIN_INJECTED,
+    SPAWN_ORIGIN_LOOP,
     TIER_RERUN,
     CircuitBreakerSpec,
     EstimatorConfig,
@@ -77,6 +79,7 @@ from .models import (
     ResolverTier,
     RouterSpec,
     RunState,
+    SpawnRecord,
     TaskContext,
     TaskIntegrationState,
     TaskResult,
@@ -678,6 +681,25 @@ class Orchestrator:
         order = graph.topological_order()
 
         state = run_state or self._runstate.new_run(workflow)
+
+        # Record this run-session's static-spec identity BEFORE the run's first save
+        # (ADR-0017 D2, HLD §8.2, T-l7t6TT): makes the run's dependency structure
+        # reconstructible from its own run directory regardless of how it was
+        # launched (`ao ui`, bare `ao run`, `ao resume`, or a cron/event trigger).
+        # `get_run_logger` is used directly here (not the `run_log` var below, which
+        # is only bound after `attach_run_handler`) -- it only wraps the package
+        # logger, so it works before the per-run file handler is attached. A write
+        # failure never fails the run: the SpecSession is already appended to `state`
+        # by the time record_spec_session's file write could raise.
+        try:
+            self._runstate.record_spec_session(state, workflow)
+        except OSError as exc:
+            get_run_logger(state.run_id).warning(
+                "workflow snapshot not written: %s",
+                exc,
+                extra={"event": "run.snapshot_failed"},
+            )
+
         self._runstate.save(state)
 
         # Derive run directory: <workspace>/.orchestrator/runs/<run_id>
@@ -1048,8 +1070,10 @@ class Orchestrator:
                     exc,
                     extra={"event": "task.fail", "reason": "worktree_collision"},
                 )
+                # origin=ts_pre.origin (ADR-0017 D1, T-AZzgT8): carry provenance kind
+                # across this wholesale TaskRunState replace, same as dispatch_cycle above.
                 state.tasks[tid] = TaskRunState(
-                    status="failed", dispatch_cycle=ts_pre.dispatch_cycle
+                    status="failed", dispatch_cycle=ts_pre.dispatch_cycle, origin=ts_pre.origin
                 )
                 self._runstate.save(state)
                 state.status = "failed"
@@ -1109,7 +1133,15 @@ class Orchestrator:
                 missing,
                 extra={"event": "task.fail", "reason": "missing_inputs"},
             )
-            state.tasks[tid] = TaskRunState(status="failed")
+            # Carry forward `origin` (ADR-0017 D1, T-AZzgT8) across this wholesale
+            # TaskRunState replace, so an injected/loop task's provenance kind survives a
+            # missing-inputs failure the same way dispatch_cycle/cumulative_* usage already
+            # survive resume. `route` is deliberately NOT carried -- that is a separate,
+            # already-logged finding (F-2) with its own behavioral reach.
+            prev = state.tasks.get(tid)
+            state.tasks[tid] = TaskRunState(
+                status="failed", origin=prev.origin if prev else "static"
+            )
             self._runstate.save(state)
             state.status = "failed"
             return DispatchPrep(signal="halt")
@@ -2049,7 +2081,14 @@ class Orchestrator:
                 self._runstate.save(state)
                 return SettleResult(signal="halt")
             try:
-                self._inject(new_specs, workflow, state, origin="injected", route=ts.route)
+                self._inject(
+                    new_specs,
+                    workflow,
+                    state,
+                    origin=SPAWN_ORIGIN_INJECTED,
+                    route=ts.route,
+                    parent_task_id=tid,
+                )
             except InjectionError as exc:
                 task_log.error(
                     "Task injection failed: %s",
@@ -2159,7 +2198,16 @@ class Orchestrator:
                     next_iter = cur_iter + 1
                     clones = self._clone_body(loop, next_iter, workflow)
                     try:
-                        self._inject(clones, workflow, state, origin="loop", route=ts.route)
+                        self._inject(
+                            clones,
+                            workflow,
+                            state,
+                            origin=SPAWN_ORIGIN_LOOP,
+                            route=ts.route,
+                            parent_task_id=tid,
+                            loop_id=loop.id,
+                            iteration=next_iter,
+                        )
                     except InjectionError as exc:
                         task_log.error(
                             "Loop clone injection failed: %s",
@@ -4109,11 +4157,20 @@ class Orchestrator:
         state: RunState,
         origin: _TaskOrigin,
         route: str | None = None,
+        *,
+        parent_task_id: str,
+        loop_id: str | None = None,
+        iteration: int | None = None,
     ) -> None:
         """Merge *new* TaskSpec objects into the live workflow and RunState.
 
         Raises InjectionError if any id in *new* already exists in the workflow
         (NFR-6 — duplicate-id rejection).
+
+        Also records spawn provenance (ADR-0017 D1): ``state.spawned_by[child_id]`` for
+        every injected spec, in the SAME per-spec step as ``injected_tasks.append`` so
+        whatever batch-atomicity a future change adds (E-Grpp0X's injected-task DAG
+        validation) covers ``spawned_by`` automatically.
 
         Parameters
         ----------
@@ -4123,7 +4180,20 @@ class Orchestrator:
             breaker counts) stays consistent across dynamic expansion. None when
             the emitter is not on an activated branch (no ``branches`` declared,
             or a pre-routing workflow).
+        parent_task_id:
+            Keyword-only and REQUIRED (ADR-0017 D1) — the task whose settle created
+            *new*. mypy rejects any future call site that forgets it. This is the
+            emitting task for ``origin="injected"``, or the gate task of the current
+            iteration for ``origin="loop"``.
+        loop_id, iteration:
+            Set together iff ``origin == SPAWN_ORIGIN_LOOP`` (asserted below); None for
+            ``origin == SPAWN_ORIGIN_INJECTED``.
         """
+        assert (origin == SPAWN_ORIGIN_LOOP) == (loop_id is not None and iteration is not None), (
+            "loop_id/iteration must be set together, and only for origin=='loop'"
+        )
+        now_iso = self._clock().isoformat()  # one timestamp per batch
+        parent_cycle = state.tasks[parent_task_id].dispatch_cycle
         existing = {t.id for t in workflow.tasks}
         for spec in new:
             if spec.id in existing:
@@ -4134,6 +4204,14 @@ class Orchestrator:
             existing.add(spec.id)
             state.injected_tasks.append(spec)
             state.tasks[spec.id] = TaskRunState(origin=origin, route=route)
+            state.spawned_by[spec.id] = SpawnRecord(
+                parent_task_id=parent_task_id,
+                parent_dispatch_cycle=parent_cycle,
+                origin=origin,
+                injected_at=now_iso,
+                loop_id=loop_id,
+                iteration=iteration,
+            )
 
     def _recompute_order(self, graph, done: set[str]) -> tuple[list[str], int]:
         """Recompute full topological order and return (order, cursor).

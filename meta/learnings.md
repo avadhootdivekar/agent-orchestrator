@@ -1103,3 +1103,74 @@ By: manager
 Role: manager
 Date: 2026-09-22
 ---
+
+---
+Learning-ID: LRN-20260928-uv-tool-install-doesnt-restart-running-service
+Learning: Reinstalling the global `ao` package (`install.sh`/`uv tool install`) does NOT affect an
+  already-running long-lived process that loaded the old code into memory — e.g. the systemd
+  `ao.service` hub and its per-workspace `ao ui` dashboard children keep serving the pre-reinstall
+  build until explicitly restarted (`systemctl --user restart ao.service`).
+Context: Verified real production impact: dashboards for `ao-runner-finplan`/`ao-runner-ai-models`
+  kept serving a stale build after `install.sh --yes` until the service was restarted; confirmed via
+  the new frontend bundle appearing only post-restart.
+By: agent
+Role: agent
+Date: 2026-09-28
+---
+
+---
+Learning-ID: LRN-20260928-taskrunstate-wholesale-replaced-on-resume
+Learning: `TaskRunState` objects are wholesale-replaced (not merged) on resume and on some engine
+  failure paths, so a field added there for tracking purposes can silently reset/vanish across a
+  resume even with a correct pydantic default. New per-task data that must survive resume belongs
+  in a `RunState`-level map keyed by task id (e.g. `RunState.spawned_by`), not on `TaskRunState`.
+Context: `E-k3AMEr-run-graph-canvas`'s spawn-provenance design initially targeted
+  `TaskRunState.parent_task_id`; architect review caught the resume-wipe and moved it to
+  `RunState.spawned_by`, populated from exactly the two `_inject` call sites (`emit_tasks`
+  expansion, loop gate) — router activation only tags existing tasks, it never spawns any.
+By: agent
+Role: architect
+Date: 2026-09-28
+---
+
+---
+Learning-ID: LRN-20260928-merge-base-blind-to-squash-merge
+Learning: `git merge-base --is-ancestor <feature-branch> origin/main` reports "not an ancestor" even
+  when a feature branch's full content already landed on `origin/main`, if it landed via a
+  squash-merged PR (a new commit hash, different history). To check "is this branch's work already
+  on main," diff `main..origin/main` for the merge/squash commit instead of relying on ancestry.
+Context: `ad/overseer-runner-workflow`'s remote branch showed `[gone]` after `fetch --prune`
+  (deleted post-squash-merge) but `merge-base --is-ancestor` against `origin/main` returned false;
+  `git log main..origin/main` correctly showed the single squash commit (PR #13).
+By: agent
+Role: agent
+Date: 2026-09-28
+---
+
+---
+Learning-ID: LRN-20260928-agent-writable-launch-record-path-fallback-risk
+Learning: A fallback that recovers a run's original file path (e.g. a workflow spec location) by
+  reading it out of a dashboard/launch record is a path-traversal risk when that record lives in an
+  agent-writable workspace — an agent could point the path at any file. Prefer an explicit "data
+  unavailable" signal over resolving a path from writable state.
+Context: `E-k3AMEr-run-graph-canvas`'s dependency-edge design initially included a
+  `DashboardService._workflow_for_run`-based fallback for reading old-run specs; security review
+  (Gate G2) dropped it for a snapshot-at-run-start mechanism plus an honest "unavailable" banner.
+By: agent
+Role: developer
+Date: 2026-09-28
+---
+
+---
+Learning-ID: LRN-20260928-ao-workspace-root-may-not-be-git-repo
+Learning: An `ao` workspace directory (holding `.ao/config.yaml`, `workflows/`,
+  `.orchestrator/runs/`) is not necessarily a git repo itself — the actual tracked project repo can
+  live in a subdirectory (e.g. `fin_plan/` inside `ao-runner-finplan/`). A bare `git status`/`git
+  log` at the workspace root fails with "not a git repository"; check the repo_set config first.
+Context: Hit while verifying sibling-workspace compatibility for `E-k3AMEr-run-graph-canvas` — both
+  `ao-runner-finplan` and `ao-runner-ai-models` workspace roots have no `.git`, confirmed via a
+  direct check rather than assumed.
+By: agent
+Role: agent
+Date: 2026-09-28
+---

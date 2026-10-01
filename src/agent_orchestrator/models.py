@@ -945,6 +945,78 @@ class RunIntegrationState(BaseModel):
     degraded_reason: str | None = None  # set when isolation fell back to none
 
 
+# ---------------------------------------------------------------------------
+# Spawn provenance (E-k3AMEr T-AZzgT8, HLD §8.1, ADR-0017 D1) — records which task
+# created each dynamically-injected task (emit_tasks manifest / loop clone). Lives on
+# RunState, keyed by child task id, rather than on TaskRunState: TaskRunState is replaced
+# WHOLESALE in three places (runstate.prepare_resume, and two engine.py failure resets),
+# which would silently drop a field placed there -- the same reason TaskIntegrationState
+# above lives on RunState instead of TaskRunState.
+# ---------------------------------------------------------------------------
+
+# Typed as `Literal[...]` (mirrors ISOLATION_NONE/TIER_AUTO's own convention above) so these
+# satisfy engine.py's `_TaskOrigin`-typed `_inject(origin=...)` parameter under mypy. This is
+# independent of `SpawnRecord.origin` being a plain `str` (open set) below: the engine only
+# ever WRITES one of these two known values, even though a READER must tolerate any string.
+SPAWN_ORIGIN_INJECTED: Literal["injected"] = "injected"
+SPAWN_ORIGIN_LOOP: Literal["loop"] = "loop"
+
+
+class SpawnRecord(BaseModel):
+    """One dynamically-injected task's provenance (ADR-0017 D1), keyed by child task id on
+    ``RunState.spawned_by`` and written only by ``Orchestrator._inject``.
+
+    ``origin`` is deliberately ``str``, NOT a closed ``Literal`` (dev-critic, HIGH):
+    pydantic v2's default ``extra="ignore"`` (no ``model_config`` overrides it anywhere in
+    this module) protects an older reader from an unknown *field*, but not from an unknown
+    *value* -- a future origin kind (e.g. a sub-workflow spawn) must not make an older
+    engine or dashboard reject the whole ``state.json``. The engine itself only ever writes
+    ``SPAWN_ORIGIN_INJECTED``/``SPAWN_ORIGIN_LOOP``.
+    """
+
+    parent_task_id: str  # task whose settle created this task
+    parent_dispatch_cycle: int  # parent's TaskRunState.dispatch_cycle at emit time
+    origin: str  # open set; the engine writes "injected" | "loop"
+    injected_at: str  # ISO-8601 UTC from Orchestrator._clock (deterministic under test clocks)
+    loop_id: str | None = None  # set iff origin == SPAWN_ORIGIN_LOOP
+    iteration: int | None = None  # set iff origin == SPAWN_ORIGIN_LOOP; by convention >= 2
+
+
+class SpecSession(BaseModel):
+    """One run-session's static-spec identity (ADR-0017 D2, HLD §8.2).
+
+    Appended to ``RunState.spec_sessions`` -- an append-only log -- at the start of
+    EVERY run session (fresh run or resume), before the run's first ``save()``. This
+    is the source of truth for which static spec a session executed, independent of
+    how the run was launched (`ao ui` / bare `ao run` / `ao resume` / a cron/event
+    trigger). Never mutated or removed once appended.
+    """
+
+    session: int  # 1-based; = len(spec_sessions) + 1 at append time
+    started_at: str  # ISO-8601 UTC, engine clock
+    # sha256 hex digest of runstate.canonical_spec_json() of the STATIC spec (every
+    # state.injected_tasks id filtered out of workflow.tasks first).
+    spec_sha256: str
+
+
+class WorkflowSnapshot(BaseModel):
+    """File body for ``<run_dir>/workflow.snapshot.<sha12>.json`` (ADR-0017 D2, HLD
+    §8.2/§13.1).
+
+    Write-once per distinct static-spec sha within a run dir; never rewritten (see
+    ``RunStateStore.record_spec_session``). Carries the same sensitivity as the spec
+    file already in the workspace (instructions, hook argv) -- no redaction, by design,
+    since that would break reproducibility.
+    """
+
+    # Keep numerically in sync with runstate.WORKFLOW_SNAPSHOT_SCHEMA_VERSION.
+    schema_version: int = 1
+    run_id: str
+    spec_sha256: str  # must equal the sha embedded in the file name and a SpecSession
+    written_at: str  # ISO-8601 UTC
+    workflow: WorkflowSpec  # STATIC tasks only -- every injected task id filtered out
+
+
 class TaskRunState(BaseModel):
     status: TaskStatus = "pending"
     attempts: int = 0
@@ -1029,6 +1101,16 @@ class RunState(BaseModel):
     # "isolation never happened in this run" state -- correct for every pre-epic run.
     integration: RunIntegrationState = RunIntegrationState()
     task_integration: dict[str, TaskIntegrationState] = {}  # keyed by task id
+    # Spawn provenance (ADR-0017 D1): child task id -> who/what created it. Written only by
+    # engine.py::_inject, in the SAME per-spec step as injected_tasks.append (see that
+    # method). Default {} keeps every pre-epic state.json loadable (NFR-1) -- an old run
+    # reports as "not recorded" rather than inferring provenance.
+    spawned_by: dict[str, SpawnRecord] = {}
+    # Append-only log of every run-session's static-spec identity (ADR-0017 D2, HLD
+    # §8.2) -- the source of truth for which spec a session ran, independent of how the
+    # run was launched. Defaulted for NFR-5 backward-compat: a pre-epic state.json loads
+    # with spec_sessions == [], which the dashboard reports as source "unavailable".
+    spec_sessions: list[SpecSession] = []
 
 
 class RunUsageTotals(BaseModel):
