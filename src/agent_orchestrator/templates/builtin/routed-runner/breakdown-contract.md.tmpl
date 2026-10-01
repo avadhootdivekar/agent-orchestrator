@@ -43,6 +43,24 @@ agent's own setting for it).
 - `effort`/`model` are both optional on every entry; omit either (or both) to inherit
   the agent's own values unchanged.
 
+### Haiku tier (cheap model) — opt-in, narrow
+`"model": "claude-haiku-4-5-20251001"` is allowed ONLY on `impl1-<tid>` and `test1-<tid>`
+(the first implement / first test pass) of a task that meets ALL of:
+- its interface/shape is fully fixed by `design.md` (signatures, schemas, endpoints) —
+  no design decisions left to the implementer;
+- one module/layer, following an existing pattern in the repo (CRUD/API handlers,
+  small unit tests, fixtures, mappers, DTOs, config plumbing);
+- no concurrency, security, migration, or cross-module reasoning.
+
+Hard limits — never set Haiku on: `review-<tid>`, `impl2-<tid>` (the fix pass),
+`test2-<tid>`, the aggregator, or any non-pipeline task. Because `impl2` inherits the
+`developer` agent's own (stronger) model, a Haiku first pass that fails review is
+automatically repaired by the stronger model — keep it that way. The engine rejects a
+`model` containing a name an agent lists in its `forbidden_task_models` (the recommended
+agents forbid Haiku on `reviewer`, `full-tester`, `manager` and every architect), and
+fails the run at injection. When unsure, omit `model`: Haiku is a cost optimisation, never
+a requirement.
+
 ## `touches` & `isolation` per task (optional)
 Any emitted entry may also set `"touches"` (a list of glob-pattern strings) and/or
 `"isolation"` (one of `"none"`, `"worktree"`, `"inherit"`) — both optional; an entry

@@ -384,3 +384,12 @@ the gate's logic), `docs-md/template-cost-hygiene-hld.md` (this file),
 Not touched: any engine/core module (`engine.py`, `dag.py`, `scheduler.py`, `spec.py`,
 `models.py`, `cli.py`), any `ao-runner-*` sibling workspace (read-only reference only, per this
 epic's hard boundary), any shared spec schema (`specs/*.schema.json`).
+
+## 9. Haiku tier for low-rigour pipeline passes (2026-10-01)
+
+Per-task `model` overrides already existed (ADR-0003 decision 2). This adds a narrow, guarded way to use Haiku:
+
+- **Contract** (`breakdown-contract.md.tmpl`, "Haiku tier"): `claude-haiku-4-5-20251001` is permitted only on `impl1-<tid>`/`test1-<tid>` for tasks whose shape `design.md` fixes (CRUD/API handlers, small tests, fixtures). Never on review, `impl2` (fix), `test2`, aggregator. `impl2` inherits the `developer` agent's own model, so a failed Haiku first pass is repaired by the stronger model (escalation by construction, no new engine logic).
+- **Guard** (`AgentSpec.forbidden_task_models`, `spec.validate_task_model_policy`): case-insensitive substring deny-list on a task's `model` override, checked at `ao validate` and at `emit_tasks` injection (a violation fails the run, like an isolation violation). `agents.recommended.json` sets `["haiku"]` on `architect`, `architect-opus`, `reviewer-opus`, `reviewer`, `full-tester`, `manager`. Opt-in per agent: an agent without the field accepts any model, and the template only *recommends* it (merge reference), so operators must merge it into their own agents file.
+- **Not enforced by the engine**: the "impl1/test1 only" and "shape is fixed" criteria are breakdown-agent guidance; the engine enforces only the per-agent deny-list.
+- **Open**: measure cost/pass-rate with vs without Haiku via ao-bench before recommending it by default.

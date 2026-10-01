@@ -196,6 +196,15 @@ finish in roughly 10 minutes — and leaves the breakdown agent free to mark a g
 larger `<tid>` `"high"`/`"xhigh"` and/or pin a different `model`, instead of forcing an
 artificial split. See the contract's "Effort & model per task" section.
 
+**Haiku tier.** The contract lets the breakdown agent put `claude-haiku-4-5-20251001` on
+`impl1-<tid>`/`test1-<tid>` only, for tasks whose shape `design.md` already fixes (CRUD/API
+handlers, small tests, fixtures). Review, fix (`impl2`), re-test and the aggregator never use
+it, so a weak first pass is repaired by the stronger `developer` model. The recommended
+`agents.recommended.json` sets `forbidden_task_models: ["haiku"]` on every architect,
+`reviewer`, `reviewer-opus`, `full-tester` and `manager`; the engine rejects a violating
+`model` at `ao validate` time and when the `emit_tasks` manifest is injected. Merge that
+field into your own agents file to get the guard (an agent without it accepts any model).
+
 Each entry may also set `touches` (a best-effort glob-list hint) and `isolation`
 (`none`/`worktree`/`inherit`) — see the contract's "`touches` & `isolation` per task"
 section and "Parallel isolation" below.

@@ -107,7 +107,7 @@ from .monitoring import (
 )
 from .runstate import RunStateStore
 from .scheduling.overlap import overlap_score, rank_wave
-from .spec import validate_isolation
+from .spec import validate_isolation, validate_task_model_policy
 
 # Valid origin values for injected/loop tasks
 _TaskOrigin = Literal["static", "injected", "loop"]
@@ -2064,6 +2064,9 @@ class Orchestrator:
             # docstring) so a misconfiguration fails fast here rather than at first isolated
             # dispatch mid-run.
             try:
+                # Agent-authored `model` overrides must respect each agent's
+                # forbidden_task_models (e.g. no Haiku on reviewer/architect roles).
+                validate_task_model_policy(new_specs, ctx.agents)
                 for warning in validate_isolation(workflow, [*workflow.tasks, *new_specs]):
                     task_log.warning(
                         "isolation validation: %s",

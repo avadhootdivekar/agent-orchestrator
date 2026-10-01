@@ -224,12 +224,37 @@ def cross_validate(
     if workflow.budget is not None:
         budget_cross_validate(workflow.budget)
 
+    validate_task_model_policy(workflow.tasks, agents)
+
     # Per-task git isolation & rebase-integration cross-validation (E-Wk9Tz3, HLD §10.4,
     # rules V1-V12). Packaging note (pre-existing, inherited): specs/*.schema.json is not
     # packaged into the wheel and config._validate_against_schema silently no-ops when the
     # file is absent -- so for an installed `ao`, THIS function is the real gate. Every
     # rule below must therefore exist here, not only in JSON Schema.
     return _cross_validate_isolation(workflow, reposets, agents)
+
+
+def validate_task_model_policy(tasks: list[TaskSpec], agents: dict) -> None:
+    """Reject a task whose `model` override matches its agent's `forbidden_task_models`.
+
+    Matching is a case-insensitive substring test, so ``"haiku"`` covers every dated Haiku
+    id. Tasks naming an unknown agent, or setting no `model`, are skipped (unknown agents are
+    reported by `cross_validate`'s own check). Called at spec-load and again at `emit_tasks`
+    injection time, where the override is agent-authored.
+    """
+    for task in tasks:
+        agent = agents.get(task.agent)
+        if agent is None or not task.model:
+            continue
+        model = task.model.lower()
+        for needle in agent.forbidden_task_models:
+            if needle.lower() in model:
+                raise SpecValidationError(
+                    f"Task {task.id!r}: model {task.model!r} is not allowed for agent "
+                    f"{task.agent!r} (its forbidden_task_models contains {needle!r}); "
+                    "omit `model` to inherit the agent's own",
+                    path=f"tasks.{task.id}.model",
+                )
 
 
 def budget_cross_validate(budget: BudgetSpec) -> None:

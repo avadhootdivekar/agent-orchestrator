@@ -265,6 +265,14 @@ class AgentSpec(BaseModel):
     # ships opt-in per CLAUDE.md's "safe by default" rule rather than as a silent default for
     # `isolation: worktree` workflows. Recommended for every agent used in such a workflow.
     exclude_dynamic_system_prompt_sections: bool = False
+    # Case-insensitive substrings a TASK-level `model` override may NOT contain when this
+    # agent is dispatched (e.g. ["haiku"] on reviewer/architect/e2e-tester roles). Guards the
+    # agent-authored `emit_tasks` path, where a breakdown agent can set `model` per task with
+    # no other check. Enforced by `spec.validate_task_model_policy` at `ao validate` time AND
+    # at injection time -- a violation fails fast rather than silently running a weak model in
+    # a rigour-critical role. The agent's OWN `model` is the operator's choice and is not
+    # policed here. Default [] = no restriction (backward compatible).
+    forbidden_task_models: list[str] = []
 
 
 class TaskSpec(BaseModel):
