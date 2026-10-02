@@ -107,6 +107,8 @@ class RunSurvival(BaseModel):
     total: TaskSurvival
     tasks: list[TaskSurvival] = []
     unavailable: str | None = None
+    # Why attribution is coarser than serial heads would give (FR-12); None = nothing to explain.
+    attribution_reason: str | None = None
 
 
 class SurvivalReport(BaseModel):
@@ -751,7 +753,31 @@ def _time_window_units(
 # ---------------------------------------------------------------------------------------
 
 
+REASON_HEADS_OPTED_OUT = (
+    "git heads were intentionally not recorded for this run (record_git_heads=false): "
+    "per-task serial attribution unavailable; showing isolation ranges where present, "
+    "else low-confidence time-window"
+)
+REASON_HEADS_ABSENT = (
+    "no git heads were recorded for this run (older run or git unavailable at start): "
+    "per-task serial attribution unavailable"
+)
+
+
+def _attribution_reason(state: RunState) -> str | None:
+    if state.record_git_heads is False:
+        return REASON_HEADS_OPTED_OUT
+    if state.record_git_heads is None and not state.git_start_heads:
+        return REASON_HEADS_ABSENT
+    return None
+
+
 def _survival_for_run(state: RunState, workspace_root: str, m: _Measurer) -> RunSurvival:
+    run = _survival_for_run_inner(state, workspace_root, m)
+    return run.model_copy(update={"attribution_reason": _attribution_reason(state)})
+
+
+def _survival_for_run_inner(state: RunState, workspace_root: str, m: _Measurer) -> RunSurvival:
     units: list[_Unit] = []
     iso_units = _plan_isolation(state, workspace_root)
     units.extend(iso_units)

@@ -458,6 +458,7 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_MAX_ATTEMPTS` | `--max-attempts` | Max task attempts (overrides workflow `defaults.retries.max_attempts`) |
 | `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides effort-derived value) |
 | `AO_MAX_PARALLEL` | `--max-parallel` | Max independent ready tasks to run at once (default: `1` = serial); see [Parallel execution](#parallel-execution) |
+| `AO_RECORD_GIT_HEADS` | `--record-git-heads/--no-record-git-heads` | Record git HEADs at run/task start+settle for `ao report-survival` serial attribution (default: on; off = no head-recording git calls, coarser survival attribution — isolation `landed_ranges` still recorded) |
 | `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
 | `AO_QUOTA_POLL_SECONDS` | `--quota-poll-interval` | Seconds between quota-exhaustion re-run attempts (default: 900 = 15 min) |
 | `AO_GENERAL_INSTRUCTIONS` | `--general-instruction` | `os.pathsep`-separated instruction paths applied to **every** task; **additive**, not an override — see [General instructions](#general-instructions) |
@@ -488,6 +489,7 @@ agents:    path/to/agents.json
 # model: claude-sonnet-4-6 # AO_MODEL        — claude model for all agents
 # effort: medium           # AO_EFFORT       — low / medium / high
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
+# record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival
 
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h

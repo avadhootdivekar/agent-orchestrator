@@ -290,7 +290,7 @@ class TestGeneralInstructionFlag:
 
 class TestHelpSurface:
     def test_run_help_documents_both_new_flags(self) -> None:
-        result = runner.invoke(app, ["run", "--help"])
+        result = runner.invoke(app, ["run", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
         assert "--prompt" in result.output
         assert "--general-instruction" in result.output
@@ -302,7 +302,7 @@ class TestHelpSurface:
         assert "ADDITIVE" in normalized or "additive" in normalized
 
     def test_env_var_name_is_documented(self) -> None:
-        result = runner.invoke(app, ["run", "--help"])
+        result = runner.invoke(app, ["run", "--help"], env={"COLUMNS": "200"})
         assert ENV_GENERAL_INSTRUCTIONS in " ".join(result.output.split())
 
     def test_pathsep_convention_is_documented(self) -> None:
