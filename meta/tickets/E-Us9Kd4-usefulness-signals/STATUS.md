@@ -14,3 +14,4 @@
 ## Next actions
 1. Early-gate review of HLD. 2. Dispatch tasks 1-3.
 - By: developer | Role: developer | Date: 2026-10-02 | Comment: T-Fb3Ef4-local-feedback-cli Done (rollup).
+- By: developer | Role: developer | Date: 2026-10-02 | Comment: T-Jn4Gh5-usage-rollup-join Done (rollup); suite 4614 passed / 8 skipped.

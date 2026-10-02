@@ -1791,44 +1791,63 @@ def report_usage(
         [], "--run-id", help="Restrict to this run (repeatable). Default: every run."
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    with_survival: bool = typer.Option(
+        False, "--with-survival", help="Also join diff survival (git; degrades if unavailable)."
+    ),
+    ref: str | None = typer.Option(
+        None, "--ref", help="With --with-survival: git ref to measure survival at (default HEAD)."
+    ),
 ) -> None:
     """Roll settled tasks up by (agent, model, effort) across runs: cost, retries, and how
     often the work needed rework (reviewer verdict FAIL / findings), attributed to the model
-    that produced the reviewed work.
+    that produced the reviewed work. Joins local user feedback (`ao rate`) and, with
+    --with-survival, how much of the added code still exists.
 
     Observational, not an A/B test -- different models usually get different tasks, so compare
     groups with similar task mixes; small groups are shown but never flagged. Runs recorded
     before model/effort capture appear under "(default)"."""
     import json as _json
 
-    from .artifacts import LocalFsArtifactStore
-    from .runstate import RunStateStore
-    from .usage import aggregate_usage, list_run_ids
+    from .survival import validate_ref
+    from .usage import build_usage_report, usage_report_payload
+
+    if ref is not None:
+        if not with_survival:
+            typer.echo("ERROR: --ref requires --with-survival", err=True)
+            raise typer.Exit(2)
+        ref_err = validate_ref(ref)
+        if ref_err:
+            typer.echo(f"ERROR: invalid --ref: {ref_err}", err=True)
+            raise typer.Exit(2)
 
     ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
-    store = LocalFsArtifactStore(ws_root)
-    rs_store = RunStateStore(ws_root, store)
-    states = []
-    for rid in run_ids or list_run_ids(ws_root):
-        try:
-            states.append(rs_store.load(rid))
-        except (FileNotFoundError, ValueError) as e:
-            typer.echo(f"WARNING: skipping run {rid!r}: {e}", err=True)
-    report = aggregate_usage(states, store)
+    try:
+        report = build_usage_report(ws_root, run_ids or None, with_survival=with_survival, ref=ref)
+    except ValueError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(2) from e
+    for skipped in report.skipped:
+        typer.echo(f"WARNING: skipping run {skipped}", err=True)
 
     if as_json:
-        payload = report.model_dump()
-        for row, g in zip(payload["groups"], report.groups, strict=True):
-            row["mean_cost_usd"] = g.mean_cost_usd
-            row["retry_rate"] = g.retry_rate
-            row["review_fail_rate"] = g.review_fail_rate
-        typer.echo(_json.dumps(payload, indent=2))  # includes `outcomes` (per-run charter signals)
+        # includes `outcomes` (per-run charter signals) and, with survival, `run_signals`
+        typer.echo(_json.dumps(usage_report_payload(report), indent=2))
         return
 
     typer.echo(
         f"\nRuns scanned: {report.runs_scanned}  |  verdicts found: "
         f"{report.verdicts_found}/{report.reviews_seen}"
     )
+    if not with_survival:
+        survival_txt = "off (use --with-survival)"
+    elif report.survival_available:
+        survival_txt = f"at {ref or 'HEAD'}"
+    else:
+        survival_txt = f"unavailable ({report.survival_unavailable_reason})"
+    fb_txt = f"feedback: {report.runs_rated} of {report.runs_scanned} runs rated"
+    if report.feedback_errors:
+        fb_txt += f" ({report.feedback_errors} unreadable)"
+    typer.echo(f"{fb_txt} | survival: {survival_txt}")
     if report.outcomes:
         typer.echo("\nOutcome vs charter")
         for o in report.outcomes:
@@ -1841,6 +1860,19 @@ def report_usage(
             fv = o.final_verify
             fv_txt = f"met/partial/not_met: {fv.met}/{fv.partial}/{fv.not_met}" if fv else "n/a"
             typer.echo(f"    final verify {fv_txt}")
+    if report.run_signals:
+        typer.echo("\nRun signals (implicit, circumstantial)")
+        for rs in report.run_signals:
+            sg = rs.signals
+
+            def _v(x: object) -> str:
+                return "n/a" if x is None else str(x)
+
+            typer.echo(
+                f"  {rs.run_id}: status={sg.run_status} landed={_v(sg.landed)} "
+                f"followup_commits={_v(sg.followup_commits)} "
+                f"reverted_commits={_v(sg.reverted_commits)}"
+            )
     if not report.groups:
         typer.echo("(no settled, dispatched tasks found)")
         return
@@ -1850,20 +1882,27 @@ def report_usage(
 
     typer.echo(
         f"\n{'Agent':<18} {'Model':<26} {'Effort':<7} {'Tasks':>5} {'OK':>4} {'Retry':>6} "
-        f"{'$/task':>8} {'Reviewed':>8} {'Fail%':>6} {'C/M/m':>9}"
+        f"{'$/task':>8} {'Reviewed':>8} {'Fail%':>6} {'C/M/m':>9} "
+        f"{'Fb(g/o/b)':>10} {'Unn':>4} {'Surv%':>6}"
     )
-    typer.echo("-" * 106)
+    typer.echo("-" * 130)
     for g in report.groups:
         mean = f"{g.mean_cost_usd:.3f}" if g.mean_cost_usd is not None else "n/a"
+        fb = f"{g.fb_good}/{g.fb_ok}/{g.fb_bad}"
         typer.echo(
             f"{g.agent:<18} {g.model:<26} {g.effort:<7} {g.tasks:>5} {g.succeeded:>4} "
             f"{_pct(g.retry_rate):>6} {mean:>8} {g.reviewed:>8} "
-            f"{_pct(g.review_fail_rate):>6} {f'{g.critical}/{g.major}/{g.minor}':>9}"
+            f"{_pct(g.review_fail_rate):>6} {f'{g.critical}/{g.major}/{g.minor}':>9} "
+            f"{fb:>10} {g.fb_unnecessary:>4} {_pct(g.survival_rate):>6}"
         )
     for g in report.groups:
         for flag in g.flags:
             typer.echo(f"FLAG {g.agent}/{g.model}/{g.effort}: {flag}")
     typer.echo("\nC/M/m = critical/major/minor review findings attributed to that group's work.")
+    typer.echo(
+        "Fb = user ratings (effective: task entry, else run entry); Surv% = share of added lines "
+        "still present (isolation/serial-attributed tasks only)."
+    )
 
 
 @app.command(name="rate")

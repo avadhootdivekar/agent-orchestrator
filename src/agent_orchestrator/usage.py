@@ -20,16 +20,34 @@ different tasks, so compare groups with similar task mixes, and treat small samp
 
 from __future__ import annotations
 
+import logging
 import posixpath
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
-from .artifacts import ArtifactStore, read_control
+from .artifacts import ArtifactStore, LocalFsArtifactStore, read_control
 from .errors import ControlFileError
+from .feedback import (
+    FeedbackEntry,
+    FeedbackError,
+    FeedbackFile,
+    effective_for_task,
+    load_feedback,
+    validate_run_id,
+)
+from .implicit_signals import RunSignals, apply_survival, implicit_signals
 from .models import RunState, TaskRunState, TaskSpec
+from .survival import (
+    FLAG_LIKELY_WORTHLESS,
+    TaskSurvival,
+    compute_survival,
+    validate_ref,
+)
+
+log = logging.getLogger(__name__)
 
 # A review task is recognised by declaring this output; its verdict sidecar sits beside it.
 REVIEW_OUTPUT_BASENAME = "review.md"
@@ -57,6 +75,14 @@ NO_EFFORT_LABEL = "-"
 # of them were judged FAIL -- below the sample floor a rate is noise, not a signal.
 MIN_SAMPLE_FOR_FLAG = 5
 REWORK_FLAG_RATE = 0.5
+USER_BAD_FLAG_RATE = 0.5  # share of user-rated tasks rated "bad" (needs MIN_SAMPLE_FOR_FLAG rated)
+DISAGREE_FLAG_RATE = 0.5  # share of explicitly-rated reviewed pairs where reviewer and user differ
+LOW_SURVIVAL_FLAG_SHARE = 0.5  # share of measured tasks flagged likely_worthless
+MAX_REPORT_RUN_IDS = 500  # explicit run ids per report (CLI and dashboard share this cap)
+# Only these survival attributions are reliably per-task; "ambiguous"/"time-window"/"none"
+# are run-level (or n/a) and never join into groups. Low-confidence rows are excluded too.
+SURVIVAL_JOIN_ATTRIBUTIONS = frozenset({"isolation", "serial"})
+SURVIVAL_JOIN_EXCLUDED_CONFIDENCE = "low"
 
 _SETTLED = frozenset({"succeeded", "failed", "timed_out", "cancelled"})
 
@@ -257,6 +283,22 @@ class GroupUsage(BaseModel):
     major: int = 0
     minor: int = 0
     must_fix: int = 0
+    # User feedback (effective rating per task: task entry, else run entry). All additive.
+    fb_good: int = 0
+    fb_ok: int = 0
+    fb_bad: int = 0
+    fb_unnecessary: int = 0
+    fb_rated_tasks: int = 0
+    # Reviewer-vs-user candidates: EXPLICIT task-scope ratings only (a run-level rating never
+    # creates one). Candidates, not an error rate -- the user may be the one who is wrong.
+    false_pass_candidates: int = 0  # reviewer PASS, user explicitly rated bad
+    false_fail_candidates: int = 0  # reviewer FAIL, user explicitly rated good
+    verdict_rated_pairs: int = 0  # (producer, reviewer) pairs with an explicit task rating
+    # Diff survival (only per-task-attributable tasks: isolation/serial, confidence not low).
+    lines_added: int = 0
+    lines_survived: int = 0
+    survival_tasks: int = 0  # tasks with countable added lines that joined
+    survival_low_tasks: int = 0  # ...of which flagged likely_worthless
     flags: list[str] = []
 
     @property
@@ -271,6 +313,30 @@ class GroupUsage(BaseModel):
     def review_fail_rate(self) -> float | None:
         return self.review_fail / self.reviewed if self.reviewed else None
 
+    @property
+    def survival_rate(self) -> float | None:
+        return self.lines_survived / self.lines_added if self.lines_added else None
+
+    @property
+    def fb_bad_rate(self) -> float | None:
+        return self.fb_bad / self.fb_rated_tasks if self.fb_rated_tasks else None
+
+    @property
+    def reviewer_disagreement_rate(self) -> float | None:
+        if not self.verdict_rated_pairs:
+            return None
+        return (self.false_pass_candidates + self.false_fail_candidates) / self.verdict_rated_pairs
+
+
+class RunSignalRow(BaseModel):
+    """Per-run implicit signals (+ survival totals) -- only computed when survival is asked."""
+
+    run_id: str
+    signals: RunSignals
+    lines_added: int | None = None
+    lines_survived: int | None = None
+    survival_rate: float | None = None
+
 
 class UsageReport(BaseModel):
     runs_scanned: int
@@ -278,14 +344,47 @@ class UsageReport(BaseModel):
     reviews_seen: int  # tasks that declared a verdict path, any kind (found or not)
     groups: list[GroupUsage]
     outcomes: list[RunOutcome] = []
+    # Coverage / provenance of the optional joins (all additive; defaults = "not computed").
+    runs_rated: int = 0  # scanned runs with at least one feedback entry
+    feedback_errors: int = 0  # runs whose feedback.json was unreadable (skipped, counted)
+    skipped: list[str] = []  # runs that could not be loaded, as "run_id: reason"
+    survival_available: bool = False
+    survival_unavailable_reason: str | None = None
+    survival_ref: str | None = None
+    run_signals: list[RunSignalRow] = []
+
+
+FeedbackInput = Mapping[str, Sequence[FeedbackEntry] | FeedbackFile]
+SurvivalInput = Mapping[tuple[str, str], TaskSurvival]
+
+
+def _joinable_survival(row: TaskSurvival | None) -> TaskSurvival | None:
+    """The row only if it is a reliable per-task measurement with countable lines."""
+    if row is None or row.unavailable or row.lines_added <= 0:
+        return None
+    if row.attribution not in SURVIVAL_JOIN_ATTRIBUTIONS:
+        return None
+    if row.confidence == SURVIVAL_JOIN_EXCLUDED_CONFIDENCE:
+        return None
+    return row
 
 
 def _key(ts: TaskRunState) -> tuple[str, str, str]:
     return (ts.agent or UNKNOWN_LABEL, ts.model or UNKNOWN_LABEL, ts.effort or NO_EFFORT_LABEL)
 
 
-def aggregate_usage(states: Iterable[RunState], store: ArtifactStore) -> UsageReport:
-    """Group every settled, dispatched task in *states* by (agent, model, effort)."""
+def aggregate_usage(
+    states: Iterable[RunState],
+    store: ArtifactStore,
+    *,
+    feedback: FeedbackInput | None = None,
+    survival: SurvivalInput | None = None,
+) -> UsageReport:
+    """Group every settled, dispatched task in *states* by (agent, model, effort).
+
+    Optional joins (keyword-only, so the two-argument call keeps working): *feedback* maps
+    run_id -> feedback entries (or a `FeedbackFile`); *survival* maps (run_id, task_id) ->
+    `TaskSurvival` (only isolation/serial, non-low-confidence rows are joined)."""
     groups: dict[tuple[str, str, str], GroupUsage] = {}
 
     def group(ts: TaskRunState) -> GroupUsage:
@@ -295,12 +394,17 @@ def aggregate_usage(states: Iterable[RunState], store: ArtifactStore) -> UsageRe
         )
 
     outcomes: list[RunOutcome] = []
-    runs = verdicts = reviews = 0
+    runs = verdicts = reviews = runs_rated = 0
     for state in states:
         runs += 1
+        raw_fb = (feedback or {}).get(state.run_id)
+        entries: list[FeedbackEntry] = (
+            list(raw_fb.entries) if isinstance(raw_fb, FeedbackFile) else list(raw_fb or [])
+        )
+        runs_rated += bool(entries)
         outcome = RunOutcome(run_id=state.run_id)
         has_outcome = False
-        for ts in state.tasks.values():
+        for tid, ts in state.tasks.items():
             # Never-dispatched tasks (skipped/not_taken/pending) have no usage to attribute.
             if ts.status not in _SETTLED or ts.dispatch_cycle < 1:
                 continue
@@ -312,6 +416,18 @@ def aggregate_usage(states: Iterable[RunState], store: ArtifactStore) -> UsageRe
             g.cost_usd += ts.cumulative_cost_usd
             g.input_tokens += ts.cumulative_input_tokens
             g.output_tokens += ts.cumulative_output_tokens
+            if entries:
+                eff = effective_for_task(entries, tid)
+                if eff is not None:
+                    g.fb_rated_tasks += 1
+                    setattr(g, f"fb_{eff.rating}", getattr(g, f"fb_{eff.rating}") + 1)
+                    g.fb_unnecessary += "unnecessary" in eff.reasons
+            joined = _joinable_survival((survival or {}).get((state.run_id, tid)))
+            if joined is not None:
+                g.lines_added += joined.lines_added
+                g.lines_survived += joined.lines_survived
+                g.survival_tasks += 1
+                g.survival_low_tasks += FLAG_LIKELY_WORTHLESS in joined.flags
 
             vpath = ts.verdict_path or ts.review_verdict_path
             if vpath is None:
@@ -362,6 +478,15 @@ def aggregate_usage(states: Iterable[RunState], store: ArtifactStore) -> UsageRe
                 pg.major += verdict.major
                 pg.minor += verdict.minor
                 pg.must_fix += verdict.must_fix
+                explicit = effective_for_task(entries, pid, explicit_only=True) if entries else None
+                if explicit is not None:
+                    pg.verdict_rated_pairs += 1
+                    pg.false_pass_candidates += (
+                        verdict.verdict == "PASS" and explicit.rating == "bad"
+                    )
+                    pg.false_fail_candidates += (
+                        verdict.verdict == "FAIL" and explicit.rating == "good"
+                    )
         if has_outcome:
             outcomes.append(outcome)
 
@@ -372,6 +497,7 @@ def aggregate_usage(states: Iterable[RunState], store: ArtifactStore) -> UsageRe
                 f"high rework: {g.review_fail}/{g.reviewed} reviews FAIL -- consider a stronger "
                 "model/effort for this role, or tighter task shapes"
             )
+        g.flags.extend(_signal_flags(g))
     ordered = sorted(groups.values(), key=lambda g: (g.agent, g.model, g.effort))
     return UsageReport(
         runs_scanned=runs,
@@ -379,7 +505,38 @@ def aggregate_usage(states: Iterable[RunState], store: ArtifactStore) -> UsageRe
         reviews_seen=reviews,
         groups=ordered,
         outcomes=outcomes,
+        runs_rated=runs_rated,
+        survival_available=survival is not None,
     )
+
+
+def _signal_flags(g: GroupUsage) -> list[str]:
+    """Feedback/disagreement/survival flags -- each only above the sample floor."""
+    flags: list[str] = []
+    bad = g.fb_bad_rate
+    if g.fb_rated_tasks >= MIN_SAMPLE_FOR_FLAG and bad is not None and bad >= USER_BAD_FLAG_RATE:
+        flags.append(f"user-rated bad: {g.fb_bad}/{g.fb_rated_tasks} rated tasks")
+    dis = g.reviewer_disagreement_rate
+    if (
+        g.verdict_rated_pairs >= MIN_SAMPLE_FOR_FLAG
+        and dis is not None
+        and dis >= DISAGREE_FLAG_RATE
+    ):
+        n = g.false_pass_candidates + g.false_fail_candidates
+        flags.append(
+            f"reviewer disagrees with user: {n}/{g.verdict_rated_pairs} rated pairs "
+            f"({g.false_pass_candidates} PASS-but-bad, {g.false_fail_candidates} FAIL-but-good; "
+            "candidates, not an error rate)"
+        )
+    if (
+        g.survival_tasks >= MIN_SAMPLE_FOR_FLAG
+        and g.survival_low_tasks / g.survival_tasks >= LOW_SURVIVAL_FLAG_SHARE
+    ):
+        flags.append(
+            f"low survival: {g.survival_low_tasks}/{g.survival_tasks} tasks have <10% of their "
+            "added lines still present"
+        )
+    return flags
 
 
 def list_run_ids(workspace_root: str) -> list[str]:
@@ -388,3 +545,133 @@ def list_run_ids(workspace_root: str) -> list[str]:
     if not root.is_dir():
         return []
     return sorted(p.name for p in root.iterdir() if (p / "state.json").is_file())
+
+
+def _load_states(ws_root: str, run_ids: Sequence[str] | None) -> tuple[list[RunState], list[str]]:
+    """Load run states like the CLI always did; unreadable/invalid runs are skipped and
+    returned as "run_id: reason" strings (never raised)."""
+    from .runstate import RunStateStore
+
+    store = LocalFsArtifactStore(ws_root)
+    rs_store = RunStateStore(ws_root, store)
+    states: list[RunState] = []
+    skipped: list[str] = []
+    for rid in run_ids if run_ids else list_run_ids(ws_root):
+        try:
+            validate_run_id(rid)  # explicit ids come from CLI/HTTP: no traversal into other dirs
+            states.append(rs_store.load(rid))
+        except (FileNotFoundError, ValueError, FeedbackError, OSError) as e:
+            skipped.append(f"{rid}: {e}")
+    return states, skipped
+
+
+def _load_feedback_map(
+    ws_root: str, states: Sequence[RunState]
+) -> tuple[dict[str, list[FeedbackEntry]], int]:
+    out: dict[str, list[FeedbackEntry]] = {}
+    errors = 0
+    for st in states:
+        try:
+            entries = load_feedback(ws_root, st.run_id).entries
+        except FeedbackError as e:
+            log.warning("usage: skipping feedback for run %s: %s", st.run_id, e)
+            errors += 1
+            continue
+        if entries:
+            out[st.run_id] = entries
+    return out, errors
+
+
+def build_usage_report(
+    ws_root: str,
+    run_ids: Sequence[str] | None = None,
+    *,
+    with_survival: bool = False,
+    ref: str | None = None,
+) -> UsageReport:
+    """The single report builder shared by `ao report-usage` and the dashboard API.
+
+    Loads run states (unreadable runs go to `report.skipped`), joins per-run feedback (a corrupt
+    `feedback.json` is skipped and counted in `feedback_errors`) and -- only when asked --
+    diff survival. Survival never breaks the report: any failure degrades to
+    ``survival_available=False`` with a reason. Raises ValueError only for caller errors
+    (too many run ids)."""
+    if run_ids is not None and len(run_ids) > MAX_REPORT_RUN_IDS:
+        raise ValueError(f"too many run ids ({len(run_ids)} > {MAX_REPORT_RUN_IDS})")
+    states, skipped = _load_states(ws_root, run_ids)
+    fb_map, fb_errors = _load_feedback_map(ws_root, states)
+
+    survival_rows: dict[tuple[str, str], TaskSurvival] | None = None
+    run_survivals: dict[str, Any] = {}
+    reason: str | None = None
+    if with_survival:
+        ref_err = validate_ref(ref) if ref is not None else None
+        if ref_err:
+            reason = f"invalid ref: {ref_err}"
+        else:
+            try:
+                sv = compute_survival(states, ws_root, ref=ref)
+            except Exception as e:  # compute_survival promises not to raise; belt and braces
+                log.warning("usage: survival failed: %s", e)
+                reason = f"survival failed: {e}"
+            else:
+                reason = sv.unavailable or None
+                if reason is None:
+                    survival_rows = {}
+                    for run in sv.runs:
+                        run_survivals[run.run_id] = run
+                        for row in run.tasks:
+                            if row.task_id is not None:
+                                survival_rows[(run.run_id, row.task_id)] = row
+
+    store = LocalFsArtifactStore(ws_root)
+    report = aggregate_usage(states, store, feedback=fb_map, survival=survival_rows)
+    report.skipped = skipped
+    report.feedback_errors = fb_errors
+    if with_survival:
+        report.survival_available = survival_rows is not None
+        report.survival_unavailable_reason = reason
+        report.survival_ref = ref
+        if survival_rows is not None:
+            report.run_signals = _run_signal_rows(states, ws_root, run_survivals)
+    return report
+
+
+def _run_signal_rows(
+    states: Sequence[RunState], ws_root: str, run_survivals: Mapping[str, Any]
+) -> list[RunSignalRow]:
+    rows: list[RunSignalRow] = []
+    for st in states:
+        rsv = run_survivals.get(st.run_id)
+        try:
+            sig = implicit_signals(st, ws_root)
+        except Exception as e:  # signals are circumstantial extras; never break the report
+            log.debug("usage: implicit signals failed for %s: %s", st.run_id, e)
+            sig = RunSignals(run_status=st.status)
+        total = rsv.total if rsv is not None else None
+        if rsv is not None:
+            apply_survival(sig, rsv)
+        rows.append(
+            RunSignalRow(
+                run_id=st.run_id,
+                signals=sig,
+                lines_added=total.lines_added if total and not total.unavailable else None,
+                lines_survived=total.lines_survived if total and not total.unavailable else None,
+                survival_rate=total.survival_rate if total else None,
+            )
+        )
+    return rows
+
+
+def usage_report_payload(report: UsageReport) -> dict[str, Any]:
+    """JSON-ready dict: the model dump plus each group's computed rates (shared by the CLI
+    `--json` and the dashboard API so they cannot drift)."""
+    payload = report.model_dump()
+    for row, g in zip(payload["groups"], report.groups, strict=True):
+        row["mean_cost_usd"] = g.mean_cost_usd
+        row["retry_rate"] = g.retry_rate
+        row["review_fail_rate"] = g.review_fail_rate
+        row["survival_rate"] = g.survival_rate
+        row["fb_bad_rate"] = g.fb_bad_rate
+        row["reviewer_disagreement_rate"] = g.reviewer_disagreement_rate
+    return payload

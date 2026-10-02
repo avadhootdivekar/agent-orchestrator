@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from .isolation.git import GitRepo
 from .models import RunState
+from .survival import FLAG_REVERTED, RunSurvival
 
 log = logging.getLogger(__name__)
 
@@ -176,4 +177,15 @@ def implicit_signals(state: RunState, ws_root: str) -> RunSignals:
         sig.followup_confidence = "low" if lossy else "normal"
     else:
         sig.followup_reason = "; ".join(reasons) or "unknown"
+    return sig
+
+
+def apply_survival(sig: RunSignals, survival: RunSurvival) -> RunSignals:
+    """Fill `reverted_commits` from a computed `RunSurvival` (a lower bound: tasks/units with
+    the `reverted` flag; at least 1 when only the run total carries it). Left None when the
+    run's survival was unavailable."""
+    if survival.unavailable or survival.total.unavailable:
+        return sig
+    reverted_tasks = sum(1 for t in survival.tasks if FLAG_REVERTED in t.flags)
+    sig.reverted_commits = max(reverted_tasks, int(FLAG_REVERTED in survival.total.flags))
     return sig
