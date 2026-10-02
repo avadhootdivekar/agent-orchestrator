@@ -108,6 +108,7 @@ from .monitoring import (
 from .runstate import RunStateStore
 from .scheduling.overlap import overlap_score, rank_wave
 from .spec import validate_isolation, validate_task_model_policy
+from .survival import current_heads, record_git_start, record_landed_ranges
 from .usage import dispatch_provenance
 
 # Valid origin values for injected/loop tasks
@@ -776,6 +777,11 @@ class Orchestrator:
                 run_dir=run_dir,
             )
 
+            # Diff-survival recording (`ao report-survival`): git repos + start HEADs, written once
+            # for a NEW run only (a resume must keep the original start); never fails the run.
+            if run_state is None:
+                record_git_start(state, ctx.repo_paths)
+
             # E-Wk9Tz3 (HLD §9.2, R-5): hotspots load ONCE at run start, never per wave, with
             # an empty-on-any-error fallback (an unresolvable/absent path is not fatal --
             # hotspots are advisory scheduling data, never a gate). Skipped entirely when
@@ -1394,6 +1400,7 @@ class Orchestrator:
         # resume`, so a resumed dispatch still gets its own fresh started_at.
         if ts.started_at is None:
             ts.started_at = datetime.now(UTC).isoformat()
+            ts.start_heads = current_heads(state.git_repos)
         self._runstate.save(state)
         task_log.info("Task started", extra={"event": "task.start"})
 
@@ -1761,6 +1768,7 @@ class Orchestrator:
         # `conflict_rerun`): it runs unconditionally, before that switch, so no
         # second accumulation call is needed there (E-Wk9Tz3 T-Ac6Vd9).
         self._accumulate_actuals(ts, result)
+        ts.end_heads = current_heads(state.git_repos)
 
         if result.status == "succeeded":
             # Verify declared outputs were actually produced. E-Wk9Tz3 C-1 (review fix):
@@ -1906,6 +1914,7 @@ class Orchestrator:
                     # line reports the head each repo moved FROM as well as TO.
                     head_from = {k: state.integration.heads.get(k) for k in integ.heads}
                     state.integration.heads.update(integ.heads)
+                    record_landed_ranges(ti, head_from, integ.heads)
                     ti.status = "integrated"
                     ti.mode = "normal"
                     copy_ok = True

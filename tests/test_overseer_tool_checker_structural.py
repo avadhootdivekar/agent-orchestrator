@@ -1104,6 +1104,22 @@ def test_r10_tail_missing_charter_input_on_final_verify(
     assert "R10" in rule_ids_of(excinfo.value.violations)
 
 
+def test_r10_final_verify_declared_outputs_must_stay_exactly_verify_md(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The optional verify-verdict.json sidecar (ao report-usage) must never be declared.
+    ws = tmp_path
+    inst, unit_id, emitter, next_wave, cfg_dict = setup_ckpt_happy_path(ws, tmp_path, monkeypatch)
+    tail = make_tail_entries(emitter=emitter)
+    assert tail[0]["outputs"] == [f"{_INSTANCE_DIR}/outputs/final/verify.md"]
+    tail[0]["outputs"].append(f"{_INSTANCE_DIR}/outputs/final/verify-verdict.json")
+    write_manifest_entries(inst, "ck-01.json", tail)
+
+    with pytest.raises(ov.CheckViolations) as excinfo:
+        ov.ckpt_check(make_args(ws))
+    assert "R10" in rule_ids_of(excinfo.value.violations)
+
+
 def test_r10_tail_final_push_wrong_isolation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

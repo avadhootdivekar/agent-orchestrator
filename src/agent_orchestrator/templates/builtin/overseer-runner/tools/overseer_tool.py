@@ -2672,6 +2672,9 @@ def _check_tail_shape(
                     "R10", f"final-verify inputs missing required path(s): {missing_inputs}", path
                 )
             )
+        # The optional `outputs/final/verify-verdict.json` sidecar (read by `ao report-usage`)
+        # must stay UNDECLARED: a declared output is enforced and would let a missing sidecar
+        # fail the run. Keep this exactly [verify.md].
         expected_outputs = [f"{ctx.instance_dir}/outputs/final/verify.md"]
         if raw.get("outputs") != expected_outputs:
             violations.append(

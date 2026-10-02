@@ -488,6 +488,13 @@ def validate_isolation(workflow: WorkflowSpec, tasks: list[TaskSpec]) -> list[st
                     "(no absolute path, no '..' segment)",
                     path=f"tasks.{task.id}.touches",
                 )
+    for task in tasks:
+        if task.verdict_path and _is_unsafe_relative_glob(task.verdict_path):
+            raise SpecValidationError(
+                f"Task {task.id!r}: verdict_path {task.verdict_path!r} must be "
+                "workspace-relative (no absolute path, no '..' segment)",
+                path=f"tasks.{task.id}.verdict_path",
+            )
     for glob in integ.commit_denylist:
         if _is_unsafe_relative_glob(glob):
             raise SpecValidationError(

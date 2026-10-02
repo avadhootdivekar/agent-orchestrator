@@ -40,3 +40,16 @@ Write `outputs/final/verify.md` with a table, one row per ask: ask id, acceptanc
 criteria status, usable-bar status (met / not met), and the concrete evidence for each
 (command output, file references, whatever you actually checked — not a bare
 assertion).
+
+## Optional verdict sidecar (never a gate)
+After `verify.md` is written, you may also write `outputs/final/verify-verdict.json` (same
+directory as `verify.md`) — a small machine-readable summary read only by `ao report-usage`:
+
+```json
+{"schema": "ao.overseer.final-verify/v1",
+ "asks": [{"id": "A1", "verdict": "met"}, {"id": "A2", "verdict": "partial"}]}
+```
+
+One entry per charter ask; `verdict` is exactly one of `met|partial|not_met`. This file is
+**optional, not a declared output, and never a gate** — skipping it or getting it wrong cannot
+fail your task or the run, and the engine never reads it. `verify.md` stays the deliverable.

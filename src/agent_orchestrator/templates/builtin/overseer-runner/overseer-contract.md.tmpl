@@ -179,6 +179,11 @@ written by the checkpoint (you), once per checkpoint:
 - `signal_responses` — one entry per digest signal id: `{signal_id, response: redirect|descope|accept|hold, rationale}`
 - `hold_questions` (list of strings; required, ≥1, iff `decision == "hold"`)
 
+**final-verify sidecar** — `outputs/final/verify-verdict.json`, `schema: "ao.overseer.final-verify/v1"` —
+OPTIONAL, written by `final-verify` after `verify.md`; NOT a declared output (the tail's `outputs`
+stay exactly `[verify.md]`) and never a gate; read only by `ao report-usage`:
+- `schema`, `asks` — one entry per charter ask: `{id, verdict: met|partial|not_met}`
+
 **hold-request** — `control/hold-request.json`, `schema: "ao.overseer.hold/v1"` — written only
 when `decision == "hold"`:
 - `schema`, `checkpoint`, `created_at`, `questions` (≥1 strings), `needs_input_path`

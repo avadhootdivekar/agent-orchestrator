@@ -18,6 +18,8 @@ Commands:
                         post-run deterministic grading pass (--grade) (E-1cecSx B3).
   ao report-usage    — Cross-run cost/retry/rework rollup by (agent, model, effort), with
                         review-verdict attribution to the model whose work was reviewed.
+  ao rate            — Record your own good/ok/bad rating (run or task) in the run's local
+                        feedback.json, or list it with --show (E-Us9Kd4).
 
 Options:
   ao --version / -V         — Show version (+ commit/build info for non-release builds).
@@ -1820,13 +1822,25 @@ def report_usage(
             row["mean_cost_usd"] = g.mean_cost_usd
             row["retry_rate"] = g.retry_rate
             row["review_fail_rate"] = g.review_fail_rate
-        typer.echo(_json.dumps(payload, indent=2))
+        typer.echo(_json.dumps(payload, indent=2))  # includes `outcomes` (per-run charter signals)
         return
 
     typer.echo(
-        f"\nRuns scanned: {report.runs_scanned}  |  review verdicts found: "
+        f"\nRuns scanned: {report.runs_scanned}  |  verdicts found: "
         f"{report.verdicts_found}/{report.reviews_seen}"
     )
+    if report.outcomes:
+        typer.echo("\nOutcome vs charter")
+        for o in report.outcomes:
+            al = " ".join(f"{k}={v}" for k, v in sorted(o.alignment.items())) or "-"
+            typer.echo(
+                f"  {o.run_id}: checkpoints {o.checkpoints_found}/{o.checkpoints_seen}  "
+                f"last decision: {o.last_decision or 'n/a'}  criteria met/unmet/deferred: "
+                f"{o.criteria_met}/{o.criteria_unmet}/{o.criteria_deferred}  alignment: {al}"
+            )
+            fv = o.final_verify
+            fv_txt = f"met/partial/not_met: {fv.met}/{fv.partial}/{fv.not_met}" if fv else "n/a"
+            typer.echo(f"    final verify {fv_txt}")
     if not report.groups:
         typer.echo("(no settled, dispatched tasks found)")
         return
@@ -1850,6 +1864,171 @@ def report_usage(
         for flag in g.flags:
             typer.echo(f"FLAG {g.agent}/{g.model}/{g.effort}: {flag}")
     typer.echo("\nC/M/m = critical/major/minor review findings attributed to that group's work.")
+
+
+@app.command(name="rate")
+def rate(
+    run_id: str = typer.Argument(..., help="Run ID to rate"),
+    rating: str | None = typer.Argument(None, help="good | ok | bad (omit with --show)"),
+    task: str | None = typer.Option(None, "--task", help="Rate this task instead of the run."),
+    reasons: list[str] = typer.Option(
+        [], "--reason", help="Why (repeatable): wrong, incomplete, unnecessary, too-costly, ..."
+    ),
+    note: str | None = typer.Option(None, "--note", help="Free-text note (max 2000 chars)."),
+    show: bool = typer.Option(False, "--show", help="List feedback history + effective ratings."),
+    as_json: bool = typer.Option(False, "--json", help="With --show: machine-readable JSON."),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+) -> None:
+    """Record local feedback on a run (or one task) -- stored in the run's feedback.json,
+    never sent anywhere. History is kept; the latest rating per run/task is the effective one."""
+    import json as _json
+
+    from .feedback import (
+        FeedbackError,
+        add_feedback,
+        effective_ratings,
+        load_feedback,
+    )
+
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    try:
+        if show:
+            doc = load_feedback(ws_root, run_id)
+            eff = effective_ratings(doc.entries)
+            if as_json:
+                typer.echo(
+                    _json.dumps(
+                        {
+                            "run_id": run_id,
+                            "entries": [e.model_dump() for e in doc.entries],
+                            "effective": [e.model_dump() for e in eff.values()],
+                        },
+                        indent=2,
+                    )
+                )
+                return
+            if not doc.entries:
+                typer.echo(f"(no feedback recorded for run {run_id})")
+                return
+            typer.echo(f"\nFeedback for {run_id} ({len(doc.entries)} entries)")
+            typer.echo(
+                f"{'Time':<32} {'Scope':<5} {'Task':<24} {'Rating':<6} {'Eff':<3} Reasons / note"
+            )
+            effective_ids = {id(e) for e in eff.values()}
+            for e in doc.entries:
+                extra = ",".join(e.reasons) + (f'  "{e.note}"' if e.note else "")
+                typer.echo(
+                    f"{e.ts:<32} {e.scope:<5} {e.task_id or '-':<24} {e.rating:<6} "
+                    f"{'*' if id(e) in effective_ids else '':<3} {extra}"
+                )
+            return
+        if rating is None:
+            raise FeedbackError("a rating (good|ok|bad) is required unless --show is given")
+        entry = add_feedback(
+            ws_root,
+            run_id,
+            scope="task" if task else "run",
+            rating=rating,
+            reasons=list(reasons),
+            note=note,
+            task_id=task,
+            source="cli",
+        )
+    except FeedbackError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1) from e
+    target = f"task {entry.task_id}" if entry.task_id else "run"
+    typer.echo(f"Recorded {entry.rating!r} for {target} of {run_id}.")
+
+
+@app.command(name="report-survival")
+def report_survival(
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+    run_ids: list[str] = typer.Option(
+        [], "--run-id", help="Restrict to this run (repeatable). Default: every run."
+    ),
+    ref: str | None = typer.Option(
+        None, "--ref", help="Git ref to measure survival at (default: each repo's HEAD)."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """How much of the code each run/task added is still present at a ref (default HEAD).
+
+    Git-only heuristic (content match, not blame): ~100% right after a run, only informative
+    as later work lands -- re-run it later. Task rows appear only where commits can be
+    attributed (isolation squash, or non-overlapping serial tasks); run rows always count
+    everything attributed, old runs fall back to a low-confidence time window."""
+    import json as _json
+
+    from .artifacts import LocalFsArtifactStore
+    from .runstate import RunStateStore
+    from .survival import TaskSurvival, compute_survival, validate_ref
+    from .usage import list_run_ids
+
+    if ref is not None:
+        ref_err = validate_ref(ref)
+        if ref_err:
+            typer.echo(f"ERROR: invalid --ref: {ref_err}", err=True)
+            raise typer.Exit(2)
+
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    store = LocalFsArtifactStore(ws_root)
+    rs_store = RunStateStore(ws_root, store)
+    states = []
+    for rid in run_ids or list_run_ids(ws_root):
+        try:
+            states.append(rs_store.load(rid))
+        except (FileNotFoundError, ValueError) as e:
+            typer.echo(f"WARNING: skipping run {rid!r}: {e}", err=True)
+    report = compute_survival(states, ws_root, ref=ref)
+
+    if ref is not None and report.ref_resolved is False:
+        typer.echo(f"ERROR: {report.unavailable}", err=True)
+        raise typer.Exit(1)
+    if as_json:
+        typer.echo(_json.dumps(report.model_dump(), indent=2))
+        return
+    if report.unavailable:
+        typer.echo(f"survival: unavailable ({report.unavailable})")
+        return
+    if not report.runs:
+        typer.echo("(no runs found)")
+        return
+
+    def _cell(r: TaskSurvival) -> str:
+        rate = f"{r.survival_rate:.0%}" if r.survival_rate is not None else "n/a"
+        flags = ",".join(r.flags + [f"trunc:{t}" for t in r.truncated])
+        if r.unavailable:
+            flags = (flags + " " if flags else "") + f"unavailable({r.unavailable})"
+        return (
+            f"{r.attribution:<11} {r.confidence or '-':<6} {r.commits:>7} {r.files:>5} "
+            f"{r.lines_added:>7} {r.lines_survived:>8} {rate:>6}  {flags}"
+        )
+
+    typer.echo(f"\nSurvival at {ref or 'HEAD'}")
+    typer.echo(
+        f"\n{'Run':<22} {'Task':<22} {'Attribution':<11} {'Conf':<6} {'Commits':>7} "
+        f"{'Files':>5} {'+Lines':>7} {'Survived':>8} {'Rate':>6}  Flags"
+    )
+    typer.echo("-" * 120)
+    for run in report.runs:
+        typer.echo(f"{run.run_id[:22]:<22} {'(run)':<22} {_cell(run.total)}")
+        for t in run.tasks:
+            typer.echo(f"{'':<22} {(t.task_id or '')[:22]:<22} {_cell(t)}")
+    typer.echo(
+        "\nContent-match heuristic, not blame; ambiguous = overlapping serial windows "
+        "(run-level only); time-window = low-confidence fallback for old runs."
+    )
 
 
 @app.command(name="init")

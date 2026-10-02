@@ -33,7 +33,7 @@
 ## Task List (order; ∥ = parallel)
 - [ ] `T-Vd1Ab2-generic-verdict-capture` — FR-1, FR-2, NFR-1 (∥)
 - [ ] `T-Sv2Cd3-diff-survival-report` — FR-3, FR-4, NFR-2 (∥)
-- [ ] `T-Fb3Ef4-local-feedback-cli` — FR-5, FR-6, NFR-3 (∥)
+- [x] `T-Fb3Ef4-local-feedback-cli` — FR-5, FR-6, NFR-3 (∥)
 - [ ] `T-Jn4Gh5-usage-rollup-join` — FR-7, FR-8 (after the three above)
 - [ ] `T-Ui5Ij6-dashboard-usage-feedback` — FR-9, FR-10, NFR-4 (after join)
 - [ ] `T-Dc6Kl7-docs-e2e-verification` — FR-11 (last)

@@ -321,6 +321,10 @@ class TaskSpec(BaseModel):
     # same reasoning as `touches` above). None (the default) is a true no-op (FR-4).
     pre_hook: HookRef | None = None
     post_hook: HookRef | None = None
+    # Workspace-relative path of an optional structured verdict sidecar this task writes
+    # (`ao report-usage`, see `usage.verdict_path_for`). NOT a declared output and never a
+    # gate: read lazily at report time via `artifacts.read_control`; missing = "no verdict".
+    verdict_path: str | None = None
 
 
 def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
@@ -931,6 +935,10 @@ class TaskIntegrationState(BaseModel):
     conflicted_paths: list[str] = []  # paths only (NFR-1)
     verify_status: Literal["not_run", "passed", "failed"] = "not_run"
     last_error: str | None = None
+    # repo_key -> [[head_from, head_to], ...]: every integration-head range this task's landing
+    # advanced (one entry per successful integration, so retries/requeues are summed). Durable
+    # patch range for `ao report-survival` -- squash shas alone can be rewritten/unreachable.
+    landed_ranges: dict[str, list[list[str]]] = {}
 
 
 class RunIntegrationState(BaseModel):
@@ -1083,6 +1091,15 @@ class TaskRunState(BaseModel):
     # a task that declares a `review.md` output (see `usage.REVIEW_VERDICT_BASENAME`).
     # Read lazily at report time, never by the engine.
     review_verdict_path: str | None = None
+    # Generic verdict sidecar path (see `usage.verdict_path_for`); superset of the above.
+    verdict_path: str | None = None
+    # repo_key -> HEAD sha of that git repo when this task settled (main thread, same site as
+    # the cumulative-usage mirror). Feeds `ao report-survival`'s serial attribution
+    # (prev_head..end_head). Empty for pre-existing states / non-git workspaces.
+    end_heads: dict[str, str] = {}
+    # Same shape, captured at the task's FIRST dispatch -- bounds the task's [start, end] commit
+    # window so concurrent (`max_parallel>1`) tasks can be told apart from serial ones.
+    start_heads: dict[str, str] = {}
 
 
 class RunState(BaseModel):
@@ -1136,6 +1153,12 @@ class RunState(BaseModel):
     # run was launched. Defaulted for NFR-5 backward-compat: a pre-epic state.json loads
     # with spec_sessions == [], which the dashboard reports as source "unavailable".
     spec_sessions: list[SpecSession] = []
+
+    # Diff-survival recording (`ao report-survival`): repo_key -> toplevel for every git repo of
+    # the workflow's repo paths, and repo_key -> HEAD at the FIRST run start (never overwritten
+    # on resume). Both default empty so older state.json files load unchanged.
+    git_repos: dict[str, str] = {}
+    git_start_heads: dict[str, str] = {}
 
 
 class RunUsageTotals(BaseModel):
