@@ -35,7 +35,7 @@ save while talking to a real backend.
 ```
 src/
   main.tsx            entry point
-  App.tsx             shell: sidebar nav, view switching, theme toggle
+  App.tsx             shell: sidebar nav, tab bar + mounted tab panels, hash/localStorage sync, theme toggle
   api.ts              typed client for /api (throws ApiError carrying the status code)
   types.ts            response shapes, mirroring src/agent_orchestrator/ui/app.py
   usePolling.ts       poll hook: ticks now + every N ms, paused while document.hidden / disabled (E-iafh2F)
@@ -53,6 +53,13 @@ src/
     Usage.tsx         usage report: group table, run filter, survival toggle, outcomes
     FeedbackControls.tsx  rating form (good/ok/bad, reason tags, note) shared by run + task
     FeedbackPanels.tsx    run feedback history, implicit-signals/survival panel
+  tabs/               tabbed workspace (E-iafh2F Phase 2, docs-md/live-activity-and-tabs-hld.md §2)
+    model.ts          PURE: Tab type, kind/param allowlists, hash codec, persistence codec, reducer
+    storage.ts        guarded localStorage read/write
+    context.tsx       TabActiveContext (inactive tabs stop polling) + TabActionsContext (navigate/open)
+    TabBar.tsx        tab strip: close, drag + Alt+Arrow reorder, roving tabindex
+    TabLink.tsx       <a href="#/..."> links + the explicit "open in new tab" button
+    TabView.tsx       tab -> view component;  TaskTab.tsx / GraphTab.tsx  the two tab-only views
   graph/              run graph canvas (E-k3AMEr) — lazy-loaded chunk, see docs-md/run-graph-canvas-hld.md
     model.ts          PURE (no React, no fetch): named constants, joinNodes/edgesForView/nodesForView,
                       metricFraction, searchNodes, relatedIds, waitSeconds, panelModel, prefs

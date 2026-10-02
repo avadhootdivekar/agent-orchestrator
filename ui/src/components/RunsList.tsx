@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { api, ApiError } from "../api";
 import { formatCost, formatCount, formatDuration, formatTimestamp } from "../format";
 import type { AggregateStats, RunSummary } from "../types";
+import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
 import { usePolling } from "../usePolling";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { briefRows, NowRunning } from "./NowRunning";
@@ -127,9 +128,17 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
               {runs.map((run) => (
                 <tr key={run.run_id}>
                   <td>
-                    <button className="link" onClick={() => onOpen(run.run_id)}>
+                    <TabLink
+                      target={{ kind: "run", params: { id: run.run_id } }}
+                      className="link"
+                      onPlainClick={() => onOpen(run.run_id)}
+                    >
                       {run.run_id}
-                    </button>
+                    </TabLink>
+                    <OpenInNewTabButton
+                      target={{ kind: "run", params: { id: run.run_id } }}
+                      label={`run ${run.run_id}`}
+                    />
                     <div className="muted" style={{ fontSize: 11 }}>
                       {run.workflow_id}
                     </div>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { formatBytes, isMarkdownPath, languageFor } from "../format";
 import type { DirListing, FileContent, HtmlPreview as HtmlPreviewData } from "../types";
+import { OpenInNewTabButton } from "../tabs/TabLink";
 import { Empty, ErrorBanner } from "./common";
 import { CodeView } from "./viewer/CodeView";
 import { HtmlPreview } from "./viewer/HtmlPreview";
@@ -25,7 +26,15 @@ type ViewMode = "preview" | "source";
  * inspecting `.ao/`, `.orchestrator/`, and `.git/` is the point. Hidden entries are dimmed
  * rather than filtered so they read as secondary without being invisible.
  */
-export function FileBrowser() {
+export function FileBrowser({
+  initialPath,
+  initialRoot,
+}: {
+  /** Workspace-relative FILE to open on mount (workspace tab, `file` kind); omitted = browse the root. */
+  initialPath?: string;
+  /** Optional named root (the API's `root` param). */
+  initialRoot?: string;
+} = {}) {
   const [listing, setListing] = useState<DirListing | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [content, setContent] = useState<FileContent | null>(null);
@@ -47,17 +56,13 @@ export function FileBrowser() {
     setLoading(true);
     setError(null);
     try {
-      setListing(await api.listDir(path));
+      setListing(await api.listDir(path, initialRoot));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    void load("");
-  }, [load]);
+  }, [initialRoot]);
 
   const openFile = async (path: string) => {
     setSelected(path);
@@ -66,7 +71,7 @@ export function FileBrowser() {
     setHtmlPreview(null);
     setHtmlPreviewError(null);
     try {
-      const next = await api.readFile(path);
+      const next = await api.readFile(path, initialRoot);
       setContent(next);
       // Markup previews of untrusted workspace content should be a deliberate click, not
       // automatic (1B.2) — everything else defaults to the rendered view.
@@ -76,6 +81,17 @@ export function FileBrowser() {
     }
   };
 
+  // Initial location: the `file` tab's path (open it and show its directory), else the root.
+  useEffect(() => {
+    if (!initialPath) {
+      void load("");
+      return;
+    }
+    void load(initialPath.split("/").slice(0, -1).join("/"));
+    void openFile(initialPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per mount (tab params are the key)
+  }, []);
+
   // Fetches the sanitized HTML preview lazily, only once the user actually switches a
   // markup file to Preview mode — sanitizing/inlining assets is real server-side work that
   // the (source-by-default) common case shouldn't pay for.
@@ -83,7 +99,7 @@ export function FileBrowser() {
     if (!content || content.kind !== "markup" || mode !== "preview" || htmlPreview) return;
     let cancelled = false;
     api
-      .readFileHtml(content.path)
+      .readFileHtml(content.path, initialRoot)
       .then((preview) => {
         if (!cancelled) setHtmlPreview(preview);
       })
@@ -95,7 +111,7 @@ export function FileBrowser() {
     return () => {
       cancelled = true;
     };
-  }, [content, mode, htmlPreview]);
+  }, [content, mode, htmlPreview, initialRoot]);
 
   const currentPath = listing?.path ?? "";
   const segments = currentPath ? currentPath.split("/") : [];
@@ -210,7 +226,16 @@ export function FileBrowser() {
           ) : (
             <>
               <div className="page-head">
-                <h2 className="mono">{content.path}</h2>
+                <h2 className="mono">
+                  {content.path}{" "}
+                  <OpenInNewTabButton
+                    target={{
+                      kind: "file",
+                      params: { path: content.path, ...(initialRoot ? { root: initialRoot } : {}) },
+                    }}
+                    label={content.path}
+                  />
+                </h2>
                 <span className="muted" style={{ fontSize: 12 }}>
                   {formatBytes(content.size)} · {languageFor(content.path)}
                   {content.truncated ? " · truncated" : ""}

@@ -20,6 +20,7 @@ import {
   formatTimestamp,
 } from "../format";
 import type { RunGraph as RunGraphData, TaskStat } from "../types";
+import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
 import { PANEL_PENDING_STATUS, panelModel } from "./model";
 
 export interface TaskDetailPanelProps {
@@ -30,6 +31,8 @@ export interface TaskDetailPanelProps {
   onClose: () => void;
   /** Called with a related-task id -- the caller re-points the panel and recenters the canvas. */
   onNavigate: (id: string) => void;
+  /** Run id, so the panel can offer "open in new tab" / link output files (E-iafh2F). */
+  runId?: string;
 }
 
 /** Below this viewport width the panel becomes a bottom sheet instead of a 360px side panel. */
@@ -169,6 +172,7 @@ export function TaskDetailPanel({
   statsById,
   onClose,
   onNavigate,
+  runId,
 }: TaskDetailPanelProps) {
   const isNarrow = useIsNarrowViewport(RESPONSIVE_BREAKPOINT_PX);
   const asideRef = useRef<HTMLElement | null>(null);
@@ -176,7 +180,7 @@ export function TaskDetailPanel({
   // Focus moves into the panel on open (TASK.md item 2) -- the aside itself is the target since
   // its content is a mix of headings/dl's/buttons, not one obvious first focusable control.
   useEffect(() => {
-    if (nodeId) asideRef.current?.focus();
+    if (nodeId) asideRef.current?.focus({ preventScroll: true });
   }, [nodeId]);
 
   if (!nodeId) return null;
@@ -201,6 +205,12 @@ export function TaskDetailPanel({
       onKeyDown={handleKeyDown}
     >
       <div className="task-detail-panel-head">
+        {runId ? (
+          <OpenInNewTabButton
+            target={{ kind: "task", params: { run: runId, id: nodeId } }}
+            label={`task ${panel.header.label}`}
+          />
+        ) : null}
         <button type="button" className="task-detail-close" aria-label="Close" onClick={onClose}>
           ×
         </button>
@@ -377,7 +387,7 @@ export function TaskDetailPanel({
               <ul className="task-detail-outputs">
                 {panel.outcome.outputs.map((path) => (
                   <li key={path} className="mono">
-                    {path}
+                    <TabLink target={{ kind: "file", params: { path } }}>{path}</TabLink>
                   </li>
                 ))}
               </ul>

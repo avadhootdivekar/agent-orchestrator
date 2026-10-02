@@ -14,6 +14,7 @@ import type {
   RunIntegration,
   TaskStat,
 } from "../types";
+import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
 import { POLL_MS, usePolling } from "../usePolling";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
@@ -274,6 +275,12 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
             >
               Graph
             </button>
+            <span style={{ marginLeft: "auto" }}>
+              <OpenInNewTabButton
+                target={{ kind: "graph", params: { run: runId } }}
+                label="graph"
+              />
+            </span>
           </div>
         ) : null}
 
@@ -306,7 +313,16 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                 {detail.tasks.map((task) => (
                   <tr key={task.id}>
                     <td className="mono">
-                      {task.id}
+                      <TabLink
+                        target={{ kind: "task", params: { run: runId, id: task.id } }}
+                        className="task-link"
+                      >
+                        {task.id}
+                      </TabLink>
+                      <OpenInNewTabButton
+                        target={{ kind: "task", params: { run: runId, id: task.id } }}
+                        label={`task ${task.id}`}
+                      />
                       {task.origin !== "static" ? (
                         <span className="tag" style={{ marginLeft: 6 }}>
                           {task.origin}
@@ -343,7 +359,21 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                       <IntegrationCell task={task} />
                     </td>
                     <td className="mono muted" style={{ fontSize: 11 }}>
-                      {task.output_artifact_path ?? "—"}
+                      {task.output_artifact_path ? (
+                        <>
+                          <TabLink
+                            target={{ kind: "file", params: { path: task.output_artifact_path } }}
+                          >
+                            {task.output_artifact_path}
+                          </TabLink>
+                          <OpenInNewTabButton
+                            target={{ kind: "file", params: { path: task.output_artifact_path } }}
+                            label={task.output_artifact_path}
+                          />
+                        </>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                   </tr>
                 ))}
