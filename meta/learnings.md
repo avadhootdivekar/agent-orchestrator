@@ -1174,3 +1174,34 @@ By: agent
 Role: agent
 Date: 2026-09-28
 ---
+
+---
+Learning-ID: LRN-20261002-stream-json-output-tokens-are-first-chunk
+Learning: In claude `--output-format stream-json` transcripts, each `assistant` event's
+  `message.usage.output_tokens` is a first-chunk value (about 1% of the final total); only the
+  terminal `result` event carries the real usage. Input tokens per message are right. Live token
+  numbers must therefore be labelled estimates (chars/4 of model text + tool input, plus the
+  `system/thinking_tokens` `estimated_tokens_delta` events landed at 61-87% of final over 60 real
+  attempts). Turns: count distinct non-sidechain `message.id`, not assistant events (one event per
+  content block), and expect ~70-90% of the final `num_turns`.
+Context: Measured while building `E-iafh2F` live activity against real transcripts in
+  `ao-runner-ai-models`; fixture `tests/fixtures/transcript_stream_real_shape.jsonl` pins the shape.
+  The earlier committed fixture `transcript_activity_breakdown.jsonl` has no `message.id`/`usage`,
+  so designing against it alone would have been wrong.
+By: dev-epic
+Role: manager
+Date: 2026-10-02
+---
+
+---
+Learning-ID: LRN-20261002-unclosed-css-rule-nests-later-rules
+Learning: An unclosed `{` in `ui/src/styles.css` does not fail the Vite build: modern CSS nesting
+  silently scopes every following rule under the open selector, so later styles quietly stop
+  applying (and new rules appended at EOF inherit that prefix). When appended styles "do nothing",
+  grep the built CSS for a selector that picked up an unexpected parent prefix.
+Context: `.task-detail-outputs {` lost its `}` in commit 72db75f and swallowed the run-prompt CSS;
+  found and closed in `E-iafh2F`.
+By: dev-epic
+Role: manager
+Date: 2026-10-02
+---

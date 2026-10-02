@@ -305,6 +305,18 @@ ao ui --port 9000 --workspace /path/to/repo --open
   parent/children/dependency links. Live runs refresh in place. Runs from before this feature
   still render, with a banner explaining which data is missing. See
   [`docs-md/run-graph-canvas-hld.md`](docs-md/run-graph-canvas-hld.md).
+- **Live task activity** — a fixed three-row **Now running** box tops every run page (and a
+  compact one sits under each live run in the list): per running task the model, effort, turns,
+  live tokens (`~` = estimate, a lower bound until the task settles), cost of finished attempts,
+  elapsed time, the last tool call, and an *idle* chip after 5 minutes without transcript output.
+  More than three running tasks scroll inside the same box; it never grows or collapses. Polling
+  pauses while the page (or workspace tab) is hidden. See
+  [`docs-md/live-activity-and-tabs-hld.md`](docs-md/live-activity-and-tabs-hld.md).
+- **Tabs** — the dashboard is a tabbed workspace: open runs, tasks, graphs and files side by side
+  as tabs (closable, drag or Alt+←/→ to reorder). Plain click navigates the current tab,
+  Ctrl/Cmd/middle-click or the ⧉ button opens a new tab. The tab set persists in the browser and
+  the active tab is in the URL hash (`#/run?id=…`), so a link restores it, including in a new
+  browser tab.
 - **Run control** — resume an interrupted run, cancel a running one, delete old runs.
 - **Workspace** — the effective [general instructions](#general-instructions), with a flag
   showing whether each path actually resolves.

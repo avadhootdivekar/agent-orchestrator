@@ -6,7 +6,7 @@
 - Owner: dev-epic
 - Created: 2026-10-02
 - Last Updated: 2026-10-02
-- Status: In Progress
+- Status: Done
 
 ## Summary
 - Goal: Phase 1 shows live turns/tokens/last-action/stuck hint for running tasks; Phase 2 adds a tab bar (persisted, hash-addressable) to the dashboard.
@@ -33,11 +33,11 @@
 - [x] `T-LYf6DJ-activity-endpoint` — Phase 1: Activity endpoint + additive payload fields
 - [x] `T-j6dTdO-now-running-ui` — Phase 1: Now-running box, list compact variant, Model/Turns columns, usePolling
 - [x] `T-ySND8C-phase1-verify` — Phase 1: Phase 1 gates: tests, e2e, screenshots with 5+ running tasks
-- [ ] `T-f0YWSy-tab-model-and-persistence` — Phase 2: Tab model, reducer, hash codec, localStorage persistence, validation
-- [ ] `T-WQjrEt-tab-shell-and-new-tab-actions` — Phase 2: Tab bar UI, reorder/close, open-in-new-tab actions
-- [ ] `T-mee0lL-component-props-refactor` — Phase 2: RunDetail/FileBrowser/RunGraph/TaskDetailPanel take ids/paths as props
-- [ ] `T-mJWSkm-phase2-verify` — Phase 2: Phase 2 gates: tests, SPA-fallback check, screenshots
-- [ ] `T-6UNaea-docs-and-closeout` — Phase 2: Docs (HLD, ui/README), bundle rebuild, closeout
+- [x] `T-f0YWSy-tab-model-and-persistence` — Phase 2: Tab model, reducer, hash codec, localStorage persistence, validation
+- [x] `T-WQjrEt-tab-shell-and-new-tab-actions` — Phase 2: Tab bar UI, reorder/close, open-in-new-tab actions
+- [x] `T-mee0lL-component-props-refactor` — Phase 2: RunDetail/FileBrowser/RunGraph/TaskDetailPanel take ids/paths as props
+- [x] `T-mJWSkm-phase2-verify` — Phase 2: Phase 2 gates: tests, SPA-fallback check, screenshots
+- [x] `T-6UNaea-docs-and-closeout` — Phase 2: Docs (HLD, ui/README), bundle rebuild, closeout
 
 ## Risks and Dependencies
 - Transcript counts best-effort under huge files (approximate flag). Cost is a floor.
@@ -51,3 +51,5 @@
 - By: dev-epic · Role: manager · Date: 2026-10-02 · Comment: Epic opened; phases delivered in order.
 - By: dev-epic · Role: reviewer · Date: 2026-10-02 · Comment: Early gate (reviewer) outcome: sound direction; MUST-FIX items (verify accounting against real transcripts, define attempt/cycle token scope, capture-dir resolution rules, tail bounds) were all addressed in HLD §1.3-1.4 and code; architect pass not run separately (design authored to ADR-0017 conventions; reviewer covered design + trust model). Phase 2 SHOULDs (title never taken from hash, rel=noopener, concrete MAX_TABS, single click semantics) carry into Phase 2 HLD.
 - By: dev-epic · Role: manager · Date: 2026-10-02 · Comment: Phase 1 DONE (4/4). Evidence in STATUS.md.
+- By: dev-epic · Role: tester · Date: 2026-10-02 · Comment: Late gate: independent tester pass over the real `ao ui` server + system Chrome; one failure traced to a stale verification script (not product) and fixed; final re-runs PASS.
+- By: dev-epic · Role: manager · Date: 2026-10-02 · Comment: Phase 2 DONE (5/5). Epic DONE. Open items: cross-window localStorage last-writer-wins; split-pane future work; live cost needs a price table (not derivable).

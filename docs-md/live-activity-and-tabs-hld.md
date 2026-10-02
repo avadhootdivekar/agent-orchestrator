@@ -1,6 +1,6 @@
 # Live task activity and tabbed workspace — HLD/LLD (E-iafh2F)
 
-**Status:** In progress · **Date:** 2026-10-02 · **ADR:** [ADR-0018](adr/ADR-0018-live-activity-reader-and-tabbed-workspace.md)
+**Status:** Implemented (Phase 1 + Phase 2) · **Date:** 2026-10-02 · **ADR:** [ADR-0018](adr/ADR-0018-live-activity-reader-and-tabbed-workspace.md)
 **Epic:** [`meta/tickets/E-iafh2F-live-status-and-tabbed-workspace/`](../meta/tickets/E-iafh2F-live-status-and-tabbed-workspace/EPIC.md)
 **Builds on:** [ADR-0010](adr/ADR-0010-dashboard-architecture-and-general-instructions.md) ·
 [ADR-0011](adr/ADR-0011-untrusted-workspace-content-rendering.md) ·
@@ -142,28 +142,38 @@ HTTP integration (`TestClient`), e2e via real `ao ui` server on a fixture worksp
 
 ---
 
-## Phase 2 — Tabbed workspace
+## Phase 2 — Tabbed workspace (implemented)
 
 ### 2.1 Decision
 
-No router library. `ui/src/tabs/` holds a small pure model + reducer; `App.tsx` renders a tab bar
-above the main pane. `Tab = { id, kind, params, title }`, `kind ∈ runs | run | task | graph | file |
-usage | new | settings` (closed allowlist).
+No router library. `ui/src/tabs/` holds a pure model + reducer (`model.ts`), guarded storage
+(`storage.ts`), React contexts (`context.tsx`), the tab strip (`TabBar.tsx`), links
+(`TabLink.tsx`) and the per-kind views (`TabView.tsx`, `TaskTab.tsx`, `GraphTab.tsx`);
+`App.tsx` renders the strip above the main pane. `Tab = { id, kind, params, title }`,
+`kind ∈ runs | run | task | graph | file | usage | new | settings` (closed allowlist).
 
 | Concern | Decision |
 |---|---|
-| State | `useReducer` over `{tabs, activeId}`; pure reducer (open/close/activate/reorder/retitle) |
-| Persistence | `localStorage` key `ao-tabs`, every access try/catch guarded; page renders without it |
-| URL | Active tab encoded in the **hash**: `#/<kind>?<k=v&…>` (e.g. `#/run?id=r1`, `#/file?root=workspace&path=a/b.md`). Hash is client-only: the backend SPA fallback already serves `/` and any deep path with `index.html`, so no server change (verified by test). |
-| Open in new browser tab | Real `<a href="#/…" target="_blank">` — a fresh page load parses the hash → opens that tab. Middle/ctrl/cmd-click open an in-app tab (`openTab`) unless the modifier is the browser's native new-tab gesture on the anchor; explicit "open in new tab" buttons call `openTab` |
-| Mounting | All opened tabs stay mounted (state kept); inactive ones are `hidden` and get `active=false` → `usePolling` pauses |
-| Trust | Hash + localStorage are untrusted: `parseTab()` checks kind against the allowlist, each param against a per-kind schema (string, length cap, charset), drops unknown keys/tabs, caps tab count (`MAX_TABS`). Params are used only through the existing API client (server re-validates paths per ADR-0011) |
-| Components | `RunDetail({runId})`, `FileBrowser({initialPath,initialRoot})`, `RunGraph`, `TaskDetailPanel` take ids/paths as props with minimal edits; navigation callbacks (`onOpen*`) replace `setOpenRun` |
-| Out of scope | Split-pane / side-by-side tabs (future work). Drag-and-drop uses native HTML5 DnD with keyboard-accessible Move left/right |
+| State | `useReducer(tabsReducer)` over `{tabs, activeId}`; actions `open` / `navigate` / `activate` / `close` / `move`; never tab-less (closing the last tab recreates `Runs`) |
+| Params | per-kind key allowlist: `run{id}` · `task{run,id}` · `graph{run}` · `file{path?,root?}` · others none. Run ids `^[A-Za-z0-9][A-Za-z0-9._:@+-]*$` ≤200; task ids/paths: no control/bidi chars, ≤200/≤1024; root `^[A-Za-z0-9._@+-]{1,64}$` |
+| Persistence | `localStorage["ao-tabs"] = {v:1, activeId, tabs:[{id,kind,params}]}`, every access try/catch guarded (private window, blocked, quota, corrupt JSON → default `Runs` tab). Titles are not stored |
+| URL | Active tab encoded in the **hash** `#/<kind>?k=v…` (URLSearchParams-encoded), written with `history.replaceState` (no history spam, no `hashchange` loop). A `hashchange` (pasted/edited link) opens or focuses the tab. On load the hash tab is opened+focused on top of the restored set. A hash never reaches the server; the SPA fallback already serves `/` and any deep path with `index.html` (asserted by `tests/ui/test_activity_e2e.py::test_hash_deep_links_are_served_by_the_spa_fallback`), so **no backend change** |
+| Click semantics (one rule set) | links are real `<a href="#/…">`. **Plain click** navigates *within the current tab* (reuse an identical tab, else replace the active tab's content; the old "open a run replaces the pane" behaviour, now per tab). **Ctrl/Cmd-click or middle-click** opens a new *in-app* tab in the background. The explicit **"open in new tab" button** (⧉, on run rows, task rows, graph-node panel, output file paths, the file viewer, the Graph toggle) opens and activates a new in-app tab. **Shift-click / context menu / copy-link** stay native: the hash URL opens a real new browser tab that restores from the hash alone |
+| Mounting | every opened tab stays mounted (`hidden` attribute when inactive; component state survives); `TabActiveContext` → `usePolling` stops all requests for inactive tabs (verified: 0 `/api/runs` requests in 7.5 s while inactive). Max `MAX_TABS`=12; opening past it evicts the oldest *inactive* tab |
+| Trust | hash + localStorage are untrusted: `kind` allowlist, key allowlist (inherited/`__proto__` keys never read), bounded strings, a supplied-but-invalid value (even optional) rejects the whole tab (a hostile `path` must not degrade into "browse root"), **title is always recomputed** (never taken from input), tab ids re-validated/regenerated, duplicate ids/singletons dropped, count capped. Params reach only the typed API client (server re-validates, ADR-0011). Links with invalid targets render as plain text |
+| Components | `RunDetail({runId,onBack})` unchanged; `FileBrowser({initialPath?,initialRoot?})`; `TaskDetailPanel` gains optional `runId`; `RunGraph` passes it. `TaskTab` reuses `TaskDetailPanel`; `GraphTab` reuses the lazy `RunGraph` chunk |
+| Reorder | native HTML5 drag-and-drop **and** keyboard (Alt+←/→ on a focused tab); roving tabindex arrows, Delete/middle-click/× close |
+| Known limits | two browser windows share one `localStorage` key: last writer wins (no cross-window sync). Split-pane / side-by-side tabs are future work. `TaskDetailPanel` now focuses with `preventScroll` so opening a task tab does not scroll its header away |
 
-### 2.2 Test plan
+### 2.2 Test plan (all landed)
 
-vitest: reducer, `parseTab`/hash codec (hostile hash, unknown kind, oversize, `__proto__`),
-persistence (localStorage throws), tab bar (close, reorder, middle-click, ctrl-click, new-tab
-action), inactive-tab polling paused. pytest: SPA fallback serves index for `/` + deep path with
-hash-only needs. Visual: screenshots in `output/E-iafh2F-live-status-and-tabbed-workspace/`.
+vitest: `tabs-model.test.ts` (64: allowlists, hostile hashes/ids/paths, codec round-trip,
+persistence repair, reducer incl. eviction/close/move, storage guards), `tabs-app.test.tsx` (13,
+through `<App/>`: persist, hash restore on load / `hashchange` / hostile hash, sidebar, plain /
+ctrl / middle / explicit new-tab on run rows, task rows, file paths, close, reorder by Alt+Arrow
+and drag-drop, corrupt + throwing localStorage, inactive tabs mounted but not polling),
+`tabs-components.test.tsx` (TabLink fallbacks, TabBar roving focus, Graph/Task tab errors).
+Visual + real-browser: `scripts/helper/epics/E-iafh2F/shoot.py 2` drives system Chrome against a
+real `ao ui` (reload restores tabs, a fresh browser context opening the hash URL restores that
+tab, hostile hash ignored, zero polling while inactive); screenshots in
+`output/E-iafh2F-live-status-and-tabbed-workspace/`.
