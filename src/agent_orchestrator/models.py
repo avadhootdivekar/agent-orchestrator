@@ -1102,6 +1102,33 @@ class TaskRunState(BaseModel):
     start_heads: dict[str, str] = {}
 
 
+# Run-prompt capture (E-Us9Kd4 FR-13). Named so the CLI capture helper, the dashboard and the
+# tests share one bound. The stored text is cut at this many UTF-8 BYTES (never mid-character).
+MAX_PROMPT_BYTES = 64 * 1024
+PromptSource = Literal["cli-prompt", "cli-prompt-file", "workflow-file"]
+PROMPT_SOURCE_CLI_PROMPT: PromptSource = "cli-prompt"
+PROMPT_SOURCE_CLI_PROMPT_FILE: PromptSource = "cli-prompt-file"
+PROMPT_SOURCE_WORKFLOW_FILE: PromptSource = "workflow-file"
+
+
+class RunPrompt(BaseModel):
+    """The prompt a run started with, recorded as a VALUE on ``RunState.prompt``.
+
+    Captured by the CLI layer (never the engine, which must not read payload artifacts --
+    NFR-1) and handed to the Orchestrator. ``text`` is bounded to ``MAX_PROMPT_BYTES``;
+    ``chars`` is the ORIGINAL length and ``sha256`` is over the FULL file bytes, so a later
+    edit of the prompt file is detectable even when the stored text is truncated.
+    """
+
+    text: str
+    truncated: bool = False
+    chars: int
+    source: PromptSource
+    path: str  # the workflow's ``prompt_path`` exactly as declared
+    sha256: str
+    captured_at: str
+
+
 class RunState(BaseModel):
     run_id: str
     workflow_id: str
@@ -1159,6 +1186,14 @@ class RunState(BaseModel):
     # on resume). Both default empty so older state.json files load unchanged.
     git_repos: dict[str, str] = {}
     git_start_heads: dict[str, str] = {}
+    # The prompt this run started with (E-Us9Kd4 FR-13); None for runs that predate the field
+    # or whose workflow declares no prompt_path / has no prompt file at start. Never rewritten
+    # on resume.
+    prompt: RunPrompt | None = None
+    # The `record_git_heads` setting in force when the run STARTED (FR-12): False = the operator
+    # intentionally opted out of head recording (so `ao report-survival` can say why attribution
+    # is coarser); None = unknown (a run predating this field). Never rewritten on resume.
+    record_git_heads: bool | None = None
 
 
 class RunUsageTotals(BaseModel):

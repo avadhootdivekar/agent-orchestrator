@@ -78,6 +78,7 @@ from .models import (
     MonitorDecisionRecord,
     ResolverTier,
     RouterSpec,
+    RunPrompt,
     RunState,
     SpawnRecord,
     TaskContext,
@@ -587,8 +588,15 @@ class Orchestrator:
         escalation_hook: EscalationHook | None = None,
         isolation_strict: bool = False,
         isolation_env: dict[str, dict[str, str]] | None = None,
+        record_git_heads: bool = True,
+        run_prompt: RunPrompt | None = None,
     ) -> None:
         self._executor = executor
+        # Opt-out for diff-survival head recording (FR-12): False => no head-recording git calls.
+        self._record_git_heads = record_git_heads
+        # Prompt VALUE captured by the CLI layer (the engine never reads payload files, NFR-1);
+        # stored on a NEW run's state only -- a resume keeps whatever was recorded (FR-13).
+        self._run_prompt = run_prompt
         self._store = artifact_store
         self._runstate = runstate_store
         self._sleeper = sleeper
@@ -702,6 +710,8 @@ class Orchestrator:
                 extra={"event": "run.snapshot_failed"},
             )
 
+        if run_state is None and self._run_prompt is not None:
+            state.prompt = self._run_prompt
         self._runstate.save(state)
 
         # Derive run directory: <workspace>/.orchestrator/runs/<run_id>
@@ -780,7 +790,9 @@ class Orchestrator:
             # Diff-survival recording (`ao report-survival`): git repos + start HEADs, written once
             # for a NEW run only (a resume must keep the original start); never fails the run.
             if run_state is None:
-                record_git_start(state, ctx.repo_paths)
+                state.record_git_heads = self._record_git_heads
+                if self._record_git_heads:
+                    record_git_start(state, ctx.repo_paths)
 
             # E-Wk9Tz3 (HLD §9.2, R-5): hotspots load ONCE at run start, never per wave, with
             # an empty-on-any-error fallback (an unresolvable/absent path is not fatal --
@@ -1400,7 +1412,8 @@ class Orchestrator:
         # resume`, so a resumed dispatch still gets its own fresh started_at.
         if ts.started_at is None:
             ts.started_at = datetime.now(UTC).isoformat()
-            ts.start_heads = current_heads(state.git_repos)
+            if self._record_git_heads:
+                ts.start_heads = current_heads(state.git_repos)
         self._runstate.save(state)
         task_log.info("Task started", extra={"event": "task.start"})
 
@@ -1768,7 +1781,8 @@ class Orchestrator:
         # `conflict_rerun`): it runs unconditionally, before that switch, so no
         # second accumulation call is needed there (E-Wk9Tz3 T-Ac6Vd9).
         self._accumulate_actuals(ts, result)
-        ts.end_heads = current_heads(state.git_repos)
+        if self._record_git_heads:
+            ts.end_heads = current_heads(state.git_repos)
 
         if result.status == "succeeded":
             # Verify declared outputs were actually produced. E-Wk9Tz3 C-1 (review fix):

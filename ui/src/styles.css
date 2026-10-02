@@ -1491,4 +1491,48 @@ pre.code {
   margin: 4px 0 0;
   padding-left: 16px;
   font-size: 12px;
+/* ---------- run prompt (E-Us9Kd4 FR-13) ---------- */
+
+.prompt-panel > summary {
+  cursor: pointer;
+}
+
+.prompt-panel .banner {
+  margin-bottom: 0;
+}
+
+.prompt-none {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.prompt-meta {
+  font-size: 12px;
+}
+
+/* Text only: pre-wrap keeps the author's line breaks; the block scrolls inside itself. */
+.prompt-text {
+  margin: 0;
+  padding: 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.prompt-preview {
+  max-width: 420px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

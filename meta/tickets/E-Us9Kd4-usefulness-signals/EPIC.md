@@ -6,7 +6,7 @@
 - Owner: dev-epic
 - Created: 2026-10-02
 - Last Updated: 2026-10-02
-- Status: In Progress (follow-up tasks FR-12/13 open)
+- Status: Done
 - Branch: `ad/1-oct-enhancements` (local commits, not pushed)
 
 ## Summary
@@ -37,8 +37,8 @@
 - [x] `T-Jn4Gh5-usage-rollup-join` — FR-7, FR-8 (after the three above)
 - [x] `T-Ui5Ij6-dashboard-usage-feedback` — FR-9, FR-10, NFR-4 (after join)
 - [x] `T-Dc6Kl7-docs-e2e-verification` — FR-11 (last)
-- [ ] `T-Gh8Mn2-record-git-heads-opt-out` — FR-12 (follow-up A)
-- [ ] `T-Pr9Qs3-run-prompt-in-runstate-dashboard` — FR-13 (follow-up B)
+- [x] `T-Gh8Mn2-record-git-heads-opt-out` — FR-12 (follow-up A)
+- [x] `T-Pr9Qs3-run-prompt-in-runstate-dashboard` — FR-13 (follow-up B)
 
 ## Risks
 - Concurrent edits of models.py/cli.py by parallel tasks (mitigation: targeted edits, orchestrator commits).

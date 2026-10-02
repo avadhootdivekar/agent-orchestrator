@@ -135,6 +135,12 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
                     <div className="muted" style={{ fontSize: 11 }}>
                       {run.workflow_id}
                     </div>
+                    {run.prompt_preview ? (
+                      // Plain text child: React escapes it, so a hostile prompt is never parsed.
+                      <div className="prompt-preview" title={run.prompt_preview}>
+                        {run.prompt_preview}
+                      </div>
+                    ) : null}
                   </td>
                   <td>
                     <div className="row" style={{ gap: 6 }}>

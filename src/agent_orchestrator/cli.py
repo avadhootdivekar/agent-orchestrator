@@ -526,6 +526,38 @@ def _apply_prompt(
     typer.echo(f"Wrote prompt ({len(text)} chars) to {dest}")
 
 
+def _capture_run_prompt(
+    wf,  # WorkflowSpec — untyped to keep this module's lazy-import style
+    store: ArtifactStore,
+    prompt: str | None,
+    prompt_file: str | None,
+):
+    """Read the workflow's prompt file into a ``RunPrompt`` value for the Orchestrator (FR-13).
+
+    Runs AFTER ``_apply_prompt`` so ``--prompt``/``--prompt-file`` content is already on disk.
+    The engine never reads payload artifacts (NFR-1), hence the capture lives here. Returns
+    ``None`` -- never fails the run -- when the workflow declares no ``prompt_path``, the path
+    escapes the workspace, or no readable file exists yet.
+    """
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    from .errors import ArtifactPathError
+    from .run_prompt import capture_run_prompt, prompt_source
+
+    if not wf.prompt_path:
+        return None
+    try:
+        resolved = Path(store.resolve(wf.prompt_path))
+    except ArtifactPathError:
+        return None
+    if not resolved.is_file():
+        return None
+    return capture_run_prompt(
+        resolved, wf.prompt_path, prompt_source(prompt, prompt_file), lambda: _dt.now(UTC)
+    )
+
+
 def _resolve_run_settings(
     max_attempts: int | None,
     max_turns: int | None,
@@ -737,6 +769,25 @@ def _resolve_monitoring_settings(self_heal: bool | None) -> MonitoringConfig:
         resolved_self_heal = base.self_heal
 
     return base.model_copy(update={"self_heal": resolved_self_heal})
+
+
+ENV_RECORD_GIT_HEADS = "AO_RECORD_GIT_HEADS"
+
+
+def _resolve_record_git_heads(record_git_heads: bool | None) -> bool:
+    """Resolve the diff-survival head-recording opt-out (FR-12): CLI flag > env
+    `AO_RECORD_GIT_HEADS` (1/0/true/false/yes/no/on/off) > `.ao/config.yaml`
+    `record_git_heads` > built-in default (True). Tri-state like `--self-heal`: an operator can
+    force it either way over the config."""
+    if record_git_heads is not None:
+        return record_git_heads
+    env = os.environ.get(ENV_RECORD_GIT_HEADS)
+    if env and env.strip():
+        return env.strip().lower() in ("1", "true", "yes", "on")
+    cfg = _load_project_config_or_exit()
+    if cfg is not None and cfg.record_git_heads is not None:
+        return cfg.record_git_heads
+    return True
 
 
 def _build_monitor(
@@ -974,6 +1025,16 @@ def run(
             " which activates purely from a workflow's own circuit_breakers[].mode."
         ),
     ),
+    record_git_heads: bool | None = typer.Option(
+        None,
+        "--record-git-heads/--no-record-git-heads",
+        help=(
+            "Record git HEADs at run/task start+settle for `ao report-survival` serial"
+            " attribution (default: on). --no-record-git-heads makes no head-recording git"
+            " calls (survival falls back to isolation ranges / time-window and says so)."
+            " Env: AO_RECORD_GIT_HEADS (1/0). Config: record_git_heads."
+        ),
+    ),
     general_instruction: list[str] = typer.Option(
         [],
         "--general-instruction",
@@ -1116,6 +1177,7 @@ def run(
     # Materialize the run prompt BEFORE the run starts, so the task that lists prompt_path
     # in its inputs sees the new text (and its missing-inputs gate passes).
     _apply_prompt(wf, store, prompt, prompt_file)
+    run_prompt = _capture_run_prompt(wf, store, prompt, prompt_file)
 
     effective_general_instructions = resolve_general_instructions(
         general_instruction, wf.general_instructions
@@ -1161,6 +1223,8 @@ def run(
         general_instructions=effective_general_instructions,
         isolation_strict=eff_isolation_strict,
         isolation_env=eff_isolation_env,
+        record_git_heads=_resolve_record_git_heads(record_git_heads),
+        run_prompt=run_prompt,
     )
 
     try:
@@ -1268,6 +1332,16 @@ def resume(
             "Enable/disable task-failure self-healing (Consult Point B, E-XyfjuZ);"
             " overrides env/config in either direction. Env: AO_SELF_HEAL (1/0)."
             " Default: off."
+        ),
+    ),
+    record_git_heads: bool | None = typer.Option(
+        None,
+        "--record-git-heads/--no-record-git-heads",
+        help=(
+            "Record git HEADs at run/task start+settle for `ao report-survival` serial"
+            " attribution (default: on). --no-record-git-heads makes no head-recording git"
+            " calls (survival falls back to isolation ranges / time-window and says so)."
+            " Env: AO_RECORD_GIT_HEADS (1/0). Config: record_git_heads."
         ),
     ),
     general_instruction: list[str] = typer.Option(
@@ -1488,6 +1562,7 @@ def resume(
         general_instructions=effective_general_instructions,
         isolation_strict=eff_isolation_strict,
         isolation_env=eff_isolation_env,
+        record_git_heads=_resolve_record_git_heads(record_git_heads),
     )
 
     try:
@@ -2066,6 +2141,9 @@ def report_survival(
         typer.echo(f"{run.run_id[:22]:<22} {'(run)':<22} {_cell(run.total)}")
         for t in run.tasks:
             typer.echo(f"{'':<22} {(t.task_id or '')[:22]:<22} {_cell(t)}")
+    for run in report.runs:
+        if run.attribution_reason:
+            typer.echo(f"\nNote [{run.run_id[:22]}]: {run.attribution_reason}")
     typer.echo(
         "\nContent-match heuristic, not blame; ambiguous = overlapping serial windows "
         "(run-level only); time-window = low-confidence fallback for old runs."

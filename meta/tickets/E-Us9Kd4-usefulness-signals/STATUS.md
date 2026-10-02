@@ -2,7 +2,7 @@
 
 - ID: `E-Us9Kd4-usefulness-signals`
 - Updated At: 2026-10-02
-- State: Done (6/6 tasks done)
+- State: Done (8/8 tasks done, incl. follow-ups FR-12/13)
 - Owner: dev-epic
 
 ## This update
@@ -18,3 +18,8 @@
 
 ## Next actions
 1. User review of decisions in the final report; push/PR is the user's call.
+- By: developer | Role: developer | Date: 2026-10-02 | Comment: T-Gh8Mn2 (FR-12) Done; T-for FR-13 still open.
+- By: developer | Role: developer | Date: 2026-10-02 | Comment: T-Pr9Qs3 (FR-13) Done; run prompt in RunState + dashboard Prompt panel/list preview.
+
+## Follow-up update (By: dev-epic | Role: manager | Date: 2026-10-02)
+- T-Gh8Mn2 (record_git_heads opt-out) and T-Pr9Qs3 (run prompt in RunState + dashboard) Done. Final gates: pytest 4729 passed / 8 skipped; vitest 108 passed; ruff check clean; mypy only the 4 known _version.py errors.

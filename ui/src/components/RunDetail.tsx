@@ -11,6 +11,7 @@ import { readPrefs, writePrefs, type GraphTab } from "../graph/model";
 import type { RunDetail as RunDetailData, RunIntegration, TaskStat } from "../types";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
+import { PromptPanel } from "./PromptPanel";
 import { RunFeedbackPanel, SignalsPanel, useFeedback } from "./FeedbackPanels";
 
 // React Flow/dagre (and this task's own graph CSS) download only once the Graph tab is
@@ -225,6 +226,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
           </div>
         ) : null}
       </div>
+
+      <PromptPanel prompt={detail.prompt ?? null} changed={detail.prompt_changed_since_start} />
 
       <div>
         <h2>Tasks</h2>

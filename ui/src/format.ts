@@ -217,3 +217,22 @@ export function formatFeedbackSplit(g: {
 export function formatCountOrNA(n: number | null | undefined, denominator: number): string {
   return denominator > 0 && n !== null && n !== undefined ? String(n) : "n/a";
 }
+
+/** Number of leading sha256 hex chars shown in the UI. */
+export const SHORT_SHA_LENGTH = 8;
+
+/** Short form of a hex digest for display; empty input renders as an em dash. */
+export function formatShortSha(sha: string | null | undefined): string {
+  return sha ? sha.slice(0, SHORT_SHA_LENGTH) : "—";
+}
+
+const PROMPT_SOURCE_LABELS: Record<string, string> = {
+  "cli-prompt": "--prompt",
+  "cli-prompt-file": "--prompt-file",
+  "workflow-file": "workflow file",
+};
+
+/** Human label for a RunPrompt.source; unknown values pass through unchanged. */
+export function formatPromptSource(source: string): string {
+  return PROMPT_SOURCE_LABELS[source] ?? source;
+}

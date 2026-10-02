@@ -86,6 +86,8 @@ export interface RunSummary {
   is_terminal: boolean;
   is_live: boolean;
   launch_id: string | null;
+  /** One-line preview of the run prompt (list rows carry only this, never the full text). */
+  prompt_preview?: string | null;
 }
 
 export interface TaskStat {
@@ -147,6 +149,19 @@ export interface LaunchRecord {
   cancelled: boolean;
 }
 
+/** The prompt a run started with (E-Us9Kd4 FR-13); `text` is bounded server-side. */
+export interface RunPrompt {
+  text: string;
+  truncated: boolean;
+  /** Original length in characters, even when `text` was truncated. */
+  chars: number;
+  source: "cli-prompt" | "cli-prompt-file" | "workflow-file";
+  path: string;
+  /** sha256 of the FULL prompt file at run start. */
+  sha256: string;
+  captured_at: string;
+}
+
 export interface RunDetail {
   summary: RunSummary;
   tasks: TaskStat[];
@@ -163,6 +178,10 @@ export interface RunDetail {
    * client refetches `GET /runs/{id}/graph` only when this value changes between polls.
    */
   graph_version: string | null;
+  /** Absent/null for runs that predate prompt capture or declare no prompt_path. */
+  prompt?: RunPrompt | null;
+  /** True when the prompt file now differs from the recorded one; null when unknown. */
+  prompt_changed_since_start?: boolean | null;
 }
 
 /**

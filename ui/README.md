@@ -44,6 +44,7 @@ src/
     common.tsx        StatusChip, Tile, ErrorBanner, LiveBadge, Empty
     RunsList.tsx      run table + workspace-wide stat tiles
     RunDetail.tsx     per-run stats, task table, tripped breakers, CLI log
+    PromptPanel.tsx   recorded run prompt (text-only, collapsible, truncation/changed notices)
     NewRun.tsx        workflow picker + prompt box + override fields
     FileBrowser.tsx   directory tree + code viewer
     Settings.tsx      workspace config + effective general instructions

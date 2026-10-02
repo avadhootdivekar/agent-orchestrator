@@ -25,3 +25,7 @@ It is deliberately NOT a declared output: it is metadata, never a gate, so a rev
 
 ## Update (E-Us9Kd4): usefulness signals
 This report now also joins (a) generic verdicts for any workflow (`TaskSpec.verdict_path`, declared `*verdict.json` outputs; overseer checkpoint/final-verify "outcome vs charter"), (b) your own ratings (`ao rate`, dashboard) with reviewer-disagreement candidates, and (c) git diff survival (`--with-survival`, `ao report-survival`). Design, schemas, attribution algorithm and limits: [`usage-signals-hld.md`](usage-signals-hld.md). The dashboard "Usage" tab renders the same rollup (`GET /api/usage`).
+
+## Update 2 (E-Us9Kd4 follow-ups)
+- `record_git_heads` (default on; `--record-git-heads/--no-record-git-heads`, `AO_RECORD_GIT_HEADS`, `.ao/config.yaml`) controls the per-dispatch/settle `git rev-parse HEAD` used for survival attribution. Off => `ao report-survival` falls back to isolation ranges / time-window and says heads were intentionally not recorded; report-usage is unaffected.
+- `RunState.prompt` records the run prompt (bounded 64 KiB, sha256 of the full text, source) and the dashboard shows it (run-detail Prompt panel, list preview). This also makes a future re-run-of-similar-prompt signal derivable (same workflow + prompt sha within a window).
