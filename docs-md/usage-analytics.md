@@ -22,3 +22,6 @@ It is deliberately NOT a declared output: it is metadata, never a gate, so a rev
 - Review FAIL rate measures what the reviewer catches; a weak reviewer under-reports.
 - Runs recorded before this change appear under `(default)`.
 - Not yet covered: repeated-trial pass rates / paired comparison in `ao-bench`, and an ao-vs-bare-Claude comparison on live runs.
+
+## Update (E-Us9Kd4): usefulness signals
+This report now also joins (a) generic verdicts for any workflow (`TaskSpec.verdict_path`, declared `*verdict.json` outputs; overseer checkpoint/final-verify "outcome vs charter"), (b) your own ratings (`ao rate`, dashboard) with reviewer-disagreement candidates, and (c) git diff survival (`--with-survival`, `ao report-survival`). Design, schemas, attribution algorithm and limits: [`usage-signals-hld.md`](usage-signals-hld.md). The dashboard "Usage" tab renders the same rollup (`GET /api/usage`).

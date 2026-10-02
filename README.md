@@ -216,7 +216,13 @@ ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
+ao report-usage     Cross-run cost/retry/rework rollup by (agent, model, effort) + verdicts, feedback, survival
+ao report-survival  How much of a run's code changes survived into a ref (git only)
+ao rate       Record your own good/ok/bad rating of a run or task (local, no telemetry)
 ```
+
+Usefulness signals (verdicts, diff survival, your ratings) are documented in
+[`docs-md/usage-signals-hld.md`](docs-md/usage-signals-hld.md); the dashboard's **Usage** tab shows the same rollup.
 
 All commands accept:
 

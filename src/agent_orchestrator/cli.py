@@ -18,6 +18,8 @@ Commands:
                         post-run deterministic grading pass (--grade) (E-1cecSx B3).
   ao report-usage    — Cross-run cost/retry/rework rollup by (agent, model, effort), with
                         review-verdict attribution to the model whose work was reviewed.
+  ao report-survival — Git-only diff survival per run/task: how much of what a run changed
+                        is still present at a ref (E-Us9Kd4).
   ao rate            — Record your own good/ok/bad rating (run or task) in the run's local
                         feedback.json, or list it with --show (E-Us9Kd4).
 
