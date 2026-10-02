@@ -95,6 +95,8 @@ describe("RunDetail cache-effectiveness disclosure", () => {
     expect(headers).toEqual([
       "Task",
       "Status",
+      "Model",
+      "Turns",
       "Attempts",
       "Duration",
       "Tokens",

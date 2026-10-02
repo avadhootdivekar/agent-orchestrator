@@ -1491,6 +1491,8 @@ pre.code {
   margin: 4px 0 0;
   padding-left: 16px;
   font-size: 12px;
+}
+
 /* ---------- run prompt (E-Us9Kd4 FR-13) ---------- */
 
 .prompt-panel > summary {
@@ -1535,4 +1537,89 @@ pre.code {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---------- now running (E-iafh2F) ----------
+   The box height is ALSO set inline by NowRunning.tsx (3 rows, fixed): it scrolls internally
+   and has no collapse control by design. */
+
+.now-running {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  overflow-x: auto;
+}
+
+.now-running.full {
+  padding: 8px 12px 12px;
+}
+
+.now-running-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.now-running-head,
+.now-running:not(.compact) .now-running-row {
+  display: grid;
+  grid-template-columns:
+    minmax(140px, 1.4fr) 104px minmax(70px, 0.7fr) 64px 56px 72px 72px 80px
+    minmax(160px, 2.2fr) 96px;
+  gap: 10px;
+  align-items: center;
+  min-width: 940px;
+}
+
+.now-running-head {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 0 4px 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.now-running-head .num,
+.now-running-row .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.now-running-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.now-running-row {
+  box-sizing: border-box;
+  padding: 0 4px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--hairline);
+  overflow: hidden;
+}
+
+.now-running-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-running-row.compact {
+  display: grid;
+  grid-template-columns: 10px minmax(80px, 1fr) minmax(70px, auto) 64px;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.now-running.compact {
+  margin-top: 6px;
+  min-width: 260px;
+  max-width: 420px;
+}
+
+.now-running-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
 }

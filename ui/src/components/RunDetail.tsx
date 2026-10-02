@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useState } from "react";
 import { api, ApiError } from "../api";
 import {
   formatCost,
@@ -8,17 +8,22 @@ import {
   formatTimestamp,
 } from "../format";
 import { readPrefs, writePrefs, type GraphTab } from "../graph/model";
-import type { RunDetail as RunDetailData, RunIntegration, TaskStat } from "../types";
+import type {
+  RunActivity,
+  RunDetail as RunDetailData,
+  RunIntegration,
+  TaskStat,
+} from "../types";
+import { POLL_MS, usePolling } from "../usePolling";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
+import { NowRunning, nowRunningRows } from "./NowRunning";
 import { PromptPanel } from "./PromptPanel";
 import { RunFeedbackPanel, SignalsPanel, useFeedback } from "./FeedbackPanels";
 
 // React Flow/dagre (and this task's own graph CSS) download only once the Graph tab is
 // opened -- the initial dashboard load is unaffected (NFR-4, TASK.md item 5).
 const RunGraph = lazy(() => import("../graph/RunGraph"));
-
-const POLL_MS = 3000;
 
 /** Placeholder shown wherever a run carries no isolation data at all (E-Wk9Tz3 AC-9). */
 const BLANK = "—";
@@ -103,6 +108,9 @@ function IntegrationHeader({ integration }: { integration: RunIntegration }) {
 export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
   const [detail, setDetail] = useState<RunDetailData | null>(null);
   const [log, setLog] = useState("");
+  // Live activity is best-effort: an old backend (404) or a transient failure just leaves the
+  // Now-running metrics blank; it never blocks or errors the page.
+  const [activity, setActivity] = useState<RunActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const feedback = useFeedback(runId);
@@ -125,18 +133,26 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
     }
   }, [runId]);
 
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+  const refreshActivity = useCallback(async () => {
+    try {
+      setActivity(await api.runActivity(runId));
+    } catch {
+      setActivity(null);
+    }
+  }, [runId]);
+
+  // One tick refreshes detail and activity together; paused while the page is hidden.
+  const tick = useCallback(async () => {
+    await Promise.all([refresh(), refreshActivity()]);
+  }, [refresh, refreshActivity]);
+  usePolling(tick, POLL_MS);
 
   const act = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
     try {
       await action();
-      await refresh();
+      await tick();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -189,6 +205,11 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
         </div>
 
         <ErrorBanner message={error} />
+
+        {/* Top of the page, fixed 3-row height, never collapsible (E-iafh2F FR-4). */}
+        <div style={{ marginBottom: 12 }}>
+          <NowRunning rows={nowRunningRows(detail.tasks, activity, Date.now())} />
+        </div>
 
         <div className="tiles">
           <Tile
@@ -271,6 +292,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                 <tr>
                   <th>Task</th>
                   <th>Status</th>
+                  <th>Model</th>
+                  <th className="num">Turns</th>
                   <th className="num">Attempts</th>
                   <th className="num">Duration</th>
                   <th className="num">Tokens</th>
@@ -306,6 +329,10 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                     <td>
                       <StatusChip status={task.status} />
                     </td>
+                    <td className="muted" title={task.effort ? `effort: ${task.effort}` : undefined}>
+                      {task.model ?? "—"}
+                    </td>
+                    <td className="num">{activity?.tasks[task.id]?.turns ?? "—"}</td>
                     <td className="num">{task.attempts}</td>
                     <td className="num">{formatDuration(task.duration_seconds)}</td>
                     <td className="num">

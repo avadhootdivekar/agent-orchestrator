@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { api, ApiError } from "../api";
 import { formatCost, formatCount, formatDuration, formatTimestamp } from "../format";
 import type { AggregateStats, RunSummary } from "../types";
+import { usePolling } from "../usePolling";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
+import { briefRows, NowRunning } from "./NowRunning";
 
 /** Poll interval for the runs list. Fast enough to feel live, slow enough to stay cheap. */
 const POLL_MS = 4000;
@@ -30,11 +32,7 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+  usePolling(refresh, POLL_MS);
 
   const act = async (runId: string, action: () => Promise<unknown>) => {
     setBusy(runId);
@@ -140,6 +138,12 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
                       <div className="prompt-preview" title={run.prompt_preview}>
                         {run.prompt_preview}
                       </div>
+                    ) : null}
+                    {run.running_tasks && run.running_tasks.length > 0 ? (
+                      <NowRunning
+                        variant="compact"
+                        rows={briefRows(run.running_tasks, Date.now())}
+                      />
                     ) : null}
                   </td>
                   <td>

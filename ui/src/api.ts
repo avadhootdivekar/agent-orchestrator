@@ -11,6 +11,7 @@ import type {
   GeneralInstruction,
   HtmlPreview,
   LaunchRecord,
+  RunActivity,
   RunDetail,
   RunGraph,
   RunOptions,
@@ -94,6 +95,9 @@ export const api = {
   run: (runId: string) => request<RunDetail>(`/runs/${encodeURIComponent(runId)}`),
   /** Run graph topology (E-k3AMEr, HLD §14.2). Fetch on mount and on `graph_version` change. */
   runGraph: (runId: string) => request<RunGraph>(`/runs/${encodeURIComponent(runId)}/graph`),
+  /** Live per-task activity (turns, tokens, last action, stuck hint). 404 on an old backend. */
+  runActivity: (runId: string) =>
+    request<RunActivity>(`/runs/${encodeURIComponent(runId)}/activity`),
   runLog: (runId: string) =>
     request<{ run_id: string; launch_id: string | null; text: string }>(
       `/runs/${encodeURIComponent(runId)}/log`,

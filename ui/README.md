@@ -38,11 +38,13 @@ src/
   App.tsx             shell: sidebar nav, view switching, theme toggle
   api.ts              typed client for /api (throws ApiError carrying the status code)
   types.ts            response shapes, mirroring src/agent_orchestrator/ui/app.py
+  usePolling.ts       poll hook: ticks now + every N ms, paused while document.hidden / disabled (E-iafh2F)
   format.ts           pure display helpers — bytes, durations, cost, status tone/glyph
   styles.css          theme tokens + layout; light and dark both explicitly defined
   components/
     common.tsx        StatusChip, Tile, ErrorBanner, LiveBadge, Empty
     RunsList.tsx      run table + workspace-wide stat tiles
+    NowRunning.tsx    fixed 3-row, non-collapsible live-task box (full + compact variants), E-iafh2F
     RunDetail.tsx     per-run stats, task table, tripped breakers, CLI log
     PromptPanel.tsx   recorded run prompt (text-only, collapsible, truncation/changed notices)
     NewRun.tsx        workflow picker + prompt box + override fields

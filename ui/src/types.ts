@@ -88,6 +88,8 @@ export interface RunSummary {
   launch_id: string | null;
   /** One-line preview of the run prompt (list rows carry only this, never the full text). */
   prompt_preview?: string | null;
+  /** First few running tasks (state-derived) for the compact list view; `task_counts.running` is the total. */
+  running_tasks?: RunningTaskBrief[];
 }
 
 export interface TaskStat {
@@ -123,6 +125,49 @@ export interface TaskStat {
    */
   dispatch_cycle: number;
   not_taken_reason: string | null;
+  /** Effective agent/model/effort of the most recent dispatch (E-iafh2F). Absent on old backends. */
+  agent?: string | null;
+  model?: string | null;
+  effort?: string | null;
+}
+
+/** One currently-running task on a runs-list row (state-derived; E-iafh2F). */
+export interface RunningTaskBrief {
+  id: string;
+  model: string | null;
+  effort: string | null;
+  started_at: string | null;
+}
+
+/**
+ * Live activity of one task (`GET /api/runs/{id}/activity`, E-iafh2F, ADR-0018).
+ * `source` says where the numbers came from: a live transcript tail, a settled `result.json`,
+ * or nothing on disk yet. Output tokens from a transcript are an estimate (`tokens_estimated`,
+ * a lower bound); cost is only ever a floor from finished attempts, else null.
+ */
+export interface TaskActivity {
+  task_id: string;
+  status: string;
+  source: "transcript" | "result" | "none";
+  attempt: number | null;
+  cycle: number;
+  turns: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+  last_action: string | null;
+  idle_seconds: number | null;
+  elapsed_seconds: number | null;
+  stuck: boolean;
+  approximate: boolean;
+  tokens_estimated: boolean;
+}
+
+export interface RunActivity {
+  schema_version: number;
+  run_id: string;
+  generated_at: string;
+  tasks: Record<string, TaskActivity>;
 }
 
 /** Run-wide integration header (E-Wk9Tz3). Null for a run without isolation. */
