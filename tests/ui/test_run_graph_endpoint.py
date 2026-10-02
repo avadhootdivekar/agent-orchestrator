@@ -422,7 +422,12 @@ class TestAdditiveOnly:
         write_run(workspace, make_run_state())  # conftest's own default fixture
         payload = asdict(repo.detail("demo-20260724T100000Z"))
 
-        assert set(payload.keys()) - self._PRE_EXISTING_RUN_DETAIL_KEYS == {"graph_version"}
+        # graph_version is this epic's; prompt/prompt_changed_since_start are E-Us9Kd4 FR-13's.
+        assert set(payload.keys()) - self._PRE_EXISTING_RUN_DETAIL_KEYS == {
+            "graph_version",
+            "prompt",
+            "prompt_changed_since_start",
+        }
         assert self._PRE_EXISTING_RUN_DETAIL_KEYS <= set(payload.keys())
 
         build_task = next(t for t in payload["tasks"] if t["id"] == "build")
