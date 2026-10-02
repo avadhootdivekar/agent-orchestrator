@@ -29,7 +29,11 @@ from __future__ import annotations
 import logging
 import os
 import re
+import subprocess
+import threading
+import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
@@ -58,6 +62,14 @@ TRUNC_COMMITS = "commits"
 TRUNC_FILES = "files"
 TRUNC_FILE_LINES = "file_lines"
 DEFAULT_REF = "HEAD"
+MAX_DIFF_BYTES = (
+    16 * 1024 * 1024
+)  # stdout cap per git call (diff / cat-file / log); over => truncated
+SURVIVAL_BUDGET_S = 20.0  # wall-clock budget for one compute_survival call
+TRUNC_BYTES = "bytes"
+_GIT_READ_CHUNK = 64 * 1024
+# Shas read from state.json are untrusted input: only plain lowercase hex may reach git argv.
+_SHA_RE = re.compile(r"[0-9a-f]{7,64}")
 _REVERT_RE = re.compile(r"This reverts commit ([0-9a-fA-F]{7,64})")
 _DIFF_PREFIXES = ["--src-prefix=a/", "--dst-prefix=b/"]  # immune to diff.noprefix/mnemonicPrefix
 _SINCE_FMT = "%Y-%m-%d %H:%M:%S +0000"
@@ -121,14 +133,75 @@ def validate_ref(ref: str) -> str | None:
 # ---------------------------------------------------------------------------------------
 
 
+def is_valid_sha(value: object) -> bool:
+    """True for a plain lowercase-hex object name (7-64 chars, no newline/whitespace)."""
+    return isinstance(value, str) and _SHA_RE.fullmatch(value) is not None
+
+
+class _OutputTooLarge(Exception):
+    """A git call's stdout exceeded ``MAX_DIFF_BYTES``."""
+
+
+class _BoundedRunner:
+    """Default runner that streams stdout and kills git once it exceeds ``MAX_DIFF_BYTES``
+    (``subprocess.run(capture_output=True)`` would buffer an unbounded diff). It plugs into
+    ``GitRepo`` as its ``Runner``, so ``_run``'s hardening (hooks off, forbidden verbs, env)
+    is untouched. stderr is discarded (callers only use the exit status)."""
+
+    def __call__(
+        self, argv: list[str], *, cwd: str, env: dict[str, str] | None, timeout: float
+    ) -> subprocess.CompletedProcess[bytes]:
+        proc = subprocess.Popen(  # noqa: S603 -- argv built by GitRepo._run, no shell
+            argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+        timed_out = threading.Event()
+
+        def _expire() -> None:
+            timed_out.set()
+            proc.kill()
+
+        timer = threading.Timer(timeout, _expire)
+        timer.start()
+        buf = bytearray()
+        try:
+            assert proc.stdout is not None
+            while chunk := proc.stdout.read(_GIT_READ_CHUNK):
+                buf += chunk
+                if len(buf) > MAX_DIFF_BYTES:
+                    raise _OutputTooLarge
+            proc.wait()
+        finally:
+            timer.cancel()
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            if proc.stdout is not None:
+                proc.stdout.close()
+        if timed_out.is_set():
+            raise subprocess.TimeoutExpired(argv, timeout)
+        return subprocess.CompletedProcess(argv, proc.returncode, bytes(buf), b"")
+
+
 class _Git:
     """Thin never-raising wrapper over ``GitRepo._run`` (the one choke point for git calls;
-    survival needs read-only plumbing GitRepo has no dedicated method for)."""
+    survival needs read-only plumbing GitRepo has no dedicated method for). Two bounds apply:
+    stdout is capped at ``MAX_DIFF_BYTES`` (raises ``_OutputTooLarge`` for the caller to turn
+    into ``truncated``) and, when a deadline is set, every call past it returns None and flags
+    ``budget_exceeded`` instead of running."""
 
-    def __init__(self, runner: Runner | None = None) -> None:
-        self._runner = runner
+    def __init__(
+        self,
+        runner: Runner | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        budget_s: float | None = None,
+    ) -> None:
+        self._runner: Runner = runner if runner is not None else _BoundedRunner()
         self._repo: GitRepo | None = None
         self._failed = False
+        self._clock = clock
+        self._deadline = None if budget_s is None else clock() + budget_s
+        self.budget_exceeded = False
 
     def _get(self) -> GitRepo | None:
         if self._failed:
@@ -147,11 +220,22 @@ class _Git:
         repo = self._get()
         if repo is None or not os.path.isdir(cwd):
             return None
+        timeout: float = repo.timeout
+        if self._deadline is not None:
+            remaining = self._deadline - self._clock()
+            if remaining <= 0:
+                self.budget_exceeded = True
+                return None
+            timeout = min(timeout, remaining)
         try:
-            cp = repo._run(args, cwd=cwd, check=False)
+            cp = repo._run(args, cwd=cwd, check=False, timeout=timeout)
         except (GitError, OSError, ValueError) as exc:
             logger.debug("survival.git_failed: %s", exc)
+            if self._deadline is not None and self._clock() >= self._deadline:
+                self.budget_exceeded = True
             return None
+        if len(cp.stdout) > MAX_DIFF_BYTES:  # injected runners are not streamed
+            raise _OutputTooLarge
         return cp.stdout if cp.returncode == 0 else None
 
     def text(self, cwd: str, args: list[str]) -> str | None:
@@ -365,6 +449,7 @@ class _Measurer:
                     f"--max-count={MAX_REVERT_SCAN}",
                     "--grep=This reverts commit",
                     "--format=%B%x00",
+                    "--end-of-options",
                     ref_sha,
                 ],
             )
@@ -386,6 +471,21 @@ class _Measurer:
         return self._names[key]
 
     def measure(self, unit: _Unit, acc: _Acc) -> None:
+        """Measure one unit into *acc*. Never raises: bad recorded shas, oversized git output
+        and an exhausted time budget all degrade to ``unavailable``/``truncated``."""
+        if not is_valid_sha(unit.head) or (unit.base is not None and not is_valid_sha(unit.base)):
+            # state.json is untrusted: never let a non-hex value reach git argv.
+            acc.unavailable.append(f"invalid commit id recorded for {unit.repo_key}")
+            acc.low_confidence = True
+            return
+        try:
+            self._measure(unit, acc)
+        except _OutputTooLarge:
+            acc.truncated.add(f"{TRUNC_BYTES}>{MAX_DIFF_BYTES}")
+        if self.git.budget_exceeded:
+            acc.unavailable.append("time budget exceeded")
+
+    def _measure(self, unit: _Unit, acc: _Acc) -> None:
         cwd, head = unit.cwd, unit.head
         ref_sha = self.ref_sha(cwd)
         if ref_sha is None:
@@ -396,7 +496,13 @@ class _Measurer:
             base = self.git.rev(cwd, f"{head}^") or EMPTY_TREE_SHA
         commits = self.git.text(
             cwd,
-            ["rev-list", f"--max-count={MAX_COMMITS + 1}", "--ancestry-path", f"{base}..{head}"],
+            [
+                "rev-list",
+                f"--max-count={MAX_COMMITS + 1}",
+                "--ancestry-path",
+                "--end-of-options",
+                f"{base}..{head}",
+            ],
         )
         if base == EMPTY_TREE_SHA:
             commit_list = [head]
@@ -407,7 +513,13 @@ class _Measurer:
             commit_list = [c for c in commits.split() if c]
             if not commit_list:  # not an ancestry-path range (e.g. non-linear) -> fall back
                 commits = self.git.text(
-                    cwd, ["rev-list", f"--max-count={MAX_COMMITS + 1}", f"{base}..{head}"]
+                    cwd,
+                    [
+                        "rev-list",
+                        f"--max-count={MAX_COMMITS + 1}",
+                        "--end-of-options",
+                        f"{base}..{head}",
+                    ],
                 )
                 commit_list = (commits or "").split()
         if len(commit_list) > MAX_COMMITS:
@@ -465,7 +577,13 @@ class _Measurer:
             acc.added += total
             if path in deleted:
                 continue
-            blob = self.git.run(cwd, ["cat-file", "blob", f"{ref_sha}:{renames.get(path, path)}"])
+            try:
+                blob = self.git.run(
+                    cwd, ["cat-file", "blob", f"{ref_sha}:{renames.get(path, path)}"]
+                )
+            except _OutputTooLarge:
+                acc.truncated.add(f"{TRUNC_BYTES}>{MAX_DIFF_BYTES}")
+                continue
             if blob is None:
                 continue
             at_ref = _line_counter(blob.decode("utf-8", errors="replace"))
@@ -617,6 +735,7 @@ def _time_window_units(
             f"--since={start.astimezone(UTC).strftime(_SINCE_FMT)}",
             f"--until={end.astimezone(UTC).strftime(_SINCE_FMT)}",
             "--format=%H",
+            "--end-of-options",
             ref_sha,
         ],
     )
@@ -716,9 +835,13 @@ def compute_survival(
     *,
     ref: str | None = None,
     runner: Runner | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    budget_s: float = SURVIVAL_BUDGET_S,
 ) -> SurvivalReport:
     """Survival for each run in *states* (given order) measured at *ref* (default: each repo's
-    HEAD). Never raises: git problems become ``unavailable`` reasons."""
+    HEAD). Never raises: git problems become ``unavailable`` reasons. The whole call is bounded
+    by *budget_s* wall-clock seconds (injectable *clock*); past it the report is flagged
+    ``unavailable`` rather than continuing to shell out."""
     report = SurvivalReport(ref=ref)
     if ref is not None:
         err = validate_ref(ref)
@@ -729,7 +852,7 @@ def compute_survival(
     if GitRepo.version(runner) is None:
         report.unavailable = "git is not available"
         return report
-    git = _Git(runner)
+    git = _Git(runner, clock=clock, budget_s=budget_s)
     m = _Measurer(git, ref)
     if ref is not None:
         cwds = {workspace_root}
@@ -746,4 +869,6 @@ def compute_survival(
     except Exception as exc:  # report-time safety net: degrade, never break callers
         logger.debug("survival.failed", exc_info=True)
         report.unavailable = f"survival failed: {exc}"
+    if git.budget_exceeded and report.unavailable is None:
+        report.unavailable = f"survival time budget ({budget_s:g}s) exceeded; results incomplete"
     return report

@@ -6,7 +6,7 @@
 - Owner: dev-epic (delegated to developer subagent)
 - Created: 2026-10-02
 - Last Updated: 2026-10-02
-- Status: `Done` (pending full-suite confirmation, see STATUS)
+- Status: `Done`
 - Estimate: `< 3 days`
 
 ## Requirements Mapping

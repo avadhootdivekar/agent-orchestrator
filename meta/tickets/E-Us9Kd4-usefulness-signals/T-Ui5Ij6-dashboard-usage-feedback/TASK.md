@@ -6,7 +6,7 @@
 - Owner: dev-epic (delegated to developer subagent)
 - Created: 2026-10-02
 - Last Updated: 2026-10-02
-- Status: `In Progress`
+- Status: `Done`
 - Estimate: `< 3 days`
 
 ## Requirements Mapping
@@ -20,3 +20,6 @@ See the epic EPIC.md traceability table and the HLD section for this part; each 
 
 ## Handoff Boundary
 - Upstream / Downstream: see EPIC.md task order.
+
+## Completion (By: dev-epic | Role: manager | Date: 2026-10-02)
+Backend routes + frontend (Usage tab, rating controls, signals panel) delivered; security review (dev-security) found 0 critical / 1 medium / 4 low, all fixed (see STATUS "Security hardening"). Evidence: full pytest 4692 passed / 8 skipped; vitest 101 passed; live `ao ui` smoke (feedback POST 201, cross-origin 403, bad rating 422, CLI `ao rate --show` sees dashboard entry, /api/usage joins it).

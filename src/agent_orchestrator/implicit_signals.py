@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from .isolation.git import GitRepo
 from .models import RunState
-from .survival import FLAG_REVERTED, RunSurvival
+from .survival import FLAG_REVERTED, RunSurvival, is_valid_sha
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +122,9 @@ def implicit_signals(state: RunState, ws_root: str) -> RunSignals:
     followup_computed = False
     for key in sorted(heads):
         head = heads[key]
+        if not is_valid_sha(head):  # state.json is untrusted: nothing non-hex reaches git argv
+            reasons.append(f"{key}: invalid integration head recorded")
+            continue
         path = _repo_path(state.integration.repos.get(key, ""))
         if path is None:
             reasons.append(f"{key}: repo location unknown")
@@ -144,6 +147,9 @@ def implicit_signals(state: RunState, ws_root: str) -> RunSignals:
         if not base:
             reasons.append(f"{key}: no base head recorded; follow-ups unknown")
             continue
+        if not is_valid_sha(base):
+            reasons.append(f"{key}: invalid base head recorded; follow-ups unknown")
+            continue
         try:
             files = set(repo.diff_names(path, base, head))
             raw = repo._run(  # noqa: SLF001 - read-only log, no public equivalent
@@ -153,6 +159,7 @@ def implicit_signals(state: RunState, ws_root: str) -> RunSignals:
                     f"--max-count={MAX_FOLLOWUP_COMMITS}",
                     f"--format={_COMMIT_MARK}%H",
                     "--name-only",
+                    "--end-of-options",
                     f"{head}..HEAD",
                 ],
                 cwd=path,

@@ -6,7 +6,7 @@
 - Owner: dev-epic
 - Created: 2026-10-02
 - Last Updated: 2026-10-02
-- Status: In Progress
+- Status: Done
 - Branch: `ad/1-oct-enhancements` (local commits, not pushed)
 
 ## Summary
@@ -31,12 +31,12 @@
 - Non-MVP/Stretch: see HLD "Non-goals / later".
 
 ## Task List (order; ∥ = parallel)
-- [ ] `T-Vd1Ab2-generic-verdict-capture` — FR-1, FR-2, NFR-1 (∥)
-- [ ] `T-Sv2Cd3-diff-survival-report` — FR-3, FR-4, NFR-2 (∥)
+- [x] `T-Vd1Ab2-generic-verdict-capture` — FR-1, FR-2, NFR-1 (∥)
+- [x] `T-Sv2Cd3-diff-survival-report` — FR-3, FR-4, NFR-2 (∥)
 - [x] `T-Fb3Ef4-local-feedback-cli` — FR-5, FR-6, NFR-3 (∥)
 - [x] `T-Jn4Gh5-usage-rollup-join` — FR-7, FR-8 (after the three above)
-- [ ] `T-Ui5Ij6-dashboard-usage-feedback` — FR-9, FR-10, NFR-4 (after join)
-- [ ] `T-Dc6Kl7-docs-e2e-verification` — FR-11 (last)
+- [x] `T-Ui5Ij6-dashboard-usage-feedback` — FR-9, FR-10, NFR-4 (after join)
+- [x] `T-Dc6Kl7-docs-e2e-verification` — FR-11 (last)
 
 ## Risks
 - Concurrent edits of models.py/cli.py by parallel tasks (mitigation: targeted edits, orchestrator commits).

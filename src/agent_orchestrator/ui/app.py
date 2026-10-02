@@ -15,6 +15,7 @@ launching runs, so it must not be reachable off-box until the deferred auth work
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,11 @@ class FeedbackRequest(BaseModel):
     note: str | None = Field(None, max_length=MAX_NOTE_CHARS)
 
 
+logger = logging.getLogger(__name__)
+
+# Store failures carry server-side paths/exception text: log it, tell the client nothing more.
+STORE_ERROR_CLIENT_DETAIL = "internal store error; see the server log"
+
 # Status per service error type; first isinstance match wins. Plain DashboardError -> 400.
 _ERROR_STATUS: tuple[tuple[type[DashboardError], int], ...] = (
     (DashboardNotFoundError, 404),
@@ -108,6 +114,9 @@ _ERROR_STATUS: tuple[tuple[type[DashboardError], int], ...] = (
 
 def _http_error(exc: DashboardError) -> HTTPException:
     status = next((code for kind, code in _ERROR_STATUS if isinstance(exc, kind)), 400)
+    if isinstance(exc, DashboardStoreError):
+        logger.error("dashboard store error: %s", exc)
+        return HTTPException(status_code=status, detail=STORE_ERROR_CLIENT_DETAIL)
     return HTTPException(status_code=status, detail=str(exc))
 
 

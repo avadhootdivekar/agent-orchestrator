@@ -6,7 +6,7 @@
 - Owner: dev-epic (delegated to developer subagent)
 - Created: 2026-10-02
 - Last Updated: 2026-10-02
-- Status: `In Progress`
+- Status: `Done`
 - Estimate: `< 3 days`
 
 ## Requirements Mapping
@@ -20,3 +20,6 @@ See the epic EPIC.md traceability table and the HLD section for this part; each 
 
 ## Handoff Boundary
 - Upstream / Downstream: see EPIC.md task order.
+
+## Completion (By: dev-epic | Role: manager | Date: 2026-10-02)
+All ACs met; see STATUS.md.

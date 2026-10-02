@@ -2,7 +2,7 @@
 
 - ID: `T-Ui5Ij6-dashboard-usage-feedback`
 - Updated At: 2026-10-02
-- State: In Progress
+- State: Done
 - Owner: dev-epic
 
 ## This update
@@ -22,3 +22,10 @@ Error mapping: 400 validation (bad run id/ref/run_id count/semantic feedback err
 
 ## Frontend
 - By: developer (frontend agent) | Role: developer | Date: 2026-10-02 | Comment: Frontend half implemented in `ui/src`: new Usage nav view (`components/Usage.tsx`: group table, run filter, survival toggle, coverage line, outcomes, flags as text), RunDetail run-level rating + per-task rate disclosure (`FeedbackControls.tsx`, `FeedbackPanels.tsx`), feedback history (text-only notes), implicit-signals panel with on-demand survival. Types follow the landed backend (`/signals` -> `{run_id, signals, survival:{requested,available,reason,ref,total,tasks}}`). vitest 101/101 pass (new: usage.test.tsx, feedback.test.tsx), `make ui-typecheck` clean, `make ui-build` regenerated `src/agent_orchestrator/ui/static` (index-BeKx9SWQ.js replaced by index-Cjj4p2eT.js; CSS unchanged). Smoke on a fabricated workspace with headless Chrome driven over CDP: Usage table, survival toggle, run detail, feedback history (HTML/script note rendered as plain text) and survival-unavailable state all rendered.
+
+## Security hardening (By: developer | Role: developer | Date: 2026-10-02)
+Security-review fixes, tests in `tests/test_hardening_usage_signals.py`:
+- `survival.py`: git stdout capped at `MAX_DIFF_BYTES` (16 MiB; default `_BoundedRunner` streams and kills git, injected runners are length-checked) -> unit reported `truncated: bytes>N`, a too-large blob skips that file. `compute_survival(clock=, budget_s=SURVIVAL_BUDGET_S=20)`: past the deadline git calls stop, the report is `unavailable` ("time budget exceeded"), never raises; dashboard/usage paths inherit it. `git.py` unchanged.
+- shas from state.json (`landed_ranges`/`start_heads`/`end_heads`/`squash_commits`/integration heads) must fullmatch `[0-9a-f]{7,64}` (`is_valid_sha`) before reaching git argv in `survival.py` and `implicit_signals.py`; invalid => unit unavailable + low confidence. `--end-of-options` added to rev-list/log calls.
+- `feedback.py`: `RUN_ID_RE` used with `fullmatch` (`r1\n` rejected); `_atomic_write` uses a unique tmp name opened `O_CREAT|O_EXCL|O_NOFOLLOW`, cleans up on failure; symlinked `feedback.json` refused (lstat) with a message that omits absolute paths.
+- `ui/app.py`: `DashboardStoreError` -> 500 with generic detail; full text logged at ERROR.

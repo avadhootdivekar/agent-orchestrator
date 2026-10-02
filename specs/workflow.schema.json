@@ -182,7 +182,11 @@
           "description": "SOFT hint: glob patterns this task is expected to modify, workspace-relative (no leading '/' and no '..' segment). Used only to PREFER co-scheduling non-overlapping tasks. Never a gate; may be incomplete or wrong."
         },
         "pre_hook": { "$ref": "#/$defs/hookRef" },
-        "post_hook": { "$ref": "#/$defs/hookRef" }
+        "post_hook": { "$ref": "#/$defs/hookRef" },
+        "verdict_path": {
+          "type": "string",
+          "description": "Optional workspace-relative path of a structured verdict sidecar this task writes (for ao report-usage). Not a declared output; read lazily at report time."
+        }
       }
     },
     "loop": {

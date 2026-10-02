@@ -11,10 +11,13 @@ overwritten -- `FeedbackError` is raised so the operator can inspect it.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
 import re
+import secrets
+import stat
 import threading
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -35,7 +38,8 @@ SCHEMA_VERSION = 1
 MAX_NOTE_CHARS = 2000
 MAX_ENTRIES = 500
 MAX_RUN_ID_CHARS = 128
-RUN_ID_RE = re.compile(rf"^[A-Za-z0-9._-]{{1,{MAX_RUN_ID_CHARS}}}$")
+FEEDBACK_FILE_MODE = 0o644  # as the previous default-umask file; owner-writable only
+RUN_ID_RE = re.compile(rf"[A-Za-z0-9._-]{{1,{MAX_RUN_ID_CHARS}}}")  # used with fullmatch
 
 Rating = Literal["good", "ok", "bad"]
 Reason = Literal["wrong", "incomplete", "unnecessary", "too-costly", "needed-hand-fixing"]
@@ -103,7 +107,7 @@ class FeedbackFile(BaseModel):
 
 
 def validate_run_id(run_id: str) -> str:
-    if not isinstance(run_id, str) or run_id in _DOT_RUN_IDS or not RUN_ID_RE.match(run_id):
+    if not isinstance(run_id, str) or run_id in _DOT_RUN_IDS or RUN_ID_RE.fullmatch(run_id) is None:
         raise FeedbackError(f"invalid run id {run_id!r}: must match {RUN_ID_RE.pattern}")
     return run_id
 
@@ -123,7 +127,21 @@ def feedback_path(ws_root: str | Path, run_id: str) -> Path:
     return _run_dir(ws_root, run_id) / FEEDBACK_FILE
 
 
+def _refuse_symlink(path: Path) -> None:
+    """Refuse a symlinked feedback file (it could redirect reads/writes outside the run dir).
+    The message names the file, never an absolute path."""
+    try:
+        is_link = stat.S_ISLNK(os.lstat(path).st_mode)
+    except FileNotFoundError:
+        return
+    except OSError as e:
+        raise FeedbackError(f"cannot stat {path.name}: {e.strerror or type(e).__name__}") from e
+    if is_link:
+        raise FeedbackError(f"refusing symlinked {path.name}")
+
+
 def _read_file(path: Path) -> FeedbackFile:
+    _refuse_symlink(path)
     if not path.exists():
         return FeedbackFile()
     try:
@@ -161,12 +179,25 @@ def _locked(run_dir: Path) -> Iterator[None]:
 
 
 def _atomic_write(path: Path, doc: FeedbackFile) -> None:
-    tmp = path.with_suffix(".tmp")  # same directory => os.replace is atomic
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(doc.model_dump_json(indent=2))
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    _refuse_symlink(path)
+    # Unique tmp name in the same directory (=> os.replace is atomic), created exclusively and
+    # without following symlinks so a pre-planted link can never redirect the write.
+    tmp = path.with_name(f"{path.name}.{secrets.token_hex(8)}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(tmp, flags, FEEDBACK_FILE_MODE)
+    except OSError as e:
+        raise FeedbackError(f"cannot create temp file for {path.name}: {e.strerror}") from e
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(doc.model_dump_json(indent=2))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _known_task_ids(run_dir: Path) -> set[str]:
