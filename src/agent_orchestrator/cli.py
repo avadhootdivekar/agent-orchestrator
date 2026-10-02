@@ -16,6 +16,8 @@ Commands:
                         optional --task activity-type breakdown, on-demand (E-1cecSx B2/B4).
   ao report-outcomes — Local retry/review-loop/breakdown-frequency counts, and an optional
                         post-run deterministic grading pass (--grade) (E-1cecSx B3).
+  ao report-usage    — Cross-run cost/retry/rework rollup by (agent, model, effort), with
+                        review-verdict attribution to the model whose work was reviewed.
 
 Options:
   ao --version / -V         — Show version (+ commit/build info for non-release builds).
@@ -1773,6 +1775,81 @@ def report_outcomes(
         _json.dumps([g.model_dump() for g in grades], indent=2), encoding="utf-8"
     )
     typer.echo(f"\nWritten: {report_path}")
+
+
+@app.command(name="report-usage")
+def report_usage(
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+    run_ids: list[str] = typer.Option(
+        [], "--run-id", help="Restrict to this run (repeatable). Default: every run."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Roll settled tasks up by (agent, model, effort) across runs: cost, retries, and how
+    often the work needed rework (reviewer verdict FAIL / findings), attributed to the model
+    that produced the reviewed work.
+
+    Observational, not an A/B test -- different models usually get different tasks, so compare
+    groups with similar task mixes; small groups are shown but never flagged. Runs recorded
+    before model/effort capture appear under "(default)"."""
+    import json as _json
+
+    from .artifacts import LocalFsArtifactStore
+    from .runstate import RunStateStore
+    from .usage import aggregate_usage, list_run_ids
+
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    store = LocalFsArtifactStore(ws_root)
+    rs_store = RunStateStore(ws_root, store)
+    states = []
+    for rid in run_ids or list_run_ids(ws_root):
+        try:
+            states.append(rs_store.load(rid))
+        except (FileNotFoundError, ValueError) as e:
+            typer.echo(f"WARNING: skipping run {rid!r}: {e}", err=True)
+    report = aggregate_usage(states, store)
+
+    if as_json:
+        payload = report.model_dump()
+        for row, g in zip(payload["groups"], report.groups, strict=True):
+            row["mean_cost_usd"] = g.mean_cost_usd
+            row["retry_rate"] = g.retry_rate
+            row["review_fail_rate"] = g.review_fail_rate
+        typer.echo(_json.dumps(payload, indent=2))
+        return
+
+    typer.echo(
+        f"\nRuns scanned: {report.runs_scanned}  |  review verdicts found: "
+        f"{report.verdicts_found}/{report.reviews_seen}"
+    )
+    if not report.groups:
+        typer.echo("(no settled, dispatched tasks found)")
+        return
+
+    def _pct(v: float | None) -> str:
+        return f"{v:.0%}" if v is not None else "n/a"
+
+    typer.echo(
+        f"\n{'Agent':<18} {'Model':<26} {'Effort':<7} {'Tasks':>5} {'OK':>4} {'Retry':>6} "
+        f"{'$/task':>8} {'Reviewed':>8} {'Fail%':>6} {'C/M/m':>9}"
+    )
+    typer.echo("-" * 106)
+    for g in report.groups:
+        mean = f"{g.mean_cost_usd:.3f}" if g.mean_cost_usd is not None else "n/a"
+        typer.echo(
+            f"{g.agent:<18} {g.model:<26} {g.effort:<7} {g.tasks:>5} {g.succeeded:>4} "
+            f"{_pct(g.retry_rate):>6} {mean:>8} {g.reviewed:>8} "
+            f"{_pct(g.review_fail_rate):>6} {f'{g.critical}/{g.major}/{g.minor}':>9}"
+        )
+    for g in report.groups:
+        for flag in g.flags:
+            typer.echo(f"FLAG {g.agent}/{g.model}/{g.effort}: {flag}")
+    typer.echo("\nC/M/m = critical/major/minor review findings attributed to that group's work.")
 
 
 @app.command(name="init")

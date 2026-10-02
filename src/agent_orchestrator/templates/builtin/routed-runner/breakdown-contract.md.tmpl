@@ -120,6 +120,9 @@ that omits either simply inherits the workflow's own default for it.
   "timeout_seconds": 10800, "skip_if_outputs_exist": true, "effort": "medium"}
 ```
 
+`review-<tid>`'s reviewer also writes a `review-verdict.json` sidecar next to `review.md` (per
+its instruction file); do NOT list it in `outputs` — it is optional metadata, never a gate.
+
 `review-<tid>` and the aggregator below are left without an explicit `effort` (they
 inherit the `reviewer`/`manager` agents' own settings) — reviewing one task's diff, and
 collating already-finished reports, are usually quick and rarely need a bigger budget;

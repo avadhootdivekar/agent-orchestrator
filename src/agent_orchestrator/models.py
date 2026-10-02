@@ -1066,6 +1066,23 @@ class TaskRunState(BaseModel):
     # <output_dir>/pre_hook|post_hook/ regardless.
     pre_hook_result: HookOutcome | None = None
     post_hook_result: HookOutcome | None = None
+    # Dispatch provenance for usage analytics (`ao report-usage`), recorded by the engine at
+    # each dispatch via `usage.dispatch_provenance` (main thread, same site as
+    # `dispatch_cycle`). Reflects the MOST RECENT dispatch. All default to "unknown" so
+    # pre-existing run states load unchanged. `model`/`effort` are the EFFECTIVE values the
+    # executor was handed (task override > agent > global fill-in); `model` None means the
+    # claude CLI's own default was used. A T2 conflict-resolver redispatch records the
+    # originating task's agent, not the resolver's (known approximation).
+    agent: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    # Ids of tasks whose declared outputs this task consumes as inputs -- lets a review's
+    # verdict be attributed to the task(s) whose work it judged.
+    upstream_producers: list[str] = []
+    # Workspace-relative path of this task's structured review verdict sidecar, set only for
+    # a task that declares a `review.md` output (see `usage.REVIEW_VERDICT_BASENAME`).
+    # Read lazily at report time, never by the engine.
+    review_verdict_path: str | None = None
 
 
 class RunState(BaseModel):

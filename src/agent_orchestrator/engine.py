@@ -108,6 +108,7 @@ from .monitoring import (
 from .runstate import RunStateStore
 from .scheduling.overlap import overlap_score, rank_wave
 from .spec import validate_isolation, validate_task_model_policy
+from .usage import dispatch_provenance
 
 # Valid origin values for injected/loop tasks
 _TaskOrigin = Literal["static", "injected", "loop"]
@@ -1045,6 +1046,20 @@ class Orchestrator:
         # work inside THIS task's freshly-created worktree (§7.4). ----
         ts_pre = state.tasks.setdefault(tid, TaskRunState())
         ts_pre.dispatch_cycle += 1  # R-21: monotonic across requeues/resumes
+        # Usage analytics (`ao report-usage`): record what actually ran. Defensive about the
+        # agent lookup -- provenance must never be able to fail a dispatch.
+        _prov_agent = (
+            resolve_effective_agent(task, ctx.agents[task.agent])
+            if task.agent in ctx.agents
+            else None
+        )
+        for _field, _value in dispatch_provenance(
+            task,
+            _prov_agent.model if _prov_agent else task.model,
+            (_prov_agent.effort if _prov_agent else task.effort),
+            workflow.tasks,
+        ).items():
+            setattr(ts_pre, _field, _value)
         iso_mode = resolve_task_isolation(task, workflow)
         task_iso: TaskIsolation | None = None
         ctx_store: ArtifactStore = self._store
