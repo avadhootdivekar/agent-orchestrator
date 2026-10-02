@@ -5,12 +5,14 @@ import { NewRun } from "./components/NewRun";
 import { RunDetail } from "./components/RunDetail";
 import { RunsList } from "./components/RunsList";
 import { Settings } from "./components/Settings";
+import { Usage } from "./components/Usage";
 import type { WorkspaceInfo } from "./types";
 
-type View = "runs" | "new" | "files" | "settings";
+type View = "runs" | "usage" | "new" | "files" | "settings";
 
 const NAV: { id: View; label: string; glyph: string }[] = [
   { id: "runs", label: "Runs", glyph: "▤" },
+  { id: "usage", label: "Usage", glyph: "∑" },
   { id: "new", label: "New run", glyph: "＋" },
   { id: "files", label: "Files", glyph: "▸" },
   { id: "settings", label: "Workspace", glyph: "⚙" },
@@ -84,6 +86,8 @@ export function App() {
           <RunDetail runId={openRun} onBack={() => setOpenRun(null)} />
         ) : view === "runs" ? (
           <RunsList onOpen={setOpenRun} />
+        ) : view === "usage" ? (
+          <Usage />
         ) : view === "new" ? (
           <NewRun
             onLaunched={(runId) => {

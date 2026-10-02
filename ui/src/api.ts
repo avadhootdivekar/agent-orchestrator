@@ -5,6 +5,8 @@ import type {
   CreateInstanceRequest,
   CreateInstanceResponse,
   DirListing,
+  FeedbackRequest,
+  FeedbackState,
   FileContent,
   GeneralInstruction,
   HtmlPreview,
@@ -12,8 +14,10 @@ import type {
   RunDetail,
   RunGraph,
   RunOptions,
+  RunSignalsResponse,
   RunSummary,
   TemplateInfo,
+  UsageReport,
   WorkflowInfo,
   WorkspaceInfo,
 } from "./types";
@@ -112,4 +116,26 @@ export const api = {
 
   deleteRun: (runId: string) =>
     request<{ deleted: string }>(`/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
+
+  usage: (runIds: string[], survival: boolean) => {
+    const params = new URLSearchParams();
+    for (const id of runIds) params.append("run_id", id);
+    if (survival) params.set("survival", "true");
+    const query = params.toString();
+    return request<UsageReport>(`/usage${query ? `?${query}` : ""}`);
+  },
+
+  feedback: (runId: string) =>
+    request<FeedbackState>(`/runs/${encodeURIComponent(runId)}/feedback`),
+
+  postFeedback: (runId: string, body: FeedbackRequest) =>
+    request<unknown>(`/runs/${encodeURIComponent(runId)}/feedback`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  runSignals: (runId: string, survival: boolean) =>
+    request<RunSignalsResponse>(
+      `/runs/${encodeURIComponent(runId)}/signals?survival=${survival ? "true" : "false"}`,
+    ),
 };

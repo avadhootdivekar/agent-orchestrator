@@ -47,6 +47,9 @@ src/
     NewRun.tsx        workflow picker + prompt box + override fields
     FileBrowser.tsx   directory tree + code viewer
     Settings.tsx      workspace config + effective general instructions
+    Usage.tsx         usage report: group table, run filter, survival toggle, outcomes
+    FeedbackControls.tsx  rating form (good/ok/bad, reason tags, note) shared by run + task
+    FeedbackPanels.tsx    run feedback history, implicit-signals/survival panel
   graph/              run graph canvas (E-k3AMEr) — lazy-loaded chunk, see docs-md/run-graph-canvas-hld.md
     model.ts          PURE (no React, no fetch): named constants, joinNodes/edgesForView/nodesForView,
                       metricFraction, searchNodes, relatedIds, waitSeconds, panelModel, prefs

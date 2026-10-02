@@ -357,3 +357,157 @@ export interface CreateInstanceResponse {
   workflow: WorkflowInfo;
   launch: LaunchRecord | null;
 }
+
+// ---------- usage + feedback (E-Us9Kd4) — mirror usage.py::usage_report_payload ----------
+
+export type FeedbackRating = "good" | "ok" | "bad";
+export type FeedbackScope = "run" | "task";
+export type FeedbackReason =
+  | "wrong"
+  | "incomplete"
+  | "unnecessary"
+  | "too-costly"
+  | "needed-hand-fixing";
+
+export interface UsageGroup {
+  agent: string;
+  model: string;
+  effort: string;
+  tasks: number;
+  succeeded: number;
+  failed: number;
+  retried: number;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  reviewed: number;
+  review_fail: number;
+  critical: number;
+  major: number;
+  minor: number;
+  must_fix: number;
+  fb_good: number;
+  fb_ok: number;
+  fb_bad: number;
+  fb_unnecessary: number;
+  fb_rated_tasks: number;
+  false_pass_candidates: number;
+  false_fail_candidates: number;
+  verdict_rated_pairs: number;
+  lines_added: number;
+  lines_survived: number;
+  survival_tasks: number;
+  survival_low_tasks: number;
+  flags: string[];
+  // computed rates (null = not computable, rendered "n/a" — never 0)
+  mean_cost_usd: number | null;
+  retry_rate: number | null;
+  review_fail_rate: number | null;
+  survival_rate: number | null;
+  fb_bad_rate: number | null;
+  reviewer_disagreement_rate: number | null;
+}
+
+export interface UsageOutcome {
+  run_id: string;
+  checkpoints_seen: number;
+  checkpoints_found: number;
+  last_decision: string | null;
+  criteria_met: number;
+  criteria_unmet: number;
+  criteria_deferred: number;
+  alignment: Record<string, number>;
+  final_verify: { met: number; partial: number; not_met: number } | null;
+}
+
+export interface ImplicitSignals {
+  landed?: string | null;
+  landed_reason?: string | null;
+  followup_commits?: number | null;
+  followup_confidence?: string | null;
+  followup_reason?: string | null;
+  reverted_commits?: number | null;
+  run_status: string;
+  killed: boolean;
+  tripped_breakers: number;
+  breaker_pauses: number;
+  breaker_kills: number;
+}
+
+export interface UsageRunSignal {
+  run_id: string;
+  signals: ImplicitSignals;
+  lines_added: number | null;
+  lines_survived: number | null;
+  survival_rate: number | null;
+}
+
+export interface UsageReport {
+  runs_scanned: number;
+  verdicts_found: number;
+  reviews_seen: number;
+  groups: UsageGroup[];
+  outcomes: UsageOutcome[];
+  runs_rated: number;
+  feedback_errors: number;
+  skipped: string[];
+  survival_available: boolean;
+  survival_unavailable_reason: string | null;
+  survival_ref: string | null;
+  run_signals: UsageRunSignal[];
+}
+
+export interface FeedbackEntry {
+  ts: string;
+  scope: FeedbackScope;
+  task_id: string | null;
+  rating: FeedbackRating;
+  reasons: FeedbackReason[];
+  note: string | null;
+  source: string;
+}
+
+export interface FeedbackState {
+  entries: FeedbackEntry[];
+  /** Latest entry per (scope, task) — shape per backend; used loosely for display. */
+  effective?: unknown;
+  tasks?: unknown;
+}
+
+export interface FeedbackRequest {
+  scope: FeedbackScope;
+  task_id?: string;
+  rating: FeedbackRating;
+  reasons: FeedbackReason[];
+  note?: string;
+}
+
+export interface SurvivalRow {
+  run_id: string;
+  task_id: string | null;
+  attribution: string;
+  confidence: string | null;
+  commits: number;
+  files: number;
+  lines_added: number;
+  lines_survived: number;
+  survival_rate: number | null;
+  flags: string[];
+  unavailable: string | null;
+  note: string | null;
+}
+
+export interface RunSurvivalPart {
+  requested: boolean;
+  available: boolean;
+  reason: string | null;
+  ref: string | null;
+  total: SurvivalRow | null;
+  tasks: SurvivalRow[];
+}
+
+export interface RunSignalsResponse {
+  run_id: string;
+  signals: ImplicitSignals;
+  survival: RunSurvivalPart;
+}

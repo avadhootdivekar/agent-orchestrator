@@ -180,3 +180,40 @@ export function isMarkdownPath(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   return ext === "md" || ext === "markdown";
 }
+
+// ---------- usage + feedback helpers (E-Us9Kd4) ----------
+
+/** Mirrors feedback.py::MAX_NOTE_CHARS; the server is authoritative, this is early UX. */
+export const MAX_NOTE_CHARS = 2000;
+
+export const FEEDBACK_REASONS = [
+  "wrong",
+  "incomplete",
+  "unnecessary",
+  "too-costly",
+  "needed-hand-fixing",
+] as const;
+
+/** Null when the note is acceptable, else a human message. Counts the trimmed text, like the server. */
+export function noteError(note: string): string | null {
+  const length = note.trim().length;
+  return length > MAX_NOTE_CHARS
+    ? `Note is ${length} characters; the limit is ${MAX_NOTE_CHARS}.`
+    : null;
+}
+
+/** "3g / 1o / 0b" feedback split; "—" when no task was rated at all. */
+export function formatFeedbackSplit(g: {
+  fb_good: number;
+  fb_ok: number;
+  fb_bad: number;
+  fb_rated_tasks: number;
+}): string {
+  if (g.fb_rated_tasks === 0) return "—";
+  return `${g.fb_good}g / ${g.fb_ok}o / ${g.fb_bad}b`;
+}
+
+/** "n/a" for a missing denominator, so 0 and "unknown" are never conflated. */
+export function formatCountOrNA(n: number | null | undefined, denominator: number): string {
+  return denominator > 0 && n !== null && n !== undefined ? String(n) : "n/a";
+}

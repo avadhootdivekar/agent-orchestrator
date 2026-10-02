@@ -15,14 +15,28 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import yaml
 
+from ..feedback import (
+    FeedbackCapError,
+    FeedbackEntry,
+    FeedbackError,
+    add_feedback,
+    effective_for_task,
+    effective_ratings,
+    load_feedback,
+    validate_run_id,
+)
+from ..implicit_signals import apply_survival, implicit_signals
 from ..models import RunState
 from ..project_config import ProjectConfig, find_project_config, load_project_config
+from ..survival import compute_survival, validate_ref
 from ..templates import TemplateError, discover_templates, instantiate
+from ..usage import MAX_REPORT_RUN_IDS, build_usage_report, usage_report_payload
 from .files import FileBrowser, Root
 from .htmlpreview import build_html_preview
 from .processes import LaunchError, LaunchRecord, ProcessSupervisor
@@ -67,8 +81,37 @@ PROMPT_CONFLICT_PREFIX = "prompt conflict"
 _SLUG_DERIVE_RE = re.compile(r"[^a-z0-9]+")
 
 
+# Survival shells out to git per run/task. Sync routes already run in Starlette's threadpool
+# (never on the event loop), so the bounds here are about not letting a few requests saturate
+# the host: at most this many survival computations at once (others get a 429-style busy
+# error), and an implicit run-id list is capped to the newest N runs.
+MAX_CONCURRENT_SURVIVAL = 2
+SURVIVAL_DEFAULT_MAX_RUNS = 50
+DASHBOARD_FEEDBACK_SOURCE = "dashboard"
+
+
 class DashboardError(Exception):
     """Raised for dashboard-level failures that map to a 4xx response."""
+
+
+class DashboardValidationError(DashboardError):
+    """Caller input is invalid (HTTP 400)."""
+
+
+class DashboardNotFoundError(DashboardError):
+    """Unknown run/task (HTTP 404)."""
+
+
+class DashboardConflictError(DashboardError):
+    """State conflict, e.g. feedback entry cap reached (HTTP 409)."""
+
+
+class DashboardBusyError(DashboardError):
+    """Too many expensive computations in flight (HTTP 429)."""
+
+
+class DashboardStoreError(DashboardError):
+    """A server-side store (e.g. corrupt feedback.json) is unusable (HTTP 500)."""
 
 
 @dataclass(frozen=True)
@@ -150,6 +193,21 @@ def _derive_slug_from_prompt(prompt: str | None) -> str | None:
     return None
 
 
+class _SurvivalSlot:
+    """Context manager taking a non-blocking slot on the survival semaphore (no-op if None)."""
+
+    def __init__(self, sem: threading.BoundedSemaphore | None) -> None:
+        self._sem = sem
+
+    def __enter__(self) -> None:
+        if self._sem is not None and not self._sem.acquire(blocking=False):
+            raise DashboardBusyError("too many survival computations in progress; retry shortly")
+
+    def __exit__(self, *exc: object) -> None:
+        if self._sem is not None:
+            self._sem.release()
+
+
 class DashboardService:
     """Backend for the browser dashboard.
 
@@ -179,6 +237,7 @@ class DashboardService:
             roots=[Root(name="workspace", path=self.workspace_root, role="workspace")]
         )
         self._repo = repository or RunRepository(self.workspace_root)
+        self._survival_sem = threading.BoundedSemaphore(MAX_CONCURRENT_SURVIVAL)
         self._supervisor = supervisor or ProcessSupervisor(self.workspace_root)
 
         if project_config is None:
@@ -586,6 +645,155 @@ class DashboardService:
         RunStateStore(self.workspace_root, store).save(state)
 
     # -- launches --------------------------------------------------------------
+
+    # -- usage / feedback / signals (E-Us9Kd4) ---------------------------------------
+
+    def usage_report(
+        self,
+        run_ids: list[str] | None = None,
+        *,
+        survival: bool = False,
+        ref: str | None = None,
+    ) -> dict:
+        """The shared usage report (same builder + payload as `ao report-usage --json`)."""
+        ids = list(dict.fromkeys(run_ids or []))  # de-dupe, keep order
+        if len(ids) > MAX_REPORT_RUN_IDS:
+            raise DashboardValidationError(f"too many run ids ({len(ids)} > {MAX_REPORT_RUN_IDS})")
+        for rid in ids:
+            self._checked_run_id(rid)
+        self._check_ref(ref, survival)
+        capped = False
+        if survival and not ids:
+            all_ids = self._repo.list_run_ids()  # newest first
+            capped = len(all_ids) > SURVIVAL_DEFAULT_MAX_RUNS
+            ids = all_ids[:SURVIVAL_DEFAULT_MAX_RUNS]
+        with self._survival_slot(survival):
+            try:
+                report = build_usage_report(
+                    self.workspace_root, ids or None, with_survival=survival, ref=ref
+                )
+            except ValueError as exc:
+                raise DashboardValidationError(str(exc)) from exc
+        payload = usage_report_payload(report)
+        payload["survival_runs_capped"] = capped
+        return payload
+
+    def get_feedback(self, run_id: str) -> dict:
+        """Entries (history), effective entries, and each task's effective rating."""
+        state = self._known_run_state(run_id)
+        try:
+            entries = load_feedback(self.workspace_root, run_id).entries
+        except FeedbackError as exc:
+            raise self._map_feedback_error(exc) from exc
+        return self._feedback_view(run_id, state, entries)
+
+    def add_run_feedback(
+        self,
+        run_id: str,
+        *,
+        scope: str,
+        rating: str,
+        reasons: list[str],
+        note: str | None = None,
+        task_id: str | None = None,
+    ) -> dict:
+        """Append one dashboard-sourced entry via the shared `feedback.add_feedback`."""
+        state = self._known_run_state(run_id)
+        try:
+            entry = add_feedback(
+                self.workspace_root,
+                run_id,
+                scope=scope,
+                rating=rating,
+                reasons=reasons,
+                note=note,
+                task_id=task_id,
+                source=DASHBOARD_FEEDBACK_SOURCE,
+            )
+            entries = load_feedback(self.workspace_root, run_id).entries
+        except FeedbackError as exc:
+            raise self._map_feedback_error(exc) from exc
+        return {
+            "entry": entry.model_dump(),
+            "feedback": self._feedback_view(run_id, state, entries),
+        }
+
+    def run_signals(self, run_id: str, *, survival: bool = False, ref: str | None = None) -> dict:
+        """Implicit signals plus (on demand) diff survival for one run."""
+        state = self._known_run_state(run_id)
+        self._check_ref(ref, survival)
+        survival_part: dict = {
+            "requested": survival,
+            "available": False,
+            "reason": None,
+            "ref": ref,
+            "total": None,
+            "tasks": [],
+        }
+        with self._survival_slot(survival):
+            sig = implicit_signals(state, self.workspace_root)
+            if survival:
+                report = compute_survival([state], self.workspace_root, ref=ref)
+                run = report.runs[0] if report.runs else None
+                reason = report.unavailable or (run.unavailable if run else "no survival result")
+                survival_part["reason"] = reason
+                if run is not None and not reason:
+                    survival_part["available"] = True
+                    survival_part["total"] = run.total.model_dump()
+                    survival_part["tasks"] = [t.model_dump() for t in run.tasks]
+                    apply_survival(sig, run)
+        return {"run_id": run_id, "signals": sig.model_dump(), "survival": survival_part}
+
+    def _checked_run_id(self, run_id: str) -> str:
+        try:
+            return validate_run_id(run_id)
+        except FeedbackError as exc:
+            raise DashboardValidationError(str(exc)) from exc
+
+    def _known_run_state(self, run_id: str) -> RunState:
+        self._checked_run_id(run_id)
+        try:
+            return self._repo.load_state(run_id)
+        except RunNotFoundError as exc:
+            raise DashboardNotFoundError(f"run not found: {run_id!r}") from exc
+
+    @staticmethod
+    def _check_ref(ref: str | None, survival: bool) -> None:
+        # Mirrors `ao report-usage`: --ref only means something with survival.
+        if ref is None:
+            return
+        if not survival:
+            raise DashboardValidationError("ref requires survival=true")
+        err = validate_ref(ref)
+        if err:
+            raise DashboardValidationError(f"invalid ref: {err}")
+
+    @staticmethod
+    def _map_feedback_error(exc: FeedbackError) -> DashboardError:
+        message = str(exc)
+        if isinstance(exc, FeedbackCapError):
+            return DashboardConflictError(message)
+        if "unknown task" in message or "run not found" in message:
+            return DashboardNotFoundError(message)
+        if message.startswith("corrupt feedback file") or "cannot read run state" in message:
+            return DashboardStoreError(message)
+        return DashboardValidationError(message)
+
+    @staticmethod
+    def _feedback_view(run_id: str, state: RunState, entries: list[FeedbackEntry]) -> dict:
+        tasks: dict[str, dict | None] = {}
+        for tid in state.tasks:
+            eff = effective_for_task(entries, tid)
+            tasks[tid] = eff.model_dump() if eff else None
+        return {
+            "run_id": run_id,
+            "entries": [e.model_dump() for e in entries],
+            "effective": [e.model_dump() for e in effective_ratings(entries).values()],
+            "tasks": tasks,
+        }
+
+    def _survival_slot(self, survival: bool) -> _SurvivalSlot:
+        return _SurvivalSlot(self._survival_sem if survival else None)
 
     def list_launches(self) -> list[dict]:
         """Every dashboard-initiated launch, reconciled against live PIDs."""

@@ -10,6 +10,8 @@ import {
 import { readPrefs, writePrefs, type GraphTab } from "../graph/model";
 import type { RunDetail as RunDetailData, RunIntegration, TaskStat } from "../types";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
+import { FeedbackForm } from "./FeedbackControls";
+import { RunFeedbackPanel, SignalsPanel, useFeedback } from "./FeedbackPanels";
 
 // React Flow/dagre (and this task's own graph CSS) download only once the Graph tab is
 // opened -- the initial dashboard load is unaffected (NFR-4, TASK.md item 5).
@@ -102,6 +104,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
   const [log, setLog] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const feedback = useFeedback(runId);
   // Table is the default (TASK.md item 5); persisted globally, not per-run.
   const [activeTab, setActiveTab] = useState<GraphTab>(() => readPrefs().tab);
 
@@ -284,6 +287,18 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                         </span>
                       ) : null}
                       <CacheDetails task={task} />
+                    <details className="task-cache-details">
+                      <summary>rate</summary>
+                      <div className="task-cache-body">
+                        <FeedbackForm
+                          label={`Rate task ${task.id}`}
+                          scope="task"
+                          taskId={task.id}
+                          disabled={feedback.posting}
+                          onSubmit={feedback.post}
+                        />
+                      </div>
+                    </details>
                     </td>
                     <td>
                       <StatusChip status={task.status} />
@@ -307,6 +322,15 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
           </div>
         )}
       </div>
+
+      <RunFeedbackPanel
+        entries={feedback.entries}
+        posting={feedback.posting}
+        error={feedback.error}
+        onSubmit={feedback.post}
+      />
+
+      <SignalsPanel runId={runId} />
 
       {detail.tripped_breakers.length > 0 ? (
         <div>
