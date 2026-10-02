@@ -54,6 +54,16 @@ Backend (`ui/service.py` + thin routes in `ui/app.py`, reuse `usage.py`/`feedbac
 - `GET /api/runs/{id}/signals?survival=bool` → implicit signals + per-task survival (on demand).
 Security: existing `SecurityMiddleware` covers Host/Origin/JSON content-type for the POST; ids validated by the shared validators (no path traversal); body size bounds enforced by pydantic; the server never takes a path from the client. Frontend: new "Usage" tab (group table, run filter, survival toggle), RunDetail rating control + per-task thumbs/reason tags/note, implicit-signal/survival panel; built with the existing `ui/` Vite pipeline into `ui/static`.
 
+## Early-gate review outcome (reviewer, 2026-10-02) — incorporated
+- Serial attribution under `max_parallel>1`: also record `TaskRunState.start_heads` at dispatch; overlapping windows => ambiguous; uncommitted work => n/a.
+- Run-start git record is separate from the isolation path, written once, never overwritten on resume.
+- Squash sha may be rewritten/unreachable: prefer integration `head_from..head_to` range, fall back to sha; sum multiple squashes; low confidence when not an ancestor of ref. Time-window attribution is run-level only and never joins into groups.
+- Metric ignores trivial lines (`MIN_LINE_CHARS`); all caps are named constants.
+- Verdict rule 2 only counts files that parse to a known kind; `verdict_path` rejects `..`/absolute; overseer final-verify declared outputs stay exactly `[verify.md]` (pinned by a test).
+- Reviewer-error candidates use EXPLICIT task-scope ratings only (a run-level bad must not mark every PASS a false-pass); flags say "disagrees", they are candidates, not an error rate. Last verdict per (producer, reviewer) counts.
+- Feedback: cross-process flock + fsync + same-dir tmp; corrupt/unknown-schema files raise, never overwritten; run id rejects `.`/`..` + containment check.
+- Dashboard: survival computed off the event loop with caps; `/api/usage` caps run_id count; notes rendered as text only.
+
 ## Limits (read before acting on any of it)
 - Reviewer PASS/FAIL can be a false PASS or false FAIL — hence the reviewer-error measure, itself only a candidate list (the user may be wrong too).
 - A correct PASS on a task that should never have existed is invisible to pass/fail; only the `unnecessary` reason and low survival hint at it.
