@@ -496,6 +496,14 @@ class DashboardService:
             raise DashboardError(f"run not found: {run_id}") from exc
         return asdict(graph)
 
+    def run_activity(self, run_id: str) -> dict:
+        """Live per-task activity (turns/tokens/last action/stuck) for the run page."""
+        try:
+            activity = self._repo.load_activity(run_id)
+        except RunNotFoundError as exc:
+            raise DashboardError(f"run not found: {run_id}") from exc
+        return asdict(activity)
+
     def run_stats(self) -> dict:
         """Aggregate stats across all runs (FR-R5.1)."""
         return asdict(self._repo.aggregate())

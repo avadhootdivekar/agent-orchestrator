@@ -432,7 +432,8 @@ class TestAdditiveOnly:
 
         build_task = next(t for t in payload["tasks"] if t["id"] == "build")
         new_task_keys = set(build_task.keys()) - self._PRE_EXISTING_TASK_STAT_KEYS
-        assert new_task_keys == {"dispatch_cycle", "not_taken_reason"}
+        # agent/model/effort are E-iafh2F (live activity) additions.
+        assert new_task_keys == {"dispatch_cycle", "not_taken_reason", "agent", "model", "effort"}
         assert self._PRE_EXISTING_TASK_STAT_KEYS <= set(build_task.keys())
 
     def test_every_pre_existing_value_is_byte_identical_to_before(
