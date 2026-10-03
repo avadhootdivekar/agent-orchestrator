@@ -38,10 +38,14 @@ src/
   App.tsx             shell: sidebar nav, tab bar + mounted tab panels, hash/localStorage sync, theme toggle
   api.ts              typed client for /api (throws ApiError carrying the status code)
   types.ts            response shapes, mirroring src/agent_orchestrator/ui/app.py
+  launch.ts           PURE launch helpers: status fallback, poll constants, guarded storage for the last launch / dismissals
+  useLaunchPanel.ts   owns a launcher's launch record; remembers an unresolved one in sessionStorage
   usePolling.ts       poll hook: ticks now + every N ms, paused while document.hidden / disabled (E-iafh2F)
   format.ts           pure display helpers — bytes, durations, cost, status tone/glyph
   styles.css          theme tokens + layout; light and dark both explicitly defined
   components/
+    LaunchResultPanel.tsx  the outcome of a launch (starting / started / not confirmed / failed); never navigates by itself
+    FailedLaunches.tsx     runs-list strip of recent failed-to-start launches (dismissable)
     common.tsx        StatusChip, Tile, ErrorBanner, LiveBadge, Empty
     RunsList.tsx      run table + workspace-wide stat tiles
     NowRunning.tsx    fixed 3-row, non-collapsible live-task box (full + compact variants), E-iafh2F
@@ -73,6 +77,15 @@ src/
     TaskDetailPanel.tsx pinned side panel (bottom sheet under 720 px)
   test/               vitest suites (jsdom, mocked fetch; React Flow jsdom shims in setup.ts)
 ```
+
+## Launching a run (no auto-redirect)
+
+`NewRun` ("Start run") and `TemplateLaunch` ("Create & run") never navigate on their own. The POST
+response carries a derived `status` and a bounded `log_tail`; `LaunchResultPanel` renders it and
+every way out is an explicit button (`onLaunched(runId | null)`, `null` = run list). A launch whose
+engine died before creating a run directory shows "Failed to start" with the log, and also lands in
+the strip at the top of the runs list for 24 h (or until dismissed). Design and limits:
+[HLD Phase 3](../docs-md/live-activity-and-tabs-hld.md#phase-3--launch-status-and-pre-spawn-validation-t-lc5rq8-launch-status).
 
 ## Conventions
 

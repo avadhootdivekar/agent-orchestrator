@@ -11,6 +11,7 @@ import type {
   GeneralInstruction,
   HtmlPreview,
   LaunchRecord,
+  LaunchStatus,
   RunActivity,
   RunDetail,
   RunGraph,
@@ -102,6 +103,18 @@ export const api = {
     request<{ run_id: string; launch_id: string | null; text: string }>(
       `/runs/${encodeURIComponent(runId)}/log`,
     ),
+
+  /** One launch with its bounded log tail (404 for an unknown or malformed id). */
+  launch: (launchId: string) => request<LaunchRecord>(`/launches/${encodeURIComponent(launchId)}`),
+
+  /** Launch records (no log tails), optionally filtered by derived status / recency. */
+  launches: (filter: { status?: LaunchStatus; sinceHours?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (filter.status) params.set("status", filter.status);
+    if (filter.sinceHours !== undefined) params.set("since_hours", String(filter.sinceHours));
+    const query = params.toString();
+    return request<LaunchRecord[]>(`/launches${query ? `?${query}` : ""}`);
+  },
 
   startRun: (workflowPath: string, prompt: string, options: RunOptions) =>
     request<LaunchRecord>("/runs", {

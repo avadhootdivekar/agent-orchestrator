@@ -138,6 +138,10 @@ describe("NewRun", () => {
     const body = JSON.parse(posted[0].body);
     expect(body.workflow_path).toBe("/ws/promptable.json");
     expect(body.prompt).toBe("Add rate limiting");
+    // No auto-redirect: the outcome panel appears and navigation waits for an explicit click.
+    expect(await screen.findByText("Run started")).toBeInTheDocument();
+    expect(onLaunched).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Open run" }));
     expect(onLaunched).toHaveBeenCalledWith("new-run");
   });
 

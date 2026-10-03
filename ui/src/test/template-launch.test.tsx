@@ -232,7 +232,7 @@ describe("TemplateLaunch", () => {
     expect(onLaunched).not.toHaveBeenCalled();
   });
 
-  it("Create & run (start:true) posts start:true and launches using launch.run_id", async () => {
+  it("Create & run (start:true) posts start:true and shows the started panel, navigating only on Open run", async () => {
     const posted: Record<string, unknown>[] = [];
     const response: CreateInstanceResponse = {
       instance_dir: "/ws/workflows/routed-runner/runs/e-abc123-fix-bug",
@@ -274,9 +274,10 @@ describe("TemplateLaunch", () => {
 
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toMatchObject({ start: true });
-    await waitFor(() =>
-      expect(onLaunched).toHaveBeenCalledWith("e-abc123-fix-bug-20260724T100000Z"),
-    );
+    expect(await screen.findByText("Run started")).toBeInTheDocument();
+    expect(onLaunched).not.toHaveBeenCalled(); // no auto-redirect
+    await userEvent.click(screen.getByRole("button", { name: "Open run" }));
+    expect(onLaunched).toHaveBeenCalledWith("e-abc123-fix-bug-20260724T100000Z");
   });
 
   it("shows the server error detail (e.g. a 409 prompt conflict) via the banner", async () => {

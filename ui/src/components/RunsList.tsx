@@ -1,10 +1,12 @@
 import { useCallback, useState } from "react";
 import { api, ApiError } from "../api";
 import { formatCost, formatCount, formatDuration, formatTimestamp } from "../format";
-import type { AggregateStats, RunSummary } from "../types";
+import { FAILED_LAUNCH_WINDOW_HOURS, readDismissedLaunches } from "../launch";
+import type { AggregateStats, LaunchRecord, RunSummary } from "../types";
 import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
 import { usePolling } from "../usePolling";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
+import { FailedLaunches } from "./FailedLaunches";
 import { briefRows, NowRunning } from "./NowRunning";
 
 /** Poll interval for the runs list. Fast enough to feel live, slow enough to stay cheap. */
@@ -21,12 +23,22 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
   const [stats, setStats] = useState<AggregateStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [failedLaunches, setFailedLaunches] = useState<LaunchRecord[]>([]);
+  const [dismissed, setDismissed] = useState<string[]>(readDismissedLaunches);
 
   const refresh = useCallback(async () => {
     try {
-      const [runList, aggregate] = await Promise.all([api.runs(), api.runStats()]);
+      const [runList, aggregate, failed] = await Promise.all([
+        api.runs(),
+        api.runStats(),
+        // Independent of the run table: an older backend (404) must not break the list.
+        api
+          .launches({ status: "failed_to_start", sinceHours: FAILED_LAUNCH_WINDOW_HOURS })
+          .catch(() => [] as LaunchRecord[]),
+      ]);
       setRuns(runList);
       setStats(aggregate);
+      setFailedLaunches(Array.isArray(failed) ? failed : []);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -63,6 +75,11 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
       </div>
 
       <ErrorBanner message={error} />
+
+      <FailedLaunches
+        launches={failedLaunches.filter((l) => !dismissed.includes(l.launch_id))}
+        onDismiss={setDismissed}
+      />
 
       {stats ? (
         <>

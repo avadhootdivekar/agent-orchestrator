@@ -6,7 +6,9 @@ import type {
   TemplateInfo,
   TemplateParam,
 } from "../types";
+import { useLaunchPanel } from "../useLaunchPanel";
 import { Empty, ErrorBanner } from "./common";
+import { LaunchPending, LaunchResultPanel } from "./LaunchResultPanel";
 
 /**
  * Launcher for a new run scaffolded from a workflow template ("From template" mode;
@@ -15,8 +17,9 @@ import { Empty, ErrorBanner } from "./common";
  * Unlike "From workflow", the workflow spec does not exist yet: picking a template and
  * filling params/prompt calls `POST /api/templates/{name}/instances`, which renders the
  * instance (workflow.json + prompt.md + aux files) server-side. "Create" only renders it
- * (`start: false`); "Create & run" also starts it (`start: true`) and hands off through
- * the same `onLaunched` callback RunDetail navigation already uses for the classic flow.
+ * (`start: false`); "Create & run" also starts it (`start: true`) and shows the outcome in
+ * a LaunchResultPanel. It never navigates by itself: `onLaunched` (the same callback the
+ * classic flow uses; `null` = run list) fires only from an explicit panel button.
  */
 
 /** Required params with no non-empty value — the client-side half of enforcement. */
@@ -75,6 +78,8 @@ export function TemplateLaunch({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<"create" | "run" | null>(null);
   const [created, setCreated] = useState<CreateInstanceResponse | null>(null);
+  const panel = useLaunchPanel("template");
+  const [instanceDir, setInstanceDir] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -118,11 +123,13 @@ export function TemplateLaunch({
     setSubmitting(start ? "run" : "create");
     setError(null);
     setCreated(null);
+    panel.clear();
     try {
       const body = buildCreateInstanceRequest({ slug, paramValues, prompt, start });
       const response = await api.createInstance(selected.name, body);
-      if (start) {
-        onLaunched(response.launch?.run_id ?? null);
+      if (start && response.launch) {
+        setInstanceDir(response.instance_dir);
+        panel.show(response.launch);
       } else {
         setCreated(response);
       }
@@ -151,6 +158,28 @@ export function TemplateLaunch({
   return (
     <div>
       <ErrorBanner message={error} />
+
+      {submitting === "run" ? <LaunchPending /> : null}
+      {submitting !== "run" && panel.launch ? (
+        <LaunchResultPanel
+          key={panel.launch.launch_id}
+          initial={panel.launch}
+          onRecord={panel.track}
+          onOpenRun={(runId) => onLaunched(runId)}
+          onOpenRunList={() => onLaunched(null)}
+          onStartAnother={() => {
+            setSlug("");
+            setPrompt(selected?.prompt_skeleton ?? "");
+            panel.clear();
+          }}
+          onEditRetry={panel.clear}
+          retryHint={
+            instanceDir
+              ? `The instance was already created at ${instanceDir}. Once the cause is fixed, start it from "From workflow" rather than re-creating it.`
+              : undefined
+          }
+        />
+      ) : null}
 
       <div className="card">
         <div className="field">

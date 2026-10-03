@@ -1723,3 +1723,54 @@ a.link:hover,
   max-width: 760px;
   max-height: none;
 }
+
+/* ---------- launch result panel (E-iafh2F launch-status) ---------- */
+.launch-panel h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.launch-panel p {
+  margin: 0 0 10px;
+}
+
+.launch-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.launch-facts dt {
+  color: var(--text-muted);
+}
+
+.launch-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Text only (React text child). Scrolls inside itself; never widens the page. */
+pre.launch-log {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.failed-launches {
+  margin-bottom: 16px;
+}
+
+.failed-launches summary {
+  cursor: pointer;
+}

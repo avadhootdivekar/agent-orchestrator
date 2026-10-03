@@ -179,6 +179,13 @@ export interface RunIntegration {
   degraded_reason: string | null;
 }
 
+/**
+ * Derived by the server (never persisted): `starting` = alive, no run dir yet, inside the
+ * discovery window; `started` = a run dir is attributed; `failed_to_start` = the process is
+ * gone and no run dir ever appeared; `running_unconfirmed` = alive, no run dir, past the window.
+ */
+export type LaunchStatus = "starting" | "started" | "failed_to_start" | "running_unconfirmed";
+
 export interface LaunchRecord {
   launch_id: string;
   kind: string;
@@ -192,6 +199,11 @@ export interface LaunchRecord {
   finished_at: string | null;
   exit_code: number | null;
   cancelled: boolean;
+  /** Additive (E-iafh2F launch-status): absent on an older backend — see `launchStatusOf`. */
+  status?: LaunchStatus;
+  /** Bounded, control-char-stripped tail of the launch log; only on single-launch/POST responses. */
+  log_tail?: string;
+  log_truncated?: boolean;
 }
 
 /** The prompt a run started with (E-Us9Kd4 FR-13); `text` is bounded server-side. */
