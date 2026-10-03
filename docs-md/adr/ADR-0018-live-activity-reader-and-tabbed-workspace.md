@@ -30,3 +30,9 @@ Split-pane is explicitly deferred.
 Activity numbers can lag one poll and are lower bounds under extreme output; tab params are
 display-only inputs re-validated server-side; adding a tab kind means extending the allowlist,
 codec and tests together.
+
+## Addendum (2026-10-03) — "open in new tab" from the launch panel
+The launch-result panel (HLD Phase 3) uses the existing `useTabActions().open(..., {activate: true})`
+for "Open in new tab" and hides it outside the workspace shell; plain "Open run" uses the launcher's
+`onLaunched` (the tab's own navigation). No new tab kind or hash route was added: launches are
+transient panel state, not addressable tabs.

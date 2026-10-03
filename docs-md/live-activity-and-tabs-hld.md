@@ -177,3 +177,68 @@ Visual + real-browser: `scripts/helper/epics/E-iafh2F/shoot.py 2` drives system 
 real `ao ui` (reload restores tabs, a fresh browser context opening the hash URL restores that
 tab, hostile hash ignored, zero polling while inactive); screenshots in
 `output/E-iafh2F-live-status-and-tabbed-workspace/`.
+
+## Phase 3 — Launch status and pre-spawn validation (T-Lc5Rq8-launch-status)
+
+### 3.1 Problem
+"Create & run" / "Start run" navigated to the runs list as soon as the POST returned. When the
+engine process died immediately (real case: `ao run` exits 1 within ~2 s with `ERROR: Unknown
+repo_set: ai-models`) the launch record had `run_id=None`, `exit_code=1`, a log under
+`.orchestrator/ui/logs/`, and **no run directory** — so it appeared in neither the run list nor the
+failure list, and the operator was simply bounced with no explanation.
+
+### 3.2 Decisions
+1. **No auto-navigation, ever.** The launcher shows a `LaunchResultPanel` that stays until the
+   operator acts. `onLaunched` (navigation) fires only from explicit buttons. States:
+
+   | Server `status` | Panel | Buttons |
+   |---|---|---|
+   | (POST in flight) | "Starting…" `role=status` | — |
+   | `started` | "Run started" + run id | Open run (this tab) · Open in new tab (ADR-0018 `actions.open`) · Start another |
+   | `starting` / `running_unconfirmed` | "Starting… run id not yet visible" — polls `GET /api/launches/{id}` every 1.5 s, at most 20 polls (`LAUNCH_POLL_MS`, `LAUNCH_MAX_POLLS`), paused while the tab is inactive | — |
+   | …budget exhausted | "Not confirmed yet — process still running" | Open run list · Keep waiting (resets the budget) |
+   | `failed_to_start` | `role=alert` "Failed to start": exit code, workflow path, last ~40 log lines in a scrollable `<pre>` (text child, never HTML) | Edit & retry (keeps form values) · Copy log · Open run list |
+
+2. **Status is derived, not persisted** (`processes.derive_launch_status`, pure, clock injected):
+   run id attributed -> `started`; process gone without one -> `failed_to_start`; alive -> `starting`
+   inside the discovery window (`RUN_ID_DISCOVERY_TIMEOUT_SECONDS`), else `running_unconfirmed`.
+   Records written before this change classify correctly; the UI also has a fallback for a backend
+   that omits the field. Launch responses/records only gain fields (`status`, `log_tail`,
+   `log_truncated`); `LaunchRecord` loading now ignores unknown keys so a downgrade cannot drop
+   records.
+3. **`_discover_run_id` returns the moment the child exits** (after one last scan to close the
+   exit-vs-create race) and `launch_run` stamps `finished_at`, so a dead engine is reported in the
+   POST response itself, not after the 10 s window.
+4. **Bounded, safe log tail.** `GET /api/launches/{launch_id}` (404 for anything not matching
+   `launch-<YYYYMMDDTHHMMSSffffff>Z`; the stored id must equal the filename) returns the record +
+   tail. The log path is *derived from the validated id* under `.orchestrator/ui/logs/` — the
+   record's own `log_path` is ignored, symlinks resolving outside the logs dir are refused (same
+   stance as ADR-0011). Caps: 16 KiB and 40 lines (`LOG_TAIL_MAX_*`); control characters other than
+   `\n`/`\t` are stripped. List rows (`GET /api/launches`) never carry a tail.
+5. **Failure surface = a strip on the runs list**, the smallest design that puts these launches
+   "in the failure list": `GET /api/launches?status=failed_to_start&since_hours=24` (cancelled
+   launches excluded). Each entry expands to the log tail on demand and can be dismissed;
+   dismissals live in localStorage (`ao.launch.dismissed`, capped at 200). It is independent of the run table:
+   an older backend (404) just hides it. The launcher also remembers its last unresolved launch id in
+   sessionStorage so the failure panel is still there after navigating away and back in the tab
+   (a `started` launch is not remembered).
+6. **Root-cause prevention.** Before spawning, `DashboardService._preflight` loads the workflow
+   (`spec.load_workflow`), the reposets/agents files the process will use (project config, else
+   `AO_REPOSETS`/`AO_AGENTS` — same precedence as `cli._resolve_config_defaults`) via
+   `config.load_reposets/load_agents`, and runs the engine's own `spec.cross_validate`. Only the
+   repo-set message is re-phrased to list valid names: HTTP 400 `Unknown repo_set ai-models;
+   available: fin-plan`. Skipped when no reposets are configured at all (the engine reports that
+   itself). For templates, a supplied `repo_set` param is checked **before** the instance is
+   scaffolded, and `GET /api/templates` turns a `repo_set` param into an enum of the workspace's repo
+   sets (dropping a declared default that is not one), so the form renders a select.
+
+### 3.3 Known limits
+- The preflight does not run `build_dag`/`validate_run_control`: a cyclic spec still reaches the
+  engine and surfaces through the failure panel (that is the screenshot case).
+- After a template "Create & run" fails *post*-scaffold, the instance exists; the panel says so and
+  points at "From workflow" rather than re-creating it.
+- A `resume` launch has its run id up front, so it classifies as `started` even if it dies at once;
+  its failure shows in the run's own log, as before.
+- Evidence: `output/E-iafh2F-live-status-and-tabbed-workspace/launch-*.png` (real `ao ui` against
+  scratch workspaces; the "not confirmed" pair uses the real supervisor with a stand-in engine that
+  stays alive).

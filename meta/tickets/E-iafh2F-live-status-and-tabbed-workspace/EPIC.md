@@ -25,6 +25,7 @@
 - FR-9 (MVP): persistence in localStorage (guarded) + active tab in URL hash restoring on load / real new browser tab.
 - FR-10 (MVP): inactive tabs stay mounted, polling paused.
 - FR-11 (MVP): RunDetail/FileBrowser/RunGraph/TaskDetailPanel take ids/paths as props.
+- FR-12 (follow-up): a launch outcome is always visible; the launcher never auto-navigates. FR-13 (follow-up): a workflow whose repo_set/agents/reposets do not resolve is rejected (4xx, valid names listed) before spawning.
 - NFR-1: path safety per ADR-0011 (no traversal, workspace-scoped); bounded reads. NFR-2: pure builder + I/O split, fixed clocks in tests. NFR-3: no layout jump. NFR-4: hash/localStorage untrusted, validated against kind allowlist.
 - Non-MVP: split-pane; live cost via price table (not derivable today). Stretch: per-row sparkline.
 
@@ -38,6 +39,7 @@
 - [x] `T-mee0lL-component-props-refactor` — Phase 2: RunDetail/FileBrowser/RunGraph/TaskDetailPanel take ids/paths as props
 - [x] `T-mJWSkm-phase2-verify` — Phase 2: Phase 2 gates: tests, SPA-fallback check, screenshots
 - [x] `T-6UNaea-docs-and-closeout` — Phase 2: Docs (HLD, ui/README), bundle rebuild, closeout
+- [x] `T-Lc5Rq8-launch-status` — Follow-up (2026-10-03): launch result panel (no auto-redirect), launch status + log tail, failed-launch strip, pre-spawn repo_set validation
 
 ## Risks and Dependencies
 - Transcript counts best-effort under huge files (approximate flag). Cost is a floor.
