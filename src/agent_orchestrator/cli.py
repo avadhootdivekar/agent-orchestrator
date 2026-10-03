@@ -984,7 +984,7 @@ def run(
     model: str | None = typer.Option(
         None,
         "--model",
-        help="Claude model for all agents (e.g. claude-sonnet-4-6). Env: AO_MODEL",
+        help="Claude model for all agents (e.g. sonnet, opus or claude-sonnet-5-5). Env: AO_MODEL",
     ),
     effort: str | None = typer.Option(
         None,
@@ -1277,7 +1277,7 @@ def resume(
     model: str | None = typer.Option(
         None,
         "--model",
-        help="Claude model for all agents (e.g. claude-sonnet-4-6). Env: AO_MODEL",
+        help="Claude model for all agents (e.g. sonnet, opus or claude-sonnet-5-5). Env: AO_MODEL",
     ),
     effort: str | None = typer.Option(
         None,

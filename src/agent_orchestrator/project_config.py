@@ -185,7 +185,7 @@ class ProjectConfig(BaseModel):
     """Max turns per claude invocation (overrides effort-derived value)."""
 
     model: str | None = None
-    """Claude model to use for all agents (e.g. 'claude-sonnet-4-6')."""
+    """Claude model for all agents: an alias ('sonnet' = latest) or a pinned id."""
 
     effort: str | None = None
     """Effort level for all agents: low, medium, or high."""
@@ -395,7 +395,7 @@ _INIT_TEMPLATE = """\
 # --- Runtime execution settings (env var equivalents shown) ---
 # max_attempts: 1          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
-# model: claude-sonnet-4-6 # AO_MODEL        — claude model for all agents
+# model: sonnet # AO_MODEL        — claude model for all agents
 # effort: medium           # AO_EFFORT       — low / medium / high
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 # record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival

@@ -75,8 +75,8 @@ params:
     default: ""
   default_unit_model:
     description: >-
-      Default model for wave work units (any model id/alias, e.g. claude-opus-4-8,
-      claude-sonnet-4-5, claude-sonnet-5-5, haiku). Empty inherits each agent's own model.
+      Default model for wave work units (any model id/alias, e.g. opus (latest),
+      sonnet, haiku, or a pinned id like claude-sonnet-5-5). Empty inherits each agent's own model.
       Per-kind (`kind_map[kind].model` in overseer-config.json) and per-unit (brief `model`)
       choices take precedence. See the contract's "Per-unit model rule".
     default: ""

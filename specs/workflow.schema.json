@@ -20,7 +20,7 @@
         "model": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:\\-\\[\\]]{0,127}$",
-          "description": "Default model (id or alias, e.g. claude-opus-4-8, sonnet) for every task that sets no model of its own, including emit_tasks-injected ones. Beats the agent's own model."
+          "description": "Default model (id or alias, e.g. opus, sonnet, haiku = latest; or a pinned id like claude-sonnet-5-5) for every task that sets no model of its own, including emit_tasks-injected ones. Beats the agent's own model."
         },
         "isolation": {
           "enum": ["none", "worktree"],

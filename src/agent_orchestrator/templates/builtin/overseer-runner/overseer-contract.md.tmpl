@@ -70,8 +70,8 @@ skip_if_outputs_exist, effort, touches, isolation, model` (OV-R2/OV-R9 — no `p
 A unit's model is chosen by one precedence rule: the brief's optional `model` → the
 `kind_map[kind].model` → the config's `default_unit_model` → none (inherit the agent's own).
 Emit exactly the resolved value as the unit's `"model"` (OV-R9m), and **omit `model` when the
-rule resolves to none**. Use any well-formed model id or alias — e.g. `claude-opus-4-8`,
-`claude-sonnet-4-5`, `claude-sonnet-5-5`, `claude-haiku-4-5-20251001`, `opus`, `sonnet`. If
+rule resolves to none**. Use any well-formed model id or alias. Prefer the aliases `opus`, `sonnet`, `haiku` (always
+the latest); pin a full id such as `claude-sonnet-5-5` only when a task needs that exact version. If
 the config sets `allowed_models`, only those ids are accepted. An agent's `forbidden_task_models`
 (e.g. no Haiku on a reviewer) is still enforced by the engine at injection time. Set a brief
 `model` only when a work item genuinely needs a different model (cost vs. capability), or when

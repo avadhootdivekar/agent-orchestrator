@@ -196,7 +196,7 @@ finish in roughly 10 minutes — and leaves the breakdown agent free to mark a g
 larger `<tid>` `"high"`/`"xhigh"` and/or pin a different `model`, instead of forcing an
 artificial split. See the contract's "Effort & model per task" section.
 
-**Haiku tier.** The contract lets the breakdown agent put `claude-haiku-4-5-20251001` on
+**Haiku tier.** The contract lets the breakdown agent put `haiku` on
 `impl1-<tid>`/`test1-<tid>` only, for tasks whose shape `design.md` already fixes (CRUD/API
 handlers, small tests, fixtures). Review, fix (`impl2`), re-test and the aggregator never use
 it, so a weak first pass is repaired by the stronger `developer` model. The recommended

@@ -465,7 +465,7 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_REPOSETS` | `--reposets` | Default path to the reposets config |
 | `AO_AGENTS` | `--agents` | Default path to the agents config |
 | `AO_WORKSPACE_ROOT` | — | Override the `workspace_root` from the reposet (useful in CI) |
-| `AO_MODEL` | `--model` | Claude model for all agents (e.g. `claude-sonnet-4-6`) |
+| `AO_MODEL` | `--model` | Claude model for all agents (alias `sonnet`/`opus`/`haiku` = latest; or a pinned id e.g. `claude-sonnet-5-5`) |
 | `AO_EFFORT` | `--effort` | Effort level: `low`, `medium`, or `high` |
 | `AO_MAX_ATTEMPTS` | `--max-attempts` | Max task attempts (overrides workflow `defaults.retries.max_attempts`) |
 | `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides effort-derived value) |
@@ -498,7 +498,7 @@ agents:    path/to/agents.json
 # --- Runtime execution settings (env var equivalents shown) ---
 # max_attempts: 3          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
-# model: claude-sonnet-4-6 # AO_MODEL        — claude model for all agents
+# model: sonnet # AO_MODEL        — claude model for all agents
 # effort: medium           # AO_EFFORT       — low / medium / high
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 # record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival
