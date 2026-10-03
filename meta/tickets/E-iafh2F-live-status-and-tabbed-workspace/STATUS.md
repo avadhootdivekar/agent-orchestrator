@@ -15,7 +15,7 @@
 - Final: pytest -q 4969 passed / 8 skipped; ui coverage 95%; vitest 353 passed (Phase 1 gate: 269); ruff/mypy(src, excluding pre-existing _version.py)/typecheck/build clean. Screenshots: output/E-iafh2F-live-status-and-tabbed-workspace/. See task STATUS files.
 
 ## Follow-up 2026-10-03
-- By: developer (Claude) · Role: developer · Date: 2026-10-03 · Comment: T-Lc5Rq8-launch-status done: launch result panel, status/log tail API, failed-launch strip, preflight validation. Gate results recorded in the task STATUS / hand-off report.
+- By: developer (Claude) · Role: developer · Date: 2026-10-03 · Comment: T-Lc5Rq8-launch-status done: launch result panel, status/log tail API, failed-launch strip, preflight validation. Gates: pytest 5018 passed / 8 skipped (was 4969); vitest 398 (was 353); ruff/mypy/typecheck/build clean (pre-existing _version.py/_build_info.py excluded).
 
 ## Next actions
 1. None. Open follow-ups: cross-window tab sync, split-pane view, live cost via price table.

@@ -6,7 +6,7 @@
 - Owner: developer
 
 ## This update
-- By: developer (Claude) · Role: developer · Date: 2026-10-03 · Comment: Implemented backend (status, tail, preflight), UI launch panel + failed-launch strip, tests, docs, bundle. Gate numbers in the epic STATUS.
+- By: developer (Claude) · Role: developer · Date: 2026-10-03 · Comment: Implemented backend (status, tail, preflight), UI launch panel + failed-launch strip, tests, docs, bundle. Gates: pytest -q 5018 passed / 8 skipped / 0 failed (before: 4969 passed); vitest 398 passed (before: 353); ruff check clean; ruff format clean except pre-existing generated src/agent_orchestrator/_build_info.py; mypy src only the 4 known _version.py errors; npm typecheck/build clean. tests/ui/conftest.py declared as an additive exception in tests/test_nfr2_regression_gate.py.
 
 ## Evidence
 - Commits on ad/1-oct-enhancements (see epic STATUS). Tests: tests/ui/test_launch_status.py (49), ui/src/test/launch-panel.test.tsx, launch-surfaces-coverage.test.tsx.
