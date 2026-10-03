@@ -362,8 +362,18 @@ def create_app(
             raise _http_error(exc) from exc
 
     @app.get(f"{API_PREFIX}/launches")
-    def launches() -> list[dict]:
-        return service.list_launches()
+    def launches(
+        status: str | None = Query(None, max_length=32),
+        since_hours: float | None = Query(None, gt=0, le=24 * 365),
+    ) -> list[dict]:
+        return service.list_launches(status=status, since_hours=since_hours)
+
+    @app.get(f"{API_PREFIX}/launches/{{launch_id}}")
+    def launch_detail(launch_id: str) -> dict:
+        try:
+            return service.get_launch(launch_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
 
     # -- static frontend -------------------------------------------------------
 

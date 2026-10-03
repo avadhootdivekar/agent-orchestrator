@@ -209,6 +209,7 @@ class StubSupervisor:
         self.cancelled: list[str] = []
         self.next_run_id: str | None = "launched-run"
         self.live_runs: set[str] = set()
+        self.log_tails: dict[str, str] = {}
 
     def _record(self, kind: str, run_id: str | None, **extra: object) -> LaunchRecord:
         record = LaunchRecord(
@@ -258,6 +259,19 @@ class StubSupervisor:
 
     def reconcile(self) -> list[LaunchRecord]:
         return list(self.records)
+
+    def describe(self, record: LaunchRecord, *, include_log: bool = False) -> dict:
+        data = record.to_dict()
+        data["status"] = (
+            "started" if record.run_id else "failed_to_start" if record.finished_at else "starting"
+        )
+        if include_log:
+            data["log_tail"] = self.log_tails.get(record.launch_id, "")
+            data["log_truncated"] = False
+        return data
+
+    def get_launch(self, launch_id: str) -> LaunchRecord | None:
+        return next((r for r in self.records if r.launch_id == launch_id), None)
 
     def read_log(self, launch_id: str, max_bytes: int = 200_000) -> str:
         return f"log for {launch_id}"[:max_bytes]
