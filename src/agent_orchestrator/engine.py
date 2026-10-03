@@ -109,6 +109,7 @@ from .monitoring import (
 from .runstate import RunStateStore
 from .scheduling.overlap import overlap_score, rank_wave
 from .spec import validate_isolation, validate_task_model_policy
+from .summarizer import RunSummarizer
 from .survival import current_heads, record_git_start, record_landed_ranges
 from .usage import dispatch_provenance
 
@@ -590,8 +591,12 @@ class Orchestrator:
         isolation_env: dict[str, dict[str, str]] | None = None,
         record_git_heads: bool = True,
         run_prompt: RunPrompt | None = None,
+        summarizer: RunSummarizer | None = None,
     ) -> None:
         self._executor = executor
+        # Engine-owned live summary for runs above a fixed cost threshold (advisory only;
+        # see summarizer.py). Tests inject a stub-backed instance via `summarizer`.
+        self._summarizer = summarizer if summarizer is not None else RunSummarizer(executor)
         # Opt-out for diff-survival head recording (FR-12): False => no head-recording git calls.
         self._record_git_heads = record_git_heads
         # Prompt VALUE captured by the CLI layer (the engine never reads payload files, NFR-1);
@@ -953,6 +958,9 @@ class Orchestrator:
                         order = settle.order
                         preds = self._predecessors(graph)
                     # settled: nothing extra
+                    self._summarizer.on_task_settled(
+                        state, run_dir, self._pending_ids(state, order)
+                    )
                 # pool.shutdown(wait=True) via `with`, on every exit path
 
             # E-Wk9Tz3: run-end finalize (AC-12) -- best-effort final checkout sync +
@@ -966,6 +974,8 @@ class Orchestrator:
 
             if not failed and state.status == "running":
                 state.status = "succeeded"
+
+            self._summarizer.finalize(state, run_dir, self._pending_ids(state, order))
 
             run_log.info(
                 "run.end",
@@ -983,6 +993,11 @@ class Orchestrator:
             if ctx is not None and ctx.workspace_lock is not None:
                 ctx.workspace_lock.release()
             detach_run_handler(state.run_id)
+
+    @staticmethod
+    def _pending_ids(state: RunState, order: list[str]) -> list[str]:
+        """Task ids not yet started, in topological order (the summary's roadmap input)."""
+        return [t for t in order if (ts := state.tasks.get(t)) and ts.status == "pending"]
 
     def _prepare_and_maybe_dispatch(
         self,

@@ -13,6 +13,7 @@ import type {
   LaunchRecord,
   LaunchStatus,
   RunActivity,
+  RunLiveSummary,
   RunDetail,
   RunGraph,
   RunOptions,
@@ -99,6 +100,9 @@ export const api = {
   /** Live per-task activity (turns, tokens, last action, stuck hint). 404 on an old backend. */
   runActivity: (runId: string) =>
     request<RunActivity>(`/runs/${encodeURIComponent(runId)}/activity`),
+  /** Engine-written digest of an expensive run; `available: false` below the cost threshold. */
+  runSummary: (runId: string) =>
+    request<RunLiveSummary>(`/runs/${encodeURIComponent(runId)}/summary`),
   runLog: (runId: string) =>
     request<{ run_id: string; launch_id: string | null; text: string }>(
       `/runs/${encodeURIComponent(runId)}/log`,

@@ -617,6 +617,16 @@ class DashboardService:
             raise DashboardError(f"run not found: {run_id}") from exc
         return asdict(activity)
 
+    def run_summary(self, run_id: str) -> dict:
+        """Live Haiku digest of an expensive run (written by the engine, see summarizer.py)."""
+        from ..summarizer import read_summary
+
+        try:
+            run_dir = self._repo.run_dir(run_id)
+        except RunNotFoundError as exc:
+            raise DashboardError(f"run not found: {run_id}") from exc
+        return {"run_id": run_id, **read_summary(run_dir)}
+
     def run_stats(self) -> dict:
         """Aggregate stats across all runs (FR-R5.1)."""
         return asdict(self._repo.aggregate())

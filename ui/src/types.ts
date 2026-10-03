@@ -587,3 +587,22 @@ export interface RunSignalsResponse {
   signals: ImplicitSignals;
   survival: RunSurvivalPart;
 }
+
+/** Live Haiku digest of an expensive run (`GET /api/runs/{id}/summary`). */
+export interface RunSummaryMeta {
+  updated_at: string;
+  final: boolean;
+  model: string;
+  run_cost_usd: number;
+  summary_cost_usd: number;
+  calls: number;
+  settled_tasks: number;
+  threshold_usd: number;
+}
+
+export interface RunLiveSummary {
+  run_id: string;
+  available: boolean;
+  text: string;
+  meta: RunSummaryMeta | null;
+}

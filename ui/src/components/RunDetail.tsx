@@ -14,12 +14,14 @@ import type {
   RunDetail as RunDetailData,
   RunIntegration,
   TaskStat,
+  RunLiveSummary,
 } from "../types";
 import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
 import { POLL_MS, usePolling } from "../usePolling";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
 import { NowRunning, nowRunningRows } from "./NowRunning";
+import { RunSummaryPanel } from "./RunSummaryPanel";
 import { PromptPanel } from "./PromptPanel";
 import { RunFeedbackPanel, SignalsPanel, useFeedback } from "./FeedbackPanels";
 
@@ -124,6 +126,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
     writePrefs({ ...readPrefs(), tab });
   };
 
+  const [liveSummary, setLiveSummary] = useState<RunLiveSummary | null>(null);
+
   const refresh = useCallback(async () => {
     try {
       const [next, logResponse] = await Promise.all([api.run(runId), api.runLog(runId)]);
@@ -144,9 +148,17 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
   }, [runId]);
 
   // One tick refreshes detail and activity together; paused while the page is hidden.
+  const refreshSummary = useCallback(async () => {
+    try {
+      setLiveSummary(await api.runSummary(runId));
+    } catch {
+      setLiveSummary(null); // old backend (404) or transient error: panel simply hides
+    }
+  }, [runId]);
+
   const tick = useCallback(async () => {
-    await Promise.all([refresh(), refreshActivity()]);
-  }, [refresh, refreshActivity]);
+    await Promise.all([refresh(), refreshActivity(), refreshSummary()]);
+  }, [refresh, refreshActivity, refreshSummary]);
   usePolling(tick, POLL_MS);
 
   const act = async (action: () => Promise<unknown>) => {
@@ -251,6 +263,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
           </div>
         ) : null}
       </div>
+
+      <RunSummaryPanel summary={liveSummary} />
 
       <PromptPanel prompt={detail.prompt ?? null} changed={detail.prompt_changed_since_start} />
 
