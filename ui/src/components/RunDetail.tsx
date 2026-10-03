@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatPercent,
   formatTimestamp,
+  summarizeModels,
 } from "../format";
 import { readPrefs, writePrefs, type GraphTab } from "../graph/model";
 import type {
@@ -161,6 +162,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
     }
   };
 
+  const modelUsage = summarizeModels(detail?.tasks ?? []);
+
   if (!detail) {
     return (
       <div>
@@ -281,6 +284,17 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                 label="graph"
               />
             </span>
+          </div>
+        ) : null}
+
+        {modelUsage.length > 0 ? (
+          <div className="muted models-used" data-testid="models-used">
+            Models used:{" "}
+            {modelUsage.map((m) => (
+              <span key={m.model} className="tag" style={{ marginRight: 6 }}>
+                {m.model} × {m.tasks}
+              </span>
+            ))}
           </div>
         ) : null}
 

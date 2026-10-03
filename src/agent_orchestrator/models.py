@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +301,12 @@ class TaskSpec(BaseModel):
     model: str | None = None
     effort: EffortLevel | None = None
     max_turns: int | None = None
+
+    @field_validator("model")
+    @classmethod
+    def _check_model_id(cls, v: str | None) -> str | None:
+        return None if v is None else validate_model_id(v)
+
     # Per-task git isolation (E-Wk9Tz3 FR-1). "inherit" (default) takes
     # workflow.defaults.isolation; "worktree" runs the task in a private git worktree on
     # branch ao/<run_id>/<task_id> and integrates by squash+rebase; "none" opts a task out
@@ -327,7 +334,52 @@ class TaskSpec(BaseModel):
     verdict_path: str | None = None
 
 
-def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
+# A model id/alias is handed to `claude --model` as ONE argv element. Whitelisting the
+# character set (and forbidding a leading '-') means an agent-authored `emit_tasks` manifest
+# can never smuggle a flag through the `model` field. Covers aliases ("opus"), dated ids
+# ("claude-haiku-4-5-20251001"), versioned ids ("claude-opus-4-8") and context suffixes
+# ("sonnet[1m]"). Whether the model actually EXISTS is the CLI's call, not ours.
+MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-\[\]]{0,127}$")
+
+
+def validate_model_id(value: str) -> str:
+    """Return *value* stripped if it is a well-formed model id/alias, else raise ValueError."""
+    model = value.strip()
+    if not MODEL_ID_PATTERN.match(model):
+        raise ValueError(
+            f"invalid model id {value!r}: expected letters/digits/'.'/'_'/'-'/':'/'[]' "
+            "(e.g. 'claude-opus-4-8', 'sonnet', 'claude-haiku-4-5-20251001')"
+        )
+    return model
+
+
+_MODEL_FLAGS = ("--model", "-m")
+
+
+def strip_model_flag(argv: list[str]) -> list[str]:
+    """Drop any `--model X` / `--model=X` / `-m X` pair from *argv* (a command_template).
+
+    A TASK-level model must beat a model baked into an agent's command_template (e.g. the
+    `architect-opus` agent), otherwise the override would be silently ignored.
+    """
+    out: list[str] = []
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+            continue
+        if arg in _MODEL_FLAGS:
+            skip = True
+            continue
+        if arg.startswith("--model="):
+            continue
+        out.append(arg)
+    return out
+
+
+def resolve_effective_agent(
+    task: TaskSpec, agent: AgentSpec, default_model: str | None = None
+) -> AgentSpec:
     """Merge *task*'s model/effort/max_turns overrides onto *agent* (ADR-0003 decision 2).
 
     Precedence at dispatch: task > agent > (whatever the agent already resolved from the
@@ -339,14 +391,24 @@ def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
     passing the raw `AgentSpec` so the executor's argv-injection logic never has to know
     about task-level overrides.
 
-    Returns *agent* unchanged (no copy) when the task declares no overrides at all, so the
-    common case (no per-task tuning) allocates nothing new.
+    *default_model* is the workflow's `defaults.model`: an explicit workflow-author choice
+    that applies to every task naming no model of its own (including `emit_tasks`-injected
+    ones) and, like a task-level model, beats the agent's own/baked model.
+
+    Returns *agent* unchanged (no copy) when no override applies at all, so the common case
+    (no per-task tuning) allocates nothing new.
     """
-    if task.model is None and task.effort is None and task.max_turns is None:
+    model = task.model if task.model is not None else default_model
+    if model is None and task.effort is None and task.max_turns is None:
         return agent
     return agent.model_copy(
         update={
-            "model": task.model if task.model is not None else agent.model,
+            "command_template": (
+                strip_model_flag(agent.command_template)
+                if model is not None
+                else agent.command_template
+            ),
+            "model": model if model is not None else agent.model,
             "effort": task.effort if task.effort is not None else agent.effort,
             "max_turns": task.max_turns if task.max_turns is not None else agent.max_turns,
         }
@@ -360,6 +422,14 @@ class WorkflowDefaults(BaseModel):
     # isolation="inherit" (the TaskSpec default) resolves to this value. Default "none"
     # keeps every pre-epic workflow byte-identical (NFR-2).
     isolation: WorkflowIsolation = ISOLATION_NONE
+    # Workflow-level default model for every task (static or `emit_tasks`-injected) that sets
+    # no `model` of its own; resolved in `resolve_effective_agent`. None = agents decide.
+    model: str | None = None
+
+    @field_validator("model")
+    @classmethod
+    def _check_model_id(cls, v: str | None) -> str | None:
+        return None if v is None else validate_model_id(v)
 
 
 class Trigger(BaseModel):

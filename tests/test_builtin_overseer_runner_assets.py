@@ -80,6 +80,8 @@ ALLOWED_VARIABLES = frozenset(
         "params.final_push",
         "params.overseer_effort",
         "params.overseer_model",
+        "params.default_unit_model",
+        "params.allowed_models",
         "params.python_bin",
         "params.branch_policy",
     }
@@ -102,6 +104,8 @@ EXPECTED_PARAM_NAMES = frozenset(
         "final_push",
         "overseer_effort",
         "overseer_model",
+        "default_unit_model",
+        "allowed_models",
         "python_bin",
         "branch_policy",
     }
@@ -203,6 +207,8 @@ DUMMY_VALUES: dict[str, str] = {
     "params.final_push": "true",
     "params.overseer_effort": "high",
     "params.overseer_model": "",
+    "params.default_unit_model": "",
+    "params.allowed_models": "",
     "params.python_bin": "python3",
     "params.branch_policy": "",
 }
@@ -285,7 +291,7 @@ def test_template_yaml_params_shape_matches_hld_13_1() -> None:
     params = manifest["params"]
     assert isinstance(params, dict)
     assert set(params) == EXPECTED_PARAM_NAMES
-    assert len(params) == 17
+    assert len(params) == 19
 
     allowed_param_keys = {"description", "required", "enum", "default"}
     for name, spec in params.items():
@@ -311,6 +317,8 @@ def test_template_yaml_params_shape_matches_hld_13_1() -> None:
         "final_push": "true",
         "overseer_effort": "high",
         "overseer_model": "",
+        "default_unit_model": "",
+        "allowed_models": "",
         "python_bin": "python3",
         "branch_policy": "",
     }

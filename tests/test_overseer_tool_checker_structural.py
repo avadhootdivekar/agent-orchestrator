@@ -909,7 +909,8 @@ def test_r9_unit_carrying_post_hook(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "R9" in rule_ids_of(excinfo.value.violations)
 
 
-def test_r9_model_on_a_unit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_r9m_unit_model_not_expected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No brief/kind_map/default model resolves -> a unit that carries `model` is rejected."""
     ws = tmp_path
     inst, *_ = setup_ckpt_happy_path(ws, tmp_path, monkeypatch)
     manifest = json.loads((inst / "outputs" / "manifests" / "ck-01.json").read_text())
@@ -918,7 +919,78 @@ def test_r9_model_on_a_unit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(ov.CheckViolations) as excinfo:
         ov.ckpt_check(make_args(ws))
-    assert "R9" in rule_ids_of(excinfo.value.violations)
+    assert "R9m" in rule_ids_of(excinfo.value.violations)
+
+
+def test_r9m_default_unit_model_must_be_carried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = tmp_path
+    inst, *_ = setup_ckpt_happy_path(
+        ws, tmp_path, monkeypatch, default_unit_model="claude-sonnet-4-5"
+    )
+    path = inst / "outputs" / "manifests" / "ck-01.json"
+    manifest = json.loads(path.read_text())
+    with pytest.raises(ov.CheckViolations) as excinfo:  # unit omits the expected model
+        ov.ckpt_check(make_args(ws))
+    assert "R9m" in rule_ids_of(excinfo.value.violations)
+
+    manifest["tasks"][0]["model"] = "claude-sonnet-4-5"
+    write_manifest(inst, "ck-01.json", manifest)
+    ov.ckpt_check(make_args(ws))  # now clean
+
+
+def test_r9m_brief_model_beats_kind_map_and_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = tmp_path
+    inst, unit_id, _e, next_wave, _c = setup_ckpt_happy_path(
+        ws, tmp_path, monkeypatch, default_unit_model="claude-sonnet-4-5"
+    )
+    write_brief(inst, next_wave, unit_id, model="claude-opus-4-8")
+    path = inst / "outputs" / "manifests" / "ck-01.json"
+    manifest = json.loads(path.read_text())
+    manifest["tasks"][0]["model"] = "claude-opus-4-8"
+    write_manifest(inst, "ck-01.json", manifest)
+    ov.ckpt_check(make_args(ws))
+
+
+def test_r9m_model_outside_allowed_models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = tmp_path
+    inst, *_ = setup_ckpt_happy_path(
+        ws,
+        tmp_path,
+        monkeypatch,
+        default_unit_model="claude-opus-4-8",
+        allowed_models="claude-sonnet-4-5, haiku",
+    )
+    path = inst / "outputs" / "manifests" / "ck-01.json"
+    manifest = json.loads(path.read_text())
+    manifest["tasks"][0]["model"] = "claude-opus-4-8"
+    write_manifest(inst, "ck-01.json", manifest)
+    with pytest.raises(ov.CheckViolations) as excinfo:
+        ov.ckpt_check(make_args(ws))
+    assert "not in allowed_models" in str(excinfo.value.violations)
+
+
+@pytest.mark.parametrize("bad", ["--dangerously-skip-permissions", "a b", "x;rm", ""])
+def test_r9m_malformed_model_rejected(
+    bad: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = tmp_path
+    inst, *_ = setup_ckpt_happy_path(ws, tmp_path, monkeypatch, default_unit_model=bad)
+    path = inst / "outputs" / "manifests" / "ck-01.json"
+    manifest = json.loads(path.read_text())
+    manifest["tasks"][0]["model"] = bad
+    write_manifest(inst, "ck-01.json", manifest)
+    if not bad:  # empty default == "no model" -> an empty `model` on the unit still mismatches
+        manifest["tasks"][0].pop("model")
+        write_manifest(inst, "ck-01.json", manifest)
+        ov.ckpt_check(make_args(ws))
+        return
+    with pytest.raises(ov.CheckViolations) as excinfo:
+        ov.ckpt_check(make_args(ws))
+    assert "R9m" in rule_ids_of(excinfo.value.violations)
 
 
 def test_r9_max_turns_on_a_unit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1470,7 +1542,7 @@ def test_main_ckpt_check_multiple_violations_one_stderr_line_each(
     ws = tmp_path
     inst, *_ = setup_ckpt_happy_path(ws, tmp_path, monkeypatch)
     manifest = json.loads((inst / "outputs" / "manifests" / "ck-01.json").read_text())
-    manifest["tasks"][0]["model"] = "x"  # R9
+    manifest["tasks"][0]["post_hook"] = {"use": "x"}  # R9
     manifest["tasks"][1]["id"] = "ck-99"  # R10
     write_manifest(inst, "ck-01.json", manifest)
 

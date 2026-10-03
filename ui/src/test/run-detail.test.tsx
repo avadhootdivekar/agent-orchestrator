@@ -136,3 +136,25 @@ describe("RunDetail cache-effectiveness disclosure", () => {
     expect(within(row).queryByText(/hit rate: 0\.0%/)).toBeNull();
   });
 });
+
+describe("RunDetail models-used summary", () => {
+  it("lists each distinct model with its task count", async () => {
+    const detail = makeDetail([
+      { ...BASE_TASK, id: "a", model: "claude-opus-4-8" },
+      { ...BASE_TASK, id: "b", model: "claude-haiku-4-5-20251001" },
+      { ...BASE_TASK, id: "c", model: "claude-opus-4-8" },
+    ]);
+    vi.stubGlobal("fetch", mockFetch(detail));
+    render(<RunDetail runId="run-1" onBack={() => {}} />);
+    const box = await screen.findByTestId("models-used");
+    expect(box.textContent).toContain("claude-opus-4-8 × 2");
+    expect(box.textContent).toContain("claude-haiku-4-5-20251001 × 1");
+  });
+
+  it("is absent when no task recorded a model", async () => {
+    vi.stubGlobal("fetch", mockFetch(makeDetail([BASE_TASK])));
+    render(<RunDetail runId="run-1" onBack={() => {}} />);
+    await screen.findByText("task-a");
+    expect(screen.queryByTestId("models-used")).toBeNull();
+  });
+});

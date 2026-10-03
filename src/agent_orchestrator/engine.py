@@ -1067,7 +1067,7 @@ class Orchestrator:
         # Usage analytics (`ao report-usage`): record what actually ran. Defensive about the
         # agent lookup -- provenance must never be able to fail a dispatch.
         _prov_agent = (
-            resolve_effective_agent(task, ctx.agents[task.agent])
+            resolve_effective_agent(task, ctx.agents[task.agent], workflow.defaults.model)
             if task.agent in ctx.agents
             else None
         )
@@ -2104,7 +2104,7 @@ class Orchestrator:
             try:
                 # Agent-authored `model` overrides must respect each agent's
                 # forbidden_task_models (e.g. no Haiku on reviewer/architect roles).
-                validate_task_model_policy(new_specs, ctx.agents)
+                validate_task_model_policy(new_specs, ctx.agents, workflow.defaults.model)
                 for warning in validate_isolation(workflow, [*workflow.tasks, *new_specs]):
                     task_log.warning(
                         "isolation validation: %s",
@@ -3901,7 +3901,7 @@ class Orchestrator:
         # Task-level model/effort/max_turns win over the agent's own (ADR-0003 decision 2,
         # fill-in not clobber) -- resolved once here so the executor never has to know
         # about task-level overrides; it just reads ctx.agent like before.
-        effective_agent = resolve_effective_agent(task, agent_spec)
+        effective_agent = resolve_effective_agent(task, agent_spec, workflow.defaults.model)
 
         # Resolve all paths through the artifact store (no content reads). E-Wk9Tz3 R-19:
         # SIX of the seven remappable path categories -- `st`, not `self._store` (repo_paths,

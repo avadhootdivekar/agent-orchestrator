@@ -60,6 +60,8 @@ All 17 are declared in `template.yaml`, which is the source of truth for current
 | `final_push` | whether the close-out tail includes a final git push |
 | `overseer_effort` | effort level the checkpoint task itself dispatches at |
 | `overseer_model` | optional per-checkpoint model override (see "The `overseer_model` rule" in the contract) |
+| `default_unit_model` | optional default model for wave work units; per-kind (`kind_map[kind].model`) and per-brief `model` win (OV-R9m, see `docs-md/model-selection.md`) |
+| `allowed_models` | optional comma-separated allowlist for unit models (empty = any well-formed id) |
 | `python_bin` | interpreter every hook uses to invoke `tools/overseer_tool.py` |
 | `branch_policy` | optional free-text guidance for `git-branch-off`'s branch decision (see "Branch policy" below) |
 

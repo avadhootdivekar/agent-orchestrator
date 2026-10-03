@@ -73,6 +73,18 @@ params:
       Optional per-checkpoint model override. Empty string inherits the manager agent's own
       model.
     default: ""
+  default_unit_model:
+    description: >-
+      Default model for wave work units (any model id/alias, e.g. claude-opus-4-8,
+      claude-sonnet-4-5, claude-sonnet-5-5, haiku). Empty inherits each agent's own model.
+      Per-kind (`kind_map[kind].model` in overseer-config.json) and per-unit (brief `model`)
+      choices take precedence. See the contract's "Per-unit model rule".
+    default: ""
+  allowed_models:
+    description: >-
+      Optional comma-separated allowlist of model ids a unit may use. Empty allows any
+      well-formed id.
+    default: ""
   python_bin:
     description: >-
       Interpreter used to invoke tools/overseer_tool.py from every hook. Must be Python >=

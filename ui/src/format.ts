@@ -236,3 +236,24 @@ const PROMPT_SOURCE_LABELS: Record<string, string> = {
 export function formatPromptSource(source: string): string {
   return PROMPT_SOURCE_LABELS[source] ?? source;
 }
+
+/** One distinct model seen across a run's tasks, with how many tasks dispatched on it. */
+export interface ModelUsage {
+  model: string;
+  tasks: number;
+}
+
+/**
+ * Tasks per effective model (most-used first, ties alphabetical). Tasks with no recorded
+ * model (not yet dispatched, or an old backend) are not counted -- the agent's own model is
+ * unknown to the dashboard, so guessing one would mislead.
+ */
+export function summarizeModels(tasks: ReadonlyArray<{ model?: string | null }>): ModelUsage[] {
+  const counts = new Map<string, number>();
+  for (const t of tasks) {
+    if (t.model) counts.set(t.model, (counts.get(t.model) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([model, n]) => ({ model, tasks: n }))
+    .sort((a, b) => b.tasks - a.tasks || a.model.localeCompare(b.model));
+}

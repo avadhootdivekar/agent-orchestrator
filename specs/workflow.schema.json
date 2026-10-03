@@ -17,6 +17,11 @@
       "properties": {
         "retries": { "$ref": "#/$defs/retryPolicy" },
         "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "model": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:\\-\\[\\]]{0,127}$",
+          "description": "Default model (id or alias, e.g. claude-opus-4-8, sonnet) for every task that sets no model of its own, including emit_tasks-injected ones. Beats the agent's own model."
+        },
         "isolation": {
           "enum": ["none", "worktree"],
           "default": "none",
@@ -160,6 +165,7 @@
         },
         "model": {
           "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:\\-\\[\\]]{0,127}$",
           "description": "Per-task override of the dispatched agent's --model (ADR-0003 decision 2). Wins over the agent's own `model` when set; omit to use the agent's value."
         },
         "effort": {

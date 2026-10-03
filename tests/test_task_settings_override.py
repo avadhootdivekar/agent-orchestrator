@@ -396,3 +396,104 @@ class TestValidateCliBoundary:
 
         assert result.exit_code == 1
         assert "ERROR" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Workflow-level `defaults.model` (custom workflows): static + injected tasks inherit it,
+# a task's own model wins, a forbidden default is rejected, a malformed id fails validate.
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowDefaultModel:
+    def test_default_model_applies_unless_task_sets_its_own(
+        self, make_orchestrator, workspace: Path
+    ) -> None:
+        executor = FakeExecutor()
+        orch, reposets, agents = make_orchestrator(executor)
+        agents["ag"] = AgentSpec(executor="fake", model="agent-model")
+        tasks = [
+            TaskSpec(id="plain", agent="ag", instruction="specs/instructions/plain.md"),
+            TaskSpec(
+                id="pinned",
+                agent="ag",
+                instruction="specs/instructions/pinned.md",
+                model="claude-haiku-4-5-20251001",
+            ),
+        ]
+        wf = _settings_workflow(workspace, tasks)
+        wf.defaults.model = "claude-sonnet-4-5"
+
+        assert orch.run(wf, reposets, agents).status == "succeeded"
+        assert executor.resolved_agents["plain"].model == "claude-sonnet-4-5"
+        assert executor.resolved_agents["pinned"].model == "claude-haiku-4-5-20251001"
+
+    def test_injected_task_inherits_default_or_sets_own(
+        self, make_orchestrator, workspace: Path
+    ) -> None:
+        emitted = [
+            {
+                "id": "inj-default",
+                "agent": "ag",
+                "instruction": "i/a.md",
+                "depends_on": ["emitter"],
+            },
+            {
+                "id": "inj-own",
+                "agent": "ag",
+                "instruction": "i/b.md",
+                "depends_on": ["emitter"],
+                "model": "claude-opus-4-8",
+            },
+        ]
+        executor = FakeExecutor(emit_payloads={"emitter": {"tasks": emitted}})
+        orch, reposets, agents = make_orchestrator(executor)
+        agents["ag"] = AgentSpec(executor="fake", model="agent-model")
+        emitter = TaskSpec(
+            id="emitter",
+            agent="ag",
+            instruction="specs/instructions/emitter.md",
+            emit_tasks=True,
+            task_manifest_path="output/task-manifest.json",
+        )
+        wf = _settings_workflow(workspace, [emitter])
+        wf.defaults.model = "claude-sonnet-5-5"
+
+        assert orch.run(wf, reposets, agents).status == "succeeded"
+        assert executor.resolved_agents["inj-default"].model == "claude-sonnet-5-5"
+        assert executor.resolved_agents["inj-own"].model == "claude-opus-4-8"
+
+    def test_default_model_forbidden_for_agent_is_rejected(self) -> None:
+        from agent_orchestrator.spec import validate_task_model_policy
+
+        agents = {"ag": AgentSpec(executor="fake", forbidden_task_models=["haiku"])}
+        tasks = [TaskSpec(id="t", agent="ag", instruction="i.md")]
+        with pytest.raises(SpecValidationError, match="forbidden_task_models"):
+            validate_task_model_policy(tasks, agents, "claude-haiku-4-5-20251001")
+        validate_task_model_policy(tasks, agents, "claude-opus-4-8")  # allowed
+
+    def test_ao_validate_rejects_malformed_default_model(self, tmp_path: Path) -> None:
+        instr_dir = tmp_path / "specs" / "instructions"
+        instr_dir.mkdir(parents=True)
+        (instr_dir / "t1.md").write_text("do the thing")
+        spec = _minimal_workflow_dict({"outputs": ["out/t1.txt"]})
+        spec["defaults"] = {"model": "--dangerously-skip-permissions"}
+        wf = _write_json(tmp_path / "workflow.json", spec)
+        rs = _write_reposets(tmp_path)
+        ag = _write_agents(tmp_path)
+
+        result = runner.invoke(
+            app,
+            ["validate", "--workflow", str(wf), "--reposets", str(rs), "--agents", str(ag)],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+        assert result.exit_code == 1
+        assert "ERROR" in result.output
+
+        spec["defaults"] = {"model": "claude-opus-4-8"}
+        wf = _write_json(tmp_path / "workflow.json", spec)
+        ok = runner.invoke(
+            app,
+            ["validate", "--workflow", str(wf), "--reposets", str(rs), "--agents", str(ag)],
+            env={"AO_WORKSPACE_ROOT": str(tmp_path)},
+        )
+        assert ok.exit_code == 0, ok.output
