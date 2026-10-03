@@ -541,11 +541,11 @@ class TestOverseerRunnerE2E:
         (see the sibling standalone simulation used to derive these numbers) and verified against
         the actual on-disk `outputs/checkpoints/ck-0N/digest.json` produced by a real run.
 
-        Costs were chosen so:
-          ck-01: spent=15,  est_unit=5,    est_ckpt=5 (default) -> projection=40  -> explore
-          ck-02: spent=35,  est_unit=10,   est_ckpt=5 (ck-01)   -> projection=80  -> converge
-          ck-03: spent=45,  est_unit=10,   est_ckpt=5           -> projection=90  -> stabilize
-          ck-04: spent=60,  est_unit=7.5,  est_ckpt=5           -> projection=95  -> closeout
+        The stage follows ACTUAL spend (never a full-estimate projection), so costs were chosen:
+          ck-01: spent=15    -> explore    (<80%)
+          ck-02: spent=80    -> converge   (>=80%)
+          ck-03: spent=90.5  -> stabilize  (>=90%)
+          ck-04: spent=96    -> closeout   (>=95%, and the tail's ~3.5 stays under the 100 backstop)
         (`est_unit_cost_usd`/`est_ckpt_cost_usd` are medians of the last <=2 waves'/settled
         checkpoints' REAL recorded costs -- `compute_budget`, `overseer_tool.py` lines
         1239-1338 -- not hand-set digest fields.)
@@ -687,7 +687,7 @@ class TestOverseerRunnerE2E:
             ]
         }
 
-        # ck-01 own cost=5 -> spent=20 (+ w02's 15 below -> 35 at ck-02's pre_hook: converge).
+        # ck-01 own cost=5 -> spent=20 (+ w02's 60 below -> 80 at ck-02's pre_hook: converge).
         ck01_script = ScriptEntry(
             output_map={
                 str(
@@ -727,7 +727,7 @@ class TestOverseerRunnerE2E:
             cost_usd=5.0,
         )
 
-        # w02-01-implement: cost=15 -> spent=35 at ck-02's pre_hook (stage: converge).
+        # w02-01-implement: cost=60 -> spent=80 at ck-02's pre_hook (stage: converge).
         w02_01_script = ScriptEntry(
             output_map={
                 str(instance_dir / "outputs" / "waves" / "w02" / "w02-01-implement.md"): "# Impl\n",
@@ -735,7 +735,7 @@ class TestOverseerRunnerE2E:
                     instance_dir / "outputs" / "progress" / "w02-01-implement.json"
                 ): build_breadcrumb(unit_id="w02-01-implement", outcome="done", verdict="pass"),
             },
-            cost_usd=15.0,
+            cost_usd=60.0,
         )
 
         # ck-02 (converge): emits wave 3 with one unit that REUSES the existing work_item
@@ -763,7 +763,7 @@ class TestOverseerRunnerE2E:
             ]
         }
 
-        # ck-02 own cost=5 -> spent=40 (+ w03's 5 below -> 45 at ck-03's pre_hook: stabilize).
+        # ck-02 own cost=5 -> spent=85 (+ w03's 5.5 below -> 90.5 at ck-03's pre_hook: stabilize).
         ck02_script = ScriptEntry(
             output_map={
                 str(
@@ -803,7 +803,7 @@ class TestOverseerRunnerE2E:
             cost_usd=5.0,
         )
 
-        # w03-01-test: cost=5 -> spent=45 at ck-03's pre_hook (stage: stabilize).
+        # w03-01-test: cost=5.5 -> spent=90.5 at ck-03's pre_hook (stage: stabilize).
         w03_01_script = ScriptEntry(
             output_map={
                 str(instance_dir / "outputs" / "waves" / "w03" / "w03-01-test.md"): "# Test\n",
@@ -811,7 +811,7 @@ class TestOverseerRunnerE2E:
                     unit_id="w03-01-test", outcome="done", verdict="pass"
                 ),
             },
-            cost_usd=5.0,
+            cost_usd=5.5,
         )
 
         # ck-03 (stabilize): emits wave 4 with ONLY a stabilize-kind unit (AC3 -- OV-R11's
@@ -840,7 +840,7 @@ class TestOverseerRunnerE2E:
             ]
         }
 
-        # ck-03 own cost=5 -> spent=50 (+ w04's 10 below -> 60 at ck-04's pre_hook: closeout).
+        # ck-03 own cost=5 -> spent=95.5 (+ w04's 0.5 below -> 96 at ck-04's pre_hook: closeout).
         ck03_script = ScriptEntry(
             output_map={
                 str(
@@ -884,7 +884,7 @@ class TestOverseerRunnerE2E:
             cost_usd=5.0,
         )
 
-        # w04-01-stabilize: cost=10 -> spent=60 at ck-04's pre_hook (stage: closeout).
+        # w04-01-stabilize: cost=0.5 -> spent=96 at ck-04's pre_hook (stage: closeout).
         w04_01_script = ScriptEntry(
             output_map={
                 str(
@@ -894,7 +894,7 @@ class TestOverseerRunnerE2E:
                     instance_dir / "outputs" / "progress" / "w04-01-stabilize.json"
                 ): build_breadcrumb(unit_id="w04-01-stabilize", outcome="done", verdict="pass"),
             },
-            cost_usd=10.0,
+            cost_usd=0.5,
         )
 
         # ck-04 (closeout): emits the fixed tail. Stage=closeout is not an "early closeout"

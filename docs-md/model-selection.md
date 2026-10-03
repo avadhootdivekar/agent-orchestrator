@@ -48,3 +48,13 @@ no longer clobbers per-unit choices; see ADR-0003 for the remaining agent-level 
 The run detail shows a "Models used" summary (tasks per effective model) above the task table;
 the per-task Model column, Now-running rows and the graph hover card already show it. The
 template launcher renders the new overseer params automatically.
+
+## Where each setting lands, and what restricts it
+
+- `--model` / `AO_MODEL` / `.ao/config.yaml: model` (CLI > env > config) is a **fill-in for
+  `agent.model`** on every agent. It is the lowest-ranked choice: any task or workflow model
+  beats it, and it never limits what a task may pick.
+- Nothing orders models by "generic vs specific": a task may pick any well-formed model, more or
+  less capable than the global one. The only restrictions are (a) the id format, (b) an agent's
+  `forbidden_task_models` (substring match, checked for task models and `defaults.model`, also at
+  `emit_tasks` injection), and (c) overseer `allowed_models` for overseer units.

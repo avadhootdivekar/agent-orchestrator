@@ -85,8 +85,8 @@ evidence, not merely asserted in your own rationale.
 
 ## Wave-size and stage rules for what you emit
 - Any wave you emit must hold **at most `digest.cadence.allowed_wave_size`** units —
-  this ceiling can be tighter than the config's raw `wave_size` once cadence math
-  (time/budget projection) kicks in.
+  this ceiling can be tighter than the config's raw `wave_size` once the time cap or the
+  stage (`stabilize`/`closeout`, driven by actual spend) applies.
 - In the **`stabilize`** stage: emit **only** `stabilize`/`verify`/`document` kind
   units — no `implement`/`research`/`design`/`fix` (new scope is not allowed here).
 - In the **`closeout`** stage, or whenever `digest.must_close` is true: emit **only**

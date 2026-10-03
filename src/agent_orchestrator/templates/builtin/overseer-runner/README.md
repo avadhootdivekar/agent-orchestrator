@@ -254,17 +254,15 @@ units and `max_expanders_per_wave > 0` are NOT implemented** — `workflow.json.
 (FR-15 is deferred, MVP-Should, below this epic's cut line). Leave `max_expanders_per_wave` at
 its default `0`; setting it higher will fail at run time, not at `ao validate` time.
 
-**Budget floor caveat (from the live smoke run, `T-23yMMB`)**: `default_unit_cost_usd`/
-`default_ckpt_cost_usd` (in `overseer-config.json.tmpl`, not exposed as `ao new --param`
-overrides) set a real, non-obvious floor on viable `run_budget_usd` — intake's own
-projected-cost gate uses these hardcoded defaults (not real per-unit cost, which may be far
-cheaper) before any wave is emitted, and `compute_allowed_wave_size` returns 0 (no wave at all)
-if the projection lands in the `closeout` band. For `wave_size=3`/`final_push=true`, this floor
-is ~$67 for `run_budget_usd` to reach `explore` at all (~$59 for `converge`); scale down
-proportionally for smaller `wave_size`/`final_push=false`. A too-small `run_budget_usd` (e.g.
-picked to match a tiny toy task's real expected cost) will block `intake` from emitting any wave,
-regardless of how cheap the real work turns out to be. See `overseer-runner-hld.md` §26
-"Deviations from design" for the full derivation.
+**Budgets are independent limits, not a coupled constraint.** `run_budget_usd`, `task_budget_usd`,
+`wave_size` and `default_unit_cost_usd` are NOT required to satisfy
+`wave_size x unit cost <= run_budget_usd`: units rarely spend their full estimate, so no
+combination of them is rejected up front and no wave is shrunk or skipped because the *planned*
+spend would exceed the budget. The stage machine (explore -> converge -> stabilize -> closeout)
+advances on **actual settled spend** vs `converge_pct`/`stabilize_pct`/`closeout_pct`, and
+`run_cost_usd` (hard stop) / `task_cost_usd` stay the enforcement. `wave_size` is limited only by
+`wave_max_minutes` (time cap) and, in `stabilize`, `stabilize_wave_size`; closeout plans no new
+units. The digest still reports `stage_projected`/`budget_cap` as informational numbers.
 
 `python_bin` (default `python3`) must resolve to Python ≥ 3.11 on the PATH the `ao`
 service's hooks inherit — every hook (`ov-intake-prep`, `ov-ckpt-prep`, `ov-unit-gate`, …)

@@ -1521,3 +1521,14 @@ three stale spots. dev-epic fixed all three directly after reviewing this ticket
   among the shipped signals (it is deferred, NFR-X10) and omitted the real, shipped
   `breadcrumb_integrity` signal — corrected to match the actual signal set
   (`_period_mirror_signals`/`overseer_tool.py` L1589-1623 and the other real signal emitters).
+
+## Amendment (2026-10-03): stage follows actual spend, not a full-estimate projection
+
+`derive_budget` previously escalated the stage on `projection = spent + wave_size x est_unit +
+est_ckpt + reserve_tail`, and `budget_cap` capped `allowed_wave_size`. That coupled
+`wave_size x unit cost` to `run_budget_usd` and could force close-out at `spent=$0` (a $20 run
+with `wave_size=6`, $8 units). Units seldom spend their estimate, so this is removed: `stage =
+max(stage_raw, prev_stage)` on ACTUAL spend; `allowed_wave_size = min(wave_size, time_cap)`
+(explore/converge), `stabilize_wave_size` (stabilize), 0 (closeout). `stage_projected` and
+`budget_cap*` remain in the digest as informational fields. The hard stops are unchanged:
+`run_cost_usd` / `task_cost_usd` breakers and the `ov-unit-gate` BUDGET check.

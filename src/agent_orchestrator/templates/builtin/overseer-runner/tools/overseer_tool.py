@@ -265,10 +265,15 @@ def compute_allowed_wave_size(
     budget_cap_to_100pct: int,
 ) -> int:
     """HLD S8.2 `allowed_wave_size` table."""
+    # `budget_cap*` are ADVISORY (digest-only): wave_size x unit-cost is NOT required to fit
+    # the run budget -- units rarely spend their full estimate, so the stage follows ACTUAL
+    # spend and the run_cost_usd breaker is the hard stop. They stay in the signature so the
+    # digest schema is unchanged.
+    del budget_cap, budget_cap_to_100pct
     if stage in ("explore", "converge"):
-        return int(max(1, min(wave_size, time_cap, budget_cap)))
+        return int(max(1, min(wave_size, time_cap)))
     if stage == "stabilize":
-        return int(max(1, min(stabilize_wave_size, budget_cap_to_100pct)))
+        return int(max(1, stabilize_wave_size))
     return 0  # closeout
 
 
@@ -353,7 +358,10 @@ def derive_budget(
     stage_projected = stage_of(
         100.0 * projection / run_budget_usd, converge_pct, stabilize_pct, closeout_pct
     )
-    stage = max_stage(stage_projected, prev_stage)
+    # The stage follows ACTUAL spend (stage_raw), never the "every planned unit spends its
+    # full estimate" projection: that projection is kept as an informational digest field
+    # (stage_projected) but must not force close-out or shrink a wave by itself.
+    stage = max_stage(stage_raw, prev_stage)
 
     threshold = next_threshold(stage, converge_pct, stabilize_pct, closeout_pct)
     budget_cap = budget_cap_for_threshold(
