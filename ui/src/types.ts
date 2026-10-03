@@ -86,6 +86,10 @@ export interface RunSummary {
   is_terminal: boolean;
   is_live: boolean;
   launch_id: string | null;
+  /** One-line preview of the run prompt (list rows carry only this, never the full text). */
+  prompt_preview?: string | null;
+  /** First few running tasks (state-derived) for the compact list view; `task_counts.running` is the total. */
+  running_tasks?: RunningTaskBrief[];
 }
 
 export interface TaskStat {
@@ -121,6 +125,49 @@ export interface TaskStat {
    */
   dispatch_cycle: number;
   not_taken_reason: string | null;
+  /** Effective agent/model/effort of the most recent dispatch (E-iafh2F). Absent on old backends. */
+  agent?: string | null;
+  model?: string | null;
+  effort?: string | null;
+}
+
+/** One currently-running task on a runs-list row (state-derived; E-iafh2F). */
+export interface RunningTaskBrief {
+  id: string;
+  model: string | null;
+  effort: string | null;
+  started_at: string | null;
+}
+
+/**
+ * Live activity of one task (`GET /api/runs/{id}/activity`, E-iafh2F, ADR-0018).
+ * `source` says where the numbers came from: a live transcript tail, a settled `result.json`,
+ * or nothing on disk yet. Output tokens from a transcript are an estimate (`tokens_estimated`,
+ * a lower bound); cost is only ever a floor from finished attempts, else null.
+ */
+export interface TaskActivity {
+  task_id: string;
+  status: string;
+  source: "transcript" | "result" | "none";
+  attempt: number | null;
+  cycle: number;
+  turns: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+  last_action: string | null;
+  idle_seconds: number | null;
+  elapsed_seconds: number | null;
+  stuck: boolean;
+  approximate: boolean;
+  tokens_estimated: boolean;
+}
+
+export interface RunActivity {
+  schema_version: number;
+  run_id: string;
+  generated_at: string;
+  tasks: Record<string, TaskActivity>;
 }
 
 /** Run-wide integration header (E-Wk9Tz3). Null for a run without isolation. */
@@ -131,6 +178,13 @@ export interface RunIntegration {
   tier_counts: Record<string, number>;
   degraded_reason: string | null;
 }
+
+/**
+ * Derived by the server (never persisted): `starting` = alive, no run dir yet, inside the
+ * discovery window; `started` = a run dir is attributed; `failed_to_start` = the process is
+ * gone and no run dir ever appeared; `running_unconfirmed` = alive, no run dir, past the window.
+ */
+export type LaunchStatus = "starting" | "started" | "failed_to_start" | "running_unconfirmed";
 
 export interface LaunchRecord {
   launch_id: string;
@@ -145,6 +199,24 @@ export interface LaunchRecord {
   finished_at: string | null;
   exit_code: number | null;
   cancelled: boolean;
+  /** Additive (E-iafh2F launch-status): absent on an older backend — see `launchStatusOf`. */
+  status?: LaunchStatus;
+  /** Bounded, control-char-stripped tail of the launch log; only on single-launch/POST responses. */
+  log_tail?: string;
+  log_truncated?: boolean;
+}
+
+/** The prompt a run started with (E-Us9Kd4 FR-13); `text` is bounded server-side. */
+export interface RunPrompt {
+  text: string;
+  truncated: boolean;
+  /** Original length in characters, even when `text` was truncated. */
+  chars: number;
+  source: "cli-prompt" | "cli-prompt-file" | "workflow-file";
+  path: string;
+  /** sha256 of the FULL prompt file at run start. */
+  sha256: string;
+  captured_at: string;
 }
 
 export interface RunDetail {
@@ -163,6 +235,10 @@ export interface RunDetail {
    * client refetches `GET /runs/{id}/graph` only when this value changes between polls.
    */
   graph_version: string | null;
+  /** Absent/null for runs that predate prompt capture or declare no prompt_path. */
+  prompt?: RunPrompt | null;
+  /** True when the prompt file now differs from the recorded one; null when unknown. */
+  prompt_changed_since_start?: boolean | null;
 }
 
 /**
@@ -356,4 +432,158 @@ export interface CreateInstanceResponse {
   workflow_path: string;
   workflow: WorkflowInfo;
   launch: LaunchRecord | null;
+}
+
+// ---------- usage + feedback (E-Us9Kd4) — mirror usage.py::usage_report_payload ----------
+
+export type FeedbackRating = "good" | "ok" | "bad";
+export type FeedbackScope = "run" | "task";
+export type FeedbackReason =
+  | "wrong"
+  | "incomplete"
+  | "unnecessary"
+  | "too-costly"
+  | "needed-hand-fixing";
+
+export interface UsageGroup {
+  agent: string;
+  model: string;
+  effort: string;
+  tasks: number;
+  succeeded: number;
+  failed: number;
+  retried: number;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  reviewed: number;
+  review_fail: number;
+  critical: number;
+  major: number;
+  minor: number;
+  must_fix: number;
+  fb_good: number;
+  fb_ok: number;
+  fb_bad: number;
+  fb_unnecessary: number;
+  fb_rated_tasks: number;
+  false_pass_candidates: number;
+  false_fail_candidates: number;
+  verdict_rated_pairs: number;
+  lines_added: number;
+  lines_survived: number;
+  survival_tasks: number;
+  survival_low_tasks: number;
+  flags: string[];
+  // computed rates (null = not computable, rendered "n/a" — never 0)
+  mean_cost_usd: number | null;
+  retry_rate: number | null;
+  review_fail_rate: number | null;
+  survival_rate: number | null;
+  fb_bad_rate: number | null;
+  reviewer_disagreement_rate: number | null;
+}
+
+export interface UsageOutcome {
+  run_id: string;
+  checkpoints_seen: number;
+  checkpoints_found: number;
+  last_decision: string | null;
+  criteria_met: number;
+  criteria_unmet: number;
+  criteria_deferred: number;
+  alignment: Record<string, number>;
+  final_verify: { met: number; partial: number; not_met: number } | null;
+}
+
+export interface ImplicitSignals {
+  landed?: string | null;
+  landed_reason?: string | null;
+  followup_commits?: number | null;
+  followup_confidence?: string | null;
+  followup_reason?: string | null;
+  reverted_commits?: number | null;
+  run_status: string;
+  killed: boolean;
+  tripped_breakers: number;
+  breaker_pauses: number;
+  breaker_kills: number;
+}
+
+export interface UsageRunSignal {
+  run_id: string;
+  signals: ImplicitSignals;
+  lines_added: number | null;
+  lines_survived: number | null;
+  survival_rate: number | null;
+}
+
+export interface UsageReport {
+  runs_scanned: number;
+  verdicts_found: number;
+  reviews_seen: number;
+  groups: UsageGroup[];
+  outcomes: UsageOutcome[];
+  runs_rated: number;
+  feedback_errors: number;
+  skipped: string[];
+  survival_available: boolean;
+  survival_unavailable_reason: string | null;
+  survival_ref: string | null;
+  run_signals: UsageRunSignal[];
+}
+
+export interface FeedbackEntry {
+  ts: string;
+  scope: FeedbackScope;
+  task_id: string | null;
+  rating: FeedbackRating;
+  reasons: FeedbackReason[];
+  note: string | null;
+  source: string;
+}
+
+export interface FeedbackState {
+  entries: FeedbackEntry[];
+  /** Latest entry per (scope, task) — shape per backend; used loosely for display. */
+  effective?: unknown;
+  tasks?: unknown;
+}
+
+export interface FeedbackRequest {
+  scope: FeedbackScope;
+  task_id?: string;
+  rating: FeedbackRating;
+  reasons: FeedbackReason[];
+  note?: string;
+}
+
+export interface SurvivalRow {
+  run_id: string;
+  task_id: string | null;
+  attribution: string;
+  confidence: string | null;
+  commits: number;
+  files: number;
+  lines_added: number;
+  lines_survived: number;
+  survival_rate: number | null;
+  flags: string[];
+  unavailable: string | null;
+  note: string | null;
+}
+
+export interface RunSurvivalPart {
+  requested: boolean;
+  available: boolean;
+  reason: string | null;
+  ref: string | null;
+  total: SurvivalRow | null;
+  tasks: SurvivalRow[];
+}
+
+export interface RunSignalsResponse {
+  run_id: string;
+  signals: ImplicitSignals;
+  survival: RunSurvivalPart;
 }

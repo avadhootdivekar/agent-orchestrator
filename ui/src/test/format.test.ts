@@ -7,6 +7,7 @@ import {
   formatPercent,
   formatTimestamp,
   languageFor,
+  summarizeModels,
   statusGlyph,
   statusTone,
 } from "../format";
@@ -137,5 +138,25 @@ describe("languageFor", () => {
     expect(languageFor("App.tsx")).toBe("typescript");
     expect(languageFor("workflow.json")).toBe("json");
     expect(languageFor("LICENSE")).toBe("text");
+  });
+});
+
+describe("summarizeModels", () => {
+  it("counts tasks per model, most-used first, ignoring unset models", () => {
+    const out = summarizeModels([
+      { model: "claude-sonnet-4-5" },
+      { model: "claude-opus-4-8" },
+      { model: "claude-sonnet-4-5" },
+      { model: null },
+      {},
+    ]);
+    expect(out).toEqual([
+      { model: "claude-sonnet-4-5", tasks: 2 },
+      { model: "claude-opus-4-8", tasks: 1 },
+    ]);
+  });
+
+  it("returns an empty list when no task has a model", () => {
+    expect(summarizeModels([{}, { model: null }])).toEqual([]);
   });
 });

@@ -5,15 +5,21 @@ import type {
   CreateInstanceRequest,
   CreateInstanceResponse,
   DirListing,
+  FeedbackRequest,
+  FeedbackState,
   FileContent,
   GeneralInstruction,
   HtmlPreview,
   LaunchRecord,
+  LaunchStatus,
+  RunActivity,
   RunDetail,
   RunGraph,
   RunOptions,
+  RunSignalsResponse,
   RunSummary,
   TemplateInfo,
+  UsageReport,
   WorkflowInfo,
   WorkspaceInfo,
 } from "./types";
@@ -90,10 +96,25 @@ export const api = {
   run: (runId: string) => request<RunDetail>(`/runs/${encodeURIComponent(runId)}`),
   /** Run graph topology (E-k3AMEr, HLD §14.2). Fetch on mount and on `graph_version` change. */
   runGraph: (runId: string) => request<RunGraph>(`/runs/${encodeURIComponent(runId)}/graph`),
+  /** Live per-task activity (turns, tokens, last action, stuck hint). 404 on an old backend. */
+  runActivity: (runId: string) =>
+    request<RunActivity>(`/runs/${encodeURIComponent(runId)}/activity`),
   runLog: (runId: string) =>
     request<{ run_id: string; launch_id: string | null; text: string }>(
       `/runs/${encodeURIComponent(runId)}/log`,
     ),
+
+  /** One launch with its bounded log tail (404 for an unknown or malformed id). */
+  launch: (launchId: string) => request<LaunchRecord>(`/launches/${encodeURIComponent(launchId)}`),
+
+  /** Launch records (no log tails), optionally filtered by derived status / recency. */
+  launches: (filter: { status?: LaunchStatus; sinceHours?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (filter.status) params.set("status", filter.status);
+    if (filter.sinceHours !== undefined) params.set("since_hours", String(filter.sinceHours));
+    const query = params.toString();
+    return request<LaunchRecord[]>(`/launches${query ? `?${query}` : ""}`);
+  },
 
   startRun: (workflowPath: string, prompt: string, options: RunOptions) =>
     request<LaunchRecord>("/runs", {
@@ -112,4 +133,26 @@ export const api = {
 
   deleteRun: (runId: string) =>
     request<{ deleted: string }>(`/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
+
+  usage: (runIds: string[], survival: boolean) => {
+    const params = new URLSearchParams();
+    for (const id of runIds) params.append("run_id", id);
+    if (survival) params.set("survival", "true");
+    const query = params.toString();
+    return request<UsageReport>(`/usage${query ? `?${query}` : ""}`);
+  },
+
+  feedback: (runId: string) =>
+    request<FeedbackState>(`/runs/${encodeURIComponent(runId)}/feedback`),
+
+  postFeedback: (runId: string, body: FeedbackRequest) =>
+    request<unknown>(`/runs/${encodeURIComponent(runId)}/feedback`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  runSignals: (runId: string, survival: boolean) =>
+    request<RunSignalsResponse>(
+      `/runs/${encodeURIComponent(runId)}/signals?survival=${survival ? "true" : "false"}`,
+    ),
 };

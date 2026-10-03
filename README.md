@@ -216,7 +216,13 @@ ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
+ao report-usage     Cross-run cost/retry/rework rollup by (agent, model, effort) + verdicts, feedback, survival
+ao report-survival  How much of a run's code changes survived into a ref (git only)
+ao rate       Record your own good/ok/bad rating of a run or task (local, no telemetry)
 ```
+
+Usefulness signals (verdicts, diff survival, your ratings) are documented in
+[`docs-md/usage-signals-hld.md`](docs-md/usage-signals-hld.md); the dashboard's **Usage** tab shows the same rollup.
 
 All commands accept:
 
@@ -299,6 +305,18 @@ ao ui --port 9000 --workspace /path/to/repo --open
   parent/children/dependency links. Live runs refresh in place. Runs from before this feature
   still render, with a banner explaining which data is missing. See
   [`docs-md/run-graph-canvas-hld.md`](docs-md/run-graph-canvas-hld.md).
+- **Live task activity** — a fixed three-row **Now running** box tops every run page (and a
+  compact one sits under each live run in the list): per running task the model, effort, turns,
+  live tokens (`~` = estimate, a lower bound until the task settles), cost of finished attempts,
+  elapsed time, the last tool call, and an *idle* chip after 5 minutes without transcript output.
+  More than three running tasks scroll inside the same box; it never grows or collapses. Polling
+  pauses while the page (or workspace tab) is hidden. See
+  [`docs-md/live-activity-and-tabs-hld.md`](docs-md/live-activity-and-tabs-hld.md).
+- **Tabs** — the dashboard is a tabbed workspace: open runs, tasks, graphs and files side by side
+  as tabs (closable, drag or Alt+←/→ to reorder). Plain click navigates the current tab,
+  Ctrl/Cmd/middle-click or the ⧉ button opens a new tab. The tab set persists in the browser and
+  the active tab is in the URL hash (`#/run?id=…`), so a link restores it, including in a new
+  browser tab.
 - **Run control** — resume an interrupted run, cancel a running one, delete old runs.
 - **Workspace** — the effective [general instructions](#general-instructions), with a flag
   showing whether each path actually resolves.
@@ -447,11 +465,12 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_REPOSETS` | `--reposets` | Default path to the reposets config |
 | `AO_AGENTS` | `--agents` | Default path to the agents config |
 | `AO_WORKSPACE_ROOT` | — | Override the `workspace_root` from the reposet (useful in CI) |
-| `AO_MODEL` | `--model` | Claude model for all agents (e.g. `claude-sonnet-4-6`) |
+| `AO_MODEL` | `--model` | Claude model for all agents (alias `sonnet`/`opus`/`haiku` = latest; or a pinned id e.g. `claude-sonnet-5-5`) |
 | `AO_EFFORT` | `--effort` | Effort level: `low`, `medium`, or `high` |
 | `AO_MAX_ATTEMPTS` | `--max-attempts` | Max task attempts (overrides workflow `defaults.retries.max_attempts`) |
 | `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides effort-derived value) |
 | `AO_MAX_PARALLEL` | `--max-parallel` | Max independent ready tasks to run at once (default: `1` = serial); see [Parallel execution](#parallel-execution) |
+| `AO_RECORD_GIT_HEADS` | `--record-git-heads/--no-record-git-heads` | Record git HEADs at run/task start+settle for `ao report-survival` serial attribution (default: on; off = no head-recording git calls, coarser survival attribution — isolation `landed_ranges` still recorded) |
 | `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
 | `AO_QUOTA_POLL_SECONDS` | `--quota-poll-interval` | Seconds between quota-exhaustion re-run attempts (default: 900 = 15 min) |
 | `AO_GENERAL_INSTRUCTIONS` | `--general-instruction` | `os.pathsep`-separated instruction paths applied to **every** task; **additive**, not an override — see [General instructions](#general-instructions) |
@@ -479,9 +498,10 @@ agents:    path/to/agents.json
 # --- Runtime execution settings (env var equivalents shown) ---
 # max_attempts: 3          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
-# model: claude-sonnet-4-6 # AO_MODEL        — claude model for all agents
+# model: sonnet # AO_MODEL        — claude model for all agents
 # effort: medium           # AO_EFFORT       — low / medium / high
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
+# record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival
 
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h

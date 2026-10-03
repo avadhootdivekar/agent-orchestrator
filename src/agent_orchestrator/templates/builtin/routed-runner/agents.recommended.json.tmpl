@@ -10,14 +10,17 @@
   "agents": {
     "architect": {
       "executor": "claude_cli",
+      "forbidden_task_models": ["haiku"],
       "extra_args": ["--autocompact", "500000"]
     },
     "architect-opus": {
       "executor": "claude_cli",
+      "forbidden_task_models": ["haiku"],
       "extra_args": ["--autocompact", "500000"]
     },
     "reviewer-opus": {
       "executor": "claude_cli",
+      "forbidden_task_models": ["haiku"],
       "extra_args": ["--autocompact", "500000"]
     },
     "developer": {
@@ -26,10 +29,12 @@
     },
     "full-tester": {
       "executor": "claude_cli",
+      "forbidden_task_models": ["haiku"],
       "extra_args": ["--autocompact", "180000"]
     },
     "manager": {
       "executor": "claude_cli",
+      "forbidden_task_models": ["haiku"],
       "extra_args": ["--autocompact", "180000"]
     },
     "market-surveyor": {
@@ -38,6 +43,7 @@
     },
     "reviewer": {
       "executor": "claude_cli",
+      "forbidden_task_models": ["haiku"],
       "extra_args": ["--autocompact", "180000"]
     },
     "tester": {

@@ -180,3 +180,80 @@ export function isMarkdownPath(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   return ext === "md" || ext === "markdown";
 }
+
+// ---------- usage + feedback helpers (E-Us9Kd4) ----------
+
+/** Mirrors feedback.py::MAX_NOTE_CHARS; the server is authoritative, this is early UX. */
+export const MAX_NOTE_CHARS = 2000;
+
+export const FEEDBACK_REASONS = [
+  "wrong",
+  "incomplete",
+  "unnecessary",
+  "too-costly",
+  "needed-hand-fixing",
+] as const;
+
+/** Null when the note is acceptable, else a human message. Counts the trimmed text, like the server. */
+export function noteError(note: string): string | null {
+  const length = note.trim().length;
+  return length > MAX_NOTE_CHARS
+    ? `Note is ${length} characters; the limit is ${MAX_NOTE_CHARS}.`
+    : null;
+}
+
+/** "3g / 1o / 0b" feedback split; "—" when no task was rated at all. */
+export function formatFeedbackSplit(g: {
+  fb_good: number;
+  fb_ok: number;
+  fb_bad: number;
+  fb_rated_tasks: number;
+}): string {
+  if (g.fb_rated_tasks === 0) return "—";
+  return `${g.fb_good}g / ${g.fb_ok}o / ${g.fb_bad}b`;
+}
+
+/** "n/a" for a missing denominator, so 0 and "unknown" are never conflated. */
+export function formatCountOrNA(n: number | null | undefined, denominator: number): string {
+  return denominator > 0 && n !== null && n !== undefined ? String(n) : "n/a";
+}
+
+/** Number of leading sha256 hex chars shown in the UI. */
+export const SHORT_SHA_LENGTH = 8;
+
+/** Short form of a hex digest for display; empty input renders as an em dash. */
+export function formatShortSha(sha: string | null | undefined): string {
+  return sha ? sha.slice(0, SHORT_SHA_LENGTH) : "—";
+}
+
+const PROMPT_SOURCE_LABELS: Record<string, string> = {
+  "cli-prompt": "--prompt",
+  "cli-prompt-file": "--prompt-file",
+  "workflow-file": "workflow file",
+};
+
+/** Human label for a RunPrompt.source; unknown values pass through unchanged. */
+export function formatPromptSource(source: string): string {
+  return PROMPT_SOURCE_LABELS[source] ?? source;
+}
+
+/** One distinct model seen across a run's tasks, with how many tasks dispatched on it. */
+export interface ModelUsage {
+  model: string;
+  tasks: number;
+}
+
+/**
+ * Tasks per effective model (most-used first, ties alphabetical). Tasks with no recorded
+ * model (not yet dispatched, or an old backend) are not counted -- the agent's own model is
+ * unknown to the dashboard, so guessing one would mislead.
+ */
+export function summarizeModels(tasks: ReadonlyArray<{ model?: string | null }>): ModelUsage[] {
+  const counts = new Map<string, number>();
+  for (const t of tasks) {
+    if (t.model) counts.set(t.model, (counts.get(t.model) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([model, n]) => ({ model, tasks: n }))
+    .sort((a, b) => b.tasks - a.tasks || a.model.localeCompare(b.model));
+}

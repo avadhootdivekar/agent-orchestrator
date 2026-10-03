@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { api, ApiError } from "../api";
 import { formatCost, formatCount, formatDuration, formatTimestamp } from "../format";
-import type { AggregateStats, RunSummary } from "../types";
+import { FAILED_LAUNCH_WINDOW_HOURS, readDismissedLaunches } from "../launch";
+import type { AggregateStats, LaunchRecord, RunSummary } from "../types";
+import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
+import { usePolling } from "../usePolling";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
+import { FailedLaunches } from "./FailedLaunches";
+import { briefRows, NowRunning } from "./NowRunning";
 
 /** Poll interval for the runs list. Fast enough to feel live, slow enough to stay cheap. */
 const POLL_MS = 4000;
@@ -18,23 +23,29 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
   const [stats, setStats] = useState<AggregateStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [failedLaunches, setFailedLaunches] = useState<LaunchRecord[]>([]);
+  const [dismissed, setDismissed] = useState<string[]>(readDismissedLaunches);
 
   const refresh = useCallback(async () => {
     try {
-      const [runList, aggregate] = await Promise.all([api.runs(), api.runStats()]);
+      const [runList, aggregate, failed] = await Promise.all([
+        api.runs(),
+        api.runStats(),
+        // Independent of the run table: an older backend (404) must not break the list.
+        api
+          .launches({ status: "failed_to_start", sinceHours: FAILED_LAUNCH_WINDOW_HOURS })
+          .catch(() => [] as LaunchRecord[]),
+      ]);
       setRuns(runList);
       setStats(aggregate);
+      setFailedLaunches(Array.isArray(failed) ? failed : []);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
   }, []);
 
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+  usePolling(refresh, POLL_MS);
 
   const act = async (runId: string, action: () => Promise<unknown>) => {
     setBusy(runId);
@@ -64,6 +75,11 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
       </div>
 
       <ErrorBanner message={error} />
+
+      <FailedLaunches
+        launches={failedLaunches.filter((l) => !dismissed.includes(l.launch_id))}
+        onDismiss={setDismissed}
+      />
 
       {stats ? (
         <>
@@ -129,12 +145,32 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
               {runs.map((run) => (
                 <tr key={run.run_id}>
                   <td>
-                    <button className="link" onClick={() => onOpen(run.run_id)}>
+                    <TabLink
+                      target={{ kind: "run", params: { id: run.run_id } }}
+                      className="link"
+                      onPlainClick={() => onOpen(run.run_id)}
+                    >
                       {run.run_id}
-                    </button>
+                    </TabLink>
+                    <OpenInNewTabButton
+                      target={{ kind: "run", params: { id: run.run_id } }}
+                      label={`run ${run.run_id}`}
+                    />
                     <div className="muted" style={{ fontSize: 11 }}>
                       {run.workflow_id}
                     </div>
+                    {run.prompt_preview ? (
+                      // Plain text child: React escapes it, so a hostile prompt is never parsed.
+                      <div className="prompt-preview" title={run.prompt_preview}>
+                        {run.prompt_preview}
+                      </div>
+                    ) : null}
+                    {run.running_tasks && run.running_tasks.length > 0 ? (
+                      <NowRunning
+                        variant="compact"
+                        rows={briefRows(run.running_tasks, Date.now())}
+                      />
+                    ) : null}
                   </td>
                   <td>
                     <div className="row" style={{ gap: 6 }}>

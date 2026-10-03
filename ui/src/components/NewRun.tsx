@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import type { RunOptions, WorkflowInfo } from "../types";
+import { useLaunchPanel } from "../useLaunchPanel";
 import { ErrorBanner } from "./common";
+import { LaunchPending, LaunchResultPanel } from "./LaunchResultPanel";
 import { TemplateLaunch } from "./TemplateLaunch";
 
 type Mode = "workflow" | "template";
@@ -17,6 +19,10 @@ type Mode = "workflow" | "template";
  * workflow's declared `prompt_path` before starting. A workflow that declares no
  * `prompt_path` has nowhere to put it, so the box is disabled and says why rather than
  * accepting text that would be silently dropped.
+ *
+ * Launching never navigates by itself: the outcome shows in a LaunchResultPanel and the
+ * operator picks where to go (`onLaunched` fires only from an explicit button). `null` means
+ * "go to the run list".
  */
 export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => void }) {
   const [mode, setMode] = useState<Mode>("workflow");
@@ -26,6 +32,7 @@ export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => v
   const [options, setOptions] = useState<RunOptions>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const panel = useLaunchPanel("workflow");
 
   useEffect(() => {
     api
@@ -59,10 +66,9 @@ export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => v
     event.preventDefault();
     setSubmitting(true);
     setError(null);
+    panel.clear();
     try {
-      const record = await api.startRun(workflowPath, prompt, options);
-      setPrompt("");
-      onLaunched(record.run_id);
+      panel.show(await api.startRun(workflowPath, prompt, options));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -102,6 +108,22 @@ export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => v
       {mode === "workflow" ? (
         <>
           <ErrorBanner message={error} />
+
+          {submitting ? <LaunchPending /> : null}
+          {!submitting && panel.launch ? (
+            <LaunchResultPanel
+              key={panel.launch.launch_id}
+              initial={panel.launch}
+              onRecord={panel.track}
+              onOpenRun={(runId) => onLaunched(runId)}
+              onOpenRunList={() => onLaunched(null)}
+              onStartAnother={() => {
+                setPrompt("");
+                panel.clear();
+              }}
+              onEditRetry={panel.clear}
+            />
+          ) : null}
 
           <form className="card" onSubmit={submit}>
             <div className="field">

@@ -78,6 +78,7 @@ from .models import (
     MonitorDecisionRecord,
     ResolverTier,
     RouterSpec,
+    RunPrompt,
     RunState,
     SpawnRecord,
     TaskContext,
@@ -107,7 +108,9 @@ from .monitoring import (
 )
 from .runstate import RunStateStore
 from .scheduling.overlap import overlap_score, rank_wave
-from .spec import validate_isolation
+from .spec import validate_isolation, validate_task_model_policy
+from .survival import current_heads, record_git_start, record_landed_ranges
+from .usage import dispatch_provenance
 
 # Valid origin values for injected/loop tasks
 _TaskOrigin = Literal["static", "injected", "loop"]
@@ -585,8 +588,15 @@ class Orchestrator:
         escalation_hook: EscalationHook | None = None,
         isolation_strict: bool = False,
         isolation_env: dict[str, dict[str, str]] | None = None,
+        record_git_heads: bool = True,
+        run_prompt: RunPrompt | None = None,
     ) -> None:
         self._executor = executor
+        # Opt-out for diff-survival head recording (FR-12): False => no head-recording git calls.
+        self._record_git_heads = record_git_heads
+        # Prompt VALUE captured by the CLI layer (the engine never reads payload files, NFR-1);
+        # stored on a NEW run's state only -- a resume keeps whatever was recorded (FR-13).
+        self._run_prompt = run_prompt
         self._store = artifact_store
         self._runstate = runstate_store
         self._sleeper = sleeper
@@ -700,6 +710,8 @@ class Orchestrator:
                 extra={"event": "run.snapshot_failed"},
             )
 
+        if run_state is None and self._run_prompt is not None:
+            state.prompt = self._run_prompt
         self._runstate.save(state)
 
         # Derive run directory: <workspace>/.orchestrator/runs/<run_id>
@@ -774,6 +786,13 @@ class Orchestrator:
                 done=done,
                 run_dir=run_dir,
             )
+
+            # Diff-survival recording (`ao report-survival`): git repos + start HEADs, written once
+            # for a NEW run only (a resume must keep the original start); never fails the run.
+            if run_state is None:
+                state.record_git_heads = self._record_git_heads
+                if self._record_git_heads:
+                    record_git_start(state, ctx.repo_paths)
 
             # E-Wk9Tz3 (HLD §9.2, R-5): hotspots load ONCE at run start, never per wave, with
             # an empty-on-any-error fallback (an unresolvable/absent path is not fatal --
@@ -1045,6 +1064,20 @@ class Orchestrator:
         # work inside THIS task's freshly-created worktree (§7.4). ----
         ts_pre = state.tasks.setdefault(tid, TaskRunState())
         ts_pre.dispatch_cycle += 1  # R-21: monotonic across requeues/resumes
+        # Usage analytics (`ao report-usage`): record what actually ran. Defensive about the
+        # agent lookup -- provenance must never be able to fail a dispatch.
+        _prov_agent = (
+            resolve_effective_agent(task, ctx.agents[task.agent], workflow.defaults.model)
+            if task.agent in ctx.agents
+            else None
+        )
+        for _field, _value in dispatch_provenance(
+            task,
+            _prov_agent.model if _prov_agent else task.model,
+            (_prov_agent.effort if _prov_agent else task.effort),
+            workflow.tasks,
+        ).items():
+            setattr(ts_pre, _field, _value)
         iso_mode = resolve_task_isolation(task, workflow)
         task_iso: TaskIsolation | None = None
         ctx_store: ArtifactStore = self._store
@@ -1379,6 +1412,8 @@ class Orchestrator:
         # resume`, so a resumed dispatch still gets its own fresh started_at.
         if ts.started_at is None:
             ts.started_at = datetime.now(UTC).isoformat()
+            if self._record_git_heads:
+                ts.start_heads = current_heads(state.git_repos)
         self._runstate.save(state)
         task_log.info("Task started", extra={"event": "task.start"})
 
@@ -1746,6 +1781,8 @@ class Orchestrator:
         # `conflict_rerun`): it runs unconditionally, before that switch, so no
         # second accumulation call is needed there (E-Wk9Tz3 T-Ac6Vd9).
         self._accumulate_actuals(ts, result)
+        if self._record_git_heads:
+            ts.end_heads = current_heads(state.git_repos)
 
         if result.status == "succeeded":
             # Verify declared outputs were actually produced. E-Wk9Tz3 C-1 (review fix):
@@ -1891,6 +1928,7 @@ class Orchestrator:
                     # line reports the head each repo moved FROM as well as TO.
                     head_from = {k: state.integration.heads.get(k) for k in integ.heads}
                     state.integration.heads.update(integ.heads)
+                    record_landed_ranges(ti, head_from, integ.heads)
                     ti.status = "integrated"
                     ti.mode = "normal"
                     copy_ok = True
@@ -2064,6 +2102,9 @@ class Orchestrator:
             # docstring) so a misconfiguration fails fast here rather than at first isolated
             # dispatch mid-run.
             try:
+                # Agent-authored `model` overrides must respect each agent's
+                # forbidden_task_models (e.g. no Haiku on reviewer/architect roles).
+                validate_task_model_policy(new_specs, ctx.agents, workflow.defaults.model)
                 for warning in validate_isolation(workflow, [*workflow.tasks, *new_specs]):
                     task_log.warning(
                         "isolation validation: %s",
@@ -3860,7 +3901,7 @@ class Orchestrator:
         # Task-level model/effort/max_turns win over the agent's own (ADR-0003 decision 2,
         # fill-in not clobber) -- resolved once here so the executor never has to know
         # about task-level overrides; it just reads ctx.agent like before.
-        effective_agent = resolve_effective_agent(task, agent_spec)
+        effective_agent = resolve_effective_agent(task, agent_spec, workflow.defaults.model)
 
         # Resolve all paths through the artifact store (no content reads). E-Wk9Tz3 R-19:
         # SIX of the seven remappable path categories -- `st`, not `self._store` (repo_paths,

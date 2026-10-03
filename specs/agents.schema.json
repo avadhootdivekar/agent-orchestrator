@@ -58,6 +58,12 @@
           "type": "boolean",
           "default": false,
           "description": "Opt-in prompt-cache fix (E-1cecSx B1) for isolated (per-task-worktree) workflows: injects the claude CLI's own --exclude-dynamic-system-prompt-sections flag, which moves its default system prompt's per-session sections (working directory, git-repo flag, platform, shell, OS version, auto memory paths) into the first user message instead, so tasks started from different worktree directories can still share a cacheable system-prompt prefix. Default false: the flag is headless/print-mode-only and its CLI-version floor is undocumented, so this is not auto-enabled. Recommended true for every agent used in an isolation:worktree workflow."
+        },
+        "forbidden_task_models": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "Case-insensitive substrings a task-level `model` override may not contain when this agent is dispatched (e.g. [\"haiku\"] on reviewer/architect roles). Enforced at `ao validate` and when an agent-authored emit_tasks manifest is injected. Default [] = no restriction. Does not police the agent's own `model`."
         }
       }
     }

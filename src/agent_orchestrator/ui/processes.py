@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -44,6 +46,26 @@ LOGS_DIR = "logs"
 # `reconcile`, because a slow-starting run must never look like a failed launch.
 RUN_ID_DISCOVERY_TIMEOUT_SECONDS = 10.0
 RUN_ID_DISCOVERY_POLL_SECONDS = 0.05
+
+# Launch lifecycle as the dashboard reports it (E-iafh2F launch-status; HLD §3). Derived on
+# read from the persisted record + process liveness -- never persisted, so an old record
+# written before this existed still classifies correctly.
+STATUS_STARTING = "starting"  # alive, no run dir yet, still inside the discovery window
+STATUS_STARTED = "started"  # a run directory is attributed to this launch
+STATUS_FAILED_TO_START = "failed_to_start"  # process gone and no run dir ever appeared
+STATUS_RUNNING_UNCONFIRMED = "running_unconfirmed"  # alive, no run dir, past the window
+
+# A launch id is minted by `_new_launch_id` and is also a filename component, so anything
+# arriving from a URL must match this exactly before it touches the filesystem.
+LAUNCH_ID_PATTERN = re.compile(r"^launch-\d{8}T\d{12}Z$")
+
+# Bounds for the log tail returned with a launch (UI shows ~40 lines in a <pre>).
+LOG_TAIL_MAX_BYTES = 16_384
+LOG_TAIL_MAX_LINES = 40
+
+# Control characters other than \n and \t are stripped from the tail: the log is whatever a
+# child (or a hostile spec/agent it ran) printed, and it is rendered in an operator's UI.
+_UNSAFE_LOG_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 # Grace period between SIGTERM and SIGKILL on cancel. The engine handles SIGTERM by
 # unwinding normally; SIGKILL is the backstop for a wedged child.
@@ -79,8 +101,58 @@ class LaunchRecord:
         return asdict(self)
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return _utc_now().isoformat()
+
+
+def derive_launch_status(
+    record: LaunchRecord, alive: bool, now: datetime, discovery_window: float
+) -> str:
+    """Pure classification of one launch (see the ``STATUS_*`` constants).
+
+    A record with a ``run_id`` is ``started`` whatever happens to the run afterwards --
+    from then on the *run's* status is the source of truth, not the launch's. Without a
+    run id the process decides: gone means the engine died before creating a run
+    directory (``failed_to_start``); alive splits on age so a slow-but-healthy start
+    reads as "starting" first and "unconfirmed" only once the discovery window has passed.
+    """
+    if record.run_id:
+        return STATUS_STARTED
+    if not alive:
+        return STATUS_FAILED_TO_START
+    try:
+        age = (now - datetime.fromisoformat(record.started_at)).total_seconds()
+    except ValueError:
+        return STATUS_RUNNING_UNCONFIRMED  # unreadable timestamp: do not claim "starting"
+    return STATUS_STARTING if age < discovery_window else STATUS_RUNNING_UNCONFIRMED
+
+
+def tail_log_text(
+    path: Path, max_bytes: int = LOG_TAIL_MAX_BYTES, max_lines: int = LOG_TAIL_MAX_LINES
+) -> tuple[str, bool]:
+    """Last *max_lines* lines (and at most *max_bytes* bytes) of *path*, as safe text.
+
+    Returns ``(text, truncated)``. Missing/unreadable file -> ``("", False)``.
+    """
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as fh:
+            cut = size > max_bytes
+            if cut:
+                fh.seek(size - max_bytes)
+            raw = fh.read(max_bytes)
+    except OSError:
+        return "", False
+    text = _UNSAFE_LOG_CHARS.sub("", raw.decode("utf-8", errors="replace"))
+    lines = text.splitlines()
+    if cut and lines:
+        lines = lines[1:]  # first line is almost certainly cut mid-way
+    truncated = cut or len(lines) > max_lines
+    return "\n".join(lines[-max_lines:]), truncated
 
 
 def _pid_alive(pid: int) -> bool:
@@ -116,6 +188,7 @@ class ProcessSupervisor:
         ao_command: list[str] | None = None,
         env: dict[str, str] | None = None,
         run_id_discovery_timeout: float = RUN_ID_DISCOVERY_TIMEOUT_SECONDS,
+        clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         """
         Args:
@@ -129,7 +202,10 @@ class ProcessSupervisor:
             env: Extra environment variables for children, merged over ``os.environ``.
             run_id_discovery_timeout: Seconds to wait for a launched run's directory to
                 appear. Injectable so tests need not pay the production timeout.
+            clock: Time source for launch ids/timestamps/status ages. Injectable so
+                status classification is deterministic in tests.
         """
+        self._clock = clock
         self._root = Path(workspace_root).resolve()
         self._ao_command = (
             list(ao_command)
@@ -201,13 +277,73 @@ class ProcessSupervisor:
             return []
         records: list[LaunchRecord] = []
         for path in self.launches_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                records.append(LaunchRecord(**data))
-            except (OSError, json.JSONDecodeError, TypeError):
-                continue
+            record = self._read_record(path)
+            if record is not None:
+                records.append(record)
         records.sort(key=lambda r: r.started_at, reverse=True)
         return records
+
+    @staticmethod
+    def _read_record(path: Path) -> LaunchRecord | None:
+        """Parse one record file; ``None`` for anything unreadable or not a record.
+
+        Unknown keys are dropped (a record written by a newer version must not vanish
+        after a downgrade), but a missing required key or a wrong container type is not
+        guessed at.
+        """
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return None
+            known = {f.name for f in fields(LaunchRecord)}
+            return LaunchRecord(**{k: v for k, v in data.items() if k in known})
+        except (OSError, ValueError, TypeError):
+            return None
+
+    def get_launch(self, launch_id: str) -> LaunchRecord | None:
+        """Load one record by id, refreshed against process liveness.
+
+        *launch_id* may come straight from a URL, so it must match
+        :data:`LAUNCH_ID_PATTERN` (no separators, no ``..``) before it is joined onto a
+        path; anything else is "not found". The stored ``launch_id`` field must agree with
+        the filename, so a tampered/copied record cannot alias another launch's log.
+        """
+        if not LAUNCH_ID_PATTERN.match(launch_id):
+            return None
+        record = self._read_record(self._record_path(launch_id))
+        if record is None or record.launch_id != launch_id:
+            return None
+        self._refresh(record)
+        return record
+
+    def describe(self, record: LaunchRecord, *, include_log: bool = False) -> dict:
+        """The persisted fields plus derived ``status`` (and optionally the log tail).
+
+        Additive over :meth:`LaunchRecord.to_dict`. The log path is *derived from the
+        validated launch id*, never taken from the record's own ``log_path`` (which a
+        tampered record could point anywhere).
+        """
+        alive = record.finished_at is None and self._alive(record)
+        data = record.to_dict()
+        data["status"] = derive_launch_status(record, alive, self._clock(), self._discovery_timeout)
+        if include_log:
+            text, truncated = self._safe_log_tail(record.launch_id)
+            data["log_tail"] = text
+            data["log_truncated"] = truncated
+        return data
+
+    def _safe_log_tail(self, launch_id: str) -> tuple[str, bool]:
+        if not LAUNCH_ID_PATTERN.match(launch_id):
+            return "", False
+        path = self.logs_dir / f"{launch_id}.log"
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
+            return "", False
+        # A symlinked log could point outside the workspace's logs dir.
+        if resolved.parent != self.logs_dir.resolve() or not resolved.is_file():
+            return "", False
+        return tail_log_text(resolved)
 
     def record_for_run(self, run_id: str) -> LaunchRecord | None:
         """Return the launch record that owns *run_id*, if the dashboard started it."""
@@ -252,7 +388,7 @@ class ProcessSupervisor:
             kind=kind,
             pid=proc.pid,
             argv=list(argv),
-            started_at=_utc_now_iso(),
+            started_at=self._clock().isoformat(),
             log_path=str(log_path),
             known_run_ids=sorted(known),
         )
@@ -278,7 +414,7 @@ class ProcessSupervisor:
             The persisted :class:`LaunchRecord`, with ``run_id`` filled in when the engine
             created its run directory quickly enough to observe.
         """
-        launch_id = f"launch-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
+        launch_id = self._new_launch_id()
         argv = [*self._ao_command, "run"]
 
         if workflow_path:
@@ -303,6 +439,11 @@ class ProcessSupervisor:
         record.workflow_path = workflow_path
         record.prompt_chars = prompt_chars
         record.run_id = self._discover_run_id(record)
+        if record.run_id is None and record.exit_code is not None:
+            # The child already exited without ever creating a run directory: record that
+            # now, so the very first response can say "failed to start" instead of leaving
+            # it to a later reconcile.
+            record.finished_at = self._clock().isoformat()
         self._save(record)
         return record
 
@@ -316,7 +457,7 @@ class ProcessSupervisor:
         general_instructions: list[str] | None = None,
     ) -> LaunchRecord:
         """Start ``ao resume --run-id <run_id>``."""
-        launch_id = f"launch-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
+        launch_id = self._new_launch_id()
         argv = [*self._ao_command, "resume", "--run-id", run_id]
 
         if workflow_path:
@@ -334,6 +475,9 @@ class ProcessSupervisor:
         record.run_id = run_id  # known up front, unlike a fresh run
         self._save(record)
         return record
+
+    def _new_launch_id(self) -> str:
+        return f"launch-{self._clock().strftime('%Y%m%dT%H%M%S%fZ')}"
 
     def _write_prompt_file(self, launch_id: str, prompt: str) -> Path:
         """Persist the UI-typed prompt so it can be passed by path, and kept for audit."""
@@ -359,16 +503,24 @@ class ProcessSupervisor:
         claimed = {r.run_id for r in self.load_records() if r.run_id}
         deadline = time.monotonic() + self._discovery_timeout
 
-        while time.monotonic() < deadline:
+        def fresh_run() -> str | None:
             fresh = [rid for rid in self._repo.list_run_ids() if rid not in known | claimed]
-            if fresh:
-                # list_run_ids is newest-first by mtime; the oldest unclaimed id is the one
-                # created earliest after this launch, i.e. most likely ours.
-                return fresh[-1]
+            # list_run_ids is newest-first by mtime; the oldest unclaimed id is the one
+            # created earliest after this launch, i.e. most likely ours.
+            return fresh[-1] if fresh else None
+
+        while True:
+            found = fresh_run()
+            if found:
+                return found
             if not self._alive(record):
-                return None  # child already exited (bad flags, validation error, ...)
+                # Child already exited (bad flags, validation error, ...): stop waiting at
+                # once -- there is nothing left to discover. One last scan closes the race
+                # where it created its run directory and exited between the two checks.
+                return fresh_run()
+            if time.monotonic() >= deadline:
+                return None
             time.sleep(RUN_ID_DISCOVERY_POLL_SECONDS)
-        return None
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -381,21 +533,25 @@ class ProcessSupervisor:
         """
         records = self.load_records()
         for record in records:
-            changed = False
+            self._refresh(record)
+        return records
 
-            if record.run_id is None and record.finished_at is None:
-                discovered = self._discover_run_id_fast(record)
-                if discovered:
-                    record.run_id = discovered
-                    changed = True
+    def _refresh(self, record: LaunchRecord) -> None:
+        """Bring one record up to date (run id, liveness) and persist any change."""
+        changed = False
 
-            if record.finished_at is None and not self._alive(record):
-                record.finished_at = _utc_now_iso()
+        if record.run_id is None and record.finished_at is None:
+            discovered = self._discover_run_id_fast(record)
+            if discovered:
+                record.run_id = discovered
                 changed = True
 
-            if changed:
-                self._save(record)
-        return records
+        if record.finished_at is None and not self._alive(record):
+            record.finished_at = self._clock().isoformat()
+            changed = True
+
+        if changed:
+            self._save(record)
 
     def _discover_run_id_fast(self, record: LaunchRecord) -> str | None:
         """Non-blocking variant of :meth:`_discover_run_id` for the reconcile path."""
@@ -433,7 +589,7 @@ class ProcessSupervisor:
                 "circuit breaker on the workflow for out-of-band cancellation."
             )
         if not self._alive(record):
-            record.finished_at = record.finished_at or _utc_now_iso()
+            record.finished_at = record.finished_at or self._clock().isoformat()
             self._save(record)
             raise LaunchError(f"run {run_id} is no longer running (pid {record.pid} is gone)")
 
@@ -455,7 +611,7 @@ class ProcessSupervisor:
                     pass
 
         record.cancelled = True
-        record.finished_at = _utc_now_iso()
+        record.finished_at = self._clock().isoformat()
         self._save(record)
         return record
 
@@ -521,6 +677,13 @@ __all__ = [
     "ALLOWED_BOOL_OPTIONS",
     "ALLOWED_OPTIONS",
     "CANCEL_GRACE_SECONDS",
+    "LAUNCH_ID_PATTERN",
+    "STATUS_FAILED_TO_START",
+    "STATUS_RUNNING_UNCONFIRMED",
+    "STATUS_STARTED",
+    "STATUS_STARTING",
+    "derive_launch_status",
+    "tail_log_text",
     "LaunchError",
     "LaunchRecord",
     "ProcessSupervisor",

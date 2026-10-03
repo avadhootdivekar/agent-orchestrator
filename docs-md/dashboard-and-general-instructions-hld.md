@@ -267,7 +267,8 @@ through to the SPA, so a typo'd endpoint is a clear error and not a confusing HT
 | POST | `/api/runs/{id}/resume` | resume |
 | POST | `/api/runs/{id}/cancel` | cancel |
 | DELETE | `/api/runs/{id}` | delete run artifacts |
-| GET | `/api/launches` | dashboard-initiated launches |
+| GET | `/api/launches` | dashboard-initiated launches, each with derived `status`; `?status=` / `?since_hours=` filters |
+| GET | `/api/launches/{launch_id}` | one launch + bounded `log_tail` (404 for malformed/unknown id) — see live-activity-and-tabs-hld Phase 3 |
 
 Status codes: `403` traversal · `404` missing · `409` wrong state (delete a live run, resume
 a running one, cancel a run the dashboard did not launch) · `400` bad request (prompt for a

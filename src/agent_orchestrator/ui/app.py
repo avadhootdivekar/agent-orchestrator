@@ -15,23 +15,30 @@ launching runs, so it must not be reachable off-box until the deferred auth work
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .._version import get_version_string
+from ..feedback import MAX_NOTE_CHARS, REASONS, Rating, Reason, Scope
 from .files import PathNotAllowedError, PathNotFoundError
 from .htmlpreview import NotMarkupError
 from .security import SecurityMiddleware, resolve_allowed_hosts
 from .service import (
     PROMPT_CONFLICT_PREFIX,
     TEMPLATE_NOT_FOUND_PREFIX,
+    DashboardBusyError,
+    DashboardConflictError,
     DashboardError,
+    DashboardNotFoundError,
     DashboardService,
+    DashboardStoreError,
+    DashboardValidationError,
 )
 
 # Where the built frontend lands. Populated by `npm run build` in ui/ (see
@@ -76,6 +83,41 @@ class CreateInstanceRequest(BaseModel):
     prompt: str | None = None
     start: bool = False
     options: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackRequest(BaseModel):
+    """Body for ``POST /api/runs/{run_id}/feedback``. The source is NOT client-settable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Scope
+    task_id: str | None = Field(None, max_length=256)
+    rating: Rating
+    reasons: list[Reason] = Field(default_factory=list, max_length=len(REASONS))
+    note: str | None = Field(None, max_length=MAX_NOTE_CHARS)
+
+
+logger = logging.getLogger(__name__)
+
+# Store failures carry server-side paths/exception text: log it, tell the client nothing more.
+STORE_ERROR_CLIENT_DETAIL = "internal store error; see the server log"
+
+# Status per service error type; first isinstance match wins. Plain DashboardError -> 400.
+_ERROR_STATUS: tuple[tuple[type[DashboardError], int], ...] = (
+    (DashboardNotFoundError, 404),
+    (DashboardConflictError, 409),
+    (DashboardBusyError, 429),
+    (DashboardStoreError, 500),
+    (DashboardValidationError, 400),
+)
+
+
+def _http_error(exc: DashboardError) -> HTTPException:
+    status = next((code for kind, code in _ERROR_STATUS if isinstance(exc, kind)), 400)
+    if isinstance(exc, DashboardStoreError):
+        logger.error("dashboard store error: %s", exc)
+        return HTTPException(status_code=status, detail=STORE_ERROR_CLIENT_DETAIL)
+    return HTTPException(status_code=status, detail=str(exc))
 
 
 def create_app(
@@ -228,6 +270,13 @@ def create_app(
         except DashboardError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/activity")
+    def run_activity(run_id: str) -> dict:
+        try:
+            return service.run_activity(run_id)
+        except DashboardError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get(f"{API_PREFIX}/runs/{{run_id}}/log")
     def run_log(run_id: str, max_bytes: int = Query(200_000, ge=1, le=5_000_000)) -> dict:
         return service.run_log(run_id, max_bytes=max_bytes)
@@ -267,9 +316,64 @@ def create_app(
         except DashboardError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    # -- usage / feedback / signals (E-Us9Kd4) ---------------------------------------
+    # Sync `def` routes: Starlette runs them in its threadpool, so git-backed survival work
+    # never blocks the event loop; the service bounds concurrency/size of that work.
+
+    @app.get(f"{API_PREFIX}/usage")
+    def usage(
+        run_id: list[str] | None = Query(None, description="Repeatable; omit for all runs"),
+        survival: bool = Query(False),
+        ref: str | None = Query(None),
+    ) -> dict:
+        try:
+            return service.usage_report(run_id, survival=survival, ref=ref)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/feedback")
+    def get_feedback(run_id: str) -> dict:
+        try:
+            return service.get_feedback(run_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.post(f"{API_PREFIX}/runs/{{run_id}}/feedback", status_code=201)
+    def post_feedback(run_id: str, body: FeedbackRequest) -> dict:
+        try:
+            return service.add_run_feedback(
+                run_id,
+                scope=body.scope,
+                task_id=body.task_id,
+                rating=body.rating,
+                reasons=list(body.reasons),
+                note=body.note,
+            )
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/signals")
+    def run_signals(
+        run_id: str, survival: bool = Query(False), ref: str | None = Query(None)
+    ) -> dict:
+        try:
+            return service.run_signals(run_id, survival=survival, ref=ref)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
     @app.get(f"{API_PREFIX}/launches")
-    def launches() -> list[dict]:
-        return service.list_launches()
+    def launches(
+        status: str | None = Query(None, max_length=32),
+        since_hours: float | None = Query(None, gt=0, le=24 * 365),
+    ) -> list[dict]:
+        return service.list_launches(status=status, since_hours=since_hours)
+
+    @app.get(f"{API_PREFIX}/launches/{{launch_id}}")
+    def launch_detail(launch_id: str) -> dict:
+        try:
+            return service.get_launch(launch_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
 
     # -- static frontend -------------------------------------------------------
 

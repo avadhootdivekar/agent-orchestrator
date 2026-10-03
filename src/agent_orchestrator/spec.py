@@ -224,12 +224,41 @@ def cross_validate(
     if workflow.budget is not None:
         budget_cross_validate(workflow.budget)
 
+    validate_task_model_policy(workflow.tasks, agents, workflow.defaults.model)
+
     # Per-task git isolation & rebase-integration cross-validation (E-Wk9Tz3, HLD §10.4,
     # rules V1-V12). Packaging note (pre-existing, inherited): specs/*.schema.json is not
     # packaged into the wheel and config._validate_against_schema silently no-ops when the
     # file is absent -- so for an installed `ao`, THIS function is the real gate. Every
     # rule below must therefore exist here, not only in JSON Schema.
     return _cross_validate_isolation(workflow, reposets, agents)
+
+
+def validate_task_model_policy(
+    tasks: list[TaskSpec], agents: dict, default_model: str | None = None
+) -> None:
+    """Reject a task whose `model` override matches its agent's `forbidden_task_models`.
+
+    Matching is a case-insensitive substring test, so ``"haiku"`` covers every dated Haiku
+    id. Tasks naming an unknown agent, or setting no `model`, are skipped (unknown agents are
+    reported by `cross_validate`'s own check). Called at spec-load and again at `emit_tasks`
+    injection time, where the override is agent-authored. A task naming no model is checked
+    against the workflow's `defaults.model` (*default_model*), which it will inherit.
+    """
+    for task in tasks:
+        agent = agents.get(task.agent)
+        effective = task.model or default_model
+        if agent is None or not effective:
+            continue
+        model = effective.lower()
+        for needle in agent.forbidden_task_models:
+            if needle.lower() in model:
+                raise SpecValidationError(
+                    f"Task {task.id!r}: model {effective!r} is not allowed for agent "
+                    f"{task.agent!r} (its forbidden_task_models contains {needle!r}); "
+                    "omit `model` to inherit the agent's own",
+                    path=f"tasks.{task.id}.model",
+                )
 
 
 def budget_cross_validate(budget: BudgetSpec) -> None:
@@ -463,6 +492,13 @@ def validate_isolation(workflow: WorkflowSpec, tasks: list[TaskSpec]) -> list[st
                     "(no absolute path, no '..' segment)",
                     path=f"tasks.{task.id}.touches",
                 )
+    for task in tasks:
+        if task.verdict_path and _is_unsafe_relative_glob(task.verdict_path):
+            raise SpecValidationError(
+                f"Task {task.id!r}: verdict_path {task.verdict_path!r} must be "
+                "workspace-relative (no absolute path, no '..' segment)",
+                path=f"tasks.{task.id}.verdict_path",
+            )
     for glob in integ.commit_denylist:
         if _is_unsafe_relative_glob(glob):
             raise SpecValidationError(

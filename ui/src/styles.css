@@ -456,6 +456,78 @@ label {
   margin-bottom: 16px;
 }
 
+/* Template parameter form: compact 4-column grid; free-text params span the full row. */
+.param-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px 14px;
+}
+.param-grid .param-cell {
+  margin-bottom: 10px;
+  min-width: 0;
+}
+.param-grid .param-wide {
+  grid-column: 1 / -1;
+}
+.param-grid textarea {
+  min-height: 60px;
+  font-family: inherit;
+}
+@media (max-width: 900px) {
+  .param-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .param-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.param-grid .param-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+.param-grid .param-head label {
+  margin-bottom: 0;
+}
+.info-tip {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border-radius: 50%;
+  font: italic 600 10px/1 var(--font-sans);
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  cursor: help;
+}
+.info-tip:hover::after,
+.info-tip:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  top: 20px;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 400;
+  font-style: normal;
+  text-align: left;
+  white-space: normal;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
 .field-hint {
   font-size: 11px;
   color: var(--text-muted);
@@ -1491,4 +1563,298 @@ pre.code {
   margin: 4px 0 0;
   padding-left: 16px;
   font-size: 12px;
+}
+
+/* ---------- run prompt (E-Us9Kd4 FR-13) ---------- */
+
+.prompt-panel > summary {
+  cursor: pointer;
+}
+
+.prompt-panel .banner {
+  margin-bottom: 0;
+}
+
+.prompt-none {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.prompt-meta {
+  font-size: 12px;
+}
+
+/* Text only: pre-wrap keeps the author's line breaks; the block scrolls inside itself. */
+.prompt-text {
+  margin: 0;
+  padding: 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.prompt-preview {
+  max-width: 420px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- now running (E-iafh2F) ----------
+   The box height is ALSO set inline by NowRunning.tsx (3 rows, fixed): it scrolls internally
+   and has no collapse control by design. */
+
+.now-running {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  overflow-x: auto;
+}
+
+.now-running.full {
+  padding: 8px 12px 12px;
+}
+
+.now-running-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.now-running-head,
+.now-running:not(.compact) .now-running-row {
+  display: grid;
+  grid-template-columns:
+    minmax(140px, 1.4fr) 104px minmax(70px, 0.7fr) 64px 56px 72px 72px 80px
+    minmax(160px, 2.2fr) 96px;
+  gap: 10px;
+  align-items: center;
+  min-width: 940px;
+}
+
+.now-running-head {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 0 4px 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.now-running-head .num,
+.now-running-row .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.now-running-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.now-running-row {
+  box-sizing: border-box;
+  padding: 0 4px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--hairline);
+  overflow: hidden;
+}
+
+.now-running-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-running-row.compact {
+  display: grid;
+  grid-template-columns: 10px minmax(80px, 1fr) minmax(70px, auto) 64px;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.now-running.compact {
+  margin-top: 6px;
+  min-width: 260px;
+  max-width: 420px;
+}
+
+.now-running-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+/* ---------- workspace tabs (E-iafh2F Phase 2) ---------- */
+
+.tabbar {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  overflow-x: auto;
+}
+
+.tabbar-item {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 220px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  margin-bottom: -1px;
+}
+
+.tabbar-item.is-active {
+  background: var(--surface-1);
+  border-color: var(--hairline);
+}
+
+.tabbar-tab {
+  border: none;
+  background: none;
+  padding: 7px 4px 7px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabbar-item.is-active .tabbar-tab {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.tabbar-close {
+  border: none;
+  background: none;
+  padding: 2px 7px;
+  margin-right: 4px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tabbar-close:hover {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+.open-in-tab {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.open-in-tab:hover {
+  color: var(--accent);
+}
+
+a.link,
+.task-link {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+a.link:hover,
+.task-link:hover {
+  text-decoration: underline;
+}
+
+/* A task opened as a full tab: the graph's panel, laid out as a page column. */
+.task-tab .task-detail-panel {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 760px;
+  max-height: none;
+}
+
+/* ---------- launch result panel (E-iafh2F launch-status) ---------- */
+.launch-panel h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.launch-panel p {
+  margin: 0 0 10px;
+}
+
+.launch-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.launch-facts dt {
+  color: var(--text-muted);
+}
+
+.launch-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Text only (React text child). Scrolls inside itself; never widens the page. */
+pre.launch-log {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.failed-launches {
+  margin-bottom: 16px;
+}
+
+.failed-launches summary {
+  cursor: pointer;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

@@ -62,8 +62,20 @@ reference other ids in this same manifest (OV-R8). A unit may also carry optiona
 `"touches": [...]` (best-effort glob hints) and/or `"isolation": "none"|"worktree"|"inherit"`
 (both omitted by default) — see `TaskSpec` for the full optional-field set; do not add fields
 beyond `id, agent, instruction, depends_on, inputs, outputs, pre_hook, timeout_seconds,
-skip_if_outputs_exist, effort, touches, isolation` (OV-R2/OV-R9 — no `post_hook`, no `model`, no
-`max_turns` on a unit).
+skip_if_outputs_exist, effort, touches, isolation, model` (OV-R2/OV-R9 — no `post_hook`, no
+`max_turns` on a unit). `model` follows the **per-unit model rule** below (OV-R9m).
+
+### Per-unit model rule
+
+A unit's model is chosen by one precedence rule: the brief's optional `model` → the
+`kind_map[kind].model` → the config's `default_unit_model` → none (inherit the agent's own).
+Emit exactly the resolved value as the unit's `"model"` (OV-R9m), and **omit `model` when the
+rule resolves to none**. Use any well-formed model id or alias. Prefer the aliases `opus`, `sonnet`, `haiku` (always
+the latest); pin a full id such as `claude-sonnet-5-5` only when a task needs that exact version. If
+the config sets `allowed_models`, only those ids are accepted. An agent's `forbidden_task_models`
+(e.g. no Haiku on a reviewer) is still enforced by the engine at injection time. Set a brief
+`model` only when a work item genuinely needs a different model (cost vs. capability), or when
+the prompt explicitly asks for a specific one.
 
 ### Next checkpoint
 
@@ -160,6 +172,8 @@ per unit you emit, written before the unit dispatches:
 - `approach_change` (≤600 chars, or `null` — required when this unit re-attempts a work item at
   its attempt cap)
 - `prior_attempts` (list of earlier unit ids on this work item), `context_paths`, `touches`
+- optional `model` (well-formed model id/alias — see the per-unit model rule; omit to use the
+  `kind_map`/`default_unit_model` value)
 
 **breadcrumb** — `outputs/progress/<unit-id>.json`, `schema: "ao.overseer.breadcrumb/v1"` —
 written by the unit itself, a declared output the engine enforces exists:
@@ -178,6 +192,11 @@ written by the checkpoint (you), once per checkpoint:
 - `criteria` — one entry per charter acceptance criterion: `{id, status: met|unmet|deferred}`
 - `signal_responses` — one entry per digest signal id: `{signal_id, response: redirect|descope|accept|hold, rationale}`
 - `hold_questions` (list of strings; required, ≥1, iff `decision == "hold"`)
+
+**final-verify sidecar** — `outputs/final/verify-verdict.json`, `schema: "ao.overseer.final-verify/v1"` —
+OPTIONAL, written by `final-verify` after `verify.md`; NOT a declared output (the tail's `outputs`
+stay exactly `[verify.md]`) and never a gate; read only by `ao report-usage`:
+- `schema`, `asks` — one entry per charter ask: `{id, verdict: met|partial|not_met}`
 
 **hold-request** — `control/hold-request.json`, `schema: "ao.overseer.hold/v1"` — written only
 when `decision == "hold"`:
@@ -296,7 +315,9 @@ subcommands; run them yourself in dry-run mode before you finish, per "Self-chec
 - **OV-R7** — unit outputs exactly [report, breadcrumb], inputs include the brief.
 - **OV-R8** — `depends_on` ∋ E (the emitter) and ⊆ {E} ∪ this manifest.
 - **OV-R9** — units carry exactly `pre_hook: {"use": "ov-unit-gate"}`, no
-  `post_hook`/`model`/`max_turns`, `effort ∈ {low, medium, high}`.
+  `post_hook`/`max_turns`, `effort ∈ {low, medium, high}`.
+- **OV-R9m** — a unit's `model` is well-formed, in `allowed_models` (when set), and equals
+  brief `model` > `kind_map[kind].model` > `default_unit_model` (omitted when none).
 - **OV-R10** — exactly one of {next checkpoint, tail}, exact shapes (`model` on `ck-*` iff
   `overseer_model` is set).
 - **OV-R11** — stage restrictions (converge: existing work items only; stabilize:

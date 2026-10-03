@@ -140,7 +140,19 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
     # literal, which is part of the changed contract. Every numeric total they assert
     # (consumed_tokens, window_consumed_tokens) is unchanged -- the NFR-2 promise is about
     # the numbers, not the dict key shape.
+    "tests/test_e2e_cli_prompt_and_instructions.py": (
+        "FR-12 (T-Gh8Mn2): `--record-git-heads/--no-record-git-heads` widens rich's flag column "
+        "at the default 80-col test terminal and truncates `--general-instruction`; the two "
+        "help-surface tests now pass COLUMNS=200 (assertions unchanged)"
+    ),
     "tests/test_budget.py": "R-1b cycle-keyed estimate ledger (T-Ac6Vd9): key literal only",
+    # Additive only: DashboardService now asks its supervisor for `describe()`/`get_launch()`
+    # (derived launch status + bounded log tail, E-iafh2F T-Lc5Rq8-launch-status), so the shared
+    # in-memory StubSupervisor gained those two methods. No existing stub behaviour changed.
+    "tests/ui/conftest.py": (
+        "additive (T-Lc5Rq8-launch-status): StubSupervisor.describe/get_launch/log_tails for the "
+        "new supervisor contract used by DashboardService"
+    ),
     "tests/test_engine_budget.py": (
         "R-1b cycle-keyed resume double-charge guard (T-Ac6Vd9): the fixture must seed a "
         "TaskRunState with dispatch_cycle and go through prepare_resume"

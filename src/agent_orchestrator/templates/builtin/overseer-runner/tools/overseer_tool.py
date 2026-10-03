@@ -265,10 +265,15 @@ def compute_allowed_wave_size(
     budget_cap_to_100pct: int,
 ) -> int:
     """HLD S8.2 `allowed_wave_size` table."""
+    # `budget_cap*` are ADVISORY (digest-only): wave_size x unit-cost is NOT required to fit
+    # the run budget -- units rarely spend their full estimate, so the stage follows ACTUAL
+    # spend and the run_cost_usd breaker is the hard stop. They stay in the signature so the
+    # digest schema is unchanged.
+    del budget_cap, budget_cap_to_100pct
     if stage in ("explore", "converge"):
-        return int(max(1, min(wave_size, time_cap, budget_cap)))
+        return int(max(1, min(wave_size, time_cap)))
     if stage == "stabilize":
-        return int(max(1, min(stabilize_wave_size, budget_cap_to_100pct)))
+        return int(max(1, stabilize_wave_size))
     return 0  # closeout
 
 
@@ -353,7 +358,10 @@ def derive_budget(
     stage_projected = stage_of(
         100.0 * projection / run_budget_usd, converge_pct, stabilize_pct, closeout_pct
     )
-    stage = max_stage(stage_projected, prev_stage)
+    # The stage follows ACTUAL spend (stage_raw), never the "every planned unit spends its
+    # full estimate" projection: that projection is kept as an informational digest field
+    # (stage_projected) but must not force close-out or shrink a wave by itself.
+    stage = max_stage(stage_raw, prev_stage)
 
     threshold = next_threshold(stage, converge_pct, stabilize_pct, closeout_pct)
     budget_cap = budget_cap_for_threshold(
@@ -590,6 +598,10 @@ class Config:
     runs_root: str
     contract_version: int
     kind_map: dict[str, Any] = field(default_factory=dict)
+    # Per-unit model selection: default for units whose kind_map entry/brief name none, and an
+    # optional allowlist (empty = any well-formed id). See `expected_unit_model`.
+    default_unit_model: str = ""
+    allowed_models: tuple[str, ...] = ()
 
 
 def _require_number(data: dict[str, Any], field_name: str) -> float:
@@ -608,6 +620,12 @@ def _require_number(data: dict[str, Any], field_name: str) -> float:
         except ValueError as exc:
             raise Violation("CFG-0", detail=f"{field_name}={value!r} is not numeric") from exc
     raise Violation("CFG-0", detail=f"{field_name}={value!r} is not numeric")
+
+
+def _parse_allowed_models(raw: Any) -> tuple[str, ...]:
+    """`allowed_models` is a comma-separated string (template params are strings) or a list."""
+    items = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, list) else []
+    return tuple(str(m).strip() for m in items if str(m).strip())
 
 
 def load_config(inst: Path) -> Config:
@@ -679,6 +697,8 @@ def load_config(inst: Path) -> Config:
         runs_root=str(data.get("runs_root", DEFAULT_RUNS_ROOT)),
         contract_version=int(_require_number(data, "contract_version")),
         kind_map=dict(data.get("kind_map", {})),
+        default_unit_model=str(data.get("default_unit_model", "") or "").strip(),
+        allowed_models=_parse_allowed_models(data.get("allowed_models", "")),
     )
 
 
@@ -2206,9 +2226,10 @@ _UNIT_REQUIRED_FIELDS: Final[frozenset[str]] = frozenset(
         "effort",
     }
 )
-_UNIT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"touches", "isolation"})
+_UNIT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"touches", "isolation", "model"})
 _UNIT_ALLOWED_FIELDS: Final[frozenset[str]] = _UNIT_REQUIRED_FIELDS | _UNIT_OPTIONAL_FIELDS
-_UNIT_R9_ONLY_FIELDS: Final[frozenset[str]] = frozenset({"post_hook", "model", "max_turns"})
+_UNIT_R9_ONLY_FIELDS: Final[frozenset[str]] = frozenset({"post_hook", "max_turns"})
+_MODEL_ID_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-\[\]]{0,127}$")
 _UNIT_EFFORT_ENUM: Final[frozenset[str]] = frozenset({"low", "medium", "high"})
 
 _NEXT_CKPT_REQUIRED_FIELDS: Final[frozenset[str]] = frozenset(
@@ -2672,6 +2693,9 @@ def _check_tail_shape(
                     "R10", f"final-verify inputs missing required path(s): {missing_inputs}", path
                 )
             )
+        # The optional `outputs/final/verify-verdict.json` sidecar (read by `ao report-usage`)
+        # must stay UNDECLARED: a declared output is enforced and would let a missing sidecar
+        # fail the run. Keep this exactly [verify.md].
         expected_outputs = [f"{ctx.instance_dir}/outputs/final/verify.md"]
         if raw.get("outputs") != expected_outputs:
             violations.append(
@@ -3391,7 +3415,7 @@ def _check_entry_r9_pre_hook_and_effort(
             RuleViolation(
                 "R9",
                 f"unit {entry.entry_id} must not carry field(s) {forbidden_present} "
-                "(post_hook/model/max_turns are checkpoint-only)",
+                "(post_hook/max_turns are checkpoint-only)",
                 path,
             )
         )
@@ -3401,6 +3425,64 @@ def _check_entry_r9_pre_hook_and_effort(
                 "R9",
                 f"unit {entry.entry_id} effort must be one of {sorted(_UNIT_EFFORT_ENUM)}, "
                 f"got {raw.get('effort')!r}",
+                path,
+            )
+        )
+    return violations
+
+
+def expected_unit_model(cfg: Config, brief: dict[str, Any] | None, kind: Any) -> str:
+    """The ONE precedence rule for a unit's model: brief.model > kind_map[kind].model >
+    default_unit_model > "" (inherit the agent's own). The checkpoint agent must emit exactly
+    this on the unit (OV-R9m), so model selection is deterministic and auditable."""
+    if isinstance(brief, dict) and isinstance(brief.get("model"), str) and brief["model"].strip():
+        return brief["model"].strip()
+    entry = cfg.kind_map.get(kind) if isinstance(kind, str) else None
+    if isinstance(entry, dict) and isinstance(entry.get("model"), str) and entry["model"].strip():
+        return entry["model"].strip()
+    return cfg.default_unit_model
+
+
+def _check_entry_r9m_model(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    """OV-R9m: a unit's `model` is well-formed, allowed, and equals `expected_unit_model`."""
+    path = f"tasks[{entry.index}]"
+    unit_id = entry.entry_id
+    if not isinstance(unit_id, str):
+        return []
+    brief_data, brief_violation = _read_brief_for_check(ctx.inst, ctx.next_wave, unit_id)
+    if brief_violation is not None or brief_data is None:
+        return []  # R6/R15 already reports the unreadable brief
+    expected = expected_unit_model(ctx.cfg, brief_data, brief_data.get("kind"))
+    actual = entry.raw.get("model", "")
+    violations: list[RuleViolation] = []
+    for label, value in (("brief/kind_map/default", expected), ("unit", actual)):
+        if value and (not isinstance(value, str) or not _MODEL_ID_RE.match(value)):
+            violations.append(
+                RuleViolation("R9m", f"unit {unit_id} {label} model {value!r} is malformed", path)
+            )
+            return violations
+    if expected and ctx.cfg.allowed_models and expected not in ctx.cfg.allowed_models:
+        violations.append(
+            RuleViolation(
+                "R9m",
+                f"unit {unit_id} model {expected!r} is not in allowed_models "
+                f"{list(ctx.cfg.allowed_models)!r}",
+                path,
+            )
+        )
+    if actual != expected:
+        violations.append(
+            RuleViolation(
+                "R9m",
+                f"unit {unit_id} model must be {expected!r} "
+                + (
+                    "(brief.model > kind_map model > default_unit_model)"
+                    if expected
+                    else "(omit `model`)"
+                )
+                + f", got {actual!r}",
                 path,
             )
         )
@@ -3696,6 +3778,7 @@ _WAVE_ENTRY_STRUCTURAL_CHECKS: Final[list[WaveEntryCheckFn]] = [
     _check_entry_r7_outputs_inputs,
     _check_entry_r8_depends_on,
     _check_entry_r9_pre_hook_and_effort,
+    _check_entry_r9m_model,
     _check_entry_r11_stage_restrictions,
     _check_entry_r13_attempt_cap,
     _check_entry_r13c_rename_dodge,

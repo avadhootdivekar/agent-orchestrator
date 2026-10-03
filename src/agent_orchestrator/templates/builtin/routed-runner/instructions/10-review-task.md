@@ -21,6 +21,12 @@ repository's path — see your prompt's Repos line).
 
 ## Output
 - `review.md` at the exact output path provided.
+- `review-verdict.json` in the SAME directory as `review.md` — a small machine-readable
+  summary used for usage analytics (never gates anything; write it AFTER `review.md`, and
+  keep it consistent with it). Strict JSON, exactly this shape:
+  `{"verdict": "PASS", "findings": {"critical": 0, "major": 0, "minor": 0}, "must_fix": 0}`
+  `verdict` is `"PASS"` or `"FAIL"` — map your `review.md` verdict onto it (PASS→PASS, FAIL→FAIL).
+  `must_fix` counts MUST-FIX/blocking findings; the three severity counts cover all findings.
 
 ## Review dimensions (cover all)
 1. **Design alignment** — does the code implement `design.md`'s interfaces, data

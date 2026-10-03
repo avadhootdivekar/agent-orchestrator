@@ -311,3 +311,11 @@ def test_template_yaml_declares_branch_policy_param() -> None:
 def test_10_work_unit_covers_every_non_stabilize_kind(kind: str) -> None:
     text = _read("10-work-unit.md")
     assert f"`{kind}`" in text, kind
+
+
+def test_final_verify_documents_optional_verdict_sidecar() -> None:
+    text = _normalize_whitespace(_read("40-final-verify.md"))
+    assert "outputs/final/verify-verdict.json" in text
+    assert "ao.overseer.final-verify/v1" in text and "met|partial|not_met" in text
+    assert "optional, not a declared output, and never a gate" in text
+    assert "After `verify.md` is written" in text

@@ -185,7 +185,7 @@ class ProjectConfig(BaseModel):
     """Max turns per claude invocation (overrides effort-derived value)."""
 
     model: str | None = None
-    """Claude model to use for all agents (e.g. 'claude-sonnet-4-6')."""
+    """Claude model for all agents: an alias ('sonnet' = latest) or a pinned id."""
 
     effort: str | None = None
     """Effort level for all agents: low, medium, or high."""
@@ -201,6 +201,11 @@ class ProjectConfig(BaseModel):
     scoped (ADR-0003 §3 / ADR-0007 D5): rides the CLI/env/config/default chain only, never a
     workflow-spec field. Consumed by Orchestrator.run()'s wave/barrier scheduler (ADR-0007);
     the default of 1 is byte-identical to the pre-ADR-0007 serial engine."""
+
+    record_git_heads: bool | None = None
+    """Record git HEADs for `ao report-survival` serial attribution (FR-12). `None` = unset
+    (built-in default: on). CLI `--record-git-heads/--no-record-git-heads` > env
+    `AO_RECORD_GIT_HEADS` > this field (`cli._resolve_record_git_heads`)."""
 
     monitoring: MonitoringConfig = MonitoringConfig()
     """Agent-based monitoring & self-healing settings (E-XyfjuZ). Absent block ->
@@ -390,9 +395,10 @@ _INIT_TEMPLATE = """\
 # --- Runtime execution settings (env var equivalents shown) ---
 # max_attempts: 1          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
-# model: claude-sonnet-4-6 # AO_MODEL        — claude model for all agents
+# model: sonnet # AO_MODEL        — claude model for all agents
 # effort: medium           # AO_EFFORT       — low / medium / high
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
+# record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival
 
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h of exhaustion

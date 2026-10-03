@@ -15,17 +15,41 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
 
+from ..config import load_agents, load_reposets
+from ..errors import OrchestratorError
+from ..feedback import (
+    FeedbackCapError,
+    FeedbackEntry,
+    FeedbackError,
+    add_feedback,
+    effective_for_task,
+    effective_ratings,
+    load_feedback,
+    validate_run_id,
+)
+from ..implicit_signals import apply_survival, implicit_signals
 from ..models import RunState
 from ..project_config import ProjectConfig, find_project_config, load_project_config
+from ..spec import cross_validate, load_workflow
+from ..survival import compute_survival, validate_ref
 from ..templates import TemplateError, discover_templates, instantiate
+from ..usage import MAX_REPORT_RUN_IDS, build_usage_report, usage_report_payload
 from .files import FileBrowser, Root
 from .htmlpreview import build_html_preview
-from .processes import LaunchError, LaunchRecord, ProcessSupervisor
+from .processes import (
+    STATUS_FAILED_TO_START,
+    LaunchError,
+    LaunchRecord,
+    ProcessSupervisor,
+)
 from .runs import RunNotFoundError, RunRepository
 
 # Extensions scanned when discovering workflow specs on disk.
@@ -63,12 +87,49 @@ DISCOVERY_MAX_DEPTH = 4
 TEMPLATE_NOT_FOUND_PREFIX = "template not found"
 PROMPT_CONFLICT_PREFIX = "prompt conflict"
 
+# Template param whose value names a repo set; its choices come from the workspace reposets.
+REPO_SET_PARAM = "repo_set"
+ENV_REPOSETS = "AO_REPOSETS"
+ENV_AGENTS = "AO_AGENTS"
+
+# A "failed to start" launch stays in the runs list's failure strip for this long.
+FAILED_LAUNCH_WINDOW_HOURS = 24.0
+
 # Non-alnum run -> single hyphen, for deriving a slug from a free-text prompt (HLD §2.6).
 _SLUG_DERIVE_RE = re.compile(r"[^a-z0-9]+")
 
 
+# Survival shells out to git per run/task. Sync routes already run in Starlette's threadpool
+# (never on the event loop), so the bounds here are about not letting a few requests saturate
+# the host: at most this many survival computations at once (others get a 429-style busy
+# error), and an implicit run-id list is capped to the newest N runs.
+MAX_CONCURRENT_SURVIVAL = 2
+SURVIVAL_DEFAULT_MAX_RUNS = 50
+DASHBOARD_FEEDBACK_SOURCE = "dashboard"
+
+
 class DashboardError(Exception):
     """Raised for dashboard-level failures that map to a 4xx response."""
+
+
+class DashboardValidationError(DashboardError):
+    """Caller input is invalid (HTTP 400)."""
+
+
+class DashboardNotFoundError(DashboardError):
+    """Unknown run/task (HTTP 404)."""
+
+
+class DashboardConflictError(DashboardError):
+    """State conflict, e.g. feedback entry cap reached (HTTP 409)."""
+
+
+class DashboardBusyError(DashboardError):
+    """Too many expensive computations in flight (HTTP 429)."""
+
+
+class DashboardStoreError(DashboardError):
+    """A server-side store (e.g. corrupt feedback.json) is unusable (HTTP 500)."""
 
 
 @dataclass(frozen=True)
@@ -150,6 +211,32 @@ def _derive_slug_from_prompt(prompt: str | None) -> str | None:
     return None
 
 
+def _started_after(started_at: str, cutoff: datetime) -> bool:
+    """True if the ISO timestamp is at/after *cutoff*; unparseable timestamps are excluded."""
+    try:
+        started = datetime.fromisoformat(started_at)
+    except (TypeError, ValueError):
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    return started >= cutoff
+
+
+class _SurvivalSlot:
+    """Context manager taking a non-blocking slot on the survival semaphore (no-op if None)."""
+
+    def __init__(self, sem: threading.BoundedSemaphore | None) -> None:
+        self._sem = sem
+
+    def __enter__(self) -> None:
+        if self._sem is not None and not self._sem.acquire(blocking=False):
+            raise DashboardBusyError("too many survival computations in progress; retry shortly")
+
+    def __exit__(self, *exc: object) -> None:
+        if self._sem is not None:
+            self._sem.release()
+
+
 class DashboardService:
     """Backend for the browser dashboard.
 
@@ -162,6 +249,7 @@ class DashboardService:
             *workspace_root*.
         config_path: Path the config was loaded from, for display.
         search_roots: Directories scanned for workflow specs. Defaults to *workspace_root*.
+        clock: Time source for launch-age filtering. Defaults to the wall clock.
     """
 
     def __init__(
@@ -173,12 +261,15 @@ class DashboardService:
         project_config: ProjectConfig | None = None,
         config_path: str | None = None,
         search_roots: list[str] | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
+        self._clock_now: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
         self.workspace_root = str(Path(workspace_root).resolve())
         self._browser = browser or FileBrowser(
             roots=[Root(name="workspace", path=self.workspace_root, role="workspace")]
         )
         self._repo = repository or RunRepository(self.workspace_root)
+        self._survival_sem = threading.BoundedSemaphore(MAX_CONCURRENT_SURVIVAL)
         self._supervisor = supervisor or ProcessSupervisor(self.workspace_root)
 
         if project_config is None:
@@ -304,7 +395,81 @@ class DashboardService:
             infos = discover_templates(self.workspace_root, self._config)
         except TemplateError as exc:
             raise DashboardError(str(exc)) from exc
-        return [asdict(info) for info in infos]
+        names = self._reposet_names()
+        out = [asdict(info) for info in infos]
+        if names:
+            for entry in out:
+                for param in entry["params"]:
+                    if param["name"] == REPO_SET_PARAM and not param["enum"]:
+                        # Offer the workspace's real repo sets instead of free text; a
+                        # declared default that is not one of them would pre-select a value
+                        # the engine rejects, so it is dropped.
+                        param["enum"] = list(names)
+                        if param["default"] not in names:
+                            param["default"] = None
+        return out
+
+    # -- launch preflight (root-cause prevention) -------------------------------
+
+    def _spec_path(self, configured: str | None, env_name: str) -> str | None:
+        """Reposets/agents path as the spawned ``ao run`` will resolve it.
+
+        The launcher passes the project-config path as an explicit flag, which outranks
+        the env var in ``cli._resolve_config_defaults`` -- same order here.
+        """
+        return configured or os.environ.get(env_name) or None
+
+    def _reposet_names(self) -> list[str] | None:
+        """Sorted repo-set names from the workspace reposets, or None when unreadable."""
+        path = self._spec_path(self._config.reposets if self._config else None, ENV_REPOSETS)
+        if not path:
+            return None
+        try:
+            return sorted(load_reposets(path))
+        except (OrchestratorError, OSError, ValueError, TypeError, AttributeError):
+            return None
+
+    def _check_repo_set(self, repo_set: str) -> None:
+        """Reject *repo_set* with the valid names listed, when the reposets are readable."""
+        names = self._reposet_names()
+        if names is not None and repo_set not in names:
+            raise DashboardValidationError(
+                f"Unknown repo_set {repo_set}; available: {', '.join(names) or '(none)'}"
+            )
+
+    def _preflight(self, workflow_path: str) -> None:
+        """Validate *workflow_path* against the workspace reposets/agents before spawning.
+
+        Uses the engine's own loaders and ``cross_validate`` so a spec the engine would
+        refuse is refused here with a precise 4xx instead of as a process that dies a
+        second later. Only the repo-set check is re-phrased (to list valid names).
+        Skipped when no reposets file is configured at all -- the engine then reports the
+        missing configuration itself, which this layer should not second-guess.
+        """
+        reposets_path = self._spec_path(
+            self._config.reposets if self._config else None, ENV_REPOSETS
+        )
+        if not reposets_path:
+            return
+        try:
+            workflow = load_workflow(workflow_path)
+            reposets = load_reposets(reposets_path)
+        except (OrchestratorError, OSError, ValueError) as exc:
+            raise DashboardValidationError(f"cannot launch {workflow_path}: {exc}") from exc
+
+        if workflow.repo_set not in reposets:
+            raise DashboardValidationError(
+                f"Unknown repo_set {workflow.repo_set}; available: "
+                f"{', '.join(sorted(reposets)) or '(none)'} (reposets file: {reposets_path})"
+            )
+
+        agents_path = self._spec_path(self._config.agents if self._config else None, ENV_AGENTS)
+        if not agents_path:
+            return
+        try:
+            cross_validate(workflow, reposets, load_agents(agents_path))
+        except (OrchestratorError, OSError, ValueError) as exc:
+            raise DashboardValidationError(f"cannot launch {workflow_path}: {exc}") from exc
 
     def create_instance(
         self,
@@ -355,6 +520,12 @@ class DashboardService:
 
         prompt_text = prompt if prompt and prompt.strip() else None
 
+        # Fail before scaffolding anything: a bad repo set would otherwise leave a
+        # half-useful instance dir behind and only surface when the run process dies.
+        chosen_repo_set = (params or {}).get(REPO_SET_PARAM, "").strip()
+        if chosen_repo_set:
+            self._check_repo_set(chosen_repo_set)
+
         try:
             result = instantiate(
                 template,
@@ -375,6 +546,7 @@ class DashboardService:
 
         launch: dict | None = None
         if start:
+            self._preflight(result.workflow_path)
             try:
                 record = self._supervisor.launch_run(
                     workflow_path=result.workflow_path,
@@ -384,7 +556,7 @@ class DashboardService:
                 )
             except LaunchError as exc:
                 raise DashboardError(str(exc)) from exc
-            launch = record.to_dict()
+            launch = self._supervisor.describe(record, include_log=True)
 
         return {
             "instance_dir": result.instance_dir,
@@ -417,7 +589,7 @@ class DashboardService:
         record = self._supervisor.record_for_run(run_id)
         payload = asdict(detail)
         payload["is_live"] = self._supervisor.is_running(run_id)
-        payload["launch"] = record.to_dict() if record else None
+        payload["launch"] = self._supervisor.describe(record) if record else None
         return payload
 
     def run_graph(self, run_id: str) -> dict:
@@ -436,6 +608,14 @@ class DashboardService:
         except RunNotFoundError as exc:
             raise DashboardError(f"run not found: {run_id}") from exc
         return asdict(graph)
+
+    def run_activity(self, run_id: str) -> dict:
+        """Live per-task activity (turns/tokens/last action/stuck) for the run page."""
+        try:
+            activity = self._repo.load_activity(run_id)
+        except RunNotFoundError as exc:
+            raise DashboardError(f"run not found: {run_id}") from exc
+        return asdict(activity)
 
     def run_stats(self) -> dict:
         """Aggregate stats across all runs (FR-R5.1)."""
@@ -500,6 +680,7 @@ class DashboardService:
                     "in the inputs of the task that should consume it."
                 )
 
+        self._preflight(workflow_path)
         try:
             record = self._supervisor.launch_run(
                 workflow_path=workflow_path,
@@ -510,7 +691,7 @@ class DashboardService:
             )
         except LaunchError as exc:
             raise DashboardError(str(exc)) from exc
-        return record.to_dict()
+        return self._supervisor.describe(record, include_log=True)
 
     def resume_run(self, run_id: str, options: dict | None = None) -> dict:
         """Resume an interrupted run (FR-R2)."""
@@ -530,7 +711,7 @@ class DashboardService:
             )
         except LaunchError as exc:
             raise DashboardError(str(exc)) from exc
-        return record.to_dict()
+        return self._supervisor.describe(record, include_log=True)
 
     def _workflow_for_run(self, run_id: str) -> str | None:
         """Best guess at the workflow spec a run used.
@@ -587,9 +768,181 @@ class DashboardService:
 
     # -- launches --------------------------------------------------------------
 
-    def list_launches(self) -> list[dict]:
-        """Every dashboard-initiated launch, reconciled against live PIDs."""
-        return [r.to_dict() for r in self._supervisor.reconcile()]
+    # -- usage / feedback / signals (E-Us9Kd4) ---------------------------------------
+
+    def usage_report(
+        self,
+        run_ids: list[str] | None = None,
+        *,
+        survival: bool = False,
+        ref: str | None = None,
+    ) -> dict:
+        """The shared usage report (same builder + payload as `ao report-usage --json`)."""
+        ids = list(dict.fromkeys(run_ids or []))  # de-dupe, keep order
+        if len(ids) > MAX_REPORT_RUN_IDS:
+            raise DashboardValidationError(f"too many run ids ({len(ids)} > {MAX_REPORT_RUN_IDS})")
+        for rid in ids:
+            self._checked_run_id(rid)
+        self._check_ref(ref, survival)
+        capped = False
+        if survival and not ids:
+            all_ids = self._repo.list_run_ids()  # newest first
+            capped = len(all_ids) > SURVIVAL_DEFAULT_MAX_RUNS
+            ids = all_ids[:SURVIVAL_DEFAULT_MAX_RUNS]
+        with self._survival_slot(survival):
+            try:
+                report = build_usage_report(
+                    self.workspace_root, ids or None, with_survival=survival, ref=ref
+                )
+            except ValueError as exc:
+                raise DashboardValidationError(str(exc)) from exc
+        payload = usage_report_payload(report)
+        payload["survival_runs_capped"] = capped
+        return payload
+
+    def get_feedback(self, run_id: str) -> dict:
+        """Entries (history), effective entries, and each task's effective rating."""
+        state = self._known_run_state(run_id)
+        try:
+            entries = load_feedback(self.workspace_root, run_id).entries
+        except FeedbackError as exc:
+            raise self._map_feedback_error(exc) from exc
+        return self._feedback_view(run_id, state, entries)
+
+    def add_run_feedback(
+        self,
+        run_id: str,
+        *,
+        scope: str,
+        rating: str,
+        reasons: list[str],
+        note: str | None = None,
+        task_id: str | None = None,
+    ) -> dict:
+        """Append one dashboard-sourced entry via the shared `feedback.add_feedback`."""
+        state = self._known_run_state(run_id)
+        try:
+            entry = add_feedback(
+                self.workspace_root,
+                run_id,
+                scope=scope,
+                rating=rating,
+                reasons=reasons,
+                note=note,
+                task_id=task_id,
+                source=DASHBOARD_FEEDBACK_SOURCE,
+            )
+            entries = load_feedback(self.workspace_root, run_id).entries
+        except FeedbackError as exc:
+            raise self._map_feedback_error(exc) from exc
+        return {
+            "entry": entry.model_dump(),
+            "feedback": self._feedback_view(run_id, state, entries),
+        }
+
+    def run_signals(self, run_id: str, *, survival: bool = False, ref: str | None = None) -> dict:
+        """Implicit signals plus (on demand) diff survival for one run."""
+        state = self._known_run_state(run_id)
+        self._check_ref(ref, survival)
+        survival_part: dict = {
+            "requested": survival,
+            "available": False,
+            "reason": None,
+            "ref": ref,
+            "total": None,
+            "tasks": [],
+        }
+        with self._survival_slot(survival):
+            sig = implicit_signals(state, self.workspace_root)
+            if survival:
+                report = compute_survival([state], self.workspace_root, ref=ref)
+                run = report.runs[0] if report.runs else None
+                reason = report.unavailable or (run.unavailable if run else "no survival result")
+                survival_part["reason"] = reason
+                if run is not None and not reason:
+                    survival_part["available"] = True
+                    survival_part["total"] = run.total.model_dump()
+                    survival_part["tasks"] = [t.model_dump() for t in run.tasks]
+                    apply_survival(sig, run)
+        return {"run_id": run_id, "signals": sig.model_dump(), "survival": survival_part}
+
+    def _checked_run_id(self, run_id: str) -> str:
+        try:
+            return validate_run_id(run_id)
+        except FeedbackError as exc:
+            raise DashboardValidationError(str(exc)) from exc
+
+    def _known_run_state(self, run_id: str) -> RunState:
+        self._checked_run_id(run_id)
+        try:
+            return self._repo.load_state(run_id)
+        except RunNotFoundError as exc:
+            raise DashboardNotFoundError(f"run not found: {run_id!r}") from exc
+
+    @staticmethod
+    def _check_ref(ref: str | None, survival: bool) -> None:
+        # Mirrors `ao report-usage`: --ref only means something with survival.
+        if ref is None:
+            return
+        if not survival:
+            raise DashboardValidationError("ref requires survival=true")
+        err = validate_ref(ref)
+        if err:
+            raise DashboardValidationError(f"invalid ref: {err}")
+
+    @staticmethod
+    def _map_feedback_error(exc: FeedbackError) -> DashboardError:
+        message = str(exc)
+        if isinstance(exc, FeedbackCapError):
+            return DashboardConflictError(message)
+        if "unknown task" in message or "run not found" in message:
+            return DashboardNotFoundError(message)
+        if message.startswith("corrupt feedback file") or "cannot read run state" in message:
+            return DashboardStoreError(message)
+        return DashboardValidationError(message)
+
+    @staticmethod
+    def _feedback_view(run_id: str, state: RunState, entries: list[FeedbackEntry]) -> dict:
+        tasks: dict[str, dict | None] = {}
+        for tid in state.tasks:
+            eff = effective_for_task(entries, tid)
+            tasks[tid] = eff.model_dump() if eff else None
+        return {
+            "run_id": run_id,
+            "entries": [e.model_dump() for e in entries],
+            "effective": [e.model_dump() for e in effective_ratings(entries).values()],
+            "tasks": tasks,
+        }
+
+    def _survival_slot(self, survival: bool) -> _SurvivalSlot:
+        return _SurvivalSlot(self._survival_sem if survival else None)
+
+    def list_launches(
+        self, status: str | None = None, since_hours: float | None = None
+    ) -> list[dict]:
+        """Dashboard-initiated launches (newest first), reconciled against live PIDs.
+
+        Each row carries the derived ``status``. *status* filters on it; *since_hours*
+        keeps launches that started within that many hours. For the failure strip
+        (``status=failed_to_start``) cancelled launches are excluded -- an operator who
+        cancelled a launch does not need to be told it did not start.
+        """
+        rows = [self._supervisor.describe(r) for r in self._supervisor.reconcile()]
+        if status:
+            rows = [r for r in rows if r["status"] == status]
+            if status == STATUS_FAILED_TO_START:
+                rows = [r for r in rows if not r["cancelled"] and r["exit_code"] != 0]
+        if since_hours is not None:
+            cutoff = self._clock_now() - timedelta(hours=since_hours)
+            rows = [r for r in rows if _started_after(r["started_at"], cutoff)]
+        return rows
+
+    def get_launch(self, launch_id: str) -> dict:
+        """One launch with its bounded log tail (404 for an unknown or malformed id)."""
+        record = self._supervisor.get_launch(launch_id)
+        if record is None:
+            raise DashboardNotFoundError(f"launch not found: {launch_id}")
+        return self._supervisor.describe(record, include_log=True)
 
 
 __all__ = [

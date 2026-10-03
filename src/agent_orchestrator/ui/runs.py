@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..artifacts import LocalFsArtifactStore
+from ..errors import ArtifactPathError
 from ..models import (
     RunState,
     WorkflowSnapshot,
@@ -26,7 +28,9 @@ from ..models import (
     compute_run_usage_totals,
 )
 from ..reporting import cache_effectiveness
+from ..run_prompt import file_sha256
 from ..runstate import load_workflow_snapshot_at
+from .activity import ResultReader, RunActivity, TranscriptTailer, read_run_activity, utc_now
 from .graph import RunGraph, build_run_graph, compute_graph_version
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,23 @@ STATUS_FILE = "status.json"
 # Terminal run statuses — a run in any other status is still considered live and is
 # therefore resumable/cancellable from the UI.
 TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+
+# The runs LIST carries only a one-line prompt preview (the full text, up to 64 KiB, is served
+# by the per-run detail endpoint) so the list payload stays small (E-Us9Kd4 FR-13).
+PROMPT_PREVIEW_CHARS = 80
+PROMPT_PREVIEW_ELLIPSIS = "\u2026"
+# Cap on running-task briefs carried per runs-list row (payload size on a polled endpoint).
+MAX_RUNNING_BRIEFS = 20
+
+
+def prompt_preview(text: str, limit: int = PROMPT_PREVIEW_CHARS) -> str | None:
+    """Single-line, ellipsized preview of a prompt; ``None`` when the prompt is blank."""
+    flat = " ".join(text.split())
+    if not flat:
+        return None
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1].rstrip() + PROMPT_PREVIEW_ELLIPSIS
 
 
 class RunNotFoundError(Exception):
@@ -85,6 +106,21 @@ class TaskStat:
     # never surfaced on the dashboard's own per-task view.
     dispatch_cycle: int = 0
     not_taken_reason: str | None = None
+    # E-iafh2F (additive): the EFFECTIVE agent/model/effort of the task's most recent dispatch
+    # (mirrors of TaskRunState; None for a never-dispatched task / pre-existing state).
+    agent: str | None = None
+    model: str | None = None
+    effort: str | None = None
+
+
+@dataclass(frozen=True)
+class RunningTaskBrief:
+    """One currently-running task on a runs-list row (state-derived, zero file I/O)."""
+
+    id: str
+    model: str | None
+    effort: str | None
+    started_at: str | None
 
 
 @dataclass(frozen=True)
@@ -124,6 +160,11 @@ class RunSummary:
     wall_seconds: float
     active_seconds: float
     is_terminal: bool
+    # One-line preview of the run prompt; None for runs with no recorded prompt.
+    prompt_preview: str | None = None
+    # E-iafh2F: the first MAX_RUNNING_BRIEFS running tasks (compact "now running" list view);
+    # `task_counts["running"]` still carries the true total.
+    running_tasks: list[RunningTaskBrief] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -143,6 +184,11 @@ class RunDetail:
     # `ui.graph.compute_graph_version` the `/graph` endpoint uses, from the SAME loaded
     # `state` -- so the two endpoints can never independently derive different values.
     graph_version: str = ""
+    # Full recorded prompt object (RunState.prompt) or None for old / prompt-less runs.
+    prompt: dict | None = None
+    # True/False when the prompt file's current sha256 differs from / matches the recorded one;
+    # None when it cannot be determined (no prompt, file gone/unreadable, path rejected).
+    prompt_changed_since_start: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +235,9 @@ class RunRepository:
 
     def __init__(self, workspace_root: str) -> None:
         self._root = Path(workspace_root).resolve()
+        # Bounded, cached readers for the live-activity endpoint (E-iafh2F, ADR-0018).
+        self._tailer = TranscriptTailer()
+        self._results = ResultReader()
 
     @property
     def runs_dir(self) -> Path:
@@ -257,6 +306,12 @@ class RunRepository:
             wall_seconds=_wall_seconds(state),
             active_seconds=compute_run_active_seconds(state),
             is_terminal=state.status in TERMINAL_STATUSES,
+            prompt_preview=prompt_preview(state.prompt.text) if state.prompt else None,
+            running_tasks=[
+                RunningTaskBrief(id=tid, model=ts.model, effort=ts.effort, started_at=ts.started_at)
+                for tid, ts in state.tasks.items()
+                if ts.status == "running"
+            ][:MAX_RUNNING_BRIEFS],
         )
 
     def list_summaries(self) -> list[RunSummary]:
@@ -308,11 +363,16 @@ class RunRepository:
                     cache_hit_rate=cache_eff.hit_rate,
                     dispatch_cycle=ts.dispatch_cycle,
                     not_taken_reason=ts.not_taken_reason,
+                    agent=ts.agent,
+                    model=ts.model,
+                    effort=ts.effort,
                 )
             )
 
         integration = state.integration
         return RunDetail(
+            prompt=asdict_safe(state.prompt) if state.prompt else None,
+            prompt_changed_since_start=self._prompt_changed(state),
             summary=summary,
             tasks=tasks,
             tripped_breakers=[asdict_safe(tb) for tb in state.tripped_breakers],
@@ -360,6 +420,37 @@ class RunRepository:
                     extra={"event": "ui.graph.degraded"},
                 )
         return build_run_graph(state, snapshot)
+
+    def load_activity(self, run_id: str, now: datetime | None = None) -> RunActivity:
+        """Live per-task activity for *run_id* (E-iafh2F, ADR-0018): read-only, bounded.
+
+        ``run_dir`` is the traversal-guarded directory; the reader additionally refuses task
+        ids / paths that escape it. ``RunNotFoundError`` only for an unknown/unreadable run.
+        """
+        state = self.load_state(run_id)
+        return read_run_activity(
+            state,
+            self.run_dir(run_id),
+            tailer=self._tailer,
+            results=self._results,
+            now=now or utc_now(),
+        )
+
+    def _prompt_changed(self, state: RunState) -> bool | None:
+        """Has the prompt file been edited since the run recorded it?
+
+        Resolved through the workspace-guarded artifact store (``prompt.path`` comes from
+        ``state.json`` so it is treated as untrusted) and hashed by streaming, in this service
+        layer -- the engine never reads payload files (NFR-1).
+        """
+        if state.prompt is None:
+            return None
+        try:
+            resolved = Path(LocalFsArtifactStore(str(self._root)).resolve(state.prompt.path))
+        except ArtifactPathError:
+            return None
+        current = file_sha256(resolved)
+        return None if current is None else current != state.prompt.sha256
 
     def aggregate(self) -> AggregateStats:
         """Totals across every readable run in the workspace (FR-R5.1)."""

@@ -127,25 +127,22 @@ def _derive(**kwargs: object):
 
 
 def test_ac1a_2000_example_converge_then_stabilize_then_closeout() -> None:
-    """HLD S12.2's $2000 example, run as a real sequential 3-checkpoint chain (the latch
-    threaded through `prev_stage`/`stabilize_passes_before` exactly as `compute_budget` would).
-    """
-    # Checkpoint 1: spent $1,450, projected next wave ~$1,650 (>= 80%) -> converge.
+    """The $2000 example as a real sequential 3-checkpoint chain: the stage follows ACTUAL
+    spend (80/90/95%), with the latch threaded through `prev_stage`/`stabilize_passes_before`
+    exactly as `compute_budget` would."""
     r1 = _derive(
-        spent=1450.0, est_unit_cost_usd=20.0, est_ckpt_cost_usd=20.0, prev_stage="explore", k=1
+        spent=1650.0, est_unit_cost_usd=20.0, est_ckpt_cost_usd=20.0, prev_stage="explore", k=1
     )
-    assert r1.stage_raw == "explore"
+    assert r1.stage_raw == "converge"
     assert r1.stage == "converge"
     assert r1.must_close is False
 
-    # Checkpoint 2: spent $1,760, projected ~$1,860 (>= 90%) -> stabilize (latched from converge).
     r2 = _derive(
-        spent=1760.0, est_unit_cost_usd=10.0, est_ckpt_cost_usd=10.0, prev_stage=r1.stage, k=2
+        spent=1860.0, est_unit_cost_usd=10.0, est_ckpt_cost_usd=10.0, prev_stage=r1.stage, k=2
     )
     assert r2.stage == "stabilize"
     assert r2.must_close is False
 
-    # Checkpoint 3: spent $1,905 (>= 95% alone) -> closeout, must_close.
     stabilize_passes_before = 0 + (1 if r2.stage == "stabilize" else 0)
     r3 = _derive(
         spent=1905.0,
@@ -175,13 +172,31 @@ def test_ac1c_zero_settled_costs_are_used_not_defaults() -> None:
     assert ov.time_cap_from_median_duration(0.0, wave_max_minutes=90.0) == ov.DEFAULT_TIME_CAP_TASKS
 
 
-def test_ac1d_projection_crosses_threshold_while_spend_has_not() -> None:
+def test_ac1d_projection_alone_never_escalates_the_stage() -> None:
+    """wave_size x unit-cost need NOT fit the run budget (units rarely spend their full
+    estimate): a projection that crosses a threshold is informational only."""
     result = _derive(
         spent=1500.0, est_unit_cost_usd=20.0, est_ckpt_cost_usd=20.0, prev_stage="explore"
     )
-    assert result.stage_raw == "explore"  # 75% alone stays under converge_pct=80
-    assert result.stage_projected == "converge"  # but the projection crosses 80%
-    assert result.stage == "converge"
+    assert result.stage_raw == "explore"  # 75% actual spend
+    assert result.stage_projected == "converge"  # informational: the full-estimate projection
+    assert result.stage == "explore"  # the stage follows actual spend
+
+
+def test_ac1d2_oversized_wave_still_runs_when_estimates_exceed_budget() -> None:
+    """The reported case: 6 units x $8 + tail > a $20 run budget must not force close-out
+    or a zero-size wave at spent=$0."""
+    result = _derive(
+        spent=0.0,
+        run_budget_usd=20.0,
+        wave_size=6,
+        est_unit_cost_usd=8.0,
+        est_ckpt_cost_usd=5.0,
+        prev_stage="explore",
+    )
+    assert result.stage == "explore"
+    assert result.allowed_wave_size == 6
+    assert result.must_close is False
 
 
 def test_ac1e_latch_never_de_escalates_on_a_lower_later_spend() -> None:
@@ -402,9 +417,9 @@ def test_ac1k_must_close_forces_closeout_only_regardless_of_stage() -> None:
         "expected",
     ),
     [
-        ("explore", 6, 4, 10, 3, 20, 3),  # min(wave_size, time_cap, budget_cap)
+        ("explore", 6, 4, 10, 3, 20, 6),  # min(wave_size, time_cap); budget_cap is advisory
         ("explore", 6, 4, 2, 20, 20, 2),  # time_cap is the binding constraint
-        ("converge", 6, 4, 20, 0, 20, 1),  # budget_cap=0 still floors at 1 (keeps the run moving)
+        ("converge", 6, 4, 20, 0, 20, 6),  # budget_cap=0 no longer limits the wave
         (
             "stabilize",
             6,
@@ -412,8 +427,8 @@ def test_ac1k_must_close_forces_closeout_only_regardless_of_stage() -> None:
             20,
             20,
             2,
-            2,
-        ),  # stabilize uses stabilize_wave_size + budget_cap_to_100pct
+            4,
+        ),  # stabilize uses stabilize_wave_size; budget_cap_to_100pct is advisory
         ("stabilize", 6, 4, 20, 20, 20, 4),  # stabilize_wave_size is the binding constraint
         ("closeout", 6, 4, 20, 20, 20, 0),  # closeout never plans new units
     ],

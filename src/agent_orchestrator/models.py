@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,14 @@ class AgentSpec(BaseModel):
     # ships opt-in per CLAUDE.md's "safe by default" rule rather than as a silent default for
     # `isolation: worktree` workflows. Recommended for every agent used in such a workflow.
     exclude_dynamic_system_prompt_sections: bool = False
+    # Case-insensitive substrings a TASK-level `model` override may NOT contain when this
+    # agent is dispatched (e.g. ["haiku"] on reviewer/architect/e2e-tester roles). Guards the
+    # agent-authored `emit_tasks` path, where a breakdown agent can set `model` per task with
+    # no other check. Enforced by `spec.validate_task_model_policy` at `ao validate` time AND
+    # at injection time -- a violation fails fast rather than silently running a weak model in
+    # a rigour-critical role. The agent's OWN `model` is the operator's choice and is not
+    # policed here. Default [] = no restriction (backward compatible).
+    forbidden_task_models: list[str] = []
 
 
 class TaskSpec(BaseModel):
@@ -292,6 +301,12 @@ class TaskSpec(BaseModel):
     model: str | None = None
     effort: EffortLevel | None = None
     max_turns: int | None = None
+
+    @field_validator("model")
+    @classmethod
+    def _check_model_id(cls, v: str | None) -> str | None:
+        return None if v is None else validate_model_id(v)
+
     # Per-task git isolation (E-Wk9Tz3 FR-1). "inherit" (default) takes
     # workflow.defaults.isolation; "worktree" runs the task in a private git worktree on
     # branch ao/<run_id>/<task_id> and integrates by squash+rebase; "none" opts a task out
@@ -313,9 +328,58 @@ class TaskSpec(BaseModel):
     # same reasoning as `touches` above). None (the default) is a true no-op (FR-4).
     pre_hook: HookRef | None = None
     post_hook: HookRef | None = None
+    # Workspace-relative path of an optional structured verdict sidecar this task writes
+    # (`ao report-usage`, see `usage.verdict_path_for`). NOT a declared output and never a
+    # gate: read lazily at report time via `artifacts.read_control`; missing = "no verdict".
+    verdict_path: str | None = None
 
 
-def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
+# A model id/alias is handed to `claude --model` as ONE argv element. Whitelisting the
+# character set (and forbidding a leading '-') means an agent-authored `emit_tasks` manifest
+# can never smuggle a flag through the `model` field. Covers aliases ("opus"), dated ids
+# ("claude-haiku-4-5-20251001"), versioned ids ("claude-opus-4-8") and context suffixes
+# ("sonnet[1m]"). Whether the model actually EXISTS is the CLI's call, not ours.
+MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-\[\]]{0,127}$")
+
+
+def validate_model_id(value: str) -> str:
+    """Return *value* stripped if it is a well-formed model id/alias, else raise ValueError."""
+    model = value.strip()
+    if not MODEL_ID_PATTERN.match(model):
+        raise ValueError(
+            f"invalid model id {value!r}: expected letters/digits/'.'/'_'/'-'/':'/'[]' "
+            "(e.g. 'claude-opus-4-8', 'sonnet', 'claude-haiku-4-5-20251001')"
+        )
+    return model
+
+
+_MODEL_FLAGS = ("--model", "-m")
+
+
+def strip_model_flag(argv: list[str]) -> list[str]:
+    """Drop any `--model X` / `--model=X` / `-m X` pair from *argv* (a command_template).
+
+    A TASK-level model must beat a model baked into an agent's command_template (e.g. the
+    `architect-opus` agent), otherwise the override would be silently ignored.
+    """
+    out: list[str] = []
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+            continue
+        if arg in _MODEL_FLAGS:
+            skip = True
+            continue
+        if arg.startswith("--model="):
+            continue
+        out.append(arg)
+    return out
+
+
+def resolve_effective_agent(
+    task: TaskSpec, agent: AgentSpec, default_model: str | None = None
+) -> AgentSpec:
     """Merge *task*'s model/effort/max_turns overrides onto *agent* (ADR-0003 decision 2).
 
     Precedence at dispatch: task > agent > (whatever the agent already resolved from the
@@ -327,14 +391,24 @@ def resolve_effective_agent(task: TaskSpec, agent: AgentSpec) -> AgentSpec:
     passing the raw `AgentSpec` so the executor's argv-injection logic never has to know
     about task-level overrides.
 
-    Returns *agent* unchanged (no copy) when the task declares no overrides at all, so the
-    common case (no per-task tuning) allocates nothing new.
+    *default_model* is the workflow's `defaults.model`: an explicit workflow-author choice
+    that applies to every task naming no model of its own (including `emit_tasks`-injected
+    ones) and, like a task-level model, beats the agent's own/baked model.
+
+    Returns *agent* unchanged (no copy) when no override applies at all, so the common case
+    (no per-task tuning) allocates nothing new.
     """
-    if task.model is None and task.effort is None and task.max_turns is None:
+    model = task.model if task.model is not None else default_model
+    if model is None and task.effort is None and task.max_turns is None:
         return agent
     return agent.model_copy(
         update={
-            "model": task.model if task.model is not None else agent.model,
+            "command_template": (
+                strip_model_flag(agent.command_template)
+                if model is not None
+                else agent.command_template
+            ),
+            "model": model if model is not None else agent.model,
             "effort": task.effort if task.effort is not None else agent.effort,
             "max_turns": task.max_turns if task.max_turns is not None else agent.max_turns,
         }
@@ -348,6 +422,14 @@ class WorkflowDefaults(BaseModel):
     # isolation="inherit" (the TaskSpec default) resolves to this value. Default "none"
     # keeps every pre-epic workflow byte-identical (NFR-2).
     isolation: WorkflowIsolation = ISOLATION_NONE
+    # Workflow-level default model for every task (static or `emit_tasks`-injected) that sets
+    # no `model` of its own; resolved in `resolve_effective_agent`. None = agents decide.
+    model: str | None = None
+
+    @field_validator("model")
+    @classmethod
+    def _check_model_id(cls, v: str | None) -> str | None:
+        return None if v is None else validate_model_id(v)
 
 
 class Trigger(BaseModel):
@@ -923,6 +1005,10 @@ class TaskIntegrationState(BaseModel):
     conflicted_paths: list[str] = []  # paths only (NFR-1)
     verify_status: Literal["not_run", "passed", "failed"] = "not_run"
     last_error: str | None = None
+    # repo_key -> [[head_from, head_to], ...]: every integration-head range this task's landing
+    # advanced (one entry per successful integration, so retries/requeues are summed). Durable
+    # patch range for `ao report-survival` -- squash shas alone can be rewritten/unreachable.
+    landed_ranges: dict[str, list[list[str]]] = {}
 
 
 class RunIntegrationState(BaseModel):
@@ -1058,6 +1144,59 @@ class TaskRunState(BaseModel):
     # <output_dir>/pre_hook|post_hook/ regardless.
     pre_hook_result: HookOutcome | None = None
     post_hook_result: HookOutcome | None = None
+    # Dispatch provenance for usage analytics (`ao report-usage`), recorded by the engine at
+    # each dispatch via `usage.dispatch_provenance` (main thread, same site as
+    # `dispatch_cycle`). Reflects the MOST RECENT dispatch. All default to "unknown" so
+    # pre-existing run states load unchanged. `model`/`effort` are the EFFECTIVE values the
+    # executor was handed (task override > agent > global fill-in); `model` None means the
+    # claude CLI's own default was used. A T2 conflict-resolver redispatch records the
+    # originating task's agent, not the resolver's (known approximation).
+    agent: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    # Ids of tasks whose declared outputs this task consumes as inputs -- lets a review's
+    # verdict be attributed to the task(s) whose work it judged.
+    upstream_producers: list[str] = []
+    # Workspace-relative path of this task's structured review verdict sidecar, set only for
+    # a task that declares a `review.md` output (see `usage.REVIEW_VERDICT_BASENAME`).
+    # Read lazily at report time, never by the engine.
+    review_verdict_path: str | None = None
+    # Generic verdict sidecar path (see `usage.verdict_path_for`); superset of the above.
+    verdict_path: str | None = None
+    # repo_key -> HEAD sha of that git repo when this task settled (main thread, same site as
+    # the cumulative-usage mirror). Feeds `ao report-survival`'s serial attribution
+    # (prev_head..end_head). Empty for pre-existing states / non-git workspaces.
+    end_heads: dict[str, str] = {}
+    # Same shape, captured at the task's FIRST dispatch -- bounds the task's [start, end] commit
+    # window so concurrent (`max_parallel>1`) tasks can be told apart from serial ones.
+    start_heads: dict[str, str] = {}
+
+
+# Run-prompt capture (E-Us9Kd4 FR-13). Named so the CLI capture helper, the dashboard and the
+# tests share one bound. The stored text is cut at this many UTF-8 BYTES (never mid-character).
+MAX_PROMPT_BYTES = 64 * 1024
+PromptSource = Literal["cli-prompt", "cli-prompt-file", "workflow-file"]
+PROMPT_SOURCE_CLI_PROMPT: PromptSource = "cli-prompt"
+PROMPT_SOURCE_CLI_PROMPT_FILE: PromptSource = "cli-prompt-file"
+PROMPT_SOURCE_WORKFLOW_FILE: PromptSource = "workflow-file"
+
+
+class RunPrompt(BaseModel):
+    """The prompt a run started with, recorded as a VALUE on ``RunState.prompt``.
+
+    Captured by the CLI layer (never the engine, which must not read payload artifacts --
+    NFR-1) and handed to the Orchestrator. ``text`` is bounded to ``MAX_PROMPT_BYTES``;
+    ``chars`` is the ORIGINAL length and ``sha256`` is over the FULL file bytes, so a later
+    edit of the prompt file is detectable even when the stored text is truncated.
+    """
+
+    text: str
+    truncated: bool = False
+    chars: int
+    source: PromptSource
+    path: str  # the workflow's ``prompt_path`` exactly as declared
+    sha256: str
+    captured_at: str
 
 
 class RunState(BaseModel):
@@ -1111,6 +1250,20 @@ class RunState(BaseModel):
     # run was launched. Defaulted for NFR-5 backward-compat: a pre-epic state.json loads
     # with spec_sessions == [], which the dashboard reports as source "unavailable".
     spec_sessions: list[SpecSession] = []
+
+    # Diff-survival recording (`ao report-survival`): repo_key -> toplevel for every git repo of
+    # the workflow's repo paths, and repo_key -> HEAD at the FIRST run start (never overwritten
+    # on resume). Both default empty so older state.json files load unchanged.
+    git_repos: dict[str, str] = {}
+    git_start_heads: dict[str, str] = {}
+    # The prompt this run started with (E-Us9Kd4 FR-13); None for runs that predate the field
+    # or whose workflow declares no prompt_path / has no prompt file at start. Never rewritten
+    # on resume.
+    prompt: RunPrompt | None = None
+    # The `record_git_heads` setting in force when the run STARTED (FR-12): False = the operator
+    # intentionally opted out of head recording (so `ao report-survival` can say why attribution
+    # is coarser); None = unknown (a run predating this field). Never rewritten on resume.
+    record_git_heads: bool | None = None
 
 
 class RunUsageTotals(BaseModel):

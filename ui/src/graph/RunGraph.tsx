@@ -689,6 +689,7 @@ function RunGraphCanvas({
             statsById={statsById}
             onClose={() => handleClosePanel({ returnFocus: true })}
             onNavigate={selectAndCenter}
+            runId={runId}
           />
         ) : null}
       </div>

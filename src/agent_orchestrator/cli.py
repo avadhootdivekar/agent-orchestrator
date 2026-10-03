@@ -16,6 +16,12 @@ Commands:
                         optional --task activity-type breakdown, on-demand (E-1cecSx B2/B4).
   ao report-outcomes — Local retry/review-loop/breakdown-frequency counts, and an optional
                         post-run deterministic grading pass (--grade) (E-1cecSx B3).
+  ao report-usage    — Cross-run cost/retry/rework rollup by (agent, model, effort), with
+                        review-verdict attribution to the model whose work was reviewed.
+  ao report-survival — Git-only diff survival per run/task: how much of what a run changed
+                        is still present at a ref (E-Us9Kd4).
+  ao rate            — Record your own good/ok/bad rating (run or task) in the run's local
+                        feedback.json, or list it with --show (E-Us9Kd4).
 
 Options:
   ao --version / -V         — Show version (+ commit/build info for non-release builds).
@@ -520,6 +526,38 @@ def _apply_prompt(
     typer.echo(f"Wrote prompt ({len(text)} chars) to {dest}")
 
 
+def _capture_run_prompt(
+    wf,  # WorkflowSpec — untyped to keep this module's lazy-import style
+    store: ArtifactStore,
+    prompt: str | None,
+    prompt_file: str | None,
+):
+    """Read the workflow's prompt file into a ``RunPrompt`` value for the Orchestrator (FR-13).
+
+    Runs AFTER ``_apply_prompt`` so ``--prompt``/``--prompt-file`` content is already on disk.
+    The engine never reads payload artifacts (NFR-1), hence the capture lives here. Returns
+    ``None`` -- never fails the run -- when the workflow declares no ``prompt_path``, the path
+    escapes the workspace, or no readable file exists yet.
+    """
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    from .errors import ArtifactPathError
+    from .run_prompt import capture_run_prompt, prompt_source
+
+    if not wf.prompt_path:
+        return None
+    try:
+        resolved = Path(store.resolve(wf.prompt_path))
+    except ArtifactPathError:
+        return None
+    if not resolved.is_file():
+        return None
+    return capture_run_prompt(
+        resolved, wf.prompt_path, prompt_source(prompt, prompt_file), lambda: _dt.now(UTC)
+    )
+
+
 def _resolve_run_settings(
     max_attempts: int | None,
     max_turns: int | None,
@@ -733,6 +771,25 @@ def _resolve_monitoring_settings(self_heal: bool | None) -> MonitoringConfig:
     return base.model_copy(update={"self_heal": resolved_self_heal})
 
 
+ENV_RECORD_GIT_HEADS = "AO_RECORD_GIT_HEADS"
+
+
+def _resolve_record_git_heads(record_git_heads: bool | None) -> bool:
+    """Resolve the diff-survival head-recording opt-out (FR-12): CLI flag > env
+    `AO_RECORD_GIT_HEADS` (1/0/true/false/yes/no/on/off) > `.ao/config.yaml`
+    `record_git_heads` > built-in default (True). Tri-state like `--self-heal`: an operator can
+    force it either way over the config."""
+    if record_git_heads is not None:
+        return record_git_heads
+    env = os.environ.get(ENV_RECORD_GIT_HEADS)
+    if env and env.strip():
+        return env.strip().lower() in ("1", "true", "yes", "on")
+    cfg = _load_project_config_or_exit()
+    if cfg is not None and cfg.record_git_heads is not None:
+        return cfg.record_git_heads
+    return True
+
+
 def _build_monitor(
     cfg: MonitoringConfig, agent_map: dict, store: ArtifactStore, executor: Executor
 ) -> Monitor:
@@ -927,7 +984,7 @@ def run(
     model: str | None = typer.Option(
         None,
         "--model",
-        help="Claude model for all agents (e.g. claude-sonnet-4-6). Env: AO_MODEL",
+        help="Claude model for all agents (e.g. sonnet, opus or claude-sonnet-5-5). Env: AO_MODEL",
     ),
     effort: str | None = typer.Option(
         None,
@@ -966,6 +1023,16 @@ def run(
             " overrides env/config in either direction. Env: AO_SELF_HEAL (1/0)."
             " Default: off. Unrelated to recommend-mode breaker consult (Consult Point A),"
             " which activates purely from a workflow's own circuit_breakers[].mode."
+        ),
+    ),
+    record_git_heads: bool | None = typer.Option(
+        None,
+        "--record-git-heads/--no-record-git-heads",
+        help=(
+            "Record git HEADs at run/task start+settle for `ao report-survival` serial"
+            " attribution (default: on). --no-record-git-heads makes no head-recording git"
+            " calls (survival falls back to isolation ranges / time-window and says so)."
+            " Env: AO_RECORD_GIT_HEADS (1/0). Config: record_git_heads."
         ),
     ),
     general_instruction: list[str] = typer.Option(
@@ -1110,6 +1177,7 @@ def run(
     # Materialize the run prompt BEFORE the run starts, so the task that lists prompt_path
     # in its inputs sees the new text (and its missing-inputs gate passes).
     _apply_prompt(wf, store, prompt, prompt_file)
+    run_prompt = _capture_run_prompt(wf, store, prompt, prompt_file)
 
     effective_general_instructions = resolve_general_instructions(
         general_instruction, wf.general_instructions
@@ -1155,6 +1223,8 @@ def run(
         general_instructions=effective_general_instructions,
         isolation_strict=eff_isolation_strict,
         isolation_env=eff_isolation_env,
+        record_git_heads=_resolve_record_git_heads(record_git_heads),
+        run_prompt=run_prompt,
     )
 
     try:
@@ -1207,7 +1277,7 @@ def resume(
     model: str | None = typer.Option(
         None,
         "--model",
-        help="Claude model for all agents (e.g. claude-sonnet-4-6). Env: AO_MODEL",
+        help="Claude model for all agents (e.g. sonnet, opus or claude-sonnet-5-5). Env: AO_MODEL",
     ),
     effort: str | None = typer.Option(
         None,
@@ -1262,6 +1332,16 @@ def resume(
             "Enable/disable task-failure self-healing (Consult Point B, E-XyfjuZ);"
             " overrides env/config in either direction. Env: AO_SELF_HEAL (1/0)."
             " Default: off."
+        ),
+    ),
+    record_git_heads: bool | None = typer.Option(
+        None,
+        "--record-git-heads/--no-record-git-heads",
+        help=(
+            "Record git HEADs at run/task start+settle for `ao report-survival` serial"
+            " attribution (default: on). --no-record-git-heads makes no head-recording git"
+            " calls (survival falls back to isolation ranges / time-window and says so)."
+            " Env: AO_RECORD_GIT_HEADS (1/0). Config: record_git_heads."
         ),
     ),
     general_instruction: list[str] = typer.Option(
@@ -1482,6 +1562,7 @@ def resume(
         general_instructions=effective_general_instructions,
         isolation_strict=eff_isolation_strict,
         isolation_env=eff_isolation_env,
+        record_git_heads=_resolve_record_git_heads(record_git_heads),
     )
 
     try:
@@ -1773,6 +1854,300 @@ def report_outcomes(
         _json.dumps([g.model_dump() for g in grades], indent=2), encoding="utf-8"
     )
     typer.echo(f"\nWritten: {report_path}")
+
+
+@app.command(name="report-usage")
+def report_usage(
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+    run_ids: list[str] = typer.Option(
+        [], "--run-id", help="Restrict to this run (repeatable). Default: every run."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    with_survival: bool = typer.Option(
+        False, "--with-survival", help="Also join diff survival (git; degrades if unavailable)."
+    ),
+    ref: str | None = typer.Option(
+        None, "--ref", help="With --with-survival: git ref to measure survival at (default HEAD)."
+    ),
+) -> None:
+    """Roll settled tasks up by (agent, model, effort) across runs: cost, retries, and how
+    often the work needed rework (reviewer verdict FAIL / findings), attributed to the model
+    that produced the reviewed work. Joins local user feedback (`ao rate`) and, with
+    --with-survival, how much of the added code still exists.
+
+    Observational, not an A/B test -- different models usually get different tasks, so compare
+    groups with similar task mixes; small groups are shown but never flagged. Runs recorded
+    before model/effort capture appear under "(default)"."""
+    import json as _json
+
+    from .survival import validate_ref
+    from .usage import build_usage_report, usage_report_payload
+
+    if ref is not None:
+        if not with_survival:
+            typer.echo("ERROR: --ref requires --with-survival", err=True)
+            raise typer.Exit(2)
+        ref_err = validate_ref(ref)
+        if ref_err:
+            typer.echo(f"ERROR: invalid --ref: {ref_err}", err=True)
+            raise typer.Exit(2)
+
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    try:
+        report = build_usage_report(ws_root, run_ids or None, with_survival=with_survival, ref=ref)
+    except ValueError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(2) from e
+    for skipped in report.skipped:
+        typer.echo(f"WARNING: skipping run {skipped}", err=True)
+
+    if as_json:
+        # includes `outcomes` (per-run charter signals) and, with survival, `run_signals`
+        typer.echo(_json.dumps(usage_report_payload(report), indent=2))
+        return
+
+    typer.echo(
+        f"\nRuns scanned: {report.runs_scanned}  |  verdicts found: "
+        f"{report.verdicts_found}/{report.reviews_seen}"
+    )
+    if not with_survival:
+        survival_txt = "off (use --with-survival)"
+    elif report.survival_available:
+        survival_txt = f"at {ref or 'HEAD'}"
+    else:
+        survival_txt = f"unavailable ({report.survival_unavailable_reason})"
+    fb_txt = f"feedback: {report.runs_rated} of {report.runs_scanned} runs rated"
+    if report.feedback_errors:
+        fb_txt += f" ({report.feedback_errors} unreadable)"
+    typer.echo(f"{fb_txt} | survival: {survival_txt}")
+    if report.outcomes:
+        typer.echo("\nOutcome vs charter")
+        for o in report.outcomes:
+            al = " ".join(f"{k}={v}" for k, v in sorted(o.alignment.items())) or "-"
+            typer.echo(
+                f"  {o.run_id}: checkpoints {o.checkpoints_found}/{o.checkpoints_seen}  "
+                f"last decision: {o.last_decision or 'n/a'}  criteria met/unmet/deferred: "
+                f"{o.criteria_met}/{o.criteria_unmet}/{o.criteria_deferred}  alignment: {al}"
+            )
+            fv = o.final_verify
+            fv_txt = f"met/partial/not_met: {fv.met}/{fv.partial}/{fv.not_met}" if fv else "n/a"
+            typer.echo(f"    final verify {fv_txt}")
+    if report.run_signals:
+        typer.echo("\nRun signals (implicit, circumstantial)")
+        for rs in report.run_signals:
+            sg = rs.signals
+
+            def _v(x: object) -> str:
+                return "n/a" if x is None else str(x)
+
+            typer.echo(
+                f"  {rs.run_id}: status={sg.run_status} landed={_v(sg.landed)} "
+                f"followup_commits={_v(sg.followup_commits)} "
+                f"reverted_commits={_v(sg.reverted_commits)}"
+            )
+    if not report.groups:
+        typer.echo("(no settled, dispatched tasks found)")
+        return
+
+    def _pct(v: float | None) -> str:
+        return f"{v:.0%}" if v is not None else "n/a"
+
+    typer.echo(
+        f"\n{'Agent':<18} {'Model':<26} {'Effort':<7} {'Tasks':>5} {'OK':>4} {'Retry':>6} "
+        f"{'$/task':>8} {'Reviewed':>8} {'Fail%':>6} {'C/M/m':>9} "
+        f"{'Fb(g/o/b)':>10} {'Unn':>4} {'Surv%':>6}"
+    )
+    typer.echo("-" * 130)
+    for g in report.groups:
+        mean = f"{g.mean_cost_usd:.3f}" if g.mean_cost_usd is not None else "n/a"
+        fb = f"{g.fb_good}/{g.fb_ok}/{g.fb_bad}"
+        typer.echo(
+            f"{g.agent:<18} {g.model:<26} {g.effort:<7} {g.tasks:>5} {g.succeeded:>4} "
+            f"{_pct(g.retry_rate):>6} {mean:>8} {g.reviewed:>8} "
+            f"{_pct(g.review_fail_rate):>6} {f'{g.critical}/{g.major}/{g.minor}':>9} "
+            f"{fb:>10} {g.fb_unnecessary:>4} {_pct(g.survival_rate):>6}"
+        )
+    for g in report.groups:
+        for flag in g.flags:
+            typer.echo(f"FLAG {g.agent}/{g.model}/{g.effort}: {flag}")
+    typer.echo("\nC/M/m = critical/major/minor review findings attributed to that group's work.")
+    typer.echo(
+        "Fb = user ratings (effective: task entry, else run entry); Surv% = share of added lines "
+        "still present (isolation/serial-attributed tasks only)."
+    )
+
+
+@app.command(name="rate")
+def rate(
+    run_id: str = typer.Argument(..., help="Run ID to rate"),
+    rating: str | None = typer.Argument(None, help="good | ok | bad (omit with --show)"),
+    task: str | None = typer.Option(None, "--task", help="Rate this task instead of the run."),
+    reasons: list[str] = typer.Option(
+        [], "--reason", help="Why (repeatable): wrong, incomplete, unnecessary, too-costly, ..."
+    ),
+    note: str | None = typer.Option(None, "--note", help="Free-text note (max 2000 chars)."),
+    show: bool = typer.Option(False, "--show", help="List feedback history + effective ratings."),
+    as_json: bool = typer.Option(False, "--json", help="With --show: machine-readable JSON."),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+) -> None:
+    """Record local feedback on a run (or one task) -- stored in the run's feedback.json,
+    never sent anywhere. History is kept; the latest rating per run/task is the effective one."""
+    import json as _json
+
+    from .feedback import (
+        FeedbackError,
+        add_feedback,
+        effective_ratings,
+        load_feedback,
+    )
+
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    try:
+        if show:
+            doc = load_feedback(ws_root, run_id)
+            eff = effective_ratings(doc.entries)
+            if as_json:
+                typer.echo(
+                    _json.dumps(
+                        {
+                            "run_id": run_id,
+                            "entries": [e.model_dump() for e in doc.entries],
+                            "effective": [e.model_dump() for e in eff.values()],
+                        },
+                        indent=2,
+                    )
+                )
+                return
+            if not doc.entries:
+                typer.echo(f"(no feedback recorded for run {run_id})")
+                return
+            typer.echo(f"\nFeedback for {run_id} ({len(doc.entries)} entries)")
+            typer.echo(
+                f"{'Time':<32} {'Scope':<5} {'Task':<24} {'Rating':<6} {'Eff':<3} Reasons / note"
+            )
+            effective_ids = {id(e) for e in eff.values()}
+            for e in doc.entries:
+                extra = ",".join(e.reasons) + (f'  "{e.note}"' if e.note else "")
+                typer.echo(
+                    f"{e.ts:<32} {e.scope:<5} {e.task_id or '-':<24} {e.rating:<6} "
+                    f"{'*' if id(e) in effective_ids else '':<3} {extra}"
+                )
+            return
+        if rating is None:
+            raise FeedbackError("a rating (good|ok|bad) is required unless --show is given")
+        entry = add_feedback(
+            ws_root,
+            run_id,
+            scope="task" if task else "run",
+            rating=rating,
+            reasons=list(reasons),
+            note=note,
+            task_id=task,
+            source="cli",
+        )
+    except FeedbackError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(1) from e
+    target = f"task {entry.task_id}" if entry.task_id else "run"
+    typer.echo(f"Recorded {entry.rating!r} for {target} of {run_id}.")
+
+
+@app.command(name="report-survival")
+def report_survival(
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
+    run_ids: list[str] = typer.Option(
+        [], "--run-id", help="Restrict to this run (repeatable). Default: every run."
+    ),
+    ref: str | None = typer.Option(
+        None, "--ref", help="Git ref to measure survival at (default: each repo's HEAD)."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """How much of the code each run/task added is still present at a ref (default HEAD).
+
+    Git-only heuristic (content match, not blame): ~100% right after a run, only informative
+    as later work lands -- re-run it later. Task rows appear only where commits can be
+    attributed (isolation squash, or non-overlapping serial tasks); run rows always count
+    everything attributed, old runs fall back to a low-confidence time window."""
+    import json as _json
+
+    from .artifacts import LocalFsArtifactStore
+    from .runstate import RunStateStore
+    from .survival import TaskSurvival, compute_survival, validate_ref
+    from .usage import list_run_ids
+
+    if ref is not None:
+        ref_err = validate_ref(ref)
+        if ref_err:
+            typer.echo(f"ERROR: invalid --ref: {ref_err}", err=True)
+            raise typer.Exit(2)
+
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    store = LocalFsArtifactStore(ws_root)
+    rs_store = RunStateStore(ws_root, store)
+    states = []
+    for rid in run_ids or list_run_ids(ws_root):
+        try:
+            states.append(rs_store.load(rid))
+        except (FileNotFoundError, ValueError) as e:
+            typer.echo(f"WARNING: skipping run {rid!r}: {e}", err=True)
+    report = compute_survival(states, ws_root, ref=ref)
+
+    if ref is not None and report.ref_resolved is False:
+        typer.echo(f"ERROR: {report.unavailable}", err=True)
+        raise typer.Exit(1)
+    if as_json:
+        typer.echo(_json.dumps(report.model_dump(), indent=2))
+        return
+    if report.unavailable:
+        typer.echo(f"survival: unavailable ({report.unavailable})")
+        return
+    if not report.runs:
+        typer.echo("(no runs found)")
+        return
+
+    def _cell(r: TaskSurvival) -> str:
+        rate = f"{r.survival_rate:.0%}" if r.survival_rate is not None else "n/a"
+        flags = ",".join(r.flags + [f"trunc:{t}" for t in r.truncated])
+        if r.unavailable:
+            flags = (flags + " " if flags else "") + f"unavailable({r.unavailable})"
+        return (
+            f"{r.attribution:<11} {r.confidence or '-':<6} {r.commits:>7} {r.files:>5} "
+            f"{r.lines_added:>7} {r.lines_survived:>8} {rate:>6}  {flags}"
+        )
+
+    typer.echo(f"\nSurvival at {ref or 'HEAD'}")
+    typer.echo(
+        f"\n{'Run':<22} {'Task':<22} {'Attribution':<11} {'Conf':<6} {'Commits':>7} "
+        f"{'Files':>5} {'+Lines':>7} {'Survived':>8} {'Rate':>6}  Flags"
+    )
+    typer.echo("-" * 120)
+    for run in report.runs:
+        typer.echo(f"{run.run_id[:22]:<22} {'(run)':<22} {_cell(run.total)}")
+        for t in run.tasks:
+            typer.echo(f"{'':<22} {(t.task_id or '')[:22]:<22} {_cell(t)}")
+    for run in report.runs:
+        if run.attribution_reason:
+            typer.echo(f"\nNote [{run.run_id[:22]}]: {run.attribution_reason}")
+    typer.echo(
+        "\nContent-match heuristic, not blame; ambiguous = overlapping serial windows "
+        "(run-level only); time-window = low-confidence fallback for old runs."
+    )
 
 
 @app.command(name="init")

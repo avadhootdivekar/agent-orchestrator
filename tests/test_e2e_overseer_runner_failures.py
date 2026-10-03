@@ -1180,7 +1180,7 @@ class TestOverseerRunnerFailures:
         # AC1: Write budget-override.json without extending -- should still fail
         (instance_dir / "control").mkdir(parents=True, exist_ok=True)
         (instance_dir / "control" / "budget-override.json").write_text(
-            json.dumps(build_budget_override(run_budget_usd=100, reason="test override"))
+            json.dumps(build_budget_override(run_budget_usd=60, reason="test override"))
         )
 
         result2 = runner.invoke(
@@ -1259,7 +1259,7 @@ class TestOverseerRunnerFailures:
         assert len(budget_override_lines) == 1, (
             f"Expected 1 budget_override event, got {len(budget_override_lines)}"
         )
-        assert budget_override_lines[0]["run_budget_usd"] == 100
+        assert budget_override_lines[0]["run_budget_usd"] == 60
         assert budget_override_lines[0]["reason"] == "test override"
 
     def test_scenario_f_signal_response(

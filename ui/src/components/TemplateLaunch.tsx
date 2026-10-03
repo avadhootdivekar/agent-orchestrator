@@ -6,7 +6,9 @@ import type {
   TemplateInfo,
   TemplateParam,
 } from "../types";
+import { useLaunchPanel } from "../useLaunchPanel";
 import { Empty, ErrorBanner } from "./common";
+import { LaunchPending, LaunchResultPanel } from "./LaunchResultPanel";
 
 /**
  * Launcher for a new run scaffolded from a workflow template ("From template" mode;
@@ -15,8 +17,9 @@ import { Empty, ErrorBanner } from "./common";
  * Unlike "From workflow", the workflow spec does not exist yet: picking a template and
  * filling params/prompt calls `POST /api/templates/{name}/instances`, which renders the
  * instance (workflow.json + prompt.md + aux files) server-side. "Create" only renders it
- * (`start: false`); "Create & run" also starts it (`start: true`) and hands off through
- * the same `onLaunched` callback RunDetail navigation already uses for the classic flow.
+ * (`start: false`); "Create & run" also starts it (`start: true`) and shows the outcome in
+ * a LaunchResultPanel. It never navigates by itself: `onLaunched` (the same callback the
+ * classic flow uses; `null` = run list) fires only from an explicit panel button.
  */
 
 /** Required params with no non-empty value — the client-side half of enforcement. */
@@ -52,6 +55,22 @@ export function buildCreateInstanceRequest({
   return body;
 }
 
+/** A default longer than this (or a free-text param) gets a full-width row, not a grid cell. */
+export const WIDE_PARAM_DEFAULT_CHARS = 24;
+const FREE_TEXT_HINT = /free[- ]?text/i;
+
+/**
+ * Whether a param needs more than a compact grid cell: free-text guidance or a long default.
+ * Enums and short scalars (numbers, ids, model names) stay compact, four to a row.
+ */
+export function isWideParam(param: TemplateParam): boolean {
+  if (param.enum) return false;
+  return (
+    FREE_TEXT_HINT.test(param.description ?? "") ||
+    (param.default ?? "").length > WIDE_PARAM_DEFAULT_CHARS
+  );
+}
+
 /** Initial param values for a freshly-selected template: declared defaults, else blank. */
 function defaultParamValues(params: TemplateParam[]): Record<string, string> {
   const values: Record<string, string> = {};
@@ -75,6 +94,8 @@ export function TemplateLaunch({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<"create" | "run" | null>(null);
   const [created, setCreated] = useState<CreateInstanceResponse | null>(null);
+  const panel = useLaunchPanel("template");
+  const [instanceDir, setInstanceDir] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -118,11 +139,13 @@ export function TemplateLaunch({
     setSubmitting(start ? "run" : "create");
     setError(null);
     setCreated(null);
+    panel.clear();
     try {
       const body = buildCreateInstanceRequest({ slug, paramValues, prompt, start });
       const response = await api.createInstance(selected.name, body);
-      if (start) {
-        onLaunched(response.launch?.run_id ?? null);
+      if (start && response.launch) {
+        setInstanceDir(response.instance_dir);
+        panel.show(response.launch);
       } else {
         setCreated(response);
       }
@@ -152,6 +175,28 @@ export function TemplateLaunch({
     <div>
       <ErrorBanner message={error} />
 
+      {submitting === "run" ? <LaunchPending /> : null}
+      {submitting !== "run" && panel.launch ? (
+        <LaunchResultPanel
+          key={panel.launch.launch_id}
+          initial={panel.launch}
+          onRecord={panel.track}
+          onOpenRun={(runId) => onLaunched(runId)}
+          onOpenRunList={() => onLaunched(null)}
+          onStartAnother={() => {
+            setSlug("");
+            setPrompt(selected?.prompt_skeleton ?? "");
+            panel.clear();
+          }}
+          onEditRetry={panel.clear}
+          retryHint={
+            instanceDir
+              ? `The instance was already created at ${instanceDir}. Once the cause is fixed, start it from "From workflow" rather than re-creating it.`
+              : undefined
+          }
+        />
+      ) : null}
+
       <div className="card">
         <div className="field">
           <label htmlFor="template">Template</label>
@@ -177,38 +222,70 @@ export function TemplateLaunch({
         {selected && selected.params.length > 0 ? (
           <>
             <h2>Parameters</h2>
-            {selected.params.map((param) => (
-              <div className="field" key={param.name}>
-                <label htmlFor={`param-${param.name}`}>
-                  {param.name}
-                  {param.required ? " *" : ""}
-                </label>
-                {param.enum ? (
-                  <select
-                    id={`param-${param.name}`}
-                    value={paramValues[param.name] ?? ""}
-                    onChange={(event) => setParam(param.name, event.target.value)}
+            <div className="param-grid" data-testid="param-grid">
+              {selected.params.map((param) => {
+                const wide = isWideParam(param);
+                const id = `param-${param.name}`;
+                return (
+                  <div
+                    className={wide ? "field param-cell param-wide" : "field param-cell"}
+                    key={param.name}
                   >
-                    <option value="">{param.required ? "select…" : "unset"}</option>
-                    {param.enum.map((choice) => (
-                      <option key={choice} value={choice}>
-                        {choice}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    id={`param-${param.name}`}
-                    value={paramValues[param.name] ?? ""}
-                    placeholder={param.default ?? ""}
-                    onChange={(event) => setParam(param.name, event.target.value)}
-                  />
-                )}
-                {param.description ? (
-                  <div className="field-hint">{param.description}</div>
-                ) : null}
-              </div>
-            ))}
+                    <div className="param-head">
+                      <label htmlFor={id}>
+                        {param.name}
+                        {param.required ? " *" : ""}
+                      </label>
+                      {param.description ? (
+                        <button
+                          type="button"
+                          className="info-tip"
+                          aria-label="Description"
+                          aria-describedby={`${id}-desc`}
+                          data-tip={param.description}
+                        >
+                          i
+                        </button>
+                      ) : null}
+                    </div>
+                    {param.description ? (
+                      <span id={`${id}-desc`} className="sr-only">
+                        {param.description}
+                      </span>
+                    ) : null}
+                    {param.enum ? (
+                      <select
+                        id={id}
+                        value={paramValues[param.name] ?? ""}
+                        onChange={(event) => setParam(param.name, event.target.value)}
+                      >
+                        <option value="">{param.required ? "select…" : "unset"}</option>
+                        {param.enum.map((choice) => (
+                          <option key={choice} value={choice}>
+                            {choice}
+                          </option>
+                        ))}
+                      </select>
+                    ) : wide ? (
+                      <textarea
+                        id={id}
+                        rows={2}
+                        value={paramValues[param.name] ?? ""}
+                        placeholder={param.default ?? ""}
+                        onChange={(event) => setParam(param.name, event.target.value)}
+                      />
+                    ) : (
+                      <input
+                        id={id}
+                        value={paramValues[param.name] ?? ""}
+                        placeholder={param.default ?? ""}
+                        onChange={(event) => setParam(param.name, event.target.value)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </>
         ) : null}
 

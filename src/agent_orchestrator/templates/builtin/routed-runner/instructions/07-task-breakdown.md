@@ -77,6 +77,11 @@ tasks you expect to run long even under `"high"`) `"xhigh"`, and/or set an expli
 pipeline. See the contract's "Effort & model per task" section for the full guidance —
 it is authoritative on the allowed values and field names.
 
+For the cheap-model tier, the contract's "Haiku tier" section is authoritative: Haiku is
+permitted only on `impl1-<tid>`/`test1-<tid>` of tasks whose shape the design already
+fixes (CRUD/API handlers, small tests, fixtures) — never on review, fix, or re-test
+passes. If you cannot say with confidence that a task qualifies, leave `model` unset.
+
 ### Hard rules (violations crash or hang the run)
 1. **Valid strict JSON** — no comments, no trailing commas, double-quoted keys.
 2. **Every `depends_on` id must exist** — either another id in this same manifest or
