@@ -55,6 +55,22 @@ export function buildCreateInstanceRequest({
   return body;
 }
 
+/** A default longer than this (or a free-text param) gets a full-width row, not a grid cell. */
+export const WIDE_PARAM_DEFAULT_CHARS = 24;
+const FREE_TEXT_HINT = /free[- ]?text/i;
+
+/**
+ * Whether a param needs more than a compact grid cell: free-text guidance or a long default.
+ * Enums and short scalars (numbers, ids, model names) stay compact, four to a row.
+ */
+export function isWideParam(param: TemplateParam): boolean {
+  if (param.enum) return false;
+  return (
+    FREE_TEXT_HINT.test(param.description ?? "") ||
+    (param.default ?? "").length > WIDE_PARAM_DEFAULT_CHARS
+  );
+}
+
 /** Initial param values for a freshly-selected template: declared defaults, else blank. */
 function defaultParamValues(params: TemplateParam[]): Record<string, string> {
   const values: Record<string, string> = {};
@@ -206,38 +222,70 @@ export function TemplateLaunch({
         {selected && selected.params.length > 0 ? (
           <>
             <h2>Parameters</h2>
-            {selected.params.map((param) => (
-              <div className="field" key={param.name}>
-                <label htmlFor={`param-${param.name}`}>
-                  {param.name}
-                  {param.required ? " *" : ""}
-                </label>
-                {param.enum ? (
-                  <select
-                    id={`param-${param.name}`}
-                    value={paramValues[param.name] ?? ""}
-                    onChange={(event) => setParam(param.name, event.target.value)}
+            <div className="param-grid" data-testid="param-grid">
+              {selected.params.map((param) => {
+                const wide = isWideParam(param);
+                const id = `param-${param.name}`;
+                return (
+                  <div
+                    className={wide ? "field param-cell param-wide" : "field param-cell"}
+                    key={param.name}
                   >
-                    <option value="">{param.required ? "select…" : "unset"}</option>
-                    {param.enum.map((choice) => (
-                      <option key={choice} value={choice}>
-                        {choice}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    id={`param-${param.name}`}
-                    value={paramValues[param.name] ?? ""}
-                    placeholder={param.default ?? ""}
-                    onChange={(event) => setParam(param.name, event.target.value)}
-                  />
-                )}
-                {param.description ? (
-                  <div className="field-hint">{param.description}</div>
-                ) : null}
-              </div>
-            ))}
+                    <div className="param-head">
+                      <label htmlFor={id}>
+                        {param.name}
+                        {param.required ? " *" : ""}
+                      </label>
+                      {param.description ? (
+                        <button
+                          type="button"
+                          className="info-tip"
+                          aria-label="Description"
+                          aria-describedby={`${id}-desc`}
+                          data-tip={param.description}
+                        >
+                          i
+                        </button>
+                      ) : null}
+                    </div>
+                    {param.description ? (
+                      <span id={`${id}-desc`} className="sr-only">
+                        {param.description}
+                      </span>
+                    ) : null}
+                    {param.enum ? (
+                      <select
+                        id={id}
+                        value={paramValues[param.name] ?? ""}
+                        onChange={(event) => setParam(param.name, event.target.value)}
+                      >
+                        <option value="">{param.required ? "select…" : "unset"}</option>
+                        {param.enum.map((choice) => (
+                          <option key={choice} value={choice}>
+                            {choice}
+                          </option>
+                        ))}
+                      </select>
+                    ) : wide ? (
+                      <textarea
+                        id={id}
+                        rows={2}
+                        value={paramValues[param.name] ?? ""}
+                        placeholder={param.default ?? ""}
+                        onChange={(event) => setParam(param.name, event.target.value)}
+                      />
+                    ) : (
+                      <input
+                        id={id}
+                        value={paramValues[param.name] ?? ""}
+                        placeholder={param.default ?? ""}
+                        onChange={(event) => setParam(param.name, event.target.value)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </>
         ) : null}
 
