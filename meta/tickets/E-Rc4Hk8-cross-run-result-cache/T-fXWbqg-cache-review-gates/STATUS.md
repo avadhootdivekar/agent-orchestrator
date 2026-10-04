@@ -6,22 +6,26 @@
 - Owner: `reviewer` + `dev-security`
 
 ## This update
-- Rev 2 ticket: three gates (G1a, G1b, G2) with explicit threat-model scopes and evidence rules. Estimate 24 h.
+- Rev 3 ticket: gate scopes follow the manager's sequential plan; exit criteria name the Rev 3
+  tests and the honest engine budget. Estimate unchanged (24 h).
 
 ## Evidence
-- None yet (not started). Design evidence: HLD Rev 2 and ADR-0019 Rev 2.
+- None yet (not started). Design evidence: HLD Rev 3 and ADR-0019 Rev 3.
 
 ## Risks / Blockers
 - No blockers.
-- Risk: fix-up loops; Sprint 3 slack absorbs them.
+- Risk: fix-up loops; S3 slack absorbs them.
 
 ## Next actions
-1. Schedule G1a for the last two days of Sprint 1.
-2. Schedule G1b for the end of Sprint 2.
-3. Hold G2 after T-JCOAsq Part 3, T-6tRKml and T-bLpoze.
+1. G1a when the core set is done.
+2. G1b when the engine set is done.
+3. G2 after T-JCOAsq Part 3.
 
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Status initialized (Draft).
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 re-plan after the Phase-4
-  consultation. State stays `Draft` (G1a end of Sprint 1 / G1b end of Sprint 2 / G2 Sprint 3); this file, `TASK.md`, `HANDOFF.md` (when present)
-  and the epic `STATUS.md` rollup agree.
+  consultation.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 re-plan after the
+  early-gate review and the manager's scope decisions (HLD §23.5). State stays `Draft`
+  (G1a after the core set / G1b after the engine set / G2 final); this file, `TASK.md`, `HANDOFF.md` (when present) and the epic `STATUS.md` rollup
+  agree.

@@ -7,9 +7,8 @@
 
 ## What will be handed over
 - `agent_orchestrator.cache.fingerprint`: `CliVersionReader`, `claude_cli_fingerprint`,
-  `guarded_resolve`, `guarded_abs`, `CLAUDE_FINGERPRINT_ENV_VARS` and `CLAUDE_CONTEXT_PATHS`.
-- `agent_orchestrator.cache.keys`: `build_cache_key`, `summary_from_doc`, `AGENT_KEY_FIELDS`
-  and `AGENT_NON_KEY_FIELDS`.
+  `guarded_resolve`, `guarded_abs`, `CLAUDE_FINGERPRINT_ENV_VARS`, `CLAUDE_CONTEXT_PATHS`.
+- `agent_orchestrator.cache.keys`: `build_cache_key`, `summary_from_doc`.
 
 ## Frozen names / contracts
 - Key schema v1 and GV-1 Rev 2. A change needs an HLD §8.2.7 update and a decision on
@@ -20,5 +19,6 @@
 
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Handoff stub created.
-- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 contents. State `Draft`
-  mirrors `TASK.md` and `STATUS.md`.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 contents.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3: AgentSpec field sets come
+  from `constants`. State `Draft` mirrors `TASK.md` and `STATUS.md`.

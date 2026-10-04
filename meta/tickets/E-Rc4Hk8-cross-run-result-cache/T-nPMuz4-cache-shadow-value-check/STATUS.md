@@ -3,24 +3,26 @@
 - ID: `T-nPMuz4-cache-shadow-value-check`
 - Updated At: `2026-10-05`
 - State: `Draft`
-- Owner: `manager` (+ `tester`)
+- Owner: `tester` (+ `manager` sign-off)
 
 ## This update
-- Ticket created (Rev 2): G0 shadow-mode value check, report and decision rule. Estimate 6 h plus the observation window.
+- Rev 3 ticket: re-scoped to the G0 protocol and tooling hand-off; G0 execution is post-merge
+  and owned by the parent or operator. Estimate 6 h.
 
 ## Evidence
-- None yet (not started). Design evidence: HLD Rev 2 and ADR-0019 Rev 2.
+- None yet (not started). Design evidence: HLD Rev 3 and ADR-0019 Rev 3.
 
 ## Risks / Blockers
-- Depends on T-o95l1M (end of Sprint 2).
-- OQ-6: the parent must confirm the thresholds.
+- Depends on T-o95l1M and T-eyn5UG.
+- OQ-6: the parent confirms the G0 thresholds and owns the post-merge execution.
 
 ## Next actions
-1. When T-o95l1M merges: install the beta flavour and choose the workflows.
-2. Run in shadow mode through Sprint 3, then write the report and record the outcome in the epic `STATUS.md`.
+1. After T-o95l1M and T-eyn5UG: write the protocol and the report template.
+2. Run the smoke validation on a fake workflow; record the evidence and the epic G0 line; get manager sign-off.
 
 ## Comments
-- By: architect · Role: architect · Date: 2026-10-05 · Comment: Status initialized (Draft).
-- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 re-plan after the Phase-4
-  consultation. State stays `Draft` (Sprint 3); this file, `TASK.md`, `HANDOFF.md` (when present)
-  and the epic `STATUS.md` rollup agree.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Status initialized (Draft, Rev 2).
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 re-plan after the
+  early-gate review and the manager's scope decisions (HLD §23.5). State stays `Draft`
+  (surfaces, after T-o95l1M); this file, `TASK.md`, `HANDOFF.md` (when present) and the epic `STATUS.md` rollup
+  agree.

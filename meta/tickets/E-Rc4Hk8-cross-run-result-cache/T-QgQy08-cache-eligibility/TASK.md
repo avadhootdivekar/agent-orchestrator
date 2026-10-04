@@ -5,9 +5,9 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev B)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 2)
+- Last Updated: `2026-10-05` (Rev 3)
 - Status: `Draft`
-- Estimate: `12 focus hours (1.5 days)` · Sprint 1, Wave 2
+- Estimate: `13 focus hours (1.6 days)` · Sprint 1
 
 ## Requirements Mapping
 - Requirement IDs: FR-4, NFR-10 (M-12)
@@ -16,91 +16,71 @@
 
 ## Description
 Implement the fail-closed, **structural** allowlist in `cache/eligibility.py`. It is pure: no
-I/O and no logging. The coordinator checks the author policy before calling it.
+I/O, no logging, public model helpers only. The coordinator checks the author policy before
+calling it.
 
-Contents:
-
-- **Tables.** `TASK_ANY_VALUE` (a frozenset), `TASK_VALUE_RULED`
-  (`dict[str, Rule(ok, reason)]`), `WORKFLOW_FIELD_COVERAGE` and `DEFAULTS_FIELD_COVERAGE`,
-  exactly as in the §8.3.1 tables.
+- **Tables:** `TASK_ANY_VALUE`, `TASK_VALUE_RULED` (`dict[str, Rule(ok, reason)]`),
+  `WORKFLOW_FIELD_COVERAGE`, `DEFAULTS_FIELD_COVERAGE` (HLD §8.3.1).
 - **`Eligibility(eligible, reason=None, detail=None)`**, a frozen dataclass.
-- **`check_eligibility(task, workflow, agents, *, integration_active) -> Eligibility`**, following
-  §8.3.2 verbatim. In particular:
-  - it iterates `type(task).model_fields`, sorted, so subclass fields are seen (developer #7);
-  - runtime unknown-field rules apply to the task, the workflow and the defaults;
-  - the command-basename rule: `posixpath.basename(command_template[0])` must be in
-    `CACHEABLE_COMMAND_BASENAMES`;
-  - `model_unresolved`: the effective model is `None` and no model flag is present;
-  - the verdict-sidecar and breaker-verdict-source rules.
-- **Tripwire message (U-E1).** Use the instructive wording from §8.3.1, including "an
-  approval/human-gate field (E-Ag7Pw3) is ALWAYS RULED".
+- **`check_eligibility(task, workflow, agents, *, integration_active)`**, following HLD §8.3.2
+  **verbatim**, including:
+  - iteration over `type(task).model_fields`, sorted;
+  - runtime unknown-field rules for the task, the workflow and the defaults;
+  - **the `AgentSpec` runtime rule (Rev 3):** on the **effective** agent, any field outside
+    `constants.AGENT_KEY_FIELDS | AGENT_NON_KEY_FIELDS` with a non-default value →
+    `unknown_agent_field` (detail = field name);
+  - the command-basename, `model_unresolved`, verdict-sidecar and breaker-verdict-source rules.
+- **Tripwire message (U-E1):** the §8.3.1 wording, including "an approval/human-gate field
+  (E-Ag7Pw3) is ALWAYS RULED".
 
 ## File scope (exclusive)
 - `src/agent_orchestrator/cache/eligibility.py` (new)
 - `tests/cache/test_eligibility.py` (new)
 
 ## Inputs / Outputs
-- **Inputs:**
-  - from `models`: `resolve_task_isolation`, `strip_iter_suffix`, `resolve_effective_agent` and
-    `ISOLATION_NONE`;
-  - `usage.verdict_path_for`;
-  - `constants`.
-- **Outputs:** `check_eligibility` and the classification tables, consumed by T-gDNjN2. The
-  tripwires guard future spec growth.
+- **Inputs:** `models` (`resolve_task_isolation`, `strip_iter_suffix`, `resolve_effective_agent`,
+  `ISOLATION_NONE`); `usage.verdict_path_for`; `constants` (incl. the AgentSpec field sets).
+- **Outputs:** `check_eligibility` and the tables, consumed by T-gDNjN2.
 
 ## Acceptance Criteria
-1. **U-E1 (TaskSpec tripwire).**
-   - `set(TaskSpec.model_fields) == TASK_ANY_VALUE | set(TASK_VALUE_RULED)`.
-   - A failing run prints the §8.3.1 instruction text.
-2. **U-E2 (workflow tripwire).** `WORKFLOW_FIELD_COVERAGE` covers every `WorkflowSpec` field, and
-   `DEFAULTS_FIELD_COVERAGE` covers every `WorkflowDefaults` field.
-3. **Runtime unknown-field rules.**
-   - A `TaskSpec` subclass with an extra field set to a non-default value gives
-     `unknown_task_field` with detail = the field name. At its default value, the task is
-     eligible.
-   - The same pattern holds for `WorkflowSpec` and `WorkflowDefaults` subclasses, giving
-     `unknown_workflow_field` with details `<name>` and `defaults.<name>`.
-4. **U-E3..E26 (one test per eligibility-owned reason in §8.3.3).** Each test triggers exactly one
-   reason and asserts both `reason` and `detail`:
-   - `run_integration_active`
-   - `emit_tasks`
-   - `task_manifest_path`
-   - `output_manifest`
-   - `pre_hook`
-   - `post_hook`
-   - `isolation_worktree`, from the task and separately from `defaults.isolation`
-   - `router_task`
-   - `loop_member`, including `dev__iter3`
-   - `no_outputs`
-   - `agent_unknown`
-   - `executor_not_cacheable`
-   - `command_not_cacheable`, for a wrapper script
-   - `model_unresolved`
-   - `verdict_sidecar_undeclared`
-   - `breaker_verdict_source`
-5. **Positive cases.** Each of these gives `Eligibility(True)`:
-   - `command_template[0] == "/usr/local/bin/claude"`;
-   - `--model opus` baked into `command_template` with `agent.model=None`;
-   - `--model=opus` in `extra_args`;
-   - `executor: fake`;
-   - a review task whose `review-verdict.json` sibling is declared.
-6. **Determinism.** With several violations at once, the first reported reason is stable across
-   100 calls and follows the §8.3.2 order.
-7. **Purity.** With `builtins.open`, `os.stat` and `subprocess.run` monkeypatched to raise,
-   `check_eligibility` still returns.
-8. **Hygiene.** `ruff` and `mypy` are clean. `pytest -q` has no new failures.
+1. **U-E1.** `set(TaskSpec.model_fields) == TASK_ANY_VALUE | set(TASK_VALUE_RULED)`; a failing run
+   prints the §8.3.1 instruction text.
+2. **U-E2.** `WORKFLOW_FIELD_COVERAGE` covers every `WorkflowSpec` field and
+   `DEFAULTS_FIELD_COVERAGE` every `WorkflowDefaults` field.
+3. **Runtime rules.** A `TaskSpec` subclass field at a non-default value → `unknown_task_field`
+   (detail = name); at its default → eligible. The same pattern for `WorkflowSpec` and
+   `WorkflowDefaults` subclasses → `unknown_workflow_field` (details `<name>` and
+   `defaults.<name>`).
+4. **U-E27 (`unknown_agent_field`).** An `AgentSpec` subclass with an extra field: at its default
+   → eligible; non-default → `unknown_agent_field` with the field name. The rule reads the
+   **effective** agent (a `defaults.model` override does not trip it).
+5. **U-E3..E26.** One test per eligibility-owned reason row of §8.3.3, each asserting `reason` and
+   `detail`: `run_integration_active`, `emit_tasks`, `task_manifest_path`, `output_manifest`,
+   `pre_hook`, `post_hook`, `isolation_worktree` (from the task and from `defaults.isolation`),
+   `router_task`, `loop_member` (including `dev__iter3`), `no_outputs`, `agent_unknown`,
+   `executor_not_cacheable`, `command_not_cacheable` (wrapper script), `model_unresolved`,
+   `verdict_sidecar_undeclared`, `breaker_verdict_source`.
+6. **Positive cases.** Eligible: `command_template[0] == "/usr/local/bin/claude"`; `--model opus`
+   baked into `command_template` with `model=None`; `--model=opus` in `extra_args`;
+   `executor: fake`; a review task whose verdict sidecar is declared.
+7. **U-E28 (consistency).** Every task for which `models._is_structural_task(task, workflow)` is
+   true is ineligible (the production code does not call that private helper).
+8. **Determinism and purity.** With several violations, the first reason is stable across 100
+   calls and follows the §8.3.2 order; with `builtins.open`, `os.stat` and `subprocess.run`
+   patched to raise, `check_eligibility` still returns.
+9. **Hygiene.** ruff (≤ 100 columns) and mypy are clean; `pytest -q` has no new failures.
 
 ## Test requirements
-- `tests/cache/test_eligibility.py`: AC-1..AC-7.
+- `tests/cache/test_eligibility.py`: AC-1..AC-8.
 
 ## Risks
-- **The tripwire fails when E-Ag7Pw3 merges.** This is expected. The merge note (HLD §24.2) says
-  to classify the approval field as RULED. The runtime rule keeps cached runs safe meanwhile.
-- **Default-value comparison for mutable defaults.** Use
+- **Tripwires fail when sibling epics add fields.** Expected; the merge notes (HLD §24.2) say how
+  to classify them. The runtime rules keep cached runs safe meanwhile.
+- **Default comparison for mutable defaults.** Use
   `model_fields[f].get_default(call_default_factory=True)`.
 
 ## Dependencies
-- T-28J9oR (models with `cache`, settings) and T-FJH6LI (constants).
+- T-28J9oR (models with `cache`), T-FJH6LI (constants).
 
 ## Pseudocode / Algorithm
 ```text
@@ -113,7 +93,7 @@ HLD §8.3.2 check_eligibility verbatim.
 
 ## Handoff Boundary
 - **Upstream:** T-28J9oR, T-FJH6LI.
-- **Downstream:** T-gDNjN2. At merge time, E-Ag7Pw3 classifies its new field here.
+- **Downstream:** T-gDNjN2; at merge time, E-Ag7Pw3 classifies its new fields here.
 
 ## Artifacts
 - **Docs/comments:** `meta/tickets/E-Rc4Hk8-cross-run-result-cache/T-QgQy08-cache-eligibility/`
@@ -122,9 +102,8 @@ HLD §8.3.2 check_eligibility verbatim.
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Allowlist predicate with
   tripwires.
-- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 changes:
-  - **Iteration:** iterates `type(task).model_fields` (developer #7).
-  - **New runtime rules:** `unknown_workflow_field` (critic #8c), `command_not_cacheable` and
-    `model_unresolved` (reviewer R7).
-  - **Ownership:** the author opt-in moved out to `settings.task_cache_policy` (double opt-in);
-    sensitive and control output checks moved to keys.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2: `type(task)` iteration,
+  workflow rules, command-basename and model-unresolved rules.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (early-gate A3, D): the
+  `unknown_agent_field` runtime rule (an unclassified `AgentSpec` field was silently unkeyed) and
+  the U-E28 consistency test; re-estimated from 12 h to 13 h.

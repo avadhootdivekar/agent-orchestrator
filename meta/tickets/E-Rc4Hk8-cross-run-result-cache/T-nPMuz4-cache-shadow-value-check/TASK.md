@@ -3,105 +3,114 @@
 ## Metadata
 - Task ID: `T-nPMuz4-cache-shadow-value-check`
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
-- Owner: `manager` (+ `tester`)
+- Title (Rev 3): **G0 protocol and tooling hand-off** (the folder name is kept for id stability)
+- Owner: `tester` (+ `manager` sign-off)
 - Created: `2026-10-05`
-- Last Updated: `2026-10-05`
+- Last Updated: `2026-10-05` (Rev 3)
 - Status: `Draft`
-- Estimate: `6 focus hours (0.75 day)` of analysis, plus a multi-day observation window in Sprint 3
+- Estimate: `6 focus hours (0.75 day)` · surfaces (after T-o95l1M)
 
 ## Requirements Mapping
-- Requirement IDs: R-14 (strategic value risk), FR-16 (shadow mode exercised on real workflows)
-- HLD: §22.5 (G0), §3 A-11, §23.2 OQ-6, §16 (rollout)
-- ADR-0019: D26; ALT-8 (fallback)
+- Requirement IDs: R-14 (strategic value risk), FR-16 (shadow mode exercised end to end)
+- HLD: §22.5 (G0), §3 A-11 (corrected), §13.6, §16 (rollout), §23.2 OQ-6
+- ADR-0019: D26, D34; ALT-8 (fallback)
 
 ## Description
-**Purpose.** G0 is the business go/no-go for **recommending** result-cache mode `on`. It does not
-block shipping. It answers dev-critic's strategic objection with data: given fail-closed keys,
-committing tasks and per-epic output paths, how often would real workflows actually hit?
+**Scope (Rev 3, manager decision).** This task does **not** execute G0. Executing G0 needs
+multi-day shadow-mode runs of a real consumer workflow with the operator's consent. It is a
+**post-merge follow-up owned by the parent or the operator** (finplan, with consent), and it
+**does not block epic closure**. This repository cannot supply that workload: `specs/self-dev/`
+holds only agent and reposet files, the built-in templates write per-instance output paths, and
+the bench forces the cache off.
 
-**Steps.**
+This task delivers what the G0 executor needs:
 
-1. **Install a beta build.** Install the epic branch as the **beta flavour** (`install.sh
-   --flavor beta`, which gives `ao-beta`; see E-Bi5Nw8), so that the stable `ao` used by other
-   work is untouched.
-2. **Choose workflows.** Pick at least 3 of this repository's self-dev workflows. Add
-   `ao-runner-finplan` workflows **only if the operator agrees**.
-3. **Opt tasks in.** Opt in only tasks that are pure by inspection: `cache: true`. Record which
-   tasks and why in the report.
-4. **Observe.** Run them under `AO_CACHE=shadow` through the normal course of Sprint 3. Shadow
-   never restores; it only hashes and stores, so it adds no model spend.
-5. **Collect** from each run's `status.json` and `run.log`:
-   - `would_hits`, `misses` by reason, and `ineligible` by reason;
-   - store skips by reason (`repo_head_moved`, `repo_worktree_changed`,
-     `key_changed_during_run`);
-   - `avoidable_cost_usd`;
-   - the miss `components` that differ most often.
-6. **Write `output/E-Rc4Hk8-cross-run-result-cache/g0-shadow-report.md`.** It contains:
-   - the method;
-   - the workflows and tasks;
-   - a metrics table;
-   - the dominant miss components;
-   - a recommendation using the HLD §22.5 decision rule.
-7. **Record the decision** in the epic `STATUS.md`. The parent confirms the thresholds (OQ-6).
+1. **`docs-md/result-cache-g0-protocol.md`, a runnable procedure:**
+   - install the epic build as the beta flavour (`install.sh --flavor beta` → `ao-beta`), so the
+     stable `ao` is untouched;
+   - choose workflows and opt in only tasks that are pure by inspection (`cache: true`), with the
+     reason recorded per task;
+   - run them under `AO_CACHE=shadow` for the observation window (shadow adds hashing and storage
+     but no model spend);
+   - collect `ao report-usage --json` → `result_cache` (`lookups`, `would_hits`, `misses`,
+     `ineligible`, `miss_reasons`, `store_skip_reasons`, `avoidable_cost_usd`; HLD §13.6) and
+     `ao cache stats --json` (`entries`, `bytes.total`, `expired_entries`, `oldest_created_at`,
+     `newest_created_at`) at the start and end of the window;
+   - extract the dominant miss components from `run.log` `cache.miss` events (a documented
+     one-liner);
+   - compute the would-hit rate (`would_hits / lookups`) and the avoidable spend per week;
+   - apply the decision rule of HLD §22.5 **as a recommendation** (thresholds pending OQ-6).
+2. **A report template** in the same document: method, workflows and tasks, a metrics table per
+   workflow, dominant miss reasons and components, recommendation, and the parent's decision
+   line.
+3. **A smoke validation** of the procedure on a fake-executor workflow run twice under
+   `AO_CACHE=shadow` (outputs deleted between runs), showing that every collection step works and
+   that the would-hit rate on the second run is non-zero. Evidence:
+   `output/E-Rc4Hk8-cross-run-result-cache/g0-protocol-smoke.md`. This validates the tooling,
+   not the value.
+4. **The epic `STATUS.md` G0 line:** "G0 protocol shipped; execution is a post-merge follow-up
+   (owner: parent/operator); not run in this epic."
 
 ## File scope (exclusive)
-- `output/E-Rc4Hk8-cross-run-result-cache/g0-shadow-report.md` (new)
-- The epic `STATUS.md`: the G0 outcome line only.
-- The opt-in edits to the observed workflow files live in the **observed workspaces**, not in
-  this repository's source. Record each one in the report.
+- `docs-md/result-cache-g0-protocol.md` (new; T-bdQZW4 links to it and does not edit it)
+- `output/E-Rc4Hk8-cross-run-result-cache/g0-protocol-smoke.md` (new)
+- The epic `STATUS.md`: the G0 line only.
 
 ## Inputs / Outputs
-- **Inputs:** T-o95l1M merged on the epic branch (shadow mode usable from the CLI); real workflow
-  runs.
-- **Outputs:** the G0 report and recommendation (`on` for named workflows, or "keep off and
-  pursue ALT-8 / `include_repo_heads: false`").
+- **Inputs:** T-o95l1M (shadow mode usable from the CLI), T-eyn5UG (the `result_cache` usage
+  object). The `ao cache stats --json` fields are specified by HLD §13.4 and checked by T-6tRKml
+  (AC-2); the smoke validation does not need T-6tRKml.
+- **Outputs:** the protocol, the report template, the smoke evidence and the epic G0 line.
 
 ## Acceptance Criteria
-1. The report covers at least 3 workflows and at least 10 lookups of opted-in tasks in total. If
-   fewer are available, say so explicitly.
-2. The metrics table lists, per workflow: lookups, would_hits, would-hit rate, misses by reason,
-   store skips by reason, and the avoidable $ estimate per week.
-3. The top miss components are identified, for example `repo_heads` versus `inputs`.
-4. The recommendation follows the §22.5 rule: a would-hit rate of at least 10%, **or** an
-   avoidable spend of at least $5 per week per workflow, means recommend `on`. These thresholds
-   are placeholders pending OQ-6.
-5. The epic `STATUS.md` records the G0 outcome and the parent's decision, or "awaiting parent
-   decision".
-6. The stable `ao` install is untouched: `ao --version` is unchanged before and after.
+1. The protocol document exists, states in its first paragraph that executing G0 is a post-merge
+   follow-up owned by the parent or operator and does not block epic closure, and never claims G0
+   was run.
+2. Every command in the protocol is copy-pasteable and names its expected output fields; the field
+   names match HLD §13.4 and §13.6 exactly.
+3. The report template has every section listed above, including the decision rule table marked
+   "recommendation" and the OQ-6 note.
+4. The smoke evidence lists the exact commands, run ids and the `report-usage --json`
+   `result_cache` object of the two runs, with `would_hits > 0` and `lookups > 0` on the second
+   run.
+5. The epic `STATUS.md` carries the G0 line above; the stable `ao` install is untouched
+   (`ao --version` unchanged before and after).
+6. The `manager` signs off in this task's `STATUS.md`.
 
 ## Test requirements
-- N/A (analysis task). Report reproducibility: list the exact commands and run ids.
+- N/A (documentation and tooling validation). The smoke run is reproducible from the listed
+  commands.
 
 ## Risks
-- **No representative workload during Sprint 3.** Mitigation: use this repository's self-dev
-  workflows (A-11), and say clearly in the report when the sample is too small.
-- **Observer effect on finplan.** Mitigation: shadow mode never changes dispatch, and the beta
-  flavour keeps stable untouched.
+- **G0 never runs after the merge**, so `on` is never recommended. Mitigation: the parent owns the
+  follow-up (OQ-6); the protocol makes it a short, mechanical job.
 
 ## Dependencies
-- T-o95l1M (shadow mode end to end). Ideally T-JCOAsq Part 2's I-23 is green first.
+- T-o95l1M, T-eyn5UG.
 
 ## Pseudocode / Algorithm
 ```text
-for wf in chosen_workflows:
-    opt in pure tasks (cache: true) ; run with AO_CACHE=shadow (ao-beta) over the window
-    for run in runs(wf): parse status.json result_cache blocks + run.log cache.* events
-aggregate -> rates, reasons, avoidable $ -> apply §22.5 rule -> report + STATUS line
+write protocol (install beta -> opt in pure tasks -> AO_CACHE=shadow runs -> collect
+report-usage/stats/run.log -> compute rate and avoidable $ -> recommendation per §22.5)
+smoke: fake workflow, run twice in shadow mode with outputs deleted between runs, collect, record
 ```
 
 ## Schemas / Interface Notes
-- **Data sources:** `status.json` `result_cache` (HLD §13.5) and `cache.*` events (HLD §15).
+- **Data sources:** `status.json` `result_cache` (§13.5), `ao report-usage --json` `result_cache`
+  (§13.6), `ao cache stats --json` (§13.4), `cache.*` events (§15).
 
 ## Handoff Boundary
-- **Upstream:** T-o95l1M.
-- **Downstream:** the parent (go/no-go on recommending `on`) and T-bdQZW4 (the docs include the
-  G0 outcome).
+- **Upstream:** T-o95l1M, T-eyn5UG.
+- **Downstream:** T-bdQZW4 (links the protocol); the parent or operator (executes G0 after the
+  merge).
 
 ## Artifacts
 - **Docs/comments:** `meta/tickets/E-Rc4Hk8-cross-run-result-cache/T-nPMuz4-cache-shadow-value-check/`
-- **Large outputs:** `output/E-Rc4Hk8-cross-run-result-cache/g0-shadow-report.md`
+- **Large outputs:** `output/E-Rc4Hk8-cross-run-result-cache/g0-protocol-smoke.md`
 
 ## Comments
-- By: architect · Role: architect · Date: 2026-10-05 · Comment: New in Rev 2. It answers
-  dev-critic STRATEGIC #1 (value unproven) with measurement instead of opinion. The go/no-go is
-  escalated to the parent; the architect does not overrule the brief.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: New in Rev 2 (G0 value check).
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (manager A5): re-scoped to
+  "G0 protocol and tooling hand-off". The Rev 2 premise (run G0 on this repo's self-dev
+  workflows inside S3) was false. Executing G0 is a post-merge follow-up owned by the parent or
+  operator and does not block epic closure. Owner: tester, with manager sign-off.

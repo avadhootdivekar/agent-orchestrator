@@ -5,148 +5,105 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev A)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 2)
+- Last Updated: `2026-10-05` (Rev 3)
 - Status: `Draft`
-- Estimate: `20 focus hours (2.5 days)` · Sprint 1, Wave 2
+- Estimate: `20 focus hours (2.5 days)` · Sprint 1 → 2
 
 ## Requirements Mapping
 - Requirement IDs: FR-3, FR-4 (path rules), NFR-3, NFR-10 (M-2, M-5, M-14)
-- HLD: §8.2.5 (fingerprint), §8.2.6 (`build_cache_key`, `summary_from_doc`, N-1..N-8), §8.2.7
-  (key schema v1, GV-1 Rev 2)
+- HLD: §8.2.5 (fingerprint), §8.2.6 (`build_cache_key`, `summary_from_doc`, N-1..N-8, residual
+  notes), §8.2.7 (key schema v1, GV-1 Rev 2)
 - ADR-0019: D3, D4, D5, D6, D7, D21, D29, D30
 
 ## Description
-Turn "what this agent would be asked to do" into a deterministic sha256 key. The key comes with a
+Turn "what this agent would be asked to do" into a deterministic sha256 key, with a
 non-sensitive summary and per-component digests.
 
 1. **`cache/fingerprint.py`** (HLD §8.2.5):
-   - `CLAUDE_FINGERPRINT_ENV_VARS` and `CLAUDE_CONTEXT_PATHS`;
-   - `CliVersionReader.version(binary)`: memoized per resolved path, with a 10 s timeout; any
-     failure raises `executor_fingerprint_unavailable`;
+   - `CLAUDE_FINGERPRINT_ENV_VARS` (deliberately **small and closed**; adding a name needs
+     review; never a secret) and `CLAUDE_CONTEXT_PATHS`;
+   - `CliVersionReader.version(binary)`: memoized **per binary identity** (resolved path,
+     `st_mtime_ns`, `st_size`), so an auto-updated binary is re-read; 10 s timeout; any failure →
+     `executor_fingerprint_unavailable`;
    - `claude_cli_fingerprint(req, deps, budget)`;
-   - the shared path guards `guarded_resolve(req, raw)` and `guarded_abs(req, a)`. `Path.resolve`
-     can raise `RuntimeError` (symlink loop) or `ValueError` (NUL); both map to `path_rejected`
-     (developer #5).
+   - the shared path guards `guarded_resolve` and `guarded_abs` (`RuntimeError`/`ValueError`
+     from `Path.resolve` → `path_rejected`).
 2. **`cache/keys.py`** (HLD §8.2.6):
-   - `AGENT_KEY_FIELDS` and `AGENT_NON_KEY_FIELDS`;
    - `build_cache_key(req, deps, *, preseed=None) -> CacheKey`, following the pseudocode
-     **verbatim**: guards, sensitive and control outputs, duplicates, priors, digests, the
-     normalized `TaskContext`, the real `build_prompt`, `build_claude_argv`, the fingerprint, the
-     key document, `canonical_json`, the components and `cli_version`;
-   - `summary_from_doc(doc, components) -> KeySummary`. It must never include argv, prompt,
-     prompt template or `extra_args` (D21).
-   - Re-export `canonical_json` from `types`; do not redefine it.
+     **verbatim**; it projects `constants.AGENT_KEY_FIELDS` (imported, not redefined);
+   - `summary_from_doc(doc, components) -> KeySummary` (never argv, prompt, prompt template or
+     `extra_args`; D21);
+   - re-export `canonical_json` from `types`.
 3. **A-9 TODO.** Check `CLAUDE_FINGERPRINT_ENV_VARS` against the installed Claude CLI's
-   documented environment variables. Record the result in `STATUS.md`. Never add a secret such as
-   an API key or auth token.
+   documented environment variables; record the result in `STATUS.md`.
 
 ## File scope (exclusive)
 - `src/agent_orchestrator/cache/fingerprint.py`, `src/agent_orchestrator/cache/keys.py` (new)
 - `tests/cache/test_fingerprint.py`, `tests/cache/test_keys.py`, `tests/cache/test_keys_golden.py` (new)
 
 ## Inputs / Outputs
-- **Inputs:**
-  - T-FJH6LI: `types` (`KeyRequest`, `KeyDeps`, `CacheKey`, `KeySummary`, `canonical_json`,
-    `UncacheableError`) and `safeio`;
-  - T-OeRYSO: `build_claude_argv`;
-  - T-8tr1H4: `HashBudget`, `digest_path`, `hash_regular_file`;
-  - `executors.prompt.build_prompt` and `artifacts.LocalFsArtifactStore.resolve`.
+- **Inputs:** T-FJH6LI (types, safeio, constants), T-OeRYSO (`build_claude_argv`), T-8tr1H4
+  (hashing), `executors.prompt.build_prompt`, `LocalFsArtifactStore.resolve`.
 - **Outputs:** `build_cache_key` and `CacheKey`, consumed by T-gDNjN2.
 
 ## Acceptance Criteria
-1. **U-K1 (GV-1 Rev 2, exact).** The HLD §8.2.7 worked example reproduces:
-   - key `6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f`;
-   - **every** component digest: agent `ced58570dab6`, argv `315cfbdef1cf`, dynamic_inputs
-     `4f53cda18c2b`, executor_fingerprint `620dc66502c3`, general_instructions `80c58b832f5c`,
-     inputs `6518d7ac7319`, instruction `8f7ad8e7e8d2`, key_schema `6b86b273ff34`, outputs
-     `2789b49e50b4`, prompt `25e61c2662b6`, repo_heads `b1e77f36ac12`.
+Test ids follow HLD §18.1.
 
-   Setup: real files in `tmp_path`, `cli_version_of` returning `"2.1.278 (Claude Code)"`,
-   `environ={}`, no context files, and the given `repo_heads`.
-2. **U-K2 (determinism).**
-   - 100 builds give one key.
-   - The same tree under a different absolute workspace path gives the same key (N-3).
-3. **U-K3 (sensitivity).** Changing each of these alters the key:
-   - the content of the instruction, a general instruction, an input or a dynamic input;
-   - the output set;
-   - an output prior (absent vs present);
-   - repo heads;
-   - model, effort or `max_turns`;
-   - `prompt_template`, `command_template` or `extra_args`;
-   - `disallowed_tools`;
-   - `working_dir`;
-   - argv construction, with `EFFORT_MAX_TURNS` monkeypatched;
-   - the CLI version;
-   - an allowlisted env var;
-   - `CLAUDE.md`, `.claude/agents/x.md` or `.mcp.json`;
-   - the input order (N-2).
-4. **U-K4 (insensitivity).** None of these alters the key:
-   - task id or run id;
-   - `timeout_seconds` or `retries`;
-   - `depends_on`, `touches`, `skip_if_outputs_exist` or `join`;
-   - `forbidden_task_models`;
-   - a non-allowlisted env var (`ANTHROPIC_API_KEY`), which also never appears anywhere in the
-     key document;
-   - the workspace path.
-5. **U-K7.** `build_prompt` output is invariant to `run_id`/`task_id` for the normalized
-   context.
-6. **U-K8 (tripwire).** `set(AgentSpec.model_fields) == AGENT_KEY_FIELDS | AGENT_NON_KEY_FIELDS`.
-   The failure message tells the developer to classify the new field and consider
+1. **U-K1 (GV-1 Rev 2, exact).** Key
+   `6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f` and **every** component
+   digest: agent `ced58570dab6`, argv `315cfbdef1cf`, dynamic_inputs `4f53cda18c2b`,
+   executor_fingerprint `620dc66502c3`, general_instructions `80c58b832f5c`, inputs
+   `6518d7ac7319`, instruction `8f7ad8e7e8d2`, key_schema `6b86b273ff34`, outputs `2789b49e50b4`,
+   prompt `25e61c2662b6`, repo_heads `b1e77f36ac12` (setup per HLD §8.2.7).
+2. **U-K2.** 100 builds give one key; the same tree under another absolute path gives the same
+   key.
+3. **U-K3 (sensitivity).** Each of these alters the key: instruction, general instruction, input
+   or dynamic-input content; the output set; an output prior; repo heads; model, effort or
+   `max_turns`; `prompt_template`, `command_template` or `extra_args`; `disallowed_tools`;
+   `working_dir`; argv construction (`EFFORT_MAX_TURNS` monkeypatched); the CLI version; an
+   allowlisted env var; `CLAUDE.md`, `.claude/agents/x.md` or `.mcp.json`; input order.
+4. **U-K4 (insensitivity).** None of these alters the key: task or run id; `timeout_seconds`,
+   `retries`; `depends_on`, `touches`, `skip_if_outputs_exist`, `join`; `forbidden_task_models`;
+   `ANTHROPIC_API_KEY` (which never appears in the key document); the workspace path.
+5. **U-K5.** Normalization N-1…N-4 and N-6…N-8 (one test each).
+6. **U-K6.** Preseed N-5: an input that is also an output uses the prior digest; the recompute
+   with the preseed equals the lookup key.
+7. **U-K7.** `build_prompt` output is invariant to `run_id`/`task_id` for the normalized context.
+8. **U-K8 (tripwire).** `AGENT_KEY_FIELDS | AGENT_NON_KEY_FIELDS == set(AgentSpec.model_fields)`,
+   with a message telling the developer to classify the field (`constants.py`) and consider
    `KEY_SCHEMA_VERSION`.
-7. **Normalization N-1…N-8.** Each rule has a test:
-   - symlink-collapsed paths;
-   - POSIX separators;
-   - output sort order in the structured field;
-   - the N-5 preseed reuse (an input that is also an output uses its prior digest);
-   - the directory walk excluding outputs;
-   - root-relative dynamic inputs;
-   - context-file listing from the root down to the cwd.
-8. **Path and output rules.** Each of these raises `UncacheableError` with exactly the stated
-   reason:
-   - `sensitive_output`, including an output symlinked into `.git/hooks`;
-   - `control_output`;
-   - `path_rejected`: a traversal, a symlink loop, a NUL byte, or a `CLAUDE.md` symlink pointing
-     outside the workspace;
-   - `path_in_cache_dir`;
-   - `duplicate_output`;
-   - `output_not_regular_file`;
-   - `prompt_render_error`, for an unknown template placeholder;
-   - `key_encoding`.
-9. **U-F1..F5 (fingerprint).**
-   - `CliVersionReader` is memoized: two calls make one subprocess call.
-   - A missing binary, a timeout and a non-zero exit each give
-     `executor_fingerprint_unavailable`.
-   - The env allowlist copies only listed vars.
-   - Absent context files are listed as `kind: absent`.
-   - A symlink inside `.claude/agents` makes the task uncacheable.
-   - For `executor: fake`, `argv` and `executor_fingerprint` are `null` and no subprocess runs.
-10. **D21.** `summary_from_doc` output contains no argv, prompt, template or `extra_args` text.
-    Assert that a secret placed in `extra_args` is absent from `KeySummary.model_dump_json()`.
-11. **Hygiene.**
-    - The AST guard passes.
-    - `ruff` and `mypy` are clean.
-    - `pytest -q` has no new failures.
-    - `STATUS.md` records the A-9 verification.
+9. **U-K9.** `path_rejected` (traversal, symlink loop, NUL, `CLAUDE.md` symlink out of the
+   workspace), `path_in_cache_dir`, `duplicate_output`.
+10. **U-K10.** `sensitive_output` (including an output symlinked into `.git/hooks`),
+    `control_output`, `output_not_regular_file`.
+11. **U-K11.** `prompt_render_error` (unknown placeholder) and `key_encoding`.
+12. **U-K12 (D21).** A secret placed in `extra_args` is absent from
+    `KeySummary.model_dump_json()`; argv, prompt and templates are absent.
+13. **U-F1..F5.** `CliVersionReader` is memoized (one subprocess call for two lookups) **and
+    re-reads after the binary's mtime or size changes**; a missing binary, a timeout or a
+    non-zero exit → `executor_fingerprint_unavailable`; the env allowlist copies only listed
+    vars; absent context files appear as `kind: absent`; a symlink inside `.claude/agents` makes
+    the task uncacheable; for `executor: fake`, `argv` and `executor_fingerprint` are `null` and
+    no subprocess runs.
+14. **Hygiene.** The AST guard passes; ruff (≤ 100 columns) and mypy are clean; `pytest -q` has
+    no new failures; `STATUS.md` records the A-9 check.
 
 ## Test requirements
 - `tests/cache/test_keys_golden.py`: AC-1.
-- `tests/cache/test_keys.py`: AC-2..AC-8, AC-10.
-- `tests/cache/test_fingerprint.py`: AC-9.
+- `tests/cache/test_keys.py`: AC-2..AC-12.
+- `tests/cache/test_fingerprint.py`: AC-13.
 
 ## Risks
-- **GV-1 drift caused by a legitimate upstream change** (for example, `build_prompt` wording).
-  Mitigation: update GV-1 in the HLD with the reason, and decide on a `KEY_SCHEMA_VERSION` bump.
-  The task's reviewer signs off.
+- **GV-1 drift from a legitimate upstream change** (for example `build_prompt` wording).
+  Mitigation: update GV-1 in the HLD with the reason and decide on a `KEY_SCHEMA_VERSION` bump.
 - **The env allowlist misses a behaviour-relevant variable** (R-17). Mitigation: the A-9 check.
 
 ## Dependencies
-- T-FJH6LI (types, safeio), T-OeRYSO (argv) and T-8tr1H4 (hashing).
-- Development can start against the contracts. The GV-1 test needs all three.
+- T-FJH6LI, T-OeRYSO, T-8tr1H4.
 
 ## Pseudocode / Algorithm
 ```text
-HLD §8.2.5 (CliVersionReader, claude_cli_fingerprint, guarded_resolve/guarded_abs) and §8.2.6
-(build_cache_key, summary_from_doc) verbatim. canonical_json comes from types.
+HLD §8.2.5 and §8.2.6 verbatim; AGENT_KEY_FIELDS / AGENT_NON_KEY_FIELDS come from constants.
 ```
 
 ## Schemas / Interface Notes
@@ -162,12 +119,9 @@ HLD §8.2.5 (CliVersionReader, claude_cli_fingerprint, guarded_resolve/guarded_a
 - **Large outputs:** N/A
 
 ## Comments
-- By: architect · Role: architect · Date: 2026-10-04 · Comment: Key builder with golden vector
-  GV-1.
-- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 changes:
-  - **Moved out:** hashing and repo state moved to T-8tr1H4.
-  - **Added to the key:** argv (via T-OeRYSO) and the executor fingerprint (critic #4,
-    reviewer R7).
-  - **New path rules:** sensitive outputs (security S3); `guarded_resolve` catches
-    `RuntimeError`/`ValueError` (developer #5); `summary_from_doc` is defined here.
-  - **GV-1 is now Rev 2** (`6646469e…`). Rev 1 `536533b0…` is superseded.
+- By: architect · Role: architect · Date: 2026-10-04 · Comment: Key builder with GV-1.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2: argv and fingerprint in
+  the key; sensitive outputs; GV-1 Rev 2.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (early-gate C; manager B):
+  `claude --version` memoized by binary identity; small closed env allowlist; AgentSpec field
+  sets moved to `constants`; every test id U-K1…U-K12 now owned explicitly. GV-1 unchanged.

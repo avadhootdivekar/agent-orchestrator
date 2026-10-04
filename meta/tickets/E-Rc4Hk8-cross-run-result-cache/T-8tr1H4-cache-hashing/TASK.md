@@ -5,142 +5,121 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev C)
 - Created: `2026-10-05`
-- Last Updated: `2026-10-05`
+- Last Updated: `2026-10-05` (Rev 3)
 - Status: `Draft`
-- Estimate: `14 focus hours (1.75 days)` · Sprint 1, Wave 2
+- Estimate: `14 focus hours (1.75 days)` · Sprint 1 (after T-FJH6LI)
 
 ## Requirements Mapping
 - Requirement IDs: FR-3, FR-6 (guards 2 and 3), NFR-4, NFR-10 (M-5, M-6, M-7)
-- HLD: §8.2.3 (bounded hashing), §8.2.4 (repo state), N-6
+- HLD: §8.2.3 (bounded hashing, key-hygiene note), §8.2.4 (repo state), N-6
 - ADR-0019: D5, D8, D13
 
 ## Description
 Implement the two I/O-bearing building blocks of key construction and the store guards.
 
-1. **`cache/hashing.py`** (HLD §8.2.3):
-   - `HashBudget(max_bytes, max_files)`, with `charge()` raising
-     `UncacheableError(input_too_large)`;
-   - `hash_regular_file(abs_path, budget) -> Digest`. It is bounded and FIFO-safe via
-     `safeio.open_regular_read`. A size change mid-read raises `input_unstable`.
-   - `hash_directory(abs_dir, budget, *, exclude_abs, skip_abs) -> Digest`. The canonical manifest
-     `[["D", rel] | ["F", rel, size, sha]]` is sorted by `os.fsencode(rel)` and hashed through
-     `types.canonical_json` with `DIR_DIGEST_SCHEMA`. It skips `.git`, `skip_abs` and
-     `exclude_abs`. A symlink or special file inside the directory raises `input_not_regular`.
-   - `digest_path(abs_path, budget, *, exclude_abs=frozenset(), skip_abs=frozenset())`.
+1. **`cache/hashing.py`** (HLD §8.2.3): `HashBudget`; `hash_regular_file` (bounded, FIFO-safe,
+   `input_unstable` on a size change); `hash_directory` (canonical sorted manifest through
+   `types.canonical_json`; skips `.git`, `skip_abs` and `exclude_abs`; a symlink or special file
+   inside raises `input_not_regular`); `digest_path`.
 2. **`cache/repo_state.py`** (HLD §8.2.4):
-   - `has_git_marker(path) -> bool`: a filesystem walk up to `/` looking for a `.git` entry,
-     using `lstat`. **Do not use `GitRepo.probe()`**: it hides failures (reviewer R8).
-   - `RepoHeadReader(*, runner=None, hooks_dir=None, timeout=CACHE_GIT_TIMEOUT_SECONDS)` with
-     `.read(repo_paths) -> dict[str, str]`:
-     - non-git repos are omitted;
-     - an unborn HEAD gives `"unborn"`;
-     - results are memoized per toplevel;
-     - `GitError`, `OSError`, `RuntimeError` and `subprocess.TimeoutExpired` all map to
-       `UncacheableError(repo_head_unavailable)`.
-
-     Construct `GitRepo(path, timeout=CACHE_GIT_TIMEOUT_SECONDS, runner=..., hooks_dir=...)`.
-     Never use the 300 s default. `GitRepo.__init__` can raise `OSError`/`RuntimeError` when the
-     empty-hooks dir cannot be created (developer #1).
-   - `WorktreeProbe.snapshot(repo_paths, workspace_root, exclude_abs) -> frozenset[tuple]`:
-     - tracked changes only, via `status_porcelain(top, untracked=False)`;
-     - plus `(mtime_ns, size)` per path;
-     - excluding `<ws>/.orchestrator/**` and the declared outputs;
-     - failures map to `UncacheableError(repo_worktree_probe_failed)`.
+   - **`find_git_toplevel(path, *, workspace_root) -> str | None`**: the directory holding the
+     nearest `.git` entry, walking up from `path` to `workspace_root` **inclusive and never
+     above it**. A path outside the workspace raises `UncacheableError(path_rejected)`. A `.git`
+     in `$HOME` or any other ancestor of the workspace is never consulted (early-gate A2).
+   - **`nested_repo_marker(workspace_root) -> str | None`**: the first ancestor above the
+     workspace root holding a `.git` entry (lstat only); used only for the banner warning.
+   - **`RepoHeadReader(*, workspace_root, runner=None, hooks_dir=None,
+     timeout=CACHE_GIT_TIMEOUT_SECONDS)`** with `.read(repo_paths)`: non-git repos omitted;
+     unborn HEAD → `"unborn"`; memoized per toplevel. The toplevel is the marker directory. It
+     uses **public `GitRepo` methods only** (`rev_parse`, `current_branch`) on
+     `GitRepo(top, timeout=10, runner=..., hooks_dir=..., env={GIT_OPTIONAL_LOCKS_VAR:
+     GIT_OPTIONAL_LOCKS_OFF})`; **never** `GitRepo._run` and never `GitRepo.probe()`.
+     `GitError`, `OSError`, `RuntimeError` and `subprocess.TimeoutExpired` (including from the
+     `GitRepo` constructor) → `UncacheableError(repo_head_unavailable)`.
+   - **`WorktreeProbe.snapshot(repo_paths, workspace_root, exclude_abs)`**: tracked changes only,
+     via `status_porcelain(top, untracked=False)` with the same `GitRepo` settings, plus
+     `(mtime_ns, size)` per path, excluding `<ws>/.orchestrator/**` and the declared outputs. Any
+     failure → `UncacheableError(repo_worktree_probe_failed)`. The coordinator calls it lazily and
+     maps a failure to "not storable", never to "ineligible".
 
 ## File scope (exclusive)
 - `src/agent_orchestrator/cache/hashing.py`, `src/agent_orchestrator/cache/repo_state.py` (new)
 - `tests/cache/test_hashing.py`, `tests/cache/test_repo_state.py` (new)
 
 ## Inputs / Outputs
-- **Inputs:** T-FJH6LI commit 2 (`safeio`) and commit 3 (`types`: `Digest`, `UncacheableError`,
-  `canonical_json`); `isolation.git.GitRepo`.
-- **Outputs:** bounded digests; repo HEAD maps; tracked-worktree snapshots.
+- **Inputs:** T-FJH6LI commit 3 (`safeio`, `types`: `Digest`, `UncacheableError`,
+  `canonical_json`; `constants`); `isolation.git.GitRepo` (public API).
+- **Outputs:** bounded digests; repo HEAD maps; tracked-worktree snapshots; the nested-repo
+  marker.
 
 ## Acceptance Criteria
-1. **U-H1 (file digest).** A file's digest equals `hashlib.sha256(content)`, with `size` equal to
-   its byte length.
-2. **U-H2 (directory determinism).** A directory's digest is identical when the same tree is
-   created in a different order. Renaming one file changes it.
-3. **U-H3 (empty and non-UTF-8 names).** An empty directory gives a stable digest with
-   `size == 0`. Non-UTF-8 file names hash deterministically (surrogate escapes).
-4. **U-H4 (links and special files).**
-   - A symlink inside a directory raises `UncacheableError(input_not_regular)`.
-   - A FIFO inside a directory raises the same reason within 5 s (thread + join timeout).
-   - A FIFO given directly as an input raises the same reason.
-5. **U-H5 (budget).**
-   - Exceeding `max_bytes` or `max_files` raises `input_too_large`, with the detail carrying the
-     counts.
-   - The check runs **before** reading the file's bytes: spy on `os.read`.
-6. **U-H6 (unstable input).** A file that grows during hashing raises `input_unstable`. Simulate
-   it with a patched `os.read` that returns extra bytes.
-7. **U-H7 (skips).**
-   - `.git` directories and `<ws>/.orchestrator` are skipped.
-   - Paths in `exclude_abs` (the task's own outputs) are skipped.
-8. **U-H8 (missing and unreadable).**
-   - A missing path raises `input_missing`.
-   - An `EACCES` on open raises `input_unreadable`.
-9. **U-G1 (`has_git_marker`).**
-   - True inside a temp repo, including a subdirectory of it, and for a `.git` *file*
-     (worktree-style).
-   - False in a plain temp directory.
-10. **U-G2..G4 (head reader).**
-    - A plain directory is omitted from the result.
-    - An unborn repo gives `"unborn"`.
-    - A repo with a commit gives its sha.
-    - Each of these gives `repo_head_unavailable` with the exception type name in the detail: a
-      failing `rev_parse`, a runner raising `TimeoutExpired`, a runner raising `OSError`, and a
-      `GitRepo` construction raising `RuntimeError` (non-empty hooks dir).
-    - Results are memoized: the runner is called once per toplevel per reader instance.
-    - The timeout passed to `GitRepo` is 10 s.
-11. **U-G5 (worktree snapshot).**
-    - Editing an undeclared tracked file changes the snapshot. A same-size rewrite is caught by
-      `mtime_ns`.
-    - Editing a declared output, or a file under `.orchestrator`, does not change it.
-    - A new **untracked** file does not change it. This is the documented residual risk.
-12. **U-G6.** A probe failure raises `repo_worktree_probe_failed`.
-13. **Hygiene.**
-    - VCS tests use temp repos, an injected `hooks_dir`, and `AO_STATE_DIR` pointed at
-      `tmp_path`.
-    - The AST guard (U-AST) passes: no bare `open(` outside `safeio`.
-    - `ruff` and `mypy` are clean.
-    - `pytest -q` has no new failures.
+1. **U-H1.** A file's digest equals `hashlib.sha256(content)`, with `size` equal to its length.
+2. **U-H2.** A directory's digest is independent of creation order; renaming one file changes it.
+3. **U-H3.** An empty directory has a stable digest with `size == 0`; non-UTF-8 names hash
+   deterministically.
+4. **U-H4.** A symlink inside a directory → `input_not_regular`.
+5. **U-H5.** A FIFO inside a directory and a FIFO given directly → `input_not_regular`, within
+   5 s (thread + join timeout; `skipif(not hasattr(os, "mkfifo"))`).
+6. **U-H6.** Exceeding `max_bytes` or `max_files` → `input_too_large` with the counts in the
+   detail, checked **before** reading the bytes (spy on `os.read`).
+7. **U-H7.** A file that grows while being read (patched `os.read`) → `input_unstable`.
+8. **U-H8.** A missing path → `input_missing`; a **simulated** `PermissionError` (monkeypatched
+   `os.open`) → `input_unreadable`. No `chmod`-based test (CI may run as root).
+9. **U-H9.** `.git` and `<ws>/.orchestrator` are skipped by directory walks.
+10. **U-H10.** Paths in `exclude_abs` (the task's own outputs) are skipped.
+11. **U-G1.** `find_git_toplevel` returns the marker directory for a repo, a subdirectory of it,
+    and a `.git` *file* (worktree-style); None for a plain directory.
+12. **U-G2..G4.** The head reader omits plain directories, returns `"unborn"` and real shas, and
+    maps a failing `rev_parse`, a runner raising `TimeoutExpired`, a runner raising `OSError`,
+    and a `GitRepo` construction raising `RuntimeError` (non-empty hooks dir) to
+    `repo_head_unavailable` with the exception type in the detail. It is memoized per toplevel.
+13. **U-G5/G6.** The worktree snapshot changes on an undeclared tracked edit (a same-size rewrite
+    is caught by `mtime_ns`), not on a declared output, a file under `.orchestrator` or a new
+    untracked file. A probe failure → `repo_worktree_probe_failed`.
+14. **U-G7.** With a `.git` directory in a parent of the workspace (simulated `$HOME`), a plain
+    project dir inside the workspace is non-git, no VCS command runs against the outer
+    repository (runner spy), and `nested_repo_marker` reports the outer marker. A repo path
+    outside the workspace → `path_rejected`.
+15. **U-G8.** Every `GitRepo` built by this module receives `env` with `GIT_OPTIONAL_LOCKS=0`
+    and `timeout=10` (spy); the module never references `_run` or `probe` (grep test).
+16. **Hygiene.** VCS tests use temp repos, an injected `hooks_dir` and `AO_STATE_DIR` pointed at
+    `tmp_path`; symlink tests carry `skipif(sys.platform == "win32")`; the AST guard passes;
+    ruff (≤ 100 columns) and mypy are clean; `pytest -q` has no new failures.
 
 ## Test requirements
-- `tests/cache/test_hashing.py`: AC-1..AC-8.
-- `tests/cache/test_repo_state.py`: AC-9..AC-12.
+- `tests/cache/test_hashing.py`: AC-1..AC-10.
+- `tests/cache/test_repo_state.py`: AC-11..AC-15.
 
 ## Risks
-- **Platform differences in FIFO and permission behaviour.** Skip the `EACCES` case when running
-  as root (`os.geteuid() == 0`).
-- **Slow VCS calls in CI.** The runner is injectable; only a few tests use real repositories.
+- **The nested-workspace residual** (A-12, R-19): documented; the banner warns.
+- **Slow VCS calls in CI.** The runner is injectable; few tests use real repositories.
 
 ## Dependencies
-- T-FJH6LI commit 2 (`safeio`) and commit 3 (`types`).
+- T-FJH6LI (commit 3, i.e. the whole task).
 
 ## Pseudocode / Algorithm
 ```text
-HLD §8.2.3 (HashBudget, hash_regular_file, hash_directory, digest_path) and §8.2.4
-(has_git_marker, RepoHeadReader.read, WorktreeProbe.snapshot) verbatim.
+HLD §8.2.3 and §8.2.4 verbatim.
 ```
 
 ## Schemas / Interface Notes
-- **Interface:**
-  - `digest_path(...) -> Digest`;
-  - `RepoHeadReader.read(Mapping[str, str]) -> dict[str, str]`;
-  - `WorktreeProbe.snapshot(...) -> frozenset[tuple]`;
-  - `has_git_marker(path) -> bool`.
-- **Spec / data schema:** directory manifest `ao.result-cache.dir/v1` (HLD D8).
+- **Interface:** `digest_path(...) -> Digest`; `find_git_toplevel(path, *, workspace_root)`;
+  `nested_repo_marker(workspace_root)`; `RepoHeadReader.read(...)`; `WorktreeProbe.snapshot(...)`.
+- **Spec / data schema:** directory manifest `ao.result-cache.dir/v1` (D8).
 
 ## Handoff Boundary
 - **Upstream:** T-FJH6LI.
-- **Downstream:** T-uoYW6b (hashing) and T-gDNjN2 (`RepoHeadReader`, `WorktreeProbe`).
+- **Downstream:** T-uoYW6b (hashing), T-gDNjN2 (`RepoHeadReader`, `WorktreeProbe`,
+  `nested_repo_marker`).
 
 ## Artifacts
 - **Docs/comments:** `meta/tickets/E-Rc4Hk8-cross-run-result-cache/T-8tr1H4-cache-hashing/`
 - **Large outputs:** N/A
 
 ## Comments
-- By: architect · Role: architect · Date: 2026-10-05 · Comment: New in Rev 2. Split out of
-  T-uoYW6b so that one task stays ≤ 3 days (developer #10). Incorporates developer #1 (exception
-  set, timeout, injectable runner and hooks dir), reviewer R8 (filesystem repo detection) and the
-  tracked-worktree guard (reviewer R1).
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: New in Rev 2 (split out of
+  T-uoYW6b; developer #1, reviewer R8).
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (early-gate A1c, A2, C,
+  D; manager B): depends on T-FJH6LI commit 3; repository detection stops at the workspace root;
+  public `GitRepo` API only with `GIT_OPTIONAL_LOCKS=0`; `nested_repo_marker`; explicit
+  U-H1..U-H10 and U-G7/U-G8; simulated `EACCES`.
