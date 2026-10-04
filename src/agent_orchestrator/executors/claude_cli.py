@@ -31,7 +31,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..models import TaskContext, TaskResult
+from ..models import AgentSpec, TaskContext, TaskResult
 from .base import Executor
 from .prompt import build_prompt
 
@@ -524,6 +524,69 @@ def _write_derived_capture(output_dir: str, transcript_text: str) -> None:
         )
 
 
+def build_claude_argv(agent: AgentSpec, prompt: str) -> list[str]:
+    """Return the exact argv ``ClaudeCliExecutor.execute`` spawns for *agent* and *prompt*.
+
+    Pure: no I/O, no clock/env/RNG reads, and *agent* is never mutated; every call returns a
+    fresh list. The steps run in this order, and the order is part of the contract:
+
+    1. substitute *prompt* for ``{prompt}`` in ``command_template``, then append ``extra_args``;
+    2. inject ``--model`` unless argv already carries ``--model`` or ``-m``;
+    3. inject ``--max-turns`` (explicit ``max_turns``, else ``EFFORT_MAX_TURNS[effort]``)
+       unless argv already carries it;
+    4. compose the opt-in and forced tool-disable lists (`_apply_tool_policy`);
+    5. add the opt-in exclude-dynamic-sections flag (`_ensure_exclude_dynamic_sections`);
+    6. add the stream-capture flags (`_ensure_stream_capture_flags`).
+
+    The cross-run result-cache key hashes this exact argv (ADR-0019 D7), so a change to how argv
+    is built (the ``EFFORT_MAX_TURNS`` values, flag injection, tool policy, stream flags) changes
+    cache keys automatically, with no manual version bump. Make such a change HERE, never in
+    ``execute()``, and keep this function free of side effects.
+    """
+    argv = [
+        (arg.replace("{prompt}", prompt) if "{prompt}" in arg else arg)
+        for arg in agent.command_template
+    ] + agent.extra_args
+
+    # Inject --model if specified in agent spec and not already in argv.
+    if agent.model and "--model" not in argv and "-m" not in argv:
+        argv = argv + ["--model", agent.model]
+
+    # Inject --max-turns unless the command already sets it. Explicit
+    # agent.max_turns wins; otherwise derive from effort. (agent.max_turns is
+    # the escape hatch a run-level --max-turns override sets on every agent.)
+    if "--max-turns" not in argv:
+        max_turns: int | None = None
+        if agent.max_turns is not None:
+            max_turns = agent.max_turns
+        elif agent.effort:
+            from ..models import EFFORT_MAX_TURNS
+
+            max_turns = EFFORT_MAX_TURNS[agent.effort]
+        if max_turns is not None:
+            argv = argv + ["--max-turns", str(max_turns)]
+
+    # Apply the agent's opt-in tool-disable list (default: none → allow all) and
+    # the engine's non-overridable forced set, BEFORE the stream flags, so the
+    # variadic --disallowedTools list is terminated by --output-format rather than
+    # swallowing it. The forced set is appended even when the agent declares its own
+    # tool-policy flag (E-Wk9Tz3 as-built review C-1); the opt-in list is not.
+    argv = _apply_tool_policy(
+        argv,
+        tuple(agent.disallowed_tools),
+        tuple(agent.forced_disallowed_tools),
+    )
+
+    # E-1cecSx B1: opt-in cache-scope fix for isolated (per-task-worktree) workflows --
+    # see AgentSpec.exclude_dynamic_system_prompt_sections and this module's own
+    # `_ensure_exclude_dynamic_sections` docstring. No-op (byte-identical argv) unless the
+    # agent explicitly opts in.
+    argv = _ensure_exclude_dynamic_sections(argv, agent.exclude_dynamic_system_prompt_sections)
+
+    # Emit a per-turn JSONL stream so all turns are captured (not just the last).
+    return _ensure_stream_capture_flags(argv)
+
+
 class ClaudeCliExecutor(Executor):
     """Executes tasks by spawning a `claude` CLI subprocess.
 
@@ -542,50 +605,7 @@ class ClaudeCliExecutor(Executor):
 
     def execute(self, ctx: TaskContext) -> TaskResult:
         prompt = build_prompt(ctx)
-        argv = [
-            (arg.replace("{prompt}", prompt) if "{prompt}" in arg else arg)
-            for arg in ctx.agent.command_template
-        ] + ctx.agent.extra_args
-
-        # Inject --model if specified in agent spec and not already in argv.
-        if ctx.agent.model and "--model" not in argv and "-m" not in argv:
-            argv = argv + ["--model", ctx.agent.model]
-
-        # Inject --max-turns unless the command already sets it. Explicit
-        # agent.max_turns wins; otherwise derive from effort. (agent.max_turns is
-        # the escape hatch a run-level --max-turns override sets on every agent.)
-        if "--max-turns" not in argv:
-            max_turns: int | None = None
-            if ctx.agent.max_turns is not None:
-                max_turns = ctx.agent.max_turns
-            elif ctx.agent.effort:
-                from ..models import EFFORT_MAX_TURNS
-
-                max_turns = EFFORT_MAX_TURNS[ctx.agent.effort]
-            if max_turns is not None:
-                argv = argv + ["--max-turns", str(max_turns)]
-
-        # Apply the agent's opt-in tool-disable list (default: none → allow all) and
-        # the engine's non-overridable forced set, BEFORE the stream flags, so the
-        # variadic --disallowedTools list is terminated by --output-format rather than
-        # swallowing it. The forced set is appended even when the agent declares its own
-        # tool-policy flag (E-Wk9Tz3 as-built review C-1); the opt-in list is not.
-        argv = _apply_tool_policy(
-            argv,
-            tuple(ctx.agent.disallowed_tools),
-            tuple(ctx.agent.forced_disallowed_tools),
-        )
-
-        # E-1cecSx B1: opt-in cache-scope fix for isolated (per-task-worktree) workflows --
-        # see AgentSpec.exclude_dynamic_system_prompt_sections and this module's own
-        # `_ensure_exclude_dynamic_sections` docstring. No-op (byte-identical argv) unless the
-        # agent explicitly opts in.
-        argv = _ensure_exclude_dynamic_sections(
-            argv, ctx.agent.exclude_dynamic_system_prompt_sections
-        )
-
-        # Emit a per-turn JSONL stream so all turns are captured (not just the last).
-        argv = _ensure_stream_capture_flags(argv)
+        argv = build_claude_argv(ctx.agent, prompt)
 
         os.makedirs(ctx.output_dir, exist_ok=True)
         transcript_path = os.path.join(ctx.output_dir, TRANSCRIPT_FILE)
