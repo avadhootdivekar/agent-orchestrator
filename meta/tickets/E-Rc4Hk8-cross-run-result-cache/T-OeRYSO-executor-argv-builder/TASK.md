@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev C)
 - Created: `2026-10-05`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `6 focus hours (0.75 day)` · Sprint 1, Wave 1
 
 ## Requirements Mapping
