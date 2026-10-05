@@ -11,6 +11,7 @@ Module                      Owner       Contents
 ``crypto.py``               T-s6sJmB    ``TEST_PARAMS``, ``FastFakeHasher``
 ``store.py``                T-8NQP8J    ``make_store``
 ``sessions.py``             T-kwwJ82    ``make_identity``
+``state.py``                T-CsT5gk    ``make_lockout_store``, ``make_audit_log``, spawn workers
 ``stub_runtime.py``         T-G7qByZ    ``StubRuntime``, ``StubRealm``,
                                         ``install_stub_auth_routes``
 ``enumeration.py``          T-G7qByZ    the route-enumeration harness (``iter_route_contexts``)

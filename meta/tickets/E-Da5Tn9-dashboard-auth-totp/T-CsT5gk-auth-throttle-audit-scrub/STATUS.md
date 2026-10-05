@@ -2,11 +2,33 @@
 
 - ID: `T-CsT5gk-auth-throttle-audit-scrub`
 - Updated At: `2026-10-05`
-- State: `Draft`
+- State: `Done`
 - Owner: `developer` (lane Q)
 - Scope: `MVP` · Sprint: `S1` · Estimate: `3 d`
 
 ## This update
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Implemented `auth/lockouts.py`,
+  `auth/throttle.py`, `auth/audit.py` with tests and both schema copies; all ACs (1-13, 15) met,
+  no cut-line applied (rotation, coalescing and the phantom table are implemented).
+  Decisions and deviations to know:
+  - `AuditLog(paths: StorePaths, *, clock, strict, max_bytes, backups, failures_per_minute,
+    lock_timeout)` follows this ticket (the HLD sketch shows `audit_file, audit_lock`);
+    `AuditLog.for_state_dir` builds a `StorePaths` whose store dir is the state dir (only the
+    audit paths are used). `NullAuditLog` is included (HLD 11.12).
+  - `lockouts.enter_state_lock` (public) is the one helper that takes a state-dir sidecar flock and
+    creates the state dir at 0700; `audit.py` reuses it (no duplicated lock code).
+  - Lockout timestamps have 1 s resolution; `locked_until` is rounded **up**, so a lock is never
+    shortened. A corrupt file raises `StoreUnavailableError` from `state`/`record_failure`/`reset`/
+    `forget`/`name_digest`; `check_readable` raises `StoreCorruptError`; lock timeout raises
+    `StoreLockTimeoutError` (same as `UserStore`).
+  - Phantom eviction never evicts the entry just written (timestamp ties).
+  - Flood coalescing counts events with `outcome == failure` or in `FAILURE_CLASS_EVENTS`
+    (excluding `auth.lockout`); a non-strict malformed event name is written as
+    `audit.invalid_event` so lines stay schema-valid.
+  - `USERNAME_RE` (compiled `USERNAME_PATTERN`) lives in `lockouts.py`.
+  - `lockouts.py` imports `store._field_paths` (private helper, same layer) to avoid duplicating
+    the no-value validation-error renderer.
+  - Test helper module `tests/auth/helpers/state.py` (+ row in `helpers/__init__.py`).
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
   Estimate unchanged (3 d); scope rebalanced.
   - **Moved out:** `scrub.py` (redaction, filters, record factory; v2 ACs 14–15) now belongs to
@@ -39,7 +61,15 @@
   is consumed by the approval-gates epic (HLD §2.6).
 
 ## Evidence
-- None yet.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: results below (worktree
+  `ad/dashboard-auth-totp`).
+- `.venv/bin/python -m pytest -q tests/auth/test_lockouts.py tests/auth/test_throttle.py tests/auth/test_audit.py tests/auth/test_import_boundary.py` -> 153 passed
+  (64 lockouts, 28 throttle, 39 audit).
+- `.venv/bin/python -m pytest -q tests/auth --cov=agent_orchestrator.auth.lockouts --cov=agent_orchestrator.auth.throttle --cov=agent_orchestrator.auth.audit --cov-report=term-missing`
+  -> 1113 passed; coverage audit.py 100%, throttle.py 100%, lockouts.py 98% (uncovered: refuse-to-write
+  validation guard and a stat failure after write).
+- `.venv/bin/ruff check` + `ruff format --check` on the 3 modules, 3 test files and `helpers/state.py` -> clean.
+- `.venv/bin/mypy src` -> only the 4 pre-existing `_version.py` errors; `MYPYPATH=src mypy` on the new tests -> clean.
 
 ## Risks / Blockers
 - None. The audit-line JSON Schema is derived from the HLD §12.4 field list and example (see
@@ -48,5 +78,6 @@
   here and in the epic STATUS.
 
 ## Next actions
-1. developer: implement once T-kzEzwy and T-8NQP8J (`fsutil`, `StorePaths`) land, run the TASK.md
-   verification, and record the results and coverage here.
+1. Downstream: T-XchniS (`AttemptGuard`, `check_ready` -> `check_readable` + `ensure_name_key`,
+   `audit_log_for` in `runtime.py`); T-j9dfsw (`reset(repair_corrupt=True)`, `forget`,
+   `ensure_name_key` on mutations).

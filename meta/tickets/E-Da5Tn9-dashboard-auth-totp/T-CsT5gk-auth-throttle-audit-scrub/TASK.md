@@ -6,7 +6,7 @@
 - Owner: `developer` (lane Q)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `3 days` · Sprint `S1`
 
 ## Requirements Mapping
