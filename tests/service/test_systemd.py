@@ -41,6 +41,12 @@ class TestRenderUnit:
         text = render_unit("/usr/local/bin/ao", hub_port=9999, hub_host="0.0.0.0")
         assert "ExecStart=/usr/local/bin/ao service run --hub-host 0.0.0.0 --hub-port 9999" in text
 
+    def test_auth_appends_the_flag_to_exec_start_only_when_asked(self) -> None:
+        on = render_unit("/usr/local/bin/ao", auth=True)
+        off = render_unit("/usr/local/bin/ao")
+        assert f"--hub-port {DEFAULT_HUB_PORT} --auth\n" in on
+        assert "--auth" not in off
+
     def test_exec_start_uses_the_default_hub_port_when_unspecified(self) -> None:
         text = render_unit("/usr/local/bin/ao")
         assert f"--hub-port {DEFAULT_HUB_PORT}" in text

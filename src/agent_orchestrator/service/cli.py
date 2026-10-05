@@ -339,10 +339,17 @@ def install(
             "AO_UI_AUTH -- trusted networks only)."
         ),
     ),
+    auth: bool = typer.Option(
+        False,
+        "--auth",
+        help="Bake --auth into the unit's ExecStart (dashboard login on the hub and its children).",
+    ),
 ) -> None:
     """Generate (and, unless --print, install) the `ao.service` systemd user unit."""
     try:
-        result = install_unit(print_only=print_only, hub_port=hub_port, hub_host=hub_host)
+        result = install_unit(
+            print_only=print_only, hub_port=hub_port, hub_host=hub_host, auth=auth
+        )
     except ServiceError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -364,9 +371,15 @@ def install(
         " (EnvironmentFile is optional -- a missing file will not block startup)."
     )
     typer.echo(
-        "  Dashboard login (optional): add AO_UI_AUTH=1 (and optionally AO_UI_AUTH_TOTP=required)"
-        " to ~/.config/ao/service.env, create an account with `ao auth add-user <name>`, then"
+        "  Dashboard login (optional): re-run `ao service install --auth` (bakes --auth into"
+        " ExecStart; preferred), or add AO_UI_AUTH=1 (and optionally AO_UI_AUTH_TOTP=required)"
+        " to ~/.config/ao/service.env. Create an account with `ao auth add-user <name>`, then"
         " `systemctl --user restart ao`."
+    )
+    typer.echo(
+        "  Warning: env-only enablement (service.env) is ignored by a stale `ao` snapshot that"
+        " predates auth, so the dashboards start UNAUTHENTICATED without any error. After"
+        ' restarting, verify with `ao auth status` or GET /api/auth/status ("enabled": true).'
     )
     typer.echo(
         "  Note: a globally-installed `ao` can be a stale snapshot of a different version"

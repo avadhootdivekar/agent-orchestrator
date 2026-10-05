@@ -1209,7 +1209,11 @@ multi-user use.
   - the store lives outside the workspace, where agents do not routinely write (D5);
   - the file browser never serves it;
   - **CLI and env outrank workspace config**, so service deployments that enable auth through
-    `service.env` or `--auth` are immune to agent edits of `.ao/config.yaml`;
+    `service.env` or `--auth` are immune to agent edits of `.ao/config.yaml`; prefer
+    `ao service install --auth` (bakes `--auth` into the unit's `ExecStart`). **Operational
+    caveat (T-2wE08U M-1):** env-only enablement through `service.env` is silently ignored by a
+    stale global `ao` snapshot that predates auth, so the dashboards start unauthenticated; after
+    every install or restart, check `ao auth status` or `GET /api/auth/status`;
   - a broken config fails closed when users exist (D16);
   - a startup notice appears when auth is off but users exist;
   - **sticky TOTP**: a policy downgrade never weakens an enrolled account (D7);

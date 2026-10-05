@@ -147,3 +147,19 @@ def test_install_next_steps_mention_enabling_dashboard_auth(
     assert "AO_UI_AUTH=1" in result.output
     assert "ao auth add-user" in result.output
     assert "systemctl --user restart ao" in result.output
+    # T-2wE08U M-1: the stale-snapshot fail-open caveat and the verification command are printed.
+    assert "stale" in result.output and "ao auth status" in result.output
+    assert "ao service install --auth" in result.output
+
+
+def test_install_auth_flag_bakes_auth_into_exec_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["/opt/ao/bin/ao", "service", "install"])
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    plain = runner.invoke(app, ["service", "install", "--print"])
+    authed = runner.invoke(app, ["service", "install", "--print", "--auth"])
+    assert plain.exit_code == authed.exit_code == 0
+    assert "--auth" not in plain.output.split("ExecStart=")[1].splitlines()[0]
+    exec_line = authed.output.split("ExecStart=")[1].splitlines()[0]
+    assert exec_line.endswith("--hub-port 8770 --auth")
