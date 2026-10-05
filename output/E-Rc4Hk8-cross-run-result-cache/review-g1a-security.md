@@ -123,3 +123,73 @@ Scratchpad adversarial scripts (`/tmp/claude-1000/-usr-avadhoot-mounted-agent-or
 | SEC-06 / SEC-15 sensitive-path set and case folding (ADR-0019 addendum) | architect + T-uoYW6b owner | G2 at the latest |
 | SEC-08 / SEC-09 store self-heal and error mapping | T-U7ckfd owner | G1b |
 | NITs SEC-10 .. SEC-21 | batch into one hygiene ticket | G2 |
+
+## Re-verification (delta, after remediation `763375f` code / `1e65fc3` docs)
+
+- Reviewer: dev-security, 2026-10-05. Scope: `git diff a359fb9..HEAD -- src/agent_orchestrator/cache tests/cache`. No source or test file modified.
+- Method: original adversarial scripts re-run unchanged from the scratchpad, plus one new script (`rv_worst.py`) for the bound's worst case.
+
+### Verdict: **PASS** (0 open MUST-FIX)
+
+SEC-01 is fixed and M-7 now holds. SEC-02..09 are fixed (one documented residual each for SEC-03 and SEC-07). The deferred items are
+hygiene or accepted-residual; none is a MUST-FIX in disguise. One new NIT (RV-1) below.
+
+### SEC-01 / M-7: re-run of the original reproductions
+
+| scenario (script) | before | after |
+|---|---|---|
+| 3000 sparse 1 MiB files under `entries/v9/aa`, over `max_bytes` (`adv5_dos.py` C) | 30.46 s, inline prune ran | 0.00 s, `deferred=True` |
+| 300 sparse 1 MiB files nested under a v1 shard (`adv10_nested.py`) | 3.08 s, `deferred=False` | 0.00 s, `deferred=True` |
+| 100 000 symlinks / real files in a v1 shard, 100 000 blob files (`adv5_dos.py` A, B) | bounded | still bounded: 0.04 / 0.01 / 0.11 s, `deferred=True` |
+| just under every bound: 60 x 1 MiB random files + 4 000 empty files under `entries/v9`, 30 000 blobs, over `max_bytes` (`rv_worst.py` W1, run while the 11-minute suite loaded the box) | n/a | 0.97 s, `deferred=False`: the worst case that is still allowed to run inline |
+
+Code evidence: `store.py:158-200` `_Budget` (items / files / bytes / blobs), `_inline_budget` reads the constants at call time;
+`_walk_entry_files` (`:591`) charges every directory entry and every regular file of ANY version and depth BEFORE reading it;
+`_referenced_blobs`, `_scan_blobs`, `_tmp_files`, `_trash_dirs`, `_iter_entries` each take a fresh per-phase budget (`:781` `_prune(new_budget=...)`);
+`_scan_sizes` (`:886`) uses the same walker, so the trigger and the prune now cover the same tree; `_BudgetExceeded` is raised before any deletion
+(all read phases precede the delete block), so a deferral never leaves a partial prune; `maybe_enforce_limits` (`:907`) turns it into
+`PruneReport(deferred=True)` and clears `_approx_total` so the next store re-checks with a cheap lstat-only scan. Explicit `ao cache prune` keeps
+`_Budget()` (unbounded) by design. The bound is count/byte based, not wall-clock: the allowed maximum is
+100 000 directory entries, 5 000 files / 64 MiB read per phase, 50 000 blobs, which measured about 1 s. Acceptable; a wall-clock deadline would
+be a nice extra, not a requirement.
+
+### Spot checks (SEC-02..09), each by the original script or a direct read
+
+| id | result | evidence |
+|---|---|---|
+| SEC-02 / S-2 | Fixed | blob and walk bounds above (`INLINE_PRUNE_MAX_BLOBS` 50 000, `INLINE_PRUNE_MAX_WALK_ITEMS` 100 000); every `stat` in `_scan_blobs`, `_scan_sizes`, `_walk_entry_files`, `_tmp_files` tolerates `FileNotFoundError` |
+| SEC-03 | Fixed, residual documented | `adv6_git.py` B: `core.fsmonitor` marker NOT created by `WorktreeProbe.snapshot`; `core.fsmonitor=false` + `core.untrackedCache=false` injected via `GIT_CONFIG_COUNT` (`repo_state.py:98-112`). Residual: `filter.<x>.clean` / `diff.<x>.textconv` through in-repo `.gitattributes`; my original probe did not execute a filter either |
+| SEC-04 | Fixed | `adv6_git.py` C: with `GIT_DIR` exported, `RepoHeadReader` returned the workspace HEAD (`3fbd539fa6`), not the other repo's; `GIT_SCRUBBED_ENV_VARS` + `GIT_CONFIG_KEY_/VALUE_` prefix scrub |
+| SEC-05 | Fixed | `adv3_restore.py`: capture through a swapped parent symlink -> `StoreSkip(output_not_regular_file)`, no outside bytes stored (`restore.py:154`) |
+| SEC-06 | Fixed | `adv3_restore.py`: `.GIT/hooks/pre-commit` and `Claude.md` -> `refused:sensitive_output` (was RESTORED) |
+| SEC-07 | Fixed, residual documented | mode set by `fchmod` on the open fd after hash verification (`restore.py`, phase 1); hard-link backups + `_rollback`: the forced 2nd-rename failure now leaves `a.md: OLD-A, b.md: OLD-B` (was a mixed workspace). Residual: no hard links -> that one file stays replaced (documented). Leftover parent dirs from `ensure_dir_chain` unchanged (harmless) |
+| SEC-08 | Fixed | `adv2_store_restore.py`: a planted directory at `blobs/xx/<sha>` is renamed into `trash-*` (no recursion inline) and the verified blob installed, `new=True`, `has_blob` True; `has_blob` requires `S_ISREG`; `_dedupe_onto_existing` requires regular + exact size; `delete_blob` on a directory is `CacheUnsafePathError`, not a raw `IsADirectoryError` |
+| SEC-09 | Fixed | `read_blob` maps only `NotRegularFileError` to `blob_corrupt`; other `OSError` -> `CacheError(store_error)`; restore maps it to a non-evicting `RestoreMiss(store_error)` (`CacheUnsafePathError` still propagates, D33) |
+
+### Deferred items: justification
+
+All deferred items (SEC-10..21, S-8/SEC-15 sensitive-name list, S-9 attribute-call AST guard, SEC-11 key allowlist, SEC-13 strict models,
+SEC-14 CLI display, SEC-16, SEC-17, SEC-18, SEC-19) need either an architect decision (D29 list, GV-1 golden vector change), are same-uid
+poisoning already accepted in the threat model, are display/report-only, or are code with no demonstrated exploit path on a current caller
+(restore destinations come from the spec; the cache is not yet wired to the engine). None gives an unauthenticated or cross-trust-boundary
+execution, read-outside-workspace, or unbounded-work path. Confirmed still demonstrable but accepted: `.gitlab-ci.yml`, `.githooks/*`,
+`Jenkinsfile`, `.circleci/*`, `.vscode/tasks.json` etc. restore (SEC-15) and mode `0o000` restores unreadable (SEC-16). Recommendation: the
+SEC-15 list decision should land before G2/release, since the cache then restores spec-declared outputs into CI-config paths.
+
+### New finding
+
+| id | severity | file:line | issue | fix |
+|----|----------|-----------|-------|-----|
+| RV-1 | NIT | `store.py:849-850` (`_prune` trash removal via `_rmtree_checked`) | The deletion of stale `trash-*` directories is not budgeted. A planted `trash-x` with 200 000 empty files made the inline prune run 1.23 s (`rv_worst.py` W2); a 3 000-deep chain was fine on Python 3.12. Cost is about 1x the planted inode count (no amplification), and the files are same-uid attacker-created, so this is not a SEC-01-class issue. | Optionally skip inline trash removal beyond N directories and leave it to `ao cache prune`; or count `os.scandir` of each trash dir against the item budget. |
+
+### Commands and results (worktree `.../agent-a18ce2c08e42a3a5a`, `.venv/bin/python`)
+
+| command | result |
+|---|---|
+| `pytest -q -p no:cacheprovider tests/cache tests/test_spawn_provenance.py tests/test_nfr2_regression_gate.py` | **945 passed** in 10.25 s |
+| `ruff check src tests` | All checks passed |
+| `mypy src tests/cache` | 4 errors, all in `src/agent_orchestrator/_version.py:24-27` (`None` assigned to `str`/`bool`); the file is untouched by this epic (`git diff 0b980e3..HEAD` empty), so pre-existing and unrelated to the cache; no errors in `cache/` or `tests/cache` |
+| `pytest -q -p no:cacheprovider` (full suite) | **6081 passed, 10 skipped, 0 failed**, 1 warning, 691 s (prior 6027 / 10) |
+
+Residual follow-ups: SEC-15 list decision (architect) before G2; keep ADV-7 style planted-tree tests (present: `test_store_hardening.py`) in CI; record SEC-03
+filter/textconv residual in HLD 7.7; mypy `_version.py` errors belong to a separate hygiene fix.

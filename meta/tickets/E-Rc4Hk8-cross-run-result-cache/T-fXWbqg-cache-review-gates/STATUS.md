@@ -24,7 +24,7 @@
 ## G1a remediation (fix commit `763375f`; reports `output/E-Rc4Hk8-cross-run-result-cache/review-g1a.md`, `review-g1a-security.md`)
 
 Verdicts as reported: reviewer PASS (0 MUST-FIX, S-1..S-11), dev-security FAIL (SEC-01 MUST-FIX).
-G1a is NOT marked PASS here: the manager re-verifies after this remediation.
+G1a: PASS (manager, 2026-10-05) after independent dev-security re-verification; see the Comments.
 
 | finding | status | fix / regression test (all in `tests/cache/`) |
 |---------|--------|----------------------------------------------|
@@ -71,3 +71,4 @@ Verification run for this remediation (worktree `agent-a18ce2c08e42a3a5a`): `.ve
   early-gate review and the manager's scope decisions (HLD §23.5). State stays `Draft`
   (G1a after the core set / G1b after the engine set / G2 final); this file, `TASK.md`, `HANDOFF.md` (when present) and the epic `STATUS.md` rollup
   agree.
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: G1a PASS. Reviewer: PASS, 0 MUST-FIX. dev-security: SEC-01 MUST-FIX fixed in `763375f`, delta re-verified PASS, 0 open MUST-FIX; full suite 6081 passed / 10 skipped / 0 failed. Carry to G2: SEC-15 sensitive-path list decision; NIT RV-1. State stays `Draft` until G1b/G2 are complete (mirrors TASK.md).

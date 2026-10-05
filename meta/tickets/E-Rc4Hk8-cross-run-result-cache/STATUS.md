@@ -2,7 +2,7 @@
 
 - ID: `E-Rc4Hk8-cross-run-result-cache`
 - Updated At: `2026-10-05`
-- State: `Draft` — **Design complete (Rev 3) / Not started**. No task has started.
+- State: `In Progress` — Design complete (Rev 3); implementation under way (manager execution, 2026-10-05).
 - Owner: `manager` (execution) · `architect` (design)
 
 ## This update
@@ -67,7 +67,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 ### Gate tracker
 | Gate | When | State |
 |------|------|-------|
-| G1a | after the core set | reports in (reviewer PASS, dev-security FAIL on SEC-01); remediation committed in `763375f`, awaiting manager re-verification; NOT yet PASS |
+| G1a | after the core set | **PASS** (2026-10-05): reviewer PASS (0 MUST-FIX); dev-security FAIL on SEC-01 -> fixed in `763375f`, re-verified PASS (0 open MUST-FIX; full suite 6081 passed / 10 skipped / 0 failed) |
 | G1b | after the engine set | not started |
 | G2 | after T-JCOAsq Part 3 | not started |
 | G0 (value; business go/no-go) | **post-merge**, parent or operator | not part of this epic; T-nPMuz4 ships the protocol |
@@ -122,3 +122,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-u3jG8F -> Done (commit 87814ea). Rollup row and counts updated (12 Draft, 8 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Gate G1a not started (core set incomplete: T-HjxNQ0 remains).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-HjxNQ0 -> Done (commit 6753c71). Rollup row and counts updated (11 Draft, 9 Done); `EPIC.md` checkbox ticked; gate G1a is ready to start (core set complete); matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Full suite after the core-set group (T-U7ckfd + T-u3jG8F + T-HjxNQ0): 6027 passed, 10 skipped, 0 failed (5787 after the previous group; baseline 5583).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation committed in `763375f` (SEC-01 MUST-FIX and the SHOULD-FIX set fixed; the rest deferred with rationale in `T-fXWbqg-cache-review-gates/STATUS.md`). Gate row updated; G1a is not marked PASS until the manager re-verifies.
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: Gate G1a PASS after remediation `763375f` and independent dev-security re-verification (report `output/E-Rc4Hk8-cross-run-result-cache/review-g1a-security.md`, Re-verification section). Open for G2: SEC-15 sensitive-path list decision (`.gitlab-ci.yml`, `.githooks/*`, `Jenkinsfile`); optional NIT RV-1 (unbudgeted inline trash cleanup).
