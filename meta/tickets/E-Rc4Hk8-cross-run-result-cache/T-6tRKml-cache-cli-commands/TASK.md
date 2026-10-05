@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev C)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Done)
+- Status: `Done`
 - Estimate: `17 focus hours (2.1 days)` · Sprint 2 · surfaces
 
 ## Requirements Mapping
@@ -108,3 +108,4 @@ HLD §8.9 (table, prefix resolution) verbatim.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (manager B): `rm --run
   --task` and `verify --repair` deferred (`verify` is read-only); `stats --json` carries the G0
   fields; re-estimated from 20 h to 17 h; Sprint 2.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `033dd79`). All ten acceptance criteria pass; evidence, deviations and the prune-side restore-leftover sweep decision in `STATUS.md` / `HANDOFF.md`.

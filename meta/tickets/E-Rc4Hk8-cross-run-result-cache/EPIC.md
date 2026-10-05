@@ -122,7 +122,7 @@ ordered by dependency (HLD §22.2).
 
 ### 3. Surfaces
 - [ ] `T-nPMuz4-cache-shadow-value-check`: **G0 protocol and tooling hand-off** (procedure, report template, smoke validation); does not execute G0. 6 h. Tester (+ manager sign-off). Deps: T-o95l1M, T-eyn5UG.
-- [ ] `T-6tRKml-cache-cli-commands`: `ao cache ls|stats|show|rm|prune|clear|verify`. 17 h. Dev C. Deps: T-HjxNQ0, T-28J9oR.
+- [x] `T-6tRKml-cache-cli-commands`: `ao cache ls|stats|show|rm|prune|clear|verify`. 17 h. Dev C. Deps: T-HjxNQ0, T-28J9oR. **Done** (2026-10-05) Commit 033dd79.
 - [ ] `T-bLpoze-cache-dashboard-surface`: payload fields, file-browser deny, tag, tile; bundle rebuilt as a separate commit. 10 h. Dev C. Deps: T-eyn5UG.
 
 ### 4. Hardening, gate G2, docs
