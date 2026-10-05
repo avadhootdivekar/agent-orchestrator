@@ -49,6 +49,9 @@
 ## Verification the receiver should run
 - `pytest -q tests/cache/test_hashing.py tests/cache/test_repo_state.py` (77 tests)
 
+## G1a remediation deviations (commit `763375f`)
+- New public helper `repo_state.git_read_env()` builds the child environment of every repository read: it removes repository-selecting variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, object/ceiling/namespace variables) and inherited config injection, keeps `GIT_OPTIONAL_LOCKS=0`, and forces `core.fsmonitor=false` and `core.untrackedCache=false` through `GIT_CONFIG_COUNT` (git >= 2.31; older git ignores it). Supersedes deviation 1 (env layering). Residual: in-repo `filter.<x>.clean` / `textconv` via `.gitattributes` cannot be neutralised by a config key.
+
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Handoff stub created (Rev 2).
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3: workspace-bounded repo
@@ -56,3 +59,4 @@
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done; handoff available
   (commit `00b9a3c`). Deviations 1-4 above are small and documented; the frozen names are
   unchanged.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation (SEC-03, SEC-04 (repo state)) in commit `763375f`; deviations listed above; frozen names unchanged.

@@ -85,3 +85,4 @@ installed CLI at `2.1.289 (Claude Code)`.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `95dab70`).
   All 14 acceptance criteria pass, GV-1 Rev 2 reproduced exactly; four small deviations in
   `HANDOFF.md`; A-9 check recorded above. Matches `TASK.md`, `HANDOFF.md` and the epic rollup.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation touched this task's code (SEC-06, S-11, S-10 (key builder / sensitive paths)) in commit `763375f`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1a remediation) from `output/E-Rc4Hk8-cross-run-result-cache/review-g1a.md` and `review-g1a-security.md`. Task state stays Done; matches `HANDOFF.md`.

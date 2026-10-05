@@ -200,6 +200,10 @@ its resolved path has:
 - a component in `{.git, .claude, .github, .gitlab, .husky, .ao, .orchestrator}`; or
 - a basename in `{CLAUDE.md, CLAUDE.local.md, AGENTS.md, .mcp.json, .envrc}`.
 
+*Addendum (G1a remediation, SEC-06):* the match is **case-insensitive** (`casefold()`), because a
+case-insensitive filesystem makes `.GIT/hooks` and `Claude.md` name the protected targets; a false
+refusal only makes a task uncacheable. The earlier "`docs/claude.md` is not sensitive" note is void.
+
 ### D11 / D12 — Lookup placement; the engine owns the hit transition
 
 **Placement.** The lookup runs in `_prepare_and_maybe_dispatch`:
@@ -313,6 +317,15 @@ flags this to the parent (HLD OQ-7).
 - Inline enforcement is bounded twice: it **defers** when the store holds more than
   `INLINE_PRUNE_MAX_ENTRIES` entries **or** more than `INLINE_PRUNE_MAX_ENTRY_FILE_BYTES` of entry
   files, because the mark phase reads every entry file.
+  *Addendum (G1a remediation, SEC-01/SEC-02):* "entry files" means every file under `entries/**`
+  of **any version and depth** (the mark phase reads them all), and the bound applies to the
+  size scan **and to the prune it triggers** (the scan is cached per store instance, so the prune
+  bounds its own reads). Two further caps defer the same way: `INLINE_PRUNE_MAX_WALK_ITEMS`
+  directory entries visited and `INLINE_PRUNE_MAX_BLOBS` blobs. The explicit `ao cache prune`
+  stays unbounded.
+- The mark phase **fails closed**: an entry file that cannot be read (EACCES, EIO, too large)
+  makes the mark incomplete, and then no blob is swept. The sweep re-checks a blob's age
+  immediately before deleting it.
 - `clear` moves the root's contents into a trash directory and verifies the removal.
 - `verify` is read-only; `--repair` is deferred (Rev 3).
 
@@ -327,7 +340,11 @@ flags this to the parent (HLD OQ-7).
    - `realpath(dest) == dest`;
    - inside the workspace;
    - not sensitive.
-3. Only then: `chmod(mode & 0o755)` and `os.replace`.
+3. Only then `os.replace`. The mode (`mode & 0o755`) is applied with `fchmod` on the open
+   staging descriptor once its content is verified (never by path), and each destination that
+   already exists is first hard-linked to a backup, so a failing rename rolls the earlier ones
+   back (G1a remediation, SEC-07). Residuals: parent directories created for the restore stay,
+   and on a filesystem without hard links a mid-commit failure can leave that one file replaced.
 
 Every restore failure is a miss and is **not storable** for that dispatch. A corrupt entry or blob
 is also evicted.

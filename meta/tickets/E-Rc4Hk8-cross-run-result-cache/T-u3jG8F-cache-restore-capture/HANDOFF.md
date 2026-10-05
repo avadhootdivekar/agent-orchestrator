@@ -35,9 +35,16 @@
 ## Verification the receiver should run
 - `pytest -q tests/cache/test_restore.py`
 
+## G1a remediation deviations (commit `763375f`)
+- `capture_outputs` refuses (`StoreSkip(output_not_regular)`) any path whose `realpath` differs from itself (a swapped parent directory); signature unchanged.
+- `restore_outputs` applies the mode with `os.fchmod` on the open staging descriptor after hash verification (no path chmod, so U-R11's 'private until commit' test now spies `fchmod`); each existing destination is hard-linked to a `<staging>.bak` before phase 2 and a failing rename rolls the earlier renames back. Residuals: created parent directories stay; where hard links are unavailable that one file is not rolled back.
+- A non-integrity `CacheError` from `read_blob` (transient I/O) is `RestoreMiss(store_error, evict=False)`; `CacheUnsafePathError` still propagates.
+- Sensitive-path matching is case-insensitive (see T-uoYW6b); the old 'lower-case lookalike is not sensitive' test was inverted.
+
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Handoff stub created.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 contents.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3: owner Dev B; test
   hygiene. State `Draft` mirrors `TASK.md` and `STATUS.md`.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done; handoff available (commit `87814ea`). Deviations 1-4 above are small.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation (SEC-05, SEC-07, SEC-09 (restore/capture)) in commit `763375f`; deviations listed above; frozen names unchanged.

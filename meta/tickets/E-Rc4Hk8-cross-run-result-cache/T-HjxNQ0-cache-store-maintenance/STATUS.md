@@ -67,3 +67,4 @@ Cache stays OFF by default; the engine is unchanged.
   (core set); this file, `TASK.md`, `HANDOFF.md` (when present) and the epic `STATUS.md` rollup
   agree.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `6753c71`). All 16 acceptance criteria pass; matches `TASK.md`, `HANDOFF.md` and the epic rollup. Full suite 6027 passed, 10 skipped, 0 failed.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation touched this task's code (SEC-01, SEC-02, S-2, S-3, S-4, S-5 (maintenance)) in commit `763375f`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1a remediation) from `output/E-Rc4Hk8-cross-run-result-cache/review-g1a.md` and `review-g1a-security.md`. Task state stays Done; matches `HANDOFF.md`.

@@ -52,9 +52,16 @@
 ## Verification the receiver should run
 - `pytest -q tests/cache/test_store_maintenance.py tests/cache/test_store_race.py`
 
+## G1a remediation deviations (commit `763375f`)
+- Inline enforcement is bounded for everything it reads: a private per-phase `_Budget` (files, file bytes, directory entries, blobs) applies to `_scan_sizes` AND to the prune that `maybe_enforce_limits` triggers; the walk covers `entries/**` of any version and depth. New constants `INLINE_PRUNE_MAX_WALK_ITEMS` (100000) and `INLINE_PRUNE_MAX_BLOBS` (50000); the two frozen D19 constants are unchanged. `_scan_sizes` (private) changed signature from `(entry_limit, entry_bytes_limit)` to `(budget)`; the HLD 8.4.3 pseudocode is stale on this point. `prune` (public) is unchanged and unbounded; a private `_prune` takes the budget factory.
+- `iter_entries` yields an `unreadable` anomaly for an entry file that cannot be read (S-3); `verify` treats it as a failing problem and never deletes it.
+- The mark phase fails CLOSED (`_Marks.complete`): any unreadable entry file under `entries/**` means no blob is swept; `stats` reports no orphans and `verify` no orphan problems in that case. `PruneReport` has no new field to say so.
+- The sweep re-lstats each blob right before deleting it; `PruneReport.removed_blobs` excludes blobs a concurrent store refreshed (S-5).
+
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Handoff stub created.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 contents.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3: `CacheAdmin` base added
   here; byte bound; read-only `verify`. State `Draft` mirrors `TASK.md` and `STATUS.md`.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done; handoff available (commit `6753c71`). Deviations 1-7 above are small and behaviour-strengthening.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation (SEC-01, SEC-02, S-2, S-3, S-4, S-5 (maintenance)) in commit `763375f`; deviations listed above; frozen names unchanged.

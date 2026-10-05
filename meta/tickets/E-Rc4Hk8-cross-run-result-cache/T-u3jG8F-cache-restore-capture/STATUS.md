@@ -55,3 +55,4 @@ No pre-existing file was touched. Cache stays OFF by default; the engine is unch
   (core set); this file, `TASK.md`, `HANDOFF.md` (when present) and the epic `STATUS.md` rollup
   agree.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `87814ea`). All 14 acceptance criteria pass; matches `TASK.md`, `HANDOFF.md` and the epic rollup.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation touched this task's code (SEC-05, SEC-07, SEC-09 (restore/capture)) in commit `763375f`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1a remediation) from `output/E-Rc4Hk8-cross-run-result-cache/review-g1a.md` and `review-g1a-security.md`. Task state stays Done; matches `HANDOFF.md`.

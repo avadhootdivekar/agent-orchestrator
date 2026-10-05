@@ -40,9 +40,15 @@
 ## Verification the receiver should run
 - `pytest -q tests/cache/test_store_core.py`
 
+## G1a remediation deviations (commit `763375f`)
+- `put_blob` dedupe now requires a REGULAR file of the right size at the blob path; otherwise it replaces it (a planted directory is first moved to a root-level `trash-*` directory, which prune removes). Same-size forged content is not re-hashed at dedupe (restore verifies the hash).
+- `read_blob`: only `NotRegularFileError` is `CacheIntegrityError(blob_corrupt)`. Any other `OSError` is now a plain `CacheError(store_error)` so no caller evicts on a transient error. Frozen names and signatures unchanged.
+- `delete_entry` / `delete_blob` on a directory raise `CacheUnsafePathError` (never evicted) instead of a raw `IsADirectoryError`.
+
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Handoff stub created.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 contents.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3: `CacheStore`-only class;
   unsafe-path semantics. State `Draft` mirrors `TASK.md` and `STATUS.md`.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done; handoff available (commit `181bbbb`). Deviations 1-5 above are small and behaviour-preserving.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation (SEC-08, SEC-09 (store core)) in commit `763375f`; deviations listed above; frozen names unchanged.

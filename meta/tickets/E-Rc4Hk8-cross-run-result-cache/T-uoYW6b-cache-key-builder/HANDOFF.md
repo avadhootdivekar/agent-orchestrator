@@ -49,6 +49,10 @@
 - `pytest -q tests/cache/test_keys_golden.py tests/cache/test_keys.py tests/cache/test_fingerprint.py`
   (127 tests)
 
+## G1a remediation deviations (commit `763375f`)
+- `safeio.is_sensitive_rel_path` (used by `keys.py` and `restore.py`) is now case-insensitive (`casefold()`), per ADR-0019 D29 addendum; `docs/claude.md` is sensitive. GV-1 is unaffected.
+- `keys.py`: the prior-output `lstat` maps FileNotFoundError to the absent prior and any other OSError to `UncacheableError(input_unreadable)`.
+
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Handoff stub created.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 contents.
@@ -56,3 +60,4 @@
   from `constants`.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done; handoff available
   (commit `95dab70`). Deviations 1-4 above are small and documented; GV-1 is reproduced exactly.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation (SEC-06, S-11, S-10 (key builder / sensitive paths)) in commit `763375f`; deviations listed above; frozen names unchanged.

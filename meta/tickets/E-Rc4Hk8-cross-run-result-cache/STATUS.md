@@ -67,7 +67,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 ### Gate tracker
 | Gate | When | State |
 |------|------|-------|
-| G1a | after the core set | ready to start (core set complete: all 9 core-set tasks Done); not started |
+| G1a | after the core set | reports in (reviewer PASS, dev-security FAIL on SEC-01); remediation committed in `763375f`, awaiting manager re-verification; NOT yet PASS |
 | G1b | after the engine set | not started |
 | G2 | after T-JCOAsq Part 3 | not started |
 | G0 (value; business go/no-go) | **post-merge**, parent or operator | not part of this epic; T-nPMuz4 ships the protocol |
@@ -121,3 +121,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-U7ckfd -> Done (commit 181bbbb). Rollup row and counts updated (13 Draft, 7 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Gate G1a not started (core set incomplete: T-u3jG8F, T-HjxNQ0 remain).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-u3jG8F -> Done (commit 87814ea). Rollup row and counts updated (12 Draft, 8 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Gate G1a not started (core set incomplete: T-HjxNQ0 remains).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-HjxNQ0 -> Done (commit 6753c71). Rollup row and counts updated (11 Draft, 9 Done); `EPIC.md` checkbox ticked; gate G1a is ready to start (core set complete); matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Full suite after the core-set group (T-U7ckfd + T-u3jG8F + T-HjxNQ0): 6027 passed, 10 skipped, 0 failed (5787 after the previous group; baseline 5583).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation committed in `763375f` (SEC-01 MUST-FIX and the SHOULD-FIX set fixed; the rest deferred with rationale in `T-fXWbqg-cache-review-gates/STATUS.md`). Gate row updated; G1a is not marked PASS until the manager re-verifies.
