@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -119,6 +120,29 @@ def test_auth_with_an_empty_store_exits_78_before_serving(
     assert "ERROR:" in result.output and "ao auth add-user" in result.output
     assert fake_uvicorn.calls == []
     assert audit_events(empty.store_dir / "state") == ["auth.startup.refused"]
+
+
+@pytest.fixture()
+def read_only_store(tmp_path: Path) -> Iterator[LaunchEnv]:
+    """A store dir (with a user) at mode 0500 and no state dir yet: creating the derived
+    ``<store>/state`` raises ``PermissionError``."""
+    env = make_launch_env(tmp_path / "ro", users=("alice",))
+    env.state_dir.rmdir()
+    env.store_dir.chmod(0o500)
+    try:
+        yield env
+    finally:
+        env.store_dir.chmod(0o700)
+
+
+def test_h_code_1_a_read_only_store_exits_78_not_a_traceback(
+    read_only_store: LaunchEnv, fake_uvicorn: RecordingUvicorn
+) -> None:
+    result = ui(read_only_store, "--auth", "--auth-dir", str(read_only_store.store_dir))
+    assert result.exit_code == EXIT_CONFIG == 78, result.output
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit)  # not a raw PermissionError
+    assert fake_uvicorn.calls == []
 
 
 def test_the_same_refusal_through_the_environment_and_the_config(

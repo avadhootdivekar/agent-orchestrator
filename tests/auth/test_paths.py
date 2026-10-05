@@ -198,3 +198,30 @@ class TestCheckStateDir:
         finally:
             os.chmod(tmp_path, 0o700)
         assert len(notices) == 1 and "chmod g-w" in notices[0]
+
+
+class TestOsErrorsBecomeConfigErrors:
+    """T-2wE08U M-code-1: a PermissionError must exit 78 (AuthConfigError), never escape raw."""
+
+    def test_check_state_dir_under_a_read_only_parent(self, tmp_path: Path) -> None:
+        parent = tmp_path / "ro"
+        parent.mkdir(mode=0o700)
+        parent.chmod(0o500)
+        try:
+            with pytest.raises(UnsafePermissionsError, match="Permission denied") as info:
+                check_state_dir(parent / "state")
+        finally:
+            parent.chmod(0o700)
+        assert isinstance(info.value, AuthConfigError)
+        assert str(parent / "state") in str(info.value)
+
+    def test_check_private_paths_when_the_store_cannot_be_inspected(self, tmp_path: Path) -> None:
+        outer = tmp_path / "locked"
+        store_dir = outer / "store"
+        store_dir.mkdir(parents=True, mode=0o700)
+        outer.chmod(0o000)  # stat() of anything inside raises PermissionError
+        try:
+            with pytest.raises(UnsafePermissionsError):
+                check_private_paths(store_dir, store_dir / "users.json")
+        finally:
+            outer.chmod(0o700)

@@ -165,6 +165,21 @@ def test_auth_with_an_empty_store_exits_78_before_any_supervisor(
     assert _state_files(tmp_path) == []  # no lock file, no supervisor.json
 
 
+def test_h_code_1_a_read_only_store_exits_78_before_any_supervisor(
+    tmp_path: Path, uvicorn_stub: _StubUvicorn, recorder: _Recorder
+) -> None:
+    ro = make_launch_env(tmp_path / "ro", users=("alice",))
+    ro.state_dir.rmdir()  # the derived <store>/state must be created -> PermissionError
+    ro.store_dir.chmod(0o500)
+    try:
+        result = service_run("--auth", "--auth-dir", str(ro.store_dir))
+    finally:
+        ro.store_dir.chmod(0o700)
+    assert result.exit_code == EXIT_CONFIG == 78, result.output
+    assert "Traceback" not in result.output
+    assert recorder.supervisors == [] and uvicorn_stub.config_calls == []
+
+
 def test_the_same_refusal_through_the_environment(
     tmp_path: Path,
     uvicorn_stub: _StubUvicorn,

@@ -88,6 +88,10 @@ def is_within(path: Path, root: Path) -> bool:
     return _contains(_normalized(path), _normalized(root))
 
 
+def _os_error_text(path: Path, exc: OSError) -> str:
+    return f"{path}: {exc.strerror or type(exc).__name__}"
+
+
 def check_private_paths(store_dir: Path, users_file: Path) -> list[str]:
     """Verify the credential store is private; return the non-fatal parent warnings.
 
@@ -107,6 +111,8 @@ def check_private_paths(store_dir: Path, users_file: Path) -> list[str]:
             pass
     except fsutil.UnsafePathError as exc:
         raise UnsafePermissionsError(str(exc)) from exc
+    except OSError as exc:  # e.g. a 0500 store: surface as exit 78, not a traceback (M-code-1)
+        raise UnsafePermissionsError(_os_error_text(store_dir, exc)) from exc
     return notices
 
 
@@ -119,6 +125,8 @@ def check_state_dir(state_dir: Path) -> list[str]:
         return fsutil.ensure_private_dir(state_dir, create=True, fix=False)
     except fsutil.UnsafePathError as exc:
         raise UnsafePermissionsError(str(exc)) from exc
+    except OSError as exc:  # PermissionError creating/inspecting it: exit 78, not a traceback
+        raise UnsafePermissionsError(_os_error_text(state_dir, exc)) from exc
 
 
 # The XDG-config-relative tail of ``service.env`` (".config/ao/service.env" -> "ao/service.env").
