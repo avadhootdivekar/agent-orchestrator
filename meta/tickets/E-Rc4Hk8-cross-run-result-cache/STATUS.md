@@ -2,7 +2,7 @@
 
 - ID: `E-Rc4Hk8-cross-run-result-cache`
 - Updated At: `2026-10-05`
-- State: `In Progress` — Design complete (Rev 3); implementation under way (manager execution, 2026-10-05).
+- State: `In Review` — implementation complete, gates G1a / G1b / G2 PASS, docs reconciled; **architect sign-off on `T-bdQZW4` pending**; G0 is a post-merge follow-up.
 - Owner: `manager` (execution) · `architect` (design)
 
 ## This update
@@ -60,9 +60,9 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-bLpoze-cache-dashboard-surface | surfaces | Dev C | 10 h | Done |
 | T-JCOAsq-cache-test-hardening | Part 1 before T-XpF1pF; Parts 2–3 hardening | Tester | 24 h | Done |
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Done |
-| T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
+| T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | In Review |
 
-**Counts:** 20 tasks: 1 Draft (T-bdQZW4), 0 In Progress, 0 In Review, 0 Blocked, 19 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 0 Draft, 0 In Progress, 1 In Review (T-bdQZW4, architect sign-off pending), 0 Blocked, 19 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
@@ -98,7 +98,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - **Highest risks** (HLD §23.1): R-1 stale hits; R-7 merge conflicts; R-9 junior-written
   security code; R-14 unproven value.
 
-## Next actions
+## Next actions (historical; superseded by "Next actions (current)" at the end)
 1. **`manager`:** start the core set (HLD §22.3): T-FJH6LI (commit 1, 2, 3), T-28J9oR, T-QgQy08,
    T-8tr1H4, T-uoYW6b, T-U7ckfd, T-u3jG8F, T-HjxNQ0, then gate G1a. T-OeRYSO may run in
    parallel at any time; T-JCOAsq Part 1 any time before T-XpF1pF.
@@ -137,3 +137,66 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-JCOAsq -> Done (commits `b7489d1` E-1..E-6, `a947986` CI step, then the docs commit). Rollup row and counts updated (2 Draft, 0 In Progress, 18 Done); `EPIC.md` Part 3 checkbox ticked; gate G2 row is "ready to start"; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 55 e2e tests; CI coverage step green locally (package 98.71%, keys 100, store 96, restore 97, coordinator 100); full suite 6805 passed, 10 skipped, 0 failed; dashboard step 94.42%; vitest 419 passed. No production defect; one Part 2 test tripwire fixed (it broke under `--cov`). Decision recorded: E-2's allow-list includes `cache.cli`. Merge-notes table in the task `HANDOFF.md` (note: `tests/ui/test_run_graph_endpoint.py` is an edited existing file not listed in HLD 24.2).
 By: developer · Role: developer · Date: 2026-10-05 · Comment: G2 remediation applied (reviewer PASS 0 MUST-FIX + dev-security PASS 0 MUST-FIX; reports `output/E-Rc4Hk8-cross-run-result-cache/review-g2.md`, `review-g2-security.md`). Fixed: restore-tmp hashing exemption removed (G2-S1), sensitive-path list extended (G2-S3), UI deny-list casefold + NUL (G2-S2), `ao cache` missing workspace exit 2 (G2-S5), `strip_control_chars` additions, G1b suite-figure correction (G2-S6: 6572 passed / 10 skipped). Deferred/accepted: provider env in key (G2-S4), git `filter.<x>.clean` probe (sec G2-S2), HLD 24.2 merge notes (rev G2-S3) -> carry-overs in T-bdQZW4; NITs in `T-fXWbqg-cache-review-gates/STATUS.md`. GV-1 unchanged. The G2 gate row is NOT updated here: the manager marks G2. Task rollup unchanged (2 Draft, 18 Done).
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Gate G2 PASS (reports `output/E-Rc4Hk8-cross-run-result-cache/review-g2.md`, `review-g2-security.md`). Accepted residuals (documented by T-bdQZW4): provider env not in key, `filter.*.clean` executed by the guard-3 probe, dirty-tracked-edit, same-uid cache forgery. Next: T-bdQZW4 (docs refresh, last).
+
+## Epic completion note (2026-10-05, `T-bdQZW4`)
+
+By: developer · Role: developer · Date: 2026-10-05. State: **In Review** (not Done) until the architect signs off in
+`T-bdQZW4-cache-docs-refresh/STATUS.md`.
+
+### Final scope delivered
+- **Feature.** An opt-in, double-opt-in, content-addressed, workspace-local cross-run **result cache** (not
+  prompt caching): `ao run|resume --cache/--no-cache`, `AO_CACHE` (`1|0|shadow`), `.ao/config.yaml cache.*`;
+  author opt-in `cache: true` per task or `defaults.cache`; modes `on` and `shadow`; key schema v1 (GV-1
+  `6646469e...0319f`); fail-closed eligibility with tripwires and runtime unknown-field rules; three purity
+  guards at store; restore with verify-before-commit, rollback and sensitive-path refusal; `status.json`,
+  summary line, `report-usage` `result_cache` object, `settle_reason: cached`, `cache.*` events; `ao cache
+  ls|stats|show|rm|prune|clear|verify`; dashboard tag and tile; `ao-bench` forced off.
+- **Code.** New package `agent_orchestrator.cache` (17 modules + `__init__`, 5 472 lines) and additive hooks:
+  `engine.py` net +105 lines (12 inside existing functions; no `open(` / `.read(`), plus models, schema,
+  project_config, cli, runstate, usage, outcomes, ui/runs, ui/files, two frontend files and the rebuilt bundle,
+  bench/subjects, one CI step.
+- **Docs.** HLD (section 0 as built), ADR-0019 Accepted, README, authoring skill, ROADMAP, usage/bench/budget
+  cross-links, G0 protocol, 7 learnings.
+- **Not in scope / deferred.** `refresh`, `rm --run/--task`, `verify --repair` (Rev 3 deferrals) and the HLD 2.3
+  non-MVP list. G0 execution is post-merge.
+
+### Key decisions
+- Double opt-in with one named flip point `DEFAULT_TASK_CACHE_POLICY = False` (D1); `--no-cache` / `AO_CACHE=0`
+  are kill switches. Prior output content, argv and an executor fingerprint are in the key; task id is not (D4-D7).
+- The engine owns the hit transition; `dispatch_cycle` keeps its increment; usage excludes current hits at both
+  sites; stale charges reversed through the shared `_reverse_stale_charge` (D11, D12).
+- Hostile-data posture: total parsers, unsafe paths never followed or evicted, error boundary that disables the
+  cache for the run rather than killing it (D28, D32, D33).
+- NFR-1 literal no-op when off, with the CLI-path allowance for `cache.cli` (ADR-0019 A3) and the engine process
+  limited to `cache` + `cache.constants`.
+- G0 re-scoped to a post-merge, operator-owned protocol (D34); result container named `result_cache` (OQ-7).
+
+### Validation performed
+- Gates: G1a (core set; SEC-01 MUST-FIX fixed and re-verified), G1b (engine set), G2 (final; restore-temp
+  exemption removed, sensitive list extended); reports in `output/E-Rc4Hk8-cross-run-result-cache/`.
+- Tests: full suite 6903 passed / 10 skipped / 0 failed at G2; 6903 passed / 10 skipped / 0 failed (698.59 s) after the docs refresh (comment-only
+  code edits); CI step set 1 707 tests, package coverage 98.71% (keys 100, store 96, restore 97, coordinator 100);
+  I-1 (working `find_spec` poison, ten workflows) and I-2 (base-captured goldens, serial and `max_parallel=3`)
+  prove the off path; hostile corpus, adversarial ADV-1..10, e2e E-1..E-8 through `CliRunner`; mutation checks.
+- Quality: `ruff check` and `ruff format --check` clean on `src tests` (only the git-ignored generated
+  `_build_info.py` flagged), `mypy src tests/cache` only the 4 pre-existing `_version.py` errors.
+- Docs reconciliation: every changed statement checked against the code (106-check script plus greps and runs in
+  the task `STATUS.md` Evidence); GV-1 and all eleven component digests re-verified.
+
+### Outstanding follow-ups
+- **G0** (parent/operator, post-merge): run the shadow-mode protocol on a real consumer workflow with consent;
+  confirm the decision-rule thresholds (OQ-6). The protocol has no cleanup step (note in HLD R-A6).
+- **Merge with E-Ag7Pw3 / E-Da5Tn9** (HLD 24.2): classify new fields RULED, approval check before the lookup seam
+  (add the pin test then), recapture I-2 goldens if output changed, rebuild the UI bundle, keep the CI
+  `permissions:` / `pip-audit` and extend the per-module coverage loop.
+- **Accepted residuals** (HLD 0.4, ADR A4): provider/endpoint env not in the key; git `filter.<x>.clean` executed
+  by the guard-3 probe; dirty tracked edits before the lookup; agent-writable cache directory and retention;
+  nested workspace; active TOCTOU.
+- **Backlog:** one hygiene ticket for the deferred NITs (HLD 0.6 FU-4); the pre-existing missing-inputs
+  `dispatch_cycle` reset bug; the pre-existing `ui/files.read_file` FIFO open; the pre-existing red lint file
+  `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py`; OQ-4 (E-Ag7Pw3 representation).
+
+## Next actions (current)
+1. **architect:** sign off `T-bdQZW4` (AC-7); then `manager` sets the task and epic to Done and syncs `EPIC.md`.
+2. **parent/operator:** merge per HLD 24.2; run G0 post-merge.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-bdQZW4 -> In Review (docs refresh delivered; commits 643ad11, eaead55, 5748316 and follow-ups). Rollup row and counts updated (19 Done, 1 In Review); epic state `In Review`, not Done, until the architect signs off; completion note above; matches the task `TASK.md`, `STATUS.md`, `HANDOFF.md` and `EPIC.md`.

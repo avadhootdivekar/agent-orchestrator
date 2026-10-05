@@ -6,8 +6,9 @@
 - Owner: `manager` (execution) · design by `architect`
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft` — **Design complete (Rev 3) / Not started**: the HLD/LLD, ADR-0019 and 20 task
-  tickets are ready; no task has started.
+- Status: `In Review` — **Implemented**: 19 of 20 tasks Done, gates G1a, G1b and G2 PASS, the docs
+  refresh (`T-bdQZW4`) delivered; **architect sign-off pending**. G0 (the value check) is a post-merge
+  follow-up, protocol shipped, not run.
 
 ## Summary
 - **Goal.** A task in any run of a workspace can reuse the declared output files of an earlier,
@@ -49,8 +50,8 @@
     controls; the separate `dispatch_cycle` bug ticket.
 
 ## Design
-- HLD + LLD: [`docs-md/cross-run-result-cache-hld.md`](../../../docs-md/cross-run-result-cache-hld.md), §0–§25, Rev 3
-- ADR: [`docs-md/adr/ADR-0019-cross-run-result-cache.md`](../../../docs-md/adr/ADR-0019-cross-run-result-cache.md), Rev 3, decisions D1–D35, alternatives ALT-1…ALT-8
+- HLD + LLD: [`docs-md/cross-run-result-cache-hld.md`](../../../docs-md/cross-run-result-cache-hld.md), §0–§25, Rev 4 (as built; read §0 first)
+- ADR: [`docs-md/adr/ADR-0019-cross-run-result-cache.md`](../../../docs-md/adr/ADR-0019-cross-run-result-cache.md), Rev 4, **Accepted**, decisions D1–D35, alternatives ALT-1…ALT-8, as-built addendum A1–A5
 - Decision log: HLD §7.6 (D1–D35). Threat model: HLD §7.7 (M-1…M-16 plus residuals).
 - Reviews: Phase 4 in HLD §23.3–§23.4 (61 dispositions); Rev 3 early-gate review in HLD §23.5.
 - Merge notes for sibling epics E-Ag7Pw3 and E-Da5Tn9: HLD §24.2
@@ -129,7 +130,7 @@ ordered by dependency (HLD §22.2).
 - [x] `T-JCOAsq-cache-test-hardening` **Part 2**: integration and adversarial (deps T-XpF1pF, T-u3jG8F, T-HjxNQ0). 10 h. Tester. **Done** (2026-10-05, commit 4d11a69, 147 tests; the task is now Done, see Part 3).
 - [x] `T-JCOAsq-cache-test-hardening` **Part 3**: e2e, CI coverage step, full suite (deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 8 h. Tester. **Done** (2026-10-05, commits b7489d1 e2e, a947986 CI step; 55 e2e tests, coverage 98.71%, full suite 6805 passed). The task is **Done**.
 - [x] `T-fXWbqg-cache-review-gates`: G1a, G1b and **G2**. 24 h in total. reviewer + dev-security.
-- [ ] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4.
+- [ ] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4. **In Review** (2026-10-05, commits 643ad11, eaead55, 5748316 and the follow-ups): all ten steps done and grep-verified; box ticked on the architect's sign-off.
 
 **Totals.**
 - **288 focus hours** across 20 tasks: developers 234, tester 30, review gates 24.
@@ -166,8 +167,8 @@ ordered by dependency (HLD §22.2).
 - Design doc: `docs-md/cross-run-result-cache-hld.md`
 - ADR: `docs-md/adr/ADR-0019-cross-run-result-cache.md`
 - Sprint plan and execution order: HLD §22
-- Output artifacts: `output/E-Rc4Hk8-cross-run-result-cache/` (gate reports and the G0 smoke
-  evidence will land there; none yet)
+- Output artifacts: `output/E-Rc4Hk8-cross-run-result-cache/` (gate reports `review-g1a*.md`, `review-g1b*.md`, `review-g2*.md` and the G0 smoke evidence `g0-protocol-smoke.md`)
+- G0 protocol: `docs-md/result-cache-g0-protocol.md` (execution is post-merge)
 
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Epic created (Rev 1).
@@ -186,3 +187,4 @@ ordered by dependency (HLD §22.2).
     fields in `result_cache` objects.
   - **Plan:** totals stay 288 h; estimates and owners rebalanced; critical path recomputed to
     120 h. T-OeRYSO and T-ZTxN1x are unchanged by Rev 3.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: `T-bdQZW4` delivered (docs refresh, HLD section 0, ADR-0019 Accepted). Epic status -> `In Review` (not `Done`) until the architect signs off in the task `STATUS.md`; rollup and the epic completion note are in the epic `STATUS.md`.

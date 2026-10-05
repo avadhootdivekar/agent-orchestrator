@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev B), with `architect` sign-off
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (as-built docs reconciliation delivered)
+- Status: `In Review` (all ten steps done and grep-verified; AC-7 architect sign-off pending)
 - Estimate: `8 focus hours (1 day)` · last task of the epic
 
 ## Requirements Mapping
@@ -100,3 +100,4 @@ for doc in the §25 list: read code -> update doc -> grep-verify each changed cl
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (early-gate A1e, D): now
   depends on T-nPMuz4; adds the example workflow, the release-note line and the flip-point
   sentence; drops `refresh`/`rm --run`/`--repair`; the G0 protocol doc is owned by T-nPMuz4.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Implemented (commits `643ad11` HLD + ADR, `eaead55` other docs and learnings, `5748316` pointer comments, then the ticket-docs commit). All ten HLD 25 steps are done and every changed statement was checked against the code (AC-1: the commands are listed in `STATUS.md` Evidence). AC-2 to AC-6 PASS; **AC-7 (architect sign-off) is pending**, so the state is `In Review`, not `Done`; `STATUS.md`, `HANDOFF.md` and the epic `EPIC.md` / `STATUS.md` rollup agree. The HLD new section 0 corrects the Rev 3 design text where the code or a gate remediation superseded it (DV-1..DV-24).
