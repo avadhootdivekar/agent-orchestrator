@@ -29,6 +29,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from ..errors import EXIT_CONFIG
 from .paths import XDG_CONFIG_HOME_ENV
 
 # Hub port baked into a freshly-generated unit's `ExecStart` when `ao service install` is
@@ -47,8 +48,9 @@ DEFAULT_HUB_HOST = "127.0.0.1"
 _UNIT_SUBPATH = ("systemd", "user")
 UNIT_FILENAME = "ao.service"
 
-# The exact HLD §7 unit text, including the early-gate corrections. `{ao_executable}` and
-# `{hub_port}` are the only two rendered values -- everything else is fixed by design.
+# The exact HLD §7 unit text, including the early-gate corrections. `{ao_executable}`,
+# `{hub_host}`, `{hub_port}` and `{exit_config}` (the terminal config-error exit status, E-Da5Tn9)
+# are the only rendered values -- everything else is fixed by design.
 _UNIT_TEMPLATE = """[Unit]
 Description=Agent Orchestrator multi-workspace service
 After=network.target
@@ -57,6 +59,7 @@ After=network.target
 Type=simple
 ExecStart={ao_executable} service run --hub-host {hub_host} --hub-port {hub_port}
 Restart=on-failure
+RestartPreventExitStatus={exit_config}
 RestartSec=5
 StartLimitIntervalSec=120
 StartLimitBurst=5
@@ -116,7 +119,12 @@ def render_unit(
     run`'s own defaults) -- an implicit default that later changed would silently desync a
     previously-installed unit from a new binary's default (HLD §7, AC16).
     """
-    return _UNIT_TEMPLATE.format(ao_executable=ao_executable, hub_port=hub_port, hub_host=hub_host)
+    return _UNIT_TEMPLATE.format(
+        ao_executable=ao_executable,
+        hub_port=hub_port,
+        hub_host=hub_host,
+        exit_config=EXIT_CONFIG,
+    )
 
 
 def _default_unit_dir() -> Path:

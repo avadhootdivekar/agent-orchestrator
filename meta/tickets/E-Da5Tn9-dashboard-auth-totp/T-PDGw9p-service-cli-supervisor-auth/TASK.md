@@ -6,7 +6,7 @@
 - Owner: `developer` (lane A; v2.1, was lane Q)
 - Created: `2026-10-05`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `2.5 days` · Sprint `S3`
 
 **Origin:** this scope was split out of v1 `T-KOv2qD-hub-service-auth` (developer D-4: the 3-day

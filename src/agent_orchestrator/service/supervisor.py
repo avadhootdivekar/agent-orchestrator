@@ -23,14 +23,15 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from pydantic import BaseModel
 
+from ..errors import EXIT_CONFIG
 from ..ui.processes import ProcessSupervisor
 from ..ui.runs import RunNotFoundError, RunRepository
 from .boot_resume import BootResumeGuard, Decision, ResumeCandidate, scan_resumable_runs
@@ -249,13 +250,19 @@ class SupervisorSnapshot(BaseModel):
 ChildSpawner = Callable[[str, int, str, Path], "subprocess.Popen"]
 
 
-def default_child_spawner(ao_executable: list[str]) -> ChildSpawner:
+def default_child_spawner(
+    ao_executable: list[str], extra_env: Mapping[str, str] | None = None
+) -> ChildSpawner:
     """Build the production `child_spawner`: real ``<ao_executable> ui --workspace <root>
     --host 127.0.0.1 --port <port>``, stdout/stderr redirected to *log_path* (AC20, same
     open-handle-then-close-in-parent pattern as ``ui/processes.py``'s own ``_spawn``),
     ``start_new_session=True`` so each child gets its own session/process group -- this is
     what lets `Supervisor.shutdown()` target only the child's own pid (ADR-0012 D2) without
     a SIGTERM to *this* process's controlling terminal also reaching them.
+
+    *extra_env* (E-Da5Tn9: the CLI-sourced auth flags) is layered over this process's own
+    environment for each child. When empty/None no `env` kwarg is passed at all, so the call
+    is exactly the pre-auth one.
     """
 
     def _spawn(root: str, port: int, host: str, log_path: Path) -> subprocess.Popen:
@@ -271,6 +278,7 @@ def default_child_spawner(ao_executable: list[str]) -> ChildSpawner:
         ]
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_handle = open(log_path, "wb")
+        env_kwargs: dict[str, Any] = {"env": {**os.environ, **extra_env}} if extra_env else {}
         try:
             return subprocess.Popen(  # noqa: S603 - argv is built here, never shell-parsed
                 argv,
@@ -279,6 +287,7 @@ def default_child_spawner(ao_executable: list[str]) -> ChildSpawner:
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
+                **env_kwargs,
             )
         finally:
             # The child holds its own dup of the fd; this process does not need it.
@@ -311,6 +320,7 @@ class Supervisor:
         run_repository_factory: Callable[[str], RunRepository] = RunRepository,
         boot_id: str | None = None,
         spawn_stagger_seconds: float = SPAWN_STAGGER_SECONDS,
+        child_env: Mapping[str, str] | None = None,
     ) -> None:
         """
         Args:
@@ -336,6 +346,9 @@ class Supervisor:
                 (AC16), so both can be swapped for fixtures in tests.
             boot_id: Injectable for deterministic tests; defaults to a fresh `uuid4` hex
                 per instance -- each `Supervisor` represents exactly one boot.
+            child_env: Extra environment for each spawned child (E-Da5Tn9: the CLI-sourced
+                auth flags, `AuthLaunch.child_env`); handed to `default_child_spawner` only --
+                an injected `child_spawner` ignores it.
         """
         # Normalize every root the same way `registry.py::save()` does, unconditionally --
         # `resolve_ports()` below is called once against `self._registry` and its resulting
@@ -362,7 +375,7 @@ class Supervisor:
         self._monotonic = monotonic
         self._sleeper = sleeper
         self._child_spawner: ChildSpawner = child_spawner or default_child_spawner(
-            self._ao_executable
+            self._ao_executable, extra_env=child_env
         )
         self._process_supervisor_factory = process_supervisor_factory
         self._run_repository_factory = run_repository_factory
@@ -560,6 +573,23 @@ class Supervisor:
 
     def _on_child_exit(self, child: ManagedChild, exit_code: int, now: float) -> None:
         ran_for = (now - child.stable_since) if child.stable_since is not None else None
+        if exit_code == EXIT_CONFIG:
+            # A configuration error (e.g. dashboard auth on with no users) cannot be fixed by
+            # restarting: terminal -- no backoff, no fast-fail port reassignment (HLD §14.8).
+            child.popen = None
+            child.stable_since = None
+            child.next_retry_at = None
+            child.last_error = (
+                f"child exited with code {EXIT_CONFIG} (configuration error: see {child.log_path})"
+            )
+            self._write_supervisor_snapshot()
+            logger.warning(
+                "child for %s exited with configuration error (code %d); not restarting -- see %s",
+                child.root,
+                EXIT_CONFIG,
+                child.log_path,
+            )
+            return
         child.popen = None
         child.last_error = f"child exited with code {exit_code}" + (
             f" after {ran_for:.1f}s" if ran_for is not None else ""
