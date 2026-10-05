@@ -38,8 +38,12 @@ ao-bench = "agent_orchestrator.bench.cli:app"
 packages = ["src/agent_orchestrator"]
 # The built dashboard frontend is data, not Python, so it needs an explicit include to
 # land in the wheel. Committed (see .gitignore) so `pip install` ships a working
-# dashboard without requiring node at install time.
-artifacts = ["src/agent_orchestrator/ui/static/**"]
+# dashboard without requiring node at install time. The hub login-page script and
+# stylesheet (auth/assets) are built-and-committed data the same way.
+artifacts = [
+    "src/agent_orchestrator/ui/static/**",
+    "src/agent_orchestrator/auth/assets/**",
+]
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build.py"

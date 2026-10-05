@@ -2,11 +2,29 @@
 
 - ID: `T-KOv2qD-hub-service-auth`
 - Updated At: `2026-10-05`
-- State: `Draft`
+- State: `Done`
 - Owner: `developer` (lane A)
 - Scope: `MVP` · Sprint: `S2→S3` (v2.1; was S3) · Estimate: `3 d` (v2.1; was 2.5 d)
 
 ## This update
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Implemented end to end (hub app only).
+  - New `auth/http/hub_page.py` (pure) and `auth/http/hub_routes.py` (`register_hub_auth_routes`:
+    flat `GET /`, `GET /login`, `GET /auth-assets/{name}`); `service/hub.py` gets
+    `build_hub_app(..., *, auth=None)` with lazy auth imports, AuthMiddleware inserted just before
+    SecurityMiddleware, `install_auth_routes`, L2 `redoc_url=None, swagger_ui_oauth2_redirect_url=None`
+    only with auth on, and `_render_index_html(payload, principal=None)`; `pyproject.toml` wheel
+    `artifacts` gains `auth/assets/**`.
+  - Tests: `tests/service/test_hub_auth.py` (26), `tests/auth/test_route_enumeration_hub.py` (7),
+    harness `tests/auth/helpers/hub.py` (`make_hub`, reuses `real_routes.build_dash(kind="hub")`).
+  - **Deviation 1 (AC 4):** `/auth-assets/..%2Fusers.json` and `/auth-assets/` match no route
+    (`{name}` is one segment), so deny-by-default answers an anonymous caller 401, not 404. Never
+    served; the test asserts 401-or-404. `/auth-assets/x.js` is a real 404 with an empty body.
+  - **Deviation 2 (pre-existing hub bug, fixed):** `GET /openapi.json` returned 500 on the hub (even
+    auth off): the lazily imported `JSONResponse` return annotation of `api_status` is unresolvable
+    under `from __future__ import annotations`. Fixed with `response_model=None` (served body
+    unchanged); required for AC 6 ("`/openapi.json` with the proof -> 200").
+  - **Deferred:** wheel listing (`uv build`) - agents must not run `uv`; CI/implementer runs the
+    Verification command. The pyproject glob and `read_hub_asset` are asserted by tests.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
   - **Estimate 2.5 → 3 d; sprint S3 → S2→S3** (lane A starts it late in S2, HLD §24.3).
   - **Design-review M2:** `register_hub_auth_routes` moves to a new `auth/http/hub_routes.py`
@@ -36,12 +54,18 @@
   hub, the `ao service` CLI, the supervisor and systemd edits (HLD §16 #5–#8); v2 keeps #5 and #16.
 
 ## Evidence
-- None yet. Record the wheel listing for `auth/assets/hub-auth.{js,css}` here.
+- By: developer · Role: developer · Date: 2026-10-05
+  - `.venv/bin/python -m pytest -q tests/auth tests/ui tests/service` -> 2764 passed, 2 skipped.
+  - `.venv/bin/python -m pytest -q tests/service/test_hub.py` (unmodified) -> 14 passed;
+    `tests/service/test_hub_auth.py` -> 26 passed; `tests/auth/test_route_enumeration_hub.py` -> 7 passed.
+  - `.venv/bin/ruff check src tests/...` clean; `ruff format --check` clean; `.venv/bin/mypy src` ->
+    only the 4 pre-existing `_version.py` errors.
+  - Wheel listing (`uv build --wheel && unzip -l ...`): NOT run (agents must not run uv); open for CI.
 
 ## Risks / Blockers
 - None. Merge-order note: the hub enumeration uses the HLD §13.2 `totp=None` rule, so it is green
   whether or not T-KQ6ZrY has landed (AC 9). OQ-8 and OQ-9 are DECIDED.
 
 ## Next actions
-1. developer: implement once T-rpKCjP, T-QJ1vyQ and T-R7JhTL land. Capture the auth-off golden
+1. (done 2026-10-05; only the CI wheel listing remains) developer: implement once T-rpKCjP, T-QJ1vyQ and T-R7JhTL land. Capture the auth-off golden
    HTML **before** editing `hub.py`, then run the verification.

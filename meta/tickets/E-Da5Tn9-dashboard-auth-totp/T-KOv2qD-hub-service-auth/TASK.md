@@ -6,7 +6,7 @@
 - Owner: `developer` (lane A)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `3 days` (v2.1; was 2.5) · Sprint `S2→S3` (v2.1; started late S2 on lane A)
 
 **v2 scope:** the hub **app** only. The `ao service` CLI, supervisor and systemd edits moved to

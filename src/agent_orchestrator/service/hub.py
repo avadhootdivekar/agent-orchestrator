@@ -31,13 +31,16 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from ..auth.principal import Principal
+    from ..auth.runtime import AuthRuntime
+
 # What `status_provider()` returns -- verbatim, the same shape `Supervisor.status_snapshot()`
 # produces (optionally enriched with a per-workspace `run_summary`, see
 # `service/cli.py::build_status_provider`).
 StatusProvider = Callable[[], dict[str, Any]]
 
 
-def build_hub_app(status_provider: StatusProvider) -> FastAPI:
+def build_hub_app(status_provider: StatusProvider, *, auth: AuthRuntime | None = None) -> FastAPI:
     """Build the hub app around *status_provider* (HLD §8).
 
     Args:
@@ -46,30 +49,63 @@ def build_hub_app(status_provider: StatusProvider) -> FastAPI:
             by `service/cli.py::build_status_provider` (adds the run-count summary + a TTL
             cache) -- this module has no opinion on that, it just calls whatever it is
             handed.
+        auth: The authentication runtime (E-Da5Tn9). ``None`` (the default) means auth is
+            off: the app behaves exactly as before, apart from the new ``GET /api/auth/status``.
+            When given, ``AuthMiddleware`` gates every route deny-by-default, the login page
+            and assets are served, and the index is registered by
+            ``auth.http.hub_routes`` (not here: see its module docstring).
     """
     from fastapi import FastAPI
     from fastapi.responses import HTMLResponse, JSONResponse
 
+    from ..auth.http.middleware import AuthMiddleware
+    from ..auth.http.routes import install_auth_routes
+    from ..auth.policy import HUB_COOKIE_ONLY_NAVIGATION, HUB_ROUTE_POLICIES
     from ..ui.security import SecurityMiddleware, resolve_allowed_hosts
 
-    app = FastAPI(title="Agent Orchestrator Service Hub")
+    title = "Agent Orchestrator Service Hub"
+    if auth is None:
+        app = FastAPI(title=title)
+    else:
+        # Drop FastAPI's two extra framework routes outside /api (security L2).
+        app = FastAPI(title=title, redoc_url=None, swagger_ui_oauth2_redirect_url=None)
+    # Added before SecurityMiddleware, so it is the inner layer and Security stays outermost.
+    app.add_middleware(
+        AuthMiddleware,
+        runtime=auth,
+        policies=HUB_ROUTE_POLICIES,
+        cookie_only_navigation=HUB_COOKIE_ONLY_NAVIGATION,
+    )
     # Same posture as `ao ui`: loopback-only bind is the caller's job (uvicorn host arg in
     # `service/cli.py`'s `run` command); this middleware is the enforced backstop against a
     # DNS-rebinding-style Host header regardless of what the process actually bound to.
     app.add_middleware(SecurityMiddleware, allowed_hosts=resolve_allowed_hosts())
 
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def index() -> HTMLResponse:
-        return HTMLResponse(_render_index_html(status_provider()))
+    install_auth_routes(app, auth)
+    if auth is None:
 
-    @app.get("/api/service/status")
+        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+        def index() -> HTMLResponse:
+            return HTMLResponse(_render_index_html(status_provider()))
+
+    else:
+        from ..auth.http.hub_routes import register_hub_auth_routes
+
+        register_hub_auth_routes(
+            app, auth, status_provider=status_provider, render_index=_render_index_html
+        )
+
+    # `response_model=None`: under `from __future__ import annotations` the lazily imported
+    # `JSONResponse` return annotation is unresolvable, so without it `/openapi.json` (which the
+    # auth-on hub keeps, behind the proof) answers 500. The served body is unchanged.
+    @app.get("/api/service/status", response_model=None)
     def api_status() -> JSONResponse:
         return JSONResponse(status_provider())
 
     return app
 
 
-def _render_index_html(payload: dict[str, Any]) -> str:
+def _render_index_html(payload: dict[str, Any], principal: Principal | None = None) -> str:
     workspaces = payload.get("workspaces") or []
     rows = "\n".join(_render_workspace_row(ws) for ws in workspaces)
     if not rows:
@@ -80,7 +116,7 @@ def _render_index_html(payload: dict[str, Any]) -> str:
     uptime = payload.get("uptime_seconds")
     uptime_str = f"{uptime:.0f}s" if isinstance(uptime, int | float) else "?"
 
-    return f"""<!doctype html>
+    page = f"""<!doctype html>
 <html>
 <head><meta charset="utf-8"><title>Agent Orchestrator Service</title></head>
 <body>
@@ -96,6 +132,14 @@ Uptime: {uptime_str}</p>
 </body>
 </html>
 """
+    if principal is None:
+        return page  # auth off (or an unauthenticated render): byte-identical to before auth
+    from ..auth.http.hub_page import hub_head_tags, render_signed_in_bar
+
+    page = page.replace("</head>", f"{hub_head_tags()}</head>", 1)
+    return page.replace(
+        "<body>\n", f"<body>\n{render_signed_in_bar(principal.username, principal.auth_method)}", 1
+    )
 
 
 def _render_workspace_row(ws: dict[str, Any]) -> str:
