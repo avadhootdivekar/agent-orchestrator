@@ -7,6 +7,18 @@
 - Scope: `MVP` · Sprint: `S2` · Estimate: `3 d`
 
 ## This update
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
+  Estimate unchanged (3 d).
+  - **Keyed phantom digests (security L1):** `authenticate` uses `lockouts.name_digest(uname)`
+    (malformed names share the `INVALID_USERNAME_BUCKET` digest); the guard's `username_hash` is the
+    digest prefix; `check_ready` ends with `lockouts.ensure_name_key()` so S6's one-write rule
+    holds. AC 1, AC 3 and AC 4 updated.
+  - **Parent warnings (security L6):** `startup_warnings()` includes the group-writable,
+    euid-owned parent notices returned by `check_private_paths` / `check_state_dir`.
+  - **Proxy detection plumbing (security M2):** `ClientInfo.proxy_suspected` (default `False`) and
+    the stricter `is_loopback` meaning (computed by T-rpKCjP); `AuthRuntime.proxy_suspected_warned`.
+  - `VerifiedIdentity` / `UserView` keep tuple roles (Principal decision A).
+  - Cut-line #2 (phantom table) noted (HLD §24.1).
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: TASK.md aligned with the HLD v2 cross-check (HLD §28.8): added `audit_log_for(request)` in `runtime.py`, `LockoutStore.check_readable()` in `check_ready`, AC-4b ownership (rows 6–8, 11, 13) and the exact HLD §11.15.3 warning strings; identity-guarded writes now use the single `store.with_identity` helper.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: **v2 rescope** after the Phase-4
   consultations.
@@ -36,7 +48,7 @@
 
 ## Risks / Blockers
 - None. The S1 modules (T-kzEzwy, T-s6sJmB, T-8NQP8J, T-kwwJ82, T-PlEROT, T-CsT5gk) must land
-  first.
+  first. On the critical path (HLD §24.3).
 
 ## Next actions
 1. developer: implement once the S1 tasks land. Keep the §11.16 attribute names identical to

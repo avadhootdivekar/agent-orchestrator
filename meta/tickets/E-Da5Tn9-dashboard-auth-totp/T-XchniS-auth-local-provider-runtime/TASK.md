@@ -19,7 +19,8 @@
   - supports: AC-3 (`check_ready` behaviour), AC-16 (`Realm.id`)
 - Invariants: S6, S9, S15, S16, S25
 - Design: HLD §11.11 (`guard.py`), §11.15.1–§11.15.4, §11.15.6 (provider parts), §11.15.7, §11.16,
-  §20.3 #6/#7/#10; §1 D6, D9, D10, D11; ADR-0021 D1 (realm ids), D7, D9, D10
+  §20.3 #6/#7/#10, §24.1 (cut-line #2), §28.9 (security L1, L6, M2); §1 D6, D9, D10, D11; ADR-0021
+  D1 (realm ids), D7, D9, D10
 
 ## Description
 This task holds the core credential logic, apart from the second factor (T-yfrfxv). It contains no
@@ -31,19 +32,39 @@ FastAPI imports (layer L3, HLD §11.1 R1/R4).
     and is re-raised.
   - Exactly one `lockouts.record_failure` per failed attempt, for known users and phantoms alike.
   - `auth.lockout` is emitted when the failure count reaches the threshold.
+  - **v2.1 (security L1):** the failure event's `username_hash` for an unknown name is
+    `subject.lockout_key.phantom[:AUDIT_USERNAME_HASH_CHARS]`, a prefix of the keyed digest; never
+    an unkeyed hash.
 - **`auth/provider.py`:** `ClientInfo`, `VerifiedIdentity` (`credential_epoch` **from the same
   snapshot** as the verified hash; `next_state: SessionState`), `UserView`, `Revalidation`, and the
-  `AuthProvider` ABC (HLD §11.15.1).
+  `AuthProvider` ABC (HLD §11.15.1). The module is **seeded** by T-kwwJ82 with `VerifiedIdentity`
+  only; this task extends it and never redefines that dataclass.
+  - **v2.1 (security M2):** `ClientInfo` gains `proxy_suspected: bool = False`, and
+    `is_loopback` now **means** loopback peer **and** loopback `Host` **and** no
+    `Forwarded`/`X-Forwarded-*` header. The value is computed by T-rpKCjP's `client_info(scope,
+    runtime)`; this task only defines the dataclass.
+  - `VerifiedIdentity` and `UserView` keep `roles: tuple[str, ...]` (v2.1 owner decision: only
+    `Principal.roles` is a list, built by `SessionManager.principal_for`).
 - **`auth/local_provider.py`:** `LocalPasswordProvider(AuthProvider)`, `provider_id =
   LOCAL_PROVIDER_ID`, constructed with `store, lockouts, guard, hasher, settings, audit, clock`.
   - `check_ready()`: checks the store directory and `users.json`, **and** the state directory,
     including the parent-directory checks. A missing state directory is created 0700 through
-    `fsutil.ensure_private_dir`. The bootstrap message text follows HLD §11.15.3.
-  - `startup_warnings()`: enrolled users under `off`, and users whose `totp_requirement` is
-    `BLOCKED`.
+    `fsutil.ensure_private_dir`. The bootstrap message text follows HLD §11.15.3. **v2.1:** it
+    keeps the non-fatal parent-directory warnings that `check_private_paths` / `check_state_dir`
+    return (security L6) for `startup_warnings()`, and ends by calling
+    **`lockouts.ensure_name_key()`** (security L1), so the first unknown-user attempt still makes
+    exactly one lockout write (S6).
+  - `startup_warnings()`: enrolled users under `off`, users whose `totp_requirement` is
+    `BLOCKED`, and (v2.1) the L6 parent-directory notices (`<parent> is group-writable; run chmod
+    g-w <parent>`).
   - `authenticate()`: HLD §11.15.4 verbatim — one snapshot, a dummy verify for unknown or
     invalid names, CAS rehash, `totp_requirement()` → `next_state` or 403 `TOTP_REQUIRED`;
-    `lockouts.reset` + `cas_mark_login` **only** for FULL.
+    `lockouts.reset` + `cas_mark_login` **only** for FULL. **v2.1 (security L1):** the phantom
+    subject is `LockoutKey(phantom=lockouts.name_digest(uname))`; names failing `USERNAME_RE` all
+    map to the single `INVALID_USERNAME_BUCKET` digest.
+  - **Cut-line #2 (HLD §24.1):** if the manager cuts the phantom table, unknown names get the
+    address throttle and the dummy verify but no lockout write; AC 4's write-count equality then
+    becomes a documented residual.
   - `verify_current_password()`, `change_password()`, `logout_everywhere()`, `revalidate()`
     (tri-state through `store.user_by_id`) and `user_view()`.
 - **Identity-guarded web writes** (task-level precision, see Pseudocode). `set_password_hash` and
@@ -53,11 +74,12 @@ FastAPI imports (layer L3, HLD §11.1 R1/R4).
 - **`auth/runtime.py`:**
   - `Realm`: `id` = `HUB_REALM_ID` or `"ui:" + sha256(str(workspace_root.resolve()))[:WORKSPACE_ID_HEX_CHARS]`;
     `cookie_name(secure)`; `login_path`.
-  - `AuthRuntime` (the exact §11.16 fields).
+  - `AuthRuntime` (the exact §11.16 fields; v2.1 adds `proxy_suspected_warned: bool = False`,
+    used by T-rpKCjP's one-WARNING-per-process rule, security M2).
   - `build_auth_runtime(settings, realm, *, clock, entropy, hasher, audit, session_store, provider=None)`.
     It raises `ValueError` if `settings.enabled` is false, and does **not** call `check_ready`.
   - `runtime_of(app)`.
-  - T-G7qByZ builds against a duck-typed `StubRuntime`/`StubRealm` in `tests/auth/helpers.py`,
+  - T-G7qByZ builds against a duck-typed `StubRuntime`/`StubRealm` in `tests/auth/helpers/stub_runtime.py`,
     which uses the exact §11.16 attribute names. When this file lands, its "final wiring" switches
     to the real types. Keep the attribute names identical.
   - `AuthRuntime.totp` stays `None` here. T-yfrfxv wires `LocalTotpService` into
@@ -97,13 +119,17 @@ FastAPI imports (layer L3, HLD §11.1 R1/R4).
    - a symlinked `users.json`.
 
    It passes with one user and correct modes, and creates a missing state directory with 0700
-   through `paths.check_state_dir`. Together with AC 2, this covers AC-4b: §11.3.4 rows 6, 7, 8
-   and 13. (`test_local_provider.py`)
+   through `paths.check_state_dir`. **(v2.1)** After a passing `check_ready()`, `lockouts.json`
+   holds a `name_key_hex`; a second `check_ready()` writes nothing more. A group-writable parent
+   owned by the euid does **not** raise; its notice appears in `startup_warnings()` (row 13, L6).
+   Together with AC 2, this covers AC-4b: §11.3.4 rows 6, 7, 8 and 13. (`test_local_provider.py`)
 2. **`startup_warnings`** (AC-4b, row 11), using the exact HLD §11.15.3 strings:
    - under `off` with enrolled users, one warning contains `will still be asked for a code` and
      the count;
    - for BLOCKED users, one warning contains `cannot log in` and `ao auth disable-2fa`;
-   - under `optional` with no BLOCKED users, the result is `[]`.
+   - under `optional` with no BLOCKED users and private parents, the result is `[]`;
+   - (v2.1) with a group-writable, euid-owned parent of the store, one warning contains
+     `chmod g-w`.
    (`test_local_provider.py`)
 3. **Guard** (AC-20 part, `test_guard.py`, using fakes):
    - When the address throttle is active, `TooManyAttemptsError` is raised, `verify` is **not**
@@ -111,7 +137,9 @@ FastAPI imports (layer L3, HLD §11.1 R1/R4).
    - When the lockout is active, the result is the same.
    - A `BusyError` from `verify` → one address failure, zero lockout writes, re-raised.
    - A failure → exactly one `record_failure`, one address failure, and one audit event:
-     `username` set and `username_hash` null for a known user, and the reverse for a phantom.
+     `username` set and `username_hash` null for a known user, and the reverse for a phantom, where
+     (v2.1) `username_hash == lockout_key.phantom[:16]` (the keyed digest prefix) and differs from
+     `sha256(name).hexdigest()[:16]`.
    - `auth.lockout` is emitted exactly once, on the threshold-th failure.
    - `reset_on_success=True` with a known user → `lockouts.reset(user_id)` is called once.
 4. **Uniformity** (AC-21 part, S6), with `FastFakeHasher` and spies. `authenticate("ghost", "x")`
@@ -120,7 +148,11 @@ FastAPI imports (layer L3, HLD §11.1 R1/R4).
    - each makes exactly **1** `hasher.verify` call, **1** `LockoutStore.record_failure` call and
      **0** `UserStore.mutate` calls.
 
-   The phantom key is `sha256("ghost").hexdigest()`. `"Bad Name!"` takes the phantom path.
+   **(v2.1, security L1)** The phantom key is `lockouts.name_digest("ghost")` (the keyed HMAC, not
+   the unkeyed `sha256("ghost")`). `"Bad Name!"` takes the phantom path with the single
+   `INVALID_USERNAME_BUCKET` digest, the same one as for `"x y"`. The name key already exists
+   (created by `check_ready()`), so the unknown-user attempt still makes exactly **1** lockout
+   write.
 5. **Shared lockout** (AC-20 part): two `LocalPasswordProvider` instances on one state directory
    share the account lockout. After `threshold` failures through instance A, instance B raises
    `TooManyAttemptsError` without calling `verify`.
@@ -172,6 +204,8 @@ FastAPI imports (layer L3, HLD §11.1 R1/R4).
     - `build_auth_runtime(disabled settings)` raises `ValueError`;
     - `build_auth_runtime(..., provider=fake)` uses the fake;
     - `runtime_of(app)` returns the app-state value, or `None`;
+    - a fresh runtime has `proxy_suspected_warned is False`; `ClientInfo(key, is_loopback,
+      secure)` defaults `proxy_suspected` to `False` (v2.1);
     - `audit_log_for(request)` (HLD §11.16 and §2.6, the approvals-epic seam) returns
       `runtime.audit` when auth is on, and `None` when `runtime_of(request.app)` is `None`.
 15. The AST layer test (T-kzEzwy) passes for the four modules. ruff and mypy are clean. Coverage of

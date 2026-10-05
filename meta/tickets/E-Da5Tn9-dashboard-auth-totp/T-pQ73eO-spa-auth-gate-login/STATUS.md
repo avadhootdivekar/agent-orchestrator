@@ -7,6 +7,16 @@
 - Scope: `MVP` · Sprint: `S1` · Estimate: `3 d`
 
 ## This update
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9). The
+  estimate is unchanged (3 d). Changes:
+  - **Bundle rule reversed (design-review M1/M2; HLD §16 row 15, cross-epic X5):** this task no
+    longer commits `ui/static`. It builds locally, records the interim gzip delta and discards the
+    output; T-vCgsU6 is the epic's single `ui/static` committer. This supersedes the v2 comment
+    below. Description item 8, AC 10, Outputs and Verification updated.
+  - **Type (security M2):** `types.ts` adds `transport.proxy_suspected` (manager-approved additive
+    contract change); the banner logic is unchanged.
+  - **Downstream:** T-R7JhTL's `auth-client-contract.test.ts` exercises this task's `api.ts` /
+    `proof.ts` (design-review minor 7).
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2 rescope after the Phase-4
   consultations (HLD §28). The estimate is unchanged. Changes:
   - **Added: the session proof (D25 / ADR-0021 D11, dev-security #2).** That covers `proof.ts` (with
@@ -29,8 +39,10 @@
 - None yet.
 
 ## Risks / Blockers
-- None. The HLD §2 contract is frozen; changes need a manager-approved entry in the epic STATUS.
+- None. The HLD §2 contract is frozen (v2.1 adds only `transport.proxy_suspected`); further changes
+  need a manager-approved entry in the epic STATUS. OQ-8 and OQ-9 are DECIDED (D25 ships, so the
+  proof handling is in scope).
 
 ## Next actions
-1. developer (frontend): implement; run vitest, typecheck and build; commit the bundle; record the
-   interim main-chunk gzip delta and the manual `npm run dev` login check here.
+1. developer (frontend): implement; run vitest, typecheck and build; **do not commit** `ui/static`;
+   record the interim main-chunk gzip delta and the manual `npm run dev` login check here.

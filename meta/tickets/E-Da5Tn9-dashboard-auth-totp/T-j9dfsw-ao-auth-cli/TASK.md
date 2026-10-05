@@ -11,9 +11,9 @@
 
 ## Requirements Mapping
 - Requirement IDs: FR-2 (CLI-only bootstrap), FR-5, FR-6 (CLI text enrollment), FR-22, FR-23 (CLI audit events), FR-28 (enrollment tokens are issued only by the CLI), NFR-3, NFR-7, NFR-8
-- ACs: AC-1 (`ao auth status` source display), AC-26, AC-27 (CLI part; the AST/subprocess skeleton is T-kzEzwy's), AC-36 (CLI part)
+- ACs: AC-1 (`ao auth status` source display), AC-26, AC-27 (CLI part; the AST/subprocess skeleton is T-kzEzwy's), AC-36 (CLI part), **AC-45 (`status` flags; v2.1)**, **AC-46 (config-sourced `store_dir`; v2.1)**
 - Invariants: S18 (import boundary), S22 (forced enrollment needs a CLI-issued token)
-- Design: HLD §11.19 (v2 command table), §11.9 (pure mutation functions), §11.11 (`LockoutStore`), §11.12 (audit), §11.5 (`fix` semantics), §12.4, §12.5, §18 #8, §19.1; ADR-0021 D3, D5, D8, D9, D10
+- Design: HLD §11.19 (v2.1 command table and common behaviour), §11.9 (pure mutation functions), §11.11 (`LockoutStore`, `ensure_name_key`), §11.12 (audit), §11.5 ("Who may fix permissions", v2.1), §11.3.1 (`ConfigRisk`), §12.4, §12.5, §18 #8, §19.1; §28.9 (security M3, M6, L1; design-review M3); ADR-0021 D3, D5, D8, D9, D10
 
 ## Description
 Create `src/agent_orchestrator/auth/cli.py` (layer L4), a Typer sub-app named `auth`, and register it
@@ -47,6 +47,16 @@ app.add_typer(auth_app, name="auth")
 - **Permissions (§11.5).**
   - Mutating commands call `ensure_private_dir(create=True, fix=True)` on the store **and** state
     directories, and `check_private_file(fix=True)`. Notices go to stderr.
+  - **v2.1 (security M6): a config-sourced `store_dir` is never created or chmod-ed.** When
+    `settings.sources["store_dir"]` starts with `config:` (a workspace `ui.auth.store_dir` reached
+    through `--workspace`), mutating commands call `ensure_private_dir(store_dir, create=False,
+    fix=False)` and `check_private_file(users.json, fix=False)`: a missing or non-private directory
+    → exit 78 with `ui.auth.store_dir from <config> must already exist and be private (0700, owned
+    by you); create it yourself, or pass --auth-dir explicitly`. Only `<store_dir>/state` may be
+    created (0700, via `os.mkdir(mode=0o700)`) inside the verified directory; nothing is chmod-ed.
+    An explicit `--auth-dir` (CLI) or `AO_AUTH_DIR` (env) restores the normal create/fix behaviour.
+  - Mutating commands also call `lockouts.ensure_name_key()` (v2.1, security L1), so the
+    phantom/audit HMAC key exists.
   - Read-only commands (`list-users`, `status`) use `fix=False` and only report.
   - An unsafe parent directory cannot be fixed: `UnsafePermissionsError` → exit 78 with the `chmod`
     hint.
@@ -75,15 +85,15 @@ functions of §11.9.
 | `enrollment-token USERNAME` (**new**) | Enrolled → exit 1 `already enrolled`. Otherwise `issue_enrollment_token` (replaces any previous token) → print it. When `totp_requirement(resolved policy, rec.totp_required)` is `NONE` or `BLOCKED`, also print a NOTE naming the policy and its source. The server's effective policy may come from another env (e.g. `service.env`), so this is a note, not a refusal. Audit `auth.enrollment_token.issued`. |
 | `unlock USERNAME` | Unknown → exit 1. `LockoutStore.reset(user_id)` (state directory). Audit `auth.user.unlocked`. |
 | `revoke-sessions USERNAME` | `bump_epoch` → epoch +1. Audit `auth.sessions.revoked`. |
-| `status [--json]` | See AC-5. |
+| `status [--json]` | See AC-5. **v2.1:** also the `ConfigRisk` flags (`disabled_by_config`, `totp_downgraded_by_config`) from `settings.config_risks` — reported, never an exit 78 — the most recent `auth.startup.*` audit events (up to 5), and the policy notes (design-review M3): under `required`, "users who are not enrolled need an operator-issued enrollment token (`ao auth enrollment-token <user>`) to finish their first login"; under `off` with enrolled users, "N enrolled user(s) are still asked for a code (enrollment is sticky)". |
 
 ## Inputs / Outputs
 - **Inputs:**
   - T-s6sJmB: `PasswordHasher`, `PasswordPolicy`, totp, recovery.
   - T-8NQP8J: `UserStore`, mutations, `fsutil`, `paths`.
-  - T-PlEROT: `resolve_auth_settings`.
-  - T-CsT5gk: `LockoutStore`, `AuditLog`.
-  - T-kzEzwy: constants, errors, `EXIT_CONFIG`, `tests/auth/helpers.py`, the import-boundary
+  - T-PlEROT: `resolve_auth_settings` (incl. `sources` and `config_risks`).
+  - T-CsT5gk: `LockoutStore` (incl. `ensure_name_key`), `AuditLog`.
+  - T-kzEzwy: constants, errors, `EXIT_CONFIG`, `tests/auth/helpers/core.py`, the import-boundary
     skeleton.
 - **Outputs:**
   - `src/agent_orchestrator/auth/cli.py`
@@ -137,7 +147,9 @@ All tests use `typer.testing.CliRunner`, a tmp `--auth-dir`, and the hermetic en
    - `AO_UI_AUTH=maybe` + `status` → exit 78; stderr names `AO_UI_AUTH`.
    - `--workspace W` with `ui.auth.trusted_proxies: ["127.0.0.1"]` → 78, naming
      `AO_UI_AUTH_TRUSTED_PROXIES`.
-   - A group-writable parent of the store → `add-user` exits 78 with the `chmod` hint.
+   - An other-writable parent of the store, or a group-writable parent owned by another user
+     (patched `stat`), → `add-user` exits 78 with the `chmod` hint. **v2.1 (security L6):** a
+     group-writable parent owned by the euid → exit 0 with a warning on stderr naming `chmod g-w`.
 5. **`status`** (AC-1 CLI part):
    - It prints each setting with its source: `(env:AO_UI_AUTH)` when set, `(default)` otherwise,
      and `(config:<path>)` for `--workspace W` with `ui.auth.totp: required`.
@@ -148,8 +160,30 @@ All tests use `typer.testing.CliRunner`, a tmp `--auth-dir`, and the hermetic en
    - It prints the counts `{users, enrolled, totp_required_unenrolled, locked,
      enrollment_tokens_pending}`, any stray `.users.json.*.tmp` files, the server UTC time, and
      warnings.
-   - `--json` parses and carries the same keys.
+   - **(v2.1, design-review M3)** With the resolved policy `required` it prints the
+     enrollment-token note; with `off` and one enrolled user it prints the "still asked for a code"
+     note with the count.
+   - `--json` parses and carries the same keys (incl. `config_risks` and `recent_startup_events`).
    - A sentinel grep finds no password, secret, code, token or hash in either output.
+5b. **`status` config-risk flags** (AC-45 status part; security M3): with `--workspace W` whose
+    `.ao/config.yaml` has `ui.auth.enabled: false` and one account in the store → exit **0** and the
+    flag `disabled_by_config` with the text `ao ui in this workspace will refuse to start (exit 78);
+    use --no-auth / AO_UI_AUTH=0 to disable on purpose`; with `ui.auth: {enabled: true, totp:
+    optional}` → the flag `totp_downgraded_by_config`; with zero accounts → neither flag. After an
+    `auth.startup.disabled_by_config` line is written to the state dir's `audit.jsonl`, `status`
+    lists it under recent startup events.
+5c. **Config-sourced `store_dir`** (AC-46; security M6). `--workspace W` with `ui.auth.store_dir:
+    <abs path outside W>`:
+    - the directory does **not** exist → `add-user` exits 78 naming the config file and
+      `--auth-dir`; afterwards the path still does not exist;
+    - it exists with mode 0755 → exit 78; the mode is still 0755 afterwards (no chmod);
+    - it exists, owned by the user, mode 0700 → exit 0; only `state/` (0700) and the store files
+      are created inside it, and the directory mode is unchanged;
+    - the same missing path passed as `--auth-dir` (or `AO_AUTH_DIR`) → exit 0, created 0700
+      (normal behaviour).
+    - A spy on `os.chmod` sees no call in any config-sourced case.
+5d. **Name key** (security L1): after `add-user`, `lockouts.json` in the state dir holds a 64-hex
+    `name_key_hex`.
 6. **`enrollment-token` notes:**
    - With the resolved policy `optional` and `totp_required=false` → exit 0, a token, and a NOTE
      containing `not currently required`.
@@ -162,15 +196,16 @@ All tests use `typer.testing.CliRunner`, a tmp `--auth-dir`, and the hermetic en
      `sessions.revoked`, `user.removed`(bob), `user.removed`(alice). Each name is prefixed `auth.`.
    - Every line has `realm:"cli"`, `details.source:"cli"` and a 32-hex `user_id`.
    - A sentinel grep finds no password, secret, recovery code or token.
-8. **Import boundary** (AC-27 CLI part), in `test_import_boundary.py`:
+8. **Import boundary** (AC-27 CLI part; v2.1: reduced to the CLI invocations, because T-kzEzwy's
+   skeleton already imports every non-http module, `auth/cli.py` included, with the frameworks
+   blocked and runs the AST layer check):
    - A subprocess with `sys.modules['fastapi'|'starlette'|'uvicorn'] = None` runs `ao auth --help`
      and `ao auth status --auth-dir <tmp>` through `CliRunner` → both exit 0.
    - After `import agent_orchestrator.cli`, none of `agent_orchestrator.auth.{store,passwords,totp,lockouts,audit,settings}`
      is in `sys.modules`.
-   - The AST check: `auth/cli.py` imports nothing from `auth/http/`.
-9. **Store busy:** another (spawn-context) process holds `users.lock`; with
-   `STORE_LOCK_TIMEOUT_SECONDS` patched to 0.2, `set-password` exits 1 within 2 s, and the message
-   names the lock file.
+9. *(Moved to T-U2ERMo in v2.1: the store-busy multiprocess test — another process holds
+   `users.lock`, `set-password` exits 1 within 2 s naming the lock file. The CLI still maps
+   `StoreLockTimeoutError` to exit 1 with that message.)*
 10. ruff and mypy are clean. Coverage of `auth/cli.py` is ≥ 90 %.
 
 ## Risks
@@ -180,6 +215,9 @@ All tests use `typer.testing.CliRunner`, a tmp `--auth-dir`, and the hermetic en
   a step boundary.
 - **Policy visible to the CLI ≠ the server's** (`service.env`). Notes, not refusals (AC-6), and
   `status` prints the sources.
+- **Estimate is tight (v2.1).** The M3/M6 additions (~0.5 d) are offset by moving the store-busy
+  test to T-U2ERMo and reducing AC 8. If it still runs over, report it in STATUS rather than
+  dropping ACs.
 
 ## Dependencies
 - **Upstream:**
@@ -188,7 +226,8 @@ All tests use `typer.testing.CliRunner`, a tmp `--auth-dir`, and the hermetic en
 - **Downstream:**
   - T-jVqH8w and T-PDGw9p: their refusal messages name `ao auth add-user`.
   - T-KQ6ZrY: its forced-enrollment tests consume tokens issued through the store API.
-  - T-U2ERMo: the scrub sweep runs every CLI command.
+  - T-U2ERMo: the scrub sweep runs every CLI command; it also owns the store-busy multiprocess test
+    (moved from AC 9 in v2.1).
 
 ## Pseudocode / Algorithm
 
@@ -197,7 +236,14 @@ FUNCTION run_command(ctx, body):
   settings = resolve_auth_settings(cli=AuthCliOverrides(store_dir=auth_dir), env=os.environ, workspace_root=ws)  # AuthConfigError -> 78
   echo(f"store: {settings.store_dir} (state: {settings.state_dir})")
   paths = StorePaths.at(settings.store_dir, settings.state_dir)
-  IF mutating: ensure_private_dir(store, create=True, fix=True); ensure_private_dir(state, create=True, fix=True)   # notices -> stderr
+  IF mutating:
+     IF settings.sources["store_dir"].startswith("config:"):          # v2.1, security M6
+        ensure_private_dir(store, create=False, fix=False)              # missing / unsafe -> AuthConfigError -> 78 (names config + --auth-dir)
+        check_private_file(users.json, fix=False) IF it exists
+        ensure_private_dir(state, create=True, fix=False)               # only inside the verified store; never chmod
+     ELSE:
+        ensure_private_dir(store, create=True, fix=True); ensure_private_dir(state, create=True, fix=True)   # notices -> stderr
+     lockouts.ensure_name_key()                                         # v2.1, security L1
   TRY result = body(UserStore(paths), LockoutStore(paths), AuditLog(paths), settings)
   EXCEPT AuthConfigError -> 78 | (UserExistsError, UserNotFoundError, AlreadyEnrolledError, NotEnrolledError,
          PasswordPolicyError, StaleIdentityError, StoreLockTimeoutError, click.Abort/EOF) -> 1

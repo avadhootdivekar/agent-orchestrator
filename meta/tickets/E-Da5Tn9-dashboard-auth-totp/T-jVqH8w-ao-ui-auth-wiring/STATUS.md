@@ -7,6 +7,17 @@
 - Scope: `MVP` · Sprint: `S3` · Estimate: `3 d`
 
 ## This update
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
+  Estimate, lane and sprint unchanged (3 d, lane B, S3). Changes:
+  - **Moved out:** the file-browser denial (`ui/files.py`, `ui/service.py`, old AC 8–9) →
+    `T-Hd4wQ2-auth-browse-denial-log-scrub` (lands in S1 for the approvals epic, HLD §16 X2). This
+    task still computes and passes `AuthLaunch.denied_paths` (now incl. `service.env`, L7).
+  - **Security M3:** `prepare_auth` enforces `ConfigRisk.DISABLED_BY_CONFIG` (exit 78 + audit
+    `auth.startup.disabled_by_config`) and audits `TOTP_DOWNGRADED_BY_CONFIG`; new AC 3 and AC 9
+    (= AC-45 incl. the config `env:` block isolation test).
+  - **Security L3 / L4:** the `--reload` call gets `**launch.uvicorn_kwargs` (tested with and
+    without trusted proxies); port 0 with auth on → exit 78.
+  - **Security M4:** merge edges — merges only after T-QJ1vyQ and T-KQ6ZrY; new upstream T-Hd4wQ2.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: TASK.md aligned with the HLD v2 cross-check (HLD §28.8): added AC-4c (row 9 via `prepare_auth`); `AO_UI_BOUND_PORT_ENV` is now an HLD §12.6 constant.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2 rescope after the Phase-4
   consultations (HLD §28).
@@ -30,7 +41,10 @@
 
 ## Risks / Blockers
 - None. `AuthLaunch` field names are frozen once T-PDGw9p starts.
+- Merge gate (v2.1, security M4): do not merge before T-QJ1vyQ and T-KQ6ZrY have merged. On the
+  critical path, with T-KQ6ZrY co-critical (HLD §24.3).
 
 ## Next actions
-1. developer: implement once T-XchniS, T-G7qByZ and T-rpKCjP land. Run the verification and the
-   full suite, and record the results and the `launch.py` coverage here.
+1. developer: implement once T-XchniS, T-G7qByZ, T-rpKCjP and T-Hd4wQ2 land; rebase onto
+   T-QJ1vyQ and T-KQ6ZrY before merging. Run the verification and the full suite, and record the
+   results and the `launch.py` coverage here.

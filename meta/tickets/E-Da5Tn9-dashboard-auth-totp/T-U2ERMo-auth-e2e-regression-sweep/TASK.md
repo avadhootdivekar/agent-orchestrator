@@ -7,25 +7,33 @@
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
 - Status: `Draft`
-- Estimate: `2.5 days` · Sprint `S3`
+- Estimate: `3 days` (v2: 2.5; +0.25 d store-busy CLI test from T-j9dfsw, +0.2 d informational
+  NFR-5 measurements from T-G7qByZ; HLD §24.2) · Sprint `S3`
 
 ## Requirements Mapping
 - Requirement IDs:
   - FR-20 (the sweep);
   - FR-11, FR-13 and FR-27 (real-process e2e, including the proof);
   - FR-15 and FR-24 (browser);
-  - NFR-1 (auth-off regression), NFR-6 (coverage gate).
+  - NFR-1 (auth-off regression), NFR-5 (informational measurement only; a target, not an AC),
+    NFR-6 (coverage gate);
+  - FR-22 (the store-busy CLI path, moved here from T-j9dfsw in v2.1).
 - ACs:
   - AC-24 (scrub sweep);
+  - AC-26 part (store busy: moved from T-j9dfsw AC 9, v2.1);
   - AC-30 (the CI rebuild-diff part);
   - AC-32 (coverage gate);
   - AC-33 (subprocess e2e);
   - AC-34 (browser smoke, including the cross-port proof check);
-  - a regression re-run of every AC.
-- Invariants: S11, S17, and S21 end to end.
+  - a regression re-run of every AC (AC-1..AC-46).
+- Invariants: S11, S17, and S21 end to end; the v2.1 invariants S27–S30 are re-run in the full
+  regression.
 - Design:
-  - HLD §20 (all; §20.3 #3 and #13), §21, §15 (caller-matrix re-verification), §16 #18
-    (`ci.yml`), §14.9 (hub flow), §25.4 (the browser premises being re-asserted);
+  - HLD §20 (all; §20.3 #3, #13 and the v2.1 gates #15–#18), §21, §15 (caller-matrix
+    re-verification), §16 #18 (`ci.yml`) and cross-epic rows X1–X6, §14.9 (hub flow), §25.4 (the
+    browser premises being re-asserted); §3.5 NFR-5 (target); §24.2 (scope moved in);
+  - HLD §28.9: design-review minor 4 (NFR-5 is a target; bundle baseline), security M2/M3 (new
+    status and audit surfaces covered by the sweep);
   - ADR-0021 D11.
 
 ## Description
@@ -48,7 +56,13 @@
          token, missing or wrong proof, `insecure_transport`.
      - **CLI:** `add-user` (with and without `--require-totp`), `set-password`, `enable-2fa`,
        `disable-2fa`, `reset-2fa`, `enrollment-token`, `unlock`, `revoke-sessions`, `remove-user`,
-       `status`, `list-users`.
+       `status` (incl. the v2.1 `disabled_by_config` / `totp_downgraded_by_config` flags),
+       `list-users`.
+     - **v2.1 surfaces:** `GET /api/auth/status` with `transport.proxy_suspected: true` (a
+       loopback client sending `X-Forwarded-For`); the startup audit events
+       `auth.startup.disabled_by_config` and `auth.startup.totp_downgraded_by_config` (via
+       `prepare_auth`), which must carry no secret; the redaction under test is T-Hd4wQ2's
+       `auth/scrub.py`.
    - **Run the sweep twice**, with `caplog` capturing at DEBUG for the root and every logger:
      - (a) with `install_log_redaction()` (the LogRecord factory) and the `auth_logger` filters;
      - (b) with the default record factory restored and every redaction filter removed.
@@ -126,12 +140,27 @@
      invoking shell. This proves T-kzEzwy's hermetic fixture.
    - `pytest -q -m e2e`; ruff, ruff format and mypy;
    - vitest, typecheck, build and `npm audit`.
-   - Re-verify the HLD §15 caller matrix rows #1–#19 against the merged code.
+   - Re-verify the HLD §15 caller matrix rows #1–#19 against the merged code. **(v2.1)** If the
+     approval-gates epic has merged by then, also record the as-merged state of the HLD §16
+     cross-epic rows X1–X6 (one `xdg.resolve_config_dir`; the approvals denial goes through
+     `FileBrowser._is_denied`; the bundle was regenerated, not hand-merged; the auth-off header
+     snapshot baseline per X4).
+6. **Store-busy CLI test (v2.1; moved from T-j9dfsw AC 9).** In `tests/auth/test_cli_e2e_busy.py`
+   (a new file, so T-j9dfsw's `test_cli_e2e.py` keeps a single owner): a spawn-context process holds
+   `users.lock`; with `STORE_LOCK_TIMEOUT_SECONDS` patched to 0.2, `ao auth set-password alice`
+   (CliRunner, `--password-stdin`) exits 1 within 2 s and the message names the lock file and
+   "busy". `join(timeout=…)` with exit-code asserts; the holder is released in a `finally`.
+7. **Informational NFR-5 measurements (v2.1; moved from T-G7qByZ AC 14; design-review minor 4).**
+   `tests/auth/test_perf_informational.py` (`-m slow`): p95 of `classify` + `sessions.lookup` +
+   `revalidate` over 1000 requests on the dashboard app, and login p95 with the real hasher at
+   `CURRENT_PARAMS` over 20 logins. The numbers are **recorded in STATUS only**; the test never
+   asserts a threshold and is never a merge gate (NFR-5 is a target).
 
 ## Inputs / Outputs
-- **Inputs:** every implementation task (#6–#18); HLD §20 and §21.
+- **Inputs:** every implementation task (#6–#18 and the v2.1 #22 T-Hd4wQ2); HLD §20 and §21.
 - **Outputs:**
-  - the three test files and the two `ci.yml` steps;
+  - the three test files, plus (v2.1) `tests/auth/test_cli_e2e_busy.py` and
+    `tests/auth/test_perf_informational.py`, and the two `ci.yml` steps;
   - the four screenshots;
   - in STATUS: an evidence table (commands, pass/fail/skip counts, coverage numbers, the three e2e
     runs, which browsers ran) and the caller-matrix table.
@@ -157,7 +186,13 @@
 6. **Regression.** The full suite (with the auth env exported), `-m e2e`, ruff, mypy, vitest,
    typecheck, build and `npm audit` are all green, and the counts are recorded.
 7. **Caller matrix.** The re-verification table is recorded. Each §15 row is marked either "as
-   designed" or as a deviation with a ticket reference.
+   designed" or as a deviation with a ticket reference. (v2.1) If the approvals epic has merged, the
+   §16 X1–X6 rows are recorded the same way.
+8. **Store busy (v2.1).** Description item 6 passes; the run time is under 2 s.
+9. **NFR-5 numbers (v2.1).** Description item 7 runs and its numbers are recorded in STATUS; no
+   threshold is asserted.
+10. **v2.1 sweep surfaces.** The sweep (AC 1) covers `proxy_suspected` status responses and the two
+    `auth.startup.*_by_config` audit events with no sentinel leak.
 
 ## Risks
 - **Flakiness from real time or a real browser.**
@@ -171,7 +206,8 @@
 
 ## Dependencies
 - **Upstream:** T-XchniS, T-yfrfxv, T-G7qByZ, T-QJ1vyQ, T-rpKCjP, T-KQ6ZrY, T-j9dfsw, T-jVqH8w,
-  T-KOv2qD, T-PDGw9p, T-R7JhTL, T-pQ73eO, T-vCgsU6.
+  T-KOv2qD, T-PDGw9p, T-R7JhTL, T-pQ73eO, T-vCgsU6, and (v2.1) **T-Hd4wQ2-auth-browse-denial-log-scrub**
+  (its `auth/scrub.py` feeds the sweep; its file-browser denial is part of the regression).
 - **Downstream:** T-2wE08U-auth-security-review.
 
 ## Pseudocode / Algorithm
@@ -198,7 +234,8 @@ FOR each captured response (endpoint E, body JSON, headers):
 ## Verification
 
 ```
-python -m pytest -q tests/auth/test_log_scrub_sweep.py
+python -m pytest -q tests/auth/test_log_scrub_sweep.py tests/auth/test_cli_e2e_busy.py
+python -m pytest -q -m slow tests/auth/test_perf_informational.py # informational; record numbers
 python -m pytest -q -m e2e tests/auth/test_e2e_subprocess.py      # three consecutive runs
 python -m pytest -q -m browser tests/auth/test_browser_smoke.py   # opt-in, local
 python -m pytest tests/auth -q --cov=agent_orchestrator.auth --cov-report=term --cov-fail-under=90

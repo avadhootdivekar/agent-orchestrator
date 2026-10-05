@@ -3,10 +3,21 @@
 - ID: `T-rpKCjP-auth-http-routes`
 - Updated At: `2026-10-05`
 - State: `Draft`
-- Owner: `developer` (lane A)
-- Scope: `MVP` · Sprint: `S2` · Estimate: `2.5 d`
+- Owner: `developer` (lane Q; v2.1, was lane A)
+- Scope: `MVP` · Sprint: `S2` · Estimate: `3 d` (v2.1; was 2.5 d)
 
 ## This update
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
+  - **Estimate 2.5 → 3 d; lane A → Q** (HLD §24.2/§24.3 rebalance, design-review minor 3).
+  - **Security M2:** `client_info(scope, runtime)` with the strict loopback rule (loopback peer +
+    loopback `Host` + no forwarding headers), `proxy_suspected`, one WARNING per process, and the
+    additive E1 field `transport.proxy_suspected` (manager-approved contract change). New AC 13 =
+    AC-43 (`test_client_info.py`, the security review's test gate 3).
+  - **Design-review M2:** list-valued `register_route_builder`; this task creates
+    `auth/http/routes_second_factor.py` as a registered no-op stub that T-KQ6ZrY then owns; the hub
+    routes go to T-KOv2qD's `hub_routes.py`; real-route enumeration in its own
+    `test_route_enumeration_real_routes.py` (T-G7qByZ's files are no longer edited here).
+  - **Design-review minor 6:** rule R1a + `test_routes_annotations.py`.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: **v2 rescope.**
   - **Estimate and sprint:** 3 d / S2→S3 → 2.5 d / S2.
   - **Split** (developer D-4): the second-factor routes (E3–E7) and the provider-seam test moved to
@@ -31,8 +42,9 @@
 - None yet.
 
 ## Risks / Blockers
-- None. It runs in parallel with T-QJ1vyQ (lane B) after T-G7qByZ. Its proof cases depend only on
-  the `proof_ok` value that T-G7qByZ computes.
+- None. It runs on lane Q in parallel with T-QJ1vyQ (lane C) after T-G7qByZ. Its proof cases
+  depend only on the `proof_ok` value that T-G7qByZ computes. It is on the critical path (HLD
+  §24.3). OQ-8 and OQ-9 are DECIDED.
 
 ## Next actions
 1. developer: implement after T-XchniS and T-G7qByZ, run the verification, and record the

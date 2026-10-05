@@ -7,12 +7,12 @@
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
 - Status: `Draft`
-- Estimate: `2.5 days` · Sprint `S1`
+- Estimate: `3 days` · Sprint `S1` (v2.1: was 2.5 d; +0.5 d for the `ConfigRisk` detection)
 
 ## Requirements Mapping
-- Requirement IDs: FR-1, FR-2 (configuration part), FR-30 (tighten-only), FR-16 (trusted-proxy parsing), NFR-1, NFR-4, NFR-8
-- ACs: AC-1 (resolution part), AC-4a (rows 1–5, 10 and 12 of §11.3.4), AC-38
-- Design: HLD §11.3 (all subsections), §12.5, §12.6; HLD D2, D16, D17; ADR-0021 D8; ADR-0003 (an empty env value is an error)
+- Requirement IDs: FR-1, FR-2 (configuration part), FR-30 (tighten-only; v2.1 config-only disable / TOTP downgrade detection), FR-16 (trusted-proxy parsing), NFR-1, NFR-4, NFR-8
+- ACs: AC-1 (resolution part), AC-4a (rows 1–5, 10 and 12 of §11.3.4), **AC-4d** (v2.1: the `ConfigRisk` detection of rows 14–15), AC-38, **AC-45** (detection part)
+- Design: HLD §11.3 (all subsections; v2.1 step 5 and rows 14–15), §12.5, §12.6, §20.3 #18, §28.9 (security M3); HLD D2, D16, D17; ADR-0021 D8; ADR-0003 (an empty env value is an error)
 
 ## Description
 Implement `auth/settings.py` (L2): an immutable `AuthSettings` computed from CLI, env, workspace
@@ -42,9 +42,25 @@ config and defaults. It records the source of each value, and refuses unsafe or 
   - the `store_dir` checks;
   - **v2 `state_dir` resolution**;
   - the trusted-proxy normalization;
-  - the issuer default and checks.
+  - the issuer default and checks;
+  - **v2.1 step 5 — `ConfigRisk` detection** (security M3; HLD §11.3.2 step 5, §11.3.4 rows 14–15).
+    A new `class ConfigRisk(StrEnum)` (`DISABLED_BY_CONFIG = "disabled_by_config"`,
+    `TOTP_DOWNGRADED_BY_CONFIG = "totp_downgraded_by_config"`) and a new field
+    `AuthSettings.config_risks: frozenset[ConfigRisk]`:
+    - `DISABLED_BY_CONFIG` when `sources["enabled"]` starts with `config:`, the value is `False`,
+      and `count_users(store_dir)` is `> 0` or `None`;
+    - `TOTP_DOWNGRADED_BY_CONFIG` when `enabled` resolves to `True`, `sources["totp"]` starts with
+      `config:`, the value is not `required`, and the count is `> 0` or `None`; it also appends the
+      warning `totp=<value> comes only from <config path>; a repository change can lower it. Pin it
+      with AO_UI_AUTH_TOTP or --auth-totp.` to `settings.warnings`;
+    - **`resolve_auth_settings` never raises for a `ConfigRisk`.** `ao auth` keeps working;
+      `prepare_auth` (T-jVqH8w) enforces (exit 78 for `DISABLED_BY_CONFIG`, audit for both), and
+      `ao auth status` (T-j9dfsw) prints both flags.
 - `count_users` defaults to `store.count_store_users` (T-8NQP8J), the **tri-state** probe: `None`
-  means unknown, which fails closed in row 3.
+  means unknown, which fails closed in row 3 and counts as "accounts may exist" in step 5.
+- **Path helpers use the v2.1 `xdg` signature** (`resolve_config_dir(None, "ao/auth", "ao/auth",
+  environ=env)` / `resolve_state_dir(..., environ=env)`; design-review M1), always passing the
+  `env` mapping.
 - `ProjectConfig` is **never** used; `project_config.py` is not modified. Only
   `find_project_config` is reused, read-only.
 - **Not here any more:** the root hermetic test fixture moved to T-kzEzwy (developer D-3, tester
@@ -54,10 +70,11 @@ config and defaults. It records the source of each value, and refuses unsafe or 
 - **Inputs:**
   - HLD §11.3, §12.5, §12.6;
   - T-kzEzwy (`constants`, `errors`, `model.TotpPolicy`);
-  - T-8NQP8J (`xdg.resolve_state_dir` / `resolve_config_dir` with the `env` mapping,
+  - T-8NQP8J (`xdg.resolve_state_dir` / `resolve_config_dir` with the `environ=` mapping,
     `paths.xdg_default_store_dir`, `store.count_store_users`). Stub them with the HLD signatures if
     they are not merged yet.
-- **Outputs:** `src/agent_orchestrator/auth/settings.py`; `tests/auth/test_settings.py`.
+- **Outputs:** `src/agent_orchestrator/auth/settings.py` (incl. `ConfigRisk`);
+  `tests/auth/test_settings.py`.
 
 ## Acceptance Criteria
 1. **Precedence (AC-1 part).** Parametrized:
@@ -131,13 +148,28 @@ config and defaults. It records the source of each value, and refuses unsafe or 
     - Resolving the same inputs twice gives equal objects.
 11. **No I/O beyond the inputs.** Only `find_project_config`, the config file read and the injected
     `count_users` touch the filesystem. A test with a `count_users` spy shows it is called **only**
-    in the UNPARSEABLE branch.
-12. ruff and mypy are clean. Coverage of `settings.py` is ≥ 95 %.
+    in the UNPARSEABLE branch and in the two v2.1 step-5 cases (a config-only `enabled: false`; a
+    config-only `totp` below `required` with auth enabled), and never otherwise.
+12. **`ConfigRisk` detection (v2.1, AC-4d and the detection part of AC-45; rows 14–15).**
+    Parametrized over the `count_users` stub returning `0`, `3` and `None`:
+    - `ui.auth.enabled: false` from config, no CLI/env `enabled`: count 3 or `None` →
+      `config_risks == {DISABLED_BY_CONFIG}`; count 0 → empty; **no exception in any case**.
+    - The same config with `--no-auth` (CLI) or `AO_UI_AUTH=0` (env) → no risk for any count
+      (row 2/9, not row 14).
+    - Auth enabled (by config, env or CLI) and `ui.auth.totp: optional` (or `off`) from config, with
+      no CLI/env `totp`: count 3 or `None` → `TOTP_DOWNGRADED_BY_CONFIG` plus the warning text
+      (`comes only from`, the config path, `AO_UI_AUTH_TOTP`); count 0 → no risk.
+    - `totp: required` from config → no risk; `AO_UI_AUTH_TOTP=optional` from env → no risk.
+    - Auth disabled and `totp: optional` from config → no TOTP risk.
+    - No warning or error message contains a config value beyond the policy name (sentinel).
+13. ruff and mypy are clean. Coverage of `settings.py` is ≥ 95 %.
 
 **Other rows of HLD §11.3.4** are implemented and tested by their owners:
 - rows 6, 7, 8, 13 (store readiness and permissions): `check_ready`, T-XchniS;
 - row 9 (the accounts-exist notice): `prepare_auth`, T-jVqH8w;
-- row 11 (`totp=off` with enrolled users): `startup_warnings`, T-XchniS.
+- row 11 (`totp=off` with enrolled users): `startup_warnings`, T-XchniS;
+- **rows 14–15 (v2.1):** detection here (AC 12); enforcement (exit 78, audit events) in
+  `prepare_auth`, T-jVqH8w; the `ao auth status` flags in T-j9dfsw.
 
 ## Risks
 - **Over-strict validation breaking existing configs.** The `ui.auth` block is parsed separately
@@ -146,13 +178,16 @@ config and defaults. It records the source of each value, and refuses unsafe or 
   alternative (AC-6).
 - **Env-mapping injection.** Every path helper must honour the passed `env` mapping, or tests
   become machine-dependent (AC-8).
+- **A `ConfigRisk` must never raise here (v2.1).** Raising would break `ao auth status --workspace
+  W`, which is exactly where the operator needs to see the flag. Enforcement belongs to
+  `prepare_auth`.
 
 ## Dependencies
 - **Upstream:** T-kzEzwy; T-8NQP8J (`xdg`, `paths`, `count_store_users`).
 - **Downstream:**
   - T-XchniS (settings feed the provider and runtime);
-  - T-j9dfsw (`ao auth status` prints the sources);
-  - T-jVqH8w (`prepare_auth`);
+  - T-j9dfsw (`ao auth status` prints the sources and, v2.1, the `config_risks` flags);
+  - T-jVqH8w (`prepare_auth`; v2.1: enforces `config_risks`);
   - T-PDGw9p (`ao service run`).
 
 ## Pseudocode / Algorithm
@@ -171,7 +206,20 @@ decide(explicit_enabled, problem, user_count):
 ```
 
 Messages are composed by `resolve_auth_settings`, which knows the path and the source.
-`count_users` is evaluated lazily, **only** for UNPARSEABLE with no explicit value.
+`count_users` is evaluated lazily, **only** for UNPARSEABLE with no explicit value, and (v2.1) for
+step 5:
+
+```text
+step 5 (after the merge and the derived checks; HLD §11.3.2):
+  weak_enabled = source("enabled").startswith("config:") AND value("enabled") IS False
+  weak_totp    = source("totp").startswith("config:") AND value("totp") != REQUIRED AND value("enabled") IS True
+  IF weak_enabled OR weak_totp:
+     n = count_users(store_dir)                       # once
+     IF n IS None OR n > 0:
+        IF weak_enabled: risks.add(DISABLED_BY_CONFIG)
+        IF weak_totp:    risks.add(TOTP_DOWNGRADED_BY_CONFIG); warnings += <pin-it warning>
+  RETURN AuthSettings(..., config_risks=frozenset(risks))   # never raises for a risk
+```
 
 ## Schemas / Interface Notes
 - Config YAML, env names and defaults: HLD §12.5. `trusted_proxies` is env/CLI only.
@@ -179,8 +227,8 @@ Messages are composed by `resolve_auth_settings`, which knows the path and the s
 
 ## Handoff Boundary
 - **Upstream:** the HLD, T-kzEzwy and T-8NQP8J.
-- **Downstream:** one immutable `AuthSettings`, used by every server and CLI entry point through
-  `prepare_auth` and `ao auth`.
+- **Downstream:** one immutable `AuthSettings` (incl. `config_risks`), used by every server and CLI
+  entry point through `prepare_auth` and `ao auth`.
 
 ## Verification
 

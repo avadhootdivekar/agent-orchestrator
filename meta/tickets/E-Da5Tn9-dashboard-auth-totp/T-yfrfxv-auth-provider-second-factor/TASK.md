@@ -37,7 +37,11 @@ Implement `src/agent_orchestrator/auth/totp_service.py` (layer L3, no FastAPI).
     - `reset_on_success=True`, then `cas_mark_login`.
   - `begin_enrollment(session, client, *, current_password=None, enrollment_token=None)`. Checks run
     in this order:
-    1. `insecure_transport` (neither `client.secure` nor `client.is_loopback`);
+    1. `insecure_transport` (neither `client.secure` nor `client.is_loopback`). **v2.1 (security
+       M2):** `ClientInfo.is_loopback` now means loopback peer **and** loopback `Host` **and** no
+       `Forwarded` / `X-Forwarded-*` header; it is computed by T-rpKCjP's `client_info(scope,
+       runtime)` (HLD §11.15.1, §11.18). This service's logic is unchanged: it only reads the flag;
+       `proxy_suspected` is not consulted here;
     2. policy `off` → `TOTP_DISABLED_BY_POLICY`;
     3. already enrolled → `TOTP_ALREADY_ENROLLED`;
     4. a FULL session → `provider.verify_current_password(...)`. A `None` password →
@@ -110,7 +114,9 @@ All checks are in `tests/auth/test_totp_service.py` unless stated otherwise. The
    - policy `off` → `TOTP_DISABLED_BY_POLICY`;
    - already enrolled → `TOTP_ALREADY_ENROLLED`.
 
-   Loopback over http and remote over https are both allowed.
+   Loopback over http and remote over https are both allowed. These unit tests construct
+   `ClientInfo` directly; the header-based loopback matrix (a loopback peer with forwarding headers
+   or a non-loopback `Host` → refused) is AC-43, owned by T-rpKCjP and T-KQ6ZrY.
 4. **Begin, FULL session** (AC-22 part): `current_password=None` → `INVALID_REQUEST`; a wrong
    password → `INVALID_CREDENTIALS` (one `record_failure`); a correct one → a challenge with a
    20-byte secret, a 32-character Base32 string, and an ASCII URI with the configured issuer and

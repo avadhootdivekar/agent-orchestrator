@@ -1,10 +1,12 @@
 # ADR-0021 — Dashboard and hub authentication: local accounts, optional TOTP, per-server sessions
 
-- **Status:** Proposed (v2, 2026-10-05). Pending the manager's independent design and security
-  reviews. Implementation has not started. It becomes Accepted when
+- **Status:** Proposed (**v2.1, gates folded**, 2026-10-05). The manager's independent design
+  review and security review have run on v2, and their findings are folded in with the manager's
+  final decisions (HLD §28.9). Implementation has not started. It becomes Accepted when
   `T-otjIkJ-auth-docs-refresh-closure` closes.
-- **Date:** 2026-10-04 (v1); revised 2026-10-05 (v2). v2 incorporates the Phase-4 consultations
-  with manager, developer, reviewer, tester, dev-security and dev-critic (HLD §28).
+- **Date:** 2026-10-04 (v1); revised 2026-10-05 (v2, then v2.1). v2 incorporates the Phase-4
+  consultations with manager, developer, reviewer, tester, dev-security and dev-critic (HLD
+  §28.1–§28.8); v2.1 incorporates the two independent gates (HLD §28.9).
 - **Deciders:** Avadhoot Divekar (owner, binding brief); architect (agent); manager (agent)
 - **Epic:** `E-Da5Tn9-dashboard-auth-totp` · **Design:**
   [`dashboard-auth-hld.md`](../dashboard-auth-hld.md). Its decision log §1 holds all of D1–D25;
@@ -59,8 +61,9 @@ hosting). That is why they get an ADR rather than living only in the HLD.
 - **Lifetime.** Sessions do not survive a server restart. Idle limit 30 min; absolute limit 12 h;
   partial sessions 300 s. Expiry is measured on **one `CLOCK_BOOTTIME` timeline**, which counts
   suspend.
-- **Sliding.** A session slides only on user activity: mutations, keepalive, and same-origin or typed
-  navigations. Polling never extends it.
+- **Sliding.** A session slides only on user activity carrying the session proof (mutations,
+  keepalive), or on a browser-attested navigation to the single cookie-only route, the hub index
+  (v2.1, security M1). Polling never extends it, and neither does any request without the proof.
 - **Rotation.** The token and the proof rotate on login, on completing the second factor, on
   enrollment, and on any credential change.
 
@@ -146,11 +149,17 @@ in the process that issued it, so realms are isolated by construction.
     older one.
   - A store carrying `required_features` the reader does not know, or `schema_version > 1`, is
     refused.
-  - Breaking migrations run **only** through an explicit `ao auth migrate`, with a backup. Never on a
-    login write.
+  - Never migrate on a login write. Breaking changes are future work for a later epic; this epic
+    ships no migration command (v2.1, design-review M3).
 - **Never browsable.** Both directories are denied by `FileBrowser.resolve()` (list, read, HTML
-  preview, symlinks, absolute paths) **whether or not auth is enabled**. This is the one deliberate
-  behaviour change with auth off.
+  preview, symlinks, absolute paths) **whether or not auth is enabled**, and so is
+  `~/.config/ao/service.env` (v2.1, security L7). This is the one deliberate behaviour change with
+  auth off. The denial is a generic `denied_paths` mechanism that the approval-gates epic reuses
+  (HLD §16 X2).
+- **Permissions (v2.1).** Directories are created with `os.mkdir(mode=0o700)` and fixed through an
+  `O_NOFOLLOW` fd + `fchmod`. A parent that is group-writable but owned by the user (`umask 002`
+  hosts) warns instead of refusing. A `store_dir` chosen by workspace config is never created or
+  chmod-ed by `ao auth` (security M6, L6).
 - **Administration and bootstrap** are CLI-only. There is no web sign-up and there are no default
   credentials.
 
@@ -232,6 +241,9 @@ in the process that issued it, so realms are isolated by construction.
 - **Safe transport.** Web enrollment, confirmation and recovery-code regeneration are refused with
   403 `insecure_transport` unless the request is https or comes from a loopback client. A shared
   secret sent in clear is compromised permanently. CLI enrollment is unaffected.
+  - **v2.1 (security M2):** a loopback client is a loopback peer **with** a loopback `Host` **and**
+    no `Forwarded` / `X-Forwarded-*` header. An unconfigured reverse proxy on the same host cannot
+    make remote clients look local; it is reported (`proxy_suspected`, one WARNING).
 
 **Alternatives.**
 - Per-realm replay tracking. Rejected: violates RFC 6238 §5.2.
@@ -261,16 +273,26 @@ in the process that issued it, so realms are isolated by construction.
   - Auth routes are registered **flat** (`add_api_route`), and this is checked at construction.
 - **Route enumeration.** A test asserts that the computed non-AUTHENTICATED set equals the
   documented allowlist exactly, for every method, and that no table entry is stale.
-- **Principal (contract v2).** The middleware always sets `request.state.principal` and
-  `request.state.auth_enabled`.
+- **Principal (contract v2.1; owner decision, final).** The middleware always sets
+  `request.state.principal` and `request.state.auth_enabled`.
 
   ```python
   @dataclass(frozen=True, slots=True)
   class Principal:
-      username: str; auth_method: Literal["password", "password+totp"]; roles: tuple[str, ...]
-      user_id: str; realm: str; session_id: str; amr: tuple[str, ...]; auth_time: datetime; provider: str
+      username: str
+      auth_method: Literal["password", "password+totp"]
+      roles: list[str] = field(default_factory=list, hash=False)   # fresh [] per Principal; excluded from hash
+      user_id: str = field(kw_only=True)                           # realm, session_id, amr (tuple),
+      ...                                                          # auth_time, provider: all kw_only=True
   ```
 
+  - `roles` keeps the brief's `list[str]`; `hash(p)` works because the list is excluded from the
+    hash (`==` still compares it). Positional `Principal(username, auth_method, roles)` works.
+  - `SessionRecord`, `VerifiedIdentity` and `UserView` keep tuples. `SessionManager.principal_for`
+    is the only converter and returns a **fresh** `list(record.roles)` per request, so mutating a
+    principal's list never reaches session or store state.
+  - A principal is set **only when the session proof matches** (v2.1, security M1), except on the
+    single route flagged `COOKIE_ONLY_NAVIGATION` (the hub index).
   - `current_principal(request)`, `auth_enabled(request)` and `require_principal(request)` are
     exported, together with `AuditLog.record`.
   - `principal is None` alone never means "auth off".
@@ -289,10 +311,11 @@ in the process that issued it, so realms are isolated by construction.
 **Consequences.**
 - A new public route is a deliberate, two-place change: the table plus the allowlist test.
 - Partial sessions are confined structurally.
-- **The `Principal` shape is a cross-epic contract.** v2 changed `roles` from the brief's
-  `list[str]` to `tuple[str, ...]` and added fields. **The manager must confirm this with the
-  approval-gates epic before either side freezes it** (HLD OQ-8). Any later change needs the
-  manager's sign-off.
+- **The `Principal` shape is a cross-epic contract.** v2.1 settles it by owner decision (HLD OQ-8,
+  decided): `roles: list[str]` as in the brief, plus keyword-only additive fields. (v2 had proposed
+  `tuple[str, ...]`; superseded.) Any later change needs the manager's sign-off.
+- Roles are frozen into a session at issue. **When RBAC lands, any role change must bump
+  `credential_epoch`** (or revalidation must re-read roles).
 
 ---
 
@@ -305,6 +328,8 @@ in the process that issued it, so realms are isolated by construction.
   - `LocalTotpService` implements the second factor.
   - Both route every credential check through one `AttemptGuard`.
 - **Routes.** Route builders are registered as callables (`register_route_builder(id, fn)`).
+  v2.1: a provider may register several builders, run in registration order; the local provider
+  registers one per module (`auth/http/routes.py`, `auth/http/routes_second_factor.py`).
   `build_auth_runtime(..., provider=)` injects any provider.
 - **Core stays credential-free.** Sessions, middleware and principal consume only
   `VerifiedIdentity`.
@@ -345,6 +370,16 @@ in the process that issued it, so realms are isolated by construction.
 - **Fail closed.** A pure `decide()` maps every combination of layer validity, enablement and user
   count to run or refuse (HLD §11.3.4). An unreadable user count, while auth might be intended,
   refuses.
+- **v2.1 — the workspace layer cannot silently switch protection off** (security M3):
+  - `enabled: false` from workspace config **only**, while accounts exist (or the count is
+    unknown) → refuse (exit 78), pointing at `--no-auth` / `AO_UI_AUTH=0`; audit
+    `auth.startup.disabled_by_config`; flagged by `ao auth status`.
+  - A `totp` value below `required` from workspace config only, with auth on and accounts present
+    → start with a warning, audit `auth.startup.totp_downgraded_by_config`, and a status flag.
+  - Settings record these as `ConfigRisk` data; only `prepare_auth` enforces them, so `ao auth`
+    keeps working.
+- **v2.1 — launch hygiene:** `--port 0` is refused with auth on (the cookie is named after the
+  port); `ao ui --reload` passes the same uvicorn kwargs as the non-reload path (security L3, L4).
 - **One launch sequence.** `auth/launch.py::prepare_auth(...) -> AuthLaunch` covers resolve, build,
   readiness, warnings, log redaction, uvicorn kwargs, child env and denied paths. `ao ui`,
   `create_app_from_env` and `ao service run` call it.
@@ -352,7 +387,9 @@ in the process that issued it, so realms are isolated by construction.
   - The supervisor treats a child exiting 78 as terminal: no restart, no port reassignment.
   - The systemd unit gains `RestartPreventExitStatus=78`.
 - **Proxy headers.** With auth on, uvicorn runs with `proxy_headers=False` unless trusted proxies are
-  configured, and the proxy must preserve `Host`.
+  configured, and the proxy must preserve `Host`. v2.1: an unconfigured proxy is detected (D5) and
+  reported; with `trusted_proxies=127.0.0.1`, any local process can claim a client address via
+  `X-Forwarded-For`, so the documented advice is a unix socket or a firewalled app port.
 - **Warnings.**
   - A loud plain-HTTP warning when auth is on with a non-loopback bind and no trusted proxy.
   - A deprecation notice when auth is off with a non-loopback bind.
@@ -375,9 +412,12 @@ in the process that issued it, so realms are isolated by construction.
   any scrypt work. Busy (503) rejections count as failures.
 - **Per-account lockout.** Exponential backoff (5 failures, then 30 s doubling to a 900 s cap; reset
   after 24 h), persisted in `lockouts.json` **keyed by `user_id`**, so it is shared by every realm.
-- **Unknown usernames.** Tracked as **phantom** entries keyed by `sha256(normalized name)`, capped at
-  4096 with oldest-first eviction. Responses, hasher calls and lockout writes are therefore
-  identical for "no such user" and "wrong password".
+- **Unknown usernames.** Tracked as **phantom** entries, capped at 4096 with oldest-first eviction.
+  Responses, hasher calls and lockout writes are therefore identical for "no such user" and "wrong
+  password". **v2.1 (security L1):** the phantom key, and the audit `username_hash`, is
+  `HMAC-SHA256(name_key, normalized name)` with a per-store random key kept in `lockouts.json`, so
+  a pasted password in the username field cannot be brute-forced offline from the state files;
+  every malformed name shares one bucket.
 - **Serialization.** A per-username `asyncio.Lock` serializes attempts within a process.
 - **Escape hatch.** `ao auth unlock` clears a lockout.
 
@@ -419,7 +459,7 @@ documented and the safe direction.
 
 ---
 
-## D11 — Session proof header: a second, origin-bound secret on every API call (HLD D25) — **owner decision, default: include**
+## D11 — Session proof header: a second, origin-bound secret on every API call (HLD D25) — **DECIDED (v2.1): in the MVP**
 
 **Context.** Any process listening on another localhost port receives the realm cookie: on
 navigations and on credentialed requests from its own page. It can then replay the cookie with
@@ -432,13 +472,18 @@ out-of-browser replay of a harvested cookie (HLD A4).
 - **Store.** The SPA and the hub page keep it in **origin-scoped `localStorage`**, which a page on
   another port cannot read. If storage is blocked, it is kept in memory with a clear message.
 - **Send.** Every `/api` request sends it as `X-AO-Session-Proof`.
-- **Check.** The middleware requires a matching proof for every non-PUBLIC `/api` route.
+- **Check.** The middleware requires a matching proof for every non-PUBLIC route (v2.1: API or not),
+  except the one route flagged `COOKIE_ONLY_NAVIGATION`.
   - A missing or wrong proof means "anonymous for this request". It never destroys the session and
     never clears the cookie, so a harvester cannot log the victim out through it.
+  - **v2.1 (security M1):** on every route, PUBLIC ones included, a request without the proof gets
+    no principal and never slides the idle timer.
   - `GET /api/auth/status` reports a session only with the proof.
   - Logout destroys the server session only with the proof.
 - **Rotation.** The proof rotates with the token.
-- **Navigations stay cookie-only:** the hub index and the SPA shell.
+- **Navigations:** the SPA shell is PUBLIC (no session needed). The hub index is the **single**
+  `COOKIE_ONLY_NAVIGATION` route: a cookie-only principal there, sliding only for browser-attested
+  navigations.
 
 **Alternatives.**
 - **Accept the residual** (v1). Viable, and cheaper by about 1.5 dev-days. The README must then
@@ -453,15 +498,15 @@ out-of-browser replay of a harvested cookie (HLD A4).
   - the hub index (a cookie-only navigation) can still be rendered with a harvested cookie;
   - a tossed duplicate cookie forces a logout (D2).
 - Any future API client must carry the proof, or use the follow-up API tokens.
-- **Owner decision (HLD OQ-9):** the default is to include D11 in the MVP. If deferred, D1's v1
-  residual statement applies unchanged.
+- **Decided (HLD OQ-9, v2.1):** D11 ships in the MVP. It is security-driven and is not on the
+  schedule cut-lines (HLD §24.1).
 
 ---
 
 ## Consequences summary
 
-- **Auth off:** byte-identical behaviour. The only additions are `GET /api/auth/status` and the
-  browsing denial of the store and state directories.
+- **Auth off:** byte-identical behaviour. The only additions are `GET /api/auth/status` (and its
+  OpenAPI entry) and the browsing denial of the store and state directories and `service.env`.
 - **Auth on:**
   - deny by default through per-app policy tables;
   - per-realm sessions with stable realm ids;
@@ -469,7 +514,8 @@ out-of-browser replay of a harvested cookie (HLD A4).
   - global single-use TOTP codes;
   - sticky enrollment, with token-gated forced enrollment over safe transports;
   - immutable user ids with CAS writes;
-  - tighten-only, fail-closed configuration;
+  - tighten-only, fail-closed configuration, where a config-only disable with accounts refuses
+    (v2.1);
   - CLI-only administration.
 - **Documented residual risks:**
   - same-user agents can read or modify the stores (out of scope; `disallowed_tools` hardening
@@ -477,7 +523,10 @@ out-of-browser replay of a harvested cookie (HLD A4).
   - with D11: hub index rendering and forced logout via cookie tossing;
   - plain-HTTP non-loopback use (loud warning; enrollment refused);
   - lockout used as a DoS (bounded; `unlock`);
-  - the phantom-eviction oracle (bounded).
+  - the phantom-eviction oracle (bounded);
+  - (v2.1) a config-sourced TOTP policy can be lowered by a repository change (warned and audited;
+    pin it with env/CLI); users behind an unconfigured proxy share one throttle bucket until
+    `trusted_proxies` is set.
 - **Follow-ups this ADR enables without redesign, in priority order:**
   1. the hub-run handoff;
   2. store-scoped SSO;

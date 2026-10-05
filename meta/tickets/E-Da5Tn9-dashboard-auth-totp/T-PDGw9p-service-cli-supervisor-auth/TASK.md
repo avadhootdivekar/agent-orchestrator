@@ -3,7 +3,7 @@
 ## Metadata
 - Task ID: `T-PDGw9p-service-cli-supervisor-auth`
 - Epic ID: `E-Da5Tn9-dashboard-auth-totp`
-- Owner: `developer` (lane Q)
+- Owner: `developer` (lane A; v2.1, was lane Q)
 - Created: `2026-10-05`
 - Last Updated: `2026-10-05`
 - Status: `Draft`
@@ -12,13 +12,17 @@
 **Origin:** this scope was split out of v1 `T-KOv2qD-hub-service-auth` (developer D-4: the 3-day
 cap).
 
+**v2.1:** this task consumes the v2.1 `prepare_auth` (T-jVqH8w) unchanged. The only new behaviour
+on the hub path is the port-0 refusal (security L4), which `prepare_auth` already implements; the
+workspace-config risks (security M3) never apply to the hub (`workspace_root=None`).
+
 ## Requirements Mapping
 - Requirement IDs: FR-2 (the hub refuses before spawning), FR-14, FR-21 (hub startup warnings via
   `prepare_auth`), FR-25, FR-26, NFR-1
-- ACs: AC-3 (`ao service run` part), AC-18, AC-31
+- ACs: AC-3 (`ao service run` part, incl. the v2.1 port-0 refusal), AC-18, AC-31
 - Invariants: S14
-- Design: HLD §11.20 (`prepare_auth`), §14.8, §15 rows 1–3, §16 rows 6, 7 and 8, §18 #3, §19.1;
-  HLD D14, D15; ADR-0021 D8
+- Design: HLD §11.20 (`prepare_auth`, v2.1), §14.8, §15 rows 1–3, §16 rows 6, 7 and 8, §18 #3,
+  §19.1, §24.3 (lane plan); §28.9 (security L4; design-review minor 3); HLD D14, D15; ADR-0021 D8
 
 ## Description
 1. **`src/agent_orchestrator/service/cli.py::run`** (§16 row 6).
@@ -101,6 +105,9 @@ cap).
 1. **Refusal** (AC-3 service part; S14): `ao service run --auth --auth-dir <empty>` → exit 78;
    stderr contains `ao auth add-user`; the `Supervisor` stub is **never constructed**;
    `uvicorn.Config` is never called; no supervisor lock or state file is created.
+1b. **Port 0** (AC-3 service part, v2.1, security L4): `ao service run --auth --hub-port 0` with one
+   user → exit 78; stderr mentions `--port 0` (the `prepare_auth` message); the `Supervisor` stub is
+   never constructed and nothing is spawned. With auth off, port 0 behaves as today.
 2. **Wiring:**
    - With one user and `--auth --auth-totp required --auth-dir D`: `Supervisor` gets
      `child_env == {"AO_UI_AUTH": "1", "AO_UI_AUTH_TOTP": "required", "AO_AUTH_DIR": D}`.

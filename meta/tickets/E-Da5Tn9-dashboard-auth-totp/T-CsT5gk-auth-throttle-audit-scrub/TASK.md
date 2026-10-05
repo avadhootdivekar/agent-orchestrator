@@ -10,23 +10,40 @@
 - Estimate: `3 days` · Sprint `S1`
 
 ## Requirements Mapping
-- Requirement IDs: FR-16, FR-17 (one lockout write per attempt, phantoms), FR-20, FR-23, NFR-4, NFR-8, NFR-9 (lockouts fail closed)
-- ACs: AC-20 (throttle and lockout part), AC-21 (phantom part), AC-28; unit support for AC-24 (redaction)
-- Design: HLD §11.11 (`lockouts.py`, `throttle.py`; `guard.py` is T-XchniS), §11.12 (`audit.py`), §11.13 (`scrub.py`), §12.1b, §12.4, §12.6; HLD D9, D18; ADR-0021 D3 (state directory), D9
+- Requirement IDs: FR-16, FR-17 (one lockout write per attempt, phantoms), FR-23, NFR-4, NFR-8, NFR-9 (lockouts fail closed)
+- ACs: AC-20 (throttle and lockout part), AC-21 (phantom part, incl. the v2.1 keyed digests), AC-28
+- Design: HLD §11.11 (`lockouts.py`, `throttle.py`; `guard.py` is T-XchniS), §11.12 (`audit.py`), §12.1b, §12.2, §12.4, §12.6, §24.1 (cut-lines), §28.9 (security L1, design-review M3); HLD D9, D18; ADR-0021 D3 (state directory), D9
+
+**v2.1 scope note.** The task ID and slug are unchanged, but **`scrub.py` (log redaction) moved out**
+to `T-Hd4wQ2-auth-browse-denial-log-scrub` (HLD §24.2, re-baseline to keep every task ≤ 3 d). The
+freed half-day goes to the keyed username digests (security L1).
 
 ## Description
-Implement the mutable security state that lives outside the credential file, plus the audit log and
-log redaction. Everything here writes **only** to the **state** directory (`StorePaths.state_dir`),
-never to `users.json`.
+Implement the mutable security state that lives outside the credential file, plus the audit log.
+Everything here writes **only** to the **state** directory (`StorePaths.state_dir`), never to
+`users.json`.
 
 - **`auth/lockouts.py`** (L2; HLD §11.11):
   - The pydantic models `LockoutState` and `LockoutFile` (`extra="allow"`,
     `hide_input_in_errors=True`).
   - The pure `LockoutPolicy`: `effective_failures`, `retry_after`, `register_failure`,
     `register_success`.
-  - `LockoutKey(user_id | phantom)` and `phantom_key(normalized_username) -> str`: the 64-hex
-    SHA-256.
-  - `LockoutStore(paths, *, clock, lock_timeout)` with `state`, `record_failure`,
+  - `LockoutKey(user_id | phantom)`.
+  - **v2.1 (security L1; HLD §11.11, §12.1b, §12.2): keyed username digests.** `LockoutFile`
+    gains an optional `name_key_hex: str | None = Field(None, repr=False)` (32 random bytes,
+    `LOCKOUT_NAME_KEY_BYTES`). `LockoutStore` gains:
+    - an `entropy: Entropy = SYSTEM_ENTROPY` constructor parameter;
+    - `ensure_name_key()`: locked; creates `name_key_hex` if absent (one write); no write when it
+      already exists. Called by `check_ready()` at startup (T-XchniS) and by mutating CLI
+      commands (T-j9dfsw), so a login attempt never pays an extra write;
+    - `name_digest(normalized_username) -> str` = `HMAC-SHA256(name_key, subject).hexdigest()`
+      (64 hex), where `subject` is the name if it matches `USERNAME_RE`, else
+      `INVALID_USERNAME_BUCKET` (`""`), so every malformed name shares **one** bucket. A missing key
+      at runtime (file deleted) triggers `ensure_name_key()` once, logged once.
+    - Phantom keys are `name_digest(...)`; the v2 unkeyed `phantom_key = sha256(...)` is removed.
+    - Losing `lockouts.json` rotates the key (old phantoms and old audit hashes stop correlating;
+      accepted, HLD §11.11).
+  - `LockoutStore(paths, *, clock, entropy, lock_timeout)` with `state`, `record_failure`,
     `reset(user_id, *, repair_corrupt=False)`, `forget` and `check_readable()`. `check_readable`
     parses `lockouts.json` if present and raises `StoreCorruptError` if it is corrupt; T-XchniS's
     `check_ready` calls it (HLD §11.11, §11.15.3). It uses the same stat-cached snapshot,
@@ -46,8 +63,9 @@ never to `users.json`.
   - `AuditOutcome` (`success` / `failure` / `info`) and the frozen `AuditEvent`. Fields: `event`
     (`AuditEventName`, or a namespaced string for other epics), `outcome`, `username`,
     `username_hash`, `user_id`, `realm`, `session_id`, `auth_method`, `client_addr`, `details`.
-  - `username_hash(normalized) -> str`: the first `AUDIT_USERNAME_HASH_CHARS` hex characters of its
-    SHA-256.
+  - **v2.1 (security L1):** there is **no** `username_hash()` helper in `audit.py` and `AuditLog`
+    never hashes names. Callers pass `username_hash=lockouts.name_digest(name)[:AUDIT_USERNAME_HASH_CHARS]`
+    for unknown names (the guard, T-XchniS).
   - `AUTH_DETAIL_KEYS` applies to `auth.*` events **only**. There is no `register_detail_keys`
     (reviewer finding R-7c).
   - `AuditLog(paths, *, clock, strict=False)` and
@@ -69,24 +87,23 @@ never to `users.json`.
     server calls it at shutdown. `auth.lockout` is never suppressed.
   - **`audit_log_for(request)` is not in this module.** It needs `runtime_of(app)` (L3), so it
     lives in `runtime.py` (T-XchniS) to keep rules R4 and R5.
-- **`auth/scrub.py`** (L2; HLD §11.13):
-  - `REDACTED`, `SECRET_PATTERNS` (the v2 list, including the `X-AO-Session-Proof` value,
-    enrollment tokens and `session_proof` / `enrollment_token` keys), `redact()`;
-  - `SecretRedactingFilter` and `auth_logger(name)` (idempotent);
-  - `install_log_redaction()`: a process-wide `logging.setLogRecordFactory` wrapper that redacts
-    `record.getMessage()` once per record. It is idempotent through a marker attribute and chains
-    to the previous factory (dev-security #11).
+- **Cut-lines (HLD §24.1, design-review M3).** If the manager cuts scope, this task's stretch items
+  go first: **#1** audit rotation + flood coalescing (AC 10 and AC 13 become stretch), then **#2**
+  the phantom table (AC 3; the guard then writes no lockout entry for unknown names). Implement
+  them last and record any cut here and in the epic STATUS.
+- **Not here any more:** `auth/scrub.py` → T-Hd4wQ2-auth-browse-denial-log-scrub.
 
 ## Inputs / Outputs
 - **Inputs:**
   - HLD §11.11–§11.13, §12.1b, §12.4, §12.6;
-  - T-kzEzwy (`constants`, `errors`, `model.AuditEventName`, `seams`);
+  - T-kzEzwy (`constants`, `errors`, `model.AuditEventName`, `seams`, `tests/auth/helpers/core.py`);
   - T-8NQP8J (`fsutil`, `StorePaths`). Stub them with the HLD signatures if they are not merged
     yet.
 - **Outputs:**
-  - `src/agent_orchestrator/auth/lockouts.py`, `throttle.py`, `audit.py`, `scrub.py`
-  - `tests/auth/test_lockouts.py`, `test_throttle.py`, `test_audit.py`, `test_scrub.py`
-  - `tests/auth/schemas/auth-lockouts-v1.json` (a verbatim copy of §12.1b)
+  - `src/agent_orchestrator/auth/lockouts.py`, `throttle.py`, `audit.py`
+  - `tests/auth/test_lockouts.py`, `test_throttle.py`, `test_audit.py`
+  - `tests/auth/schemas/auth-lockouts-v1.json` (a verbatim copy of the v2.1 §12.1b, including the
+    optional `name_key_hex`)
   - `tests/auth/schemas/auth-audit-line-v1.json` (the §12.4 line, with the field list under
     Schemas / Interface Notes below)
 
@@ -110,12 +127,22 @@ never to `users.json`.
      survive a rewrite.
    - Four spawn processes × 25 `record_failure` calls on one user give `failures == 100` (no lost
      updates; join timeouts; exit codes asserted).
-3. **Phantoms (AC-21 part).**
-   - `LockoutKey(phantom=phantom_key("ghost"))` is stored under `phantoms`.
+3. **Phantoms (AC-21 part; cut-line #2).**
+   - `LockoutKey(phantom=store.name_digest("ghost"))` is stored under `phantoms`.
    - With `PHANTOM_LOCKOUT_MAX_ENTRIES` patched to 3, a 4th distinct phantom evicts the one with the
      oldest `last_failure_at`, so the size stays 3.
    - `accounts` entries are never evicted.
    - The default value is 4096 (constants pin).
+3b. **Keyed digests (v2.1, security L1; AC-21 part).** (`SeededEntropy`)
+   - `ensure_name_key()` on a missing file writes one valid file with a 64-hex `name_key_hex`; a
+     second call writes nothing (inode and mtime unchanged).
+   - `name_digest("ghost")` is 64 hex, equals `hmac.new(key, b"ghost", sha256).hexdigest()`, and
+     is **not** equal to the unkeyed `sha256(b"ghost").hexdigest()`.
+   - Two stores with different keys give different digests for the same name.
+   - `"Bad Name!"`, `"x" * 100` and `"a b"` (all failing `USERNAME_RE`) give the **same** digest:
+     the `INVALID_USERNAME_BUCKET` digest.
+   - With the key missing at runtime, `name_digest` creates it once and logs exactly once.
+   - `name_key_hex` never appears in `repr()` of the model, nor in any log record (sentinel).
 4. **Corruption fails closed.**
    - A corrupt `lockouts.json` makes `state()` and `record_failure()` raise
      `StoreUnavailableError`.
@@ -140,7 +167,8 @@ never to `users.json`.
    - The file is `<state_dir>/audit.jsonl` (**not** the store directory), mode 0600.
    - `ts` has millisecond precision with a `Z` suffix. Keys are sorted and `ensure_ascii` is on.
    - `user_id` is present when given and `null` otherwise.
-   - `username_hash("ghost")` is 16 hex characters.
+   - An event built with `username_hash=lockouts.name_digest("ghost")[:16]` validates (16 hex);
+     `audit.py` exports no `username_hash` function (v2.1).
 9. **Validation.**
    - `strict=True` raises `ValueError` for:
      - a non-namespaced event (`"login"`);
@@ -151,42 +179,25 @@ never to `users.json`.
    - `strict=False`, with the same invalid `auth.*` event, writes one line with the same event,
      outcome and identity fields and `details == {}`. It logs exactly one ERROR per event name: a
      second invalid event with the same name logs nothing more.
-10. **Rotation.** With `max_bytes=200`, ten events produce `audit.jsonl` plus `.1` up to
+10. **Rotation** (cut-line #1 stretch). With `max_bytes=200`, ten events produce `audit.jsonl` plus `.1` up to
     `.AUDIT_BACKUP_COUNT`, never more. Every line parses.
 11. **Fail-open.** With `os.open` patched to raise `PermissionError`, `record()` returns normally,
     and exactly one ERROR record names the event, not its payload.
 12. **Concurrency.** Four spawn processes × 25 events give exactly 100 valid lines.
-13. **Coalescing** (`FakeClock`).
+13. **Coalescing** (`FakeClock`; cut-line #1 stretch).
     - 61 failure events within one minute → 60 lines written.
     - The first `record()` in the next minute first writes `auth.failure.burst` (outcome `info`,
       `details == {"suppressed": 1}`).
     - `auth.lockout` events beyond the cap are still written.
     - `flush_suppressed()` writes a pending burst immediately.
-14. **`redact()`** (`test_scrub.py`). Each sentinel is replaced with `[REDACTED]`, keeping its
-    prefix:
-    - `ao_sid_8765=<43>` and `__Host-ao_sid_8765=<43>`;
-    - `X-AO-Session-Proof: <43>`;
-    - an `otpauth://…` URI; a `$scrypt$…` hash; a 32-character Base32 secret;
-    - a recovery code and an enrollment token (`XXXX-XXXX-XXXX-XXXX`);
-    - `"password": "…"`, `password=…`, `current_password=…`, `new_password=…`, `code=123456`,
-      `"session_proof": "…"`, `"enrollment_token": "…"`.
-
-    Ordinary text (run ids such as `run-20261004-abc`, file paths) is unchanged.
-15. **Filters.**
-    - `SecretRedactingFilter`, attached through `auth_logger(__name__)`, redacts a record logged
-      with arguments (`logger.info("x %s", secret)`).
-    - Calling `auth_logger` twice attaches exactly one filter.
-    - After `install_log_redaction()`, a record from `logging.getLogger("uvicorn.error")` (with
-      `propagate=False`) has a message containing `[REDACTED]` and not the sentinel.
-    - A second `install_log_redaction()` does not double-wrap (marker), and the previous factory is
-      still called (spy).
-16. ruff and mypy are clean. Coverage of `lockouts.py`, `throttle.py`, `audit.py` and `scrub.py` is
-    ≥ 90 %.
+14. *(v2 ACs 14–15 for `redact()` and the logging filters moved with `scrub.py` to
+    T-Hd4wQ2-auth-browse-denial-log-scrub.)*
+15. ruff and mypy are clean. Coverage of `lockouts.py`, `throttle.py` and `audit.py` is ≥ 90 %.
 
 ## Risks
-- **Regex false positives in `redact()`**, for example a 32-character upper-case run id. This is
-  acceptable: redaction is defence in depth. Document the false-positive classes in the module
-  docstring.
+- **The name key must exist before the first login attempt**, or S6's "exactly one lockout write"
+  breaks for that one attempt. `check_ready()` (T-XchniS) calls `ensure_name_key()`; AC 3b covers
+  the runtime fallback.
 - **Fsync cost.** Audit and lockout writes happen on failures and admin actions only, never per
   request. The address throttle runs before any write.
 - **Lost bursts at a crash.** A pending `auth.failure.burst` is lost if the process dies before the
@@ -196,14 +207,16 @@ never to `users.json`.
 - **Upstream:** T-kzEzwy; T-8NQP8J (`fsutil`, `StorePaths`).
 - **Downstream:**
   - T-XchniS (`AttemptGuard` composes the lockouts, the throttle, the gates and the audit;
-    `audit_log_for` lives in `runtime.py`);
+    `audit_log_for` lives in `runtime.py`; `check_ready` calls `ensure_name_key`, `authenticate`
+    calls `name_digest`);
   - T-yfrfxv;
-  - T-j9dfsw (`unlock` → `reset(repair_corrupt=True)`; `remove-user` → `forget`; CLI audit);
-  - T-jVqH8w and T-PDGw9p (`install_log_redaction`);
-  - T-U2ERMo (the scrub sweep).
+  - T-j9dfsw (`unlock` → `reset(repair_corrupt=True)`; `remove-user` → `forget`; CLI audit;
+    `ensure_name_key` on mutations);
+  - T-U2ERMo (the audit file in the scrub sweep).
+  - (`install_log_redaction` now comes from T-Hd4wQ2.)
 
 ## Pseudocode / Algorithm
-HLD §11.11 (the worked example), §11.12 and §11.13. Task-level steps:
+HLD §11.11 (the worked example, v2.1 `name_digest`) and §11.12. Task-level steps:
 
 ```text
 LockoutStore.record_failure(key, policy):
@@ -216,6 +229,18 @@ LockoutStore.record_failure(key, policy):
      fsutil.atomic_write_bytes(paths.lockouts_file, canonical_json(f)); refresh cache
   RETURN new
 
+LockoutStore.ensure_name_key():                         # v2.1, security L1
+  IF cached key present: RETURN
+  WITH fsutil.FileLock(paths.lockouts_lock, timeout=lock_timeout):
+     f = load_fresh() OR LockoutFile()
+     IF f.name_key_hex IS None: f.name_key_hex = entropy.token_bytes(LOCKOUT_NAME_KEY_BYTES).hex(); atomic write
+     cache the key
+
+LockoutStore.name_digest(normalized):
+  key = cached key OR (ensure_name_key(); log_once("lockout name key was missing; created"))
+  subject = normalized IF USERNAME_RE.fullmatch(normalized) ELSE INVALID_USERNAME_BUCKET
+  RETURN hmac.new(bytes.fromhex(key), subject.encode("utf-8"), hashlib.sha256).hexdigest()
+
 AuditLog.record(event):
   TRY validate(event)                                   # strict -> ValueError propagates
   EXCEPT ValueError IF NOT strict: log_error_once(event.event); event = reduced(event)
@@ -225,7 +250,8 @@ AuditLog.record(event):
 ```
 
 ## Schemas / Interface Notes
-- `lockouts.json`: HLD §12.1b.
+- `lockouts.json`: HLD §12.1b (v2.1: optional `name_key_hex`, 64 hex).
+- Unknown-username digests: HLD §12.2 (v2.1, keyed HMAC).
 - Audit line, as in HLD §12.4 plus its example. The fields are:
   - `v` (int, `AUDIT_SCHEMA_VERSION`), `ts` (string, ms, `Z`), `event`, `outcome`
     (`success|failure|info`), `pid` (int);
@@ -240,18 +266,17 @@ AuditLog.record(event):
 ## Handoff Boundary
 - **Upstream:** the HLD, T-kzEzwy and T-8NQP8J.
 - **Downstream:**
-  - `LockoutStore`, `LockoutPolicy` and `LockoutKey`;
+  - `LockoutStore` (incl. `ensure_name_key`, `name_digest`), `LockoutPolicy` and `LockoutKey`;
   - `canonical_client_key`, `AddressThrottle` and `UsernameGates`;
-  - `AuditLog`, `AuditEvent` and `username_hash`;
-  - `redact`, `auth_logger` and `install_log_redaction`.
+  - `AuditLog` and `AuditEvent`.
 
   `AttemptGuard` (T-XchniS) is the only production composer of the lockout and throttle pieces.
 
 ## Verification
 
 ```
-python -m pytest -q tests/auth/test_lockouts.py tests/auth/test_throttle.py tests/auth/test_audit.py tests/auth/test_scrub.py tests/auth/test_import_boundary.py
-python -m pytest -q tests/auth --cov=agent_orchestrator.auth.lockouts --cov=agent_orchestrator.auth.throttle --cov=agent_orchestrator.auth.audit --cov=agent_orchestrator.auth.scrub --cov-report=term-missing
+python -m pytest -q tests/auth/test_lockouts.py tests/auth/test_throttle.py tests/auth/test_audit.py tests/auth/test_import_boundary.py
+python -m pytest -q tests/auth --cov=agent_orchestrator.auth.lockouts --cov=agent_orchestrator.auth.throttle --cov=agent_orchestrator.auth.audit --cov-report=term-missing
 ruff check src/agent_orchestrator/auth tests/auth && mypy src/agent_orchestrator/auth
 ```
 

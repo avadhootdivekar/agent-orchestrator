@@ -21,16 +21,23 @@
   - AC-29: `auth-reducer`, `auth-gate`, `auth-api`, `login-screen`, `totp-step`, `proof` and
     `fetch-mode-ban`;
   - the client half of AC-35: the proof is always sent;
-  - AC-30 build part: the committed bundle is rebuilt.
+  - AC-30 build part: a local `npm run build` succeeds (v2.1: this task does **not** commit the
+    bundle; T-vCgsU6 does).
 - Invariants: S21 (client side: every `/api` call carries the proof).
 - Design:
-  - HLD §1 D20, D25; §2 (contract; §2.5 types verbatim); §17.1–§17.4, §17.8–§17.10; §15 #7 and #8;
-    §16 #11 and #13; §12.6 (frontend `PROOF_STORAGE_KEY`);
+  - HLD §1 D20, D25; §2 (contract; §2.5 types verbatim, incl. v2.1 `transport.proxy_suspected`);
+    §17.1–§17.4, §17.8–§17.10; §15 #7 and #8; §16 #11, #13 and **#15 (v2.1 bundle rule)**,
+    cross-epic X5; §12.6 (frontend `PROOF_STORAGE_KEY`);
+  - HLD §28.9: design-review M1/M2 (bundle ownership), security M2 (type);
   - ADR-0021 D2 (fetch only, no `mode`) and D11 (proof).
 
 ## Description
 1. **`ui/src/types.ts`:** add the HLD §2.5 types verbatim: `AuthStatus`, `AuthStepResponse`,
-   `AuthErrorCode`, `SESSION_LOSS_CODES`, `SESSION_PROOF_HEADER`, and the rest.
+   `AuthErrorCode`, `SESSION_LOSS_CODES`, `SESSION_PROOF_HEADER`, and the rest. **v2.1 (security
+   M2; manager-approved additive contract change):** `AuthStatus.transport` is
+   `{ secure: boolean; client_is_loopback: boolean; proxy_suspected: boolean } | null`. The
+   transport-banner logic is unchanged (`!secure && !client_is_loopback`); a request through an
+   unconfigured proxy now arrives with `client_is_loopback: false`, so the banner already covers it.
 2. **`ui/src/auth/proof.ts`:**
    - `readProof()`, `writeProof(p)`, `clearProof()` and `proofStorageBlocked()`;
    - the key is `PROOF_STORAGE_KEY = "ao-session-proof"`, in `ui/src/auth/constants.ts`;
@@ -89,8 +96,12 @@
    `auth-api.test.ts`, `login-screen.test.tsx`, `totp-step.test.tsx`, `proof.test.ts` and
    `fetch-mode-ban.test.ts`. **Every time-dependent test uses `vi.useFakeTimers()` and
    `vi.setSystemTime()`** (tester T-6).
-8. **Build.** Run `npm run build` and **commit** the rebuilt SPA bundle under
-   `src/agent_orchestrator/ui/static/` (HLD A-10).
+8. **Build (v2.1 rule, HLD §16 row 15 and cross-epic X5; design-review M1/M2).** Run `npm run build`
+   locally to verify the build and measure the interim gzip delta, then **discard** the output with
+   `git checkout -- src/agent_orchestrator/ui/static`. This task does **not** commit
+   `src/agent_orchestrator/ui/static/`: only the last frontend task of the epic, T-vCgsU6,
+   regenerates and commits it after this task and T-R7JhTL have merged (hashed asset names would
+   otherwise conflict).
 
 ## Inputs / Outputs
 - **Inputs:** HLD §2, §17.
@@ -99,7 +110,7 @@
   - `ui/src/auth/{proof,constants,context,authReducer}.ts`
   - `ui/src/auth/{AuthGate,LoginScreen,TotpStep}.tsx`
   - the seven test files above
-  - the rebuilt bundle in `src/agent_orchestrator/ui/static/`
+  - **no** committed bundle (v2.1: `src/agent_orchestrator/ui/static/` is T-vCgsU6's)
 
 ## Acceptance Criteria
 1. **Reducer.** Every row of the HLD §17.2 table is a table-driven test case. An unexpected event
@@ -156,10 +167,14 @@
    - `new ApiError("x", 404)` still compiles.
    - No `dangerouslySetInnerHTML` in `ui/src/auth/**` (string check).
 10. **Gates.**
-    - `npm run typecheck`, `npm run test` and `npm run build` are green, and the rebuilt bundle is
-      committed.
+    - `npm run typecheck`, `npm run test` and `npm run build` are green.
+    - **(v2.1)** The task's commits contain no path under `src/agent_orchestrator/ui/static`
+      (`git diff --name-only <base>..HEAD -- src/agent_orchestrator/ui/static` prints nothing).
     - The interim main-chunk gzip delta against the pre-epic bundle (`bb6d8a0`) is recorded in
-      STATUS. The final budget gate is T-vCgsU6's.
+      STATUS. The final budget gate and the committed bundle are T-vCgsU6's.
+    - **(v2.1)** `types.ts` declares `transport.proxy_suspected`; a status with
+      `{secure: false, client_is_loopback: false, proxy_suspected: true}` shows the §17.8 transport
+      banner on `LoginScreen`.
 11. **Dev proxy.** With `npm run dev` against `ao ui --auth`, login from `http://localhost:5173`
     succeeds. This is a manual check per §16 #13, recorded in STATUS.
 
@@ -173,7 +188,10 @@
 ## Dependencies
 - **Upstream:** the frozen HLD §2 contract.
 - **Downstream:**
-  - T-vCgsU6-spa-enroll-account-qr (enrollment, account menu, keepalive, budget);
+  - T-vCgsU6-spa-enroll-account-qr (enrollment, account menu, keepalive, budget, **the committed
+    bundle**);
+  - T-R7JhTL-hub-login-page (v2.1: its `auth-client-contract.test.ts` runs against this task's
+    `api.ts` and `proof.ts`);
   - T-U2ERMo-auth-e2e-regression-sweep.
   - `fetch-mode-ban.test.ts` also covers T-R7JhTL's `hubAuthCore.ts` once it lands.
 
@@ -202,6 +220,7 @@ clearProof(): memory = null; TRY localStorage.removeItem(KEY) EXCEPT: blocked = 
 cd ui
 npm ci && npm run test && npm run typecheck && npm run build
 for f in ../src/agent_orchestrator/ui/static/assets/*.js; do echo "$f $(gzip -c "$f" | wc -c)"; done
+git checkout -- ../src/agent_orchestrator/ui/static      # v2.1: never commit ui/static in this task
 ```
 
 ## Artifacts

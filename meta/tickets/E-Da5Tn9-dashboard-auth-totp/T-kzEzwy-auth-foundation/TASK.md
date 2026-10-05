@@ -28,6 +28,10 @@ It contains no auth logic.
 - **`auth/constants.py`:** **every** constant of HLD §12.6 with its exact value, except
   `EXIT_CONFIG` (root `errors.py`) and the frontend-only constants (`ui/src/auth/constants.ts`).
   Group by area with one comment line per group. Byte sizes are written as `64 * 1024 * 1024`.
+  **v2.1 (HLD §28.9)** this includes the new rows: `LOCKOUT_NAME_KEY_BYTES` (32),
+  `INVALID_USERNAME_BUCKET` (`""`), `LOOPBACK_HOSTNAMES`, `FORWARDED_HEADER` /
+  `FORWARDING_HEADER_PREFIX`, `SERVICE_ENV_RELATIVE_PATH` and `EPHEMERAL_PORT` (security L1, M2,
+  L7, L4).
 - **`auth/errors.py`** (HLD §11.2):
   - `ErrorCode` (StrEnum) with **all 22 codes of HLD §2.2**, including `INSECURE_TRANSPORT =
     "insecure_transport"` (present in §2.2 but missing from the §11.2 listing) and the reserved
@@ -47,11 +51,17 @@ It contains no auth logic.
 - **`auth/model.py`:** `AuthMethod`, `TotpPolicy`, `SecondFactor`, `SessionState` (with
   `.api_state` and `.denial_code`), the module function `denial_code(state: SessionState | None)
   -> ErrorCode`, `TotpRequirement` (`none` / `enroll_allowed` / `blocked`), and `AuditEventName`
-  (exactly the 22 events of §12.4).
+  (exactly the **24** events of §12.4; v2.1 adds `auth.startup.disabled_by_config` and
+  `auth.startup.totp_downgraded_by_config`, security M3).
 - **Tests and harness:**
   - `tests/auth/__init__.py`;
-  - `tests/auth/helpers.py` with `FakeClock`, `SeededEntropy`, `run_async`, `make_client` and
-    `same_origin_headers`. `FastFakeHasher` and `TEST_PARAMS` are added later by T-s6sJmB;
+  - **v2.1 (design-review M2): the `tests/auth/helpers/` package**, one module per owning task, so
+    S1 lanes never edit one file (HLD §20.2). This task creates `helpers/__init__.py` (empty apart
+    from a docstring listing every module and its owner: `core.py` T-kzEzwy, `crypto.py` T-s6sJmB,
+    `store.py` T-8NQP8J, `sessions.py` T-kwwJ82, `stub_runtime.py` and `enumeration.py` T-G7qByZ)
+    and owns **`helpers/core.py`**: `FakeClock`, `SeededEntropy`, `run_async`, `make_client`,
+    `same_origin_headers`. Tests import from the owning module
+    (`from tests.auth.helpers.core import FakeClock`); there are no re-exports;
   - the **root** autouse fixture `_hermetic_auth_env` in `tests/conftest.py` (ledger row 10);
   - the `tests/auth/test_import_boundary.py` skeleton (R1, R4, R5 and a blocked-framework import).
 
@@ -61,7 +71,7 @@ It contains no auth logic.
   - `src/agent_orchestrator/errors.py` (+`EXIT_CONFIG`)
   - `src/agent_orchestrator/auth/__init__.py`, `constants.py`, `errors.py`, `seams.py`, `model.py`
   - `tests/conftest.py` (additive fixture only)
-  - `tests/auth/__init__.py`, `tests/auth/helpers.py`
+  - `tests/auth/__init__.py`, `tests/auth/helpers/__init__.py`, `tests/auth/helpers/core.py`
   - `tests/auth/test_foundation.py`, `tests/auth/test_import_boundary.py`
 
 ## Acceptance Criteria
@@ -95,7 +105,8 @@ It contains no auth logic.
    - `denial_code(None)` is `NOT_AUTHENTICATED`; `denial_code(PARTIAL_SECOND_FACTOR)` is
      `SECOND_FACTOR_REQUIRED`; `denial_code(PARTIAL_ENROLL)` is `ENROLLMENT_REQUIRED`.
      `SessionState.FULL.denial_code` raises `ValueError`.
-   - `{e.value for e in AuditEventName}` equals the 22 events of §12.4.
+   - `{e.value for e in AuditEventName}` equals the **24** events of §12.4 (v2.1), including
+     `auth.startup.disabled_by_config` and `auth.startup.totp_downgraded_by_config`.
    - `TotpPolicy` is {`off`, `optional`, `required`}; `TotpRequirement` is {`none`,
      `enroll_allowed`, `blocked`}.
    (`test_foundation.py::test_model_*`)
@@ -117,6 +128,8 @@ It contains no auth logic.
      "127.0.0.1"`.
    - `same_origin_headers(client, proof="p")` contains `Origin: http://testserver`,
      `Sec-Fetch-Site: same-origin` and `X-AO-Session-Proof: p`.
+   - `tests/auth/helpers/` is a package; `helpers/__init__.py` defines no names (no re-exports),
+     and its docstring lists each module with its owning task.
    (`test_foundation.py::test_helpers_*`)
 7. **Hermetic fixture (AC-2 part).** Inside any test, `os.environ` has:
    - no key starting with `AO_UI_AUTH`;
@@ -128,12 +141,16 @@ It contains no auth logic.
    That run is recorded in STATUS. (`test_foundation.py::test_hermetic_env`)
 8. **Import-boundary skeleton (AC-27 part).** `test_import_boundary.py` contains:
    - (a) a `LAYERS` table covering every module of HLD §11.1, including modules that do not exist
-     yet. Any `auth/**.py` file missing from the table fails with "add it to LAYERS".
+     yet (v2.1: also `http/routes_second_factor.py` and `http/hub_routes.py`). Any `auth/**.py`
+     file missing from the table fails with "add it to LAYERS".
    - (b) An AST check of R4: a module imports only from its own or a lower layer, plus `errors`,
      `fsutil`, `xdg` and `project_config`. `http/*` and `cli.py` never import each other. Only
      `auth/http/middleware.py` may import `ui.security`.
    - (c) An AST check of R1: `fastapi` and `starlette` are imported only by
-     `auth/http/middleware.py` and `auth/http/routes.py`.
+     `auth/http/middleware.py`, `auth/http/routes.py`, `auth/http/routes_second_factor.py` and
+     `auth/http/hub_routes.py` (v2.1, design-review M2). `auth/http/__init__.py` stays empty (no
+     imports), so importing a pure http module (`origin`, `responses`, `hub_page`) never pulls in
+     fastapi.
    - (d) A subprocess that sets `sys.modules["fastapi"|"starlette"|"uvicorn"] = None`, then imports
      `agent_orchestrator.auth` and every existing non-http auth module. It must exit 0.
    - (e) An R5 check: no module other than `constants.py` contains the string literals `"ao_auth"`,
@@ -160,7 +177,8 @@ It contains no auth logic.
 - **Upstream:** none.
 - **Downstream:** every implementation task: T-s6sJmB, T-8NQP8J, T-kwwJ82, T-PlEROT, T-CsT5gk,
   T-XchniS, T-yfrfxv, T-G7qByZ, T-QJ1vyQ, T-rpKCjP, T-KQ6ZrY, T-j9dfsw, T-jVqH8w, T-KOv2qD,
-  T-PDGw9p. The tester T-U2ERMo reuses the helpers.
+  T-PDGw9p, and (v2.1) T-Hd4wQ2-auth-browse-denial-log-scrub. The tester T-U2ERMo reuses the
+  helpers.
 
 ## Pseudocode / Algorithm
 ```text
@@ -193,13 +211,14 @@ layer_check(module_path, tree):                               # test_import_boun
 - `FakeClock(start: datetime = datetime(2026, 1, 1, tzinfo=UTC), mono_start: float = 1000.0)`.
 - `SeededEntropy(seed: int)` uses `random.Random(seed).randbytes(n)`. It is for tests only and is
   never imported by `src/`.
-- `make_client` imports `starlette.testclient` inside the function, so `helpers.py` itself stays
+- `make_client` imports `starlette.testclient` inside the function, so `helpers/core.py` itself stays
   importable without the `[ui]` extra.
 
 ## Handoff Boundary
 - **Upstream:** the HLD.
 - **Downstream:** every auth module imports its constants, error codes, states and event names from
-  here. No other module defines them. Every auth test uses `tests/auth/helpers.py`.
+  here. No other module defines them. Every auth test uses the `tests/auth/helpers/` package
+  (each module owned by one task; this task owns `__init__.py` and `core.py`).
 
 ## Verification
 From the worktree root. In agent worktrees, use the manager-provided interpreter instead of

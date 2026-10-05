@@ -11,8 +11,8 @@
 
 ## Requirements Mapping
 - Requirement IDs: FR-4 (replay state), FR-5 (consumption), FR-10, FR-28 (enrollment-token storage), FR-31 (`user_id`, CAS), NFR-9
-- ACs: AC-5 (CAS rehash part), AC-7 (store part), AC-13 (filesystem part), AC-36 (store part), AC-42; supports AC-39 (store part)
-- Design: HLD §11.4 (`paths.py`, `xdg.py`), §11.5 (`fsutil.py`), §11.9 (`store.py`), §12.1, §12.2, §16 rows 20 and 21; HLD D5, D7, D10; ADR-0021 D3, D5, D10
+- ACs: AC-5 (CAS rehash part), AC-7 (store part), AC-13 (filesystem part, incl. v2.1 umask 002 / parent warning / fd-based fixes), AC-36 (store part), AC-42; supports AC-39 (store part) and AC-46 (fd-based primitives)
+- Design: HLD §11.4 (`paths.py`, `xdg.py`), §11.5 (`fsutil.py`), §11.9 (`store.py`), §12.1, §12.2, §16 rows 20, 21 and cross-epic row X1, §28.9 (design-review M1, minor 2; security M6, L6); HLD D5, D7, D10; ADR-0021 D3, D5, D10
 
 ## Description
 Build the persistence layer: the neutral file primitives, path resolution, and `users.json`.
@@ -23,30 +23,51 @@ Lockouts are **not** stored here; they live in `lockouts.json` (T-CsT5gk).
   - `atomic_write_bytes`: an `O_EXCL|O_NOFOLLOW` temp file, fsync, `os.replace`, then a directory
     fsync;
   - `remove_stale_temp_files`, `ensure_private_dir`, `check_private_file`.
+  - **v2.1 (security M6; HLD §11.5):** `ensure_private_dir(create=True)` creates each missing path
+    component with `os.mkdir(p, mode=0o700)` (never `Path.mkdir(parents=True)`, whose parents
+    follow the umask). Verification and fixing go through an
+    `os.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)` fd: `os.fstat(fd)` for owner and mode,
+    `os.fchmod(fd, 0o700)` to fix (and once after creation). `check_private_file(fix=True)` fixes
+    through an `O_RDONLY | O_NOFOLLOW` fd + `os.fchmod(fd, 0o600)`. **No path-based `chmod`
+    anywhere** (no symlink race).
+  - **v2.1 parent rule (security L6):** the parent is judged with `os.stat` of the **resolved**
+    parent (a symlinked `~/.config` is judged at its target): other-writable → `UnsafePathError`;
+    group-writable and owned by another user (and not root-owned with the sticky bit) →
+    `UnsafePathError`; group-writable **and owned by the euid** (`umask 002` hosts, HLD A-18) → a
+    returned **WARNING notice** (`<parent> is group-writable; run chmod g-w <parent>`), not an
+    error; root-owned with the sticky bit → accepted.
   - It **must not import `agent_orchestrator.auth`**. Permission problems raise a neutral
     `UnsafePathError(OSError)` whose message contains the exact `chmod` fix. The auth layer maps it
     to `UnsafePermissionsError` (see `check_private_paths` below).
   - The existing call sites (`isolation/locks.py`, `service/registry.py`, `feedback.py`) are not
     migrated.
-- **`src/agent_orchestrator/xdg.py`** (shared, additive; ledger row 20):
-  - add `resolve_config_dir(override_env: str | None, subpath: str, *, env: Mapping[str, str] |
-    None = None) -> Path` with the precedence `$override` > `$XDG_CONFIG_HOME/<sub>` >
-    `~/.config/<sub>`;
-  - widen `resolve_state_dir` additively: `override_env: str | None` (None skips the override) and a
-    keyword-only `env` (None means `os.environ`).
+- **`src/agent_orchestrator/xdg.py`** (shared, additive; ledger row 20; **v2.1 signature aligned
+  with the approvals epic, design-review M1, cross-epic row X1**):
+  - add `resolve_config_dir(override_env: str | None, xdg_subdir: str, default_subdir: str, *,
+    environ: Mapping[str, str] | None = None, home: Path | None = None) -> Path` with the
+    precedence `$<override_env>` (skipped when `None`) > `$XDG_CONFIG_HOME/<xdg_subdir>` >
+    `<home>/.config/<default_subdir>`; `environ=None` → `os.environ` read at call time;
+    `home=None` → `Path.home()`. This is the exact shape of the approvals epic's `T-drPIif`
+    definition, so **one implementation serves both epics**: whichever epic merges first adds it
+    with this signature plus both epics' test cases; the second only rebases and adds call sites;
+  - widen `resolve_state_dir` additively: `override_env: str | None` (None skips the override) and
+    keyword-only `environ` and `home` with the same defaults.
   - Existing callers and `tests/test_xdg.py` stay unchanged.
 - **`auth/paths.py`** (L1; HLD §11.4):
   - `AO_AUTH_DIR_ENV`, `AO_AUTH_STATE_DIR_ENV`;
-  - `xdg_default_store_dir(env)`, which ignores `AO_AUTH_DIR`;
-  - `xdg_default_state_dir(env)`, which ignores `AO_AUTH_STATE_DIR`;
-  - `default_denied_paths(env)`;
+  - `xdg_default_store_dir(env)` = `xdg.resolve_config_dir(None, "ao/auth", "ao/auth",
+    environ=env)`, which ignores `AO_AUTH_DIR`;
+  - `xdg_default_state_dir(env)` = `xdg.resolve_state_dir(None, "ao/auth", "ao/auth",
+    environ=env)`, which ignores `AO_AUTH_STATE_DIR`;
   - `StorePaths.at(store_dir, state_dir)`, holding the users, lockouts and audit files and locks;
   - `is_within(path, root)`;
-  - `entry_is_denied(parent_resolved, entry, denied)`: resolves **only** symlink entries. T-jVqH8w
-    uses it in `FileBrowser.list_dir`;
-  - `check_private_paths(paths, *, create, fix) -> list[str]`: checks the store directory,
-    `users.json` (if present), the state directory and both parents. It maps `UnsafePathError` to
-    `UnsafePermissionsError`.
+  - `check_private_paths(store_dir, users_file) -> list[str]` and `check_state_dir(state_dir) ->
+    list[str]` (below): they map `UnsafePathError` to `UnsafePermissionsError` and **return** the
+    non-fatal parent-directory warnings (v2.1, L6).
+  - **Moved out in v2.1:** `default_denied_paths` (now including `service.env`, security L7) and
+    `entry_is_denied` belong to **T-Hd4wQ2-auth-browse-denial-log-scrub**, which appends them to
+    this `paths.py` **after this task merges** (sequential ownership, HLD §16). Do not implement
+    them here.
 - **`auth/store.py`** (L2; HLD §11.9):
   - Models with `_STORE_MODEL_CONFIG = ConfigDict(extra="allow", hide_input_in_errors=True)`:
     `TotpEnrollment`, `RecoveryCodeHash`, `EnrollmentToken`, `UserRecord` (immutable `user_id`,
@@ -69,8 +90,12 @@ Lockouts are **not** stored here; they live in `lockouts.json` (T-CsT5gk).
     `StaleIdentityError` on mismatch, before applying `mutation`. T-XchniS and T-yfrfxv use it for
     every web-initiated credential write; nobody re-implements the check.
   - `paths.check_private_paths(store_dir, users_file)` and `paths.check_state_dir(state_dir)`
-    (HLD §11.4) map `fsutil.UnsafePathError` to `UnsafePermissionsError`. `check_state_dir`
-    creates a missing state directory (0700, parent checked) and never fixes permissions.
+    (HLD §11.4) map `fsutil.UnsafePathError` to `UnsafePermissionsError` and return the parent
+    warnings. `check_state_dir` creates a missing state directory (0700, parent checked) and never
+    fixes permissions.
+  - **Cut-line #4 (HLD §24.1, design-review M3):** `required_features` gating is the last stretch
+    item. If the manager cuts it, readers refuse only on `schema_version > 1`; unknown fields are
+    still preserved. Implement it last.
   - Outcome types: `TotpOutcome(kind: OK|INVALID|REPLAYED|STALE, step: int | None)` and
     `RecoveryOutcome(kind: OK|INVALID|STALE, remaining: int | None)`.
   - Domain errors: `StoreMissingError`, `UserExistsError`, `UserNotFoundError`,
@@ -80,33 +105,38 @@ Lockouts are **not** stored here; they live in `lockouts.json` (T-CsT5gk).
 ## Inputs / Outputs
 - **Inputs:**
   - HLD §11.4, §11.5, §11.9, §12.1, §12.2, §12.6;
-  - T-kzEzwy (`constants`, `errors`, `seams`);
-  - T-s6sJmB (`match_totp_step`, `find_unused_match`, recovery helpers). Stub them with the HLD
-    signatures if they are not merged yet.
+  - T-kzEzwy (`constants`, `errors`, `seams`, `tests/auth/helpers/core.py`);
+  - T-s6sJmB (`match_totp_step`, `find_unused_match`, recovery helpers). **v2.1:** a real
+    (late-binding) edge, no stub: T-s6sJmB lands `totp.py` and `recovery.py` by S1 day 3, and this
+    task writes the `consume_*` mutations last (design-review minor 2).
 - **Outputs:**
   - `src/agent_orchestrator/fsutil.py`, `src/agent_orchestrator/xdg.py` (additive)
-  - `src/agent_orchestrator/auth/paths.py`, `store.py`
+  - `src/agent_orchestrator/auth/paths.py` (without the denial helpers), `store.py`
   - `tests/test_fsutil.py`, `tests/test_xdg.py` (+cases)
   - `tests/auth/test_paths.py`, `tests/auth/test_store.py`
+  - `tests/auth/helpers/store.py` (`make_store(tmp_path, users=...)`; this task owns the module)
   - `tests/auth/schemas/auth-users-v1.json` (a verbatim copy of HLD §12.1)
 
 ## Acceptance Criteria
-1. **`xdg`.**
-   - `resolve_config_dir("AO_AUTH_DIR", "ao/auth", env={"AO_AUTH_DIR": "/a"})` → `/a`.
-   - `env={"XDG_CONFIG_HOME": "/x"}` → `/x/ao/auth`; `env={}` → `~/.config/ao/auth`.
-   - `resolve_state_dir(None, "ao/auth", "ao/auth", env={"XDG_STATE_HOME": "/s"})` →
-     `/s/ao/auth`.
+1. **`xdg`** (v2.1 signature).
+   - `resolve_config_dir("AO_AUTH_DIR", "ao/auth", "ao/auth", environ={"AO_AUTH_DIR": "/a"})` →
+     `/a`.
+   - `environ={"XDG_CONFIG_HOME": "/x"}` → `/x/ao/auth`; `environ={}, home=Path("/h")` →
+     `/h/.config/ao/auth`; `environ={}` with no `home` → `Path.home() / ".config/ao/auth"`.
+   - `override_env=None` ignores any override variable; distinct `xdg_subdir` and
+     `default_subdir` values are each used in their own branch.
+   - `resolve_state_dir(None, "ao/auth", "ao/auth", environ={"XDG_STATE_HOME": "/s"})` →
+     `/s/ao/auth`; `home=` is honoured the same way.
+   - The final signatures are recorded in STATUS (cross-epic row X1).
    - Every existing `tests/test_xdg.py` case passes unmodified. (`tests/test_xdg.py`)
 2. **`paths`.**
    - `xdg_default_store_dir` and `xdg_default_state_dir` ignore `AO_AUTH_DIR` and
-     `AO_AUTH_STATE_DIR` respectively.
-   - `default_denied_paths(env)` is the resolved, de-duplicated set {XDG store, XDG state,
-     `$AO_AUTH_DIR` if set, `$AO_AUTH_STATE_DIR` if set}.
+     `AO_AUTH_STATE_DIR` respectively, and read only the passed `env` mapping.
    - `StorePaths.at(s, t)` uses the §12.6 file names.
    - `is_within` is True for the same path and for a child, and False for a sibling with a shared
      prefix (`/a/b` vs `/a/bc`).
-   - `entry_is_denied` makes 0 `Path.resolve` calls for 100 regular entries (patched counter), and
-     denies a symlink entry that points into the store. (`tests/auth/test_paths.py`)
+   - (`default_denied_paths` and `entry_is_denied` are tested by T-Hd4wQ2.)
+   (`tests/auth/test_paths.py`)
 3. **`FileLock`** (spawn context, `join(timeout=…)`, exit codes asserted).
    - A second process waiting with `timeout=0.2` raises `LockTimeoutError` within 1 s.
    - The lock is released when the holder exits.
@@ -118,16 +148,27 @@ Lockouts are **not** stored here; they live in `lockouts.json` (T-CsT5gk).
    - A symlink pre-planted at the temp name (with a patched `token_hex`) makes the write fail and
      leaves the symlink target untouched.
    - `remove_stale_temp_files` removes only `.<name>.*.tmp` siblings and returns their count.
-5. **Private directories and files.**
-   - `ensure_private_dir(create=True)` creates the directory with mode 0700 under both umasks.
+5. **Private directories and files** (AC-13; v2.1 security M6 and L6).
+   - `ensure_private_dir(create=True)` creates the directory, and any missing parents, with mode
+     0700 under umasks 022, 077 **and 002**; spies show `os.mkdir(..., mode=0o700)` per component
+     and no `Path.mkdir(parents=True)`.
    - An existing 0755 directory with `fix=False` raises `UnsafePathError` naming `chmod 700 <path>`.
-     With `fix=True` it is tightened, and a notice is returned.
-   - Each of these raises: a symlinked directory; a foreign owner (patched `lstat` uid); a
-     group-writable parent (named in the message).
+     With `fix=True` it is tightened through `os.fchmod` on an `O_NOFOLLOW` fd, and a notice is
+     returned. A spy on `os.chmod` / `Path.chmod` records **zero** calls in every fsutil path
+     (AC-46 support).
+   - Each of these raises: a symlinked directory; a foreign owner (patched `fstat` uid); an
+     other-writable parent; a group-writable parent owned by another user (named in the message).
+   - **A group-writable parent owned by the euid → no exception; one returned warning notice**
+     containing `chmod g-w` (run under `umask 002`, Debian/Ubuntu-style home).
+   - **A symlinked parent** (e.g. `cfg -> real_cfg`): the check judges `real_cfg`'s mode and owner.
+     (This covers the manager's "check ln" note, interpreted as "verify on a `umask 002` host,
+     including a symlinked parent"; HLD §28.9 L6.)
    - A parent with mode 1777 owned by root (patched) is accepted.
-   - `check_private_file`: mode 0644 raises with `chmod 600`; a symlink raises.
-   - `check_private_paths` raises `UnsafePermissionsError` (an `AuthConfigError`) for each of those
-     conditions on the store **or** the state directory.
+   - `check_private_file`: mode 0644 raises with `chmod 600`; a symlink raises; `fix=True` uses an
+     fd-based `fchmod`.
+   - `check_private_paths` / `check_state_dir` raise `UnsafePermissionsError` (an `AuthConfigError`)
+     for each fatal condition on the store **or** the state directory, and return the warning
+     notices otherwise.
 6. **Snapshot and forward compatibility (AC-42).**
    - A missing file → no users and `store_id == ""`.
    - Invalid JSON, or JSON nested 10 000 deep → `StoreCorruptError`.
@@ -199,18 +240,24 @@ Lockouts are **not** stored here; they live in `lockouts.json` (T-CsT5gk).
   `join(timeout=…)` and a small patched `STORE_LOCK_TIMEOUT_SECONDS`.
 - **Coarse mtime granularity.** The cache key includes `st_ino`, which changes on every replace.
 - **Case-insensitive filesystems.** `is_within` uses `os.path.normcase` on resolved strings.
-- **Scope pressure (3 days).** `fsutil` and `xdg` come first (day 1), then `paths`, then the store.
-  If time runs short, raise it in STATUS rather than dropping ACs.
+- **Scope pressure (3 days).** `fsutil` and `xdg` come first (day 1), then `paths`, then the store,
+  with the `consume_*` mutations last (they need T-s6sJmB's helpers). If time runs short, raise it
+  in STATUS rather than dropping ACs; `required_features` is cut-line #4 (HLD §24.1).
+- **Cross-epic `xdg.py` (row X1).** The approvals epic adds the same function. Keep the exact
+  signature; if the approvals change merges first, rebase and only add this epic's call sites and
+  test cases.
 
 ## Dependencies
-- **Upstream:** T-kzEzwy; T-s6sJmB (stub if needed).
+- **Upstream:** T-kzEzwy; T-s6sJmB (hard edge since v2.1; late-binding, needed on day 3; no stub).
 - **Downstream:**
   - T-PlEROT (`count_store_users`, `xdg_default_*`);
   - T-CsT5gk (`fsutil.FileLock`, `atomic_write_bytes`, `StorePaths`);
   - T-XchniS (`UserStore`, CAS, `check_private_paths`);
   - T-yfrfxv (consume and enroll mutations, tokens);
-  - T-j9dfsw (every mutation);
-  - T-jVqH8w (`default_denied_paths`, `entry_is_denied`).
+  - T-j9dfsw (every mutation; the fd-based fsutil primitives for the config-sourced `store_dir`
+    rule, AC-46);
+  - T-Hd4wQ2-auth-browse-denial-log-scrub (appends `default_denied_paths` and `entry_is_denied` to
+    `paths.py`; uses `is_within`, `xdg_default_*`).
 
 ## Pseudocode / Algorithm
 HLD §11.5 (`FileLock`, `atomic_write_bytes`, the private checks) and §11.9 (`snapshot`, `mutate`,
@@ -250,7 +297,8 @@ count_store_users(store_dir):
 - **Upstream:** the HLD, T-kzEzwy and T-s6sJmB.
 - **Downstream:** `UserStore`, the mutation functions, `StorePaths`, `count_store_users` and the
   `fsutil` primitives are the only way any module touches the credential files. No other module
-  opens `users.json`.
+  opens `users.json`. `paths.py` is handed over to T-Hd4wQ2 for the append-only denial helpers
+  after this task merges.
 
 ## Verification
 

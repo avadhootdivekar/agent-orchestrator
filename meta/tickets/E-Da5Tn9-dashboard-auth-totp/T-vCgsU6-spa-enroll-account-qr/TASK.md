@@ -24,13 +24,22 @@
 - Invariants: S20 (client side: an idle tab never slides the session).
 - Design:
   - HLD §1 D20; §2.4 (E4–E10, including the forced and voluntary E4 bodies); §17.1, §17.5,
-    §17.7–§17.11; §16 #11 and #12;
+    §17.7–§17.11; §16 #11, #12 (dependency + lock only) and **#15 (single `ui/static` owner)**,
+    cross-epic X5;
+  - HLD §28.9: design-review M1/M2 (bundle ownership), minor 4 (baseline check);
   - ADR-0021 D5 (enrollment token, `insecure_transport`).
 
 ## Description
+0. **FIRST STEP — baseline check (v2.1, design-review minor 4; HLD §16 row 15, AC-30).** Before any
+   change, on the pre-epic baseline (`main` at the epic's branch point), run
+   `cd ui && npm ci && npm run build && cd .. && git diff --exit-code -- src/agent_orchestrator/ui/static`
+   and record the command and its result in STATUS. If the diff is **not** clean (the committed
+   bundle does not equal a clean rebuild for reasons unrelated to auth), **stop and escalate to the
+   manager** before anyone relies on the CI rebuild-diff gate (T-U2ERMo, §16 row 18).
 1. **Dependency.** Add `qrcode-generator` pinned to **exactly** `"2.0.4"` in `ui/package.json`
    `dependencies`, and update `package-lock.json`. `npm audit --omit=dev --audit-level=high` must be
-   clean.
+   clean. **v2.1 (§16 row 12):** this task owns only the `dependencies` entry and the lock file; the
+   `scripts` keys belong to T-R7JhTL.
 2. **`ui/src/auth/QrCode.tsx`** is the **only** importer of `qrcode-generator`. It is a default
    export, loaded with `React.lazy(() => import("./QrCode"))`.
    - Use `qrcode(0, QR_ECC_LEVEL)` → `addData(uri)` → `make()`.
@@ -76,21 +85,30 @@
 7. **`authApi` additions** (same `request()` helper, so the proof header and rotation are
    automatic): `enrollBegin`, `enrollConfirm`, `disableTotp`, `regenerateRecoveryCodes`,
    `changePassword`, `keepalive`. Use the HLD §2.4 bodies.
-8. **Build.** Run `npm run build` and **commit** the rebuilt SPA bundle. Measure and record the gzip
-   size of every emitted chunk against the pre-epic baseline (`bb6d8a0`).
-9. **`ui/README.md`:** add `qrcode-generator` to the runtime-dependency list (rationale, gzip size,
-   link to ADR-0021), and `src/auth/` and `src/hub/` to the layout. T-otjIkJ reconciles these later.
+8. **Build — the epic's only `ui/static` committer (v2.1, HLD §16 row 15; design-review M1/M2).**
+   After T-pQ73eO **and** T-R7JhTL have merged, run `npm ci && npm run build` on the merged `ui/src`
+   and **commit** the rebuilt SPA bundle under `src/agent_orchestrator/ui/static/` (stage the whole
+   directory, including deleted hashed assets). No other task of this epic commits it. Measure and
+   record the gzip size of every emitted chunk against the pre-epic baseline (`bb6d8a0`).
+   **Cross-epic X5:** if the approvals epic (`T-pIZq3q`) has also changed `ui/src`, the bundle is
+   regenerated once from the merged sources at the second epic's merge; hashed assets are never
+   hand-merged.
+9. *(Moved in v2.1 to T-otjIkJ:* the `ui/README.md` runtime-dependency entry for `qrcode-generator`
+   and the layout lines. Record the measured gzip sizes in STATUS so T-otjIkJ can cite them.)
 10. **vitest**, with fake timers wherever time matters: `enroll-screen.test.tsx`, `qr-code.test.tsx`,
     `account-menu.test.tsx`, `keepalive.test.ts`.
 
 ## Inputs / Outputs
-- **Inputs:** T-pQ73eO (gate, context, `authApi`, `proof.ts`, `constants.ts`); HLD §2 and §17.
+- **Inputs:** T-pQ73eO (gate, context, `authApi`, `proof.ts`, `constants.ts`); T-R7JhTL (merged
+  `package.json` scripts and hub build, so the final bundle includes everything); HLD §2 and §17.
 - **Outputs:**
   - `ui/src/auth/{QrCode,EnrollScreen,RecoveryCodes,AccountMenu,ChangePasswordDialog,DisableTotpDialog,RegenerateCodesDialog,EnableTotpDialog}.tsx`
   - `ui/src/auth/useKeepalive.ts`
   - `ui/src/api.ts` (additions), `ui/src/App.tsx` (AccountMenu and banner)
-  - `ui/package.json` + lock, `ui/README.md`
-  - the rebuilt bundle and the four test files
+  - `ui/package.json` (`dependencies` entry only) + lock
+  - the rebuilt, committed bundle (`src/agent_orchestrator/ui/static/**`; sole owner) and the four
+    test files
+  - STATUS: the baseline-check result (Description item 0) and the gzip numbers
 
 ## Acceptance Criteria
 1. **Forced enrollment (AC-9, SPA part).**
@@ -137,15 +155,27 @@
    - `npm run test`, `npm run typecheck` and `npm run build` are green, and the bundle is committed.
    - A fresh rebuild leaves `git status --porcelain src/agent_orchestrator/ui/static` empty.
    - `python -m pytest -q tests/ui/test_e2e_ui.py` still passes with auth off.
+9. **Baseline (v2.1, AC-30 part).** STATUS records the Description item 0 command and result on the
+   pre-epic baseline **before** any change of this task; a non-clean result was escalated to the
+   manager (recorded) before the bundle commit.
+10. **Single owner (v2.1).** The committed bundle is built from `ui/src` after T-pQ73eO and T-R7JhTL
+    have merged (the commit's parent contains both); `ui/package.json` changes by this task touch
+    only `dependencies`.
 
 ## Risks
 - **Supply chain.** An exact pin, `npm audit` and a one-file wrapper keep it replaceable (§17.7).
 - **Budget overrun** once T-pQ73eO's screens are included. Shared strings and constants keep it down.
   If over budget, stop and escalate to the manager; do not drop features silently.
+- **Non-reproducible baseline bundle** (v2.1). Description item 0 catches it before the CI gate is
+  relied on.
+- **Cross-epic bundle conflicts** (X5) with the approvals epic. Regenerate from merged sources; never
+  hand-merge hashed assets.
 
 ## Dependencies
-- **Upstream:** T-pQ73eO-spa-auth-gate-login.
-- **Downstream:** T-U2ERMo-auth-e2e-regression-sweep (browser smoke, e2e, rebuild-diff gate).
+- **Upstream:** T-pQ73eO-spa-auth-gate-login; **T-R7JhTL-hub-login-page** (v2.1: the single
+  `ui/static` committer runs last; design-review M2).
+- **Downstream:** T-U2ERMo-auth-e2e-regression-sweep (browser smoke, e2e, rebuild-diff gate);
+  T-otjIkJ (writes the `ui/README.md` dependency entry from this task's recorded numbers).
 
 ## Pseudocode / Algorithm
 - **QR path:** for each dark `(r, c)`, append `M{c+q} {r+q}h1v1h-1z`. Use
@@ -165,6 +195,9 @@
 ## Verification
 
 ```
+# first step, on the pre-epic baseline (record the result in STATUS):
+cd ui && npm ci && npm run build && cd .. && git diff --exit-code -- src/agent_orchestrator/ui/static
+# after T-pQ73eO and T-R7JhTL have merged:
 cd ui
 npm ci && npm run test && npm run typecheck && npm run build && npm audit --omit=dev --audit-level=high
 for f in ../src/agent_orchestrator/ui/static/assets/*.js; do echo "$f $(gzip -c "$f" | wc -c)"; done

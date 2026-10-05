@@ -2,10 +2,32 @@
 
 - ID: `E-Da5Tn9-dashboard-auth-totp`
 - Updated At: `2026-10-05`
-- State: `Draft` (design v2 complete; implementation not started)
+- State: `Approved` (design v2.1, gates folded and passed; implementation not started)
 - Owner: `manager`
 
 ## This update
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: **Design package v2.1 (gates
+  folded).** Both independent gates the manager ran on v2 are folded in with the manager's final
+  decisions; dispositions are in HLD §28.9 (finding id, severity, disposition, where changed).
+  - **Contract (owner decision, supersedes the v2 tuple):** `Principal.roles: list[str] =
+    field(default_factory=list, hash=False)`; `user_id`, `realm`, `session_id`, `amr`,
+    `auth_time`, `provider` are keyword-only; `SessionRecord` / `VerifiedIdentity` / `UserView`
+    keep tuples and `principal_for` returns a fresh list per request. **OQ-8 and OQ-9 are
+    DECIDED.** Manager-approved additive HTTP-contract change: E1 `transport.proxy_suspected`
+    (security M2).
+  - **Security (all ADOPTED):** M1 proof-gated principal and sliding plus the single
+    `COOKIE_ONLY_NAVIGATION` route (hub index); M2 loopback = peer + Host + no forwarding headers;
+    M3 config-only disable refused (exit 78) and config-only TOTP downgrade warned/audited; M4 merge
+    edges #9 ⇒ #13 and #11 ⇒ #13, epic to `main` only after T-2wE08U; M6 no create/chmod of a
+    config-chosen store; L1–L7 (L7's permission re-check and CLI uid are follow-ups); four test
+    gates as AC-43..AC-45 and AC-11.
+  - **Design review (adopted except minor 8, kept by manager decision):** approvals-compatible
+    `xdg.resolve_config_dir` and cross-epic rows X1–X6 in HLD §16 (the approvals epic's files were
+    read, not edited); one file one owner; cut-lines; minors 1–7 and 9.
+  - **Plan:** new task `T-Hd4wQ2-auth-browse-denial-log-scrub`; 23 tasks, 61 dev-days, critical
+    path ≈ 26 dev-days, 3–20 % buffer; every task ≤ 3 days. New **OQ-11** (calendar basis) for the
+    manager.
+  - Epic state `Draft` → `Approved`. Every task stays `Draft` until it starts.
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Design v2 accepted for the independent gates. Decisions on the architect's open questions (owner-delegate):
   - **OQ-8 (Principal contract): `roles` stays `list[str]`**, exactly as the owner's brief and the approval-gates epic expect (a fresh empty list per Principal, so `principal.roles == []` holds; dataclass hash must exclude it, e.g. `field(hash=False)`). The additive fields (`user_id`, `realm`, `session_id`, `amr`, `auth_time`, `provider`) are accepted; `amr` may remain a tuple. HLD §2.6, ADR-0021 D6, T-kwwJ82 and AC-11 are to be amended accordingly.
   - **OQ-9: the D25 session proof stays in the MVP** (it is the first item to cut if the schedule slips: HLD §24.1).
@@ -32,30 +54,31 @@
 
 | Task | State | Sprint | Notes |
 |---|---|---|---|
-| T-kzEzwy-auth-foundation | Draft | S1 | **new (v2)**; owns the root hermetic test fixture; start first |
-| T-s6sJmB-auth-crypto-primitives | Draft | S1 | — |
-| T-8NQP8J-auth-user-store | Draft | S1 | v2 adds `fsutil.py`, `user_id`, CAS, enrollment tokens |
-| T-kwwJ82-auth-sessions-policy-principal | Draft | S1 | Waits on OQ-8 before freezing `principal.py` |
-| T-PlEROT-auth-settings-layering | Draft | S1 | v2: tighten-only; hermetic fixture moved to T-kzEzwy |
-| T-CsT5gk-auth-throttle-audit-scrub | Draft | S1 | v2 adds `lockouts.py` (state dir) |
-| T-XchniS-auth-local-provider-runtime | Draft | S2 | v2: login side + guard + runtime |
+| T-kzEzwy-auth-foundation | Draft | S1 | **new (v2)**; owns the root hermetic test fixture and `tests/auth/helpers/core.py`; start first |
+| T-s6sJmB-auth-crypto-primitives | Draft | S1 | v2.1: lands `totp.py`/`recovery.py` first (T-8NQP8J needs them) |
+| T-8NQP8J-auth-user-store | Draft | S1 | v2.1: approvals-compatible `xdg` signature; fd-based `fsutil`; denial helpers moved to T-Hd4wQ2 |
+| T-kwwJ82-auth-sessions-policy-principal | Draft | S1 | v2.1: `roles: list[str]` (OQ-8 decided); cookie-only navigation sets |
+| T-PlEROT-auth-settings-layering | Draft | S1 | v2.1: 3 d; `ConfigRisk` detection (security M3) |
+| T-CsT5gk-auth-throttle-audit-scrub | Draft | S1 | v2.1: HMAC name digests (L1); `scrub.py` moved to T-Hd4wQ2 |
+| T-Hd4wQ2-auth-browse-denial-log-scrub | Draft | S1 | **new (v2.1)**; generic `denied_paths` lands first (cross-epic X2); `scrub.py` |
+| T-XchniS-auth-local-provider-runtime | Draft | S2 | v2.1: keyed phantom digests; parent-dir warnings |
 | T-yfrfxv-auth-provider-second-factor | Draft | S2 | **new (v2)**, split from T-XchniS |
-| T-G7qByZ-auth-middleware-app-integration | Draft | S1→S2 | Start in S1 on a stub runtime (critical path) |
-| T-QJ1vyQ-auth-csrf-fetch-metadata | Draft | S2 | **new (v2)**, split from T-G7qByZ; owns the proof check (OQ-9) |
-| T-rpKCjP-auth-http-routes | Draft | S2 | v2: core routes only |
-| T-KQ6ZrY-auth-routes-second-factor | Draft | S3 | **new (v2)**, split from T-rpKCjP |
-| T-j9dfsw-ao-auth-cli | Draft | S2 | v2 adds `enrollment-token` |
-| T-jVqH8w-ao-ui-auth-wiring | Draft | S3 | v2 owns `launch.py` (`prepare_auth`) |
-| T-KOv2qD-hub-service-auth | Draft | S3 | v2: hub app only |
-| T-PDGw9p-service-cli-supervisor-auth | Draft | S3 | **new (v2)**, split from T-KOv2qD |
-| T-R7JhTL-hub-login-page | Draft | S1 | Frontend lane, parallel |
-| T-pQ73eO-spa-auth-gate-login | Draft | S1 | Frontend lane, parallel |
-| T-vCgsU6-spa-enroll-account-qr | Draft | S2 | Frontend lane |
-| T-U2ERMo-auth-e2e-regression-sweep | Draft | S3 | — |
-| T-2wE08U-auth-security-review | Draft | S3 | — |
-| T-otjIkJ-auth-docs-refresh-closure | Draft | S3 | Post-implementation docs refresh |
+| T-G7qByZ-auth-middleware-app-integration | Draft | S1→S2 | Start in S1 on a stub runtime (critical path); v2.1: proof-gated principal/sliding |
+| T-QJ1vyQ-auth-csrf-fetch-metadata | Draft | S2 | **new (v2)**; v2.1: 2.5 d, lane C, AC-44 enumeration; merge edge to T-jVqH8w |
+| T-rpKCjP-auth-http-routes | Draft | S2 | v2.1: 3 d, lane Q; `client_info` (M2); creates the `routes_second_factor.py` stub |
+| T-KQ6ZrY-auth-routes-second-factor | Draft | S3 | **new (v2)**; v2.1: owns `routes_second_factor.py`; merge edge to T-jVqH8w (co-critical) |
+| T-j9dfsw-ao-auth-cli | Draft | S2 | v2.1: config-sourced `store_dir` rule (M6); status flags |
+| T-jVqH8w-ao-ui-auth-wiring | Draft | S3 | v2.1: merges only after T-QJ1vyQ and T-KQ6ZrY; `ConfigRisk` enforcement |
+| T-KOv2qD-hub-service-auth | Draft | S2→S3 | v2.1: 3 d; `hub_routes.py`; hub cookie-only route |
+| T-PDGw9p-service-cli-supervisor-auth | Draft | S3 | **new (v2)**; v2.1: lane A |
+| T-R7JhTL-hub-login-page | Draft | S1→S2 | v2.1: 3 d; SPA↔hub contract test; owns `package.json` scripts and `tsconfig` |
+| T-pQ73eO-spa-auth-gate-login | Draft | S1 | v2.1: no longer commits `ui/static` |
+| T-vCgsU6-spa-enroll-account-qr | Draft | S2 | v2.1: the only `ui/static` committer; baseline check first |
+| T-U2ERMo-auth-e2e-regression-sweep | Draft | S3 | v2.1: 3 d (store-busy CLI test, informational p95) |
+| T-2wE08U-auth-security-review | Draft | S3 | v2.1: 2.5 d; re-verify §28.9; epic merges to `main` only after this |
+| T-otjIkJ-auth-docs-refresh-closure | Draft | S3 | Post-implementation docs refresh; v2.1: 2 d |
 
-Counts: 22 tasks · 0 Done · 0 In Progress · 0 Blocked · 22 Draft.
+Counts: 23 tasks · 0 Done · 0 In Progress · 0 Blocked · 23 Draft · 61.0 dev-days.
 
 ## Evidence
 - Empirical design evidence (HLD §25.4):
@@ -68,23 +91,28 @@ Counts: 22 tasks · 0 Done · 0 In Progress · 0 Blocked · 22 Draft.
 - Consultation record: HLD §28 (developer, reviewer, tester, dev-security, dev-critic).
 
 ## Risks / Blockers
-- **No blockers.** Owner or manager decisions with non-blocking defaults:
-  - **OQ-8:** confirm the `Principal` v2 shape (`roles: tuple[str, ...]` plus additive fields) with
-    the approval-gates epic **before T-kwwJ82 freezes `principal.py`**.
-  - **OQ-9:** ship the D25 session proof in the MVP. The default is yes. Deferring it saves about
-    1.5 dev-days, and the README must then state the cookie-replay residual.
-  - **OQ-1:** handoff vs SSO timing. Default: hub-run handoff as the first follow-up.
-  - **OQ-2:** 30-minute idle timeout with non-sliding polling. Default: keep.
+- **No blockers.** Decided: **OQ-8** (`Principal.roles: list[str]`, keyword-only additive
+  fields), **OQ-9** (D25 in the MVP), **OQ-1** and **OQ-2** (manager, above). Open and
+  non-blocking:
+  - **OQ-11 (new, v2.1):** which calendar basis governs the dates. The ≈ 26 dev-day critical path
+    holds in three sprints on the agent-lane basis; under the mandated human-team focus arithmetic
+    the chain spans ≈ 51–62 working days (HLD §24.1).
   - **OQ-10:** provider-contributed PUBLIC policies and a redirect-flow proof handoff. Not in the
     MVP; it is the OIDC follow-up's first task.
+- The v2 note "OQ-9 is the first item to cut" is superseded: D25 is security-driven and is **not**
+  a cut-line; the cut-lines are audit rotation/coalescing → phantom table → AC-10 redirect test →
+  `required_features` (HLD §24.1).
 - Coordinate merge order with the sibling epics that touch `ui/app.py`, `cli.py` and `service/*`
-  (R13).
+  (R13), and follow HLD §16 cross-epic rows X1–X6 with the approval-gates epic (`xdg.py`,
+  `ui/files.py`, `ui/app.py`, `ui/security.py`, `ui/static`, `project_config.py`).
 
 ## Next actions
-1. manager: run the independent design review and security review on HLD v2 and ADR-0021 v2. Record
-   their findings in HLD §28 (or a STATUS comment) and any contract changes here.
-2. manager or owner: decide OQ-8 (with the approvals epic) and OQ-9.
+1. manager: relay HLD §16 rows X1–X6 to the approval-gates epic (one `xdg.resolve_config_dir`
+   with the agreed defaults; its approvals-tree denial goes through `FileBrowser._is_denied`; one
+   `ui/static` rebuild after merging).
+2. manager: decide OQ-11 (calendar basis).
 3. manager: start Sprint 1:
-   - lane B: #0 T-kzEzwy first;
-   - then lanes A, B, C and Q: #1–#5, and #8 on a stub runtime;
-   - lane F in parallel: #16 and #17.
+   - lane B: #0 T-kzEzwy first, then #2;
+   - then lanes A, C and Q: #1 and #4, #3 and #8 on a stub runtime, #5 and #22 (T-Hd4wQ2's
+     `scrub.py` part may start before #5);
+   - lane F in parallel: #17, then #16.

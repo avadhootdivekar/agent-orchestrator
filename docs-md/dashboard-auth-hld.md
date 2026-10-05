@@ -1,10 +1,11 @@
 # Dashboard & hub authentication — local accounts + optional TOTP 2FA — HLD + LLD (E-Da5Tn9)
 
-- **Status:** **Draft v2** (2026-10-05), ready for the independent design review and security
-  review. v2 folds in the Phase-4 consultations (developer, reviewer, tester, dev-security,
-  dev-critic); see §28. **No code has been written.** Everything below is a design for the tickets
-  under [`meta/tickets/E-Da5Tn9-dashboard-auth-totp/`](../meta/tickets/E-Da5Tn9-dashboard-auth-totp/EPIC.md)
-  to implement.
+- **Status:** **v2.1 (gates folded)** (2026-10-05). v2 folded in the Phase-4 consultations
+  (developer, reviewer, tester, dev-security, dev-critic; §28.1–§28.8). v2.1 folds in the two
+  **independent gates the manager ran on v2** (design review and security review) with the
+  manager's final decisions; see §28.9. **No code has been written.** Everything below is a design
+  for the tickets under [`meta/tickets/E-Da5Tn9-dashboard-auth-totp/`](../meta/tickets/E-Da5Tn9-dashboard-auth-totp/EPIC.md)
+  to implement (23 tasks after the v2.1 re-baseline, §24).
 - **Epic:** `E-Da5Tn9-dashboard-auth-totp` · **ADR:** [ADR-0021](adr/ADR-0021-dashboard-authentication-and-totp.md)
 - **Author:** architect (agent) · **Driver:** manager (agent) · **Owner:** Avadhoot Divekar
 - **Related:**
@@ -18,8 +19,10 @@
   - [`dashboard-and-general-instructions-hld.md`](dashboard-and-general-instructions-hld.md) §2.7
   - [`install-flavors.md`](install-flavors.md) (the stable and beta flavors share the store)
 - **Downstream consumer of the identity contract:** the approval-gates epic (sibling). The contract
-  is §2.6. **v2 changed it** (`roles` is now a tuple; fields added; `require_principal`). The manager
-  must relay this before that epic freezes.
+  is §2.6. **v2.1 (owner decision, final):** `roles` stays `list[str]` as in the brief (a fresh list
+  per `Principal`, excluded from the hash); the v2 fields (`user_id`, `realm`, `session_id`, `amr`,
+  `auth_time`, `provider`) are added as keyword-only fields; `require_principal` and
+  `auth_enabled` are added. Positional `Principal(username, auth_method, roles)` keeps working.
 
 Conventions in this document:
 - `MUST`, `MUST NOT` and `SHOULD` are normative.
@@ -95,8 +98,9 @@ that the user-store directory is never browsable. With it **on**:
    - A route-enumeration test (5 methods × every route context) asserts 401 on everything that is
      not allowlisted.
 5. **Identity contract.**
-   - `request.state.principal` is a `Principal(username, auth_method, roles: tuple, user_id, realm,
-     session_id, amr, auth_time, provider)` or `None`.
+   - `request.state.principal` is a `Principal(username, auth_method, roles: list[str], *, user_id,
+     realm, session_id, amr, auth_time, provider)` or `None`. It is set only when the session proof
+     matches, except on the one cookie-only navigation route (the hub index; §13.3, v2.1).
    - `request.state.auth_enabled` is always set.
    - Helpers for the approval-gates epic: `current_principal()`, `require_principal()`,
      `audit_log_for()`.
@@ -108,7 +112,12 @@ that the user-store directory is never browsable. With it **on**:
      lockout, with uniform treatment of unknown usernames.
    - Compare-and-swap credential writes.
    - No secrets in logs (a record-factory redaction), in audit, in URLs or in errors.
-   - Workspace config can only **tighten** security settings.
+   - Workspace config can only **tighten** security settings. **v2.1:** a workspace-config-only
+     `enabled: false` while accounts exist is refused (exit 78), and a config-only TOTP policy below
+     `required` warns and is audited.
+   - **v2.1:** "loopback" means a loopback peer **and** a loopback `Host` **and** no forwarding
+     headers, so a reverse proxy that is not listed in `trusted_proxies` cannot make remote clients
+     look local.
 7. **Hub.**
    - The protected server-rendered index sends anonymous visitors (303) to `/login`.
    - `/login` is a tiny dependency-free page and script covering password, TOTP or recovery code,
@@ -141,7 +150,8 @@ records a change made after a Phase-4 consultation.
   `request.state.principal = None` and `request.state.auth_enabled = False`. No headers, cookies or
   response bytes change.
 - The only additions with auth off are `GET /api/auth/status` (it answers `{"enabled": false, ...}`)
-  and the store-directory denial (§11.4).
+  together with its entry in `/api/openapi.json`, and the store-directory denial (§11.4). These are
+  the complete list of NFR-1 exceptions (v2.1, design-review minor 9).
 - *Rejected:*
   - On by default with an auto-generated password. A behaviour change for everyone, and the classic
     "default credentials in a log" finding.
@@ -161,7 +171,20 @@ records a change made after a Phase-4 consultation.
   - `trusted_proxies` comes from CLI or env **only**.
   - `store_dir` stays allowed in config, as the brief's per-workspace override. It must be absolute
     and outside the workspace, and the store-safety checks (S13) apply. Ownership by the euid plus
-    file mode 0600 cannot be produced by a `git clone`, so a planted store fails closed.
+    file mode 0600 cannot be produced by a `git clone`, so a planted store fails closed. **v2.1
+    (security M6):** a config-sourced `store_dir` is never created or chmod-ed by `ao auth`; it must
+    already exist and be private, or the operator passes `--auth-dir` explicitly.
+- **v2.1 — the workspace layer cannot silently switch protection off** (security M3; a `git pull`
+  could flip it):
+  - `enabled: false` coming **only** from the workspace config (neither CLI nor env sets
+    `enabled`) while the store has accounts (or an unknown count) → **refuse to start** (exit 78).
+    The message points to `--no-auth` / `AO_UI_AUTH=0` for an intentional disable. The refusal
+    writes the audit event `auth.startup.disabled_by_config`, and `ao auth status --workspace W`
+    flags it.
+  - A `totp` value below `required` (`off` or `optional`) coming **only** from the workspace config,
+    with auth enabled and accounts present → start, but print a warning, write the audit event
+    `auth.startup.totp_downgraded_by_config`, and flag it in `ao auth status`. TOTP is not refused,
+    because sticky enrollment already protects every enrolled account (D7).
 - Fail-closed rules are a pure `decide()` (§11.3.4):
   - an invalid env value → refuse;
   - an invalid `ui.auth` block → refuse unless CLI or env explicitly disable auth;
@@ -193,7 +216,10 @@ records a change made after a Phase-4 consultation.
   receives every `ao_sid_*` cookie, and it can also *set* them (cookie tossing). v2 counters this:
   - the **session proof header (D25)** makes a harvested cookie useless for every API route;
   - duplicate realm cookies are rejected;
-  - idle sliding ignores cross-site navigations.
+  - **v2.1 (security M1):** a cookie without its proof yields **no principal and no idle slide** on
+    every route, PUBLIC ones included. The single exception is the explicitly flagged
+    cookie-only navigation route (the hub index), which slides only for browser-attested
+    navigations.
   - Remaining: a harvester could view the hub's server-rendered index (a cookie-only navigation) and
     could force a logout.
 
@@ -238,16 +264,22 @@ records a change made after a Phase-4 consultation.
   - pydantic `extra="allow"` preserves unknown fields;
   - `required_features` gates incompatible changes;
   - a reader refuses only when `schema_version` is too new or a required feature is unknown;
-  - breaking migrations happen only through an explicit `ao auth migrate` (future).
+  - breaking migrations are a **future** concern: a later epic designs an explicit,
+    operator-run migration command with a backup. This epic ships no migration command, and never
+    migrates on a login write.
   - Workspace **config** stays `extra="forbid"`, so typos fail closed.
 - **Safety checks:**
   - the store and state directories are 0700, owned by the euid, and not group/other-writable;
-  - their **parent** directories are not group/other-writable (unless root-owned with the sticky
-    bit);
+  - their **parent** directories are not other-writable, and not group-writable unless root-owned
+    with the sticky bit. **v2.1 (security L6):** a parent that is group-writable **and owned by the
+    euid** (the normal result of `umask 002` on Debian/Ubuntu-style hosts with per-user groups)
+    gives a startup **warning** instead of a refusal. The parent check runs on the resolved parent,
+    so a symlinked `~/.config` is judged by its target;
   - files are 0600, regular files, never symlinks;
   - the server refuses to start otherwise.
 - **Never browsable:** both directories are denied by `FileBrowser.resolve()`, whether auth is on or
-  off.
+  off. **v2.1 (security L7):** so is the service environment file `~/.config/ao/service.env`, which
+  holds API keys.
 - *Rejected:* a per-workspace default store, SQLite, the OS keyring.
 
 **D6 — Password hashing: stdlib scrypt `ln=15, r=8, p=3`. [ADR]**
@@ -294,6 +326,10 @@ records a change made after a Phase-4 consultation.
 - **v2 — secure transport:** E4, E5 and E7 (seed and recovery-code disclosure) are refused with 403
   `insecure_transport` when the request is plain HTTP **and** the client is not loopback. CLI
   enrollment always works.
+  - **v2.1 (security M2):** "loopback" is `ClientInfo.is_loopback` (§11.15.1): the peer is
+    loopback **and** the `Host` hostname is a loopback name **and** the request carries no
+    `Forwarded` / `X-Forwarded-*` header. A reverse proxy on the same host that is not listed in
+    `trusted_proxies` therefore cannot make remote enrollment look local.
 - *Rejected:* per-realm replay (violates RFC 6238 §5.2); policy-governed challenge (allows a silent
   downgrade); untokenized forced enrollment (first-come binding).
 
@@ -316,10 +352,16 @@ records a change made after a Phase-4 consultation.
    - shared by every realm;
    - counts password, second-factor and re-auth failures;
    - not reset while a second factor is pending.
-4. **Phantom entries:** unknown usernames get identical treatment through phantom entries keyed by
-   `sha256(normalized name)` in the same file, capped at `PHANTOM_LOCKOUT_MAX_ENTRIES=4096` with
-   oldest-first eviction. The flood-eviction oracle (dev-security finding #9) needs more than 4096
-   distinct names, each paying throttled attempts. It is documented as a residual.
+4. **Phantom entries:** unknown usernames get identical treatment through phantom entries in the
+   same file, capped at `PHANTOM_LOCKOUT_MAX_ENTRIES=4096` with oldest-first eviction. The
+   flood-eviction oracle (dev-security finding #9) needs more than 4096 distinct names, each paying
+   throttled attempts. It is documented as a residual.
+   - **v2.1 (security L1):** the phantom key is `HMAC-SHA256(name_key, normalized name)`, where
+     `name_key` is a per-store random key kept in `lockouts.json`. The audit `username_hash` is a
+     prefix of the same digest. Users paste passwords into the username field; an unkeyed hash of
+     such a string could be brute-forced offline from `lockouts.json` or the audit log.
+   - Every name that fails `USERNAME_RE` collapses into **one** phantom bucket, so arbitrary input
+     never gets its own entry.
 5. **Per-username `asyncio.Lock`** gate per process.
 6. `ao auth unlock` clears a lockout.
 
@@ -341,6 +383,9 @@ records a change made after a Phase-4 consultation.
 - `LocalPasswordProvider` implements the login side; `LocalTotpService` the second factor. Both use
   `AttemptGuard`.
 - HTTP routes come from `register_route_builder(provider_id, fn)`, where `fn` is a callable.
+  **v2.1:** a provider may register several builders (they run in registration order). The local
+  provider registers two, one per module: `auth/http/routes.py` (login, password) and
+  `auth/http/routes_second_factor.py` (TOTP), so two tasks never edit one file (design-review M2).
 - `build_auth_runtime(..., provider=)` lets a test or a future provider inject itself.
 - Core modules see only `VerifiedIdentity`.
 - v2 removed the speculative protocols (reviewer finding).
@@ -352,12 +397,19 @@ records a change made after a Phase-4 consultation.
   always set.
 - `current_principal()`, `require_principal()` (401 if auth is on and the principal is missing;
   `None` if auth is off), `auth_enabled()`, `audit_log_for()`.
-- **v2:**
-  - `roles: tuple[str, ...]`: hashable and immutable. The dev-critic, the reviewer and dev-security
-    all asked for this. It deviates from the brief's literal `list[str]` and is flagged to the
-    manager.
-  - Added `user_id`, `amr`, `auth_time`, `provider`.
+- **v2.1 (owner decision, final; design-review B1, security M5):**
+  - `roles: list[str] = field(default_factory=list, hash=False)`, exactly the brief's type: a
+    **fresh** list per `Principal`, excluded from the hash (`==` still compares it). `hash(p)`
+    works.
+  - `SessionRecord`, `VerifiedIdentity` and `UserView` keep **tuples**. `SessionManager.principal_for`
+    is the only converter and returns a fresh `list(record.roles)` on every call, so mutating a
+    principal's list never reaches the session table or the cached store snapshot.
+  - Added `user_id`, `realm`, `session_id`, `amr`, `auth_time`, `provider`, all **keyword-only**,
+    so positional `Principal(username, auth_method, roles)` keeps working.
+  - Forward note: roles are frozen into the session at issue time. When RBAC lands, any role change
+    MUST bump `credential_epoch` (or `revalidate` must re-read roles).
   - §2.6 states what a principal attests.
+  - (v2 had proposed `tuple[str, ...]`; superseded.)
 
 **D13 — Hub login UX.**
 - The protected index and `/api/service/status`. An anonymous or partial browser navigation → 303
@@ -369,8 +421,9 @@ records a change made after a Phase-4 consultation.
   - **text-only forced enrollment with the CLI enrollment token** (refused over insecure remote
     transport);
   - logout and keepalive.
-- The auth-on index is registered by `register_hub_auth_routes` in the http layer, because of the
-  `hub.py` annotation trap (v2, developer finding).
+- The auth-on index is registered by `register_hub_auth_routes` in the http layer
+  (`auth/http/hub_routes.py`, v2.1), because of the `hub.py` annotation trap (v2, developer
+  finding). It is the only route flagged as a **cookie-only navigation** (§11.14, §13.3).
 - Account management lives in the SPA and the CLI only.
 
 **D14 — Internal callers keep working.**
@@ -398,11 +451,23 @@ records a change made after a Phase-4 consultation.
 - The proxy MUST preserve `Host` (`proxy_set_header Host $host;`) and send `X-Forwarded-Proto`.
   `X-Forwarded-Host` is not trusted.
 - With auth off, uvicorn's defaults are untouched.
+- **v2.1 — an unconfigured proxy is detected, not trusted** (security M2). With auth on and **no**
+  trusted proxies, a request from a loopback peer that carries a `Forwarded` / `X-Forwarded-*`
+  header, or a non-loopback `Host`, is treated as **not loopback** (D7). The server logs one
+  WARNING per process naming `AO_UI_AUTH_TRUSTED_PROXIES`, and `GET /api/auth/status` reports
+  `transport.proxy_suspected: true`. Residual: every remote user behind such a proxy still shares
+  the proxy's throttle bucket until the operator configures `trusted_proxies`.
+- **v2.1 — residual with `trusted_proxies=127.0.0.1`:** uvicorn then honours `X-Forwarded-For` and
+  `X-Forwarded-Proto` from **any** local process, so another local user can spoof a client address
+  (and dodge the per-address throttle) by connecting to the port directly. The per-account lockout
+  still applies. Documented advice: bind the app to a unix socket or firewall the app port so only
+  the proxy can reach it.
 
 **D18 — Audit log.**
 - `audit.jsonl` (0600) lives in the **state** directory, rotated at `AUDIT_MAX_BYTES` ×
   `AUDIT_BACKUP_COUNT`.
-- No secrets. Unknown usernames appear only as `username_hash`.
+- No secrets. Unknown usernames appear only as `username_hash`, a prefix of the keyed digest of D9
+  (v2.1, security L1).
 - **Flood coalescing:** more than `AUDIT_FAILURE_EVENTS_PER_MINUTE` failure events per minute per
   process become a single `auth.failure.burst` event. `auth.lockout` is never suppressed.
 - Async callers use `run_sync`.
@@ -440,20 +505,27 @@ build.
 - `Clock.monotonic()` is `CLOCK_BOOTTIME` on Linux (counts suspend; verified on Python 3.11) and
   `time.monotonic()` elsewhere (documented).
 - Rotation never extends the absolute deadline.
-- Idle slides only on:
-  - mutating requests;
-  - keepalive;
-  - top-level navigations whose `Sec-Fetch-Site` is `same-origin` or `none`. A sibling port's page
-    cannot keep a session alive (v2, dev-security finding).
+- Idle slides only on (v2.1, security M1: **every slide needs the session proof**, except the
+  flagged cookie-only navigation route):
+  - mutating requests **with a matching proof**;
+  - keepalive (which requires the proof);
+  - a browser-attested top-level navigation (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest:
+    document`, `Sec-Fetch-Site` of `same-origin` or `none`) to the route flagged
+    `COOKIE_ONLY_NAVIGATION` (the hub index only).
+  - A sibling port's page, or a curl client holding a harvested cookie, therefore cannot keep a
+    session alive through the API, and a cookie without its proof never slides anything on a PUBLIC
+    route (v2 dev-security finding, tightened in v2.1).
 - v2 replaced v1's dual-clock design (reviewer finding: simpler, same guarantee on Linux).
 
 **D24 — Layering and import boundary.**
 - Package layers L0–L4 (§11.1), enforced by an AST import test.
-- Only `auth/http/middleware.py` and `auth/http/routes.py` import fastapi or starlette.
+- Only `auth/http/middleware.py` and the three route modules (`auth/http/routes.py`,
+  `auth/http/routes_second_factor.py`, `auth/http/hub_routes.py`; v2.1) import fastapi or
+  starlette.
 - `auth/cli.py` and every non-http module import cleanly without fastapi, starlette and uvicorn.
 
-**D25 — Origin-bound session proof header. [ADR]** (v2: dev-security HIGH #2 plus dev-critic #6; an
-owner decision with default **include**)
+**D25 — Origin-bound session proof header. [ADR]** (v2: dev-security HIGH #2 plus dev-critic #6.
+**v2.1: DECIDED, in the MVP** (OQ-9 closed; not a cut-line, §24.1))
 - **Two secrets per session.**
   - The cookie token is `HttpOnly` and host-scoped.
   - A **proof** (32 random bytes, base64url) is returned only in the JSON body of a
@@ -464,12 +536,16 @@ owner decision with default **include**)
     port-isolated**, falling back to memory.
   - They send it as `X-AO-Session-Proof` on every `/api/*` request.
 - **Server enforcement.**
-  - Every non-PUBLIC `/api/*` route, and the partial-step routes, require a valid proof. A missing or
+  - Every non-PUBLIC `/api/*` route, and the partial-step routes, require a valid proof (v2.1:
+    every non-PUBLIC non-API route too, except the flagged hub index). A missing or
     wrong proof → 401 `not_authenticated`, and the server session is **not** destroyed.
   - `GET /api/auth/status` reports `anonymous` unless the proof matches, so a thief learns nothing.
   - `POST /api/auth/logout` destroys the server session only with a matching proof.
-  - **HTML navigations** (the hub index) are cookie-only, because a navigation cannot carry a header.
-    Residual: hub index read access.
+  - **v2.1 (security M1):** `request.state.principal` is set, and the idle timer slides, **only**
+    with a matching proof, on every route including PUBLIC ones.
+  - **HTML navigations** cannot carry a header. Exactly one route is flagged as a cookie-only
+    navigation (`COOKIE_ONLY_NAVIGATION`): the hub index. Every other non-PUBLIC route, `/api` or
+    not, requires the proof. Residual: hub index read access.
 - **What this defeats.** A cookie harvested by another same-host listener cannot call any API.
   Cookie-tossing fixation into an attacker's session fails too, because the victim's tab holds a
   different proof.
@@ -477,8 +553,8 @@ owner decision with default **include**)
 - **Alternatives:**
   - Defer to a follow-up (the v1 stance).
   - Per-server `*.localhost` hostnames (an operator burden; WebAuthn-compatible later).
-- **OPEN_QUESTION OQ-9:** the owner may defer D25. If so, A4 reverts to the v1 residual, and the
-  README must say so.
+- **OQ-9 — DECIDED (v2.1):** D25 stays in the MVP. It is security-driven and is **not** on the cut
+  list (§24.1).
 
 ---
 
@@ -557,7 +633,8 @@ FastAPI `{"detail": ...}`.
 ### 2.4 Endpoints
 
 Policies (§13.2): `PUBLIC`, `PARTIAL_SECOND_FACTOR`, `ENROLLMENT`, `AUTHENTICATED`. **Every
-non-PUBLIC `/api/*` route also requires the session proof.**
+non-PUBLIC `/api/*` route also requires the session proof** (v2.1: so does every other non-PUBLIC
+route, except the single cookie-only hub index).
 
 #### E1 `GET /api/auth/status` — PUBLIC, always mounted
 
@@ -591,12 +668,17 @@ non-PUBLIC `/api/*` route also requires the session proof.**
     "policy": {"totp": "off | optional | required", "min_password_length": 12, "max_password_length": 256},
     "session": null | {"idle_timeout_seconds": 1800, "idle_expires_at": "2026-10-04T12:30:00Z",
                        "absolute_expires_at": "2026-10-05T00:00:00Z"},
-    "transport": {"secure": false, "client_is_loopback": true}
+    "transport": {"secure": false, "client_is_loopback": true, "proxy_suspected": false}
   }
   ```
 - **Field rules:**
   - The state is reported as non-anonymous **only if the session proof matches**. A valid cookie
     with no proof, or a wrong one, reports `anonymous`.
+  - **v2.1 (security M2; manager-approved contract change):** `transport.client_is_loopback` is
+    `ClientInfo.is_loopback` (peer loopback **and** loopback `Host` **and** no forwarding headers).
+    `transport.proxy_suspected` is true when no trusted proxy is configured and a loopback peer sent
+    a forwarding header or a non-loopback `Host`. Clients that show the plain-HTTP banner keep
+    using `!secure && !client_is_loopback`, which now also covers this case.
   - `user` is set only when authenticated. `pending_username`, `second_factors` and
     `enrollment_token_required` are set only in the matching partial states.
   - `can_enroll_totp = !totp_enrolled && policy.totp != "off"`.
@@ -704,6 +786,11 @@ non-PUBLIC `/api/*` route also requires the session proof.**
 
 - Every existing `/api/*` route is AUTHENTICATED (+ proof), including `/api/docs` and
   `/api/openapi.json`. The exception is `GET /api/health`, which is PUBLIC and unchanged (D19).
+  - **v2.1:** with auth on, `/api/docs` is **unusable in a browser**: the Swagger page is a
+    navigation and cannot send the proof header. Use auth off locally to browse the API docs.
+  - **v2.1 (security L2):** with auth on, `create_app` (and `build_hub_app`) pass `redoc_url=None`
+    and `swagger_ui_oauth2_redirect_url=None`, so `GET /redoc` and `GET /docs/oauth2-redirect` are
+    not registered. With auth off they are registered exactly as today (NFR-1).
 - The SPA routes are PUBLIC: `GET /` (`spa_root` or `missing_frontend`), the `/assets` mount, and
   `GET /{full_path:path}` (`spa_fallback`). The SPA shell must be able to render the login screen.
 - Under `/api/`, a PUBLIC policy holds only for an API route's own table entry. So `spa_fallback`
@@ -728,7 +815,7 @@ export interface AuthStatus {
   second_factors: SecondFactor[] | null; enrollment_token_required: boolean | null;
   policy: { totp: TotpPolicy; min_password_length: number; max_password_length: number } | null;
   session: { idle_timeout_seconds: number; idle_expires_at: string; absolute_expires_at: string } | null;
-  transport: { secure: boolean; client_is_loopback: boolean } | null;
+  transport: { secure: boolean; client_is_loopback: boolean; proxy_suspected: boolean } | null;   // proxy_suspected: v2.1
 }
 export interface AuthStepResponse {
   state: Exclude<AuthState, "disabled" | "anonymous">; user?: AuthUser;
@@ -763,17 +850,22 @@ AuthMethod = Literal["password", "password+totp"]           # from auth/model.py
 
 @dataclass(frozen=True, slots=True)
 class Principal:
-    # --- the brief's minimum contract (roles type changed in v2: see note) ---
+    # --- the brief's minimum contract (positional; owner decision v2.1: roles is list[str]) ---
     username: str                 # normalized lowercase account name; a display/audit label, NOT a stable key
     auth_method: AuthMethod       # "password+totp" also covers a recovery-code login (see amr)
-    roles: tuple[str, ...]        # always () in the MVP; immutable and hashable
-    # --- additive fields (v2, Phase-4 consultations) ---
-    user_id: str                  # immutable random id (32 hex): the STABLE key to persist
-    realm: str                    # "hub" | "ui:<workspace_id>" (stable across port reassignment)
-    session_id: str               # non-secret uuid4 hex for audit correlation
-    amr: tuple[str, ...]          # ("pwd",) | ("pwd","otp","mfa") | ("pwd","rcv","mfa"); "rcv" = recovery code (local extension of RFC 8176)
-    auth_time: datetime           # UTC instant this session lineage became fully authenticated
-    provider: str                 # "local-password" in the MVP
+    roles: list[str] = field(default_factory=list, hash=False)
+                                  # always [] in the MVP; a FRESH list per Principal (never shared);
+                                  # excluded from hash() so hash(p) works; == still compares it
+    # --- additive fields (v2), ALL keyword-only (v2.1) so Principal(username, auth_method, roles) works ---
+    user_id: str = field(kw_only=True)       # immutable random id (32 hex): the STABLE key to persist
+    realm: str = field(kw_only=True)         # "hub" | "ui:<workspace_id>" (stable across port reassignment)
+    session_id: str = field(kw_only=True)    # non-secret uuid4 hex for audit correlation
+    amr: tuple[str, ...] = field(kw_only=True)   # ("pwd",) | ("pwd","otp","mfa") | ("pwd","rcv","mfa"); "rcv" = recovery code (local extension of RFC 8176)
+    auth_time: datetime = field(kw_only=True)    # UTC instant this session lineage became fully authenticated
+    provider: str = field(kw_only=True)      # "local-password" in the MVP
+# dataclasses.fields(Principal) keeps definition order: username, auth_method, roles, user_id, realm,
+# session_id, amr, auth_time, provider (AC-11 pins it). Without kw_only, a defaulted `roles` followed by
+# non-default fields raises TypeError at class creation (design-review B1).
 
 def current_principal(request: Any) -> Principal | None    # request.state.principal
 def auth_enabled(request: Any) -> bool                      # request.state.auth_enabled (always set by AuthMiddleware)
@@ -790,16 +882,31 @@ def require_principal(request: Any) -> Principal | None:
    from `principal is None` alone; use `auth_enabled()` (v2, dev-security finding #6).
 4. Persist `user_id`, never `username`.
 5. `audit_log_for(request) -> AuditLog | None` (`None` when auth is off).
+6. **(v2.1, security M1)** A principal is set only when the session proof matches, on every route
+   including PUBLIC ones. The single exception is a route flagged `COOKIE_ONLY_NAVIGATION` (only the
+   hub index, a read-only HTML page). Never flag a route that changes state or serves another
+   epic's data.
+7. **(v2.1, security M5)** `principal.roles` is a fresh `list` built by
+   `SessionManager.principal_for` for this request. Mutating it affects neither the next request's
+   principal nor the session table nor the cached store snapshot.
 
-**Contract change from the brief:** the brief specified `roles: list[str]`.
-- v2 makes it `tuple[str, ...]` because the dev-critic, the reviewer and dev-security each flagged
-  that `hash()` raises on a frozen dataclass holding a list.
-- Read-only consumers (`"admin" in p.roles`, iteration) are unaffected.
-- **The manager must confirm this with the approval-gates epic before either side freezes** (OQ-8).
+**Contract (owner decision, final; OQ-8 DECIDED in v2.1):** `roles` stays the brief's `list[str]`.
+- v2 had proposed `tuple[str, ...]` because `hash()` raises on a frozen dataclass holding a list
+  field. v2.1 solves that with `field(hash=False)` instead, so the brief's type and positional
+  construction both survive, and `hash(p)` works.
+- `SessionRecord`, `VerifiedIdentity` and `UserView` keep `roles: tuple[str, ...]`, because a
+  shallow-copied record from `InMemorySessionStore.get()` would otherwise alias a list.
+  `principal_for` is the **only** tuple → list converter.
+- Read-only consumers (`"admin" in p.roles`, iteration, JSON) are unaffected. The approvals epic's
+  defensive reader accepts list and tuple alike.
+- Roles are frozen into the session at issue. **When RBAC lands, any role change MUST bump
+  `credential_epoch`** (or `revalidate` must re-read roles), or a session keeps stale roles until
+  expiry.
 
 **What a `Principal` does and does not attest** (dev-critic finding):
 - It attests that this HTTP request carried a **fully authenticated browser session**: a valid
-  cookie **and** a valid session proof.
+  cookie **and** a valid session proof. On the one `COOKIE_ONLY_NAVIGATION` route (the hub index)
+  it attests the cookie only (v2.1).
 - It does **not** attest that a human is present, nor that the request did not come from an agent
   running as the same OS user. Such an agent can read the store and create accounts (A6).
 - An approval gate that must hold against the very agents it constrains needs per-run sandboxing
@@ -870,7 +977,7 @@ multi-user use.
 | FR-5 | `RECOVERY_CODE_COUNT` single-use recovery codes are generated at enrollment and regeneration. They are stored hashed and returned exactly once. | AC-8 |
 | FR-6 | Enrollment always shows the manual secret and the `otpauth://` URI. The SPA also renders a QR code; the hub and the CLI show text only. | AC-9 |
 | FR-7 | An `AuthProvider` ABC exists. `LocalPasswordProvider` is the only MVP provider. A test-only provider, including a redirect-shaped one (start → 302 → cross-site callback), can be registered through `register_route_builder` and `build_auth_runtime(provider=)` without editing any core module. | AC-10 |
-| FR-8 | `request.state.principal` exists on every request. It is a `Principal` (§2.6 v2) for a full session with a valid proof, and `None` otherwise, including when auth is off. `request.state.auth_enabled` distinguishes auth off from anonymous. `current_principal()`, `auth_enabled()` and `require_principal()` are exported. | AC-11 |
+| FR-8 | `request.state.principal` exists on every request. It is a `Principal` (§2.6 v2.1: `roles: list[str]`, keyword-only additive fields) for a full session with a valid proof, and `None` otherwise, including when auth is off and on every route where the proof does not match (the hub index is the one flagged cookie-only exception). `request.state.auth_enabled` distinguishes auth off from anonymous. `current_principal()`, `auth_enabled()` and `require_principal()` are exported. | AC-11, AC-44 |
 | FR-9 | A partial session can reach only PUBLIC routes plus its own step routes: `totp/verify` for a TOTP-pending session, or `totp/enroll/*` for an enrollment-pending one. | AC-12 |
 | FR-10 | The user store is a schema-versioned JSON file in a 0700 directory. The file is 0600, written atomically under flock. The default location is user-level, with a per-workspace override that must lie outside the workspace. Mutable security state (lockouts, audit) lives in a separate state directory. Unknown fields written by newer versions are preserved. | AC-13, AC-42 |
 | FR-11 | Sessions live server-side. Tokens are 256-bit, and only their SHA-256 is kept. A session token is rotated on login, on 2FA completion, on enrollment and on credential change. Logout invalidates it server-side. Idle and absolute expiry apply. Sessions do not survive a restart. | AC-14, AC-15 |
@@ -883,7 +990,7 @@ multi-user use.
 | FR-18 | Changing the password requires the current password. Enabling 2FA from a full session requires the password again. Disabling 2FA or regenerating recovery codes requires the password plus a valid code. | AC-22 |
 | FR-19 | With auth enabled, mutating requests need a same-origin `Origin`. `Sec-Fetch-Site` is enforced when present. Responses carry `X-Frame-Options: DENY` and `Cache-Control: no-store`. The existing Host, Content-Type and CSP checks stay in place. | AC-23 |
 | FR-20 | No password, code, recovery code, token, secret or hash ever appears in logs, exceptions, audit records, error responses, status JSON or URLs. | AC-24 |
-| FR-21 | A non-loopback bind with auth enabled and no trusted proxy produces a loud startup warning. The first plain-HTTP login from a non-loopback client logs a warning. The SPA shows a banner. | AC-25 |
+| FR-21 | A non-loopback bind with auth enabled and no trusted proxy produces a loud startup warning. The first plain-HTTP login from a non-loopback client logs a warning. The SPA shows a banner. **(v2.1)** A loopback client is loopback only with a loopback `Host` and no forwarding headers; an unconfigured reverse proxy produces one WARNING per process and `transport.proxy_suspected`. | AC-25, AC-43 |
 | FR-22 | `ao auth add-user`, `remove-user`, `list-users`, `set-password`, `enable-2fa`, `disable-2fa`, `reset-2fa`, `enrollment-token`, `unlock`, `revoke-sessions` and `status` all exist. Passwords come only from a hidden prompt or `--password-stdin`. These commands work without the `[ui]` extra. | AC-26, AC-27 |
 | FR-23 | An append-only JSONL audit log (0600, rotated) records the event set in §12.4 and never contains secrets. An `AuditLog.record()` seam is exported. | AC-28 |
 | FR-24 | The SPA provides a login screen, a 2FA step with a recovery-code option, forced enrollment (QR, secret, URI, recovery codes), and an account menu (change password, 2FA enable/disable/regenerate, logout, log out everywhere). It handles 401s globally without loops, and has vitest coverage. The file browser and preview never serve the store. | AC-29, AC-30, AC-13 |
@@ -892,18 +999,18 @@ multi-user use.
 | FR-27 | **(v2)** Every non-PUBLIC `/api/*` request must carry the session proof (`X-AO-Session-Proof`), which only issuing responses return (D25). A cookie without the proof grants nothing on the API. | AC-35 |
 | FR-28 | **(v2)** Forced enrollment requires a CLI-issued, single-use, time-limited enrollment token (D7). The `ao auth enrollment-token` command exists. | AC-36 |
 | FR-29 | **(v2)** TOTP seeds and recovery codes are never sent over plain HTTP to a non-loopback client: 403 `insecure_transport` (D7). | AC-37 |
-| FR-30 | **(v2)** Workspace `ui.auth` settings can only tighten the defaults. `trusted_proxies` is CLI/env-only (D2, A12). | AC-38 |
+| FR-30 | **(v2)** Workspace `ui.auth` settings can only tighten the defaults. `trusted_proxies` is CLI/env-only (D2, A12). **(v2.1)** A workspace-config-only `enabled: false` while accounts exist refuses to start (exit 78, audited); a workspace-config-only `totp` below `required` with auth on warns and is audited; `ao auth status` flags both. A config-sourced `store_dir` is never created or chmod-ed by `ao auth`. | AC-38, AC-45, AC-46 |
 | FR-31 | **(v2)** Accounts carry an immutable `user_id`. Revalidation, CAS writes and the epoch snapshot rule prevent session revival or straddling (D10). | AC-39 |
 
 ### 3.5 Non-functional requirements
 
 | ID | Requirement |
 |---|---|
-| NFR-1 | **With auth off, behaviour is byte-identical.** Every existing test passes unchanged, and existing responses gain no headers. The only additions are the new `GET /api/auth/status` route and the SPA's single extra status request at boot. **One deliberate exception:** the user-store directory (§11.4) is never browsable through the dashboard file browser or preview, even with auth off. It holds password hashes and TOTP seeds whenever accounts exist. This only affects workspaces that contain that directory, such as `--workspace ~`. |
+| NFR-1 | **With auth off, behaviour is byte-identical.** Every existing test passes unchanged, and existing responses gain no headers. The only additions are the new `GET /api/auth/status` route, **its entry in `/api/openapi.json`** (v2.1), and the SPA's single extra status request at boot. **One deliberate exception:** the user-store directory (§11.4) is never browsable through the dashboard file browser or preview, even with auth off. It holds password hashes and TOTP seeds whenever accounts exist. This only affects workspaces that contain that directory, such as `--workspace ~`. The same denial covers the state directory and (v2.1) `~/.config/ao/service.env`. |
 | NFR-2 | **No new Python dependency.** The one new frontend runtime dependency (`qrcode-generator@2.0.4`, pinned exactly) is justified per `ui/README.md`. Main chunk budget: +≤ 12 KB gzip. QR lazy chunk budget: ≤ 12 KB gzip. `npm audit --omit=dev --audit-level=high` must be clean. |
 | NFR-3 | **Import boundary.** `agent_orchestrator.auth.cli` and every non-HTTP auth module import with fastapi, starlette and uvicorn absent. |
 | NFR-4 | **Determinism.** Every time-dependent or random unit test injects a clock, rng and hasher. TOTP tests use RFC vectors and fixed times. There is no `time.sleep` in unit tests. |
-| NFR-5 | **Performance.** Authenticated request overhead is p95 ≤ 1 ms: a dict lookup plus one `os.stat` when the store is unchanged. Login p95 is ≤ 600 ms on the dev box. Hashing memory is ≤ `HASH_CONCURRENCY` × 32 MiB per process. |
+| NFR-5 | **Performance (a target, not an acceptance criterion; v2.1, design-review minor 4).** Authenticated request overhead targets p95 ≤ 1 ms: a dict lookup plus one `os.stat` when the store is unchanged. Login targets p95 ≤ 600 ms on the dev box. Hashing memory is bounded by construction at `HASH_CONCURRENCY` × 32 MiB per process. The p95 numbers are measured informationally (`-m slow`, T-U2ERMo) and recorded; they never gate a merge. The binding part is "no blocking I/O on the event loop" (AC-40). |
 | NFR-6 | **Coverage.** The new `agent_orchestrator.auth` package needs ≥ 90 % line coverage. The existing UI gate (≥ 80 %) still passes. |
 | NFR-7 | **No magic literals.** Every number and string in §12.6 is a named constant. |
 | NFR-8 | **Observability.** The audit log, structured log lines (event, realm, session_id; never secrets), and `ao auth status` with the source of every setting plus the server's UTC time. |
@@ -938,7 +1045,7 @@ multi-user use.
 |---|---|
 | OIDC / SSO / LDAP providers | `AuthProvider` ABC + route-builder registry (D11) |
 | WebAuthn / passkeys | Same seam: a second-factor service beside `LocalTotpService` plus a `second_factors` entry. Needs a canonical hostname (§10.7) |
-| RBAC / authorization beyond "authenticated = full access" | `Principal.roles` is carried, always `()` |
+| RBAC / authorization beyond "authenticated = full access" | `Principal.roles` is carried, always `[]`. Role changes must bump `credential_epoch` once RBAC exists (§2.6). |
 | API tokens (CLI-to-dashboard, automation, curl) | Would also relax D4's Origin requirement for token-authenticated requests |
 | Email password reset, self-service sign-up | Never planned. Reset is `ao auth set-password` |
 | Fail-closed refusal of remote binds without auth | §4.3 recommendation |
@@ -987,6 +1094,8 @@ multi-user use.
 | A-15 | The browser offers `localStorage` for the dashboard origin (D25). | With storage blocked the proof lives in memory only: every page reload needs a new login. | Documented; the SPA detects missing storage and says so on the login screen. |
 | A-16 | `time.CLOCK_BOOTTIME` exists on the Linux hosts (verified on Python 3.11). | On other OSes, `time.monotonic()` may not count suspend. | Documented; the absolute 12 h deadline still applies. |
 | A-14 | `qrcode-generator@2.0.4` (2025-08-07, MIT, zero dependencies) stays installable from npm. | Supply chain. | Pinned exactly. `npm audit`. The bundle is committed, so runtime never fetches. The dependency is replaceable behind a one-file wrapper (`QrCode.tsx`). |
+| A-17 | **(v2.1)** Common reverse proxies (nginx, Caddy, Traefik, Apache) add `X-Forwarded-For` or `Forwarded`, or pass a non-loopback `Host`, so an unconfigured proxy is detectable (D17, §11.15.1). | A proxy that strips every forwarding header **and** rewrites `Host` to `127.0.0.1` makes remote clients look loopback again (enrollment over its plain-HTTP hop; shared throttle bucket). | Documented: configure `trusted_proxies` and keep `Host` (D17). The loud non-loopback warning still fires for non-loopback binds. |
+| A-18 | **(v2.1)** On `umask 002` hosts with per-user groups, `~/.config` and `~/.local/state` may be group-writable but are owned by the user (security L6). | A strict parent check would refuse to start on such hosts. | Group-writable **and** euid-owned parents warn instead of refusing (D5); verified with `umask 002` in T-8NQP8J's tests. |
 
 ---
 
@@ -1067,15 +1176,18 @@ multi-user use.
     different port cannot read.
   - **Cookie tossing for fixation** → defeated: the victim's tab holds a different proof.
   - **Duplicate-cookie tricks** (different `Path` values) → duplicate realm cookies are rejected.
-  - **Keeping a stolen session alive** → keepalive needs the proof, and idle slides only on
-    same-origin or user-typed navigations.
+  - **Keeping a stolen session alive** → **v2.1 (security M1):** every idle slide needs the proof
+    (mutations, keepalive), and a cookie without the proof yields no principal and no slide on any
+    route, PUBLIC ones included (`POST /api/auth/logout`, `GET /api/health`, …). The one exception
+    is the flagged cookie-only hub index, which slides only for browser-attested navigations; a curl
+    client can forge those headers, so the hub-index residual below also covers "keep alive by
+    re-fetching the hub index" until the absolute deadline.
 - **Residual (accepted, documented):**
   - **read access to the hub's server-rendered index** with a harvested hub cookie (navigation
     is cookie-only), until expiry or logout;
   - **forced logout** by cookie tossing.
   - Follow-ups: the hub-run handoff, plus a client-rendered hub index carrying the proof.
-- If the owner defers D25 (OQ-9), API replay becomes possible again until expiry, as in v1. The
-  README must state this.
+- D25 is in the MVP (OQ-9 decided in v2.1), so harvested-cookie API replay is closed.
 
 **A5 — Another local OS user on the same machine**
 - **Mitigations:**
@@ -1115,6 +1227,9 @@ multi-user use.
   epoch, revoking every session).
 - **Residual risk:** offline cracking of weak passwords; seed exposure. At-rest seed encryption with
   an external key is NON-MVP.
+- **v2.1 (security L5), stated plainly for the README:** the TOTP seed sits in clear in `users.json`
+  next to the password hash. Whoever steals the file holds the second factor, so 2FA then protects
+  nothing beyond the password's cracking cost. Back the credential directory up **encrypted** only.
 
 **A8 — Network observer, MITM on plain HTTP, shoulder-surfer**
 - **Mitigations:**
@@ -1158,9 +1273,21 @@ multi-user use.
   - A config `store_dir` must be absolute and outside the workspace, and must pass the ownership
     and 0700/0600/no-symlink checks, which a `git clone` cannot satisfy.
   - `enabled: false` in config cannot override env or CLI (the recommended service deployment).
+  - **v2.1 (security M3):** `enabled: false` from the workspace config **alone** while accounts
+    exist is refused (exit 78, audit `auth.startup.disabled_by_config`), so a `git pull` cannot
+    silently remove protection that existing accounts imply. A config-only `totp` below `required`
+    with auth on warns and is audited (`auth.startup.totp_downgraded_by_config`); `ao auth status`
+    flags both.
+  - **v2.1 (security M6):** `ao auth` never creates or chmods a config-sourced `store_dir`.
   - Links that send the user to another local port are covered under A4.
-- **Residual:** a repository config can **enable** auth (a tightening) or set a stricter TOTP
-  policy. Neither weakens security.
+- **Residual:**
+  - a repository config can **enable** auth (a tightening) or set a stricter TOTP policy, which
+    weakens nothing;
+  - a repository config can lower a config-sourced TOTP policy from `required` to `optional`/`off`.
+    This is **warned and audited, not refused**: enrolled users stay challenged (sticky, D7), and
+    only users who have not enrolled yet lose forced enrollment. Pin the policy with
+    `AO_UI_AUTH_TOTP` / `--auth-totp` to remove this residual;
+  - with **no** accounts, a config `enabled: false` simply runs unauthenticated, as before.
 
 ### 6.4 Security invariants (each one is a test; see §21)
 
@@ -1178,20 +1305,24 @@ multi-user use.
 | S10 | Under `required`: self-disable is refused, and a user who is not enrolled can reach only the enrollment endpoints. |
 | S11 | No secret sentinel value appears in captured logs, the audit file, error responses, status JSON or request URLs. |
 | S12 | The store directory cannot be listed, read or previewed through the dashboard, including through a symlink or an absolute path. |
-| S13 | The store directory is created 0700 and its files 0600. A server with auth enabled refuses to start when the directory is group/other-writable, the file is group/other-accessible, or either is not owned by the effective uid. |
+| S13 | The store directory is created 0700 and its files 0600. A server with auth enabled refuses to start when the directory is group/other-writable, the file is group/other-accessible, or either is not owned by the effective uid. **(v2.1)** A parent directory that is group-writable but owned by the euid warns instead of refusing; an other-writable parent, or a group-writable parent owned by someone else (and not root with the sticky bit), refuses. |
 | S14 | With auth enabled and zero users, `ao ui` and `ao service run` exit 78 and spawn no children. |
 | S15 | A credential change or user removal invalidates every other session of that user, in every running realm, on that session's next request. |
 | S16 | The per-address throttle rejects a request before any scrypt work. The per-username lockout is shared across realms. |
 | S17 | With auth off, the existing suites pass unchanged and responses carry no new headers. |
 | S18 | `agent_orchestrator.auth.cli` imports, and `ao auth --help` runs, with fastapi, starlette and uvicorn blocked. |
 | S19 | `X-Forwarded-For` and `X-Forwarded-Proto` are ignored unless `trusted_proxies` is configured. |
-| S20 | Polling `GET` requests never extend the idle deadline. Neither do navigations whose `Sec-Fetch-Site` is not `same-origin`/`none`. |
+| S20 | Polling `GET` requests never extend the idle deadline. **(v2.1)** No request without a matching session proof extends it, on any route including PUBLIC ones, except a browser-attested navigation (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`, `Sec-Fetch-Site` of `same-origin`/`none`) to the one `COOKIE_ONLY_NAVIGATION` route. |
 | S21 | **(v2)** A valid cookie without a matching session proof is rejected (401) on every non-PUBLIC `/api/*` route, and `GET /api/auth/status` reports it as anonymous. |
 | S22 | **(v2)** Forced enrollment cannot begin without a valid, unused, unexpired CLI enrollment token. |
 | S23 | **(v2)** E4, E5 and E7 are refused over plain HTTP from non-loopback clients. |
 | S24 | **(v2)** No workspace `ui.auth` value can loosen a default. `trusted_proxies` cannot come from workspace config. |
 | S25 | **(v2)** Removing and re-adding a username never revives old sessions. A login racing a password change never yields a session valid under the new credentials. A stale rehash never overwrites a newer hash. |
 | S26 | **(v2)** A request presenting the realm cookie name more than once is treated as having no session. |
+| S27 | **(v2.1, security M1)** A request with a valid cookie but no matching proof gets `request.state.principal is None` on every route of both apps, PUBLIC and non-`/api` routes included, except the hub index (the only `COOKIE_ONLY_NAVIGATION` route). |
+| S28 | **(v2.1, security M2)** With auth on and no trusted proxies, a request is treated as loopback only if the peer is loopback, the `Host` hostname is a loopback name, and no `Forwarded` / `X-Forwarded-*` header is present. |
+| S29 | **(v2.1, security M3)** With accounts present (or an unknown count), `enabled: false` coming only from workspace config never starts an unauthenticated server: exit 78. |
+| S30 | **(v2.1, security M5)** `Principal.roles` is a fresh list per principal; mutating it changes neither another principal, nor the session record, nor the cached store snapshot. |
 
 ---
 
@@ -1327,9 +1458,12 @@ flowchart LR
     SUP["Supervisor"] -- "spawn `ao ui --workspace R --host H --port P`<br/>env = inherited + CLI-sourced auth settings" --> UIProc
   end
 
-  subgraph Store["$XDG_CONFIG_HOME/ao/auth (0700)"]
-    USERS[("users.json (0600)<br/>users · lockouts · TOTP last step · phantoms")]
+  subgraph Store["$XDG_CONFIG_HOME/ao/auth (0700): credentials"]
+    USERS[("users.json (0600)<br/>users · TOTP last step · enrollment tokens")]
     ULOCK[("users.lock")]
+  end
+  subgraph State["$XDG_STATE_HOME/ao/auth (0700): mutable state"]
+    LOCKF[("lockouts.json (0600)<br/>accounts · phantoms (HMAC keys)")]
     AUD[("audit.jsonl (0600) + .1..5")]
   end
 
@@ -1339,6 +1473,9 @@ flowchart LR
   RT2 --> USERS
   RT1 --> AUD
   RT2 --> AUD
+  RT1 --> LOCKF
+  RT2 --> LOCKF
+  CLI --> LOCKF
   SPA -- "Cookie ao_sid_&lt;ui port&gt;" --> SEC1
   HUBJS -- "Cookie ao_sid_&lt;hub port&gt;" --> SEC2
   SVCCLI["ao service list/status"] -- "GET /api/service/status<br/>(401 ⇒ 'login required' + fallback)" --> SEC2
@@ -1353,24 +1490,24 @@ Layers L0–L4 are enforced by an import test (§11.1 R4). "Task" names the impl
 |---|---|---|---|---|
 | shared | `agent_orchestrator/errors.py` (+`EXIT_CONFIG`) | the single exit-code constant (78) used by auth, the supervisor and systemd | none | T-kzEzwy |
 | shared | `agent_orchestrator/fsutil.py` (new, neutral) | `FileLock` (flock + timeout), `atomic_write_bytes` (O_EXCL/O_NOFOLLOW temp, fsync, replace, dir fsync), `remove_stale_temp_files`, `ensure_private_dir` (+ parent check), `check_private_file` | none | T-8NQP8J |
-| shared | `agent_orchestrator/xdg.py` (+`resolve_config_dir`) | `$OVERRIDE` > `$XDG_CONFIG_HOME/<sub>` > `~/.config/<sub>`, the twin of the existing `resolve_state_dir` | none | T-8NQP8J |
+| shared | `agent_orchestrator/xdg.py` (+`resolve_config_dir`) | `resolve_config_dir(override_env, xdg_subdir, default_subdir, *, environ=None, home=None)`: `$OVERRIDE` > `$XDG_CONFIG_HOME/<xdg_subdir>` > `<home>/.config/<default_subdir>`, the same shape as `resolve_state_dir` and as the approvals epic's definition (v2.1, §16 cross-epic rows) | none | T-8NQP8J |
 | L0 | `auth/constants.py` | every named constant (§12.6), including the route-path constants | none | T-kzEzwy |
 | L0 | `auth/errors.py` | `ErrorCode`, `AuthError(OrchestratorError)` family, `AuthConfigError(ConfigError)` family | none | T-kzEzwy |
-| L0 | `auth/seams.py` | `Clock` / `Entropy` protocols and system implementations (`CLOCK_BOOTTIME` timeline). The fakes live in `tests/auth/helpers.py`. | none | T-kzEzwy |
+| L0 | `auth/seams.py` | `Clock` / `Entropy` protocols and system implementations (`CLOCK_BOOTTIME` timeline). The fakes live in the `tests/auth/helpers/` package (one module per owning task, §20.2). | none | T-kzEzwy |
 | L0 | `auth/model.py` | `AuthMethod`, `SessionState` (with `.api_state` and `.denial_code`), `TotpPolicy`, `TotpRequirement`, `SecondFactor`, `AuditEventName` (StrEnum) | none | T-kzEzwy |
 | L0 | `auth/principal.py` | the frozen `Principal` contract, `current_principal()`, `auth_enabled()`, `require_principal()` | none | T-kwwJ82 |
 | L1 | `auth/passwords.py`, `totp.py`, `recovery.py` | pure crypto (§11.6–§11.8) | none | T-s6sJmB |
-| L1 | `auth/policy.py` | `RoutePolicy`, the per-app **policy tables**, `proof_required`, `policy_allows`, `totp_requirement()` | none | T-kwwJ82 |
-| L1 | `auth/paths.py` | store-dir resolution, `StorePaths`, `is_within`, `default_denied_paths` | none | T-8NQP8J |
+| L1 | `auth/policy.py` | `RoutePolicy`, the per-app **policy tables**, the per-app `COOKIE_ONLY_NAVIGATION` route sets (v2.1), `proof_required`, `policy_allows`, `totp_requirement()` | none | T-kwwJ82 |
+| L1 | `auth/paths.py` | store-dir resolution, `StorePaths`, `is_within`, `check_private_paths`, `check_state_dir`; **then** (appended, v2.1) `default_denied_paths` (incl. `service.env`) and `entry_is_denied` | none | T-8NQP8J; the denial helpers T-Hd4wQ2 |
 | L2 | `auth/store.py` | `users.json`: forward-compatible models, cached snapshot with `user_id` index, locked `mutate`, pure user mutations | pydantic | T-8NQP8J |
-| L2 | `auth/lockouts.py` | `LockoutState`, `LockoutPolicy` (pure maths), and `LockoutStore` for `lockouts.json`: per-`user_id` and phantom entries | pydantic | T-CsT5gk |
+| L2 | `auth/lockouts.py` | `LockoutState`, `LockoutPolicy` (pure maths), and `LockoutStore` for `lockouts.json`: per-`user_id` and phantom entries; the per-store `name_key` and `name_digest()` (v2.1, HMAC) | pydantic | T-CsT5gk |
 | L2 | `auth/audit.py` | `AuditEvent`, `AuditLog` (JSONL, flock, rotation, flood coalescing, strict mode for tests), `AuditLog.for_state_dir(state_dir)` | none | T-CsT5gk |
-| L2 | `auth/scrub.py` | `SECRET_PATTERNS`, `redact()`, `auth_logger()`, `install_log_redaction()` (LogRecord factory, idempotent) | none | T-CsT5gk |
+| L2 | `auth/scrub.py` | `SECRET_PATTERNS`, `redact()`, `auth_logger()`, `install_log_redaction()` (LogRecord factory, idempotent) | none | T-Hd4wQ2 (moved from T-CsT5gk in v2.1) |
 | L2 | `auth/settings.py` | `UIAuthConfig`, `AuthSettings`, `resolve_auth_settings`, the pure fail-closed `decide()` | pydantic, yaml | T-PlEROT |
 | L3 | `auth/sessions.py` | `SessionRecord`, `SessionStore` ABC, `InMemorySessionStore`, `SessionManager` (every mutation ends in `put()`; `principal_for`) | none | T-kwwJ82 |
 | L3 | `auth/throttle.py` | `canonical_client_key()`, `AddressThrottle`, `UsernameGates` (in memory) | none | T-CsT5gk |
 | L3 | `auth/guard.py` | `AttemptGuard.attempt(...)`: the **single** throttle → gate → lockout → verify → record → audit sequence | none | T-XchniS |
-| L3 | `auth/provider.py` | `AuthProvider` ABC, `VerifiedIdentity`, `UserView`, `Revalidation` | none | T-XchniS |
+| L3 | `auth/provider.py` | `AuthProvider` ABC, `VerifiedIdentity`, `UserView`, `Revalidation`, `ClientInfo` | none | T-kwwJ82 (seeds the file with `VerifiedIdentity` only), then T-XchniS (everything else) |
 | L3 | `auth/local_provider.py` | `LocalPasswordProvider`: login side (`authenticate`, re-auth, password change, logout everywhere, `revalidate`, `check_ready`) | none | T-XchniS |
 | L3 | `auth/totp_service.py` | `LocalTotpService`: second factor (verify, enroll begin/confirm, disable, regenerate) | none | T-yfrfxv |
 | L3 | `auth/runtime.py` | `Realm` (stable id; port for the cookie), `AuthRuntime`, `build_auth_runtime(..., provider=)`, `runtime_of(app)`, `audit_log_for(request)` (L3, because it needs `runtime_of`; re-exported from `auth/__init__.py` lazily) | none | T-XchniS |
@@ -1378,7 +1515,9 @@ Layers L0–L4 are enforced by an import test (§11.1 R4). "Task" names the impl
 | L4 | `auth/http/origin.py` | pure `origin_matches_host()` | none (lives in http) | T-QJ1vyQ |
 | L4 | `auth/http/responses.py` | byte-exact `Set-Cookie` builders and the error-envelope builder, shared by middleware and routes | none | T-G7qByZ |
 | L4 | `auth/http/middleware.py` | `AuthMiddleware` (pure ASGI, policy-table classification) | starlette | T-G7qByZ, T-QJ1vyQ |
-| L4 | `auth/http/routes.py` | `install_auth_routes` (flat), core / password / second-factor route builders, `register_route_builder`, `register_hub_auth_routes`, `auth_error_handler` | fastapi | T-rpKCjP, T-KQ6ZrY, T-KOv2qD |
+| L4 | `auth/http/routes.py` | `install_auth_routes` (flat), the list-valued `register_route_builder` registry, core + local-password route builder, `client_info`, `user_payload`, `rotate`, `auth_error_handler` | fastapi | T-G7qByZ (minimal), then T-rpKCjP |
+| L4 | `auth/http/routes_second_factor.py` (v2.1) | `add_totp_routes` (E3–E7), registered with `register_route_builder(LOCAL_PROVIDER_ID, …)` | fastapi | created as a registered no-op stub by T-rpKCjP; owned by T-KQ6ZrY |
+| L4 | `auth/http/hub_routes.py` (v2.1) | `register_hub_auth_routes` (hub index, `/login`, `/auth-assets/{name}`) | fastapi | T-KOv2qD |
 | L4 | `auth/http/hub_page.py` | hub login HTML, signed-in bar, package-asset reader | none | T-KOv2qD |
 | L4 | `auth/cli.py` | the `ao auth` Typer app (heavy imports inside command bodies) | typer | T-j9dfsw |
 | asset | `auth/assets/hub-auth.js` / `.css` | hub login page script (built) and stylesheet | — | T-R7JhTL |
@@ -1435,8 +1574,9 @@ requires the matching proof header.
 2. Suppose dashboard A's token is copied under dashboard B's cookie name. B finds nothing in its own
    table → 401. The tables are per-process, and tokens are 256-bit.
 3. A restarted server has an empty table, so old cookies get 401 and are cleared.
-4. A harvested cookie **without** its proof gets 401 on every non-PUBLIC `/api/*` route (D25). The
-   proof lives only in the issuing origin's storage.
+4. A harvested cookie **without** its proof gets 401 on every non-PUBLIC route except the hub index
+   (D25; v2.1 also covers non-`/api` routes), and yields no principal and no idle slide on PUBLIC
+   routes. The proof lives only in the issuing origin's storage.
 5. Records carry `realm`, `store_id` and `user_id` for the handoff and SSO seams (§10.7).
 
 **Remaining UX cost:** **each realm needs its own login**. With TOTP enrolled, each also needs a
@@ -1464,13 +1604,15 @@ The hub-run handoff follow-up removes this cost.
    then Security); `install_auth_routes` (flat, **before** `_mount_frontend`); `create_app_from_env`
    via `prepare_auth`. **No decorator edits:** policies come from the table.
 2. **`service/hub.py`:** `build_hub_app(..., auth=)`, with lazy imports. When auth is on, the hub
-   index is registered by `register_hub_auth_routes`.
+   index is registered by `register_hub_auth_routes` (`auth/http/hub_routes.py`) and the app is
+   built with `redoc_url=None, swagger_ui_oauth2_redirect_url=None`.
 3. **`service/cli.py`:** `run` uses `prepare_auth` before `supervisor.start()`; `list`/`status`
    handle a 401.
 4. **`service/supervisor.py`:** `child_env`; exit `EXIT_CONFIG` is terminal.
 5. **`service/systemd.py`:** `RestartPreventExitStatus={EXIT_CONFIG}`.
 6. **`cli.py`:** `ao auth` registration; `ao ui` flags plus `prepare_auth`.
-7. **`ui/files.py` + `ui/service.py`:** denied paths.
+7. **`ui/files.py` + `ui/service.py`:** a generic `denied_paths` mechanism (T-Hd4wQ2, landed
+   early so the approvals epic can express its own denial through it; §16 cross-epic rows).
 8. **Shared modules:** `errors.py` (+`EXIT_CONFIG`), `xdg.py` (+`resolve_config_dir`), new
    `fsutil.py`.
 9. **`tests/conftest.py`:** the hermetic auth environment.
@@ -1487,7 +1629,7 @@ Exact edits are in §16. The caller matrix is in §15.
 | OIDC / LDAP / trusted-header providers | `AuthProvider` ABC + `VerifiedIdentity` + `register_route_builder` + `build_auth_runtime(provider=)`. The **redirect-shaped** seam test proves the session seam (D11). AC-10 composes a test app with its own policy table and captures the proof. | A provider module plus a route builder, **plus two follow-up seams (OQ-10):** (1) **provider-contributed PUBLIC policy entries** (today the per-app tables are static, so a real provider needs `create_app(..., extra_policies=...)` or builder-returned entries); (2) a **proof handoff for redirect flows** (the callback redirects to `/#auth=<one-time ticket>`; the SPA exchanges the single-use, 60 s, session-bound ticket for `session_proof`; a cookie-only proof endpoint would defeat D25). The OIDC callback is a cross-site top-level GET. Its state and nonce must live server-side or in a separate `SameSite=Lax` state cookie, because the session cookie stays Strict. Sessions, middleware and principal are untouched. |
 | WebAuthn / passkeys | `SessionState.PARTIAL_SECOND_FACTOR` plus `second_factors[]` on the wire (add `"webauthn"`) | A second-factor service and routes. **Constraint:** WebAuthn rejects IP-literal origins, so a canonical hostname (`localhost` or `*.localhost`) and a configurable hub link host are needed first. |
 | Store-scoped SSO (second choice) | `SessionStore` ABC (every mutation ends in `put()`); records carry `realm` and `store_id`; the single `Realm.cookie_name()` | A `FileSessionStore` with locking and rate-limited activity writes, a cookie naming switch, and per-origin proof binding |
-| RBAC | `Principal.roles` (tuple) plus the per-app policy tables | Role bindings plus per-route role requirements in the tables; the reserved `forbidden` error code |
+| RBAC | `Principal.roles` (`list[str]`, fresh per request) plus the per-app policy tables | Role bindings plus per-route role requirements in the tables; the reserved `forbidden` error code. **Any role change MUST bump `credential_epoch`** (roles are frozen into sessions at issue) |
 | API tokens | `RoutePolicy` + `AuthMiddleware` step order | A token lookup before the cookie lookup, with its own Origin and proof rule for token-authenticated requests |
 
 **Core vs edge.**
@@ -1515,7 +1657,8 @@ src/agent_orchestrator/
     L1  passwords.py  totp.py  recovery.py  policy.py  paths.py
     L2  store.py  lockouts.py  audit.py  scrub.py  settings.py
     L3  sessions.py  throttle.py  guard.py  provider.py  local_provider.py  totp_service.py  runtime.py  launch.py
-    L4  http/__init__.py  http/origin.py  http/responses.py  http/middleware.py  http/routes.py  http/hub_page.py
+    L4  http/__init__.py  http/origin.py  http/responses.py  http/middleware.py  http/routes.py
+        http/routes_second_factor.py (v2.1)  http/hub_routes.py (v2.1)  http/hub_page.py
     L4  cli.py
     assets/hub-auth.js  assets/hub-auth.css
 ```
@@ -1523,11 +1666,19 @@ src/agent_orchestrator/
 **Rules:**
 
 - **R1 — framework boundary.**
-  - Only `auth/http/middleware.py` and `auth/http/routes.py` import `fastapi`/`starlette`, and they
-    do so at module scope.
+  - Only `auth/http/middleware.py` and the route modules `auth/http/routes.py`,
+    `auth/http/routes_second_factor.py` and `auth/http/hub_routes.py` import `fastapi`/`starlette`,
+    and they do so at module scope.
   - `http/origin.py`, `http/responses.py` and `http/hub_page.py` are pure (stdlib only), even
-    though they live in `http/`.
+    though they live in `http/`. `http/__init__.py` stays empty, so importing a pure http module
+    never pulls in fastapi.
   - Every module outside `auth/http/` MUST import without fastapi, starlette and uvicorn.
+  - **R1a — handler annotations (v2.1, design-review minor 6).** In `http/routes*.py` and
+    `http/hub_routes.py`, every name used in a **route-handler parameter annotation** (`Request`,
+    `Response`, …) MUST be imported at module scope, never only under `if TYPE_CHECKING:`. The repo
+    uses `from __future__ import annotations`, so FastAPI resolves handler annotations at runtime;
+    a TYPE_CHECKING-only name makes it treat `request` as a query parameter and answer 422 (the same
+    trap as developer finding D-2). An AST test enforces this (T-rpKCjP).
 - **R2 — dependency direction.**
   - `ui` and `service` → `auth`. `auth` never imports `ui.app`, `ui.service` or `service.*`.
   - One exception: `auth/http/middleware.py` imports the **constant** `MUTATING_METHODS` from
@@ -1624,8 +1775,8 @@ SYSTEM_ENTROPY: Entropy  # secrets.token_bytes
 ```
 
 **Test doubles** (`FakeClock`, `SeededEntropy`, `FastFakeHasher`, `TEST_PARAMS`, `run_async`,
-`make_client`, `same_origin_headers`) live in `tests/auth/helpers.py`. They **never** ship in the
-wheel (reviewer finding R-12).
+`make_client`, `same_origin_headers`) live in the `tests/auth/helpers/` package, one module per
+owning task (§20.2, v2.1). They **never** ship in the wheel (reviewer finding R-12).
 
 **Edge cases:**
 - An `AuthError` built with a caller-supplied value in `detail`. Forbidden: the scrub sweep (AC-24)
@@ -1690,6 +1841,12 @@ class AuthSettings:
     sources: Mapping[str, str]              # field -> "cli" | "env:<VAR>" | "config:<path>" | "default"
     config_path: Path | None
     warnings: tuple[str, ...]               # non-fatal findings to print at startup
+    config_risks: frozenset[ConfigRisk]     # v2.1 (security M3): see step 5 below; enforced by prepare_auth,
+                                            # reported by `ao auth status`; resolve_auth_settings never raises for them
+
+class ConfigRisk(StrEnum):                  # v2.1, in settings.py
+    DISABLED_BY_CONFIG = "disabled_by_config"            # enabled=False from config only, accounts > 0 or unknown
+    TOTP_DOWNGRADED_BY_CONFIG = "totp_downgraded_by_config"  # enabled, totp < required from config only, accounts > 0 or unknown
     # v2: the launch adapters (uvicorn kwargs, child env, denied paths) moved to auth/launch.py (§11.20),
     # so AuthSettings is pure data (reviewer finding R-3).
 
@@ -1801,7 +1958,20 @@ FUNCTION resolve_auth_settings(cli, env, workspace_root, count_users):
                             EXCEPT ValueError: RAISE AuthConfigError(f"trusted_proxies entry {p!r:.64} is not an IP address (CIDR ranges are not supported yet)")
   issuer = value_of("totp_issuer") OR f"{DEFAULT_TOTP_ISSUER_PREFIX}{short_hostname()}"
   IF ":" in issuer OR not issuer.isprintable(): RAISE AuthConfigError("totp_issuer must be printable and must not contain ':'")
-  RETURN AuthSettings(..., idle=minutes*60, absolute=hours*3600, ...)
+
+  # 5. v2.1 — config-only weakening while accounts exist (security M3). Recorded, never raised here:
+  #    `ao auth` must keep working; prepare_auth (§11.20) enforces.
+  risks = set()
+  weak_enabled = source_of("enabled").startswith("config:") AND value_of("enabled") IS False
+  weak_totp = (source_of("totp").startswith("config:") AND value_of("totp") != REQUIRED AND value_of("enabled") IS True)
+  IF weak_enabled OR weak_totp:
+     n = count_users(store_dir)                    # lazy: ONLY in these two cases and the UNPARSEABLE branch
+     IF n IS None OR n > 0:
+        IF weak_enabled: risks.add(DISABLED_BY_CONFIG)
+        IF weak_totp:    risks.add(TOTP_DOWNGRADED_BY_CONFIG);
+                         warnings += f"totp={value_of('totp')} comes only from {cfg_path}; a repository change can lower it. "
+                                     f"Pin it with AO_UI_AUTH_TOTP or --auth-totp."
+  RETURN AuthSettings(..., idle=minutes*60, absolute=hours*3600, config_risks=frozenset(risks), ...)
 ```
 
 #### 11.3.3 `load_auth_block` pseudocode
@@ -1820,7 +1990,7 @@ EXCEPT ValidationError AS e:
    # NEVER include err["input"] — keeps messages bounded and value-free
 ```
 
-#### 11.3.4 Fail-closed decision table (`ao ui`; the hub uses rows 1–2 and 6–9)
+#### 11.3.4 Fail-closed decision table (`ao ui`; the hub uses rows 1–2, 6–9 and 13; rows 14–15 need a workspace layer)
 
 | # | Situation | `enabled` decided by CLI/env? | Outcome |
 |---|---|---|---|
@@ -1832,11 +2002,13 @@ EXCEPT ValidationError AS e:
 | 6 | Enabled; store dir or `users.json` missing; or zero users | — | **Refuse** (78) with the bootstrap command (§11.15.3) |
 | 7 | Enabled; dir/file not owned by the euid, dir group/other-writable, or file group/other-accessible | — | **Refuse** (78) with the `chmod` fix |
 | 8 | Enabled; `users.json` corrupt or with an unknown `schema_version` | — | **Refuse** (78) |
-| 9 | Disabled; store has users | — | Start, and print `Note: dashboard authentication is disabled (ui.auth.enabled=false from <source>) although <n> account(s) exist in <store>.` |
+| 9 | Disabled **by default, CLI or env**; store has users | — | Start, and print `Note: dashboard authentication is disabled (ui.auth.enabled=false from <source>) although <n> account(s) exist in <store>.` (v2.1: a config-only disable is row 14) |
 | 10 | Config-sourced `store_dir` is relative or inside the workspace | — | **Refuse** whenever the block is used (see pseudocode) |
 | 11 | `totp: off` while enrolled users exist | — | Start, and warn `totp=off only disables new enrollment; <n> enrolled user(s) will still be challenged` |
 | 12 | **(v2)** A workspace `ui.auth` value **loosens** a default, or sets `trusted_proxies` | — | **Refuse** (78), naming the key and the env/CLI alternative |
-| 13 | **(v2)** Enabled; the parent of the store or state directory is group/other-writable (and not root-owned with the sticky bit) | — | **Refuse** (78) with the fix |
+| 13 | **(v2)** Enabled; the parent of the store or state directory is other-writable, or group-writable and owned by another user (and not root-owned with the sticky bit) | — | **Refuse** (78) with the fix. **(v2.1)** Group-writable but owned by the euid → start with a warning naming the `chmod g-w` fix |
+| 14 | **(v2.1, security M3)** `enabled: false` comes **only** from the workspace config (CLI and env do not set it), and the store has ≥ 1 account **or an unknown count** | no | **Refuse** (78): `ui.auth.enabled=false in <config> while <n> account(s) exist in <store>; refusing to start an unauthenticated dashboard. To disable authentication on purpose, pass --no-auth or set AO_UI_AUTH=0.` Audit `auth.startup.disabled_by_config` (best effort). |
+| 15 | **(v2.1, security M3)** Enabled; `totp` below `required` comes **only** from the workspace config; the store has ≥ 1 account or an unknown count | — | Start, with the warning of step 5, audit `auth.startup.totp_downgraded_by_config`, and an `ao auth status` flag |
 
 #### 11.3.5 Launch adapters
 
@@ -1849,7 +2021,9 @@ Their rules are unchanged from v1:
   - `{"proxy_headers": False}` when on without trusted proxies;
   - `{"proxy_headers": True, "forwarded_allow_ips": "<csv>"}` when trusted proxies are set.
 - **`denied_paths`:** the XDG default store and state directories, `$AO_AUTH_DIR` and
-  `$AO_AUTH_STATE_DIR` when set, and the effective store and state directories.
+  `$AO_AUTH_STATE_DIR` when set, the effective store and state directories, and (v2.1, security L7)
+  the service environment file `<home>/.config/ao/service.env` (plus
+  `$XDG_CONFIG_HOME/ao/service.env` when `XDG_CONFIG_HOME` is set).
 
 **Subtasks:**
 - the `UIAuthConfig` model and the YAML-`off` validator;
@@ -1860,7 +2034,9 @@ Their rules are unchanged from v1:
 - the pure `decide()` and the tighten-only rules;
 - the `count_users` seam wiring. `count_store_users` itself lives in `store.py` (T-8NQP8J). It
   returns 0 when `users.json` is missing, the count when readable, and `None` when the file exists
-  but is unreadable or corrupt (the fail-closed probe of §11.3.1).
+  but is unreadable or corrupt (the fail-closed probe of §11.3.1). **v2.1:** it is called only in
+  the UNPARSEABLE branch and in step 5's two config-risk cases;
+- **v2.1:** `ConfigRisk` detection (step 5, rows 14–15).
 
 **Edge cases:**
 - YAML `totp: off` (parsed as boolean False) maps to `off`; `totp: on` (True) is an error.
@@ -1873,15 +2049,24 @@ Their rules are unchanged from v1:
   config-sourced path is refused). A warning is issued and the file browser denies the store.
 - A non-UTF-8 config: treated as `UNPARSEABLE`.
 - A config file outside the git root: `find_project_config` semantics are unchanged.
+- **(v2.1)** Config `enabled: false` with **zero** accounts: no risk is recorded; the dashboard runs
+  unauthenticated as today. With `AO_UI_AUTH=0` or `--no-auth` and accounts: row 2/9 (start with a
+  note), never row 14.
+- **(v2.1)** A config `env:` block cannot smuggle `AO_UI_AUTH=0` in through the env layer:
+  `project_config.apply_project_config_env` is never called on the `ao ui` / `ao service run`
+  paths (verified, `cli.py:142` is its only caller). AC-45 pins this with a test.
 
 ### 11.4 `paths.py` (L1) and the file-browser denial
 
 ```python
 AO_AUTH_DIR_ENV = "AO_AUTH_DIR"; AO_AUTH_STATE_DIR_ENV = "AO_AUTH_STATE_DIR"
-def xdg_default_store_dir(env: Mapping[str, str] | None = None) -> Path   # xdg.resolve_config_dir(None, "ao/auth") — NOT AO_AUTH_DIR
-def xdg_default_state_dir(env: Mapping[str, str] | None = None) -> Path   # xdg.resolve_state_dir(..., "ao/auth", "ao/auth") — NOT AO_AUTH_STATE_DIR
-def default_denied_paths(env: Mapping[str, str] | None = None) -> tuple[Path, ...]
-    # resolved, de-duplicated: {xdg store, xdg state, $AO_AUTH_DIR if set, $AO_AUTH_STATE_DIR if set}
+def xdg_default_store_dir(env: Mapping[str, str] | None = None) -> Path   # xdg.resolve_config_dir(None, "ao/auth", "ao/auth", environ=env) — NOT AO_AUTH_DIR
+def xdg_default_state_dir(env: Mapping[str, str] | None = None) -> Path   # xdg.resolve_state_dir(None, "ao/auth", "ao/auth", environ=env) — NOT AO_AUTH_STATE_DIR
+def default_denied_paths(env: Mapping[str, str] | None = None) -> tuple[Path, ...]     # appended by T-Hd4wQ2 (v2.1)
+    # resolved, de-duplicated: {xdg store, xdg state, $AO_AUTH_DIR if set, $AO_AUTH_STATE_DIR if set,
+    #                           <home>/.config/ao/service.env, $XDG_CONFIG_HOME/ao/service.env if set}   (service.env: v2.1, security L7)
+def entry_is_denied(parent_resolved: Path, entry: os.DirEntry, denied: Sequence[Path]) -> bool        # T-Hd4wQ2
+    # resolves ONLY symlink entries; otherwise parent_resolved / entry.name (reviewer R-12)
 @dataclass(frozen=True)
 class StorePaths:
     store_dir: Path; state_dir: Path
@@ -1894,29 +2079,46 @@ class StorePaths:
     @classmethod
     def at(cls, store_dir: Path, state_dir: Path) -> StorePaths
 def is_within(path: Path, root: Path) -> bool   # both resolved; os.path.normcase on the strings; path == root or root in path.parents
-def check_private_paths(store_dir: Path, users_file: Path) -> None
+def check_private_paths(store_dir: Path, users_file: Path) -> list[str]
     # fsutil.ensure_private_dir(store_dir, create=False, fix=False) + fsutil.check_private_file(users_file, fix=False);
-    # maps the neutral fsutil.UnsafePathError to auth's UnsafePermissionsError (keeps fsutil free of auth imports)
-def check_state_dir(state_dir: Path) -> None
-    # fsutil.ensure_private_dir(state_dir, create=True, fix=False); UnsafePathError -> UnsafePermissionsError
+    # maps the neutral fsutil.UnsafePathError to auth's UnsafePermissionsError (keeps fsutil free of auth imports);
+    # v2.1: returns the non-fatal parent-directory warnings (L6)
+def check_state_dir(state_dir: Path) -> list[str]
+    # fsutil.ensure_private_dir(state_dir, create=True, fix=False); UnsafePathError -> UnsafePermissionsError; warnings returned
 ```
 
-**`xdg.py` (shared, additive):** add
-`resolve_config_dir(override_env: str | None, subpath: str, *, env: Mapping[str, str] | None = None) -> Path`
-with the precedence `$<override_env>` > `$XDG_CONFIG_HOME/<subpath>` > `~/.config/<subpath>`. It is
-the twin of the existing `resolve_state_dir`. `resolve_state_dir` gains the same optional
-keyword-only `env` mapping and accepts `override_env=None`. Both are additive: existing callers
-are unchanged, and `env=None` means `os.environ`. `service/paths.py` and `systemd.py` keep their own copies; migrating
-them is out of scope (reviewer finding R-8: no churn in unrelated files).
+**`xdg.py` (shared, additive; signature aligned with the approvals epic in v2.1, design-review M1):**
+add
 
-**File-browser denial** (the touchpoint in `ui/files.py` and `ui/service.py`):
+```python
+def resolve_config_dir(override_env: str | None, xdg_subdir: str, default_subdir: str, *,
+                       environ: Mapping[str, str] | None = None, home: Path | None = None) -> Path
+    # $<override_env> (exact directory; skipped when override_env is None)
+    #   > $XDG_CONFIG_HOME/<xdg_subdir> > <home>/.config/<default_subdir>
+    # environ=None -> os.environ (read at call time); home=None -> Path.home()
+```
+
+It has the same three-positional shape as the existing `resolve_state_dir(override_env, xdg_subdir,
+default_subdir)` and as the approvals epic's `T-drPIif` definition, so **one** implementation serves
+both epics: auth passes `home=None`; approvals passes its `pwd` home. `resolve_state_dir` gains the
+same optional keyword-only `environ` and `home` and accepts `override_env=None`. Both changes are
+additive: existing callers are unchanged. `service/paths.py` and `systemd.py` keep their own copies;
+migrating them is out of scope (reviewer finding R-8: no churn in unrelated files). Owner and merge
+order across the two epics: §16 cross-epic rows.
+
+**File-browser denial** (the touchpoint in `ui/files.py` and `ui/service.py`; owned by T-Hd4wQ2 in
+v2.1, which lands it early in S1 as a **generic, epic-neutral `denied_paths` mechanism**: the
+approvals epic expresses its approvals-tree denial through the same helper instead of adding a
+second check, §16 cross-epic rows):
 
 ```
 FileBrowser gains:  denied_paths: list[str] = field(default_factory=list)   # resolved in __post_init__
 FileBrowser.resolve(root_name, rel_path):   (existing body unchanged; AFTER `resolved = target.resolve()`
                                               and AFTER the existing containment check)
-    IF any(is_within(resolved, d) FOR d IN self._denied):
+    IF self._is_denied(resolved):                                            # the ONE deny helper
         RAISE PathNotAllowedError(f"path is not browsable: {rel_path}")     # generic; never says "auth store"
+FileBrowser._is_denied(resolved) -> bool:   any(is_within(resolved, d) FOR d IN self._denied)
+                                            # the approvals epic adds its predicate HERE (one helper), never a second check
 FileBrowser.list_dir(...): omit an entry when is_within(entry_path, d) for any denied d. Only SYMLINK entries need
                            Path.resolve() (dirent.is_symlink()); for the rest, the already-resolved parent + name suffices
                            (reviewer finding R-12: no per-entry resolve cost)
@@ -1933,6 +2135,8 @@ tests too. HTML preview inlining goes through `resolve()`.
 - **Listing the store's parent:** the entry is omitted.
 - **Case-insensitive filesystems:** handled by `normcase`.
 - **A denied directory that does not exist yet:** still denied by path.
+- **A denied file** (`service.env`, v2.1): `is_within(path, file)` is true only for the file itself,
+  so it is hidden from listings and refused on read.
 
 ### 11.5 `agent_orchestrator/fsutil.py` (shared, NEW, neutral) — file primitives
 
@@ -1957,19 +2161,38 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     # on BaseException: best-effort unlink(tmp); RAISE
 def remove_stale_temp_files(path: Path) -> int   # unlink ".{name}.*.tmp" siblings; CALL ONLY WHILE HOLDING THE WRITER LOCK
 def ensure_private_dir(path: Path, *, create: bool, fix: bool) -> list[str]
-    # create: mkdir(parents=True), then chmod 0o700 (umask-proof)
-    # verify path: lstat -> is_dir and not symlink; st_uid == geteuid(); mode & 0o077 == 0 (fix -> chmod 0700 + notice)
-    # verify PARENT (dev-security finding #12): not group/other-writable, UNLESS owned by root with the sticky bit
-    #   -> else RAISE UnsafePathError naming the exact chmod   (a neutral OSError subclass; auth maps it)
+    # create (v2.1, security M6): only the LAST component is created by this call, with
+    #   os.mkdir(path, mode=0o700); missing intermediate parents are created with os.mkdir(p, mode=0o700) too
+    #   (never Path.mkdir(parents=True), whose parents follow the umask). FileExistsError -> verify as below.
+    # open + verify: fd = os.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW); st = os.fstat(fd)
+    #   st_uid == geteuid(); mode & 0o077 == 0, else: fix -> os.fchmod(fd, 0o700) + notice   (fd-based: no symlink race)
+    #                                                      no fix -> RAISE UnsafePathError naming `chmod 700 <path>`
+    #   a newly created directory is also os.fchmod(fd, 0o700) once (umask-proof); close(fd) always
+    # verify PARENT (dev-security #12; v2.1 security L6), using os.stat of the RESOLVED parent (a symlinked
+    #   ~/.config is judged by its target):
+    #   other-writable                                   -> RAISE UnsafePathError (exact chmod in the message)
+    #   group-writable, owner != euid, not (root + sticky) -> RAISE UnsafePathError
+    #   group-writable, owner == euid                    -> return a WARNING notice (umask-002 hosts; A-18)
+    #   root-owned with the sticky bit                   -> accepted
 def check_private_file(path: Path, *, fix: bool) -> list[str]
-    # lstat: regular file, NOT a symlink; owner == euid; mode & 0o077 == 0 (fix -> chmod 0600 + notice)
+    # lstat: regular file, NOT a symlink; owner == euid; mode & 0o077 == 0
+    # fix -> fd = os.open(path, O_RDONLY | O_NOFOLLOW); os.fchmod(fd, 0o600) + notice (fd-based, v2.1)
 ```
 
 **Who may fix permissions:**
 - The **server** calls these with `create=False, fix=False` for the credential store, and any
   problem means refusing to start (S13). It may **create** the state directory (0700, parent
-  checked) with `create=True, fix=False`, but it never fixes permissions.
-- **Mutating CLI commands** use `create=True, fix=True` and print the notices.
+  checked) with `create=True, fix=False`, but it never fixes permissions. Parent warnings (L6) are
+  added to the startup warnings.
+- **Mutating CLI commands** use `create=True, fix=True` and print the notices, **except** when the
+  store directory is **config-sourced** (v2.1, security M6: a cloned repository chose that path):
+  - the store directory must already exist and pass the checks with `create=False, fix=False`;
+    otherwise exit 78 with "ui.auth.store_dir from <config> must already exist and be private
+    (0700, owned by you); create it yourself, or pass --auth-dir explicitly";
+  - the state directory `<store_dir>/state` may be created (0700) **inside** that verified
+    directory, but nothing is ever chmod-ed;
+  - an explicit `--auth-dir` (CLI) or `AO_AUTH_DIR` (env) restores the normal create/fix behaviour.
+- Read-only CLI commands (`list-users`, `status`) use `fix=False` and only report.
 
 **Edge cases:**
 - **Stale temp files** (old hashes and seeds) are removed by the next writer under the lock
@@ -1989,7 +2212,7 @@ class ScryptParams:
     def n(self) -> int: return 1 << self.log2_n
     def maxmem(self) -> int: return max(SCRYPT_MAXMEM_BYTES, 2 * 128 * self.n * self.r)
 CURRENT_PARAMS = ScryptParams(SCRYPT_LOG2_N, SCRYPT_R, SCRYPT_P)
-# TEST_PARAMS = ScryptParams(10, 8, 1) lives in tests/auth/helpers.py (~1 ms); never shipped (reviewer R-12)
+# TEST_PARAMS = ScryptParams(10, 8, 1) lives in tests/auth/helpers/crypto.py (~1 ms); never shipped (reviewer R-12)
 
 def normalize_password(raw: str) -> str       # unicodedata.normalize("NFKC", raw) — no strip, no case change
 @dataclass(frozen=True)
@@ -2293,6 +2516,10 @@ class SessionManager:
     def destroy(self, record: SessionRecord) -> None
     def destroy_user_sessions(self, user_id: str, *, except_session_id: str | None = None) -> int   # this realm only
     def principal_for(self, record: SessionRecord) -> Principal   # the ONLY Principal builder (reviewer finding R-1)
+        # v2.1: the ONLY tuple -> list converter. Builds Principal(record.username, record.auth_method,
+        # list(record.roles), user_id=..., realm=..., session_id=..., amr=record.amr, auth_time=record.auth_time,
+        # provider=record.provider) with a FRESH list on every call; never passes any stored list object through.
+        # Raises ValueError for a non-FULL record.
     def times(self, record: SessionRecord) -> SessionTimes         # wall-clock projections for /status and keepalive
 ```
 
@@ -2344,6 +2571,9 @@ amr_for(auth_method, second_factor): "password" -> ("pwd",); totp -> ("pwd", "ot
   finding R-7).
 - **`get()` returns a copy.** Callers must mutate through `SessionManager` methods, which end in
   `put()`. This keeps a future file-backed store correct.
+- **`roles` stays a tuple in the record** (v2.1). `dataclasses.replace` is a shallow copy, so a list
+  would be shared between the stored record and every copy. Only `principal_for` produces a list,
+  freshly, for one request.
 ### 11.11 `lockouts.py` (L2), `throttle.py` (L3) and `guard.py` (L3)
 
 **`lockouts.py`.** `LockoutState` sits next to its policy, which breaks the v1 store↔throttle cycle
@@ -2354,8 +2584,9 @@ class LockoutState(BaseModel):  model_config = ConfigDict(extra="allow", hide_in
     failures: int = 0; last_failure_at: str | None = None; locked_until: str | None = None
 class LockoutFile(BaseModel):   model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
     schema_version: int = 1
+    name_key_hex: str | None = Field(None, repr=False)   # v2.1 (security L1): 32 random bytes, hex; per store
     accounts: dict[str, LockoutState] = {}      # key = user_id
-    phantoms: dict[str, LockoutState] = {}      # key = sha256(normalized unknown username) hex; cap PHANTOM_LOCKOUT_MAX_ENTRIES
+    phantoms: dict[str, LockoutState] = {}      # key = name_digest(normalized unknown username), 64 hex; cap PHANTOM_LOCKOUT_MAX_ENTRIES
 
 @dataclass(frozen=True)
 class LockoutPolicy:                            # pure maths
@@ -2371,14 +2602,27 @@ class LockoutKey:                               # exactly one of the two
     user_id: str | None = None; phantom: str | None = None
 
 class LockoutStore:                             # same snapshot/mutate pattern as UserStore (fsutil.FileLock + atomic write)
-    def __init__(self, paths: StorePaths, *, clock: Clock, lock_timeout: float = STORE_LOCK_TIMEOUT_SECONDS) -> None
+    def __init__(self, paths: StorePaths, *, clock: Clock, entropy: Entropy = SYSTEM_ENTROPY,   # entropy: v2.1 (name key)
+                 lock_timeout: float = STORE_LOCK_TIMEOUT_SECONDS) -> None
     def state(self, key: LockoutKey) -> LockoutState                        # cached read; missing -> LockoutState()
     def record_failure(self, key: LockoutKey, policy: LockoutPolicy) -> LockoutState    # locked RMW; phantom eviction
     def reset(self, user_id: str, *, repair_corrupt: bool = False) -> None  # locked; no write when already clear;
                                                                             # repair_corrupt=True (ao auth unlock) rewrites a corrupt file
     def forget(self, user_id: str) -> None                                  # on remove-user
     def check_readable(self) -> None                                        # parse lockouts.json if present; StoreCorruptError if corrupt
+    # v2.1 (security L1) — keyed username digests for phantoms and audit:
+    def ensure_name_key(self) -> None        # locked; creates name_key_hex (LOCKOUT_NAME_KEY_BYTES from Entropy) if absent;
+                                             # called by check_ready() at startup and by mutating CLI commands, so a login
+                                             # attempt never pays an extra write (S6 stays "exactly one lockout write")
+    def name_digest(self, normalized_username: str) -> str
+        # key = cached name_key (missing at runtime -> ensure_name_key(), logged once)
+        # subject = normalized_username IF USERNAME_RE.fullmatch(normalized_username) ELSE INVALID_USERNAME_BUCKET
+        #           (INVALID_USERNAME_BUCKET = "" — never a valid username; every malformed name shares ONE bucket)
+        # RETURN hmac.new(key, subject.encode("utf-8"), hashlib.sha256).hexdigest()       # 64 hex
 ```
+
+- Losing `lockouts.json` (the state directory is "safe to lose", D5) rotates the key. Old phantom
+  entries and old audit `username_hash` values then stop correlating with new ones. Accepted.
 
 **`throttle.py`.** In memory, per process, event-loop confined.
 
@@ -2457,7 +2701,8 @@ ASYNC FUNCTION AttemptGuard.attempt(subject, client, verify, failure_event, rese
         address_throttle.record_failure(client.key)
         AWAIT run_sync(audit.record, AuditEvent(failure_event, FAILURE,
                        username=subject.username IF subject.user_id ELSE None,
-                       username_hash=None IF subject.user_id ELSE short_hash(subject.username),
+                       username_hash=None IF subject.user_id ELSE subject.lockout_key.phantom[:AUDIT_USERNAME_HASH_CHARS],
+                                                   # v2.1: a prefix of the keyed digest (L1), never an unkeyed hash
                        user_id=subject.user_id, realm=realm, client_addr=client.key,
                        details={"reason": result.reason}))
         IF new.failures == lockout_policy.threshold: AWAIT run_sync(audit.record, AuditEvent(AUTH_LOCKOUT, INFO, ...))
@@ -2506,7 +2751,8 @@ class AuditEvent:
     event: str                                          # AuditEventName for auth.*; other namespaces must match AUDIT_EVENT_NAME_RE
     outcome: AuditOutcome
     username: str | None = None                         # ONLY for known accounts
-    username_hash: str | None = None                    # sha256(normalized)[:AUDIT_USERNAME_HASH_CHARS] for unknown names
+    username_hash: str | None = None                    # unknown names only: LockoutStore.name_digest(normalized)[:AUDIT_USERNAME_HASH_CHARS]
+                                                        # (v2.1, keyed HMAC; computed by the caller, never by AuditLog)
     user_id: str | None = None                          # v2: the stable account key (known accounts only)
     realm: str | None = None                            # "hub" | "ui:<workspace_id>" | "cli"
     client_addr: str | None = None                      # canonical client key (§11.11)
@@ -2662,8 +2908,16 @@ HUB_ROUTE_POLICIES: Mapping[RouteKey, RoutePolicy] = {
     **AUTH_ROUTE_POLICIES,
     ("GET", HUB_LOGIN_PATH): PUBLIC, ("GET", HUB_ASSET_ROUTE_PATH): PUBLIC,   # "/login", "/auth-assets/{name}"
 }   # hub "/" and "/api/service/status" are AUTHENTICATED by omission
-def proof_required(policy: RoutePolicy, route_path_is_api: bool) -> bool
-    # D25: True for every non-PUBLIC policy on an /api path; False for PUBLIC and for non-API (navigation) routes
+
+# v2.1 (security M1) — the ONE explicit cookie-only-navigation flag, per app. A route in this set may yield a
+# principal from the cookie alone (a navigation cannot send the proof header). It MUST be a read-only HTML GET
+# outside /api and MUST be AUTHENTICATED in the app's table (AuthMiddleware asserts both at construction).
+DASHBOARD_COOKIE_ONLY_NAVIGATION: frozenset[RouteKey] = frozenset()                   # the SPA shell is PUBLIC
+HUB_COOKIE_ONLY_NAVIGATION: frozenset[RouteKey] = frozenset({("GET", "/")})          # the hub index, nothing else
+
+def proof_required(policy: RoutePolicy, *, cookie_only_navigation: bool) -> bool
+    # D25 + v2.1: True for every non-PUBLIC policy (API or not), unless the route is the flagged cookie-only
+    # navigation; False for PUBLIC. (v2 exempted every non-API route; v2.1 exempts only the flagged one.)
 def policy_allows(policy: RoutePolicy, state: SessionState | None) -> bool    # the table below
 def totp_requirement(policy: TotpPolicy, user_totp_required: bool) -> TotpRequirement
     # PURE, the ONE place for "is TOTP required for this user" (reviewer finding R-4):
@@ -2683,6 +2937,9 @@ def totp_requirement(policy: TotpPolicy, user_totp_required: bool) -> TotpRequir
 - `ui/app.py` needs no decorator edits.
 - A renamed route path falls back to AUTHENTICATED, which is the safe direction.
 - The enumeration test fails on stale entries that match no route.
+- The cookie-only flag is a **separate** per-app set rather than a fifth `RoutePolicy`, so
+  `policy_allows` and the §11.14 4×4 table stay unchanged, and the flag cannot accidentally make a
+  route public.
 
 ### 11.15 `provider.py`, `local_provider.py`, `totp_service.py` (L3)
 
@@ -2692,8 +2949,13 @@ def totp_requirement(policy: TotpPolicy, user_totp_required: bool) -> TotpRequir
 @dataclass(frozen=True)
 class ClientInfo:
     key: str                      # canonical_client_key(peer) (D9)
-    is_loopback: bool             # canonical address is loopback
+    is_loopback: bool             # v2.1 (security M2): peer is loopback AND the Host hostname is in LOOPBACK_HOSTNAMES
+                                  # AND no "forwarded" header and no "x-forwarded-*" header is present
     secure: bool                  # scope["scheme"] == "https"
+    proxy_suspected: bool = False # v2.1: no trusted proxies configured AND a loopback peer sent a forwarding header
+                                  # or a non-loopback Host (D17). Reported in E1 transport; triggers one WARNING per process.
+# With trusted proxies configured, uvicorn has already rewritten scope["client"] and scope["scheme"] from the trusted
+# headers, so is_loopback reflects the real client; proxy_suspected is always False then.
 
 @dataclass(frozen=True)
 class VerifiedIdentity:
@@ -2742,6 +3004,8 @@ class AuthProvider(ABC):          # FastAPI-free; the only seam type (protocols 
 | `auth.user.added`, `auth.user.removed`, `auth.user.unlocked`, `auth.sessions.revoked`, `auth.totp.reset`, `auth.enrollment_token.issued` | CLI |
 | `auth.failure.burst` | `AuditLog` itself (coalescing, §11.12) |
 | `auth.startup.refused` | `prepare_auth` when it raises for exit 78. Best-effort: the state directory may not exist. |
+| `auth.startup.disabled_by_config` (v2.1) | `prepare_auth`, for `ConfigRisk.DISABLED_BY_CONFIG` (row 14), instead of `auth.startup.refused`. Best-effort. |
+| `auth.startup.totp_downgraded_by_config` (v2.1) | `prepare_auth`, for `ConfigRisk.TOTP_DOWNGRADED_BY_CONFIG` (row 15). Best-effort. |
 
 #### 11.15.3 `check_ready()` and `startup_warnings()`
 
@@ -2761,6 +3025,8 @@ FUNCTION check_ready():                                  # LocalPasswordProvider
   TRY lockouts.check_readable()                                     # parses lockouts.json if present
   EXCEPT StoreCorruptError AS e: RAISE AuthNotReadyError(f"lockout state {paths.lockouts_file} is unusable: {e}; "
                                                          "run `ao auth unlock <user>` to rewrite it")
+  lockouts.ensure_name_key()                                         # v2.1 (L1): the phantom/audit HMAC key exists before
+                                                                     # the first login attempt (keeps S6's one-write rule)
 ```
 
 **Bootstrap message** (exact wording; `<…>` are substitutions):
@@ -2783,6 +3049,8 @@ then start again. To run without authentication instead, pass --no-auth (or set 
 - `the user store <dir> is inside the served workspace; it is never served by the dashboard, but
   agent tasks can write there`. This one comes from `resolve_auth_settings` (§11.3), not from the
   provider.
+- **(v2.1, L6)** the `fsutil` parent-directory notices (`<parent> is group-writable; run chmod g-w
+  <parent>`), returned by `check_private_paths` / `check_state_dir`.
 
 #### 11.15.4 `LocalPasswordProvider.authenticate()`
 
@@ -2792,7 +3060,8 @@ ASYNC FUNCTION authenticate(username_raw, password, client) -> VerifiedIdentity:
   snap = snapshot_or_503()                                        # ONE snapshot for this attempt (D10)
   rec = snap.users.get(uname) IF USERNAME_RE.fullmatch(uname) ELSE None
   subject = AttemptSubject(uname, rec.user_id IF rec ELSE None,
-                           LockoutKey(user_id=rec.user_id) IF rec ELSE LockoutKey(phantom=sha256_hex(uname)))
+                           LockoutKey(user_id=rec.user_id) IF rec ELSE LockoutKey(phantom=lockouts.name_digest(uname)))
+                           # v2.1 (L1): keyed digest; malformed names all map to the one INVALID_USERNAME_BUCKET digest
   verified_hash = rec.password_hash IF rec ELSE hasher.dummy_hash
   ASYNC FUNCTION verify_password():                     # NO short-circuit: the scrypt verify ALWAYS runs (S6)
      matched = AWAIT hasher.verify(password, verified_hash)
@@ -2976,6 +3245,7 @@ class AuthRuntime:
     totp: LocalTotpService | None               # None for providers without TOTP
     sessions: SessionManager; address_throttle: AddressThrottle; clock: Clock
     first_insecure_login_warned: bool = False
+    proxy_suspected_warned: bool = False        # v2.1 (security M2): one WARNING per process (D17)
 
 def build_auth_runtime(settings: AuthSettings, realm: Realm, *, clock: Clock = SYSTEM_CLOCK,
                        entropy: Entropy = SYSTEM_ENTROPY, hasher: PasswordHasher | None = None,
@@ -2992,9 +3262,15 @@ def audit_log_for(request: Any) -> AuditLog | None:      # §2.6 seam for the ap
 ```python
 class AuthMiddleware:   # pure ASGI
     def __init__(self, app: ASGIApp, *, runtime: AuthRuntime | None,
-                 policies: Mapping[RouteKey, RoutePolicy]) -> None
+                 policies: Mapping[RouteKey, RoutePolicy],
+                 cookie_only_navigation: frozenset[RouteKey] = frozenset()) -> None
+        # v2.1 (security M1): the per-app COOKIE_ONLY_NAVIGATION set (§11.14). Asserted at construction: every key
+        # is ("GET", <non-/api path>) and is NOT in `policies` (so it is AUTHENTICATED by omission).
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None
 ```
+
+`create_app` passes `cookie_only_navigation=DASHBOARD_COOKIE_ONLY_NAVIGATION` (empty);
+`build_hub_app` passes `HUB_COOKIE_ONLY_NAVIGATION`.
 
 The algorithm is in **§13.3**, and this section uses its numbering:
 - **Preamble:** lifespan pass-through; scope-state initialisation; full pass-through when auth is
@@ -3003,23 +3279,37 @@ The algorithm is in **§13.3**, and this section uses its numbering:
 2. CSRF and Fetch Metadata;
 3. the auth body cap;
 4. cookie read with duplicate rejection, and session lookup;
-5. the **proof check** for proof-required routes;
+5. the **proof check** (`proof_ok`, `cookie_only`, `attested`) and its enforcement for
+   proof-required routes;
 6. tri-state revalidation;
 7. the policy decision;
-8. principal injection;
-9. activity sliding (same-origin or typed navigations only);
+8. principal injection, **only when attested** (v2.1);
+9. activity sliding, **only with the proof**, or for a browser-attested navigation to the flagged
+   cookie-only route (v2.1);
 10. dispatch with header injection (`X-Frame-Options`, `no-store` for API and protected
     responses, cookie clear).
 
 **Split for task sizing:**
 - T-G7qByZ owns the preamble (including websocket deny), steps 1, 4 and 6–10, and `deny()`. It also
-  **computes `proof_ok`** (`sessions.proof_matches`) and sets the `SCOPE_PROOF_OK_KEY` scope key.
-  E1 and E10 in T-rpKCjP, which is on the critical path, depend only on that key.
+  **computes `proof_ok`, `cookie_only` and `attested`** in step 5 and sets the
+  `SCOPE_PROOF_OK_KEY` scope key. E1 and E10 in T-rpKCjP, which is on the critical path, depend
+  only on that key. The v2.1 gating of steps 8 and 9 on `attested` / `proof_ok` is T-G7qByZ's,
+  because it owns those steps.
 - T-QJ1vyQ owns step 2 (`http/origin.py`), step 3 and the **enforcement** half of step 5: for
-  proof-required routes, `proof_ok == False` makes the request anonymous. It plugs into the step
-  skeleton that T-G7qByZ leaves as clearly marked pass-through hooks.
+  proof-required routes, a session that is not attested makes the request anonymous. It plugs into
+  the step skeleton that T-G7qByZ leaves as clearly marked pass-through hooks. It also owns the
+  dashboard part of the cookie-only-principal enumeration (AC-44).
 
-### 11.18 `http/routes.py`, `http/responses.py`, `http/origin.py`, `http/hub_page.py` (L4)
+### 11.18 `http/routes.py`, `http/routes_second_factor.py`, `http/hub_routes.py`, `http/responses.py`, `http/origin.py`, `http/hub_page.py` (L4)
+
+**One file, one owner (v2.1, design-review M2).** v2 had three S3 tasks appending to
+`http/routes.py` in parallel. v2.1 splits it:
+
+| Module | Contents | Owner |
+|---|---|---|
+| `http/routes.py` | `install_auth_routes`, the builder registry, core routes (E1, E9, E10), the local-password builder (E2, E8), shared helpers (`read_json_object`, `require_str`, `client_info`, `user_payload`, `rotate`, `auth_error_handler`, `assert_flat_auth_routes`) | T-G7qByZ (minimal), then T-rpKCjP |
+| `http/routes_second_factor.py` | `add_totp_routes` (E3–E7), registered for `LOCAL_PROVIDER_ID` | created by T-rpKCjP as a registered no-op stub; then owned by T-KQ6ZrY |
+| `http/hub_routes.py` | `register_hub_auth_routes` (hub index, `/login`, `/auth-assets/{name}`) | T-KOv2qD |
 
 ```python
 # http/origin.py (pure)
@@ -3038,20 +3328,33 @@ def error_headers(err: AuthError, realm: Realm, *, www_authenticate: bool) -> li
 
 # http/routes.py (fastapi)
 RouteBuilder = Callable[[FastAPI, AuthRuntime], None]
+ROUTE_BUILDERS: dict[str, list[RouteBuilder]]                                  # v2.1: list-valued
 def register_route_builder(provider_id: str, fn: RouteBuilder) -> None       # callable, not "module:function" (R-5)
+    # v2.1: APPENDS fn to ROUTE_BUILDERS[provider_id]; registering the same fn twice is a no-op. Builders run in
+    # registration order. routes.py registers add_local_password_routes for LOCAL_PROVIDER_ID at import.
+_BUILTIN_ROUTE_MODULES = ("agent_orchestrator.auth.http.routes_second_factor",)   # imported for their registrations
 def install_auth_routes(app: FastAPI, runtime: AuthRuntime | None) -> None
     # app.state.<APP_STATE_AUTH_KEY> = runtime
     # None  -> add_disabled_auth_routes(app)                                    (GET /api/auth/status only)
-    # given -> add_core_auth_routes(app, runtime)                               (status, logout, keepalive)
-    #          ROUTE_BUILDERS[runtime.provider.provider_id](app, runtime)       (login, password; + totp routes if runtime.totp)
+    # given -> FOR m IN _BUILTIN_ROUTE_MODULES: importlib.import_module(m)      (idempotent; registers add_totp_routes)
+    #          add_core_auth_routes(app, runtime)                               (status, logout, keepalive)
+    #          builders = ROUTE_BUILDERS.get(runtime.provider.provider_id) -> none: AuthConfigError("no route builder ...")
+    #          FOR fn IN builders: fn(app, runtime)                             (login, password; then totp routes —
+    #                                                                            add_totp_routes returns at once if runtime.totp is None)
     #          app.add_exception_handler(AuthError, auth_error_handler)
     #          assert_flat_auth_routes(app)
     # FLAT ONLY: app.add_api_route(...). include_router() hides routes from classification (developer D-1).
     # MUST run BEFORE the SPA fallback is registered.
 def assert_flat_auth_routes(app: FastAPI) -> None    # every AUTH_ROUTE_POLICIES key must be a DIRECT member of app.router.routes
+
+# http/routes_second_factor.py (fastapi; v2.1)
+def add_totp_routes(app: FastAPI, runtime: AuthRuntime) -> None              # E3–E7 handlers; no-op if runtime.totp is None
+register_route_builder(LOCAL_PROVIDER_ID, add_totp_routes)                   # at import (imports helpers from routes.py)
+
+# http/hub_routes.py (fastapi; v2.1)
 def register_hub_auth_routes(app: FastAPI, runtime: AuthRuntime, *, status_provider: StatusProvider,
                              render_index: Callable[[dict, Principal | None], str]) -> None
-    # flat: GET / (index; AUTHENTICATED; cookie-only navigation) + GET /login + GET /auth-assets/{name}
+    # flat: GET / (index; AUTHENTICATED; the ONE HUB_COOKIE_ONLY_NAVIGATION route) + GET /login + GET /auth-assets/{name}
     # lives here, not in service/hub.py (developer D-2: Request annotation trap)
 async def auth_error_handler(request: Request, exc: AuthError) -> Response
     # body/headers from http/responses.py; 5xx -> log ERROR once with exc.cause_for_log (reviewer R-10)
@@ -3060,15 +3363,32 @@ async def read_json_object(request: Request, *, allowed: frozenset[str], require
     # empty body -> {} if optional_body (E10 logout) else invalid_request; non-object/unknown key -> invalid_request;
     # catches (ValueError, RecursionError); names keys, never values
 def require_str(data: dict, key: str, *, min_len: int = 0, max_len: int, optional: bool = False) -> str | None
-def client_info(scope: Scope) -> ClientInfo     # canonical key + loopback + secure
+def client_info(scope: Scope, runtime: AuthRuntime) -> ClientInfo
+    # v2.1 (security M2):
+    #   peer = scope["client"][0] or None; key = canonical_client_key(peer)
+    #   peer_loopback = parsed peer is loopback (after the ::ffff: unwrap)
+    #   host = hostname of the Host header (lower-case, brackets and port stripped)
+    #   forwarded = any header named "forwarded" or starting with "x-forwarded-"   (FORWARDING_HEADER_PREFIX)
+    #   is_loopback = peer_loopback AND host IN LOOPBACK_HOSTNAMES AND NOT forwarded
+    #   proxy_suspected = NOT runtime.settings.trusted_proxies AND peer_loopback AND (forwarded OR host NOT IN LOOPBACK_HOSTNAMES)
+    #   IF proxy_suspected AND NOT runtime.proxy_suspected_warned:
+    #       log WARNING "requests from 127.0.0.1 carry proxy headers or a non-loopback Host, but no trusted proxy is
+    #                    configured: treating them as remote. Set AO_UI_AUTH_TRUSTED_PROXIES to the proxy address."
+    #       runtime.proxy_suspected_warned = True
+    #   secure = scope["scheme"] == "https"
 ```
+
+**Annotation rule (R1a, v2.1).** Every handler in `http/routes*.py` and `http/hub_routes.py`
+annotates `request: Request` with `Request` imported at module scope. An AST test
+(`tests/auth/test_routes_annotations.py`, T-rpKCjP) fails if any name used in a handler parameter
+annotation is bound only under `if TYPE_CHECKING:`.
 
 **Handler outline.** Every handler is `async def` and reads the session and `proof_ok` through
 `request.state.<SCOPE_SESSION_KEY>` / `<SCOPE_PROOF_OK_KEY>`, both set by the middleware.
 
 | Handler (path constant) | Policy | Steps |
 |---|---|---|
-| `auth_status` | PUBLIC | `session` and `proof_ok` come from the middleware. Report non-anonymous **only if** `proof_ok`. Build the E1 body. |
+| `auth_status` | PUBLIC | `session` and `proof_ok` come from the middleware. Report non-anonymous **only if** `proof_ok`. Build the E1 body; `transport` = `{secure, client_is_loopback: is_loopback, proxy_suspected}` from `client_info(scope, runtime)` (v2.1). |
 | `auth_login` | PUBLIC | `read_json_object` → `provider.authenticate` → `sessions.issue(identity, identity.next_state, replacing=session IF proof_ok ELSE None)` (D25: a missing proof never destroys anything; an unproven old session simply expires) → for FULL, audit `auth.login.success` (new `session_id`) → E2 body with `session_proof` + cookie |
 | `auth_totp_verify` | PARTIAL_SECOND_FACTOR (+ proof) | FULL → 409. Exactly one of `code`/`recovery_code` → `runtime.totp.verify_second_factor`. On `INVALID_CODE`: `remaining = sessions.record_second_factor_failure(session)` (destroys at 0; clear the cookie then) → re-raise with `attempts_remaining`. On `NOT_AUTHENTICATED`: `sessions.destroy` → re-raise. On success: `issue(FULL, "password+totp", second_factor=method, replacing=session)` → audit success (+ `auth.recovery_code.used`) → E3 |
 | `auth_totp_enroll_begin` | ENROLLMENT (+ proof) | `runtime.totp.begin_enrollment(session, client, current_password=…, enrollment_token=…)` → `sessions.set_pending_secret(session, secret)` → E4 |
@@ -3114,6 +3434,12 @@ startup is unaffected (developer finding D-8).
 - Every command prints the store path as `store: <path>` on its first line.
 - Mutating commands create or tighten the directory and file permissions, and record an audit event
   (`realm="cli"`, `source="cli"`).
+  - **v2.1 (security M6):** when `settings.sources["store_dir"]` starts with `config:`, mutating
+    commands **never create or chmod** the store directory: it must already exist and pass the
+    private checks unchanged (else exit 78 naming the config file and `--auth-dir`). Only the
+    `state` subdirectory may be created inside it. An explicit `--auth-dir` or `AO_AUTH_DIR`
+    restores the normal behaviour (§11.5 "Who may fix permissions").
+  - Mutating commands also call `lockouts.ensure_name_key()` (v2.1, L1).
 - **Passwords and tokens are never accepted through argv or env.**
   - Passwords come from a hidden prompt with confirmation (a mismatch re-prompts, as click does;
     EOF → exit 1), or from `--password-stdin`: the first line, with exactly one trailing `\n` or
@@ -3135,7 +3461,7 @@ startup is unaffected (developer finding D-8).
 | **`enrollment-token USERNAME`** (v2) | Issues and prints a fresh one-time token for **any user who is not enrolled**, replacing any previous token. An enrolled user → exit 1 (hint: `reset-2fa`). If the CLI's resolved settings suggest the token is unnecessary (policy not `required` and the user not `totp_required`) or blocked (policy `off`), it prints a NOTE but still issues the token, because the server may run with a different environment (`service.env`). Audit `auth.enrollment_token.issued`. |
 | `unlock USERNAME` | `lockouts.reset(user_id, repair_corrupt=True)` in the state directory, which also rewrites a corrupt `lockouts.json`. Audit `auth.user.unlocked`. |
 | `revoke-sessions USERNAME` | `bump_epoch` (all realms). Audit `auth.sessions.revoked`. |
-| `status [--json]` | Effective settings, each with its source (`git config --show-origin` style); the store and state directories; permission-check results (including parent directories); user, enrolled, locked and `totp_required` counts; the **count** of pending enrollment tokens; `lockouts.json` health; audit file size; stray `*.tmp` files; server UTC time; warnings. **Never prints secrets or token values.** Exit 78 on an `AuthConfigError`. |
+| `status [--json]` | Effective settings, each with its source (`git config --show-origin` style); the store and state directories; permission-check results (including parent directories); user, enrolled, locked and `totp_required` counts; the **count** of pending enrollment tokens; `lockouts.json` health; audit file size; stray `*.tmp` files; server UTC time; warnings. **(v2.1)** Flags: `disabled_by_config` (the resolved settings carry `ConfigRisk.DISABLED_BY_CONFIG`: "`ao ui` in this workspace will refuse to start (exit 78); use --no-auth / AO_UI_AUTH=0 to disable on purpose") and `totp_downgraded_by_config`; plus the most recent `auth.startup.*` audit events (up to 5). Policy notes (design-review M3): under `required`, "users who are not enrolled need an operator-issued enrollment token (`ao auth enrollment-token <user>`) to finish their first login"; under `off` with enrolled users, "N enrolled user(s) are still asked for a code (enrollment is sticky)". **Never prints secrets or token values.** Exit 78 on an `AuthConfigError`; never exits 78 because of a `ConfigRisk` (it reports them). |
 
 **Edge cases:**
 - **A password passed in argv:** there is no such option. A test asserts that no command has a
@@ -3166,15 +3492,27 @@ def prepare_auth(*, cli: AuthCliOverrides, env: Mapping[str, str], workspace_roo
                  realm_kind: Literal["ui", "hub"], port: int, bind_host: str,
                  clock: Clock = SYSTEM_CLOCK) -> AuthLaunch
     # 1 settings = resolve_auth_settings(...)                     (AuthConfigError propagates)
-    # 2 if enabled: runtime = build_auth_runtime(settings, Realm(realm_kind, port, workspace_root));
-    #               runtime.provider.check_ready()                 (AuthNotReadyError propagates; best-effort audit auth.startup.refused)
-    #               warnings += provider.startup_warnings()
-    #               if bind_host not loopback and not settings.trusted_proxies: warnings += LOUD plain-HTTP warning (D22)
-    #               install_log_redaction()
+    # 1b v2.1 (security M3): IF ConfigRisk.DISABLED_BY_CONFIG IN settings.config_risks:
+    #       best-effort audit auth.startup.disabled_by_config (AuditLog.for_state_dir(settings.state_dir); errors -> DEBUG)
+    #       RAISE AuthConfigError(<row-14 message: names the config file, the account count, --no-auth / AO_UI_AUTH=0>)
+    # 2 if enabled:
+    #     v2.1 (security L4): IF port == 0: RAISE AuthConfigError("--port 0 cannot be used with dashboard authentication: "
+    #                          "the session cookie is named after the listening port; choose a fixed port")
+    #     runtime = build_auth_runtime(settings, Realm(realm_kind, port, workspace_root));
+    #     runtime.provider.check_ready()                 (AuthNotReadyError propagates; best-effort audit auth.startup.refused)
+    #     warnings += provider.startup_warnings()        (includes the v2.1 parent-directory notices, L6)
+    #     IF ConfigRisk.TOTP_DOWNGRADED_BY_CONFIG IN settings.config_risks:
+    #        best-effort audit auth.startup.totp_downgraded_by_config   (the warning text is already in settings.warnings)
+    #     if bind_host not loopback and not settings.trusted_proxies: warnings += LOUD plain-HTTP warning (D22)
+    #     install_log_redaction()
     # 3 else: if bind_host not loopback: warnings += DEPRECATION_NOTICE (D22);
     #         if count_store_users(settings.store_dir) not in (0, None): warnings += "Note: ... account(s) exist ..."
     # 4 compute uvicorn_kwargs, child_env, denied_paths (rules in §11.3.5)
 ```
+
+`--reload` (v2.1, security L3): `ao ui --reload` passes `**launch.uvicorn_kwargs` to its
+`uvicorn.run(...)` call exactly like the non-reload path, so the reloaded server never falls back to
+uvicorn's default `proxy_headers=True` / `FORWARDED_ALLOW_IPS=127.0.0.1` (§16 row 4).
 
 **Call sites** are about 8 lines each:
 - `cli.py::ui_cmd`;
@@ -3199,7 +3537,7 @@ erDiagram
   UserRecord ||--o| TotpEnrollment : totp
   UserRecord ||--o{ RecoveryCodeHash : recovery_codes
   UserRecord ||--o| EnrollmentToken : enrollment_token
-  LockoutFile ||--o{ LockoutState : "accounts{user_id} / phantoms{sha256(name)}"
+  LockoutFile ||--o{ LockoutState : "accounts{user_id} / phantoms{HMAC(name_key, name)}"
   UserRecord ||--o| LockoutState : "by user_id (state dir)"
   SessionRecord }o--|| UserRecord : "user_id + credential_epoch (revalidated per request)"
   AuditEvent }o--o| UserRecord : "user_id/username (known) | username_hash (unknown)"
@@ -3283,8 +3621,9 @@ erDiagram
   `ao`.
 - Readers refuse only when `schema_version > 1` or `required_features` names something unknown. In
   v1 the known set is empty, hence `maxItems: 0`.
-- A future **breaking** v2 runs a pure `migrate_v1_to_v2()` **only** through an explicit
-  `ao auth migrate`, which writes `users.json.v1.bak` first. Never on a login write.
+- A future **breaking** v2 would run a pure `migrate_v1_to_v2()` **only** through an explicit,
+  operator-run migration command that writes `users.json.v1.bak` first; never on a login write.
+  That command is **future work, not part of this epic** (v2.1: the ADR no longer names it).
 - Additive changes need no bump.
 
 **Example user** (illustrative values):
@@ -3310,6 +3649,7 @@ erDiagram
   "required": ["schema_version", "accounts", "phantoms"],
   "properties": {
     "schema_version": {"const": 1},
+    "name_key_hex": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
     "accounts": {"type": "object", "propertyNames": {"pattern": "^[0-9a-f]{32}$"},
                  "additionalProperties": {"$ref": "#/$defs/lockout"}},
     "phantoms": {"type": "object", "maxProperties": 4096, "propertyNames": {"pattern": "^[0-9a-f]{64}$"},
@@ -3323,7 +3663,9 @@ erDiagram
 ```
 
 If `lockouts.json` is corrupt, it is treated as unavailable: logins get 503 `store_unavailable`,
-which fails closed. `ao auth unlock` rewrites it.
+which fails closed. `ao auth unlock` rewrites it (with a fresh `name_key_hex`). `name_key_hex`
+(v2.1, L1) is optional in the schema, so a v2 file without it stays valid; it is added on the next
+startup or CLI mutation.
 
 ### 12.2 Hash string formats
 
@@ -3332,7 +3674,7 @@ which fails closed. `ao auth unlock` rewrites it.
 | Password | `$scrypt$v=1$ln=<log2 N>,r=<r>,p=<p>$<salt>$<dk>` | 16-byte salt, 32-byte dk, standard base64 with no padding. `v=1` = NFKC + UTF-8. Bounds: `10 ≤ ln ≤ 17`, `r ≤ 16`, `p ≤ 16`, `128·N·r ≤ 128 MiB`. |
 | Recovery code / enrollment token | `hash_hex = sha256(salt ‖ normalized_ascii).hexdigest()` | Per-item 16-byte salt. The normalized form is 16 Crockford characters. |
 | Session token / proof | memory only: `sha256(raw 32 bytes)` | Never persisted |
-| Unknown username (phantom key / audit) | `sha256(normalized.encode("utf-8")).hexdigest()` (the audit log keeps the first 16 characters) | Bounded size; no raw attacker strings |
+| Unknown username (phantom key / audit) | **v2.1 (L1):** `HMAC-SHA256(name_key, subject).hexdigest()`, where `name_key` is `lockouts.json`'s per-store random `name_key_hex` and `subject` is the normalized name, or `INVALID_USERNAME_BUCKET` (`""`) for any name failing `USERNAME_RE`. The audit log keeps the first 16 characters. | Bounded size; no raw attacker strings; not brute-forceable offline without the key |
 
 ### 12.3 Session record (in memory)
 
@@ -3389,6 +3731,9 @@ Field rules not expressible in the schema:
 - `auth.user.added`, `auth.user.removed`, `auth.user.unlocked`
 - `auth.sessions.revoked`
 - `auth.startup.refused`
+- `auth.startup.disabled_by_config`, `auth.startup.totp_downgraded_by_config` (v2.1, security M3)
+
+That is **24** events (22 in v2).
 
 Readers MUST tolerate unknown keys and unknown events, because flavors can differ. Other epics use
 their own namespace, such as `approval.*`.
@@ -3422,9 +3767,9 @@ ui:
 
 | Setting | CLI | Env | Config key | Default | Config rule |
 |---|---|---|---|---|---|
-| enabled | `--auth/--no-auth` | `AO_UI_AUTH` | `ui.auth.enabled` | `false` | any |
-| totp | `--auth-totp` | `AO_UI_AUTH_TOTP` | `ui.auth.totp` | `off` | any (every value is ≥ the default) |
-| store dir | `--auth-dir` (also `ao auth *`) | `AO_AUTH_DIR` | `ui.auth.store_dir` | `$XDG_CONFIG_HOME/ao/auth` | absolute, outside the workspace, safe permissions |
+| enabled | `--auth/--no-auth` | `AO_UI_AUTH` | `ui.auth.enabled` | `false` | any; **v2.1:** a config-only `false` while accounts exist → refuse (row 14) |
+| totp | `--auth-totp` | `AO_UI_AUTH_TOTP` | `ui.auth.totp` | `off` | any (every value is ≥ the default); **v2.1:** a config-only value below `required` with auth on and accounts → warning + audit (row 15) |
+| store dir | `--auth-dir` (also `ao auth *`) | `AO_AUTH_DIR` | `ui.auth.store_dir` | `$XDG_CONFIG_HOME/ao/auth` | absolute, outside the workspace, safe permissions; **v2.1:** never created or chmod-ed by `ao auth` when config-sourced |
 | state dir | — | `AO_AUTH_STATE_DIR` | — | `$XDG_STATE_HOME/ao/auth`, or `<store_dir>/state` when overridden | — |
 | idle / absolute | — | `AO_UI_AUTH_IDLE_MINUTES` / `AO_UI_AUTH_ABSOLUTE_HOURS` | `ui.auth.session_*` | 30 min / 12 h | ≤ default |
 | lockout threshold / base / max | — | `AO_UI_AUTH_LOCKOUT_*` | `ui.auth.lockout_*` | 5 / 30 / 900 | threshold ≤, base and max ≥ |
@@ -3476,6 +3821,9 @@ The single source is `auth/constants.py`, plus root `errors.py` for `EXIT_CONFIG
 | **`APP_STATE_AUTH_KEY`** | `"ao_auth"` | **`SCOPE_PRINCIPAL_KEY` / `SCOPE_SESSION_KEY` / `SCOPE_AUTH_ENABLED_KEY` / `SCOPE_PROOF_OK_KEY`** | `"principal"` / `"auth_session"` / `"auth_enabled"` / `"auth_proof_ok"` |
 | `WWW_AUTHENTICATE_SCHEME` / `WS_POLICY_VIOLATION` | `"AO-Session"` / `1008` | **`LOCAL_PROVIDER_ID` / `CLI_REALM` / `SOURCE_CLI` / `SOURCE_WEB`** | `"local-password"` / `"cli"` / `"cli"` / `"web"` |
 | **`CLI_TOTP_CONFIRM_ATTEMPTS`** | `3` | frontend `KEEPALIVE_MIN_INTERVAL_MS` | `60_000` |
+| *v2.1* `LOCKOUT_NAME_KEY_BYTES` | `32` | *v2.1* `INVALID_USERNAME_BUCKET` | `""` |
+| *v2.1* `LOOPBACK_HOSTNAMES` | `frozenset({"localhost", "127.0.0.1", "::1"})` | *v2.1* `FORWARDED_HEADER` / `FORWARDING_HEADER_PREFIX` | `"forwarded"` / `"x-forwarded-"` |
+| *v2.1* `SERVICE_ENV_RELATIVE_PATH` | `".config/ao/service.env"` (the systemd unit's `EnvironmentFile`) | *v2.1* `EPHEMERAL_PORT` | `0` (refused with auth on) |
 | frontend `QR_ECC_LEVEL` / `QR_QUIET_ZONE_MODULES` / `QR_RENDER_PX` | `"M"` / `4` / `224` | frontend **`PROOF_STORAGE_KEY`** | `"ao-session-proof"` |
 
 ---
@@ -3490,7 +3838,7 @@ FUNCTION route_path(scope) -> str:            # dev-security #8: root_path-safe,
   RETURN path[len(root):] OR "/" IF root AND path.startswith(root) ELSE path
 FUNCTION is_api_path(p) -> bool: RETURN p == API_PREFIX OR p.startswith(API_PREFIX + "/")
 
-FUNCTION classify(scope, policies) -> (route | None, RoutePolicy):
+FUNCTION classify(scope, policies, cookie_only_navigation) -> (route | None, RoutePolicy, bool):
   router = scope["app"].router
   full, partial = None, None
   FOR route IN router.routes:                  # SAME order Starlette's router uses
@@ -3498,22 +3846,37 @@ FUNCTION classify(scope, policies) -> (route | None, RoutePolicy):
      IF match == Match.FULL: full = route; BREAK
      IF match == Match.PARTIAL AND partial IS None: partial = route   # path matched, method did not (-> 405 later)
   chosen = full OR partial
+  key = None
   IF chosen IS None:                 policy = AUTHENTICATED
   ELIF isinstance(chosen, Mount):    policy = policies.get(("MOUNT", chosen.name), AUTHENTICATED)
-  ELIF hasattr(chosen, "path"):      policy = policies.get((scope["method"] IF full ELSE first(chosen.methods), chosen.path), AUTHENTICATED)
+  ELIF hasattr(chosen, "path"):
+     IF full: key = (scope["method"], chosen.path); policy = policies.get(key, AUTHENTICATED)
+     ELSE:                                   # PARTIAL: v2.1 (design-review minor 1) — NEVER first() over a set:
+        hits = [(m, chosen.path) FOR m IN sorted(chosen.methods OR ()) IF (m, chosen.path) IN policies]
+        key = hits[0] IF hits ELSE None      # deterministic: the alphabetically first method that has a table entry
+        policy = policies[key] IF key ELSE AUTHENTICATED
   ELSE:                              policy = AUTHENTICATED       # e.g. an opaque _IncludedRouter (developer D-1): never public
   IF is_api_path(route_path(scope)) AND policy != AUTHENTICATED AND NOT str(getattr(chosen, "path", "")).startswith(API_PREFIX + "/"):
      policy = AUTHENTICATED                   # spa_fallback can never open /api/*
-  RETURN chosen, policy
+  cookie_only = full IS NOT None AND key IN cookie_only_navigation        # v2.1 (security M1): a FULL match only
+  RETURN chosen, policy, cookie_only
 ```
 
 **Notes:**
-- A HEAD request to a GET-only API route is a PARTIAL match. It gets that route's policy, then a 405.
+- A HEAD request to a GET-only API route is a PARTIAL match (FastAPI's `APIRoute` does not add
+  HEAD; verified on FastAPI 0.139.2). It gets that route's policy, then a 405. Starlette's plain
+  `Route` (the docs routes) does add HEAD, so HEAD there is a FULL match whose `("HEAD", path)` key
+  is not in any table: AUTHENTICATED. A unit test pins `classify` on HEAD requests, `/redoc` and
+  `/docs/oauth2-redirect` (v2.1).
 - **Flat routes only.** `include_router()` stores an opaque `_IncludedRouter`, whose routes classify
   as AUTHENTICATED: safe, but never public. Auth routes are added flat, and
   `assert_flat_auth_routes()` checks this.
 - The enumeration test walks `fastapi.routing.iter_route_contexts(app.router.routes)`, so it also
-  sees nested routes.
+  sees nested routes. **v2.1 (design-review minor 5):** `iter_route_contexts` exists only in recent
+  FastAPI releases (0.139+), while `pyproject.toml` allows `fastapi>=0.110`. The enumeration tests
+  call `pytest.importorskip`-style guards (skip with a clear reason when the helper is missing);
+  the FastAPI floor is **not** bumped (NFR-2: no dependency changes). CI runs a recent FastAPI, so
+  the gate is effective there.
 - The dev-security probes are kept as regression tests: `//api/x`, `/API/x`, `%2F`, `..` and
   `/api/x/` all classify the way Starlette dispatches. Non-`/api` spellings reach the PUBLIC SPA
   fallback, which serves only the static `index.html`.
@@ -3535,22 +3898,47 @@ FUNCTION classify(scope, policies) -> (route | None, RoutePolicy):
 | hub | `GET /login` | PUBLIC | no | static page |
 | hub | `GET /auth-assets/{name}` | PUBLIC | no | fixed two-file allowlist |
 
-**Everything else is AUTHENTICATED by default.** Every AUTHENTICATED route under `/api/` also
-**requires the proof**. The hub's `GET /` index is AUTHENTICATED and cookie-only, because it is a
-navigation.
+**Everything else is AUTHENTICATED by default.** Every AUTHENTICATED route **requires the proof**
+(v2.1: API or not), except the single `COOKIE_ONLY_NAVIGATION` route:
+
+| App | Method + path | Policy | Proof | Why |
+|---|---|---|---|---|
+| hub | `GET /` (index) | AUTHENTICATED, **cookie-only navigation** (`HUB_COOKIE_ONLY_NAVIGATION`) | no (cookie only) | a navigation cannot carry the header; read-only HTML (A4 residual) |
+
+**Framework routes outside `/api` (v2.1, design-review and security L2):**
+- `FastAPI()` registers `GET /redoc` and `GET /docs/oauth2-redirect` by default. With auth **on**,
+  `create_app` and `build_hub_app` pass `redoc_url=None, swagger_ui_oauth2_redirect_url=None`, so
+  they do not exist (a dashboard request for them reaches the PUBLIC SPA fallback, which serves
+  only `index.html`). With auth **off** they are registered exactly as today (NFR-1).
+- The dashboard's `/api/docs` and `/api/openapi.json` are AUTHENTICATED (+ proof). `/api/docs` is
+  therefore unusable in a browser with auth on (a navigation cannot send the proof).
+- The hub keeps FastAPI's default `/docs` and `/openapi.json`. They are AUTHENTICATED and, not
+  being flagged cookie-only, need the proof: a browser navigation gets a 303 to `/login`. Use auth
+  off to browse them.
 
 The enumeration test asserts two things:
 - the computed non-AUTHENTICATED `(method, template)` set equals this table exactly;
 - every table entry matches a real route, so there are no stale entries.
+
+**Test-file ownership (v2.1, design-review M2):** the enumeration is split so that no two tasks edit
+one test file. The shared harness lives in `tests/auth/helpers/enumeration.py` (T-G7qByZ):
+
+| File | Owner | Covers |
+|---|---|---|
+| `tests/auth/test_route_enumeration_dashboard.py` | T-G7qByZ | dashboard, built and unbuilt, with `install_stub_auth_routes` |
+| `tests/auth/test_route_enumeration_real_routes.py` | T-rpKCjP | dashboard with the real core routes (`totp=None`), `assert_flat_auth_routes` |
+| `tests/auth/test_route_enumeration_hub.py` | T-KOv2qD | hub with `totp=None` |
+| `tests/auth/test_route_enumeration_full_config.py` | T-KQ6ZrY | both apps with a TOTP service: the full §13.2 table |
 
 **Configuration-dependent entries.** The no-stale-entry check skips the three
 `/api/auth/totp/*` entries (`AUTH_TOTP_VERIFY_PATH`, `AUTH_ENROLL_BEGIN_PATH`,
 `AUTH_ENROLL_CONFIRM_PATH`) **iff `runtime.totp is None`**, because their routes are only installed
 with a TOTP service. Together with one test helper, this makes the merge order safe:
 - **Before any real auth route exists** (T-G7qByZ in S1), tests call
-  `install_stub_auth_routes(app)` from `tests/auth/helpers.py`. It registers trivial **flat**
-  handlers at all ten `/api/auth/*` paths, so the full table is checked from day 1. T-rpKCjP
-  removes its use.
+  `install_stub_auth_routes(app)` from `tests/auth/helpers/stub_runtime.py`. It registers trivial
+  **flat** handlers at all ten `/api/auth/*` paths, so the full table is checked from day 1. The
+  stub-based file stays (it is merge-order independent); T-rpKCjP adds its own real-routes file
+  instead of editing T-G7qByZ's.
 - **After T-rpKCjP and before T-KQ6ZrY**, enumerations such as T-KOv2qD's hub check build the
   runtime with `totp=None`. The expected set then excludes the three TOTP rows.
 - **T-KQ6ZrY** adds the full-configuration enumeration for both apps.
@@ -3569,7 +3957,7 @@ ASYNC FUNCTION AuthMiddleware.__call__(scope, receive, send):
   IF scope["type"] == "websocket": AWAIT send({"type": "websocket.close", "code": WS_POLICY_VIOLATION}); RETURN
   headers = Headers(scope=scope); method = scope["method"]; rpath = route_path(scope)
 
-  1. route, policy = classify(scope, policies)
+  1. route, policy, cookie_only = classify(scope, policies, cookie_only_navigation)    # cookie_only: v2.1
 
   2. CSRF strengthening (EVERY route, public included):
      IF method IN MUTATING_METHODS:                              # imported from ui.security (R2 exception)
@@ -3594,11 +3982,15 @@ ASYNC FUNCTION AuthMiddleware.__call__(scope, receive, send):
      session = runtime.sessions.lookup(value)
      clear_cookie = value IS NOT None AND session IS None AND NOT duplicated          # a stale/expired cookie -> clear it
 
-  5. Proof (D25):
+  5. Proof (D25; v2.1 security M1):
      proof_ok = session IS NOT None AND runtime.sessions.proof_matches(session, headers.get(SESSION_PROOF_HEADER))
      state[SCOPE_PROOF_OK_KEY] = proof_ok
-     IF proof_required(policy, is_api_path(rpath)) AND session IS NOT None AND NOT proof_ok:
+     attested = proof_ok OR cookie_only                      # cookie_only: ONLY the flagged hub index (§11.14)
+     browser_nav = navigation AND sfs IN {"same-origin", "none"}      # a browser-attested top-level navigation
+     # --- enforcement (T-QJ1vyQ) ---
+     IF proof_required(policy, cookie_only_navigation=cookie_only) AND session IS NOT None AND NOT attested:
         session = None                                       # treat as anonymous for THIS request; do NOT destroy, do NOT clear the cookie
+     # PUBLIC routes keep the session in scope (E1, E2, E10 read proof_ok themselves) but get NO principal and NO slide below
 
   6. Revalidation (tri-state; developer D-7):
      IF session IS NOT None:
@@ -3614,12 +4006,17 @@ ASYNC FUNCTION AuthMiddleware.__call__(scope, receive, send):
            RETURN redirect(303, runtime.realm.login_path, clear_cookie)
         RETURN deny(401, denial_code(st), www_authenticate=True, clear_cookie=clear_cookie)
 
-  8. Principal: IF session AND session.state == FULL: state[SCOPE_PRINCIPAL_KEY] = runtime.sessions.principal_for(session)
+  8. Principal (v2.1, security M1: ONLY when attested):
+     IF session AND session.state == FULL AND attested:
+        state[SCOPE_PRINCIPAL_KEY] = runtime.sessions.principal_for(session)      # a fresh Principal and roles list per request
 
-  9. Sliding (FULL only):
-     IF session AND session.state == FULL AND (method IN MUTATING_METHODS OR rpath == AUTH_KEEPALIVE_PATH
-        OR (navigation AND sfs IN {None, "same-origin", "none"})):                  # dev-security #2
-        runtime.sessions.touch(session)
+  9. Sliding (FULL only; v2.1, security M1):
+     IF session AND session.state == FULL:
+        IF proof_ok AND (method IN MUTATING_METHODS OR rpath == AUTH_KEEPALIVE_PATH):
+           runtime.sessions.touch(session)
+        ELIF cookie_only AND browser_nav:                                         # the flagged hub index only
+           runtime.sessions.touch(session)
+     # Nothing else slides: no GET poll, no request without the proof (PUBLIC routes included), no other navigation.
 
   10. Dispatch with header injection (send wrapper on "http.response.start"):
         X-Frame-Options: DENY                                                    (every response)
@@ -3643,8 +4040,12 @@ FUNCTION deny(status, code, *, www_authenticate=False, clear_cookie=False):
   - use `make_client()`, i.e. `TestClient(app, client=("127.0.0.1", 50000))`;
   - use `follow_redirects=False` to see the 303;
   - use `same_origin_headers(client, proof)` for mutating requests and API calls.
-- **The hub index** is a navigation, so it is checked without a proof (step 5 applies only to
-  `/api` routes).
+- **The hub index** is the one `COOKIE_ONLY_NAVIGATION` route, so it is reached with the cookie
+  alone (v2.1: every other non-PUBLIC route, API or not, needs the proof).
+- **v2.1 (security M1):** a valid cookie without its proof on a PUBLIC route (`POST
+  /api/auth/logout`, `GET /api/health`, `GET /api/auth/status`, the SPA shell) yields
+  `principal is None` and leaves `last_activity_mono` unchanged. AC-44 enumerates this over every
+  route of both apps.
 
 ---
 
@@ -3866,6 +4267,9 @@ sequenceDiagram
 | Required user, policy `off` | login by a `totp_required` user who is not enrolled | 403 `totp_required` | none (password verified, no session) |
 | Credential change during login | `set-password` lands between verify and issue | login 200, next request 401 | session destroyed on revalidation |
 | Corrupt store at runtime | `users.json` broken by hand | 503 `store_unavailable` (sessions kept) | none |
+| **(v2.1)** Config flip disables auth | a `git pull` sets `ui.auth.enabled: false` while accounts exist | `ao ui` exits 78 with the row-14 message | audit `auth.startup.disabled_by_config` |
+| **(v2.1)** Unconfigured reverse proxy | a local proxy forwards remote users with `X-Forwarded-For`, no `trusted_proxies` | requests are treated as remote: E4/E5/E7 over its plain-HTTP hop → 403 `insecure_transport`; status shows `proxy_suspected: true` | one WARNING per process |
+| **(v2.1)** Harvested cookie on a PUBLIC route | `POST /api/auth/logout` or `GET /api/health` with the victim's cookie, no proof | 200 as usual | no principal, no idle slide, session untouched |
 
 ### 14.11 401 during polling (SPA)
 
@@ -3919,29 +4323,53 @@ Verified by grep on `bb6d8a0`. Search terms: `api/health`, `/api/service/status`
 
 | # | File | Exact intended change (minimal, additive) | Why | Task | Verification |
 |---|---|---|---|---|---|
-| 1 | `src/agent_orchestrator/ui/app.py` | (a) `create_app(..., auth: AuthRuntime \| None = None)` (keyword-only, default `None`). (b) `app.add_middleware(AuthMiddleware, runtime=auth, policies=DASHBOARD_ROUTE_POLICIES)` **immediately before** the existing `SecurityMiddleware` line. (c) `install_auth_routes(app, auth)` right after the middleware lines, i.e. before every route and before `_mount_frontend`. **(d) No decorator edits:** policies come from the table (§11.14). (e) `create_app_from_env` → `prepare_auth(cli=AuthCliOverrides(), env=os.environ, workspace_root=…, realm_kind="ui", port=int(env[AO_UI_BOUND_PORT]), bind_host=…)`, then pass `denied_paths` + `auth=launch.runtime` (about 8 lines). (f) Module docstring update. (g) A test pins `auth.constants.API_PREFIX == ui.app.API_PREFIX`. | FR-13 | T-G7qByZ (a–c, f, g), T-jVqH8w (e) | existing `tests/ui/*` unchanged and green; middleware-order test; route enumeration |
-| 2 | `src/agent_orchestrator/ui/files.py` | `FileBrowser.denied_paths: list[str] = field(default_factory=list)` (resolved in `__post_init__`); a deny check in `resolve()` after the containment check; skip denied entries in `list_dir` | FR-24 / S12 | T-jVqH8w | `tests/ui/test_files.py` unchanged + new denial tests |
-| 3 | `src/agent_orchestrator/ui/service.py` | `DashboardService.__init__(..., denied_paths: list[str] \| None = None)`; the default `FileBrowser` gets `denied_paths` or `default_denied_paths()` | FR-24 | T-jVqH8w | `tests/ui/test_service.py` unchanged |
-| 4 | `src/agent_orchestrator/cli.py` | (a) `from .auth.cli import app as auth_app` + `app.add_typer(auth_app, name="auth")` next to the `service` registration. (b) `ui_cmd` gains `--auth/--no-auth`, `--auth-totp`, `--auth-dir`; **one `prepare_auth(...)` call** (exit 78 on `AuthConfigError`), print `launch.warnings`, `DashboardService(ws, denied_paths=launch.denied_paths)`, `create_app(..., auth=launch.runtime)`, `uvicorn.run(..., **launch.uvicorn_kwargs)`; for `--reload`: `os.environ.update(launch.child_env)` + `AO_UI_BOUND_PORT`. (c) The module docstring lists `ao auth`. The existing "UNAUTHENTICATED" warning text is unchanged when auth is off. | FR-1/2/21/22 | T-j9dfsw (a), T-jVqH8w (b, c) | `tests/ui/test_ui_command.py` unchanged + new tests |
-| 5 | `src/agent_orchestrator/service/hub.py` | `build_hub_app(status_provider, *, auth: AuthRuntime \| None = None)`. All auth imports are **lazy inside** `build_hub_app`, so `hub.py` stays importable without fastapi (existing AC1 at `tests/service/test_hub.py:130`). Middleware lines as in #1 + `install_auth_routes(app, auth)`. **Auth off:** the existing `index()` route is unchanged. **Auth on:** `register_hub_auth_routes(app, auth, status_provider=status_provider, render_index=_render_index_html)` registers `GET /` itself in `auth/routes.py`. A nested `def index(request: Request)` in `hub.py` would get 422, because `from __future__ import annotations` plus the lazy import leave `Request` unresolvable (developer finding). `_render_index_html(payload, principal=None)` adds `hub_head_tags()` + `render_signed_in_bar()` only when the principal is not `None`. | FR-15 | T-KOv2qD | `tests/service/test_hub.py` unchanged (auth-off HTML byte-identical) + `test_hub_auth.py` |
+| 1 | `src/agent_orchestrator/ui/app.py` | (a) `create_app(..., auth: AuthRuntime \| None = None)` (keyword-only, default `None`). (b) `app.add_middleware(AuthMiddleware, runtime=auth, policies=DASHBOARD_ROUTE_POLICIES)` **immediately before** the existing `SecurityMiddleware` line. (c) `install_auth_routes(app, auth)` right after the middleware lines, i.e. before every route and before `_mount_frontend`. **(d) No decorator edits:** policies come from the table (§11.14). (e) `create_app_from_env` → `prepare_auth(cli=AuthCliOverrides(), env=os.environ, workspace_root=…, realm_kind="ui", port=int(env[AO_UI_BOUND_PORT]), bind_host=…)`, then pass `denied_paths` + `auth=launch.runtime` (about 8 lines). (f) Module docstring update. (g) A test pins `auth.constants.API_PREFIX == ui.app.API_PREFIX`. **(h, v2.1, security L2)** When `auth is not None`, the `FastAPI(...)` call also gets `redoc_url=None, swagger_ui_oauth2_redirect_url=None`; with `auth=None` the call is byte-identical to today. The middleware line passes `cookie_only_navigation=DASHBOARD_COOKIE_ONLY_NAVIGATION`. | FR-13 | T-G7qByZ (a–c, f, g, h), T-jVqH8w (e) | existing `tests/ui/*` unchanged and green; middleware-order test; route enumeration |
+| 2 | `src/agent_orchestrator/ui/files.py` | `FileBrowser.denied_paths: list[str] = field(default_factory=list)` (resolved in `__post_init__`); **one** deny helper `_is_denied(resolved)` called in `resolve()` after the containment check; skip denied entries in `list_dir`. Epic-neutral, so the approvals epic adds its predicate to the same helper (cross-epic row X2). | FR-24 / S12 | **T-Hd4wQ2** (v2.1; was T-jVqH8w) | `tests/ui/test_files.py` unchanged + new denial tests |
+| 3 | `src/agent_orchestrator/ui/service.py` | `DashboardService.__init__(..., denied_paths: list[str] \| None = None)`; the default `FileBrowser` gets `denied_paths` or `default_denied_paths()` | FR-24 | **T-Hd4wQ2** (v2.1; was T-jVqH8w) | `tests/ui/test_service.py` unchanged |
+| 4 | `src/agent_orchestrator/cli.py` | (a) `from .auth.cli import app as auth_app` + `app.add_typer(auth_app, name="auth")` next to the `service` registration. (b) `ui_cmd` gains `--auth/--no-auth`, `--auth-totp`, `--auth-dir`; **one `prepare_auth(...)` call** (exit 78 on `AuthConfigError`, which includes `--port 0` with auth on, security L4), print `launch.warnings`, `DashboardService(ws, denied_paths=launch.denied_paths)`, `create_app(..., auth=launch.runtime)`, `uvicorn.run(..., **launch.uvicorn_kwargs)`; for `--reload`: `os.environ.update(launch.child_env)` + `AO_UI_BOUND_PORT`, **and the reload `uvicorn.run(...)` also gets `**launch.uvicorn_kwargs`** (v2.1, security L3; tested). (c) The module docstring lists `ao auth`. The existing "UNAUTHENTICATED" warning text is unchanged when auth is off. | FR-1/2/21/22 | T-j9dfsw (a), T-jVqH8w (b, c) | `tests/ui/test_ui_command.py` unchanged + new tests |
+| 5 | `src/agent_orchestrator/service/hub.py` | `build_hub_app(status_provider, *, auth: AuthRuntime \| None = None)`. All auth imports are **lazy inside** `build_hub_app`, so `hub.py` stays importable without fastapi (existing AC1 at `tests/service/test_hub.py:130`). Middleware lines as in #1 + `install_auth_routes(app, auth)`. **Auth off:** the existing `index()` route is unchanged. **Auth on:** `register_hub_auth_routes(app, auth, status_provider=status_provider, render_index=_render_index_html)` registers `GET /` itself, in `auth/http/hub_routes.py` (v2.1); the hub's `FastAPI(...)` call gets `redoc_url=None, swagger_ui_oauth2_redirect_url=None` (security L2), and the middleware line passes `cookie_only_navigation=HUB_COOKIE_ONLY_NAVIGATION` (security M1). A nested `def index(request: Request)` in `hub.py` would get 422, because `from __future__ import annotations` plus the lazy import leave `Request` unresolvable (developer finding). `_render_index_html(payload, principal=None)` adds `hub_head_tags()` + `render_signed_in_bar()` only when the principal is not `None`. | FR-15 | T-KOv2qD | `tests/service/test_hub.py` unchanged (auth-off HTML byte-identical) + `test_hub_auth.py` |
 | 6 | `src/agent_orchestrator/service/cli.py` | (a0) `run` calls the shared `prepare_auth(..., workspace_root=None, realm_kind="hub", port=hub_port, bind_host=hub_host)` **before** `supervisor.start()`. It is testable without uvicorn (developer D-9 / reviewer R-3). (a) `run` gains `--auth/--no-auth`, `--auth-totp`, `--auth-dir`; one `launch = prepare_auth(...)` call **before** `supervisor.start()` (it resolves settings, runs `check_ready()`, collects warnings and installs log redaction; `AuthConfigError` → exit 78 with no child spawned); print `launch.warnings`; `Supervisor(..., child_env=launch.child_env)`; `build_hub_app(..., auth=launch.runtime)`; `uvicorn.Config(..., **launch.uvicorn_kwargs)`. (b) `_probe_hub_status` raises the new `HubLoginRequired` on HTTP 401: an `except urllib.error.HTTPError` branch placed **before** the existing `except (OSError, URLError, ValueError)`. (c) `list`/`status` catch `HubLoginRequired` (messages per §15 #1). (d) The `--host`/`--hub-host` help texts say "unauthenticated unless --auth / AO_UI_AUTH". | FR-25/26 | T-PDGw9p | `tests/service/test_cli_e2e.py` unchanged + new tests. `_probe_hub_status(hub_port)` keeps its **single-argument** signature, because tests monkeypatch it with `lambda port: ...`. |
 | 7 | `src/agent_orchestrator/service/supervisor.py` | (a) `Supervisor.__init__(..., child_env: Mapping[str, str] \| None = None)`, passed only to `default_child_spawner(self._ao_executable, extra_env=child_env)`. (b) `default_child_spawner(ao_executable, extra_env=None)`: `env={**os.environ, **extra_env} if extra_env else None`. (c) `_on_child_exit`: `if exit_code == EXIT_CONFIG` (imported from root `errors.py`) set `last_error`, `next_retry_at=None`, write the snapshot, log WARNING, return (no `_register_failure`). | FR-25 | T-PDGw9p | `tests/service/test_supervisor.py` unchanged + new tests using `_sleep_child_spawner("exit 78")` |
 | 8 | `src/agent_orchestrator/service/systemd.py` | Add the line `RestartPreventExitStatus={exit_config}` after `Restart=on-failure` in `_UNIT_TEMPLATE`, rendered from `errors.EXIT_CONFIG` (no literal 78). Add a hint line in `install`'s "Next steps" output (in `service/cli.py`) about `AO_UI_AUTH=1` in `service.env`. | D15 | T-PDGw9p | `tests/service/test_systemd.py` uses substring checks, so nothing breaks (developer-verified). Add one assertion for the new line. |
 | 9 | `src/agent_orchestrator/project_config.py` | **Optional:** a commented `ui.auth` block in `_INIT_TEMPLATE` (comments only; no model change) | docs | T-otjIkJ | `tests/test_project_config.py` green |
 | 10 | `tests/conftest.py` (root) | Autouse fixture `_hermetic_auth_env`: `monkeypatch.delenv` every `AO_UI_AUTH*` var, `AO_UI_BOUND_PORT` and `AO_AUTH_STATE_DIR`, and `monkeypatch.setenv("AO_AUTH_DIR", <tmp dir>)` (the state directory then resolves to `<tmp dir>/state`), so no test ever reads the developer's real store or env | NFR-1, NFR-4 | T-kzEzwy (foundation; moved earlier on tester + developer advice, so no test in S1/S2 can touch the developer's real store) | full suite green on a machine that has a real store and `AO_UI_AUTH=1` exported |
-| 11 | `ui/src/api.ts`, `ui/src/types.ts`, `ui/src/main.tsx`, `ui/src/App.tsx` | `ApiError` gains an optional `code`/`retryAfterSeconds`; the session-loss handler; the proof header; `authApi` (§17.3); types from §2.5. `main.tsx` wraps `<App/>` in `<AuthGate>`. `App.tsx` adds `<AccountMenu/>` in the sidebar when auth is enabled. | FR-24 | T-pQ73eO, T-vCgsU6 | vitest + `tsc -b` + build |
-| 12 | `ui/package.json` (+ lock) | Dependency `qrcode-generator` **`2.0.4` exact**. Scripts: `"build": "tsc -b && vite build && vite build --config vite.hub.config.ts"`, `"build:hub"` | FR-6, D13 | T-vCgsU6 (QR), T-R7JhTL (hub build) | `npm audit --omit=dev --audit-level=high` clean; gzip budget recorded |
+| 11 | `ui/src/api.ts`, `ui/src/types.ts`, `ui/src/main.tsx`, `ui/src/App.tsx` | `ApiError` gains an optional `code`/`retryAfterSeconds`; the session-loss handler; the proof header; `authApi` (§17.3); types from §2.5. `main.tsx` wraps `<App/>` in `<AuthGate>`. `App.tsx` adds `<AccountMenu/>` in the sidebar when auth is enabled. | FR-24 | T-pQ73eO (`types.ts`, `main.tsx`, `api.ts` core), then T-vCgsU6 (`App.tsx`, `authApi` additions) | vitest + `tsc -b` + build |
+| 12 | `ui/package.json` (+ lock) | **v2.1 split by key (design-review M2):** the `scripts` keys (`"build": "tsc -b && vite build && vite build --config vite.hub.config.ts"`, `"build:hub"`) belong to **T-R7JhTL**; the `dependencies` entry `qrcode-generator` **`2.0.4` exact** and the lock file belong to **T-vCgsU6**, which runs after T-R7JhTL | FR-6, D13 | T-R7JhTL (scripts), T-vCgsU6 (dependency + lock) | `npm audit --omit=dev --audit-level=high` clean; gzip budget recorded |
+| 12b | `ui/tsconfig.json` | **(v2.1, previously missing from the ledger)** add `vite.hub.config.ts` and `src/hub/**` to `include` | D13 | T-R7JhTL | `npm run typecheck` |
 | 13 | `ui/vite.config.ts` | Dev-only proxy `configure` hook setting the `origin` header to the proxy target (§15 #8) | dev UX | T-pQ73eO | manual `npm run dev` login |
 | 14 | `ui/vite.hub.config.ts` (new) | Library build of `ui/src/hub/hubAuth.ts` → `src/agent_orchestrator/auth/assets/hub-auth.js` (IIFE, no hash, `emptyOutDir: false`) | D13 | T-R7JhTL | asset exists and is non-empty (pytest) |
-| 15 | `src/agent_orchestrator/ui/static/**` | Rebuilt and committed bundle (as today) | FR-24 | T-vCgsU6 | `make ui-build` |
+| 15 | `src/agent_orchestrator/ui/static/**` | Rebuilt and committed bundle (as today). **v2.1 rule (design-review M1/M2):** only the **last frontend task of the epic, T-vCgsU6**, regenerates and commits `ui/static`, after T-pQ73eO and T-R7JhTL have merged. Earlier frontend tasks build locally to verify but do **not** commit `ui/static` (they discard it with `git checkout -- src/agent_orchestrator/ui/static`). T-R7JhTL still commits its own fixed-name `auth/assets/hub-auth.{js,css}` (row 14). T-vCgsU6's first step confirms that `npm ci && npm run build && git diff --exit-code -- src/agent_orchestrator/ui/static` is clean on the pre-epic baseline, so the CI rebuild-diff gate (row 18) cannot fail for reasons unrelated to auth. | FR-24 | T-vCgsU6 (sole owner) | `make ui-build`; baseline check recorded in T-vCgsU6 STATUS |
 | 16 | `pyproject.toml` | Add `"src/agent_orchestrator/auth/assets/**"` to `[tool.hatch.build.targets.wheel].artifacts` **unconditionally**, mirroring `ui/static/**` (reviewer R-12). No dependency changes. | packaging | T-KOv2qD | `uv build` + `unzip -l` |
 | 19 | `src/agent_orchestrator/errors.py` | Add `EXIT_CONFIG = 78` (sysexits `EX_CONFIG`), with a docstring. Additive. | D15 / reviewer R-10 | T-kzEzwy | import test |
-| 20 | `src/agent_orchestrator/xdg.py` | Add `resolve_config_dir(override_env, subpath, *, env=None)`, the twin of `resolve_state_dir`. `resolve_state_dir` gains the same optional keyword-only `env` and accepts `override_env=None`. Additive; existing callers untouched (§11.4). | D5 / reviewer R-8 | T-8NQP8J | `tests/test_xdg.py` + new cases |
-| 21 | `src/agent_orchestrator/fsutil.py` (NEW) | `FileLock` (flock + timeout), `atomic_write_bytes` (O_EXCL/O_NOFOLLOW temp, fsync, replace, dir fsync), `remove_stale_temp_files`, `ensure_private_dir`, `check_private_file`. Old call sites are not migrated. | D5 / reviewer R-8 | T-8NQP8J | `tests/test_fsutil.py` |
+| 20 | `src/agent_orchestrator/xdg.py` | **v2.1 signature (design-review M1):** add `resolve_config_dir(override_env, xdg_subdir, default_subdir, *, environ=None, home=None)`, the same shape as `resolve_state_dir` and as the approvals epic's `T-drPIif` definition. `resolve_state_dir` gains the same optional keyword-only `environ` and `home` and accepts `override_env=None`. Additive; existing callers untouched (§11.4). One implementation for both epics (cross-epic row X1). | D5 / reviewer R-8 | T-8NQP8J | `tests/test_xdg.py` + new cases |
+| 21 | `src/agent_orchestrator/fsutil.py` (NEW) | `FileLock` (flock + timeout), `atomic_write_bytes` (O_EXCL/O_NOFOLLOW temp, fsync, replace, dir fsync), `remove_stale_temp_files`, `ensure_private_dir` (v2.1: `os.mkdir(mode=0o700)` + fd-based `fchmod`; the parent rule with the euid-owned group-writable warning), `check_private_file`. Old call sites are not migrated. | D5 / reviewer R-8; security M6, L6 | T-8NQP8J | `tests/test_fsutil.py` |
 | 18 | `.github/workflows/ci.yml` | (a) One step next to the existing per-package coverage gates: `pytest tests/auth -q --cov=agent_orchestrator.auth --cov-report=term --cov-fail-under=90`. (b) In the frontend job, after `npm run build`: `git diff --exit-code -- src/agent_orchestrator/ui/static src/agent_orchestrator/auth/assets`. Committed bundles must equal a clean rebuild (dev-security #13). | NFR-6 / security | T-U2ERMo | CI run |
 | 17 | Docs (`README.md`, `meta/ROADMAP.md`, `docs-md/dashboard-and-general-instructions-hld.md` §2.7, `docs-md/multi-workspace-service-hld.md` §8, `ui/README.md` runtime deps) | Reconcile with the implementation | §27 | T-otjIkJ | docs review |
 
-**Accepted residual (developer finding):** `DashboardService.start_run` (`ui/service.py:652`)
+**Within-epic single ownership (v2.1, design-review M2).** Every file above has exactly one owner
+at a time; where two tasks touch a file, they do it in sequence and the ledger names the order:
+`ui/app.py` (T-G7qByZ, then T-jVqH8w row 1e), `cli.py` (T-j9dfsw row 4a, then T-jVqH8w row 4b),
+`auth/paths.py` (T-8NQP8J, then T-Hd4wQ2 appends the denial helpers), `auth/http/routes.py`
+(T-G7qByZ minimal, then T-rpKCjP), `auth/http/routes_second_factor.py` (T-rpKCjP stub, then
+T-KQ6ZrY), `ui/package.json` (row 12 split by key), `ui/static/**` (T-vCgsU6 only). Test helpers
+are a package with one module per owner (`tests/auth/helpers/`, §20.2), and the route enumeration
+is split into one file per owner (§13.2).
+
+**Cross-epic rows — shared with `E-Ag7Pw3-human-approval-gates` (v2.1, design-review M1).** Recorded
+here only; the approvals epic's own tickets and HLD are **not** edited by this epic. Its current
+definitions were read from `docs-md/human-approval-gates-hld.md` §26 / CE-3 / CE-4 and
+`T-drPIif` / `T-l43hCg` / `T-pIZq3q` on 2026-10-05.
+
+| # | File | Approvals epic (current definition) | This epic | Single owner and merge order |
+|---|---|---|---|---|
+| X1 | `src/agent_orchestrator/xdg.py` | `T-drPIif`: `resolve_config_dir(override_env, xdg_subdir, default_subdir, *, environ, home)`; `keys.py` passes the `pwd` home (CE-4a) | the **same** signature (row 20), with `environ=None` / `home=None` defaults | **One implementation.** Whichever epic merges first adds it with this exact signature plus both epics' test cases; the second rebases and only adds its call sites. The manager confirms the defaults (`environ=None` → `os.environ`, `home=None` → `Path.home()`) with the approvals owner. |
+| X2 | `src/agent_orchestrator/ui/files.py` | `T-l43hCg` row 36: refuse `.orchestrator/runs/<id>/approvals/` in `FileBrowser.resolve` (CE-4c: merge into **one** deny helper) | the generic `denied_paths` + `_is_denied` helper (rows 2–3, T-Hd4wQ2, S1) | **Land `denied_paths` first** (T-Hd4wQ2 is early S1). Approvals then expresses its denial **through** `_is_denied` (one extra predicate in the same helper), never as a second independent check. |
+| X3 | `src/agent_orchestrator/ui/app.py` | `T-l43hCg` row 29: `register_approval_routes(...)` before `_mount_frontend` | rows 1a–c/h (middleware, `install_auth_routes`) and 1e | Both are additive line insertions; keep the order middleware → `install_auth_routes` → approval routes → `_mount_frontend`. Approval routes must be flat and under `/api` (they are AUTHENTICATED + proof by omission, and never `COOKIE_ONLY_NAVIGATION`). |
+| X4 | `src/agent_orchestrator/ui/security.py` | `T-l43hCg` row 30: `X-Frame-Options: DENY` in `_STATIC_SECURITY_HEADERS` (every response, auth on or off) | **not touched** (§16 "files not touched"); `AuthMiddleware` sets XFO with `setdefault` semantics when auth is on | No textual conflict. **If approvals merges first**, XFO appears with auth off too; this epic's auth-off header snapshot (AC-2) and AC-23's "no XFO with auth off" are then computed against the post-approvals baseline (the header comes from `ui/security.py`, not from auth). |
+| X5 | `src/agent_orchestrator/ui/static/**` + `ui/src/**` | `T-pIZq3q` rebuilds and commits the bundle (CE-3: rebuild once after merging all `ui/src` changes; never merge `static/` by hand) | row 15: T-vCgsU6 is this epic's only bundle committer | **Rule:** only the last frontend task of each epic regenerates and commits `ui/static`, after merging. At the second epic's merge, re-run `npm ci && npm run build` on the merged `ui/src` and commit the result; never hand-merge hashed assets. |
+| X6 | `src/agent_orchestrator/project_config.py` | `T-drPIif` row 35: a 6-key `CONFIG_ENV_DENYLIST` in `apply_project_config_env` (CE-4b) | only the optional `_INIT_TEMPLATE` comment (row 9, T-otjIkJ); `apply_project_config_env` is never called on the `ao ui` / `ao service run` paths | No overlap in the same function. Recommended (not required, since those paths never call it): add `AO_UI_AUTH*`, `AO_AUTH_DIR` and `AO_AUTH_STATE_DIR` to that single denylist when both epics have merged. |
+
+**Accepted residual (developer finding):** `DashboardService.start_run` (`ui/service.py:662`)
 accepts an absolute `workflow_path`, and launch logs are returned to the browser. Launching a
 "workflow" that points at `users.json` would fail validation, and the error could echo file
 content into the launch log. This is **not** blocked: anyone who may launch runs may already
@@ -4128,6 +4556,9 @@ is **no** `innerHTML`.
   - logout posts `/api/auth/logout` and then calls `location.replace("/login")`;
   - keepalive works as in §17.5.
 - Error codes map to the messages in §17.8.
+- **Duplication with the SPA is deliberate** (no shared imports keeps the hub page tiny and
+  dependency-free). The v2.1 shared contract test `auth-client-contract.test.ts` (§17.10) pins both
+  clients to the same protocol, so they cannot drift silently.
 
 ### 17.7 QR library decision (per `ui/README.md` conventions)
 
@@ -4193,6 +4624,7 @@ which is pure ASCII (§11.7), so byte mode is safe.
 | `proof.test.ts` | Stored on issuing responses; sent on every request; cleared on logout/anonymous; memory fallback when `localStorage` throws |
 | `fetch-mode-ban.test.ts` | String check: no `mode:` in fetch calls under `ui/src/**` (including `hub/`) |
 | `hub-auth.test.ts` | DOM fixture from the §17.6 skeleton: login → totp → `location.replace` stubbed; enrollment text-only; logout button; `textContent` only |
+| `auth-client-contract.test.ts` (v2.1, design-review minor 7; T-R7JhTL, written after T-pQ73eO lands) | The SPA (`api.ts` + `proof.ts`) and the hub page (`hubAuthCore.ts`) duplicate the client protocol on purpose (the hub page has no dependencies). One table of scenarios runs against **both** clients with a mocked `fetch`: the proof header name and storage key are equal; `session_proof` from every issuing response replaces the stored one; the proof is sent on every `/api` call; it is cleared on logout and on an `anonymous` status; the session-loss codes are exactly `SESSION_LOSS_CODES`; no `mode` option; the memory fallback works when storage throws |
 
 **Mandatory for every time-dependent test** (tester finding T-6): `vi.useFakeTimers()` and
 `vi.setSystemTime(...)`. This covers countdowns, keepalive and anything reading `Date.now()`.
@@ -4231,6 +4663,14 @@ which is pure ASCII (§11.7), so byte mode is safe.
    4. Cookies become `Secure` and `__Host-` automatically.
    - Plain-HTTP LAN use works but warns loudly, and **TOTP enrollment is refused remotely** (D7).
      Enroll on the host with `ao auth enable-2fa`, or over TLS.
+   - **(v2.1, security M2)** Forgetting step 2 is detected: requests from the proxy carry
+     forwarding headers, so they count as remote, the server logs one WARNING naming
+     `AO_UI_AUTH_TRUSTED_PROXIES`, and the status reports `proxy_suspected`. Until fixed, every
+     remote user shares the proxy's throttle bucket.
+   - **(v2.1)** With `trusted_proxies=127.0.0.1`, any **local** process can send its own
+     `X-Forwarded-For` straight to the app port and choose its client address (the per-address
+     throttle is then per-claimed-address; the account lockout still applies). Bind the app to a
+     unix socket, or firewall the app port so only the proxy reaches it.
 5. **Stale global installs.** A globally installed `ao` is a non-editable snapshot (`install.sh`). An
    `ao` that predates this epic **silently ignores** `ui.auth`, `AO_UI_AUTH` and `--auth` (the flag
    errors out, but env and config are ignored). So after upgrading:
@@ -4243,13 +4683,20 @@ which is pure ASCII (§11.7), so byte mode is safe.
    - The store stays on disk, harmless, and the startup notice reminds you it exists.
    - Downgrading the binary has the stale-install effect (auth silently off). Warned.
 7. **Backup and restore:**
-   - Copy `~/.config/ao/auth/` (credentials: hashes and TOTP seeds; keep it private).
+   - Copy `~/.config/ao/auth/` (credentials: hashes and TOTP seeds; keep it private). **v2.1
+     (security L5):** the TOTP seeds are in clear inside `users.json`, so a leaked backup hands over
+     the second factor together with the hashes. Only keep **encrypted** backups of this directory.
    - Optionally copy `~/.local/state/ao/auth/` (lockouts and audit; safe to lose).
    - A restore requires 0700/0600 permissions, which `ao auth status` checks.
    - Restoring an older `users.json` lowers epochs, so newer sessions die (D10).
 8. **Enabling `required` for existing users:** for each user who is not enrolled, run
    `ao auth enrollment-token <user>` and hand over the printed token. The token is valid for
-   `ENROLLMENT_TOKEN_TTL_SECONDS`. Users enter it on first login.
+   `ENROLLMENT_TOKEN_TTL_SECONDS`. Users enter it on first login. **(v2.1, design-review M3)**
+   This also applies to any user created **without** `--require-totp` while the policy is
+   `required`: their first web login cannot show a QR code until they enter an operator-issued
+   token (a stolen password alone must not bind an authenticator, D7). The README and
+   `ao auth status` say so. Conversely, under `totp: off`, users who **are** enrolled are still
+   asked for a code (sticky enrollment); the README and `ao auth status` say that too.
 9. **Version skew:**
    - The SPA bundle and the backend ship in the same wheel.
    - The hub and its children run the same binary, because the supervisor spawns
@@ -4257,6 +4704,10 @@ which is pure ASCII (§11.7), so byte mode is safe.
    - The hub page asset ships in the same wheel.
 10. **CI:** no new jobs. The existing pytest, ruff, mypy, vitest, tsc and build jobs cover the new
    code. Add `--cov=agent_orchestrator.auth --cov-fail-under=90` to the UI/auth coverage job (T-U2ERMo).
+11. **Merge to `main` (v2.1, security M4):** the epic branch merges to `main` **only after
+   T-2wE08U** (the post-implementation security review) has signed off. Within the epic branch,
+   T-jVqH8w (`ao ui --auth`) merges only after T-QJ1vyQ (CSRF + proof enforcement) and T-KQ6ZrY
+   (TOTP routes), so no intermediate integration state offers an `--auth` without them (§24.3).
 
 ---
 
@@ -4278,6 +4729,13 @@ which is pure ASCII (§11.7), so byte mode is safe.
 | 403 `totp_required` at login | the user must have TOTP but the policy is `off` | set the policy to `optional`/`required`, or `ao auth disable-2fa <user>` (clears the requirement) |
 | Signed out after every page reload | the browser blocks site storage (the session proof cannot persist) | allow site storage for the dashboard origin (D25) |
 | exit 78 "…would weaken the default…" | a workspace config tried to loosen a setting | set it via env/CLI instead (A12) |
+| **(v2.1)** exit 78 "ui.auth.enabled=false in <config> while N account(s) exist…" | the workspace config (maybe changed by a `git pull`) disables auth while accounts exist | if intended: `--no-auth` or `AO_UI_AUTH=0`; otherwise revert the config change |
+| **(v2.1)** warning "totp=… comes only from <config>…" | the TOTP policy depends on a repository file | pin it with `AO_UI_AUTH_TOTP` / `--auth-totp` |
+| **(v2.1)** warning "requests from 127.0.0.1 carry proxy headers…" / status `proxy_suspected` | a reverse proxy is not listed in `trusted_proxies` | set `AO_UI_AUTH_TRUSTED_PROXIES` to the proxy address (D17, §18 #4) |
+| **(v2.1)** warning "<parent> is group-writable" at startup | `umask 002` host; the parent of the store is group-writable but yours | optional: `chmod g-w <parent>` (a parent owned by someone else, or other-writable, refuses instead) |
+| **(v2.1)** exit 78 "ui.auth.store_dir from <config> must already exist and be private" from `ao auth` | a workspace config chose the store directory | create it yourself (`mkdir -m 700`), or pass `--auth-dir` |
+| **(v2.1)** exit 78 "--port 0 cannot be used with dashboard authentication" | an ephemeral port with auth on | choose a fixed port |
+| **(v2.1)** `/api/docs` (or the hub's `/docs`) shows a login page or 401 | auth is on; doc pages are navigations and cannot send the session proof | browse the API docs with auth off locally |
 | Signed out on every dashboard restart | sessions are in memory by design (D3) | expected; store-scoped SSO is the follow-up |
 | Logged in at `localhost:8765` but not `127.0.0.1:8765` | different cookie hosts | use one host consistently (the hub links use 127.0.0.1) |
 | `ao service status` says "login required" | hub auth is on | expected; it shows persisted state; the browser shows live state |
@@ -4289,7 +4747,7 @@ which is pure ASCII (§11.7), so byte mode is safe.
   `vite.config.ts` Origin hook (§15 #8).
 - **Tests:**
   - Construct `build_auth_runtime(settings, Realm("ui", 8765), clock=FakeClock(...),
-    entropy=SeededEntropy(1), hasher=FastFakeHasher())` from `tests/auth/helpers.py`.
+    entropy=SeededEntropy(1), hasher=FastFakeHasher())` with the fakes from `tests/auth/helpers/`.
   - Use `TEST_PARAMS` for real scrypt where needed.
   - `same_origin_headers()` provides the `Origin` header for mutating requests.
 - The hermetic root fixture keeps `AO_AUTH_DIR` and `AO_UI_AUTH*` out of every test.
@@ -4310,25 +4768,28 @@ which is pure ASCII (§11.7), so byte mode is safe.
 | Level | Files (new) | What |
 |---|---|---|
 | Unit (pure, fast) | `tests/test_fsutil.py`, `tests/test_xdg.py` (+cases); `tests/auth/test_passwords.py`, `test_totp.py`, `test_recovery.py`, `test_settings.py` (incl. `decide()` and tighten-only), `test_paths.py`, `test_store.py` (incl. CAS mutations, enrollment tokens, forward-compat), `test_lockouts.py`, `test_throttle.py` (incl. `canonical_client_key`), `test_guard.py`, `test_sessions.py` (incl. proof), `test_policy.py` (tables, `totp_requirement`), `test_audit.py` (strict/non-strict, coalescing), `test_scrub.py` (record factory), `test_local_provider.py`, `test_totp_service.py`, `test_launch.py`, `test_import_boundary.py` (AST layers + blocked frameworks) | crypto vectors, policy maths, store semantics, fail-closed table, session expiry/rotation/bounds/proof with `FakeClock`, provider flows with a fake hasher |
-| Integration (TestClient) | `tests/auth/test_responses.py` (byte pins), `test_origin.py` (incl. parity vs `ui/security.py`), `test_middleware.py`, `test_route_enumeration.py`, `test_partial_confinement.py`, `test_csrf.py`, `test_body_cap.py`, `test_proof.py`, `test_routes_core.py`, `test_routes_second_factor.py`, `test_cookie_isolation.py`, `test_revocation.py` (incl. remove→re-add, straddle, CAS), `test_provider_seam.py` (redirect-shaped), `test_event_loop.py`, `test_auth_off_regression.py`; `tests/ui/test_file_browser_denial.py`; `tests/service/test_hub_auth.py`, `test_cli_probe_auth.py`, `test_supervisor_auth.py` | the HTTP contract (every endpoint and error code in §2), deny by default, isolation, CSRF and proof matrices, hub, supervisor |
-| E2E (outer boundary) | `tests/auth/test_cli_e2e.py`, `tests/auth/test_ui_command_auth.py`, `tests/auth/test_service_run_auth.py`, `tests/auth/test_e2e_subprocess.py` (`-m e2e`) | from the CLI or a real subprocess down to the core |
+| Integration (TestClient) | `tests/auth/test_responses.py` (byte pins), `test_origin.py` (incl. parity vs `ui/security.py`), `test_middleware.py`, `test_route_enumeration_{dashboard,real_routes,hub,full_config}.py` (v2.1: one file per owner, §13.2), `test_partial_confinement.py`, `test_csrf.py`, `test_body_cap.py`, `test_proof.py`, `test_cookie_only_principal.py` (v2.1, AC-44), `test_routes_core.py`, `test_client_info.py` (v2.1, AC-43), `test_routes_annotations.py` (v2.1, R1a), `test_routes_second_factor.py`, `test_cookie_isolation.py`, `test_revocation.py` (incl. remove→re-add, straddle, CAS), `test_provider_seam.py` (redirect-shaped), `test_event_loop.py`, `test_auth_off_regression.py`; `tests/ui/test_file_browser_denial.py`; `tests/service/test_hub_auth.py`, `test_cli_probe_auth.py`, `test_supervisor_auth.py` | the HTTP contract (every endpoint and error code in §2), deny by default, isolation, CSRF and proof matrices, cookie-only principal, hub, supervisor |
+| E2E (outer boundary) | `tests/auth/test_cli_e2e.py`, `tests/auth/test_cli_e2e_busy.py` (v2.1, T-U2ERMo: the store-busy multiprocess case), `tests/auth/test_ui_command_auth.py`, `tests/auth/test_service_run_auth.py`, `tests/auth/test_e2e_subprocess.py` (`-m e2e`) | from the CLI or a real subprocess down to the core |
+| Informational (opt-in) | `tests/auth/test_perf_informational.py` (`-m slow`, v2.1, T-U2ERMo) | NFR-5 p95 targets, measured and recorded, never gating |
 | Sweep | `tests/auth/test_log_scrub_sweep.py` | S11 across every flow, with and without redaction |
 | Frontend | `ui/src/test/*` (§17.10) | vitest + jsdom, fake timers |
 | Browser (opt-in) | `tests/auth/test_browser_smoke.py` (`-m browser`, system Chrome via `executable_path`; Firefox/WebKit when installed) | login, forced enrollment (QR), TOTP, hub login, **proof behaviour across two ports**, no CSP console errors. Screenshots go to `output/E-Da5Tn9-dashboard-auth-totp/`. |
 
 ### 20.2 Determinism and harness
 
-- **Test doubles** live in `tests/auth/helpers.py`, never in the package:
-  - `FakeClock` (wall + monotonic; `advance`);
-  - `SeededEntropy`;
-  - `FastFakeHasher` (`verify` compares `"fake$" + raw`, counts calls, and has a `dummy_hash`
-    parsing to the current params);
-  - `TEST_PARAMS`;
-  - `run_async(coro)` (`asyncio.run`, the repo precedent `tests/ui/test_e2e_graph.py`; **no
-    pytest-asyncio**);
-  - `make_client(app)` (`TestClient(app, client=("127.0.0.1", 50000))`);
-  - `same_origin_headers(client, proof=None)`;
-  - `make_store(tmp_path, users=...)`.
+- **Test doubles** live in the **`tests/auth/helpers/` package** (v2.1, design-review M2: one
+  module per owning task, so S1 lanes never edit one file), never in the shipped package. The
+  package `__init__.py` is empty apart from a docstring that lists the modules and owners; tests
+  import from the owning module (`from tests.auth.helpers.core import FakeClock`):
+
+  | Module | Owner | Contents |
+  |---|---|---|
+  | `helpers/core.py` | T-kzEzwy | `FakeClock` (wall + monotonic; `advance`), `SeededEntropy`, `run_async(coro)` (`asyncio.run`, the repo precedent `tests/ui/test_e2e_graph.py`; **no pytest-asyncio**), `make_client(app)` (`TestClient(app, client=("127.0.0.1", 50000))`), `same_origin_headers(client, proof=None)` |
+  | `helpers/crypto.py` | T-s6sJmB | `TEST_PARAMS`, `FastFakeHasher` (`verify` compares `"fake$" + raw`, counts calls, and has a `dummy_hash` parsing to the current params) |
+  | `helpers/store.py` | T-8NQP8J | `make_store(tmp_path, users=...)` |
+  | `helpers/sessions.py` | T-kwwJ82 | `make_identity(**overrides)` |
+  | `helpers/stub_runtime.py` | T-G7qByZ | `StubRuntime`, `StubRealm`, `install_stub_auth_routes(app)` |
+  | `helpers/enumeration.py` | T-G7qByZ | the route-enumeration harness (`iter_route_contexts` guarded by an importorskip-style check) used by all four `test_route_enumeration_*.py` files |
 - **TOTP tests** use RFC vectors and a fixed `now_unix`.
 - The only real-time test is the subprocess e2e. It uses TOTP **once**, uses recovery codes for any
   later login, and is run 3× in T-U2ERMo for evidence. The CLI `enable-2fa` confirmation has
@@ -4364,7 +4825,10 @@ which is pure ASCII (§11.7), so byte mode is safe.
    - With the proof → passes.
    - `GET /api/auth/status` without the proof → `anonymous`.
    - Logout without the proof → the server session is still valid afterwards.
-   - The hub index navigation works with the cookie alone.
+   - The hub index navigation works with the cookie alone (the one `COOKIE_ONLY_NAVIGATION` route).
+   - **(v2.1)** An AUTHENTICATED **non-API** route that is not flagged (a probe page, the hub's
+     `/docs`) with a full cookie and no proof → 401, or a 303 to the login path for an HTML
+     navigation.
 4. **Cookie isolation (S3) and tossing (S26).**
    - Two dashboard apps (ports 8765 and 8766) and a hub sharing a store.
    - A token under the wrong name → 401.
@@ -4406,7 +4870,39 @@ which is pure ASCII (§11.7), so byte mode is safe.
       `ALLOWED_SECRET_LOCATIONS = {E4: {secret, otpauth_uri}, E5: {recovery_codes}, E7: {recovery_codes}, session-issuing responses: {session_proof}}`),
       URLs, and CLI output (except intended interactive printouts).
 14. **Auth-off regression (S17).** The existing suites are unchanged, plus header-name snapshots of
-    `/api/health`, `/api/runs` and `/` against a hard-coded expected set.
+    `/api/health`, `/api/runs` and `/` against a hard-coded expected set. **(v2.1)** The snapshot is
+    taken against the integration baseline at merge time: if the approvals epic's
+    `X-Frame-Options` line in `ui/security.py` (§16 X4) merged first, it is part of that baseline.
+
+**v2.1 — the four security test gates** (security review "CI and process"; each is an AC in §21):
+
+15. **Cookie-only principal enumeration (S27, AC-44).** For every route context of the dashboard
+    (built) and of the hub, send a request with a valid FULL cookie and **no** proof (same-origin
+    headers, a mutating method only where the route accepts it). Observe through a scope-capturing
+    shim around `app.router` (and a spy on `SessionManager.principal_for`): `principal is None` and
+    `last_activity_mono` unchanged on every route, except the hub `GET /`, where the principal is set
+    and only a browser-attested navigation slides it. Named cases: `POST /api/auth/logout` and
+    `GET /api/health`.
+16. **Principal aliasing (S30, AC-11).** Two requests on one session: `p1.roles is not p2.roles`;
+    `p1.roles.append("x")` changes neither `p2.roles`, nor the stored `SessionRecord.roles`, nor
+    `store.snapshot().users[...].roles`. `hash(p1)` works; `isinstance(p1.roles, list)`;
+    `Principal("u", "password", [] , user_id=..., ...)` and the two-positional form construct.
+17. **Forwarded headers from a loopback peer (S28, AC-43).** TestClient with
+    `client=("127.0.0.1", 1)`, no trusted proxies: (a) no forwarding header and `Host: 127.0.0.1:8765`
+    → `client_is_loopback: true`, `proxy_suspected: false`; (b) `X-Forwarded-For: 203.0.113.9` → E4
+    over http → 403 `insecure_transport`, status `client_is_loopback: false`,
+    `proxy_suspected: true`; (c) `Forwarded: for=203.0.113.9` → the same; (d)
+    `Host: dash.example.com` (allow-listed) → the same; (e) exactly one WARNING across (b)–(d);
+    (f) with `AO_UI_AUTH_TRUSTED_PROXIES=127.0.0.1` the uvicorn kwargs trust the headers and
+    `proxy_suspected` stays false.
+18. **Config flip (S29, AC-45).** A workspace whose `.ao/config.yaml` changes from
+    `enabled: true` to `enabled: false` (the `git pull` case) with one account: `ao ui` exits 78
+    with the row-14 message and one `auth.startup.disabled_by_config` audit line; the same with
+    `--no-auth` or `AO_UI_AUTH=0` starts (row 9 note); with zero accounts it starts; a corrupt store
+    (unknown count) refuses. `totp: optional` from config with auth on and one account → starts,
+    warning + `auth.startup.totp_downgraded_by_config`; `ao auth status --workspace W` shows both
+    flags. A config `env:` block containing `AO_UI_AUTH: "0"` does not reach the auth env layer of
+    `ao ui`.
 
 ### 20.4 Coverage and commands
 
@@ -4429,26 +4925,26 @@ Every AC is an objective pass/fail check bound to a test (tester finding T-2).
 | AC | Statement (pass/fail) | FR / S | Tests | Task |
 |---|---|---|---|---|
 | AC-1 | For `enabled`, `totp` and `store_dir`, every layer pair resolves CLI > env > config > default, and `settings.sources[...]` names the winning layer. The hub (`workspace_root=None`) ignores a `.ao/config.yaml` in the cwd. `ao auth status` prints each source. | FR-1 | `test_settings.py`, `test_cli_e2e.py` | T-PlEROT, T-j9dfsw |
-| AC-2 | With no auth settings: `prepare_auth(...).uvicorn_kwargs == {}`; the `ao ui` stub-uvicorn kwargs are exactly `{host, port}`; `GET /api/auth/status` equals the E1 disabled body byte-for-byte; the header-name snapshots match (§20.3 #14); the existing suites pass unmodified | FR-1, NFR-1, S17 | `test_auth_off_regression.py`, `test_launch.py`, existing suites | T-kzEzwy (hermetic fixture), T-G7qByZ, T-jVqH8w |
-| AC-3 | An empty or missing store with auth on → `ao ui` and `ao service run` exit 78; stderr contains `ao auth add-user`; `uvicorn.run` and `Supervisor.start` are not called | FR-2, S14 | `test_ui_command_auth.py`, `test_service_run_auth.py`, `test_launch.py` | T-jVqH8w, T-PDGw9p |
-| AC-4 | Every row of the §11.3.4 fail-closed table has a passing parametrized case owned by exactly one task. **4a** (`decide()`, `resolve_auth_settings`): rows 1–5, 10 and 12, where row 3 uses the `count_users` seam returning 0, >0 or `None` (T-PlEROT, `test_settings.py`). **4b** (`check_ready` / `startup_warnings`): rows 6–8, 11 and 13 (T-XchniS, `test_local_provider.py`). **4c** (`prepare_auth`): row 9, with `count_store_users` returning >0 (T-jVqH8w, `test_launch.py`). | FR-2, D16 | `test_settings.py`, `test_local_provider.py`, `test_launch.py` | T-PlEROT, T-XchniS, T-jVqH8w |
+| AC-2 | With no auth settings: `prepare_auth(...).uvicorn_kwargs == {}`; the `ao ui` stub-uvicorn kwargs are exactly `{host, port}`; `GET /api/auth/status` equals the E1 disabled body byte-for-byte; the header-name snapshots match (§20.3 #14); the existing suites pass unmodified. **(v2.1)** The only differences from the pre-epic app are the NFR-1 list: the `/api/auth/status` route and its `/api/openapi.json` entry (asserted by diffing the OpenAPI path keys), and the store/state/`service.env` denial; `/redoc` and `/docs/oauth2-redirect` still exist with auth off | FR-1, NFR-1, S17 | `test_auth_off_regression.py`, `test_launch.py`, existing suites | T-kzEzwy (hermetic fixture), T-G7qByZ, T-jVqH8w |
+| AC-3 | An empty or missing store with auth on → `ao ui` and `ao service run` exit 78; stderr contains `ao auth add-user`; `uvicorn.run` and `Supervisor.start` are not called. **(v2.1, L4)** `--port 0` with auth on → exit 78 (`prepare_auth`), for both commands. **(v2.1, L3)** `ao ui --reload --auth` passes the same `launch.uvicorn_kwargs` to `uvicorn.run` as the non-reload path (with and without trusted proxies) | FR-2, S14, S19 | `test_ui_command_auth.py`, `test_service_run_auth.py`, `test_launch.py` | T-jVqH8w, T-PDGw9p |
+| AC-4 | Every row of the §11.3.4 fail-closed table has a passing parametrized case owned by exactly one task. **4a** (`decide()`, `resolve_auth_settings`): rows 1–5, 10 and 12, where row 3 uses the `count_users` seam returning 0, >0 or `None` (T-PlEROT, `test_settings.py`). **4b** (`check_ready` / `startup_warnings`): rows 6–8, 11 and 13 (T-XchniS, `test_local_provider.py`). **4c** (`prepare_auth`): row 9, with `count_store_users` returning >0, and **(v2.1)** the enforcement of rows 14–15 (T-jVqH8w, `test_launch.py`). **4d (v2.1)** (`resolve_auth_settings` step 5): the `ConfigRisk` detection of rows 14–15, with the `count_users` seam returning 0, >0 or `None` (T-PlEROT, `test_settings.py`). | FR-2, D16 | `test_settings.py`, `test_local_provider.py`, `test_launch.py` | T-PlEROT, T-XchniS, T-jVqH8w |
 | AC-5 | Hash round-trip; verify true/false; malformed or `v=2` → False plus one log line; `parse_hash` rejects `ln=18`, `r=17`, `p=17` and > 128 MiB; NFKC-equivalent passwords verify; policy violations listed; `hmac.compare_digest` used; one `CURRENT_PARAMS` run succeeds; a rehash is applied **with no epoch bump**, and a stale CAS rehash is **not** applied | FR-3, S25 | `test_passwords.py`, `test_store.py` | T-s6sJmB, T-8NQP8J |
 | AC-6 | The RFC 4226 vectors (0–9) and RFC 6238 SHA-1 vectors (59 → 94287082, 1111111109 → 07081804, 1111111111 → 14050471, 1234567890 → 89005924, 2000000000 → 69279037, 20000000000 → 65353130) pass; ±1 step accepted, ±2 rejected | FR-4 | `test_totp.py` | T-s6sJmB |
 | AC-7 | Step s accepted once; s again → `REPLAYED`; s+1 → OK. Two spawn-context processes consuming the same code → exactly one OK. Across two apps sharing a store, the same code on the second app → 401 `invalid_code` with `reason: "replayed"`. | FR-4, S7 | `test_store.py`, `test_routes_second_factor.py` | T-8NQP8J, T-KQ6ZrY |
 | AC-8 | 10 codes in the Crockford 4-4-4-4 format; no plaintext in `users.json` (grep); single use; normalization (case, separators, I/L/O); regeneration invalidates the old codes | FR-5, S8 | `test_recovery.py`, `test_routes_second_factor.py` | T-s6sJmB, T-KQ6ZrY |
 | AC-9 | E4 returns `secret` and an ASCII `otpauth_uri` (the SPA test asserts the QR SVG, the hub test asserts text only). **9b:** a user enrolled under `optional`, restarted under `off` → E2 returns `state == "second_factor_required"`, and a following `GET /api/runs` (with proof) → 401 `second_factor_required`. **9c:** under `required`, a user not enrolled → E2 `enrollment_required`; every route except PUBLIC and enroll → 401 `enrollment_required`; E6 for an enrolled user → 403 `totp_required`. | FR-6, S9, S10 | `test_totp_service.py`, `test_routes_second_factor.py`, `enroll-screen.test.tsx`, `hub-auth.test.ts` | T-yfrfxv, T-KQ6ZrY, T-vCgsU6, T-R7JhTL |
 | AC-10 | A fake provider with a **redirect-shaped** flow (`GET /api/auth/test/start` → 302 to an external URL; cross-site `GET /api/auth/test/callback?state=…` → session + 303 `/`), registered through `register_route_builder` and `build_auth_runtime(provider=…)`, signs a user in. An AST check shows `sessions.py`, `http/middleware.py` and `principal.py` never import `local_provider`. | FR-7 | `test_provider_seam.py` | T-KQ6ZrY |
-| AC-11 | Auth off → a probe route sees `principal is None` and `auth_enabled is False`. Full session plus proof → `Principal` with exactly the §2.6 field names, in order and with those types (`roles` is a tuple), and `require_principal` returns it. Partial session → `None`, and `require_principal` raises 401. With auth off, `require_principal` returns `None`. | FR-8 | `test_middleware.py` | T-G7qByZ |
+| AC-11 | Auth off → a probe route sees `principal is None` and `auth_enabled is False`. Full session plus proof → `Principal` with exactly the §2.6 field names, in order and with those types, and `require_principal` returns it. **(v2.1, owner decision)** `isinstance(p.roles, list)` and `p.roles == []`; `hash(p)` works; two principals (two requests, or two direct constructions) never share a list (`p1.roles is not p2.roles`); mutating `p.roles` affects neither the next request's principal nor the stored session record nor the cached store snapshot (§20.3 #16); the positional form `Principal(username, auth_method, roles)` plus keyword-only fields constructs, and every field after `roles` is keyword-only. Partial session → `None`, and `require_principal` raises 401. With auth off, `require_principal` returns `None`. | FR-8, S30 | `test_principal.py`, `test_sessions.py`, `test_middleware.py` | T-kwwJ82 (class, `principal_for`), T-G7qByZ (through the middleware) |
 | AC-12 | The partial-confinement enumeration (§20.3 #2) | FR-9, S2 | `test_partial_confinement.py` | T-G7qByZ |
-| AC-13 | Created modes 0700/0600 under umasks 022 and 077. Unsafe permissions, a symlinked file, or a group-writable parent → refuse. A simulated `os.replace` failure leaves the original intact and removes the temp file. A 20-process `add_user` run → 20 users. Stale temp files are removed by the next writer. Denial covers list, read, HTML preview, symlink, absolute path and listing omission, with auth off **and** on. | FR-10, FR-24, S12, S13 | `test_fsutil.py`, `test_store.py`, `test_file_browser_denial.py` | T-8NQP8J, T-jVqH8w |
+| AC-13 | Created modes 0700/0600 under umasks 022, 077 **and 002** (v2.1). Unsafe permissions, a symlinked file, an other-writable parent, or a group-writable parent owned by another user → refuse. **(v2.1, L6)** A group-writable parent owned by the euid → a warning, not a refusal; a symlinked parent is judged by its target. **(v2.1, M6)** Creation uses `os.mkdir(mode=0o700)` and fixes use an `O_NOFOLLOW` fd + `fchmod` (asserted with spies: no path-based `chmod`). A simulated `os.replace` failure leaves the original intact and removes the temp file. A 20-process `add_user` run → 20 users. Stale temp files are removed by the next writer. Denial covers list, read, HTML preview, symlink, absolute path and listing omission, with auth off **and** on, and **(v2.1, L7)** also `~/.config/ao/service.env`. | FR-10, FR-24, S12, S13 | `test_fsutil.py`, `test_store.py`, `test_file_browser_denial.py` | T-8NQP8J (fsutil, store), T-Hd4wQ2 (denial) |
 | AC-14 | The cookie value and the proof are each 43 base64url characters; memory holds only their hashes. The token **and** proof change on login, 2FA, enrollment, password change, disable and regenerate, and the old pair → 401. After logout, the replayed pair → 401. | FR-11, FR-27 | `test_sessions.py`, `test_routes_core.py` | T-kwwJ82, T-rpKCjP |
-| AC-15 | With `FakeClock`: idle expiry at `idle_seconds` without a slide; a slide via keepalive, a mutation, or a same-origin or typed navigation; **no** slide via GET polling or a cross-site navigation; absolute expiry always; a new app instance rejects old cookies | FR-11, S20 | `test_sessions.py`, `test_middleware.py` | T-kwwJ82, T-G7qByZ |
+| AC-15 | With `FakeClock`: idle expiry at `idle_seconds` without a slide; a slide via keepalive or a mutation **with the proof**, or **(v2.1)** a browser-attested navigation (`Sec-Fetch-Site` `same-origin`/`none`) to a `COOKIE_ONLY_NAVIGATION` route; **no** slide via GET polling, a cross-site navigation, a navigation without `Sec-Fetch-*` headers, any request without the proof (PUBLIC routes included), or a navigation to an unflagged route; absolute expiry always; a new app instance rejects old cookies | FR-11, S20 | `test_sessions.py`, `test_middleware.py` | T-kwwJ82, T-G7qByZ |
 | AC-16 | Cross-realm isolation (§20.3 #4). Cookie names `ao_sid_<port>`. Flags `HttpOnly`, `SameSite=Strict`, `Path=/` always; `Secure` + `__Host-` **iff** https. Realm ids are `hub` / `ui:<12 hex>` and do not change when the port changes. | FR-12, S3, S5 | `test_cookie_isolation.py` | T-rpKCjP |
-| AC-17 | Route enumeration (§20.3 #1) for the dashboard (built and unbuilt) and the hub; middleware order `[SecurityMiddleware, AuthMiddleware]`; `assert_flat_auth_routes` raises when an auth route is added through `include_router`. The TOTP entries follow the §13.2 configuration rule. | FR-13, S1 | `test_route_enumeration.py`, `test_middleware.py`, `test_routes_core.py` | T-G7qByZ (dashboard), T-KOv2qD (hub), T-rpKCjP (`assert_flat_auth_routes`), T-KQ6ZrY (full configuration) |
+| AC-17 | Route enumeration (§20.3 #1) for the dashboard (built and unbuilt) and the hub; middleware order `[SecurityMiddleware, AuthMiddleware]`; `assert_flat_auth_routes` raises when an auth route is added through `include_router`. The TOTP entries follow the §13.2 configuration rule. **(v2.1)** With auth on, `/redoc` and `/docs/oauth2-redirect` are absent from both apps (L2); `classify` is deterministic for PARTIAL matches (no set iteration; tested on HEAD, `/redoc`, `/docs/oauth2-redirect`); the enumeration files skip cleanly (importorskip-style) when `fastapi.routing.iter_route_contexts` is unavailable, and the FastAPI floor in `pyproject.toml` is unchanged. | FR-13, S1 | `test_route_enumeration_{dashboard,real_routes,hub,full_config}.py`, `test_middleware.py`, `test_routes_core.py` | T-G7qByZ (dashboard + harness), T-rpKCjP (real routes, `assert_flat_auth_routes`), T-KOv2qD (hub), T-KQ6ZrY (full configuration) |
 | AC-18 | `_probe_hub_status` raises `HubLoginRequired` on HTTP 401 and returns `None` on other failures. `ao service list/status` print the §15 #1 messages plus the fallback JSON and exit 0. The existing `test_cli_e2e.py` passes unmodified. | FR-14, FR-26 | `test_cli_probe_auth.py` | T-PDGw9p |
 | AC-19 | Hub: anonymous `GET /` with `Accept: text/html` → 303 `/login`; `/api/service/status` → 401. After API login, `GET /` (cookie only) → 200 with the signed-in bar and `no-store`. `/login` has no inline script, no `on*` attributes and no `<style>`. Assets have exact content types; an unknown asset → 404. With auth off the HTML is byte-identical. | FR-15 | `test_hub_auth.py` | T-KOv2qD |
 | AC-20 | While throttled, `hasher.verify` is not called. `canonical_client_key` maps `::ffff:127.0.0.1` to `127.0.0.1` and two addresses in one IPv6 /64 to one key. The lockout is shared by two runtimes on one state directory. The backoff schedule (with `FakeClock`) is 30/60/120/240/480/900 s after failures 5–10+. `ao auth unlock` clears it. `busy` counts as an address failure. | FR-16, S16, S19 | `test_throttle.py`, `test_guard.py`, `test_local_provider.py` | T-CsT5gk, T-XchniS |
-| AC-21 | §20.3 #6, plus the phantom table capped at 4096 with oldest-first eviction | FR-17, S6 | `test_local_provider.py`, `test_lockouts.py` | T-XchniS, T-CsT5gk |
+| AC-21 | §20.3 #6, plus the phantom table capped at 4096 with oldest-first eviction. **(v2.1, L1)** Phantom keys and audit `username_hash` values are `HMAC-SHA256(name_key, …)` prefixes: they differ between two stores for the same name, never equal the unkeyed `sha256(name)`, and every name failing `USERNAME_RE` maps to the single `INVALID_USERNAME_BUCKET` digest; `name_key_hex` exists after `check_ready()`, so the first unknown-user attempt still makes exactly one lockout write | FR-17, S6 | `test_local_provider.py`, `test_lockouts.py`, `test_guard.py` | T-XchniS, T-CsT5gk |
 | AC-22 | E8 requires `current_password` (wrong → 401, counted). E4 from a full session requires the password; from an enrollment-pending session it requires the enrollment token. E6 and E7 require the password plus a valid code. | FR-18, FR-28 | `test_local_provider.py`, `test_totp_service.py`, `test_routes_core.py`, `test_routes_second_factor.py` | T-XchniS, T-yfrfxv, T-rpKCjP, T-KQ6ZrY |
 | AC-23 | The CSRF matrix (§20.3 #5) passes. Responses produced at or below `AuthMiddleware` carry `X-Frame-Options: DENY`, and `no-store` on `/api` and protected routes, with auth on. Neither header appears with auth off. | FR-19, S4 | `test_csrf.py`, `test_auth_off_regression.py` | T-QJ1vyQ, T-G7qByZ |
 | AC-24 | The scrub sweep (§20.3 #13) passes in both modes | FR-20, S11 | `test_log_scrub_sweep.py` | T-U2ERMo |
@@ -4457,7 +4953,7 @@ Every AC is an objective pass/fail check bound to a test (tester finding T-2).
 | AC-27 | With fastapi, starlette and uvicorn blocked in a subprocess: `ao auth --help` and `ao auth status` exit 0, and every non-http auth module imports. The AST layer test passes. | NFR-3, S18 | `test_import_boundary.py` | T-kzEzwy (skeleton), T-j9dfsw |
 | AC-28 | Every audit line validates against §12.4. Mode 0600 in the state directory. Rotation at a small `max_bytes`. Fail-open (`os.open` patched to raise → login still 200, plus one ERROR). Strict mode raises on a bad detail key; non-strict writes a reduced event. More than 60 failures in a minute → one `auth.failure.burst` with `suppressed=n`. | FR-23 | `test_audit.py` | T-CsT5gk |
 | AC-29 | The vitest files listed in §17.10 exist, cover the cases listed there, and `npm run test` exits 0. Every time-dependent test uses fake timers. | FR-24 | `ui/src/test/*` | T-pQ73eO, T-vCgsU6, T-R7JhTL |
-| AC-30 | §17.11 budgets are met and recorded; `npm audit --omit=dev --audit-level=high` exits 0; `npm run build` emits the SPA and `hub-auth.js`; `tsc` is clean; `git diff --exit-code` on the built output is clean after a rebuild | FR-24, NFR-2 | CI + STATUS evidence | T-vCgsU6, T-R7JhTL, T-U2ERMo |
+| AC-30 | §17.11 budgets are met and recorded; `npm audit --omit=dev --audit-level=high` exits 0; `npm run build` emits the SPA and `hub-auth.js`; `tsc` is clean; `git diff --exit-code` on the built output is clean after a rebuild. **(v2.1)** T-vCgsU6's first step records that `npm ci && npm run build && git diff --exit-code -- src/agent_orchestrator/ui/static` is clean on the pre-epic baseline (if not, the manager decides before the CI gate is relied on); only T-vCgsU6 commits `ui/static` | FR-24, NFR-2 | CI + STATUS evidence | T-vCgsU6, T-R7JhTL, T-U2ERMo |
 | AC-31 | `child_env` reaches the child (a dump-env spawner); with `child_env=None`, `Popen` gets no `env`. A child exiting 78 → `stopped`, no respawn after 5 ticks, port unchanged. The unit text contains `RestartPreventExitStatus=78`, rendered from `EXIT_CONFIG`. | FR-25 | `test_supervisor_auth.py`, `test_systemd.py` | T-PDGw9p |
 | AC-32 | Coverage: `agent_orchestrator.auth` ≥ 90 % (CI gate); the UI gate is still ≥ 80 % | NFR-6 | CI | T-U2ERMo |
 | AC-33 | Real-subprocess e2e (§20.2), passing 3× in a row | FR-11, FR-13 | `test_e2e_subprocess.py` | T-U2ERMo |
@@ -4470,6 +4966,10 @@ Every AC is an objective pass/fail check bound to a test (tester finding T-2).
 | AC-40 | **(v2)** Event-loop safety (§20.3 #10) | NFR-5 | `test_event_loop.py` | T-XchniS (harness + login), T-yfrfxv (second factor) |
 | AC-41 | **(v2)** Byte pins (§20.3 #12) and origin parity: `origin_matches_host` agrees with `ui/security.py::_is_origin_allowed` on every common same-origin and cross-origin case; documented differences are asserted explicitly | FR-19 | `test_responses.py`, `test_origin.py` | T-G7qByZ, T-QJ1vyQ |
 | AC-42 | **(v2)** Forward compatibility: an unknown top-level or user field written into `users.json` survives a `set-password` rewrite; `required_features: ["x"]` → refuse; `schema_version: 2` → refuse | D5 | `test_store.py` | T-8NQP8J |
+| AC-43 | **(v2.1, security M2; gate test 3)** The forwarded-headers matrix of §20.3 #17: `ClientInfo.is_loopback` requires a loopback peer, a loopback `Host` and no `Forwarded`/`X-Forwarded-*` header; with no trusted proxies a loopback peer with forwarding headers or a non-loopback `Host` gets `proxy_suspected: true` in E1, is refused E4/E5/E7 over http (403 `insecure_transport`), and produces exactly one WARNING per process naming `AO_UI_AUTH_TRUSTED_PROXIES`; with trusted proxies, `proxy_suspected` is always false | FR-21, FR-29, S28 | `test_client_info.py`, `test_routes_core.py`, `test_routes_second_factor.py` | T-rpKCjP (`client_info`, E1, warning), T-KQ6ZrY (E4/E5/E7 case) |
+| AC-44 | **(v2.1, security M1; gate test 1)** §20.3 #15: for every route of the dashboard and the hub, a FULL cookie without its proof gives `principal is None` and no change to `last_activity_mono`, except the hub `GET /` (`HUB_COOKIE_ONLY_NAVIGATION`), which yields a principal and slides only for a browser-attested navigation. Named cases: `POST /api/auth/logout` and `GET /api/health` with the cookie and no proof → `principal is None`, no slide, session still valid. `AuthMiddleware(...)` construction rejects a cookie-only key that is under `/api`, not a GET, or present in the policy table | FR-8, FR-27, S20, S27 | `test_middleware.py`, `test_cookie_only_principal.py`, `tests/service/test_hub_auth.py` | T-G7qByZ (steps 8–9 gating, named cases, construction checks), T-QJ1vyQ (dashboard enumeration), T-KOv2qD (hub enumeration) |
+| AC-45 | **(v2.1, security M3; gate test 4)** §20.3 #18: a config-only `enabled: false` with accounts (or an unknown count) → `ao ui` exit 78 with the row-14 message and one `auth.startup.disabled_by_config` audit line; `--no-auth` / `AO_UI_AUTH=0` → start with the row-9 note; zero accounts → start. A config-only `totp` below `required` with auth on and accounts → start, the warning and one `auth.startup.totp_downgraded_by_config` line. `ao auth status --workspace W` prints both flags and exits 0. A config `env:` block never reaches the auth env layer of `ao ui` | FR-30, S29 | `test_settings.py`, `test_launch.py`, `test_ui_command_auth.py`, `test_cli_e2e.py` | T-PlEROT (detection), T-jVqH8w (enforcement, `ao ui`), T-j9dfsw (status flags) |
+| AC-46 | **(v2.1, security M6)** With `ui.auth.store_dir` set by the workspace config (via `--workspace W`): a mutating `ao auth` command against a **missing** directory exits 78 and creates nothing (the path does not exist afterwards); against an existing directory with mode 0755 it exits 78 and the mode is still 0755; against an existing private directory it succeeds and creates only `state/` (0700) inside it; with `--auth-dir` the normal create/fix behaviour applies | FR-10, FR-30 | `test_cli_e2e.py`, `test_fsutil.py` | T-j9dfsw (rule), T-8NQP8J (fd-based primitives) |
 
 ---
 
@@ -4486,7 +4986,7 @@ Every AC is an objective pass/fail check bound to a test (tester finding T-2).
 - [x] All schemas defined (§12)
 - [x] Pseudocode for every module (§11, §13)
 - [x] Edge cases covered (per module)
-- [x] ADRs created (ADR-0021, v2 incl. D25)
+- [x] ADRs created (ADR-0021, v2.1 incl. D25 decided and the v2.1 amendments)
 
 **Before sprint planning:**
 - [x] Tasks are atomic, with single ownership (§24)
@@ -4503,13 +5003,15 @@ Every AC is an objective pass/fail check bound to a test (tester finding T-2).
 | Are all interfaces and schemas fully defined? | **Yes** (§2, §11, §12). The hub page script's internal structure is left to the implementer, within the §17.6 DOM contract and the §17.8 strings. |
 | Are all failure scenarios handled? | **Yes**: §11 edge cases, §13 deny paths, §14.10 failure table, §11.3.4 fail-closed table. |
 
-**Gate result: READY for implementation (v2).** All five Phase-4 consultations (§28) are folded in;
-no BLOCKER or MAJOR finding is open. The open questions in §25.3 have defaults that do not block
-any task. Two of them need an owner decision before the affected tasks start:
-- **OQ-8** (Principal field shapes): before T-kwwJ82 freezes `principal.py`.
-- **OQ-9** (session proof in the MVP): before T-QJ1vyQ starts step 5.
+**Gate result: READY for implementation (v2.1).** All five Phase-4 consultations (§28.1–§28.8)
+and both manager-run independent gates (§28.9) are folded in. No BLOCKER, MAJOR, HIGH or MEDIUM
+finding is open: every gate finding is ADOPTED with a recorded location, except design-review
+minor 8, which the manager kept as is (repo convention). The owner decisions are made:
+- **OQ-8 DECIDED:** `Principal.roles: list[str]` (fresh per principal, excluded from the hash;
+  additive fields keyword-only).
+- **OQ-9 DECIDED:** the D25 session proof stays in the MVP, and is not a cut-line.
 
-If the owner overrides either default, the delta is local: one module plus its ACs.
+The remaining open questions in §25.3 have defaults that block no task.
 
 ---
 
@@ -4518,6 +5020,15 @@ If the owner overrides either default, the delta is local: one module plus its A
 This plan was re-baselined after the Phase-4 consultations (§28). The developer found six tasks
 over the ≤ 3-day cap and a hidden foundation prerequisite. dev-security's fixes add work: the
 session proof, enrollment tokens, CAS writes and the state directory.
+
+**v2.1 re-baseline (§28.9).** The gate fixes add about 6 dev-days. Several already-capped tasks
+would otherwise exceed 3 days, so v2.1:
+- adds **one task, `T-Hd4wQ2-auth-browse-denial-log-scrub`** (2 d, S1, lane Q). It takes the
+  file-browser denial (from T-jVqH8w, so the cross-epic `denied_paths` mechanism lands in S1), the
+  denial helpers in `paths.py` (from T-8NQP8J) and `scrub.py` (from T-CsT5gk);
+- moves T-j9dfsw's store-busy multiprocess test and T-G7qByZ's informational p95 benchmark to
+  T-U2ERMo, and T-vCgsU6's `ui/README.md` dependency entry to T-otjIkJ;
+- re-estimates nine tasks (table below). Every task stays ≤ 3 days.
 
 ### 24.1 Capacity
 
@@ -4533,45 +5044,65 @@ GrossHoursPerSprint      = team_size * 10 days * 8 h = 5 * 10 * 8   = 400 h
 NetFocusHoursPerSprint   = Gross * 0.60                              = 240 h
 CommitmentHoursPerSprint = Net * (0.70 .. 0.85)                      = 168 .. 204 h  ≈ 21.0 .. 25.5 dev-days
 Per person per sprint                                                ≈ 4.2 .. 5.1 dev-days
-Epic demand (22 tasks, below)                                        = 55 dev-days
-3 sprints capacity                                                   = 63 .. 76.5 dev-days → fits with 13–28 % buffer
-Critical path                                                        ≈ 24 dev-days (≈ 4.8 weeks) < 6 weeks (3 sprints)
+Epic demand (23 tasks, below; v2.1)                                  = 61 dev-days   (v2: 22 tasks, 55)
+3 sprints capacity                                                   = 63 .. 76.5 dev-days → fits with 2 .. 15.5 dev-days (3–20 %) buffer
+Critical path (dependency chain, in dev-days)                        ≈ 26 dev-days   (v2: 24)
 ```
 
 **Why five people and three sprints:**
-- With 4 people, three sprints give 50.4–61.2 dev-days, which cannot reliably hold 55.
-- Two sprints cannot hold the 24-day critical path.
-- The 13–28 % buffer covers T-2wE08U's fix-ups. If it runs short, OQ-9 (deferring the D25 proof
-  header) gives back about 1.5 days.
+- With 4 people, three sprints give 50.4–61.2 dev-days, which cannot hold 61.
+- Two sprints (42–51 dev-days) cannot hold the demand.
+- The buffer covers T-2wE08U's fix-ups. At the low end of the commitment range it is only about
+  2 dev-days, so the **cut-lines below** are the planned relief. D25, enrollment tokens,
+  `insecure_transport` and the tighten-only layer are security-driven and are **not** cut-lines
+  (manager decision, §28.9; this replaces v2's "defer D25 to gain 1.5 days").
+
+**Cut-lines (v2.1, design-review M3; manager decision).** If the schedule slips, drop scope in this
+order, and record each cut in the epic STATUS and the HLD "As built" section:
+
+| Order | Stretch item | Owner | Saves | Consequence if cut |
+|---|---|---|---|---|
+| 1 | Audit **rotation and flood coalescing** (AC-28 rotation/burst parts) | T-CsT5gk | ≈ 0.5 d | `audit.jsonl` grows unbounded until a follow-up; failure floods are written line by line |
+| 2 | The **phantom lockout table** (AC-21 phantom part) | T-CsT5gk, T-XchniS | ≈ 0.5 d | Unknown usernames get the address throttle but no lockout write. S6 weakens from "identical work" to "identical responses + one verify each"; the write-count difference becomes a documented timing residual |
+| 3 | The **redirect-shaped** provider-seam test (AC-10) | T-KQ6ZrY | ≈ 0.5 d | Replaced by a credential-shaped fake provider through the same `register_route_builder` seam; the OIDC follow-up re-adds the redirect proof |
+| 4 | **`required_features`** gating (AC-42 part) | T-8NQP8J | ≈ 0.25 d | Readers refuse only on `schema_version > 1`; extra fields are still preserved |
+
+**Calendar caveat — OPEN_QUESTION OQ-11 (v2.1, architect).** The critical path is stated in
+**dev-days**, as in v2. Under the mandated human-team arithmetic a person delivers only
+4.2–5.1 dev-days per 10-day sprint, so a strictly sequential 26 dev-day chain spans roughly 51–62
+working days (more than three sprints) unless the chain tasks are worked at full focus. The manager
+runs the lanes as agents, which do not carry the 40 % overhead; on that basis three sprints hold.
+The manager decides which basis governs the dates (§25.3).
 
 ### 24.2 Tasks (each ≤ 3 days; details in each `TASK.md`)
 
 | # | Task ID | Title | Agent | Est (d) | Depends on | Sprint | Lane |
 |---|---|---|---|---|---|---|---|
-| 0 | `T-kzEzwy-auth-foundation` | `auth/` skeleton; `constants.py` (all of §12.6), `errors.py` (+ root `EXIT_CONFIG`), `seams.py`, `model.py`; `tests/auth/helpers.py` (fakes, `run_async`, `make_client`); the **root hermetic fixture**; the import-boundary/AST test skeleton | developer | 1 | — | S1 | B |
-| 1 | `T-s6sJmB-auth-crypto-primitives` | passwords (bounded parse, `hide_input_in_errors`) / TOTP / recovery codes | developer | 2.5 | #0 | S1 | A |
-| 2 | `T-8NQP8J-auth-user-store` | `fsutil.py`, `xdg.resolve_config_dir`, `paths.py`, `store.py` (forward-compatible, `user_id`, CAS mutations, enrollment tokens) | developer | 3 | #0 (#1 stubbed) | S1 | B |
-| 3 | `T-kwwJ82-auth-sessions-policy-principal` | sessions (proof hash, `put()` mutations, `principal_for`), principal (`require_principal`, `auth_enabled`), policy tables, `totp_requirement` | developer | 2 | #0 | S1 | C |
-| 4 | `T-PlEROT-auth-settings-layering` | settings resolution, pure `decide()`, tighten-only, state dir, tri-state user probe | developer | 2.5 | #0, #2 | S1 | A |
-| 5 | `T-CsT5gk-auth-throttle-audit-scrub` | `canonical_client_key` + `AddressThrottle` + `UsernameGates`; `lockouts.py` (`LockoutStore`); audit (strict mode, coalescing, state dir); scrub (record factory) | developer | 3 | #0, #2 | S1 | Q |
-| 6 | `T-XchniS-auth-local-provider-runtime` | `guard.py`, `AuthProvider` ABC, `LocalPasswordProvider` (authenticate with the snapshot epoch + CAS, re-auth, password change, logout everywhere, tri-state `revalidate`, `check_ready`), `runtime.py` (`Realm` ids, `provider=`, `runtime_of`) | developer | 3 | #1–#5 | S2 | A |
+| 0 | `T-kzEzwy-auth-foundation` | `auth/` skeleton; `constants.py` (all of §12.6, incl. the v2.1 rows), `errors.py` (+ root `EXIT_CONFIG`), `seams.py`, `model.py` (24 audit events); the `tests/auth/helpers/` **package** + `helpers/core.py`; the **root hermetic fixture**; the import-boundary/AST test skeleton (incl. the three route modules) | developer | 1 | — | S1 | B |
+| 1 | `T-s6sJmB-auth-crypto-primitives` | passwords (bounded parse, `hide_input_in_errors`) / TOTP / recovery codes; `helpers/crypto.py`. **Order:** `totp.py` and `recovery.py` first (T-8NQP8J needs them on its last day) | developer | 2.5 | #0 | S1 | A |
+| 2 | `T-8NQP8J-auth-user-store` | `fsutil.py` (v2.1: `os.mkdir(mode=0o700)` + fd `fchmod`; L6 parent warning), `xdg.resolve_config_dir` (approvals-compatible signature), `paths.py` (minus the denial helpers), `store.py` (forward-compatible, `user_id`, CAS mutations, enrollment tokens) | developer | 3 | #0; #1 (`match_totp_step` / `find_unused_match`; late-binding, day 3) | S1 | B |
+| 3 | `T-kwwJ82-auth-sessions-policy-principal` | sessions (proof hash, `put()` mutations, `principal_for` with a fresh roles list), principal (v2.1 `list[str]`, keyword-only fields; `require_principal`, `auth_enabled`), policy tables + `COOKIE_ONLY_NAVIGATION` sets, `totp_requirement` | developer | 2 | #0 | S1 | C |
+| 4 | `T-PlEROT-auth-settings-layering` | settings resolution, pure `decide()`, tighten-only, state dir, tri-state user probe; **v2.1** `ConfigRisk` detection (rows 14–15) | developer | **3** (2.5) | #0, #2 | S1 | A |
+| 5 | `T-CsT5gk-auth-throttle-audit-scrub` | `canonical_client_key` + `AddressThrottle` + `UsernameGates`; `lockouts.py` (`LockoutStore`; **v2.1** `name_key` + `name_digest`, L1); audit (strict mode, coalescing, state dir). *`scrub.py` moved to #22.* | developer | 3 | #0, #2 | S1 | Q |
+| 6 | `T-XchniS-auth-local-provider-runtime` | `guard.py`, `AuthProvider` ABC, `LocalPasswordProvider` (authenticate with the snapshot epoch + CAS, keyed phantom digests, re-auth, password change, logout everywhere, tri-state `revalidate`, `check_ready`), `runtime.py` (`Realm` ids, `provider=`, `runtime_of`) | developer | 3 | #1–#5 | S2 | A |
 | 7 | `T-yfrfxv-auth-provider-second-factor` | `LocalTotpService`: verify, enrollment begin (token or password, secure transport) / confirm, disable, regenerate | developer | 2 | #6 | S2 | C |
-| 8 | `T-G7qByZ-auth-middleware-app-integration` | `AuthMiddleware` §13.3 preamble (incl. websocket deny) and steps 1, 4, 6–10 (classification, cookie/duplicates, revalidate, policy, principal, sliding, headers) + computing `proof_ok` + `http/responses.py` + `create_app` wiring + route enumeration + partial confinement + auth-off regression | developer | 3 | #3 (stub runtime), #6 (final wire) | S1→S2 | C |
-| 9 | `T-QJ1vyQ-auth-csrf-fetch-metadata` | middleware §13.3 steps 2, 3 and the **enforcement half of step 5 (session proof)** + `http/origin.py` (+ parity test) + CSRF, body-cap and proof matrices | developer | 2 | #8 | S2 | B |
-| 10 | `T-rpKCjP-auth-http-routes` | `install_auth_routes` (flat, `assert_flat_auth_routes`) + status/login/logout/keepalive/password + error handler + cookie/proof issuance + isolation + revocation races + conformance for these | developer | 2.5 | #6, #8 | S2 | A |
-| 11 | `T-KQ6ZrY-auth-routes-second-factor` | `totp/verify`, `enroll/begin\|confirm`, `disable`, `recovery-codes` routes + cross-realm replay + attempt counting + enrollment-token and `insecure_transport` flows + the redirect-shaped provider-seam test | developer | 3 | #7, #10 | S3 | C |
-| 12 | `T-j9dfsw-ao-auth-cli` | `ao auth …` (incl. `enrollment-token`; tokens printed by `add-user --require-totp` and `reset-2fa`) + registration + import boundary | developer | 3 | #1, #2, #4, #5 | S2 | B |
-| 13 | `T-jVqH8w-ao-ui-auth-wiring` | **`launch.py` (`prepare_auth`)** + `ao ui` flags and wiring + `create_app_from_env` + file-browser denial (incl. the state dir) | developer | 3 | #4, #6, #8, #10 | S3 | B |
-| 14 | `T-KOv2qD-hub-service-auth` | **hub app**: `hub.py` (lazy imports), `http/hub_page.py`, `register_hub_auth_routes` (index/login/assets), hub enumeration, wheel `artifacts` | developer | 2.5 | #10, #16 | S3 | A |
-| 15 | `T-PDGw9p-service-cli-supervisor-auth` | `ao service run` via `prepare_auth` (refuse before spawn), probe 401, `list`/`status`, supervisor `child_env` + exit `EXIT_CONFIG`, systemd | developer | 2.5 | #13, #14 | S3 | Q |
-| 16 | `T-R7JhTL-hub-login-page` | `ui/src/hub/hubAuth.ts` (incl. proof + enrollment token) + `vite.hub.config.ts` + `hub-auth.css` + vitest + built asset | developer (frontend) | 2.5 | §2 contract only | S1 | F |
-| 17 | `T-pQ73eO-spa-auth-gate-login` | `api.ts` (proof header, single-flight 401, fetch-mode ban), `proof.ts`, `AuthGate` + reducer, Login, second-factor step, `pageshow`, dev-proxy Origin hook | developer (frontend) | 3 | §2 contract only | S1 | F |
-| 18 | `T-vCgsU6-spa-enroll-account-qr` | Enroll (token or password) + QR (lazy) + recovery codes + account menu + keepalive + bundle/audit | developer (frontend) | 3 | #17 | S2 | F |
-| 19 | `T-U2ERMo-auth-e2e-regression-sweep` | subprocess e2e, scrub sweep, browser smoke (incl. the cross-port proof check), coverage gate + bundle-diff CI step, full regression | tester | 2.5 | #6–#18 | S3 | Q |
-| 20 | `T-2wE08U-auth-security-review` | dev-security audit + reviewer pass + fix-up coordination | dev-security / reviewer | 2 | #19 (may overlap) | S3 | review |
-| 21 | `T-otjIkJ-auth-docs-refresh-closure` | **post-implementation docs refresh**: README, ROADMAP, cross-links, `ao init` template, ADR status, as-built reconciliation | developer / manager | 1.5 | #20 | S3 | B |
+| 8 | `T-G7qByZ-auth-middleware-app-integration` | `AuthMiddleware` §13.3 preamble (incl. websocket deny) and steps 1, 4, 6–10 (classification, cookie/duplicates, revalidate, policy, principal **only when attested**, sliding **only with the proof**, headers) + computing `proof_ok`/`attested` + `http/responses.py` + `create_app` wiring (incl. L2) + dashboard route enumeration + partial confinement + auth-off regression. *The informational p95 benchmark moved to #19.* | developer | 3 | #3 (stub runtime), #6 (final wire) | S1→S2 | C |
+| 9 | `T-QJ1vyQ-auth-csrf-fetch-metadata` | middleware §13.3 steps 2, 3 and the **enforcement half of step 5 (session proof)** + `http/origin.py` (+ parity test) + CSRF, body-cap and proof matrices; **v2.1** the dashboard cookie-only-principal enumeration (AC-44) | developer | **2.5** (2) | #8 | S2 | C |
+| 10 | `T-rpKCjP-auth-http-routes` | `install_auth_routes` (flat, list-valued builder registry, `assert_flat_auth_routes`) + status/login/logout/keepalive/password + error handler + cookie/proof issuance + isolation + revocation races + conformance for these; the `routes_second_factor.py` stub; **v2.1** `client_info` (M2) + R1a annotation test | developer | **3** (2.5) | #6, #8 | S2 | Q |
+| 11 | `T-KQ6ZrY-auth-routes-second-factor` | `http/routes_second_factor.py`: `totp/verify`, `enroll/begin\|confirm`, `disable`, `recovery-codes` routes + cross-realm replay + attempt counting + enrollment-token and `insecure_transport` flows + the redirect-shaped provider-seam test + the full-configuration enumeration | developer | 3 | #7, #10 | S3 | C |
+| 12 | `T-j9dfsw-ao-auth-cli` | `ao auth …` (incl. `enrollment-token`; tokens printed by `add-user --require-totp` and `reset-2fa`) + registration + import boundary; **v2.1** config-sourced `store_dir` rule (M6), `status` flags and policy notes. *The store-busy multiprocess test moved to #19.* | developer | 3 | #1, #2, #4, #5 | S2 | B |
+| 13 | `T-jVqH8w-ao-ui-auth-wiring` | **`launch.py` (`prepare_auth`, incl. v2.1 `ConfigRisk` enforcement, port-0 refusal)** + `ao ui` flags and wiring (incl. the `--reload` uvicorn kwargs) + `create_app_from_env`. *The file-browser denial moved to #22.* | developer | 3 | #4, #6, #8, #10, #22; **merges only after #9 and #11** (v2.1, security M4) | S3 | B |
+| 14 | `T-KOv2qD-hub-service-auth` | **hub app**: `hub.py` (lazy imports, L2 doc URLs, cookie-only set), `http/hub_page.py`, `http/hub_routes.py` (`register_hub_auth_routes`: index/login/assets), hub enumeration (incl. the AC-44 hub part), wheel `artifacts` | developer | **3** (2.5) | #9, #10, #16 | S2→S3 | A |
+| 15 | `T-PDGw9p-service-cli-supervisor-auth` | `ao service run` via `prepare_auth` (refuse before spawn), probe 401, `list`/`status`, supervisor `child_env` + exit `EXIT_CONFIG`, systemd | developer | 2.5 | #13, #14 | S3 | A |
+| 16 | `T-R7JhTL-hub-login-page` | `ui/src/hub/hubAuth.ts` (incl. proof + enrollment token) + `vite.hub.config.ts` + `hub-auth.css` + `tsconfig`/`package.json` scripts + vitest + built `auth/assets` (not `ui/static`); **v2.1** the SPA↔hub `auth-client-contract.test.ts` | developer (frontend) | **3** (2.5) | §2 contract; #17 (for the contract test only) | S1→S2 | F |
+| 17 | `T-pQ73eO-spa-auth-gate-login` | `api.ts` (proof header, single-flight 401, fetch-mode ban), `proof.ts`, `AuthGate` + reducer, Login, second-factor step, `pageshow`, dev-proxy Origin hook. **v2.1:** does not commit `ui/static` | developer (frontend) | 3 | §2 contract only | S1 | F |
+| 18 | `T-vCgsU6-spa-enroll-account-qr` | Enroll (token or password) + QR (lazy) + recovery codes + account menu + keepalive + audit; **the epic's only `ui/static` committer** (baseline check first); the `qrcode-generator` dependency + lock | developer (frontend) | 3 | #16, #17 | S2 | F |
+| 19 | `T-U2ERMo-auth-e2e-regression-sweep` | subprocess e2e, scrub sweep, browser smoke (incl. the cross-port proof check), coverage gate + bundle-diff CI step, full regression; **v2.1** the store-busy multiprocess CLI test (from #12) and the informational p95 measurements (NFR-5, from #8) | tester | **3** (2.5) | #6–#18, #22 | S3 | Q |
+| 20 | `T-2wE08U-auth-security-review` | dev-security audit + reviewer pass + fix-up coordination; **v2.1** re-verify the §28.9 gate findings (M1–M6, L1–L7) against the code | dev-security / reviewer | **2.5** (2) | #19 (may overlap) | S3 | review |
+| 21 | `T-otjIkJ-auth-docs-refresh-closure` | **post-implementation docs refresh**: README (incl. the v2.1 notes: seeds in clear / encrypted backups, required-policy tokens, sticky TOTP under `off`, `/api/docs` under auth, proxy and XFF advice), ROADMAP, cross-links, `ao init` template, `ui/README.md` dependency entry (from #18), ADR status, as-built reconciliation | developer / manager | **2** (1.5) | #20 | S3 | B |
+| 22 | **`T-Hd4wQ2-auth-browse-denial-log-scrub`** (new in v2.1) | the generic file-browser `denied_paths` mechanism (`ui/files.py`, `ui/service.py`; lands first for the approvals epic, §16 X2) + `paths.default_denied_paths` (incl. `service.env`, L7) / `entry_is_denied` + `auth/scrub.py` (moved from #5) | developer | 2 | #0, #2 (`paths.py`); `scrub.py` part needs only #0 | S1 | Q |
 
-Total: **55 dev-days.**
+Total: **61 dev-days** (v2: 55). Bold estimates changed in v2.1; the v2 value is in parentheses.
 
 ### 24.3 Dependency DAG, parallel lanes and critical path
 
@@ -4580,8 +5111,10 @@ flowchart LR
   F0[T-kzEzwy foundation 1d] --> s6[T-s6sJmB crypto 2.5d]
   F0 --> st[T-8NQP8J store 3d]
   F0 --> kw[T-kwwJ82 sessions/policy 2d]
-  st --> PL[T-PlEROT settings 2.5d]
+  s6 -.->|totp/recovery helpers, day 3| st
+  st --> PL[T-PlEROT settings 3d]
   st --> CS[T-CsT5gk throttle/lockouts/audit 3d]
+  st --> DN[T-Hd4wQ2 denial + scrub 2d]
   s6 --> X[T-XchniS provider login 3d]
   st --> X
   kw --> X
@@ -4590,8 +5123,8 @@ flowchart LR
   X --> SF[T-yfrfxv TOTP service 2d]
   kw --> G7[T-G7qByZ middleware 3d]
   X -.->|final wire ~0.5d| G7
-  G7 --> QJ[T-QJ1vyQ CSRF/proof 2d]
-  X --> RP[T-rpKCjP routes core 2.5d]
+  G7 --> QJ[T-QJ1vyQ CSRF/proof 2.5d]
+  X --> RP[T-rpKCjP routes core 3d]
   G7 --> RP
   SF --> KQ[T-KQ6ZrY routes 2nd factor 3d]
   RP --> KQ
@@ -4600,38 +5133,68 @@ flowchart LR
   PL --> J9
   CS --> J9
   RP --> JV[T-jVqH8w launch + ao ui 3d]
-  RP --> KO[T-KOv2qD hub app 2.5d]
-  R7[T-R7JhTL hub page 2.5d] --> KO
+  DN --> JV
+  QJ ==>|merge edge, v2.1 M4| JV
+  KQ ==>|merge edge, v2.1 M4| JV
+  RP --> KO[T-KOv2qD hub app 3d]
+  QJ --> KO
+  R7[T-R7JhTL hub page 3d] --> KO
   KO --> PD[T-PDGw9p service CLI/supervisor 2.5d]
   JV --> PD
-  pQ[T-pQ73eO SPA gate 3d] --> vC[T-vCgsU6 SPA enroll/account 3d]
-  QJ --> U2[T-U2ERMo e2e sweep 2.5d]
+  pQ[T-pQ73eO SPA gate 3d] --> vC[T-vCgsU6 SPA enroll/account + bundle 3d]
+  R7 --> vC
+  pQ -.->|contract test only| R7
+  QJ --> U2[T-U2ERMo e2e sweep 3d]
   KQ --> U2
   PD --> U2
   vC --> U2
   J9 --> U2
-  U2 --> SR[T-2wE08U security review 2d]
-  SR --> DOC[T-otjIkJ docs/closure 1.5d]
+  DN --> U2
+  U2 --> SR[T-2wE08U security review 2.5d]
+  SR --> DOC[T-otjIkJ docs/closure 2d]
+  SR ==>|epic merges to main only after| MAIN((main))
 ```
 
-- **Critical path:** T-kzEzwy (1) → T-8NQP8J (3) → T-CsT5gk (3) → T-XchniS (3) → T-rpKCjP (2.5) →
-  T-jVqH8w (3) → T-PDGw9p (2.5) → T-U2ERMo (2.5) → T-2wE08U (2) → T-otjIkJ (1.5) = **≈ 24
-  dev-days**.
+**v2.1 edge changes** (§28.9):
+- **T-QJ1vyQ ⇒ T-jVqH8w and T-KQ6ZrY ⇒ T-jVqH8w** (security M4) are **merge edges**: T-jVqH8w
+  may be built as soon as its build inputs land, but it merges to the integration branch only after
+  T-QJ1vyQ (CSRF, Fetch Metadata, proof enforcement) and T-KQ6ZrY (TOTP routes) have merged, and
+  rebases its tests onto them. No intermediate state therefore offers `ao ui --auth` without them.
+  Treated as start edges instead, they would add about 3 dev-days to the critical path.
+- **The epic merges to `main` only after T-2wE08U** (security M4).
+- **T-s6sJmB ⇢ T-8NQP8J** (design-review minor 2): `consume_totp` / `consume_recovery` call
+  `match_totp_step` / `find_unused_match`. A late-binding edge: T-s6sJmB lands `totp.py` and
+  `recovery.py` first (by S1 day 3), and T-8NQP8J writes those mutations last.
+- **T-QJ1vyQ → T-KOv2qD** (design-review minor 2): the hub reuses the complete middleware.
+- **T-R7JhTL → T-vCgsU6** (design-review M2): the single `ui/static` committer runs last.
+- **T-Hd4wQ2** (new) → T-jVqH8w and T-U2ERMo.
+
+- **Critical path:** T-kzEzwy (1) → T-8NQP8J (3) → T-CsT5gk (3) → T-XchniS (3) → T-rpKCjP (3) →
+  T-jVqH8w (3, with **T-KQ6ZrY (3) co-critical** through its merge edge) → T-PDGw9p (2.5) →
+  T-U2ERMo (3) → T-2wE08U (2.5) → T-otjIkJ (2) = **≈ 26 dev-days** (v2: 24). T-PlEROT (3) runs
+  in parallel with T-CsT5gk with zero slack. (Calendar interpretation: OQ-11, §24.1.)
 - **This critical path assumes** T-G7qByZ is built in S1–S2 against a duck-typed `StubRuntime` and
-  `StubRealm` in `tests/auth/helpers.py`, which use the exact §11.16 attribute names. `runtime.py`,
-  `AuthProvider` and `LocalTotpService` do not exist yet in S1. Only its final wiring (about 0.5 d,
-  the dotted edge) waits for T-XchniS, and mypy must be clean only after that wiring.
+  `StubRealm` in `tests/auth/helpers/stub_runtime.py`, which use the exact §11.16 attribute names.
+  `runtime.py`, `AuthProvider` and `LocalTotpService` do not exist yet in S1. Only its final wiring
+  (about 0.5 d, the dotted edge) waits for T-XchniS, and mypy must be clean only after that wiring.
   - If T-G7qByZ instead starts only after T-XchniS completes, the path becomes T-XchniS →
-    T-G7qByZ (3) → T-rpKCjP, about **27 dev-days**.
-  - That still fits inside three sprints (30 working days), but with almost no slack.
+    T-G7qByZ (3) → T-rpKCjP, about **29 dev-days**, with almost no slack in 30 working days.
   - **The manager should therefore start T-G7qByZ in S1.**
-- **Lane plan:**
+- **Lane plan (v2.1; loads in dev-days):**
 
 | Sprint | A | B | C | F | Q |
 |---|---|---|---|---|---|
-| **S1** | #1, #4 | #0, #2 | #3, then start #8 on a stub runtime | #17, #16 | #5 |
-| **S2** | #6, #10 | #9, #12 | finish #8, #7 | #18 | §20 harnesses for #19 |
-| **S3** | #14 | #13, #21 | #11 | browser-smoke support | #15, #19; #20 (review) overlaps |
+| **S1** | #1, #4 (5.5) | #0, #2 (4) | #3, then start #8 on a stub runtime (≈ 5) | #17, then start #16 (≈ 5) | #5, then #22 (5; #22's `scrub.py` part may start before #5) |
+| **S2** | #6, then start #14 (≈ 4.5) | #12 (3; slack backs up the chain) | finish #8, #7, #9 (5) | finish #16, #18 (≈ 4) | #10, then §20 harnesses for #19 (≈ 4.5) |
+| **S3** | finish #14, #15 (≈ 4) | #13, #21 (5) | #11 (3) | browser-smoke support (≈ 1) | #19 (3); #20 (review lane) overlaps |
+
+**Capacity note (v2.1, design-review minor 3).** The per-person upper bound is 5.1 dev-days per
+sprint. v2.1 rebalances the two lanes the review flagged: T-R7JhTL now straddles S1→S2 on lane F,
+and T-rpKCjP moves from lane A to lane Q in S2 (Q's S2 was harness preparation only). One
+overload remains and is **accepted explicitly**: lane A in S1 holds T-s6sJmB (2.5) plus T-PlEROT (3)
+= 5.5 dev-days, 0.4 over the bound, because both feed T-XchniS on the critical path and lane B
+(4 dev-days in S1) cannot take either without delaying T-8NQP8J. If lane A runs late, the first
+relief is the sprint buffer, then the cut-lines (§24.1).
 
 ---
 
@@ -4641,11 +5204,11 @@ flowchart LR
 
 | ID | Risk | Likelihood / impact | Mitigation |
 |---|---|---|---|
-| R1 | A composition bug in TOTP, hash format or sessions | M / H | stdlib primitives only; RFC vectors; invariants S1–S26 as tests; security-review task |
+| R1 | A composition bug in TOTP, hash format or sessions | M / H | stdlib primitives only; RFC vectors; invariants S1–S30 as tests (S27–S30 added in v2.1); security-review task |
 | R2 | A route accidentally public, or the SPA broken by deny-by-default | M / H | route-identity classification; exact-set enumeration test; browser smoke |
 | R3 | Regression with auth off | L / H | pass-through middleware; header snapshot; full suite; hermetic env fixture |
 | R4 | Multi-realm login friction (N logins, TOTP step waits) | H / M | documented; clear messages; SSO follow-up (OQ-1) |
-| R5 | Cookie harvesting by a local listener (A4) | L / H | **D25 session proof** closes API replay (OQ-9). Residual: the hub index renders with a harvested cookie, and cookie tossing forces a logout. Expiry; logout everywhere; the handoff follow-up |
+| R5 | Cookie harvesting by a local listener (A4) | L / H | **D25 session proof** closes API replay (OQ-9 decided: in the MVP). **v2.1:** no principal and no idle slide without the proof on any route (M1). Residual: the hub index renders with a harvested cookie, and cookie tossing forces a logout. Expiry; logout everywhere; the handoff follow-up |
 | R6 | Lockout used as a DoS against a known username | M / M | bounded backoff (≤ 15 min); `ao auth unlock`; audit |
 | R7 | A stale global install silently ignores auth config | M / H | README and release note; `ao auth status` as a probe; `install.sh --reinstall` |
 | R8 | Store on NFS, or a filesystem without flock | L / M | documented unsupported; local-FS assumption A-3 |
@@ -4653,11 +5216,13 @@ flowchart LR
 | R10 | Flaky tests (time, multiprocess) | M / M | `FakeClock`; timing measurement opt-in only; multiprocess tests with generous timeouts |
 | R11 | Frontend supply chain | L / M | exact pin; `npm audit`; lazy chunk; one-file wrapper |
 | R12 | Per-request route classification cost | L / L | micro-benchmark; fall back to an LRU keyed by `(method, path)` if p95 > 1 ms |
-| R13 | Merge conflicts with sibling epics (`app.py`, `cli.py`, `service/*`) | M / M | small additive edits (§16); land T-jVqH8w (#13), T-KOv2qD (#14) and T-PDGw9p (#15) early in S3; rebase often |
+| R13 | Merge conflicts with sibling epics (`app.py`, `cli.py`, `service/*`, and v2.1: `xdg.py`, `ui/files.py`, `ui/security.py`, `ui/static`) | M / M | small additive edits (§16); the v2.1 cross-epic rows X1–X6 fix one owner and a merge order per shared file; land the `denied_paths` mechanism first (T-Hd4wQ2, S1); rebuild `ui/static` once after merging, never hand-merge it; rebase often |
 | R14 | An agent disables auth through workspace config (same-user, out of scope) | M / M | recommend env/CLI enablement for services; disabled-with-users notice; sticky TOTP |
 | R15 | **(v2)** Session-proof UX: blocked storage means re-login on every reload; multi-tab proof rotation | L / M | memory fallback plus an explicit message; per-request storage read; browser smoke (AC-34) |
 | R16 | **(v2)** Enrollment-token friction when switching to `required` | M / L | `ao auth enrollment-token`; the token is printed by `add-user --require-totp` and `reset-2fa`; documented procedure (§18 #8) |
-| R17 | **(v2)** Contract change (`roles` tuple, new fields) collides with the approvals epic's assumptions | M / M | OQ-8 flagged to the manager; field names frozen in AC-11 |
+| R17 | **(v2)** Contract change collides with the approvals epic's assumptions | L / M | **v2.1: resolved by the owner decision (OQ-8):** `roles` stays the brief's `list[str]`; the additive fields are keyword-only, so positional construction is unchanged; field names and types frozen in AC-11 |
+| R18 | **(v2.1)** A reverse proxy deployed without `trusted_proxies` (security M2) | M / M | detected and treated as remote; one WARNING + `proxy_suspected`; README advice (D17, §18 #4). Residual: shared throttle bucket until configured |
+| R19 | **(v2.1)** The gate fixes add ~6 dev-days; the low-end buffer is ~2 dev-days | M / M | the cut-lines of §24.1; the new T-Hd4wQ2 keeps every task ≤ 3 d; OQ-11 (calendar basis) for the manager |
 
 ### 25.2 Dependencies
 
@@ -4670,8 +5235,11 @@ flowchart LR
   - approval gates consume §2.6;
   - the cross-run result cache has no expected interaction;
   - the third sibling epic is unknown to this design.
-  - **OQ-8** must be agreed with the approval-gates epic before either side freezes `Principal`.
-  - The manager coordinates merge order for `app.py`, `cli.py` and `service/*`.
+  - **OQ-8 is decided** (v2.1): `Principal.roles: list[str]`; the approvals epic's defensive reader
+    accepts it.
+  - The manager coordinates merge order for `app.py`, `cli.py` and `service/*`, and follows the
+    v2.1 cross-epic rows X1–X6 (§16) for `xdg.py`, `ui/files.py`, `ui/app.py`, `ui/security.py`,
+    `ui/static` and `project_config.py`.
 
 ### 25.3 Open questions (defaults chosen; none blocks implementation)
 
@@ -4684,9 +5252,10 @@ flowchart LR
 | OQ-5 | Where do approval records live? | **Revised:** in run state as the system of record, mirrored to `AuditLog.record`. With auth off they may construct `AuditLog.for_state_dir(settings.state_dir)` themselves, where `settings = resolve_auth_settings(...)` (§11.3). That function resolves the state directory even when auth is disabled (§2.6, §11.12). |
 | OQ-6 | Default TOTP issuer `ao@<short hostname>`? | Yes; configurable. |
 | OQ-7 | Should the README state plainly that "authenticated = full access, including agents that can read the store"? | Yes (A10). |
-| OQ-8 | **(v2)** `Principal.roles` changed from the brief's `list[str]` to `tuple[str, ...]`, and fields were added (§2.6). | **Changed** (3 reviewers). The manager must confirm with the approval-gates epic before either side freezes. |
-| OQ-9 | **(v2)** Ship the session proof header (D25) in the MVP? About +1.5 dev-days. It closes API replay of harvested cookies (A4). | **Yes (default).** The owner may defer it, in which case the README must state the A4 residual as in v1. |
+| OQ-8 | **(v2)** `Principal.roles`: the brief's `list[str]` or v2's `tuple[str, ...]`? Plus the additive fields (§2.6). | **DECIDED (v2.1, owner decision, final):** `roles: list[str] = field(default_factory=list, hash=False)` (fresh per principal; `hash(p)` works); the additive fields are keyword-only. `SessionRecord`, `VerifiedIdentity` and `UserView` keep tuples; `principal_for` is the only converter. |
+| OQ-9 | **(v2)** Ship the session proof header (D25) in the MVP? About +1.5 dev-days. It closes API replay of harvested cookies (A4). | **DECIDED (v2.1): yes, in the MVP**, and it is not a cut-line (§24.1). |
 | OQ-10 | **(v2, from ticket authoring)** Provider seam gaps for a real OIDC provider: (1) provider-contributed PUBLIC policy entries (today's per-app tables are static); (2) a proof handoff for redirect flows (§10.7). | **Not in the MVP.** The first OIDC follow-up adds `create_app(..., extra_policies=...)` and a one-time proof ticket. AC-10 composes a test app with its own table. |
+| OQ-11 | **(v2.1, architect)** Which basis governs the calendar? The critical path is ≈ 26 **dev-days**; under the mandated focus arithmetic (4.2–5.1 dev-days per person per 10-day sprint) a strictly sequential chain of that length spans ≈ 51–62 working days (§24.1). | **Default: the agent-lane basis** (the manager runs the lanes as agents without the 40 % overhead), on which three sprints hold. If a human team executes, plan five to six sprints, or staff the chain tasks at full focus. Manager to confirm. |
 
 ### 25.4 Empirical evidence gathered for this design (2026-10-04)
 
@@ -4713,7 +5282,8 @@ the opt-in smoke test AC-34.
 | Design → implementation | architect | manager | this HLD, ADR-0021, tickets |
 | HTTP contract freeze | architect / manager | frontend lane (T-pQ73eO, T-R7JhTL, T-vCgsU6) and backend routes (T-rpKCjP) | §2. Changes need a manager-approved STATUS entry |
 | Python identity contract | this epic | approval-gates epic | §2.6. Contract test AC-11 |
-| Foundation → everything | T-kzEzwy | every implementation task | `constants`, `errors`, `seams`, `model`, test helpers, hermetic fixture |
+| Foundation → everything | T-kzEzwy | every implementation task | `constants`, `errors`, `seams`, `model`, the `tests/auth/helpers/` package, hermetic fixture |
+| Shared denial mechanism → integration and the approvals epic (v2.1) | T-Hd4wQ2 | T-jVqH8w (`AuthLaunch.denied_paths`), the approvals epic (`T-l43hCg` adds its predicate to `_is_denied`) | `FileBrowser.denied_paths`, `_is_denied`, `default_denied_paths` |
 | Core auth package → HTTP layer | T-s6sJmB, T-8NQP8J, T-kwwJ82, T-PlEROT, T-CsT5gk | T-XchniS, T-yfrfxv → T-G7qByZ, T-QJ1vyQ, T-rpKCjP, T-KQ6ZrY | module interfaces in §11 |
 | HTTP layer → integration | T-G7qByZ, T-QJ1vyQ, T-rpKCjP, T-KQ6ZrY | T-jVqH8w (`ao ui`), T-KOv2qD (hub), T-PDGw9p (service CLI/supervisor) | `install_auth_routes`, `AuthMiddleware`, `prepare_auth` |
 | Implementation → verification | all implementation tasks | T-U2ERMo (tester) | AC matrix §21 |
@@ -4726,11 +5296,12 @@ the opt-in smoke test AC-34.
 
 ## 27. Post-implementation docs-refresh ticket
 
-`T-otjIkJ-auth-docs-refresh-closure` (Sprint 3, 1.5 d) is complete **only after** the docs have been
+`T-otjIkJ-auth-docs-refresh-closure` (Sprint 3, 2 d) is complete **only after** the docs have been
 checked against the merged code. It covers:
 
-- **This HLD:** an "As built" section listing every deviation from §1–§24, including the final
-  outcome of OQ-8 and OQ-9.
+- **This HLD:** an "As built" section listing every deviation from §1–§24, confirming the decided
+  outcomes of OQ-8 and OQ-9 against the code, any cut-line taken (§24.1), and the as-built state
+  of the §16 cross-epic rows X1–X6.
 - **ADR-0021:** status → Accepted, plus any amendments.
 - **`README.md`:**
   - the Dashboard section: an authentication subsection replacing the "no authentication" warning;
@@ -4743,6 +5314,17 @@ checked against the merged code. It covers:
   - the residual threat statement (A4/A10: "authenticated = full access; same-user processes are
     out of scope"), worded to match whether D25 shipped;
   - a stale-install warning;
+  - **(v2.1)** TOTP seeds are stored in clear in `users.json`: back the credential directory up
+    **encrypted** only (security L5);
+  - **(v2.1)** under `totp: required`, a user who has not enrolled needs an operator-issued
+    enrollment token at first login; under `totp: off`, enrolled users are still challenged
+    (design-review M3);
+  - **(v2.1)** a workspace-config-only `enabled: false` refuses to start while accounts exist; pin
+    TOTP with env/CLI (security M3);
+  - **(v2.1)** reverse proxies: set `AO_UI_AUTH_TRUSTED_PROXIES`, the `proxy_suspected` warning,
+    and the unix-socket/firewall advice for `trusted_proxies=127.0.0.1` (security M2);
+  - **(v2.1)** `/api/docs` is unusable in a browser with auth on; `~/.config/ao/service.env` is
+    never browsable;
   - the release note.
 - **`meta/ROADMAP.md`:**
   - §1 table: Authentication → "New, opt-in"; Dashboard and Service rows updated;
@@ -4752,8 +5334,8 @@ checked against the merged code. It covers:
   - §4: the "Dashboard is unauthenticated" gap rewritten.
 - **`docs-md/dashboard-and-general-instructions-hld.md` §2.7:** a pointer here.
 - **`docs-md/multi-workspace-service-hld.md` §8:** a hub-auth pointer.
-- **`ui/README.md`:** the runtime-dependency list (+ `qrcode-generator`, ADR-0021) and the layout
-  (`src/auth/`, `src/hub/`).
+- **`ui/README.md`:** the runtime-dependency list (+ `qrcode-generator`, ADR-0021; **v2.1:** written
+  here, moved from T-vCgsU6) and the layout (`src/auth/`, `src/hub/`).
 - **`project_config.py` `_INIT_TEMPLATE`:** a commented `ui.auth` block.
 
 ---
@@ -4762,9 +5344,12 @@ checked against the merged code. It covers:
 
 The consultations ran in the order the architect template requires, against **draft v1** of this
 HLD (2026-10-04/05). dev-security also probed the v1 revocation model with follow-up questions.
-This document is **v2**: it incorporates the dispositions below. Each finding either changed the
-design or was dispositioned explicitly. The independent design review and the
-security review that the manager runs next are **separate** from these consultations.
+v2 incorporated the dispositions below. Each finding either changed the design or was
+dispositioned explicitly. The independent design review and the security review that the manager
+ran afterwards on v2 are **separate** from these consultations; their findings and the manager's
+decisions are recorded in **§28.9** and folded into this document as **v2.1**. Where §28.1–§28.8
+describe a v2 choice that v2.1 changed (notably `roles: tuple`), the v2.1 text elsewhere in this
+document governs, and §28.9 says so.
 
 ### 28.1 manager (scope and delivery fit)
 
@@ -4817,9 +5402,7 @@ Verdict on v1: *approve with changes* (0 BLOCKER, 8 MAJOR, 4 MINOR). Disposition
 | R-8 MAJOR | Duplicate file primitives | **Fixed.** A neutral `agent_orchestrator/fsutil.py` (flock with timeout; O_EXCL/O_NOFOLLOW fsync'd atomic write; private dir/file checks) and an additive `xdg.resolve_config_dir()`. Existing call sites are left alone (§11.5, §16). |
 | R-9 MINOR | Cookie and envelope built twice; Starlette `delete_cookie` bytes differ | **Fixed.** `auth/http/responses.py` builds `Set-Cookie` and error bodies byte-exactly for both middleware and routes. Byte-pin tests (§11.18). |
 | R-10 MINOR | Error roots; `EXIT_CONFIG` location; 5xx logging | **Fixed.** `AuthError(OrchestratorError)` and `AuthConfigError(ConfigError)`. `EXIT_CONFIG = 78` defined once in root `errors.py`, used by auth, the supervisor and the systemd template. `auth_error_handler` logs 5xx once with the cause (§11.2). |
-| R-11 MINOR | Naming: one concept, five names; two partial states, five vocabularies | **Fixed.** Per-user flag `totp_required`; error code `totp_required`; CLI `--require-totp`. One `SessionState` enum with `.api_state` and `.denial_code`, and `VerifiedIdentity.next_state: SessionState`. `Principal` is `frozen=True, slots=True` with `roles: tuple[str, ...]` (hashable). This is a
-contract change from the brief, which dev-security and the dev-critic also asked for; it is OQ-8
-for the manager. |
+| R-11 MINOR | Naming: one concept, five names; two partial states, five vocabularies | **Fixed.** Per-user flag `totp_required`; error code `totp_required`; CLI `--require-totp`. One `SessionState` enum with `.api_state` and `.denial_code`, and `VerifiedIdentity.next_state: SessionState`. `Principal` is `frozen=True, slots=True`. v2 made `roles: tuple[str, ...]` (hashable); **superseded in v2.1** by the owner decision `roles: list[str] = field(default_factory=list, hash=False)` with keyword-only additive fields (OQ-8 decided, §2.6, §28.9). |
 | R-12 MINOR | Missing literals; test fakes shipping in the wheel; `hub.py` TYPE_CHECKING; `list_dir` performance; wheel artifacts | **Fixed.** Audit event names become a `StrEnum`; the remaining literals are named. Fakes and `TEST_PARAMS` moved to `tests/auth/helpers.py`. `list_dir` resolves only symlink entries. `artifacts` added unconditionally (§16). |
 
 ### 28.4 tester (testability and acceptance-gate quality)
@@ -4849,7 +5432,7 @@ committed). Dispositions:
 | 3 | MEDIUM | **Throttle keys and floods.** Raw peer strings let IPv6 hosts rotate addresses and let `::ffff:` forms split buckets; `busy` (503) responses were free for the attacker. | **Fixed (D9).** `canonical_client_key` (v4-mapped unwrap, IPv6 /64, `unknown`). `BusyError` counts as an address failure. Lockouts live in `lockouts.json`, keyed by `user_id` (AC-20). |
 | 4 | MEDIUM | **TOTP enrollment over plain HTTP** exposes the shared secret to a network observer, permanently. | **Fixed (D7).** E4, E5 and E7 return 403 `insecure_transport` unless the request is https or from a loopback client. CLI enrollment is unaffected (AC-37). |
 | 5 | MEDIUM | **First-come forced enrollment.** Under `required`, anyone holding the password could enroll their own device first. Separately, policy `off` silently made a per-user `totp_required` flag inert. | **Fixed (D7).** Forced enrollment needs a CLI-issued one-time **enrollment token** (80-bit, hashed, single use, `ENROLLMENT_TOKEN_TTL_SECONDS`), checked through `AttemptGuard`. `totp_requirement()` returns BLOCKED, so a required user under policy `off` gets 403 `totp_required` at login (AC-36, AC-9c). |
-| 6 | MEDIUM | **The identity contract conflated "auth disabled" with "unauthenticated"** (`principal is None` in both cases), and `roles: list` is unhashable on a frozen dataclass. | **Fixed (§2.6).** `auth_enabled(request)`, `require_principal(request)`, `roles: tuple[str, ...]` (OQ-8). |
+| 6 | MEDIUM | **The identity contract conflated "auth disabled" with "unauthenticated"** (`principal is None` in both cases), and `roles: list` is unhashable on a frozen dataclass. | **Fixed (§2.6).** `auth_enabled(request)`, `require_principal(request)`. The hashability part was solved with `roles: tuple[str, ...]` in v2, **superseded in v2.1** by `list[str]` with `field(hash=False)` (owner decision; §28.9 A). |
 | 7 | MEDIUM | **Caching.** Protected HTML and JSON could be served from the HTTP cache or the bfcache after logout. | **Fixed (D4).** `Cache-Control: no-store` on every `/api` response and every non-PUBLIC response; `Clear-Site-Data: "cache"` on logout; the SPA re-checks status on `pageshow` with `persisted` (§17.4). |
 | 8 | LOW | **`root_path` and path-spelling probes** (`//api/x`, `/API/x`, `/api/x/`, encoded slashes) | **Fixed.** Classification strips `root_path` the way Starlette does. Probes are kept as regression tests. Every non-`/api` spelling reaches only the static SPA shell (§13.1). |
 | 9 | LOW | **Phantom-lockout eviction is an oracle** (an attacker can flush a phantom entry by spraying names) | **Accepted and bounded.** Cap 4096 with oldest-first eviction, documented. Real accounts are keyed by `user_id` and are never evicted. |
@@ -4873,10 +5456,10 @@ Verdict on v1: *MVP sound; fix #1–#4 before §2.6 and §12.1 freeze*. Disposit
 
 | # | Finding | Disposition in v2 |
 |---|---|---|
-| C-1 HIGH | Version skew between flavors sharing a strict, migrate-on-write store | **Fixed.** Store models use `extra="allow"` (fields preserved). `required_features` gating. Breaking migrations only through an explicit `ao auth migrate` (D5, §12.1). |
+| C-1 HIGH | Version skew between flavors sharing a strict, migrate-on-write store | **Fixed.** Store models use `extra="allow"` (fields preserved). `required_features` gating. Breaking migrations only through an explicit, operator-run migration command, which is **future work, not in this epic** (v2.1 wording; D5, §12.1). |
 | C-2 HIGH | Reusable usernames and epoch restart revive sessions; the realm id included a reassignable port | **Fixed.** Immutable `user_id`, revalidated with the epoch (D10). Stable realm ids (`hub`, `ui:<workspace_id>`); the port stays only in the cookie name (D3). |
 | C-3 HIGH | A `Principal` over-attests against same-user agents; approval records in a rotating log | **Fixed (contract text) + recommended.** §2.6 states exactly what a principal attests. Approvals should own their records in run state, with audit as a mirror (OQ-5 revised). Audit flood coalescing (D18). `disallowed_tools` hardening for agents is recommended to the owner. |
-| C-4 MEDIUM | `Principal` shape: unhashable list; closed `auth_method`; no `auth_time`; `None` is ambiguous | **Fixed.** `roles: tuple[str, ...]` (OQ-8); `user_id`, `amr`, `auth_time` and `provider` added; `auth_enabled(request)` and `require_principal(request)` (§2.6). |
+| C-4 MEDIUM | `Principal` shape: unhashable list; closed `auth_method`; no `auth_time`; `None` is ambiguous | **Fixed.** v2: `roles: tuple[str, ...]`; **v2.1:** `roles: list[str]` with `field(hash=False)`, so hashability is kept without changing the brief's type (OQ-8 decided); `user_id`, `amr`, `auth_time` and `provider` added (keyword-only in v2.1); `auth_enabled(request)` and `require_principal(request)` (§2.6). |
 | C-5 MEDIUM | Provider seam is credential-shaped (OIDC redirect, WebAuthn) | **Fixed.** Wire state renamed to `second_factor_required` with `second_factors[]`. A redirect-shaped seam test (start → 302 → cross-site callback GET). WebAuthn's need for a canonical hostname is recorded as a follow-up constraint (§10.7). |
 | C-6 MEDIUM | Wrong first follow-up | **Adopted.** The hub-run handoff (D3 D) is the first follow-up and SSO (B) the second. "Stay signed in" prompt added to the follow-ups (§4.2). |
 | C-7 LOW | Env leak to agents; proxies that rewrite `Host`; app-coverage test; hub auth-state visibility | **Dispositioned.** Env leak accepted (settings only, §15 #17). Proxy requirement documented (D17). Both app factories are enumerated (AC-17). OQ-4 kept at "no" for the MVP because of the NFR-1 trade-off, with the critic's argument recorded (§25.3). |
@@ -4884,17 +5467,17 @@ Verdict on v1: *MVP sound; fix #1–#4 before §2.6 and §12.1 freeze*. Disposit
 
 ### 28.7 Residual concerns carried to the manager's reviews
 
-- **Owner decisions with defaults (none blocks the start of implementation):**
-  - **OQ-9** (D25 session proof in the MVP; default yes).
-  - **OQ-8** (`Principal.roles` tuple and additive fields; must be agreed with the approval-gates
-    epic before T-kwwJ82 freezes `principal.py`).
-  - **OQ-1** (handoff vs SSO timing).
-  - **OQ-2** (idle timeout vs passive tabs).
+- **Owner decisions** (v2.1 status in brackets):
+  - **OQ-9** (D25 session proof in the MVP) [**DECIDED: yes**].
+  - **OQ-8** (`Principal.roles` shape and additive fields) [**DECIDED: `list[str]`, `hash=False`,
+    keyword-only additive fields**].
+  - **OQ-1** (handoff vs SSO timing) [manager: no SSO/handoff in this epic].
+  - **OQ-2** (idle timeout vs passive tabs) [manager: 30 min / 12 h].
 - **The A4 residual with D25:**
   - a harvested cookie still renders the hub index page (a cookie-only navigation);
   - a tossed duplicate cookie forces a logout.
 
-  Without D25 (if OQ-9 is overridden), API replay is also open, as in v1.
+  D25 is decided in (v2.1), so API replay stays closed.
 - **Same-user agents (A6/A10)** remain out of scope. The `disallowed_tools` hardening is recommended
   as a cross-epic task.
 - **`start_run` bypass:** an accepted residual, to be re-evaluated in T-2wE08U.
@@ -4936,3 +5519,95 @@ Writing the 22 v2 tickets against this HLD surfaced gaps, and this HLD now resol
   - a uniform-verify pseudocode fix (§11.15.4: no short-circuit before scrypt).
 - **New open question:** OQ-10 (provider-contributed policies and the proof handoff for redirect
   flows), non-blocking for the MVP.
+
+### 28.9 Independent gates (manager-run, 2026-10-05)
+
+**What ran.** After v2 was published, the manager ran two independent, read-only gates on HLD v2,
+ADR-0021 v2 and the 22 tickets, verified against the real code (`ui/app.py`, `ui/security.py`,
+`ui/files.py`, `ui/service.py`, `cli.py`, `service/hub.py`, `service/supervisor.py`,
+`service/systemd.py`) and the installed FastAPI 0.139.2 / Starlette 1.3.1 / uvicorn 0.51.0:
+- **Design review** (`reviewer`): "sound; not ready to freeze until B1 is fixed". 1 BLOCKER,
+  3 MAJOR, 9 MINOR, plus testing notes.
+- **Security review** (`dev-security`): no CRITICAL or HIGH. 6 MEDIUM, 8 LOW, plus four requested
+  test gates.
+
+Neither gate re-raised a §28.1–§28.8 finding. **The manager's decisions below are final** (owner
+decision for A). This section records each finding, its disposition and where the design changed.
+Severity is the gate's own rating.
+
+#### A. Principal contract (design-review B1 + security M5; owner decision, final)
+
+```python
+@dataclass(frozen=True, slots=True)
+class Principal:
+    username: str
+    auth_method: AuthMethod
+    roles: list[str] = field(default_factory=list, hash=False)   # fresh [] per Principal, excluded from hash; == still compares
+    user_id: str = field(kw_only=True)   # and realm, session_id, amr, auth_time, provider: all kw_only=True
+```
+
+- `SessionRecord`, `VerifiedIdentity` and `UserView` keep tuple roles. `SessionManager.principal_for`
+  is the only converter and returns a fresh `list(record.roles)` on every call; the cached snapshot's
+  list is never exposed.
+- Forward note: when RBAC lands, any role change must bump `credential_epoch`.
+- OQ-8 → **DECIDED** (`list[str]`). OQ-9 → **DECIDED** (D25 stays in the MVP; not a cut-line).
+- Verified with a scratch script (the worktree's Python 3.12 venv): the class above constructs
+  positionally, keeps the §2.6 field order in `dataclasses.fields`, hashes, compares equal, and two
+  instances never share a list.
+
+#### B. Security review — dispositions
+
+| Finding | Severity | Disposition | Where changed |
+|---|---|---|---|
+| M1 Cookie-only identity and idle sliding on PUBLIC routes | MEDIUM | **ADOPTED.** `principal` is set and `touch()` runs only when the proof matches; one explicit per-app flag `COOKIE_ONLY_NAVIGATION`, used only by the hub index, allows a cookie-only principal, which slides only for browser-attested navigations; every other non-PUBLIC route (API or not) needs the proof | D3, D23, D25; §0; §2.6 guarantees 6–7 and "attests"; §6.3 A4; §6.4 S20, S27; §11.14 (`*_COOKIE_ONLY_NAVIGATION`, `proof_required`); §11.17; §13.1 `classify`; §13.2; §13.3 steps 5, 8, 9; §14.10; §20.3 #3, #15; AC-15, AC-44; ADR D6, D11; T-kwwJ82, T-G7qByZ, T-QJ1vyQ, T-KOv2qD |
+| M2 Transport and loopback decisions use the peer address only | MEDIUM | **ADOPTED.** `is_loopback` = loopback peer **and** loopback `Host` **and** no `Forwarded`/`X-Forwarded-*`; with auth on and no trusted proxies, one WARNING per process plus `transport.proxy_suspected` in E1 when a loopback peer sends forwarding headers or a non-loopback Host (a manager-approved additive HTTP-contract change). The spoofable-XFF residual with `trusted_proxies=127.0.0.1` is documented with the unix-socket/firewall advice | D7, D17; §0; §2.4 E1, §2.5; §5 A-17; §6.4 S28; §11.15.1 `ClientInfo`; §11.16; §11.18 `client_info`; §12.6; §14.10; §18 #4; §19.1; §20.3 #17; FR-21; AC-43; ADR D5, D8; T-rpKCjP, T-KQ6ZrY, T-pQ73eO (types) |
+| M3 Workspace config can silently disable auth | MEDIUM | **ADOPTED.** Config-only `enabled: false` with accounts (or an unknown count) → exit 78 pointing at `--no-auth` / `AO_UI_AUTH=0`, audit `auth.startup.disabled_by_config`, `ao auth status` flag. Config-only `totp` below `required` with auth on and accounts → warning, audit `auth.startup.totp_downgraded_by_config`, status flag. Detection is pure data (`ConfigRisk`) in settings; `prepare_auth` enforces, so `ao auth` itself keeps working | D2; §0; §6.3 A12 (mitigations and residual); §6.4 S29; §11.3.1 (`ConfigRisk`), §11.3.2 step 5, §11.3.4 rows 9, 14, 15; §11.15.2; §11.19 `status`; §11.20; §12.4 (24 events), §12.5; §14.10; §19.1; §20.3 #18; FR-30; AC-4, AC-45; ADR D8; T-kzEzwy, T-PlEROT, T-jVqH8w, T-j9dfsw |
+| M4 The task DAG permits an unprotected integration state | MEDIUM | **ADOPTED.** Edges T-QJ1vyQ (#9) ⇒ T-jVqH8w (#13) and T-KQ6ZrY (#11) ⇒ T-jVqH8w (#13), as merge edges; the epic merges to `main` only after T-2wE08U | §18 #11; §24.2 (#13 deps), §24.3 (DAG, edge notes, critical path); EPIC task table; T-jVqH8w, T-QJ1vyQ, T-KQ6ZrY, T-2wE08U |
+| M5 The `roles: list[str]` decision not propagated; aliasing hazard | MEDIUM | **ADOPTED** as decision A above, with the aliasing test | header; §0; D12; §2.6; §3.4 FR-8; §4.2; §6.4 S30; §10.7; §11.10; §20.3 #16; §25.1 R17; §25.3 OQ-8; §28.3 R-11, §28.5 #6, §28.6 C-4, §28.7 (marked superseded); AC-11; ADR D6, D11 header; EPIC; epic STATUS; T-kwwJ82, T-G7qByZ |
+| M6 `ao auth --workspace` creates/chmods an attacker-chosen `store_dir` | MEDIUM | **ADOPTED.** With a config-sourced `store_dir`, mutating `ao auth` commands never create or chmod it: it must already exist and be private, or the operator passes `--auth-dir`; only `state/` may be created inside it. `fsutil` creates with `os.mkdir(mode=0o700)` and fixes through an `O_NOFOLLOW` fd + `fchmod` | D2; §6.3 A12; §11.5; §11.19; §12.5; §19.1; FR-30; AC-13, AC-46; T-8NQP8J, T-j9dfsw |
+| L1 Unsalted username hashes | LOW | **ADOPTED.** Phantom keys and audit `username_hash` use `HMAC-SHA256(name_key, …)` with a per-store random key in `lockouts.json`; every name failing `USERNAME_RE` shares one bucket; the key is created at startup so S6's one-write rule holds | D9, D18; §11.11 (`name_key_hex`, `ensure_name_key`, `name_digest`, guard), §11.12; §11.15.3–§11.15.4; §12.1b; §12.2; §12.6; AC-21; ADR D9; T-CsT5gk, T-XchniS |
+| L2 Extra FastAPI routes outside `/api` | LOW | **ADOPTED, conditioned on auth.** `redoc_url=None` and `swagger_ui_oauth2_redirect_url=None` are passed **only when auth is on**, so auth-off stays byte-identical; both routes are also listed in §13.2 | §2.4; §10.6; §13.1 notes; §13.2; §16 rows 1h and 5; AC-2, AC-17; T-G7qByZ, T-KOv2qD |
+| L3 `--reload` path drops `uvicorn_kwargs` | LOW | **ADOPTED.** The reload `uvicorn.run` gets `**launch.uvicorn_kwargs`; tested | §11.20; §16 row 4; AC-3; T-jVqH8w |
+| L4 `--port 0` | LOW | **ADOPTED.** `prepare_auth` refuses port 0 when auth is on (exit 78) | §11.20; §12.6; §19.1; AC-3; T-jVqH8w, T-PDGw9p |
+| L5 TOTP seed stored in clear | LOW | **ADOPTED (documentation).** The README says plainly that the seed is in clear in `users.json` and that backups must be encrypted | §6.3 A7; §18 #7; §27; T-otjIkJ |
+| L6 Parent-directory check on `umask 002` hosts | LOW | **ADOPTED.** A group-writable parent **owned by the euid** warns instead of refusing; other-writable or foreign-owned group-writable parents still refuse; the check judges the resolved parent, so a symlinked `~/.config` is checked at its target. Interpretation note: the manager's "check ln" is read as "verify on a `umask 002` (Debian/Ubuntu-style) home, including a symlinked parent"; T-8NQP8J's tests cover both | D5; §5 A-18; §6.4 S13; §11.3.4 row 13; §11.5; §11.15.3; §19.1; AC-13; T-8NQP8J, T-XchniS |
+| L7 Smaller hygiene items | LOW | **ADOPTED in part.** `~/.config/ao/service.env` (API keys) joins the default denied paths. **Follow-ups (not in this epic):** re-checking store permissions after startup; recording the OS uid in CLI audit events | D5; §3.5 NFR-1; §11.3.5; §11.4; §12.6; AC-13; T-Hd4wQ2; §28.9 D (follow-ups) |
+| L8 `start_run` residual | LOW (note) | **NOTED.** The reviewer confirmed `load_workflow` errors echo only key names or positions; the accepted residual holds, and `service.env` (L7) was the real exposure | §16 (residual; line reference fixed to `ui/service.py:662`); T-2wE08U re-checks |
+| Test gate 1: cookie-without-proof principal enumeration | — | **ADOPTED** as AC-44 | §20.3 #15; AC-44 |
+| Test gate 2: `Principal.roles` aliasing | — | **ADOPTED** in AC-11 | §20.3 #16; AC-11 |
+| Test gate 3: forwarded headers from a loopback peer | — | **ADOPTED** as AC-43 | §20.3 #17; AC-43 |
+| Test gate 4: config flip | — | **ADOPTED** as AC-45 | §20.3 #18; AC-45 |
+
+#### C. Design review — dispositions
+
+| Finding | Severity | Disposition | Where changed |
+|---|---|---|---|
+| B1 `roles` decision not applied; the dataclass as written cannot be built | BLOCKER | **ADOPTED** (decision A) | as security M5 above |
+| M1 Cross-epic collisions with `E-Ag7Pw3` missing from §16 | MAJOR | **ADOPTED.** `xdg.resolve_config_dir(override_env, xdg_subdir, default_subdir, *, environ=None, home=None)`, one implementation for both epics; cross-epic rows X1–X6 (xdg, `ui/files.py` `denied_paths` landing first with the approvals denial expressed through it, `ui/app.py`, `ui/security.py` XFO, the committed bundle, `project_config.py`); bundle rule "only the last frontend task of each epic regenerates/commits `ui/static`, after merge". The approvals epic's files were read, not edited | §10.2; §10.6 #7; §11.4; §16 rows 2, 3, 15, 20 and X1–X6; §20.3 #14; §25.1 R13; §25.2; T-8NQP8J, T-Hd4wQ2, T-vCgsU6, T-pQ73eO |
+| M2 Same-file parallel edits; frontend bundle ownership | MAJOR | **ADOPTED.** `register_hub_auth_routes` → `auth/http/hub_routes.py`; TOTP routes → `auth/http/routes_second_factor.py` through a list-valued `register_route_builder`; `tests/auth/helpers/` becomes a package (one module per owner); route-enumeration tests split into four owner files; ledger fixed: T-vCgsU6 is the single `ui/static` owner (last frontend task), T-R7JhTL owns the `package.json` scripts and `tsconfig.json`, T-vCgsU6 owns the dependency | D11, D13, D24; §10.2; §11.1 (layout, R1); §11.2; §11.18; §13.2; §16 rows 5, 11, 12, 12b, 15 and the single-ownership note; §20.1, §20.2; T-kzEzwy, T-s6sJmB, T-8NQP8J, T-kwwJ82, T-G7qByZ, T-rpKCjP, T-KQ6ZrY, T-KOv2qD, T-R7JhTL, T-pQ73eO, T-vCgsU6 |
+| M3 Scope against the owner's five requirements | MAJOR | **ADOPTED.** Explicit cut-lines in stretch order: audit rotation + coalescing → phantom table → AC-10 redirect-shaped test → `required_features`. `ao auth migrate` dropped from the ADR (future work). The README and `ao auth status` state that `totp=required` needs an operator-issued enrollment token for users who have not enrolled, and that enrolled users are still challenged under `totp=off`. **Kept (security-driven, not cut):** D25, enrollment tokens, `insecure_transport`, tighten-only | D5; §11.19 `status`; §12.1; §18 #8; §24.1 (cut-lines); §27; §28.6 C-1; ADR D3; T-j9dfsw, T-otjIkJ |
+| Minor 1 `classify` iterates a set for `first(...)` | MINOR | **ADOPTED.** PARTIAL matches use `sorted(chosen.methods)` and the first method with a table entry; a unit test covers HEAD, `/redoc`, `/docs/oauth2-redirect` | §13.1; AC-17; T-G7qByZ |
+| Minor 2 Missing DAG edges; `provider.py` owner | MINOR | **ADOPTED.** T-s6sJmB ⇢ T-8NQP8J (late-binding: `totp.py`/`recovery.py` first); T-QJ1vyQ → T-KOv2qD drawn in §24.3; §10.2 names T-kwwJ82 (seed) and T-XchniS as `provider.py` owners | §10.2; §24.2; §24.3; EPIC; T-s6sJmB, T-8NQP8J, T-KOv2qD |
+| Minor 3 Lane capacity over 5.1 d (lanes F/S1, A/S2) | MINOR | **ADOPTED (rebalance + one explicit acceptance).** T-R7JhTL straddles S1→S2; T-rpKCjP moves to lane Q; lane A/S1 at 5.5 d is accepted explicitly. New task T-Hd4wQ2 and re-estimates keep every task ≤ 3 d (61 dev-days); OQ-11 raises the dev-days-vs-calendar basis | §24 (intro, 24.1, 24.2, 24.3 capacity note); §25.1 R19; §25.3 OQ-11 |
+| Minor 4 NFR-5 untestable; bundle baseline | MINOR | **ADOPTED.** NFR-5 is a target, measured informationally (moved to T-U2ERMo), not an AC; T-vCgsU6's first step checks `npm run build` + `git diff --exit-code ui/static` on the baseline | §3.5 NFR-5; §16 row 15; AC-30; T-G7qByZ, T-U2ERMo, T-vCgsU6 |
+| Minor 5 FastAPI floor vs `iter_route_contexts` | MINOR | **ADOPTED.** Enumeration tests skip with a reason when the helper is missing (importorskip-style); the FastAPI floor is not bumped | §13.1 notes; §20.2 (`helpers/enumeration.py`); AC-17 |
+| Minor 6 `TYPE_CHECKING`-only handler annotations | MINOR | **ADOPTED.** Rule R1a plus an AST test | §11.1 R1a; §11.18; T-rpKCjP |
+| Minor 7 Hub page and SPA duplicate client logic | MINOR | **ADOPTED.** Shared `auth-client-contract.test.ts` runs one scenario table against both clients | §17.6; §17.10; T-R7JhTL |
+| Minor 8 `Role: agent` vs `meta/tickets/README.md` roles | MINOR | **NOT ADOPTED (manager decision):** `Role: agent` is the repo's manager convention and stays as is | — |
+| Minor 9 NFR-1 wording | MINOR | **ADOPTED.** `/api/auth/status` and its OpenAPI entry are listed as NFR-1 exceptions | D1; §3.5 NFR-1; AC-2 |
+| Small inaccuracies | — | **FIXED.** `auth/http/routes.py` (ledger #5, now `hub_routes.py`); `start_run` at `ui/service.py:662`; `/redoc` and `/docs/oauth2-redirect` in §13.2; `/api/docs` unusable in a browser under auth | §2.4; §13.2; §16 row 5 and the residual |
+| Testing notes | — | **ADOPTED where they test a v2.1 change:** the Principal contract test (AC-11), the `classify` unit test on HEAD and the doc routes (AC-17), and the config `env:`-block isolation test (AC-45). The defensive-reader check belongs to the approvals epic | §20.3 #16, #18; AC-11, AC-17, AC-45 |
+
+#### D. Residual concerns and follow-ups after v2.1
+
+- **OQ-11** (new): whether the 3-sprint calendar uses the agent-lane basis or the human-team
+  arithmetic (§24.1, §25.3). Manager decision.
+- **Follow-ups recorded, not in this epic:** re-check store permissions after startup; OS uid in CLI
+  audit events (security L7); a client-rendered hub index carrying the proof (removes the last
+  cookie-only route, A4); adding `AO_UI_AUTH*`, `AO_AUTH_DIR` and `AO_AUTH_STATE_DIR` to the shared
+  config-env denylist once both epics have merged (§16 X6).
+- **Cross-epic:** the approvals epic's tickets are not edited here. The manager relays rows X1–X6
+  (§16) to that epic, and in particular confirms the `xdg.resolve_config_dir` defaults and that its
+  approvals-tree denial goes through `FileBrowser._is_denied`.
+- **Plan size:** 23 tasks, 61 dev-days, critical path ≈ 26 dev-days, buffer 3–20 % of capacity;
+  the cut-lines are the planned relief.

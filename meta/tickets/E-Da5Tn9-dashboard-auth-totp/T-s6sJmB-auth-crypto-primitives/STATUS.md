@@ -7,6 +7,11 @@
 - Scope: `MVP` · Sprint: `S1` · Estimate: `2.5 d`
 
 ## This update
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
+  Estimate unchanged (2.5 d).
+  - Test doubles move to `tests/auth/helpers/crypto.py` (the helpers package, design-review M2).
+  - New hard DAG edge T-s6sJmB → T-8NQP8J (design-review minor 2): land `totp.py` and
+    `recovery.py` first, by S1 day 3; T-8NQP8J no longer stubs them.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2 rescope. Changes:
   - **Foundation.** The task now builds on T-kzEzwy, so it no longer creates `constants.py`
     (developer finding D-3).
@@ -25,7 +30,8 @@
 - None yet.
 
 ## Risks / Blockers
-- None. Starts once T-kzEzwy lands.
+- None. Starts once T-kzEzwy lands. T-8NQP8J needs `totp.py` and `recovery.py` by S1 day 3.
 
 ## Next actions
-1. developer: implement, run the TASK.md verification, and record the results and coverage here.
+1. developer: implement `totp.py` and `recovery.py` first, then `passwords.py`; run the TASK.md
+   verification, and record the results and coverage here.

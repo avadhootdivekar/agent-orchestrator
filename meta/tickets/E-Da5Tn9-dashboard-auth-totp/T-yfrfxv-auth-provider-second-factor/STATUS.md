@@ -7,6 +7,11 @@
 - Scope: `MVP` · Sprint: `S2` · Estimate: `2 d`
 
 ## This update
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
+  Estimate unchanged (2 d); no logic change. `ClientInfo.is_loopback` now means loopback peer
+  **and** loopback `Host` **and** no forwarding headers (security M2), computed by T-rpKCjP's
+  `client_info`; this service only reads it. Its unit tests keep constructing `ClientInfo`
+  directly; the header matrix is AC-43 (T-rpKCjP, T-KQ6ZrY).
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: TASK.md aligned with the HLD v2 cross-check (HLD §28.8): guarded web writes now use `store.with_identity`; a missing enrollment token is a counted failed attempt; the token is consumed by `begin`.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: Task **created in v2**. It is split out
   of T-XchniS, which was over the 3-day cap (developer D-4) and too large (reviewer R-4).

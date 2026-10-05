@@ -54,7 +54,13 @@ the stdlib only: no FastAPI, no pydantic, no file I/O, no store. Constants, `Bus
   - **v2:** CLI-issued enrollment tokens (T-8NQP8J, T-j9dfsw) reuse exactly this format and these
     functions (`generate_recovery_codes(entropy, count=1)`, `normalize_recovery_code`,
     `hash_recovery_code`).
-- **Test doubles** (in `tests/auth/helpers.py`, never in the package; reviewer finding R-12):
+- **Work order (v2.1, design-review minor 2).** Land `totp.py` and `recovery.py` **first** (merged
+  by S1 day 3): T-8NQP8J's `consume_totp` / `consume_recovery` call `match_totp_step` and
+  `find_unused_match` on its last day. This is a real (late-binding) DAG edge T-s6sJmB → T-8NQP8J
+  (HLD §24.3); T-8NQP8J does not stub these functions. `passwords.py` follows.
+- **Test doubles** (in **`tests/auth/helpers/crypto.py`**, a module of the v2.1 helpers package
+  owned by this task — design-review M2, HLD §20.2; never in the shipped package; reviewer finding
+  R-12):
   - `TEST_PARAMS = ScryptParams(10, 8, 1)`;
   - `FastFakeHasher`:
     - `hash(raw)` returns `"fake$" + raw`;
@@ -69,7 +75,7 @@ the stdlib only: no FastAPI, no pydantic, no file I/O, no store. Constants, `Bus
 - **Outputs:**
   - `src/agent_orchestrator/auth/passwords.py`, `totp.py`, `recovery.py`
   - `tests/auth/test_passwords.py`, `test_totp.py`, `test_recovery.py`
-  - `tests/auth/helpers.py` (+`TEST_PARAMS`, +`FastFakeHasher`)
+  - `tests/auth/helpers/crypto.py` (`TEST_PARAMS`, `FastFakeHasher`)
 
 ## Acceptance Criteria
 1. **Round-trip.** `hash_password(..., params=TEST_PARAMS)` round-trips through `parse_hash`. The
@@ -147,11 +153,14 @@ the stdlib only: no FastAPI, no pydantic, no file I/O, no store. Constants, `Bus
 - **Slow tests.** Use `TEST_PARAMS` everywhere except AC-4.
 - **Timing leaks.** There is no early exit in `match_totp_step` or `find_unused_match`
   (AC-10, AC-12).
+- **Blocking T-8NQP8J (v2.1).** If `totp.py` / `recovery.py` slip past S1 day 3, T-8NQP8J (on the
+  critical path) waits. Follow the work order above.
 
 ## Dependencies
 - **Upstream:** T-kzEzwy.
 - **Downstream:**
-  - T-8NQP8J: `consume_totp`, `consume_recovery` and the enrollment tokens call `match_totp_step`,
+  - **T-8NQP8J (hard edge since v2.1, design-review minor 2; late-binding: needed on its day 3):**
+    `consume_totp`, `consume_recovery` and the enrollment tokens call `match_totp_step`,
     `find_unused_match` and the recovery helpers;
   - T-XchniS: `PasswordHasher`, `BoundedScryptHasher`, `FastFakeHasher`;
   - T-yfrfxv;
