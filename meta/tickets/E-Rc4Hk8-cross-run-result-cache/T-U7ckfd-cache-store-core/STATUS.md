@@ -58,3 +58,4 @@ default; the engine is unchanged. `maybe_enforce_limits` is the `TODO(T-HjxNQ0)`
   agree.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `181bbbb`). All 17 acceptance criteria pass; matches `TASK.md`, `HANDOFF.md` and the epic rollup.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation touched this task's code (SEC-08, SEC-09 (store core)) in commit `763375f`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1a remediation) from `output/E-Rc4Hk8-cross-run-result-cache/review-g1a.md` and `review-g1a-security.md`. Task state stays Done; matches `HANDOFF.md`.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b remediation touched this task's code (rev S-4 (ttl_days annotation widened to int or None)) in commit `6ba90ba`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation). Task state stays Done.

@@ -62,3 +62,4 @@ by default; the print sites (`_print_state`, `report-usage` text) belong to T-o9
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `cbf9152`).
   Every acceptance criterion passes; deviations 1-6 above are small and documented. Epic
   `EPIC.md` / `STATUS.md` rollup updated to match.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b remediation touched this task's code (sec S-2 (format_summary_line made total)) in commit `6ba90ba`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation). Task state stays Done.

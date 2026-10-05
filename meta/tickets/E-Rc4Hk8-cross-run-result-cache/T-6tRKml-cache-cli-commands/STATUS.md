@@ -27,3 +27,4 @@
   early-gate review and the manager's scope decisions (HLD §23.5). State stays `Draft`
   (surfaces); this file, `TASK.md`, `HANDOFF.md` (when present) and the epic `STATUS.md` rollup
   agree.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b carry-over: orphaned `.ao-result-cache-*.tmp[.bak]` restore leftovers are only ignored by hashing (sec S-1), not deleted; a prune-side sweep (with a liveness / age rule) belongs here (see also G1a SEC-19). See `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation).

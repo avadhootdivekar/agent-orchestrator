@@ -65,3 +65,4 @@ E-Ag7Pw3 code is not present in this tree (no approval or human-gate code in `en
   Every acceptance criterion passes; engine diff net +103 with 12 added lines inside existing
   functions; deviations 1-6 above are small and documented. Epic `EPIC.md` / `STATUS.md` rollup
   updated to match.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b remediation touched this task's code (rev S-1 (HLD 8.7.4 rule in the _result_cache_lookup docstring), rev N-1 and N-3; engine net +105) in commit `6ba90ba`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation). Task state stays Done.

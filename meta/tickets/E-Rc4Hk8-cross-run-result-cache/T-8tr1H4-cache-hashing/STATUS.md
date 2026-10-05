@@ -66,3 +66,4 @@ deviations: `HANDOFF.md`.
   layering, per-call HEAD memo) are documented in `HANDOFF.md`. Matches `TASK.md`, `HANDOFF.md`
   and the epic rollup.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation touched this task's code (SEC-03, SEC-04 (repo state)) in commit `763375f`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1a remediation) from `output/E-Rc4Hk8-cross-run-result-cache/review-g1a.md` and `review-g1a-security.md`. Task state stays Done; matches `HANDOFF.md`.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b remediation touched this task's code (sec S-1 (directory hashing ignores .ao-result-cache-*.tmp[.bak] regular files)) in commit `6ba90ba`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation). Task state stays Done.

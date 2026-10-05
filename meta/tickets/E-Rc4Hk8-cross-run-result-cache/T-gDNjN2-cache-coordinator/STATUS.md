@@ -75,3 +75,4 @@ OFF by default.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `d14f07d`).
   Every acceptance criterion passes; deviations 1-9 above are small and documented; frozen names
   unchanged. Epic `EPIC.md` / `STATUS.md` rollup updated to match.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b remediation touched this task's code (rev S-3 (shared clip_text / try_resolve) and rev S-4 (ttl_days int or None, cast removed)) in commit `6ba90ba`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation). Task state stays Done.

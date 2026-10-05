@@ -58,3 +58,4 @@ allow-list `{cache, cache.constants, cache.settings, cache.cli}`, and an AST gua
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Every acceptance
   criterion passes; deviations 1-4 above are small and documented. Epic `EPIC.md` / `STATUS.md`
   rollup updated to match.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b remediation touched this task's code (sec S-2 (ao status echo strip and ValueError fallback) and sec S-5 (on-mode banner trust note)) in commit `6ba90ba`; findings and regression tests are listed in `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation). Task state stays Done.
