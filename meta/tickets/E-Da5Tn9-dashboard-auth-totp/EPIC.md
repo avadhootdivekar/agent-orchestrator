@@ -1,0 +1,218 @@
+# EPIC: E-Da5Tn9-dashboard-auth-totp
+
+## Metadata
+- Epic ID: `E-Da5Tn9-dashboard-auth-totp`
+- Title: `Authentication (local accounts + optional TOTP 2FA) for the ao ui dashboard and the ao service hub`
+- Owner: `manager` (delivery) · design by `architect`
+- Created: `2026-10-04`
+- Last Updated: `2026-10-05`
+- Status: `Draft` (design package v2 complete, with all five Phase-4 consultations folded in;
+  awaiting the independent design review and security review before implementation starts)
+
+## Summary
+- **Goal:** Add opt-in authentication to the dashboard (`ao ui`) and the multi-workspace hub
+  (`ao service run`):
+  - local accounts with a username and a scrypt-hashed password;
+  - an optional, configurable TOTP second factor (authenticator apps), with single-use recovery codes;
+  - deny-by-default enforcement;
+  - an identity contract (`request.state.principal`, v2) and an audit seam that the approval-gates
+    epic builds on.
+  - With auth off (the default), behaviour is byte-identical to today.
+- **v2 additions** (HLD §28):
+  - an immutable `user_id` with compare-and-swap writes;
+  - an origin-bound session proof header (D25; owner decision OQ-9, default include);
+  - CLI-issued enrollment tokens for forced enrollment;
+  - `insecure_transport` refusal for enrollment over plain HTTP;
+  - a tighten-only workspace config;
+  - credential and state directories split (`lockouts.json` and `audit.jsonl` live in the state
+    directory);
+  - per-app policy tables instead of route decorators;
+  - one launch sequence (`prepare_auth`).
+- **Scope In:**
+  - A new package `src/agent_orchestrator/auth/` (layered L0–L4: constants, errors, seams, model,
+    settings, paths, store, lockouts, crypto, sessions, policy, principal, throttle, guard, audit,
+    scrub, provider, TOTP service, runtime, launch, http middleware and routes, CLI).
+  - A neutral `src/agent_orchestrator/fsutil.py`, plus `xdg.resolve_config_dir` and
+    `errors.EXIT_CONFIG`.
+  - Wiring into `ui/app.py`, `service/hub.py`, `service/cli.py`, `service/supervisor.py`,
+    `service/systemd.py`, `cli.py`, `ui/files.py`, `ui/service.py`, `tests/conftest.py`,
+    `pyproject.toml` (wheel artifacts) and `.github/workflows/ci.yml`.
+  - The `ao auth` CLI.
+  - SPA screens: login, 2FA, forced enrollment with QR, account menu, global 401 handling, proof
+    handling.
+  - The hub login page (TypeScript built into a committed asset).
+  - Tests: unit, integration, e2e, vitest, opt-in browser, and a log-scrub sweep.
+  - Docs.
+- **Scope Out (NON-MVP):**
+  - The hub-run login handoff (**recommended first follow-up**) and store-scoped SSO (second).
+  - OIDC, SSO and LDAP providers; WebAuthn and passkeys.
+  - RBAC; API tokens.
+  - Email password reset; self-service sign-up.
+  - Fail-closed refusal of remote binds.
+  - Native TLS flags; at-rest TOTP seed encryption.
+  - The hub showing each child's auth state (OQ-4).
+  - Full list in HLD §4.2.
+
+## Design
+- **HLD + LLD (v2):** [`docs-md/dashboard-auth-hld.md`](../../../docs-md/dashboard-auth-hld.md).
+  Key sections:
+  - §1 decision log D1–D25;
+  - §2 the **frozen HTTP contract**, including the session proof;
+  - §2.6 the identity contract v2;
+  - §6 threat model;
+  - §11 LLD;
+  - §13 middleware algorithm;
+  - §16 shared-file touchpoints;
+  - §21 AC matrix (AC-1..AC-42);
+  - §24 sprint plan;
+  - §28 consultation record.
+- **ADR (v2):** [`docs-md/adr/ADR-0021-dashboard-authentication-and-totp.md`](../../../docs-md/adr/ADR-0021-dashboard-authentication-and-totp.md)
+  (D1–D11, Proposed).
+- **Identity contract for the approval-gates epic:** HLD §2.6. v2 changed `roles` to
+  `tuple[str, ...]` and added fields (OQ-8). The manager confirms with the approvals epic before
+  T-kwwJ82 freezes it. Any later change needs manager sign-off.
+
+## Requirements
+Full text is in HLD §3. Each requirement maps to the 11 binding decisions B1–B11 of the brief.
+
+- FR-1 Settings layering: CLI > env > workspace `ui.auth` > default (hub: CLI > env > default); off by default (B1)
+- FR-2 Refuse to start (exit 78) with zero users or invalid/unsafe configuration; no default credentials; no web sign-up (B1)
+- FR-3 scrypt password hashing; per-hash salt; bounded parameters in the hash string; CAS rehash on login; NFKC; `compare_digest` (B2)
+- FR-4 TOTP per RFC 6238 (SHA-1/6/30, ±1 step); global replay rejection (B2)
+- FR-5 Single-use recovery codes, stored hashed, shown once (B2)
+- FR-6 Enrollment shows the manual secret and the `otpauth://` URI; the SPA also shows a QR code (B2/B11)
+- FR-7 `AuthProvider` ABC + `LocalPasswordProvider`; the seam is proven by a redirect-shaped fake-provider test (B3)
+- FR-8 `request.state.principal` (v2 shape) and `request.state.auth_enabled` are always present; `current_principal()`, `auth_enabled()`, `require_principal()` (B4)
+- FR-9 Partial sessions are confined to their 2FA or enrollment endpoints (B4)
+- FR-10 Credential store 0700/0600, atomic + flock, schema-versioned and forward-compatible; mutable state in a separate state directory (B5)
+- FR-11 Server-side sessions, 256-bit tokens with only the hash stored, rotation, logout invalidation, idle and absolute expiry, no restart survival (B5)
+- FR-12 Cookie name includes the port; `__Host-` + `Secure` on https; proven isolation between realms with stable realm ids (B6)
+- FR-13 Deny-by-default ASGI middleware inside `SecurityMiddleware`, driven by per-app policy tables; route-enumeration test (B7)
+- FR-14 Every internal HTTP caller has a working path with auth off and on (B7)
+- FR-15 Hub protected; hub login page including text-only forced enrollment (B7)
+- FR-16 Per-address (canonical key) and per-account (`lockouts.json`) throttling with exponential backoff; X-Forwarded-For only from trusted proxies (B8)
+- FR-17 Uniform errors and work for "unknown user" vs "bad password" (B8)
+- FR-18 Re-authentication for a password change, enabling 2FA, disabling 2FA and regenerating codes (B8)
+- FR-19 Stronger CSRF checks for cookie-authenticated mutations; existing checks kept (B8)
+- FR-20 No secrets in logs, exceptions, audit, status JSON or URLs (B8)
+- FR-21 Loud warning for plain HTTP on a non-loopback bind (B8)
+- FR-22 `ao auth` CLI incl. `enrollment-token`; passwords only from a hidden prompt or stdin; works without `[ui]` (B9)
+- FR-23 Append-only JSONL audit log (0600, rotated, state directory) and a `record()` seam (B10)
+- FR-24 SPA login, 2FA (with a recovery option), forced enrollment, account menu, global 401 handling; stores never browsable (B11/B5)
+- FR-25 The supervisor propagates CLI-sourced settings; the hub refuses to start before spawning; exit 78 does not cause a restart loop (B1/B7)
+- FR-26 `ao service list/status` handle the hub's 401 (B7)
+- FR-27 **(v2)** Session proof header required on every non-PUBLIC `/api` request (D25; B6/B8)
+- FR-28 **(v2)** Forced enrollment needs a CLI-issued, single-use, time-limited enrollment token (B2/B9)
+- FR-29 **(v2)** No TOTP seed or recovery code over plain HTTP to a non-loopback client (`insecure_transport`) (B8)
+- FR-30 **(v2)** Workspace config can only tighten; `trusted_proxies` CLI/env-only (B1/B8)
+- FR-31 **(v2)** Immutable `user_id`, snapshot-consistent epochs and CAS writes prevent session revival (B5)
+- NFR-1 Auth off is byte-identical (one deliberate exception: the store and state directories are never browsable)
+- NFR-2 No new Python dependencies; one pinned frontend dependency within a gzip budget, with a clean audit
+- NFR-3 Import boundary: `ao auth` works without fastapi, starlette or uvicorn; AST layer test
+- NFR-4 Deterministic tests (injected clock, entropy and hasher; fake timers in vitest)
+- NFR-5 Per-request overhead p95 ≤ 1 ms; login p95 ≤ 600 ms; hashing memory bounded; no blocking I/O on the event loop
+- NFR-6 Coverage ≥ 90 % for `agent_orchestrator.auth`; the UI gate stays ≥ 80 %
+- NFR-7 No magic literals
+- NFR-8 Observability: audit log and `ao auth status` with the source of every setting
+- NFR-9 Fail closed on store corruption or locking; never crash
+- NFR-10 Accessible auth screens
+
+## Task List
+Sprint plan and capacity math: HLD §24 (team of 5, three 2-week sprints, 55 dev-days of demand
+against 63–76.5 dev-days of commitment capacity). Every task is ≤ 3 days.
+
+| # | Task | Agent | Est | Depends on | Sprint | Lane |
+|---|---|---|---|---|---|---|
+| 0 | [ ] `T-kzEzwy-auth-foundation` (**new in v2**) | developer | 1 d | — | S1 | B |
+| 1 | [ ] `T-s6sJmB-auth-crypto-primitives` | developer | 2.5 d | #0 | S1 | A |
+| 2 | [ ] `T-8NQP8J-auth-user-store` | developer | 3 d | #0 | S1 | B |
+| 3 | [ ] `T-kwwJ82-auth-sessions-policy-principal` | developer | 2 d | #0 | S1 | C |
+| 4 | [ ] `T-PlEROT-auth-settings-layering` | developer | 2.5 d | #0, #2 | S1 | A |
+| 5 | [ ] `T-CsT5gk-auth-throttle-audit-scrub` | developer | 3 d | #0, #2 | S1 | Q |
+| 6 | [ ] `T-XchniS-auth-local-provider-runtime` | developer | 3 d | #1–#5 | S2 | A |
+| 7 | [ ] `T-yfrfxv-auth-provider-second-factor` (**new in v2**) | developer | 2 d | #6 | S2 | C |
+| 8 | [ ] `T-G7qByZ-auth-middleware-app-integration` | developer | 3 d | #3 (stub runtime); #6 for the final wiring only | S1→S2 | C |
+| 9 | [ ] `T-QJ1vyQ-auth-csrf-fetch-metadata` (**new in v2**) | developer | 2 d | #8 | S2 | B |
+| 10 | [ ] `T-rpKCjP-auth-http-routes` | developer | 2.5 d | #6, #8 | S2 | A |
+| 11 | [ ] `T-KQ6ZrY-auth-routes-second-factor` (**new in v2**) | developer | 3 d | #7, #10 | S3 | C |
+| 12 | [ ] `T-j9dfsw-ao-auth-cli` | developer | 3 d | #1, #2, #4, #5 | S2 | B |
+| 13 | [ ] `T-jVqH8w-ao-ui-auth-wiring` | developer | 3 d | #4, #6, #8, #10 | S3 | B |
+| 14 | [ ] `T-KOv2qD-hub-service-auth` | developer | 2.5 d | #10, #16 | S3 | A |
+| 15 | [ ] `T-PDGw9p-service-cli-supervisor-auth` (**new in v2**) | developer | 2.5 d | #13, #14 | S3 | Q |
+| 16 | [ ] `T-R7JhTL-hub-login-page` | developer (frontend) | 2.5 d | HLD §2 contract | S1 | F |
+| 17 | [ ] `T-pQ73eO-spa-auth-gate-login` | developer (frontend) | 3 d | HLD §2 contract | S1 | F |
+| 18 | [ ] `T-vCgsU6-spa-enroll-account-qr` | developer (frontend) | 3 d | #17 | S2 | F |
+| 19 | [ ] `T-U2ERMo-auth-e2e-regression-sweep` | tester | 2.5 d | #6–#18 | S3 | Q |
+| 20 | [ ] `T-2wE08U-auth-security-review` | dev-security + reviewer | 2 d | #19 (may overlap) | S3 | review |
+| 21 | [ ] `T-otjIkJ-auth-docs-refresh-closure` (**post-implementation docs refresh**) | developer / manager | 1.5 d | #20 | S3 | B |
+
+- **Parallel lanes:**
+  - A, B, C: backend.
+  - **F: frontend.** Runs **in parallel with the backend from day 1** (#16, #17, then #18), using
+    the frozen HLD §2 contract with mocked `fetch`.
+  - Q: developer-in-test. Takes #5 and #15, then owns the verification sweep #19.
+- **Critical path** (≈ 24 dev-days): #0 → #2 → #5 → #6 → #10 → #13 → #15 → #19 → #20 → #21.
+  - This assumes #8 starts in S1 against a stub runtime.
+  - If #8 waits for #6, the path grows to ≈ 27 dev-days (HLD §24.3).
+- **v1 → v2 re-slicing** (developer finding D-4: six v1 tasks broke the 3-day cap):
+  - #0 is new (foundation, D-3);
+  - T-XchniS split, giving #7;
+  - T-G7qByZ split, giving #9;
+  - T-rpKCjP split, giving #11;
+  - T-KOv2qD split, giving #15.
+
+## Risks and Dependencies
+Full lists are in HLD §25. The main risks:
+- **R1 composition bugs.** Mitigated by RFC vectors, the invariant tests, and the security review.
+- **R2 deny-by-default mistakes.** Mitigated by the exact-set route-enumeration test over policy
+  tables.
+- **R3 regressions with auth off.** Mitigated by the hermetic env fixture (#0) and header snapshots.
+- **R4 multi-realm login friction.** The hub-run handoff is the first follow-up (OQ-1).
+- **R5 cookie harvesting by another local listener.** Closed for API replay by D25 (OQ-9). The
+  residual (hub index render, forced logout by tossing) is documented.
+- **R7 stale global installs silently ignore auth.** Mitigated by docs and `ao auth status`.
+- **R13 merge conflicts with sibling epics** (`app.py`, `cli.py`, `service/*`).
+- **R15–R17 (v2):**
+  - proof UX when browser storage is blocked;
+  - enrollment-token friction;
+  - the contract change colliding with the approvals epic (OQ-8).
+- **Sibling epics:**
+  - the approval-gates epic consumes HLD §2.6;
+  - the cross-run cache epic has no expected interaction.
+
+## Links
+- Design doc: `docs-md/dashboard-auth-hld.md`
+- ADR: `docs-md/adr/ADR-0021-dashboard-authentication-and-totp.md`
+- Sprint plan: HLD §24
+- Output artifacts: `output/E-Da5Tn9-dashboard-auth-totp/` (opt-in browser-smoke screenshots from
+  T-U2ERMo; security-review report from T-2wE08U)
+
+## Comments
+- By: architect · Role: agent · Date: 2026-10-04 · Comment: Design package v1 created (HLD + LLD,
+  ADR-0021, 17 tasks). No code written.
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: v2 published. All five Phase-4
+  consultations are folded in and their dispositions are recorded in HLD §28:
+  - developer: 1 BLOCKER, 4 MAJOR;
+  - reviewer: 8 MAJOR;
+  - tester: 1 BLOCKER, 5 MAJOR;
+  - dev-security: 2 HIGH, 5 MEDIUM;
+  - dev-critic: 3 HIGH.
+
+  The plan was re-baselined to 22 tasks (5 new), 55 dev-days, a team of 5, and a critical path of
+  about 24 days. Owner or manager decisions with non-blocking defaults:
+  - **OQ-8:** `Principal.roles` as a tuple plus additive fields. Confirm with the approvals epic
+    before T-kwwJ82 freezes `principal.py`.
+  - **OQ-9:** ship the D25 session proof in the MVP (default: yes).
+  - **OQ-1:** handoff vs SSO timing (default: handoff first, after the MVP).
+  - **OQ-2:** 30-minute idle timeout with non-sliding polling (default: keep).
+- By: architect · Role: agent · Date: 2026-10-05 · Comment: Ticket-authoring cross-check done.
+  The 22 tickets were written against HLD v2, and every gap they surfaced is resolved in the HLD
+  (§28.8) with the affected tickets aligned. Highlights:
+  - lost v1 detail restored: CLI, audit, scrub, throttle, `check_ready`, audit schema;
+  - `with_identity` guarded web writes;
+  - login destroys a session only with its proof;
+  - AC-4 split into 4a/4b/4c;
+  - a merge-order-safe route-enumeration rule.
+
+  New non-blocking **OQ-10**: provider-contributed policies and a proof handoff for redirect
+  providers (OIDC follow-up).
