@@ -22,6 +22,14 @@ jobs:
         run: pytest -q --tb=short
       - name: Run bench tests (deterministic, network-free, no real_llm/swebench)
         run: pytest tests/bench -q -m "not real_llm and not swebench" --cov=agent_orchestrator.bench --cov-report=term --cov-fail-under=80
+      - name: Result cache tests + coverage (E-Rc4Hk8)
+        run: |
+          pytest tests/cache tests/test_e2e_cli_result_cache.py \
+            tests/test_e2e_cli_result_cache_admin.py -q \
+            --cov=agent_orchestrator.cache --cov-report=term --cov-fail-under=85
+          for m in keys store restore coordinator; do
+            coverage report --include="*/agent_orchestrator/cache/$m.py" --fail-under=90
+          done
       - name: Run dashboard tests (unit + integration + e2e)
         run: pytest tests/ui tests/test_general_instructions.py tests/test_e2e_cli_prompt_and_instructions.py -q --cov=agent_orchestrator.ui --cov-report=term --cov-fail-under=80
       - name: Validate example specs
