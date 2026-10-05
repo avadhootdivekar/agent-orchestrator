@@ -75,6 +75,21 @@ def victim(tmp_path: Path) -> Path:
 
 
 # ------------------------------------------------------------------------------------ helpers
+def _called_by_coverage() -> bool:
+    """True when `coverage.py`'s tracer is on the call stack.
+
+    Under `--cov` (the CI step) the tracer calls `os.path.realpath` -> `os.lstat` for every
+    source file it sees for the first time, and that happens on the stack of whatever code is
+    running. A blanket `os` tripwire must not mistake the tooling for the code under test.
+    """
+    frame = sys._getframe(2)
+    while frame is not None:
+        if f"{os.sep}coverage{os.sep}" in frame.f_code.co_filename:
+            return True
+        frame = frame.f_back  # type: ignore[assignment]
+    return False
+
+
 def snapshot(root: Path) -> Tree:
     """Everything observable about *root*'s tree: kind, size, mtime_ns, and file content digest.
     Directory mtimes are included, so a created/removed/renamed child shows up."""
@@ -255,7 +270,11 @@ class TestAdv2KeySplicing:
         touched: list[str] = []
 
         def tripwire(name: str) -> Callable[..., Any]:
+            real = getattr(os, name)
+
             def spy(*a: Any, **kw: Any) -> Any:
+                if _called_by_coverage():  # the tracer resolves paths of newly seen files
+                    return real(*a, **kw)
                 touched.append(f"{name}{a[:1]}")
                 raise AssertionError(f"filesystem touched: {name}")
 
