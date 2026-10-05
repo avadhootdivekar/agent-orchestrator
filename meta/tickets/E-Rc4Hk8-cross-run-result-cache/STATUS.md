@@ -41,7 +41,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 
 | Task | Phase | Owner | Est | State |
 |------|-------|-------|-----|-------|
-| T-FJH6LI-cache-contracts | core set | Dev A | 16 h | Draft |
+| T-FJH6LI-cache-contracts | core set | Dev A | 16 h | Done |
 | T-28J9oR-cache-spec-config-surface | core set | Dev B | 16 h | Draft |
 | T-OeRYSO-executor-argv-builder | core set (any time) | Dev C | 6 h | Done |
 | T-QgQy08-cache-eligibility | core set | Dev B | 13 h | Draft |
@@ -62,7 +62,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
 | T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
 
-**Counts:** 20 tasks: 19 Draft, 0 In Progress, 0 Blocked, 1 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 18 Draft, 0 In Progress, 0 Blocked, 2 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
@@ -114,3 +114,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
   review and the manager's scope decisions. 20 tasks, all `Draft`; this rollup matches every
   task's `STATUS.md`, `TASK.md` and `HANDOFF.md`, and `EPIC.md`. Status wording changed to
   "Design complete / Not started".
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-FJH6LI -> Done (commits 9b24194, 5628556, d1c1d08). Rollup row and counts updated (18 Draft, 2 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`.

@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev A)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Done)
+- Status: `Done`
 - Estimate: `16 focus hours (2 days)` · Sprint 1 · first task of the core set
 
 ## Requirements Mapping
@@ -209,3 +209,8 @@ fakes.py:     InMemoryCacheStore keeps {key: CacheEntry}, {sha: bytes}, {key: mt
   - **New constants:** `DEFAULT_TASK_CACHE_POLICY`, `AGENT_KEY_FIELDS`/`AGENT_NON_KEY_FIELDS`,
     the inline byte bound, the `GIT_OPTIONAL_LOCKS` pair; `MODE_REFRESH` removed.
   - **New error** `CacheUnsafePathError`; `CacheAdmin.verify()` loses `repair`.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commits
+  `9b24194` (constants), `5628556` (safeio), `d1c1d08` (types, fakes, contract suite, corpus, AST
+  guard). All 12 acceptance criteria pass (AC 12: the full suite was not run, see `STATUS.md`).
+  Added `tests/cache/test_constants.py` and `tests/cache/test_fakes.py` (same directory, outside the
+  listed file scope). Clarifications and deviations are frozen in `HANDOFF.md`.

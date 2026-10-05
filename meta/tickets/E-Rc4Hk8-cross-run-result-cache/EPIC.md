@@ -100,7 +100,7 @@ staffed sprint equivalent is in HLD §22.1. File scopes are exclusive; tasks tha
 ordered by dependency (HLD §22.2).
 
 ### 1. Core set, then gate G1a (key, store and restore core)
-- [ ] `T-FJH6LI-cache-contracts`: constants (commit 1), `safeio` (commit 2), types/contracts/ABCs/errors/fakes, corpus, AST guard (commit 3). 16 h. Dev A. Deps: none.
+- [x] `T-FJH6LI-cache-contracts`: constants (commit 1), `safeio` (commit 2), types/contracts/ABCs/errors/fakes, corpus, AST guard (commit 3). 16 h. Dev A. Deps: none. **Done** (2026-10-05) Commits 9b24194, 5628556, d1c1d08.
 - [ ] `T-28J9oR-cache-spec-config-surface`: spec, config, record model (derived `hit`/`saved_tokens`), settings with the named default, CLI flag (resolution half), `ao cache` group. 16 h. Dev B. Deps: T-FJH6LI commit 1.
 - [x] `T-OeRYSO-executor-argv-builder`: pure `build_claude_argv` extraction. 6 h. Dev C. Deps: none (may run any time; independent file scope). **Done** (2026-10-05) Commit ac35e73.
 - [ ] `T-QgQy08-cache-eligibility`: allowlist predicate, tripwires, runtime rules incl. `unknown_agent_field`. 13 h. Dev B. Deps: T-28J9oR, T-FJH6LI.
