@@ -29,6 +29,7 @@ from agent_orchestrator.cache.constants import (
     REASON_CONTROL_OUTPUT,
     REASON_DUPLICATE_OUTPUT,
     REASON_INPUT_MISSING,
+    REASON_INPUT_UNREADABLE,
     REASON_KEY_ENCODING,
     REASON_OUTPUT_NOT_REGULAR,
     REASON_PROMPT_RENDER_ERROR,
@@ -132,12 +133,16 @@ def build_cache_key(
     for o in outs:  # priors (D6)
         if o in memo:
             continue
-        if not os.path.lexists(o):
+        try:
+            prior_stat = os.lstat(o)
+        except FileNotFoundError:  # absent (or removed concurrently): the "absent" prior
             memo[o] = None
-        else:
-            if not stat.S_ISREG(os.lstat(o).st_mode):
-                raise UncacheableError(REASON_OUTPUT_NOT_REGULAR, rel(o))
-            memo[o] = hash_regular_file(o, budget)
+            continue
+        except OSError as e:  # never a raw OSError out of the key builder (S-11)
+            raise UncacheableError(REASON_INPUT_UNREADABLE, rel(o)) from e
+        if not stat.S_ISREG(prior_stat.st_mode):
+            raise UncacheableError(REASON_OUTPUT_NOT_REGULAR, rel(o))
+        memo[o] = hash_regular_file(o, budget)
 
     def digest_of(path: str) -> Digest:  # inputs; outputs reuse the memo (N-5)
         if path in memo:

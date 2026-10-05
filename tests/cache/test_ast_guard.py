@@ -16,7 +16,10 @@ import agent_orchestrator.cache as cache_pkg
 
 CACHE_DIR = Path(cache_pkg.__file__).resolve().parent
 SAFEIO_NAME = "safeio.py"
-BANNED_MODULES = frozenset({"pickle", "marshal", "shelve"})
+# M-9 names "pickle, eval, YAML loading": every unsafe-deserialization module is banned (S-9).
+BANNED_MODULES = frozenset(
+    {"pickle", "marshal", "shelve", "yaml", "dill", "cloudpickle", "jsonpickle"}
+)
 BANNED_CALLS = frozenset({"eval", "exec"})
 
 PICKLE, EVAL_EXEC, SHELL_TRUE, BARE_OPEN, OS_OPEN = (
@@ -101,6 +104,10 @@ SYNTHETIC = {
         "import marshal as m",
         "from shelve import open as op",
         "import os.path\nimport pickle.x",
+        "import yaml",
+        "from yaml import load",
+        "import dill, cloudpickle",
+        "import jsonpickle.ext",
     ],
     EVAL_EXEC: ["eval('1')", "exec('x = 1')"],
     SHELL_TRUE: ["import subprocess\nsubprocess.run('ls', shell=True)", "f(shell=True)"],

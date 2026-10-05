@@ -44,6 +44,7 @@ from agent_orchestrator.cache.restore import (
 from agent_orchestrator.cache.store import LocalFsCacheStore
 from agent_orchestrator.cache.types import (
     CacheEntry,
+    CacheError,
     CacheIntegrityError,
     CacheStore,
     CacheUnsafePathError,
@@ -201,6 +202,22 @@ def test_capture_of_a_symlink_is_not_regular(
     (ws / "link").symlink_to(tmp_path / "real")
     with pytest.raises(StoreSkip) as err:
         capture_outputs({"link": str(ws / "link")}, store, max_entry_bytes=CAP)
+    assert err.value.reason == REASON_OUTPUT_NOT_REGULAR
+    assert store.blobs == {}
+
+
+@needs_posix
+def test_capture_through_a_swapped_parent_directory_is_refused(
+    ws: Path, store: InMemoryCacheStore, tmp_path: Path
+) -> None:
+    """SEC-05: `out` was swapped for a link to an outside directory after the key was built; the
+    outside file must never be read into a blob."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "id_rsa").write_bytes(b"PRIVATE-KEY-MATERIAL")
+    (ws / "out").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(StoreSkip) as err:
+        capture_outputs({"out/id_rsa": str(ws / "out" / "id_rsa")}, store, max_entry_bytes=CAP)
     assert err.value.reason == REASON_OUTPUT_NOT_REGULAR
     assert store.blobs == {}
 
@@ -447,9 +464,15 @@ def test_sensitive_destination_is_refused_and_nothing_is_created(
     assert store.called("read_blob") == 0
 
 
-def test_a_lower_case_lookalike_is_not_sensitive(ws: Path, store: InMemoryCacheStore) -> None:
-    restore(seed(store, {"docs/claude.md": b"ok"}), ws, store)
-    assert (ws / "docs" / "claude.md").read_bytes() == b"ok"
+@pytest.mark.parametrize("rel", [".GIT/hooks/pre-commit", "Claude.md", "docs/claude.md"])
+def test_case_variants_of_sensitive_paths_are_refused(
+    ws: Path, store: InMemoryCacheStore, rel: str
+) -> None:
+    """SEC-06: a case-insensitive filesystem makes these the protected targets."""
+    with pytest.raises(RestoreMiss) as err:
+        restore(seed(store, {rel: b"x"}), ws, store)
+    assert (err.value.reason, err.value.evict) == (REASON_SENSITIVE_OUTPUT, False)
+    assert list(ws.iterdir()) == []
 
 
 # ----------------------------------------------------------------------------- U-R10 links (M-5)
@@ -610,19 +633,100 @@ def test_the_staging_file_is_opened_exclusive_nofollow_and_cloexec(
 
 
 @needs_posix
-def test_the_staging_file_is_private_until_commit(
+def test_the_staging_file_is_private_until_its_content_is_verified(
     ws: Path, store: InMemoryCacheStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     modes: list[int] = []
-    real_chmod = os.chmod
+    real_fchmod = os.fchmod
 
-    def spy(path: Any, mode: int, **kwargs: Any) -> None:
-        modes.append(stat.S_IMODE(os.stat(path).st_mode))  # mode BEFORE the final chmod
-        real_chmod(path, mode, **kwargs)
+    def spy(fd: int, mode: int) -> None:
+        modes.append(stat.S_IMODE(os.fstat(fd).st_mode))  # mode BEFORE the final fchmod
+        real_fchmod(fd, mode)
 
-    monkeypatch.setattr(os, "chmod", spy)
+    monkeypatch.setattr(os, "fchmod", spy)
     restore(seed(store, {"a": b"1"}, mode=0o777), ws, store)
     assert modes == [0o600]
+
+
+@needs_posix
+def test_the_mode_is_applied_to_the_descriptor_never_to_a_path(
+    ws: Path, store: InMemoryCacheStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-07: `os.chmod(path)` follows a link swapped in after staging; `fchmod(fd)` cannot."""
+
+    def forbidden(path: Any, mode: int, **kwargs: Any) -> None:
+        raise AssertionError(f"restore chmod'ed by path: {path}")
+
+    monkeypatch.setattr(os, "chmod", forbidden)
+    restore(seed(store, {"a": b"1", "b": b"2"}, mode=0o777), ws, store)
+    assert stat.S_IMODE((ws / "a").stat().st_mode) == 0o755  # M-8 mask still applied
+
+
+@needs_posix
+def test_a_failing_commit_rolls_back_every_rename_already_done(
+    ws: Path, store: InMemoryCacheStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-07: a failure on the Nth rename leaves NO partially restored workspace."""
+    (ws / "a").write_bytes(b"old a")
+    (ws / "b").write_bytes(b"old b")  # exists: restored from its hard-link backup
+    entry = seed(store, {"a": b"new a", "b": b"new b", "c": b"new c"})
+    real_replace = os.replace
+    commits = {"n": 0}
+
+    def flaky(src: Any, dst: Any) -> None:
+        if RESTORE_TMP_PREFIX in os.fspath(src) and not os.fspath(src).endswith(".bak"):
+            commits["n"] += 1
+            if commits["n"] == 3:  # a and b are already renamed into place
+                raise OSError(28, "No space left on device (simulated)")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    with pytest.raises(RestoreMiss) as err:
+        restore(entry, ws, store)
+    assert (err.value.reason, err.value.evict) == (REASON_RESTORE_FAILED, False)
+    assert (ws / "a").read_bytes() == b"old a" and (ws / "b").read_bytes() == b"old b"
+    assert not (ws / "c").exists()
+    assert leftovers(ws) == []
+
+
+@needs_posix
+def test_a_rollback_removes_a_destination_that_did_not_exist_before(
+    ws: Path, store: InMemoryCacheStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = seed(store, {"a": b"new a", "b": b"new b"})
+    real_replace = os.replace
+    commits = {"n": 0}
+
+    def flaky(src: Any, dst: Any) -> None:
+        if RESTORE_TMP_PREFIX in os.fspath(src) and not os.fspath(src).endswith(".bak"):
+            commits["n"] += 1
+            if commits["n"] == 2:
+                raise OSError(5, "Input/output error (simulated)")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    with pytest.raises(RestoreMiss):
+        restore(entry, ws, store)
+    assert not (ws / "a").exists() and not (ws / "b").exists() and leftovers(ws) == []
+
+
+def test_a_successful_restore_leaves_no_backup_litter(ws: Path, store: InMemoryCacheStore) -> None:
+    (ws / "a").write_bytes(b"old")
+    restore(seed(store, {"a": b"new"}), ws, store)
+    assert (ws / "a").read_bytes() == b"new" and leftovers(ws) == []
+
+
+@needs_posix
+def test_a_transient_blob_read_failure_is_a_non_evicting_miss(
+    ws: Path, store: InMemoryCacheStore
+) -> None:
+    """SEC-09: EMFILE / EIO says nothing about the blob; never destroy cached data on it."""
+    entry = seed(store, {"a": b"data"})
+    store.fail_with("read_blob", CacheError(REASON_STORE_ERROR, "OSError"))
+    with pytest.raises(RestoreMiss) as err:
+        restore(entry, ws, store)
+    assert (err.value.reason, err.value.evict) == (REASON_STORE_ERROR, False)
+    assert list(ws.iterdir()) == []
 
 
 # ----------------------------------------------------------------------------- edge cases

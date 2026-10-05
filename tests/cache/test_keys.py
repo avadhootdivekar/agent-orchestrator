@@ -518,7 +518,13 @@ def test_an_output_symlinked_into_git_hooks_is_sensitive(ws: Path) -> None:
 
 
 def test_a_non_sensitive_lookalike_is_allowed(ws: Path) -> None:
-    assert key_for(ws, task=default_task(outputs=["docs/claude.md", "notes/claude-notes.md"]))
+    assert key_for(ws, task=default_task(outputs=["docs/claude-guide.md", "notes/claude-notes.md"]))
+
+
+def test_a_case_variant_of_a_sensitive_path_is_refused(ws: Path) -> None:
+    """SEC-06: the match is case-insensitive (a case-insensitive filesystem aliases the names)."""
+    err = refusal(ws, task=default_task(outputs=["docs/claude.md"]))
+    assert err.reason == REASON_SENSITIVE_OUTPUT and err.detail == "docs/claude.md"
 
 
 def test_an_engine_read_control_file_cannot_be_an_output(ws: Path) -> None:

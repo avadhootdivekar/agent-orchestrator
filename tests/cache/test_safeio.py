@@ -380,7 +380,6 @@ def test_sensitive_basenames(rel: str) -> None:
 @pytest.mark.parametrize(
     "rel",
     [
-        "docs/claude.md",
         "out/.gitkeep",
         "out/summary.md",
         ".gitignore",
@@ -394,6 +393,24 @@ def test_sensitive_basenames(rel: str) -> None:
 )
 def test_non_sensitive_paths(rel: str) -> None:
     assert not safeio.is_sensitive_rel_path(rel)
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".GIT/hooks/pre-commit",
+        ".Claude/settings.json",
+        "Claude.md",
+        "docs/claude.md",
+        "A/CLAUDE.LOCAL.MD",
+        ".GitHub/workflows/x.yml",
+        ".MCP.JSON",
+        ".ORCHESTRATOR/runs/x",
+    ],
+)
+def test_sensitive_match_is_case_insensitive(rel: str) -> None:
+    """SEC-06: on a case-insensitive filesystem these name the protected targets."""
+    assert safeio.is_sensitive_rel_path(rel)
 
 
 # ---------------------------------------------------------------- posix_rel / strip (U-IO7)

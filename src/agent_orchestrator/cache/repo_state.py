@@ -23,8 +23,11 @@ from pathlib import Path
 from agent_orchestrator.cache.constants import (
     CACHE_DIR_PARTS,
     CACHE_GIT_TIMEOUT_SECONDS,
+    GIT_NEUTRALISED_CONFIG,
     GIT_OPTIONAL_LOCKS_OFF,
     GIT_OPTIONAL_LOCKS_VAR,
+    GIT_SCRUBBED_ENV_PREFIXES,
+    GIT_SCRUBBED_ENV_VARS,
     REASON_PATH_REJECTED,
     REASON_REPO_HEAD_UNAVAILABLE,
     REASON_REPO_WORKTREE_PROBE_FAILED,
@@ -76,6 +79,29 @@ def nested_repo_marker(workspace_root: str) -> str | None:
             return current
 
 
+def git_read_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The child environment of every repository read (SEC-03, SEC-04).
+
+    `GitRepo.env` REPLACES the child environment, so this is a copy of the process environment
+    (PATH, HOME, ... must survive) with (1) every repository-selecting / config-injecting `GIT_*`
+    variable removed, so an inherited `GIT_DIR` can never redirect the workspace-bounded read to
+    another repository, (2) `GIT_OPTIONAL_LOCKS=0`, and (3) the config that makes `git status`
+    run a program named by the agent-writable repo config (`core.fsmonitor`) forced off through
+    `GIT_CONFIG_COUNT`, which has command-line precedence over repository config.
+    """
+    env = {
+        k: v
+        for k, v in (os.environ if base is None else base).items()
+        if k not in GIT_SCRUBBED_ENV_VARS and not k.startswith(GIT_SCRUBBED_ENV_PREFIXES)
+    }
+    env[GIT_OPTIONAL_LOCKS_VAR] = GIT_OPTIONAL_LOCKS_OFF
+    env["GIT_CONFIG_COUNT"] = str(len(GIT_NEUTRALISED_CONFIG))
+    for i, (key, value) in enumerate(GIT_NEUTRALISED_CONFIG):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
+
+
 class _GitReaders:
     """Shared `GitRepo` construction (one memoized instance per toplevel) for the two readers."""
 
@@ -94,9 +120,7 @@ class _GitReaders:
     def _repo(self, top: str) -> GitRepo:
         repo = self._repos.get(top)
         if repo is None:
-            # `GitRepo.env` REPLACES the child environment, so the lock switch is layered over a
-            # copy of the process environment (PATH, HOME, ... must survive).
-            env = {**os.environ, GIT_OPTIONAL_LOCKS_VAR: GIT_OPTIONAL_LOCKS_OFF}
+            env = git_read_env()
             repo = GitRepo(
                 top,
                 timeout=self._timeout,

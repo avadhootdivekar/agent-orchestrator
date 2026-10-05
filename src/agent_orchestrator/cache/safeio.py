@@ -204,15 +204,22 @@ def check_root_dir(root: str, *, workspace_root: str) -> None:
         raise UnsafePathError(f"cache root resolves outside the workspace: {root}")
 
 
+# Case-folded once: on a case-insensitive filesystem (macOS, Windows) `.GIT/hooks` and
+# `Claude.md` name the protected targets (SEC-06). A false refusal only makes a task uncacheable.
+_SENSITIVE_COMPONENTS_FOLDED = frozenset(c.casefold() for c in SENSITIVE_PATH_COMPONENTS)
+_SENSITIVE_BASENAMES_FOLDED = frozenset(b.casefold() for b in SENSITIVE_BASENAMES)
+
+
 def is_sensitive_rel_path(rel: str) -> bool:
     """Any component in SENSITIVE_PATH_COMPONENTS, or basename in SENSITIVE_BASENAMES.
 
-    Exact-case match (D29): `docs/claude.md` is not sensitive, `CLAUDE.md` is.
+    Case-INSENSITIVE (D29 addendum, SEC-06): `CLAUDE.md`, `Claude.md` and `docs/claude.md` are
+    all sensitive; the filesystem decides what a name refers to, so assume the worst.
     """
-    parts = [p for p in rel.replace(os.sep, "/").split("/") if p]
-    if any(p in SENSITIVE_PATH_COMPONENTS for p in parts):
+    parts = [p.casefold() for p in rel.replace(os.sep, "/").split("/") if p]
+    if any(p in _SENSITIVE_COMPONENTS_FOLDED for p in parts):
         return True
-    return bool(parts) and parts[-1] in SENSITIVE_BASENAMES
+    return bool(parts) and parts[-1] in _SENSITIVE_BASENAMES_FOLDED
 
 
 def posix_rel(path: str, base: str) -> str:

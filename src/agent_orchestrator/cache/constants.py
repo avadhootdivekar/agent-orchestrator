@@ -64,6 +64,11 @@ MAX_ENTRY_ATTEMPTS = 10**6
 EVICT_LOW_WATER_RATIO = 0.9
 INLINE_PRUNE_MAX_ENTRIES = 5000
 INLINE_PRUNE_MAX_ENTRY_FILE_BYTES = 64 * 1024**2  # the mark phase reads every entry file
+# SEC-01 / SEC-02: inline maintenance bounds EVERYTHING it touches, not just v1 entries. The two
+# bounds above count the files under `entries/**` of any version and depth (the mark phase reads
+# them all); these two cap the lstat-only work: every directory entry visited, and the blobs.
+INLINE_PRUNE_MAX_WALK_ITEMS = 100_000
+INLINE_PRUNE_MAX_BLOBS = 50_000
 BLOB_SWEEP_GRACE_SECONDS = 3600
 TMP_SWEEP_GRACE_SECONDS = 3600
 
@@ -82,6 +87,33 @@ MAX_INPUT_FILES_LIMIT = 10**7
 CACHE_GIT_TIMEOUT_SECONDS = 10
 GIT_OPTIONAL_LOCKS_VAR = "GIT_OPTIONAL_LOCKS"  # set to "0" for every repository read:
 GIT_OPTIONAL_LOCKS_OFF = "0"  # parallel agents must never race our index.lock
+# SEC-04: inherited variables that SELECT a repository (or its objects / index) are dropped from
+# the child environment of every repository read, so a `GIT_DIR` exported by a hook or wrapper can
+# never redirect the workspace-bounded reads to another repository. Variables that inject config
+# or an external program (SEC-03) go with them; the config key/value pairs are matched by prefix.
+GIT_SCRUBBED_ENV_VARS = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+        "GIT_PREFIX",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+    }
+)
+GIT_SCRUBBED_ENV_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+# SEC-03: config that makes a plain `git status` EXECUTE a program named by the (agent-writable)
+# repository config. Injected at command-line precedence through GIT_CONFIG_COUNT (git >= 2.31).
+GIT_NEUTRALISED_CONFIG = (("core.fsmonitor", "false"), ("core.untrackedCache", "false"))
 CLI_VERSION_TIMEOUT_SECONDS = 10
 MAX_CLI_VERSION_CHARS = 256
 
