@@ -1,0 +1,12 @@
+{
+  "status": {
+    "run_id": "golden-fixture-20260101T000000Z",
+    "status": "succeeded",
+    "tasks": {
+      "a": "succeeded",
+      "b": "succeeded",
+      "c": "succeeded"
+    }
+  },
+  "returncode": 0
+}
