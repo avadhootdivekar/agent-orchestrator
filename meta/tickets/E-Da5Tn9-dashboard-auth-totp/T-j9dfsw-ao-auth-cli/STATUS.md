@@ -2,11 +2,30 @@
 
 - ID: `T-j9dfsw-ao-auth-cli`
 - Updated At: `2026-10-05`
-- State: `Draft`
+- State: `Done`
 - Owner: `developer` (lane B)
 - Scope: `MVP` · Sprint: `S2` · Estimate: `3 d`
 
 ## This update
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Implemented `auth/cli.py` (11
+  commands incl. `enrollment-token`; M3/M6/L1/L6 folded) plus the one-hunk registration in
+  `cli.py` (import + `add_typer` + docstring line). All ACs 1-8 and 10 met; AC 9 stays with
+  T-U2ERMo (the CLI maps `StoreLockTimeoutError` to exit 1 naming the lock file and "busy"; a
+  single-process lock-held test covers the mapping). Decisions to know:
+  - **Header:** line 1 is exactly `store: <dir>`, line 2 `state: <dir>`. With `status --json` the
+    header goes to **stderr** so stdout is one parseable JSON document.
+  - **LOCKED column** shows the `locked_until` timestamp, `no`, or `?` when `lockouts.json` is
+    unreadable. `list-users --json` (HLD table) is not in this ticket's scope and was not built.
+  - **Corrupt `lockouts.json`** does not block unrelated mutating commands: `ensure_name_key`
+    failure is a stderr WARNING; `unlock` repairs the file (`reset(repair_corrupt=True)`), and
+    `remove-user` warns if `forget` fails after the user is removed.
+  - **Policy notes** (not refusals) are also printed by `add-user --require-totp` and `reset-2fa`
+    when the resolved policy is `off` (blocked user), reusing the `enrollment-token` helper.
+  - **Test seams:** hashing reads `passwords.CURRENT_PARAMS` at call time (tests swap in
+    `TEST_PARAMS`); `enable-2fa` tests pin `totp.new_totp_secret` to the RFC seed so the code can
+    be computed before the single invocation (the secret is generated inside it).
+  - **Read-only commands** (`list-users`) only warn on unsafe permissions; `status` reports every
+    check (`ok` / `missing` / `unsafe`) and never exits 78 for a `ConfigRisk`.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
   Estimate, lane and sprint unchanged (3 d, lane B, S2). Changes:
   - **Security M6:** a config-sourced `store_dir` is never created or chmod-ed; it must exist and be
@@ -38,12 +57,33 @@
   account-administration and bootstrap surface (no web sign-up).
 
 ## Evidence
-- None yet.
+- By: developer · Role: developer · Date: 2026-10-05 (worktree `agent-a0e6c5c5f87392fca`, branch
+  `ad/dashboard-auth-totp`; commands run from the worktree root with `.venv/bin/`):
+  - `python -m pytest -q tests/auth/test_cli_e2e.py` -> 78 passed.
+  - `python -m pytest -q tests/auth/test_cli_e2e.py --cov=agent_orchestrator.auth.cli
+    --cov-report=term-missing` -> `auth/cli.py` 582 stmts, 9 missed, **98 %** (AC 10 >= 90 %).
+  - `python -m pytest -q tests/auth/test_import_boundary.py` -> 24 passed (incl. the two new CLI
+    cases: `ao auth --help` and `ao auth status --auth-dir <tmp>` exit 0 with
+    fastapi/starlette/uvicorn blocked; after `import agent_orchestrator.cli` none of
+    `auth.{store,passwords,totp,lockouts,audit,settings}` is in `sys.modules`).
+  - `python -m pytest -q tests/auth tests/test_cli.py tests/service tests/test_e2e_cli.py
+    tests/test_cli_isolation_flags.py` -> 1791 passed, 0 failed (regression check of everything the
+    `cli.py` hunk and the shared auth tests could touch).
+  - `ruff check` and `ruff format --check` on `auth/cli.py`, `cli.py`, `test_cli_e2e.py`,
+    `test_import_boundary.py` -> clean. `mypy src` -> only the 4 pre-existing `_version.py` errors.
+  - `ao auth --help` lists all 11 commands.
+  - AC map: 1 lifecycle (13 steps) + 7 audit sequence = `test_lifecycle_and_audit_trail`; 2/3 =
+    password/stdin/no-secret-option tests; 4 = config/permission tests (real other-writable and
+    group-writable-by-you parents; group-writable-by-another-user via a patched `_check_parent`);
+    5/5b = `test_status_*`; 5c = `test_config_store_dir_*` (+ `os.chmod`/`os.fchmod` spy) and
+    `test_explicit_auth_dir_restores_create_and_fix` (flag and env); 5d = lifecycle step 1;
+    6 = `test_enrollment_token_*`; 8 = `test_import_boundary.py`.
 
 ## Risks / Blockers
-- None. Watch item: CliRunner + `typer.prompt(hide_input=True)` (A-9). Verify on day 1.
-- The 3-day estimate is tight after v2.1; report any overrun here early.
+- None. A-9 verified: `typer.prompt(hide_input=True, confirmation_prompt=True)` reads CliRunner
+  `input`; a mismatch re-prompts and EOF exits 1. Estimate held (no overrun).
+- Residual: the multi-process store-busy test is T-U2ERMo's (AC 9 moved there in v2.1).
 
 ## Next actions
-1. developer: implement once T-kzEzwy, T-s6sJmB, T-8NQP8J, T-PlEROT and T-CsT5gk land. Run the
-   verification and record the coverage of `auth/cli.py` here.
+1. T-U2ERMo: scrub sweep over every CLI command and the store-busy multiprocess test.
+2. T-jVqH8w / T-PDGw9p: refusal messages may name `ao auth add-user`.

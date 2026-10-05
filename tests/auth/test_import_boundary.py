@@ -478,3 +478,41 @@ def test_checker_flags_r5_literals_outside_constants(tmp_path: Path) -> None:
     assert _problems(tmp_path, {"constants.py": "KEY = 'ao_auth'\n"}) == []
     # A longer string merely containing a key name is not a literal use of the key.
     assert _problems(tmp_path, {"model.py": "DOC = 'the ao_auth runtime'\n"}) == []
+
+
+# ---------------------------------------------------------------------------
+# `ao auth` (T-j9dfsw, AC-27 CLI part): works without the web framework, imports lazily
+# ---------------------------------------------------------------------------
+
+LAZY_AUTH_MODULES = ("store", "passwords", "totp", "lockouts", "audit", "settings")
+
+
+def test_ao_auth_runs_with_frameworks_blocked(tmp_path: Path) -> None:
+    code = f"""
+        import sys
+        for name in {BLOCKED_IN_SUBPROCESS!r}:
+            sys.modules[name] = None  # any `import <name>` now raises ImportError
+        from typer.testing import CliRunner
+        from agent_orchestrator.cli import app
+        runner = CliRunner()
+        auth_dir = {str(tmp_path / "auth")!r}
+        for args in (["auth", "--help"], ["auth", "status", "--auth-dir", auth_dir]):
+            result = runner.invoke(app, args)
+            assert result.exit_code == 0, (args, result.output)
+        assert "store:" in result.stdout, result.output
+    """
+    proc = _run_python(code)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_importing_the_root_cli_does_not_load_heavy_auth_modules() -> None:
+    names = [f"{PACKAGE}.{name}" for name in LAZY_AUTH_MODULES]
+    code = f"""
+        import sys
+        import agent_orchestrator.cli
+        loaded = [name for name in {names!r} if name in sys.modules]
+        print(loaded)
+        sys.exit(1 if loaded else 0)
+    """
+    proc = _run_python(code)
+    assert proc.returncode == 0, proc.stdout + proc.stderr

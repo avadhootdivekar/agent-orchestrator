@@ -8,6 +8,7 @@ Commands:
   ao init       — Scaffold a per-project .ao/config.yaml.
   ao prune      — Remove stale run artifacts from a workspace.
   ao ui         — Serve the browser dashboard (needs the optional `ui` extra).
+  ao auth       — Manage dashboard accounts, TOTP enrollment and lockouts (E-Da5Tn9).
   ao templates  — List discovered workflow templates (E-Tpl3x9).
   ao new        — Scaffold (and optionally validate/run) a workflow instance from a template.
   ao hotspots   — Compute the git-churn hotspot signal for soft overlap-aware scheduling
@@ -50,6 +51,7 @@ import typer
 # (C-3, 2026-09-07 review) avoids a third independent spelling of "none"/"worktree"
 # alongside `models.py`'s own `IsolationMode`/`WorkflowIsolation` and
 # `project_config.IsolationConfig.mode`.
+from .auth.cli import app as auth_app
 from .models import ISOLATION_NONE, ISOLATION_WORKTREE
 from .service.cli import app as service_app
 
@@ -66,6 +68,7 @@ if TYPE_CHECKING:
 
 app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
 app.add_typer(service_app, name="service")
+app.add_typer(auth_app, name="auth")
 
 _PACKAGE_LOGGER = "agent_orchestrator"
 
