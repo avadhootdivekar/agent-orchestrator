@@ -788,6 +788,18 @@ def test_destroy_user_sessions_is_keyed_by_user_id_not_username() -> None:
     assert manager.lookup(new_alice.token) is not None
 
 
+def test_destroy_user_sessions_leaves_other_realms_alone() -> None:
+    """T-2wE08U L-1: the contract (HLD 11.10) is this realm only; other realms use the epoch."""
+    store = InMemorySessionStore()
+    dashboard, _, _ = make_manager(store=store, realm="ui:abcdef123456")
+    hub, _, _ = make_manager(store=store, realm="hub", seed=2)  # distinct tokens
+    mine = issue_full(dashboard)
+    theirs = issue_full(hub)
+    assert dashboard.destroy_user_sessions(make_identity().user_id) == 1
+    assert dashboard.lookup(mine.token) is None
+    assert hub.lookup(theirs.token) is not None
+
+
 def test_destroy_user_sessions_with_nothing_to_do_returns_zero() -> None:
     manager, _, _ = make_manager()
     issue_full(manager)

@@ -333,11 +333,16 @@ class SessionManager:
         """Destroy every session of ``user_id`` (this realm) but ``except_session_id``.
 
         Keyed by ``user_id``, never by username, so a removed-then-re-added account of the same
-        name is untouched. Returns the number destroyed.
+        name is untouched. Only this realm's records are touched (HLD 11.10: other realms are
+        revoked by the epoch bump, S15). Returns the number destroyed.
         """
         count = 0
         for record in self._store.records():
-            if record.user_id == user_id and record.session_id != except_session_id:
+            if (
+                record.realm == self._realm
+                and record.user_id == user_id
+                and record.session_id != except_session_id
+            ):
                 self._store.delete(record.token_hash)
                 count += 1
         return count
