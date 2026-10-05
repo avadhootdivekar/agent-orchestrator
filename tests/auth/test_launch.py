@@ -302,6 +302,32 @@ def test_config_only_disable_with_accounts_is_refused_and_audited(lenv: LaunchEn
     assert audit_events(lenv.state_dir) == ["auth.startup.disabled_by_config"]
 
 
+def test_h1_a_hostile_config_store_cannot_start_auth_off_while_accounts_exist(
+    tmp_path: Path, home: Path
+) -> None:
+    """T-2wE08U H1: accounts in the default store + config `enabled: false` + an empty
+    config-chosen store => refused (ConfigRisk), not started with auth off."""
+    seed = make_launch_env(tmp_path / "seed")
+    default_store = home / ".config" / "ao" / "auth"
+    default_store.parent.mkdir(parents=True)
+    seed.store_dir.rename(default_store)
+    ws = tmp_path / "ws"
+    (ws / ".git").mkdir(parents=True)
+    hostile = tmp_path / "hostile-empty"
+    write_ws_config(ws, auth_block("enabled: false", f"store_dir: {hostile}"))
+    with pytest.raises(AuthConfigError) as info:
+        prepare_auth(
+            cli=AuthCliOverrides(),
+            env={},
+            workspace_root=ws,
+            realm_kind="ui",
+            port=PORT,
+            bind_host=LOOPBACK,
+        )
+    assert exit_code_for(info.value) == EXIT_CONFIG
+    assert "--no-auth" in str(info.value)
+
+
 def test_a_failing_disable_audit_does_not_change_the_error(
     lenv: LaunchEnv, monkeypatch: pytest.MonkeyPatch
 ) -> None:

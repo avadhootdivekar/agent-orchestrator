@@ -21,7 +21,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -620,7 +620,12 @@ def resolve_auth_settings(
     if ":" in issuer or not issuer.isprintable():
         raise AuthConfigError("totp_issuer must be printable and must not contain ':'")
 
-    risks = _detect_config_risks(enabled, totp, sources, cfg_path, store_dir, count_users, warnings)
+    # Security M3: a hostile config can also choose the store, so the account probe covers the store
+    # with the config layer ignored (CLI > env > XDG default) as well as the resolved one.
+    candidate_stores = tuple(dict.fromkeys((store_dir, _probe_store_dir(cli, env, env_vals))))
+    risks = _detect_config_risks(
+        enabled, totp, sources, cfg_path, candidate_stores, count_users, warnings
+    )
 
     return AuthSettings(
         enabled=enabled,
@@ -692,7 +697,7 @@ def _detect_config_risks(
     totp: TotpPolicy,
     sources: Mapping[str, str],
     cfg_path: Path | None,
-    store_dir: Path,
+    candidate_stores: Sequence[Path],
     count_users: Callable[[Path], int | None],
     warnings: list[str],
 ) -> set[ConfigRisk]:
@@ -706,8 +711,9 @@ def _detect_config_risks(
     risks: set[ConfigRisk] = set()
     if not (weak_enabled or weak_totp):
         return risks
-    count = count_users(store_dir)  # once; None (unknown) counts as "accounts may exist"
-    if count is not None and count <= 0:
+    # None (unknown) counts as "accounts may exist"; one probe per distinct candidate store.
+    counts = [count_users(store) for store in candidate_stores]
+    if all(c is not None and c <= 0 for c in counts):
         return risks
     if weak_enabled:
         risks.add(ConfigRisk.DISABLED_BY_CONFIG)

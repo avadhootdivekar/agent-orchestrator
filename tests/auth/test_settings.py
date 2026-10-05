@@ -1038,6 +1038,79 @@ def test_default_count_probe_reads_the_real_store(
 
 
 # ---------------------------------------------------------------------------
+# T-2wE08U H1: a hostile config cannot hide the accounts by choosing the store
+# ---------------------------------------------------------------------------
+
+
+def counts_by_dir(table: dict[Path, int | None]) -> Callable[[Path], int | None]:
+    """Accounts per store dir; an unlisted dir is a missing/empty store (0)."""
+    return lambda store: table.get(store.resolve(), 0)
+
+
+def test_h1_config_chosen_empty_store_cannot_hide_accounts_in_the_default_store(
+    ws: Path, tmp_path: Path, xdg_env: dict[str, str]
+) -> None:
+    from agent_orchestrator.auth.paths import xdg_default_store_dir
+
+    default_store = xdg_default_store_dir(xdg_env).resolve()
+    hostile = tmp_path / "hostile-empty-store"  # absolute, outside the workspace, nonexistent
+    write_config(ws, auth_block("enabled: false", f"store_dir: {hostile}"))
+    s = resolve(ws, xdg_env, count=counts_by_dir({default_store: 1}))
+    assert s.store_dir == hostile.resolve()
+    assert s.config_risks == {ConfigRisk.DISABLED_BY_CONFIG}
+
+
+def test_h1_config_store_with_accounts_is_still_a_risk(
+    ws: Path, tmp_path: Path, xdg_env: dict[str, str]
+) -> None:
+    hostile = tmp_path / "other-store"
+    write_config(ws, auth_block("enabled: false", f"store_dir: {hostile}"))
+    s = resolve(ws, xdg_env, count=counts_by_dir({hostile.resolve(): 2}))
+    assert s.config_risks == {ConfigRisk.DISABLED_BY_CONFIG}
+
+
+def test_h1_the_env_store_is_probed_with_the_config_layer_ignored(
+    ws: Path, tmp_path: Path, xdg_env: dict[str, str]
+) -> None:
+    env_store = tmp_path / "env-store"
+    write_config(ws, auth_block("enabled: false"))
+    # env wins the store choice, so the config cannot redirect it; the env store is the probe.
+    s = resolve(
+        ws, {**xdg_env, "AO_AUTH_DIR": str(env_store)}, count=counts_by_dir({env_store.resolve(): 1})
+    )
+    assert s.config_risks == {ConfigRisk.DISABLED_BY_CONFIG}
+
+
+def test_h1_empty_everywhere_is_no_risk(ws: Path, tmp_path: Path, xdg_env: dict[str, str]) -> None:
+    write_config(ws, auth_block("enabled: false", f"store_dir: {tmp_path / 'nowhere'}"))
+    assert resolve(ws, xdg_env, count=counts(0)).config_risks == frozenset()
+
+
+def test_h1_an_unknown_default_store_count_counts_as_accounts_may_exist(
+    ws: Path, tmp_path: Path, xdg_env: dict[str, str]
+) -> None:
+    from agent_orchestrator.auth.paths import xdg_default_store_dir
+
+    default_store = xdg_default_store_dir(xdg_env).resolve()
+    write_config(ws, auth_block("enabled: false", f"store_dir: {tmp_path / 'nowhere'}"))
+    s = resolve(ws, xdg_env, count=counts_by_dir({default_store: None}))
+    assert s.config_risks == {ConfigRisk.DISABLED_BY_CONFIG}
+
+
+def test_h1_the_totp_downgrade_warning_also_sees_the_default_store(
+    ws: Path, tmp_path: Path, xdg_env: dict[str, str]
+) -> None:
+    from agent_orchestrator.auth.paths import xdg_default_store_dir
+
+    default_store = xdg_default_store_dir(xdg_env).resolve()
+    hostile = tmp_path / "hostile-empty-store"
+    write_config(ws, auth_block("enabled: true", "totp: optional", f"store_dir: {hostile}"))
+    s = resolve(ws, xdg_env, count=counts_by_dir({default_store: 1}))
+    assert s.config_risks == {ConfigRisk.TOTP_DOWNGRADED_BY_CONFIG}
+    assert any("comes only from" in w for w in s.warnings)
+
+
+# ---------------------------------------------------------------------------
 # AC 12: ConfigRisk detection (v2.1; rows 14-15)
 # ---------------------------------------------------------------------------
 
