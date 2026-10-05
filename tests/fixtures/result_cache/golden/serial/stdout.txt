@@ -1,0 +1,12 @@
+
+Run:    golden-fixture-20260101T000000Z
+Status: succeeded
+
+Task                           Status          Route                Attempts  Tokens (in/out)      Cost($)
+--------------------------------------------------------------------------------------------------------------
+a                              succeeded                            1         0/0                  0.0000
+b                              succeeded                            1         0/0                  0.0000
+c                              succeeded                            1         0/0                  0.0000
+
+Total tokens: in=0 out=0 cache_creation=0 cache_read=0
+Total cost:   $0.0000

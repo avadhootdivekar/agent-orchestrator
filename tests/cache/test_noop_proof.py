@@ -1,343 +1,300 @@
-"""Part 1: No-op proof (I-1, I-2).
+"""NFR-1 no-op proof, Part 1 of T-JCOAsq (HLD 8.7.5; catalogue rows I-1 and I-2).
 
-I-1: Poisoned imports - when cache is off, cache modules are not loaded.
-I-2: Golden snapshot - cached-off path behaves identically to golden from base code.
+I-1  A cache-off engine, run in a FRESH interpreter under a poisoned-import finder, completes
+     ten representative workflows without importing any `agent_orchestrator.cache.*` module
+     other than `cache` and `cache.constants`, without calling the engine's cache hooks, and
+     without leaving a cache directory or a `result_cache` key behind. The poison itself is
+     proven (self-tests + negative controls) so the check cannot be vacuous.
+I-2  `ao run` stdout and `status.json` are byte-identical (after `<WS>` normalisation) to
+     goldens captured from base commit `bb6d8a0`, serial and `max_parallel=3`. The very same
+     capture script (`_noop_capture.py`) produced the goldens on the base tree and runs here.
 
-Both I-1 and I-2 verify that with AO_CACHE=0, the orchestrator behaves as it did before
-cache code was added (no-op). I-1 verifies no cache modules are imported. I-2 verifies
-the output is byte-identical to the golden fixture.
+Needs only code that exists on base plus the empty `cache` package marker, so it stays valid
+before and after T-XpF1pF. See the T-JCOAsq HANDOFF for the golden recapture command.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
-import tempfile
+import textwrap
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent_orchestrator.artifacts import LocalFsArtifactStore
-from agent_orchestrator.engine import Orchestrator
-from agent_orchestrator.executors.fake import FakeExecutor
-from agent_orchestrator.models import (
-    AgentSpec,
-    RepoRef,
-    RepoSet,
-    TaskSpec,
-    WorkflowDefaults,
-    WorkflowSpec,
-)
-from agent_orchestrator.runstate import RunStateStore
+import agent_orchestrator
+from tests.cache import _noop_poison as poison
+from tests.cache._noop_capture import STATUS_FILE, STDOUT_FILE, VARIANTS, WORKSPACE_PLACEHOLDER
+from tests.cache._noop_subprocess import REPORT_PREFIX, contains_key
 
-# ===========================================================================================
-# I-1: Poisoned Imports Tests
-# ===========================================================================================
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC_DIR = Path(agent_orchestrator.__file__).resolve().parents[1]
+GOLDEN_DIR = REPO_ROOT / "tests" / "fixtures" / "result_cache" / "golden"
+SUBPROCESS_TIMEOUT_SECONDS = 180
+
+# The ticket's required I-1 workflows (T-JCOAsq Part 1, item 3), by scenario name.
+REQUIRED_SCENARIOS = {
+    "serial",
+    "parallel",  # max_parallel=3
+    "emit",
+    "loop",
+    "router_join_any",
+    "budget_wait",
+    "breakers_quiet",
+    "breakers_trip",
+    "hooks",
+    "isolation",
+}
+POISONED_MODULE = "agent_orchestrator.cache.keys"
+
+
+def _subprocess_env() -> dict[str, str]:
+    """Environment for child interpreters: this tree's `src` first, no ambient AO_* settings."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AO_")}
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = os.pathsep.join([str(SRC_DIR), *([existing] if existing else [])])
+    return env
+
+
+def _run_module(module: str, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", module, *args],
+        cwd=REPO_ROOT,
+        env=_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=SUBPROCESS_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+def _report_of(proc: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    lines = [ln for ln in proc.stdout.splitlines() if ln.startswith(REPORT_PREFIX)]
+    detail = f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr[-2000:]}"
+    assert len(lines) == 1, f"no report line.\n{detail}"
+    report: dict[str, Any] = json.loads(lines[0][len(REPORT_PREFIX) :])
+    return report
+
+
+# ---------------------------------------------------------------------------
+# The poison works (I-1 self-tests)
+# ---------------------------------------------------------------------------
+
+
+class TestPoisonedFinder:
+    """Prove the finder fires; the first draft defined `find_module`, which 3.12 ignores."""
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "agent_orchestrator.cache.keys",
+            "agent_orchestrator.cache.store",
+            "agent_orchestrator.cache.settings",
+            "agent_orchestrator.cache.report",
+            "agent_orchestrator.cache.deeper.still",
+        ],
+    )
+    def test_find_spec_raises_for_every_cache_submodule(self, name: str) -> None:
+        with pytest.raises(ImportError, match="poisoned"):
+            poison.PoisonedFinder().find_spec(name, None)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "agent_orchestrator.cache",
+            "agent_orchestrator.cache.constants",
+            "agent_orchestrator.cachefoo",  # a sibling that merely shares the prefix
+            "agent_orchestrator.engine",
+            "json",
+        ],
+    )
+    def test_find_spec_defers_for_allowed_and_unrelated_modules(self, name: str) -> None:
+        assert poison.PoisonedFinder().find_spec(name, None) is None
+
+    def test_finder_uses_the_hook_python_actually_calls(self) -> None:
+        assert callable(getattr(poison.PoisonedFinder, "find_spec", None))
+        assert not hasattr(poison.PoisonedFinder, "find_module")
+
+    def test_import_statement_fails_in_a_fresh_interpreter(self) -> None:
+        """End to end through the real import machinery, with the allowed modules still fine."""
+        code = textwrap.dedent(
+            f"""
+            import importlib
+            from tests.cache import _noop_poison
+            _noop_poison.install()
+
+            failures = []
+            for how in ("import_module", "statement"):
+                try:
+                    if how == "import_module":
+                        importlib.import_module("{POISONED_MODULE}")
+                    else:
+                        import agent_orchestrator.cache.keys
+                except ImportError as exc:
+                    assert "poisoned" in str(exc), exc
+                else:
+                    failures.append(how)
+            assert not failures, f"poison did not fire for: {{failures}}"
+
+            import agent_orchestrator.cache.constants  # allowed
+            import agent_orchestrator.cache  # allowed
+            assert "{POISONED_MODULE}" not in __import__("sys").modules
+            print("POISON_OK")
+            """
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            env=_subprocess_env(),
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+        assert proc.returncode == 0 and "POISON_OK" in proc.stdout, proc.stdout + proc.stderr
+
+
+class TestNegativeControls:
+    """The I-1 harness must FAIL when a cache submodule really is imported during a run."""
+
+    def test_poisoned_import_during_a_scenario_fails_the_run(self) -> None:
+        proc = _run_module(
+            "tests.cache._noop_subprocess", "--only", "serial", "--sabotage-import", POISONED_MODULE
+        )
+        report = _report_of(proc)
+        assert proc.returncode != 0
+        assert report["sabotage"] and report["sabotage"][0].startswith("ImportError: poisoned")
+        assert report["failures"], report
+
+    def test_module_check_fails_on_its_own_when_poison_is_off(self) -> None:
+        """Without the finder the import succeeds; the loaded-modules subset check must catch it."""
+        proc = _run_module(
+            "tests.cache._noop_subprocess",
+            "--only",
+            "serial",
+            "--no-poison",
+            "--sabotage-import",
+            POISONED_MODULE,
+        )
+        report = _report_of(proc)
+        assert proc.returncode != 0
+        assert report["sabotage"] == [f"imported {POISONED_MODULE}"]
+        assert POISONED_MODULE in report["unexpected_cache_modules"]
+        assert all(not r["problems"] for r in report["scenarios"].values())  # only the module check
+
+    def test_allowed_module_import_is_not_a_failure(self) -> None:
+        proc = _run_module(
+            "tests.cache._noop_subprocess",
+            "--only",
+            "serial",
+            "--sabotage-import",
+            "agent_orchestrator.cache.constants",
+        )
+        report = _report_of(proc)
+        assert proc.returncode == 0, report["failures"]
+        assert report["sabotage"] == ["imported agent_orchestrator.cache.constants"]
+
+    def test_status_key_scan_finds_nested_result_cache(self) -> None:
+        assert contains_key({"a": [{"b": {"result_cache": {}}}]}, "result_cache")
+        assert not contains_key({"a": [{"b": {"cache_hits": 1}}]}, "result_cache")
+
+
+# ---------------------------------------------------------------------------
+# I-1
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def i1_report() -> dict[str, Any]:
+    """One poisoned-import subprocess running every scenario; tests below read its report."""
+    proc = _run_module("tests.cache._noop_subprocess")
+    report = _report_of(proc)
+    report["returncode"] = proc.returncode
+    return report
 
 
 class TestI1PoisonedImports:
-    """I-1: Verify that cache modules are not imported when AO_CACHE=0."""
+    """I-1: cache off -> every workflow completes with no cache code reached or imported."""
 
-    def test_i1_serial_no_cache_submodules_imported(self) -> None:
-        """I-1 serial: No cache submodules imported when AO_CACHE=0, serial execution."""
-        self._verify_no_cache_imports(max_parallel=1)
+    def test_i1_runs_every_required_workflow(self, i1_report: dict[str, Any]) -> None:
+        assert set(i1_report["scenarios"]) == REQUIRED_SCENARIOS
 
-    def test_i1_parallel_no_cache_submodules_imported(self) -> None:
-        """I-1 max_parallel=3: No cache submodules imported when AO_CACHE=0, parallel execution."""
-        self._verify_no_cache_imports(max_parallel=3)
+    @pytest.mark.parametrize("scenario", sorted(REQUIRED_SCENARIOS))
+    def test_i1_scenario_completes_cleanly(self, i1_report: dict[str, Any], scenario: str) -> None:
+        result = i1_report["scenarios"][scenario]
+        assert result["problems"] == []
+        assert result["status"] == result["expected"]
 
-    @staticmethod
-    def _verify_no_cache_imports(max_parallel: int) -> None:
-        """Verify cache submodules are not imported with a poisoned sys.meta_path."""
-        # Create test script that runs workflows with cache disabled and poisoned imports
-        test_code = [
-            "import sys",
-            "import os",
-            "import tempfile",
-            "import json",
-            "from pathlib import Path",
-            "",
-            "# Set cache off BEFORE any imports",
-            "os.environ['AO_CACHE'] = '0'",
-            "",
-            "# Install poisoned finder to raise ImportError for cache.* modules",
-            "class PoisonedFinder:",
-            "    def find_module(self, fullname, path=None):",
-            "        if fullname.startswith('agent_orchestrator.cache'):",
-            "            if fullname not in {'agent_orchestrator.cache', 'agent_orchestrator.cache.constants'}:",  # noqa: E501
-            "                raise ImportError(f'Poisoned: {fullname}')",
-            "        return None",
-            "",
-            "sys.meta_path.insert(0, PoisonedFinder())",
-            "",
-            "# Now import orchestrator and run a workflow",
-            "from datetime import UTC, datetime",
-            "from agent_orchestrator.artifacts import LocalFsArtifactStore",
-            "from agent_orchestrator.engine import Orchestrator",
-            "from agent_orchestrator.executors.fake import FakeExecutor",
-            "from agent_orchestrator.models import AgentSpec, RepoRef, RepoSet, TaskSpec, WorkflowDefaults, WorkflowSpec",  # noqa: E501
-            "from agent_orchestrator.runstate import RunStateStore",
-            "",
-            "# Create test workflow",
-            "with tempfile.TemporaryDirectory(prefix='i1_test_') as tmpdir:",
-            "    ws = Path(tmpdir)",
-            "    os.environ['AO_WORKSPACE_ROOT'] = str(ws)",
-            "    (ws / 'specs').mkdir()",
-            "",
-            "    # Create instruction files",
-            "    (ws / 'specs/task_a.md').write_text('Task A')",
-            "    (ws / 'specs/task_b.md').write_text('Task B')",
-            "",
-            "    # Create workflow spec",
-            "    tasks = [",
-            "        TaskSpec(id='a', agent='ag', instruction='specs/task_a.md', inputs=[], outputs=['out/a.txt']),",  # noqa: E501
-            "        TaskSpec(id='b', agent='ag', instruction='specs/task_b.md', inputs=['out/a.txt'], outputs=['out/b.txt'], depends_on=['a']),",  # noqa: E501
-            "    ]",
-            "    wf = WorkflowSpec(version='1.0', id='test', repo_set='rs', tasks=tasks, defaults=WorkflowDefaults())",  # noqa: E501
-            "",
-            "    # Setup stores and repo set",
-            "    store = LocalFsArtifactStore(str(ws))",
-            "    rs_store = RunStateStore(str(ws), store, clock=lambda: datetime(2026, 1, 1, tzinfo=UTC))",  # noqa: E501
-            "    repo_set = {'rs': RepoSet(workspace_root=str(ws), repos=[RepoRef(id='core', path='.', role='primary')])}",  # noqa: E501
-            "",
-            "    # Create and run orchestrator",
-            "    executor = FakeExecutor()",
-            "    orch = Orchestrator(executor=executor, artifact_store=store, runstate_store=rs_store, max_parallel="
-            + str(max_parallel)
-            + ")",  # noqa: E501
-            "    agent_specs = {'ag': AgentSpec(executor='fake')}",
-            "    state = orch.run(wf, repo_set, agent_specs)",
-            "",
-            "    # Verify all tasks completed",
-            "    if state.status != 'succeeded':",
-            "        print(f'ERROR: workflow failed with status {state.status}')",
-            "        sys.exit(1)",
-            "",
-            "    # Verify no cache directory created",
-            "    cache_dir = ws / '.orchestrator' / 'cache'",
-            "    if cache_dir.exists():",
-            "        print(f'ERROR: .orchestrator/cache dir exists')",
-            "        sys.exit(1)",
-            "",
-            "    # Verify status.json has no result_cache key",
-            "    status_path = ws / '.orchestrator' / 'status.json'",
-            "    if status_path.exists():",
-            "        with open(status_path) as f:",
-            "            status = json.load(f)",
-            "        if 'result_cache' in status:",
-            "            print(f'ERROR: result_cache key in status.json')",
-            "            sys.exit(1)",
-            "",
-            "    # Check loaded cache modules",
-            "    loaded = {m for m in sys.modules if m.startswith('agent_orchestrator.cache')}",
-            "    allowed = {'agent_orchestrator.cache', 'agent_orchestrator.cache.constants'}",
-            "    extra = loaded - allowed",
-            "    if extra:",
-            "        print(f'ERROR: unexpected cache modules loaded: {extra}')",
-            "        sys.exit(1)",
-            "",
-            "    print('SUCCESS')",
-            "    sys.exit(0)",
-        ]
+    def test_i1_poison_was_active(self, i1_report: dict[str, Any]) -> None:
+        assert i1_report["poison_installed"] is True
 
-        script = "\n".join(test_code)
+    def test_i1_engine_cache_hooks_never_called(self, i1_report: dict[str, Any]) -> None:
+        assert i1_report["engine_hook_calls"] == []
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(script)
-            script_path = f.name
+    def test_i1_loaded_cache_modules_subset_of_allowed(self, i1_report: dict[str, Any]) -> None:
+        loaded = set(i1_report["loaded_cache_modules"])
+        assert loaded <= poison.ALLOWED_CACHE_MODULES, loaded - poison.ALLOWED_CACHE_MODULES
+        assert i1_report["unexpected_cache_modules"] == []
 
-        try:
-            result = subprocess.run(
-                [sys.executable, script_path],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-
-            if result.returncode != 0:
-                pytest.fail(
-                    f"I-1 test failed (max_parallel={max_parallel}):\n"
-                    f"stdout: {result.stdout}\n"
-                    f"stderr: {result.stderr}"
-                )
-
-            if "SUCCESS" not in result.stdout:
-                pytest.fail(f"Test did not complete successfully: {result.stdout}")
-
-        finally:
-            Path(script_path).unlink(missing_ok=True)
+    def test_i1_overall_pass(self, i1_report: dict[str, Any]) -> None:
+        assert i1_report["failures"] == []
+        assert i1_report["returncode"] == 0
 
 
-# ===========================================================================================
-# I-2: Golden Snapshot Tests
-# ===========================================================================================
+# ---------------------------------------------------------------------------
+# I-2
+# ---------------------------------------------------------------------------
+
+
+def capture_current_tree(variant: str, out_dir: Path) -> None:
+    """Run the shared capture script against THIS tree (the goldens came from base)."""
+    proc = _run_module("tests.cache._noop_capture", "--variant", variant, "--out-dir", str(out_dir))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def diff_against_golden(actual_dir: Path, golden_dir: Path) -> list[str]:
+    """Names of the artefacts whose bytes differ (empty list = byte-identical)."""
+    return [
+        name
+        for name in (STATUS_FILE, STDOUT_FILE)
+        if (actual_dir / name).read_bytes() != (golden_dir / name).read_bytes()
+    ]
 
 
 class TestI2GoldenSnapshot:
-    """I-2: Verify that cache-off output matches golden fixture."""
+    """I-2: cache-off `ao run` output equals the base-commit goldens, byte for byte."""
 
-    GOLDEN_DIR = Path(__file__).parent.parent / "fixtures" / "result_cache" / "golden"
+    @pytest.mark.parametrize("variant", sorted(VARIANTS))
+    def test_i2_matches_base_golden(self, variant: str, tmp_path: Path) -> None:
+        capture_current_tree(variant, tmp_path / "actual")
+        assert diff_against_golden(tmp_path / "actual", GOLDEN_DIR / variant) == []
 
-    @pytest.fixture()
-    def fixed_clock(self):
-        """Provide a fixed clock for deterministic output."""
-        from datetime import UTC, datetime
+    @pytest.mark.parametrize("variant", sorted(VARIANTS))
+    def test_golden_is_real_captured_output(self, variant: str) -> None:
+        status_text = (GOLDEN_DIR / variant / STATUS_FILE).read_text()
+        stdout_text = (GOLDEN_DIR / variant / STDOUT_FILE).read_text()
+        snapshot = json.loads(status_text)
+        assert snapshot["status"] == "succeeded"
+        assert [t["id"] for t in snapshot["tasks"]] == ["a", "b", "c"]
+        assert all(t["status"] == "succeeded" for t in snapshot["tasks"])
+        # Normalised, and no temp-dir path leaked into either artefact.
+        assert WORKSPACE_PLACEHOLDER in status_text
+        for text in (status_text, stdout_text):
+            assert "/tmp/" not in text and "noop-golden-" not in text
+        assert "Run:    golden-fixture-20260101T000000Z" in stdout_text
+        # The cache must be invisible: no result_cache key, no cache line in the CLI text.
+        assert not contains_key(snapshot, "result_cache")
+        assert "result_cache" not in stdout_text and "result cache" not in stdout_text.lower()
 
-        return lambda: datetime(2026, 1, 1, tzinfo=UTC)
-
-    def test_i2_serial_matches_golden(self, fixed_clock) -> None:
-        """I-2 serial: Cache-off workflow output matches golden (serial execution)."""
-        golden_file = self.GOLDEN_DIR / "golden_serial.json"
-        assert golden_file.exists(), f"Golden file not found: {golden_file}"
-
-        with open(golden_file) as f:
-            expected = json.load(f)
-
-        actual = self._run_workflow(max_parallel=1, fixed_clock=fixed_clock)
-
-        # Normalize run IDs for comparison (they're generated, so just check structure)
-        self._normalize_for_comparison(actual)
-        self._normalize_for_comparison(expected)
-
-        assert actual["returncode"] == expected["returncode"], (
-            f"Return code mismatch: {actual['returncode']} != {expected['returncode']}"
-        )
-
-        assert actual["status"]["status"] == expected["status"]["status"], (
-            f"Status mismatch: {actual['status']['status']} != {expected['status']['status']}"
-        )
-
-        assert set(actual["status"]["tasks"].keys()) == set(expected["status"]["tasks"].keys()), (
-            "Task IDs mismatch"
-        )
-
-        for task_id in actual["status"]["tasks"]:
-            assert actual["status"]["tasks"][task_id] == expected["status"]["tasks"][task_id], (
-                f"Task {task_id} status mismatch"
-            )
-
-    def test_i2_parallel_matches_golden(self, fixed_clock) -> None:
-        """I-2 max_parallel=3: Cache-off workflow output matches golden (parallel execution)."""
-        golden_file = self.GOLDEN_DIR / "golden_parallel.json"
-        assert golden_file.exists(), f"Golden file not found: {golden_file}"
-
-        with open(golden_file) as f:
-            expected = json.load(f)
-
-        actual = self._run_workflow(max_parallel=3, fixed_clock=fixed_clock)
-
-        # Normalize for comparison
-        self._normalize_for_comparison(actual)
-        self._normalize_for_comparison(expected)
-
-        assert actual["returncode"] == expected["returncode"], (
-            f"Return code mismatch: {actual['returncode']} != {expected['returncode']}"
-        )
-
-        assert actual["status"]["status"] == expected["status"]["status"], (
-            f"Status mismatch: {actual['status']['status']} != {expected['status']['status']}"
-        )
-
-        assert set(actual["status"]["tasks"].keys()) == set(expected["status"]["tasks"].keys()), (
-            "Task IDs mismatch"
-        )
-
-        for task_id in actual["status"]["tasks"]:
-            assert actual["status"]["tasks"][task_id] == expected["status"]["tasks"][task_id], (
-                f"Task {task_id} status mismatch"
-            )
-
-    @staticmethod
-    def _run_workflow(max_parallel: int, fixed_clock) -> dict[str, Any]:
-        """Run the golden test workflow and capture its status."""
-
-        # Disable cache
-        os.environ["AO_CACHE"] = "0"
-
-        with tempfile.TemporaryDirectory(prefix="i2_test_") as tmpdir:
-            ws = Path(tmpdir)
-            os.environ["AO_WORKSPACE_ROOT"] = str(ws)
-            (ws / "specs").mkdir()
-
-            # Create instruction files
-            (ws / "specs/task_a.md").write_text("Task A instruction")
-            (ws / "specs/task_b.md").write_text("Task B instruction")
-            (ws / "specs/task_c.md").write_text("Task C instruction")
-
-            # Create workflow spec: a -> b (chain) and c (independent)
-            tasks = [
-                TaskSpec(
-                    id="a",
-                    agent="ag",
-                    instruction="specs/task_a.md",
-                    inputs=[],
-                    outputs=["output/a.txt"],
-                ),
-                TaskSpec(
-                    id="b",
-                    agent="ag",
-                    instruction="specs/task_b.md",
-                    inputs=["output/a.txt"],
-                    outputs=["output/b.txt"],
-                    depends_on=["a"],
-                ),
-                TaskSpec(
-                    id="c",
-                    agent="ag",
-                    instruction="specs/task_c.md",
-                    inputs=[],
-                    outputs=["output/c.txt"],
-                ),
-            ]
-
-            wf = WorkflowSpec(
-                version="1.0",
-                id="golden-fixture",
-                repo_set="rs",
-                tasks=tasks,
-                defaults=WorkflowDefaults(),
-            )
-
-            # Setup stores and repo set
-            store = LocalFsArtifactStore(str(ws))
-            rs_store = RunStateStore(str(ws), store, clock=fixed_clock)
-            repo_set = {
-                "rs": RepoSet(
-                    workspace_root=str(ws),
-                    repos=[RepoRef(id="core", path=".", role="primary")],
-                )
-            }
-
-            # Create and run orchestrator
-            executor = FakeExecutor()
-            orch = Orchestrator(
-                executor=executor,
-                artifact_store=store,
-                runstate_store=rs_store,
-                clock=fixed_clock,
-                max_parallel=max_parallel,
-            )
-            agent_specs = {"ag": AgentSpec(executor="fake")}
-            state = orch.run(wf, repo_set, agent_specs)
-
-            # Capture status
-            status_data = {
-                "run_id": state.run_id,
-                "status": state.status,
-                "tasks": {t_id: t.status for t_id, t in state.tasks.items()},
-            }
-
-            return {
-                "status": status_data,
-                "returncode": 0 if state.status == "succeeded" else 1,
-            }
-
-    @staticmethod
-    def _normalize_for_comparison(data: dict[str, Any]) -> None:
-        """Normalize run_id and workspace paths for comparison (modifies in-place)."""
-        # Remove run_id since it's generated
-        if "status" in data and "run_id" in data["status"]:
-            data["status"].pop("run_id")
+    @pytest.mark.parametrize("name", [STATUS_FILE, STDOUT_FILE])
+    def test_comparison_detects_a_perturbed_golden(self, name: str, tmp_path: Path) -> None:
+        """Mutation check: the comparison really fails if a golden byte changes."""
+        mutated = tmp_path / "mutated"
+        shutil.copytree(GOLDEN_DIR / "serial", mutated)
+        original = (mutated / name).read_bytes()
+        (mutated / name).write_bytes(original.replace(b"succeeded", b"succeeded ", 1))
+        assert diff_against_golden(GOLDEN_DIR / "serial", mutated) == [name]
