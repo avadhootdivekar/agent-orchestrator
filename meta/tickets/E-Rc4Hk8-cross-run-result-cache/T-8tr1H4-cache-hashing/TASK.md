@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev C)
 - Created: `2026-10-05`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Rev 3; implemented)
+- Status: `Done`
 - Estimate: `14 focus hours (1.75 days)` · Sprint 1 (after T-FJH6LI)
 
 ## Requirements Mapping
@@ -123,3 +123,6 @@ HLD §8.2.3 and §8.2.4 verbatim.
   D; manager B): depends on T-FJH6LI commit 3; repository detection stops at the workspace root;
   public `GitRepo` API only with `GIT_OPTIONAL_LOCKS=0`; `nested_repo_marker`; explicit
   U-H1..U-H10 and U-G7/U-G8; simulated `EACCES`.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commit
+  `00b9a3c`. All 16 acceptance criteria pass; evidence in `STATUS.md`, frozen names and the four
+  small deviations in `HANDOFF.md`.
