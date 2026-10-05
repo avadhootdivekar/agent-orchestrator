@@ -38,6 +38,7 @@ ships a browser dashboard.
 | **Browser dashboard (`ao ui`)** | **New** | Files, runs, stats, run control. Unauthenticated — §2. |
 | **Multi-workspace service (`ao service`)** | **New** | One supervisor daemon serves every registered workspace's dashboard on its own port; boot-resume for orphaned runs; installable as a user systemd unit. Unauthenticated, same posture as `ao ui` — §2. |
 | **General instructions** | **New** | Workspace-scoped rules applied to every task. |
+| **Cross-run result cache (`ao run --cache`, `ao cache`)** | **New, opt-in** | Reuses an identical, previously successful task's declared outputs instead of re-dispatching the agent. Double opt-in (operator flag + `cache: true` per task), default off, `shadow` measure-only mode. NOT prompt caching. E-Rc4Hk8 / ADR-0019 — §2c. **Value unproven: G0 not yet run.** |
 | Authentication / multi-user | **Absent** | Deliberate for now — §2. |
 | Cron / event triggers | **Designed, not built** | `Trigger` model exists; no daemon runs it yet. Service-owned scheduler designed (E-Sc9Rt4, ADR-0014) — §3.2. |
 
@@ -50,6 +51,7 @@ ships a browser dashboard.
 - **E-9h3m7k — Accurate usage metrics**: true per-task/run cost and token totals.
 - **E-Ui7Kq2 — Dashboard + general instructions** (this change): see §2.
 - **E-GIytcL — Multi-workspace service** (2026-08-28): `ao service` supervisor daemon (spawn/monitor/restart per-workspace dashboards, bounded auto-resume, hub, systemd install) — see §2a.
+- **E-Rc4Hk8 — Cross-run result cache** (2026-10-05, ADR-0019): opt-in, content-addressed, workspace-local reuse of identical successful tasks' declared outputs; `ao cache` admin commands; `shadow` mode; dashboard tag/tile; `ao-bench` forced off — see §2c.
 - **E-Wk9Tz3 — Per-task git isolation** (2026-09-07, ADR-0013): worktree per task, squash+rebase integration behind a compare-and-swap, tiered conflict ladder, `ao hotspots`, `ao prune --worktrees-only` — see §2b.
 
 ### Designed, awaiting implementation (2026-09-07)
@@ -153,6 +155,47 @@ fix. `refs/heads/ao/**` and `refs/ao/**` are reserved for the engine.
 
 ---
 
+## 2c. Just landed: cross-run result cache
+
+**Opt-in, default off, double opt-in.** E-Rc4Hk8 / [ADR-0019](../docs-md/adr/ADR-0019-cross-run-result-cache.md) /
+[`docs-md/cross-run-result-cache-hld.md`](../docs-md/cross-run-result-cache-hld.md) (§0 = what shipped and every deviation).
+It is **not** Claude prompt caching (that is ADR-0015's separate scope).
+
+- **What it does.** For a task the workflow author opted in (`cache: true`) and the operator enabled
+  (`--cache` / `AO_CACHE` / `.ao/config.yaml cache.*`), the engine computes a sha256 key over the
+  rendered prompt, the exact `claude` argv, a CLI fingerprint, input/instruction contents, prior
+  output contents and repo HEADs. A hit restores the stored declared outputs and settles the task
+  `succeeded` with no dispatch, no retry and no budget charge; avoided spend is reported separately
+  (`saved_*`, an estimate). A miss dispatches as today and stores the final settled success behind
+  three purity guards (key unchanged, no HEAD moved, no tracked file changed).
+- **Operability.** `ao cache ls|stats|show|rm|prune|clear|verify` (each `--json`); `rm <key>` then a
+  re-run is the way to re-roll a frozen result; `shadow` mode measures the would-hit rate without
+  restoring anything. Dashboard "cached" tag and "Result cache" tile. `ao-bench` always runs with
+  `--no-cache`. When off (the default) the engine executes and imports no cache code and
+  `status.json` / CLI text are byte-identical (tests I-1, I-2).
+- **Safety.** The store is agent-writable, so it is treated as hostile data: spec-derived restore
+  destinations only, sensitive paths (`.git`, `.claude`, CI config, ...) never written, total parsers,
+  symlinks never followed or evicted, a cache bug disables the cache for the run rather than killing it.
+- **Delivered with** 20 tasks, three review gates (G1a, G1b, G2) all PASS, full suite 6903 passed /
+  10 skipped / 0 failed, cache-package coverage 98.71%.
+
+**Not yet true / open follow-ups** (carried, not hidden):
+- **G0, the value check, has not been run.** The protocol and tooling shipped
+  ([`docs-md/result-cache-g0-protocol.md`](../docs-md/result-cache-g0-protocol.md)); executing it needs
+  multi-day `AO_CACHE=shadow` runs of a real consumer workflow (finplan) with the operator's consent.
+  Until it passes, `on` is not recommended to any consumer. If the would-hit rate is negligible the
+  feature stays shipped but off and ADR-0019 ALT-8 (`ao run --reuse-from <run>`) is the next step.
+  Owner: parent or operator, post-merge; the parent confirms the decision-rule thresholds (OQ-6).
+- **Merge with E-Ag7Pw3 (approval gates) and E-Da5Tn9 (dashboard auth):** classify new fields RULED,
+  keep the approval check before the lookup seam, recapture the I-2 goldens if output changed, rebuild
+  the UI bundle (HLD §24.2).
+- **Accepted residuals** (use `--no-cache` for untrusted repositories): provider/endpoint env not in the
+  key; the guard-3 probe can execute a git `filter.<x>.clean` from the agent-writable config; dirty
+  tracked edits made before the lookup are not in the key; the cache directory is agent-writable
+  (HLD §0.4, ADR-0019 addendum A4).
+
+---
+
 ## 3. Next 3–6 months
 
 Ordered by dependency, not by calendar. Each bullet is roughly epic-sized.
@@ -206,6 +249,12 @@ Anything beyond single-user localhost needs:
 Per-task isolation (§2b) is the answer to this, and it has shipped — but **opt-in**, so the
 default (`isolation: none`) still carries the original gap. To raise the default:
 
+- **R-15 (strategic, E-Rc4Hk8): isolation vs the result cache.** The result cache (§2c) is
+  ineligible for any task with `isolation: worktree` or while the run's integration is active
+  (ADR-0019 D25), because the checkout HEAD moves at barriers. If isolation ever becomes the
+  default, almost no task stays eligible and the cache's value collapses. The recorded migration
+  path is the executor-level `CachingExecutor` (ADR-0019 ALT-7), which works inside worktrees and
+  with hooks but forces a budget pre-charge on hits. Decide this **before** defaulting isolation on.
 - **Workspace isolation per task** (worktree-style) so parallel agents cannot collide.
   **Delivered: E-Wk9Tz3 / ADR-0013** — including soft overlap-aware co-scheduling in place of
   hard write-conflict gating. Remaining work is adoption and confidence, not design.
@@ -237,6 +286,21 @@ default (`isolation: none`) still carries the original gap. To raise the default
 - Package publication and versioned releases.
 - Artifact-store backends beyond local filesystem (S3-compatible) behind `ArtifactStore`.
 - Retention/GC policy for run artifacts beyond `ao prune`.
+- **Result-cache follow-ons (non-MVP; HLD `cross-run-result-cache-hld.md` §2.3, ADR-0019):**
+  - **Run G0** on a real consumer (above); the post-merge go/no-go for recommending `on`.
+  - Remote, shared or S3 cache backends (the `CacheStore` / `CacheAdmin` ABCs are provisional);
+    HMAC-authenticated entries; `dir_fd`-walk (openat-style) store and restore I/O.
+  - An executor-level `CachingExecutor` (ALT-7) and an explicit `ao run --reuse-from <run-id>` (ALT-8).
+  - Caching with isolation, integration or hooks; directory or dynamic outputs.
+  - Dependency-aware invalidation (e.g. a FAIL verdict evicting its producers' keys), cache warming,
+    cost-aware eviction, cross-workspace sharing.
+  - Recording the resolved model id from the transcript; user-level (`~/.claude/**`) context
+    fingerprinting; memoizing hashes within a run; per-entry hit counters.
+  - An `ao validate` warning for `cache: true` on an ineligible task; `ao cache explain`; dashboard
+    launch controls, a runs-list column, a Usage-tab surface.
+  - **Deferred in Rev 3:** a `refresh` mode, `ao cache rm --run R --task T`, `ao cache verify --repair`.
+  - Hygiene ticket for the deferred gate NITs (HLD §0.6 FU-4) and the pre-existing missing-inputs
+    `dispatch_cycle` reset (HLD §23.2).
 
 ---
 
@@ -276,6 +340,11 @@ These are accepted trade-offs. They are recorded so they are chosen rather than 
   stat'd top-level only.
 - **Global `ao` installs are snapshots.** A stale global install silently lacks new features
   until `install.sh` is re-run.
+- **Result cache: value unproven and residuals accepted (E-Rc4Hk8).** The would-hit rate on a real
+  workflow is unmeasured (G0 not run). Accepted residuals: the key omits provider/endpoint env and
+  dirty tracked edits made before the lookup; the guard-3 probe can execute a `filter.<x>.clean`
+  command from the git config; the cache directory is agent-writable. All opt-in; `--no-cache`
+  for untrusted work. See §2c.
 
 ---
 

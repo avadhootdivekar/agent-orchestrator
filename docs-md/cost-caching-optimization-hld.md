@@ -11,7 +11,20 @@
   `docs-md/adr/ADR-0015-prompt-cache-scope-and-post-run-grading.md` (**NEW, Rev 2** — records
   both of this epic's durable decisions), `meta/tickets/E-9h3m7k-accurate-usage-metrics` (cache
   token fields already captured), `src/agent_orchestrator/bench/graders.py`,
-  `src/agent_orchestrator/hooks.py`
+  `src/agent_orchestrator/hooks.py`; **not to be confused with** the opt-in cross-run *result* cache,
+  `docs-md/cross-run-result-cache-hld.md` / `docs-md/adr/ADR-0019-cross-run-result-cache.md` (see the box below)
+
+> **Terminology: "prompt cache" (this document) vs "result cache" (E-Rc4Hk8).**
+> This document is about Anthropic **prompt caching**: the provider-side prefix cache behind
+> `cache_creation_input_tokens` / `cache_read_input_tokens`, `reporting.CacheEffectiveness`, the cache-hit
+> rate in `ao report-timing`, `--autocompact`, and ADR-0015. A separate, opt-in feature, the cross-run
+> **result cache** (`ao run --cache`, `ao cache ...`, `cache: true` in a spec), reuses a previous identical,
+> successful task's **declared output files** instead of dispatching the agent at all. It shares no code,
+> fields or semantics with prompt caching: its records live under `result_cache` (never `cache`), its events
+> are `cache.hit|miss|store|...`, and a result-cache hit reports $0 / 0 tokens for the task. The two are
+> orthogonal and compose (a *miss* still benefits from the prompt cache). Design:
+> [`cross-run-result-cache-hld.md`](cross-run-result-cache-hld.md), [ADR-0019](adr/ADR-0019-cross-run-result-cache.md).
+> Any user-facing string that could be read either way must say "result cache" or "prompt cache".
 
 ## 0. Scope
 

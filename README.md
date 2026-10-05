@@ -18,6 +18,7 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [Environment variables](#environment-variables)
 - [Per-project config file](#per-project-config-file)
 - [Parallel execution](#parallel-execution)
+- [Result cache (opt-in)](#result-cache-opt-in)
 - [Configuring multiple repos](#configuring-multiple-repos)
 - [Schema reference](#schema-reference)
 - [Advanced workflows](#advanced-workflows)
@@ -215,6 +216,7 @@ ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
+ao cache      Manage the opt-in RESULT cache: ls | stats | show | rm | prune | clear | verify
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
 ao report-usage     Cross-run cost/retry/rework rollup by (agent, model, effort) + verdicts, feedback, survival
 ao report-survival  How much of a run's code changes survived into a ref (git only)
@@ -474,6 +476,7 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
 | `AO_QUOTA_POLL_SECONDS` | `--quota-poll-interval` | Seconds between quota-exhaustion re-run attempts (default: 900 = 15 min) |
 | `AO_GENERAL_INSTRUCTIONS` | `--general-instruction` | `os.pathsep`-separated instruction paths applied to **every** task; **additive**, not an override — see [General instructions](#general-instructions) |
+| `AO_CACHE` | `--cache` / `--no-cache` | Opt-in **result cache** for the run: `1`/`true`/`yes`/`on`, `0`/`false`/`no`/`off`, or `shadow` (measure only); empty = unset; any other value (including `refresh`, which does not exist) = off plus a warning. See [Result cache (opt-in)](#result-cache-opt-in) |
 | `AO_UI_WORKSPACE` | `ao ui --workspace` | Workspace the dashboard serves (used by `ao ui --reload`) |
 
 ---
@@ -506,6 +509,11 @@ agents:    path/to/agents.json
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h
 # quota_poll_seconds: 900         # AO_QUOTA_POLL_SECONDS     — poll every 15 min
+
+# --- Result cache (off by default; see "Result cache (opt-in)" below) ---
+# cache:
+#   enabled: false            # AO_CACHE=1|0|shadow / --cache / --no-cache (CLI/env win)
+#   mode: "on"                # "on" | "shadow" (measure only); quote it, bare on = YAML true
 ```
 
 **Discovery**: AO walks up from your current directory, stopping at the git root
@@ -594,6 +602,123 @@ treatment `--quota-max-wait 0` / `--max-attempts 0` already get. A negative valu
 
 ---
 
+## Result cache (opt-in)
+
+> **New: opt-in result cache.** `ao run --cache` (or `AO_CACHE=1|shadow`) reuses an identical,
+> previously successful task's declared outputs instead of re-dispatching the agent, for tasks
+> whose workflow opts in with `cache: true`. Off by default; `--no-cache` is a kill switch;
+> `ao cache ls|stats|show|rm|prune|clear|verify` manage it. Not Claude prompt caching.
+
+This is a **result** cache: when a task is identical to one that already succeeded (same rendered
+prompt, same `claude` argv and CLI version, same instruction / input files, same prior output
+content, same git HEADs), `ao` restores the earlier run's declared **output files** and marks the
+task `succeeded` without dispatching an agent, spending a retry or charging a budget. It is **not**
+Anthropic *prompt* caching (`cache_read_input_tokens`, `--autocompact`, `ao report-timing`'s cache
+hit rate), which is a separate, always-on provider feature.
+
+Agent output is non-deterministic: **a hit replays ONE earlier successful result**, it does not
+re-sample. That is why the cache is a *double opt-in*.
+
+### Turning it on
+
+| Who | How |
+|-----|-----|
+| **Operator** (per run) | `--cache` / `--no-cache` on `ao run` and `ao resume` > `AO_CACHE` (`1`, `0`, `shadow`) > `.ao/config.yaml` `cache.enabled` + `cache.mode` > **off**. `--no-cache` / `AO_CACHE=0` always win. |
+| **Workflow author** (per task) | `cache: true` on a task, or `defaults.cache: true` with `cache: false` on exclusions. Task beats defaults; `false` always means never. A task nobody opts in is never looked up. |
+
+Both must agree. The author opts in a task only when its **whole effect is captured by its declared
+`outputs`** (see the "Result cache (opt-in)" section of
+[`.claude/skills/workflow-authoring/SKILL.md`](.claude/skills/workflow-authoring/SKILL.md)).
+
+```bash
+ao run --cache --workflow ...            # looks up opted-in tasks, stores their successes
+AO_CACHE=shadow ao run --workflow ...    # measure only: records "would hit", restores nothing
+ao run --no-cache --workflow ...         # kill switch (beats AO_CACHE and config)
+```
+
+`ao run` prints one stderr banner, for example
+`Result cache: on (source=cli), 1 of 2 static task(s) opted in, at <workspace>/.orchestrator/cache`
+(in `on` mode followed by `(agent-writable; avoid for untrusted prompts)`), and a summary line after
+the run, `Result cache: hits=2 (saved ~$1.2345 est., ~54000 tokens, ~312s) would_hits=0 misses=1
+stored=1 ineligible=1`. Per-task detail is in `status.json` (`tasks[].result_cache`), `ao
+report-usage` (`result_cache` in `--json`), `ao report-outcomes` (`settle_reason: cached`) and the
+dashboard ("cached" tag, "Result cache" tile). Avoided spend (`saved_*`) is an estimate and is never
+netted into real cost.
+
+### Configuration (`.ao/config.yaml`)
+
+```yaml
+# cache:
+#   enabled: false            # AO_CACHE=1|0|shadow / --cache / --no-cache (CLI/env win)
+#   mode: "on"                # "on" | "shadow" (measure only); quote it, bare on = YAML true
+#   max_bytes: 1073741824     # total size cap; least-recently-used entries evicted to 90%
+#   max_entry_bytes: null     # results bigger than this are not stored (default min(64 MiB, max_bytes))
+#   ttl_days: 30              # entries older than this are misses (null = never expire)
+#   include_repo_heads: true  # key includes HEAD of each git repo in the repo set
+#   max_input_bytes: 536870912  # per-lookup hashing cap (bigger => task not cacheable)
+#   max_input_files: 20000      # per-lookup file-count cap for directory inputs
+```
+
+`ao init` scaffolds this block (commented). Committing `enabled: true` turns the cache on for every
+clone and service run of the repo; do that only on purpose. The cache lives in
+`<workspace>/.orchestrator/cache/` (mode `0o700`, self-ignoring) and is per workspace.
+
+### Shadow mode
+
+`AO_CACHE=shadow` (or `cache.enabled: true` with `cache.mode: "shadow"`) performs the full lookup and
+key computation but **never restores**: every task still dispatches and still stores, and a valid
+entry is recorded as a *would hit*, with the cost it would have avoided. Use it to measure the hit
+rate before trusting `on`: `ao report-usage --json` -> `result_cache` (`lookups`, `would_hits`,
+`avoidable_cost_usd`), and `ao cache stats --json` for store growth. The procedure, the decision rule
+and a report template are in
+[`docs-md/result-cache-g0-protocol.md`](docs-md/result-cache-g0-protocol.md) (the value check
+itself has not been run yet; running it is a post-merge follow-up).
+
+### `ao cache` commands
+
+Each takes `--workspace/-w PATH` (default `AO_WORKSPACE_ROOT`) and `--json` (exactly one JSON
+document, also on a non-zero exit). They work even when the run mode is off. Limits
+(`max_bytes`, `ttl_days`) come from the `.ao/config.yaml` found from the current directory.
+
+| Command | What it does |
+|---------|--------------|
+| `ao cache ls [--limit N] [--sort lru\|created\|size]` | List entries (key prefix, last used, created, outputs, bytes, source task/run, cost) |
+| `ao cache stats` | Entries, bytes, limits, oldest/newest, expired entries, anomalies |
+| `ao cache show KEY_OR_PREFIX` | One entry: provenance, outputs, blob presence, key components (prefix: 4-64 lowercase hex, unique) |
+| `ao cache rm KEY_OR_PREFIX` | Remove exactly one entry: **the way to re-roll a bad cached result** (then re-run) |
+| `ao cache prune [--max-bytes N] [--older-than DAYS] [--dry-run]` | Remove invalid, expired and least-recently-used entries, unreferenced blobs, stale temp files and stale restore leftovers |
+| `ao cache clear [--yes]` | Delete every entry and blob (`--yes` required unless stdin is a terminal) |
+| `ao cache verify` | Read-only integrity check; exit 1 on corruption |
+
+Exit codes: `0` ok; `1` not found / ambiguous / store problem / refused / corruption found; `2`
+bad argument (malformed prefix, bad `--sort`, out-of-range number, a `--workspace` that is not an
+existing directory). `ao prune` does **not** touch the result cache; use `ao cache prune`. There is
+no `refresh` mode, no `rm --run/--task` and no `verify --repair`.
+
+### What to know before you rely on it
+
+- **Deleting an output to force a redo restores the cached copy instead.** Use `ao cache rm <key>`
+  and re-run, or `--no-cache`.
+- With the default `skip_if_outputs_exist: true` the cache only helps when outputs are absent (clean
+  checkout, fresh clone, deleted outputs). Pin full model ids, not aliases.
+- A **fail-closed** eligibility check excludes tasks with hooks, isolation, `emit_tasks`, routing or
+  loops, no outputs, a non-`claude` command, or an output under `.git` / `.claude` / `CLAUDE.md` / CI
+  config; the reason is in `status.json`. Only a final settled success is stored, and only if the key,
+  the repo HEADs and the tracked files outside the declared outputs did not change during the run.
+- Accepted residuals (pass `--no-cache` for untrusted repositories or prompts): provider and endpoint
+  environment (`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, region) is not
+  in the key; the tracked-file guard runs `git status`, which can execute a `filter.<x>.clean` command
+  from the agent-writable git config; uncommitted tracked edits made before the run are not in the key;
+  the cache directory is agent-writable (same-uid forgery is not defended); cached outputs persist
+  until `ao cache rm|clear|prune`.
+- `ao-bench` always runs with `--no-cache` and `AO_CACHE=0`.
+
+Design, threat model and as-built deviations:
+[`docs-md/cross-run-result-cache-hld.md`](docs-md/cross-run-result-cache-hld.md) (read §0 first) and
+[`docs-md/adr/ADR-0019-cross-run-result-cache.md`](docs-md/adr/ADR-0019-cross-run-result-cache.md).
+
+---
+
 ## Configuring multiple repos
 
 A single `reposet.json` can declare several named sets. Each set binds a `workspace_root`
@@ -664,6 +789,7 @@ Full schemas are in `specs/` and are authoritative (validated by `ao validate`):
 | `retries.backoff_seconds` | float | `0` | Delay between attempts |
 | `timeout_seconds` | int | — | Hard wall-clock limit per attempt |
 | `skip_if_outputs_exist` | bool | `true` | Skip this task if all outputs exist (idempotency) |
+| `cache` | bool | unset (= not opted in) | Result-cache **author opt-in** (also `defaults.cache`): `true` = this task's whole effect is captured by its declared outputs, so an identical previous success may be reused **when the operator also enables the cache**; `false` = never. See [Result cache (opt-in)](#result-cache-opt-in) |
 
 ### Trigger types (workflow.json → triggers[])
 
