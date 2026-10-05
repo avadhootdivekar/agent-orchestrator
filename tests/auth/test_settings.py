@@ -1076,7 +1076,9 @@ def test_h1_the_env_store_is_probed_with_the_config_layer_ignored(
     write_config(ws, auth_block("enabled: false"))
     # env wins the store choice, so the config cannot redirect it; the env store is the probe.
     s = resolve(
-        ws, {**xdg_env, "AO_AUTH_DIR": str(env_store)}, count=counts_by_dir({env_store.resolve(): 1})
+        ws,
+        {**xdg_env, "AO_AUTH_DIR": str(env_store)},
+        count=counts_by_dir({env_store.resolve(): 1}),
     )
     assert s.config_risks == {ConfigRisk.DISABLED_BY_CONFIG}
 

@@ -216,6 +216,18 @@ def ao_ui_server(sandbox: Sandbox, port: int, *extra: str) -> Iterator[subproces
                 except subprocess.TimeoutExpired:  # pragma: no cover - only on a wedged server
                     proc.kill()
                     proc.wait()
+        assert_log_is_clean(log_path)  # reached only when the test body did not raise
+
+
+# T-2wE08U H2: the process-wide log redaction once broke uvicorn's access formatter, so every
+# request printed a "--- Logging error ---" traceback. stderr is merged into the server log.
+LOG_FAILURE_MARKERS = ("Logging error", "Traceback")
+
+
+def assert_log_is_clean(log_path: Path) -> None:
+    text = log_path.read_text(errors="replace")
+    for marker in LOG_FAILURE_MARKERS:
+        assert marker not in text, f"{marker!r} in the server log:\n{text[:3000]}"
 
 
 def wait_until_serving(proc: subprocess.Popen[bytes], port: int, log_path: Path) -> None:

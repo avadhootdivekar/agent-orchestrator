@@ -57,19 +57,54 @@ def redact(text: str) -> str:
     return text
 
 
+def _redact_args(args: object) -> object:
+    """Redact the string members of a record's ``args``, keeping the tuple/mapping *shape*.
+
+    Formatters other than ``%``-style ones read ``args`` positionally (uvicorn's ``AccessFormatter``
+    unpacks a 5-tuple), so replacing the args with ``None`` or ``()`` would break them.
+    """
+    if isinstance(args, tuple):
+        return tuple(redact(a) if isinstance(a, str) else a for a in args)
+    if isinstance(args, dict):
+        return {k: redact(v) if isinstance(v, str) else v for k, v in args.items()}
+    return args
+
+
+def _redact_in_place(record: logging.LogRecord, redacted_message: str) -> None:
+    """Redact msg/args keeping the args shape; fall back to a flat message if a secret survives."""
+    original = (record.msg, record.args)
+    record.msg = redact(record.msg) if isinstance(record.msg, str) else record.msg
+    record.args = _redact_args(record.args)  # type: ignore[assignment]
+    try:
+        message = record.getMessage()
+        if redact(message) == message:
+            return
+    except Exception:  # noqa: BLE001 - fall through to the flat form
+        pass
+    record.msg, record.args = original
+    record.msg = redacted_message
+    record.args = ()
+
+
 def _scrub_record(record: logging.LogRecord) -> None:
-    """Redact *record* in place, once: ``msg`` becomes the redacted formatted message."""
+    """Redact *record* in place, once.
+
+    A record whose formatted message has nothing to redact is left untouched (so uvicorn's access
+    records keep their positional ``args``); otherwise msg/args are redacted in place.
+    """
     if getattr(record, _RECORD_MARKER, False):
         return
     try:
         message = record.getMessage()
     except Exception as exc:  # a __str__ / %-format failure must never leak raw arguments
-        message = UNFORMATTABLE_MESSAGE
         _logger.error(
             "log record could not be formatted (%s); message withheld", type(exc).__name__
         )
-    record.msg = redact(message)
-    record.args = None
+        record.msg, record.args = UNFORMATTABLE_MESSAGE, ()
+    else:
+        redacted = redact(message)
+        if redacted != message:
+            _redact_in_place(record, redacted)
     setattr(record, _RECORD_MARKER, True)
 
 

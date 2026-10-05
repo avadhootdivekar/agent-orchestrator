@@ -211,3 +211,65 @@ class TestRecordFactory:
         record = logging.LogRecord("n", logging.INFO, __file__, 1, "%s", (_Exploding(),), None)
         SecretRedactingFilter().filter(record)
         assert record.getMessage() == UNFORMATTABLE_MESSAGE
+
+
+class TestUvicornAccessRecords:
+    """T-2wE08U H2: the process-wide factory must not break uvicorn's positional access args."""
+
+    ACCESS_MSG = '%s - "%s %s HTTP/%s" %d'
+
+    def _record(self, path: str) -> logging.LogRecord:
+        logger = logging.getLogger("uvicorn.access")
+        return logger.makeRecord(
+            logger.name,
+            logging.INFO,
+            __file__,
+            1,
+            self.ACCESS_MSG,
+            ("127.0.0.1:5000", "GET", path, "1.1", 200),
+            None,
+        )
+
+    def _format(self, record: logging.LogRecord) -> str:
+        uvicorn_logging = pytest.importorskip("uvicorn.logging")
+        return str(uvicorn_logging.AccessFormatter(use_colors=False).format(record))
+
+    def test_a_clean_access_record_is_left_untouched(self, restore_factory: None) -> None:
+        install_log_redaction()
+        record = self._record("/api/health")
+        assert record.msg == self.ACCESS_MSG
+        assert record.args == ("127.0.0.1:5000", "GET", "/api/health", "1.1", 200)
+        assert '"GET /api/health HTTP/1.1" 200' in self._format(record)
+
+    def test_a_secret_in_the_path_is_redacted_and_the_args_keep_their_shape(
+        self, restore_factory: None
+    ) -> None:
+        install_log_redaction()
+        record = self._record(f"/login?password=hunter2&x=1 {BASE32_SECRET}")
+        assert isinstance(record.args, tuple) and len(record.args) == 5
+        formatted = self._format(record)  # must not raise: the formatter unpacks the 5-tuple
+        assert "hunter2" not in formatted and BASE32_SECRET not in formatted
+        assert REDACTED in formatted
+
+    def test_the_filter_keeps_a_dict_args_shape(self) -> None:
+        record = logging.LogRecord(
+            "n",
+            logging.INFO,
+            __file__,
+            1,
+            "%(who)s token=%(tok)s",
+            ({"who": "a", "tok": "zz"},),
+            None,
+        )
+        SecretRedactingFilter().filter(record)
+        assert isinstance(record.args, dict)
+        assert record.getMessage() == f"a token={REDACTED}"
+
+    def test_a_secret_hidden_in_a_non_string_arg_falls_back_to_a_flat_message(self) -> None:
+        class Holder:
+            def __str__(self) -> str:
+                return "password=hunter2"
+
+        record = logging.LogRecord("n", logging.INFO, __file__, 1, "got %s", (Holder(),), None)
+        SecretRedactingFilter().filter(record)
+        assert record.getMessage() == f"got password={REDACTED}"
