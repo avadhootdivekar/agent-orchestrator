@@ -242,7 +242,14 @@ class RunStateStore:
             elif tis.status == "failed":
                 integration_counts["failed"] += 1
 
-        snapshot = {
+        rc_tasks: dict[str, dict[str, object]] = {}
+        rc_run: dict[str, object] | None = None
+        if state.result_cache:  # lazy: a run the cache never touched never imports cache.report
+            from .cache.report import result_cache_status_fields
+
+            rc_tasks, rc_run = result_cache_status_fields(state)
+
+        snapshot: dict[str, object] = {
             "run_id": state.run_id,
             "workflow_id": state.workflow_id,
             "status": state.status,
@@ -280,6 +287,7 @@ class RunStateStore:
                         else 0
                     ),
                     "dispatch_cycle": ts.dispatch_cycle,
+                    **({"result_cache": rc_tasks[tid]} if tid in rc_tasks else {}),
                 }
                 for tid, ts in state.tasks.items()
             ],
@@ -309,6 +317,9 @@ class RunStateStore:
                 "failed": integration_counts["failed"],
             },
         }
+
+        if rc_run is not None:
+            snapshot["result_cache"] = rc_run
 
         sp = self._status_path(state.run_id)
         sp.parent.mkdir(parents=True, exist_ok=True)

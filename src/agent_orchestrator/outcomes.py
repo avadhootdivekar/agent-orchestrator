@@ -127,7 +127,7 @@ def run_breakdown_frequency(state: RunState) -> dict[str, int]:
 # task -- nothing ran, nothing to grade) are deliberately excluded.
 _GRADEABLE_STATUSES = frozenset({"succeeded", "failed", "skipped", "cancelled", "timed_out"})
 
-SettleReason = Literal["dispatched", "skipped"]
+SettleReason = Literal["dispatched", "skipped", "cached"]
 
 # Capture-dir/context.json shape locked in per the early-gate architect's required findings
 # (B-6): a flat, RUN-scoped directory (not cycle-nested like pre_hook/post_hook's own capture
@@ -150,7 +150,16 @@ class SettlementGrade(BaseModel):
     outcome: HookOutcome
 
 
-def _settle_reason(ts: TaskRunState) -> SettleReason:
+def _settle_reason(
+    ts: TaskRunState, *, state: RunState | None = None, tid: str | None = None
+) -> SettleReason:
+    """Why the task settled. A current result-cache hit is "cached": the agent did not run
+    (E-Rc4Hk8 R6), so a grading hook can tell it from a real dispatch."""
+    if state is not None and tid is not None and state.result_cache:
+        from .cache.report import current_hit  # lazy: only runs the cache touched (D9)
+
+        if current_hit(state, tid):
+            return "cached"
     return "skipped" if ts.status == "skipped" else "dispatched"
 
 
@@ -226,7 +235,7 @@ def grade_run(
         if ts.status not in _GRADEABLE_STATUSES:
             continue
         task = workflow.task(task_id)
-        settle_reason = _settle_reason(ts)
+        settle_reason = _settle_reason(ts, state=state, tid=task_id)
         capture_dir = store.resolve(
             os.path.join(
                 *_RUN_DIR_SEGMENTS, state.run_id, task_id, _SETTLEMENT_HOOK_CAPTURE_DIRNAME
