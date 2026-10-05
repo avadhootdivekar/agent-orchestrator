@@ -1,0 +1,116 @@
+# STATUS
+
+- ID: `E-Rc4Hk8-cross-run-result-cache`
+- Updated At: `2026-10-05`
+- State: `Draft` — **Design complete (Rev 3) / Not started**. No task has started.
+- Owner: `manager` (execution) · `architect` (design)
+
+## This update
+
+### Rev 3 design package
+- [`docs-md/cross-run-result-cache-hld.md`](../../../docs-md/cross-run-result-cache-hld.md): HLD +
+  LLD, §0–§25 (26 top-level sections), Rev 3.
+- [`docs-md/adr/ADR-0019-cross-run-result-cache.md`](../../../docs-md/adr/ADR-0019-cross-run-result-cache.md):
+  decisions D1–D35, alternatives ALT-1…ALT-8, Rev 3.
+- 20 task tickets (`TASK.md` + `STATUS.md`; `HANDOFF.md` for every task except T-bdQZW4, the last
+  task). Rev 3 rewrote 18 of them; **T-OeRYSO and T-ZTxN1x are unchanged** (no Rev 3 item affects
+  their scope).
+
+### Independent early-gate review of `94dac52` (verdict GO-WITH-FIXES)
+Every item is dispositioned in HLD §23.5. Summary:
+
+| Item | Resolution |
+|------|------------|
+| A1 dependency graph | `LocalFsCacheStore(CacheStore)` in T-U7ckfd, `CacheAdmin` added by T-HjxNQ0; T-XpF1pF depends on T-JCOAsq Part 1 only; one T-FJH6LI commit numbering (T-8tr1H4 needs commit 3); `types.py` references `ResultCacheRecord` only under `TYPE_CHECKING` (no cycle); T-bdQZW4 depends on T-nPMuz4; T-JCOAsq parts re-split; critical path recomputed (120 h). |
+| A2 repo detection | `find_git_toplevel` stops at the workspace root; a nested workspace is treated as non-git with a banner warning. |
+| A3 AgentSpec | `unknown_agent_field` runtime rule. |
+| A4 unsafe evict | Checks before every store operation; `CacheUnsafePathError`; never evicted. |
+| A5 G0 | Re-scoped to a protocol and tooling hand-off; execution is post-merge. |
+| B scope | `refresh`, `rm --run/--task`, `verify --repair` deferred; lazy guard 3; `GIT_OPTIONAL_LOCKS=0`; byte-bounded inline prune; version memo by binary identity; named policy default; exact brief fields. |
+| C should-fix | Both usage sites; literal NFR-1 with lazy imports; `budget.resume_reverse` on the hit path; owned test ids; cost-reporting test executor; non-vacuous concurrency; simulated `EACCES`; skip markers; key-hygiene notes. |
+| D nits | Honest engine budget (net ≤ +110 lines); copy-ready code ≤ 100 columns; public APIs only; CI step; separate bundle commit; example spec; release note. |
+
+**One deviation (B7):** the would-hit rate for G0 comes from `ao report-usage --json`
+(`result_cache` object), not from `ao cache stats --json`, because the store keeps no per-lookup
+history; `ao cache stats --json` supplies the store-growth fields.
+
+### Readiness
+- Execution Readiness Gate (HLD §21): **PASS** (re-checked in Rev 3).
+
+### Task status rollup (must match each task's `STATUS.md`)
+
+| Task | Phase | Owner | Est | State |
+|------|-------|-------|-----|-------|
+| T-FJH6LI-cache-contracts | core set | Dev A | 16 h | Draft |
+| T-28J9oR-cache-spec-config-surface | core set | Dev B | 16 h | Draft |
+| T-OeRYSO-executor-argv-builder | core set (any time) | Dev C | 6 h | Done |
+| T-QgQy08-cache-eligibility | core set | Dev B | 13 h | Draft |
+| T-8tr1H4-cache-hashing | core set | Dev C | 14 h | Draft |
+| T-uoYW6b-cache-key-builder | core set | Dev A | 20 h | Draft |
+| T-U7ckfd-cache-store-core | core set | Dev C | 17 h | Draft |
+| T-u3jG8F-cache-restore-capture | core set | Dev B | 16 h | Draft |
+| T-HjxNQ0-cache-store-maintenance | core set | Dev C | 15 h | Draft |
+| T-gDNjN2-cache-coordinator | engine set | Dev A | 20 h | Draft |
+| T-XpF1pF-cache-engine-integration | engine set | Dev A | 16 h | Draft |
+| T-eyn5UG-cache-reporting | engine set | Dev B | 18 h | Draft |
+| T-o95l1M-cache-cli-wiring | engine set | Dev B | 8 h | Draft |
+| T-ZTxN1x-bench-cache-force-off | engine set | Dev B | 4 h | Draft |
+| T-nPMuz4-cache-shadow-value-check | surfaces | Tester (+ manager) | 6 h | Draft |
+| T-6tRKml-cache-cli-commands | surfaces | Dev C | 17 h | Draft |
+| T-bLpoze-cache-dashboard-surface | surfaces | Dev C | 10 h | Draft |
+| T-JCOAsq-cache-test-hardening | Part 1 before T-XpF1pF; Parts 2–3 hardening | Tester | 24 h | Draft |
+| T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
+| T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
+
+**Counts:** 20 tasks: 19 Draft, 0 In Progress, 0 Blocked, 1 Done, 0 Deferred. Total 288 focus hours.
+
+### Gate tracker
+| Gate | When | State |
+|------|------|-------|
+| G1a | after the core set | not started |
+| G1b | after the engine set | not started |
+| G2 | after T-JCOAsq Part 3 | not started |
+| G0 (value; business go/no-go) | **post-merge**, parent or operator | not part of this epic; T-nPMuz4 ships the protocol |
+
+## Evidence
+- **Code baseline studied:** `main` @ `bb6d8a0` (engine seams, `runstate`, `usage` sites ~409
+  and ~472, `outcomes`, `budget`, `isolation/git.py` public API and `probe`, `executors`,
+  `bench/subjects.py`, `ui/runs.py`, `ui/files.py`, `.github/workflows/ci.yml`, the NFR-2 gate).
+- **GV-1 (Rev 2)** re-run on 2026-10-05 with the real `build_prompt` and argv helpers:
+  `6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f`; Rev 3 does not change
+  the key.
+- **Engine seam size:** the §8.7.1 snippets run through `ruff format --line-length 100` with no
+  diff and no E501; about 123 lines added and 20 moved out (net ≈ +103).
+- **Example workflow** (HLD §17) validated with `jsonschema` against `specs/workflow.schema.json`
+  plus the planned `cache` properties.
+- **Test baseline** (2026-10-04): 5041 passed / 8 skipped / 2 failed (the two pre-existing
+  `tests/bench/test_dev_{core,medium}_suite.py::test_fake_subject_full_suite_run_produces_valid_run_json_and_summary`).
+
+## Risks / Blockers
+- **No implementation blockers.**
+- **Parent decisions (non-blocking):** OQ-6 G0 thresholds and post-merge ownership; OQ-7 the
+  container name `result_cache` (rationale D35); OQ-8 keep or flip `DEFAULT_TASK_CACHE_POLICY`.
+- **Assumption A-9:** the env allowlist must be verified against the installed CLI (TODO in
+  T-uoYW6b).
+- **Merge with E-Ag7Pw3:** classify new fields (task/workflow as RULED; agent fields in
+  `constants`), keep the approval check before the lookup seam, recapture the I-2 goldens if a
+  sibling changed `status.json` or `ao run` output.
+- **Highest risks** (HLD §23.1): R-1 stale hits; R-7 merge conflicts; R-9 junior-written
+  security code; R-14 unproven value.
+
+## Next actions
+1. **`manager`:** start the core set (HLD §22.3): T-FJH6LI (commit 1, 2, 3), T-28J9oR, T-QgQy08,
+   T-8tr1H4, T-uoYW6b, T-U7ckfd, T-u3jG8F, T-HjxNQ0, then gate G1a. T-OeRYSO may run in
+   parallel at any time; T-JCOAsq Part 1 any time before T-XpF1pF.
+2. **Parent:** answer OQ-6, OQ-7 and OQ-8; plan the post-merge G0 run.
+3. **Separate bug ticket (recommended):** the missing-inputs branch resets `dispatch_cycle`
+   (engine.py ~1174).
+4. **Follow-up for E-Da5Tn9 or security:** the pre-existing `ui/files.read_file` FIFO open.
+
+## Comments
+- By: architect · Role: architect · Date: 2026-10-04 · Comment: Epic STATUS initialized (Rev 1).
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2 re-plan: 20 tasks, all Draft.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 re-plan after the early-gate
+  review and the manager's scope decisions. 20 tasks, all `Draft`; this rollup matches every
+  task's `STATUS.md`, `TASK.md` and `HANDOFF.md`, and `EPIC.md`. Status wording changed to
+  "Design complete / Not started".
