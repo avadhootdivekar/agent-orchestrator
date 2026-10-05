@@ -23,5 +23,7 @@ Module                      Owner       Contents
                                         HTTP-edge fixture over ``stub`` and ``real``)
 ``totp_service.py``         T-yfrfxv    ``make_totp_env`` / ``TotpEnv`` (a real ``LocalTotpService``
                                         over ``make_env``), ``spy``, ``code_of``, ``error_of``
+``real_routes.py``          T-rpKCjP    ``dash_factory`` / ``Dash``: the real ``create_app`` (or a
+                                        hub-realm app) over a real runtime, for the core routes
 ==========================  ==========  ======================================================
 """

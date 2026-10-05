@@ -3345,7 +3345,11 @@ def install_auth_routes(app: FastAPI, runtime: AuthRuntime | None) -> None
     #          assert_flat_auth_routes(app)
     # FLAT ONLY: app.add_api_route(...). include_router() hides routes from classification (developer D-1).
     # MUST run BEFORE the SPA fallback is registered.
-def assert_flat_auth_routes(app: FastAPI) -> None    # every AUTH_ROUTE_POLICIES key must be a DIRECT member of app.router.routes
+def assert_flat_auth_routes(app: FastAPI, *, optional: Iterable[RouteKey] = ()) -> None
+    # every AUTH_ROUTE_POLICIES key must be a DIRECT member of app.router.routes. Implementation note (T-rpKCjP): `optional`
+    # is a GROUP that may be absent as a whole but never partly (install passes TOTP_ROUTE_KEYS: the three /api/auth/totp/*
+    # routes exist only when the TOTP builder adds them), so a runtime whose TOTP service is wired before T-KQ6ZrY's routes
+    # land still starts. Keyed on the routes actually present, not on `runtime.totp`.
 
 # http/routes_second_factor.py (fastapi; v2.1)
 def add_totp_routes(app: FastAPI, runtime: AuthRuntime) -> None              # E3–E7 handlers; no-op if runtime.totp is None
