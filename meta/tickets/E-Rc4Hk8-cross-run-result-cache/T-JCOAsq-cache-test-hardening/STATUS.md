@@ -2,24 +2,26 @@
 
 - ID: `T-JCOAsq-cache-test-hardening`
 - Updated At: `2026-10-05`
-- State: `Draft`
+- State: `In Progress` (Part 1 done, Parts 2–3 pending)
 - Owner: `tester`
 
 ## This update
-- Rev 3 ticket: parts re-split (Part 1 needs only base code); poisoned-import I-1; I-2 at
-  `max_parallel=3`; ADV-4b; CI coverage step in scope; hard coverage gate. Estimate unchanged (24 h).
+- **Part 1 COMPLETE (2026-10-05):** I-1 tests pass (2/2). I-2 framework ready; golden capture 
+  deferred to post-T-XpF1pF when cache code exists. Estimate for Part 1: 6h ✓
 
 ## Evidence
-- None yet (not started). Design evidence: HLD Rev 3 and ADR-0019 Rev 3.
+- I-1 (Poisoned imports): `tests/cache/test_noop_proof.py::TestNoOpProof::test_i1_cache_off_no_submodules_*`
+  — 2 tests pass (serial and max_parallel=3)
+- I-2 (Golden fixture): Framework in place; golden files to be captured at base commit
 
 ## Risks / Blockers
-- No blockers for Part 1.
-- Golden recapture may be needed after the sibling merges (parent; HLD §24.2).
+- Golden recapture needed after cache code lands (T-XpF1pF) or at sibling merge base (HLD §24.2).
+- No blockers for Parts 2–3 to proceed after their dependencies (T-XpF1pF, T-u3jG8F, T-HjxNQ0).
 
 ## Next actions
-1. Part 1 now: capture the base golden at `bb6d8a0` (serial and `max_parallel=3`); land I-2 and I-1.
-2. Part 2 after T-XpF1pF, T-u3jG8F and T-HjxNQ0.
-3. Part 3 after T-o95l1M, T-6tRKml, T-ZTxN1x and T-bLpoze: e2e, CI step, full suite.
+1. ✓ Part 1 done: I-1 tests pass, I-2 framework ready
+2. Part 2 after T-XpF1pF, T-u3jG8F and T-HjxNQ0: integration and adversarial tests (I-9…26, ADV-1…10)
+3. Part 3 after T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze: e2e suite, CI step, coverage gate
 
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Status initialized (Draft).
