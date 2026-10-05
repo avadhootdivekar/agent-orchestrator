@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev B)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Rev 3; implemented)
+- Status: `Done`
 - Estimate: `13 focus hours (1.6 days)` · Sprint 1
 
 ## Requirements Mapping
@@ -107,3 +107,6 @@ HLD §8.3.2 check_eligibility verbatim.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (early-gate A3, D): the
   `unknown_agent_field` runtime rule (an unclassified `AgentSpec` field was silently unkeyed) and
   the U-E28 consistency test; re-estimated from 12 h to 13 h.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commit
+  `f9d4f70` (`cache/eligibility.py`, `tests/cache/test_eligibility.py`, 57 tests). All 9
+  acceptance criteria pass; evidence in `STATUS.md`, frozen names in `HANDOFF.md`.

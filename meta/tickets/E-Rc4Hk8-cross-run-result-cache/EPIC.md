@@ -101,9 +101,9 @@ ordered by dependency (HLD §22.2).
 
 ### 1. Core set, then gate G1a (key, store and restore core)
 - [x] `T-FJH6LI-cache-contracts`: constants (commit 1), `safeio` (commit 2), types/contracts/ABCs/errors/fakes, corpus, AST guard (commit 3). 16 h. Dev A. Deps: none. **Done** (2026-10-05) Commits 9b24194, 5628556, d1c1d08.
-- [ ] `T-28J9oR-cache-spec-config-surface`: spec, config, record model (derived `hit`/`saved_tokens`), settings with the named default, CLI flag (resolution half), `ao cache` group. 16 h. Dev B. Deps: T-FJH6LI commit 1.
+- [x] `T-28J9oR-cache-spec-config-surface`: spec, config, record model (derived `hit`/`saved_tokens`), settings with the named default, CLI flag (resolution half), `ao cache` group. 16 h. Dev B. Deps: T-FJH6LI commit 1. **Done** (2026-10-05) Commit 458c472.
 - [x] `T-OeRYSO-executor-argv-builder`: pure `build_claude_argv` extraction. 6 h. Dev C. Deps: none (may run any time; independent file scope). **Done** (2026-10-05) Commit ac35e73.
-- [ ] `T-QgQy08-cache-eligibility`: allowlist predicate, tripwires, runtime rules incl. `unknown_agent_field`. 13 h. Dev B. Deps: T-28J9oR, T-FJH6LI.
+- [x] `T-QgQy08-cache-eligibility`: allowlist predicate, tripwires, runtime rules incl. `unknown_agent_field`. 13 h. Dev B. Deps: T-28J9oR, T-FJH6LI. **Done** (2026-10-05) Commit f9d4f70.
 - [ ] `T-8tr1H4-cache-hashing`: bounded hashing; repository detection bounded by the workspace root; HEAD reader; worktree probe. 14 h. Dev C. Deps: T-FJH6LI (commit 3).
 - [ ] `T-uoYW6b-cache-key-builder`: fingerprint, keys, GV-1. 20 h. Dev A. Deps: T-FJH6LI, T-OeRYSO, T-8tr1H4.
 - [ ] `T-U7ckfd-cache-store-core`: `LocalFsCacheStore(CacheStore)`, checks before every operation, `CacheUnsafePathError`, `is_expired`. 17 h. Dev C. Deps: T-FJH6LI.
