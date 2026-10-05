@@ -4,9 +4,10 @@ import type { AuthStatus } from "../types";
 import { AuthContext, type AuthContextValue } from "./context";
 import { INITIAL_AUTH_VIEW, authReducer, normalizeStatus } from "./authReducer";
 import { LoginScreen } from "./LoginScreen";
-import { MSG_FORCED_ENROLL_INTRO } from "./constants";
+import { EnrollScreen } from "./EnrollScreen";
 import { clearProof } from "./proof";
 import { TotpStep } from "./TotpStep";
+import { useKeepalive } from "./useKeepalive";
 
 const HTTP_NOT_FOUND = 404;
 
@@ -75,6 +76,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
     if (view.kind === "anonymous" || view.kind === "disabled") clearProof();
   }, [view.kind]);
 
+  // Keepalive runs only for a signed-in session; user activity (never a timer) slides it (§17.5).
+  useKeepalive(view.kind === "authenticated");
+
   const logout = useCallback(async (everywhere = false) => {
     try {
       await authApi.logout(everywhere);
@@ -137,17 +141,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
         />
       );
     case "enroll":
-      // Placeholder until T-vCgsU6 plugs in EnrollScreen.
       return (
-        <main className="auth-screen">
-          <div className="auth-card">
-            <h1>Set up two-factor authentication</h1>
-            <p>{MSG_FORCED_ENROLL_INTRO}</p>
-            <button type="button" onClick={() => void logout(false)}>
-              Sign out
-            </button>
-          </div>
-        </main>
+        <EnrollScreen
+          mode="forced"
+          onDone={() => dispatch({ type: "ENROLL_DONE" })}
+          onLeave={() => void logout(false)}
+        />
       );
     case "disabled":
     case "authenticated":

@@ -6,7 +6,7 @@
 - Owner: `developer` (frontend lane F)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done` (2026-10-05, developer; evidence in STATUS.md)
 - Estimate: `3 days` · Sprint `S2`
 
 ## Requirements Mapping

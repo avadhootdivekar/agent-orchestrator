@@ -8,13 +8,17 @@ import type {
   CreateInstanceRequest,
   CreateInstanceResponse,
   DirListing,
+  EnrollBeginBody,
   FeedbackRequest,
   FeedbackState,
   FileContent,
   GeneralInstruction,
   HtmlPreview,
+  KeepaliveResponse,
   LaunchRecord,
   LaunchStatus,
+  ReauthBody,
+  RecoveryCodesResponse,
   RunActivity,
   RunLiveSummary,
   RunDetail,
@@ -23,6 +27,7 @@ import type {
   RunSignalsResponse,
   RunSummary,
   TemplateInfo,
+  TotpEnrollment,
   UsageReport,
   WorkflowInfo,
   WorkspaceInfo,
@@ -128,7 +133,7 @@ function postJson<T>(path: string, body?: unknown): Promise<T> {
   });
 }
 
-/** Typed auth endpoints (HLD §2.4). T-vCgsU6 adds the enrollment/account calls with `postJson`. */
+/** Typed auth endpoints (HLD §2.4). Every call goes through `request()`, so the proof header and rotation are automatic. */
 export const authApi = {
   status: () => request<AuthStatus>("/auth/status"),
   login: (username: string, password: string) =>
@@ -136,6 +141,17 @@ export const authApi = {
   verifyTotp: (code: string) => postJson<AuthStepResponse>("/auth/totp/verify", { code }),
   verifyRecovery: (recoveryCode: string) =>
     postJson<AuthStepResponse>("/auth/totp/verify", { recovery_code: recoveryCode }),
+  /** E4. Forced enrollment sends `{enrollment_token}`, voluntary `{current_password}`; never both. */
+  enrollBegin: (body: EnrollBeginBody) =>
+    postJson<TotpEnrollment>("/auth/totp/enroll/begin", body),
+  enrollConfirm: (body: { code: string }) =>
+    postJson<AuthStepResponse>("/auth/totp/enroll/confirm", body),
+  disableTotp: (body: ReauthBody) => postJson<AuthStepResponse>("/auth/totp/disable", body),
+  regenerateRecoveryCodes: (body: ReauthBody) =>
+    postJson<RecoveryCodesResponse>("/auth/totp/recovery-codes", body),
+  changePassword: (body: { current_password: string; new_password: string }) =>
+    postJson<AuthStepResponse>("/auth/password", body),
+  keepalive: () => postJson<KeepaliveResponse>("/auth/keepalive"),
   /** Idempotent. The local proof is dropped even if the request fails: the client is signed out either way. */
   logout: async (everywhere = false): Promise<{ state: "anonymous" }> => {
     try {

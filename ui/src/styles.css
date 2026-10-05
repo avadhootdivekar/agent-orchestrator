@@ -1911,3 +1911,116 @@ pre.launch-log {
   align-items: center;
   gap: 10px;
 }
+
+/* ---------- enrollment, recovery codes, account menu and dialogs (E-Da5Tn9) ---------- */
+
+.auth-card.enroll,
+.dialog.auth-card {
+  max-width: 460px;
+}
+
+.enroll-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.qr-box {
+  display: flex;
+  justify-content: center;
+}
+
+/* The QR is black on white in both themes: scanners need the contrast (HLD §17.7). */
+.qr-box svg {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--hairline);
+}
+
+.auth-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.auth-secret code {
+  flex: 1 1 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.auth-copy-state {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.recovery-codes {
+  margin: 0;
+  padding-left: 24px;
+  columns: 2;
+  font-family: var(--font-mono);
+}
+
+.auth-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-violations {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.dialog {
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.account-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+
+.account-meta {
+  margin: 0 0 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.recovery-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}

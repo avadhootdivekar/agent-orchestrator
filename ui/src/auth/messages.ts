@@ -1,5 +1,6 @@
 import { ApiError } from "../api";
 import {
+  MSG_INSECURE_TRANSPORT,
   MSG_INVALID_CREDENTIALS,
   MSG_REPLAYED_CODE,
   MSG_SERVER_BUSY,
@@ -9,8 +10,6 @@ import {
 } from "./constants";
 
 const MSG_NETWORK = "Could not reach the server. Please try again.";
-const MSG_INSECURE_TRANSPORT =
-  "Setting up two-factor authentication needs a secure connection (HTTPS) or a local connection. Ask the operator to run `ao auth enable-2fa <you>` on the host, or connect over TLS.";
 
 function attemptsRemaining(error: ApiError): number | undefined {
   const value = error.extra?.attempts_remaining;
@@ -25,13 +24,11 @@ export function authErrorMessage(error: unknown): string {
       return MSG_INVALID_CREDENTIALS;
     case "too_many_attempts":
       return msgTooManyAttempts(error.retryAfterSeconds ?? 0);
-    case "invalid_code": {
-      const left = attemptsRemaining(error);
-      if (error.extra?.reason === "replayed") {
-        return left === undefined ? MSG_REPLAYED_CODE : `${MSG_REPLAYED_CODE} (${left} attempts left)`;
-      }
-      return msgInvalidCode(left);
-    }
+    case "invalid_code":
+      // §17.8: the replayed string is shown exactly (the hub page does the same): no attempts suffix.
+      return error.extra?.reason === "replayed"
+        ? MSG_REPLAYED_CODE
+        : msgInvalidCode(attemptsRemaining(error));
     case "busy":
     case "store_unavailable":
       return MSG_SERVER_BUSY;
@@ -42,6 +39,16 @@ export function authErrorMessage(error: unknown): string {
     default:
       return error.message || MSG_NETWORK;
   }
+}
+
+/**
+ * Like `authErrorMessage`, for the signed-in account dialogs. The one difference: a 403
+ * `totp_required` there means "you may not disable 2FA", whose reason is the server's `detail`
+ * (the login-time string is about a different situation).
+ */
+export function accountErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.code === "totp_required") return error.message;
+  return authErrorMessage(error);
 }
 
 /** Seconds to lock the form for, when the error is a 429 / 503-with-Retry-After; else 0. */

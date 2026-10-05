@@ -7,7 +7,6 @@ import { api } from "../api";
 import { AuthGate } from "../auth/AuthGate";
 import { useAuth } from "../auth/context";
 import {
-  MSG_FORCED_ENROLL_INTRO,
   MSG_SESSION_TIMED_OUT,
   MSG_SIGNED_OUT,
   PROOF_STORAGE_KEY,
@@ -133,7 +132,7 @@ describe("AuthGate — other states", () => {
     expect(callsTo(fetchMock, STATUS_PATH)).toHaveLength(2);
   });
 
-  it("enrollment_required shows the forced-enrollment placeholder with Sign out", async () => {
+  it("enrollment_required shows the forced-enrollment token step with Sign out", async () => {
     const fetchMock = mockFetch((url) => {
       if (url === STATUS_PATH) {
         return json(status({ state: "enrollment_required", pending_username: "alice" }));
@@ -142,7 +141,7 @@ describe("AuthGate — other states", () => {
       return json([]);
     });
     renderGate();
-    expect(await screen.findByText(MSG_FORCED_ENROLL_INTRO)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Enrollment token")).toBeInTheDocument();
     expect(screen.queryByTestId("app")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(await screen.findByText(MSG_SIGNED_OUT)).toBeInTheDocument();

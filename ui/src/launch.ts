@@ -12,7 +12,8 @@ export const LAUNCH_MAX_POLLS = 20;
 /** Failed-to-start launches stay on the runs list this long (or until dismissed). */
 export const FAILED_LAUNCH_WINDOW_HOURS = 24;
 
-const LAST_LAUNCH_KEY_PREFIX = "ao.launch.last.";
+/** sessionStorage key prefix of the remembered last launch (cleared on explicit logout). */
+export const LAST_LAUNCH_KEY_PREFIX = "ao.launch.last.";
 const DISMISSED_KEY = "ao.launch.dismissed";
 /** Bound on remembered dismissals so the key can never grow without limit. */
 const MAX_DISMISSED = 200;

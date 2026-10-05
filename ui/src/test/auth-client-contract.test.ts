@@ -100,9 +100,7 @@ const spaClient: Client = {
   proofHeader: SESSION_PROOF_HEADER,
   storageKey: spaConstants.PROOF_STORAGE_KEY,
   sessionLossCodes: SESSION_LOSS_CODES,
-  // `confirm` goes through the SPA's one `request()` path via a generic call: proof storage is
-  // path-independent there. Switch it to `authApi.confirmEnrollment` once T-vCgsU6 adds it.
-  paths: { ...PATHS, confirm: "/api/workspace", other: "/api/general-instructions" },
+  paths: { ...PATHS, confirm: "/api/auth/totp/enroll/confirm", other: "/api/general-instructions" },
   async start() {
     resetAuthState();
     setSessionLossHandler(null);
@@ -125,7 +123,7 @@ const spaClient: Client = {
       case "verify":
         return swallow(authApi.verifyTotp("123456"));
       case "confirm":
-        return swallow(api.workspace());
+        return swallow(authApi.enrollConfirm({ code: "123456" }));
       case "other":
         return swallow(api.generalInstructions());
       case "logout":

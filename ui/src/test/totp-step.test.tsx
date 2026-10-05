@@ -103,7 +103,7 @@ describe("TotpStep", () => {
     expect(onVerified).not.toHaveBeenCalled();
   });
 
-  it("replayed shows the already-used string and still reports attempts_remaining", async () => {
+  it("replayed shows the exact §17.8 already-used string, like the hub page (no attempts suffix)", async () => {
     mockFetch(() =>
       json({ detail: "bad", code: "invalid_code", reason: "replayed", attempts_remaining: 2 }, 401),
     );
@@ -111,7 +111,7 @@ describe("TotpStep", () => {
     await enterCode("123456");
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent(MSG_REPLAYED_CODE);
-    expect(alert).toHaveTextContent("2 attempts left");
+    expect(alert.textContent).toBe(MSG_REPLAYED_CODE);
     expect(alert).not.toHaveTextContent("Check the time");
   });
 

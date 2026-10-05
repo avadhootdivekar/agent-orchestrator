@@ -23,7 +23,7 @@ export function useCountdown(): { remaining: number; start: (seconds: number) =>
  * Error + 429-lockout state shared by the sign-in and second-factor forms. A lockout is shown as a
  * live countdown (and disappears at 0); any other failure is shown as the §17.8 message.
  */
-export function useFormFailure() {
+export function useFormFailure(describe: (err: unknown) => string = authErrorMessage) {
   const [error, setError] = useState<string | null>(null);
   const lockout = useCountdown();
 
@@ -34,10 +34,10 @@ export function useFormFailure() {
         setError(null);
         lockout.start(seconds);
       } else {
-        setError(authErrorMessage(err));
+        setError(describe(err));
       }
     },
-    [lockout.start],
+    [lockout.start, describe],
   );
   const clear = useCallback(() => setError(null), []);
 

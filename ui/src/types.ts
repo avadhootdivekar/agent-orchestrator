@@ -669,6 +669,25 @@ export interface TotpEnrollment {
   period: 30;
 }
 
+/** E4 request body: the CLI enrollment token (forced) or the current password (voluntary), never both. */
+export type EnrollBeginBody = { enrollment_token: string } | { current_password: string };
+
+/** E6 / E7 request body: re-authentication with the password plus a TOTP or recovery code. */
+export interface ReauthBody {
+  current_password: string;
+  code: string;
+}
+
+/** E7 200 body. */
+export interface RecoveryCodesResponse {
+  recovery_codes: string[];
+  user: AuthUser;
+  session_proof: string;
+}
+
+/** `violations` entries of a 400 `password_policy` (HLD §2.2). */
+export type PasswordViolation = "too_short" | "too_long" | "control_characters" | "equals_username";
+
 export interface KeepaliveResponse {
   idle_expires_at: string;
   absolute_expires_at: string;
