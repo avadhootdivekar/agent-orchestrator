@@ -40,7 +40,6 @@ from agent_orchestrator.cache.constants import (
 )
 from agent_orchestrator.cache.store import LocalFsCacheStore, is_expired
 from agent_orchestrator.cache.types import (
-    CacheAdmin,
     CacheBlobMissingError,
     CacheIntegrityError,
     CacheLayoutError,
@@ -125,9 +124,9 @@ class TestLocalFsStoreContract(CacheStoreContract):
 
 
 # ---------------------------------------------------------------------------- class shape (AC-16)
-def test_class_derives_from_cachestore_only() -> None:
+def test_class_derives_from_the_store_abc_and_is_complete() -> None:
+    # T-U7ckfd shipped CacheStore only; T-HjxNQ0 added the CacheAdmin base (test_store_maintenance).
     assert CacheStore in LocalFsCacheStore.__mro__
-    assert CacheAdmin not in LocalFsCacheStore.__mro__
     assert not LocalFsCacheStore.__abstractmethods__
 
 
@@ -137,7 +136,7 @@ def test_class_instantiates_and_exposes_the_root(ws: Path, store: LocalFsCacheSt
     assert (store.max_bytes, store.ttl_days) == (MAX_BYTES, TTL_DAYS)
 
 
-def test_maybe_enforce_limits_is_a_placeholder(store: LocalFsCacheStore) -> None:
+def test_maybe_enforce_limits_on_an_empty_store_is_a_no_op(store: LocalFsCacheStore) -> None:
     assert store.maybe_enforce_limits(now=FIXED_CREATED_AT) is None
 
 
