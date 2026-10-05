@@ -650,7 +650,12 @@ class TestParallelDispatchProof:
             ]
         )
         gated = _GatedExecutor()
+        # Gate BOTH tasks: the pool may start either worker first, and an ungated
+        # task could finish before its sibling entered (no overlap, a test race that
+        # showed up under load). Holding both until both entered proves the overlap.
         a_release = gated.gate("a")
+        b_release = gated.gate("b")
+        a_entered = gated.entered_event("a")
         b_entered = gated.entered_event("b")
         orch = _orch(tmp_path, gated, max_parallel=2)
 
@@ -662,12 +667,14 @@ class TestParallelDispatchProof:
         thread = threading.Thread(target=_run)
         thread.start()
         try:
-            # b's execute() must be entered WHILE a is still blocked -- proves
-            # both were genuinely dispatched together, not one-after-the-other.
+            # Both execute() calls must be entered while the other is still blocked --
+            # proves both were genuinely dispatched together, not one-after-the-other.
+            assert a_entered.wait(timeout=5), "task a never entered execute() -- no overlap"
             assert b_entered.wait(timeout=5), "task b never entered execute() -- no overlap"
-            assert "a" in gated._in_flight or gated.max_concurrent >= 2
+            assert gated.max_concurrent >= 2
         finally:
             a_release.set()
+            b_release.set()
             thread.join(timeout=5)
 
         assert not thread.is_alive()
@@ -676,9 +683,6 @@ class TestParallelDispatchProof:
         assert state.tasks["a"].status == "succeeded"
         assert state.tasks["b"].status == "succeeded"
         assert gated.max_concurrent >= 2
-        # b entered while a was already in flight (a was submitted first, in
-        # sorted-Kahn order, and hadn't been released yet).
-        assert "a" in gated.entered_snapshot["b"]
 
 
 # ---------------------------------------------------------------------------
