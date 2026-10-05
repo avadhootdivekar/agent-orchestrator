@@ -606,3 +606,104 @@ export interface RunLiveSummary {
   text: string;
   meta: RunSummaryMeta | null;
 }
+
+/* ---------- dashboard authentication (E-Da5Tn9, HLD §2.5 — frozen contract) ---------- */
+
+export type AuthState =
+  | "disabled"
+  | "anonymous"
+  | "second_factor_required"
+  | "enrollment_required"
+  | "authenticated";
+export type AuthMethod = "password" | "password+totp";
+export type SecondFactor = "totp" | "recovery_code";
+export type TotpPolicy = "off" | "optional" | "required";
+
+export interface AuthUser {
+  username: string;
+  auth_method: AuthMethod;
+  roles: string[];
+  totp_enrolled: boolean;
+  recovery_codes_remaining: number | null;
+  totp_required: boolean;
+  can_enroll_totp: boolean;
+  can_disable_totp: boolean;
+}
+
+/** `GET /api/auth/status` body (E1). The disabled body has every key but `enabled`/`state` null. */
+export interface AuthStatus {
+  enabled: boolean;
+  state: AuthState;
+  user: AuthUser | null;
+  pending_username: string | null;
+  second_factors: SecondFactor[] | null;
+  enrollment_token_required: boolean | null;
+  policy: { totp: TotpPolicy; min_password_length: number; max_password_length: number } | null;
+  session: {
+    idle_timeout_seconds: number;
+    idle_expires_at: string;
+    absolute_expires_at: string;
+  } | null;
+  // proxy_suspected: v2.1 (security M2). The banner still keys on `!secure && !client_is_loopback`.
+  transport: { secure: boolean; client_is_loopback: boolean; proxy_suspected: boolean } | null;
+}
+
+/** Body of every session-issuing response (login, TOTP verify, enroll confirm, ...). */
+export interface AuthStepResponse {
+  state: Exclude<AuthState, "disabled" | "anonymous">;
+  user?: AuthUser;
+  second_factors?: SecondFactor[];
+  enrollment_token_required?: boolean;
+  used_recovery_code?: boolean;
+  recovery_codes?: string[];
+  session_proof: string;
+}
+
+export interface TotpEnrollment {
+  secret: string;
+  otpauth_uri: string;
+  issuer: string;
+  account: string;
+  algorithm: "SHA1";
+  digits: 6;
+  period: 30;
+}
+
+export interface KeepaliveResponse {
+  idle_expires_at: string;
+  absolute_expires_at: string;
+  idle_timeout_seconds: number;
+}
+
+export type AuthErrorCode =
+  | "invalid_request"
+  | "password_policy"
+  | "not_authenticated"
+  | "second_factor_required"
+  | "enrollment_required"
+  | "invalid_credentials"
+  | "invalid_code"
+  | "origin_required"
+  | "origin_mismatch"
+  | "cross_site_request"
+  | "insecure_transport"
+  | "totp_disabled_by_policy"
+  | "totp_required"
+  | "forbidden"
+  | "already_authenticated"
+  | "totp_already_enrolled"
+  | "totp_not_enrolled"
+  | "no_pending_enrollment"
+  | "body_too_large"
+  | "too_many_attempts"
+  | "busy"
+  | "store_unavailable";
+
+/** 401 codes meaning "your session is gone or incomplete" — the ONLY ones that trigger the global handler. */
+export const SESSION_LOSS_CODES: readonly AuthErrorCode[] = [
+  "not_authenticated",
+  "second_factor_required",
+  "enrollment_required",
+];
+
+export const SESSION_PROOF_HEADER = "X-AO-Session-Proof";

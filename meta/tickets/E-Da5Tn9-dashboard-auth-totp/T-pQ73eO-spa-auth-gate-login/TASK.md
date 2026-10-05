@@ -6,7 +6,7 @@
 - Owner: `developer` (frontend lane F)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done` (2026-10-05; AC 11 manual dev-proxy login against a real `ao ui --auth` deferred to T-U2ERMo, see STATUS)
 - Estimate: `3 days` · Sprint `S1`. It runs in parallel with the backend against the frozen HLD §2
   contract, using a mocked `fetch`.
 
