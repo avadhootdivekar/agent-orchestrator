@@ -6,7 +6,7 @@
 - Owner: `developer` (lane C; v2.1, was lane B)
 - Created: `2026-10-05`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `2.5 days` (v2.1; was 2) · Sprint `S2`
 
 ## Requirements Mapping

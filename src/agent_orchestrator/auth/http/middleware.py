@@ -6,9 +6,9 @@ cookie, looks the session up, computes the session-proof state, revalidates, dec
 injects the principal and slides the idle timer **only when the request is attested** (HLD 13.3
 steps 8-9, security M1), and finally adds the response headers.
 
-Task split (HLD 11.17): this module owns the preamble, steps 1, 4, 5 (the *computing* half),
-6-10 and ``deny()``. T-QJ1vyQ fills the three marked hooks -- ``_check_csrf`` (step 2),
-``_cap_auth_body`` (step 3) and the enforcement branch inside ``_check_proof`` (step 5).
+Task split (HLD 11.17): T-G7qByZ owns the preamble, steps 1, 4, 5 (computing), 6-10 and
+``deny()``. T-QJ1vyQ owns ``_check_csrf`` (step 2), ``_cap_auth_body`` (step 3) and the
+enforcement branch inside ``_check_proof`` (step 5).
 
 Auth off (``runtime is None``) is a pure pass-through: nothing is read, added or denied, so the
 app is byte-identical to an app without this middleware (NFR-1, S17).
@@ -28,8 +28,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ...ui.security import MUTATING_METHODS
 from ..constants import (
     API_PREFIX,
+    AUTH_API_PREFIX,
     AUTH_KEEPALIVE_PATH,
     HUB_LOGIN_PATH,
+    MAX_AUTH_BODY_BYTES,
     SCOPE_AUTH_ENABLED_KEY,
     SCOPE_PRINCIPAL_KEY,
     SCOPE_PROOF_OK_KEY,
@@ -37,16 +39,18 @@ from ..constants import (
     SESSION_PROOF_HEADER,
     WS_POLICY_VIOLATION,
 )
-from ..errors import AuthError, StoreUnavailableError
+from ..errors import AuthError, ErrorCode, StoreUnavailableError
 from ..model import SessionState, denial_code
 from ..policy import (
     MOUNT_METHOD,
     RouteKey,
     RoutePolicy,
     policy_allows,
+    proof_required,
 )
 from ..provider import Revalidation
 from ..sessions import SessionManager, SessionRecord
+from .origin import origin_matches_host
 from .responses import (
     RealmLike,
     clear_cookie_header,
@@ -68,6 +72,12 @@ FETCH_MODE_HEADER = "sec-fetch-mode"
 FETCH_DEST_HEADER = "sec-fetch-dest"
 FETCH_MODE_NAVIGATE = "navigate"
 FETCH_DEST_DOCUMENT = "document"
+ORIGIN_HEADER = "origin"
+HOST_HEADER = "host"
+# Fetch-Metadata ``Sec-Fetch-Site`` values that are not cross-site (HLD 13.3 step 2).
+FETCH_SITE_NOT_CROSS = frozenset({"same-origin", "none"})
+HTTP_REQUEST_MESSAGE = "http.request"
+HTTP_DISCONNECT_MESSAGE = "http.disconnect"
 # A browser-attested top-level navigation: same-origin or typed into the address bar / bookmark.
 FETCH_SITE_BROWSER_NAV = frozenset({"same-origin", "none"})
 NAVIGATION_METHODS = frozenset({"GET", "HEAD"})
@@ -168,28 +178,82 @@ def classify(
     return chosen, policy, cookie_only
 
 
-# --- Hooks for T-QJ1vyQ (steps 2, 3 and the enforcement half of 5) ---
+# --- Steps 2 and 3: CSRF / Fetch Metadata and the auth body cap (HLD 13.3, T-QJ1vyQ) ---
 
 
 def _check_csrf(
     scope: Scope, headers: Headers, policy: RoutePolicy, *, navigation: bool, sfs: str | None
 ) -> AuthError | None:
-    """HOOK (HLD 13.3 step 2, T-QJ1vyQ): Origin and Fetch-Metadata checks. No-op here.
+    """HLD 13.3 step 2: Origin and Fetch-Metadata checks, for every route (PUBLIC included).
 
-    Return an :class:`AuthError` (403 ``origin_*`` / ``cross_site_request``) to deny. It runs for
-    every route, PUBLIC included, before the session lookup.
+    A mutation needs an ``Origin`` equal to the request's own origin (S4). Independently, a
+    ``Sec-Fetch-Site`` other than same-origin/none is refused on any non-PUBLIC route or any
+    mutation, except a top-level GET/HEAD navigation (``navigation``). Runs before the session
+    lookup, so a denial never touches a session.
     """
+    mutating = scope["method"] in MUTATING_METHODS
+    if mutating:
+        origin = headers.get(ORIGIN_HEADER)
+        if origin is None:
+            return AuthError(ErrorCode.ORIGIN_REQUIRED)
+        if not origin_matches_host(
+            origin, scheme=scope.get("scheme", "http"), host_header=headers.get(HOST_HEADER, "")
+        ):
+            return AuthError(ErrorCode.ORIGIN_MISMATCH)
+    if (
+        sfs is not None
+        and sfs not in FETCH_SITE_NOT_CROSS
+        and (policy is not RoutePolicy.PUBLIC or mutating)
+        and not navigation
+    ):
+        return AuthError(ErrorCode.CROSS_SITE_REQUEST)
     return None
+
+
+def _replay(body: bytes, receive: Receive, disconnected: bool) -> Receive:
+    """A ``receive`` that serves the buffered ``body`` once, then defers to the real one."""
+    pending: list[Message] = (
+        [{"type": HTTP_DISCONNECT_MESSAGE}]
+        if disconnected
+        else [{"type": HTTP_REQUEST_MESSAGE, "body": body, "more_body": False}]
+    )
+
+    async def replay() -> Message:
+        if pending:
+            return pending.pop(0)
+        return await receive()
+
+    return replay
 
 
 async def _cap_auth_body(
     scope: Scope, receive: Receive, rpath: str
 ) -> tuple[Receive, AuthError | None]:
-    """HOOK (HLD 13.3 step 3, T-QJ1vyQ): the 16 KiB cap on auth request bodies. No-op here.
+    """HLD 13.3 step 3: the ``MAX_AUTH_BODY_BYTES`` cap on mutating ``/api/auth/*`` bodies.
 
-    Return the (possibly buffering) ``receive`` to hand the app, or a 413 :class:`AuthError`.
+    A declared ``Content-Length`` over the cap is refused outright; otherwise the body is
+    buffered (a chunked body over the cap is refused as soon as it crosses it) and replayed to
+    the app as one message, byte-identical. Every other path is returned untouched.
     """
-    return receive, None
+    if scope["method"] not in MUTATING_METHODS or not rpath.startswith(AUTH_API_PREFIX + "/"):
+        return receive, None
+    declared = Headers(scope=scope).get("content-length")
+    if declared is not None and declared.strip().isdigit():
+        if int(declared) > MAX_AUTH_BODY_BYTES:
+            return receive, AuthError(ErrorCode.BODY_TOO_LARGE)
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        message = await receive()
+        if message["type"] == HTTP_DISCONNECT_MESSAGE:
+            return _replay(b"", receive, True), None
+        chunk: bytes = message.get("body", b"")
+        size += len(chunk)
+        if size > MAX_AUTH_BODY_BYTES:
+            return receive, AuthError(ErrorCode.BODY_TOO_LARGE)
+        chunks.append(chunk)
+        if not message.get("more_body", False):
+            return _replay(b"".join(chunks), receive, False), None
 
 
 @dataclass(frozen=True)
@@ -212,18 +276,24 @@ def _check_proof(
     navigation: bool,
     sfs: str | None,
 ) -> ProofCheck:
-    """HLD 13.3 step 5. This task COMPUTES ``proof_ok`` / ``attested`` / ``browser_nav``.
+    """HLD 13.3 step 5: compute ``proof_ok`` / ``attested`` / ``browser_nav`` and enforce them.
 
-    HOOK (T-QJ1vyQ): the enforcement branch goes at the marked line below -- for a
-    proof-required route (``policy.proof_required``) a session that is not ``attested`` becomes
-    ``None`` for THIS request only (never destroyed, cookie never cleared).
+    Enforcement (D25, security M1): on a proof-required route (every non-PUBLIC route except the
+    flagged cookie-only navigation) a session that is not ``attested`` becomes ``None`` for THIS
+    request only -- it is never destroyed and the cookie is never cleared, so a request that
+    merely lacks the proof cannot log the victim out. PUBLIC routes keep the session in scope.
     """
     proof_ok = session is not None and runtime.sessions.proof_matches(
         session, headers.get(SESSION_PROOF_HEADER)
     )
     attested = proof_ok or cookie_only
     browser_nav = navigation and sfs in FETCH_SITE_BROWSER_NAV
-    # --- enforcement (T-QJ1vyQ) goes here ---
+    if (
+        session is not None
+        and not attested
+        and proof_required(policy, cookie_only_navigation=cookie_only)
+    ):
+        session = None
     return ProofCheck(session, proof_ok, attested, browser_nav)
 
 
