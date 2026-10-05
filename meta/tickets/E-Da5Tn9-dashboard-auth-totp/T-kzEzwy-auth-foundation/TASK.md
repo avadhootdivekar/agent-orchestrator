@@ -6,7 +6,7 @@
 - Owner: `developer` (lane B)
 - Created: `2026-10-05`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `1 day` · Sprint `S1`
 
 ## Requirements Mapping
@@ -73,6 +73,8 @@ It contains no auth logic.
   - `tests/conftest.py` (additive fixture only)
   - `tests/auth/__init__.py`, `tests/auth/helpers/__init__.py`, `tests/auth/helpers/core.py`
   - `tests/auth/test_foundation.py`, `tests/auth/test_import_boundary.py`
+  - `tests/test_nfr2_regression_gate.py` (one declared, justified entry for the `tests/conftest.py`
+    edit, the gate's sanctioned mechanism; found by the full-suite run)
 
 ## Acceptance Criteria
 1. `from agent_orchestrator.errors import EXIT_CONFIG` gives `78`. `git diff` of `errors.py` shows

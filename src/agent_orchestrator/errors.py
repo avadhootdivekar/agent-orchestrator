@@ -253,3 +253,9 @@ class WorkspaceLockHeldError(OrchestratorError):
         self.lock_path = lock_path
         self.holder_run_id = holder_run_id
         self.holder_pid = holder_pid
+
+
+# sysexits ``EX_CONFIG``: a configuration error. Used by ``ao ui``, ``ao service run``,
+# ``ao auth``, the service supervisor (a terminal child exit, never restarted) and the systemd
+# unit (``RestartPreventExitStatus``). Defined once here so no caller spells the literal 78.
+EXIT_CONFIG = 78

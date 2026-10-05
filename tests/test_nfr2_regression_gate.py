@@ -202,6 +202,12 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
         "found undeclared while verifying E-Vt6Lp2); Epic D's own addition on top is "
         "additive only -- one new test method, no pre-existing assertion touched"
     ),
+    # Additive only (E-Da5Tn9 T-kzEzwy, HLD section 16 row 10): one new autouse fixture,
+    # `_hermetic_auth_env`, appended at the end; it only edits os.environ (never imports
+    # agent_orchestrator.auth), so no pre-existing fixture or test is touched.
+    "tests/conftest.py": (
+        "additive (E-Da5Tn9 T-kzEzwy): autouse `_hermetic_auth_env` fixture appended"
+    ),
 }
 
 
