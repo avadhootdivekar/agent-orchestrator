@@ -1,9 +1,10 @@
 # ADR-0021 — Dashboard and hub authentication: local accounts, optional TOTP, per-server sessions
 
-- **Status:** Proposed (**v2.1, gates folded**, 2026-10-05). The manager's independent design
-  review and security review have run on v2, and their findings are folded in with the manager's
-  final decisions (HLD §28.9). Implementation has not started. It becomes Accepted when
-  `T-otjIkJ-auth-docs-refresh-closure` closes.
+- **Status:** **Accepted** (2026-10-05). Implemented by `E-Da5Tn9-dashboard-auth-totp` (all 23 tasks
+  Done) and signed off by the post-implementation security review (T-2wE08U). The decisions below
+  are the approved design (v2.1, gates folded, HLD §28.9); every change made during implementation
+  or review is recorded in [Amendments (as built)](#amendments-as-built-2026-10-05) at the end,
+  and the HLD's "As built" section holds the full deviation list and residual risks.
 - **Date:** 2026-10-04 (v1); revised 2026-10-05 (v2, then v2.1). v2 incorporates the Phase-4
   consultations with manager, developer, reviewer, tester, dev-security and dev-critic (HLD
   §28.1–§28.8); v2.1 incorporates the two independent gates (HLD §28.9).
@@ -398,7 +399,8 @@ in the process that issued it, so realms are isolated by construction.
 **Consequences.**
 - A cloned repository's `.ao/config.yaml` can make an `ao` instance *stricter*, never weaker.
 - A stale globally installed `ao` silently ignores these settings. Docs, `ao auth status` and
-  `install.sh --reinstall` are the mitigation.
+  `install.sh --force` (which runs `uv ... --reinstall`; there is no `--reinstall` flag, see
+  Amendment 2) are the mitigation.
 - `ao service list/status` treat a hub 401 as "running, login required" and fall back to the
   persisted state.
 
@@ -538,3 +540,53 @@ out-of-browser replay of a harvested cookie (HLD A4).
   8. the hub showing child auth state;
   9. at-rest TOTP seed encryption;
   10. native TLS flags.
+
+---
+
+## Amendments (as built, 2026-10-05)
+
+Decisions D1–D11 stand. These amendments record what implementation and the security review
+changed. Code references and the remaining deviations are in the HLD's "As built" section.
+
+1. **D8 (settings and service enablement; HLD OQ-3 reversed).** `ao service install --auth` now
+   exists and bakes ` --auth` into the unit's ExecStart (T-2wE08U M-1). Rationale: enablement by
+   `service.env` alone **fails open** on a stale global `ao` snapshot (it ignores the unknown
+   `AO_UI_AUTH`), whereas an old binary *rejects* an unknown `--auth` flag, so the flag fails
+   closed. `service.env` stays supported; `install` prints the alternative and a stale-snapshot
+   warning.
+2. **D8 (stale installs).** The mitigation command is `bash install.sh --force` (it passes
+   `--reinstall` to `uv` internally), verified by `ao auth status`; there is no
+   `install.sh --reinstall` flag.
+3. **D8 (`trusted_proxies`).** Environment-only (`AO_UI_AUTH_TRUSTED_PROXIES`); no CLI flag exists.
+   The workspace-file key is refused with a message naming the variable.
+4. **D8 (config-only weakening, security M3).** The detector probes accounts in the resolved store
+   **and** in the config-ignored store(s), and treats an unknown count as "accounts may exist"
+   (T-2wE08U H1). Otherwise a hostile `store_dir` pointing at an empty directory could hide the
+   accounts and let a config-only `enabled: false` start an unauthenticated dashboard.
+5. **D3 (store durability).** `users.json` and `lockouts.json` reads are capped at
+   `STORE_FILE_MAX_BYTES` (16 MiB); an over-cap file is corrupt (count probe: unknown; lockouts:
+   fail closed).
+6. **D1 (sessions).** `destroy_user_sessions` revokes only the manager's own realm; other realms
+   die by the credential-epoch bump (as §11.10 specifies). `SessionManager.lookup` additionally
+   ignores a record whose realm differs from its own.
+7. **D4/D5 (log hygiene).** Redaction of uvicorn access records keeps a tuple `args` of the same
+   length (numeric slots kept, the redacted line in the first string slot, other slots emptied), so
+   the access formatter never fails and no secret fragment survives (H2, N1).
+8. **D6 (identity contract), confirmed.** As built: `Principal.roles: list[str]`
+   (`hash=False`, a fresh list per principal), additive fields keyword-only (HLD OQ-8).
+9. **D11 (session proof), confirmed.** It shipped in the MVP and was not cut (HLD OQ-9, no
+   cut-line taken).
+10. **D1 (hub).** A malformed `/auth-assets/` path matches no route, so an anonymous caller gets
+    401 rather than 404 (never served). A pre-existing hub `/openapi.json` 500 was fixed on the
+    way.
+
+### Residual risks accepted at sign-off (supplements "Consequences summary")
+
+`start_run` accepts an absolute `workflow_path`; a local process can claim a client address via
+`X-Forwarded-For` under `trusted_proxies=127.0.0.1`; account-lockout DoS and a shared throttle
+bucket behind an unconfigured proxy; IPv6 throttling per `/64`; the phantom-eviction oracle; a
+hard link bypasses the file-browser path denial; a stale binary fails open when auth is enabled
+only through `service.env`; per-session counters are not concurrency-exact; the `dompurify`
+moderate advisory; TOTP seeds in clear in `users.json`. The real-browser smoke (HLD AC-34) has not
+been run (Playwright unavailable on the build machine). Full table:
+[HLD "As built" section D](../dashboard-auth-hld.md#as-built-2026-10-05).

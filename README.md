@@ -13,6 +13,7 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [Spec files](#spec-files)
 - [CLI reference](#cli-reference)
 - [Dashboard (`ao ui`)](#dashboard-ao-ui)
+  - [Authentication](#authentication)
 - [Workflow templates](#workflow-templates)
 - [General instructions](#general-instructions)
 - [Environment variables](#environment-variables)
@@ -216,6 +217,7 @@ ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
+ao auth       Manage dashboard accounts, TOTP and lockouts (see Authentication)
 ao report-usage     Cross-run cost/retry/rework rollup by (agent, model, effort) + verdicts, feedback, survival
 ao report-survival  How much of a run's code changes survived into a ref (git only)
 ao rate       Record your own good/ok/bad rating of a run or task (local, no telemetry)
@@ -280,11 +282,14 @@ ao ui --port 9000 --workspace /path/to/repo --open
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--host HOST` | `127.0.0.1` | Interface to bind.  Loopback by default — see the warning below |
+| `--host HOST` | `127.0.0.1` | Interface to bind.  Loopback by default; unauthenticated unless `--auth` — see [Authentication](#authentication) |
 | `--port, -p PORT` | `8765` | Port to listen on |
 | `--workspace, -w PATH` | cwd | Workspace root to serve.  Env: `AO_WORKSPACE_ROOT` |
 | `--open` | `false` | Open the dashboard in your browser once it is serving |
 | `--reload` | `false` | Auto-reload on code changes (development) |
+| `--auth / --no-auth` | off | Require login (local accounts). Env: `AO_UI_AUTH`. See [Authentication](#authentication) |
+| `--auth-totp off\|optional\|required` | `off` | TOTP policy with `--auth`. Env: `AO_UI_AUTH_TOTP` |
+| `--auth-dir DIR` | `~/.config/ao/auth` | Credential store directory. Env: `AO_AUTH_DIR` |
 
 **What it does**
 
@@ -324,10 +329,80 @@ ao ui --port 9000 --workspace /path/to/repo --open
 Runs start as separate `ao run` processes, so closing the browser (or restarting the
 dashboard) does not stop them.
 
-> **⚠️ There is no authentication in this release.**  The dashboard can read any file under
-> the workspace and can start runs that cost money, so it binds loopback by default.  Only
-> bind another interface on a network you trust.  Authentication and configurable secrets
-> are the top item on the [roadmap](meta/ROADMAP.md).
+### Authentication
+
+Login is **opt-in** and off by default: until you enable it the dashboard is unauthenticated, can
+read any file under the workspace and can start runs that cost money, so it binds loopback.
+Never bind another interface without enabling auth (and, off-loopback, a TLS proxy). Full guide:
+[`docs-md/dashboard-authentication.md`](docs-md/dashboard-authentication.md).
+
+**Enable (first-user bootstrap).** Accounts are created from the CLI only:
+
+```bash
+ao auth add-user alice            # prompts for a password (min 12 chars); creates the store
+ao ui --auth                      # or AO_UI_AUTH=1, or ui.auth.enabled: true in .ao/config.yaml
+ao auth status                    # effective settings + where each came from, permissions, counts
+```
+
+`ao ui --auth` with no accounts exits 78 (a configuration error) instead of serving. The workspace
+config (`ui.auth` in `.ao/config.yaml`, see [Per-project config](#per-project-config-file)) **may
+only tighten** settings; anything that would weaken a default is refused with exit 78, and
+`trusted_proxies` is env-only. A workspace-config-only `enabled: false` also refuses to start
+while accounts exist; disable on purpose with `--no-auth` or `AO_UI_AUTH=0`.
+
+**Two-factor (TOTP) policy** (`--auth-totp` / `AO_UI_AUTH_TOTP` / `ui.auth.totp`):
+
+- `off` (default) / `optional` / `required`. Users enroll in the account menu (QR code + manual
+  secret) or on the host with `ao auth enable-2fa USER`; ten single-use **recovery codes** are
+  shown once.
+- Under `required`, a user who has not enrolled needs an **operator-issued enrollment token** at
+  first login (`ao auth enrollment-token USER`, valid 60 minutes), even if the account was created
+  without `--require-totp`. To switch an existing deployment to `required`, issue one per
+  unenrolled user and hand it over.
+- Under `off`, users who are already enrolled are **still asked for a code** (enrollment is
+  sticky). `ao auth status` prints these notes.
+- Lost device: sign in with a recovery code and re-enroll, or `ao auth reset-2fa USER` prints a
+  fresh enrollment token. Remote enrollment over plain HTTP is refused; enroll over TLS, on the
+  host, or through an SSH tunnel.
+- A TOTP policy below `required` that comes only from the config file warns; pin it with
+  `AO_UI_AUTH_TOTP` / `--auth-totp`.
+
+**Hub and dashboards are separate logins.** Cookies are scoped by host, not port, so the
+`ao service` hub and every workspace dashboard are separate *realms*, each with its own session
+and login. Sessions live in memory (a restart signs everyone out); the idle limit is 30 minutes
+and the hard limit 12 hours (`AO_UI_AUTH_IDLE_MINUTES`, `AO_UI_AUTH_ABSOLUTE_HOURS`).
+
+**Plain HTTP, TLS proxies.** `ao` serves plain HTTP; a non-loopback bind prints a loud warning.
+For remote access put a TLS reverse proxy in front and set `AO_UI_AUTH_TRUSTED_PROXIES`
+(env only, e.g. `127.0.0.1`); the proxy must keep the `Host` header and send
+`X-Forwarded-Proto`/`-For`. Without it, proxied requests count as remote, the server logs a
+`proxy_suspected` warning, and all remote users share one throttle bucket. With
+`trusted_proxies=127.0.0.1`, bind the app to a unix socket or firewall its port: any local process
+could otherwise claim a client address via `X-Forwarded-For`.
+
+**Where things live.** Credentials (password hashes, **TOTP seeds in clear**, recovery-code
+hashes) are in `~/.config/ao/auth/` (`AO_AUTH_DIR`); lockouts and the audit log in
+`~/.local/state/ao/auth/` (`AO_AUTH_STATE_DIR`). Because a stolen `users.json` holds the second
+factor too, back the credential directory up **encrypted only**. The file browser never serves
+either directory or `~/.config/ao/service.env`.
+
+**Threat model, in one paragraph.** Authenticated means full access (no roles); same-user
+processes, including the agents `ao` runs, are out of scope. A cookie harvested by a local
+listener cannot call the API, because every API call also needs a per-session proof header kept in
+the page; the remaining residuals are that the hub index page still renders for a bare cookie and
+that cookie tossing can force a logout. `/api/docs` (and the hub's `/docs`) cannot be used in a
+browser with auth on; `--port 0` is refused with auth on.
+
+**Service.** `ao service install --auth` bakes `--auth` into the systemd unit (preferred), or put
+`AO_UI_AUTH=1` in `~/.config/ao/service.env`, then `ao auth add-user`, then
+`systemctl --user restart ao`. The unit carries `RestartPreventExitStatus=78`, so a bad auth
+configuration (exit 78) is not restart-looped. **Stale-install warning:** a global `ao` that
+predates this feature silently ignores `AO_UI_AUTH`/`ui.auth` (only an explicit `--auth` flag
+errors), so the dashboards would start *unauthenticated* with no error. After upgrading run
+`bash install.sh --force`, then verify with `ao auth status` (it exists only in new builds).
+
+> **Release note.** Dashboard authentication is new and opt-in: `ao auth`, `--auth`,
+> `--auth-totp`, `--auth-dir`, `ao service install --auth`. Nothing changes unless enabled.
 
 **Deferred:** UI-based dynamic workflow generation (building or editing a DAG in the browser) is
 on the roadmap, not in this release. The run graph above is read-only.
@@ -475,6 +550,14 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_QUOTA_POLL_SECONDS` | `--quota-poll-interval` | Seconds between quota-exhaustion re-run attempts (default: 900 = 15 min) |
 | `AO_GENERAL_INSTRUCTIONS` | `--general-instruction` | `os.pathsep`-separated instruction paths applied to **every** task; **additive**, not an override — see [General instructions](#general-instructions) |
 | `AO_UI_WORKSPACE` | `ao ui --workspace` | Workspace the dashboard serves (used by `ao ui --reload`) |
+| `AO_UI_AUTH` | `ao ui/service run --auth/--no-auth` | Require dashboard/hub login (default off); see [Authentication](#authentication) |
+| `AO_UI_AUTH_TOTP` | `--auth-totp` | TOTP policy: `off` / `optional` / `required` |
+| `AO_AUTH_DIR` | `--auth-dir`, `ao auth --auth-dir` | Credential store directory (default `~/.config/ao/auth`) |
+| `AO_AUTH_STATE_DIR` | — | Lockout/audit state directory (default `~/.local/state/ao/auth`) |
+| `AO_UI_AUTH_TRUSTED_PROXIES` | — (env only) | Comma-separated reverse-proxy addresses whose `X-Forwarded-*` headers are trusted |
+| `AO_UI_AUTH_IDLE_MINUTES`, `AO_UI_AUTH_ABSOLUTE_HOURS` | — | Session idle (default 30) / absolute (default 12) limits |
+| `AO_UI_AUTH_LOCKOUT_THRESHOLD`, `AO_UI_AUTH_LOCKOUT_BASE_SECONDS`, `AO_UI_AUTH_LOCKOUT_MAX_SECONDS`, `AO_UI_AUTH_ADDRESS_THRESHOLD` | — | Account lockout and per-address throttle tuning (defaults 5 / 30 s / 900 s / 20) |
+| `AO_UI_AUTH_MIN_PASSWORD_LENGTH`, `AO_UI_AUTH_TOTP_ISSUER` | — | Minimum password length (default 12); TOTP issuer label (default `ao@<host>`) |
 
 ---
 
@@ -506,6 +589,17 @@ agents:    path/to/agents.json
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h
 # quota_poll_seconds: 900         # AO_QUOTA_POLL_SECONDS     — poll every 15 min
+
+# --- Dashboard authentication (opt-in). The workspace file may only TIGHTEN settings: a value
+# that weakens a default is refused at startup (exit 78); trusted_proxies is env-only. ---
+# ui:
+#   auth:
+#     enabled: true                 # AO_UI_AUTH   (enabled: false here, with accounts, refuses to start)
+#     totp: required                # AO_UI_AUTH_TOTP  (below `required` from config only: warns)
+#     session_idle_minutes: 15      # AO_UI_AUTH_IDLE_MINUTES      (default 30; lower only)
+#     session_absolute_hours: 8     # AO_UI_AUTH_ABSOLUTE_HOURS    (default 12; lower only)
+#     lockout_threshold: 3          # AO_UI_AUTH_LOCKOUT_THRESHOLD (default 5; lower only)
+#     min_password_length: 16       # AO_UI_AUTH_MIN_PASSWORD_LENGTH (default 12; raise only)
 ```
 
 **Discovery**: AO walks up from your current directory, stopping at the git root
@@ -708,6 +802,7 @@ dynamic fan-out and a bugfix/review loop) lives in [`playground/sum-of-array/`](
 agent-orchestrator/
   src/agent_orchestrator/   Python package (engine, CLI, executors, DAG, …)
     ui/                       Dashboard backend + built frontend (served by `ao ui`)
+    auth/                     Dashboard/hub authentication (`ao auth`, sessions, TOTP)
   ui/                       Dashboard frontend source (React + Vite) — see ui/README.md
   specs/                    JSON schemas + example spec files
     *.schema.json             Authoritative schemas
@@ -767,5 +862,8 @@ See [`ui/README.md`](ui/README.md) for the frontend layout and conventions.
 - **Detailed walkthrough** — from writing your first spec to driving a multi-task epic to
   completion and recovering from failures —
   [`docs-md/guide-epic-walkthrough.md`](docs-md/guide-epic-walkthrough.md)
+- **Dashboard authentication** — user guide
+  [`docs-md/dashboard-authentication.md`](docs-md/dashboard-authentication.md), design
+  [`docs-md/dashboard-auth-hld.md`](docs-md/dashboard-auth-hld.md)
 - **Dashboard & general-instruction design** —
   [`docs-md/dashboard-and-general-instructions-hld.md`](docs-md/dashboard-and-general-instructions-hld.md)

@@ -1205,3 +1205,72 @@ By: dev-epic
 Role: manager
 Date: 2026-10-02
 ---
+
+---
+Learning-ID: LRN-20261005-cookies-scope-by-host-not-port
+Learning: Browsers scope cookies by host, not port, so every local `ao` listener (hub + each
+  dashboard on a different port) receives every other listener's session cookie, even with
+  `SameSite=Strict`. Name the cookie per port, give each server its own session table (realm), and
+  require a second, non-cookie secret (the `X-AO-Session-Proof` header, kept in the page) for API
+  calls, otherwise a cookie harvested by any local listener replays against the API.
+Context: Verified empirically (Chrome 138, Playwright) while designing E-Da5Tn9; shipped as D1/D11
+  in ADR-0021. Residual: a bare cookie still renders the hub index (the one cookie-only route).
+By: manager
+Role: agent
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-include-router-hides-routes
+Learning: A deny-by-default check that classifies routes by (method, path) is blind to routes added
+  through FastAPI/Starlette `include_router` (they are nested/opaque to a flat route walk), so auth
+  routes must be registered flat (`app.add_api_route`) and the policy table must be asserted against
+  the *real* app's route enumeration, not just the table.
+Context: Reproduced in the E-Da5Tn9 developer consultation; enforced by
+  `assert_flat_auth_routes` and the `test_route_enumeration_*` suites.
+By: manager
+Role: agent
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-log-redaction-keeps-args-shape
+Learning: A `logging` filter that redacts secrets must keep the *shape* of `record.args`. Replacing
+  a tuple with `()` breaks formatters that unpack it (uvicorn's `AccessFormatter` expects a 5-tuple),
+  producing one "Logging error" traceback per request. Keep the tuple length, numeric members and
+  the first string slot (carrying the redacted line); empty the rest.
+Context: Found by the independent security review (H2) and its re-audit (N1: an empty-value
+  `?code=` query made line-level and per-arg redaction disagree); fixed in `auth/scrub.py`, and the
+  real-subprocess e2e now asserts a clean server log.
+By: manager
+Role: agent
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-config-as-attacker-input
+Learning: Treat the workspace `.ao/config.yaml` (and anything a `git pull` can change) as attacker
+  input to any security setting: let it only tighten, refuse (exit 78) when it would silently
+  disable auth while accounts exist, and probe *every* candidate store (including the default one
+  a config-chosen `store_dir` would hide), counting an unreadable store as "accounts may exist".
+Context: E-Da5Tn9 A12/M3; the first implementation probed only the resolved store and a config
+  pointing at an empty dir bypassed the refusal (HIGH H1, fixed in `9e62b5a`).
+By: manager
+Role: agent
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-env-only-enablement-fails-open-on-stale-binary
+Learning: A security feature enabled only through an environment variable or config key fails
+  *open* on a stale binary that predates it (the unknown variable is ignored, the service starts
+  unauthenticated, no error). Prefer enabling through a CLI flag baked into the unit's ExecStart
+  (an old binary rejects an unknown flag), and tell operators to verify with a command that exists
+  only in new builds (`ao auth status`).
+Context: Design assumed `service.env`; the security review (M-1) added `ao service install
+  --auth`. Also: the design docs said `install.sh --reinstall`, a flag that does not exist (the
+  command is `install.sh --force`); docs-refresh verification against the code caught it.
+By: manager
+Role: agent
+Date: 2026-10-05
+---

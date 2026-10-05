@@ -2,10 +2,16 @@
 
 - ID: `E-Da5Tn9-dashboard-auth-totp`
 - Updated At: `2026-10-05`
-- State: `In Progress` (design v2.1 approved; Sprint 1 implementation under way)
+- State: `Done` (23/23 tasks; AC-34 browser smoke NOT RUN, carried as a follow-up)
 - Owner: `manager`
 
 ## This update
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: **Epic closed: all 23 tasks Done.** The security
+  + design review gate (T-2wE08U) signed off (0 CRITICAL; H1/H2/M fixed; accepted residuals listed) and
+  T-otjIkJ refreshed the docs to the as-built state (HLD "As built", ADR-0021 Accepted, README,
+  `docs-md/dashboard-authentication.md`, ROADMAP, `ui/README.md`). Full suite 7471 passed / 13
+  skipped. Rollup synchronized from each task STATUS (counts 23/23). Open items are follow-ups, not
+  blockers (see Next actions). Branch `ad/dashboard-auth-totp`, not pushed.
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Independent gates re-verified as NOT previously run (the v2 STATUS 'launched' note referred to the architect's v1 consultations); reviewer + dev-security gates run on v2 and folded into HLD §28.9 (commit 4d2aafd). Implementation started on branch ad/dashboard-auth-totp: Done so far T-kzEzwy (9446c9d), T-pQ73eO (50e0d39), T-R7JhTL (e996c4e), T-s6sJmB (1ce99bf), T-kwwJ82 (3e9e0db), T-8NQP8J (4837d48).
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: **Design package v2.1 (gates
   folded).** Both independent gates the manager ran on v2 are folded in with the manager's final
@@ -69,17 +75,17 @@
 | T-rpKCjP-auth-http-routes | Done | S2 | v2.1: 3 d, lane Q; `client_info` (M2); creates the `routes_second_factor.py` stub |
 | T-KQ6ZrY-auth-routes-second-factor | Done | S3 | **new (v2)**; v2.1: owns `routes_second_factor.py`; merge edge to T-jVqH8w (co-critical) |
 | T-j9dfsw-ao-auth-cli | Done | S2 | v2.1: config-sourced `store_dir` rule (M6); status flags |
-| T-jVqH8w-ao-ui-auth-wiring | Draft | S3 | v2.1: merges only after T-QJ1vyQ and T-KQ6ZrY; `ConfigRisk` enforcement |
+| T-jVqH8w-ao-ui-auth-wiring | Done | S3 | v2.1: merges only after T-QJ1vyQ and T-KQ6ZrY; `ConfigRisk` enforcement |
 | T-KOv2qD-hub-service-auth | Done | S2→S3 | v2.1: 3 d; `hub_routes.py`; hub cookie-only route |
-| T-PDGw9p-service-cli-supervisor-auth | Draft | S3 | **new (v2)**; v2.1: lane A |
+| T-PDGw9p-service-cli-supervisor-auth | Done | S3 | **new (v2)**; v2.1: lane A |
 | T-R7JhTL-hub-login-page | Done | S1→S2 | v2.1: 3 d; SPA↔hub contract test; owns `package.json` scripts and `tsconfig` |
 | T-pQ73eO-spa-auth-gate-login | Done | S1 | v2.1: no longer commits `ui/static` |
 | T-vCgsU6-spa-enroll-account-qr | Done | S2 | v2.1: the only `ui/static` committer; baseline check first |
-| T-U2ERMo-auth-e2e-regression-sweep | Draft | S3 | v2.1: 3 d (store-busy CLI test, informational p95) |
-| T-2wE08U-auth-security-review | Draft | S3 | v2.1: 2.5 d; re-verify §28.9; epic merges to `main` only after this |
-| T-otjIkJ-auth-docs-refresh-closure | Draft | S3 | Post-implementation docs refresh; v2.1: 2 d |
+| T-U2ERMo-auth-e2e-regression-sweep | Done | S3 | v2.1: 3 d; **AC-34 browser smoke NOT RUN** (Playwright not installed), recorded as a follow-up |
+| T-2wE08U-auth-security-review | Done | S3 | v2.1: 2.5 d; re-verify §28.9; epic merges to `main` only after this |
+| T-otjIkJ-auth-docs-refresh-closure | Done | S3 | Post-implementation docs refresh; v2.1: 2 d |
 
-Counts: 23 tasks · 18 Done · 0 In Progress · 0 Blocked · 5 Not started · 61.0 dev-days.
+Counts: 23 tasks · 23 Done · 0 In Progress · 0 Blocked · 0 Not started · 61.0 dev-days.
 
 ## Evidence
 - Empirical design evidence (HLD §25.4):
@@ -92,28 +98,33 @@ Counts: 23 tasks · 18 Done · 0 In Progress · 0 Blocked · 5 Not started · 61
 - Consultation record: HLD §28 (developer, reviewer, tester, dev-security, dev-critic).
 
 ## Risks / Blockers
-- **No blockers.** Decided: **OQ-8** (`Principal.roles: list[str]`, keyword-only additive
-  fields), **OQ-9** (D25 in the MVP), **OQ-1** and **OQ-2** (manager, above). Open and
-  non-blocking:
-  - **OQ-11 (new, v2.1):** which calendar basis governs the dates. The ≈ 26 dev-day critical path
-    holds in three sprints on the agent-lane basis; under the mandated human-team focus arithmetic
-    the chain spans ≈ 51–62 working days (HLD §24.1).
-  - **OQ-10:** provider-contributed PUBLIC policies and a redirect-flow proof handoff. Not in the
-    MVP; it is the OIDC follow-up's first task.
-- The v2 note "OQ-9 is the first item to cut" is superseded: D25 is security-driven and is **not**
-  a cut-line; the cut-lines are audit rotation/coalescing → phantom table → AC-10 redirect test →
-  `required_features` (HLD §24.1).
-- Coordinate merge order with the sibling epics that touch `ui/app.py`, `cli.py` and `service/*`
-  (R13), and follow HLD §16 cross-epic rows X1–X6 with the approval-gates epic (`xdg.py`,
-  `ui/files.py`, `ui/app.py`, `ui/security.py`, `ui/static`, `project_config.py`).
+- **No blockers.** Everything below is an accepted residual or a follow-up (full list: HLD "As built"
+  section D; ROADMAP section 4):
+  - **AC-34 browser smoke NOT RUN** (Playwright missing); `test_browser_smoke.py` has never executed.
+  - Cross-epic rows **X1-X6 open until E-Ag7Pw3 (approvals) merges**; merge-order coordination with
+    E-Rc4Hk8 (result cache) and E-Ag7Pw3 for `ui/app.py`, `cli.py`, `service/*`, `xdg.py`,
+    `ui/files.py`, `ui/static`.
+  - Security residuals: `start_run` absolute `workflow_path`; local `X-Forwarded-For` claim under
+    `trusted_proxies=127.0.0.1`; account-lockout DoS and a shared throttle bucket behind an
+    unconfigured proxy; IPv6 `/64` rotation; phantom-eviction oracle; hard link vs the denied-path
+    check; stale-binary fail-open when auth is enabled only via `service.env`; per-session counter
+    concurrency; `dompurify` moderate advisory; TOTP seeds in clear.
+  - **OQ-11** (calendar basis): settled in practice on the agent-lane basis; manager confirmation
+    outstanding. **OQ-4** and **OQ-10** remain open follow-ups.
 
 ## Next actions
-1. manager: relay HLD §16 rows X1–X6 to the approval-gates epic (one `xdg.resolve_config_dir`
-   with the agreed defaults; its approvals-tree denial goes through `FileBrowser._is_denied`; one
-   `ui/static` rebuild after merging).
-2. manager: decide OQ-11 (calendar basis).
-3. manager: start Sprint 1:
-   - lane B: #0 T-kzEzwy first, then #2;
-   - then lanes A, C and Q: #1 and #4, #3 and #8 on a stub runtime, #5 and #22 (T-Hd4wQ2's
-     `scrub.py` part may start before #5);
-   - lane F in parallel: #17, then #16.
+1. manager: merge `ad/dashboard-auth-totp` into the target branch. The security gate (M4) is satisfied.
+   Sequence it with E-Rc4Hk8 and E-Ag7Pw3 (shared files above); after both epics are in, rebuild
+   `ui/static` once (`npm ci && npm run build`), never hand-merge hashed assets.
+2. manager: when E-Ag7Pw3 merges, re-verify X1-X6 and re-take the auth-off header snapshot
+   (`tests/auth/test_auth_off_regression.py`).
+3. someone with Chrome + Playwright: run AC-34 (`uv sync --extra browser`;
+   `pytest -q -m browser tests/auth/test_browser_smoke.py`), fix, and add the forced-enrollment/QR,
+   hub and Firefox/WebKit cases.
+4. developer: bump `dompurify` past 3.4.12 (moderate advisory GHSA-55q2-fjhq-7xh7).
+5. manager: confirm OQ-11 (agent-lane calendar basis) and decide OQ-4 (hub showing child auth state).
+6. Follow-up epics in priority order (ROADMAP section 3.1): the **hub-run handoff**, store-scoped
+   SSO, RBAC, API tokens, OIDC, fail-closed remote binds, hub child-auth state, at-rest seed
+   encryption, then the smaller items (permission re-check after startup, OS uid in CLI audit
+   events, client-rendered hub index with the proof).
+7. operator, after merge: `bash install.sh --force`, restart `ao.service`, verify with `ao auth status`.

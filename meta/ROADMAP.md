@@ -5,7 +5,7 @@
 > [`meta/tickets/`](tickets/), and design detail in [`docs-md/`](../docs-md/). Update the
 > status table when an epic closes; revisit the horizon sections roughly quarterly.
 >
-> Last reviewed: **2026-09-07**
+> Last reviewed: **2026-10-05** (authentication epic E-Da5Tn9 closed; other sections as of 2026-09-07)
 
 ---
 
@@ -35,10 +35,10 @@ ships a browser dashboard.
 | Cost/token accounting per task and per run | **Stable** | Cumulative across retries. |
 | Benchmark harness (`ao-bench`, S/M/L tiers, SWE-bench import) | **Stable** | See `docs-md/benchmarking-framework-hld.md`. |
 | Installable CLI (`ao`, `ao-bench`) | **Stable** | `install.sh`; snapshot-install semantics. |
-| **Browser dashboard (`ao ui`)** | **New** | Files, runs, stats, run control. Unauthenticated — §2. |
-| **Multi-workspace service (`ao service`)** | **New** | One supervisor daemon serves every registered workspace's dashboard on its own port; boot-resume for orphaned runs; installable as a user systemd unit. Unauthenticated, same posture as `ao ui` — §2. |
+| **Browser dashboard (`ao ui`)** | **New** | Files, runs, stats, run control. Opt-in login (local accounts + TOTP), off by default — §3.1. |
+| **Multi-workspace service (`ao service`)** | **New** | One supervisor daemon serves every registered workspace's dashboard on its own port; boot-resume for orphaned runs; installable as a user systemd unit. Hub and dashboards can require login (`ao service install --auth`); off by default — §3.1. |
 | **General instructions** | **New** | Workspace-scoped rules applied to every task. |
-| Authentication / multi-user | **Absent** | Deliberate for now — §2. |
+| Authentication / multi-user | **New, opt-in** | Local accounts + optional TOTP 2FA for `ao ui` and the `ao service` hub (E-Da5Tn9, ADR-0021). Per-realm sessions, no roles/SSO yet — §3.1. |
 | Cron / event triggers | **Designed, not built** | `Trigger` model exists; no daemon runs it yet. Service-owned scheduler designed (E-Sc9Rt4, ADR-0014) — §3.2. |
 
 ### Recently delivered
@@ -48,7 +48,8 @@ ships a browser dashboard.
 - **E-IasNXu — Parallel execution** (ADR-0007): opt-in wave/barrier scheduler.
 - **E-XyfjuZ — Monitoring & self-healing**: `Monitor` ABC, recommend-mode breakers.
 - **E-9h3m7k — Accurate usage metrics**: true per-task/run cost and token totals.
-- **E-Ui7Kq2 — Dashboard + general instructions** (this change): see §2.
+- **E-Ui7Kq2 — Dashboard + general instructions**: see §2.
+- **E-Da5Tn9 — Dashboard authentication** (2026-10-05, ADR-0021, `docs-md/dashboard-auth-hld.md`, user guide `docs-md/dashboard-authentication.md`): opt-in local accounts, scrypt passwords, optional TOTP + recovery codes, per-realm in-memory sessions with an API proof header, `ao auth` CLI, hub login page, file-browser denial of the credential stores.
 - **E-GIytcL — Multi-workspace service** (2026-08-28): `ao service` supervisor daemon (spawn/monitor/restart per-workspace dashboards, bounded auto-resume, hub, systemd install) — see §2a.
 - **E-Wk9Tz3 — Per-task git isolation** (2026-09-07, ADR-0013): worktree per task, squash+rebase integration behind a compare-and-swap, tiered conflict ladder, `ao hotspots`, `ao prune --worktrees-only` — see §2b.
 
@@ -79,7 +80,7 @@ chain.
 
 | Limitation | Consequence | Tracked in |
 |---|---|---|
-| No authentication | Server must stay on loopback; it can read files and spend money | §3 — Security & multi-user |
+| Authentication is opt-in (off by default) | With it off, the server must stay on loopback; it can read files and spend money. With it on: see §4 residuals | §3.1 |
 | Cancel only works for dashboard-launched runs | A run started from another terminal has no PID the dashboard owns | §3 — Run control |
 | No file editing in the browser | Read-only browsing | §3 — Editing |
 | Polling, not streaming | Up to a few seconds of staleness; no live transcript tail | §3 — Live updates |
@@ -102,7 +103,7 @@ workspace, one hand-written systemd unit per workspace" pattern:
 - Bounded, default-on boot-resume: a run left `running` by a reboot with a dead owning PID
   is auto-resumed once per boot, with a cross-boot cooldown and quarantine so a poisoned run
   cannot loop-resume.
-- A small hub (fixed port 8770, loopback-only, same unauthenticated posture as `ao ui`)
+- A small hub (fixed port 8770, loopback-only, same default posture as `ao ui` — login is opt-in, §3.1)
   listing every workspace, plus `GET /api/service/status`.
 - `ao service install [--print]` writes a **user** systemd unit
   (`Restart=on-failure`, `KillMode=process` — required so systemd's default control-group
@@ -159,10 +160,31 @@ Ordered by dependency, not by calendar. Each bullet is roughly epic-sized.
 
 ### 3.1 Security, secrets, and multi-user *(highest priority — gates everything hosted)*
 
-The dashboard is open by design today and the engine has no notion of a caller identity.
-Anything beyond single-user localhost needs:
+**Authentication has shipped (E-Da5Tn9, 2026-10-05, opt-in).** `ao ui` and the `ao service` hub
+can require login with local accounts (scrypt), optional TOTP and recovery codes, per-realm
+in-memory sessions bound to a proof header, and an `ao auth` CLI; see
+[`docs-md/dashboard-authentication.md`](../docs-md/dashboard-authentication.md) and
+[`docs-md/dashboard-auth-hld.md`](../docs-md/dashboard-auth-hld.md) (ADR-0021). It is **off by
+default**; the engine still has no notion of a caller beyond the dashboard's `Principal`.
+Follow-ups for hosted or multi-user use, **in priority order**:
 
-- **Authentication** for `ao ui` — token/session to start, pluggable providers later.
+1. **Hub-run handoff** — one login for the hub that carries to the dashboards it launches
+   (today: one login per realm).
+2. **Store-scoped SSO** — sessions shared through the store instead of per-process memory.
+3. **RBAC** on `Principal.roles` (always `[]` today: authenticated means full access).
+4. **API tokens** for scripts and CI (today a script must repeat the browser handshake).
+5. **OIDC / LDAP / trusted-header providers** behind the existing provider seam (OQ-10: needs
+   provider-contributed public routes and a proof handoff for redirect flows).
+6. **Fail-closed remote binds** — refuse a non-loopback bind without auth (today: deprecation notice).
+7. **Hub showing child auth state** (OQ-4), so a workspace config switching auth off is visible.
+8. **At-rest TOTP seed encryption** (seeds are in clear in `users.json`).
+9. Smaller follow-ups: re-check store permissions after startup; record the OS uid in CLI audit
+    events; a client-rendered hub index that carries the proof (closes the cookie-only hub index
+    residual); `dompurify` bump past 3.4.12 (moderate advisory); a `DashboardService.start_run`
+    path restriction; WebAuthn and native TLS flags. No cut-line item was dropped (HLD §24.1).
+
+Still open from the original security list:
+
 - **Configurable secrets** — a secrets backend behind an ABC (env / file / external store),
   so agent credentials stop riding on ambient environment variables.
 - **Authorization on triggers and run control** — who may start, cancel, or delete a run.
@@ -264,8 +286,19 @@ These are accepted trade-offs. They are recorded so they are chosen rather than 
   engine suppresses repository *hooks* but not git-attribute `filter`/`merge` drivers, so a repository
   with an expensive or untrusted driver configured should not be run under isolation. See
   `docs-md/task-isolation-hld.md` §25.
-- **Dashboard is unauthenticated.** Loopback-by-default plus a startup warning is the whole
-  mitigation. Addressed by §3.1.
+- **Dashboard authentication: accepted residual risks** (E-Da5Tn9 sign-off, HLD §6.3 A4/A6/A10
+  and "As built"). Login is opt-in, so with it off the old posture applies (loopback plus a
+  startup warning). With it on: authenticated = full access and same-user processes (including
+  agents) can read the credential store (A10, out of scope); a harvested cookie cannot call the
+  API but still renders the hub index and cookie tossing can force a logout (A4);
+  `DashboardService.start_run` still accepts an absolute `workflow_path` (the launcher can already
+  run arbitrary agent code); behind a reverse proxy without `AO_UI_AUTH_TRUSTED_PROXIES` all
+  remote users share one throttle bucket (account lockout can be used as a DoS), and with
+  `trusted_proxies=127.0.0.1` a local process can claim a client address via `X-Forwarded-For`;
+  IPv6 clients are throttled per `/64`; the lockout phantom table is a bounded eviction oracle;
+  a hard link bypasses the file-browser path denial; a stale global `ao` fails open when auth is
+  enabled only by `service.env`; per-session counters are not concurrency-exact; TOTP seeds are
+  in clear. Details and rationale: `docs-md/dashboard-auth-hld.md` "As built".
 - **Run-id attribution.** The dashboard learns a run's id by diffing the runs directory
   after launch. Concurrent launches in the same instant could mis-attribute; ids already
   claimed are excluded, which bounds but does not eliminate this. A `--run-id` flag on

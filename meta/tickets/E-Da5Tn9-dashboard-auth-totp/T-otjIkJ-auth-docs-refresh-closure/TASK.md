@@ -6,7 +6,7 @@
 - Owner: `developer` (docs, lane B) with `manager` sign-off
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done` (2026-10-05; AC-1 checklist in STATUS.md)
 - Estimate: `2 days` (v2: 1.5; +0.5 d for the v2.1 README items and the `ui/README.md` entry moved
   from T-vCgsU6; HLD §24.2) · Sprint `S3`
 

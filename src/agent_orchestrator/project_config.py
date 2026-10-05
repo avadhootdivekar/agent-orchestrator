@@ -84,7 +84,8 @@ class UIConfig(BaseModel):
 
     host: str | None = None
     """P1 bind host for this workspace's dashboard (e.g. `"0.0.0.0"` to expose on all
-    interfaces -- a deliberate, warned-about choice; the dashboard is unauthenticated).
+    interfaces -- a deliberate, warned-about choice; the dashboard is unauthenticated unless
+    `ui.auth` / `--auth` enables login).
     `None` defers to the service registry's `host` (P2), then the loopback default."""
 
 
@@ -447,6 +448,28 @@ _INIT_TEMPLATE = """\
 # templates:
 #   - workflows/epic-runner/template
 #   - my-templates/
+
+# --- Dashboard authentication (`ao ui` / `ao service run`; opt-in, default off) ---
+# Create accounts first with `ao auth add-user <name>`. Precedence: CLI (--auth, --auth-totp,
+# --auth-dir) > env (AO_UI_AUTH*, AO_AUTH_DIR) > this block > defaults. THIS FILE MAY ONLY
+# TIGHTEN (a cloned repository's config is untrusted input): a value that weakens a default is
+# refused at startup (exit 78), and `trusted_proxies` is env-only (AO_UI_AUTH_TRUSTED_PROXIES).
+# `enabled: false` here while accounts exist refuses to start; use --no-auth / AO_UI_AUTH=0 to
+# disable on purpose. A `totp:` below `required` that comes only from this file warns: pin the
+# policy with AO_UI_AUTH_TOTP / --auth-totp. See README "Dashboard authentication".
+# ui:
+#   auth:
+#     enabled: true                  # AO_UI_AUTH / --auth
+#     totp: optional                 # off | optional | required  (AO_UI_AUTH_TOTP / --auth-totp)
+#     session_idle_minutes: 30       # AO_UI_AUTH_IDLE_MINUTES      (may only be lowered here)
+#     session_absolute_hours: 12     # AO_UI_AUTH_ABSOLUTE_HOURS    (may only be lowered here)
+#     lockout_threshold: 5           # AO_UI_AUTH_LOCKOUT_THRESHOLD (may only be lowered here)
+#     lockout_base_seconds: 30       # AO_UI_AUTH_LOCKOUT_BASE_SECONDS (may only be raised here)
+#     lockout_max_seconds: 900       # AO_UI_AUTH_LOCKOUT_MAX_SECONDS  (may only be raised here)
+#     address_threshold: 20          # AO_UI_AUTH_ADDRESS_THRESHOLD (may only be lowered here)
+#     min_password_length: 12        # AO_UI_AUTH_MIN_PASSWORD_LENGTH (may only be raised here)
+#     totp_issuer: "ao@myhost"       # AO_UI_AUTH_TOTP_ISSUER (label shown in the authenticator app)
+#     store_dir: null                # AO_AUTH_DIR; default ~/.config/ao/auth (must exist, 0700)
 """
 
 

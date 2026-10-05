@@ -480,6 +480,14 @@ plus every browser tab polling it would otherwise repeat that work on every requ
 last_error}`, `conflicts` (from §6.2), `boot_resume` (recent decisions), `supervisor_pid`,
 `hub_port`, `uptime_seconds`.
 
+> **Hub authentication (E-Da5Tn9, 2026-10-05):** the hub and each child dashboard can require
+> login (`ao service run --auth`, `ao service install --auth`, or `AO_UI_AUTH=1` in
+> `service.env`); the hub is its own login realm with a static `/login` page, a child that exits
+> 78 (configuration error) is terminal, and `ao service list/status` print "login required" for
+> the live view. See [`dashboard-auth-hld.md`](dashboard-auth-hld.md) and
+> [`dashboard-authentication.md`](dashboard-authentication.md). The text below describes the
+> default (auth off).
+
 Same posture as `ao ui`: loopback-only bind, no authentication, a startup warning if bound
 elsewhere. This is enforced, not aspirational — the hub app **mounts**
 `ui.security.SecurityMiddleware` (`app.add_middleware(SecurityMiddleware, allowed_hosts=
@@ -543,8 +551,8 @@ on."
 
 ## 11. Non-goals (this epic)
 
-- Authentication on the hub or the per-workspace dashboards (same deferred posture as `ao
-  ui`, tracked in `meta/ROADMAP.md` §3.1).
+- Authentication on the hub or the per-workspace dashboards (deferred in this epic; delivered
+  later, opt-in, by E-Da5Tn9 -- see §8 and `dashboard-auth-hld.md`).
 - Write-conflict detection between workspaces sharing a filesystem location (out of scope;
   workspaces are assumed disjoint roots, same assumption as everywhere else in the project).
 - A Windows/macOS-launchd equivalent of the systemd unit.

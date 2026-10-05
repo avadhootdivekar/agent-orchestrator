@@ -96,3 +96,6 @@
 - `merge-base --is-ancestor` misses squash-merged branches — check `main..origin/main` for the squash commit instead. (By: agent, agent, 2026-09-28)
 - Never resolve a read path from an agent-writable record — it's a path-traversal risk. (By: agent, developer, 2026-09-28)
 - An `ao` workspace root may not itself be a git repo — check first. (By: agent, agent, 2026-09-28)
+- Cookies scope by host, not port: every local `ao` listener sees every other's cookie — name cookies per port and require a non-cookie proof header on API calls. (By: manager, agent, 2026-10-05)
+- Log-redaction filters must keep `record.args` shape (uvicorn's AccessFormatter unpacks a 5-tuple); never set `args=()`. (By: manager, agent, 2026-10-05)
+- Treat workspace `.ao/config.yaml` as attacker input for security settings (tighten-only; refuse silent disable; probe every candidate store); env-only enablement fails open on a stale `ao` — bake `--auth` into ExecStart. (By: manager, agent, 2026-10-05)

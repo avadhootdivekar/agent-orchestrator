@@ -6,9 +6,9 @@
 - Owner: `manager` (delivery) · design by `architect`
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Approved` (design package **v2.1, gates folded**: the five Phase-4 consultations and
-  both manager-run independent gates, design review and security review, are folded in with the
-  manager's final decisions, HLD §28.9; implementation has not started)
+- Status: `Done` (2026-10-05): 23/23 tasks Done (T-U2ERMo with one recorded NOT RUN, AC-34 browser
+  smoke); security gate signed off; docs refreshed to the as-built state (HLD "As built", ADR-0021
+  Accepted, README, user guide, ROADMAP). Not yet merged to `main`: see STATUS next actions.
 
 ## Summary
 - **Goal:** Add opt-in authentication to the dashboard (`ao ui`) and the multi-workspace hub
@@ -83,7 +83,7 @@
   - §24 sprint plan (v2.1 re-baseline, cut-lines);
   - §28 consultation record; **§28.9 the independent gates**.
 - **ADR (v2.1):** [`docs-md/adr/ADR-0021-dashboard-authentication-and-totp.md`](../../../docs-md/adr/ADR-0021-dashboard-authentication-and-totp.md)
-  (D1–D11, Proposed; becomes Accepted at T-otjIkJ).
+  (D1–D11, **Accepted 2026-10-05** with 10 as-built amendments, closed by T-otjIkJ).
 - **Identity contract for the approval-gates epic:** HLD §2.6. **Decided (OQ-8, owner, v2.1):**
   `roles: list[str] = field(default_factory=list, hash=False)`, with `user_id`, `realm`,
   `session_id`, `amr`, `auth_time` and `provider` added as keyword-only fields, so positional
@@ -154,15 +154,15 @@ planned relief). Every task is ≤ 3 days.
 | 10 | [x] `T-rpKCjP-auth-http-routes` | developer | **3 d** (v2.1; was 2.5) | #6, #8 | S2 | **Q** (v2.1; was A) |
 | 11 | [x] `T-KQ6ZrY-auth-routes-second-factor` (**new in v2**) | developer | 3 d | #7, #10 | S3 | C |
 | 12 | [x] `T-j9dfsw-ao-auth-cli` | developer | 3 d | #1, #2, #4, #5 | S2 | B |
-| 13 | [ ] `T-jVqH8w-ao-ui-auth-wiring` | developer | 3 d | #4, #6, #8, #10, #22; **merges only after #9 and #11** (v2.1) | S3 | B |
+| 13 | [x] `T-jVqH8w-ao-ui-auth-wiring` | developer | 3 d | #4, #6, #8, #10, #22; **merges only after #9 and #11** (v2.1) | S3 | B |
 | 14 | [x] `T-KOv2qD-hub-service-auth` | developer | **3 d** (v2.1; was 2.5) | #9 (v2.1), #10, #16 | S2→S3 | A |
-| 15 | [ ] `T-PDGw9p-service-cli-supervisor-auth` (**new in v2**) | developer | 2.5 d | #13, #14 | S3 | **A** (v2.1; was Q) |
+| 15 | [x] `T-PDGw9p-service-cli-supervisor-auth` (**new in v2**) | developer | 2.5 d | #13, #14 | S3 | **A** (v2.1; was Q) |
 | 16 | [x] `T-R7JhTL-hub-login-page` | developer (frontend) | **3 d** (v2.1; was 2.5) | HLD §2 contract; #17 for the contract test only | S1→S2 | F |
 | 17 | [x] `T-pQ73eO-spa-auth-gate-login` | developer (frontend) | 3 d | HLD §2 contract | S1 | F |
 | 18 | [x] `T-vCgsU6-spa-enroll-account-qr` | developer (frontend) | 3 d | #16 (v2.1), #17 | S2 | F |
-| 19 | [ ] `T-U2ERMo-auth-e2e-regression-sweep` | tester | **3 d** (v2.1; was 2.5) | #6–#18, #22 | S3 | Q |
-| 20 | [ ] `T-2wE08U-auth-security-review` | dev-security + reviewer | **2.5 d** (v2.1; was 2) | #19 (may overlap) | S3 | review |
-| 21 | [ ] `T-otjIkJ-auth-docs-refresh-closure` (**post-implementation docs refresh**) | developer / manager | **2 d** (v2.1; was 1.5) | #20 | S3 | B |
+| 19 | [x] `T-U2ERMo-auth-e2e-regression-sweep` | tester | **3 d** (v2.1; was 2.5) | #6–#18, #22 | S3 | Q |
+| 20 | [x] `T-2wE08U-auth-security-review` | dev-security + reviewer | **2.5 d** (v2.1; was 2) | #19 (may overlap) | S3 | review |
+| 21 | [x] `T-otjIkJ-auth-docs-refresh-closure` (**post-implementation docs refresh**) | developer / manager | **2 d** (v2.1; was 1.5) | #20 | S3 | B |
 | 22 | [x] `T-Hd4wQ2-auth-browse-denial-log-scrub` (**new in v2.1**) | developer | 2 d | #0; #2 (`paths.py`) | S1 | Q |
 
 Total: **23 tasks, 61 dev-days** (v2: 22 tasks, 55 dev-days).
@@ -225,8 +225,10 @@ Full lists are in HLD §25. The main risks:
 - Design doc: `docs-md/dashboard-auth-hld.md`
 - ADR: `docs-md/adr/ADR-0021-dashboard-authentication-and-totp.md`
 - Sprint plan: HLD §24
+- User guide: `docs-md/dashboard-authentication.md`
 - Output artifacts: `output/E-Da5Tn9-dashboard-auth-totp/` (opt-in browser-smoke screenshots from
-  T-U2ERMo; security-review report from T-2wE08U)
+  T-U2ERMo: none yet, AC-34 NOT RUN). The security review's findings, remediation and sign-off are
+  recorded in `T-2wE08U-auth-security-review/STATUS.md` (no separate report file was written).
 
 ## Comments
 - By: architect · Role: agent · Date: 2026-10-04 · Comment: Design package v1 created (HLD + LLD,
@@ -275,3 +277,8 @@ Full lists are in HLD §25. The main risks:
     plan re-baselined to 23 tasks, 61 dev-days, critical path ≈ 26 dev-days. New **OQ-11**
     (calendar basis) for the manager.
   - Epic status: `Draft` → `Approved` (gates passed).
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: **Epic closed (Done).** All 23 tasks are
+  Done and synchronized. Delivered scope, decisions, validation and follow-ups are in the completion
+  note in `T-otjIkJ-auth-docs-refresh-closure/STATUS.md`. HLD "As built" (deviations, accepted
+  residuals, OQ dispositions) governs over the design text. No cut-line was taken. One recorded gap:
+  AC-34 (real-browser smoke) NOT RUN, because Playwright is not installed on the build machine.
