@@ -2,11 +2,12 @@
 
 - ID: `T-2wE08U-auth-security-review`
 - Updated At: `2026-10-05`
-- State: `Draft`
+- State: `Done`
 - Owner: `dev-security` + `reviewer`
 - Scope: `MVP` · Sprint: `S3` · Estimate: `2.5 d`
 
 ## This update
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: **Security + design review gate closed.** dev-security audit (real `ao ui`/`ao service run` subprocess probes) and reviewer review ran on HEAD 12ea997: 0 CRITICAL, 2 HIGH (H1 config-store M3 bypass, H2 redaction vs uvicorn access log), 1 MAJOR (PermissionError escaping prepare_auth) and MEDIUM/LOW items; all must-fix and cheap should-fix items fixed with failing-first regression tests (commits 9e62b5a, 4464169, b894abd, be47773, b415f8f, 558632d, e99d687, 99eaac7, 2ab139c; see Remediation). dev-security re-audit on HEAD 3973acf verified every H/M finding fixed against real subprocesses; its new Low N1 was fixed in 2ab139c (full `pytest -q` after remediation: 7471 passed / 13 skipped). **SIGN-OFF: approved for merge to main** (dev-security, re-audit 2026-10-05); zero open CRITICAL/HIGH; accepted residuals are listed under Remediation and carried to T-otjIkJ.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
   Estimate 2 d → 2.5 d (HLD §24.2). Changes:
   - **Invariants S1–S30** (S27 cookie-only principal, S28 loopback definition, S29 config-only

@@ -6,7 +6,7 @@
 - Owner: `dev-security` (lead) + `reviewer`. Fixes are routed to the owning task's `developer`.
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `2.5 days` (v2: 2; +0.5 d to re-verify the §28.9 gate findings; HLD §24.2) · Sprint
   `S3`. It may overlap with T-U2ERMo. The sprint buffer and the cut-lines (HLD §24.1) absorb the
   fix-ups.
