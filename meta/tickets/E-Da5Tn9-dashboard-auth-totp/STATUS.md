@@ -2,10 +2,11 @@
 
 - ID: `E-Da5Tn9-dashboard-auth-totp`
 - Updated At: `2026-10-05`
-- State: `Approved` (design v2.1, gates folded and passed; implementation not started)
+- State: `In Progress` (design v2.1 approved; Sprint 1 implementation under way)
 - Owner: `manager`
 
 ## This update
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: Independent gates re-verified as NOT previously run (the v2 STATUS 'launched' note referred to the architect's v1 consultations); reviewer + dev-security gates run on v2 and folded into HLD §28.9 (commit 4d2aafd). Implementation started on branch ad/dashboard-auth-totp: Done so far T-kzEzwy (9446c9d), T-pQ73eO (50e0d39), T-R7JhTL (e996c4e), T-s6sJmB (1ce99bf), T-kwwJ82 (3e9e0db), T-8NQP8J (4837d48).
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: **Design package v2.1 (gates
   folded).** Both independent gates the manager ran on v2 are folded in with the manager's final
   decisions; dispositions are in HLD §28.9 (finding id, severity, disposition, where changed).
@@ -54,10 +55,10 @@
 
 | Task | State | Sprint | Notes |
 |---|---|---|---|
-| T-kzEzwy-auth-foundation | Draft | S1 | **new (v2)**; owns the root hermetic test fixture and `tests/auth/helpers/core.py`; start first |
-| T-s6sJmB-auth-crypto-primitives | Draft | S1 | v2.1: lands `totp.py`/`recovery.py` first (T-8NQP8J needs them) |
-| T-8NQP8J-auth-user-store | Draft | S1 | v2.1: approvals-compatible `xdg` signature; fd-based `fsutil`; denial helpers moved to T-Hd4wQ2 |
-| T-kwwJ82-auth-sessions-policy-principal | Draft | S1 | v2.1: `roles: list[str]` (OQ-8 decided); cookie-only navigation sets |
+| T-kzEzwy-auth-foundation | Done | S1 | **new (v2)**; owns the root hermetic test fixture and `tests/auth/helpers/core.py`; start first |
+| T-s6sJmB-auth-crypto-primitives | Done | S1 | v2.1: lands `totp.py`/`recovery.py` first (T-8NQP8J needs them) |
+| T-8NQP8J-auth-user-store | Done | S1 | v2.1: approvals-compatible `xdg` signature; fd-based `fsutil`; denial helpers moved to T-Hd4wQ2 |
+| T-kwwJ82-auth-sessions-policy-principal | Done | S1 | v2.1: `roles: list[str]` (OQ-8 decided); cookie-only navigation sets |
 | T-PlEROT-auth-settings-layering | Draft | S1 | v2.1: 3 d; `ConfigRisk` detection (security M3) |
 | T-CsT5gk-auth-throttle-audit-scrub | Draft | S1 | v2.1: HMAC name digests (L1); `scrub.py` moved to T-Hd4wQ2 |
 | T-Hd4wQ2-auth-browse-denial-log-scrub | Draft | S1 | **new (v2.1)**; generic `denied_paths` lands first (cross-epic X2); `scrub.py` |
@@ -71,14 +72,14 @@
 | T-jVqH8w-ao-ui-auth-wiring | Draft | S3 | v2.1: merges only after T-QJ1vyQ and T-KQ6ZrY; `ConfigRisk` enforcement |
 | T-KOv2qD-hub-service-auth | Draft | S2→S3 | v2.1: 3 d; `hub_routes.py`; hub cookie-only route |
 | T-PDGw9p-service-cli-supervisor-auth | Draft | S3 | **new (v2)**; v2.1: lane A |
-| T-R7JhTL-hub-login-page | Draft | S1→S2 | v2.1: 3 d; SPA↔hub contract test; owns `package.json` scripts and `tsconfig` |
-| T-pQ73eO-spa-auth-gate-login | Draft | S1 | v2.1: no longer commits `ui/static` |
+| T-R7JhTL-hub-login-page | Done | S1→S2 | v2.1: 3 d; SPA↔hub contract test; owns `package.json` scripts and `tsconfig` |
+| T-pQ73eO-spa-auth-gate-login | Done | S1 | v2.1: no longer commits `ui/static` |
 | T-vCgsU6-spa-enroll-account-qr | Draft | S2 | v2.1: the only `ui/static` committer; baseline check first |
 | T-U2ERMo-auth-e2e-regression-sweep | Draft | S3 | v2.1: 3 d (store-busy CLI test, informational p95) |
 | T-2wE08U-auth-security-review | Draft | S3 | v2.1: 2.5 d; re-verify §28.9; epic merges to `main` only after this |
 | T-otjIkJ-auth-docs-refresh-closure | Draft | S3 | Post-implementation docs refresh; v2.1: 2 d |
 
-Counts: 23 tasks · 0 Done · 0 In Progress · 0 Blocked · 23 Draft · 61.0 dev-days.
+Counts: 23 tasks · 6 Done · 0 In Progress · 0 Blocked · 17 Not started · 61.0 dev-days.
 
 ## Evidence
 - Empirical design evidence (HLD §25.4):

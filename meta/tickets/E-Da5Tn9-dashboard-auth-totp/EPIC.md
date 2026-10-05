@@ -141,10 +141,10 @@ planned relief). Every task is ≤ 3 days.
 
 | # | Task | Agent | Est | Depends on | Sprint | Lane |
 |---|---|---|---|---|---|---|
-| 0 | [ ] `T-kzEzwy-auth-foundation` (**new in v2**) | developer | 1 d | — | S1 | B |
-| 1 | [ ] `T-s6sJmB-auth-crypto-primitives` | developer | 2.5 d | #0 | S1 | A |
-| 2 | [ ] `T-8NQP8J-auth-user-store` | developer | 3 d | #0; #1 (late-binding, v2.1) | S1 | B |
-| 3 | [ ] `T-kwwJ82-auth-sessions-policy-principal` | developer | 2 d | #0 | S1 | C |
+| 0 | [x] `T-kzEzwy-auth-foundation` (**new in v2**) | developer | 1 d | — | S1 | B |
+| 1 | [x] `T-s6sJmB-auth-crypto-primitives` | developer | 2.5 d | #0 | S1 | A |
+| 2 | [x] `T-8NQP8J-auth-user-store` | developer | 3 d | #0; #1 (late-binding, v2.1) | S1 | B |
+| 3 | [x] `T-kwwJ82-auth-sessions-policy-principal` | developer | 2 d | #0 | S1 | C |
 | 4 | [ ] `T-PlEROT-auth-settings-layering` | developer | **3 d** (v2.1; was 2.5) | #0, #2 | S1 | A |
 | 5 | [ ] `T-CsT5gk-auth-throttle-audit-scrub` (v2.1: `scrub.py` moved to #22) | developer | 3 d | #0, #2 | S1 | Q |
 | 6 | [ ] `T-XchniS-auth-local-provider-runtime` | developer | 3 d | #1–#5 | S2 | A |
@@ -157,8 +157,8 @@ planned relief). Every task is ≤ 3 days.
 | 13 | [ ] `T-jVqH8w-ao-ui-auth-wiring` | developer | 3 d | #4, #6, #8, #10, #22; **merges only after #9 and #11** (v2.1) | S3 | B |
 | 14 | [ ] `T-KOv2qD-hub-service-auth` | developer | **3 d** (v2.1; was 2.5) | #9 (v2.1), #10, #16 | S2→S3 | A |
 | 15 | [ ] `T-PDGw9p-service-cli-supervisor-auth` (**new in v2**) | developer | 2.5 d | #13, #14 | S3 | **A** (v2.1; was Q) |
-| 16 | [ ] `T-R7JhTL-hub-login-page` | developer (frontend) | **3 d** (v2.1; was 2.5) | HLD §2 contract; #17 for the contract test only | S1→S2 | F |
-| 17 | [ ] `T-pQ73eO-spa-auth-gate-login` | developer (frontend) | 3 d | HLD §2 contract | S1 | F |
+| 16 | [x] `T-R7JhTL-hub-login-page` | developer (frontend) | **3 d** (v2.1; was 2.5) | HLD §2 contract; #17 for the contract test only | S1→S2 | F |
+| 17 | [x] `T-pQ73eO-spa-auth-gate-login` | developer (frontend) | 3 d | HLD §2 contract | S1 | F |
 | 18 | [ ] `T-vCgsU6-spa-enroll-account-qr` | developer (frontend) | 3 d | #16 (v2.1), #17 | S2 | F |
 | 19 | [ ] `T-U2ERMo-auth-e2e-regression-sweep` | tester | **3 d** (v2.1; was 2.5) | #6–#18, #22 | S3 | Q |
 | 20 | [ ] `T-2wE08U-auth-security-review` | dev-security + reviewer | **2.5 d** (v2.1; was 2) | #19 (may overlap) | S3 | review |
