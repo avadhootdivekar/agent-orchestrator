@@ -50,3 +50,4 @@
   agree.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b carry-over: the dashboard deny-list for `.orchestrator/cache` (rev S-5 / sec S-4) is a hard G2 exit item; the cache must not be merged to main switchable on before it lands. See `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Done (commits `faf8f57`, `4e61e68`). The G1b hard G2 exit item (dashboard deny-list for `.orchestrator/cache`) is delivered. Rollup, `EPIC.md`, `TASK.md` and `HANDOFF.md` updated to match.
+By: developer · Role: developer · Date: 2026-10-05 · Comment: G2 remediation: the `ui/files.py` cache deny-list compares casefolded path parts and a NUL byte in a path is a 403 instead of a 500 (rev G2-S2 / sec G2-N2); backend only, no bundle rebuild; tests in `tests/ui/test_result_cache_ui.py`. Task state unchanged. See `T-fXWbqg-cache-review-gates/STATUS.md` (G2 remediation).
