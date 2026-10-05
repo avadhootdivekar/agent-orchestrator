@@ -26,6 +26,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
 
+# `agent_orchestrator.cache` is an import-free package marker; `.constants` is a leaf (only `re`).
+from agent_orchestrator.cache.constants import CACHE_DIR_PARTS
+
 # Cap on bytes returned for a single file view. A code/log browser needs enough to be
 # useful but must never stream an unbounded file into memory; larger files are returned
 # truncated with `truncated=True` so the UI can say so honestly.
@@ -199,6 +202,12 @@ class FileBrowser:
 
         if resolved != root_path and root_path not in resolved.parents:
             raise PathNotAllowedError(f"path escapes root {root.name!r}: {rel_path}")
+
+        # E-Rc4Hk8 M-10: the result-cache store (blobs + entries) is never browsable. Compared
+        # after resolve(), so `..` and symlinks into it are refused too.
+        cache_root = (root_path.joinpath(*CACHE_DIR_PARTS)).resolve()
+        if resolved == cache_root or cache_root in resolved.parents:
+            raise PathNotAllowedError(f"the result cache is not browsable: {rel_path}")
 
         return root, resolved
 
