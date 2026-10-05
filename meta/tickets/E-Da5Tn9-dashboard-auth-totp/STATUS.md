@@ -59,27 +59,27 @@
 | T-s6sJmB-auth-crypto-primitives | Done | S1 | v2.1: lands `totp.py`/`recovery.py` first (T-8NQP8J needs them) |
 | T-8NQP8J-auth-user-store | Done | S1 | v2.1: approvals-compatible `xdg` signature; fd-based `fsutil`; denial helpers moved to T-Hd4wQ2 |
 | T-kwwJ82-auth-sessions-policy-principal | Done | S1 | v2.1: `roles: list[str]` (OQ-8 decided); cookie-only navigation sets |
-| T-PlEROT-auth-settings-layering | Draft | S1 | v2.1: 3 d; `ConfigRisk` detection (security M3) |
-| T-CsT5gk-auth-throttle-audit-scrub | Draft | S1 | v2.1: HMAC name digests (L1); `scrub.py` moved to T-Hd4wQ2 |
-| T-Hd4wQ2-auth-browse-denial-log-scrub | Draft | S1 | **new (v2.1)**; generic `denied_paths` lands first (cross-epic X2); `scrub.py` |
-| T-XchniS-auth-local-provider-runtime | Draft | S2 | v2.1: keyed phantom digests; parent-dir warnings |
-| T-yfrfxv-auth-provider-second-factor | Draft | S2 | **new (v2)**, split from T-XchniS |
-| T-G7qByZ-auth-middleware-app-integration | Draft | S1→S2 | Start in S1 on a stub runtime (critical path); v2.1: proof-gated principal/sliding |
-| T-QJ1vyQ-auth-csrf-fetch-metadata | Draft | S2 | **new (v2)**; v2.1: 2.5 d, lane C, AC-44 enumeration; merge edge to T-jVqH8w |
-| T-rpKCjP-auth-http-routes | Draft | S2 | v2.1: 3 d, lane Q; `client_info` (M2); creates the `routes_second_factor.py` stub |
-| T-KQ6ZrY-auth-routes-second-factor | Draft | S3 | **new (v2)**; v2.1: owns `routes_second_factor.py`; merge edge to T-jVqH8w (co-critical) |
-| T-j9dfsw-ao-auth-cli | Draft | S2 | v2.1: config-sourced `store_dir` rule (M6); status flags |
+| T-PlEROT-auth-settings-layering | Done | S1 | v2.1: 3 d; `ConfigRisk` detection (security M3) |
+| T-CsT5gk-auth-throttle-audit-scrub | Done | S1 | v2.1: HMAC name digests (L1); `scrub.py` moved to T-Hd4wQ2 |
+| T-Hd4wQ2-auth-browse-denial-log-scrub | Done | S1 | **new (v2.1)**; generic `denied_paths` lands first (cross-epic X2); `scrub.py` |
+| T-XchniS-auth-local-provider-runtime | Done | S2 | v2.1: keyed phantom digests; parent-dir warnings |
+| T-yfrfxv-auth-provider-second-factor | Done | S2 | **new (v2)**, split from T-XchniS |
+| T-G7qByZ-auth-middleware-app-integration | Done | S1→S2 | Start in S1 on a stub runtime (critical path); v2.1: proof-gated principal/sliding |
+| T-QJ1vyQ-auth-csrf-fetch-metadata | Done | S2 | **new (v2)**; v2.1: 2.5 d, lane C, AC-44 enumeration; merge edge to T-jVqH8w |
+| T-rpKCjP-auth-http-routes | Done | S2 | v2.1: 3 d, lane Q; `client_info` (M2); creates the `routes_second_factor.py` stub |
+| T-KQ6ZrY-auth-routes-second-factor | Done | S3 | **new (v2)**; v2.1: owns `routes_second_factor.py`; merge edge to T-jVqH8w (co-critical) |
+| T-j9dfsw-ao-auth-cli | Done | S2 | v2.1: config-sourced `store_dir` rule (M6); status flags |
 | T-jVqH8w-ao-ui-auth-wiring | Draft | S3 | v2.1: merges only after T-QJ1vyQ and T-KQ6ZrY; `ConfigRisk` enforcement |
-| T-KOv2qD-hub-service-auth | Draft | S2→S3 | v2.1: 3 d; `hub_routes.py`; hub cookie-only route |
+| T-KOv2qD-hub-service-auth | Done | S2→S3 | v2.1: 3 d; `hub_routes.py`; hub cookie-only route |
 | T-PDGw9p-service-cli-supervisor-auth | Draft | S3 | **new (v2)**; v2.1: lane A |
 | T-R7JhTL-hub-login-page | Done | S1→S2 | v2.1: 3 d; SPA↔hub contract test; owns `package.json` scripts and `tsconfig` |
 | T-pQ73eO-spa-auth-gate-login | Done | S1 | v2.1: no longer commits `ui/static` |
-| T-vCgsU6-spa-enroll-account-qr | Draft | S2 | v2.1: the only `ui/static` committer; baseline check first |
+| T-vCgsU6-spa-enroll-account-qr | Done | S2 | v2.1: the only `ui/static` committer; baseline check first |
 | T-U2ERMo-auth-e2e-regression-sweep | Draft | S3 | v2.1: 3 d (store-busy CLI test, informational p95) |
 | T-2wE08U-auth-security-review | Draft | S3 | v2.1: 2.5 d; re-verify §28.9; epic merges to `main` only after this |
 | T-otjIkJ-auth-docs-refresh-closure | Draft | S3 | Post-implementation docs refresh; v2.1: 2 d |
 
-Counts: 23 tasks · 6 Done · 0 In Progress · 0 Blocked · 17 Not started · 61.0 dev-days.
+Counts: 23 tasks · 18 Done · 0 In Progress · 0 Blocked · 5 Not started · 61.0 dev-days.
 
 ## Evidence
 - Empirical design evidence (HLD §25.4):
