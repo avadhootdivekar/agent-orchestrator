@@ -140,6 +140,17 @@ def test_an_invalid_content_length_falls_back_to_counting_the_stream() -> None:
     assert run_async(replay())["body"] == b"hello"
 
 
+@pytest.mark.parametrize("raw", [b"\xb2", b"\xb9\xb3"], ids=["superscript-2", "superscript-1-3"])
+def test_a_unicode_digit_content_length_is_not_a_crash(raw: bytes) -> None:
+    """T-2wE08U: ``"²".isdigit()`` is True but ``int("²")`` raises; it must count the stream."""
+    scope = _scope()
+    scope["headers"] = [(b"content-length", raw)]  # latin-1 bytes decode to a non-ASCII digit
+    receive = _receive_of([_body(b"hello", False)])
+    replay, error = run_async(_cap_auth_body(scope, receive, ECHO_PATH))
+    assert error is None
+    assert run_async(replay())["body"] == b"hello"
+
+
 def test_a_disconnect_while_buffering_is_passed_on() -> None:
     receive = _receive_of([_body(b"ab", True), {"type": "http.disconnect"}])
     replay, error = run_async(_cap_auth_body(_scope(), receive, ECHO_PATH))

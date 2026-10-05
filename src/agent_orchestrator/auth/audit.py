@@ -305,8 +305,10 @@ class AuditLog:
 class NullAuditLog(AuditLog):
     """Discards every event (tests, explicit opt-out)."""
 
-    def __init__(self) -> None:  # no paths: nothing is ever written
-        pass
+    def __init__(self) -> None:
+        # Nothing is ever written; the base initializer runs with inert paths so every attribute
+        # (counters, guard) exists should a base method ever be called.
+        super().__init__(StorePaths.at(Path(os.devnull), Path(os.devnull)))
 
     def record(self, event: AuditEvent) -> None:
         return None

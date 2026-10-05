@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -388,6 +389,20 @@ def test_a_failing_downgrade_audit_still_starts(
     write_ws_config(lenv.workspace, auth_block("enabled: true", "totp: optional"))
     monkeypatch.setattr(AuditLog, "record", boom)
     assert prepare(lenv, cli=AuthCliOverrides()).runtime is not None
+
+
+def test_a_failing_startup_audit_is_logged_at_warning(
+    lenv: LaunchEnv, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """T-2wE08U: a lost security audit event must be visible at the default log level."""
+    write_ws_config(lenv.workspace, auth_block("enabled: false"))
+    monkeypatch.setattr(AuditLog, "record", boom)
+    with caplog.at_level(logging.WARNING, logger=launch_mod.__name__):
+        with pytest.raises(AuthConfigError):
+            prepare(lenv, cli=AuthCliOverrides())
+    assert [r.levelno for r in caplog.records if "audit event" in r.getMessage()] == [
+        logging.WARNING
+    ]
 
 
 def test_a_pinned_totp_policy_records_no_risk(lenv: LaunchEnv) -> None:

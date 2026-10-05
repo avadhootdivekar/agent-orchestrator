@@ -220,7 +220,7 @@ async def _cap_auth_body(
     if scope["method"] not in MUTATING_METHODS or not rpath.startswith(AUTH_API_PREFIX + "/"):
         return receive, None
     declared = Headers(scope=scope).get("content-length")
-    if declared is not None and declared.strip().isdigit():
+    if declared is not None and declared.strip().isascii() and declared.strip().isdigit():
         if int(declared) > MAX_AUTH_BODY_BYTES:
             return receive, AuthError(ErrorCode.BODY_TOO_LARGE)
     chunks: list[bytes] = []

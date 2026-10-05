@@ -32,7 +32,7 @@ from typing import Any
 import typer
 
 from ..auth.model import TotpPolicy
-from ..errors import EXIT_CONFIG
+from ..errors import EXIT_CONFIG, OrchestratorError
 from ..ui.runs import RunRepository
 from .boot_resume import BOOT_RESUME_FILENAME
 from .paths import default_state_dir
@@ -82,7 +82,7 @@ HUB_AUTH_NOTE = (
 )
 
 
-class HubLoginRequired(Exception):
+class HubLoginRequired(OrchestratorError):
     """The hub answered the status probe with 401: it is up, with dashboard authentication
     on. Carries only the port (no secret content); `list`/`status` fall back to the
     persisted state files."""

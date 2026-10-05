@@ -56,6 +56,12 @@ def test_a_401_raises_hub_login_required_with_the_port(monkeypatch: pytest.Monke
     assert excinfo.value.hub_port == PORT
 
 
+def test_hub_login_required_is_an_orchestrator_error() -> None:
+    from agent_orchestrator.errors import OrchestratorError
+
+    assert issubclass(HubLoginRequired, OrchestratorError)
+
+
 @pytest.mark.parametrize(
     "exc",
     [

@@ -206,13 +206,13 @@ def _audit(
     name: AuditEventName,
     outcome: AuditOutcome,
 ) -> None:
-    """Best-effort startup audit event: any failure is swallowed and logged at DEBUG."""
+    """Best-effort startup audit event: any failure is swallowed and logged at WARNING."""
     try:
         AuditLog.for_state_dir(settings.state_dir, clock=clock).record(
             AuditEvent(name, outcome, realm=realm.id, details={"reason": _REASONS[name]})
         )
     except Exception:  # noqa: BLE001 - informational; must never replace the real error
-        _log.debug("could not write the %s audit event", name, exc_info=True)
+        _log.warning("could not write the %s audit event", name, exc_info=True)
 
 
 _REASONS: Mapping[AuditEventName, str] = {

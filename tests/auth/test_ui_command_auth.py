@@ -18,9 +18,13 @@ from typer.testing import CliRunner
 
 from agent_orchestrator.auth.errors import AuthConfigError
 from agent_orchestrator.auth.runtime import runtime_of
-from agent_orchestrator.cli import app
+from agent_orchestrator.cli import UI_DEFAULT_HOST, UI_DEFAULT_PORT, app
 from agent_orchestrator.errors import EXIT_CONFIG
-from agent_orchestrator.ui.app import create_app_from_env
+from agent_orchestrator.ui.app import (
+    FACTORY_DEFAULT_HOST,
+    FACTORY_DEFAULT_PORT,
+    create_app_from_env,
+)
 from tests.auth.helpers.launch import (
     LaunchEnv,
     RecordingUvicorn,
@@ -433,3 +437,8 @@ def test_the_config_env_block_cannot_disable_auth(
     result = ui(lenv, "--auth-dir", str(lenv.store_dir))
     assert result.exit_code == 0, result.output
     assert runtime_of(serving_app(fake_uvicorn)) is not None
+
+
+def test_the_factory_defaults_mirror_the_cli_defaults() -> None:
+    """``ui/app.py`` cannot import ``cli``; this pins the mirrored constants (T-2wE08U)."""
+    assert (FACTORY_DEFAULT_HOST, FACTORY_DEFAULT_PORT) == (UI_DEFAULT_HOST, UI_DEFAULT_PORT)

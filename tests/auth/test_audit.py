@@ -148,6 +148,10 @@ class TestLines:
         null.flush_suppressed()
         assert list(tmp_path.iterdir()) == []
 
+    def test_null_audit_log_runs_the_base_initializer(self) -> None:
+        null = NullAuditLog()
+        assert null._max_bytes > 0 and null._count == 0  # base attributes exist
+
 
 # ---------------------------------------------------------------------------
 # Validation (AC 9)
