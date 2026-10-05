@@ -474,7 +474,7 @@ class LookupRequest:
     workflow: WorkflowSpec
     agents: Mapping[str, AgentSpec]
     run_id: str
-    injected: bool  # state.tasks[tid].origin == "injected"
+    injected: bool  # True for an emit_tasks-injected task (TaskRunState origin "injected")
     integration_active: bool  # state.integration.active
     artifact_store: ArtifactStore  # the engine's self._store
     general_instruction_paths: tuple[str, ...]
