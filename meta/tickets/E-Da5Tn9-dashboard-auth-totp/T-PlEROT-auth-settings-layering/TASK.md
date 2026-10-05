@@ -6,7 +6,7 @@
 - Owner: `developer` (lane A)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `3 days` · Sprint `S1` (v2.1: was 2.5 d; +0.5 d for the `ConfigRisk` detection)
 
 ## Requirements Mapping
