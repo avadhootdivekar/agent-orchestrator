@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
 
+from ..auth.paths import entry_is_denied, is_within
+
 # Cap on bytes returned for a single file view. A code/log browser needs enough to be
 # useful but must never stream an unbounded file into memory; larger files are returned
 # truncated with `truncated=True` so the UI can say so honestly.
@@ -151,9 +153,13 @@ class FileBrowser:
         roots: Browsable roots. The first is treated as the default when a request names
             no root. Roots whose directory does not exist are kept (so the UI can show why
             a configured root is unavailable) but always list as empty.
+        denied_paths: Paths (files or directories) that are never browsable even though they
+            lie inside a root: they are refused by :meth:`resolve` and omitted from listings.
+            Generic and epic-neutral; see :meth:`_is_denied`.
     """
 
     roots: list[Root] = field(default_factory=list)
+    denied_paths: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         # Resolve once, up front: every later comparison is then a cheap prefix check
@@ -161,6 +167,7 @@ class FileBrowser:
         self.roots = [
             Root(name=r.name, path=str(Path(r.path).resolve()), role=r.role) for r in self.roots
         ]
+        self._denied: list[Path] = [Path(p).resolve() for p in self.denied_paths]
 
     def _root_by_name(self, name: str | None) -> Root:
         if not self.roots:
@@ -171,6 +178,16 @@ class FileBrowser:
             if r.name == name:
                 return r
         raise PathNotAllowedError(f"unknown root: {name}")
+
+    def _is_denied(self, resolved: Path) -> bool:
+        """Whether the already-resolved *resolved* lies within a denied path.
+
+        This is the ONE deny check of the file browser (cross-epic ledger row X2). Any other
+        epic that must hide a path (for example the approvals tree under
+        ``.orchestrator/runs/<id>/approvals/``) adds its predicate **here**, never as a second
+        independent check elsewhere. Denied paths that do not exist yet are still denied.
+        """
+        return any(is_within(resolved, d) for d in self._denied)
 
     def resolve(self, root_name: str | None, rel_path: str) -> tuple[Root, Path]:
         """Resolve *rel_path* within *root_name* and prove it stays inside that root.
@@ -200,6 +217,10 @@ class FileBrowser:
         if resolved != root_path and root_path not in resolved.parents:
             raise PathNotAllowedError(f"path escapes root {root.name!r}: {rel_path}")
 
+        if self._is_denied(resolved):
+            # Deliberately generic: the message never says why (or which feature) denies it.
+            raise PathNotAllowedError(f"path is not browsable: {rel_path}")
+
         return root, resolved
 
     def relative(self, root: Root, path: Path) -> str:
@@ -214,7 +235,7 @@ class FileBrowser:
         file explorer is expected to have.
 
         Raises:
-            PathNotAllowedError: If the path escapes the root.
+            PathNotAllowedError: If the path escapes the root or is denied.
             PathNotFoundError: If the path does not exist or is not a directory.
         """
         root, resolved = self.resolve(root_name, rel_path)
@@ -226,6 +247,8 @@ class FileBrowser:
         entries: list[DirEntry] = []
         with os.scandir(resolved) as it:
             for dirent in it:
+                if entry_is_denied(resolved, dirent, self._denied):
+                    continue
                 entries.append(self._entry(root, Path(dirent.path), dirent))
 
         entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))

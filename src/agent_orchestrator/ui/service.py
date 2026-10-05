@@ -23,6 +23,7 @@ from pathlib import Path
 
 import yaml
 
+from ..auth.paths import default_denied_paths
 from ..config import load_agents, load_reposets
 from ..errors import OrchestratorError
 from ..feedback import (
@@ -250,6 +251,8 @@ class DashboardService:
         config_path: Path the config was loaded from, for display.
         search_roots: Directories scanned for workflow specs. Defaults to *workspace_root*.
         clock: Time source for launch-age filtering. Defaults to the wall clock.
+        denied_paths: Paths the default file browser never exposes. ``None`` (the default)
+            uses ``auth.paths.default_denied_paths()``; ignored when *browser* is given.
     """
 
     def __init__(
@@ -262,11 +265,18 @@ class DashboardService:
         config_path: str | None = None,
         search_roots: list[str] | None = None,
         clock: Callable[[], datetime] | None = None,
+        denied_paths: list[str] | None = None,
     ) -> None:
         self._clock_now: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
         self.workspace_root = str(Path(workspace_root).resolve())
         self._browser = browser or FileBrowser(
-            roots=[Root(name="workspace", path=self.workspace_root, role="workspace")]
+            roots=[Root(name="workspace", path=self.workspace_root, role="workspace")],
+            # Never browsable: the auth store/state dirs and service.env (E-Da5Tn9 NFR-1).
+            denied_paths=(
+                denied_paths
+                if denied_paths is not None
+                else [str(p) for p in default_denied_paths()]
+            ),
         )
         self._repo = repository or RunRepository(self.workspace_root)
         self._survival_sem = threading.BoundedSemaphore(MAX_CONCURRENT_SURVIVAL)

@@ -6,7 +6,7 @@
 - Owner: `developer` (lane Q)
 - Created: `2026-10-05`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `2 days` · Sprint `S1`
 
 **Origin (v2.1, HLD §24 and §28.9):** created when the independent gates were folded in. The gate
