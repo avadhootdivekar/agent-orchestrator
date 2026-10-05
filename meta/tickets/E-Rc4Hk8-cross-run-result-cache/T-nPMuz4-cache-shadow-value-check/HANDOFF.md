@@ -1,7 +1,7 @@
 # HANDOFF: T-nPMuz4-cache-shadow-value-check
 
 - Task: `T-nPMuz4-cache-shadow-value-check` (G0 protocol and tooling hand-off)
-- State: `In Review (handoff available; manager sign-off pending)`
+- State: `Done`
 - From: `tester` (+ `manager` sign-off)
 - To: T-bdQZW4 (links the protocol); the parent or operator (executes G0 after the merge)
 

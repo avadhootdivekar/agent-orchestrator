@@ -7,7 +7,7 @@
 - Owner: `tester` (+ `manager` sign-off)
 - Created: `2026-10-05`
 - Last Updated: `2026-10-05` (implemented)
-- Status: `In Review` (implemented; manager sign-off pending, AC-6)
+- Status: `Done`
 - Estimate: `6 focus hours (0.75 day)` · surfaces (after T-o95l1M)
 
 ## Requirements Mapping

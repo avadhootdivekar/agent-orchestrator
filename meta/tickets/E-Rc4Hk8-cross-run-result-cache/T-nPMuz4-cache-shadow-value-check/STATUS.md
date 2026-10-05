@@ -2,7 +2,7 @@
 
 - ID: `T-nPMuz4-cache-shadow-value-check`
 - Updated At: `2026-10-05`
-- State: `In Review` (manager sign-off pending)
+- State: `Done`
 - Owner: `tester` (+ `manager` sign-off)
 
 ## This update
@@ -42,4 +42,4 @@
   (surfaces, after T-o95l1M); this file, `TASK.md`, `HANDOFF.md` (when present) and the epic `STATUS.md` rollup
   agree.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Implemented (commit `edc3c18`); State -> In Review, awaiting the manager sign-off (AC-6). G0 itself is not run (post-merge, parent/operator). Evidence: `output/E-Rc4Hk8-cross-run-result-cache/g0-protocol-smoke.md`.
-- By: manager · Role: manager · Date: PENDING · Comment: PENDING sign-off (AC-6); to be written by the manager.
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: AC-6 sign-off. Reviewed the protocol doc (post-merge/operator-owned opening, no claim G0 ran), the smoke evidence (run 2 lookups=2, would_hits=2) and the guard test. G0 execution remains a post-merge follow-up. State -> Done.

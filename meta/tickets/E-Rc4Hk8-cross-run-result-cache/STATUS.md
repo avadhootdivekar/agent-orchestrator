@@ -55,14 +55,14 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-eyn5UG-cache-reporting | engine set | Dev B | 18 h | Done |
 | T-o95l1M-cache-cli-wiring | engine set | Dev B | 8 h | Done |
 | T-ZTxN1x-bench-cache-force-off | engine set | Dev B | 4 h | Done |
-| T-nPMuz4-cache-shadow-value-check | surfaces | Tester (+ manager) | 6 h | In Review (manager sign-off pending) |
+| T-nPMuz4-cache-shadow-value-check | surfaces | Tester (+ manager) | 6 h | Done |
 | T-6tRKml-cache-cli-commands | surfaces | Dev C | 17 h | Done |
 | T-bLpoze-cache-dashboard-surface | surfaces | Dev C | 10 h | Draft |
 | T-JCOAsq-cache-test-hardening | Part 1 before T-XpF1pF; Parts 2–3 hardening | Tester | 24 h | In Progress (Part 1 done) |
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
 | T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
 
-**Counts:** 20 tasks: 3 Draft, 1 In Progress (T-JCOAsq, Part 1 done), 1 In Review (T-nPMuz4), 0 Blocked, 15 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 3 Draft, 1 In Progress (T-JCOAsq, Part 1 done), 0 In Review, 0 Blocked, 16 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
