@@ -5,9 +5,9 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `tester`
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3, Part 2 done)
-- Status: `In Progress` (Parts 1 and 2 complete)
-- Estimate: `24 focus hours (3 days)`: Part 1 6 h ✓ / Part 2 10 h / Part 3 8 h
+- Last Updated: `2026-10-05` (Rev 3, Part 3 done)
+- Status: `Done` (Parts 1, 2 and 3 complete; every acceptance criterion passes)
+- Estimate: `24 focus hours (3 days)`: Part 1 6 h ✓ / Part 2 10 h ✓ / Part 3 8 h ✓
 
 ## Requirements Mapping
 - Requirement IDs: NFR-1, NFR-5, NFR-9, NFR-10, NFR-11, FR-1, FR-2, FR-5, FR-6, FR-8, FR-10, FR-16
@@ -52,7 +52,8 @@ It is a prerequisite of T-XpF1pF and may run at any point before it.
 ### Part 3 — end to end, coverage gate, full suite (8 h). Depends on Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze.
 - **E-1…E-6** (HLD §18.1). E-1 includes the companion negative (cache off → 2 dispatches). E-2
   includes a subprocess module check: loaded cache modules ⊆ {`cache`, `cache.constants`,
-  `cache.settings`}.
+  `cache.settings`, `cache.cli`} (`cache.cli` added by the manager decision: the CLI registers
+  the `ao cache` group eagerly; recorded in `HANDOFF.md`).
 - **CI step.** Add one additive step to `.github/workflows/ci.yml`, exactly as in HLD §18
   ("Result cache tests + coverage (E-Rc4Hk8)"): `--cov=agent_orchestrator.cache
   --cov-fail-under=85`, then `coverage report --include=... --fail-under=90` for `keys`, `store`,
@@ -144,3 +145,4 @@ HLD §18.1 catalogue rows owned by T-JCOAsq; §8.7.5 I-1/I-2 definitions; §18 C
   scope extended to the `_noop_*.py` helper modules. Status stays `In Progress` until Part 3;
   details in `STATUS.md` and `HANDOFF.md`.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 2 delivered (commit `4d11a69`): 147 tests (I-5b, I-9..I-17, I-19, I-20, I-23, I-25, I-26, ADV-1..ADV-10, ADV-4b). File scope extended by the helper module `_hardening_rig.py`. Status stays `In Progress` until Part 3; details in `STATUS.md` and `HANDOFF.md`.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 3 done and the task is `Done` (commits `b7489d1` tests, `a947986` CI step, then the docs commit). `tests/test_e2e_cli_result_cache.py` holds E-1..E-6 (55 tests, through `CliRunner`); the CI step "Result cache tests + coverage (E-Rc4Hk8)" is in `.github/workflows/ci.yml`; coverage 98.71% for the package and 100/96/97/100% for keys/store/restore/coordinator; full suite 6805 passed, 10 skipped, 0 failed. E-2's module allow-list includes `cache.cli` (manager decision, recorded in `HANDOFF.md`). The Part 3 run found that a Part 2 tripwire broke under `--cov`; fixed in the test (no production change). Acceptance criteria 1-5 are checked in `STATUS.md`; the HLD 24.2 merge-notes table is in `HANDOFF.md`.

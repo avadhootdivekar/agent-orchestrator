@@ -1,9 +1,77 @@
 # HANDOFF: T-JCOAsq-cache-test-hardening
 
 - Task: `T-JCOAsq-cache-test-hardening`
-- State: `In Progress` (Parts 1 and 2 done; Part 3 pending)
+- State: `Done` (Parts 1, 2 and 3 done)
 - From: `tester`
-- To: T-XpF1pF (Part 1 is its prerequisite), T-fXWbqg (gate evidence), T-bdQZW4, the parent
+- To: T-XpF1pF (Part 1 is its prerequisite), T-fXWbqg (gate evidence, G2), T-bdQZW4, the parent
+
+## Part 3 summary (2026-10-05, commits `b7489d1` tests, `a947986` CI step)
+
+Expected: `.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_e2e_cli_result_cache.py` -> `55 passed`.
+The CI step, run as in `ci.yml` (venv on `PATH`): `1620 passed`, package coverage 98.71%, `keys` 100%,
+`store` 96%, `restore` 97%, `coordinator` 100%. Full suite: `6805 passed, 10 skipped`.
+
+### Test ids -> tests (all in `tests/test_e2e_cli_result_cache.py`, through `CliRunner`)
+| Id | Class | Notes |
+|----|-------|-------|
+| E-1 | `TestE1SecondRunIsAllHits` | second run 0 dispatches, restored bytes, summary line, `status.json`, `report-usage`; companion negative (cache off: 2 dispatches on the second run); prior-output control |
+| E-2 | `TestE2PlainRun` | no trace of the cache; stdout and `status.json` equal the I-2 goldens (serial, parallel) in a subprocess whose loaded cache modules are a subset of the allow-list; positive control (`--cache` loads coordinator/store/keys) |
+| E-3 | `TestE3NoCacheWins` | `--no-cache` beats env and config (5), positive controls (2) |
+| E-4 | `TestE4PrecedenceMatrix` | 33 literal rows + a guard that every mode, source and the `refresh`/`maybe` warnings are covered |
+| E-5 | `TestE5DoubleOptIn` | no task opts in; `defaults.cache: false` + one `true`; task `false` beats defaults `true` |
+| E-6 | `TestE6Resume` | `ao resume --cache` serves the failed task from the cache; `--no-cache` re-dispatches it; a restored task is not re-dispatched |
+Owned elsewhere (not duplicated): E-7 `tests/test_e2e_cli_result_cache_admin.py` (T-6tRKml); E-8
+`tests/bench/test_bench_cache_forced_off.py` (T-ZTxN1x); E-9/E-10/E-11 and U-LZ2
+`tests/cache/test_cli_result_cache_wiring.py` (T-o95l1M); D-1 `tests/ui/test_result_cache_ui.py`.
+
+### Decision recorded: E-2's module allow-list includes `cache.cli`
+HLD 18.1 E-2 and 8.7.5 allow a cache-off CLI process {`cache`, `cache.constants`, `cache.settings`}.
+`src/agent_orchestrator/cli.py` registers the `ao cache` Typer group eagerly
+(`app.add_typer(cache_app, name="cache")`), so every `ao` start loads `agent_orchestrator.cache.cli`.
+Manager decision (T-o95l1M): allow `cache.cli` on the CLI path, provided `cache/cli.py`'s module-level
+imports stay limited to typer + `cache.constants` + `cache.settings` (guarded by
+`tests/cache/test_cli_result_cache_wiring.py::TestCacheCliStaysImportLight`). The E-2 subprocess
+check therefore asserts `loaded <= {cache, cache.constants, cache.settings, cache.cli}` and that
+`settings` and `cli` ARE loaded (so the subset check is not vacuous). The I-1 engine-process check
+(Part 1) keeps the narrower HLD set {`cache`, `cache.constants`}. **For T-bdQZW4:** amend HLD
+8.7.5 / 18.1 E-2 to name `cache.cli`.
+
+### HLD 24.2 touchpoints vs the actual `git diff 0b980e3..HEAD --stat` (for the merge notes)
+Range base `0b980e3` (merge of the earlier worktree into `ad/4oct-enhancements`). "Additive?" = only
+added lines, apart from the named replaced lines.
+
+| File (HLD 24.2 row) | Lines +/- | Matches additive-only? |
+|---------------------|-----------|------------------------|
+| `src/agent_orchestrator/models.py` | +81 / -1 | Yes. The -1 is the pydantic import line gaining `StrictBool`, `model_validator` (24.2 says so). |
+| `specs/workflow.schema.json` | +8 / -0 | Yes (`cache` in `defaults` and `$defs.task`). |
+| `src/agent_orchestrator/project_config.py` | +71 / -1 | Yes. The -1 is the pydantic import line. |
+| `src/agent_orchestrator/engine.py` | +135 / -30 (net +105) | Additive except the one MOVED block: the resume stale-charge guard (-29 lines: its 12-line comment and the code) is moved verbatim into `_reverse_stale_charge` and called from the budget gate (24.2 row says so); the `from typing import Literal` line (-1) is rewritten to also import `TYPE_CHECKING`. Net +105 (budget +110), 12 added lines inside existing functions (budget 12). |
+| `src/agent_orchestrator/executors/claude_cli.py` | no diff in this range | The `build_claude_argv` extraction (T-OeRYSO, `ac35e73`) is already in the base `0b980e3`; the pointer comment belongs to T-bdQZW4 (not yet). |
+| `src/agent_orchestrator/cli.py` | +115 / -2 | Yes. -2: `from .models import BudgetSpec` -> `... BudgetSpec, WorkflowSpec` (TYPE_CHECKING import) and `except (json.JSONDecodeError, KeyError)` -> `except (ValueError, KeyError)` in `status` (a total-parse fix; comment in place). `--cache/--no-cache`, `_build_result_cache`, `add_typer(cache_app)`, summary lines, `report_usage` line are all additions. |
+| `src/agent_orchestrator/runstate.py` | +12 / -1 | Yes. -1: `snapshot = {` becomes `snapshot: dict[str, object] = {` (a type annotation the new conditional keys need). |
+| `src/agent_orchestrator/usage.py` | +109 / -23 | Additive in behaviour, not in text: the group-metrics block of site A (20 lines) is re-indented under the new current-hit guard (removed and re-added indented); site B's `if producer is None or producer.dispatch_cycle < 1:` / `continue` pair is replaced by the same test plus `or pid in rc_hits`; `from typing import Any, Literal` gains `cast`. The 24.2 row says both sites change. |
+| `src/agent_orchestrator/outcomes.py` | +12 / -3 | Yes (`SettleReason` widened, `_settle_reason` gains keyword-only parameters, its one caller updated). |
+| `src/agent_orchestrator/ui/runs.py` | +15 / -0 | Yes. |
+| `src/agent_orchestrator/ui/files.py` | +9 / -0 | Yes (24.2 says about 6; the deny-list plus its comment). |
+| `ui/src/types.ts`, `ui/src/components/RunDetail.tsx` | +41 / -0, +40 / -0 | Yes. |
+| `src/agent_orchestrator/ui/static/**` | 3 renamed hashed files (+4 / -4), `index.html` +1 / -1 | Yes: generated bundle, a separate commit (`4e61e68`); drop and rebuild after merging sibling dashboard epics. |
+| `src/agent_orchestrator/bench/subjects.py` | +9 / -0 | Yes. |
+| `.github/workflows/ci.yml` | +8 / -0 | Yes (this task's step). |
+| `tests/conftest.py`, `tests/test_nfr2_regression_gate.py` | no diff | Yes: NOT edited. |
+
+Files in the diff that 24.2 does NOT list (none is a shared-file touchpoint of a sibling epic except the one marked):
+- `src/agent_orchestrator/cache/**` (18 new modules, +5 434 lines; the new package of HLD 8.0).
+- `docs-md/cross-run-result-cache-hld.md` (+10), `docs-md/adr/ADR-0019-cross-run-result-cache.md`
+  (+18 / -1), `docs-md/result-cache-g0-protocol.md` (new, +290): docs.
+- **`tests/ui/test_run_graph_endpoint.py` (+12 / -3): an existing test edited.** It pins the exact
+  key sets of the run payload, so the additive `result_cache` key had to be added to both sets. A
+  sibling epic that also adds a key to those payloads will conflict textually here: take both
+  sides (the key set must contain every sibling's key). Not in 24.2; add it to the merge notes.
+- `ui/src/test/run-detail-result-cache.test.tsx` (new), `tests/ui/test_result_cache_ui.py` (new),
+  `tests/bench/test_bench_cache_forced_off.py` (new), the new `tests/cache/**`, the e2e files and
+  `tests/fixtures/result_cache/**` (the corpus, schemas and goldens): new test files.
+- `meta/tickets/E-Rc4Hk8-**` ticket docs and `output/E-Rc4Hk8-**` review artefacts.
+- `pyproject.toml`: NOT touched.
 
 ## Part 2 summary (2026-10-05, commit `4d11a69`)
 
@@ -103,10 +171,11 @@ process (not the engine) loads a cache submodule outside HLD 8.7.5's CLI allowan
 `constants`, `settings`). Decide: amend the HLD to include `cache.cli`, or register the sub-app
 lazily. Part 3's E-2 module check (allowed set incl. `cache.settings`) will hit this on the CLI path.
 
-## What will be handed over (Part 3)
+## Handed over (Part 3, delivered)
 - `tests/test_e2e_cli_result_cache.py` (Part 3: E-1…6)
 - CI step in `.github/workflows/ci.yml` (Part 3)
-- Coverage gate and full-suite baseline
+- Coverage gate (98.71% / 100 / 96 / 97 / 100) and the full-suite numbers (6805 passed, 10 skipped)
+- A test-only fix to the ADV-2 tripwire (it broke under `--cov`)
 
 ## Frozen names / contracts
 - Test file: `tests/cache/test_noop_proof.py`; capture script `tests/cache/_noop_capture.py`
@@ -121,3 +190,4 @@ lazily. Part 3's E-2 module check (allowed set incl. `cache.settings`) will hit 
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3: re-split parts, CI step.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 1 reworked (commit 8972149) after the first delivery was rejected; command, base sha, test ids and the CLI-import finding recorded above.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 2 done (commit `4d11a69`): test ids, files and interpretations recorded in "Part 2 summary" above.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 3 done, task `Done` (commits `b7489d1`, `a947986`): E-1..E-6 ids, the `cache.cli` allow-list decision and the HLD 24.2 merge-notes table are in "Part 3 summary" above. Items for the parent/T-bdQZW4: add `tests/ui/test_run_graph_endpoint.py` to the 24.2 merge notes; name `cache.cli` in HLD 8.7.5 / 18.1 E-2; add the pointer comment in `claude_cli.py` (24.2 row).

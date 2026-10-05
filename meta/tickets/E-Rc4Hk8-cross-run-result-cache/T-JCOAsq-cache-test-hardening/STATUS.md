@@ -2,12 +2,123 @@
 
 - ID: `T-JCOAsq-cache-test-hardening`
 - Updated At: `2026-10-05`
-- State: `In Progress` (Parts 1 and 2 done, Part 3 pending)
+- State: `Done` (Parts 1, 2 and 3 done; acceptance criteria 1-5 all pass, see below)
 - Owner: `tester`
 
-## This update (2026-10-05, Part 2 done)
+## This update (2026-10-05, Part 3 done; task Done)
+By: developer · Role: developer · Date: 2026-10-05.
+
+- **E-1..E-6** (commit `b7489d1`): `tests/test_e2e_cli_result_cache.py`, 55 tests, every one entering
+  through `CliRunner` on the real `ao` app (`ao run`, `ao resume`, `ao status`, `ao report-usage`),
+  `executor: fake`, `monkeypatch.chdir(tmp_path)`, workflows opting in with `defaults.cache: true`
+  (task-level flags where opt-in itself is the subject), a dispatch-counting wrapper on
+  `FakeExecutor.execute` that also reports cost/tokens and stamps each output with its dispatch
+  ordinal (so a restored file is provably the stored bytes), and a ticking `runstate._utc_now`.
+  - **E-1** `TestE1SecondRunIsAllHits` (4): `ao run --cache` twice with the outputs deleted: the
+    second run makes 0 dispatches (counter unmoved), restored bytes equal run 1's, the stdout line
+    matches `Result cache: hits=2 (saved ~$1.0000 est., ~2540 tokens, ~Ns) would_hits=0 misses=0
+    stored=0 ineligible=0` after `Total cost:   $0.0000`; `status.json` has `attempts == 0`, the
+    exact D35 view with `source_run_id` of run 1, `usage_totals.cost_usd == 0`; `report-usage
+    --json` aggregates hits=2/lookups=4. **Companion negative:** the same sequence with the cache
+    off dispatches 4 times in total (2 on the second run vs 0), prints nothing about the cache,
+    creates no cache directory and no `result_cache` key. Control: a hand-edited leftover output
+    changes the key (D6), so both tasks are dispatched again.
+  - **E-2** `TestE2PlainRun` (4 tests incl. parametrization): a plain run (the workflow opts in; the
+    operator did not enable the layer) leaves no cache directory, no "result cache" text in `run`,
+    `status`, `report-usage` (text and JSON), no `result_cache` key in `status.json`; stdout and
+    `status.json` equal the base-`bb6d8a0` I-2 goldens byte for byte (serial and `max_parallel=3`)
+    from the SAME capture script run in a subprocess, and in that subprocess the loaded
+    `agent_orchestrator.cache*` modules are a subset of {`cache`, `cache.constants`,
+    `cache.settings`, `cache.cli`} (manager decision recorded in `HANDOFF.md`; non-vacuous: the
+    settings and cli modules must be present). Positive control: a `--cache` run in a subprocess
+    additionally loads `coordinator`, `store` and `keys`.
+  - **E-3** `TestE3NoCacheWins` (7): `--no-cache` beats env on/shadow, config on/shadow and both:
+    the second run dispatches again (4 total), no banner/warning, no cache directory, no records;
+    positive controls: the same env/config without the flag hits (2 dispatches total).
+  - **E-4** `TestE4PrecedenceMatrix` (33 rows + a coverage guard): flag > env > config > off, the
+    env spellings (`1/true/yes/ ON /0/false/no/off/shadow/ Shadow `, empty and blank), `refresh`
+    and `maybe` giving off plus exactly one warning (also over an enabling config), config
+    `enabled`/`mode`, and the flag short-circuiting the env (no warning). The expectation per row
+    is literal (not computed by the resolver) and checked on the banner (mode, source,
+    "2 of 2 static task(s) opted in"), the warning lines, the cache directory and `status.json`
+    (lookups 2/misses 2/stored 2 and the per-task `mode`, or no `result_cache` at all).
+  - **E-5** `TestE5DoubleOptIn` (3): operator on but no task opts in: the explanatory banner,
+    no records, no entries, 4 dispatches; `defaults.cache: false` plus one task `cache: true`
+    (and one explicit `false`): only that task is cached (one lookup, restored from run 1; the
+    others dispatch again, banner "1 of 3"); a task-level `false` beats `defaults.cache: true`.
+  - **E-6** `TestE6Resume` (3): run 1 `--cache` stores a, b, c; run 2 (cache OFF, outputs deleted)
+    fails at c; `ao resume --cache` serves c from run 1's entry with 0 new dispatches of any
+    task (run `succeeded`, c's record is a hit, a/b have none), while `ao resume --no-cache`
+    re-dispatches only c (no banner, no `result_cache` anywhere); and a restored task is not
+    re-dispatched on resume with its record still current (hits stay 2, `attempts == 0`).
+- **Mutation sanity** (temporary one-edit source mutations, run against the e2e file, each restored
+  byte for byte; every one FAILED the intended tests): `store.get_entry` returning `None` (E-1:
+  4 dispatches instead of 2); `cli._build_result_cache` importing the coordinator before the
+  `MODE_OFF` return (E-2 module check, `[serial]`); `resolve_result_cache_settings` letting the
+  env override `--cache` (E-4 row `--cache|env='0'`); `DEFAULT_TASK_CACHE_POLICY = True` (E-5
+  "no task opts in"); `ao resume` ignoring its `--cache` flag (E-6 resume-with-cache);
+  `--no-cache` no longer a kill switch (E-3 `env-on`); the unknown-env warning silenced (E-4 row
+  `refresh`); and, for the fixed Part 2 tripwire, `get_entry` touching the filesystem before key
+  validation (ADV-2, run with `--cov`).
+- **Defect found (test, not production): ADV-2's filesystem tripwire broke under `--cov`.**
+  The CI step runs with `--cov`; coverage.py's tracer calls `os.path.realpath` -> `os.lstat` for
+  each source file it first sees, on the stack of whatever is running, and that tripped the blanket
+  `os.lstat/stat/open/unlink/...` spy of `test_adv2_every_store_operation_rejects_a_spliced_key...`
+  (the spy then stayed installed through teardown and failed the whole session). It passed without
+  `--cov`, which is why Part 2 did not see it. Fixed in `tests/cache/test_adversarial.py`
+  (commit `b7489d1`): the spy delegates to the real function when the `coverage` package is on the
+  call stack; the tripwire is still live (mutation above). No production code changed.
+- **No production defect found in Part 3.** `src/` untouched in this task's Part 3
+  (`git diff 07f9b22..HEAD -- src` is empty). Engine budget unchanged: net +105 / 12 added lines
+  inside existing functions vs `ed8b8c3` (135 added, 30 removed; budget +110 / 12).
+- **CI step** (commit `a947986`): one additive step "Result cache tests + coverage (E-Rc4Hk8)" in
+  `.github/workflows/ci.yml`, after the bench step and before the dashboard step, text exactly as
+  HLD 18. `yaml.safe_load` parses the workflow (job `test`, 9 steps with the new one).
+
+### Acceptance criteria
+1. **Part 1** PASS: goldens captured from base `bb6d8a0` (command in `HANDOFF.md`), I-2 serial and
+   parallel pass, I-1 passes (37 tests in `test_noop_proof.py`, unedited and green in the full run).
+2. **Part 2** PASS: 147 tests green (full run).
+3. **Part 3** PASS: E-1..E-6, 55 tests.
+4. **Coverage (hard gate)** PASS: package 98.71% (>= 85), `keys.py` 100%, `store.py` 96%,
+   `restore.py` 97%, `coordinator.py` 100% (each >= 90); no extra tests were needed.
+5. **Full suite** PASS: 6805 passed, 10 skipped, 0 failed (the 2 known bench failures did not
+   occur; no regression against the baseline 5041 / 8 / 2). `ruff check src tests` and `ruff format
+   --check src tests` clean; `mypy src` only the 4 pre-existing `_version.py` errors; NFR-2 gate
+   green; `tests/conftest.py` and `tests/test_nfr2_regression_gate.py` unedited.
+
+### Evidence for Part 3 (commands run in the task worktree, 2026-10-05)
+- `.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_e2e_cli_result_cache.py`: `55 passed`
+  (about 5 s).
+- CI step, run locally exactly as in `ci.yml` (venv on `PATH`; script in the scratchpad):
+  `pytest tests/cache tests/test_e2e_cli_result_cache.py tests/test_e2e_cli_result_cache_admin.py -q
+  --cov=agent_orchestrator.cache --cov-report=term --cov-fail-under=85` -> `1620 passed in 48.65s`,
+  `Required test coverage of 85% reached. Total coverage: 98.71%` (2644 statements, 34 missed).
+  Per module: `keys.py` 92/0 100%, `store.py` 620/25 96%, `restore.py` 150/4 97%, `coordinator.py`
+  260/0 100% (the four `coverage report --include="*/agent_orchestrator/cache/$m.py"
+  --fail-under=90` calls exit 0); `safeio.py` 97%, every other cache module 100%.
+- Full suite `.venv/bin/python -m pytest -q -p no:cacheprovider` (run after the tests and CI
+  commits, tree clean): `6805 passed, 10 skipped, 1 warning in 711.65s (0:11:51)`. Baseline for
+  comparison: 6572 passed / 10 skipped at T-6tRKml (before Parts 2/3 and T-bLpoze/T-nPMuz4 tests).
+- `ruff check src tests`: `All checks passed!`. `ruff format --check src tests`: only the generated,
+  git-ignored `src/agent_orchestrator/_build_info.py` is flagged (only when it exists). `ruff check .`
+  and `ruff format --check .`: the ONLY finding is `output/E-YAAGhk-overseer-runner-template/
+  repro_emit_lost_on_breaker_trip.py` (import order / format), a file from the merged overseer PR
+  #13 (`191da69`), untouched by this epic (`git diff 0b980e3..HEAD -- output/E-YAAGhk-...` empty),
+  so it is pre-existing and excluded. `mypy src tests/test_e2e_cli_result_cache.py`: only the 4
+  pre-existing `_version.py` errors. No line over 100 columns.
+- Dashboard: `cd ui && npx tsc -b --noEmit` exit 0; `npx vitest run`: `36 files, 419 tests passed`.
+  The dashboard CI step `pytest tests/ui tests/test_general_instructions.py
+  tests/test_e2e_cli_prompt_and_instructions.py -q --cov=agent_orchestrator.ui --cov-report=term
+  --cov-fail-under=80`: `659 passed, 2 skipped`, `Total coverage: 94.42%`.
+- I-2 goldens unedited: `tests/fixtures/result_cache/golden/{serial,parallel}/` last changed in
+  `8972149` (Part 1); `test_i2_matches_base_golden[serial|parallel]` pass in the full run.
+- `tests/conftest.py`, `tests/test_nfr2_regression_gate.py`: `git diff 0b980e3..HEAD` empty for both.
+  No `.origin ==`/`!=`/`in` under `src/` (grep empty).
+
+## Earlier update (2026-10-05, Part 2 done)
 - **Part 2 done** (commit `4d11a69`, tests only, no `src/` change): 147 new tests, all passing
-  deterministically (3 consecutive runs). The task stays `In Progress` until Part 3.
+  deterministically (3 consecutive runs). The task stayed `In Progress` until Part 3.
   - `tests/cache/test_integration_hardening.py` (27 tests): I-5b (both halves: 4 independent
     opted-in tasks at `max_parallel=3` all store, then all hit with 0 dispatches, plus two
     concurrent runs storing the SAME key with a barrier inside `put_entry` proving the overlap),
@@ -150,7 +261,9 @@
 ## Next actions
 1. ✓ Part 1 done: I-1 and I-2 pass (see Evidence).
 2. ✓ Part 2 done: integration and adversarial tests (see the Part 2 update above)
-3. Part 3 after T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze: e2e suite, CI step, coverage gate
+3. ✓ Part 3 done: e2e suite, CI step, coverage gate, full suite (see the Part 3 update above).
+4. Gate G2 (T-fXWbqg) is ready to start; then T-bdQZW4. Parent, at merge time: the HLD 24.2
+   table in `HANDOFF.md`.
 
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Status initialized (Draft).
@@ -160,3 +273,4 @@
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 1 reworked (commit 8972149): working `find_spec` poison with self-tests and negative controls, ten cache-off workflows in I-1, real base-captured goldens in I-2 (serial and `max_parallel=3`). Task remains In Progress until Part 3.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b carry-over: Part 2 must add I-5b (miss -> pending -> store at max_parallel>1) and I-25 (engine-level unexpected coordinator exception, run completes) (rev S-2). See `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 2 done (commit `4d11a69`): I-5b, I-9..I-17, I-19, I-20, I-23, I-25, I-26 and ADV-1..ADV-10 (+ ADV-4b, ADV-9 harness) as 147 passing tests in `tests/cache/test_integration_hardening.py`, `tests/cache/test_adversarial.py` and the helper `tests/cache/_hardening_rig.py`; mutation-checked against the key defences; no production defect found. Task stays In Progress until Part 3.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 3 done and task `Done` (commits `b7489d1` E-1..E-6 + ADV-2 tripwire fix, `a947986` CI step, then docs). 55 e2e tests through `CliRunner`; coverage 98.71% package, keys 100 / store 96 / restore 97 / coordinator 100; full suite 6805 passed, 10 skipped, 0 failed; mutation-checked (see above); the only defect found was a Part 2 test tripwire that broke under `--cov` (fixed in the test; no production change). Epic rollup and the G2 gate row updated to match.

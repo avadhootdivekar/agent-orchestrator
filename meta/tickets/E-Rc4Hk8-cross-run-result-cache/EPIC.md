@@ -112,7 +112,7 @@ ordered by dependency (HLD §22.2).
 - [ ] Gate **G1a** (`T-fXWbqg`).
 
 ### 2. Engine set, then gate G1b (coordinator, engine, CLI wiring, reporting)
-- [x] `T-JCOAsq-cache-test-hardening` **Part 1** (golden, I-2, I-1; base code only; may run any time before T-XpF1pF). 6 h. Tester. **Done** (2026-10-05, reworked, commit 8972149; the task stays In Progress until Part 3).
+- [x] `T-JCOAsq-cache-test-hardening` **Part 1** (golden, I-2, I-1; base code only; may run any time before T-XpF1pF). 6 h. Tester. **Done** (2026-10-05, reworked, commit 8972149; the task is now Done, see Part 3).
 - [x] `T-gDNjN2-cache-coordinator`: `ResultCache` (shadow, lazy guard 3, unsafe-path handling, boundary) and records builders. 20 h. Dev A. Deps: T-uoYW6b, T-QgQy08, T-U7ckfd, T-u3jG8F, T-8tr1H4, T-28J9oR. **Done** (2026-10-05) Commit d14f07d.
 - [x] `T-XpF1pF-cache-engine-integration`: engine seams, shared `_reverse_stale_charge`, integration tests. 16 h. Dev A. Deps: T-gDNjN2, T-JCOAsq Part 1. **Done** (2026-10-05) Commit b7ca9c7.
 - [x] `T-eyn5UG-cache-reporting`: report helpers; `status.json`, usage (both sites, `result_cache` object) and outcomes hooks; lazy imports. 18 h. Dev B. Deps: T-28J9oR, T-FJH6LI. **Done** (2026-10-05) Commit cbf9152.
@@ -126,8 +126,8 @@ ordered by dependency (HLD §22.2).
 - [x] `T-bLpoze-cache-dashboard-surface`: payload fields, file-browser deny, tag, tile; bundle rebuilt as a separate commit. 10 h. Dev C. Deps: T-eyn5UG. **Done** (2026-10-05) Commits faf8f57 (source + tests), 4e61e68 (bundle).
 
 ### 4. Hardening, gate G2, docs
-- [x] `T-JCOAsq-cache-test-hardening` **Part 2**: integration and adversarial (deps T-XpF1pF, T-u3jG8F, T-HjxNQ0). 10 h. Tester. **Done** (2026-10-05, commit 4d11a69, 147 tests; the task stays In Progress until Part 3).
-- [ ] `T-JCOAsq-cache-test-hardening` **Part 3**: e2e, CI coverage step, full suite (deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 8 h. Tester.
+- [x] `T-JCOAsq-cache-test-hardening` **Part 2**: integration and adversarial (deps T-XpF1pF, T-u3jG8F, T-HjxNQ0). 10 h. Tester. **Done** (2026-10-05, commit 4d11a69, 147 tests; the task is now Done, see Part 3).
+- [x] `T-JCOAsq-cache-test-hardening` **Part 3**: e2e, CI coverage step, full suite (deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 8 h. Tester. **Done** (2026-10-05, commits b7489d1 e2e, a947986 CI step; 55 e2e tests, coverage 98.71%, full suite 6805 passed). The task is **Done**.
 - [ ] `T-fXWbqg-cache-review-gates`: G1a, G1b and **G2**. 24 h in total. reviewer + dev-security.
 - [ ] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4.
 
