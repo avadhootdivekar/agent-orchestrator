@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
+import agent_orchestrator.cache.records as records
 from agent_orchestrator.artifacts import LocalFsArtifactStore
-from agent_orchestrator.cache import records
 from agent_orchestrator.cache.constants import (
     ENTRY_SCHEMA,
     MAX_ENTRY_COST_USD,

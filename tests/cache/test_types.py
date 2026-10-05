@@ -17,9 +17,9 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+import agent_orchestrator.cache.safeio as safeio
 import agent_orchestrator.cache.types as types_mod
 from agent_orchestrator.cache import constants as c
-from agent_orchestrator.cache import safeio
 from agent_orchestrator.cache.types import (
     CacheAdmin,
     CacheBlobMissingError,
