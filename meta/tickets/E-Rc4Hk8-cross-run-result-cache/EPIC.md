@@ -107,7 +107,7 @@ ordered by dependency (HLD §22.2).
 - [x] `T-8tr1H4-cache-hashing`: bounded hashing; repository detection bounded by the workspace root; HEAD reader; worktree probe. 14 h. Dev C. Deps: T-FJH6LI (commit 3). **Done** (2026-10-05) Commit 00b9a3c.
 - [x] `T-uoYW6b-cache-key-builder`: fingerprint, keys, GV-1. 20 h. Dev A. Deps: T-FJH6LI, T-OeRYSO, T-8tr1H4. **Done** (2026-10-05) Commit 95dab70.
 - [x] `T-U7ckfd-cache-store-core`: `LocalFsCacheStore(CacheStore)`, checks before every operation, `CacheUnsafePathError`, `is_expired`. 17 h. Dev C. Deps: T-FJH6LI. **Done** (2026-10-05) Commit 181bbbb.
-- [ ] `T-u3jG8F-cache-restore-capture`: staged, verified restore and safe capture. 16 h. Dev B. Deps: T-FJH6LI.
+- [x] `T-u3jG8F-cache-restore-capture`: staged, verified restore and safe capture. 16 h. Dev B. Deps: T-FJH6LI. **Done** (2026-10-05) Commit 87814ea.
 - [ ] `T-HjxNQ0-cache-store-maintenance`: adds `CacheAdmin`; streaming iteration, prune, inline enforcement bounded by entries and bytes, `clear`, read-only `verify`, race test. 15 h. Dev C. Deps: T-U7ckfd.
 - [ ] Gate **G1a** (`T-fXWbqg`).
 
