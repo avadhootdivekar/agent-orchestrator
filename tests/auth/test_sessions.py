@@ -150,6 +150,29 @@ def test_lookup_finds_the_issued_session() -> None:
     assert found is not None and found.session_id == issued.record.session_id
 
 
+def test_lookup_ignores_a_record_issued_for_another_realm() -> None:
+    """S3 / T-U2ERMo item 6: one store, two realms: a token only works in its own realm."""
+    store = InMemorySessionStore()
+    dashboard, _, _ = make_manager(store=store, realm="ui:abcdef123456")
+    hub, _, _ = make_manager(store=store, realm="hub")
+    issued = issue_full(dashboard)
+    assert hub.lookup(issued.token) is None  # the hub does not honour a dashboard session
+    found = dashboard.lookup(issued.token)  # ... which is left untouched in the store
+    assert found is not None and found.realm == "ui:abcdef123456"
+
+
+def test_a_foreign_realm_record_is_not_deleted_even_when_expired() -> None:
+    store = InMemorySessionStore()
+    dashboard, clock, _ = make_manager(store=store, realm="ui:abcdef123456")
+    hub, _, _ = make_manager(store=store, realm="hub", clock=clock)
+    issued = issue_full(dashboard)
+    clock.advance(TEST_IDLE_SECONDS + 1)
+    assert hub.lookup(issued.token) is None
+    assert len(store.records()) == 1  # only its own realm may expire it
+    assert dashboard.lookup(issued.token) is None
+    assert store.records() == []
+
+
 def test_lookup_returns_a_copy() -> None:
     manager, _, store = make_manager()
     issued = issue_full(manager)

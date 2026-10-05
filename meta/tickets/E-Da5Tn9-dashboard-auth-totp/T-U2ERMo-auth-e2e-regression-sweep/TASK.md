@@ -6,7 +6,7 @@
 - Owner: `tester` (lane Q)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done (AC-34 browser smoke NOT RUN: Playwright not installed; see STATUS.md)`
 - Estimate: `3 days` (v2: 2.5; +0.25 d store-busy CLI test from T-j9dfsw, +0.2 d informational
   NFR-5 measurements from T-G7qByZ; HLD §24.2) · Sprint `S3`
 

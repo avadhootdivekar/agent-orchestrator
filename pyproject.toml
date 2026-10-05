@@ -83,6 +83,7 @@ markers = [
     "e2e: end-to-end test via the ao CLI",
     "browser: opt-in real-browser smoke test (E-k3AMEr); requires /usr/bin/google-chrome and playwright",
     "perf: performance envelope checks",
+    "slow: opt-in informational measurement (E-Da5Tn9 NFR-5); skipped unless selected with -m slow, never a gate",
     "swebench: opt-in real network/HF/git SWE-bench tier; set AO_E2E_SWEBENCH=1 to run",
 ]
 

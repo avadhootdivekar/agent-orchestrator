@@ -273,6 +273,10 @@ class SessionManager:
         record = self._store.get(_sha256(raw))
         if record is None:
             return None
+        if record.realm != self._realm:
+            # A record issued by another realm sharing this store (the SSO/handoff seam, S3):
+            # never ours to honour, and not ours to delete or expire either.
+            return None
         if _is_expired(record, self._clock.monotonic(), self._idle_seconds):
             self._store.delete(record.token_hash)
             return None
