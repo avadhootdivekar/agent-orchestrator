@@ -55,14 +55,14 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-eyn5UG-cache-reporting | engine set | Dev B | 18 h | Done |
 | T-o95l1M-cache-cli-wiring | engine set | Dev B | 8 h | Done |
 | T-ZTxN1x-bench-cache-force-off | engine set | Dev B | 4 h | Done |
-| T-nPMuz4-cache-shadow-value-check | surfaces | Tester (+ manager) | 6 h | Draft |
+| T-nPMuz4-cache-shadow-value-check | surfaces | Tester (+ manager) | 6 h | In Review (manager sign-off pending) |
 | T-6tRKml-cache-cli-commands | surfaces | Dev C | 17 h | Done |
 | T-bLpoze-cache-dashboard-surface | surfaces | Dev C | 10 h | Draft |
 | T-JCOAsq-cache-test-hardening | Part 1 before T-XpF1pF; Parts 2–3 hardening | Tester | 24 h | In Progress (Part 1 done) |
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
 | T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
 
-**Counts:** 20 tasks: 5 Draft, 1 In Progress (T-JCOAsq, Part 1 done), 0 Blocked, 14 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 3 Draft, 1 In Progress (T-JCOAsq, Part 1 done), 1 In Review (T-nPMuz4), 0 Blocked, 15 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
@@ -70,7 +70,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | G1a | after the core set | **PASS** (2026-10-05): reviewer PASS (0 MUST-FIX); dev-security FAIL on SEC-01 -> fixed in `763375f`, re-verified PASS (0 open MUST-FIX; full suite 6081 passed / 10 skipped / 0 failed) |
 | G1b | after the engine set | **PASS** (2026-10-05): reviewer PASS (0 MUST-FIX, 5 SHOULD-FIX, 7 NIT) + dev-security PASS (0 MUST-FIX, 5 SHOULD-FIX, 10 NIT); fixable items remediated in `6ba90ba`; deferred items recorded in T-fXWbqg STATUS. Hard G2 exit items: dashboard deny-list for `.orchestrator/cache` (T-bLpoze), approval-ordering check |
 | G2 | after T-JCOAsq Part 3 | not started |
-| G0 (value; business go/no-go) | **post-merge**, parent or operator | not part of this epic; T-nPMuz4 ships the protocol |
+| G0 (value; business go/no-go) | **post-merge**, parent or operator | G0 protocol shipped; execution is a post-merge follow-up (owner: parent/operator); not run in this epic. |
 
 ## Evidence
 - **Code baseline studied:** `main` @ `bb6d8a0` (engine seams, `runstate`, `usage` sites ~409
@@ -131,3 +131,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-ZTxN1x -> Done (commit `15a659d`). Rollup row and counts updated (5 Draft, 1 In Progress, 14 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 7 new tests; `tests/bench` 417 passed, 4 skipped. Gate G1b ready to start (engine set complete). Full suite after T-eyn5UG + T-o95l1M + T-ZTxN1x: 6333 passed, 10 skipped, 0 failed (655 s); last known 6249 passed, 10 skipped, 1 failed (the load-dependent wave-scheduler flake did not recur).
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Gate G1b PASS (reports `output/E-Rc4Hk8-cross-run-result-cache/review-g1b.md`, `review-g1b-security.md`). Engine diff net +105 / 12 in-function lines (budget +110 / 12). Next: surfaces (T-nPMuz4, T-6tRKml, T-bLpoze), then T-JCOAsq Parts 2-3, G2, T-bdQZW4.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-6tRKml -> Done (commit `033dd79`). Rollup row and counts updated (4 Draft, 1 In Progress, 15 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 191 new tests (138 e2e CliRunner, 32 restore-sweep unit, 21 safeio); cache/cli.py, cli_ops.py and restore_sweep.py at 100% line coverage; full suite 6572 passed, 10 skipped (6582 collected).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-nPMuz4 -> In Review (commit `edc3c18`), manager sign-off pending (AC-6). Rollup row and counts updated (3 Draft, 1 In Progress, 1 In Review, 15 Done); `EPIC.md` line annotated (box not ticked until sign-off); matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. G0 gate line: protocol shipped, execution post-merge, not run. Evidence `output/E-Rc4Hk8-cross-run-result-cache/g0-protocol-smoke.md`; `tests/cache` + spawn-provenance + NFR-2 gate: 1301 passed. No `src/` change, full suite not run.

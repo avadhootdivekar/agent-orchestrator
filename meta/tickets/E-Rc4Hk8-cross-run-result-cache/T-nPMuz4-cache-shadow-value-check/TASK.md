@@ -6,8 +6,8 @@
 - Title (Rev 3): **G0 protocol and tooling hand-off** (the folder name is kept for id stability)
 - Owner: `tester` (+ `manager` sign-off)
 - Created: `2026-10-05`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (implemented)
+- Status: `In Review` (implemented; manager sign-off pending, AC-6)
 - Estimate: `6 focus hours (0.75 day)` · surfaces (after T-o95l1M)
 
 ## Requirements Mapping
@@ -114,3 +114,4 @@ smoke: fake workflow, run twice in shadow mode with outputs deleted between runs
   "G0 protocol and tooling hand-off". The Rev 2 premise (run G0 on this repo's self-dev
   workflows inside S3) was false. Executing G0 is a post-merge follow-up owned by the parent or
   operator and does not block epic closure. Owner: tester, with manager sign-off.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Implemented (commit `edc3c18`); State -> In Review, awaiting the manager sign-off (AC-6). G0 itself is not run (post-merge, parent/operator). Evidence: `output/E-Rc4Hk8-cross-run-result-cache/g0-protocol-smoke.md`.
