@@ -98,3 +98,4 @@ Verification: `.venv/bin/python -m pytest -q -p no:cacheprovider tests/cache tes
   (G1a after the core set / G1b after the engine set / G2 final); this file, `TASK.md`, `HANDOFF.md` (when present) and the epic `STATUS.md` rollup
   agree.
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: G1a PASS. Reviewer: PASS, 0 MUST-FIX. dev-security: SEC-01 MUST-FIX fixed in `763375f`, delta re-verified PASS, 0 open MUST-FIX; full suite 6081 passed / 10 skipped / 0 failed. Carry to G2: SEC-15 sensitive-path list decision; NIT RV-1. State stays `Draft` until G1b/G2 are complete (mirrors TASK.md).
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: G1b PASS. Reviewer 0 MUST-FIX; dev-security 0 MUST-FIX; remediation `6ba90ba`. Open for G2: dashboard deny-list (T-bLpoze), approval-ordering check, I-5b/I-25/store-at-max_parallel>1 tests (T-JCOAsq Part 2), prune-side tmp sweep (T-6tRKml). State stays `Draft` until G2 (mirrors TASK.md).
