@@ -70,6 +70,18 @@
 | `FACTORY_DEFAULT_HOST/PORT` == `UI_DEFAULT_HOST/PORT` | `558632d` | `tests/auth/test_ui_command_auth.py::test_the_factory_defaults_mirror_the_cli_defaults` |
 | CI: `permissions: contents: read`; separate `pip-audit` job (`uv export --extra ui --no-dev --no-hashes --no-emit-project` then `uvx pip-audit --no-deps --disable-pip`; run locally: no known vulnerabilities) | `99eaac7` | n/a (CI config; yaml parsed) |
 
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: **N1** (re-audit): an unauthenticated
+  `GET /x?code=` / `?password=` (empty value) made the formatted line (`\s*\S+` runs into
+  ` HTTP/1.1`) and per-arg redaction disagree; the fallback set `args=()` and uvicorn's
+  `AccessFormatter` failed to unpack, one "Logging error" traceback per request. Fix in
+  `auth/scrub.py` (`_set_flat_message`): the fallback keeps a tuple `args` length (numeric slots
+  kept, redacted line in the first string slot, all other slots empty, `%.0s` template), so no
+  secret fragment can survive and the status stays an int. The regex is unchanged (narrowing it
+  would risk leaks). Tests (seen failing before the fix):
+  `tests/auth/test_scrub.py::TestUvicornAccessRecords::test_n1_*`;
+  `tests/auth/test_e2e_subprocess.py::test_n1_empty_value_secret_queries_do_not_break_the_access_log`
+  (real subprocess, server log has no "Logging error"/"Traceback").
+
 **Accepted residuals (not fixed, by decision):** per-session counter concurrency (sessions.py record
 mutators); L-2 hardlink denial; L-4 health version hash; M-2 shared throttle bucket behind an
 unconfigured proxy; dompurify bump; DRY header-constant refactor.

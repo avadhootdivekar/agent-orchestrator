@@ -40,6 +40,9 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
 )
 
+# Arg types that cannot carry a secret and that positional formatters read as numbers.
+_KEEP_TYPES = (int, float)
+
 _logger = logging.getLogger(__name__)  # deliberately NOT an auth_logger: no filter on itself
 
 
@@ -82,8 +85,31 @@ def _redact_in_place(record: logging.LogRecord, redacted_message: str) -> None:
     except Exception:  # noqa: BLE001 - fall through to the flat form
         pass
     record.msg, record.args = original
-    record.msg = redacted_message
-    record.args = ()
+    _set_flat_message(record, redacted_message)
+
+
+def _set_flat_message(record: logging.LogRecord, redacted_message: str) -> None:
+    """Replace the record's message with *redacted_message*, keeping a tuple ``args`` shape.
+
+    Per-arg and formatted-line redaction can disagree (``GET /x?code= HTTP/1.1``: the line-level
+    ``\\s*\\S+`` runs past the empty value, the lone ``?code=`` arg has nothing to match). A flat
+    ``args=()`` would then break formatters that unpack ``args`` (uvicorn's access formatter), one
+    traceback per request. So a tuple keeps its length and its numeric members (the status code
+    stays an int; any other object could hide a secret in its ``__str__``); the redacted line
+    goes in the first string slot, every other slot becomes empty (it could hold a fragment of
+    the secret), and the template consumes them all.
+    """
+    args = record.args
+    if isinstance(args, tuple) and args:
+        carrier = next((i for i, a in enumerate(args) if isinstance(a, str)), None)
+        if carrier is not None:
+            record.msg = " ".join("%s" if i == carrier else "%.0s" for i in range(len(args)))
+            record.args = tuple(
+                redacted_message if i == carrier else (a if isinstance(a, _KEEP_TYPES) else "")
+                for i, a in enumerate(args)
+            )
+            return
+    record.msg, record.args = redacted_message, ()  # empty args: msg is never %-formatted
 
 
 def _scrub_record(record: logging.LogRecord) -> None:

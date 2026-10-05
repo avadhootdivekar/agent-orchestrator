@@ -440,6 +440,25 @@ def test_login_totp_proof_logout_and_recovery_code_over_a_real_server(
     assert server.returncode in (0, -signal.SIGTERM)
 
 
+# T-2wE08U N1: an empty-value key (`?code=`) made the formatted access line and its per-arg
+# redaction disagree, the fallback flattened uvicorn's positional args, and every such
+# unauthenticated request then printed a "Logging error" traceback (a remote log-noise vector).
+EMPTY_VALUE_QUERIES = ("code=", "password=", "token=&x=1", "secret=&code=&password=")
+
+
+def test_n1_empty_value_secret_queries_do_not_break_the_access_log(tmp_path: Path) -> None:
+    sandbox = make_sandbox(tmp_path)
+    create_user_with_totp(sandbox)
+    port = free_port()
+    with ao_ui_server(sandbox, port, "--auth", "--auth-dir", str(sandbox.auth_dir)) as server:
+        base = f"http://{LOOPBACK}:{port}"
+        for query in EMPTY_VALUE_QUERIES:
+            response = httpx.get(f"{base}{PROTECTED_PATH}?{query}", timeout=HTTP_TIMEOUT_SECONDS)
+            assert response.status_code == 401, query  # anonymous, and the server still answers
+        assert server.poll() is None
+    # assert_log_is_clean (run by ao_ui_server on exit) fails on "Logging error"/"Traceback"
+
+
 def test_ui_auth_without_users_exits_78_and_refuses_to_start(tmp_path: Path) -> None:
     sandbox = make_sandbox(tmp_path)
     port = free_port()

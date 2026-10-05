@@ -251,6 +251,55 @@ class TestUvicornAccessRecords:
         assert "hunter2" not in formatted and BASE32_SECRET not in formatted
         assert REDACTED in formatted
 
+    @pytest.mark.parametrize(
+        "path", ["/x?code=", "/x?password=", "/x?token=&x=1", "/x?secret=&code=&password="]
+    )
+    def test_n1_an_empty_value_key_keeps_the_access_args_shape(
+        self, path: str, restore_factory: None
+    ) -> None:
+        # The formatted line's `\s*\S+` runs past the empty value into " HTTP/1.1", so the
+        # per-arg and formatted-line results disagree; the fallback must keep the 5-tuple.
+        install_log_redaction()
+        record = self._record(path)
+        assert isinstance(record.args, tuple) and len(record.args) == 5
+        assert record.args[4] == 200  # the status stays an int for AccessFormatter
+        formatted = self._format(record)  # must not raise
+        assert "Logging error" not in formatted
+        assert "200" in formatted
+
+    def test_n1_a_secret_spread_over_args_never_leaks_in_the_fallback(
+        self, restore_factory: None
+    ) -> None:
+        install_log_redaction()
+        record = self._record(f"/x?code= {BASE32_SECRET}")
+        assert BASE32_SECRET not in self._format(record)
+
+    def test_n1_the_fallback_keeps_a_tuple_args_length_and_non_string_slots(self) -> None:
+        record = logging.LogRecord(
+            "n", logging.INFO, __file__, 1, "%s %s %d", ("a", "code=", 7), None
+        )
+        SecretRedactingFilter().filter(record)
+        assert isinstance(record.args, tuple) and len(record.args) == 3
+        assert record.args[2] == 7
+        assert record.getMessage()  # formats without raising
+
+    def test_n1_the_fallback_does_not_keep_an_object_that_hides_a_secret(self) -> None:
+        class Holder:
+            def __str__(self) -> str:
+                return "password=hunter2"
+
+        record = logging.LogRecord("n", logging.INFO, __file__, 1, "%s %s", ("a", Holder()), None)
+        SecretRedactingFilter().filter(record)
+        assert "hunter2" not in record.getMessage()
+        assert isinstance(record.args, tuple) and len(record.args) == 2
+
+    def test_n1_a_percent_in_the_message_survives_the_fallback(self) -> None:
+        record = logging.LogRecord(
+            "n", logging.INFO, __file__, 1, "100%% %s then", ("password=",), None
+        )
+        SecretRedactingFilter().filter(record)
+        assert "100%" in record.getMessage()
+
     def test_the_filter_keeps_a_dict_args_shape(self) -> None:
         record = logging.LogRecord(
             "n",
