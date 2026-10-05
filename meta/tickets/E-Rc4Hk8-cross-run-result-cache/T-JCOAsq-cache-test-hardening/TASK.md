@@ -73,7 +73,8 @@ It is a prerequisite of T-XpF1pF and may run at any point before it.
 - **Never edit `tests/conftest.py`.** Each module controls `AO_CACHE` itself.
 
 ## File scope (exclusive)
-- `tests/cache/test_noop_proof.py` (Part 1: I-1, I-2)
+- `tests/cache/test_noop_proof.py` (Part 1: I-1, I-2) and its helpers
+  `tests/cache/_noop_poison.py`, `_noop_scenarios.py`, `_noop_subprocess.py`, `_noop_capture.py`
 - `tests/fixtures/result_cache/golden/**` (Part 1)
 - `tests/cache/test_adversarial.py`, `tests/cache/test_integration_hardening.py` (Part 2)
 - `tests/test_e2e_cli_result_cache.py` (Part 3: E-1…E-6)
@@ -138,3 +139,7 @@ HLD §18.1 catalogue rows owned by T-JCOAsq; §8.7.5 I-1/I-2 definitions; §18 C
   to Part 2); I-1 uses a poisoned-import finder plus a module check; I-2 adds `max_parallel=3`;
   I-24 retired; ADV-4b added; the CI coverage step is in this task's file scope; coverage is a
   hard pass/fail AC.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 1 reworked (commit 8972149)
+  after the first delivery was rejected (vacuous poison, one workflow, hand-made goldens). File
+  scope extended to the `_noop_*.py` helper modules. Status stays `In Progress` until Part 3;
+  details in `STATUS.md` and `HANDOFF.md`.
