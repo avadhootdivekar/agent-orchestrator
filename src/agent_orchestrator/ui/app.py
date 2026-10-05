@@ -8,9 +8,12 @@ holds no framework imports — see that module's docstring.
 Requires the optional ``[ui]`` extra (``pip install 'agent-orchestrator[ui]'`` /
 ``uv sync --extra ui``); nothing else in the package imports this module at module scope.
 
-Security posture for this release: **no authentication**. The server therefore binds to
-loopback by default (see ``ao ui``) — it exposes the filesystem and can spend money by
-launching runs, so it must not be reachable off-box until the deferred auth work lands.
+Security posture: authentication is **off by default**. With it off (``auth=None``) the
+server has no login and therefore binds to loopback by default (see ``ao ui``) — it exposes
+the filesystem and can spend money by launching runs, so it must not be reachable off-box.
+With ``auth`` given (E-Da5Tn9) every route is deny-by-default behind ``AuthMiddleware``, except
+the small allowlist in ``auth/policy.py``; with it off the app is byte-identical to before
+apart from the new ``GET /api/auth/status``.
 """
 
 from __future__ import annotations
@@ -25,6 +28,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .._version import get_version_string
+from ..auth.http.middleware import AuthMiddleware, AuthRuntimeLike
+from ..auth.http.routes import install_auth_routes
+from ..auth.policy import DASHBOARD_COOKIE_ONLY_NAVIGATION, DASHBOARD_ROUTE_POLICIES
 from ..feedback import MAX_NOTE_CHARS, REASONS, Rating, Reason, Scope
 from .files import PathNotAllowedError, PathNotFoundError
 from .htmlpreview import NotMarkupError
@@ -124,6 +130,7 @@ def create_app(
     service: DashboardService,
     *,
     allowed_hosts: frozenset[str] | None | _AllowedHostsUnset = _ALLOWED_HOSTS_UNSET,
+    auth: AuthRuntimeLike | None = None,
 ) -> FastAPI:
     """Build the dashboard app around an already-constructed *service*.
 
@@ -138,18 +145,34 @@ def create_app(
             host explicitly so that value is always included too. Pass `None` explicitly
             to disable the Host check outright (equivalent to the `AO_UI_ALLOWED_HOSTS=*`
             escape hatch); this is deliberately distinct from leaving the argument unset.
+        auth: The authentication runtime (``None``, the default, means auth is off and the
+            app behaves exactly as before). When given, ``AuthMiddleware`` gates every
+            route and ``/redoc`` plus ``/docs/oauth2-redirect`` are not registered.
     """
+    # With auth on, drop FastAPI's two extra framework routes outside /api (security L2).
+    auth_on_kwargs: dict[str, Any] = (
+        {"redoc_url": None, "swagger_ui_oauth2_redirect_url": None} if auth is not None else {}
+    )
     app = FastAPI(
         title="Agent Orchestrator Dashboard",
         version=get_version_string(),
         docs_url=f"{API_PREFIX}/docs",
         openapi_url=f"{API_PREFIX}/openapi.json",
+        **auth_on_kwargs,
     )
     app.state.service = service
     effective_hosts = (
         resolve_allowed_hosts() if isinstance(allowed_hosts, _AllowedHostsUnset) else allowed_hosts
     )
+    app.add_middleware(
+        AuthMiddleware,
+        runtime=auth,
+        policies=DASHBOARD_ROUTE_POLICIES,
+        cookie_only_navigation=DASHBOARD_COOKIE_ONLY_NAVIGATION,
+    )
     app.add_middleware(SecurityMiddleware, allowed_hosts=effective_hosts)
+    # Before every route and before the SPA fallback (classification and first-match order).
+    install_auth_routes(app, auth)
 
     # -- health / workspace ----------------------------------------------------
 

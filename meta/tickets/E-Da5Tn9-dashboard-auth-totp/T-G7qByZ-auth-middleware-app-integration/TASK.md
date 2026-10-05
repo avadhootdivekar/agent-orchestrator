@@ -6,7 +6,7 @@
 - Owner: `developer` (lane C)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `In Progress` (S1 stub phase done 2026-10-05; S2 final wiring pending T-XchniS)
 - Estimate: `3 days` · Sprint `S1→S2`
 
 ## Requirements Mapping

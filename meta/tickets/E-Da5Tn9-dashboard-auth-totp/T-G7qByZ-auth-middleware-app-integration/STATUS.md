@@ -2,11 +2,30 @@
 
 - ID: `T-G7qByZ-auth-middleware-app-integration`
 - Updated At: `2026-10-05`
-- State: `Draft`
+- State: `In Progress` (S1 stub phase complete; remainder = S2 final wiring, blocked on T-XchniS)
 - Owner: `developer` (lane C)
 - Scope: `MVP` · Sprint: `S1→S2` · Estimate: `3 d`
 
 ## This update
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: **S1 (stub-runtime phase) done;
+  the S2 final wiring is the explicit remainder.** Implemented `auth/http/{__init__,responses,
+  middleware,routes}.py`, the `ui/app.py` edits (§16 #1 a, b, c, f, h; g is a test), and the
+  tests and helpers listed in TASK.md Outputs. Notes for reviewers and downstream tasks:
+  - `Revalidation` (HLD 11.15.1, exactly as specified) was added to `auth/provider.py` because
+    step 6 branches on it; T-XchniS extends that module and must not redefine it.
+  - Until T-XchniS lands, the middleware and `create_app(auth=...)` are typed against a local
+    `AuthRuntimeLike` / `RealmLike` Protocol (same attribute names as HLD 11.16).
+  - `install_auth_routes` with an enabled runtime raises `NotImplementedError` (fail closed, marked
+    `TODO(T-rpKCjP)`); tests swap in `stub_install_auth_routes` by monkeypatching
+    `ui.app.install_auth_routes` (fixture `build_dashboard`).
+  - Hooks for T-QJ1vyQ in `middleware.py`: `_check_csrf` (step 2), `_cap_auth_body` (step 3) and
+    the marked enforcement line in `_check_proof` (step 5, returns `ProofCheck`).
+  - Duplicate-cookie WARNING is once per middleware instance (one per app).
+  - **Remainder (about 0.5 d, after T-XchniS):** switch the constructor/`create_app` annotations
+    to the real `AuthRuntime`/`Realm` (TYPE_CHECKING import), parametrize `tests/auth/conftest.py`
+    fixtures over `StubRuntime` and `build_auth_runtime(...)`, rerun mypy/ruff. Coverage target
+    met already.
+
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
   Estimate, lane and sprint unchanged (3 d, lane C, S1→S2). Changes:
   - **Principal (owner decision, design-review B1 / security M5):** AC-11 now asserts
@@ -49,12 +68,31 @@
   default. The exact allowlist is in HLD §13.2.
 
 ## Evidence
-- None yet.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: commands run in the worktree
+  (all from the repo root with `.venv/bin/python`):
+  - `python -m pytest -q tests/ui -p no:warnings` -> `593 passed, 2 skipped` (unmodified; same
+    count as before the change).
+  - `python -m pytest -q tests/auth/test_middleware.py tests/auth/test_route_enumeration_dashboard.py
+    tests/auth/test_partial_confinement.py tests/auth/test_auth_off_regression.py
+    tests/auth/test_responses.py` -> all pass (47 middleware, 24 enumeration, 6 partial confinement, 13 auth-off, 40 responses);
+    together with `tests/ui`, import-boundary, foundation, policy, principal and sessions suites:
+    `1085 passed, 2 skipped`.
+  - Coverage (`--cov=agent_orchestrator.auth.http`): `middleware.py` 98 %, `responses.py` 100 %,
+    `routes.py` 94 %.
+  - `ruff check` / `ruff format --check` on all touched src/tests files: clean.
+  - `mypy src`: only the 4 pre-existing `_version.py` errors.
+  - Mutation checks (temporarily broke step 8 `attested` gating, step 9 `proof_ok` gating, and
+    `browser_nav` gating): each made the named tests fail; sources restored.
+  - Auth-off byte-parity: header-name sets for `/api/health`, `/api/runs`, `/` captured from
+    pre-change `create_app` and hard-coded in `test_auth_off_regression.py`; OpenAPI path keys
+    differ by exactly `/api/auth/status`; `/redoc` and `/docs/oauth2-redirect` still 200.
 
 ## Risks / Blockers
 - None. OQ-8 is DECIDED (`roles: list[str]`, `hash=False`, keyword-only additive fields) and OQ-9
   is DECIDED (D25 in the MVP).
 
 ## Next actions
-1. developer: start in S1 on the stub runtime. Do the final wiring after T-XchniS. Run the
-   verification, including `tests/ui` unmodified, and record the results here.
+1. developer: after T-XchniS, do the S2 final wiring (see This update, Remainder) and rerun the
+   verification, including `tests/ui` unmodified.
+2. T-QJ1vyQ: fill the three marked hooks in `auth/http/middleware.py`.
+3. T-rpKCjP: replace the `NotImplementedError` branch of `install_auth_routes`.

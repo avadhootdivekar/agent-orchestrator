@@ -8,9 +8,22 @@ needs. T-XchniS later adds ``ClientInfo``, ``UserView``, ``Revalidation`` and th
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from .constants import LOCAL_PROVIDER_ID
 from .model import SessionState
+
+
+class Revalidation(StrEnum):
+    """Tri-state outcome of ``AuthProvider.revalidate`` (HLD 11.15.1).
+
+    Added by T-G7qByZ because ``AuthMiddleware`` step 6 branches on it; T-XchniS extends this
+    module with the rest of the seam and must not redefine it.
+    """
+
+    VALID = "valid"
+    REVOKED = "revoked"
+    UNAVAILABLE = "unavailable"  # the store is unreadable: answer 503 and KEEP the session
 
 
 @dataclass(frozen=True)
