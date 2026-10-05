@@ -50,7 +50,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-U7ckfd-cache-store-core | core set | Dev C | 17 h | Done |
 | T-u3jG8F-cache-restore-capture | core set | Dev B | 16 h | Done |
 | T-HjxNQ0-cache-store-maintenance | core set | Dev C | 15 h | Done |
-| T-gDNjN2-cache-coordinator | engine set | Dev A | 20 h | Draft |
+| T-gDNjN2-cache-coordinator | engine set | Dev A | 20 h | Done |
 | T-XpF1pF-cache-engine-integration | engine set | Dev A | 16 h | Draft |
 | T-eyn5UG-cache-reporting | engine set | Dev B | 18 h | Draft |
 | T-o95l1M-cache-cli-wiring | engine set | Dev B | 8 h | Draft |
@@ -62,7 +62,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
 | T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
 
-**Counts:** 20 tasks: 11 Draft, 0 In Progress, 0 Blocked, 9 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 10 Draft, 0 In Progress, 0 Blocked, 10 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
@@ -123,3 +123,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-HjxNQ0 -> Done (commit 6753c71). Rollup row and counts updated (11 Draft, 9 Done); `EPIC.md` checkbox ticked; gate G1a is ready to start (core set complete); matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Full suite after the core-set group (T-U7ckfd + T-u3jG8F + T-HjxNQ0): 6027 passed, 10 skipped, 0 failed (5787 after the previous group; baseline 5583).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: G1a remediation committed in `763375f` (SEC-01 MUST-FIX and the SHOULD-FIX set fixed; the rest deferred with rationale in `T-fXWbqg-cache-review-gates/STATUS.md`). Gate row updated; G1a is not marked PASS until the manager re-verifies.
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Gate G1a PASS after remediation `763375f` and independent dev-security re-verification (report `output/E-Rc4Hk8-cross-run-result-cache/review-g1a-security.md`, Re-verification section). Open for G2: SEC-15 sensitive-path list decision (`.gitlab-ci.yml`, `.githooks/*`, `Jenkinsfile`); optional NIT RV-1 (unbudgeted inline trash cleanup).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-gDNjN2 -> Done (commit `d14f07d`). Rollup row and counts updated (10 Draft, 10 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 107 new tests (coordinator 97, records 10), coordinator and records line coverage 100%; `tests/cache` + spawn-provenance: 1045 passed. Full suite not run (new files only, no shared module touched). Gate G1b not started (engine set incomplete: T-XpF1pF, T-eyn5UG, T-o95l1M, T-ZTxN1x remain).
