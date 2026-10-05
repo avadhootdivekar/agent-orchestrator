@@ -210,7 +210,7 @@ class LocalTotpService:
     ) -> EnrollmentChallenge:
         """HLD 11.15.6. A FULL session re-authenticates with its password; a forced-enrollment
         (PARTIAL_ENROLL) session presents the CLI-issued token, which this call CONSUMES."""
-        self._require_transport(client)
+        self.require_secure_transport(client)
         self._require_policy_on()
         rec = self._current_record(session)
         if rec.totp is not None:
@@ -268,7 +268,7 @@ class LocalTotpService:
         The pending-attempt counter is the route's; a wrong code here only raises
         ``INVALID_CODE`` and writes nothing.
         """
-        self._require_transport(client)
+        self.require_secure_transport(client)
         self._require_policy_on()
         secret = session.pending_totp_secret
         if secret is None:  # confirm without a begin
@@ -330,7 +330,7 @@ class LocalTotpService:
         self, session: SessionRecord, current_password: str, code: str, client: ClientInfo
     ) -> tuple[int, list[str]]:
         """Replace all recovery codes: ``(new credential_epoch, the ten new codes)``."""
-        self._require_transport(client)
+        self.require_secure_transport(client)
         rec = self._current_record(session)
         if rec.totp is None:
             raise AuthError(ErrorCode.TOTP_NOT_ENROLLED)
@@ -424,8 +424,10 @@ class LocalTotpService:
             reset_on_success=reset_on_success,
         )
 
-    def _require_transport(self, client: ClientInfo) -> None:
+    def require_secure_transport(self, client: ClientInfo) -> None:
         """D7/S23: a secret or recovery codes must not cross plain HTTP from a non-loopback peer.
+
+        Public so the E5 route can apply it BEFORE its own "no pending enrollment" check.
 
         ``is_loopback`` already folds in the Host and forwarding-header checks (v2.1, M2).
         """

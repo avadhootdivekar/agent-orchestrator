@@ -246,6 +246,7 @@ def build_dash(
     session_store: InMemorySessionStore | None = None,
     hasher: FastFakeHasher | None = None,
     totp_service: Any = None,
+    with_totp: bool = False,
     peer: tuple[str, int] = LOOPBACK_PEER,
     base_url: str = LOOPBACK_BASE_URL,
     **settings_overrides: Any,
@@ -273,7 +274,9 @@ def build_dash(
 
         runtime.store.mutate(seed_users, create=True)
     # Deterministic: the core routes are tested without a second-factor service (HLD 13.2).
-    runtime.totp = totp_service
+    # ``with_totp`` (T-KQ6ZrY) keeps the real ``LocalTotpService`` ``build_auth_runtime`` wired.
+    if not with_totp:
+        runtime.totp = totp_service
     runtime.lockouts.ensure_name_key()  # what check_ready() does at startup (S6)
     if kind == "ui":
         app = ui_app.create_app(service, auth=runtime)
