@@ -1,18 +1,25 @@
 # ADR-0019 — Double-opt-in, content-addressed cross-run result cache
 
-- **Status:** **Proposed** (Rev 3, 2026-10-05).
+- **Status:** **Accepted** (Rev 4, 2026-10-05), pending the architect's sign-off line in
+  `T-bdQZW4`'s `STATUS.md`.
   - Rev 2 incorporated the Phase-4 consultation (`developer`, `reviewer`, `tester`,
     `dev-security`, `dev-critic`).
-  - Rev 3 applies an independent early-gate review of the committed design (`94dac52`,
+  - Rev 3 applied an independent early-gate review of the committed design (`94dac52`,
     GO-WITH-FIXES) and the manager's scope decisions.
-  - It becomes **Accepted** when T-bdQZW4 reconciles it with the implementation.
-  - Recommending mode `on` to users additionally waits for the G0 value check (HLD §22.5),
-    which runs **after** the merge and does not block epic closure (D34).
-- **Date:** 2026-10-04 (Rev 1), 2026-10-05 (Rev 2, Rev 3)
+  - Rev 4 reconciles the decisions with the implementation after gates G1a, G1b and G2 closed
+    PASS: the gate addenda to D8, D10/D29, D19 and D20 (inline in the sections below) are folded
+    together with the new "Addendum (Rev 4, as built)" at the end, which records the `cache.cli`
+    CLI-path decision, the accepted residuals and the other as-built deviations. Where an
+    addendum and the decision text differ, **the addendum wins**.
+  - Recommending mode `on` to users additionally waits for the G0 value check (HLD §22.5). The
+    protocol shipped; **execution is post-merge**, owned by the parent or operator, and does not
+    block epic closure (D34). G0 was not run.
+- **Date:** 2026-10-04 (Rev 1), 2026-10-05 (Rev 2, Rev 3, Rev 4)
 - **Deciders:** `architect` (design). Inputs: the `manager` analysis (items A–K) and scope
   decisions, the Phase-4 consultation, and the Rev 3 early-gate review.
 - **Epic:** `E-Rc4Hk8-cross-run-result-cache`
 - **Design:** [`docs-md/cross-run-result-cache-hld.md`](../cross-run-result-cache-hld.md).
+  - §0 is the as-built outcome and the deviation table (DV-1..DV-24); read it first.
   - §7.6 is the full decision log; the D-numbers below match it.
   - §7.7 is the threat model.
   - §23.4 (Phase 4) and §23.5 (Rev 3) map every finding to its disposition.
@@ -176,7 +183,8 @@ remains, for the sweep only. The key schema and GV-1 are unchanged.
 - **Rev 3:** `runstate`, `usage`, `outcomes`, `cli` and `ui/runs` import `cache.report` inside the
   function and only when `state.result_cache` is non-empty. A cache-off engine process loads no
   cache module except `cache` and `cache.constants` (via `project_config`); the CLI path may also
-  load `cache.settings`. Test I-1 asserts this in a subprocess.
+  load `cache.settings` **and `cache.cli`** (Rev 4 addendum A3 below). Test I-1 asserts the engine
+  set in a subprocess; test E-2 asserts the CLI set.
 
 ### D10 / D29 — Fail-closed allowlist eligibility
 
@@ -438,10 +446,11 @@ prompt template, `extra_args` or the key document.
 
   Mitigations: `cache: false`, `ao cache rm`, `--no-cache`.
 - **Not defended:** a deliberate same-uid poisoner, or an active TOCTOU race. Recommend
-  `--no-cache` for untrusted workflows; HMAC and `dir_fd` walking are non-MVP.
+  `--no-cache` for untrusted workflows; HMAC and `dir_fd` walking are non-MVP. The full list of
+  accepted residuals, with their preconditions, is in addendum A4 below.
 - **Version-bump rule.** A behaviour-relevant executor change that is visible in neither argv nor
-  the fingerprint **must** bump `KEY_SCHEMA_VERSION`. Pointer comments in `models.py` and
-  `claude_cli.py` say so.
+  the fingerprint **must** bump `KEY_SCHEMA_VERSION`. Pointer comments next to
+  `models.EFFORT_MAX_TURNS` and above `claude_cli.build_claude_argv` say so (added by T-bdQZW4).
 - **Upgrade cosmetics.** The new spec fields change static spec hashes, so resuming a pre-upgrade
   run logs `run.spec_changed_on_resume` once.
 - **Downgrade.** An older `ao` that resumes a run drops `result_cache` records; `run.log` keeps the
@@ -470,6 +479,95 @@ stays shipped but off, and ALT-8 is the next step.
 - Executing G0 on a real consumer workflow (post-merge, parent or operator).
 - Fixing the missing-inputs `dispatch_cycle` reset in `engine.py` (separate bug ticket).
 
+## Addendum (Rev 4, as built; `T-bdQZW4`, 2026-10-05)
+
+This addendum folds the gate addenda and the implementation record into one place. Evidence and
+the complete deviation table (DV-1..DV-24) are in HLD §0; every statement below was checked against
+the code (commands in `T-bdQZW4`'s `STATUS.md`).
+
+### A1 — Acceptance
+
+The decision set D1 to D35 is **accepted as implemented**, with the corrections below. The one
+named flip point stays `DEFAULT_TASK_CACHE_POLICY = False` (test U-S4); flipping it needs an addendum
+here. GV-1 is unchanged since Rev 2:
+`6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f` (re-run; all eleven component
+digests equal HLD §8.2.7; `KEY_SCHEMA_VERSION = 1`). None of the gate remediations changed the key.
+
+### A2 — Gate addenda that stand (see the sections above)
+
+| Decision | Addendum | Gate |
+|----------|----------|------|
+| D8 | No restore-staging-name exemption in directory hashing | G2-S1 |
+| D10 / D29 | Case-insensitive sensitive match; extended component and basename lists | G1a SEC-06; G1a SEC-15 / G2-S3 |
+| D19 | Inline maintenance bounded over `entries/**` of any version and depth, in the scan and the prune; `INLINE_PRUNE_MAX_WALK_ITEMS`, `INLINE_PRUNE_MAX_BLOBS`; fail-closed mark phase | G1a SEC-01, SEC-02, S-4 |
+| D20 | `fchmod` on the staging descriptor; hard-link backups and rollback of earlier renames | G1a SEC-07 |
+
+### A3 — Decision: `cache.cli` is allowed on the CLI path (amends D9)
+
+`cli.py` registers the `ao cache` group eagerly (`from .cache.cli import cache_app`;
+`app.add_typer(cache_app, name="cache")`), so every `ao` start loads `agent_orchestrator.cache.cli`.
+The design allowed a cache-off CLI process only `cache`, `cache.constants` and `cache.settings`
+(HLD §8.7.5, §18.1 E-2). **Decision (manager, T-o95l1M): allow `cache.cli`, provided
+`cache/cli.py` stays import-light**: its module-level imports are `typer`, `cache.constants` and
+`cache.settings` only, and every other cache import (`cli_ops`, `store`, `coordinator`, `report`,
+...) is lazy inside the command bodies. The CLI-path allow-list is
+`{cache, cache.constants, cache.settings, cache.cli}`; the **engine** process keeps
+`{cache, cache.constants}` (I-1). Alternative not taken: registering the sub-app lazily (a second
+mechanism for one group; the eager registration keeps `ao cache --help` simple). Guards:
+`tests/cache/test_cli_result_cache_wiring.py::TestCacheCliStaysImportLight` and `::TestLazyImports`;
+E-2 in `tests/test_e2e_cli_result_cache.py`.
+
+### A4 — Accepted residuals (stated, not fixed)
+
+Operator mitigation for all of them: `--no-cache` for untrusted repositories or prompts. The IDs are
+those of HLD §0.4.
+
+1. **R-A1: provider and endpoint environment is not in the key.** `ANTHROPIC_BASE_URL`,
+   `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` and the provider region are not in
+   `CLAUDE_FINGERPRINT_ENV_VARS`, so a hit can be served across a backend or endpoint switch with an
+   unchanged model alias. Same model name, operator-controlled, non-secret; adding them would change
+   GV-1. Pass `--no-cache`, or run `ao cache clear`, when switching provider or endpoint (G2 rev S4,
+   G1a SEC-11).
+2. **R-A2: `filter.<x>.clean` is executed by the guard-3 probe.** `git status` in
+   `WorktreeProbe.snapshot` still runs a `filter.<x>.clean` command named in the agent-writable git
+   config (re-confirmed on git 2.39.5; `core.fsmonitor` and `core.untrackedCache` are neutralised).
+   Precondition: cache on, the task opted in, and a writer of the git config or `.gitattributes` that
+   cannot already run code (a tool-restricted agent without Bash). An agent with Bash already has the
+   same power, and the same primitive pre-exists in the isolation integrator (G2 sec S2, G1b S-3,
+   same family as G1a SEC-03).
+3. **R-A3: dirty tracked edits made before the lookup are not in the key** (accepted at Rev 3).
+   Guard 3 catches edits made during the run only; it is blind to `assume-unchanged` and
+   `skip-worktree` files and to untracked or non-git writes, and after a quota or self-heal requeue
+   the next lookup re-takes the baseline, absorbing the abandoned attempt's tracked edits (G1b N-7,
+   N-9).
+4. **R-A4: same-uid cache forgery.** The cache directory is agent-writable and keys are not secrets;
+   an agent that can write `.orchestrator/cache` can plant an entry and blobs that a later `on` run
+   restores. The `on` banner says so (`(agent-writable; avoid for untrusted prompts)`). Related and
+   accepted: a forged future `created_at` never expires (SEC-18), a stored mode `0o000` restores
+   unreadable (SEC-16), hard-linked blobs (SEC-21). HMAC and `dir_fd` walking remain non-MVP.
+5. **R-A5: nested workspace.** A workspace inside a parent repository is treated as non-git (HEAD
+   not keyed; guards 2 and 3 inactive); the banner warns (A-12).
+6. **R-A6: retention.** Outputs persist in `.orchestrator/cache` until `ao cache rm`, `clear` or
+   `prune`; shadow mode also stores them. Crash leftovers `.ao-result-cache-*.tmp[.bak]` are swept
+   only by `ao cache prune` and only in the output directories of entries still in the store.
+7. **R-A7: active TOCTOU races** (including the prune-side sweep's intermediate directory
+   component) and **R-A8**: smaller hygiene items (unbounded `ResultCacheRecord` strings, `ao cache
+   prune` taking limits from the current directory's config). See HLD §0.4.
+
+### A5 — Other as-built decisions
+
+- **Prune-side restore sweep (T-6tRKml; replaces the G1b hashing exemption, which G2 removed).**
+  `ao cache prune` (never a run, never `clear`) deletes only regular, user-owned files named exactly
+  like a restore staging file that are direct children of an output directory of a valid entry, older
+  than `TMP_SWEEP_GRACE_SECONDS`, through directory file descriptors opened `O_NOFOLLOW`; a `.bak`
+  that is the only name of replaced content is kept.
+- **`mode: "on"` is quoted in the `ao init` template.** A bare `on` is boolean `true` under YAML
+  1.1 and fails validation; a user who writes it gets a loud `ConfigError` (fail-closed).
+- **Module split.** The package also contains `cli_ops.py` and `restore_sweep.py` (HLD §8.0);
+  `cache/cli.py` imports stay lazy (A3).
+- **Merge notes.** HLD §24.2 carries the corrected figures and the edited existing test
+  `tests/ui/test_run_graph_endpoint.py`.
+
 ## Revision history
 
 | Rev | Date | Change |
@@ -477,3 +575,4 @@ stays shipped but off, and ALT-8 is the next step.
 | 1 | 2026-10-04 | Initial decision set. |
 | 2 | 2026-10-05 | Phase-4 consultation folded in: double opt-in and modes; argv and fingerprint in the key; three store guards; the engine owns the hit transition and keeps the cycle increment; stale budget charges are reversed; total parsing and the error boundary; sensitive destinations; versioned layout and provisional split ABCs; `rm`; alternatives ALT-7/ALT-8 recorded; G0 escalated. |
 | 3 | 2026-10-05 | Early-gate review (GO-WITH-FIXES) and manager scope decisions: repository detection stops at the workspace root; `unknown_agent_field`; unsafe cache paths never followed or evicted (D33); G0 becomes a post-merge, operator-owned protocol (D34); exact field contract and `result_cache` container (D35); named author-policy default; lazy guard 3 and lock-free reads; inline prune bounded by bytes; lazy `cache.report` imports; shared `_reverse_stale_charge` with the `budget.resume_reverse` event; `refresh`, `rm --run/--task` and `verify --repair` deferred. |
+| 4 | 2026-10-05 | As-built reconciliation (`T-bdQZW4`): status Accepted; gate addenda (D8, D10/D29, D19, D20) folded; `cache.cli` CLI-path decision (amends D9); accepted residuals stated (A4); prune-side restore sweep; `mode: "on"` quoting; pointer comments for the version-bump rule. |
