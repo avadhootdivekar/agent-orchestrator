@@ -104,3 +104,5 @@
 
 ## Manager log
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Baselines on untouched base bb6d8a0 recorded (pytest 5041 passed / 8 skipped / 2 pre-existing bench failures `tests/bench/test_dev_core_suite.py` + `tests/bench/test_dev_medium_suite.py` fake-pass; ruff: 1 pre-existing I001 + 1 format diff in `output/E-YAAGhk-.../repro_emit_lost_on_breaker_trip.py`; mypy src: 4 pre-existing errors in `_version.py`; vitest 34 files / 406 tests). Design package received from architect. Independent early gates launched: `reviewer` (design quality, feasibility vs real code, scope) and `dev-security` (adversarial). No implementation starts before both return PASS / PASS-WITH-CHANGES and the architect has applied the required changes.
+
+- By: user (relayed by developer) · Role: user · Date: 2026-10-05 · Comment: Owner decisions: gate approval requires auth (anonymous refused, OQ-1); resume policy is per-gate with no removing/weakening (OQ-2); OQ-12..OQ-15 and CE-1 stand as designed. Implementation waits for the design re-gate; auth (E-Da5Tn9) has landed, so the `Principal` contract is now available.

@@ -146,6 +146,11 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
         "help-surface tests now pass COLUMNS=200 (assertions unchanged)"
     ),
     "tests/test_budget.py": "R-1b cycle-keyed estimate ledger (T-Ac6Vd9): key literal only",
+    "tests/test_wave_scheduler.py": (
+        "E-Rc4Hk8 flake fix (962ac51): `test_two_independent_tasks_overlap_at_max_parallel_two` "
+        "only held task `a`, so `b` could finish before `a` started (~2 in 80 runs, unrelated to "
+        "the cache); it now holds both tasks. Assertions unchanged"
+    ),
     # Additive only: DashboardService now asks its supervisor for `describe()`/`get_launch()`
     # (derived launch status + bounded log tail, E-iafh2F T-Lc5Rq8-launch-status), so the shared
     # in-memory StubSupervisor gained those two methods. No existing stub behaviour changed.

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -81,3 +82,13 @@ def build_dashboard(
         return ui_app.create_app(dashboard_service, auth=runtime)
 
     return factory
+
+
+@pytest.fixture(autouse=True)
+def _restore_log_record_factory() -> Iterator[None]:
+    """`install_log_redaction()` swaps the process-wide LogRecord factory (it tags every record
+    with `_ao_redacted`); undo it after each auth test so it cannot leak into other suites, e.g.
+    the result-cache tests that assert exact log-record fields."""
+    factory = logging.getLogRecordFactory()
+    yield
+    logging.setLogRecordFactory(factory)
