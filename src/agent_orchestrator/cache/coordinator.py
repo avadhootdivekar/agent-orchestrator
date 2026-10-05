@@ -26,7 +26,7 @@ from typing import Protocol, cast
 from pydantic import ValidationError
 
 from agent_orchestrator import __version__
-from agent_orchestrator.artifacts import ArtifactPathError, ArtifactStore, LocalFsArtifactStore
+from agent_orchestrator.artifacts import LocalFsArtifactStore
 from agent_orchestrator.cache.constants import (
     ENTRY_SCHEMA,
     EVENT_CORRUPT,
@@ -42,7 +42,6 @@ from agent_orchestrator.cache.constants import (
     MAX_ENTRY_COST_USD,
     MAX_ENTRY_SECONDS,
     MAX_ENTRY_TOKENS,
-    MAX_TEXT_CHARS,
     MODE_ON,
     MODE_SHADOW,
     REASON_ARTIFACT_STORE_UNSUPPORTED,
@@ -62,7 +61,7 @@ from agent_orchestrator.cache.constants import (
     REASON_UNSAFE_PATH,
 )
 from agent_orchestrator.cache.eligibility import check_eligibility
-from agent_orchestrator.cache.fingerprint import CliVersionReader
+from agent_orchestrator.cache.fingerprint import CliVersionReader, try_resolve
 from agent_orchestrator.cache.keys import build_cache_key
 from agent_orchestrator.cache.records import (
     make_hit_record,
@@ -100,6 +99,7 @@ from agent_orchestrator.cache.types import (
     StoreResult,
     StoreSkip,
     UncacheableError,
+    clip_text,
 )
 from agent_orchestrator.errors import GitError
 from agent_orchestrator.models import AgentSpec, TaskRunState, resolve_effective_agent
@@ -120,15 +120,8 @@ EXPECTED_ERRORS = (
     subprocess.SubprocessError,
 )
 
-# What `ArtifactStore.resolve` raises for a hostile or unresolvable path (see fingerprint.py).
-_RESOLVE_FAILURES = (ArtifactPathError, OSError, RuntimeError, ValueError)
-
 _PHASE_LOOKUP = "lookup"
 _PHASE_STORE = "store"
-
-
-def _clip(text: str | None) -> str | None:
-    return None if text is None else text[:MAX_TEXT_CHARS]
 
 
 def _clamp(value: float, hi: float) -> float:
@@ -169,13 +162,6 @@ class Worktree(Protocol):
         workspace_root: str,
         exclude_abs: frozenset[str] | set[str],
     ) -> frozenset[tuple[object, ...]]: ...
-
-
-def _try_resolve(store: ArtifactStore, raw: str) -> str | None:
-    try:
-        return store.resolve(raw)
-    except _RESOLVE_FAILURES:
-        return None
 
 
 class ResultCache:
@@ -225,10 +211,8 @@ class ResultCache:
         fills `warnings` (printed by the CLI banner).
         """
         ws = str(Path(workspace_root).resolve())
-        # `ttl_days=None` ("never expire") is handled by the store at runtime; its annotation
-        # is narrower than its behaviour, hence the cast.
         store = LocalFsCacheStore.for_workspace(
-            ws, max_bytes=settings.max_bytes, ttl_days=cast("int", settings.ttl_days)
+            ws, max_bytes=settings.max_bytes, ttl_days=settings.ttl_days
         )
         marker = nested_repo_marker(ws)
         warnings: tuple[str, ...] = ()
@@ -540,12 +524,12 @@ class ResultCache:
             key_schema=KEY_SCHEMA_VERSION,
             created_at=now,
             source=EntrySource(
-                workflow_id=req.workflow.id[:MAX_TEXT_CHARS],
-                task_id=req.task.id[:MAX_TEXT_CHARS],
-                run_id=req.run_id[:MAX_TEXT_CHARS],
-                agent=req.task.agent[:MAX_TEXT_CHARS],
-                ao_version=__version__[:MAX_TEXT_CHARS],
-                cli_version=_clip(pending.key.cli_version),
+                workflow_id=clip_text(req.workflow.id),
+                task_id=clip_text(req.task.id),
+                run_id=clip_text(req.run_id),
+                agent=clip_text(req.task.agent),
+                ao_version=clip_text(__version__),
+                cli_version=clip_text(pending.key.cli_version),
             ),
             usage=EntryUsage(
                 cost_usd=_clamp(ts.cumulative_cost_usd, MAX_ENTRY_COST_USD),
@@ -559,8 +543,8 @@ class ResultCache:
                 ),
                 duration_seconds=_duration_seconds(ts.started_at, ts.ended_at, now),
                 attempts=_clamp_int(ts.attempts, MAX_ENTRY_ATTEMPTS),
-                model=_clip(ts.model),
-                effort=_clip(ts.effort),
+                model=clip_text(ts.model),
+                effort=clip_text(ts.effort),
                 actuals_available=ts.cumulative_cost_usd > 0 or ts.cumulative_input_tokens > 0,
             ),
             outputs=outputs,
@@ -603,7 +587,7 @@ class ResultCache:
         raw += [b.verdict_path for b in wf.circuit_breakers]
         raw += [b.path for b in wf.circuit_breakers]
         raw.append(wf.prompt_path)
-        resolved = (_try_resolve(req.artifact_store, p) for p in raw if p)
+        resolved = (try_resolve(req.artifact_store, p) for p in raw if p)
         return frozenset(r for r in resolved if r is not None)
 
     def _ineligible(
@@ -686,7 +670,7 @@ class ResultCache:
                 "event": EVENT_SKIP,
                 "phase": _PHASE_LOOKUP,
                 "reason": REASON_STORE_UNAVAILABLE,
-                "reason_detail": str(exc)[:MAX_TEXT_CHARS],
+                "reason_detail": clip_text(str(exc)),
             },
         )
 

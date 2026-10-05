@@ -16,9 +16,12 @@ from agent_orchestrator.cache.constants import (
     CACHE_DIR_MODE,
     GROUP_OTHER_WRITE_BITS,
     HASH_CHUNK_BYTES,
+    RESTORE_BACKUP_SUFFIX,
+    RESTORE_TMP_PREFIX,
     SENSITIVE_BASENAMES,
     SENSITIVE_PATH_COMPONENTS,
     TMP_FILE_MODE,
+    TMP_SUFFIX,
 )
 
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -220,6 +223,17 @@ def is_sensitive_rel_path(rel: str) -> bool:
     if any(p in _SENSITIVE_COMPONENTS_FOLDED for p in parts):
         return True
     return bool(parts) and parts[-1] in _SENSITIVE_BASENAMES_FOLDED
+
+
+def is_restore_tmp_name(name: str) -> bool:
+    """True for a restore staging name (`.ao-result-cache-*.tmp`) or its `.bak` backup link.
+
+    A crash (SIGKILL, power loss) between staging and commit leaves such a file next to the
+    output. Directory-input hashing ignores these names so a stale leftover can never change a
+    key (SEC G1b S-1); the restore itself never deletes anything it did not create.
+    """
+    stem = name.removesuffix(RESTORE_BACKUP_SUFFIX)
+    return name.startswith(RESTORE_TMP_PREFIX) and stem.endswith(TMP_SUFFIX)
 
 
 def posix_rel(path: str, base: str) -> str:

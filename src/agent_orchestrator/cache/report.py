@@ -15,7 +15,6 @@ binary-float noise such as 1.2345000000000002.
 from __future__ import annotations
 
 from collections import Counter
-from typing import cast
 
 from agent_orchestrator.models import (
     RESULT_CACHE_HIT,
@@ -29,6 +28,10 @@ from agent_orchestrator.models import (
 
 _USD_DIGITS = 6
 _SECONDS_DIGITS = 3
+# Summary-line fields (HLD 8.8.3) and the largest value `format_summary_line` will print.
+_SUMMARY_COUNTS = ("hits", "saved_tokens", "would_hits", "misses", "stored", "ineligible")
+_SUMMARY_FLOATS = ("saved_cost_usd", "saved_seconds")
+_SUMMARY_MAX = 10**15
 UNKNOWN_REASON = "unknown"  # a miss / store-skip record that carries no reason string
 
 # The brief's exact fields (D35), in the order the HLD documents them.
@@ -112,16 +115,38 @@ def result_cache_status_fields(
     return {tid: task_view(rec) for tid, rec in recs.items()}, _run_block(recs)
 
 
-def format_summary_line(block: dict[str, object] | None) -> str | None:
-    """The §8.8.3 line; None for None."""
-    if block is None:
+def _summary_number(block: dict[object, object], key: str, kind: type) -> float | None:
+    """`block[key]` when it is a plain, finite, non-negative, bounded `kind`; else None."""
+    value = block.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if kind is int and not isinstance(value, int):
+        return None
+    if not 0 <= value <= _SUMMARY_MAX:  # also False for NaN / inf
+        return None
+    return value
+
+
+def format_summary_line(block: object) -> str | None:
+    """The §8.8.3 line; None for None.
+
+    TOTAL: `ao status` feeds it the `result_cache` block of `status.json`, an agent-writable file.
+    Anything that is not a dict of well-typed, bounded numbers (hostile or corrupt) yields None
+    instead of raising or echoing attacker-chosen text (SEC G1b S-2). Only numbers are ever
+    formatted, so the line carries no foreign string.
+    """
+    if not isinstance(block, dict):
+        return None
+    counts = {k: _summary_number(block, k, int) for k in _SUMMARY_COUNTS}
+    floats = {k: _summary_number(block, k, float) for k in _SUMMARY_FLOATS}
+    if any(v is None for v in (*counts.values(), *floats.values())):
         return None
     return (
-        f"Result cache: hits={block['hits']} "
-        f"(saved ~${cast(float, block['saved_cost_usd']):.4f} est., "
-        f"~{block['saved_tokens']} tokens, ~{cast(float, block['saved_seconds']):.0f}s) "
-        f"would_hits={block['would_hits']} misses={block['misses']} "
-        f"stored={block['stored']} ineligible={block['ineligible']}"
+        f"Result cache: hits={counts['hits']} "
+        f"(saved ~${floats['saved_cost_usd']:.4f} est., "
+        f"~{counts['saved_tokens']} tokens, ~{floats['saved_seconds']:.0f}s) "
+        f"would_hits={counts['would_hits']} misses={counts['misses']} "
+        f"stored={counts['stored']} ineligible={counts['ineligible']}"
     )
 
 

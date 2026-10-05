@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 import jsonschema
@@ -30,6 +31,17 @@ from tests.cache._report_states import (
 
 REPORT_SOURCE = Path(report.__file__)
 
+# A well-formed `result_cache` status block (all eight summary fields).
+GOOD_BLOCK: dict[str, object] = {
+    "hits": 1,
+    "saved_cost_usd": 0.1,
+    "saved_tokens": 2,
+    "saved_seconds": 3.0,
+    "would_hits": 0,
+    "misses": 0,
+    "stored": 0,
+    "ineligible": 0,
+}
 # The HLD 8.8.2 example: two hits, one stored miss, one ineligible task.
 EXAMPLE_LINE = (
     "Result cache: hits=2 (saved ~$1.2345 est., ~54000 tokens, ~312s) "
@@ -219,6 +231,40 @@ class TestSummaryLine:
             "Result cache: hits=0 (saved ~$0.0000 est., ~0 tokens, ~0s) "
             "would_hits=1 misses=0 stored=1 ineligible=0"
         )
+
+
+HOSTILE_BLOCKS: list[object] = [
+    "pwn",
+    [1, 2],
+    42,
+    {"hits": "\x1b]0;PWNED\x07\x1b[2J"},  # the b1.py escape-injection PoC (missing keys too)
+    {**GOOD_BLOCK, "hits": "\x1b]0;PWNED\x07\x1b[2J"},
+    {**GOOD_BLOCK, "saved_cost_usd": "1.5"},  # number replaced by a string
+    {**GOOD_BLOCK, "saved_cost_usd": None},
+    {**GOOD_BLOCK, "saved_seconds": float("nan")},
+    {**GOOD_BLOCK, "saved_seconds": float("inf")},
+    {**GOOD_BLOCK, "hits": True},  # a bool is not a count
+    {**GOOD_BLOCK, "hits": -1},
+    {**GOOD_BLOCK, "misses": 1.5},  # a count must be an int
+    {**GOOD_BLOCK, "stored": 10**5000},  # beyond int->str digit limits / the display bound
+    {**GOOD_BLOCK, "saved_tokens": [1]},
+]
+
+
+class TestSummaryLineIsTotal:
+    """SEC G1b S-2: `ao status` feeds the raw `status.json` block; nothing may raise or echo it."""
+
+    @pytest.mark.parametrize("block", HOSTILE_BLOCKS, ids=range(len(HOSTILE_BLOCKS)))
+    def test_hostile_block_gives_none_and_never_raises(self, block: object) -> None:
+        assert report.format_summary_line(block) is None
+
+    def test_a_well_formed_block_is_unchanged_after_a_json_round_trip(self) -> None:
+        block = json.loads(json.dumps(report.run_block(_example_state())))
+        assert report.format_summary_line(block) == EXAMPLE_LINE
+
+    def test_extra_keys_are_ignored_and_never_echoed(self) -> None:
+        line = report.format_summary_line({**GOOD_BLOCK, "note": "\x1b[2Jboom"})
+        assert line is not None and "boom" not in line and "\x1b" not in line
 
 
 class TestUsageCounters:

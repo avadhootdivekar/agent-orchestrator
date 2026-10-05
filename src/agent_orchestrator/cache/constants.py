@@ -123,6 +123,7 @@ KIND_FILE, KIND_DIR, KIND_ABSENT = "file", "dir", "absent"
 KEY_PLACEHOLDER_ID, KEY_PLACEHOLDER_TIMEOUT = "-", 1
 COMPONENT_DIGEST_CHARS = 12
 RESTORE_TMP_PREFIX = ".ao-result-cache-"
+RESTORE_BACKUP_SUFFIX = ".bak"  # appended to a restore staging name (the hard-link backup)
 DIR_WALK_SKIP_NAMES = frozenset({".git"})
 # AgentSpec classification (D7, D10). Tripwire U-K8: KEY | NON_KEY == AgentSpec.model_fields.
 # keys.py projects KEY into the key; eligibility.py rejects any OTHER non-default field.

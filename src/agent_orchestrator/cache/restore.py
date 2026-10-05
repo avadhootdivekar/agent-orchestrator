@@ -36,6 +36,7 @@ from agent_orchestrator.cache.constants import (
     REASON_RESTORE_FAILED,
     REASON_SENSITIVE_OUTPUT,
     REASON_STORE_ERROR,
+    RESTORE_BACKUP_SUFFIX,
     RESTORE_TMP_PREFIX,
     RESTORED_MODE_MASK,
     STORED_MODE_MASK,
@@ -55,10 +56,12 @@ from agent_orchestrator.cache.types import (
     StoreSkip,
 )
 
+# A crash between staging and commit leaves `.ao-result-cache-*.tmp[.bak]` next to the output.
+# Nothing sweeps them (a restore deletes only what it created); `safeio.is_restore_tmp_name` lets
+# directory-input hashing ignore them so they cannot poison a key (SEC G1b S-1).
 # Parent directories of restored outputs are created the way the agent would have created them:
 # the umask decides the final mode (unlike the cache's own 0o700 directories).
 _RESTORE_DIR_MODE = 0o777
-_BACKUP_SUFFIX = ".bak"  # appended to the staging name, so every restore sweep also finds it
 
 
 class HashingWriter:
@@ -119,7 +122,7 @@ def _backup_existing(item: _Staged) -> None:
     item.existed = os.path.lexists(item.dest)
     if not item.existed:
         return
-    backup = item.tmp + _BACKUP_SUFFIX
+    backup = item.tmp + RESTORE_BACKUP_SUFFIX
     try:
         os.link(item.dest, backup, follow_symlinks=False)
     except (OSError, NotImplementedError):

@@ -8,8 +8,9 @@ the `input_*` reasons: an input that cannot be hashed safely makes the task unca
 (fail-closed), never a silent partial hash.
 
 Directory walks skip only `.git` (any depth), the caller's `skip_abs` (the `.orchestrator` state
-dir) and `exclude_abs` (the task's own declared outputs). Editor / OS noise inside a declared
-input directory is hashed on purpose: it causes false misses, never false hits.
+dir), `exclude_abs` (the task's own declared outputs) and regular files named like a restore
+staging file (`.ao-result-cache-*.tmp[.bak]`: crash leftovers, SEC G1b S-1). Editor / OS noise
+inside a declared input directory is hashed on purpose: it causes false misses, never false hits.
 """
 
 from __future__ import annotations
@@ -102,6 +103,9 @@ def hash_directory(
             with os.scandir(current) as it:
                 for e in it:
                     if e.name in DIR_WALK_SKIP_NAMES or e.path in skip_abs or e.path in exclude_abs:
+                        continue
+                    # An orphaned restore temp file (crash mid-restore) must not poison the key.
+                    if safeio.is_restore_tmp_name(e.name) and e.is_file(follow_symlinks=False):
                         continue
                     rel = safeio.posix_rel(e.path, abs_dir)
                     if e.is_symlink():

@@ -251,7 +251,9 @@ class _BlobScan:
 class LocalFsCacheStore(CacheStore, CacheAdmin):
     """`CacheStore` + `CacheAdmin` over `<workspace>/.orchestrator/cache` (HLD 8.4.1, 8.4.3)."""
 
-    def __init__(self, workspace_root: str | os.PathLike[str], *, max_bytes: int, ttl_days: int):
+    def __init__(
+        self, workspace_root: str | os.PathLike[str], *, max_bytes: int, ttl_days: int | None
+    ):
         # abspath, not realpath: constructing the store must perform no I/O (U-ST1).
         self._ws = os.path.abspath(os.fspath(workspace_root))
         self._orchestrator_dir = os.path.join(self._ws, CACHE_DIR_PARTS[0])
@@ -263,7 +265,7 @@ class LocalFsCacheStore(CacheStore, CacheAdmin):
 
     @classmethod
     def for_workspace(
-        cls, workspace_root: str | os.PathLike[str], *, max_bytes: int, ttl_days: int
+        cls, workspace_root: str | os.PathLike[str], *, max_bytes: int, ttl_days: int | None
     ) -> LocalFsCacheStore:
         """Factory; creates nothing (the layout is created lazily by the first write)."""
         return cls(workspace_root, max_bytes=max_bytes, ttl_days=ttl_days)

@@ -16,7 +16,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_orchestrator.cache.constants import (
     CLI_VERSION_TIMEOUT_SECONDS,
@@ -30,6 +30,9 @@ from agent_orchestrator.cache.hashing import HashBudget, digest_path
 from agent_orchestrator.cache.safeio import posix_rel
 from agent_orchestrator.cache.types import KeyDeps, KeyRequest, UncacheableError
 from agent_orchestrator.errors import ArtifactPathError
+
+if TYPE_CHECKING:
+    from agent_orchestrator.artifacts import ArtifactStore
 
 # Deliberately SMALL and CLOSED (A-9): adding a name needs review. NEVER add a secret (API keys,
 # tokens). These change which model runs or how much it may emit, so they must change the key.
@@ -59,18 +62,26 @@ CLAUDE_CONTEXT_PATHS = (
 
 # Errors `Path.resolve` / the artifact store can raise for a hostile path: traversal, a symlink
 # loop (RuntimeError on older Pythons, OSError on newer), a NUL byte (ValueError).
-_RESOLVE_FAILURES = (ArtifactPathError, OSError, RuntimeError, ValueError)
+RESOLVE_FAILURES = (ArtifactPathError, OSError, RuntimeError, ValueError)
 
 
 def _in_cache_root(path: str, cache_root: str) -> bool:
     return path == cache_root or path.startswith(cache_root + os.sep)
 
 
+def try_resolve(store: ArtifactStore, raw: str) -> str | None:
+    """`store.resolve(raw)`, or None when the path is hostile or unresolvable."""
+    try:
+        return store.resolve(raw)
+    except RESOLVE_FAILURES:
+        return None
+
+
 def guarded_resolve(req: KeyRequest, raw: str) -> str:
     """Resolve *raw* through the engine's own path guard; refuse the cache directory itself."""
     try:
         resolved = req.artifact_store.resolve(raw)
-    except _RESOLVE_FAILURES as e:
+    except RESOLVE_FAILURES as e:
         raise UncacheableError(REASON_PATH_REJECTED, raw) from e
     if _in_cache_root(resolved, req.cache_root):
         raise UncacheableError(REASON_PATH_IN_CACHE_DIR, raw)

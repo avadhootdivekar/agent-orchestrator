@@ -491,7 +491,7 @@ class _RunContext:
     # claim, both of which never touch this field.
     workspace_lock: WorkspaceRunLock | None = None
     # E-Rc4Hk8: task id -> PendingStore for a storable result-cache lookup of the CURRENT
-    # dispatch; popped at every prepare pass and at settle; never written when the cache is off.
+    # dispatch; popped at the next prepare pass and at a successful settle; unused when off.
     result_cache_pending: dict[str, PendingStore] = field(default_factory=dict)
 
 
@@ -1492,7 +1492,8 @@ class Orchestrator:
         Mirrors the should_skip branch (done + save + "skipped"): a hit never reaches the
         budget gate, a worker, breaker evaluation or the quota timer. dispatch_cycle keeps the
         increment made above, so R-21 stays monotonic. Cache contracts are imported lazily, so
-        the cache-off path imports nothing.
+        the cache-off path imports nothing. RULE (HLD 8.7.4): any new success-side effect in
+        `_settle_completed_task` must state whether it applies to hits; a hit skips ALL of them.
         """
         from .cache.types import LookupRequest
 
@@ -1528,7 +1529,8 @@ class Orchestrator:
         if ts.started_at is None:
             ts.started_at = started.isoformat()
         ts.ended_at = ended
-        record = state.result_cache[tid]
+        record = outcome.record
+        assert record is not None  # a hit always carries its record (ResultCacheHook contract)
         state.result_cache[tid] = record.model_copy(update={"ended_at": ended})
         # crash -> resume -> hit: release the stale cycle's charge, exactly like the gate does
         self._reverse_stale_charge(tid, ts, state, ctx.run_log)

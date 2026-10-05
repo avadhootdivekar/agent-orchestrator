@@ -391,6 +391,10 @@ def _load_project_config_or_exit() -> ProjectConfig | None:
         raise typer.Exit(1) from exc
 
 
+# Appended to the `on`-mode banner (S-5): the trust assumption behind serving cached outputs.
+_RESULT_CACHE_TRUST_NOTE = " (agent-writable; avoid for untrusted prompts)"
+
+
 def _build_result_cache(
     cache_flag: bool | None, workspace: str, wf: WorkflowSpec
 ) -> ResultCacheHook | None:
@@ -402,7 +406,7 @@ def _build_result_cache(
     imported lazily here, so a cache-off `ao run` loads nothing beyond `cache.constants` /
     `cache.settings` (NFR-1).
     """
-    from .cache.constants import MODE_OFF
+    from .cache.constants import MODE_OFF, MODE_ON
     from .cache.settings import opted_in_count, resolve_result_cache_settings
 
     cfg = _load_project_config_or_exit()
@@ -422,8 +426,11 @@ def _build_result_cache(
         if n
         else "but no task opts in (set defaults.cache: true or tasks[].cache: true)"
     )
+    # `on` serves stored outputs without running the agent, and the cache dir is writable by the
+    # agent/workspace (accepted residual, SEC G1b S-5): say so. Shadow never serves a hit.
+    trust = _RESULT_CACHE_TRUST_NOTE if settings.mode == MODE_ON else ""
     typer.echo(
-        f"Result cache: {settings.mode} (source={settings.source}), {note}, at {rc.root}",
+        f"Result cache: {settings.mode} (source={settings.source}), {note}, at {rc.root}{trust}",
         err=True,
     )
     for w in rc.warnings:
@@ -431,7 +438,7 @@ def _build_result_cache(
     return rc
 
 
-def _echo_result_cache_line(block: dict | None) -> None:
+def _echo_result_cache_line(block: object) -> None:
     """Print the run-summary line (HLD 8.8.3) for a run block; nothing when there is none.
 
     Callers pass a block only when the run has result-cache records, so `cache.report` is
@@ -440,10 +447,11 @@ def _echo_result_cache_line(block: dict | None) -> None:
     if not block:
         return
     from .cache.report import format_summary_line
+    from .cache.safeio import strip_control_chars
 
-    line = format_summary_line(block)
+    line = format_summary_line(block)  # total: `block` may come from an agent-writable file
     if line is not None:
-        typer.echo(line)
+        typer.echo(strip_control_chars(line))
 
 
 # Env var carrying the workspace-scoped general-instruction list, os.pathsep-separated
@@ -1717,7 +1725,7 @@ def status(
             snap = json.loads(status_json_path.read_text())
             _print_status_snapshot(snap)
             return
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, KeyError):  # JSONDecodeError / int-digit-limit are ValueErrors
             # Corrupt status.json — fall through to state.json
             pass
 

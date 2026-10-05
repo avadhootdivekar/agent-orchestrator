@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, BinaryIO, Literal, Protocol
+from typing import TYPE_CHECKING, Annotated, BinaryIO, Literal, Protocol, overload
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
@@ -55,8 +55,13 @@ def canonical_json(obj: object) -> str:
 
 
 # ---------------------------------------------------------------------------------- errors (14.1)
-def _clip(text: str) -> str:
-    return text[:MAX_TEXT_CHARS]
+@overload
+def clip_text(text: str) -> str: ...
+@overload
+def clip_text(text: None) -> None: ...
+def clip_text(text: str | None) -> str | None:
+    """THE clip to `MAX_TEXT_CHARS` (free text in errors, records and entries); None passes."""
+    return None if text is None else text[:MAX_TEXT_CHARS]
 
 
 class CacheError(Exception):
@@ -67,7 +72,7 @@ class CacheError(Exception):
 
     def __init__(self, reason: str, detail: str = "") -> None:
         self.reason = reason
-        self.detail = _clip(detail)
+        self.detail = clip_text(detail)
         super().__init__(f"{reason}: {self.detail}" if self.detail else reason)
 
 
@@ -102,7 +107,7 @@ class UncacheableError(Exception):
 
     def __init__(self, reason: str, detail: str = "") -> None:
         self.reason = reason
-        self.detail = _clip(detail)
+        self.detail = clip_text(detail)
         super().__init__(f"{reason}: {self.detail}" if self.detail else reason)
 
 
@@ -114,7 +119,7 @@ class StoreSkip(Exception):
 
     def __init__(self, reason: str, detail: str = "") -> None:
         self.reason = reason
-        self.detail = _clip(detail)
+        self.detail = clip_text(detail)
         super().__init__(f"{reason}: {self.detail}" if self.detail else reason)
 
 
@@ -133,7 +138,7 @@ class RestoreMiss(Exception):
         self.reason = reason
         self.evict = evict
         self.blob = blob
-        self.detail = _clip(detail)
+        self.detail = clip_text(detail)
         super().__init__(f"{reason}: {self.detail}" if self.detail else reason)
 
 

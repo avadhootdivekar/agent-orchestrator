@@ -44,6 +44,8 @@ IN_TOKENS = 1200
 OUT_TOKENS = 340
 SAVED_TOKENS = IN_TOKENS + OUT_TOKENS
 BANNER_PREFIX = "Result cache: "
+# SEC G1b S-5: the `on` banner warns that the cache dir is agent-writable (pinned literally).
+TRUST_NOTE = " (agent-writable; avoid for untrusted prompts)"
 SUMMARY_PREFIX = "Result cache: hits="
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = Path(agent_orchestrator.__file__).resolve().parents[1]
@@ -130,7 +132,7 @@ class TestBanner:
         assert res.exit_code == 0, res.output
         assert _banners(res) == [
             f"Result cache: on (source=cli), 1 of 1 static task(s) opted in, "
-            f"at {_cache_root(tmp_path)}"
+            f"at {_cache_root(tmp_path)}{TRUST_NOTE}"
         ]
         assert "WARNING" not in res.stderr
 
@@ -142,6 +144,7 @@ class TestBanner:
             f"Result cache: shadow (source=env), 1 of 1 static task(s) opted in, "
             f"at {_cache_root(tmp_path)}"
         ]
+        assert "agent-writable" not in res.stderr  # shadow never serves a hit
 
     def test_config_enabled_banner_names_the_config_source(self, tmp_path: Path) -> None:
         (tmp_path / ".ao").mkdir()
@@ -158,7 +161,7 @@ class TestBanner:
         assert _banners(res) == [
             "Result cache: on (source=cli), but no task opts in "
             "(set defaults.cache: true or tasks[].cache: true), "
-            f"at {_cache_root(tmp_path)}"
+            f"at {_cache_root(tmp_path)}{TRUST_NOTE}"
         ]
 
     def test_nested_workspace_prints_the_repository_warning(

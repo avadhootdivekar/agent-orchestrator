@@ -8,8 +8,8 @@ never make record construction fail. `hit` and `saved_tokens` are derived by the
 
 from __future__ import annotations
 
-from agent_orchestrator.cache.constants import MAX_REASON_CHARS, MAX_TEXT_CHARS
-from agent_orchestrator.cache.types import CacheEntry, LookupRequest
+from agent_orchestrator.cache.constants import MAX_REASON_CHARS
+from agent_orchestrator.cache.types import CacheEntry, LookupRequest, clip_text
 from agent_orchestrator.models import (
     RESULT_CACHE_HIT,
     RESULT_CACHE_INELIGIBLE,
@@ -22,11 +22,6 @@ from agent_orchestrator.models import (
 def _short(text: str | None) -> str | None:
     """Clip a reason-like value to the record's `reason` bound."""
     return None if text is None else text[:MAX_REASON_CHARS]
-
-
-def _text(text: str | None) -> str | None:
-    """Clip a free-text value to the record's `reason_detail` / `source_run_id` bound."""
-    return None if text is None else text[:MAX_TEXT_CHARS]
 
 
 def _entry_record(
@@ -52,7 +47,7 @@ def _entry_record(
         saved_input_tokens=usage.input_tokens,
         saved_output_tokens=usage.output_tokens,
         saved_seconds=usage.duration_seconds,
-        source_run_id=_text(entry.source.run_id),
+        source_run_id=clip_text(entry.source.run_id),
     )
 
 
@@ -92,7 +87,7 @@ def make_miss_record(
         mode=mode,
         mode_source=source,
         reason=_short(reason),
-        reason_detail=_text(detail),
+        reason_detail=clip_text(detail),
         key=key,
         dispatch_cycle=req.dispatch_cycle,
         at=req.now.isoformat(),
@@ -109,7 +104,7 @@ def make_ineligible_record(
         mode=mode,
         mode_source=source,
         reason=_short(reason),
-        reason_detail=_text(detail),
+        reason_detail=clip_text(detail),
         key=None,
         dispatch_cycle=req.dispatch_cycle,
         at=req.now.isoformat(),
