@@ -52,6 +52,7 @@ import typer
 # alongside `models.py`'s own `IsolationMode`/`WorkflowIsolation` and
 # `project_config.IsolationConfig.mode`.
 from .auth.cli import app as auth_app
+from .auth.model import TotpPolicy
 from .models import ISOLATION_NONE, ISOLATION_WORKTREE
 from .service.cli import app as service_app
 
@@ -2239,8 +2240,8 @@ def ui_cmd(
         UI_DEFAULT_HOST,
         "--host",
         help=(
-            "Interface to bind. Defaults to loopback because the dashboard is unauthenticated"
-            " and can launch runs; only change this on a trusted network."
+            "Interface to bind. Defaults to loopback because the dashboard is"
+            " unauthenticated unless --auth / AO_UI_AUTH; only change this on a trusted network."
         ),
     ),
     port: int = typer.Option(UI_DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
@@ -2253,6 +2254,17 @@ def ui_cmd(
     reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev)."),
     open_browser: bool = typer.Option(
         False, "--open", help="Open the dashboard in the default browser once it is serving."
+    ),
+    auth: bool | None = typer.Option(
+        None,
+        "--auth/--no-auth",
+        help="Require login (local accounts; see `ao auth`). Env: AO_UI_AUTH. Default: off.",
+    ),
+    auth_totp: TotpPolicy | None = typer.Option(
+        None, "--auth-totp", help="TOTP policy with --auth. Env: AO_UI_AUTH_TOTP."
+    ),
+    auth_dir: str | None = typer.Option(
+        None, "--auth-dir", help="Directory of the user store. Env: AO_AUTH_DIR."
     ),
 ) -> None:
     """Serve the browser-based dashboard.
@@ -2276,16 +2288,35 @@ def ui_cmd(
         typer.echo(f"ERROR: workspace root is not a directory: {ws}", err=True)
         raise typer.Exit(1)
 
+    from .auth.constants import AO_UI_BOUND_PORT_ENV
+    from .auth.errors import AuthConfigError
+    from .auth.launch import exit_code_for, prepare_auth
+    from .auth.settings import AuthCliOverrides
     from .ui.app import create_app
     from .ui.security import DEFAULT_ALLOWED_HOSTS, resolve_allowed_hosts
     from .ui.service import DashboardService
+
+    try:  # E-Da5Tn9: the one auth startup sequence (refuses to start with auth on and no users)
+        launch = prepare_auth(
+            cli=AuthCliOverrides(enabled=auth, totp=auth_totp, store_dir=auth_dir),
+            env=os.environ,
+            workspace_root=Path(ws),
+            realm_kind="ui",
+            port=port,
+            bind_host=host,
+        )
+    except AuthConfigError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(exit_code_for(e))
+    for line in launch.warnings:
+        typer.echo(line, err=True)
 
     url = f"http://{host}:{port}"
     typer.echo(f"Agent Orchestrator dashboard — workspace: {ws}")
     typer.echo(f"Serving on {url}  (Ctrl-C to stop)")
     # Single source of truth for the loopback host list: ui/security.py's DEFAULT_ALLOWED_HOSTS
     # (imported lazily, same as the rest of this function — the [ui] extra must stay optional).
-    if host not in DEFAULT_ALLOWED_HOSTS:
+    if launch.runtime is None and host not in DEFAULT_ALLOWED_HOSTS:
         typer.echo(
             f"WARNING: binding {host} exposes an UNAUTHENTICATED dashboard that can browse "
             "files and start runs. Only do this on a trusted network.",
@@ -2309,18 +2340,23 @@ def ui_cmd(
         # string plus the workspace/bound-host handed over via env rather than a live object.
         os.environ["AO_UI_WORKSPACE"] = ws
         os.environ["AO_UI_BOUND_HOST"] = host
+        os.environ[AO_UI_BOUND_PORT_ENV] = str(port)  # names the realm cookie in the child
+        os.environ.update(launch.child_env)  # CLI-sourced auth flags only
         uvicorn.run(
             "agent_orchestrator.ui.app:create_app_from_env",
             host=host,
             port=port,
             reload=True,
             factory=True,
+            **launch.uvicorn_kwargs,
         )
     else:
         app_instance = create_app(
-            DashboardService(ws), allowed_hosts=resolve_allowed_hosts(bound_host=host)
+            DashboardService(ws, denied_paths=[str(p) for p in launch.denied_paths]),
+            allowed_hosts=resolve_allowed_hosts(bound_host=host),
+            auth=launch.runtime,
         )
-        uvicorn.run(app_instance, host=host, port=port)
+        uvicorn.run(app_instance, host=host, port=port, **launch.uvicorn_kwargs)
 
 
 # ---------------------------------------------------------------------------------------

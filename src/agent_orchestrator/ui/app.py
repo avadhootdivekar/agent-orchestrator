@@ -56,6 +56,11 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 API_PREFIX = "/api"
 
+# Mirror ``cli.py::UI_DEFAULT_HOST`` / ``UI_DEFAULT_PORT`` (this module cannot import ``cli``):
+# the factory's fallback when ``ao ui --reload`` did not relay a bound host or port.
+FACTORY_DEFAULT_HOST = "127.0.0.1"
+FACTORY_DEFAULT_PORT = 8765
+
 
 class _AllowedHostsUnset:
     """Sentinel for `create_app`'s `allowed_hosts` parameter.
@@ -474,10 +479,34 @@ def create_app_from_env() -> FastAPI:
     """
     import os
 
+    from ..auth.constants import AO_UI_BOUND_PORT_ENV
+    from ..auth.errors import AuthConfigError
+    from ..auth.launch import prepare_auth
+    from ..auth.settings import AuthCliOverrides
+
     workspace = os.environ.get("AO_UI_WORKSPACE") or os.getcwd()
     bound_host = os.environ.get("AO_UI_BOUND_HOST")
+    raw_port = os.environ.get(AO_UI_BOUND_PORT_ENV, "")
+    bound_port = int(raw_port) if raw_port.isascii() and raw_port.isdecimal() else None
+    # The CLI-sourced auth flags reach this process through the environment (``child_env``), so
+    # an empty ``AuthCliOverrides`` resolves the same settings the parent checked.
+    launch = prepare_auth(
+        cli=AuthCliOverrides(),
+        env=os.environ,
+        workspace_root=Path(workspace),
+        realm_kind="ui",
+        port=bound_port if bound_port is not None else FACTORY_DEFAULT_PORT,
+        bind_host=bound_host or FACTORY_DEFAULT_HOST,
+    )
+    if launch.runtime is not None and bound_port is None:
+        # A guessed port would mis-name the realm cookie.
+        raise AuthConfigError(f"{AO_UI_BOUND_PORT_ENV} is required (and must be a port number)")
+    for line in launch.warnings:
+        logger.warning("%s", line)
     return create_app(
-        DashboardService(workspace), allowed_hosts=resolve_allowed_hosts(bound_host=bound_host)
+        DashboardService(workspace, denied_paths=[str(p) for p in launch.denied_paths]),
+        allowed_hosts=resolve_allowed_hosts(bound_host=bound_host),
+        auth=launch.runtime,
     )
 
 

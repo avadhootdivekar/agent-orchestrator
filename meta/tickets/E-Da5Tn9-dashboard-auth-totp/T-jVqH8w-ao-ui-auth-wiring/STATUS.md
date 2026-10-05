@@ -2,11 +2,24 @@
 
 - ID: `T-jVqH8w-ao-ui-auth-wiring`
 - Updated At: `2026-10-05`
-- State: `Draft`
+- State: `Done`
 - Owner: `developer` (lane B)
 - Scope: `MVP` · Sprint: `S3` · Estimate: `3 d`
 
 ## This update
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Implemented and verified (see
+  Evidence). Delivered: `auth/launch.py` (`AuthLaunch`, `prepare_auth`, `exit_code_for`,
+  `is_loopback_bind`, message constants); `ao ui` wiring (`--auth/--no-auth`, `--auth-totp`,
+  `--auth-dir`; `--reload` gets `**launch.uvicorn_kwargs`, `AO_UI_BOUND_PORT` and the CLI relay
+  env; the UNAUTHENTICATED warning only when `launch.runtime is None`; `denied_paths` passed to
+  `DashboardService`); `create_app_from_env` (requires a numeric `AO_UI_BOUND_PORT` when auth is
+  on). Decisions: (1) `AuthLaunch.uvicorn_kwargs` is typed `dict[str, Any]` (not `dict[str,
+  object]`) so `**launch.uvicorn_kwargs` type-checks against `uvicorn.run`; field names are
+  unchanged. (2) `ui/app.py` mirrors `cli.UI_DEFAULT_HOST/PORT` as `FACTORY_DEFAULT_HOST/PORT`
+  (it cannot import `cli`; same precedent as `service/supervisor.py`). (3) Startup audit events
+  carry `realm` and `details.reason` only. (4) Row-9 `Note:` stays silent for an unknown store
+  count (it is a refusal on the config path, row 14). (5) The module docstring of `cli.py`
+  already listed `ao auth` (aa0bc23).
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
   Estimate, lane and sprint unchanged (3 d, lane B, S3). Changes:
   - **Moved out:** the file-browser denial (`ui/files.py`, `ui/service.py`, old AC 8–9) →
@@ -37,7 +50,21 @@
   applies with auth on **and** off. It is the one deliberate behaviour change with auth off (NFR-1).
 
 ## Evidence
-- None yet.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: commands run in the worktree:
+  - `.venv/bin/python -m pytest -q tests/auth tests/ui tests/test_cli*.py tests/service` ->
+    3046 passed, 2 skipped (includes `tests/ui/test_ui_command.py`, `test_files.py`,
+    `test_service.py` unmodified).
+  - `.venv/bin/python -m pytest -q --ignore=tests/auth --ignore=tests/ui --ignore=tests/service`
+    -> 4432 passed, 8 skipped (rest of the suite; with the line above, the whole suite is green).
+  - `.venv/bin/python -m pytest -q tests/auth/test_launch.py --cov=agent_orchestrator.auth.launch`
+    -> 37 passed, `auth/launch.py` 100 % (112 stmts, 0 missed).
+  - `tests/auth/test_ui_command_auth.py` -> 26 passed. Auth-off proof:
+    `test_auth_off_uvicorn_kwargs_are_exactly_host_and_port` asserts
+    `kwargs == {"host": "127.0.0.1", "port": 8765}`; the existing stub-uvicorn tests in
+    `tests/ui/test_ui_command.py` still pass.
+  - `.venv/bin/ruff check src tests` clean; `ruff format --check` clean on every touched path
+    (only the pre-existing, untracked-generated `_build_info.py` would reformat);
+    `.venv/bin/mypy src` -> only the 4 pre-existing `_version.py` errors.
 
 ## Risks / Blockers
 - None. `AuthLaunch` field names are frozen once T-PDGw9p starts.

@@ -25,5 +25,8 @@ Module                      Owner       Contents
                                         over ``make_env``), ``spy``, ``code_of``, ``error_of``
 ``real_routes.py``          T-rpKCjP    ``dash_factory`` / ``Dash``: the real ``create_app`` (or a
                                         hub-realm app) over a real runtime, for the core routes
+``launch.py``               T-jVqH8w    ``make_launch_env`` / ``LaunchEnv`` (a seeded store, a
+                                        workspace and the env for ``prepare_auth``),
+                                        ``audit_events``, ``write_ws_config``, ``RecordingUvicorn``
 ==========================  ==========  ======================================================
 """
