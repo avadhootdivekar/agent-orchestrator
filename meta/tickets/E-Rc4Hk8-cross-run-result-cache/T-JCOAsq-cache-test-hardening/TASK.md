@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `tester`
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `In Progress` (Part 1 complete)
+- Last Updated: `2026-10-05` (Rev 3, Part 2 done)
+- Status: `In Progress` (Parts 1 and 2 complete)
 - Estimate: `24 focus hours (3 days)`: Part 1 6 h ✓ / Part 2 10 h / Part 3 8 h
 
 ## Requirements Mapping
@@ -76,7 +76,7 @@ It is a prerequisite of T-XpF1pF and may run at any point before it.
 - `tests/cache/test_noop_proof.py` (Part 1: I-1, I-2) and its helpers
   `tests/cache/_noop_poison.py`, `_noop_scenarios.py`, `_noop_subprocess.py`, `_noop_capture.py`
 - `tests/fixtures/result_cache/golden/**` (Part 1)
-- `tests/cache/test_adversarial.py`, `tests/cache/test_integration_hardening.py` (Part 2)
+- `tests/cache/test_adversarial.py`, `tests/cache/test_integration_hardening.py` (Part 2) and its shared helper `tests/cache/_hardening_rig.py`
 - `tests/test_e2e_cli_result_cache.py` (Part 3: E-1…E-6)
 - `.github/workflows/ci.yml` (Part 3: one additive step)
 
@@ -143,3 +143,4 @@ HLD §18.1 catalogue rows owned by T-JCOAsq; §8.7.5 I-1/I-2 definitions; §18 C
   after the first delivery was rejected (vacuous poison, one workflow, hand-made goldens). File
   scope extended to the `_noop_*.py` helper modules. Status stays `In Progress` until Part 3;
   details in `STATUS.md` and `HANDOFF.md`.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Part 2 delivered (commit `4d11a69`): 147 tests (I-5b, I-9..I-17, I-19, I-20, I-23, I-25, I-26, ADV-1..ADV-10, ADV-4b). File scope extended by the helper module `_hardening_rig.py`. Status stays `In Progress` until Part 3; details in `STATUS.md` and `HANDOFF.md`.

@@ -126,7 +126,8 @@ ordered by dependency (HLD §22.2).
 - [x] `T-bLpoze-cache-dashboard-surface`: payload fields, file-browser deny, tag, tile; bundle rebuilt as a separate commit. 10 h. Dev C. Deps: T-eyn5UG. **Done** (2026-10-05) Commits faf8f57 (source + tests), 4e61e68 (bundle).
 
 ### 4. Hardening, gate G2, docs
-- [ ] `T-JCOAsq-cache-test-hardening` **Parts 2–3**: integration and adversarial (Part 2; deps T-XpF1pF, T-u3jG8F, T-HjxNQ0); e2e, CI coverage step, full suite (Part 3; deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 18 h. Tester.
+- [x] `T-JCOAsq-cache-test-hardening` **Part 2**: integration and adversarial (deps T-XpF1pF, T-u3jG8F, T-HjxNQ0). 10 h. Tester. **Done** (2026-10-05, commit 4d11a69, 147 tests; the task stays In Progress until Part 3).
+- [ ] `T-JCOAsq-cache-test-hardening` **Part 3**: e2e, CI coverage step, full suite (deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 8 h. Tester.
 - [ ] `T-fXWbqg-cache-review-gates`: G1a, G1b and **G2**. 24 h in total. reviewer + dev-security.
 - [ ] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4.
 
