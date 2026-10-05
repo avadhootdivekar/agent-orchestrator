@@ -19,11 +19,23 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 import yaml
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
+from .cache.constants import (
+    DEFAULT_CACHE_INCLUDE_REPO_HEADS,
+    DEFAULT_CACHE_MAX_BYTES,
+    DEFAULT_CACHE_MAX_ENTRY_BYTES,
+    DEFAULT_CACHE_MAX_INPUT_BYTES,
+    DEFAULT_CACHE_MAX_INPUT_FILES,
+    DEFAULT_CACHE_TTL_DAYS,
+    MAX_CONFIG_BYTES,
+    MAX_INPUT_FILES_LIMIT,
+    MAX_TTL_DAYS,
+)
 from .errors import ConfigError
 from .models import (
     DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
@@ -155,6 +167,42 @@ class IsolationConfig(BaseModel):
         return result
 
 
+class CacheConfig(BaseModel):
+    """`cache:` block: the RESULT cache (E-Rc4Hk8, ADR-0019), not Claude prompt caching."""
+
+    enabled: StrictBool | None = None
+    # Literal default, not `constants.MODE_ON`: mypy cannot narrow a plain `str` constant to
+    # the Literal (constants.py may import only `re`, so it cannot be `Final`). A test pins
+    # `"on" == constants.MODE_ON`.
+    mode: Literal["on", "shadow"] = "on"
+    max_bytes: int = Field(default=DEFAULT_CACHE_MAX_BYTES, ge=1, le=MAX_CONFIG_BYTES)
+    # None -> min(DEFAULT_CACHE_MAX_ENTRY_BYTES, max_bytes); see effective_max_entry_bytes.
+    max_entry_bytes: int | None = Field(default=None, ge=1, le=MAX_CONFIG_BYTES)
+    # None (YAML null) = never expire.
+    ttl_days: int | None = Field(default=DEFAULT_CACHE_TTL_DAYS, ge=1, le=MAX_TTL_DAYS)
+    include_repo_heads: StrictBool = DEFAULT_CACHE_INCLUDE_REPO_HEADS
+    max_input_bytes: int = Field(default=DEFAULT_CACHE_MAX_INPUT_BYTES, ge=1, le=MAX_CONFIG_BYTES)
+    max_input_files: int = Field(
+        default=DEFAULT_CACHE_MAX_INPUT_FILES, ge=1, le=MAX_INPUT_FILES_LIMIT
+    )
+
+    @model_validator(mode="after")
+    def _entry_fits_total(self) -> CacheConfig:
+        if self.max_entry_bytes is not None and self.max_entry_bytes > self.max_bytes:
+            raise ValueError(
+                f"cache.max_entry_bytes ({self.max_entry_bytes}) must be <= "
+                f"cache.max_bytes ({self.max_bytes})"
+            )
+        return self
+
+    @property
+    def effective_max_entry_bytes(self) -> int:
+        """Unset -> min(64 MiB, max_bytes), so a small max_bytes alone never errors."""
+        if self.max_entry_bytes is not None:
+            return self.max_entry_bytes
+        return min(DEFAULT_CACHE_MAX_ENTRY_BYTES, self.max_bytes)
+
+
 class ProjectConfig(BaseModel):
     """Schema for a per-project AO config file.
 
@@ -239,6 +287,10 @@ class ProjectConfig(BaseModel):
     """Per-task git worktree isolation settings for this workspace (E-Wk9Tz3, HLD §11 M9).
     Absent block -> `IsolationConfig()`'s all-defaults (no mode override, not strict, no env
     overlay) -> byte-identical to pre-epic behaviour."""
+
+    cache: CacheConfig = CacheConfig()
+    """Cross-run RESULT cache settings (E-Rc4Hk8, ADR-0019). Absent block -> `CacheConfig()`'s
+    defaults with `enabled=None` -> the cache stays off (and byte-identical to pre-epic)."""
 
     @field_validator("env", mode="before")
     @classmethod
@@ -428,6 +480,24 @@ _INIT_TEMPLATE = """\
 # For an emergency kill switch that forces EVERY task to isolation=none regardless of the
 # above, use `ao run/resume --no-isolation` (or AO_NO_ISOLATION=1) -- deliberately not a
 # config-file setting.
+
+# --- Result cache (E-Rc4Hk8): reuse an identical, previously SUCCESSFUL task's declared output
+# files across runs instead of re-dispatching the agent. NOT Claude prompt caching. Off by default.
+# DOUBLE opt-in: the operator enables it here / via AO_CACHE / --cache, AND the workflow author
+# opts tasks in with `defaults.cache: true` or `tasks[].cache: true`. Agent output is
+# non-deterministic: a hit replays ONE earlier result. Committing `enabled: true` turns it on for
+# every clone and service run of this repo.
+# cache:
+#   enabled: false            # AO_CACHE=1|0|shadow / --cache / --no-cache (CLI/env win)
+#   mode: "on"                # "on" | "shadow" (measure only); quote it, bare on = YAML true
+#   max_bytes: 1073741824     # total size cap; least-recently-used entries evicted to 90%
+#   max_entry_bytes: null     # results bigger than this are not stored
+#                             # (default min(64 MiB, max_bytes))
+#   ttl_days: 30              # entries older than this are misses (null = never expire)
+#   include_repo_heads: true  # key includes HEAD of each git repo in the repo set
+#   max_input_bytes: 536870912  # per-lookup hashing cap (bigger => task not cacheable)
+#   max_input_files: 20000      # per-lookup file-count cap for directory inputs
+# Manage it with `ao cache ls|stats|show|prune|clear|verify|rm`.
 
 # --- Agent-based monitoring & self-healing (absent -> all defaults, byte-identical) ---
 # monitoring:

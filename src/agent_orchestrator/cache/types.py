@@ -38,10 +38,7 @@ from agent_orchestrator.cache.constants import (
 
 if TYPE_CHECKING:
     from agent_orchestrator.artifacts import ArtifactStore, LocalFsArtifactStore
-
-    # `ResultCacheRecord` is added to `models` by T-28J9oR; drop the ignore once it lands
-    # (`unused-ignore` keeps warn_unused_ignores quiet in the meantime).
-    from agent_orchestrator.models import (  # type: ignore[attr-defined,unused-ignore]
+    from agent_orchestrator.models import (
         AgentSpec,
         ResultCacheRecord,
         TaskRunState,

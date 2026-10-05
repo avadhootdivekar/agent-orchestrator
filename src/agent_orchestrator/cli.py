@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING
 
 import typer
 
+from .cache.cli import cache_app
+
 # `models.py` is already imported transitively by `.service.cli` below (confirmed: this is
 # NOT a new eager-import cost) -- unlike `.engine`/`.artifacts`/etc, which stay lazy
 # per-function per this module's own convention, these are two plain string constants
@@ -57,15 +59,17 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from .artifacts import ArtifactStore
+    from .cache.types import ResultCacheHook
     from .executors.base import Executor
     from .isolation.git import GitRepo
     from .isolation.worktrees import IsolatedRepo
-    from .models import BudgetSpec
+    from .models import BudgetSpec, WorkflowSpec
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
 
 app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
 app.add_typer(service_app, name="service")
+app.add_typer(cache_app, name="cache")
 
 _PACKAGE_LOGGER = "agent_orchestrator"
 
@@ -380,6 +384,29 @@ def _load_project_config_or_exit() -> ProjectConfig | None:
     except ConfigError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+
+def _build_result_cache(
+    cache_flag: bool | None, workspace: str, wf: WorkflowSpec
+) -> ResultCacheHook | None:
+    """ONE helper for `ao run` and `ao resume` (FR-1). None => the engine runs no cache code.
+
+    Resolution half (T-28J9oR): resolves the run-level mode and echoes each warning. The
+    construction half (T-o95l1M) replaces the final ``return None`` once the coordinator
+    exists, so today no mode builds a cache.
+    """
+    from .cache.constants import MODE_OFF
+    from .cache.settings import resolve_result_cache_settings
+
+    cfg = _load_project_config_or_exit()
+    settings, warnings = resolve_result_cache_settings(
+        cache_flag, os.environ, cfg.cache if cfg else None
+    )
+    for w in warnings:
+        typer.echo(f"WARNING: {w}", err=True)
+    if settings.mode == MODE_OFF:
+        return None
+    return None  # construction half: T-o95l1M (ResultCache.from_settings + banner)
 
 
 # Env var carrying the workspace-scoped general-instruction list, os.pathsep-separated
@@ -1083,6 +1110,17 @@ def run(
             " into the workflow's declared `prompt_path`. Mutually exclusive with --prompt."
         ),
     ),
+    cache: bool | None = typer.Option(
+        None,
+        "--cache/--no-cache",
+        help=(
+            "Result cache: reuse an identical, previously successful task's declared "
+            "outputs across runs instead of re-dispatching the agent (NOT Claude prompt "
+            "caching). Default off. Only tasks the workflow opts in (defaults.cache / "
+            "tasks[].cache: true) are cached. --no-cache is a kill switch that wins over "
+            "env/config. Env: AO_CACHE (1|0|shadow). Config: cache.enabled / cache.mode."
+        ),
+    ),
 ) -> None:
     """Run a workflow from scratch."""
     from datetime import UTC
@@ -1200,6 +1238,10 @@ def run(
         clock = _wall_clock
         budget_manager = DefaultBudgetManager(effective_budget, clock)
         estimator = HeuristicTokenEstimator(store)
+
+    # Result cache (E-Rc4Hk8): resolve the mode and echo any warnings. Resolution half only --
+    # T-o95l1M completes `_build_result_cache` and passes its result to the Orchestrator.
+    _build_result_cache(cache, workspace, wf)
 
     # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
@@ -1376,6 +1418,17 @@ def resume(
             " override, not a setting). Mutually exclusive with --isolation worktree."
         ),
     ),
+    cache: bool | None = typer.Option(
+        None,
+        "--cache/--no-cache",
+        help=(
+            "Result cache: reuse an identical, previously successful task's declared "
+            "outputs across runs instead of re-dispatching the agent (NOT Claude prompt "
+            "caching). Default off. Only tasks the workflow opts in (defaults.cache / "
+            "tasks[].cache: true) are cached. --no-cache is a kill switch that wins over "
+            "env/config. Env: AO_CACHE (1|0|shadow). Config: cache.enabled / cache.mode."
+        ),
+    ),
 ) -> None:
     """Resume a previously interrupted run.
 
@@ -1539,6 +1592,10 @@ def resume(
         estimator = HeuristicTokenEstimator(store)
 
     executor = DispatchExecutor()
+
+    # Result cache (E-Rc4Hk8): resolve the mode and echo any warnings. Resolution half only --
+    # T-o95l1M completes `_build_result_cache` and passes its result to the Orchestrator.
+    _build_result_cache(cache, workspace, wf)
 
     # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
