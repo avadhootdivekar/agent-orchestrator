@@ -1856,6 +1856,45 @@ def report_outcomes(
     typer.echo(f"\nWritten: {report_path}")
 
 
+@app.command(name="summary")
+def summary(
+    run_id: str = typer.Option(..., "--run-id", help="Run ID to show the live summary for"),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Show the live Haiku digest of an expensive run (cost above the engine's fixed
+    threshold). Refreshed as tasks settle and once more when the run ends; runs that never
+    cross the threshold have none."""
+    import json as _json
+
+    from .summarizer import read_summary
+    from .ui.runs import RunNotFoundError, RunRepository
+
+    ws_root = _resolve_workspace_root(workspace, None, None, None)
+    try:
+        run_dir = RunRepository(ws_root).run_dir(run_id)
+    except RunNotFoundError as e:
+        typer.echo(f"ERROR: invalid run id {run_id!r}", err=True)
+        raise typer.Exit(2) from e
+    payload = read_summary(run_dir)
+    if as_json:
+        typer.echo(_json.dumps({"run_id": run_id, **payload}, indent=2))
+        return
+    if not payload["available"]:
+        typer.echo(f"No summary for run {run_id} (run cost has not crossed the threshold).")
+        raise typer.Exit(1)
+    meta = payload["meta"] or {}
+    state = "final" if meta.get("final") else "live"
+    typer.echo(f"# Run {run_id} - {state} summary (updated {meta.get('updated_at', '?')})\n")
+    typer.echo(payload["text"])
+    typer.echo(
+        f"\n(run ${meta.get('run_cost_usd', 0):.2f}; summaries cost "
+        f"${meta.get('summary_cost_usd', 0):.4f} over {meta.get('calls', 0)} calls)"
+    )
+
+
 @app.command(name="report-usage")
 def report_usage(
     workspace: str | None = typer.Option(
