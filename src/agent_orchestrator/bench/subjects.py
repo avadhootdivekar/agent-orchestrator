@@ -50,6 +50,7 @@ from typing import Literal, cast
 from pydantic import BaseModel
 
 from ..artifacts import LocalFsArtifactStore
+from ..cache.constants import ENV_CACHE
 from ..executors.claude_cli import (
     STDERR_FILE,
     TRANSCRIPT_FILE,
@@ -86,6 +87,12 @@ _STATUS_SCRIPTED_EFFECTS: dict[str, Literal["failed", "timed_out", "error"]] = {
     "timeout": "timed_out",
     "error": "error",
 }
+
+# The bench must measure real dispatch cost, never a result-cache hit (E-Rc4Hk8, ADR-0019 D23):
+# `AoWorkflowSubject` passes the flag (wins over env/config) AND sets AO_CACHE=0 (belt and braces,
+# in case a future `ao` entry point reads only one of them).
+_AO_NO_CACHE_FLAG = "--no-cache"
+_AO_CACHE_OFF_VALUE = "0"
 
 
 class SubjectResult(BaseModel):
@@ -446,6 +453,7 @@ class AoWorkflowSubject(Subject):
             str(rendered_path),
             "--agents",
             str(agents_path),
+            _AO_NO_CACHE_FLAG,
         ]
         # Deviation from design doc §4.2 pseudocode's `AO_BUDGET_TOTAL` env var: core
         # `cli.py`'s `run`/`resume` commands read budget ONLY as the `--budget-total`
@@ -459,6 +467,7 @@ class AoWorkflowSubject(Subject):
 
         env = dict(os.environ)
         env["AO_WORKSPACE_ROOT"] = ctx.workspace
+        env[ENV_CACHE] = _AO_CACHE_OFF_VALUE  # overrides any AO_CACHE inherited from the operator
         if self.spec.model:
             env["AO_MODEL"] = self.spec.model
         max_turns = ctx.max_turns if ctx.max_turns is not None else self.spec.max_turns
