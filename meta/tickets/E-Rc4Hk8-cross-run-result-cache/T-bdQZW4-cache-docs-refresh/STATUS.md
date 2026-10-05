@@ -2,7 +2,7 @@
 
 - ID: `T-bdQZW4-cache-docs-refresh`
 - Updated At: `2026-10-05`
-- State: `In Review` (all ten HLD 25 steps done and grep-verified; **architect sign-off pending**)
+- State: `Done` (all ten HLD 25 steps done and grep-verified; architect sign-off APPROVE-WITH-NOTES, 2026-10-05)
 - Owner: `developer` (Dev B), `architect` sign-off
 
 ## This update
@@ -33,7 +33,7 @@
 | 4 skill: double opt-in, flip point, EC-20 warning, example | PASS | skill section items 1, 6, 10 |
 | 5 README section + release-note line; nothing claims `refresh`, `rm --run/--task`, `verify --repair` exist | PASS | `grep -n 'refresh\|--repair\|rm --run' README.md .claude/skills/workflow-authoring/SKILL.md` shows only the negations (README line 479 and 696, skill lines 334-335) |
 | 6 pointer comments exist; full suite still passes | PASS | `git diff 5748316~1 5748316` is comments only; suite figures below |
-| 7 architect signs off | **PENDING** | see "Architect sign-off" |
+| 7 architect signs off | PASS (APPROVE-WITH-NOTES) | see "Architect sign-off" |
 
 ## Evidence
 Run in the task worktree (`.venv/bin/python`), 2026-10-05. Doc-vs-code verification, per AC-1:
@@ -122,8 +122,66 @@ Run in the task worktree (`.venv/bin/python`), 2026-10-05. Doc-vs-code verificat
 | T-JCOAsq: Part 1 rejection, vacuous `find_spec` finder, I-1 vs E-2 allow-lists | HLD DV-24, DV-16; learning `LRN-20261005-import-poison-finder-must-implement-find-spec` |
 
 ## Architect sign-off
-- **PENDING.** Awaiting the architect's line here (the manager will arrange it). Until then this
-  task and the epic stay `In Review`, not `Done`.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: **APPROVE-WITH-NOTES.** Independent
+  re-verification against the code (the STATUS evidence was not relied on), 37 claims checked, all in
+  the task worktree with `.venv/bin/ao` / `.venv/bin/python`:
+  (1) `ao cache --help` lists exactly ls/stats/show/rm/prune/clear/verify; no `refresh`, no
+  `rm --run/--task`, no `verify --repair`; (2) `ao run --help` and `ao resume --help` carry
+  `--cache/--no-cache` naming `AO_CACHE (1|0|shadow)` and `cache.enabled / cache.mode`;
+  (3) `AO_CACHE` parsing (`settings.py`: on/off sets, `shadow`, empty = unset, other = off + one warning);
+  (4) `DEFAULT_TASK_CACHE_POLICY = False`; (5) `KEY_SCHEMA_VERSION = 1`; (6) config defaults 1 GiB / 30 d /
+  64 MiB / 512 MiB / 20 000 / 90% LRU low water (`constants.py`, `CacheConfig`); (7) `mode: "on"` quoted in
+  the `ao init` template; (8) exit codes run live: bad `--sort` 2, missing `--workspace` 2 (text `ERROR:`
+  and JSON `error`), unknown prefix 1, upper-case prefix 2, `clear --json` without `--yes` 1;
+  (9) `ao prune --older-than 0` deleted the run dir and left `.orchestrator/cache` intact; (10) banner text
+  and `_RESULT_CACHE_TRUST_NOTE` (`cli.py` 395-433); (11) `format_summary_line` text equals the README
+  example; (12) `report-usage` text lines and the 11 `ResultCacheUsage` fields; (13) the `result_cache`
+  object is omitted when no scanned run has current records; (14) `SettleReason` includes `"cached"`;
+  (15) `status.json` `tasks[].result_cache` and top-level `result_cache` (`runstate.py`); (16) bench
+  `_AO_NO_CACHE_FLAG` / `_AO_CACHE_OFF_VALUE` / `env[ENV_CACHE]` and 7 bench tests; (17) 13 + 13 sensitive
+  names, case-insensitive; (18) `INLINE_PRUNE_MAX_WALK_ITEMS` 100 000, `_BLOBS` 50 000, both graces 3600 s;
+  (19) the 9-name `CLAUDE_FINGERPRINT_ENV_VARS` without the provider variables; (20) eager
+  `app.add_typer(cache_app)` and the 4-module CLI allow-list; (21) `engine.py` has no `open(`/`.read(`,
+  cache imports only at lines 118 (`TYPE_CHECKING`) and 1498 (lazy); (22) the `git diff --numstat 0b980e3..HEAD`
+  figures of HLD 24.2 (engine 135/30, cli 115/2, runstate 12/1, ui/files 13/0, usage 109/23, bench 9/0, ci 8/0,
+  `test_run_graph_endpoint.py` 12/3; conftest and the NFR-2 gate unchanged); (23) the hit path (`ts.attempts`
+  untouched, `_reverse_stale_charge` called, no budget gate); (24) the CI step set collects 1 707 tests and
+  enforces 85% / 90% floors; (25) vitest file has 10 cases; (26) `tests/ui/test_result_cache_ui.py` collects
+  32 (the HLD said 21); (27) the skill's example workflow passes `ao validate` (OK), the JSON schema and
+  `WorkflowSpec`, and `opted_in_count` is (1, 2) as the "1 of 2" banner claim says; (28) `ao cache` workspace
+  resolution run live: `--workspace` > `AO_WORKSPACE_ROOT` > the reposet `workspace_root` of the
+  config-discovered workflow (the config `workspace_root` key is not read, as `--help` says; `ao run`
+  uses the same workspace); (29) `ao cache clear --yes` on a shadow-populated workspace: "cleared 1 entry,
+  1 blob(s), 1334 bytes freed", root mode `0o700`, `stats` then shows 0 entries; (30) the pointer comments
+  (`5748316`) are comment-only; (31) no approval-gate code exists in `src/`; (32) eligibility reasons for
+  hooks / isolation / integration / `emit_tasks`; (33) coordinator `_disable` + `cache.disabled` (a cache
+  bug disables, never kills, the run); (34) `restore_sweep` uses `O_NOFOLLOW` dir fds, a uid check, the
+  `.bak` `st_nlink < 2` keep rule and `TMP_SWEEP_GRACE_SECONDS`; (35) DV-8..DV-17 symbol names exist
+  (`_Budget`, `_Marks.complete`, `_Sha256Sink`, `fchmod`, `_RESTORE_DIR_MODE`, `clip_text`, `try_resolve`,
+  `open_dir_fd`, the U+061C / U+00AD / tag-character strip); (36) the G0 protocol was not edited by this task
+  (only `edc3c18`) and no doc claims G0 ran; (37) deviation completeness against six HANDOFFs: T-28J9oR
+  (1-4 -> DV-2/DV-3), T-U7ckfd (1-4 and the G1a items -> DV-9; item 5 was missing), T-eyn5UG (1-6 -> DV-14),
+  T-bLpoze (DV-19), T-OeRYSO and T-QgQy08 (no deviations).
+  **Corrections made (docs only):** skill item 4 said hits have `attempts == 0`; now "`attempts`
+  unchanged (0 on a first-pass hit)" per D12; `hld-agent-orchestrator.md` §5 said the lookup runs
+  "after ... any approval gate", but no approval gate exists in this code base, now worded as the merge
+  rule for E-Ag7Pw3; HLD 0.1 UI test count 21 -> 32; DV-16 and ADR A3 overstated `cache/cli.py`'s
+  module-level imports (it imports `typer` and `constants`; `settings` is allowed, not imported);
+  DV-18 wording on `--help` and the workspace fallback made exact; DV-9 gains the T-U7ckfd POSIX-only
+  `utime` item (A-4); README `ao cache` workspace default now names the config-discovered fallback.
+  **Manager-authorized extra edit:** `docs-md/result-cache-g0-protocol.md` gains "Step 9: cleanup and
+  retention" (verified live; no new `g0-cmd` marker; `tests/cache/test_g0_protocol_doc.py` 10 passed), so
+  HLD R-A6 / R-24 no longer record it as a gap; T-nPMuz4 `STATUS.md` notes the post-Done edit.
+  **"Two section 0s"**: left as is. Section 0 (as built) and 0A (Rev 3 design summary) are clearly
+  titled, the header says "§0 wins", and no reference in the HLD, the ADR, the tickets or the other docs
+  points at the old summary as "§0"; renumbering would only move the problem. **User questions answered**:
+  how to enable (README "Turning it on", skill item 1), how to tell it hit (banner, summary line,
+  `status.json` `tasks[].result_cache`, `settle_reason: cached`, dashboard tag), how to clear
+  (`ao cache rm|clear --yes|prune`, G0 Step 9). **Notes (non-blocking):** residual statements quoted
+  "as reported" from the gate reports (R-A8) were not reproduced; OQ-5 "not revisited" is accurate. Doc-reading
+  tests after the edits: 242 passed. The full suite was not re-run (docs-only edits after the developer's
+  6903-passed run). G0 execution and the sibling-epic merge verification (HLD 24.2) remain post-merge
+  follow-ups. State -> `Done`.
 
 ## Risks / Blockers
 - No blockers. Items the architect should check (uncertain or judgement calls):
@@ -139,8 +197,7 @@ Run in the task worktree (`.venv/bin/python`), 2026-10-05. Doc-vs-code verificat
   5. HLD 0.2 OQ-5 is marked "not revisited".
 
 ## Next actions
-1. Architect: review and add the sign-off line (AC-7); then the manager moves T-bdQZW4 and the epic
-   to Done and syncs `EPIC.md` / `STATUS.md`.
+1. Done: architect sign-off (AC-7); T-bdQZW4 and the epic are `Done`, `EPIC.md` / `STATUS.md` synced.
 2. Parent / operator (post-merge): execute G0 (protocol in `docs-md/result-cache-g0-protocol.md`);
    merge with E-Ag7Pw3 and E-Da5Tn9 per HLD 24.2; rebuild the UI bundle.
 
@@ -155,3 +212,4 @@ Run in the task worktree (`.venv/bin/python`), 2026-10-05. Doc-vs-code verificat
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: G1b carry-over for the docs refresh: (1) list sec S-3 (git `filter.<x>.clean` executed by the guard-3 probe; precondition: an in-.git write by a task agent) as a named residual in HLD 7.7 and the authoring guide, recommending --no-cache for untrusted repos; (2) document the agent-writable cache dir and the on-mode banner clause (sec S-5); (3) HLD 8.7.5 allow-list includes cache.cli (rev N-4); (4) residual rows for skip-worktree / assume-unchanged and partial-attempt baselines (sec N-7, N-9) and the orphaned restore temp files that directory hashing ignores (sec S-1). See `T-fXWbqg-cache-review-gates/STATUS.md` (G1b remediation).
 By: developer · Role: developer · Date: 2026-10-05 · Comment: G2 carry-over for the docs refresh (state stays Draft). (1) ACCEPTED RESIDUAL, rev G2-S4 / G1a SEC-11: "`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` and the provider region are not in the key's env allowlist, so a hit can be served across a backend or endpoint switch with an unchanged model alias; same model name, operator-controlled, non-secret; changing it would change GV-1. Mitigation: pass `--no-cache` (or run `ao cache clear`) when switching provider or endpoint." List it in HLD 7.7 and the authoring guide. (2) ACCEPTED RESIDUAL, sec G2-S2 / G1b S-3 (same family as G1a SEC-03): "`git status` in the guard-3 probe still executes a `filter.<x>.clean` command named in the agent-writable git config (re-confirmed live, git 2.39.5; `core.fsmonitor` is closed). Precondition: cache on AND the task opted in AND a writer of the git config / `.gitattributes` that cannot already run code (a tool-restricted agent without Bash); an agent with Bash already has the same power, and the same primitive pre-exists elsewhere in the code base. Mitigation: use `--no-cache` for untrusted repositories." List it in HLD 7.7 and the authoring guide with that precondition. (3) rev G2-S3: correct the HLD 24.2 merge notes: add the unlisted file `tests/ui/test_run_graph_endpoint.py` (+12/-3, adds `result_cache` to two exact key-set assertions; merge guidance: "take both sides; the key set must contain every sibling's key"); `cli.py` `status` also changes `except (json.JSONDecodeError, KeyError)` to `except (ValueError, KeyError)` and imports `cache.cli` eagerly at module level; `runstate.py` is +12/-1 (not "about 6"; it also retypes `snapshot`); `ui/files.py` was +9 before G2 and is now a few lines more (casefolded deny-list, NUL guard); the new module-level imports of `cache.constants` in `project_config.py`, `bench/subjects.py` and `ui/files.py`; the HLD 8.7.5 / 18.1 E-2 allow-list must include `cache.cli`. (4) HLD text owed by the G2 fixes: D8 (no restore-temp exemption in directory hashing; ADR-0019 D8 addendum) and D29 / SEC-15 (extended sensitive lists; ADR-0019 D29 addendum; HLD 7.7 M-14 and the constants snippet near line 1043); G0 protocol Step 9 (shadow mode stores output copies; `ao cache clear --yes` cleanup) (sec G2-N4); retention statement (outputs persist in `.orchestrator/cache` until `rm/clear/prune`; shadow also stores them); the sweep residual after `clear` (sec G2-N7); the HLD 18 baseline sentence is stale (rev G2-N8). See `T-fXWbqg-cache-review-gates/STATUS.md` (G2 remediation).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Docs reconciliation delivered (commits `643ad11`, `eaead55`, `5748316`, `7d73af8` and the ticket-docs commit). All ten HLD 25 steps done and grep-verified (Evidence above); every G1b and G2 carry-over comment in this file is reflected (table "Carry-over reconciliation"). State -> `In Review`: AC-7 (architect sign-off) is pending, so the task and the epic are not `Done`. `TASK.md`, `HANDOFF.md` and the epic `EPIC.md` / `STATUS.md` rollup agree.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: AC-7 sign-off recorded above (APPROVE-WITH-NOTES). State -> `Done`; `TASK.md`, `HANDOFF.md` and the epic `EPIC.md` / `STATUS.md` (20 Done, epic `Done`) agree.

@@ -2,7 +2,7 @@
 
 - ID: `E-Rc4Hk8-cross-run-result-cache`
 - Updated At: `2026-10-05`
-- State: `In Review` — implementation complete, gates G1a / G1b / G2 PASS, docs reconciled; **architect sign-off on `T-bdQZW4` pending**; G0 is a post-merge follow-up.
+- State: `Done` — implementation complete, gates G1a / G1b / G2 PASS, docs reconciled and signed off by the architect (`T-bdQZW4`, APPROVE-WITH-NOTES, 2026-10-05). **Post-merge follow-ups (not done here):** G0 execution and the E-Ag7Pw3 / E-Da5Tn9 merge verification (HLD §24.2).
 - Owner: `manager` (execution) · `architect` (design)
 
 ## This update
@@ -60,9 +60,9 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-bLpoze-cache-dashboard-surface | surfaces | Dev C | 10 h | Done |
 | T-JCOAsq-cache-test-hardening | Part 1 before T-XpF1pF; Parts 2–3 hardening | Tester | 24 h | Done |
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Done |
-| T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | In Review |
+| T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Done |
 
-**Counts:** 20 tasks: 0 Draft, 0 In Progress, 1 In Review (T-bdQZW4, architect sign-off pending), 0 Blocked, 19 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 0 Draft, 0 In Progress, 0 In Review, 0 Blocked, 20 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
@@ -140,8 +140,8 @@ By: developer · Role: developer · Date: 2026-10-05 · Comment: G2 remediation 
 
 ## Epic completion note (2026-10-05, `T-bdQZW4`)
 
-By: developer · Role: developer · Date: 2026-10-05. State: **In Review** (not Done) until the architect signs off in
-`T-bdQZW4-cache-docs-refresh/STATUS.md`.
+By: developer · Role: developer · Date: 2026-10-05. State: **Done** (the architect signed off in
+`T-bdQZW4-cache-docs-refresh/STATUS.md`, APPROVE-WITH-NOTES, 2026-10-05).
 
 ### Final scope delivered
 - **Feature.** An opt-in, double-opt-in, content-addressed, workspace-local cross-run **result cache** (not
@@ -185,7 +185,8 @@ By: developer · Role: developer · Date: 2026-10-05. State: **In Review** (not 
 
 ### Outstanding follow-ups
 - **G0** (parent/operator, post-merge): run the shadow-mode protocol on a real consumer workflow with consent;
-  confirm the decision-rule thresholds (OQ-6). The protocol has no cleanup step (note in HLD R-A6).
+  confirm the decision-rule thresholds (OQ-6). The protocol now ends with Step 9 (cleanup and retention,
+  `ao cache clear --yes`), added at the architect sign-off.
 - **Merge with E-Ag7Pw3 / E-Da5Tn9** (HLD 24.2): classify new fields RULED, approval check before the lookup seam
   (add the pin test then), recapture I-2 goldens if output changed, rebuild the UI bundle, keep the CI
   `permissions:` / `pip-audit` and extend the per-module coverage loop.
@@ -197,6 +198,7 @@ By: developer · Role: developer · Date: 2026-10-05. State: **In Review** (not 
   `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py`; OQ-4 (E-Ag7Pw3 representation).
 
 ## Next actions (current)
-1. **architect:** sign off `T-bdQZW4` (AC-7); then `manager` sets the task and epic to Done and syncs `EPIC.md`.
-2. **parent/operator:** merge per HLD 24.2; run G0 post-merge.
+1. Done: architect signed off `T-bdQZW4` (AC-7); task and epic `Done`; `EPIC.md` synced.
+2. **parent/operator (post-merge):** merge per HLD 24.2 and run its post-merge verification list; run G0.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-bdQZW4 -> In Review (docs refresh delivered; commits 643ad11, eaead55, 5748316 and follow-ups). Rollup row and counts updated (19 Done, 1 In Review); epic state `In Review`, not Done, until the architect signs off; completion note above; matches the task `TASK.md`, `STATUS.md`, `HANDOFF.md` and `EPIC.md`.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: AC-7 sign-off on T-bdQZW4: APPROVE-WITH-NOTES (37 claims independently re-checked against the code; seven doc corrections; manager-authorized G0 protocol Step 9). T-bdQZW4 -> Done; rollup 20 Done; epic State -> `Done`. G0 execution and the sibling-epic merge verification (HLD §24.2) remain post-merge follow-ups. Matches the task `TASK.md`, `STATUS.md`, `HANDOFF.md` and `EPIC.md`.

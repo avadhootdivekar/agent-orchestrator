@@ -1,7 +1,7 @@
 # HANDOFF: T-bdQZW4-cache-docs-refresh
 
 - Task: `T-bdQZW4-cache-docs-refresh`
-- State: `In Review` (architect sign-off pending; mirrors `TASK.md` and `STATUS.md`)
+- State: `Done` (architect sign-off APPROVE-WITH-NOTES, 2026-10-05; mirrors `TASK.md` and `STATUS.md`)
 - From: `developer` (Dev B)
 - To: `architect` (AC-7 sign-off), `manager` (epic closure), the parent (merge go/no-go, G0)
 - Commits: `643ad11` (HLD + ADR-0019), `eaead55` (README, skill, ROADMAP, cross-links, learnings),
@@ -21,8 +21,8 @@
 
 ## What the reader must know
 - Where the HLD body and HLD section 0 differ, section 0 wins.
-- `docs-md/result-cache-g0-protocol.md` was not edited. It has no cleanup/retention step (G2 sec N4);
-  the HLD records this as a gap (R-A6, R-24).
+- `docs-md/result-cache-g0-protocol.md` was not edited by the developer. At the architect sign-off
+  (manager-authorized) it gained "Step 9: cleanup and retention" (G2 sec N4 closed; HLD R-A6, R-24 updated).
 - G0 was not run. The decision-rule thresholds (OQ-6) await the parent.
 
 ## Verification the receiver should run
@@ -32,3 +32,4 @@
 
 ## Comments
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: Handoff created; state `In Review` until the architect signs off in `STATUS.md`.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: AC-7 signed off (APPROVE-WITH-NOTES; see `STATUS.md`). State -> `Done`. Remaining for the receivers (post-merge): run G0; merge with E-Ag7Pw3 / E-Da5Tn9 per HLD 24.2 and run its post-merge verification list.

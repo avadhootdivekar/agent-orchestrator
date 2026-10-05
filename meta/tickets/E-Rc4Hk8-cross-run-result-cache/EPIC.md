@@ -6,9 +6,10 @@
 - Owner: `manager` (execution) · design by `architect`
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `In Review` — **Implemented**: 19 of 20 tasks Done, gates G1a, G1b and G2 PASS, the docs
-  refresh (`T-bdQZW4`) delivered; **architect sign-off pending**. G0 (the value check) is a post-merge
-  follow-up, protocol shipped, not run.
+- Status: `Done` — **Implemented**: 20 of 20 tasks Done, gates G1a, G1b and G2 PASS, the docs
+  refresh (`T-bdQZW4`) signed off by the architect (APPROVE-WITH-NOTES, 2026-10-05). **Post-merge
+  follow-ups, not done here:** G0 execution (protocol shipped, not run) and the sibling-epic merge
+  verification (E-Ag7Pw3 / E-Da5Tn9, HLD §24.2).
 
 ## Summary
 - **Goal.** A task in any run of a workspace can reuse the declared output files of an earlier,
@@ -130,7 +131,7 @@ ordered by dependency (HLD §22.2).
 - [x] `T-JCOAsq-cache-test-hardening` **Part 2**: integration and adversarial (deps T-XpF1pF, T-u3jG8F, T-HjxNQ0). 10 h. Tester. **Done** (2026-10-05, commit 4d11a69, 147 tests; the task is now Done, see Part 3).
 - [x] `T-JCOAsq-cache-test-hardening` **Part 3**: e2e, CI coverage step, full suite (deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 8 h. Tester. **Done** (2026-10-05, commits b7489d1 e2e, a947986 CI step; 55 e2e tests, coverage 98.71%, full suite 6805 passed). The task is **Done**.
 - [x] `T-fXWbqg-cache-review-gates`: G1a, G1b and **G2**. 24 h in total. reviewer + dev-security.
-- [ ] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4. **In Review** (2026-10-05, commits 643ad11, eaead55, 5748316 and the follow-ups): all ten steps done and grep-verified; box ticked on the architect's sign-off.
+- [x] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4. **Done** (2026-10-05, commits 643ad11, eaead55, 5748316, 7d73af8, 1ed5556 and the architect sign-off commit): all ten steps done and grep-verified; architect APPROVE-WITH-NOTES.
 
 **Totals.**
 - **288 focus hours** across 20 tasks: developers 234, tester 30, review gates 24.
@@ -188,3 +189,4 @@ ordered by dependency (HLD §22.2).
   - **Plan:** totals stay 288 h; estimates and owners rebalanced; critical path recomputed to
     120 h. T-OeRYSO and T-ZTxN1x are unchanged by Rev 3.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: `T-bdQZW4` delivered (docs refresh, HLD section 0, ADR-0019 Accepted). Epic status -> `In Review` (not `Done`) until the architect signs off in the task `STATUS.md`; rollup and the epic completion note are in the epic `STATUS.md`.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: `T-bdQZW4` signed off (APPROVE-WITH-NOTES, see its `STATUS.md`): checkbox ticked, epic Status -> `Done` (20 of 20 tasks Done). G0 execution and the E-Ag7Pw3 / E-Da5Tn9 merge verification (HLD §24.2) remain post-merge follow-ups owned by the parent/operator; they do not reopen the epic.
