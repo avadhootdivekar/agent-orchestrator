@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev A)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `16 focus hours (2 days)` · Sprint 2 → 3
 
 ## Requirements Mapping
@@ -117,3 +117,6 @@ HLD §8.7.1 code blocks (a)–(e) verbatim.
   depends on T-JCOAsq Part 1 only; the stale-charge block is extracted into
   `_reverse_stale_charge` (shared, emits `budget.resume_reverse`); honest budget (net ≤ +110,
   ≤ 12 inside existing functions, ≤ 100 columns); I-27 and the cost-reporting test executor.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `b7ca9c7`).
+  All 13 acceptance criteria pass; measured engine diff net +103 (133 added, 30 removed), 12 added
+  lines inside existing functions; deviations are listed in `STATUS.md`.

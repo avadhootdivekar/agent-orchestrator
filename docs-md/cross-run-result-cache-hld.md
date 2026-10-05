@@ -3019,6 +3019,16 @@ happens before breaker evaluation. `model_copy(update=...)` changes only `ended_
 included, for `\bopen\s*\(` and `\.read\s*\(`. So the factory is named `from_settings`, and no
 comment in `engine.py` may contain either pattern.
 
+**Implementation note (T-XpF1pF, 2026-10-05).** Shipped as in the blocks above, with three
+differences. (1) `LookupRequest.injected` is derived from `RunState.spawned_by` (a spawn record
+whose `loop_id` is `None` means emit_tasks-injected; loop clones carry loop coordinates) instead of
+`ts.origin == SPAWN_ORIGIN_INJECTED`: `tests/test_spawn_provenance.py` forbids any `.origin`
+comparison under `src/`. (2) The constructor keyword is the LAST parameter (after `summarizer`,
+which landed after this block was written), so no positional caller changes. (3) The call-site (c)
+block is followed directly by the `_estimate` comment (no blank line) to keep the added lines
+inside existing functions at exactly 12. Measured against the pre-task commit: 133 lines added,
+30 removed (net +103), all added lines <= 100 columns.
+
 #### 8.7.2 Order inside `_prepare_and_maybe_dispatch` with the cache on
 
 ```
