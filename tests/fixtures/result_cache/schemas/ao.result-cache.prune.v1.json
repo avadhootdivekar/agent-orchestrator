@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.result-cache.prune/v1",
+  "type": "object",
+  "required": ["schema", "dry_run", "removed_entries", "removed_blobs", "bytes_before", "bytes_after"],
+  "properties": {
+    "schema": {"const": "ao.result-cache.prune/v1"},
+    "dry_run": {"type": "boolean"},
+    "removed_entries": {
+      "type": "object",
+      "properties": {
+        "expired": {"type": "integer"},
+        "lru": {"type": "integer"},
+        "invalid": {"type": "integer"}
+      }
+    },
+    "removed_blobs": {"type": "integer"},
+    "removed_tmp": {"type": "integer"},
+    "removed_trash": {"type": "integer"},
+    "removed_restore_tmp": {"type": "integer", "description": "T-6tRKml addition: stale restore staging files swept from output directories"},
+    "kept_restore_backups": {"type": "integer", "description": "T-6tRKml addition: sole-copy .bak files left alone"},
+    "restore_sweep_truncated": {"type": "boolean", "description": "T-6tRKml addition"},
+    "bytes_before": {"type": "integer"},
+    "bytes_after": {"type": "integer"}
+  }
+}

@@ -32,8 +32,14 @@ O_SAFE_READ = os.O_RDONLY | _NOFOLLOW | _NONBLOCK | _CLOEXEC
 O_SAFE_CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC
 _O_SAFE_DIR = os.O_RDONLY | _NOFOLLOW | _DIRECTORY | _CLOEXEC
 
-# C0 controls (incl. \n, \t, \r, ESC), DEL and C1 controls (CWE-150 terminal/log injection).
-_CONTROL_CHARS_RE = re.compile("[\x00-\x1f\x7f-\x9f]")
+# C0 controls (incl. \n, \t, \r, ESC), DEL and C1 controls (CWE-150 terminal/log injection), plus
+# the invisible Unicode format characters that spoof how text reads when printed: zero-width and
+# directional marks U+200B-U+200F, line/paragraph separators and bidi embeddings U+2028-U+202E,
+# word joiner and invisible operators U+2060-U+2064, bidi isolates and the deprecated format
+# controls U+2066-U+206F, and the byte-order mark U+FEFF (G1a SEC-14, "Trojan Source").
+_CONTROL_CHARS_RE = re.compile(
+    "[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff]"
+)
 
 
 class SafeIOError(Exception):
@@ -121,6 +127,12 @@ def _check_component(path: str) -> bool:
     if not stat.S_ISDIR(st.st_mode):
         raise UnsafePathError(f"component is not a directory: {path}")
     return True
+
+
+def open_dir_fd(path: str) -> int:
+    """Open a directory without following a final symlink (O_NOFOLLOW | O_DIRECTORY), for
+    `dir_fd`-relative lstat / unlink. The caller closes the descriptor."""
+    return os.open(path, _O_SAFE_DIR)
 
 
 def check_dir_chain(root: str, path: str) -> None:
@@ -242,5 +254,6 @@ def posix_rel(path: str, base: str) -> str:
 
 
 def strip_control_chars(text: str) -> str:
-    """Remove C0/C1 control characters and DEL from text printed by the CLI (CWE-150)."""
+    """Remove C0/C1 control characters, DEL and invisible bidi / zero-width format characters from
+    text printed by the CLI (CWE-150, SEC-14)."""
     return _CONTROL_CHARS_RE.sub("", text)

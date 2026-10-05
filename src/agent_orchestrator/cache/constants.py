@@ -156,9 +156,24 @@ SENSITIVE_BASENAMES = frozenset(
     {"CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".mcp.json", ".envrc"}
 )
 
-# ---- CLI
+# ---- CLI (HLD 8.9, 13.4)
 DEFAULT_LS_LIMIT = 50
 LS_SORT_KEYS = ("lru", "created", "size")
+SORT_LRU, SORT_CREATED, SORT_SIZE = LS_SORT_KEYS
+EXIT_OK, EXIT_ERROR, EXIT_USAGE = 0, 1, 2
+SCHEMA_LS = "ao.result-cache.ls/v1"
+SCHEMA_STATS = "ao.result-cache.stats/v1"
+SCHEMA_SHOW = "ao.result-cache.show/v1"
+SCHEMA_RM = "ao.result-cache.rm/v1"
+SCHEMA_PRUNE = "ao.result-cache.prune/v1"
+SCHEMA_CLEAR = "ao.result-cache.clear/v1"
+SCHEMA_VERIFY = "ao.result-cache.verify/v1"
+KEY_DISPLAY_CHARS = 12  # `ao cache ls` shows key[:12]
+CLI_MAX_CANDIDATES = 10  # ambiguous-prefix candidates listed
+CLI_MAX_DISPLAY_CHARS = 1024  # an entry-derived string is clipped to this when printed
+CLI_MAX_DIR_ITEMS = 100_000  # directory entries one prefix lookup / restore sweep will read
+CLI_MAX_LIMIT = 1_000_000  # `ao cache ls --limit` upper bound
+RESTORE_SWEEP_MAX_DIRS = 10_000  # output directories one `ao cache prune` sweep will visit
 
 # ---- REASON_* (HLD 8.3.3 ineligibility, 8.6.4 miss / store-skip, 15 evict). The string value is
 # the persisted / logged reason; it is always <= MAX_REASON_CHARS.

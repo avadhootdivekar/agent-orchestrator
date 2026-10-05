@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.result-cache.entry/v1",
+  "type": "object",
+  "required": ["schema", "key", "key_schema", "created_at", "source", "usage", "outputs", "key_summary"],
+  "properties": {
+    "schema": {"const": "ao.result-cache.entry/v1"},
+    "key": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "key_schema": {"type": "integer", "minimum": 1, "maximum": 1000},
+    "created_at": {"type": "string", "format": "date-time", "description": "timezone-aware"},
+    "source": {
+      "type": "object",
+      "required": ["workflow_id", "task_id", "run_id", "agent", "ao_version"],
+      "properties": {
+        "workflow_id": {"type": "string", "maxLength": 256},
+        "task_id": {"type": "string", "maxLength": 256},
+        "run_id": {"type": "string", "maxLength": 256},
+        "agent": {"type": "string", "maxLength": 256},
+        "ao_version": {"type": "string", "maxLength": 256},
+        "cli_version": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "cost_usd": {"type": "number", "minimum": 0, "maximum": 1000000},
+        "input_tokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "output_tokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "cache_creation_input_tokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "cache_read_input_tokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "duration_seconds": {"type": "number", "minimum": 0, "maximum": 100000000},
+        "attempts": {"type": "integer", "minimum": 0, "maximum": 1000000},
+        "model": {"type": ["string", "null"], "maxLength": 256},
+        "effort": {"type": ["string", "null"], "maxLength": 256},
+        "actuals_available": {"type": "boolean"}
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "size", "mode"],
+        "properties": {
+          "path": {"type": "string", "maxLength": 4096},
+          "kind": {"const": "file"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size": {"type": "integer", "minimum": 0},
+          "mode": {"type": "integer", "minimum": 0, "maximum": 511}
+        }
+      }
+    },
+    "key_summary": {"type": "object"}
+  }
+}

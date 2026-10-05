@@ -449,3 +449,47 @@ def test_strip_control_chars_removes_c0_c1_and_del() -> None:
 def test_strip_control_chars_keeps_printable_and_unicode() -> None:
     text = "plain text ~   é 中文 \U0001f600"
     assert safeio.strip_control_chars(text) == text
+    # ordinary typography next to the invisible-character ranges is untouched
+    typography = "‐ – — … ‘’ “” ℃ ⁰"
+    assert safeio.strip_control_chars(typography) == typography
+
+
+@pytest.mark.parametrize(
+    "invisible",
+    [
+        "​",  # zero-width space
+        "‌",  # zero-width non-joiner
+        "‍",  # zero-width joiner
+        "‎",  # left-to-right mark
+        "‏",  # right-to-left mark
+        " ",  # line separator
+        " ",  # paragraph separator
+        "‪",  # bidi embeddings and overrides ...
+        "‫",
+        "‬",
+        "‭",
+        "‮",
+        "⁠",  # word joiner
+        "⁤",  # invisible plus
+        "⁦",  # bidi isolates ...
+        "⁧",
+        "⁨",
+        "⁩",
+        "⁯",
+        "﻿",  # byte-order mark
+    ],
+)
+def test_strip_control_chars_removes_invisible_format_characters(invisible: str) -> None:
+    """G1a SEC-14: bidi overrides and zero-width characters can spoof how a name reads."""
+    assert safeio.strip_control_chars(f"a{invisible}b") == "ab"
+
+
+def test_open_dir_fd_refuses_a_symlink_and_a_file(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real)
+    (tmp_path / "file").write_text("x", encoding="utf-8")
+    os.close(safeio.open_dir_fd(str(real)))
+    for bad in ("link", "file", "missing"):
+        with pytest.raises(OSError):
+            safeio.open_dir_fd(str(tmp_path / bad))

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.result-cache.verify/v1",
+  "type": "object",
+  "required": ["schema", "ok", "problems"],
+  "properties": {
+    "schema": {"const": "ao.result-cache.verify/v1"},
+    "ok": {"type": "boolean"},
+    "entries_checked": {"type": "integer"},
+    "blobs_checked": {"type": "integer"},
+    "problems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "enum": [
+              "corrupt_entry", "key_mismatch", "missing_blob", "corrupt_blob", "orphan_blob",
+              "foreign_version", "symlink", "unexpected_file", "unreadable"
+            ],
+            "description": "`unreadable` is a G1a S-3 addition to the HLD 13.4 list (a file that cannot be read)"
+          },
+          "key": {"type": ["string", "null"]},
+          "blob": {"type": ["string", "null"]},
+          "detail": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}
