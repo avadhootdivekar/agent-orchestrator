@@ -1,7 +1,7 @@
 # ADR-0019 — Double-opt-in, content-addressed cross-run result cache
 
-- **Status:** **Accepted** (Rev 4, 2026-10-05), pending the architect's sign-off line in
-  `T-bdQZW4`'s `STATUS.md`.
+- **Status:** **Accepted** (Rev 4, 2026-10-05); the architect signed off in `T-bdQZW4`'s
+  `STATUS.md` (APPROVE-WITH-NOTES, 2026-10-05).
   - Rev 2 incorporated the Phase-4 consultation (`developer`, `reviewer`, `tester`,
     `dev-security`, `dev-critic`).
   - Rev 3 applied an independent early-gate review of the committed design (`94dac52`,
@@ -508,8 +508,8 @@ digests equal HLD §8.2.7; `KEY_SCHEMA_VERSION = 1`). None of the gate remediati
 `app.add_typer(cache_app, name="cache")`), so every `ao` start loads `agent_orchestrator.cache.cli`.
 The design allowed a cache-off CLI process only `cache`, `cache.constants` and `cache.settings`
 (HLD §8.7.5, §18.1 E-2). **Decision (manager, T-o95l1M): allow `cache.cli`, provided
-`cache/cli.py` stays import-light**: its module-level imports are `typer`, `cache.constants` and
-`cache.settings` only, and every other cache import (`cli_ops`, `store`, `coordinator`, `report`,
+`cache/cli.py` stays import-light**: its module-level imports are limited to `typer`,
+`cache.constants` and `cache.settings` (today `typer` and `cache.constants`), and every other cache import (`cli_ops`, `store`, `coordinator`, `report`,
 ...) is lazy inside the command bodies. The CLI-path allow-list is
 `{cache, cache.constants, cache.settings, cache.cli}`; the **engine** process keeps
 `{cache, cache.constants}` (I-1). Alternative not taken: registering the sub-app lazily (a second

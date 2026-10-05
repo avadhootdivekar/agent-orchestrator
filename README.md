@@ -676,8 +676,9 @@ itself has not been run yet; running it is a post-merge follow-up).
 
 ### `ao cache` commands
 
-Each takes `--workspace/-w PATH` (default `AO_WORKSPACE_ROOT`) and `--json` (exactly one JSON
-document, also on a non-zero exit). They work even when the run mode is off. Limits
+Each takes `--workspace/-w PATH` (default `AO_WORKSPACE_ROOT`, then the repo set's `workspace_root`
+of the workflow named in `.ao/config.yaml`, i.e. the workspace `ao run` uses) and `--json` (exactly
+one JSON document, also on a non-zero exit). They work even when the run mode is off. Limits
 (`max_bytes`, `ttl_days`) come from the `.ao/config.yaml` found from the current directory.
 
 | Command | What it does |

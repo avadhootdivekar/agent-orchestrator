@@ -223,6 +223,22 @@ workspace hosts several.
 
 A tiny `lookups` (a handful) is not evidence either way: extend the window instead of deciding.
 
+### Step 9 — cleanup and retention
+
+Shadow mode never restores, but it **stores**: every successful opted-in task leaves a copy of its
+declared output files under `$WS/.orchestrator/cache` (mode `0700`, self-gitignored, refused by the
+dashboard). The cache is **workspace-local**: one store per workspace, never shared. The copies stay
+until `ao cache rm`, `clear` or `prune` removes them. Once the report is written, unless the parent decided `on` and
+wants the warm store kept, delete every entry and blob:
+
+```bash
+$AO cache clear --yes --workspace "$WS"        # e.g. "cleared 1 entry, 1 blob(s), 1334 bytes freed"
+$AO cache stats --workspace "$WS"              # expect "entries:     0 (0 invalid, 0 expired)"
+```
+
+`--yes` is required when stdin is not a terminal. `ao prune` (run directories) does **not** touch
+the result cache.
+
 ## 3. Report template
 
 Copy this section into the G0 report (e.g. `output/<epic>/g0-report.md`) and fill it in.

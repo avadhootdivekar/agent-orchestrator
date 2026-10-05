@@ -89,8 +89,8 @@ It is **not** Claude prompt caching. Design, threat model and as-built deviation
    - if resuming and task succeeded and all outputs exist → **skip** (idempotent);
    - assert all inputs exist (else **fail: missing input**);
    - **result-cache lookup** (only when the operator enabled it **and** the task opted in with
-     `cache: true`; after the skip, join and missing-input checks and any approval gate, **before**
-     the budget gate): on a hit the stored outputs are restored and the task is marked
+     `cache: true`; after the skip, join and missing-input checks, **before** the budget gate; an
+     approval gate from E-Ag7Pw3, not yet in this code base, must run before it when merged): on a hit the stored outputs are restored and the task is marked
      `succeeded` without dispatching an agent, consuming a retry or charging a budget; on a miss
      the task continues below, and its final settled success is stored if the purity guards pass;
    - execute via `Executor` with retries/backoff + timeout (safe-by-default, cancellable);

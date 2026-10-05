@@ -319,7 +319,8 @@ tasks.
   wrapper command, an unresolved model, an output under `.git`/`.claude`/`CLAUDE.md`/CI config
   (sensitive destinations are never written, matched case-insensitively), a symlink or special file in
   an input, or an unknown field a newer spec added. `ao validate` does not warn; check the reason.
-- Hits are `succeeded` with `attempts == 0`, charge no budget, feed no breaker and report avoided
+- Hits are `succeeded` without consuming an attempt (`attempts` unchanged: 0 on a first-pass hit),
+  charge no budget, feed no breaker and report avoided
   spend (`saved_*`, an estimate) separately from real cost.
 
 **5. `skip_if_outputs_exist` interplay.**
