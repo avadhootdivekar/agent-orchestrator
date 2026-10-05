@@ -1,16 +1,25 @@
 # HLD + LLD — Cross-run result cache (E-Rc4Hk8)
 
-- **Status:** Design complete, **Rev 3**. No code has been written for this epic yet.
+- **Status:** **Implemented** (Rev 4, reconciled with the code by `T-bdQZW4`, 2026-10-05). All 20
+  tasks are Done and review gates G1a, G1b and G2 closed PASS. **Where the shipped code differs
+  from the design below, §0 wins: read it first.** The design body (§0A onward) is the Rev 3
+  design as hardened by the gates; the statements that the implementation or an ADR-0019 addendum
+  superseded have been corrected in place and are flagged "as built".
   - **Rev 2** folded in the Phase-4 consultation: `developer`, `reviewer`, `tester`,
     `dev-security` and `dev-critic` reviewed Rev 1 against the code at `bb6d8a0` (§23.3–§23.4).
   - **Rev 3** applies an independent early-gate review of the committed design (`94dac52`,
     verdict GO-WITH-FIXES) and the manager's scope decisions (§23.5).
-  - The design passes the Execution Readiness Gate (§21).
-  - The value gate G0 (§22.5) is a post-merge follow-up owned by the parent or operator. This
-    epic delivers its protocol and tooling; executing G0 does not block epic closure.
+  - **Rev 4** is the as-built reconciliation: §0, plus corrections to §7.6, §7.7, §8.x, §16,
+    §17, §18, §22.5, §23 and §24.2 where the code or a gate remediation differs.
+  - The design passed the Execution Readiness Gate (§21).
+  - The value gate G0 (§22.5) is a post-merge follow-up owned by the parent or operator. The
+    protocol shipped (`docs-md/result-cache-g0-protocol.md`); **execution is post-merge** and was
+    not run in this epic.
 - **Epic:** [`E-Rc4Hk8-cross-run-result-cache`](../meta/tickets/E-Rc4Hk8-cross-run-result-cache/EPIC.md)
 - **ADR:** [`ADR-0019`](adr/ADR-0019-cross-run-result-cache.md)
-- **Date:** 2026-10-04 (Rev 1) / 2026-10-05 (Rev 2, Rev 3) · **Author:** `architect` · **Base:** `main` @ `bb6d8a0`
+- **Date:** 2026-10-04 (Rev 1) / 2026-10-05 (Rev 2, Rev 3, Rev 4) · **Author:** `architect`
+  (design), `developer` (as-built reconciliation, `T-bdQZW4`) · **Base:** `main` @ `bb6d8a0`;
+  implemented on branch `worktree-agent-a18ce2c08e42a3a5a`, merge base `0b980e3`
 - **Related:**
   - ADR-0003 / ADR-0006: settings precedence, and fill-in vs. kill switch.
   - ADR-0007: the main-thread engine core.
@@ -37,7 +46,163 @@
 
 ---
 
-## 0. Summary
+## 0. Implementation outcome and deviations (post-implementation, `T-bdQZW4`)
+
+Reconciled against the code at branch `worktree-agent-a18ce2c08e42a3a5a` (HEAD `7a28289`, merge
+base `0b980e3`), after gates G1a, G1b and G2 closed PASS. Every claim here was grep- or
+run-checked; the commands are listed in `meta/tickets/E-Rc4Hk8-cross-run-result-cache/T-bdQZW4-cache-docs-refresh/STATUS.md`.
+Where a gate remediation or an ADR-0019 addendum superseded a design statement, the statement
+elsewhere in this document has been corrected and carries an "as built" marker; this section
+lists every such place.
+
+### 0.1 What shipped (as designed)
+
+- **Package `agent_orchestrator.cache`**: 17 modules plus an import-free `__init__.py`, 5 472
+  lines: `constants`, `safeio`, `types`, `settings`, `hashing`, `repo_state`, `fingerprint`, `keys`,
+  `eligibility`, `store`, `restore`, `records`, `coordinator`, `report`, `cli`, and (not in the
+  Rev 3 layout) `cli_ops` and `restore_sweep` (DV-17). Nothing in the package imports `engine`,
+  `runstate`, `cli` or `ui`; `executors/claude_cli.py` and `models.py` import nothing from it.
+- **Double opt-in, default off.** Operator mode: `--cache` / `--no-cache` > `AO_CACHE`
+  (`1|true|yes|on`, `0|false|no|off`, `shadow`; anything else, including `refresh`, is off plus one
+  warning) > `.ao/config.yaml cache.enabled` + `cache.mode` > off. Author policy:
+  `task.cache` > `defaults.cache` > `DEFAULT_TASK_CACHE_POLICY` (**False**, the one flip point;
+  test U-S4 pins it). An injected task's `true` is ignored. `cli._build_result_cache` is the one
+  helper for `ao run` and `ao resume`.
+- **Key schema v1** (`KEY_SCHEMA_VERSION = 1`), argv and executor fingerprint included, task id
+  excluded, prior output content included, repo HEADs included by default. GV-1 re-verified (§0.5).
+- **Engine seams.** `Orchestrator(..., result_cache=None)`, `_result_cache_lookup` (before the
+  budget gate; the engine settles the hit itself and returns `DispatchPrep(signal="skipped")`),
+  `_result_cache_store` (top of the `succeeded` settle branch), and `_reverse_stale_charge` (the
+  existing stale-charge block moved verbatim, shared by the budget gate and the hit path).
+  `git diff --numstat 0b980e3..HEAD -- src/agent_orchestrator/engine.py`: 135 added, 30 removed,
+  **net +105** (budget +110); 12 added lines inside existing functions (budget 12); `engine.py`
+  contains neither `open(` nor `.read(`, and imports cache modules only under `TYPE_CHECKING`
+  (`engine.py:118`) or lazily inside `_result_cache_lookup` (`engine.py:1498`).
+- **Eligibility, store, restore, coordinator** as §8.3 to §8.6, with the hardening in §0.3.
+- **Surfaces.** `status.json` (`tasks[].result_cache`, top-level `result_cache`), the run-summary
+  line, `ao report-usage` text and `--json` (`result_cache` object), `ao report-outcomes`
+  (`settle_reason: "cached"`), the `cache.*` events, dashboard payload keys, the "cached" tag and the
+  "Result cache" tile, `ao cache ls|stats|show|rm|prune|clear|verify` (each `--json`).
+- **Bench forced off**: `bench/subjects.py` passes `--no-cache` and `AO_CACHE=0`
+  (`_AO_NO_CACHE_FLAG`, `_AO_CACHE_OFF_VALUE`).
+- **CI**: one additive step "Result cache tests + coverage (E-Rc4Hk8)" in `.github/workflows/ci.yml`.
+- **Tests and measured outcomes.**
+  - Full suite at the last gate (G2): **6903 passed, 10 skipped, 0 failed**. Baseline at design time
+    was 5041 passed / 8 skipped / 2 known bench failures; the two bench failures no longer occur.
+  - The CI step set (`tests/cache`, `tests/test_e2e_cli_result_cache.py`,
+    `tests/test_e2e_cli_result_cache_admin.py`): 1 707 tests; package coverage **98.71%**; `keys`
+    100%, `store` 96%, `restore` 97%, `coordinator` 100% (floors 85% and 90%).
+  - Other result-cache tests outside that set: `tests/ui/test_result_cache_ui.py` (32),
+    `tests/bench/test_bench_cache_forced_off.py` (7), `tests/test_claude_cli_argv_builder.py`,
+    vitest `run-detail-result-cache.test.tsx` (10).
+  - NFR-1 proof: I-1 (a working `find_spec` poison, ten cache-off workflows, subprocess) and I-2
+    (byte-identical `status.json` and stdout against goldens captured at base `bb6d8a0`, serial and
+    `max_parallel=3`) in `tests/cache/test_noop_proof.py`; E-2 in `tests/test_e2e_cli_result_cache.py`.
+
+### 0.2 Resolved assumptions and open questions
+
+- **G0 (A-11, D34, OQ-6): protocol shipped; execution is post-merge.** `docs-md/result-cache-g0-protocol.md`
+  (T-nPMuz4, guarded by `tests/cache/test_g0_protocol_doc.py`), the measurement fields and the smoke
+  evidence `output/E-Rc4Hk8-cross-run-result-cache/g0-protocol-smoke.md` shipped. **G0 was not run**: it needs multi-day
+  shadow-mode runs of a real consumer workflow with the operator's consent. The decision rule's
+  thresholds (§22.5) remain placeholders for the parent to confirm (OQ-6). No claim of a value result
+  is made anywhere in the docs.
+- **A-9 (env allowlist): checked, list unchanged, residual accepted.** `fingerprint.CLAUDE_FINGERPRINT_ENV_VARS`
+  has 9 names: the six model and output-limit variables the CLI documents (checked against the
+  published environment-variable page, T-uoYW6b) plus `CLAUDE_CODE_SUBAGENT_MODEL`,
+  `MAX_THINKING_TOKENS` and `CLAUDE_CONFIG_DIR`, which the page summary did not list and which are
+  kept because an unused name costs at most a false miss. The provider and
+  endpoint variables are **not** in it (accepted residual R-A1, §0.4).
+- **A-12 (nested workspace): as designed.** `find_git_toplevel` stops at the workspace root; the
+  banner warns through `rc.warnings` (U-CO20). Accepted residual R-A5.
+- **OQ-1** (`ao validate` warning): not built; the reason shows in `status.json`. **OQ-2**: `ao prune`
+  does not touch the result cache; `ao cache prune` does. **OQ-3**: `include_repo_heads` stays
+  config-only. **OQ-4**: still open: E-Ag7Pw3 is not in this tree, so the approval-ordering rule is
+  recorded at the seam comment and in §24.2 and has no test (N4, §0.6). **OQ-5**: not revisited; the design default stands (root-relative resolution, a missing path makes the task uncacheable).
+  **OQ-7**: `result_cache` kept as the container name. **OQ-8**: `DEFAULT_TASK_CACHE_POLICY` stays
+  **False**; flipping it is one constant plus an ADR-0019 addendum.
+
+### 0.3 Deviations from this design
+
+IDs are DV-n. "Gate" names the review finding that caused the change; "T-xxx" the task that recorded
+it in its `HANDOFF.md` or `STATUS.md`.
+
+| # | Design said | Shipped | Why / status |
+|---|---|---|---|
+| DV-1 | §8.2.1: `OutputRecord.kind = KIND_FILE`. `types` imports `safeio`. | `kind: Literal["file"] = "file"`; `types.py` does not import `safeio`. | mypy cannot narrow a plain `str` constant to a `Literal`, and `constants.py` may import only `re`; a test pins `KIND_FILE == "file"`. Nothing in `types` uses `safeio` (T-FJH6LI). |
+| DV-2 | §8.1.4: `mode: Literal["on","shadow"] = MODE_ON`. | The default is the literal `"on"`; `settings.py` reads constants through the module (`constants.X`). | Same Literal reason; a test pins `"on" == constants.MODE_ON`. The module access makes test U-S4's monkeypatch of the flip point effective (a name import would capture the old value) (T-28J9oR). |
+| DV-3 | §8.1.4 template: `mode: on`. | `mode: "on"` **quoted**, with a comment. | Under YAML 1.1 a bare `on` loads as boolean `true`, so the uncommented template failed `CacheConfig` validation. A user who writes bare `mode: on` gets a loud `ConfigError` (fail-closed). §8.1.4 corrected (T-28J9oR). |
+| DV-4 | §8.2.4: child git environment `{GIT_OPTIONAL_LOCKS: "0"}`. | `repo_state.git_read_env()`: scrubs repository-selecting and config-injecting variables (`GIT_SCRUBBED_ENV_VARS`, `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*`), keeps `GIT_OPTIONAL_LOCKS=0`, injects `core.fsmonitor=false` and `core.untrackedCache=false` through `GIT_CONFIG_COUNT` (git >= 2.31). | Gate G1a SEC-03 (a planted `core.fsmonitor` ran code on `git status`), SEC-04 (an inherited `GIT_DIR` redirected the HEAD read). Residual `filter.<x>.clean`: R-A2. The HEAD memo is per-toplevel within one `read()`, never across calls; `RepoHeadReader` and `WorktreeProbe` share one private `_GitReaders` base (T-8tr1H4). |
+| DV-5 | §8.2.6: refusals use the listed reasons. | `summary_from_doc` over-bound summary maps to `UncacheableError(key_encoding, "summary_out_of_bounds")`; an empty `command_template` maps to `executor_fingerprint_unavailable`; a prior-output `lstat` `OSError` other than `FileNotFoundError` maps to `input_unreadable`. | A `ValidationError` or `IndexError` would otherwise escape `build_cache_key`; gate G1a S-11 for the last (T-uoYW6b). |
+| DV-6 | D29 / §7.6 / §8.1.5: sensitive match is exact-case; list of 7 components and 5 basenames. | **Case-insensitive** (`casefold()`), so `docs/claude.md` and `.GIT/hooks` are sensitive. Components also `.githooks .circleci .vscode .devcontainer .cursor .idea`; basenames also `.gitlab-ci.yml Jenkinsfile .travis.yml azure-pipelines.yml bitbucket-pipelines.yml .pre-commit-config.yaml .gitmodules .gitattributes`. | G1a SEC-06 (case) and G1a SEC-15 / G2-S3 (list). ADR-0019 D29 addenda. The key schema and GV-1 do not read the lists. §7.6 D29, §8.1.5 and §7.7 M-14 corrected. |
+| DV-7 | D8: directory digest skips `.git`, `<ws>/.orchestrator` and the task's own outputs. | Unchanged **after G2**. The G1b remediation had added an exemption for restore-staging names (`.ao-result-cache-*.tmp[.bak]`); G2-S1 **removed** it. | Any writer of an input directory could hide a file from the key with such a name (a demonstrated poisoned hit). A crash leftover now costs a false miss; `ao cache prune` sweeps it (`restore_sweep`). `safeio.is_restore_tmp_name` remains for the sweep only. ADR-0019 D8 addendum. |
+| DV-8 | D19 / §8.4.3: inline enforcement is bounded by `INLINE_PRUNE_MAX_ENTRIES` and `INLINE_PRUNE_MAX_ENTRY_FILE_BYTES`; `_scan_sizes(entry_limit, entry_bytes_limit)`. | A private per-phase `_Budget` bounds **everything inline maintenance reads**: files, file bytes, directory entries visited and blobs, over `entries/**` of any version and depth, in the size scan **and** in the prune it triggers. Two new constants `INLINE_PRUNE_MAX_WALK_ITEMS = 100000`, `INLINE_PRUNE_MAX_BLOBS = 50000`. `_scan_sizes(budget)`. The mark phase **fails closed** (`_Marks.complete`): an unreadable entry file means no blob is swept. The sweep re-lstats each blob before deleting it. | Gate G1a SEC-01 (the one MUST-FIX: a planted sparse tree stalled the scheduler thread), SEC-02, S-1, S-2, S-4, S-5. The explicit `ao cache prune` stays unbounded. ADR-0019 D19 addendum. §7.6 D19, §8.1.5 and §8.4.3 corrected. |
+| DV-9 | §8.4.3 store pseudocode. | `put_entry` checks the 1 MiB bound before `ensure_layout`; `ensure_layout` creates `.orchestrator` itself (mode `0o777` under the umask; only the cache root and below are forced to `0o700`), maps `UnsafePathError` to `CacheUnsafePathError`; `_ws` is `abspath`, not `realpath`; `put_blob` dedupes only onto a **regular** file of the right size and otherwise replaces it (a planted directory is moved to a root-level `trash-*` directory); `read_blob` treats only `NotRegularFileError` as `blob_corrupt`, any other `OSError` is `CacheError(store_error)`; `delete_entry` / `delete_blob` on a directory raise `CacheUnsafePathError`; `os.utime(..., follow_symlinks=False)` has no Windows fallback (POSIX first, A-4). | T-U7ckfd; gate G1a SEC-08, SEC-09, S-7. Same-size forged blob content is not re-hashed at dedupe; restore's hash check self-heals it. |
+| DV-10 | §8.4.3 `clear` / `iter_entries` / `verify`. | `clear` wraps a failed `rmtree` into `CacheError(store_error)` and verifies the trash directory itself is gone; `iter_entries` also treats a directory named like an entry, a non-hex name, a wrong-shard file and an **unreadable** entry file as anomalies (never parsed or deleted; `verify` fails on `unreadable`); `prune`/`stats`/`verify` check `entries/v1`, `blobs/`, `tmp/` up front; `stats`/`verify` on a missing root return an empty report; `verify` hashes through a private `_Sha256Sink` (the store may import only `types`, `safeio`, `constants`). `CacheStats.max_entry_bytes` is `None` in the store (the CLI fills it from settings). | T-HjxNQ0; gate G1a S-3. |
+| DV-11 | §8.5 restore pseudocode: `chmod` by path, then `os.replace`; a hard crash may leave `.ao-result-cache-*.tmp` litter. | Phase 1 also refuses a destination that is a directory (`restore_failed`); the mode is applied with `os.fchmod` on the open staging descriptor **after** hash verification, never by path; each existing destination is hard-linked to `<staging>.bak` before phase 2 and a failing rename **rolls the earlier ones back**; a transient `read_blob` error is `RestoreMiss(store_error, evict=False)`; `capture_outputs` refuses a path whose `realpath` differs from itself. | T-u3jG8F; gate G1a SEC-05, SEC-07, SEC-09. Residuals: created parent directories stay; where hard links are unavailable one file is not rolled back. ADR-0019 D20 addendum. `0o777` parent mode is the named `_RESTORE_DIR_MODE`. |
+| DV-12 | §8.6.2: one `CacheUnsafePathError` handler around `get_entry`. | `_lookup` wraps everything after the key build in one D33 handler; `CacheTooLargeError` from `put_entry` is the skip `entry_too_large`; a coordinator built for a mode other than `on`/`shadow` disables itself; `cli_versions` is a `Callable[[str], str]`; two small `Protocol`s (`HeadReader`, `Worktree`) type the collaborators; `ttl_days` is `int \| None` end to end (no `cast`); `_miss` takes an optional `detail`, `_evict` an optional `blob`; duration is computed from the ISO timestamps (0.0 when unparsable); shared helpers `types.clip_text` and `fingerprint.try_resolve` replace per-module copies. | T-gDNjN2; G1b rev S-3 and S-4. |
+| DV-13 | §8.7: `LookupRequest.injected = (ts.origin == "injected")`; constructor keyword after `run_prompt`. | `injected` is `spawn is not None and spawn.loop_id is None` from `RunState.spawned_by` (no `.origin` comparison anywhere under `src/`, enforced by `tests/test_spawn_provenance.py`); the keyword is last, after `summarizer`; the hit path uses `record = outcome.record`. | T-XpF1pF, G1b rev N-1. By the `SpawnRecord` invariant a spawn record without `loop_id` is exactly an `emit_tasks`-injected task. I-27 "no lookup" is verified as no record, no store activity and no cache directory (the coordinator owns the opt-in policy). |
+| DV-14 | §8.8: `report.py` and `usage.py` shapes. | `run_block` and `usage_counters` round summed floats (6 and 3 digits); `ResultCacheUsage` lives in `usage.py`; a current hit's **verdict is still read** (a reviewer served from the cache still describes this run's producers; site B filters producers only); a hit-after-spend with no other task in the group creates a group row with `tasks == 0`; `UNKNOWN_REASON` buckets a record with no reason; `format_summary_line` is **total** (a non-dict or any non-finite, negative, non-numeric or oversized field gives no line); `cli._echo_result_cache_line` strips control characters; the `ao status` fallback catches `ValueError` (JSON integer-digit limit). | T-eyn5UG; G1b sec S-2 (`status.json` is agent-writable). |
+| DV-15 | §8.1.7 banner. | In mode `on` the banner ends with `(agent-writable; avoid for untrusted prompts)` (`_RESULT_CACHE_TRUST_NOTE`); the shadow banner does not. | G1b sec S-5: `on` serves stored outputs and the cache directory is writable by the agent (R-A4). |
+| DV-16 | §8.7.5 / E-2 / U-LZ: a cache-off CLI process loads only `cache`, `cache.constants`, `cache.settings`. | The allow-list is `{cache, cache.constants, cache.settings, cache.cli}`. The **engine** process (I-1) keeps `{cache, cache.constants}`. | `cli.py:44` registers the `ao cache` group eagerly (`from .cache.cli import cache_app`), so every `ao` start loads `cache.cli`. Manager decision (T-o95l1M): keep `cache/cli.py` import-light (module level: at most `typer`, `constants`, `settings`; today `typer` and `constants`; everything else lazy inside the command bodies), pinned by `TestCacheCliStaysImportLight` and `TestLazyImports`. **Decision recorded in ADR-0019 (Rev 4 addendum).** |
+| DV-17 | §8.0 / §8.9: `cache/cli.py` holds the commands. | Surface in `cache/cli.py`; behaviour in `cache/cli_ops.py` (lazy); the prune-side sweep in `cache/restore_sweep.py`; new `safeio.open_dir_fd`; `safeio.strip_control_chars` also strips bidi, zero-width and tag characters (U+061C, U+00AD, U+E0000 to U+E007F added at G2). | T-6tRKml; G1a SEC-14, G2-N1. Import graph: `cli` -> `cli_ops` (lazy) -> `store`, `restore_sweep`, `settings`, `safeio`; `restore_sweep` imports `safeio`, `constants`, `types`. |
+| DV-18 | §8.9: `--workspace` / `AO_WORKSPACE_ROOT` / config discovery; `prune` JSON per §13.4. | Same resolver (`cli._resolve_workspace_root`), but a workspace that is **not an existing directory is exit 2** for every command (text: one `ERROR:` line; `--json`: a document with `error`). Limits (`max_bytes`, `ttl_days`) come from the `.ao/config.yaml` discovered from the **current directory**, not from `--workspace`. `prune --json` adds `removed_restore_tmp`, `kept_restore_backups`, `restore_sweep_truncated`; `verify` problem `kind` may be `unreadable`; `--older-than 0` does not expire an entry with a future `created_at`; `rm` removes the entry file only (its blobs go with the next `prune`, after the 1 h grace). | T-6tRKml; G2-S5 (a mistyped `--workspace` used to exit 0), G2-N6 (accepted: run `prune` from the project, use `--dry-run`). `--help` names only `AO_WORKSPACE_ROOT` (and says the `.ao/config.yaml` `workspace_root` override is not read, which is true); the remaining fallback is the repo set's `workspace_root` of the workflow found via `.ao/config.yaml`, the same workspace `ao run` uses (re-checked by the architect, T-bdQZW4 sign-off). |
+| DV-19 | §8.10: `ui/files.py` about +6 lines, case-sensitive comparison. | `ui/files.py` is +13 lines: the cache-root comparison is on **casefolded** path parts and a NUL byte is a 403. `tests/ui/test_run_graph_endpoint.py` (+12/-3) is an existing test edited: it pins exact payload key sets, so `result_cache` was added to both. | G2-N2. Backend only; no bundle rebuild. |
+| DV-20 | §8.11: `bench/subjects.py` +3 lines. | +9 lines: a second named constant `_AO_CACHE_OFF_VALUE = "0"` next to `_AO_NO_CACHE_FLAG`, and a module-level import of `cache.constants.ENV_CACHE`. | NFR-7, no bare literal (T-ZTxN1x). |
+| DV-21 | §24.2 merge-notes figures. | See the corrected table in §24.2 (`runstate.py` +12/-1, `ui/files.py` +13, `cli.py` +115/-2 including an eager `cache.cli` import and `except (ValueError, KeyError)` in `status`, `usage.py` +109/-23, `ci.yml` +8, and the unlisted `tests/ui/test_run_graph_endpoint.py`). | G2-S3. |
+| DV-22 | §23.5 B7: G0 would-hit rate from `ao cache stats --json`. | Unchanged: it comes from `ao report-usage --json` (`result_cache.would_hits / lookups`); `ao cache stats --json` supplies store growth. | Recorded in Rev 3; the G0 protocol encodes it. |
+| DV-23 | §18: test files listed per task. | Extra shared helper modules: `tests/cache/{fakes,keys_fixture,_report_states,_wiring_fixture,_hardening_rig,_noop_poison,_noop_scenarios,_noop_subprocess,_noop_capture}.py`, `tests/fixtures/result_cache/{corpus,schemas,golden}/`. `tests/conftest.py` and `tests/test_nfr2_regression_gate.py` are **not edited**. | Test infrastructure only. |
+| DV-24 | §18 I-1: a `sys.meta_path` poison finder. | The finder must implement `find_spec` (Python 3.12 never calls the legacy `find_module`). Part 1's first delivery was rejected as vacuous; the rework has self-tests and negative controls, ten cache-off workflows and base-captured goldens. | T-JCOAsq. Learning captured (`meta/learnings.md`). |
+
+### 0.4 Accepted residuals
+
+Stated here and in ADR-0019 (Rev 4 addendum). Each was judged and accepted at a gate; none is
+fixed in code. Operator mitigation: `--no-cache` for untrusted repositories or prompts.
+
+| ID | Residual | Source | Precondition and mitigation |
+|---|---|---|---|
+| R-A1 | **Provider and endpoint environment is not in the key.** `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` and the provider region are outside `CLAUDE_FINGERPRINT_ENV_VARS`, so a hit can be served across a backend or endpoint switch with an unchanged model alias. Same model name, operator-controlled, non-secret; adding them would change GV-1. | G2 rev S4, G1a SEC-11 | Pass `--no-cache`, or run `ao cache clear`, when switching provider or endpoint. |
+| R-A2 | **`git status` in the guard-3 probe executes a `filter.<x>.clean` command** named in the agent-writable git config (re-confirmed live on git 2.39.5; `core.fsmonitor` is closed by DV-4). Same family as G1a SEC-03. | G2 sec S2, G1b S-3 | Cache on **and** the task opted in **and** a writer of the git config or `.gitattributes` that cannot already run code (a tool-restricted agent without Bash). An agent with Bash already has the same power, and the isolation integrator already runs `git status` in agent-touched trees. Use `--no-cache` for untrusted repositories. |
+| R-A3 | **Dirty tracked edits made before the lookup are not in the key** (accepted at Rev 3, R-20, EC-26). Guard 3 catches edits made during the run only. It is also blind to `assume-unchanged` / `skip-worktree` files and to untracked or non-git writes, and after a quota or self-heal requeue the next lookup re-takes the baseline, so tracked edits made by the abandoned partial attempt are absorbed and the successful retry can be stored. | Rev 3; G1b sec N-7, N-9 | Opt in only tasks whose effect is captured by their declared outputs. |
+| R-A4 | **The cache directory is agent-writable, so same-uid forgery is not defended** (keys are not secrets): an agent that can write `.orchestrator/cache` can plant an entry and blobs that a later `on` run restores. Includes a forged future `created_at` that never expires (SEC-18), a stored mode `0o000` restored unreadable (SEC-16) and a hard-linked blob. | §7.7; G1b sec S-5; G1a SEC-16, 18, 21 | The `on` banner says so (DV-15). `ao cache verify` / `clear`; HMAC and `dir_fd` walking are non-MVP 2 and 9. |
+| R-A5 | **A workspace nested inside a parent repository is treated as non-git** (HEAD not keyed; guards 2 and 3 inactive). | A-12, R-19 | The banner warns. Do not opt tasks in such a layout. |
+| R-A6 | **Retention.** Outputs persist in `.orchestrator/cache` (mode `0o700`, self-gitignored, refused by the dashboard) until `ao cache rm`, `clear` or `prune`; **shadow mode also stores output copies**. A crash leftover `.ao-result-cache-*.tmp[.bak]` in an output directory is swept only by `ao cache prune`, and only in the output directories of entries still in the store: after `ao cache clear` a leftover is never swept (G2-N7). | G2 sec N4, N7 | Run `ao cache clear --yes` after a shadow measurement. The G0 protocol now ends with "Step 9 — cleanup and retention" (`ao cache clear --yes --workspace "$WS"`; added at the architect sign-off of T-bdQZW4, manager-authorized, closing G2 sec N4). |
+| R-A7 | **Active TOCTOU races.** Persistent planted links are caught; a concurrent same-uid racer is not (§7.7). The prune-side sweep follows an intermediate directory component swapped between `check_dir_chain` and `open_dir_fd` (G2-N5; blast radius: regular, user-owned, staging-named files older than the grace). | §7.7; G2 sec N5 | Non-MVP 9. |
+| R-A8 | **Smaller accepted items:** `ResultCacheRecord.outcome/mode/mode_source` have no `max_length` and `reason_detail` can carry host paths (G2-N8, G1b N-4/N-5); `ao cache prune` takes limits from the CWD config (DV-18); a same-size forged blob is not re-hashed at dedupe (DV-9); `assume-unchanged` and partial-attempt baselines (R-A3); the restore rollback leaves created parent directories (DV-11). | gates | Same-uid or hygiene class; one post-merge hygiene ticket. |
+
+### 0.5 GV-1 and the component digests (re-verified)
+
+`.venv/bin/python -m pytest -q -p no:cacheprovider tests/cache/test_keys_golden.py
+tests/test_claude_cli_argv_builder.py` -> `102 passed`. A direct run of the GV-1 fixture
+(`tests/cache/keys_fixture.py`: `key_for` over the workspace in §8.2.7) printed:
+
+```text
+key = 6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f   (== GV1_KEY, unchanged since Rev 2)
+agent ced58570dab6 · argv 315cfbdef1cf · dynamic_inputs 4f53cda18c2b · executor_fingerprint 620dc66502c3 ·
+general_instructions 80c58b832f5c · inputs 6518d7ac7319 · instruction 8f7ad8e7e8d2 · key_schema 6b86b273ff34 ·
+outputs 2789b49e50b4 · prompt 25e61c2662b6 · repo_heads b1e77f36ac12
+```
+
+All eleven digests equal the §8.2.7 worked example. None of the gate remediations changed the key:
+the sensitive lists, the restore protocol, the git environment and the hashing exemption removal do
+not feed the key document for the GV-1 workspace (no restore-staging names, no sensitive outputs).
+
+### 0.6 Follow-ups (not done in this epic)
+
+| ID | Follow-up | Source | Tracking |
+|---|---|---|---|
+| FU-1 | **Run G0** (shadow mode on a real consumer workflow, then the §22.5 decision rule). | D34, OQ-6 | Parent or operator, post-merge. The parent confirms the thresholds. |
+| FU-2 | **Merge with E-Ag7Pw3 and E-Da5Tn9**: follow §24.2 (classify new fields RULED; approval check before call site (c); recapture the I-2 goldens if `status.json` or `ao run` output changed; rebuild the UI bundle, never hand-merge). Add the approval-seam pin test once that code exists (G2 N4). | §24.2, OQ-4 | Parent, at merge. |
+| FU-3 | **CI supply-chain gates**: keep the `permissions:` block and the `pip-audit` job (T-2wE08U), add `cli_ops restore_sweep safeio` to the per-module coverage loop. | G2 sec N3 | Merge-time item. |
+| FU-4 | One **hygiene ticket** for the deferred NITs: `claude --version` stdin and output bounds (SEC-10), strict models (SEC-13), `ResultCacheRecord` string bounds (G2-N8), the `--cache` option declared twice (rev G2-N1), `SHA256_HEX_RE` / `TypedDict` (rev G2-N3), `_LS_HEADER` widths (rev G2-N6), `Path.open` / `read_bytes` AST checks (S-9), `PruneReport` live total (S-6). | G1a, G1b, G2 | Backlog. |
+| FU-5 | **Bug ticket** (pre-existing): the missing-inputs branch in `_prepare_and_maybe_dispatch` resets `dispatch_cycle` (§23.2). D14's `ended_at` binding keeps this epic robust to it. | §23.2 | Backlog. |
+| FU-6 | The pre-existing `ui/files.read_file` FIFO open (§23.2) and the pre-existing red lint step on `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py` (G2 N7). | §23.2, G2 | Backlog. |
+| FU-7 | Hardening options for R-A2 if it is ever promoted: stat-compare via `git ls-files --debug`, skip guard 3 when `.git/config` has `filter.`, or an empty attributes source. Making `--help` mention the config-discovered workspace fallback (DV-18). | G1b S-3 | Architect decision. |
+| FU-8 | Non-MVP items of §2.3 (remote backends, HMAC, `CachingExecutor` / ALT-7 if isolation becomes the default (R-15), `--reuse-from` / ALT-8, `refresh`, `rm --run/--task`, `verify --repair`, ...). | §2.3 | `meta/ROADMAP.md` §3.6 and §3.4. |
+
+---
+
+## 0A. Design summary (Rev 3)
 
 This epic adds a **double-opt-in, content-addressed, workspace-local result cache**. It is off by
 default.
@@ -88,7 +253,8 @@ files get small, additive hooks (§24.2).
 
 **When the switch is off (the default), the engine runs and imports no cache code.** The only
 cache modules a cache-off process can load are `agent_orchestrator.cache` and
-`agent_orchestrator.cache.constants` (via `project_config`), plus `cache.settings` on the CLI path.
+`agent_orchestrator.cache.constants` (via `project_config`), plus `cache.settings` and
+`cache.cli` on the CLI path (as built: `cli.py` registers the `ao cache` group eagerly, DV-16).
 Read-side helpers import `cache.report` lazily, and only when a run has result-cache records, so
 `status.json` and the CLI text are byte-identical.
 
@@ -190,7 +356,7 @@ Read-side helpers import `cache.report` lazily, and only when a run has result-c
 | FR-15 | **Config:** `cache.{enabled,mode,max_bytes,max_entry_bytes,ttl_days,include_repo_heads,max_input_bytes,max_input_files}`, with bounds; plus the `ao init` template. | ✅ | unit |
 | FR-16 | **Shadow mode.** `shadow` records `would_hit`, never restores, and still stores. (`refresh` is deferred, non-MVP 14.) | ✅ | integration + e2e |
 | FR-17 | **Single-entry invalidation:** `ao cache rm <key\|prefix>`. (`rm --run R --task T` is deferred, non-MVP 15.) | ✅ | e2e |
-| NFR-1 | **No-op when off** (§8.7.5). The engine executes no cache code. A cache-off engine process loads no cache module except `agent_orchestrator.cache` and `.constants` (via `project_config`); the CLI path may also load `.settings`. `runstate`, `usage`, `outcomes`, `cli` and `ui/runs` import `cache.report` lazily, only when `state.result_cache` is non-empty. `status.json` and CLI text are byte-identical. `state.json` gains `result_cache: {}`. The dashboard JSON gains null keys, following the `integration` precedent. `report-usage --json` omits its `result_cache` object when there are no records. | ✅ | structural guards, I-1/I-2, full suite |
+| NFR-1 | **No-op when off** (§8.7.5). The engine executes no cache code. A cache-off engine process loads no cache module except `agent_orchestrator.cache` and `.constants` (via `project_config`); the CLI path may also load `.settings` and `.cli` (as built, DV-16: `cli.py` registers the `ao cache` group eagerly, and `cache/cli.py` stays import-light). `runstate`, `usage`, `outcomes`, `cli` and `ui/runs` import `cache.report` lazily, only when `state.result_cache` is non-empty. `status.json` and CLI text are byte-identical. `state.json` gains `result_cache: {}`. The dashboard JSON gains null keys, following the `integration` precedent. `report-usage --json` omits its `result_cache` object when there are no records. | ✅ | structural guards, I-1/I-2, full suite |
 | NFR-2 | **`engine.py` stays content-free.** All byte I/O happens in `agent_orchestrator.cache`. | ✅ | existing static audits + review |
 | NFR-3 | **Deterministic and replayable:** injected clock, canonical JSON, golden vectors. | ✅ | unit |
 | NFR-4 | **Bounded work and memory:** hash caps, entry caps, size checks before reads, bounded reads, inline maintenance bounded by entry count **and** entry-file bytes. | ✅ | unit |
@@ -214,7 +380,9 @@ Read-side helpers import `cache.report` lazily, and only when a run has result-c
 - `hashing`, `repo_state`, `fingerprint`, `keys`;
 - `eligibility`, `store`, `restore`;
 - `records`, `coordinator`, `report`;
-- `cli` (the `ao cache` sub-app).
+- `cli` (the `ao cache` sub-app: the Typer surface), and, as built, `cli_ops` (the commands'
+  behaviour, imported lazily) and `restore_sweep` (the prune-side sweep of stale restore
+  staging files).
 
 **Additive shared-file hooks:**
 
@@ -308,7 +476,7 @@ Read-side helpers import `cache.report` lazily, and only when a run has result-c
 | A-6 | Model aliases and the CLI version are acceptable key material. | A retargeted alias gives a stale hit. | The CLI version is in the key; the TTL defaults to 30 days; the guide recommends pinned ids. |
 | A-7 | E-Ag7Pw3 adds a `TaskSpec` or `WorkflowSpec` field, or a kind. | An approval inferred from an existing value would bypass the allowlist. | Runtime unknown-field rules for both specs, plus the merge checklist (§24.2). |
 | A-8 | A display-only dashboard is acceptable. | Users want a launch toggle. | Non-MVP item 11. |
-| A-9 | The env allowlist in `fingerprint.CLAUDE_FINGERPRINT_ENV_VARS` names the behaviour-relevant, **non-secret** Claude CLI variables. It is deliberately small and closed; adding a name needs review. **TODO (T-uoYW6b):** check the list against the installed CLI's documented env vars. | An unlisted variable causes a stale hit. | The list is easy to extend. Secrets (`*_API_KEY`, auth tokens) are never included. |
+| A-9 | The env allowlist in `fingerprint.CLAUDE_FINGERPRINT_ENV_VARS` names the behaviour-relevant, **non-secret** Claude CLI variables. It is deliberately small and closed; adding a name needs review. **Checked in T-uoYW6b (§0.2):** the list was compared with the CLI's documented env vars and is unchanged; the provider and endpoint variables are an accepted residual (R-A1). | An unlisted variable causes a stale hit. | The list is easy to extend. Secrets (`*_API_KEY`, auth tokens) are never included. |
 | A-10 | `claude --version` is cheap: memoized per binary identity (resolved path, mtime and size), with a 10 s timeout. A binary replaced mid-process is re-read. | Auto-updates churn the key, which costs misses but is safe. | Documented, and visible in G0. |
 | A-11 | **Corrected in Rev 3.** G0 needs multi-day shadow-mode runs of a **real consumer** workflow, with the operator's consent. This repo cannot supply that workload: `specs/self-dev/` holds only agent and reposet files, the built-in templates write per-instance output paths, and the bench forces the cache off. Shadow mode adds hashing and storage but no model spend. | G0 never runs, so `on` is never recommended. | G0 is a post-merge follow-up owned by the parent or operator (finplan, with consent). T-nPMuz4 ships a runnable protocol, the measurement fields and a report template (D34). |
 | A-12 | The workspace root is a repository toplevel, or contains the repositories of the repo set. Repository detection walks up only to the workspace root (D5). | A workspace nested inside a parent repository is treated as non-git: its HEAD is not keyed and guards 2 and 3 do not apply (fail-open for that layout). | The `ao run` banner warns when a `.git` marker exists above the workspace root (§8.1.7). The authoring guide says not to opt in tasks in such a layout. |
@@ -436,20 +604,20 @@ flowchart LR
 | Container | Change | Notes |
 |-----------|--------|-------|
 | `agent_orchestrator.cache` (NEW) | All logic | §8.0 modules and owners |
-| `models.py` | +~65 lines, additive | `TaskSpec.cache` and `WorkflowDefaults.cache` (both `StrictBool \| None`); `ResultCacheRecord` (with computed `hit` and `saved_tokens`) + outcome constants; `RunState.result_cache`; `is_current_result_cache_record()`. `models.py` never imports from `cache/`. |
+| `models.py` | +~65 lines, additive (as built: +81/-1) | `TaskSpec.cache` and `WorkflowDefaults.cache` (both `StrictBool \| None`); `ResultCacheRecord` (with computed `hit` and `saved_tokens`) + outcome constants; `RunState.result_cache`; `is_current_result_cache_record()`. `models.py` never imports from `cache/`. |
 | `specs/workflow.schema.json` | +2 properties | `defaults.cache`, `task.cache` (`boolean`) |
-| `project_config.py` | +~45 lines | `CacheConfig` (bounded), `ProjectConfig.cache`, `_INIT_TEMPLATE` block |
+| `project_config.py` | +~45 lines (as built: +71/-1) | `CacheConfig` (bounded), `ProjectConfig.cache`, `_INIT_TEMPLATE` block |
 | `engine.py` | net ≤ +110 formatted lines (measured ≈ +103); ≤ 12 added lines inside existing functions; every line ≤ 100 columns | ctor kwarg; `_RunContext` field; `_result_cache_lookup()` + `_result_cache_store()` private methods; one call site in prepare, one in settle; the existing stale-charge reversal extracted verbatim into `_reverse_stale_charge()` (net-negative inside `_prepare_and_maybe_dispatch`) and shared by the budget gate and the hit path |
 | `executors/claude_cli.py` | refactor, behaviour-identical | extract pure `build_claude_argv(agent, prompt) -> list[str]`; `execute()` calls it |
-| `cli.py` | ~+75 lines | `--cache/--no-cache` on run/resume; `_build_result_cache`; `add_typer(cache_app)`; summary lines and `report-usage` line, importing `cache.report` lazily and only when there are records |
-| `runstate.py` | +~6 lines | `write_status` merges `cache.report.result_cache_status_fields(state)`, imported lazily and only when `state.result_cache` is non-empty |
-| `usage.py` | +~30 lines | both dispatch-counting sites (group metrics and producer attribution) skip current hits, while a hit's real carried spend still counts; `UsageReport.result_cache` totals object; payload omits it when absent; lazy `cache.report` import |
-| `outcomes.py` | +~6 lines | `_settle_reason(ts, *, state=None, tid=None)` returns `"cached"` for a current hit (lazy import) |
-| `ui/runs.py` | +~14 lines | `TaskStat.result_cache`, `RunDetail.result_cache` (nullable; lazy import) |
-| `ui/files.py` | +~6 lines | the browser refuses paths under `<root>/.orchestrator/cache` |
+| `cli.py` | ~+75 lines (as built: +115/-2; it also imports `cache.cli` eagerly and `status` catches `ValueError`) | `--cache/--no-cache` on run/resume; `_build_result_cache`; `add_typer(cache_app)`; summary lines and `report-usage` line, importing `cache.report` lazily and only when there are records |
+| `runstate.py` | +~6 lines (as built: +12/-1) | `write_status` merges `cache.report.result_cache_status_fields(state)`, imported lazily and only when `state.result_cache` is non-empty |
+| `usage.py` | +~30 lines (as built: +109/-23) | both dispatch-counting sites (group metrics and producer attribution) skip current hits, while a hit's real carried spend still counts; `UsageReport.result_cache` totals object; payload omits it when absent; lazy `cache.report` import |
+| `outcomes.py` | +~6 lines (as built: +12/-3) | `_settle_reason(ts, *, state=None, tid=None)` returns `"cached"` for a current hit (lazy import) |
+| `ui/runs.py` | +~14 lines (as built: +15) | `TaskStat.result_cache`, `RunDetail.result_cache` (nullable; lazy import) |
+| `ui/files.py` | +~6 lines (as built: +13: casefolded comparison and a NUL guard) | the browser refuses paths under `<root>/.orchestrator/cache` |
 | `ui/src/types.ts`, `RunDetail.tsx` | +~30 lines | types, "cached" tag, "Result cache" tile; bundle rebuilt |
-| `bench/subjects.py` | +3 lines | `--no-cache` + `AO_CACHE=0` |
-| `.github/workflows/ci.yml` | +1 step | result-cache tests with `--cov-fail-under=85` for the package and a 90% floor per core module |
+| `bench/subjects.py` | +3 lines (as built: +9) | `--no-cache` + `AO_CACHE=0` |
+| `.github/workflows/ci.yml` | +1 step (as built: +8 lines) | result-cache tests with `--cov-fail-under=85` for the package and a 90% floor per core module |
 
 ### 7.3 Component breakdown
 
@@ -469,7 +637,7 @@ flowchart TB
     RE[records.py: record builders]
     CO[coordinator.py: ResultCache implements ResultCacheHook]
     RP[report.py: status fields, summary line, usage counts, task views]
-    CLI[cli.py: ao cache sub-app]
+    CLI[cli.py: ao cache sub-app surface] -.lazy.-> OPS[cli_ops.py: command behaviour] --> ST & SW[restore_sweep.py]
   end
   ENG[engine.py] -- "ResultCacheHook (lazy import)" --> CO
   CO --> E & K & ST & R & RE & RS
@@ -477,6 +645,7 @@ flowchart TB
   H --> SIO
   ST --> SIO & T
   R --> SIO & T
+  SW --> SIO & T
   ARGV[executors/claude_cli.build_claude_argv] --> K
   RSTATE[runstate.write_status] --> RP
   AOCLI[cli.py] --> S & CO & RP & CLI
@@ -558,8 +727,8 @@ to the Phase-4 findings in §23.4, or to the Rev 3 early-gate items in §23.5.
 | D5 | **`repo_heads` in the key by default** (`{repo_id: sha \| "unborn"}`). Non-git repos are omitted. Git-ness is decided from the filesystem: a `.git` entry found walking up from the repo path **to the workspace root and never above it** (`find_git_toplevel`); the directory holding that entry is the repo toplevel. No probe that hides failures, and no private `GitRepo._run`. For a git repo, any failure (`GitError`/`OSError`/`RuntimeError`, short timeout) → uncacheable. Repository reads set `GIT_OPTIONAL_LOCKS=0`. A workspace nested inside a parent repository is therefore treated as non-git; that residual is documented and the banner warns about it (A-12). `include_repo_heads: false` drops the field, but the **HEAD-moved store guard stays active**. | Omit; always on with no opt-out. | Every prompt names the repos, so committed state is an undeclared input. `GitRepo.probe()` returns None both for "not a repo" and for failures, and a transient failure must not silently drop HEAD (reviewer R8). | D(i); Rev2: reviewer R1/R8, developer #1; Rev3: early-gate A2 (a `.git` in `$HOME` no longer makes plain project dirs "git") |
 | D6 | **The prior content of each declared output is in the key** (`outputs: [{path, prior}]`). The settle-time recompute reuses the lookup-time priors (preseed). | Paths only. | Without it, in-place-update tasks get stale hits that **overwrite newer edits**. With `skip_if_outputs_exist: true`, priors are always `"absent"`. | new (Rev 1) |
 | D7 | **The exact argv and an executor fingerprint are in the key.** argv = `build_claude_argv(effective_agent, normalized_prompt)`, a behaviour-identical extraction from `ClaudeCliExecutor.execute`; it is `null` for `fake`. The fingerprint (claude_cli) is `{cli_version, env, context_files}`: `claude --version` (memoized per binary identity: resolved path, mtime and size; failure → uncacheable), a small, closed allowlist of behaviour-relevant **non-secret** env vars, and digests or absence markers for `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude/settings*.json` and `.claude/{agents,commands,skills}` at the workspace root and on the path down to the agent cwd. | Rev 1 relied on a "bump `KEY_SCHEMA_VERSION`" convention; omit ambient files. | A missed version bump is a silently wrong success; an extra bump is just a miss. Hashing the real argv makes `EFFORT_MAX_TURNS` changes and flag-injection changes invalidate automatically. Context files steer every agent, and the primary consumer's root is not a git repo. | Rev2: critic #4, reviewer R7 |
-| D8 | **Directory digest** = canonical JSON of `[["D", rel] \| ["F", rel, size, sha]]`, sorted by `os.fsencode(rel)`. A symlink or special file inside → uncacheable. `.git` entries, `<ws>/.orchestrator` and the task's own declared outputs are skipped. | Follow symlinks; hash `.git`. | Fail-closed, stable, no false impurity. | refines P-2 |
-| D9 | **NFR-1 carve-out and lazy imports.** Only `agent_orchestrator.cache` reads artifact bytes. `engine.py` and the `ArtifactStore` ABC stay content-free. Modules the engine imports (`runstate`, `usage`) and the other read sides (`outcomes`, `cli`, `ui/runs`) import `cache.report` **inside the function, only when `state.result_cache` is non-empty**, so a cache-off process loads no cache module beyond `cache` + `cache.constants` (via `project_config`) and, on the CLI path, `cache.settings`. | Add reads to `ArtifactStore`; module-level imports of `cache.report`. | Keeps the engine invariant and its static audits intact, and makes the NFR-1 no-import claim literally true (I-1). | C; Rev3: early-gate C (NFR-1 literal) |
+| D8 | **Directory digest** = canonical JSON of `[["D", rel] \| ["F", rel, size, sha]]`, sorted by `os.fsencode(rel)`. A symlink or special file inside → uncacheable. `.git` entries, `<ws>/.orchestrator` and the task's own declared outputs are skipped, and **nothing else**: as built, a restore-staging name (`.ao-result-cache-*.tmp[.bak]`) is hashed like any other file (ADR-0019 D8 addendum, G2-S1). | Follow symlinks; hash `.git`. | Fail-closed, stable, no false impurity. | refines P-2 |
+| D9 | **NFR-1 carve-out and lazy imports.** Only `agent_orchestrator.cache` reads artifact bytes. `engine.py` and the `ArtifactStore` ABC stay content-free. Modules the engine imports (`runstate`, `usage`) and the other read sides (`outcomes`, `cli`, `ui/runs`) import `cache.report` **inside the function, only when `state.result_cache` is non-empty**, so a cache-off process loads no cache module beyond `cache` + `cache.constants` (via `project_config`) and, on the CLI path, `cache.settings` and `cache.cli` (as built, DV-16). | Add reads to `ArtifactStore`; module-level imports of `cache.report`. | Keeps the engine invariant and its static audits intact, and makes the NFR-1 no-import claim literally true (I-1). | C; Rev3: early-gate C (NFR-1 literal) |
 | D10 | **Allowlist eligibility (§8.3).** Every field of `TaskSpec`, `AgentSpec`, `WorkflowSpec` and `WorkflowDefaults` is classified, and tripwires fail on unclassified fields. **Runtime unknown-field rules** apply to `type(task).model_fields`, the **effective `AgentSpec`** (`unknown_agent_field`; any field outside `AGENT_KEY_FIELDS \| AGENT_NON_KEY_FIELDS` with a non-default value), `WorkflowSpec` and `WorkflowDefaults`. Further rules: `executor` ∈ {claude_cli, fake}; `command_template[0]` basename ∈ {claude} for claude_cli; the effective `model` must be resolved for claude_cli; integration must not be active; any verdict sidecar must be a declared output; the task must not be a verdict breaker's source. Control-file and sensitive outputs are checked on **resolved** paths during key build. | Denylist; lexical control-path checks. | A future kind or field is non-cacheable by default. A label (`executor: claude_cli`) is not proof that `claude` is the binary. An unresolved model (CLI default) cannot be keyed. | E; Rev2: critic #8c, reviewer R7b/R11, developer #7; Rev3: early-gate A3 (an unclassified `AgentSpec` field was silently unkeyed) |
 | D11 | **Lookup placement.** After `should_skip`, the isolation resolution, `_apply_join`, the missing-inputs check and dynamic-input collection; **before** the budget gate. Implemented as `if self._result_cache is not None and self._result_cache_lookup(...): return DispatchPrep(signal="skipped")`. The cache contracts are imported lazily inside the method. | A new `"cached"` signal; lookup before `should_skip`. | Reuses the `skipped` handling of the fill loop. Barriers, `_ready_ids` and the wave scheduler are unchanged (verified by the reviewer). | B |
 | D12 | **Hit bookkeeping is owned by the engine** (in `_result_cache_lookup`). `status="succeeded"`, `outputs_present=True`. **`dispatch_cycle` keeps its increment**, so R-21 stays monotonic and `ui/activity.locate_attempt_dirs` finds no transcript for a hit instead of a stale one. `attempts` is unchanged. `started_at` is set if unset, and `ended_at` is set. A `task.end` event is logged with `cached: true`. **A stale charged estimate of the previous dispatch cycle (`dispatch_cycle - 1`) is reversed** when a budget manager is present (crash→resume→hit), through the same extracted helper the budget gate uses (`_reverse_stale_charge`), which also emits the existing `budget.resume_reverse` event. `cumulative_*`, breakers and the quota timer are untouched. Both `usage` dispatch-counting sites skip current hits; a hit's real carried spend (hit after an earlier paid attempt) still counts. `outcomes._settle_reason` returns `"cached"`. | Rev 1: the decrement plus mutations in `cache.records`; `attempts=0`. | The reviewer and the critic showed that the decrement breaks R-21 and makes the dashboard show a failed attempt's transcript for a hit. State transitions belong to the engine, as with the ABC-injection pattern (reviewer R5). The budget leak was reviewer R3 / developer #14. | B/H; Rev2: reviewer R3/R4/R5/R6, critic #8a/#8b; Rev3: early-gate C (shared helper, event) |
@@ -569,8 +738,8 @@ to the Phase-4 findings in §23.4, or to the Rev 3 early-gate items in §23.5.
 | D16 | **`saved_*` is an estimate**: the source entry's cumulative usage, including the source run's retries. It is labelled "est.", never netted into cost, and never fed to breakers. | Net savings out of cost. | Keeps E-9h3m7k's real-spend numbers exact. | H |
 | D17 | **Store trust boundary.** The store receives only its own namespace. The one exception is `LocalFsCacheStore.for_workspace(ws, ...)`, which computes and validates its root. The ABCs are split into `CacheStore` (hot path) and `CacheAdmin` (maintenance), both **provisional**. `LocalFsCacheStore` derives from `CacheStore` when T-U7ckfd lands; T-HjxNQ0 adds the `CacheAdmin` base and its methods. Callers verify every byte. | A single 14-method ABC that takes `check_root(workspace)`. | Interface segregation. A remote backend need not implement admin operations. Matches D17's own rule (reviewer R9). | Rev2: reviewer R9, critic #6 |
 | D18 | **Layout**: `entries/v1/<k[:2]>/<k>.json` (major version in the path), shared `blobs/<s[:2]>/<s>`, `tmp/`. Entries are canonical JSON bytes. Blobs are written before the entry, via tmp + `os.replace` with unique names; dedupe touches the blob's mtime. **Never overwrite or delete entries in another version directory.** The sweep's mark phase collects every 64-hex token from **every** entry file under `entries/**`, so blobs that newer versions reference are protected. | A single entries dir; overwrite of unparseable entries. | Stable and beta installs run side by side, and the service auto-resumes runs (critic #5). | G; Rev2: critic #5 |
-| D19 | **Eviction.** LRU by entry mtime (touched on hit) down to 90% of `max_bytes`. TTL measured from `created_at`. Mark-and-sweep of blobs with a 1 h grace period. **Inline enforcement is bounded twice**: its lstat-only scan stops and defers to `ao cache prune` (WARNING) when the store holds more than `INLINE_PRUNE_MAX_ENTRIES` entries **or** more than `INLINE_PRUNE_MAX_ENTRY_FILE_BYTES` of entry files, because the mark phase reads every entry file. `clear` creates its trash dir first and verifies the removal. | Full prune inline; unbounded lists. | A planted or huge cache must not stall the scheduler thread (security S7). The Rev 1 `clear` silently did nothing (security S5). | G; Rev2: security S5/S7; Rev3: manager B (byte bound) |
-| D20 | **Restore.** Every output is staged first: a temp file in the destination's directory (`O_EXCL\|O_NOFOLLOW\|O_CLOEXEC`, `0o600`), with size and sha verified. Each destination is re-validated (`realpath(dest) == dest`, inside the workspace, not sensitive). Missing parent directories are created component by component, refusing symlinks. Then `chmod(mode & 0o755)` and `os.replace`. Any failure → temps removed → miss (evict and delete the blob if corrupt). | Direct writes; exact modes. | Partial writes are never accepted, and no special or writable-by-others bits come from an agent-writable store. | G; Rev2: security S4 |
+| D19 | **Eviction.** LRU by entry mtime (touched on hit) down to 90% of `max_bytes`. TTL measured from `created_at`. Mark-and-sweep of blobs with a 1 h grace period. **Inline enforcement is bounded** (as built, ADR-0019 D19 addendum): a private per-phase `_Budget` over `entries/**` of any version and depth, applied to the size scan **and** to the prune it triggers, defers to `ao cache prune` (WARNING) when the store holds more than `INLINE_PRUNE_MAX_ENTRIES` entries, more than `INLINE_PRUNE_MAX_ENTRY_FILE_BYTES` of entry files (the mark phase reads every entry file), more than `INLINE_PRUNE_MAX_WALK_ITEMS` directory entries, or more than `INLINE_PRUNE_MAX_BLOBS` blobs. The mark phase fails closed (an unreadable entry file protects every blob) and the sweep re-checks a blob's age right before deleting it. `clear` creates its trash dir first and verifies the removal. | Full prune inline; unbounded lists. | A planted or huge cache must not stall the scheduler thread (security S7). The Rev 1 `clear` silently did nothing (security S5). | G; Rev2: security S5/S7; Rev3: manager B (byte bound) |
+| D20 | **Restore.** Every output is staged first: a temp file in the destination's directory (`O_EXCL\|O_NOFOLLOW\|O_CLOEXEC`, `0o600`), with size and sha verified. Each destination is re-validated (`realpath(dest) == dest`, inside the workspace, not sensitive). Missing parent directories are created component by component, refusing symlinks. Then `os.replace`; as built, the mode (`mode & 0o755`) is applied with `fchmod` on the open staging descriptor after hash verification (never by path), and each existing destination is first hard-linked to a `.bak` so a failing rename rolls the earlier ones back (ADR-0019 D20 addendum; DV-11). Any failure → temps removed → miss (evict and delete the blob if corrupt). | Direct writes; exact modes. | Partial writes are never accepted, and no special or writable-by-others bits come from an agent-writable store. | G; Rev2: security S4 |
 | D21 | **Entry metadata.** Only a non-sensitive key *summary* is stored; never the argv, the prompt template, `extra_args` or the key document. Every string and list in an entry is length-bounded. | Store the key document. | Secrets in argv. The key is one-way. | new |
 | D22 | **Naming.** "Result cache", `ao cache`, `--cache`, `AO_CACHE`, `cache:`, `ResultCache`, `RunState.result_cache`, `cache.*` events. The factory is `ResultCache.from_settings`. The text `open(` and `.read(` never appear anywhere in `engine.py`, comments included, because the static NFR-1 audits regex the raw text. | `--result-cache` flags. | The parent fixed the flag names. The audits are regex-based (developer #4). | J; Rev2: developer #4 |
 | D23 | **Bench forced off** via argv `--no-cache` plus env `AO_CACHE=0`. | One of the two. | Belt and braces. | P-7 |
@@ -579,7 +748,7 @@ to the Phase-4 findings in §23.4, or to the Rev 3 early-gate items in §23.5.
 | D26 | **Shadow mode.** `shadow`: full lookup, but no restore. A valid entry whose blobs are present records `would_hit` (with the `saved_*` estimate) and emits `cache.would_hit`. The task dispatches normally and still stores. **`refresh` is deferred (Rev 3, non-MVP 14):** re-rolling one result is `ao cache rm <key>` followed by a re-run. | Ship `on` only; keep `refresh`. | Measure before trusting (critic STRATEGIC #1). A run-wide overwrite mode adds a third lookup semantics for little value once single-entry `rm` exists. | Rev2: critic #1/#2; Rev3: manager B |
 | D27 | **`ao cache rm <key\|prefix>`.** The prefix is validated with `KEY_PREFIX_RE.fullmatch` before any path is built and must match exactly one entry. **`rm --run R --task T` is deferred (Rev 3, non-MVP 15)**: it reads the agent-writable `state.json`, an extra trust boundary. | Clear everything; wait for the TTL; the run form. | Single-entry invalidation (critic MUST #2) with the smallest trust surface. | Rev2: critic #2; Rev3: manager B |
 | D28 | **Hostile data is parsed by total functions.** One parse boundary (`types.parse_entry_bytes`) maps *any* failure (including `RecursionError` and `UnicodeDecodeError`) to `CacheIntegrityError`. Models use `AwareDatetime`, finite and bounded numbers (`allow_inf_nan=False`, `le=`), and `max_length` on every string and list. All internal cache-file reads go through `safeio` (`O_NOFOLLOW\|O_NONBLOCK\|O_CLOEXEC` + `S_ISREG`). | `except ValueError` only. | Verified exploits: nested JSON → `RecursionError`; naive datetimes → `TypeError`; `inf` → an unreadable `state.json`; a FIFO at an entry path → a hang (security S1, reviewer R2, developer #6). | Rev2: security S1 |
-| D29 | **Sensitive destinations are refused.** An output whose resolved workspace-relative path has a component in `{.git, .claude, .github, .gitlab, .husky, .ao, .orchestrator}`, or a basename in `{CLAUDE.md, CLAUDE.local.md, AGENTS.md, .mcp.json, .envrc}`, makes the task uncacheable (`sensitive_output`). `restore_outputs` re-checks this. | Rely on spec-derived paths only. | An in-workspace symlink `out/a.md → .git/hooks/pre-commit` turns a restore into code execution. A restored `CLAUDE.md` steers the next agent (security S3). | Rev2: security S3 |
+| D29 | **Sensitive destinations are refused.** An output whose resolved workspace-relative path has a component in `SENSITIVE_PATH_COMPONENTS` or a basename in `SENSITIVE_BASENAMES` (§8.1.5), **matched case-insensitively** (as built, ADR-0019 D29 addenda; DV-6), makes the task uncacheable (`sensitive_output`). Designed lists: components `{.git, .claude, .github, .gitlab, .husky, .ao, .orchestrator}`, basenames `{CLAUDE.md, CLAUDE.local.md, AGENTS.md, .mcp.json, .envrc}`; extended at G2 with the CI, IDE and dev-container sinks. `restore_outputs` re-checks this. | Rely on spec-derived paths only. | An in-workspace symlink `out/a.md → .git/hooks/pre-commit` turns a restore into code execution. A restored `CLAUDE.md` steers the next agent (security S3). | Rev2: security S3 |
 | D30 | **Miss diagnostics.** `cache.miss` carries `components` (the first 12 hex characters of the sha256 of each top-level key-document field), so an operator can diff two runs and see which component changed. | Opaque misses. | Diagnosability (reviewer NIT). | Rev2 |
 | D31 | **One safe-I/O module (`cache/safeio.py`) plus an AST guard test.** The guard rejects `pickle`, `marshal`, `shelve`, `eval`, `exec`, `subprocess` with `shell=True`, and any bare `open(` / `os.open(` in `cache/` outside `safeio.py`. | Per-module copies of the safe-open logic. | One audited I/O choke point (security S9, reviewer NIT). | Rev2 |
 | D32 | **Engine-facing error boundary.** `ResultCache.lookup` and `store_success` never raise to the engine. Expected failures (`OSError`, `CacheError`, `ValidationError`, `GitError`, `ValueError`, `TypeError`, `RecursionError`, `OverflowError`) become a miss or skip with an ERROR log. Any other exception logs ERROR with the traceback, **disables the cache for the rest of the run** (`cache.disabled`) and returns a miss/skip. `ResultCache(strict=True)`, used in tests, re-raises. | Rev 1: propagate unexpected errors. | A cache bug must not kill a long, paid run, or lose a paid success before it is saved (developer #9, reviewer R2). The error is logged loudly, not swallowed. | Rev2: developer #9, reviewer R2 |
@@ -616,15 +785,18 @@ to the Phase-4 findings in §23.4, or to the Rev 3 early-gate items in §23.5.
 | M-11 | Semantic stale hit | Ambient state; alias drift; non-determinism | Double opt-in; HEADs, priors, argv and fingerprint in the key; three store guards; TTL; `shadow`; `ao cache rm`. | integration |
 | M-12 | Approval bypass (E-Ag7Pw3) | A gated task served from the cache | Allowlist plus runtime unknown-field rules; gate ordering before the lookup; G2 check. | U-E*, G2 |
 | M-13 | Hostile-data crash (CWE-248/674/20) | Nested JSON, naive datetimes, `inf`, unbounded strings | Total parse boundary; strict and bounded models. | ADV-9 (hostile corpus) |
-| M-14 | Execution sink via restore (CWE-94/73) | An output resolves into `.git/hooks`, `.claude/`, `CLAUDE.md`, CI config | Sensitive-path refusal at key build **and** at restore. | ADV-10 |
+| M-14 | Execution sink via restore (CWE-94/73) | An output resolves into `.git/hooks`, `.claude/`, `CLAUDE.md`, CI config | Sensitive-path refusal at key build **and** at restore, case-insensitive, with the extended list of §8.1.5 (as built, DV-6). | ADV-10 |
 | M-15 | Terminal escape injection (CWE-150) | Entry strings printed by `ao cache ls`/`show` | Control characters stripped in text output. | E-7 |
 | M-16 | A cache bug kills a run | Any unexpected exception | Error boundary; cache disabled for the run; strict mode in tests. | U-CO14, I-25 |
 | — | **Residual: deliberate poisoning** by a same-uid writer | Rewrite an entry and its blobs (keys are visible) | **Not mitigated in MVP.** Recommend `--no-cache` for untrusted workflows, plus `ao cache verify`/`clear`. HMAC is non-MVP 2 and does not stop an attacker who can read its key. | — |
 | — | **Residual: active TOCTOU race** | A concurrent malicious writer swaps a path component between check and use | **Not mitigated in MVP.** Persistent plants are caught. `dir_fd` walking is non-MVP 9. | — |
 | — | **Residual: user-level context** | `~/.claude/settings.json`, `~/.claude/CLAUDE.md` | **Not fingerprinted.** The CLI version and TTL bound the impact (non-MVP 8). | — |
 | — | **Residual: offline guessing** | `key_summary.digests` of low-entropy inputs | Documented. The digests are display-only and live in the same trust domain as the inputs. | — |
-| — | **Residual: dirty tracked edits** (accepted, Rev 3) | Uncommitted edits to tracked files that are not declared inputs exist **before** the lookup | **Not in the key.** Guard 3 only catches edits made *during* the run. A hit can replay a result computed against a different dirty tree. Documented in §17 and R-20; opt in only tasks whose inputs are declared. | — |
+| — | **Residual: dirty tracked edits** (accepted, Rev 3; blind spots added at G1b N-7, N-9) | Uncommitted edits to tracked files that are not declared inputs exist **before** the lookup | **Not in the key.** Guard 3 only catches edits made *during* the run. A hit can replay a result computed against a different dirty tree. Guard 3 is also blind to `assume-unchanged` / `skip-worktree` files and to untracked or non-git writes, and after a quota or self-heal requeue the next lookup re-takes the baseline, so tracked edits of the abandoned partial attempt are absorbed. Documented in §17 and R-20; opt in only tasks whose inputs are declared (R-A3). | — |
 | — | **Residual: nested workspace** | The workspace root sits inside a parent repository | Treated as non-git (D5): HEAD not keyed, guards 2 and 3 inactive. The banner warns (A-12, R-19). | U-G7 |
+| — | **Residual: provider and endpoint environment not in the key** (accepted at G2, SEC-11, R-A1) | `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, the provider region | **Not in `CLAUDE_FINGERPRINT_ENV_VARS`**: a hit can be served across a backend or endpoint switch with an unchanged model alias. Same model name, operator-controlled, non-secret; adding them would change GV-1. Pass `--no-cache` (or `ao cache clear`) when switching provider or endpoint. | — |
+| — | **Residual: git `filter.<x>.clean` executed by the guard-3 probe** (accepted at G2, G1b S-3, G2 sec S2, R-A2) | `git status` in `WorktreeProbe.snapshot` runs a `filter.<x>.clean` command named in the agent-writable `.git/config` (re-confirmed on git 2.39.5; `core.fsmonitor` and `core.untrackedCache` are neutralised by `git_read_env`, DV-4) | **Not mitigated.** Precondition: cache on **and** the task opted in **and** a writer of the git config or `.gitattributes` that cannot already run code (a tool-restricted agent without Bash). An agent with Bash has the same power, and the isolation integrator already runs `git status` in agent-touched trees. Use `--no-cache` for untrusted repositories. | — |
+| — | **Residual: agent-writable cache directory; retention** (accepted at G1b S-5, G2) | Same-uid forgery of an entry and its blobs; stored outputs outlive their deletion; shadow mode also stores copies; forged future `created_at` never expires; restored mode `0o000`; crash leftovers `.ao-result-cache-*.tmp[.bak]` survive `ao cache clear` (the sweep visits only output directories of entries still in the store) | The `on` banner carries `(agent-writable; avoid for untrusted prompts)` (DV-15); root `0o700`, self-`.gitignore`, dashboard refusal; `ao cache verify`, `rm`, `clear`, `prune` (R-A4, R-A6). | — |
 
 ---
 ## 8. Low-level design
@@ -649,7 +821,9 @@ src/agent_orchestrator/cache/
                    Protocol; CacheStore + CacheAdmin ABCs; error types  (T-FJH6LI, commit 3)
   settings.py      ResultCacheSettings, resolve_result_cache_settings, task_cache_policy,
                    opted_in_count                                                   (T-28J9oR)
-  cli.py           `ao cache` Typer sub-app            (skeleton T-28J9oR; commands T-6tRKml)
+  cli.py           `ao cache` Typer surface; import-light (skeleton T-28J9oR; commands T-6tRKml)
+  cli_ops.py       behaviour of the `ao cache` commands, imported lazily    (T-6tRKml, as built)
+  restore_sweep.py prune-side sweep of stale restore staging files          (T-6tRKml, as built)
   hashing.py       HashBudget, digest_path (bounded, safe)                          (T-8tr1H4)
   repo_state.py    find_git_toplevel, nested_repo_marker, RepoHeadReader, WorktreeProbe
                                                                                     (T-8tr1H4)
@@ -688,12 +862,13 @@ Import graph (acyclic). `constants` is a leaf.
 | `coordinator` | all of the above, plus `artifacts` and `agent_orchestrator.__version__` |
 | `report` | `models`, `constants` |
 | `settings` | `constants`; imports `project_config.CacheConfig` lazily |
-| `cli` | lazy imports only |
+| `cli` | `constants` at module level; everything else lazy (an AST test pins it). As built: `cli_ops` -> `store`, `restore_sweep`, `settings`, `safeio`, `types` (lazy); `restore_sweep` -> `safeio`, `constants`, `types` |
 
 `executors/claude_cli.py` imports nothing from `cache/`. `models.py` imports nothing from
 `cache/`. `runstate`, `usage`, `outcomes`, `cli` and `ui/runs` import `cache.report` **inside the
 function, and only when `state.result_cache` is non-empty** (D9), so a cache-off process loads at
-most `cache` + `cache.constants` (via `project_config`) and, on the CLI path, `cache.settings`.
+most `cache` + `cache.constants` (via `project_config`) and, on the CLI path, `cache.settings` and
+`cache.cli` (as built: `cli.py` registers the `ao cache` group eagerly, DV-16).
 
 ### 8.1 Module M1 — spec, config and settings (`models.py`, schema, `project_config.py`, `cache/settings.py`, `cache/constants.py`, `cli.py` flags)
 
@@ -904,6 +1079,11 @@ class ProjectConfig(BaseModel):
 `project_config.py` adds `Field` and `StrictBool` to its pydantic import, `Literal` from `typing`,
 and imports the named defaults from `cache.constants` (a leaf module).
 
+**As built (DV-2, DV-3).** `mode` defaults to the literal `"on"` (pinned equal to `MODE_ON` by a
+test), and the template line is `mode: "on"` **quoted**: under YAML 1.1 a bare `on` loads as
+boolean `true`, which fails `CacheConfig` validation. A user who writes bare `mode: on` gets a
+loud `ConfigError` (fail-closed). The block below is the shipped template text.
+
 Add this block to `_INIT_TEMPLATE` after the isolation block:
 
 ```yaml
@@ -915,9 +1095,10 @@ Add this block to `_INIT_TEMPLATE` after the isolation block:
 # every clone and service run of this repo.
 # cache:
 #   enabled: false            # AO_CACHE=1|0|shadow / --cache / --no-cache (CLI/env win)
-#   mode: on                  # on | shadow (measure only, never restore)
+#   mode: "on"                # "on" | "shadow" (measure only); quote it, bare on = YAML true
 #   max_bytes: 1073741824     # total size cap; least-recently-used entries evicted to 90%
-#   max_entry_bytes: null     # results bigger than this are not stored (default min(64 MiB, max_bytes))
+#   max_entry_bytes: null     # results bigger than this are not stored
+#                             # (default min(64 MiB, max_bytes))
 #   ttl_days: 30              # entries older than this are misses (null = never expire)
 #   include_repo_heads: true  # key includes HEAD of each git repo in the repo set
 #   max_input_bytes: 536870912  # per-lookup hashing cap (bigger => task not cacheable)
@@ -988,6 +1169,9 @@ MAX_ENTRY_ATTEMPTS = 10**6
 EVICT_LOW_WATER_RATIO = 0.9
 INLINE_PRUNE_MAX_ENTRIES = 5000
 INLINE_PRUNE_MAX_ENTRY_FILE_BYTES = 64 * 1024**2  # the mark phase reads every entry file
+# As built (G1a SEC-01/02): inline maintenance bounds EVERYTHING it touches, not only v1 entries.
+INLINE_PRUNE_MAX_WALK_ITEMS = 100_000  # directory entries visited
+INLINE_PRUNE_MAX_BLOBS = 50_000
 BLOB_SWEEP_GRACE_SECONDS = 3600
 TMP_SWEEP_GRACE_SECONDS = 3600
 
@@ -1006,6 +1190,19 @@ MAX_INPUT_FILES_LIMIT = 10**7
 CACHE_GIT_TIMEOUT_SECONDS = 10
 GIT_OPTIONAL_LOCKS_VAR = "GIT_OPTIONAL_LOCKS"  # set to "0" for every repository read:
 GIT_OPTIONAL_LOCKS_OFF = "0"  # parallel agents must never race our index.lock
+# As built (G1a SEC-04/SEC-03): every repository read drops repository-selecting variables
+# (GIT_SCRUBBED_ENV_VARS, and GIT_CONFIG_KEY_*/GIT_CONFIG_VALUE_* by prefix) and neutralises
+# the config that makes `git status` execute a program, via GIT_CONFIG_COUNT (git >= 2.31).
+GIT_SCRUBBED_ENV_VARS = frozenset(
+    {
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+        "GIT_PREFIX", "GIT_CEILING_DIRECTORIES", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+        "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_SSH", "GIT_SSH_COMMAND",
+    }
+)
+GIT_SCRUBBED_ENV_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+GIT_NEUTRALISED_CONFIG = (("core.fsmonitor", "false"), ("core.untrackedCache", "false"))
 CLI_VERSION_TIMEOUT_SECONDS = 10
 MAX_CLI_VERSION_CHARS = 256
 
@@ -1015,6 +1212,7 @@ KIND_FILE, KIND_DIR, KIND_ABSENT = "file", "dir", "absent"
 KEY_PLACEHOLDER_ID, KEY_PLACEHOLDER_TIMEOUT = "-", 1
 COMPONENT_DIGEST_CHARS = 12
 RESTORE_TMP_PREFIX = ".ao-result-cache-"
+RESTORE_BACKUP_SUFFIX = ".bak"  # the hard-link backup of a replaced destination (as built)
 DIR_WALK_SKIP_NAMES = frozenset({".git"})
 # AgentSpec classification (D7, D10). Tripwire U-K8: KEY | NON_KEY == AgentSpec.model_fields.
 # keys.py projects KEY into the key; eligibility.py rejects any OTHER non-default field.
@@ -1040,16 +1238,26 @@ AGENT_NON_KEY_FIELDS = frozenset({"forbidden_task_models"})  # validation-only, 
 CACHEABLE_EXECUTORS = frozenset({"claude_cli", "fake"})
 CACHEABLE_COMMAND_BASENAMES = frozenset({"claude"})
 MODEL_FLAGS = ("--model", "-m")
+# As built (G1a SEC-06, G2-S3 / SEC-15): matched case-insensitively (`safeio.is_sensitive_rel_path`).
 SENSITIVE_PATH_COMPONENTS = frozenset(
-    {".git", ".claude", ".github", ".gitlab", ".husky", ".ao", ".orchestrator"}
+    {
+        ".git", ".claude", ".github", ".gitlab", ".husky", ".ao", ".orchestrator",
+        ".githooks", ".circleci", ".vscode", ".devcontainer", ".cursor", ".idea",
+    }
 )
 SENSITIVE_BASENAMES = frozenset(
-    {"CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".mcp.json", ".envrc"}
+    {
+        "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".mcp.json", ".envrc",
+        ".gitlab-ci.yml", "Jenkinsfile", ".travis.yml", "azure-pipelines.yml",
+        "bitbucket-pipelines.yml", ".pre-commit-config.yaml", ".gitmodules", ".gitattributes",
+    }
 )
 
-# ---- CLI
+# ---- CLI (as built: also EXIT_*, SCHEMA_*, CLI_MAX_* and RESTORE_SWEEP_MAX_DIRS, T-6tRKml)
 DEFAULT_LS_LIMIT = 50
 LS_SORT_KEYS = ("lru", "created", "size")
+EXIT_OK, EXIT_ERROR, EXIT_USAGE = 0, 1, 2
+SCHEMA_LS = "ao.result-cache.ls/v1"  # likewise SCHEMA_STATS, _SHOW, _RM, _PRUNE, _CLEAR, _VERIFY
 # REASON_* (§8.3.3, §8.6.4) and EVENT_* (§15): every string listed there is a constant here.
 ```
 
@@ -1155,6 +1363,12 @@ T-28J9oR delivers the resolution half: everything up to `return None` for the of
 final `return None` in place of the construction half, because construction is not wired yet.
 T-o95l1M completes the helper and passes `result_cache=_build_result_cache(cache, workspace, wf)`
 to both `Orchestrator(...)` constructions.
+
+**As built (DV-15).** The banner in mode `on` ends with ` (agent-writable; avoid for untrusted
+prompts)` (`cli._RESULT_CACHE_TRUST_NOTE`), because `on` serves stored outputs and the cache
+directory is writable by the agent. The shadow banner does not carry it (shadow never serves a
+hit). The helper imports `MODE_ON` for this. Both `ao run` and `ao resume` bind the helper's
+result and pass it as `result_cache=`.
 
 **Subtasks.**
 
@@ -1303,7 +1517,10 @@ def check_root_dir(root: str, *, workspace_root: str) -> None:
 
 
 def is_sensitive_rel_path(rel: str) -> bool:
-    """Any component in SENSITIVE_PATH_COMPONENTS, or basename in SENSITIVE_BASENAMES."""
+    """Any component in SENSITIVE_PATH_COMPONENTS, or basename in SENSITIVE_BASENAMES.
+
+    As built: compared case-insensitively (`casefold()`), so `.GIT/hooks` and `docs/claude.md`
+    are sensitive (ADR-0019 D29 addendum)."""
 
 
 def posix_rel(path: str, base: str) -> str:
@@ -1311,7 +1528,10 @@ def posix_rel(path: str, base: str) -> str:
 
 
 def strip_control_chars(text: str) -> str:
-    """Remove C0/C1 control characters and DEL from text printed by the CLI (CWE-150)."""
+    """Remove C0/C1 control characters and DEL from text printed by the CLI (CWE-150).
+
+    As built: also bidi and zero-width format characters, U+061C, U+00AD and the Unicode tag
+    block U+E0000-U+E007F (G1a SEC-14, G2-N1)."""
 ```
 
 #### 8.2.3 Bounded hashing (`hashing.py`)
@@ -1433,6 +1653,15 @@ class WorktreeProbe:                         # store guard (3), D13 -- called LA
     #   UncacheableError(REASON_REPO_WORKTREE_PROBE_FAILED). The coordinator maps it to a
     #   NOT-STORABLE outcome (store_reason), never to an ineligible task or a failed lookup.
 ```
+
+**As built (DV-4).** The child environment is not `{GIT_OPTIONAL_LOCKS: "0"}` alone (which would
+also replace `PATH` and `HOME`). `repo_state.git_read_env()` starts from `os.environ`, drops
+`GIT_SCRUBBED_ENV_VARS` and the `GIT_CONFIG_KEY_*` / `GIT_CONFIG_VALUE_*` pairs, sets
+`GIT_OPTIONAL_LOCKS=0`, and injects `core.fsmonitor=false` and `core.untrackedCache=false`
+through `GIT_CONFIG_COUNT` (git >= 2.31; older git ignores it). `RepoHeadReader` and
+`WorktreeProbe` share one private `_GitReaders` base, and a HEAD is read once per toplevel within
+a `read()` and never cached across calls. A `filter.<x>.clean` driver reached through
+`.gitattributes` cannot be neutralised by a config key (accepted residual R-A2).
 
 **Behaviour.** A `.git` marker that is not a working repository (a stray file, an empty
 directory) makes `rev_parse` fail, so the task is uncacheable (`repo_head_unavailable`), which is
@@ -1631,8 +1860,8 @@ FUNCTION summary_from_doc(doc, components) -> KeySummary:
 - `KEY_SCHEMA_VERSION` must still be bumped when the **meaning** of a field changes while its
   serialized form stays the same. Example: the executor starts reading a new file that is not in
   `CLAUDE_CONTEXT_PATHS`.
-- A pointer comment placed **next to `EFFORT_MAX_TURNS` in `models.py`, and in `claude_cli.py`**
-  (T-bdQZW4) states the rule.
+- A pointer comment placed **next to `EFFORT_MAX_TURNS` in `models.py`, and above
+  `build_claude_argv` in `claude_cli.py`** (added by T-bdQZW4) states the rule.
 - The U-K8 and U-K8a tripwires fail when the `AgentSpec` fields or the argv golden change.
 
 **Worked example (golden vector GV-1, Rev 2).** T-uoYW6b's test must reproduce this exactly. It
@@ -2292,11 +2521,13 @@ class LocalFsCacheStore(CacheStore):      # T-U7ckfd. T-HjxNQ0: (CacheStore, Cac
                            removed_tmp=len(stale_tmp), bytes_before=..., bytes_after=...,
                            dry_run=dry_run)
 
-    def maybe_enforce_limits(self, *, now):                    # INLINE, bounded twice (D19)
+    def maybe_enforce_limits(self, *, now):                    # INLINE, bounded (D19)
         IF self._approx_total is None:
-            scan = self._scan_sizes(entry_limit=INLINE_PRUNE_MAX_ENTRIES,
-                                    entry_bytes_limit=INLINE_PRUNE_MAX_ENTRY_FILE_BYTES)
-            # lstat-only walk; stops as soon as either limit is exceeded
+            scan = self._scan_sizes(budget)     # AS BUILT: one private _Budget (files, file bytes,
+            #   directory entries, blobs) over entries/** of any version and depth; the SAME budget
+            #   bounds the prune triggered below. Caps: INLINE_PRUNE_MAX_ENTRIES,
+            #   INLINE_PRUNE_MAX_ENTRY_FILE_BYTES, INLINE_PRUNE_MAX_WALK_ITEMS, INLINE_PRUNE_MAX_BLOBS.
+            # lstat-only walk; stops as soon as any limit is exceeded
             IF scan.over_limit: RETURN PruneReport(deferred=True)   # coordinator: WARNING
             self._approx_total = scan.total_bytes                  # entries + blobs bytes
         IF self._approx_total <= self.max_bytes: RETURN None
@@ -2358,7 +2589,7 @@ a miss.
 | Concurrent same-key writers | blobs first, then `os.replace` of the entry | last writer wins; each entry self-consistent |
 | Concurrent `prune` vs `put` | grace period on fresh blobs; dedupe touch | rarely a dangling entry, which is later a miss + evict (benign) |
 | Concurrent `clear` vs `put` | the put's `os.replace` fails ENOENT, or the entry lands referencing trashed blobs | skipped store, or later a miss + evict (benign) |
-| Huge or planted cache, more than `INLINE_PRUNE_MAX_ENTRIES` entries | inline enforcement deferred | `cache.evict` with `reason=deferred` (WARNING); `ao cache prune` needed |
+| Huge or planted cache (more than `INLINE_PRUNE_MAX_ENTRIES` entries, `INLINE_PRUNE_MAX_ENTRY_FILE_BYTES` of entry files, `INLINE_PRUNE_MAX_WALK_ITEMS` directory entries or `INLINE_PRUNE_MAX_BLOBS` blobs, under `entries/**` of any version) | inline enforcement deferred | `cache.evict` with `reason=deferred` (WARNING); `ao cache prune` needed |
 | Clock skew (future `created_at`) | age is negative, so not expired | documented |
 
 **Concurrency.**
@@ -2443,6 +2674,16 @@ FUNCTION restore_outputs(entry, expected, store, *, workspace_root, max_entry_by
         FOR (tmp, _, _) IN staged: TRY os.unlink(tmp) EXCEPT FileNotFoundError: pass
 ```
 
+**As built (DV-11, ADR-0019 D20 addendum).** Phase 1 also refuses a destination that is a
+directory (`restore_failed`). Phase 2 does not `chmod` by path: the mode (`mode & 0o755`) is applied
+with `os.fchmod` on the still-open staging descriptor after its hash is verified. Before phase 2
+each existing destination is hard-linked to `<staging>.bak` (`RESTORE_BACKUP_SUFFIX`); a failing
+rename rolls the earlier renames back and a successful restore leaves no backup litter. Where hard
+links are unavailable that one file is not rolled back, and parent directories created for the
+restore stay. A transient `read_blob` `OSError` is `RestoreMiss(store_error, evict=False)`;
+`CacheUnsafePathError` still propagates. `capture_outputs` also refuses (`output_not_regular_file`)
+a path whose `realpath` differs from itself, so a swapped parent directory is never followed.
+
 Every `RestoreMiss` raised by `restore_outputs` is **not storable** for this dispatch: the coordinator
 sets no pending token. A partially committed restore contradicts the "absent" prior preseed
 (developer #11). The task still dispatches normally.
@@ -2457,7 +2698,9 @@ sets no pending token. A partially committed restore contradicts the "absent" pr
   - a failed restore falls through to a real dispatch, which rewrites every declared output;
   - after a crash, the task resumes as `pending`.
 - Temp files are removed on every failure path. Only a hard crash can leave
-  `.ao-result-cache-*.tmp` litter, which is documented.
+  `.ao-result-cache-*.tmp[.bak]` litter. As built, `ao cache prune` sweeps it (`restore_sweep`,
+  see §8.9); it is never exempted from directory hashing (D8 addendum), so a leftover costs at
+  worst a false miss.
 
 **Failure matrix (restore).**
 
@@ -3019,6 +3262,16 @@ happens before breaker evaluation. `model_copy(update=...)` changes only `ended_
 included, for `\bopen\s*\(` and `\.read\s*\(`. So the factory is named `from_settings`, and no
 comment in `engine.py` may contain either pattern.
 
+**Implementation note (T-XpF1pF, 2026-10-05).** Shipped as in the blocks above, with three
+differences. (1) `LookupRequest.injected` is derived from `RunState.spawned_by` (a spawn record
+whose `loop_id` is `None` means emit_tasks-injected; loop clones carry loop coordinates) instead of
+`ts.origin == SPAWN_ORIGIN_INJECTED`: `tests/test_spawn_provenance.py` forbids any `.origin`
+comparison under `src/`. (2) The constructor keyword is the LAST parameter (after `summarizer`,
+which landed after this block was written), so no positional caller changes. (3) The call-site (c)
+block is followed directly by the `_estimate` comment (no blank line) to keep the added lines
+inside existing functions at exactly 12. Measured against the pre-task commit: 133 lines added,
+30 removed (net +103), all added lines <= 100 columns.
+
 #### 8.7.2 Order inside `_prepare_and_maybe_dispatch` with the cache on
 
 ```
@@ -3086,7 +3339,11 @@ seam (c) points here.
 - An engine process (`Orchestrator(..., result_cache=None)`) loads **no** module from
   `agent_orchestrator.cache` except `agent_orchestrator.cache` and `.constants`, which arrive via
   `project_config` if anything imports it. The CLI path may additionally load `.settings`
-  (mode resolution).
+  (mode resolution) and, **as built (DV-16)**, `.cli`: `cli.py` registers the `ao cache` group
+  eagerly (`from .cache.cli import cache_app`), so every `ao` start loads it. `cache/cli.py` is
+  kept import-light (module level: `typer`, `constants`, `settings` only; an AST test pins this),
+  so the CLI-path allow-list is `{cache, cache.constants, cache.settings, cache.cli}`; the engine
+  process keeps `{cache, cache.constants}`.
 - `runstate.write_status`, `usage`, `outcomes`, `cli` and `ui/runs` import `cache.report` inside
   the function and **only when `state.result_cache` is non-empty**, so a run the cache never
   touched never loads it.
@@ -3131,7 +3388,8 @@ Part 1 authors I-1 and I-2 against base code only, before T-XpF1pF starts.
 - **U-LZ (lazy read sides).** With an empty `result_cache`, calling `write_status`,
   `aggregate_usage`, `_settle_reason`, `_print_state` and the dashboard run detail does not add
   `agent_orchestrator.cache.report` to `sys.modules` (subprocess check).
-- **Full suite.** The baseline of 5041 passed / 8 skipped / 2 known bench failures must hold. The
+- **Full suite.** As built: 6903 passed / 10 skipped / 0 failed at G2 (the design-time baseline was
+  5041 passed / 8 skipped / 2 known bench failures, which no longer occur). The
   no-op proof makes **no** edit to `tests/conftest.py`, because the NFR-2 regression gate
   (`tests/test_nfr2_regression_gate.py::TestPreEpicTestsUnedited`) forbids it (developer #2). Each
   new cache test module controls `AO_CACHE` itself, with `monkeypatch.delenv` / `setenv`.
@@ -3175,7 +3433,7 @@ def usage_counters(state: RunState) -> dict[str, object] | None:
     """One run's contribution to the cross-run `result_cache` usage object (§13.6)."""
 ```
 
-#### 8.8.2 `status.json` additions (`runstate.write_status`, about 6 lines)
+#### 8.8.2 `status.json` additions (`runstate.write_status`, as built +12/-1 lines)
 
 ```python
         rc_tasks: dict[str, dict[str, object]] = {}
@@ -3272,12 +3530,14 @@ The sub-app is registered with `app.add_typer(cache_app, name="cache")`. Group h
 
 - `--workspace/-w`. The workspace is resolved as `--workspace`, then `AO_WORKSPACE_ROOT`, then the
   config-discovered spec triplet (via `cli._resolve_workspace_root(ws, None, None, None)`, imported
-  lazily).
+  lazily). **As built (DV-18):** a workspace that is not an existing directory is exit 2 for every
+  command; `--help` mentions only `AO_WORKSPACE_ROOT`.
 - `--json`: prints exactly **one** JSON document on stdout, including on exit 1.
 
 **Common behaviour.**
 
-- Limits come from `.ao/config.yaml cache.*`.
+- Limits come from `.ao/config.yaml cache.*`, **discovered from the current directory** (as built;
+  not from `--workspace`: run `ao cache prune` from the project, and use `--dry-run`, G2-N6).
 - The wall clock is read through a module-level `_now()` so tests can patch it.
 - Text output passes every entry-derived string through `safeio.strip_control_chars`.
 - Every regex check uses `fullmatch`.
@@ -3292,6 +3552,23 @@ The sub-app is registered with `app.add_typer(cache_app, name="cache")`. Group h
 | `prune` | `--max-bytes N`, `--older-than DAYS` (overrides `ttl_days`; `0` = every entry expired, like `ao prune --older-than 0`; negative → exit 2), `--dry-run` | removed counts by reason; bytes before and after | `ao.result-cache.prune/v1` | 0 |
 | `clear` | `--yes` | removed counts | `ao.result-cache.clear/v1` | 0; 1 when the removal could not be verified, or when it refused (no `--yes` and stdin is not a TTY: "refusing to clear without --yes") |
 | `verify` | — (read-only; `--repair` is deferred, non-MVP 16) | problems by kind | `ao.result-cache.verify/v1` | 0 clean (orphan blobs and foreign versions alone count as clean); 1 corruption found |
+
+**As built (T-6tRKml, DV-18).**
+
+- `prune --json` adds `removed_restore_tmp`, `kept_restore_backups` and `restore_sweep_truncated`.
+  The sweep (`ao cache prune` only) deletes regular, user-owned files named exactly like a restore
+  staging file (`.ao-result-cache-*.tmp`, `.tmp.bak`) that are direct children of the parent
+  directory of an output of a **valid entry still in the store**, with ctime older than
+  `TMP_SWEEP_GRACE_SECONDS`; never through a symlink, never a directory, never outside the
+  workspace, never a protected path; a `.bak` with link count 1 (the only name of replaced content)
+  is kept and counted. `--dry-run` deletes nothing. After `ao cache clear` a leftover is not swept
+  (R-A6).
+- `verify` problem `kind` may also be `unreadable`; `--older-than 0` does not expire an entry whose
+  `created_at` is in the future; `rm` removes the entry file only (its blobs go with the next
+  `prune`, after the 1 h grace).
+- On failure `--json` still prints exactly one document (`schema`, the schema's required fields
+  where known, and `error`); Click usage errors raised before the command body are plain stderr
+  text (exit 2).
 
 **Deferred in Rev 3.** `rm --run R --task T` (non-MVP 15) and `verify --repair` (non-MVP 16) are
 not implemented. Operators copy a key from `status.json` (`tasks[].result_cache.key`), the
@@ -3333,7 +3610,8 @@ class RunDetail:
 `ui/runs.py` imports `cache.report` lazily, only when `state.result_cache` is non-empty.
 
 `ui/files.py`: the browser refuses any resolved path equal to or under `<root>/.orchestrator/cache`
-and raises `PathNotAllowedError`. Blobs are opaque copies of outputs, some already deleted, and
+and raises `PathNotAllowedError`. As built (G2-N2) the comparison is on **casefolded** path parts
+and a NUL byte in a path is also refused (HTTP 403). Blobs are opaque copies of outputs, some already deleted, and
 `ao cache show` is the right tool for inspecting them (M-10, critic #8d, security NIT d).
 
 `ui/app.py` and `ui/service.py` are **not** touched.
@@ -3359,6 +3637,7 @@ and raises `PathNotAllowedError`. Blobs are opaque copies of outputs, some alrea
 
 ```python
 _AO_NO_CACHE_FLAG = "--no-cache"  # the bench must measure real dispatch cost (ADR-0019 D23)
+_AO_CACHE_OFF_VALUE = "0"  # as built: named, so the env value is not a bare literal (NFR-7)
 
         argv = [
             "uv",
@@ -3375,7 +3654,7 @@ _AO_NO_CACHE_FLAG = "--no-cache"  # the bench must measure real dispatch cost (A
         ]
         ...
         env = dict(os.environ)
-        env[ENV_CACHE] = "0"  # ENV_CACHE from agent_orchestrator.cache.constants
+        env[ENV_CACHE] = _AO_CACHE_OFF_VALUE  # ENV_CACHE from agent_orchestrator.cache.constants
 ```
 
 **Regression test.** Monkeypatch `_run_with_timeout` to capture argv and env. Assert that
@@ -4008,8 +4287,9 @@ cache; use `ao cache prune`.
   (`refresh` and `rm --run/--task` are deferred.)
 - **Reset:** `ao cache clear --yes`.
 
-**Workflow authors.** T-bdQZW4 adds a "Result cache" section to the workflow-authoring skill and the
-docs. Outline:
+**Workflow authors.** The "Result cache" section of `.claude/skills/workflow-authoring/SKILL.md`
+(delivered by T-bdQZW4) and the README section "Result cache (opt-in)" follow this outline; the
+residuals of §0.4 are added to it as item 11:
 
 1. **What it is.** The result cache is a double opt-in: the operator turns it on, and the author
    opts each task in. It is not prompt caching, and a hit replays **one** earlier successful
@@ -4049,7 +4329,13 @@ docs. Outline:
    part of the key, and the TTL defaults to 30 days.
 9. **Do not commit `cache.enabled: true`** unless every clone and service run should use the cache.
 10. **Bench and CI.** `ao-bench` always runs with `--no-cache`. Do the same for cost measurements.
-11. **Example.** A workflow that opts in its pure summarization task and keeps its review task out:
+11. **Residuals to know (as built, §0.4).** Provider and endpoint environment
+    (`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, the region) is not in
+    the key: pass `--no-cache` or run `ao cache clear` when switching. The guard-3 probe can execute
+    a `filter.<x>.clean` command from the agent-writable git config: use `--no-cache` for untrusted
+    repositories. The cache directory is agent-writable (same-uid forgery is not defended), and
+    cached outputs persist until `ao cache rm|clear|prune`.
+12. **Example.** A workflow that opts in its pure summarization task and keeps its review task out:
 
     ```json
     {
@@ -4160,7 +4446,8 @@ summary line must therefore supply cost itself:
   ```
 
 - The project-wide 80% floor must still hold.
-- Baseline: 5041 passed / 8 skipped / 2 known bench failures. **No new failures are allowed.**
+- Baseline (design time): 5041 passed / 8 skipped / 2 known bench failures. **No new failures are
+  allowed.** As built, at G2: 6903 passed / 10 skipped / 0 failed.
 
 ### 18.1 Test catalogue (mapped to requirements)
 
@@ -4252,7 +4539,7 @@ summary line must therefore supply cost itself:
 | I-26 | integ | A concurrent `prune` and store race is benign. | NFR-5 | T-JCOAsq |
 | I-27 | integ | In-engine asserts: a first-pass hit has `attempts == 0`; a task with `cache: false` under `defaults.cache: true` gets no lookup and no record. | FR-2, D12 | T-XpF1pF |
 | E-1 | e2e | `ao run --cache` twice, with outputs deleted in between (opted-in workflow): the second run makes **0** dispatches and prints `Result cache: hits=2 …`. Companion negative: the same with the cache off counts 2 dispatches. | FR-5, FR-11 | T-JCOAsq |
-| E-2 | e2e | A plain run: no cache directory and no "Result cache" text; stdout matches the golden; in a subprocess, cache modules loaded ⊆ {`cache`, `cache.constants`, `cache.settings`}. | NFR-1 | T-JCOAsq |
+| E-2 | e2e | A plain run: no cache directory and no "Result cache" text; stdout matches the golden; in a subprocess, cache modules loaded ⊆ {`cache`, `cache.constants`, `cache.settings`, `cache.cli`} (as built, DV-16; `settings` and `cli` must be present, so the check is not vacuous). | NFR-1 | T-JCOAsq |
 | E-3 / E-4 | e2e | `--no-cache` wins over env and config. The full precedence matrix, including `AO_CACHE=shadow` and the unknown values `refresh` and `maybe` (off plus a warning). | FR-1 | T-JCOAsq |
 | E-5 | e2e | Double opt-in: the operator enables, but a workflow without `cache: true` → banner "no task opts in" and no records. `defaults.cache: false` plus one task with `true` → only that task is cached. | FR-2 | T-JCOAsq |
 | E-6 | e2e | `ao resume --cache` and `--no-cache` after a failure. | FR-10 | T-JCOAsq |
@@ -4461,7 +4748,8 @@ tasks in the order of the table rows.
 
 ### 22.5 G0 — value check before recommending `on` (dev-critic STRATEGIC #1)
 
-**This is a post-merge business go/no-go, not a build blocker and not part of epic closure (D34).**
+**This is a post-merge business go/no-go, not a build blocker and not part of epic closure (D34).
+Status as built: protocol shipped; execution post-merge. G0 was not run in this epic.**
 
 **Why.** The critic argued that, for the primary consumer, hits may be rare. Fail-closed key
 components (repo HEADs, priors), committing tasks, per-epic output paths, and
@@ -4529,11 +4817,14 @@ The thresholds are placeholders: **OQ-6, for the parent to confirm.**
 | R-14 | **STRATEGIC: low hit rate / unproven value** (dev-critic #1). | M | H | Shadow mode; the G0 protocol and tooling ship with the epic; G0 itself runs post-merge (§22.5, D34); ADR-0019 alternatives ALT-7/ALT-8. **The parent decides.** | parent / operator |
 | R-15 | **STRATEGIC: roadmap tension.** If isolation becomes the default (roadmap §3.4), almost no task is eligible (D25). | M | M | Migrate to the executor-level design (ADR-0019 ALT-7) when isolation is defaulted. | architect |
 | R-16 | **Churn from CLI auto-updates** (version in the key). | M | L | Memoized by binary identity, so an update mid-process is seen; measured in G0; documented. | operator |
-| R-17 | **The env allowlist drifts from the CLI's real env vars.** | M | M | A-9 TODO in T-uoYW6b; easy to extend; never include secrets. | dev |
+| R-17 | **The env allowlist drifts from the CLI's real env vars.** | M | M | A-9 checked in T-uoYW6b (list unchanged); easy to extend; never include secrets. Provider and endpoint variables are an accepted residual (R-22). | dev |
 | R-18 | **Double opt-in friction** slows adoption. | M | L | Templates opt in their pure tasks; the banner gives guidance; one named flip point (`DEFAULT_TASK_CACHE_POLICY`) if the parent decides otherwise. | docs / parent |
 | R-19 | **Nested workspace** (inside a parent repository) is treated as non-git: HEAD not keyed, guards 2 and 3 inactive. | L | M | Banner warning (`nested_repo_marker`); guide says not to opt in such tasks (A-12). | docs |
 | R-20 | **Dirty tracked edits made before the lookup are not in the key** (accepted residual, Rev 3). | M | M | Guard 3 catches edits made during the run; double opt-in; documented in §17; a dirty-tree digest is not planned. | docs |
 | R-21 | **False misses from noise files** (`.DS_Store`, `__pycache__`) inside declared input directories. | M | L | Fail-closed by design; guide recommends narrower inputs. | docs |
+| R-22 | **Provider and endpoint environment not in the key** (accepted at G2, §0.4 R-A1). | L | M | `--no-cache` or `ao cache clear` when switching; documented in the guide. | operator |
+| R-23 | **`filter.<x>.clean` executed by the guard-3 probe** (accepted at G2, §0.4 R-A2). | L | M | Needs a git-config writer that cannot already run code; `--no-cache` for untrusted repositories; documented. | operator |
+| R-24 | **Agent-writable cache directory and output retention** (accepted at G1b and G2, §0.4 R-A4, R-A6). | L | M | The `on` banner notes it; `0o700`; `ao cache verify\|rm\|clear\|prune`; shadow runs should end with `ao cache clear --yes` (G0 protocol Step 9, R-A6). | operator |
 
 ### 23.2 Dependencies and open questions
 
@@ -4551,7 +4842,9 @@ The thresholds are placeholders: **OQ-6, for the parent to confirm.**
 3. **Shared HEAD reader.** Share one HEAD reader with `survival.current_heads`. Their failure
    semantics differ today: `survival` omits a repo where the cache must fail closed (critic NIT).
 
-**Open questions.** None blocks implementation; each has a default.
+**Open questions.** None blocked implementation; each had a default. As built (§0.2): OQ-1 to
+OQ-3, OQ-5, OQ-7 and OQ-8 kept their defaults; OQ-4 (E-Ag7Pw3 representation) is open until that
+merge; OQ-6 (G0 thresholds, owner) is open for the parent.
 
 | ID | Question | Default chosen |
 |----|----------|----------------|
@@ -4730,20 +5023,46 @@ All changes are **additive and localized**. Sibling epics: E-Ag7Pw3 (approval ga
 | `src/agent_orchestrator/engine.py` | `TYPE_CHECKING` imports; ctor kwarg; `_RunContext.result_cache_pending`; call site (c) before `_estimate = 0`; call site (d) at the top of the `succeeded` branch; three private methods, one of which (`_reverse_stale_charge`) is the existing stale-charge block moved verbatim and called from the budget gate. Net ≤ +110 formatted lines. | **E-Ag7Pw3 ordering rule:** an approval or human-gate check must run **before** call site (c). A hit must never satisfy or bypass an approval; G2 verifies this. A new `DispatchSignal` from E-Ag7Pw3 does not affect the lookup. **Any new success-side effect** added to `_settle_completed_task` must state whether it applies to hits (§8.7.4). |
 | `src/agent_orchestrator/executors/claude_cli.py` | Extract `build_claude_argv(agent, prompt)` (behaviour-identical); `execute()` calls it. Pointer comment (T-bdQZW4). | If another epic changes argv construction, make the change **inside** `build_claude_argv`, and re-run U-A* and GV-1. |
 | `src/agent_orchestrator/cli.py` | `--cache/--no-cache` on run/resume (last parameter); `_build_result_cache`; `add_typer(cache_app)`; summary lines; `report_usage` line | Additive; take both sides. |
-| `src/agent_orchestrator/runstate.py` | About 6 lines in `write_status`, with a lazy `cache.report` import only when `state.result_cache` is non-empty | Independent. |
+| `src/agent_orchestrator/runstate.py` | About 6 lines in `write_status` (as built **+12/-1**; the `-1` retypes `snapshot` as `dict[str, object]`), with a lazy `cache.report` import only when `state.result_cache` is non-empty | Independent. |
 | `src/agent_orchestrator/usage.py` | Both dispatch-counting sites skip current hits (real carried spend still counts); `UsageReport.result_cache`; payload omits it when None; lazy import | Independent. |
 | `src/agent_orchestrator/outcomes.py` | `SettleReason` gains `"cached"`; `_settle_reason(ts, *, state=None, tid=None)`; lazy import | Independent. |
 | `src/agent_orchestrator/ui/runs.py` | `TaskStat.result_cache`, `RunDetail.result_cache`, and the code that fills them (lazy import) | This epic touches **no** `ui/app.py` or `ui/service.py`. |
-| `src/agent_orchestrator/ui/files.py` | About 6 lines: refuse paths under `<root>/.orchestrator/cache` | If E-Da5Tn9 touches `files.py`, take both sides; the deny-list is independent of auth. |
+| `src/agent_orchestrator/ui/files.py` | About 6 lines (as built **+13**, with a casefolded comparison and a NUL guard): refuse paths under `<root>/.orchestrator/cache` | If E-Da5Tn9 touches `files.py`, take both sides; the deny-list is independent of auth. |
 | `ui/src/types.ts`, `ui/src/components/RunDetail.tsx` | Interfaces; `cached` tag; "Result cache" tile | Small hunks. |
 | `src/agent_orchestrator/ui/static/**` (committed bundle) | Rebuilt, in a **separate commit** (T-bLpoze) | **Never hand-merge.** Drop that commit if it conflicts; after all epics are merged, run `npm ci && npm run build` once. |
 | `src/agent_orchestrator/bench/subjects.py` | `--no-cache` argv and `AO_CACHE=0` env | Independent. |
 | `.github/workflows/ci.yml` | One additive step: result-cache tests with `--cov-fail-under=85` and a 90% floor per core module (T-JCOAsq) | Take both sides; steps are independent. |
 | `tests/conftest.py`, `tests/test_nfr2_regression_gate.py` | **NOT edited** (NFR-2 gate) | — |
 
+**As-built corrections to the table above (T-bdQZW4; gate G2-S3).** Measured with
+`git diff --numstat 0b980e3..HEAD` before the T-bdQZW4 comment-only edits.
+
+| File | +/- as built | Difference from the design |
+|------|--------------|----------------------------|
+| `models.py` | +81 / -1 | The `-1` is the pydantic import line. T-bdQZW4 adds a comment-only pointer next to `EFFORT_MAX_TURNS`. |
+| `specs/workflow.schema.json` | +8 / -0 | As designed. |
+| `project_config.py` | +71 / -1 | The `-1` is the pydantic import line; **new module-level import of `cache.constants`** (a leaf module). |
+| `engine.py` | +135 / -30 (net **+105**) | One moved block (the stale-charge guard, -29 lines, verbatim into `_reverse_stale_charge`) and the `from typing import Literal` line rewritten to add `TYPE_CHECKING`. 12 added lines inside existing functions. |
+| `executors/claude_cli.py` | no diff in `0b980e3..HEAD` | The `build_claude_argv` extraction (T-OeRYSO) is already in the merge base; T-bdQZW4 adds a comment-only pointer. |
+| `cli.py` | +115 / -2 | The `-2`: the `BudgetSpec` import line gains `WorkflowSpec` (under `TYPE_CHECKING`), and **`status` changes `except (json.JSONDecodeError, KeyError)` to `except (ValueError, KeyError)`** (a total-parse fix, G1b S-2). **`cli.py` imports `agent_orchestrator.cache.cli` eagerly at module level** (`app.add_typer(cache_app, name="cache")`, DV-16). |
+| `runstate.py` | +12 / -1 | Not "about 6": it also retypes `snapshot` as `dict[str, object]`. |
+| `usage.py` | +109 / -23 | Additive in behaviour, not in text: site A's 20-line group-metrics block is re-indented under the current-hit guard; site B's `producer is None or producer.dispatch_cycle < 1` test gains `or pid in rc_hits`; the `typing` import gains `cast`. |
+| `outcomes.py` | +12 / -3 | As designed. |
+| `ui/runs.py` | +15 / -0 | As designed. |
+| `ui/files.py` | +13 / -0 | Not "about 6" (+9 at T-bLpoze, a few more at G2); **new module-level import of `cache.constants`**. |
+| `ui/src/types.ts`, `ui/src/components/RunDetail.tsx` | +41 / -0, +40 / -0 | As designed. |
+| `ui/static/**` | 3 renamed hashed files, `index.html` +1/-1 | Generated bundle, separate commit `4e61e68`: drop and rebuild after merging sibling dashboard epics. |
+| `bench/subjects.py` | +9 / -0 | **New module-level import of `cache.constants`**. |
+| `.github/workflows/ci.yml` | +8 / -0 | One additive step. At merge keep the E-Da5Tn9 / T-2wE08U `permissions:` block and `pip-audit` job, and add `cli_ops restore_sweep safeio` to the per-module coverage loop (G2 sec N3). |
+| **`tests/ui/test_run_graph_endpoint.py`** | +12 / -3 | **An existing test edited that the table above omitted.** It pins the exact key sets of the run payload, so `result_cache` was added to both. Merge guidance: take both sides; the key set must contain every sibling's key. |
+| `tests/conftest.py`, `tests/test_nfr2_regression_gate.py` | no diff | Not edited. |
+
+Also at merge: the E-2 allow-list of §8.7.5 and §18.1 names `cache.cli` (DV-16); a sibling that
+loads another cache module at import time on the CLI path fails test E-2.
+
 **Post-merge verification (parent).**
 
-1. Full `pytest`: expect only the 2 known bench failures.
+1. Full `pytest`: as built 6903 passed / 10 skipped / 0 failed at G2 (the 2 design-time bench failures no longer occur); expect no failures.
 2. U-E1/U-E2 green after the approval field is classified.
 3. `ruff` and `mypy` clean.
 4. Rebuild the UI bundle and run vitest.
@@ -4760,6 +5079,10 @@ All changes are **additive and localized**. Sibling epics: E-Ag7Pw3 (approval ga
 
 **Ticket:** `T-bdQZW4-cache-docs-refresh`. It runs last, after G2 PASS. Mark it Done only after every
 statement has been confirmed against the implemented code.
+
+**Status:** all ten steps were carried out; the evidence (the `grep` and run commands) is in the
+ticket's `STATUS.md`. Architect sign-off: APPROVE-WITH-NOTES, 2026-10-05 (independent spot-check
+and corrections recorded in the ticket's `STATUS.md`); `T-bdQZW4` is Done.
 
 **Steps.**
 

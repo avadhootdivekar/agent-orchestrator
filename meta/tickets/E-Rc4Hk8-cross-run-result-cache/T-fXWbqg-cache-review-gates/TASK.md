@@ -6,7 +6,7 @@
 - Owner: `reviewer` + `dev-security`
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `24 focus hours (3 days)`: G1a 8 h / G1b 8 h / G2 8 h
 
 ## Requirements Mapping

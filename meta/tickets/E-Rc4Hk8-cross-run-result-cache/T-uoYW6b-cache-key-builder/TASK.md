@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev A)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Rev 3; implemented)
+- Status: `Done`
 - Estimate: `20 focus hours (2.5 days)` · Sprint 1 → 2
 
 ## Requirements Mapping
@@ -125,3 +125,6 @@ HLD §8.2.5 and §8.2.6 verbatim; AGENT_KEY_FIELDS / AGENT_NON_KEY_FIELDS come f
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (early-gate C; manager B):
   `claude --version` memoized by binary identity; small closed env allowlist; AgentSpec field
   sets moved to `constants`; every test id U-K1…U-K12 now owned explicitly. GV-1 unchanged.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commit
+  `95dab70`. All 14 acceptance criteria pass (GV-1 exact); evidence and the A-9 check in
+  `STATUS.md`, frozen names and the four small deviations in `HANDOFF.md`.

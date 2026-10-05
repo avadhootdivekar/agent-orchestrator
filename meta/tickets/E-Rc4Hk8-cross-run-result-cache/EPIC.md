@@ -6,8 +6,10 @@
 - Owner: `manager` (execution) · design by `architect`
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft` — **Design complete (Rev 3) / Not started**: the HLD/LLD, ADR-0019 and 20 task
-  tickets are ready; no task has started.
+- Status: `Done` — **Implemented**: 20 of 20 tasks Done, gates G1a, G1b and G2 PASS, the docs
+  refresh (`T-bdQZW4`) signed off by the architect (APPROVE-WITH-NOTES, 2026-10-05). **Post-merge
+  follow-ups, not done here:** G0 execution (protocol shipped, not run) and the sibling-epic merge
+  verification (E-Ag7Pw3 / E-Da5Tn9, HLD §24.2).
 
 ## Summary
 - **Goal.** A task in any run of a workspace can reuse the declared output files of an earlier,
@@ -49,8 +51,8 @@
     controls; the separate `dispatch_cycle` bug ticket.
 
 ## Design
-- HLD + LLD: [`docs-md/cross-run-result-cache-hld.md`](../../../docs-md/cross-run-result-cache-hld.md), §0–§25, Rev 3
-- ADR: [`docs-md/adr/ADR-0019-cross-run-result-cache.md`](../../../docs-md/adr/ADR-0019-cross-run-result-cache.md), Rev 3, decisions D1–D35, alternatives ALT-1…ALT-8
+- HLD + LLD: [`docs-md/cross-run-result-cache-hld.md`](../../../docs-md/cross-run-result-cache-hld.md), §0–§25, Rev 4 (as built; read §0 first)
+- ADR: [`docs-md/adr/ADR-0019-cross-run-result-cache.md`](../../../docs-md/adr/ADR-0019-cross-run-result-cache.md), Rev 4, **Accepted**, decisions D1–D35, alternatives ALT-1…ALT-8, as-built addendum A1–A5
 - Decision log: HLD §7.6 (D1–D35). Threat model: HLD §7.7 (M-1…M-16 plus residuals).
 - Reviews: Phase 4 in HLD §23.3–§23.4 (61 dispositions); Rev 3 early-gate review in HLD §23.5.
 - Merge notes for sibling epics E-Ag7Pw3 and E-Da5Tn9: HLD §24.2
@@ -100,35 +102,36 @@ staffed sprint equivalent is in HLD §22.1. File scopes are exclusive; tasks tha
 ordered by dependency (HLD §22.2).
 
 ### 1. Core set, then gate G1a (key, store and restore core)
-- [ ] `T-FJH6LI-cache-contracts`: constants (commit 1), `safeio` (commit 2), types/contracts/ABCs/errors/fakes, corpus, AST guard (commit 3). 16 h. Dev A. Deps: none.
-- [ ] `T-28J9oR-cache-spec-config-surface`: spec, config, record model (derived `hit`/`saved_tokens`), settings with the named default, CLI flag (resolution half), `ao cache` group. 16 h. Dev B. Deps: T-FJH6LI commit 1.
+- [x] `T-FJH6LI-cache-contracts`: constants (commit 1), `safeio` (commit 2), types/contracts/ABCs/errors/fakes, corpus, AST guard (commit 3). 16 h. Dev A. Deps: none. **Done** (2026-10-05) Commits 9b24194, 5628556, d1c1d08.
+- [x] `T-28J9oR-cache-spec-config-surface`: spec, config, record model (derived `hit`/`saved_tokens`), settings with the named default, CLI flag (resolution half), `ao cache` group. 16 h. Dev B. Deps: T-FJH6LI commit 1. **Done** (2026-10-05) Commit 458c472.
 - [x] `T-OeRYSO-executor-argv-builder`: pure `build_claude_argv` extraction. 6 h. Dev C. Deps: none (may run any time; independent file scope). **Done** (2026-10-05) Commit ac35e73.
-- [ ] `T-QgQy08-cache-eligibility`: allowlist predicate, tripwires, runtime rules incl. `unknown_agent_field`. 13 h. Dev B. Deps: T-28J9oR, T-FJH6LI.
-- [ ] `T-8tr1H4-cache-hashing`: bounded hashing; repository detection bounded by the workspace root; HEAD reader; worktree probe. 14 h. Dev C. Deps: T-FJH6LI (commit 3).
-- [ ] `T-uoYW6b-cache-key-builder`: fingerprint, keys, GV-1. 20 h. Dev A. Deps: T-FJH6LI, T-OeRYSO, T-8tr1H4.
-- [ ] `T-U7ckfd-cache-store-core`: `LocalFsCacheStore(CacheStore)`, checks before every operation, `CacheUnsafePathError`, `is_expired`. 17 h. Dev C. Deps: T-FJH6LI.
-- [ ] `T-u3jG8F-cache-restore-capture`: staged, verified restore and safe capture. 16 h. Dev B. Deps: T-FJH6LI.
-- [ ] `T-HjxNQ0-cache-store-maintenance`: adds `CacheAdmin`; streaming iteration, prune, inline enforcement bounded by entries and bytes, `clear`, read-only `verify`, race test. 15 h. Dev C. Deps: T-U7ckfd.
-- [ ] Gate **G1a** (`T-fXWbqg`).
+- [x] `T-QgQy08-cache-eligibility`: allowlist predicate, tripwires, runtime rules incl. `unknown_agent_field`. 13 h. Dev B. Deps: T-28J9oR, T-FJH6LI. **Done** (2026-10-05) Commit f9d4f70.
+- [x] `T-8tr1H4-cache-hashing`: bounded hashing; repository detection bounded by the workspace root; HEAD reader; worktree probe. 14 h. Dev C. Deps: T-FJH6LI (commit 3). **Done** (2026-10-05) Commit 00b9a3c.
+- [x] `T-uoYW6b-cache-key-builder`: fingerprint, keys, GV-1. 20 h. Dev A. Deps: T-FJH6LI, T-OeRYSO, T-8tr1H4. **Done** (2026-10-05) Commit 95dab70.
+- [x] `T-U7ckfd-cache-store-core`: `LocalFsCacheStore(CacheStore)`, checks before every operation, `CacheUnsafePathError`, `is_expired`. 17 h. Dev C. Deps: T-FJH6LI. **Done** (2026-10-05) Commit 181bbbb.
+- [x] `T-u3jG8F-cache-restore-capture`: staged, verified restore and safe capture. 16 h. Dev B. Deps: T-FJH6LI. **Done** (2026-10-05) Commit 87814ea.
+- [x] `T-HjxNQ0-cache-store-maintenance`: adds `CacheAdmin`; streaming iteration, prune, inline enforcement bounded by entries and bytes, `clear`, read-only `verify`, race test. 15 h. Dev C. Deps: T-U7ckfd. **Done** (2026-10-05) Commit 6753c71.
+- [x] Gate **G1a** (`T-fXWbqg`): PASS 2026-10-05.
 
 ### 2. Engine set, then gate G1b (coordinator, engine, CLI wiring, reporting)
-- [ ] `T-JCOAsq-cache-test-hardening` **Part 1** (golden, I-2, I-1; base code only; may run any time before T-XpF1pF). 6 h. Tester.
-- [ ] `T-gDNjN2-cache-coordinator`: `ResultCache` (shadow, lazy guard 3, unsafe-path handling, boundary) and records builders. 20 h. Dev A. Deps: T-uoYW6b, T-QgQy08, T-U7ckfd, T-u3jG8F, T-8tr1H4, T-28J9oR.
-- [ ] `T-XpF1pF-cache-engine-integration`: engine seams, shared `_reverse_stale_charge`, integration tests. 16 h. Dev A. Deps: T-gDNjN2, T-JCOAsq Part 1.
-- [ ] `T-eyn5UG-cache-reporting`: report helpers; `status.json`, usage (both sites, `result_cache` object) and outcomes hooks; lazy imports. 18 h. Dev B. Deps: T-28J9oR, T-FJH6LI.
-- [ ] `T-o95l1M-cache-cli-wiring`: CLI construction, banner and warnings, summary lines, `report-usage` lines. 8 h. Dev B. Deps: T-XpF1pF, T-eyn5UG, T-gDNjN2.
-- [ ] `T-ZTxN1x-bench-cache-force-off`: bench argv and env, plus a regression test. 4 h. Dev B. Deps: T-28J9oR.
-- [ ] Gate **G1b** (`T-fXWbqg`).
+- [x] `T-JCOAsq-cache-test-hardening` **Part 1** (golden, I-2, I-1; base code only; may run any time before T-XpF1pF). 6 h. Tester. **Done** (2026-10-05, reworked, commit 8972149; the task is now Done, see Part 3).
+- [x] `T-gDNjN2-cache-coordinator`: `ResultCache` (shadow, lazy guard 3, unsafe-path handling, boundary) and records builders. 20 h. Dev A. Deps: T-uoYW6b, T-QgQy08, T-U7ckfd, T-u3jG8F, T-8tr1H4, T-28J9oR. **Done** (2026-10-05) Commit d14f07d.
+- [x] `T-XpF1pF-cache-engine-integration`: engine seams, shared `_reverse_stale_charge`, integration tests. 16 h. Dev A. Deps: T-gDNjN2, T-JCOAsq Part 1. **Done** (2026-10-05) Commit b7ca9c7.
+- [x] `T-eyn5UG-cache-reporting`: report helpers; `status.json`, usage (both sites, `result_cache` object) and outcomes hooks; lazy imports. 18 h. Dev B. Deps: T-28J9oR, T-FJH6LI. **Done** (2026-10-05) Commit cbf9152.
+- [x] `T-o95l1M-cache-cli-wiring`: CLI construction, banner and warnings, summary lines, `report-usage` lines. 8 h. Dev B. Deps: T-XpF1pF, T-eyn5UG, T-gDNjN2. **Done** (2026-10-05) Commit e882b31.
+- [x] `T-ZTxN1x-bench-cache-force-off`: bench argv and env, plus a regression test. 4 h. Dev B. Deps: T-28J9oR. **Done** (2026-10-05) Commit 15a659d.
+- [x] Gate **G1b** (`T-fXWbqg`): PASS 2026-10-05.
 
 ### 3. Surfaces
-- [ ] `T-nPMuz4-cache-shadow-value-check`: **G0 protocol and tooling hand-off** (procedure, report template, smoke validation); does not execute G0. 6 h. Tester (+ manager sign-off). Deps: T-o95l1M, T-eyn5UG.
-- [ ] `T-6tRKml-cache-cli-commands`: `ao cache ls|stats|show|rm|prune|clear|verify`. 17 h. Dev C. Deps: T-HjxNQ0, T-28J9oR.
-- [ ] `T-bLpoze-cache-dashboard-surface`: payload fields, file-browser deny, tag, tile; bundle rebuilt as a separate commit. 10 h. Dev C. Deps: T-eyn5UG.
+- [x] `T-nPMuz4-cache-shadow-value-check`: **G0 protocol and tooling hand-off** (procedure, report template, smoke validation); does not execute G0. 6 h. Tester (+ manager sign-off). Deps: T-o95l1M, T-eyn5UG. **Done** (2026-10-05) Commit edc3c18; manager sign-off 2026-10-05.
+- [x] `T-6tRKml-cache-cli-commands`: `ao cache ls|stats|show|rm|prune|clear|verify`. 17 h. Dev C. Deps: T-HjxNQ0, T-28J9oR. **Done** (2026-10-05) Commit 033dd79.
+- [x] `T-bLpoze-cache-dashboard-surface`: payload fields, file-browser deny, tag, tile; bundle rebuilt as a separate commit. 10 h. Dev C. Deps: T-eyn5UG. **Done** (2026-10-05) Commits faf8f57 (source + tests), 4e61e68 (bundle).
 
 ### 4. Hardening, gate G2, docs
-- [ ] `T-JCOAsq-cache-test-hardening` **Parts 2–3**: integration and adversarial (Part 2; deps T-XpF1pF, T-u3jG8F, T-HjxNQ0); e2e, CI coverage step, full suite (Part 3; deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 18 h. Tester.
-- [ ] `T-fXWbqg-cache-review-gates`: G1a, G1b and **G2**. 24 h in total. reviewer + dev-security.
-- [ ] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4.
+- [x] `T-JCOAsq-cache-test-hardening` **Part 2**: integration and adversarial (deps T-XpF1pF, T-u3jG8F, T-HjxNQ0). 10 h. Tester. **Done** (2026-10-05, commit 4d11a69, 147 tests; the task is now Done, see Part 3).
+- [x] `T-JCOAsq-cache-test-hardening` **Part 3**: e2e, CI coverage step, full suite (deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 8 h. Tester. **Done** (2026-10-05, commits b7489d1 e2e, a947986 CI step; 55 e2e tests, coverage 98.71%, full suite 6805 passed). The task is **Done**.
+- [x] `T-fXWbqg-cache-review-gates`: G1a, G1b and **G2**. 24 h in total. reviewer + dev-security.
+- [x] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4. **Done** (2026-10-05, commits 643ad11, eaead55, 5748316, 7d73af8, 1ed5556 and the architect sign-off commit): all ten steps done and grep-verified; architect APPROVE-WITH-NOTES.
 
 **Totals.**
 - **288 focus hours** across 20 tasks: developers 234, tester 30, review gates 24.
@@ -165,8 +168,8 @@ ordered by dependency (HLD §22.2).
 - Design doc: `docs-md/cross-run-result-cache-hld.md`
 - ADR: `docs-md/adr/ADR-0019-cross-run-result-cache.md`
 - Sprint plan and execution order: HLD §22
-- Output artifacts: `output/E-Rc4Hk8-cross-run-result-cache/` (gate reports and the G0 smoke
-  evidence will land there; none yet)
+- Output artifacts: `output/E-Rc4Hk8-cross-run-result-cache/` (gate reports `review-g1a*.md`, `review-g1b*.md`, `review-g2*.md` and the G0 smoke evidence `g0-protocol-smoke.md`)
+- G0 protocol: `docs-md/result-cache-g0-protocol.md` (execution is post-merge)
 
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Epic created (Rev 1).
@@ -185,3 +188,5 @@ ordered by dependency (HLD §22.2).
     fields in `result_cache` objects.
   - **Plan:** totals stay 288 h; estimates and owners rebalanced; critical path recomputed to
     120 h. T-OeRYSO and T-ZTxN1x are unchanged by Rev 3.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: `T-bdQZW4` delivered (docs refresh, HLD section 0, ADR-0019 Accepted). Epic status -> `In Review` (not `Done`) until the architect signs off in the task `STATUS.md`; rollup and the epic completion note are in the epic `STATUS.md`.
+- By: architect · Role: architect · Date: 2026-10-05 · Comment: `T-bdQZW4` signed off (APPROVE-WITH-NOTES, see its `STATUS.md`): checkbox ticked, epic Status -> `Done` (20 of 20 tasks Done). G0 execution and the E-Ag7Pw3 / E-Da5Tn9 merge verification (HLD §24.2) remain post-merge follow-ups owned by the parent/operator; they do not reopen the epic.

@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev B)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Rev 3; implemented)
+- Status: `Done`
 - Estimate: `16 focus hours (2 days)` · Sprint 2 (first item for Dev B)
 
 ## Requirements Mapping
@@ -107,3 +107,6 @@ HLD §8.5 capture_outputs / restore_outputs verbatim (phase 1 validate+stage+ver
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (early-gate C; staffing):
   explicit skip markers and simulated permission errors; `CacheUnsafePathError` passes through;
   owner moves to Dev B so T-gDNjN2 is not blocked behind Dev C's queue (HLD §22.1).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commit
+  `87814ea`. All 14 acceptance criteria pass; evidence in `STATUS.md`, frozen names and the small
+  deviations in `HANDOFF.md`.

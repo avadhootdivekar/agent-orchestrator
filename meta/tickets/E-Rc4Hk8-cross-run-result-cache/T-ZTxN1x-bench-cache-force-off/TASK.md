@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev B)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05` (Rev 2)
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `4 focus hours (0.5 day)` · Sprint 1, Wave 2
 
 ## Requirements Mapping
@@ -71,3 +71,4 @@ HLD §8.11 verbatim.
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Bench forced off.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 2: AC-2 also covers
   `AO_CACHE=shadow`. The scope is unchanged.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `15a659d`). All acceptance criteria pass; evidence in `STATUS.md`.

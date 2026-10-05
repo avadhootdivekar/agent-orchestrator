@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.result-cache.clear/v1",
+  "type": "object",
+  "required": ["schema", "removed_entries", "removed_blobs", "bytes_freed"],
+  "properties": {
+    "schema": {"const": "ao.result-cache.clear/v1"},
+    "removed_entries": {"type": "integer"},
+    "removed_blobs": {"type": "integer"},
+    "bytes_freed": {"type": "integer"},
+    "error": {"type": ["string", "null"]}
+  }
+}

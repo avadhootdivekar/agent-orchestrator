@@ -422,18 +422,27 @@ class TestAdditiveOnly:
         write_run(workspace, make_run_state())  # conftest's own default fixture
         payload = asdict(repo.detail("demo-20260724T100000Z"))
 
-        # graph_version is this epic's; prompt/prompt_changed_since_start are E-Us9Kd4 FR-13's.
+        # graph_version is this epic's; prompt/prompt_changed_since_start are E-Us9Kd4 FR-13's;
+        # result_cache is E-Rc4Hk8's (null here: the fixture has no result-cache records).
         assert set(payload.keys()) - self._PRE_EXISTING_RUN_DETAIL_KEYS == {
             "graph_version",
             "prompt",
             "prompt_changed_since_start",
+            "result_cache",
         }
         assert self._PRE_EXISTING_RUN_DETAIL_KEYS <= set(payload.keys())
 
         build_task = next(t for t in payload["tasks"] if t["id"] == "build")
         new_task_keys = set(build_task.keys()) - self._PRE_EXISTING_TASK_STAT_KEYS
-        # agent/model/effort are E-iafh2F (live activity) additions.
-        assert new_task_keys == {"dispatch_cycle", "not_taken_reason", "agent", "model", "effort"}
+        # agent/model/effort are E-iafh2F (live activity) additions; result_cache is E-Rc4Hk8's.
+        assert new_task_keys == {
+            "dispatch_cycle",
+            "not_taken_reason",
+            "agent",
+            "model",
+            "effort",
+            "result_cache",
+        }
         assert self._PRE_EXISTING_TASK_STAT_KEYS <= set(build_task.keys())
 
     def test_every_pre_existing_value_is_byte_identical_to_before(

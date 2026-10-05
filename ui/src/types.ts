@@ -92,6 +92,43 @@ export interface RunSummary {
   running_tasks?: RunningTaskBrief[];
 }
 
+/**
+ * Cross-run RESULT cache (E-Rc4Hk8, HLD §13.5) -- unrelated to the prompt-cache fields above.
+ * Every string here (`source_run_id`, `key`, ...) is untrusted text: render as text only.
+ */
+export interface ResultCacheTaskView {
+  hit: boolean;
+  key: string | null;
+  saved_cost_usd: number;
+  saved_tokens: number;
+  saved_seconds: number;
+  outcome?: string;
+  mode?: string;
+  mode_source?: string;
+  reason?: string | null;
+  reason_detail?: string | null;
+  stored?: boolean;
+  store_reason?: string | null;
+  saved_input_tokens?: number;
+  saved_output_tokens?: number;
+  source_run_id?: string | null;
+}
+
+export interface ResultCacheRunBlock {
+  hits: number;
+  saved_cost_usd: number;
+  saved_tokens: number;
+  saved_seconds: number;
+  would_hits: number;
+  misses: number;
+  ineligible: number;
+  stored: number;
+  lookups: number;
+  saved_input_tokens?: number;
+  saved_output_tokens?: number;
+  avoidable_cost_usd?: number;
+}
+
 export interface TaskStat {
   id: string;
   status: string;
@@ -129,6 +166,8 @@ export interface TaskStat {
   agent?: string | null;
   model?: string | null;
   effort?: string | null;
+  /** Current result-cache record of this task (E-Rc4Hk8); null/absent when it has none. */
+  result_cache?: ResultCacheTaskView | null;
 }
 
 /** One currently-running task on a runs-list row (state-derived; E-iafh2F). */
@@ -239,6 +278,8 @@ export interface RunDetail {
   prompt?: RunPrompt | null;
   /** True when the prompt file now differs from the recorded one; null when unknown. */
   prompt_changed_since_start?: boolean | null;
+  /** Result-cache run block (E-Rc4Hk8); null/absent when no current record. */
+  result_cache?: ResultCacheRunBlock | null;
 }
 
 /**

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.result-cache.ls/v1",
+  "type": "object",
+  "required": ["schema", "root", "entries"],
+  "properties": {
+    "schema": {"const": "ao.result-cache.ls/v1"},
+    "root": {"type": "string"},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "status"],
+        "properties": {
+          "key": {"type": "string"},
+          "status": {"enum": ["ok", "invalid", "expired"]},
+          "created_at": {"type": ["string", "null"]},
+          "last_used": {"type": "string"},
+          "outputs": {"type": "integer"},
+          "bytes": {"type": "integer"},
+          "source": {"type": ["object", "null"]},
+          "cost_usd": {"type": ["number", "null"]},
+          "model": {"type": ["string", "null"]},
+          "error": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}

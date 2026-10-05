@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev C)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Rev 3; implemented)
+- Status: `Done`
 - Estimate: `17 focus hours (2.1 days)` · Sprint 1
 
 ## Requirements Mapping
@@ -121,3 +121,6 @@ maybe_enforce_limits: return None   # TODO(T-HjxNQ0)
   class derives from `CacheStore` only; component checks run before `touch_entry` and
   `delete_entry` too, and raise `CacheUnsafePathError` (never followed, never evicted); U-ST15;
   re-estimated from 16 h to 17 h.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commit
+  `181bbbb`. All 17 acceptance criteria pass; evidence in `STATUS.md`, frozen names and the small
+  deviations in `HANDOFF.md`.

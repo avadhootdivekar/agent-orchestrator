@@ -457,3 +457,22 @@ already capped via `BudgetSpec.total_tokens`); accumulating usage across a
 quota-exhaustion-triggered whole-task re-run (the outer `engine.run()` loop, distinct
 from the retry loop fixed here) — quota exhaustion is detected before real work
 happens in practice, so this was judged out of scope for this pass.
+
+## 11. Result-cache interaction (E-Rc4Hk8, ADR-0019)
+
+The opt-in cross-run **result cache** (`ao run --cache`; [`cross-run-result-cache-hld.md`](cross-run-result-cache-hld.md);
+not Claude prompt caching) looks a task up **before the budget gate** (`engine._prepare_and_maybe_dispatch`: after the skip,
+join and missing-input checks, before the estimate and `BudgetManager.gate`). Consequences for budgeting:
+
+- **A hit charges no budget.** It never reaches the gate, a worker, `reconcile` or breaker evaluation: no estimate is charged,
+  no rate-limit window is touched, `cumulative_*` is untouched (a first-pass hit carries $0 and 0 tokens), and circuit breakers
+  are not evaluated for it. The task settles `succeeded` with `attempts` unchanged (0 for a first-pass hit) and
+  `dispatch_cycle` keeping its increment. Avoided spend is reported separately as `saved_*` (an estimate; see
+  `usage-analytics.md`, Update 3) and is **never netted** into any budget or cost figure.
+- **A stale previous-cycle charge is reversed, through the shared helper.** If a crash left a charge for the task's previous
+  dispatch cycle (`dispatch_cycle - 1`) and the resumed run now hits, the hit path calls the same `_reverse_stale_charge`
+  helper the budget gate uses (the existing R2/R-1b reversal block, moved verbatim so the two cannot drift): it calls
+  `BudgetManager.reverse_estimate(tid, counters, cycle=dispatch_cycle - 1)` and emits the existing `budget.resume_reverse`
+  event. This is the only change to budget code in that epic, and it is behaviour-identical for the gate.
+- **A miss is unchanged**: it continues to the budget gate and dispatches as before; its settled success is stored afterwards.
+- Cache off (the default): none of this runs; budgeting is byte-identical.

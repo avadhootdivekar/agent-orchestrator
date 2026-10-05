@@ -42,6 +42,8 @@ from typing import TYPE_CHECKING
 
 import typer
 
+from .cache.cli import cache_app
+
 # `models.py` is already imported transitively by `.service.cli` below (confirmed: this is
 # NOT a new eager-import cost) -- unlike `.engine`/`.artifacts`/etc, which stay lazy
 # per-function per this module's own convention, these are two plain string constants
@@ -60,16 +62,18 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from .artifacts import ArtifactStore
+    from .cache.types import ResultCacheHook
     from .executors.base import Executor
     from .isolation.git import GitRepo
     from .isolation.worktrees import IsolatedRepo
-    from .models import BudgetSpec
+    from .models import BudgetSpec, WorkflowSpec
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
 
 app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
 app.add_typer(service_app, name="service")
 app.add_typer(auth_app, name="auth")
+app.add_typer(cache_app, name="cache")
 
 _PACKAGE_LOGGER = "agent_orchestrator"
 
@@ -271,6 +275,10 @@ def _print_state(state) -> None:
         f"cache_read={totals.cache_read_input_tokens}"
     )
     typer.echo(f"Total cost:   ${totals.cost_usd:.4f}")
+    if state.result_cache:  # lazy: a run the cache never touched never imports cache.report
+        from .cache.report import run_block
+
+        _echo_result_cache_line(run_block(state))
 
     # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
     integration_counts = {"integrated": 0, "conflict": 0, "failed": 0}
@@ -327,6 +335,7 @@ def _print_status_snapshot(snap: dict) -> None:
         f"cache_read={totals.get('cache_read_input_tokens', 0)}"
     )
     typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
+    _echo_result_cache_line(snap.get("result_cache"))  # present only for a current record
 
     # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
     integ = snap.get("integration") or {}
@@ -384,6 +393,69 @@ def _load_project_config_or_exit() -> ProjectConfig | None:
     except ConfigError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+
+# Appended to the `on`-mode banner (S-5): the trust assumption behind serving cached outputs.
+_RESULT_CACHE_TRUST_NOTE = " (agent-writable; avoid for untrusted prompts)"
+
+
+def _build_result_cache(
+    cache_flag: bool | None, workspace: str, wf: WorkflowSpec
+) -> ResultCacheHook | None:
+    """ONE helper for `ao run` and `ao resume` (FR-1). None => the engine runs no cache code.
+
+    Resolves the run-level mode (flag > env > config > off), echoes each warning, and, only for
+    mode `on`/`shadow`, builds the `ResultCache`, prints the one-line banner and the factory's
+    warnings (e.g. a `.git` marker above the workspace root, A-12). Everything cache-related is
+    imported lazily here, so a cache-off `ao run` loads nothing beyond `cache.constants` /
+    `cache.settings` (NFR-1).
+    """
+    from .cache.constants import MODE_OFF, MODE_ON
+    from .cache.settings import opted_in_count, resolve_result_cache_settings
+
+    cfg = _load_project_config_or_exit()
+    settings, warnings = resolve_result_cache_settings(
+        cache_flag, os.environ, cfg.cache if cfg else None
+    )
+    for w in warnings:
+        typer.echo(f"WARNING: {w}", err=True)
+    if settings.mode == MODE_OFF:
+        return None
+    from .cache.coordinator import ResultCache
+
+    rc = ResultCache.from_settings(workspace_root=workspace, settings=settings)
+    n, m = opted_in_count(wf)
+    note = (
+        f"{n} of {m} static task(s) opted in"
+        if n
+        else "but no task opts in (set defaults.cache: true or tasks[].cache: true)"
+    )
+    # `on` serves stored outputs without running the agent, and the cache dir is writable by the
+    # agent/workspace (accepted residual, SEC G1b S-5): say so. Shadow never serves a hit.
+    trust = _RESULT_CACHE_TRUST_NOTE if settings.mode == MODE_ON else ""
+    typer.echo(
+        f"Result cache: {settings.mode} (source={settings.source}), {note}, at {rc.root}{trust}",
+        err=True,
+    )
+    for w in rc.warnings:
+        typer.echo(f"WARNING: {w}", err=True)
+    return rc
+
+
+def _echo_result_cache_line(block: object) -> None:
+    """Print the run-summary line (HLD 8.8.3) for a run block; nothing when there is none.
+
+    Callers pass a block only when the run has result-cache records, so `cache.report` is
+    imported lazily and never for a run the cache did not touch (D9).
+    """
+    if not block:
+        return
+    from .cache.report import format_summary_line
+    from .cache.safeio import strip_control_chars
+
+    line = format_summary_line(block)  # total: `block` may come from an agent-writable file
+    if line is not None:
+        typer.echo(strip_control_chars(line))
 
 
 # Env var carrying the workspace-scoped general-instruction list, os.pathsep-separated
@@ -1087,6 +1159,17 @@ def run(
             " into the workflow's declared `prompt_path`. Mutually exclusive with --prompt."
         ),
     ),
+    cache: bool | None = typer.Option(
+        None,
+        "--cache/--no-cache",
+        help=(
+            "Result cache: reuse an identical, previously successful task's declared "
+            "outputs across runs instead of re-dispatching the agent (NOT Claude prompt "
+            "caching). Default off. Only tasks the workflow opts in (defaults.cache / "
+            "tasks[].cache: true) are cached. --no-cache is a kill switch that wins over "
+            "env/config. Env: AO_CACHE (1|0|shadow). Config: cache.enabled / cache.mode."
+        ),
+    ),
 ) -> None:
     """Run a workflow from scratch."""
     from datetime import UTC
@@ -1205,6 +1288,9 @@ def run(
         budget_manager = DefaultBudgetManager(effective_budget, clock)
         estimator = HeuristicTokenEstimator(store)
 
+    # Result cache (E-Rc4Hk8): resolve the mode, print the banner/warnings; None when off.
+    result_cache = _build_result_cache(cache, workspace, wf)
+
     # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
     monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
@@ -1229,6 +1315,7 @@ def run(
         isolation_env=eff_isolation_env,
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         run_prompt=run_prompt,
+        result_cache=result_cache,
     )
 
     try:
@@ -1378,6 +1465,17 @@ def resume(
             " fill-in-only semantics). Logs one WARNING naming the overridden task ids."
             f" Env: {ENV_NO_ISOLATION} (1/true/yes/on). No config-file layer (emergency"
             " override, not a setting). Mutually exclusive with --isolation worktree."
+        ),
+    ),
+    cache: bool | None = typer.Option(
+        None,
+        "--cache/--no-cache",
+        help=(
+            "Result cache: reuse an identical, previously successful task's declared "
+            "outputs across runs instead of re-dispatching the agent (NOT Claude prompt "
+            "caching). Default off. Only tasks the workflow opts in (defaults.cache / "
+            "tasks[].cache: true) are cached. --no-cache is a kill switch that wins over "
+            "env/config. Env: AO_CACHE (1|0|shadow). Config: cache.enabled / cache.mode."
         ),
     ),
 ) -> None:
@@ -1544,6 +1642,9 @@ def resume(
 
     executor = DispatchExecutor()
 
+    # Result cache (E-Rc4Hk8): resolve the mode, print the banner/warnings; None when off.
+    result_cache = _build_result_cache(cache, workspace, wf)
+
     # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
     monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
@@ -1567,6 +1668,7 @@ def resume(
         isolation_strict=eff_isolation_strict,
         isolation_env=eff_isolation_env,
         record_git_heads=_resolve_record_git_heads(record_git_heads),
+        result_cache=result_cache,
     )
 
     try:
@@ -1627,7 +1729,7 @@ def status(
             snap = json.loads(status_json_path.read_text())
             _print_status_snapshot(snap)
             return
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, KeyError):  # JSONDecodeError / int-digit-limit are ValueErrors
             # Corrupt status.json — fall through to state.json
             pass
 
@@ -1968,6 +2070,17 @@ def report_usage(
     if report.feedback_errors:
         fb_txt += f" ({report.feedback_errors} unreadable)"
     typer.echo(f"{fb_txt} | survival: {survival_txt}")
+    rcu = report.result_cache  # None unless a scanned run has result-cache records
+    if rcu is not None and rcu.hits > 0:
+        typer.echo(
+            f"Result cache: {rcu.hits} hit(s) across scanned runs, ~${rcu.saved_cost_usd:.4f} "
+            "avoided (est.; source-run cost incl. retries; not in costs below)"
+        )
+    if rcu is not None and rcu.would_hits > 0:
+        typer.echo(
+            f"Result cache (shadow): {rcu.would_hits} would-hit(s) of {rcu.lookups} lookup(s), "
+            f"~${rcu.avoidable_cost_usd:.4f} avoidable (est.)"
+        )
     if report.outcomes:
         typer.echo("\nOutcome vs charter")
         for o in report.outcomes:

@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev B)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Rev 3; implemented)
+- Status: `Done`
 - Estimate: `16 focus hours (2 days)` · Sprint 1 (starts when T-FJH6LI commit 1 lands)
 
 ## Requirements Mapping
@@ -142,3 +142,6 @@ cli._build_result_cache (resolution half): resolve -> echo warnings -> return No
   removed (unknown value → off + warning; config rejects it); `DEFAULT_TASK_CACHE_POLICY` is the
   only default and is pinned by U-S4; `ResultCacheRecord` gains the derived `hit` and
   `saved_tokens` fields (D35).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commit
+  `458c472`. All 12 acceptance criteria pass; evidence (incl. the full-suite run) in `STATUS.md`,
+  frozen names and the three small deviations in `HANDOFF.md`.

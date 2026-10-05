@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.result-cache.rm/v1",
+  "type": "object",
+  "required": ["schema", "removed"],
+  "properties": {
+    "schema": {"const": "ao.result-cache.rm/v1"},
+    "removed": {"type": "array", "items": {"type": "string"}},
+    "error": {"type": ["string", "null"]}
+  }
+}

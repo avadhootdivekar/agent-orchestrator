@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import BinaryIO
 
 from ..auth.paths import entry_is_denied, is_within
+# `agent_orchestrator.cache` is an import-free package marker; `.constants` is a leaf (only `re`).
+from agent_orchestrator.cache.constants import CACHE_DIR_PARTS
 
 # Cap on bytes returned for a single file view. A code/log browser needs enough to be
 # useful but must never stream an unbounded file into memory; larger files are returned
@@ -207,6 +209,8 @@ class FileBrowser:
         root = self._root_by_name(root_name)
         root_path = Path(root.path)
 
+        if "\0" in (rel_path or ""):  # Path.resolve() raises ValueError (a 500) on NUL
+            raise PathNotAllowedError("path contains a NUL byte")
         cleaned = (rel_path or "").strip().lstrip("/")
         target = Path(rel_path) if os.path.isabs(rel_path or "") else root_path / cleaned
 
@@ -220,6 +224,13 @@ class FileBrowser:
         if self._is_denied(resolved):
             # Deliberately generic: the message never says why (or which feature) denies it.
             raise PathNotAllowedError(f"path is not browsable: {rel_path}")
+        # E-Rc4Hk8 M-10: the result-cache store (blobs + entries) is never browsable. Compared
+        # after resolve(), so `..` and symlinks into it are refused too, and casefolded because a
+        # case-insensitive filesystem (macOS, Windows) aliases `.Orchestrator/Cache` to it.
+        cache_root = (root_path.joinpath(*CACHE_DIR_PARTS)).resolve()
+        cache_parts = [p.casefold() for p in cache_root.parts]
+        if [p.casefold() for p in resolved.parts[: len(cache_parts)]] == cache_parts:
+            raise PathNotAllowedError(f"the result cache is not browsable: {rel_path}")
 
         return root, resolved
 

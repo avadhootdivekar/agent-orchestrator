@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev B)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `18 focus hours (2.25 days)` · Sprint 2 · engine set
 
 ## Requirements Mapping
@@ -134,3 +134,4 @@ HLD §8.8.1–§8.8.4 verbatim. Every caller: if state.result_cache: (lazy impor
   exact D35 fields; both usage sites, keeping a hit's real carried spend; the cross-run
   `result_cache` usage object with the G0 fields; lazy `cache.report` imports (U-LZ1);
   re-estimated from 16 h to 18 h.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `cbf9152`). All acceptance criteria pass; evidence and deviations in `STATUS.md`.

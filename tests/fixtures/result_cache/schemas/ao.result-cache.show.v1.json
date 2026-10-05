@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.result-cache.show/v1",
+  "type": "object",
+  "required": ["schema", "entry", "blobs"],
+  "properties": {
+    "schema": {"const": "ao.result-cache.show/v1"},
+    "entry": {"$ref": "ao.result-cache.entry/v1"},
+    "last_used": {"type": "string"},
+    "expired": {"type": "boolean"},
+    "blobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sha256": {"type": "string"},
+          "present": {"type": "boolean"},
+          "size_on_disk": {"type": ["integer", "null"]}
+        }
+      }
+    }
+  }
+}

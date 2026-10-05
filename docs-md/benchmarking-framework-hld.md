@@ -197,9 +197,11 @@ CLASS AoWorkflowSubject(Subject):   # an ao DAG is the system under test
     # shared by every subject, by workspace.materialize_workspace BEFORE Subject.run is
     # called (not by AoWorkflowSubject itself; as-built deviation, see note below).
     env = {AO_MODEL: spec.model?, AO_MAX_TURNS: spec.max_turns?,
-           AO_MAX_PARALLEL: spec.max_parallel?, AO_WORKSPACE_ROOT: ctx.workspace}
+           AO_MAX_PARALLEL: spec.max_parallel?, AO_WORKSPACE_ROOT: ctx.workspace,
+           AO_CACHE: "0"}            # result cache forced OFF, overriding any inherited AO_CACHE (§22)
     argv = ["uv","run","ao","run","--workflow",ctx.workflow_json,
-            "--reposets",ctx.rendered_reposet,"--agents",spec.agents_json]
+            "--reposets",ctx.rendered_reposet,"--agents",spec.agents_json,
+            "--no-cache"]            # E-Rc4Hk8 / ADR-0019 D23: always measure REAL dispatch cost (see §22)
     IF ctx.budget_total or spec.budget_total: argv += ["--budget-total", str(ctx.budget_total or spec.budget_total)]
     t0 = monotonic(); rc = run(argv, cwd=REPO_ROOT, stdin=DEVNULL, env=env, timeout=task.timeout,
                                stdout=ctx.capture_dir/"ao.stdout.txt")
@@ -243,6 +245,9 @@ CLASS FakeSubject(Subject):        # deterministic, network-free — the ONLY su
 6. **Exactly-one-run-dir (A4/R2) is enforced by `subjects._latest_run_dir`,** which raises `SubjectError` (not a
    silent pick) if zero or more than one `run_id` directory exists under `<ws>/.orchestrator/runs/` — the runner
    catches this and records the task as `subject_status="error"`.
+7. **The result cache is always forced off (E-Rc4Hk8, ADR-0019 D23; §22).** `AoWorkflowSubject` appends `--no-cache` to the
+   argv and sets `AO_CACHE=0` in the child env, overriding anything the operator exported (`_AO_NO_CACHE_FLAG`,
+   `_AO_CACHE_OFF_VALUE`, `ENV_CACHE` from `cache.constants`).
 
 ### 4.3 Module `bench/graders.py` — Grader adapters
 
@@ -983,3 +988,22 @@ swebench"`): **1266 passed**, 7 deselected — zero regressions from this docs-o
 touched by this task). See this task's own STATUS.md
 (`meta/tickets/E-Bt4Xk9-complex-benchmark-tiers/T-Dc1Yg7-docs-adr0009-reconcile/STATUS.md`) for the full AC-by-AC
 verification record.
+
+---
+
+## 22. Result-cache interaction (E-Rc4Hk8, ADR-0019): the bench always runs with `--no-cache`
+
+The opt-in cross-run **result cache** ([`cross-run-result-cache-hld.md`](cross-run-result-cache-hld.md), ADR-0019; not Claude
+prompt caching) reuses an identical, previously successful task's declared outputs instead of dispatching the agent. A cache
+hit would make a benchmark report **$0 and 0 tokens for work it did not do**, and a hit replays one earlier sample instead of
+re-sampling, so it would hide exactly the cost and solve-rate variance the harness exists to measure.
+
+- **Forced off, belt and braces (D23).** `bench/subjects.py::AoWorkflowSubject.run` always appends `--no-cache` to its
+  `ao run` argv **and** sets `AO_CACHE=0` in the child environment, overriding any `AO_CACHE` the operator exported (the
+  kill switch beats env and config). `ClaudeCliSubject` (bare `claude -p`) never touched the cache. There is no bench option
+  to turn the cache on.
+- **Regression test:** `tests/bench/test_bench_cache_forced_off.py` (7 tests) monkeypatches the spawn, asserts `--no-cache`
+  is in argv and `env["AO_CACHE"] == "0"`, including when the outer env sets `AO_CACHE` to `1`, `shadow`, `on` or `true`.
+- **Consequence for the usage report:** benchmark runs never contain result-cache records, so
+  `usage.aggregate_usage`'s hit exclusions and the `result_cache` object (`usage-analytics.md`, Update 3) are inert for bench
+  output. Do the same (`--no-cache`) for any ad-hoc cost measurement outside the harness.

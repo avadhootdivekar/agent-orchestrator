@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev A)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `20 focus hours (2.5 days)` · Sprint 2 · first task of the engine set
 
 ## Requirements Mapping
@@ -144,3 +144,6 @@ HLD §8.6.2 and §8.6.3 verbatim.
   B): `refresh` removed (U-CO11 retired); lazy guard 3 with not-storable semantics (U-CO18);
   unsafe paths never evicted (U-CO19); `artifact_store_unsupported` test (U-CO17); nested-repo
   warnings from the factory (U-CO20).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commit
+  `d14f07d` (`coordinator.py`, `records.py`, `test_coordinator.py`, `test_records.py`); every acceptance
+  criterion passes (see `STATUS.md`).

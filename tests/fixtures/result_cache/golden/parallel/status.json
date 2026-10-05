@@ -1,0 +1,85 @@
+{
+  "run_id": "golden-fixture-20260101T000000Z",
+  "workflow_id": "golden-fixture",
+  "status": "succeeded",
+  "updated_at": "2026-01-01T00:00:00+00:00",
+  "current_task": null,
+  "counts": {
+    "succeeded": 3,
+    "failed": 0,
+    "running": 0,
+    "pending": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "timed_out": 0,
+    "not_taken": 0
+  },
+  "tasks": [
+    {
+      "id": "a",
+      "status": "succeeded",
+      "attempts": 1,
+      "output_artifact_path": "<WS>/.orchestrator/runs/golden-fixture-20260101T000000Z/a/attempt-1",
+      "origin": "static",
+      "route": null,
+      "not_taken_reason": null,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0,
+      "integration_status": "none",
+      "tier_reached": null,
+      "conflicted_count": 0,
+      "dispatch_cycle": 1
+    },
+    {
+      "id": "b",
+      "status": "succeeded",
+      "attempts": 1,
+      "output_artifact_path": "<WS>/.orchestrator/runs/golden-fixture-20260101T000000Z/b/attempt-1",
+      "origin": "static",
+      "route": null,
+      "not_taken_reason": null,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0,
+      "integration_status": "none",
+      "tier_reached": null,
+      "conflicted_count": 0,
+      "dispatch_cycle": 1
+    },
+    {
+      "id": "c",
+      "status": "succeeded",
+      "attempts": 1,
+      "output_artifact_path": "<WS>/.orchestrator/runs/golden-fixture-20260101T000000Z/c/attempt-1",
+      "origin": "static",
+      "route": null,
+      "not_taken_reason": null,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0,
+      "integration_status": "none",
+      "tier_reached": null,
+      "conflicted_count": 0,
+      "dispatch_cycle": 1
+    }
+  ],
+  "route_decisions": {},
+  "tripped_breakers": [],
+  "usage_totals": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cost_usd": 0.0
+  },
+  "integration": {
+    "active": false,
+    "branch": null,
+    "heads": {},
+    "tier_counts": {},
+    "integrated": 0,
+    "conflict": 0,
+    "failed": 0
+  }
+}
