@@ -158,19 +158,17 @@ class TestNoCacheNoChange:
         assert "WARNING" not in res.stderr
         assert not (tmp_path / ".orchestrator" / "cache").exists()
 
-    @pytest.mark.parametrize(
-        ("flag", "env"),
-        [("--cache", None), ("--no-cache", None), (None, "1"), (None, "shadow"), (None, "0")],
-    )
-    def test_every_mode_is_output_identical_until_construction_lands(
+    @pytest.mark.parametrize(("flag", "env"), [("--no-cache", None), (None, "0")])
+    def test_every_off_mode_is_output_identical(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         flag: str | None,
         env: str | None,
     ) -> None:
-        """The resolution half returns None for every mode (T-o95l1M builds the cache), so
-        the run output is byte-identical to the default run apart from run-specific ids."""
+        """An explicitly-off mode builds no cache (T-o95l1M builds one only for on/shadow, see
+        test_cli_result_cache_wiring.py), so the run output is byte-identical to the default
+        run apart from run-specific ids."""
         args = _fixture(tmp_path)
         base = runner.invoke(app, ["run", *args])
         base_text = _normalise(base.stdout + "|" + base.stderr, tmp_path)
@@ -185,20 +183,22 @@ class TestNoCacheNoChange:
 
 
 class TestBuildHelper:
-    """`_build_result_cache` never reads the workflow in the resolution half."""
+    """`_build_result_cache` never reads the workflow unless the mode is on or shadow."""
 
     @staticmethod
     def _build(flag: bool | None, workspace: Path) -> object:
         wf: Any = object()
         return cli_mod._build_result_cache(flag, str(workspace), wf)
 
-    def test_returns_none_for_every_mode(
+    def test_returns_none_for_every_off_mode(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        for flag in (None, True, False):
+        for flag in (None, False):
             assert self._build(flag, tmp_path) is None
-        monkeypatch.setenv("AO_CACHE", "shadow")
+        monkeypatch.setenv("AO_CACHE", "0")
         assert self._build(None, tmp_path) is None
+        monkeypatch.setenv("AO_CACHE", "1")
+        assert self._build(False, tmp_path) is None  # --no-cache wins over the env
 
     def test_warnings_are_echoed_to_stderr(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

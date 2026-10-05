@@ -271,6 +271,10 @@ def _print_state(state) -> None:
         f"cache_read={totals.cache_read_input_tokens}"
     )
     typer.echo(f"Total cost:   ${totals.cost_usd:.4f}")
+    if state.result_cache:  # lazy: a run the cache never touched never imports cache.report
+        from .cache.report import run_block
+
+        _echo_result_cache_line(run_block(state))
 
     # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
     integration_counts = {"integrated": 0, "conflict": 0, "failed": 0}
@@ -327,6 +331,7 @@ def _print_status_snapshot(snap: dict) -> None:
         f"cache_read={totals.get('cache_read_input_tokens', 0)}"
     )
     typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
+    _echo_result_cache_line(snap.get("result_cache"))  # present only for a current record
 
     # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
     integ = snap.get("integration") or {}
@@ -391,12 +396,14 @@ def _build_result_cache(
 ) -> ResultCacheHook | None:
     """ONE helper for `ao run` and `ao resume` (FR-1). None => the engine runs no cache code.
 
-    Resolution half (T-28J9oR): resolves the run-level mode and echoes each warning. The
-    construction half (T-o95l1M) replaces the final ``return None`` once the coordinator
-    exists, so today no mode builds a cache.
+    Resolves the run-level mode (flag > env > config > off), echoes each warning, and, only for
+    mode `on`/`shadow`, builds the `ResultCache`, prints the one-line banner and the factory's
+    warnings (e.g. a `.git` marker above the workspace root, A-12). Everything cache-related is
+    imported lazily here, so a cache-off `ao run` loads nothing beyond `cache.constants` /
+    `cache.settings` (NFR-1).
     """
     from .cache.constants import MODE_OFF
-    from .cache.settings import resolve_result_cache_settings
+    from .cache.settings import opted_in_count, resolve_result_cache_settings
 
     cfg = _load_project_config_or_exit()
     settings, warnings = resolve_result_cache_settings(
@@ -406,7 +413,37 @@ def _build_result_cache(
         typer.echo(f"WARNING: {w}", err=True)
     if settings.mode == MODE_OFF:
         return None
-    return None  # construction half: T-o95l1M (ResultCache.from_settings + banner)
+    from .cache.coordinator import ResultCache
+
+    rc = ResultCache.from_settings(workspace_root=workspace, settings=settings)
+    n, m = opted_in_count(wf)
+    note = (
+        f"{n} of {m} static task(s) opted in"
+        if n
+        else "but no task opts in (set defaults.cache: true or tasks[].cache: true)"
+    )
+    typer.echo(
+        f"Result cache: {settings.mode} (source={settings.source}), {note}, at {rc.root}",
+        err=True,
+    )
+    for w in rc.warnings:
+        typer.echo(f"WARNING: {w}", err=True)
+    return rc
+
+
+def _echo_result_cache_line(block: dict | None) -> None:
+    """Print the run-summary line (HLD 8.8.3) for a run block; nothing when there is none.
+
+    Callers pass a block only when the run has result-cache records, so `cache.report` is
+    imported lazily and never for a run the cache did not touch (D9).
+    """
+    if not block:
+        return
+    from .cache.report import format_summary_line
+
+    line = format_summary_line(block)
+    if line is not None:
+        typer.echo(line)
 
 
 # Env var carrying the workspace-scoped general-instruction list, os.pathsep-separated
@@ -1239,9 +1276,8 @@ def run(
         budget_manager = DefaultBudgetManager(effective_budget, clock)
         estimator = HeuristicTokenEstimator(store)
 
-    # Result cache (E-Rc4Hk8): resolve the mode and echo any warnings. Resolution half only --
-    # T-o95l1M completes `_build_result_cache` and passes its result to the Orchestrator.
-    _build_result_cache(cache, workspace, wf)
+    # Result cache (E-Rc4Hk8): resolve the mode, print the banner/warnings; None when off.
+    result_cache = _build_result_cache(cache, workspace, wf)
 
     # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
@@ -1267,6 +1303,7 @@ def run(
         isolation_env=eff_isolation_env,
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         run_prompt=run_prompt,
+        result_cache=result_cache,
     )
 
     try:
@@ -1593,9 +1630,8 @@ def resume(
 
     executor = DispatchExecutor()
 
-    # Result cache (E-Rc4Hk8): resolve the mode and echo any warnings. Resolution half only --
-    # T-o95l1M completes `_build_result_cache` and passes its result to the Orchestrator.
-    _build_result_cache(cache, workspace, wf)
+    # Result cache (E-Rc4Hk8): resolve the mode, print the banner/warnings; None when off.
+    result_cache = _build_result_cache(cache, workspace, wf)
 
     # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
@@ -1620,6 +1656,7 @@ def resume(
         isolation_strict=eff_isolation_strict,
         isolation_env=eff_isolation_env,
         record_git_heads=_resolve_record_git_heads(record_git_heads),
+        result_cache=result_cache,
     )
 
     try:
@@ -2021,6 +2058,17 @@ def report_usage(
     if report.feedback_errors:
         fb_txt += f" ({report.feedback_errors} unreadable)"
     typer.echo(f"{fb_txt} | survival: {survival_txt}")
+    rcu = report.result_cache  # None unless a scanned run has result-cache records
+    if rcu is not None and rcu.hits > 0:
+        typer.echo(
+            f"Result cache: {rcu.hits} hit(s) across scanned runs, ~${rcu.saved_cost_usd:.4f} "
+            "avoided (est.; source-run cost incl. retries; not in costs below)"
+        )
+    if rcu is not None and rcu.would_hits > 0:
+        typer.echo(
+            f"Result cache (shadow): {rcu.would_hits} would-hit(s) of {rcu.lookups} lookup(s), "
+            f"~${rcu.avoidable_cost_usd:.4f} avoidable (est.)"
+        )
     if report.outcomes:
         typer.echo("\nOutcome vs charter")
         for o in report.outcomes:
