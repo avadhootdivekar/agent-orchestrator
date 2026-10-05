@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev C)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Rev 3, implemented)
+- Status: `Done`
 - Estimate: `10 focus hours (1.25 days)` · Sprint 3 · surfaces
 
 ## Requirements Mapping
@@ -42,6 +42,7 @@ re-run the build after merging the sibling epics. Never hand-merge the bundle.
 - `src/agent_orchestrator/ui/runs.py`, `src/agent_orchestrator/ui/files.py`
 - `ui/src/types.ts`, `ui/src/components/RunDetail.tsx`
 - `tests/ui/test_result_cache_ui.py` (new; counts toward the existing dashboard coverage gate)
+- `tests/ui/test_run_graph_endpoint.py` (**amended, two expected-key sets only**; see Comments)
 - `ui/src/test/run-detail-result-cache.test.tsx` (new)
 - `src/agent_orchestrator/ui/static/**` (rebuilt bundle, separate commit)
 
@@ -104,3 +105,4 @@ files.py: cache_root = realpath(join(root, ".orchestrator", "cache"))
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: Rev 3 (early-gate C, D; staffing):
   lazy import (U-LZ2); backend tests in `tests/ui/` (dashboard coverage gate); the rebuilt bundle
   is a separate commit; exact D35 fields; owner moves to Dev C (HLD §22.1).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: Implemented (commits `faf8f57` source+tests, `4e61e68` bundle). Deviation: the existing additive-only key-pin test `tests/ui/test_run_graph_endpoint.py::TestAdditiveOnly::test_only_the_three_documented_keys_are_new` pins the exact run-detail / task key sets, so the two `result_cache` keys that D-1a mandates (null for a run without records) required adding `result_cache` to its two expected sets (no assertion weakened). Status Done; matches `STATUS.md`, `HANDOFF.md` and the epic rollup.

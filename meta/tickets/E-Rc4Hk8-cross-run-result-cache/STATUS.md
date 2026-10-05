@@ -57,12 +57,12 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-ZTxN1x-bench-cache-force-off | engine set | Dev B | 4 h | Done |
 | T-nPMuz4-cache-shadow-value-check | surfaces | Tester (+ manager) | 6 h | Done |
 | T-6tRKml-cache-cli-commands | surfaces | Dev C | 17 h | Done |
-| T-bLpoze-cache-dashboard-surface | surfaces | Dev C | 10 h | Draft |
+| T-bLpoze-cache-dashboard-surface | surfaces | Dev C | 10 h | Done |
 | T-JCOAsq-cache-test-hardening | Part 1 before T-XpF1pF; Parts 2–3 hardening | Tester | 24 h | In Progress (Part 1 done) |
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
 | T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
 
-**Counts:** 20 tasks: 3 Draft, 1 In Progress (T-JCOAsq, Part 1 done), 0 In Review, 0 Blocked, 16 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 2 Draft, 1 In Progress (T-JCOAsq, Part 1 done), 0 In Review, 0 Blocked, 17 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
@@ -132,3 +132,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Gate G1b PASS (reports `output/E-Rc4Hk8-cross-run-result-cache/review-g1b.md`, `review-g1b-security.md`). Engine diff net +105 / 12 in-function lines (budget +110 / 12). Next: surfaces (T-nPMuz4, T-6tRKml, T-bLpoze), then T-JCOAsq Parts 2-3, G2, T-bdQZW4.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-6tRKml -> Done (commit `033dd79`). Rollup row and counts updated (4 Draft, 1 In Progress, 15 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 191 new tests (138 e2e CliRunner, 32 restore-sweep unit, 21 safeio); cache/cli.py, cli_ops.py and restore_sweep.py at 100% line coverage; full suite 6572 passed, 10 skipped (6582 collected).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-nPMuz4 -> In Review (commit `edc3c18`), manager sign-off pending (AC-6). Rollup row and counts updated (3 Draft, 1 In Progress, 1 In Review, 15 Done); `EPIC.md` line annotated (box not ticked until sign-off); matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. G0 gate line: protocol shipped, execution post-merge, not run. Evidence `output/E-Rc4Hk8-cross-run-result-cache/g0-protocol-smoke.md`; `tests/cache` + spawn-provenance + NFR-2 gate: 1301 passed. No `src/` change, full suite not run.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-bLpoze -> Done (commits `faf8f57` source + tests, `4e61e68` bundle, separate). Rollup row and counts updated (2 Draft, 1 In Progress, 17 Done; T-nPMuz4 is Done per the manager sign-off in `c8a91dc`); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. The G1b hard G2 exit item (dashboard deny-list for `.orchestrator/cache`) is delivered. Surfaces set complete; next T-JCOAsq Parts 2-3, G2, T-bdQZW4. Bundle: drop and rebuild after merging sibling dashboard epics.
