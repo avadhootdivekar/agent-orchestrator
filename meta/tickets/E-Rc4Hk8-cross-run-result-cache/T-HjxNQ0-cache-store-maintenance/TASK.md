@@ -5,8 +5,8 @@
 - Epic ID: `E-Rc4Hk8-cross-run-result-cache`
 - Owner: `developer` (Dev C)
 - Created: `2026-10-04`
-- Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Last Updated: `2026-10-05` (Rev 3; implemented)
+- Status: `Done`
 - Estimate: `15 focus hours (1.9 days)` · Sprint 2
 
 ## Requirements Mapping
@@ -117,3 +117,6 @@ HLD §8.4.3 (the part "added by T-HjxNQ0") verbatim.
   manager B): this task adds the `CacheAdmin` base; inline enforcement is also bounded by
   entry-file bytes; `verify` is read-only (`--repair` deferred); U-SM13 is non-vacuous;
   re-estimated from 16 h to 15 h.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done. Delivered as commit
+  `6753c71`. All 16 acceptance criteria pass; evidence in `STATUS.md`, frozen names and the small
+  deviations in `HANDOFF.md`.

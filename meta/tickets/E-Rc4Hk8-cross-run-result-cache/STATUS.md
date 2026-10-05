@@ -49,7 +49,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-uoYW6b-cache-key-builder | core set | Dev A | 20 h | Done |
 | T-U7ckfd-cache-store-core | core set | Dev C | 17 h | Done |
 | T-u3jG8F-cache-restore-capture | core set | Dev B | 16 h | Done |
-| T-HjxNQ0-cache-store-maintenance | core set | Dev C | 15 h | Draft |
+| T-HjxNQ0-cache-store-maintenance | core set | Dev C | 15 h | Done |
 | T-gDNjN2-cache-coordinator | engine set | Dev A | 20 h | Draft |
 | T-XpF1pF-cache-engine-integration | engine set | Dev A | 16 h | Draft |
 | T-eyn5UG-cache-reporting | engine set | Dev B | 18 h | Draft |
@@ -62,12 +62,12 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
 | T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
 
-**Counts:** 20 tasks: 12 Draft, 0 In Progress, 0 Blocked, 8 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 11 Draft, 0 In Progress, 0 Blocked, 9 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
 |------|------|-------|
-| G1a | after the core set | not started |
+| G1a | after the core set | ready to start (core set complete: all 9 core-set tasks Done); not started |
 | G1b | after the engine set | not started |
 | G2 | after T-JCOAsq Part 3 | not started |
 | G0 (value; business go/no-go) | **post-merge**, parent or operator | not part of this epic; T-nPMuz4 ships the protocol |
@@ -120,3 +120,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-uoYW6b -> Done (commit 95dab70). Rollup row and counts updated (14 Draft, 6 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Full suite after T-8tr1H4 + T-uoYW6b: 5787 passed, 10 skipped, 0 failed (baseline 5583). Gate G1a not started (core set incomplete: T-U7ckfd, T-u3jG8F, T-HjxNQ0 remain).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-U7ckfd -> Done (commit 181bbbb). Rollup row and counts updated (13 Draft, 7 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Gate G1a not started (core set incomplete: T-u3jG8F, T-HjxNQ0 remain).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-u3jG8F -> Done (commit 87814ea). Rollup row and counts updated (12 Draft, 8 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Gate G1a not started (core set incomplete: T-HjxNQ0 remains).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-HjxNQ0 -> Done (commit 6753c71). Rollup row and counts updated (11 Draft, 9 Done); `EPIC.md` checkbox ticked; gate G1a is ready to start (core set complete); matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Full suite after the core-set group (T-U7ckfd + T-u3jG8F + T-HjxNQ0): 6027 passed, 10 skipped, 0 failed (5787 after the previous group; baseline 5583).
