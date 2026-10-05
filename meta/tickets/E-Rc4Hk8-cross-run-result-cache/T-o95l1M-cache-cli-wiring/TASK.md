@@ -6,7 +6,7 @@
 - Owner: `developer` (Dev B)
 - Created: `2026-10-05`
 - Last Updated: `2026-10-05` (Rev 3)
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `8 focus hours (1 day)` · Sprint 3 (after T-XpF1pF) · engine set
 
 ## Requirements Mapping
@@ -94,3 +94,4 @@ HLD §8.1.7 `_build_result_cache` (full version) verbatim; §8.8.3 / §8.8.4 pri
   banner prints the factory's nested-repository warnings; summary and usage lines import
   `cache.report` lazily (U-LZ2); `report-usage` prints a shadow line; the e2e wrapper supplies
   cost.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: State -> Done (commit `e882b31`). All acceptance criteria pass; evidence, deviations and the `cache.cli` CLI-path decision in `STATUS.md` / `HANDOFF.md`.

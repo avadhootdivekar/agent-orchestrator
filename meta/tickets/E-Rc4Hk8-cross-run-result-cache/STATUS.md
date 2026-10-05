@@ -53,7 +53,7 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-gDNjN2-cache-coordinator | engine set | Dev A | 20 h | Done |
 | T-XpF1pF-cache-engine-integration | engine set | Dev A | 16 h | Done |
 | T-eyn5UG-cache-reporting | engine set | Dev B | 18 h | Done |
-| T-o95l1M-cache-cli-wiring | engine set | Dev B | 8 h | Draft |
+| T-o95l1M-cache-cli-wiring | engine set | Dev B | 8 h | Done |
 | T-ZTxN1x-bench-cache-force-off | engine set | Dev B | 4 h | Draft |
 | T-nPMuz4-cache-shadow-value-check | surfaces | Tester (+ manager) | 6 h | Draft |
 | T-6tRKml-cache-cli-commands | surfaces | Dev C | 17 h | Draft |
@@ -62,13 +62,13 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
 | T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
 
-**Counts:** 20 tasks: 7 Draft, 1 In Progress (T-JCOAsq, Part 1 done), 0 Blocked, 12 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 6 Draft, 1 In Progress (T-JCOAsq, Part 1 done), 0 Blocked, 13 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
 |------|------|-------|
 | G1a | after the core set | **PASS** (2026-10-05): reviewer PASS (0 MUST-FIX); dev-security FAIL on SEC-01 -> fixed in `763375f`, re-verified PASS (0 open MUST-FIX; full suite 6081 passed / 10 skipped / 0 failed) |
-| G1b | after the engine set | not started (engine set: T-gDNjN2, T-XpF1pF and T-eyn5UG Done; T-o95l1M, T-ZTxN1x remain) |
+| G1b | after the engine set | not started (engine set: T-gDNjN2, T-XpF1pF, T-eyn5UG and T-o95l1M Done; T-ZTxN1x remains) |
 | G2 | after T-JCOAsq Part 3 | not started |
 | G0 (value; business go/no-go) | **post-merge**, parent or operator | not part of this epic; T-nPMuz4 ships the protocol |
 
@@ -127,3 +127,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-gDNjN2 -> Done (commit `d14f07d`). Rollup row and counts updated (10 Draft, 10 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 107 new tests (coordinator 97, records 10), coordinator and records line coverage 100%; `tests/cache` + spawn-provenance: 1045 passed. Full suite not run (new files only, no shared module touched). Gate G1b not started (engine set incomplete: T-XpF1pF, T-eyn5UG, T-o95l1M, T-ZTxN1x remain).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-XpF1pF -> Done (commit `b7ca9c7`). Rollup row and counts updated (8 Draft, 1 In Progress, 11 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. Engine diff net +103 formatted lines, 12 added lines inside existing functions. Full suite: 6249 passed, 10 skipped, 1 failed (a pre-existing thread-timing flake in `tests/test_wave_scheduler.py`, passes in isolation). Gate G1b not started (T-eyn5UG, T-o95l1M, T-ZTxN1x remain).
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-eyn5UG -> Done (commit `cbf9152`). Rollup row and counts updated (7 Draft, 1 In Progress, 12 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 52 new tests; existing runstate/usage/outcomes tests unedited and green. Gate G1b not started (T-o95l1M, T-ZTxN1x remain).
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-o95l1M -> Done (commit `e882b31`). Rollup row and counts updated (6 Draft, 1 In Progress, 13 Done); `EPIC.md` checkbox ticked; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 27 new wiring tests; CLI/e2e modules 417 passed unedited. Decision (manager): `agent_orchestrator.cache.cli` is allowed on the CLI path (HLD E-2 deviation, recorded in the task `HANDOFF.md` for T-bdQZW4; T-6tRKml must keep `cache/cli.py` import-light). Gate G1b not started (T-ZTxN1x remains).
