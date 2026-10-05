@@ -148,6 +148,7 @@ PINNED_CONSTANTS: list[tuple[str, object]] = [
     ("LOCK_POLL_SECONDS", 0.05),
     ("STORE_RETRY_AFTER_SECONDS", 5),
     ("MAX_USERS", 1000),
+    ("STORE_FILE_MAX_BYTES", 16 * 1024 * 1024),
     ("USER_ID_BYTES", 16),
     ("STORE_SCHEMA_VERSION", 1),
     ("KNOWN_STORE_FEATURES", frozenset()),

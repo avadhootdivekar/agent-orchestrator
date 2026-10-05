@@ -101,6 +101,9 @@ STORE_LOCK_TIMEOUT_SECONDS = 5.0
 LOCK_POLL_SECONDS = 0.05
 STORE_RETRY_AFTER_SECONDS = 5
 MAX_USERS = 1000
+# Upper bound on a store/lockout JSON file we will parse (L-5): ~1000 users are well under 4 MiB;
+# anything larger is treated as corrupt rather than read into memory.
+STORE_FILE_MAX_BYTES = 16 * 1024 * 1024
 USER_ID_BYTES = 16
 STORE_SCHEMA_VERSION = 1
 KNOWN_STORE_FEATURES: frozenset[str] = frozenset()

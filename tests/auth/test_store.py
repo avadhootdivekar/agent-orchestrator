@@ -242,6 +242,24 @@ class TestSnapshot:
         with pytest.raises(StoreCorruptError, match="not valid JSON"):
             store.snapshot()
 
+    def test_an_oversized_users_file_is_corrupt_and_unknown_not_read(
+        self, store: UserStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """T-2wE08U L-5: a file over STORE_FILE_MAX_BYTES is refused, never parsed."""
+        monkeypatch.setattr(store_mod, "STORE_FILE_MAX_BYTES", 64)
+        store.paths.users_file.write_text('{"schema_version": 1, "pad": "' + "x" * 100 + '"}')
+        with pytest.raises(StoreCorruptError, match="larger than"):
+            store.snapshot()
+        assert store.count_users() is None  # fail closed: unknown, not zero
+
+    def test_a_file_exactly_at_the_cap_is_still_read(
+        self, store: UserStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            store_mod, "STORE_FILE_MAX_BYTES", store.paths.users_file.stat().st_size
+        )
+        assert list(store.snapshot().users) == ["alice"]
+
     @pytest.mark.parametrize("version", [None, "1", True, 0, -1])
     def test_missing_or_invalid_schema_version_is_corrupt(
         self, store: UserStore, version: object

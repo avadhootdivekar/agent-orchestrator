@@ -579,6 +579,18 @@ class TestCorruption:
             store.check_readable()
         assert store._paths.lockouts_file.read_bytes() == content  # never silently rewritten
 
+    def test_an_oversized_lockouts_file_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """T-2wE08U L-5: over STORE_FILE_MAX_BYTES is refused unread, like a corrupt file."""
+        store = make_lockout_store(tmp_path)
+        store._paths.lockouts_file.write_text("{" + " " * 200 + "}")
+        monkeypatch.setattr("agent_orchestrator.auth.store.STORE_FILE_MAX_BYTES", 64)
+        with pytest.raises(StoreCorruptError, match="larger than"):
+            store.check_readable()
+        with pytest.raises(StoreUnavailableError):
+            store.state(ACCOUNT)
+
     def test_the_corrupt_error_message_has_no_values(self, tmp_path: Path) -> None:
         store = make_lockout_store(tmp_path)
         secret = "ab" * 32

@@ -38,6 +38,7 @@ from .constants import (
     KNOWN_STORE_FEATURES,
     MAX_USERS,
     RECOVERY_SALT_BYTES,
+    STORE_FILE_MAX_BYTES,
     STORE_LOCK_TIMEOUT_SECONDS,
     STORE_SCHEMA_VERSION,
     USER_ID_BYTES,
@@ -233,18 +234,34 @@ def _check_compatibility(path: Path, data: dict[str, object]) -> None:
         )
 
 
+def read_capped(path: Path) -> bytes:
+    """Read a store/lockout JSON file, refusing one over ``STORE_FILE_MAX_BYTES`` (L-5).
+
+    Raises ``FileNotFoundError`` (missing), ``StoreUnavailableError`` (cannot read) or
+    ``StoreCorruptError`` (over the cap: it was not written by this program).
+    """
+    try:
+        # Size first: the files are owner-only and replaced atomically, so a stat is enough to
+        # keep an absurd file out of memory; the length check below covers a race with a writer.
+        if path.stat().st_size > STORE_FILE_MAX_BYTES:
+            raise StoreCorruptError(f"{path}: larger than {STORE_FILE_MAX_BYTES} bytes")
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise StoreUnavailableError(cause_for_log=f"cannot read {path}: {exc}") from exc
+    if len(raw) > STORE_FILE_MAX_BYTES:
+        raise StoreCorruptError(f"{path}: larger than {STORE_FILE_MAX_BYTES} bytes")
+    return raw
+
+
 def load_store_file(path: Path) -> UserStoreFile:
     """Read, parse and validate ``users.json``.
 
     Raises ``StoreUnavailableError`` (cannot read), ``StoreCorruptError`` (not JSON, wrong shape,
     unsupported schema/feature) or ``FileNotFoundError`` (callers handle the missing case).
     """
-    try:
-        raw = path.read_bytes()
-    except FileNotFoundError:
-        raise
-    except OSError as exc:
-        raise StoreUnavailableError(cause_for_log=f"cannot read {path}: {exc}") from exc
+    raw = read_capped(path)
     try:
         data = json.loads(raw)
     except (ValueError, RecursionError) as exc:  # includes UnicodeDecodeError

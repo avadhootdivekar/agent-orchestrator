@@ -52,7 +52,7 @@ from .paths import StorePaths
 from .seams import SYSTEM_CLOCK, SYSTEM_ENTROPY, Clock, Entropy
 
 # ``_field_paths`` is the one routine that renders a pydantic error without echoing the input.
-from .store import _field_paths, canonical_json, format_timestamp, parse_timestamp
+from .store import _field_paths, canonical_json, format_timestamp, parse_timestamp, read_capped
 
 _log = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -175,12 +175,7 @@ def load_lockout_file(path: Path) -> LockoutFile:
     Raises ``StoreUnavailableError`` (cannot read), ``StoreCorruptError`` (not JSON, wrong shape,
     unsupported schema) or ``FileNotFoundError`` (callers treat a missing file as empty).
     """
-    try:
-        raw = path.read_bytes()
-    except FileNotFoundError:
-        raise
-    except OSError as exc:
-        raise StoreUnavailableError(cause_for_log=f"cannot read {path}: {exc}") from exc
+    raw = read_capped(path)
     try:
         data = json.loads(raw)
     except (ValueError, RecursionError) as exc:  # includes UnicodeDecodeError
