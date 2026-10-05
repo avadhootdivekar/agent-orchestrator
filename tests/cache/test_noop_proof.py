@@ -117,7 +117,9 @@ class TestPoisonedFinder:
 
     def test_finder_uses_the_hook_python_actually_calls(self) -> None:
         assert callable(getattr(poison.PoisonedFinder, "find_spec", None))
-        assert not hasattr(poison.PoisonedFinder, "find_module")
+        # Python 3.11's MetaPathFinder still inherits a legacy find_module (removed in 3.12), so
+        # assert the finder does not define its own rather than that the attribute is absent.
+        assert "find_module" not in vars(poison.PoisonedFinder)
 
     def test_import_statement_fails_in_a_fresh_interpreter(self) -> None:
         """End to end through the real import machinery, with the allowed modules still fine."""

@@ -42,8 +42,6 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from .cache.cli import cache_app
-
 # `models.py` is already imported transitively by `.service.cli` below (confirmed: this is
 # NOT a new eager-import cost) -- unlike `.engine`/`.artifacts`/etc, which stay lazy
 # per-function per this module's own convention, these are two plain string constants
@@ -55,6 +53,7 @@ from .cache.cli import cache_app
 # `project_config.IsolationConfig.mode`.
 from .auth.cli import app as auth_app
 from .auth.model import TotpPolicy
+from .cache.cli import cache_app
 from .models import ISOLATION_NONE, ISOLATION_WORKTREE
 from .service.cli import app as service_app
 

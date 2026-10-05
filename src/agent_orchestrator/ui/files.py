@@ -26,9 +26,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
 
-from ..auth.paths import entry_is_denied, is_within
 # `agent_orchestrator.cache` is an import-free package marker; `.constants` is a leaf (only `re`).
 from agent_orchestrator.cache.constants import CACHE_DIR_PARTS
+
+from ..auth.paths import entry_is_denied, is_within
 
 # Cap on bytes returned for a single file view. A code/log browser needs enough to be
 # useful but must never stream an unbounded file into memory; larger files are returned
