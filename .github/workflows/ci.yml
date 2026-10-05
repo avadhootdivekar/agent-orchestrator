@@ -1,5 +1,8 @@
 name: CI
 on: [push, pull_request]
+# Least privilege (T-2wE08U): no job needs more than read access to the repository.
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -57,3 +60,20 @@ jobs:
         run: git diff --exit-code -- ../src/agent_orchestrator/ui/static ../src/agent_orchestrator/auth/assets
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
+
+  pip-audit:
+    # Separate job (like `frontend`): it needs the network (PyPI advisory DB), so an outage there
+    # can never block the engine's own test signal. Audits the locked runtime closure + `ui` extra.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        run: pip install uv
+      - name: Export the locked runtime dependencies
+        run: uv export --extra ui --no-dev --no-hashes --no-emit-project -o requirements-audit.txt
+      - name: Audit Python dependencies
+        # --no-deps: the export is already fully pinned, so pip-audit must not re-resolve.
+        run: uvx pip-audit -r requirements-audit.txt --no-deps --disable-pip
