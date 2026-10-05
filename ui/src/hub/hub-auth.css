@@ -1,0 +1,85 @@
+/* Hub login page (HLD §17.6). External file only: the page's CSP allows no inline style. */
+:root {
+  color-scheme: light dark;
+  --ao-bg: #f6f7f9;
+  --ao-fg: #1b1f24;
+  --ao-card: #fff;
+  --ao-border: #c5ccd6;
+  --ao-accent: #1f5fbf;
+  --ao-accent-fg: #fff;
+  --ao-error-bg: #fde8e8;
+  --ao-error-fg: #7a1010;
+  --ao-warn-bg: #fff3cd;
+  --ao-warn-fg: #5c4400;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ao-bg: #14181d;
+    --ao-fg: #e6e9ee;
+    --ao-card: #1d232b;
+    --ao-border: #3a4350;
+    --ao-accent: #6ea8ff;
+    --ao-accent-fg: #0b1220;
+    --ao-error-bg: #4a1a1a;
+    --ao-error-fg: #ffd2d2;
+    --ao-warn-bg: #4a3a0a;
+    --ao-warn-fg: #ffe9a8;
+  }
+}
+body {
+  margin: 0;
+  background: var(--ao-bg);
+  color: var(--ao-fg);
+  font: 16px/1.5 system-ui, sans-serif;
+}
+#ao-auth {
+  box-sizing: border-box;
+  max-width: 28rem;
+  margin: 3rem auto;
+  padding: 1.5rem;
+  background: var(--ao-card);
+  border: 1px solid var(--ao-border);
+  border-radius: 8px;
+}
+#ao-auth h1 { font-size: 1.25rem; margin-top: 0; }
+#ao-auth h2 { font-size: 1.05rem; }
+#ao-auth label { display: block; margin: 0.75rem 0; }
+#ao-auth input:not([type="checkbox"]) {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+  font: inherit;
+  color: inherit;
+  background: var(--ao-bg);
+  border: 1px solid var(--ao-border);
+  border-radius: 4px;
+}
+#ao-auth button {
+  margin: 0.25rem 0.25rem 0.25rem 0;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  color: var(--ao-accent-fg);
+  background: var(--ao-accent);
+  border: 1px solid var(--ao-accent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+#ao-auth button[type="button"] { color: var(--ao-fg); background: transparent; border-color: var(--ao-border); }
+#ao-auth button:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Visible focus (NFR-10): never rely on the browser default alone. */
+#ao-auth :focus-visible, #ao-logout:focus-visible {
+  outline: 3px solid var(--ao-accent);
+  outline-offset: 2px;
+}
+.ao-warn, #ao-error {
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  border-left: 4px solid currentColor;
+}
+.ao-warn { background: var(--ao-warn-bg); color: var(--ao-warn-fg); }
+#ao-error { background: var(--ao-error-bg); color: var(--ao-error-fg); }
+/* The author's `display` rules must not override the `hidden` attribute. */
+#ao-auth [hidden] { display: none; }
+code { word-break: break-all; }

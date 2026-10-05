@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Agent Orchestrator Service</title>
+<link rel="stylesheet" href="/auth-assets/hub-auth.css"><script src="/auth-assets/hub-auth.js" defer></script></head>
+<body><main id="ao-auth" data-page="login">
+  <h1>Agent Orchestrator Service</h1>
+  <p id="ao-transport-warning" class="ao-warn" hidden>This connection is not encrypted. Your password and codes can be read on the network.</p>
+  <div id="ao-error" role="alert" aria-live="assertive" hidden></div>
+  <form id="ao-login-form" novalidate>
+    <label>Username <input id="ao-username" name="username" autocomplete="username" required></label>
+    <label>Password <input id="ao-password" name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Sign in</button></form>
+  <form id="ao-totp-form" novalidate hidden>
+    <label id="ao-code-label">Authentication code <input id="ao-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7"></label>
+    <label id="ao-recovery-label" hidden>Recovery code <input id="ao-recovery" autocomplete="off" maxlength="24"></label>
+    <button type="button" id="ao-toggle-recovery">Use a recovery code instead</button>
+    <button type="submit">Verify</button> <button type="button" id="ao-signout">Sign out</button></form>
+  <section id="ao-enroll" hidden>
+    <h2>Set up two-factor authentication</h2>
+    <p>Add this account to your authenticator app with "Enter a setup key", then type the 6-digit code it shows.
+       (QR codes are shown in workspace dashboards.)</p>
+    <form id="ao-enroll-token-form" novalidate><label>Enrollment token (from your operator: <code>ao auth enrollment-token &lt;you&gt;</code>)
+      <input id="ao-enroll-token" autocomplete="off" maxlength="24"></label><button type="submit">Continue</button></form>
+    <p>Setup key: <code id="ao-enroll-secret"></code> <button type="button" id="ao-copy-secret">Copy</button></p>
+    <p>Setup URI: <code id="ao-enroll-uri"></code> <button type="button" id="ao-copy-uri">Copy</button></p>
+    <form id="ao-enroll-form" novalidate><label>Code <input id="ao-enroll-code" inputmode="numeric" autocomplete="one-time-code"></label>
+      <button type="submit">Confirm</button></form></section>
+  <section id="ao-recovery-codes" hidden>
+    <h2>Save your recovery codes</h2><p>Each code works once. They are shown only now.</p>
+    <ol id="ao-recovery-list"></ol><button type="button" id="ao-copy-codes">Copy all</button>
+    <label><input type="checkbox" id="ao-codes-ack"> I have stored these codes</label>
+    <button type="button" id="ao-continue" disabled>Continue</button></section>
+  <noscript>Signing in requires JavaScript.</noscript>
+</main></body></html>

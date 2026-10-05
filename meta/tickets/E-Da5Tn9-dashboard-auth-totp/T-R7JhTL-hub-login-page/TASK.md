@@ -6,7 +6,7 @@
 - Owner: `developer` (frontend lane F)
 - Created: `2026-10-04`
 - Last Updated: `2026-10-05`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `3 days` (v2: 2.5; +0.5 d for the v2.1 shared contract test) · Sprint `S1→S2` (lane
   F starts it after T-pQ73eO and finishes it early in S2; HLD §24.2–§24.3). It runs in parallel
   with the backend and depends only on the frozen HLD §2 contract, plus T-pQ73eO for the contract
