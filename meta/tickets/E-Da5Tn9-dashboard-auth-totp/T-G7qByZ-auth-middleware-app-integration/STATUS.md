@@ -2,11 +2,21 @@
 
 - ID: `T-G7qByZ-auth-middleware-app-integration`
 - Updated At: `2026-10-05`
-- State: `In Progress` (S1 stub phase complete; remainder = S2 final wiring, blocked on T-XchniS)
+- State: `Done`
 - Owner: `developer` (lane C)
 - Scope: `MVP` · Sprint: `S1→S2` · Estimate: `3 d`
 
 ## This update
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: **S2 final wiring done** (with
+  T-XchniS). `AuthRuntimeLike` / `_ProviderLike` (middleware) and `RealmLike` (responses) are gone;
+  `AuthMiddleware`, `create_app(auth=...)` and the response builders are annotated with the real
+  `runtime.AuthRuntime` / `runtime.Realm` through `TYPE_CHECKING` imports (no new import-time
+  edge, auth-off dashboards never import `runtime`). `tests/auth/conftest.py::stub_runtime` is
+  parametrized over `stub` and `real` (`tests/auth/helpers/real_runtime.py`: `RealRuntime` is an
+  `AuthRuntime` subclass over `build_auth_runtime` with a real `LocalPasswordProvider` and a real
+  `users.json`; `issue_session` was factored out of `StubRuntime.issue` so both share it). Every
+  HTTP-edge test (middleware, partial confinement, route enumeration, auth-off) now runs against
+  both. Only the `[real]`/`[stub]` ids differ from before; no test body changed.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: **S1 (stub-runtime phase) done;
   the S2 final wiring is the explicit remainder.** Implemented `auth/http/{__init__,responses,
   middleware,routes}.py`, the `ui/app.py` edits (§16 #1 a, b, c, f, h; g is a test), and the
@@ -68,6 +78,11 @@
   default. The exact allowlist is in HLD §13.2.
 
 ## Evidence
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: S2 remainder, worktree
+  `.venv/bin/python`: `python -m pytest -q tests/auth tests/ui -p no:warnings` -> `2299 passed,
+  2 skipped` (tests/ui unmodified: 629 passed, 2 skipped); `-k real` on `test_middleware.py` ->
+  36 passed; `ruff check src tests` clean, `ruff format --check src tests` clean, `mypy src` only
+  the 4 pre-existing `_version.py` errors.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: commands run in the worktree
   (all from the repo root with `.venv/bin/python`):
   - `python -m pytest -q tests/ui -p no:warnings` -> `593 passed, 2 skipped` (unmodified; same
@@ -92,7 +107,5 @@
   is DECIDED (D25 in the MVP).
 
 ## Next actions
-1. developer: after T-XchniS, do the S2 final wiring (see This update, Remainder) and rerun the
-   verification, including `tests/ui` unmodified.
-2. T-QJ1vyQ: fill the three marked hooks in `auth/http/middleware.py`.
-3. T-rpKCjP: replace the `NotImplementedError` branch of `install_auth_routes`.
+1. T-rpKCjP: replace the `NotImplementedError` branch of `install_auth_routes` (the T-QJ1vyQ hooks
+   landed in c941cc0).

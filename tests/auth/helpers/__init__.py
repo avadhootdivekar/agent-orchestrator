@@ -15,5 +15,11 @@ Module                      Owner       Contents
 ``stub_runtime.py``         T-G7qByZ    ``StubRuntime``, ``StubRealm``,
                                         ``install_stub_auth_routes``
 ``enumeration.py``          T-G7qByZ    the route-enumeration harness (``iter_route_contexts``)
+``provider.py``             T-XchniS    ``make_env`` (real ``LocalPasswordProvider`` over
+                                        file-backed stores), ``make_settings``, ``CLIENT``,
+                                        ``read_audit``, ``RehashingHasher``
+``real_runtime.py``         T-XchniS    ``make_runtime`` / ``RealRuntime``: a real ``AuthRuntime``
+                                        with ``StubRuntime``'s test surface (parametrizes the
+                                        HTTP-edge fixture over ``stub`` and ``real``)
 ==========================  ==========  ======================================================
 """

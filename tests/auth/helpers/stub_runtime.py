@@ -161,23 +161,38 @@ class StubRuntime:
         roles: tuple[str, ...] = (),
     ) -> IssuedSession:
         """A fresh session of ``state`` for a user the provider knows (epoch 1)."""
-        if user_id not in self.provider._users:
-            self.provider.register(user_id)
-        identity = make_identity(
-            user_id=user_id,
-            roles=roles,
-            next_state=state,
-            credential_epoch=self.provider._users[user_id],
-        )
-        full = state is SessionState.FULL
-        issued = self.sessions.issue(
-            identity,
-            state,
-            client_key=STUB_CLIENT_KEY,
-            auth_method="password" if full else None,
-        )
-        self.issued.append(issued)
-        return issued
+        return issue_session(self, state, user_id=user_id, roles=roles)
+
+
+def issue_session(
+    runtime: Any,
+    state: SessionState = SessionState.FULL,
+    *,
+    user_id: str = STUB_USER_ID,
+    roles: tuple[str, ...] = (),
+) -> IssuedSession:
+    """A fresh session of ``state`` for ``user_id`` on ``runtime`` (stub or real; epoch as stored).
+
+    The runtime's provider must offer the ``StubProvider`` staging surface (``_users``,
+    ``register``); ``runtime.issued`` collects the result.
+    """
+    if user_id not in runtime.provider._users:
+        runtime.provider.register(user_id)
+    identity = make_identity(
+        user_id=user_id,
+        roles=roles,
+        next_state=state,
+        credential_epoch=runtime.provider._users[user_id],
+    )
+    full = state is SessionState.FULL
+    issued = runtime.sessions.issue(
+        identity,
+        state,
+        client_key=STUB_CLIENT_KEY,
+        auth_method="password" if full else None,
+    )
+    runtime.issued.append(issued)
+    return issued
 
 
 def make_stub_runtime(

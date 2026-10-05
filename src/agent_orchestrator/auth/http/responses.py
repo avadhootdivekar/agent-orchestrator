@@ -9,10 +9,13 @@ single-owner spelling lives here and nowhere else.
 from __future__ import annotations
 
 import json
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING
 
 from ..constants import WWW_AUTHENTICATE_SCHEME
 from ..errors import DEFAULT_DETAIL, AuthError, ErrorCode
+
+if TYPE_CHECKING:  # annotation only; this module stays framework- and I/O-free
+    from ..runtime import Realm
 
 SET_COOKIE_HEADER = b"set-cookie"
 CONTENT_TYPE_HEADER = b"content-type"
@@ -24,21 +27,6 @@ _COOKIE_ATTRIBUTES = "Path=/; HttpOnly; SameSite=Strict"
 _COOKIE_SECURE_ATTRIBUTE = "Secure"
 _COOKIE_EXPIRED_ATTRIBUTES = "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
 _COOKIE_PAIR_SEPARATOR = ";"
-
-
-class RealmLike(Protocol):
-    """The parts of ``runtime.Realm`` (HLD 11.16) that HTTP responses need."""
-
-    @property
-    def kind(self) -> Literal["ui", "hub"]: ...
-
-    @property
-    def id(self) -> str: ...
-
-    @property
-    def login_path(self) -> str: ...
-
-    def cookie_name(self, *, secure: bool) -> str: ...
 
 
 def json_bytes(payload: object) -> bytes:
@@ -57,12 +45,12 @@ def _cookie_header(name: str, value: str, extra: str, *, secure: bool) -> tuple[
     return SET_COOKIE_HEADER, "; ".join(parts).encode("latin-1")
 
 
-def session_cookie_header(realm: RealmLike, token: str, *, secure: bool) -> tuple[bytes, bytes]:
+def session_cookie_header(realm: Realm, token: str, *, secure: bool) -> tuple[bytes, bytes]:
     """The ``Set-Cookie`` that installs ``token`` (HttpOnly, SameSite=Strict, host-only)."""
     return _cookie_header(realm.cookie_name(secure=secure), token, "", secure=secure)
 
 
-def clear_cookie_header(realm: RealmLike, *, secure: bool) -> tuple[bytes, bytes]:
+def clear_cookie_header(realm: Realm, *, secure: bool) -> tuple[bytes, bytes]:
     """The ``Set-Cookie`` that deletes the realm cookie."""
     return _cookie_header(
         realm.cookie_name(secure=secure), "", _COOKIE_EXPIRED_ATTRIBUTES, secure=secure
@@ -104,7 +92,7 @@ def error_bytes(err: AuthError) -> bytes:
 
 
 def error_headers(
-    err: AuthError, realm: RealmLike, *, www_authenticate: bool
+    err: AuthError, realm: Realm, *, www_authenticate: bool
 ) -> list[tuple[bytes, bytes]]:
     """Response headers for ``err``: content type, the error's own (``Retry-After``), challenge."""
     headers = [(CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE)]

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .._version import get_version_string
-from ..auth.http.middleware import AuthMiddleware, AuthRuntimeLike
+from ..auth.http.middleware import AuthMiddleware
 from ..auth.http.routes import install_auth_routes
 from ..auth.policy import DASHBOARD_COOKIE_ONLY_NAVIGATION, DASHBOARD_ROUTE_POLICIES
 from ..feedback import MAX_NOTE_CHARS, REASONS, Rating, Reason, Scope
@@ -46,6 +46,9 @@ from .service import (
     DashboardStoreError,
     DashboardValidationError,
 )
+
+if TYPE_CHECKING:  # annotation only: the runtime module is not imported by an auth-off dashboard
+    from ..auth.runtime import AuthRuntime
 
 # Where the built frontend lands. Populated by `npm run build` in ui/ (see
 # ui/vite.config.ts, whose outDir points here) and shipped inside the wheel.
@@ -130,7 +133,7 @@ def create_app(
     service: DashboardService,
     *,
     allowed_hosts: frozenset[str] | None | _AllowedHostsUnset = _ALLOWED_HOSTS_UNSET,
-    auth: AuthRuntimeLike | None = None,
+    auth: AuthRuntime | None = None,
 ) -> FastAPI:
     """Build the dashboard app around an already-constructed *service*.
 

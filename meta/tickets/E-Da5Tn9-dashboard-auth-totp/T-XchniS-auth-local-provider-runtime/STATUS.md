@@ -2,11 +2,37 @@
 
 - ID: `T-XchniS-auth-local-provider-runtime`
 - Updated At: `2026-10-05`
-- State: `Draft`
+- State: `Done`
 - Owner: `developer` (lane A)
 - Scope: `MVP` · Sprint: `S2` · Estimate: `3 d`
 
 ## This update
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: **Done.** Implemented
+  `auth/guard.py` (`AttemptSubject`, `AttemptResult`, `AttemptGuard.attempt`, the `ok_if` /
+  `from_totp_outcome` / `from_recovery_outcome` adapters, `subject_for`, `lockout_call`),
+  `auth/provider.py` additions (`ClientInfo` with `proxy_suspected`, `UserView`, `AuthProvider`
+  ABC; `VerifiedIdentity` and `Revalidation` untouched), `auth/local_provider.py`
+  (`LocalPasswordProvider`, `normalize_username`) and `auth/runtime.py` (`Realm`, `AuthRuntime`,
+  `build_auth_runtime`, `runtime_of`, `audit_log_for`). Also did T-G7qByZ's S2 remainder (real
+  `AuthRuntime`/`Realm` types in the middleware, `create_app` and `responses.py`; HTTP-edge fixture
+  parametrized over stub and real). Decisions and notes for reviewers and downstream tasks:
+  - **`normalize_username`** (NFKC, strip, lower) did not exist anywhere; it lives in
+    `local_provider.py`. The CLI (T-j9dfsw) and routes should import it from there.
+  - **`LocalPasswordProvider(..., *, realm=None)`**: one additive keyword (the realm label for the
+    provider's own audit events: `second_factor_pending`, `password.changed`). `build_auth_runtime`
+    passes `realm.id`.
+  - **`Realm("ui", ...)` without `workspace_root` raises `ValueError`** (its id derives from it).
+  - **Phantom gate key is capped** at `MAX_USERNAME_CHARS` so a huge junk name cannot pin memory in
+    the 4096-entry gate table; the lockout bucket for malformed names is unchanged
+    (`INVALID_USERNAME_BUCKET` digest).
+  - **`name_digest` / `ensure_name_key` run through `run_sync`** (they can write when the key file
+    was deleted at runtime), in addition to the calls the ticket lists.
+  - **Lock timeouts and corrupt state map to `StoreUnavailableError`** (503, `cause_for_log` set)
+    at the guard/provider boundary, so the HTTP layer logs once and never leaks a path.
+  - **`startup_warnings` BLOCKED count excludes already-enrolled users**: an enrolled user is
+    challenged under every policy (S9) and can log in, so "cannot log in" would be wrong for them.
+  - `AuthRuntime.totp` is typed `Any | None` until T-yfrfxv lands `LocalTotpService` (L3 sibling
+    module; avoids a forward import). T-yfrfxv should tighten the annotation.
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: v2.1 gates folded (HLD §28.9).
   Estimate unchanged (3 d).
   - **Keyed phantom digests (security L1):** `authenticate` uses `lockouts.name_digest(uname)`
@@ -44,13 +70,27 @@
   logic (uniformity, lockout, replay, sticky enrollment). The verbatim pseudocode is in HLD §11.15.
 
 ## Evidence
-- None yet.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: commands run in the worktree
+  (`.venv/bin/python`):
+  - `python -m pytest -q tests/auth tests/ui -p no:warnings` -> `2299 passed, 2 skipped` (zero
+    failures; `tests/ui` unmodified and green).
+  - New suites: `test_guard.py` (25), `test_local_provider.py` (70), `test_runtime.py` (21),
+    `test_event_loop.py` (4); the HTTP-edge tests now also run `[real]` (`-k real`: 36 in
+    `test_middleware.py` alone).
+  - Coverage (`--cov=agent_orchestrator.auth`): `guard.py` 100 %, `local_provider.py` 100 %,
+    `provider.py` 100 %, `runtime.py` 100 % (AC 15 target 90 %).
+  - `ruff check src tests` -> all checks passed; `ruff format --check src tests` -> 349 files
+    already formatted; `mypy src` -> only the 4 pre-existing `_version.py` errors.
+  - AST layer test (`test_import_boundary.py`) passes for the four modules.
+  - Event loop (AC 13): `ThreadRecorder` shows zero watched calls on the loop thread for login
+    success/failure/phantom/rehash/partial, re-auth, change password and logout-everywhere; a
+    self-check test proves the harness flags a direct call on the loop.
 
 ## Risks / Blockers
-- None. The S1 modules (T-kzEzwy, T-s6sJmB, T-8NQP8J, T-kwwJ82, T-PlEROT, T-CsT5gk) must land
-  first. On the critical path (HLD §24.3).
+- None. Residual (documented, dev-security #12): dummy-hash timing for users still on legacy scrypt
+  parameters is not equalized.
 
 ## Next actions
-1. developer: implement once the S1 tasks land. Keep the §11.16 attribute names identical to
-   T-G7qByZ's `StubRuntime`, so its final wiring is a type swap. Run the verification and record
-   coverage here.
+1. T-yfrfxv: wire `LocalTotpService` into `build_auth_runtime` (`totp=`), reuse `guard.subject_for`,
+   `ok_if`, `from_*_outcome`; append its scenarios to `tests/auth/test_event_loop.py`.
+2. T-rpKCjP / T-jVqH8w: build on `runtime.py` (`build_auth_runtime` + `check_ready`).

@@ -11,7 +11,8 @@ from fastapi import FastAPI
 import agent_orchestrator.ui.app as ui_app
 from agent_orchestrator.ui.service import DashboardService
 from tests.auth.helpers.core import FakeClock
-from tests.auth.helpers.stub_runtime import StubRuntime, make_stub_runtime, stub_install_auth_routes
+from tests.auth.helpers.real_runtime import RealRuntime, RuntimeImpl, make_runtime
+from tests.auth.helpers.stub_runtime import StubRuntime, stub_install_auth_routes
 from tests.ui.conftest import StubSupervisor
 
 INDEX_HTML = "<!doctype html><title>spa shell</title>"
@@ -37,9 +38,19 @@ def fake_clock() -> FakeClock:
     return FakeClock()
 
 
-@pytest.fixture()
-def stub_runtime(tmp_path: Path, fake_clock: FakeClock) -> StubRuntime:
-    return make_stub_runtime(tmp_path, clock=fake_clock)
+@pytest.fixture(params=["stub", "real"])
+def stub_runtime(
+    request: pytest.FixtureRequest, tmp_path: Path, fake_clock: FakeClock
+) -> StubRuntime | RealRuntime:
+    """The runtime the HTTP-edge tests run against, parametrized (T-XchniS final wiring).
+
+    ``stub``: the duck-typed ``StubRuntime`` (T-G7qByZ, S1). ``real``: ``build_auth_runtime(...)``
+    with a real ``LocalPasswordProvider`` over a real ``users.json``. Same helper surface, so every
+    test using this fixture proves the middleware against both. (The name is kept: many tests
+    request it.)
+    """
+    impl: RuntimeImpl = request.param
+    return make_runtime(impl, tmp_path, clock=fake_clock)
 
 
 @pytest.fixture()
@@ -63,7 +74,7 @@ def build_dashboard(
     ones); with ``None`` the real ``install_auth_routes`` runs, exactly as in production.
     """
 
-    def factory(runtime: StubRuntime | None = None, *, built: bool = True) -> FastAPI:
+    def factory(runtime: StubRuntime | RealRuntime | None = None, *, built: bool = True) -> FastAPI:
         monkeypatch.setattr(ui_app, "STATIC_DIR", static_dir if built else static_dir / "missing")
         if runtime is not None:
             monkeypatch.setattr(ui_app, "install_auth_routes", stub_install_auth_routes)

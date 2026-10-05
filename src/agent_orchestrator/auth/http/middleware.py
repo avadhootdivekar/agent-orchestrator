@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.routing import BaseRoute, Match, Mount
@@ -49,15 +49,17 @@ from ..policy import (
     proof_required,
 )
 from ..provider import Revalidation
-from ..sessions import SessionManager, SessionRecord
+from ..sessions import SessionRecord
 from .origin import origin_matches_host
 from .responses import (
-    RealmLike,
     clear_cookie_header,
     error_bytes,
     error_headers,
     parse_realm_cookie,
 )
+
+if TYPE_CHECKING:  # annotation only: keeps this module's import graph unchanged
+    from ..runtime import AuthRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -86,26 +88,6 @@ REDIRECT_STATUS = 303
 UNAUTHORIZED_STATUS = 401
 LOCATION_HEADER = b"location"
 CONTENT_LENGTH_HEADER = b"content-length"
-
-
-# --- Duck types for the runtime (S1 stub; S2 swaps these for ``runtime.AuthRuntime``) ---
-
-
-class _ProviderLike(Protocol):
-    def revalidate(self, user_id: str, credential_epoch: int) -> Revalidation: ...
-
-
-class AuthRuntimeLike(Protocol):
-    """The ``AuthRuntime`` (HLD 11.16) attributes the HTTP edge reads."""
-
-    @property
-    def realm(self) -> RealmLike: ...
-
-    @property
-    def sessions(self) -> SessionManager: ...
-
-    @property
-    def provider(self) -> _ProviderLike: ...
 
 
 # --- Step 1: route classification (HLD 13.1) ---
@@ -267,7 +249,7 @@ class ProofCheck:
 
 
 def _check_proof(
-    runtime: AuthRuntimeLike,
+    runtime: AuthRuntime,
     session: SessionRecord | None,
     headers: Headers,
     *,
@@ -317,7 +299,7 @@ class AuthMiddleware:
         self,
         app: ASGIApp,
         *,
-        runtime: AuthRuntimeLike | None,
+        runtime: AuthRuntime | None,
         policies: Mapping[RouteKey, RoutePolicy],
         cookie_only_navigation: frozenset[RouteKey] = frozenset(),
     ) -> None:
@@ -359,7 +341,7 @@ class AuthMiddleware:
 
     async def _handle_http(
         self,
-        runtime: AuthRuntimeLike,
+        runtime: AuthRuntime,
         state: dict[str, Any],
         scope: Scope,
         receive: Receive,
@@ -465,7 +447,7 @@ class AuthMiddleware:
                 "treating it as no session (cookie-tossing defence)"
             )
 
-    async def _deny(self, runtime: AuthRuntimeLike, send: Send, err: AuthError) -> None:
+    async def _deny(self, runtime: AuthRuntime, send: Send, err: AuthError) -> None:
         """Send the error envelope for ``err`` (the same bytes the routes produce)."""
         body = error_bytes(err)
         headers = error_headers(
@@ -476,7 +458,7 @@ class AuthMiddleware:
         await send({"type": "http.response.start", "status": err.status, "headers": headers})
         await send({"type": "http.response.body", "body": body})
 
-    async def _redirect(self, runtime: AuthRuntimeLike, send: Send) -> None:
+    async def _redirect(self, runtime: AuthRuntime, send: Send) -> None:
         """303 an anonymous HTML navigation to the realm's login page."""
         headers = [
             (LOCATION_HEADER, runtime.realm.login_path.encode("latin-1")),
@@ -485,7 +467,7 @@ class AuthMiddleware:
         await send({"type": "http.response.start", "status": REDIRECT_STATUS, "headers": headers})
         await send({"type": "http.response.body", "body": b""})
 
-    def _injecting_send(self, runtime: AuthRuntimeLike, send: Send, ctx: _Ctx) -> Send:
+    def _injecting_send(self, runtime: AuthRuntime, send: Send, ctx: _Ctx) -> Send:
         """Step 10: wrap ``send`` to add the security headers and the cookie clear."""
         cookie_name = runtime.realm.cookie_name(secure=ctx.secure)
 
@@ -516,7 +498,6 @@ def _realm_cookie(headers: Headers, cookie_name: str) -> tuple[str | None, bool]
 
 __all__ = [
     "AuthMiddleware",
-    "AuthRuntimeLike",
     "ProofCheck",
     "classify",
     "is_api_path",
