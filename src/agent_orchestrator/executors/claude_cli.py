@@ -524,6 +524,13 @@ def _write_derived_capture(output_dir: str, transcript_text: str) -> None:
         )
 
 
+# Result-cache pointer (E-Rc4Hk8, ADR-0019 D7): the cache key hashes the EXACT argv this returns,
+# so any change to how argv is built (EFFORT_MAX_TURNS values, flag injection, tool policy, stream
+# flags) changes cache keys automatically; make it inside this function and re-run GV-1 and the
+# argv tests. A behaviour-relevant change that is visible in NEITHER the argv NOR the executor
+# fingerprint (cache/fingerprint.py: CLI version, CLAUDE_FINGERPRINT_ENV_VARS, CLAUDE_CONTEXT_PATHS)
+# -- e.g. execute() reading a new env var or ambient file, a changed cwd or stdin policy, a new
+# post-processing step -- MUST bump cache/constants.py KEY_SCHEMA_VERSION, or stale hits survive it.
 def build_claude_argv(agent: AgentSpec, prompt: str) -> list[str]:
     """Return the exact argv ``ClaudeCliExecutor.execute`` spawns for *agent* and *prompt*.
 

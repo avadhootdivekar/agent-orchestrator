@@ -20,6 +20,11 @@ WINDOW_SECONDS: dict[str, int] = {"minute": 60, "ten_minutes": 600, "hour": 3600
 # "xhigh" (ADR-0003 decision 2 follow-through, per-task settings) sits above "high" for
 # the rare task that genuinely needs a long, many-turn session.
 EFFORT_MAX_TURNS: dict[str, int] = {"low": 15, "medium": 30, "high": 60, "xhigh": 120}
+# Result-cache pointer (E-Rc4Hk8, ADR-0019 D7): the cache key hashes the EXACT claude argv built
+# from these values, so editing them changes cache keys by itself. A behaviour-relevant change that
+# is visible in NEITHER the argv NOR the executor fingerprint (cache/fingerprint.py: CLI version,
+# CLAUDE_FINGERPRINT_ENV_VARS, CLAUDE_CONTEXT_PATHS) MUST bump KEY_SCHEMA_VERSION in
+# cache/constants.py, or stale cache hits will survive the change.
 # Shared Literal so AgentSpec and TaskSpec can't drift on the allowed effort values.
 EffortLevel = Literal["low", "medium", "high", "xhigh"]
 # --- E-Rc4Hk8 result cache (ADR-0019). Outcome values the engine writes (open set on read).
