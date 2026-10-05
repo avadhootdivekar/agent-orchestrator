@@ -57,8 +57,9 @@ from agent_orchestrator.cache.types import (
 )
 
 # A crash between staging and commit leaves `.ao-result-cache-*.tmp[.bak]` next to the output.
-# Nothing sweeps them (a restore deletes only what it created); `safeio.is_restore_tmp_name` lets
-# directory-input hashing ignore them so they cannot poison a key (SEC G1b S-1).
+# A restore deletes only what it created; `ao cache prune` sweeps the leftovers
+# (`restore_sweep`, `safeio.is_restore_tmp_name`). Directory-input hashing does NOT ignore them
+# (G2-S1): a leftover costs at worst a false miss, never a name that hides a file from the key.
 # Parent directories of restored outputs are created the way the agent would have created them:
 # the umask decides the final mode (unlike the cache's own 0o700 directories).
 _RESTORE_DIR_MODE = 0o777

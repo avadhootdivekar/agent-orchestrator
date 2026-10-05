@@ -77,7 +77,6 @@ from agent_orchestrator.cache.types import (
     VerifyProblem,
 )
 
-_WORKSPACE_ENV = "AO_WORKSPACE_ROOT"
 _STATUS_OK, _STATUS_INVALID, _STATUS_EXPIRED = "ok", "invalid", "expired"
 _UNKNOWN_TIME = "unknown"
 # Column order of `_ls_line`: key[:12], last used, created, outputs, bytes, task/run, cost.
@@ -145,13 +144,18 @@ def _resolve_workspace(workspace: str | None, as_json: bool) -> str:
     from agent_orchestrator import cli as ao_cli  # lazy: this module is loaded by `ao_cli`
 
     try:
-        return ao_cli._resolve_workspace_root(workspace, None, None, None)
+        ws = ao_cli._resolve_workspace_root(workspace, None, None, None)
     except typer.Exit as exc:  # the resolver already printed `ERROR: ...` to stderr
         raise _Fail(
             "cannot resolve the workspace (use --workspace or set AO_WORKSPACE_ROOT)",
             exc.exit_code or EXIT_ERROR,
             silent=not as_json,
         ) from exc
+    # A mistyped path must not read as a successful (or "cleared 0 entries") run. A workspace
+    # without a cache directory yet is a different, fine case handled by each command.
+    if not os.path.isdir(ws):
+        raise _Fail(f"workspace does not exist or is not a directory: {ws}", EXIT_USAGE)
+    return ws
 
 
 def _limits() -> ResultCacheSettings:

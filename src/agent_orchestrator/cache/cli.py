@@ -17,7 +17,8 @@ from . import constants
 cache_app = typer.Typer(name="cache", no_args_is_help=True)
 
 _WORKSPACE_HELP = (
-    "Workspace root (default: AO_WORKSPACE_ROOT, then the project config's workspace)."
+    "Existing workspace directory (default: the AO_WORKSPACE_ROOT environment variable; "
+    "`workspace_root` in .ao/config.yaml is not read)."
 )
 _JSON_HELP = "Print exactly one JSON document on stdout (also on a non-zero exit)."
 _PREFIX_HELP = "Entry key, or a unique prefix of it (4 to 64 lowercase hex characters)."

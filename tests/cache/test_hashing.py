@@ -466,7 +466,7 @@ def test_module_exposes_the_documented_names() -> None:
     assert {"HashBudget", "hash_regular_file", "hash_directory", "digest_path"} <= set(dir(hashing))
 
 
-# -------------------------------------------------------- restore temp leftovers (SEC G1b S-1)
+# ------------------------------------------- restore temp names are NOT exempt (G2-S1)
 RESTORE_TMP_NAMES = [
     ".ao-result-cache-1234-5678-" + "a" * 32 + ".tmp",
     ".ao-result-cache-1234-5678-" + "a" * 32 + ".tmp.bak",
@@ -474,27 +474,37 @@ RESTORE_TMP_NAMES = [
 
 
 @pytest.mark.parametrize("name", RESTORE_TMP_NAMES)
-def test_orphaned_restore_temp_files_never_change_a_directory_digest(
+def test_a_file_with_a_restore_temp_name_changes_the_directory_digest(
     tmp_path: Path, name: str
 ) -> None:
-    """A crash mid-restore leaves a staging file in the output dir; it must not poison keys."""
+    """G2-S1 (supersedes the G1b S-1 exemption): a name-based skip would let any writer hide a
+    file from the key. A crash leftover costs a false miss, never a false hit."""
     root = tmp_path / "in"
     root.mkdir()
     (root / "a.md").write_text("a")
     before = dir_digest(root)
-    (root / name).write_text("a cached output copy left by a crash")
-    assert dir_digest(root) == before
+    (root / name).write_text("planted instructions the task will see")
+    with_file = dir_digest(root)
+    assert with_file != before
+    (root / name).write_text("different content")  # content is part of the key too
+    assert dir_digest(root) not in (before, with_file)
+    (root / name).unlink()
+    assert dir_digest(root) == before  # removing it restores the clean key (no stale poisoning)
 
 
-def test_only_regular_files_with_the_exact_temp_name_shape_are_ignored(tmp_path: Path) -> None:
+@pytest.mark.parametrize("name", RESTORE_TMP_NAMES)
+def test_a_restore_temp_name_nested_deep_is_hashed_too(tmp_path: Path, name: str) -> None:
+    root = tmp_path / "in"
+    (root / "x" / "y").mkdir(parents=True)
+    before = dir_digest(root)
+    (root / "x" / "y" / name).write_text("deep")
+    assert dir_digest(root) != before
+
+
+def test_a_directory_carrying_a_temp_name_is_walked_as_a_real_input(tmp_path: Path) -> None:
     root = tmp_path / "in"
     root.mkdir()
     base = dir_digest(root)
-    # same prefix but not a staging name: hashed like any other file
-    (root / ".ao-result-cache-notes.md").write_text("x")
-    assert dir_digest(root) != base
-    # a directory carrying the staging name is a real input, walked as such
-    (root / ".ao-result-cache-notes.md").unlink()
     (root / RESTORE_TMP_NAMES[0]).mkdir()
     assert dir_digest(root) != base
 
@@ -509,8 +519,8 @@ def test_a_symlink_with_a_temp_name_is_still_not_regular(tmp_path: Path) -> None
     assert err.value.reason == REASON_INPUT_NOT_REGULAR
 
 
-def test_a_temp_leftover_given_directly_as_an_input_is_still_hashed(tmp_path: Path) -> None:
-    """Only directory walks ignore the name; an explicitly declared file is the author's."""
+def test_a_temp_leftover_given_directly_as_an_input_is_hashed(tmp_path: Path) -> None:
+    """An explicitly declared file is hashed like any other."""
     path = tmp_path / RESTORE_TMP_NAMES[0]
     path.write_text("declared")
     assert digest_path(str(path), budget()).size == len("declared")

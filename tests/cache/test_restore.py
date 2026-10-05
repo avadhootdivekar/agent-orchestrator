@@ -464,7 +464,34 @@ def test_sensitive_destination_is_refused_and_nothing_is_created(
     assert store.called("read_blob") == 0
 
 
-@pytest.mark.parametrize("rel", [".GIT/hooks/pre-commit", "Claude.md", "docs/claude.md"])
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".gitlab-ci.yml",
+        "Jenkinsfile",
+        ".githooks/pre-commit",
+        ".circleci/config.yml",
+        ".vscode/tasks.json",
+        ".cursor/rules/x.mdc",
+        ".pre-commit-config.yaml",
+        ".gitmodules",
+        ".gitattributes",
+    ],
+)
+def test_ci_hook_and_ide_sinks_are_refused_at_restore(
+    ws: Path, store: InMemoryCacheStore, rel: str
+) -> None:
+    """G2-S3 / SEC-15: nothing is created and no blob is read."""
+    with pytest.raises(RestoreMiss) as err:
+        restore(seed(store, {rel: b"x"}), ws, store)
+    assert (err.value.reason, err.value.evict) == (REASON_SENSITIVE_OUTPUT, False)
+    assert list(ws.iterdir()) == []
+    assert store.called("read_blob") == 0
+
+
+@pytest.mark.parametrize(
+    "rel", [".GIT/hooks/pre-commit", "Claude.md", "docs/claude.md", "JENKINSFILE", ".VSCODE/x.json"]
+)
 def test_case_variants_of_sensitive_paths_are_refused(
     ws: Path, store: InMemoryCacheStore, rel: str
 ) -> None:

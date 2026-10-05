@@ -149,11 +149,42 @@ AGENT_NON_KEY_FIELDS = frozenset({"forbidden_task_models"})  # validation-only, 
 CACHEABLE_EXECUTORS = frozenset({"claude_cli", "fake"})
 CACHEABLE_COMMAND_BASENAMES = frozenset({"claude"})
 MODEL_FLAGS = ("--model", "-m")
+# Execution sinks a restored output must never land in (D29): VCS / hook / agent-config
+# directories, plus CI, IDE-task and dev-container configuration (G2-S3, SEC-15). Matching is
+# case-insensitive (`safeio.is_sensitive_rel_path`). A false refusal only makes a task uncacheable.
 SENSITIVE_PATH_COMPONENTS = frozenset(
-    {".git", ".claude", ".github", ".gitlab", ".husky", ".ao", ".orchestrator"}
+    {
+        ".git",
+        ".claude",
+        ".github",
+        ".gitlab",
+        ".husky",
+        ".ao",
+        ".orchestrator",
+        ".githooks",
+        ".circleci",
+        ".vscode",
+        ".devcontainer",
+        ".cursor",
+        ".idea",
+    }
 )
 SENSITIVE_BASENAMES = frozenset(
-    {"CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".mcp.json", ".envrc"}
+    {
+        "CLAUDE.md",
+        "CLAUDE.local.md",
+        "AGENTS.md",
+        ".mcp.json",
+        ".envrc",
+        ".gitlab-ci.yml",
+        "Jenkinsfile",
+        ".travis.yml",
+        "azure-pipelines.yml",
+        "bitbucket-pipelines.yml",
+        ".pre-commit-config.yaml",
+        ".gitmodules",
+        ".gitattributes",
+    }
 )
 
 # ---- CLI (HLD 8.9, 13.4)

@@ -233,6 +233,62 @@ class TestFileBrowserDeniesCache:
         names = {e.name for e in browser.list_dir(None, ".orchestrator")}
         assert {"runs", "cache", "cache-notes.txt"} <= names  # the folder is listed, not opened
 
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            ".Orchestrator/Cache",
+            ".ORCHESTRATOR/CACHE/blobs/ab",
+            ".orchestrator/CACHE/entries/v1/e.json",
+            ".OrChEsTrAtOr/cAcHe/blobs/x",
+        ],
+    )
+    def test_case_variants_of_the_cache_path_are_refused(
+        self, workspace: Path, browser: FileBrowser, rel: str
+    ) -> None:
+        """G2-S2: on a case-insensitive filesystem these resolve to the real store; the guard must
+        not depend on the filesystem's case rules (here Linux, where they do not exist)."""
+        _seed_cache(workspace)
+        with pytest.raises(PathNotAllowedError):
+            browser.resolve(None, rel)
+        with pytest.raises(PathNotAllowedError):
+            browser.read_file(None, rel)
+
+    def test_a_case_variant_of_the_workspace_root_prefix_is_refused(
+        self, workspace: Path, browser: FileBrowser
+    ) -> None:
+        cache = _seed_cache(workspace)
+        shouted = str(cache).upper() + "/ENTRIES/V1/E.JSON"
+        with pytest.raises(PathNotAllowedError):  # absolute path, root prefix case differs
+            browser.resolve(None, shouted)
+
+    def test_case_variants_do_not_over_match_siblings(
+        self, workspace: Path, browser: FileBrowser
+    ) -> None:
+        _seed_cache(workspace)
+        (workspace / ".orchestrator" / "cache-notes.txt").write_text("n", encoding="utf-8")
+        (workspace / ".orchestrator" / "Cachelike").mkdir()
+        assert browser.read_file(None, ".orchestrator/Cache-Notes.txt".lower()).text == "n"
+        browser.resolve(None, ".orchestrator/Cachelike")
+
+    @pytest.mark.parametrize("rel", ["a\0b", ".orchestrator/cache\0", "\0", "x/\0/../y"])
+    def test_a_nul_byte_is_refused_not_a_value_error(
+        self, workspace: Path, browser: FileBrowser, rel: str
+    ) -> None:
+        with pytest.raises(PathNotAllowedError):
+            browser.resolve(None, rel)
+        with pytest.raises(PathNotAllowedError):
+            browser.list_dir(None, rel)
+
+    def test_http_endpoints_refuse_case_variants_and_nul_with_a_4xx(
+        self, workspace: Path, client: TestClient
+    ) -> None:
+        _seed_cache(workspace)
+        for endpoint in ("files", "files/content", "files/html"):
+            for path in (".Orchestrator/CACHE/blobs/ab", "a\0b"):
+                response = client.get(f"{API_PREFIX}/{endpoint}", params={"path": path})
+                assert response.status_code == 403, (endpoint, path)
+                assert "cached secret payload" not in response.text
+
     def test_http_endpoints_return_403_for_the_cache(
         self, workspace: Path, client: TestClient
     ) -> None:

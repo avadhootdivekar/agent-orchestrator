@@ -501,6 +501,15 @@ def test_duplicate_outputs_are_refused(ws: Path) -> None:
         "sub/AGENTS.md",
         ".mcp.json",
         ".envrc",
+        ".gitlab-ci.yml",
+        "Jenkinsfile",
+        ".githooks/pre-commit",
+        ".circleci/config.yml",
+        ".vscode/tasks.json",
+        ".cursor/rules/x.mdc",
+        ".pre-commit-config.yaml",
+        ".gitmodules",
+        ".gitattributes",
     ],
 )
 def test_sensitive_outputs_are_refused(ws: Path, output: str) -> None:

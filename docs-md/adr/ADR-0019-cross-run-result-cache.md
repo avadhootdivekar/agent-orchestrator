@@ -157,6 +157,16 @@ The golden vector **GV-1 (Rev 2)** is
 | D7 | argv and fingerprint are included; a wrapper command basename or an unresolved model makes the task ineligible. `claude --version` is memoized per binary identity (resolved path, mtime, size), so an auto-updated binary is re-read. | Executor upgrades (`EFFORT_MAX_TURNS`, new flags) and context-file edits must miss without relying on a manual version bump (critic #4). |
 | D8 | Directory digest is a sorted canonical manifest. A symlink or special file inside makes the task uncacheable. Only `.git`, `.orchestrator` and the task's own outputs are skipped, so noise files cause false misses, never false hits. | Determinism; link safety. |
 
+*Addendum (G2 remediation, G2-S1; supersedes the G1b remediation's exemption):* the G1b
+remediation (SEC G1b S-1) made directory-input hashing skip regular files named like a restore
+staging file (`.ao-result-cache-*.tmp[.bak]`). That exemption is **removed**. Any writer of a
+declared input directory could use such a name to hide a file from the key, so a result computed
+while the file was visible was stored under the clean key and replayed later (demonstrated
+poisoned hit). D8's rule stands without exception: only `.git`, the `.orchestrator` state
+directory and the task's own outputs are skipped. A crash leftover now costs at worst a false
+miss; `ao cache prune` sweeps the leftovers (`restore_sweep`). `safeio.is_restore_tmp_name`
+remains, for the sweep only. The key schema and GV-1 are unchanged.
+
 ### D9 — NFR-1 carve-out and lazy imports
 
 - Only `agent_orchestrator.cache` reads artifact bytes.
@@ -197,12 +207,21 @@ ineligible. This applies to:
 **Sensitive destinations (D29).** An output is refused, at key build **and** again at restore, if
 its resolved path has:
 
-- a component in `{.git, .claude, .github, .gitlab, .husky, .ao, .orchestrator}`; or
+- a component in `{.git, .claude, .github, .gitlab, .husky, .ao, .orchestrator}` (extended by the
+  G2 addendum below); or
 - a basename in `{CLAUDE.md, CLAUDE.local.md, AGENTS.md, .mcp.json, .envrc}`.
 
 *Addendum (G1a remediation, SEC-06):* the match is **case-insensitive** (`casefold()`), because a
 case-insensitive filesystem makes `.GIT/hooks` and `Claude.md` name the protected targets; a false
 refusal only makes a task uncacheable. The earlier "`docs/claude.md` is not sensitive" note is void.
+
+*Addendum (G2 remediation, G2-S3 / G1a SEC-15):* the list is extended with the other
+execution sinks a restored output must never land in: components `.githooks`, `.circleci`,
+`.vscode`, `.devcontainer`, `.cursor`, `.idea`, and basenames `.gitlab-ci.yml`, `Jenkinsfile`,
+`.travis.yml`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.pre-commit-config.yaml`,
+`.gitmodules`, `.gitattributes` (matched case-insensitively, as above). The effective lists are
+`SENSITIVE_PATH_COMPONENTS` and `SENSITIVE_BASENAMES` in `cache/constants.py`. The key schema and
+GV-1 do not read them, so there is no schema bump. A false refusal only makes a task uncacheable.
 
 ### D11 / D12 — Lookup placement; the engine owns the hit transition
 

@@ -36,9 +36,12 @@ _O_SAFE_DIR = os.O_RDONLY | _NOFOLLOW | _DIRECTORY | _CLOEXEC
 # the invisible Unicode format characters that spoof how text reads when printed: zero-width and
 # directional marks U+200B-U+200F, line/paragraph separators and bidi embeddings U+2028-U+202E,
 # word joiner and invisible operators U+2060-U+2064, bidi isolates and the deprecated format
-# controls U+2066-U+206F, and the byte-order mark U+FEFF (G1a SEC-14, "Trojan Source").
+# controls U+2066-U+206F, and the byte-order mark U+FEFF (G1a SEC-14, "Trojan Source"). Also the
+# Arabic letter mark U+061C (a bidi control), the soft hyphen U+00AD and the Unicode tag
+# characters U+E0000-U+E007F (invisible "ASCII smuggling" text) (G2 security NIT).
 _CONTROL_CHARS_RE = re.compile(
-    "[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff]"
+    "[\x00-\x1f\x7f-\x9f\xad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f"
+    "\ufeff\U000e0000-\U000e007f]"
 )
 
 

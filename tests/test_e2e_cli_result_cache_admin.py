@@ -355,9 +355,14 @@ class TestStats:
         text = cache(ws, "stats")
         assert text.exit_code == 0 and "result cache is empty" in text.stdout
 
-    def test_workspace_that_does_not_exist_is_an_empty_cache(self, tmp_path: Path) -> None:
-        doc = doc_of(cache_json(tmp_path / "nope", "stats"))
-        assert doc["exists"] is False
+    def test_workspace_that_does_not_exist_is_a_usage_error_not_an_empty_cache(
+        self, tmp_path: Path
+    ) -> None:
+        """G2-S5: a typo'd `--workspace` must not look like an empty (or cleared) cache."""
+        result = cache_json(tmp_path / "nope", "stats")
+        assert result.exit_code == 2
+        assert "does not exist" in str(doc_of(result)["error"])
+        assert not (tmp_path / "nope").exists()  # and nothing was created
 
     def test_text_output(self, ws: Path, store: LocalFsCacheStore) -> None:
         add_entry(ws, store, "a")
@@ -1216,8 +1221,53 @@ class TestWorkspaceResolution:
         file_path = tmp_path / "plainfile"
         file_path.write_text("x", encoding="utf-8")
         result = cache_json(file_path, "ls")
-        assert result.exit_code == 1 and doc_of(result)["error"]
+        assert result.exit_code == 2 and doc_of(result)["error"]
         assert "Traceback" not in result.output
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ("ls",),
+            ("stats",),
+            ("show", "abcd"),
+            ("rm", "abcd"),
+            ("prune", "--dry-run"),
+            ("clear", "--yes"),
+            ("verify",),
+        ],
+        ids=lambda a: a[0],
+    )
+    def test_every_command_exits_2_on_a_missing_workspace(
+        self, tmp_path: Path, args: tuple[str, ...]
+    ) -> None:
+        missing = tmp_path / "typo"
+        text = cache(missing, *args)
+        assert text.exit_code == 2, text.output
+        assert "ERROR:" in text.stderr and "does not exist" in text.stderr
+        assert "cleared" not in text.stdout and "empty" not in text.stdout
+        as_json = cache_json(missing, *args)
+        assert as_json.exit_code == 2
+        assert "does not exist" in str(doc_of(as_json)["error"])
+        assert not missing.exists()
+
+    def test_clear_yes_with_a_typo_workspace_is_not_a_success(self, tmp_path: Path) -> None:
+        real = tmp_path / "real"
+        real.mkdir()
+        assert cache(real, "clear", "--yes").exit_code == 0  # control: a real workspace is fine
+        result = cache(tmp_path / "real-typo", "clear", "--yes")
+        assert result.exit_code == 2 and "cleared" not in result.stdout
+
+    def test_the_workspace_env_var_is_checked_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AO_WORKSPACE_ROOT", str(tmp_path / "envtypo"))
+        result = runner.invoke(app, ["cache", "stats"])
+        assert result.exit_code == 2 and "does not exist" in result.stderr
+
+    def test_the_workspace_help_is_accurate(self) -> None:
+        text = " ".join(runner.invoke(app, ["cache", "stats", "--help"]).output.split())
+        assert "AO_WORKSPACE_ROOT" in text and "not read" in text
+        assert "project config's workspace" not in text
 
 
 # =========================================================================== cross-cutting
