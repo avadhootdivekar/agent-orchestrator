@@ -117,7 +117,7 @@ ordered by dependency (HLD §22.2).
 - [x] `T-XpF1pF-cache-engine-integration`: engine seams, shared `_reverse_stale_charge`, integration tests. 16 h. Dev A. Deps: T-gDNjN2, T-JCOAsq Part 1. **Done** (2026-10-05) Commit b7ca9c7.
 - [x] `T-eyn5UG-cache-reporting`: report helpers; `status.json`, usage (both sites, `result_cache` object) and outcomes hooks; lazy imports. 18 h. Dev B. Deps: T-28J9oR, T-FJH6LI. **Done** (2026-10-05) Commit cbf9152.
 - [x] `T-o95l1M-cache-cli-wiring`: CLI construction, banner and warnings, summary lines, `report-usage` lines. 8 h. Dev B. Deps: T-XpF1pF, T-eyn5UG, T-gDNjN2. **Done** (2026-10-05) Commit e882b31.
-- [ ] `T-ZTxN1x-bench-cache-force-off`: bench argv and env, plus a regression test. 4 h. Dev B. Deps: T-28J9oR.
+- [x] `T-ZTxN1x-bench-cache-force-off`: bench argv and env, plus a regression test. 4 h. Dev B. Deps: T-28J9oR. **Done** (2026-10-05) Commit 15a659d.
 - [ ] Gate **G1b** (`T-fXWbqg`).
 
 ### 3. Surfaces
