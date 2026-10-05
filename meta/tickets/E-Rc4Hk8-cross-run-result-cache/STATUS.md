@@ -59,17 +59,17 @@ history; `ao cache stats --json` supplies the store-growth fields.
 | T-6tRKml-cache-cli-commands | surfaces | Dev C | 17 h | Done |
 | T-bLpoze-cache-dashboard-surface | surfaces | Dev C | 10 h | Done |
 | T-JCOAsq-cache-test-hardening | Part 1 before T-XpF1pF; Parts 2–3 hardening | Tester | 24 h | Done |
-| T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Draft |
+| T-fXWbqg-cache-review-gates | G1a / G1b / G2 | reviewer + dev-security | 24 h | Done |
 | T-bdQZW4-cache-docs-refresh | last | Dev B + architect | 8 h | Draft |
 
-**Counts:** 20 tasks: 2 Draft, 0 In Progress, 0 In Review, 0 Blocked, 18 Done, 0 Deferred. Total 288 focus hours.
+**Counts:** 20 tasks: 1 Draft (T-bdQZW4), 0 In Progress, 0 In Review, 0 Blocked, 19 Done, 0 Deferred. Total 288 focus hours.
 
 ### Gate tracker
 | Gate | When | State |
 |------|------|-------|
 | G1a | after the core set | **PASS** (2026-10-05): reviewer PASS (0 MUST-FIX); dev-security FAIL on SEC-01 -> fixed in `763375f`, re-verified PASS (0 open MUST-FIX; full suite 6081 passed / 10 skipped / 0 failed) |
 | G1b | after the engine set | **PASS** (2026-10-05): reviewer PASS (0 MUST-FIX, 5 SHOULD-FIX, 7 NIT) + dev-security PASS (0 MUST-FIX, 5 SHOULD-FIX, 10 NIT); fixable items remediated in `6ba90ba`; deferred items recorded in T-fXWbqg STATUS. Hard G2 exit items: dashboard deny-list for `.orchestrator/cache` (T-bLpoze), approval-ordering check |
-| G2 | after T-JCOAsq Part 3 | **ready to start** (T-JCOAsq Done 2026-10-05: coverage 98.71%, full suite 6805 passed / 10 skipped / 0 failed; inputs: HLD 24.2 table in the T-JCOAsq `HANDOFF.md`, hard exit items from G1b already delivered) |
+| G2 | after T-JCOAsq Part 3 | **PASS** (2026-10-05): reviewer PASS (0 MUST-FIX, 6 SHOULD-FIX, 8 NIT) + dev-security PASS (0 MUST-FIX, 3 SHOULD-FIX, 9 NIT); remediated in `2fa650d` (restore-tmp exemption removed, sensitive-path list extended, UI deny-list casefold/NUL, `--workspace` validation); full suite after remediation 6903 passed / 10 skipped / 0 failed; coverage package 98.71% |
 | G0 (value; business go/no-go) | **post-merge**, parent or operator | G0 protocol shipped; execution is a post-merge follow-up (owner: parent/operator); not run in this epic. |
 
 ## Evidence
@@ -136,3 +136,4 @@ history; `ao cache stats --json` supplies the store-growth fields.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-JCOAsq Part 2 done (commit `4d11a69`; 147 tests, tests only, no `src/` change; mutation-checked; no production defect found). Task row stays In Progress (Parts 1 and 2 done; Part 3 pending); counts unchanged (2 Draft, 1 In Progress, 17 Done); `EPIC.md` checkbox split; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. The G1b carry-overs (I-5b, I-25, store at `max_parallel>1`) are closed.
 - By: developer · Role: developer · Date: 2026-10-05 · Comment: T-JCOAsq -> Done (commits `b7489d1` E-1..E-6, `a947986` CI step, then the docs commit). Rollup row and counts updated (2 Draft, 0 In Progress, 18 Done); `EPIC.md` Part 3 checkbox ticked; gate G2 row is "ready to start"; matches the task `TASK.md`, `STATUS.md` and `HANDOFF.md`. 55 e2e tests; CI coverage step green locally (package 98.71%, keys 100, store 96, restore 97, coordinator 100); full suite 6805 passed, 10 skipped, 0 failed; dashboard step 94.42%; vitest 419 passed. No production defect; one Part 2 test tripwire fixed (it broke under `--cov`). Decision recorded: E-2's allow-list includes `cache.cli`. Merge-notes table in the task `HANDOFF.md` (note: `tests/ui/test_run_graph_endpoint.py` is an edited existing file not listed in HLD 24.2).
 By: developer · Role: developer · Date: 2026-10-05 · Comment: G2 remediation applied (reviewer PASS 0 MUST-FIX + dev-security PASS 0 MUST-FIX; reports `output/E-Rc4Hk8-cross-run-result-cache/review-g2.md`, `review-g2-security.md`). Fixed: restore-tmp hashing exemption removed (G2-S1), sensitive-path list extended (G2-S3), UI deny-list casefold + NUL (G2-S2), `ao cache` missing workspace exit 2 (G2-S5), `strip_control_chars` additions, G1b suite-figure correction (G2-S6: 6572 passed / 10 skipped). Deferred/accepted: provider env in key (G2-S4), git `filter.<x>.clean` probe (sec G2-S2), HLD 24.2 merge notes (rev G2-S3) -> carry-overs in T-bdQZW4; NITs in `T-fXWbqg-cache-review-gates/STATUS.md`. GV-1 unchanged. The G2 gate row is NOT updated here: the manager marks G2. Task rollup unchanged (2 Draft, 18 Done).
+- By: manager · Role: agent · Date: 2026-10-05 · Comment: Gate G2 PASS (reports `output/E-Rc4Hk8-cross-run-result-cache/review-g2.md`, `review-g2-security.md`). Accepted residuals (documented by T-bdQZW4): provider env not in key, `filter.*.clean` executed by the guard-3 probe, dirty-tracked-edit, same-uid cache forgery. Next: T-bdQZW4 (docs refresh, last).

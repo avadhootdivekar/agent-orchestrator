@@ -1,7 +1,7 @@
 # HANDOFF: T-fXWbqg-cache-review-gates
 
 - Task: `T-fXWbqg-cache-review-gates`
-- State: `Draft` (handoff not yet available)
+- State: `Done` (gates G1a, G1b, G2 PASS; reports under output/E-Rc4Hk8-cross-run-result-cache/)
 - From: `reviewer` + `dev-security`
 - To: `manager` (epic sync), T-bdQZW4, the parent (merge go/no-go)
 

@@ -109,7 +109,7 @@ ordered by dependency (HLD §22.2).
 - [x] `T-U7ckfd-cache-store-core`: `LocalFsCacheStore(CacheStore)`, checks before every operation, `CacheUnsafePathError`, `is_expired`. 17 h. Dev C. Deps: T-FJH6LI. **Done** (2026-10-05) Commit 181bbbb.
 - [x] `T-u3jG8F-cache-restore-capture`: staged, verified restore and safe capture. 16 h. Dev B. Deps: T-FJH6LI. **Done** (2026-10-05) Commit 87814ea.
 - [x] `T-HjxNQ0-cache-store-maintenance`: adds `CacheAdmin`; streaming iteration, prune, inline enforcement bounded by entries and bytes, `clear`, read-only `verify`, race test. 15 h. Dev C. Deps: T-U7ckfd. **Done** (2026-10-05) Commit 6753c71.
-- [ ] Gate **G1a** (`T-fXWbqg`).
+- [x] Gate **G1a** (`T-fXWbqg`): PASS 2026-10-05.
 
 ### 2. Engine set, then gate G1b (coordinator, engine, CLI wiring, reporting)
 - [x] `T-JCOAsq-cache-test-hardening` **Part 1** (golden, I-2, I-1; base code only; may run any time before T-XpF1pF). 6 h. Tester. **Done** (2026-10-05, reworked, commit 8972149; the task is now Done, see Part 3).
@@ -118,7 +118,7 @@ ordered by dependency (HLD §22.2).
 - [x] `T-eyn5UG-cache-reporting`: report helpers; `status.json`, usage (both sites, `result_cache` object) and outcomes hooks; lazy imports. 18 h. Dev B. Deps: T-28J9oR, T-FJH6LI. **Done** (2026-10-05) Commit cbf9152.
 - [x] `T-o95l1M-cache-cli-wiring`: CLI construction, banner and warnings, summary lines, `report-usage` lines. 8 h. Dev B. Deps: T-XpF1pF, T-eyn5UG, T-gDNjN2. **Done** (2026-10-05) Commit e882b31.
 - [x] `T-ZTxN1x-bench-cache-force-off`: bench argv and env, plus a regression test. 4 h. Dev B. Deps: T-28J9oR. **Done** (2026-10-05) Commit 15a659d.
-- [ ] Gate **G1b** (`T-fXWbqg`).
+- [x] Gate **G1b** (`T-fXWbqg`): PASS 2026-10-05.
 
 ### 3. Surfaces
 - [x] `T-nPMuz4-cache-shadow-value-check`: **G0 protocol and tooling hand-off** (procedure, report template, smoke validation); does not execute G0. 6 h. Tester (+ manager sign-off). Deps: T-o95l1M, T-eyn5UG. **Done** (2026-10-05) Commit edc3c18; manager sign-off 2026-10-05.
@@ -128,7 +128,7 @@ ordered by dependency (HLD §22.2).
 ### 4. Hardening, gate G2, docs
 - [x] `T-JCOAsq-cache-test-hardening` **Part 2**: integration and adversarial (deps T-XpF1pF, T-u3jG8F, T-HjxNQ0). 10 h. Tester. **Done** (2026-10-05, commit 4d11a69, 147 tests; the task is now Done, see Part 3).
 - [x] `T-JCOAsq-cache-test-hardening` **Part 3**: e2e, CI coverage step, full suite (deps Part 2, T-o95l1M, T-6tRKml, T-ZTxN1x, T-bLpoze). 8 h. Tester. **Done** (2026-10-05, commits b7489d1 e2e, a947986 CI step; 55 e2e tests, coverage 98.71%, full suite 6805 passed). The task is **Done**.
-- [ ] `T-fXWbqg-cache-review-gates`: G1a, G1b and **G2**. 24 h in total. reviewer + dev-security.
+- [x] `T-fXWbqg-cache-review-gates`: G1a, G1b and **G2**. 24 h in total. reviewer + dev-security.
 - [ ] `T-bdQZW4-cache-docs-refresh`: post-implementation docs reconciliation (mandatory, last). 8 h. Dev B + architect sign-off. Deps: G2 PASS, T-nPMuz4.
 
 **Totals.**
