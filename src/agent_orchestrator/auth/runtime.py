@@ -32,6 +32,7 @@ from .sessions import InMemorySessionStore, SessionManager, SessionStore
 from .settings import AuthSettings
 from .store import UserStore
 from .throttle import AddressThrottle, UsernameGates
+from .totp_service import LocalTotpService
 
 # The ``ui`` realm's cookie-less landing page: the SPA shell. The hub has its own login page.
 UI_LOGIN_PATH = "/"
@@ -72,7 +73,7 @@ class AuthRuntime:
     lockouts: LockoutStore
     audit: AuditLog
     provider: AuthProvider  # the ABC: LocalPasswordProvider in production, a fake in seam tests
-    totp: Any | None  # LocalTotpService (T-yfrfxv wires it); None for providers without TOTP
+    totp: LocalTotpService | None  # None for providers without a local second factor
     sessions: SessionManager
     address_throttle: AddressThrottle
     clock: Clock
@@ -125,10 +126,28 @@ def build_auth_runtime(
         lockouts=lockouts,
         audit=audit,
         provider=provider,
-        totp=None,
+        totp=_local_totp(provider, settings, realm, store, lockouts, audit, clock, entropy),
         sessions=sessions,
         address_throttle=throttle,
         clock=clock,
+    )
+
+
+def _local_totp(
+    provider: AuthProvider,
+    settings: AuthSettings,
+    realm: Realm,
+    store: UserStore,
+    lockouts: LockoutStore,
+    audit: AuditLog,
+    clock: Clock,
+    entropy: Entropy,
+) -> LocalTotpService | None:
+    """The second-factor service shares the provider's guard; other providers have none."""
+    if not isinstance(provider, LocalPasswordProvider):
+        return None
+    return LocalTotpService(
+        store, lockouts, provider.guard, provider, settings, audit, clock, entropy, realm=realm.id
     )
 
 

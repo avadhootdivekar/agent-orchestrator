@@ -94,6 +94,11 @@ class LocalPasswordProvider(AuthProvider):
         self._path_warnings: list[str] = []
         self._unreadable_logged = False
 
+    @property
+    def guard(self) -> AttemptGuard:
+        """The shared attempt guard (the second-factor service must use the same one)."""
+        return self._guard
+
     # -- readiness -----------------------------------------------------------------------------
 
     def check_ready(self) -> None:

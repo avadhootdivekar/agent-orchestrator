@@ -32,6 +32,7 @@ from agent_orchestrator.auth.runtime import (
 )
 from agent_orchestrator.auth.sessions import InMemorySessionStore
 from agent_orchestrator.auth.store import add_user
+from agent_orchestrator.auth.totp_service import LocalTotpService
 
 from .helpers.core import FakeClock, SeededEntropy, run_async
 from .helpers.crypto import FastFakeHasher
@@ -130,7 +131,7 @@ def test_the_default_graph_is_local_password_and_shares_one_store_set(tmp_path: 
     assert runtime.paths.state_dir == settings.state_dir
     assert runtime.store.paths is runtime.paths and runtime.lockouts is not None
     assert isinstance(runtime.audit, AuditLog)
-    assert runtime.totp is None  # T-yfrfxv wires it
+    assert isinstance(runtime.totp, LocalTotpService)  # shares the provider's guard
     assert runtime.proxy_suspected_warned is False
     assert runtime.first_insecure_login_warned is False
     assert runtime.address_throttle.retry_after("203.0.113.9") is None

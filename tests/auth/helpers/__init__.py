@@ -21,5 +21,7 @@ Module                      Owner       Contents
 ``real_runtime.py``         T-XchniS    ``make_runtime`` / ``RealRuntime``: a real ``AuthRuntime``
                                         with ``StubRuntime``'s test surface (parametrizes the
                                         HTTP-edge fixture over ``stub`` and ``real``)
+``totp_service.py``         T-yfrfxv    ``make_totp_env`` / ``TotpEnv`` (a real ``LocalTotpService``
+                                        over ``make_env``), ``spy``, ``code_of``, ``error_of``
 ==========================  ==========  ======================================================
 """

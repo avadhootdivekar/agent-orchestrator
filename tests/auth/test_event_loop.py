@@ -19,12 +19,15 @@ from agent_orchestrator.auth.audit import AuditLog
 from agent_orchestrator.auth.errors import AuthError
 from agent_orchestrator.auth.lockouts import LockoutStore
 from agent_orchestrator.auth.model import SessionState, TotpPolicy
+from agent_orchestrator.auth.provider import ClientInfo
 from agent_orchestrator.auth.store import UserStore
 
 from .helpers.core import run_async
 from .helpers.provider import CLIENT, PASSWORD, ProviderEnv, RehashingHasher, make_env
-from .helpers.store import enroll
+from .helpers.store import enroll, totp_code
+from .helpers.totp_service import make_totp_env
 
+LOOPBACK_HTTP = ClientInfo("127.0.0.1", True, False)
 NEW_PASSWORD = "an entirely different passphrase"
 
 # Every blocking, lock-taking or file-writing method the login side is allowed to call, and only
@@ -157,3 +160,74 @@ def test_the_harness_does_flag_a_blocking_call_on_the_loop(
 
     loop_thread = run_on_loop(scenario)
     assert recorder.on_thread(loop_thread) == ["UserStore.mutate"]
+
+
+# -- second factor (T-yfrfxv; AC-40 second-factor part) --------------------------------------------
+
+
+def test_second_factor_verify_runs_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t = make_totp_env(tmp_path, threshold=10)
+    codes = t.enrolled()
+    session = t.session(state=SessionState.PARTIAL_SECOND_FACTOR)
+    recorder = ThreadRecorder(monkeypatch)
+
+    async def scenario() -> None:
+        for kwargs in ({"code": "000000"}, {"code": t.code()}, {"recovery_code": codes[0]}):
+            try:
+                await t.svc.verify_second_factor(session, client=CLIENT, **kwargs)
+            except AuthError:
+                pass  # the wrong code: the failure path (record_failure + audit) is watched too
+
+    loop_thread = run_on_loop(scenario)
+    assert recorder.on_thread(loop_thread) == []
+    assert {
+        "UserStore.mutate",
+        "LockoutStore.state",
+        "LockoutStore.record_failure",
+        "LockoutStore.reset",
+        "AuditLog.record",
+    } <= recorder.labels()
+
+
+def test_enrollment_begin_with_a_token_and_confirm_run_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t = make_totp_env(tmp_path, threshold=10)
+    token = t.issue_token()
+    session = t.session(state=SessionState.PARTIAL_ENROLL)
+    recorder = ThreadRecorder(monkeypatch)
+
+    async def scenario() -> None:
+        with pytest.raises(AuthError):  # a missing token: the counted-failure path
+            await t.svc.begin_enrollment(session, LOOPBACK_HTTP)
+        challenge = await t.svc.begin_enrollment(session, LOOPBACK_HTTP, enrollment_token=token)
+        session.pending_totp_secret = challenge.secret
+        code = totp_code(t.now_unix(), challenge.secret)
+        await t.svc.confirm_enrollment(session, code, LOOPBACK_HTTP)
+
+    loop_thread = run_on_loop(scenario)
+    assert recorder.on_thread(loop_thread) == []
+    assert {
+        "UserStore.mutate",
+        "LockoutStore.record_failure",
+        "LockoutStore.reset",  # a forced-enrollment confirm clears the lockout
+        "AuditLog.record",
+    } <= recorder.labels()
+
+
+def test_disable_and_regenerate_run_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t = make_totp_env(tmp_path, threshold=10)
+    codes = t.enrolled()
+    recorder = ThreadRecorder(monkeypatch)
+
+    async def scenario() -> None:
+        await t.svc.regenerate_recovery_codes(t.session(), PASSWORD, codes[0], LOOPBACK_HTTP)
+        await t.svc.disable_totp(t.session(), PASSWORD, t.code(), CLIENT)
+
+    loop_thread = run_on_loop(scenario)
+    assert recorder.on_thread(loop_thread) == []
+    assert {"UserStore.mutate", "AuditLog.record"} <= recorder.labels()
