@@ -38,7 +38,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import typer
 
@@ -178,12 +178,21 @@ def _load_all(
             err=True,
         )
         raise typer.Exit(1)
+    wf = None
     if not rp:
-        typer.echo(
-            "ERROR: --reposets or AO_REPOSETS required (or add 'reposets' to .ao/config.yaml)",
-            err=True,
-        )
-        raise typer.Exit(1)
+        # No-repo-set mode (ADR-0022 D2): reposets are optional iff the workflow declares no
+        # repo_set. A workflow that fails to load keeps the original "reposets required"
+        # error (it surfaces first today), so repo-set behaviour is byte-identical.
+        try:
+            wf = load_workflow(workflow_path)
+        except Exception:
+            wf = None
+        if wf is None or wf.repo_set:
+            typer.echo(
+                "ERROR: --reposets or AO_REPOSETS required (or add 'reposets' to .ao/config.yaml)",
+                err=True,
+            )
+            raise typer.Exit(1)
     if not ap:
         typer.echo(
             "ERROR: --agents or AO_AGENTS required (or add 'agents' to .ao/config.yaml)",
@@ -191,8 +200,10 @@ def _load_all(
         )
         raise typer.Exit(1)
 
-    wf = load_workflow(workflow_path)
-    reposet_map = load_reposets(rp)
+    if wf is None:
+        wf = load_workflow(workflow_path)
+    # A reposets file supplied anyway is still loaded and validated (ADR-0022 D2).
+    reposet_map = load_reposets(rp) if rp else {}
     agent_map = load_agents(ap)
     # cross_validate's return is the isolation/integration/scheduling rules' non-fatal
     # warnings (V4/V5/V7/V10, E-Wk9Tz3 C-3) -- printed the same way validate_run_control's
@@ -210,6 +221,52 @@ def _load_all(
         typer.echo(f"WARNING: {warning}", err=True)
 
     return wf, reposet_map, agent_map
+
+
+def _no_repo_workspace_default() -> str:
+    """Workspace for a no-repo-set workflow when no flag/env names one (ADR-0022 D4, tail):
+    project-config ``workspace_root`` > directory containing the discovered ``.ao/`` config
+    dir > cwd (with a one-line stderr NOTE, since that fallback is the easy one to mis-set)."""
+    from .project_config import find_project_config, load_project_config
+
+    config_path = find_project_config()
+    if config_path is not None:
+        try:
+            cfg_root = load_project_config(config_path).workspace_root
+        except Exception:  # unreadable config: fall through, `_resolve_config_defaults` warns
+            cfg_root = None
+        if cfg_root:
+            return cfg_root
+        # config_path is <dir>/.ao/config.yaml (or a legacy flat file next to its dir).
+        return str(
+            config_path.parent.parent if config_path.parent.name == ".ao" else config_path.parent
+        )
+    cwd = os.getcwd()
+    typer.echo(
+        f"NOTE: no repo_set / workspace configured; using current directory as workspace ({cwd})",
+        err=True,
+    )
+    return cwd
+
+
+def _resolve_workspace(
+    wf: WorkflowSpec | None,
+    reposet_map: dict[str, Any],
+    workspace_flag: str | None = None,
+) -> str:
+    """The single workspace-root rule (ADR-0022 D4/D5), shared by run/resume/status/report-*.
+
+    With a ``repo_set``: ``--workspace`` > ``AO_WORKSPACE_ROOT`` > ``reposet.workspace_root``
+    (flag is new; env > reposet is the pre-existing rule, unchanged). Without one:
+    ``--workspace`` > ``AO_WORKSPACE_ROOT`` > project-config ``workspace_root`` > the
+    directory containing ``.ao/`` > cwd.
+    """
+    explicit = workspace_flag or os.environ.get("AO_WORKSPACE_ROOT")
+    if explicit:
+        return explicit
+    if wf is not None and wf.repo_set:
+        return reposet_map[wf.repo_set].workspace_root
+    return _no_repo_workspace_default()
 
 
 # TaskIntegrationState.status values grouped under the "conflict" count in the one-line
@@ -1023,6 +1080,16 @@ def validate(
 @app.command()
 def run(
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    workspace_flag: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help=(
+            "Workspace root for run state and artifacts. Env: AO_WORKSPACE_ROOT. Without a"
+            " repo_set it defaults to config workspace_root, the directory holding .ao/, then"
+            " the current directory."
+        ),
+    ),
     reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     budget_total: int | None = typer.Option(
@@ -1255,7 +1322,7 @@ def run(
     # isolation="worktree" declaration.
     _apply_no_isolation_kill_switch(wf, eff_no_isolation)
 
-    workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
+    workspace = _resolve_workspace(wf, reposet_map, workspace_flag)
     store = LocalFsArtifactStore(workspace)
     rs_store = RunStateStore(workspace, store)
     executor = DispatchExecutor()
@@ -1331,6 +1398,16 @@ def run(
 def resume(
     run_id: str = typer.Option(..., help="Run ID to resume"),
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
+    workspace_flag: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help=(
+            "Workspace root for run state and artifacts. Env: AO_WORKSPACE_ROOT. Without a"
+            " repo_set it defaults to config workspace_root, the directory holding .ao/, then"
+            " the current directory."
+        ),
+    ),
     reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     budget_total: int | None = typer.Option(
@@ -1508,7 +1585,7 @@ def resume(
     except SystemExit:
         return
 
-    workspace = os.environ.get("AO_WORKSPACE_ROOT") or reposet_map[wf.repo_set].workspace_root
+    workspace = _resolve_workspace(wf, reposet_map, workspace_flag)
     store = LocalFsArtifactStore(workspace)
     rs_store = RunStateStore(workspace, store)
 
@@ -1706,20 +1783,8 @@ def status(
     ws_root: str | None = workspace or os.environ.get("AO_WORKSPACE_ROOT")
 
     if ws_root is None:
-        # Fall back to deriving from the spec triplet (backward-compatible path).
-        from .artifacts import LocalFsArtifactStore
-        from .errors import OrchestratorError
-        from .runstate import RunStateStore
-
-        try:
-            wf, reposet_map, _ = _load_all(workflow, reposets, agents)
-        except OrchestratorError as e:
-            typer.echo(f"ERROR: {e}", err=True)
-            raise typer.Exit(1)
-        except SystemExit:
-            return
-
-        ws_root = reposet_map[wf.repo_set].workspace_root
+        # Fall back to the spec triplet (backward-compatible), else the no-repo default chain.
+        ws_root = _resolve_workspace_root(None, workflow, reposets, agents, no_repo_default=True)
 
     # Try status.json first (FR-6), fall back to state.json via RunStateStore.
     status_json_path = Path(ws_root) / ".orchestrator" / "runs" / run_id / "status.json"
@@ -1749,7 +1814,12 @@ def status(
 
 
 def _resolve_workspace_root(
-    workspace: str | None, workflow: str | None, reposets: str | None, agents: str | None
+    workspace: str | None,
+    workflow: str | None,
+    reposets: str | None,
+    agents: str | None,
+    *,
+    no_repo_default: bool = False,
 ) -> str:
     """Shared `--workspace` > `AO_WORKSPACE_ROOT` > spec-triplet fallback used by both
     `report-timing` and `report-outcomes` -- same precedence `status()` already uses above,
@@ -1759,12 +1829,18 @@ def _resolve_workspace_root(
     ws_root = workspace or os.environ.get("AO_WORKSPACE_ROOT")
     if ws_root is not None:
         return ws_root
+    if no_repo_default and not _resolve_config_defaults(workflow, None, None)[0]:
+        # No spec triplet either: nothing says which mode this is, so (for run-inspection
+        # commands that opt in) use the no-repo default chain (ADR-0022 D4) rather than a
+        # "--workflow is required" error. `ao cache` admin deliberately does not opt in:
+        # it must not silently operate on cwd.
+        return _no_repo_workspace_default()
     try:
         wf, reposet_map, _ = _load_all(workflow, reposets, agents)
     except OrchestratorError as e:
         typer.echo(f"ERROR: {e}", err=True)
         raise typer.Exit(1) from e
-    return reposet_map[wf.repo_set].workspace_root
+    return _resolve_workspace(wf, reposet_map)
 
 
 @app.command(name="report-timing")
@@ -1799,7 +1875,7 @@ def report_timing(
     from .reporting import cache_effectiveness, task_activity_breakdown, top_n_slowest_tasks
     from .runstate import RunStateStore
 
-    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents, no_repo_default=True)
     store = LocalFsArtifactStore(ws_root)
     rs_store = RunStateStore(ws_root, store)
     try:
@@ -1904,9 +1980,11 @@ def report_outcomes(
         except OrchestratorError as e:
             typer.echo(f"ERROR: {e}", err=True)
             raise typer.Exit(1) from e
-        ws_root = reposet_map[wf.repo_set].workspace_root
+        ws_root = _resolve_workspace(wf, reposet_map)
     else:
-        ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+        ws_root = _resolve_workspace_root(
+            workspace, workflow, reposets, agents, no_repo_default=True
+        )
 
     store = LocalFsArtifactStore(ws_root)
     rs_store = RunStateStore(ws_root, store)
@@ -2041,7 +2119,7 @@ def report_usage(
             typer.echo(f"ERROR: invalid --ref: {ref_err}", err=True)
             raise typer.Exit(2)
 
-    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents, no_repo_default=True)
     try:
         report = build_usage_report(ws_root, run_ids or None, with_survival=with_survival, ref=ref)
     except ValueError as e:
@@ -2166,7 +2244,7 @@ def rate(
         load_feedback,
     )
 
-    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents, no_repo_default=True)
     try:
         if show:
             doc = load_feedback(ws_root, run_id)
@@ -2252,7 +2330,7 @@ def report_survival(
             typer.echo(f"ERROR: invalid --ref: {ref_err}", err=True)
             raise typer.Exit(2)
 
-    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents)
+    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents, no_repo_default=True)
     store = LocalFsArtifactStore(ws_root)
     rs_store = RunStateStore(ws_root, store)
     states = []
@@ -2333,7 +2411,8 @@ def init_cmd(
     typer.echo("")
     typer.echo("Next steps:")
     typer.echo(
-        "  1. Edit .ao/config.yaml — uncomment and fill in workflow, reposets, agents paths."
+        "  1. Edit .ao/config.yaml — uncomment and fill in workflow, agents paths"
+        " (and reposets, if the workflow declares a repo_set)."
     )
     typer.echo("  2. Run `ao validate` to check your config.")
     typer.echo("  3. Run `ao run` to execute your workflow.")
