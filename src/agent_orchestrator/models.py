@@ -728,7 +728,9 @@ class WorkflowSpec(BaseModel):
     version: str
     id: str
     name: str = ""
-    repo_set: str
+    # Key into the reposets config. None (absent / null / "") = no-repo-set mode: the run uses
+    # a workspace directory only, no repo paths (ADR-0022 D1).
+    repo_set: str | None = None
     defaults: WorkflowDefaults = WorkflowDefaults()
     budget: BudgetSpec | None = None
     triggers: list[Trigger] = [Trigger(type="manual")]
@@ -757,6 +759,15 @@ class WorkflowSpec(BaseModel):
     # a task's `pre_hook`/`post_hook: HookRef`. Empty default is a byte-identical no-op for
     # every pre-epic workflow (NFR-2/NFR-5) -- mirrors the `agents`/`reposets` registry pattern.
     hooks: dict[str, HookSpec] = {}
+
+    @field_validator("repo_set", mode="before")
+    @classmethod
+    def _blank_repo_set_is_none(cls, v: object) -> object:
+        # "" / whitespace-only => no-repo-set mode, so a template may render `"repo_set": ""`
+        # without a conditional (ADR-0022 D1).
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
     def task(self, task_id: str) -> TaskSpec:
         for t in self.tasks:
@@ -1270,7 +1281,7 @@ class ResultCacheRecord(BaseModel):
 class RunState(BaseModel):
     run_id: str
     workflow_id: str
-    repo_set: str
+    repo_set: str | None = None  # None = no-repo-set mode (ADR-0022 D7)
     started_at: str
     updated_at: str
     status: Literal["running", "succeeded", "failed", "cancelled"] = "running"

@@ -132,7 +132,7 @@ WORKFLOW_FIELD_COVERAGE: dict[str, str] = {
     "version": "not semantic",
     "id": "not semantic",
     "name": "not semantic",
-    "repo_set": "repo paths enter the prompt via repo_paths; HEADs enter the key",
+    "repo_set": ("repo paths (if any) enter the prompt via repo_paths; HEADs enter the key"),
     "tasks": "per-task eligibility",
     "defaults": "its subfields, classified in DEFAULTS_FIELD_COVERAGE",
     "budget": "not semantic for outputs",

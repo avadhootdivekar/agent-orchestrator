@@ -87,7 +87,8 @@ def cross_validate(
     """Cross-validate workflow references against loaded reposets and agents.
 
     Raises SpecValidationError for:
-    - Unknown repo_set
+    - Unknown repo_set (only when the workflow declares one; ``repo_set is None`` is the
+      no-repo-set / workspace-only mode, ADR-0022, and needs no reposets)
     - Task referencing an unknown agent
     - Task depends_on referencing an unknown task id or an unknown loop id not resolvable
     - Task pre_hook/post_hook referencing an unknown WorkflowSpec.hooks key (E-AMSSHX)
@@ -96,13 +97,13 @@ def cross_validate(
     - Authored task ids or loop body ids containing '__iter' (reserved suffix, ADR-006)
 
     Returns a list of non-fatal WARNING strings (C-3): currently only from the isolation/
-    integration/scheduling rules V4/V5/V7/V10 (`_cross_validate_isolation`) -- every other
+    integration/scheduling rules V4/V5/V7/V10/V13 (`_cross_validate_isolation`) -- every other
     rule in this function is fatal-only and raises `SpecValidationError` as before. Callers
     that don't care about warnings (nearly every existing call site/test) can simply ignore
     the return value, exactly as they always have; `cli._load_all` prints them the same way
     it already prints `validate_run_control`'s own warnings (`WARNING: <text>`).
     """
-    if workflow.repo_set not in reposets:
+    if workflow.repo_set is not None and workflow.repo_set not in reposets:
         raise SpecValidationError(
             f"Unknown repo_set: {workflow.repo_set!r}",
             path="repo_set",
@@ -374,6 +375,8 @@ def _check_no_foreign_worktree_collisions(workflow: WorkflowSpec, reposets: dict
     "worktree" (a pre-existing foreign-worktree configuration poses no danger, and probing
     the filesystem would only slow down every non-isolated `ao validate` for no benefit).
     """
+    if workflow.repo_set is None:
+        return  # no-repo-set mode: no reposet, so no RepoRefs to collide (ADR-0022)
     reposet = reposets.get(workflow.repo_set)
     if reposet is None:
         return  # unknown repo_set is reported by cross_validate's own rule, not here
@@ -613,7 +616,7 @@ def _cross_validate_isolation(
     reposets: dict,
     agents: dict,
 ) -> list[str]:
-    """Full isolation/integration/scheduling validation (HLD §10.4, V1-V12): calls
+    """Full isolation/integration/scheduling validation (HLD §10.4, V1-V13): calls
     `validate_isolation` for the registry-independent rules, then adds the three that DO
     need `agents`/`reposets` -- V3 (resolver_agent existence), V8 (foreign-worktree
     collision), V10 (resolver agent's disallowed_tools coverage). Returns the combined
@@ -625,6 +628,16 @@ def _cross_validate_isolation(
         # V3/V8/V10 all govern an isolated task's landing; nothing left to check when
         # isolation never engages (mirrors validate_isolation's own V5 early-return).
         return warnings
+
+    # V13: worktree isolation needs git repos, and a no-repo-set workflow has none. The
+    # engine already degrades to isolation="none" ("no_git_repos"); this tells the user at
+    # validate time. A warning, not fatal: the CLI's --isolation override is applied after
+    # validation, so a fatal rule could not see it (ADR-0022 D6).
+    if workflow.repo_set is None:
+        warnings.append(
+            "V13: isolation='worktree' has no effect without a repo_set (no git repos to "
+            "isolate); tasks will run un-isolated in the workspace"
+        )
 
     integ = workflow.integration
     llm_in_ladder = TIER_LLM in integ.ladder
