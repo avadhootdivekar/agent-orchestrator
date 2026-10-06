@@ -903,6 +903,10 @@ class TaskContext(BaseModel):
     output_manifest_path: str | None = None
     dynamic_input_paths: list[str] = []
     repo_paths: dict[str, str]
+    # True only when the workflow declares no `repo_set` (ADR-0022 no-repo-set mode). Drives
+    # the prompt's "Repos: {repos}." clause strip; an empty reposet or a monitoring/summarizer
+    # context keeps it False so repo_set prompts stay byte-identical.
+    no_repo_set: bool = False
     timeout_seconds: int
     # Resolved absolute working directory the agent process runs in (its cwd).
     # Defaults to the workspace root; honours AgentSpec.working_dir when set.

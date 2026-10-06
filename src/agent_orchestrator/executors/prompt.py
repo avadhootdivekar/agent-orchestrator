@@ -60,8 +60,8 @@ def build_prompt(ctx: TaskContext) -> str:
         The fully rendered prompt string (paths/ids only — NFR-1).
     """
     template = ctx.agent.prompt_template
-    if not ctx.repo_paths:
-        # No-repo-set mode: don't tell the agent about phantom repos.
+    if ctx.no_repo_set:
+        # No-repo-set mode (workflow has no `repo_set`): don't tell the agent about phantom repos.
         template = _EMPTY_REPOS_CLAUSE.sub("", template)
     general = render_general_instructions(ctx.general_instruction_paths)
 

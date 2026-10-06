@@ -179,8 +179,15 @@ and covered by `python -m agent_orchestrator.validate specs`.
    additive change. Older `ao` builds reading it would fail validation — acceptable (forward
    compat is not promised across installs; the self-hosting rule keeps prod pinned).
 4. Error messages for "reposets required" / "Unknown repo_set" are verbatim unchanged.
-5. The only intentional deltas: template param optional (§6), prompt omits an empty `repos=`
-   line, V13 warning, new flags/NOTE line — none affect repo-set runs.
+5. The only intentional deltas: template param optional (§6), prompt omits the `Repos:` clause
+   (keyed on the workflow having no `repo_set` via `TaskContext.no_repo_set`, so an empty reposet
+   or a monitoring/summarizer context renders exactly as before), V13 warning, new flags/NOTE
+   line — none affect repo-set runs.
+6. **Cache: no-repo tasks must declare all inputs.** With `repo_paths={}` the HEAD guard and the
+   tracked-worktree snapshot guard are vacuously satisfied, so a cached no-repo result is keyed
+   only on declared inputs, prompt and outputs. A workspace file the agent reads but the task
+   does not list under `inputs` is NOT detected as a change — declare every input of a task you
+   opt in to caching.
 
 ## 8. Implementation plan (units) and test strategy
 

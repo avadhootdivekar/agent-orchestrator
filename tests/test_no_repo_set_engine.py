@@ -148,7 +148,7 @@ def test_result_cache_round_trips_without_repos(tmp_path: Path, monkeypatch) -> 
 
 
 # --- S18: prompt drops the phantom `Repos:` clause ----------------------------------------
-def _ctx(agent: AgentSpec, repo_paths: dict[str, str]) -> TaskContext:
+def _ctx(agent: AgentSpec, repo_paths: dict[str, str], no_repo_set: bool = True) -> TaskContext:
     return TaskContext(
         task_id="t",
         run_id="r",
@@ -157,6 +157,7 @@ def _ctx(agent: AgentSpec, repo_paths: dict[str, str]) -> TaskContext:
         input_paths=["in.txt"],
         output_paths=["out.txt"],
         repo_paths=repo_paths,
+        no_repo_set=no_repo_set,
         timeout_seconds=60,
         cwd=".",
     )
@@ -168,8 +169,32 @@ def test_prompt_omits_repos_clause_when_empty() -> None:
     assert prompt.endswith("Write outputs to: out.txt.")
 
 
+def test_empty_reposet_repo_set_workflow_keeps_repos_clause() -> None:
+    # repo_set declared but its reposet has no repos: repo_paths == {} yet the prompt is unchanged.
+    prompt = build_prompt(_ctx(AgentSpec(executor="fake"), {}, no_repo_set=False))
+    assert prompt.endswith("Write outputs to: out.txt. Repos: .")
+
+
+def test_context_default_flag_keeps_repos_clause() -> None:
+    # monitoring/summarizer build TaskContext(repo_paths={}) without the flag.
+    ctx = _ctx(AgentSpec(executor="fake"), {})
+    default = TaskContext(**{**ctx.model_dump(), "no_repo_set": False})
+    assert TaskContext.model_fields["no_repo_set"].default is False
+    assert "Repos: ." in build_prompt(default)
+
+
+def test_mid_sentence_repos_template_is_stripped_when_no_repo_set() -> None:
+    # Documents the regex's behaviour for a non-conventional template: only the `Repos: {repos}`
+    # fragment (and its optional trailing period) goes; surrounding text is left as written.
+    agent = AgentSpec(
+        executor="fake", prompt_template="Do {instruction}. Repos: {repos}, then {outputs}"
+    )
+    assert build_prompt(_ctx(agent, {})) == "Do i.md., then out.txt"
+    assert build_prompt(_ctx(agent, {}, no_repo_set=False)) == "Do i.md. Repos: , then out.txt"
+
+
 def test_prompt_with_repos_is_unchanged() -> None:
-    prompt = build_prompt(_ctx(AgentSpec(executor="fake"), {"core": "/w/core"}))
+    prompt = build_prompt(_ctx(AgentSpec(executor="fake"), {"core": "/w/core"}, no_repo_set=False))
     assert prompt.endswith("Write outputs to: out.txt. Repos: core=/w/core.")
 
 

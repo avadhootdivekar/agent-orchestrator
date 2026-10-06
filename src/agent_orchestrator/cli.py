@@ -232,10 +232,11 @@ def _load_all(
     return wf, reposet_map, agent_map
 
 
-def _no_repo_workspace_default() -> str:
+def _no_repo_workspace_default(*, note_config_root: bool = False) -> str:
     """Workspace for a no-repo-set workflow when no flag/env names one (ADR-0022 D4, tail):
     project-config ``workspace_root`` > directory containing the discovered ``.ao/`` config
-    dir > cwd (with a one-line stderr NOTE, since that fallback is the easy one to mis-set)."""
+    dir > cwd (with a one-line stderr NOTE, since that fallback is the easy one to mis-set).
+    *note_config_root* also prints the NOTE for the config-root fallbacks (used by writers)."""
     from .project_config import find_project_config, load_project_config
 
     config_path = find_project_config()
@@ -244,12 +245,17 @@ def _no_repo_workspace_default() -> str:
             cfg_root = load_project_config(config_path).workspace_root
         except Exception:  # unreadable config: fall through, `_resolve_config_defaults` warns
             cfg_root = None
-        if cfg_root:
-            return cfg_root
         # config_path is <dir>/.ao/config.yaml (or a legacy flat file next to its dir).
-        return str(
+        root = cfg_root or str(
             config_path.parent.parent if config_path.parent.name == ".ao" else config_path.parent
         )
+        if note_config_root:
+            typer.echo(
+                f"NOTE: no repo_set / workspace configured; using the project config's "
+                f"workspace ({root})",
+                err=True,
+            )
+        return root
     cwd = os.getcwd()
     typer.echo(
         f"NOTE: no repo_set / workspace configured; using current directory as workspace ({cwd})",
@@ -1845,6 +1851,7 @@ def _resolve_workspace_root(
     agents: str | None,
     *,
     no_repo_default: bool = False,
+    note_config_root: bool = False,
 ) -> str:
     """Shared `--workspace` > `AO_WORKSPACE_ROOT` > spec-triplet fallback used by both
     `report-timing` and `report-outcomes` -- same precedence `status()` already uses above,
@@ -1859,7 +1866,7 @@ def _resolve_workspace_root(
         # commands that opt in) use the no-repo default chain (ADR-0022 D4) rather than a
         # "--workflow is required" error. `ao cache` admin deliberately does not opt in:
         # it must not silently operate on cwd.
-        return _no_repo_workspace_default()
+        return _no_repo_workspace_default(note_config_root=note_config_root)
     try:
         wf, reposet_map, _ = _load_all(workflow, reposets, agents)
     except OrchestratorError as e:
@@ -2281,7 +2288,9 @@ def rate(
         load_feedback,
     )
 
-    ws_root = _resolve_workspace_root(workspace, workflow, reposets, agents, no_repo_default=True)
+    ws_root = _resolve_workspace_root(
+        workspace, workflow, reposets, agents, no_repo_default=True, note_config_root=True
+    )
     try:
         if show:
             doc = load_feedback(ws_root, run_id)

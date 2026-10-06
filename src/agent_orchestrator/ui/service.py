@@ -491,24 +491,30 @@ class DashboardService:
         except (OrchestratorError, OSError, ValueError) as exc:
             raise DashboardValidationError(f"cannot launch {workflow_path}: {exc}") from exc
 
-    def _no_repo_workspace(self, workflow_path: str | None) -> str | None:
+    def _no_repo_workspace(
+        self, workflow_path: str | None, *, unknown_is_no_repo: bool = False
+    ) -> str | None:
         """The workspace to forward as ``--workspace`` for a no-repo-set workflow, else None.
 
         A workflow with a ``repo_set`` keeps its reposet-derived workspace (flag omitted, so
         its argv is unchanged); a no-repo-set one (ADR-0022) has no reposet to supply it, so
-        the dashboard's own workspace is passed explicitly.
+        the dashboard's own workspace is passed explicitly. With *unknown_is_no_repo* (resume),
+        a run whose workflow path is unknown also gets the workspace, so ``ao resume`` does not
+        fall back to a CLI default chain that can differ from the dashboard's workspace.
         """
         if not workflow_path:
-            return None
+            return str(self.workspace_root) if unknown_is_no_repo else None
         try:
             workflow = load_workflow(workflow_path)
         except (OrchestratorError, OSError, ValueError):
             return None
         return str(self.workspace_root) if workflow.repo_set is None else None
 
-    def _workspace_kwargs(self, workflow_path: str | None) -> dict[str, Any]:
+    def _workspace_kwargs(
+        self, workflow_path: str | None, *, unknown_is_no_repo: bool = False
+    ) -> dict[str, Any]:
         """``{"workspace": ...}`` for a no-repo-set workflow, else ``{}`` (call shape unchanged)."""
-        workspace = self._no_repo_workspace(workflow_path)
+        workspace = self._no_repo_workspace(workflow_path, unknown_is_no_repo=unknown_is_no_repo)
         return {"workspace": workspace} if workspace else {}
 
     def create_instance(
@@ -770,7 +776,7 @@ class DashboardService:
                 reposets=self._config.reposets if self._config else None,
                 agents=self._config.agents if self._config else None,
                 options=options or {},
-                **self._workspace_kwargs(workflow_path),
+                **self._workspace_kwargs(workflow_path, unknown_is_no_repo=True),
             )
         except LaunchError as exc:
             raise DashboardError(str(exc)) from exc

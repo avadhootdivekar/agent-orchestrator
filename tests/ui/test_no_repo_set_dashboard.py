@@ -93,6 +93,31 @@ class TestServiceLaunch:
         svc.resume_run(stub_run)
         assert stub.launch_calls[-1]["workspace"] == str(svc.workspace_root)
 
+    def test_resume_forwards_workspace_when_workflow_path_unknown(self, workspace: Path) -> None:
+        stub = StubSupervisor(workspace)
+        svc = DashboardService(str(workspace), supervisor=stub, project_config=None)  # type: ignore[arg-type]
+        write_run(workspace, make_run_state(status="failed"))
+        assert svc._workflow_for_run("demo-20260724T100000Z") is None
+        svc.resume_run("demo-20260724T100000Z")
+        assert stub.launch_calls[-1]["workspace"] == str(svc.workspace_root)
+
+    def test_resume_repo_set_run_still_omits_workspace(self, workspace: Path) -> None:
+        stub = StubSupervisor(workspace)
+        svc = DashboardService(str(workspace), supervisor=stub, project_config=None)  # type: ignore[arg-type]
+        wf = _workflow(workspace / "wf.json", "demo-repos")
+        write_run(workspace, make_run_state(status="failed"))
+        svc._workflow_for_run = lambda run_id: str(wf)  # type: ignore[method-assign]
+        svc.resume_run("demo-20260724T100000Z")
+        assert "workspace" not in stub.launch_calls[-1]
+
+    def test_start_run_with_unknown_workflow_does_not_forward_workspace(
+        self, workspace: Path
+    ) -> None:
+        svc = DashboardService(
+            str(workspace), supervisor=StubSupervisor(workspace), project_config=None
+        )  # type: ignore[arg-type]
+        assert svc._workspace_kwargs(None) == {}
+
 
 class TestProcessArgv:
     def test_workspace_flag_only_when_given(self, workspace: Path) -> None:

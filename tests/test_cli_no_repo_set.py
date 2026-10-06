@@ -196,3 +196,20 @@ def test_example_no_repo_workflow_validates() -> None:
     )
     assert result.exit_code == 0, result.output
     assert "repo_set" not in json.loads((root / "workflow-no-repo-set.json").read_text())
+
+
+def test_rate_notes_config_root_fallback_but_status_does_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proj = tmp_path / "proj"
+    (proj / ".ao").mkdir(parents=True)
+    (proj / ".git").mkdir()
+    (proj / ".ao" / "config.yaml").write_text("{}\n")
+    monkeypatch.chdir(proj)
+
+    r = runner.invoke(app, ["rate", "nope", "--show"])
+    assert "using the project config's workspace" in r.output
+    assert str(proj.resolve()) in r.output
+
+    r = runner.invoke(app, ["status", "--run-id", "nope"])
+    assert "NOTE:" not in r.output

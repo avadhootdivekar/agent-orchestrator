@@ -1248,6 +1248,7 @@ class Orchestrator:
                 output_paths=[ctx_store.resolve(p) for p in task.outputs],
                 dynamic_input_paths=dynamic_input_paths,
                 repo_paths=iso_repo_paths if iso_repo_paths is not None else ctx.repo_paths,
+                no_repo_set=workflow.repo_set is None,
                 timeout_seconds=task.timeout_seconds or workflow.defaults.timeout_seconds,
             )
             _estimate = self._estimator.estimate(_est_ctx, _est_cfg)
@@ -4251,6 +4252,7 @@ class Orchestrator:
                 output_manifest_path=output_manifest_path,
                 dynamic_input_paths=dynamic_input_paths or [],
                 repo_paths=repo_paths,
+                no_repo_set=workflow.repo_set is None,
                 timeout_seconds=timeout,
                 cwd=agent_cwd,
                 output_dir=attempt_output_dir,
