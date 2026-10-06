@@ -1,7 +1,8 @@
 # No-repo-set mode — HLD
 
-- **Status:** Proposed (design only; no code lands with this document). Decision record:
-  [ADR-0022](adr/ADR-0022-no-repo-set-mode.md).
+- **Status:** As built (2026-10-07) — units U1–U7 landed on `ad/6-oct-enhancements`. Decision record:
+  [ADR-0022](adr/ADR-0022-no-repo-set-mode.md). User docs: README "Workspace-only mode (no repo set)".
+  Where the code differs from the plan below, §0 records it; the rest of the document is the original design.
 - **Date:** 2026-10-06
 - **Ask:** overseer run `o-969ifr-requirement`, ask **A2** — "Enable the ao tool to be invoked
   *without* any repo set defined — in that case all inputs / outputs will be in the workspace
@@ -9,6 +10,22 @@
 - **Related:** ADR-0003 (settings precedence), ADR-0013 / [`task-isolation-hld.md`](task-isolation-hld.md)
   (git isolation), ADR-0019 / [`cross-run-result-cache-hld.md`](cross-run-result-cache-hld.md)
   (result cache), [`multi-workspace-service-hld.md`](multi-workspace-service-hld.md).
+
+## 0. As built
+
+Implemented as designed (decisions D1–D8 unchanged). Notes on the final shape:
+
+- Units U1–U5 are the commits `feat(engine)` / `feat(cli)` / `feat(templates)` / `feat(ui)` for
+  ADR-0022; U6 is `tests/test_no_repo_set_{spec,engine}.py`, `tests/test_cli_no_repo_set.py`,
+  `tests/test_e2e_no_repo_set.py`, `tests/ui/test_no_repo_set_dashboard.py`; U7 is this docs pass.
+- `--workspace` / `-w` also exists on `ao run` / `ao resume` when a `repo_set` *is* declared, where
+  it takes precedence over `AO_WORKSPACE_ROOT` and the reposet's `workspace_root` (the design only
+  required it for no-repo runs). Without the flag, the repo-set rule is unchanged.
+- `ao --help` and `ao validate --help` mention the mode; `--reposets` help says it is optional
+  without a `repo_set`.
+- Boot-resume forwards the original `--workspace` for a no-repo run (`service/boot_resume.py`).
+- Not done / out of scope as planned: `--agents` stays required; bench subjects (S24) still need
+  reposets; builtin templates' git-only stages are unchanged.
 
 ## 1. Problem
 

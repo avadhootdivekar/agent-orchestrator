@@ -21,6 +21,7 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [Parallel execution](#parallel-execution)
 - [Result cache (opt-in)](#result-cache-opt-in)
 - [Configuring multiple repos](#configuring-multiple-repos)
+- [Workspace-only mode (no repo set)](#workspace-only-mode-no-repo-set)
 - [Schema reference](#schema-reference)
 - [Advanced workflows](#advanced-workflows)
 - [Repo layout](#repo-layout)
@@ -196,6 +197,7 @@ Working examples live in [`specs/examples/`](specs/examples/):
 ```
 specs/examples/
   workflow.json        — 3-task design → implement → test pipeline
+  workflow-no-repo-set.json — 2-task workspace-only example (no `repo_set`, no reposets file)
   reposet.json         — two named repo sets (default-set, experiment-set)
   agents.json          — architect, developer, tester agents (claude_cli executor)
   instructions/        — example instruction files referenced by path from workflow.json
@@ -233,7 +235,7 @@ All commands accept:
 | Option | Description |
 |--------|-------------|
 | `--workflow PATH` | Path to workflow JSON or YAML |
-| `--reposets PATH` | Path to reposets JSON or YAML |
+| `--reposets PATH` | Path to reposets JSON or YAML (optional when the workflow has no `repo_set` — see [Workspace-only mode](#workspace-only-mode-no-repo-set)) |
 | `--agents PATH` | Path to agents JSON or YAML |
 
 If a flag is omitted, AO checks (in order):
@@ -856,6 +858,57 @@ only as paths, never content. This is the **context-hygiene invariant**: the orc
 engine never reads artifact files; that's the agent's job.
 
 See `specs/examples/reposet.json` for a complete working example.
+
+---
+
+## Workspace-only mode (no repo set)
+
+A workflow does not have to name a `repo_set`. If `repo_set` is omitted (or `null` / `""`), `ao`
+runs in **workspace-only mode**: no `reposets.json` is needed, agents get no repo paths, and every
+input, output and the run state (`.orchestrator/`) live under a single workspace directory. Use it
+for docs, research or data pipelines that are not git checkouts. A workflow that *does* declare a
+`repo_set` behaves exactly as before (reposets still required).
+
+```bash
+# validate: only --workflow and --agents are needed
+ao validate --workflow specs/examples/workflow-no-repo-set.json --agents specs/examples/agents.json
+
+# run, naming the workspace explicitly (recommended)
+ao run --workflow specs/examples/workflow-no-repo-set.json --agents specs/examples/agents.json \
+       --workspace ./my-workspace
+```
+
+[`specs/examples/workflow-no-repo-set.json`](specs/examples/workflow-no-repo-set.json) is a two-task
+example (`design` → `write-up`) whose inputs/outputs are workspace-relative paths.
+
+**Workspace root resolution** (no-repo-set mode; first match wins):
+
+1. `--workspace` / `-w` (on `ao run` and `ao resume`)
+2. `AO_WORKSPACE_ROOT`
+3. `workspace_root:` in `.ao/config.yaml`
+4. the directory containing the discovered `.ao/` config
+5. the current directory — `ao` prints `NOTE: ... using current directory as workspace` to stderr
+   in this case, so pass `--workspace` if you did not mean to write `.orchestrator/` there
+
+With a `repo_set` the rule is unchanged: `AO_WORKSPACE_ROOT` > the reposet's `workspace_root`
+(`--workspace` also takes precedence there).
+
+What to know:
+
+- **Agents are still required** (`--agents`); only reposets become optional.
+- **Containment:** artifact paths are resolved inside the workspace and escapes (`..`, absolute
+  paths outside it, symlinks out) are rejected.
+- **Git features degrade, not fail:** with no repos, `isolation: worktree` falls back to `none`
+  (validate prints a warning), diff-survival records no repos, and the opt-in result cache keys on
+  workspace content only.
+- **`ao new`:** omitting `--param repo_set=...` scaffolds a workspace-only workflow and prints a
+  NOTE (or a WARNING if a reposets file is configured, in case you forgot the param). The built-in
+  `routed-runner` / `overseer-runner` templates still contain git-oriented stages (branch,
+  final push) that only make sense with a repo.
+- The dashboard (`ao ui` / `ao service`) can launch and boot-resume workspace-only runs.
+
+Design: [`docs-md/no-repo-set-mode-hld.md`](docs-md/no-repo-set-mode-hld.md),
+[`ADR-0022`](docs-md/adr/ADR-0022-no-repo-set-mode.md).
 
 ---
 

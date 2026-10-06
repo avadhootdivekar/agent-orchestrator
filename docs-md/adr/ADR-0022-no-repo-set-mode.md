@@ -1,6 +1,6 @@
 # ADR-0022 — No-repo-set (workspace-only) mode
 
-- **Status:** Proposed (2026-10-06); becomes Accepted when the implementation units land.
+- **Status:** Accepted — implemented (2026-10-07); see the HLD's "As built" section.
 - **Date:** 2026-10-06
 - **Deciders:** Avadhoot Divekar (owner, ask A2 of overseer run `o-969ifr-requirement`); architect (agent)
 - **Design:** [`no-repo-set-mode-hld.md`](../no-repo-set-mode-hld.md) (decisions D1–D8, use-site

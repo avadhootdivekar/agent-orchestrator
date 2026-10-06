@@ -69,7 +69,16 @@ if TYPE_CHECKING:
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
 
-app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
+app = typer.Typer(
+    name="ao",
+    help=(
+        "Agent Orchestrator CLI.\n\n"
+        "Workspace-only mode: a workflow with no `repo_set` needs no reposets file; all inputs,"
+        " outputs and run state live under one workspace directory (see --workspace on `ao run`;"
+        " example: specs/examples/workflow-no-repo-set.json)."
+    ),
+    add_completion=True,
+)
 app.add_typer(service_app, name="service")
 app.add_typer(auth_app, name="auth")
 app.add_typer(cache_app, name="cache")
@@ -1063,10 +1072,17 @@ def _build_effective_budget(
 @app.command()
 def validate(
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
 ) -> None:
-    """Validate workflow, reposets, and agents specs."""
+    """Validate workflow, reposets, and agents specs.
+
+    --reposets is only required when the workflow names a `repo_set`; a workspace-only
+    (no-repo-set) workflow validates with just --workflow and --agents.
+    """
     from .errors import OrchestratorError
 
     try:
@@ -1090,7 +1106,10 @@ def run(
             " the current directory."
         ),
     ),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     budget_total: int | None = typer.Option(
         None, "--budget-total", help="Total token budget for the run"
@@ -1408,7 +1427,10 @@ def resume(
             " the current directory."
         ),
     ),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     budget_total: int | None = typer.Option(
         None, "--budget-total", help="Total token budget override"
@@ -1767,7 +1789,10 @@ def status(
         "When provided the --workflow/--reposets/--agents triplet is not required.",
     ),
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
 ) -> None:
     """Show current status of a run.
@@ -1850,7 +1875,10 @@ def report_timing(
         None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
     ),
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     top: int = typer.Option(10, "--top", help="How many of the slowest tasks to show"),
     task: str | None = typer.Option(
@@ -1941,7 +1969,10 @@ def report_outcomes(
         None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
     ),
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     grade: str | None = typer.Option(
         None,
@@ -2084,7 +2115,10 @@ def report_usage(
         None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
     ),
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     run_ids: list[str] = typer.Option(
         [], "--run-id", help="Restrict to this run (repeatable). Default: every run."
@@ -2230,7 +2264,10 @@ def rate(
         None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
     ),
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
 ) -> None:
     """Record local feedback on a run (or one task) -- stored in the run's feedback.json,
@@ -2301,7 +2338,10 @@ def report_survival(
         None, "--workspace", help="Workspace root (or set AO_WORKSPACE_ROOT)."
     ),
     workflow: str | None = typer.Option(None, help="Path to workflow JSON/YAML"),
-    reposets: str | None = typer.Option(None, help="Path to reposets config JSON/YAML"),
+    reposets: str | None = typer.Option(
+        None,
+        help="Path to reposets config JSON/YAML (optional when the workflow has no repo_set)",
+    ),
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     run_ids: list[str] = typer.Option(
         [], "--run-id", help="Restrict to this run (repeatable). Default: every run."

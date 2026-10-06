@@ -40,6 +40,7 @@ ships a browser dashboard.
 | **General instructions** | **New** | Workspace-scoped rules applied to every task. |
 | **Cross-run result cache (`ao run --cache`, `ao cache`)** | **New, opt-in** | Reuses an identical, previously successful task's declared outputs instead of re-dispatching the agent. Double opt-in (operator flag + `cache: true` per task), default off, `shadow` measure-only mode. NOT prompt caching. E-Rc4Hk8 / ADR-0019 — §2c. **Value unproven: G0 not yet run.** |
 | Authentication / multi-user | **New, opt-in** | Local accounts + optional TOTP 2FA for `ao ui` and the `ao service` hub (E-Da5Tn9, ADR-0021). Per-realm sessions, no roles/SSO yet — §3.1. |
+| **Workspace-only mode (no `repo_set`)** | **New** | A workflow may omit `repo_set`; reposets file optional, `--workspace` on `ao run`/`resume`, all I/O and run state under one workspace dir; git features degrade (isolation → none). ADR-0022, `docs-md/no-repo-set-mode-hld.md`; example `specs/examples/workflow-no-repo-set.json`. |
 | Cron / event triggers | **Designed, not built** | `Trigger` model exists; no daemon runs it yet. Service-owned scheduler designed (E-Sc9Rt4, ADR-0014) — §3.2. |
 
 ### Recently delivered
@@ -54,6 +55,8 @@ ships a browser dashboard.
 - **E-GIytcL — Multi-workspace service** (2026-08-28): `ao service` supervisor daemon (spawn/monitor/restart per-workspace dashboards, bounded auto-resume, hub, systemd install) — see §2a.
 - **E-Rc4Hk8 — Cross-run result cache** (2026-10-05, ADR-0019): opt-in, content-addressed, workspace-local reuse of identical successful tasks' declared outputs; `ao cache` admin commands; `shadow` mode; dashboard tag/tile; `ao-bench` forced off — see §2c.
 - **E-Wk9Tz3 — Per-task git isolation** (2026-09-07, ADR-0013): worktree per task, squash+rebase integration behind a compare-and-swap, tiered conflict ladder, `ao hotspots`, `ao prune --worktrees-only` — see §2b.
+
+- **No-repo-set (workspace-only) mode** (2026-10-07, ADR-0022, overseer run `o-969ifr-requirement` ask A2): optional `repo_set`/reposets, single workspace resolver, `--workspace` on run/resume, dashboard + boot-resume support, optional template param, example workflow, docs.
 
 ### Designed, awaiting implementation (2026-09-07)
 
