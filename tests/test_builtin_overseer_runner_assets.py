@@ -299,8 +299,8 @@ def test_template_yaml_params_shape_matches_hld_13_1() -> None:
         assert set(spec) <= allowed_param_keys, name
 
     repo_set = params["repo_set"]
-    assert repo_set.get("required") is True
-    assert "default" not in repo_set
+    assert repo_set.get("required") is False  # ADR-0022 D8: workspace-only mode
+    assert repo_set.get("default") == ""
 
     expected_defaults = {
         "run_budget_usd": "2000",
@@ -441,7 +441,8 @@ def test_load_template_succeeds() -> None:
     assert info.source == "builtin"
     assert {p.name for p in info.params} == EXPECTED_PARAM_NAMES
     repo_set_param = next(p for p in info.params if p.name == "repo_set")
-    assert repo_set_param.required is True
+    assert repo_set_param.required is False
+    assert repo_set_param.default == ""
     final_push_param = next(p for p in info.params if p.name == "final_push")
     assert final_push_param.enum == ["true", "false"]
     overseer_effort_param = next(p for p in info.params if p.name == "overseer_effort")

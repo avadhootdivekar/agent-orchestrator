@@ -179,3 +179,20 @@ def test_cache_admin_still_refuses_unresolvable_workspace() -> None:
     # `ao cache` shares _resolve_workspace_root but must not adopt the no-repo cwd default.
     r = runner.invoke(app, ["cache", "stats"])
     assert r.exit_code == 1
+
+
+def test_example_no_repo_workflow_validates() -> None:
+    """specs/examples/workflow-no-repo-set.json declares no repo_set and passes `ao validate`."""
+    root = Path(__file__).resolve().parents[1] / "specs" / "examples"
+    result = CliRunner().invoke(
+        app,
+        [
+            "validate",
+            "--workflow",
+            str(root / "workflow-no-repo-set.json"),
+            "--agents",
+            str(root / "agents.json"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "repo_set" not in json.loads((root / "workflow-no-repo-set.json").read_text())

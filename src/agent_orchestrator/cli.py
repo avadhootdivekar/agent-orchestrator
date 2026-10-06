@@ -3545,6 +3545,24 @@ def new_cmd(
         typer.echo(f"ERROR: {e}", err=True)
         raise typer.Exit(1)
 
+    # No-repo-set mode (ADR-0022): the template's `repo_set` param is optional, so omitting it
+    # scaffolds a workspace-only workflow. Say so, or warn when a reposets file is configured
+    # (the author most likely forgot `--param repo_set=...`).
+    if not parsed_params.get("repo_set") and "repo_set" in {p.name for p in tmpl.params}:
+        if reposets or (cfg and cfg.reposets) or os.environ.get("AO_REPOSETS"):
+            typer.echo(
+                "WARNING: no repo_set param given but a reposets file is configured; the "
+                "workflow runs in workspace-only (no-repo) mode. Pass --param repo_set=<key> "
+                "to operate on repos.",
+                err=True,
+            )
+        else:
+            typer.echo(
+                "NOTE: no repo_set param given; scaffolding a workspace-only (no-repo) "
+                "workflow. Git stages have no repos to operate on.",
+                err=True,
+            )
+
     typer.echo(f"Instance ready: {result.instance_dir}")
     typer.echo(f"  workflow -> {result.workflow_path}")
     if result.prompt_path:

@@ -47,7 +47,7 @@ All 17 are declared in `template.yaml`, which is the source of truth for current
 
 | param | what it controls |
 |---|---|
-| `repo_set` | required; the repo(s) every stage operates on |
+| `repo_set` | optional (empty = workspace-only/no-repo mode, ADR-0022; git final-push is only useful with repos); the repo(s) every stage operates on |
 | `run_budget_usd` | total run spend cap (the `run-budget-backstop` breaker's threshold) |
 | `task_budget_usd` | per-task spend cap (the `task-budget-cap` breaker's threshold) |
 | `converge_pct` / `stabilize_pct` / `closeout_pct` | budget-stage thresholds, percent of `run_budget_usd` |

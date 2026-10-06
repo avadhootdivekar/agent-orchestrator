@@ -430,8 +430,9 @@ class TestRoutedRunnerE2E:
         # The error should mention which agent is missing
         assert "architect" in result.output or "ERROR" in result.output
 
-    def test_required_param_repo_set_error_when_missing(self, tmp_path: Path) -> None:
-        """Verify that omitting the required 'repo_set' param causes an error."""
+    def test_omitted_repo_set_scaffolds_no_repo_workflow_with_warning(self, tmp_path: Path) -> None:
+        """repo_set is optional (ADR-0022 D8): omitting it scaffolds a workspace-only
+        workflow; with a reposets file in play, `ao new` WARNs (likely forgot the param)."""
         ws, rs, ag = _make_workspace_for_routed_runner(tmp_path)
 
         result = runner.invoke(
@@ -439,8 +440,7 @@ class TestRoutedRunnerE2E:
             [
                 "new",
                 "routed-runner",
-                "missing-param",
-                # No --param repo_set=... — this is required
+                "no-repo",
                 "--workspace",
                 str(ws),
                 "--reposets",
@@ -450,8 +450,58 @@ class TestRoutedRunnerE2E:
                 "--validate-only",
             ],
         )
-        assert result.exit_code != 0
-        assert "required" in result.output.lower() or "repo_set" in result.output
+        assert result.exit_code == 0, result.output
+        assert "WARNING: no repo_set param given" in result.output
+        wf_files = list(ws.glob("workflows/routed-runner/runs/*/workflow.json"))
+        assert len(wf_files) == 1
+        assert json.loads(wf_files[0].read_text())["repo_set"] == ""
+
+    def test_omitted_repo_set_without_reposets_prints_note(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ws, _rs, ag = _make_workspace_for_routed_runner(tmp_path)
+        # Don't inherit a reposets entry from an enclosing project's .ao/config.yaml.
+        monkeypatch.chdir(ws)
+
+        result = runner.invoke(
+            app,
+            [
+                "new",
+                "routed-runner",
+                "no-repo",
+                "--workspace",
+                str(ws),
+                "--agents",
+                str(ag),
+                "--validate-only",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "NOTE: no repo_set param given" in result.output
+        assert "WARNING: no repo_set" not in result.output
+
+    def test_explicit_repo_set_prints_no_note_or_warning(self, tmp_path: Path) -> None:
+        ws, rs, ag = _make_workspace_for_routed_runner(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "new",
+                "routed-runner",
+                "with-repo",
+                "--param",
+                "repo_set=main",
+                "--workspace",
+                str(ws),
+                "--reposets",
+                str(rs),
+                "--agents",
+                str(ag),
+                "--validate-only",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "no repo_set param given" not in result.output
 
 
 # ---------------------------------------------------------------------------
