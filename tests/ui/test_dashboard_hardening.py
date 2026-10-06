@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_orchestrator.project_config import ProjectConfig
 from agent_orchestrator.ui.files import FileBrowser, PathNotFoundError, Root
 from agent_orchestrator.ui.service import DashboardError, DashboardService
 
@@ -77,4 +78,20 @@ class TestStartRunWorkspaceRestriction:
     ) -> None:
         wf = write_workflow(workspace / "wf.json")
         service.start_run(workflow_path=str(wf))
+        assert len(stub_supervisor.launch_calls) == 1
+
+    def test_still_launches_the_configured_spec_outside_the_workspace(
+        self,
+        workspace: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+        stub_supervisor: StubSupervisor,
+    ) -> None:
+        # list_workflows offers the configured spec even from outside the roots, so it must launch.
+        external = write_workflow(tmp_path_factory.mktemp("elsewhere") / "wf.json")
+        svc = DashboardService(
+            str(workspace),
+            supervisor=stub_supervisor,  # type: ignore[arg-type]
+            project_config=ProjectConfig(workflow=str(external)),
+        )
+        svc.start_run()
         assert len(stub_supervisor.launch_calls) == 1

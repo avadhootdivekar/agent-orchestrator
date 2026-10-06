@@ -721,12 +721,13 @@ class DashboardService:
             raise DashboardError(f"workflow spec not found: {workflow_path}")
         # An absolute path from the HTTP caller must not launch a spec from outside the
         # workspace (or the configured spec search roots). Resolved first so `..` and
-        # symlinks cannot escape.
+        # symlinks cannot escape. The operator-configured workflow is always launchable
+        # (``list_workflows`` offers it even from outside the roots).
         resolved_wf = Path(workflow_path).resolve()
-        if not any(
-            is_within(resolved_wf, Path(root))
-            for root in (self.workspace_root, *self._search_roots)
-        ):
+        allowed = [self.workspace_root, *self._search_roots]
+        if self._config and self._config.workflow:
+            allowed.append(str(Path(self._config.workflow).resolve()))
+        if not any(is_within(resolved_wf, Path(root)) for root in allowed):
             raise DashboardError(f"workflow spec is outside the workspace: {workflow_path}")
 
         if prompt and prompt.strip():
