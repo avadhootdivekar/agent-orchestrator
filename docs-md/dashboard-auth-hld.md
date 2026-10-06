@@ -134,7 +134,7 @@ None changes the frozen HTTP contract beyond the manager-approved E1 `transport.
 
 | # | Residual | Why accepted / mitigation |
 |---|---|---|
-| 1 | `DashboardService.start_run` accepts an absolute `workflow_path`; launch logs are returned to the browser (it bypasses the file-browser denial for a would-be disclosure through a launch error) | Anyone who may launch runs already executes arbitrary agent code as the OS user (A10); re-evaluated by T-2wE08U, not blocked |
+| 1 | **Path part closed 2026-10-06:** `DashboardService.start_run` now rejects any `workflow_path` resolving (symlinks followed) outside the workspace or spec search roots. Remaining: launch logs are returned to the browser (it bypasses the file-browser denial for a would-be disclosure through a launch error) | Anyone who may launch runs already executes arbitrary agent code as the OS user (A10); re-evaluated by T-2wE08U, not blocked |
 | 2 | Under `trusted_proxies=127.0.0.1`, a **local** process can claim a client address via `X-Forwarded-For` | The per-account lockout still applies; bind the app to a unix socket or firewall its port (README) |
 | 3 | Account-lockout DoS and a shared throttle bucket for all remote users behind a proxy while `AO_UI_AUTH_TRUSTED_PROXIES` is unset (M-2) | Bounded backoff (≤ 15 min), `ao auth unlock`, the `proxy_suspected` warning |
 | 4 | IPv6 throttling is per `/64` (`IPV6_THROTTLE_PREFIX_LEN`): an attacker with a wider prefix can rotate addresses | The per-account lockout still applies |
@@ -4490,8 +4490,8 @@ definitions were read from `docs-md/human-approval-gates-hld.md` §26 / CE-3 / C
 | X5 | `src/agent_orchestrator/ui/static/**` + `ui/src/**` | `T-pIZq3q` rebuilds and commits the bundle (CE-3: rebuild once after merging all `ui/src` changes; never merge `static/` by hand) | row 15: T-vCgsU6 is this epic's only bundle committer | **Rule:** only the last frontend task of each epic regenerates and commits `ui/static`, after merging. At the second epic's merge, re-run `npm ci && npm run build` on the merged `ui/src` and commit the result; never hand-merge hashed assets. |
 | X6 | `src/agent_orchestrator/project_config.py` | `T-drPIif` row 35: a 6-key `CONFIG_ENV_DENYLIST` in `apply_project_config_env` (CE-4b) | only the optional `_INIT_TEMPLATE` comment (row 9, T-otjIkJ); `apply_project_config_env` is never called on the `ao ui` / `ao service run` paths | No overlap in the same function. Recommended (not required, since those paths never call it): add `AO_UI_AUTH*`, `AO_AUTH_DIR` and `AO_AUTH_STATE_DIR` to that single denylist when both epics have merged. |
 
-**Accepted residual (developer finding):** `DashboardService.start_run` (`ui/service.py:662`)
-accepts an absolute `workflow_path`, and launch logs are returned to the browser. Launching a
+**Accepted residual (developer finding; the path part was closed 2026-10-06 by a workspace/search-root restriction):** `DashboardService.start_run` (`ui/service.py`)
+formerly accepted any absolute `workflow_path`, and launch logs are returned to the browser. Launching a
 "workflow" that points at `users.json` would fail validation, and the error could echo file
 content into the launch log. This is **not** blocked: anyone who may launch runs may already
 execute arbitrary agent code as the OS user (A10, and A6 when auth is off), so this path adds no

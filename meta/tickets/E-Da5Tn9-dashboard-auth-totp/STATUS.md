@@ -105,7 +105,8 @@ Counts: 23 tasks · 23 Done · 0 In Progress · 0 Blocked · 0 Not started · 61
   - Cross-epic rows **X1-X6 open until E-Ag7Pw3 (approvals) merges**; merge-order coordination with
     E-Rc4Hk8 (result cache) and E-Ag7Pw3 for `ui/app.py`, `cli.py`, `service/*`, `xdg.py`,
     `ui/files.py`, `ui/static`.
-  - Security residuals: `start_run` absolute `workflow_path`; local `X-Forwarded-For` claim under
+  - Closed 2026-10-06 (unit w03-03): `start_run` now rejects a `workflow_path` that resolves outside the workspace/search roots; `ui/files.read_file` refuses FIFOs/sockets/devices without opening them; the red lint file `repro_emit_lost_on_breaker_trip.py` is fixed. **Deferred:** the `dispatch_cycle` reset in the engine's missing-inputs branch (engine bug, not auth; no auth impact; tracked as FU-5 of E-Rc4Hk8).
+  - Security residuals: local `X-Forwarded-For` claim under
     `trusted_proxies=127.0.0.1`; account-lockout DoS and a shared throttle bucket behind an
     unconfigured proxy; IPv6 `/64` rotation; phantom-eviction oracle; hard link vs the denied-path
     check; stale-binary fail-open when auth is enabled only via `service.env`; per-session counter

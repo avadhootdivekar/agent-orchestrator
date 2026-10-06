@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import os
+import stat as stat_mod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
@@ -327,6 +328,11 @@ class FileBrowser:
             raise PathNotFoundError(f"no such file: {rel_path}")
         if resolved.is_dir():
             raise PathNotFoundError(f"is a directory: {rel_path}")
+
+        # A FIFO/socket/device would block `open()` (a FIFO with no writer hangs the request
+        # thread forever), so only regular files are ever opened.
+        if not stat_mod.S_ISREG(resolved.stat().st_mode):
+            raise PathNotFoundError(f"not a regular file: {rel_path}")
 
         ext = resolved.suffix.lower().lstrip(".")
         size = resolved.stat().st_size

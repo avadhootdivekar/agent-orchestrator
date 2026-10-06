@@ -23,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from ..auth.paths import default_denied_paths
+from ..auth.paths import default_denied_paths, is_within
 from ..config import load_agents, load_reposets
 from ..errors import OrchestratorError
 from ..feedback import (
@@ -688,6 +688,15 @@ class DashboardService:
             raise DashboardError("no workflow specified and none configured in .ao/config.yaml")
         if not Path(workflow_path).is_file():
             raise DashboardError(f"workflow spec not found: {workflow_path}")
+        # An absolute path from the HTTP caller must not launch a spec from outside the
+        # workspace (or the configured spec search roots). Resolved first so `..` and
+        # symlinks cannot escape.
+        resolved_wf = Path(workflow_path).resolve()
+        if not any(
+            is_within(resolved_wf, Path(root))
+            for root in (self.workspace_root, *self._search_roots)
+        ):
+            raise DashboardError(f"workflow spec is outside the workspace: {workflow_path}")
 
         if prompt and prompt.strip():
             info = _load_workflow_info(Path(workflow_path))

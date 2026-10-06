@@ -223,8 +223,8 @@ Follow-ups for hosted or multi-user use, **in priority order**:
 8. **At-rest TOTP seed encryption** (seeds are in clear in `users.json`).
 9. Smaller follow-ups (store-permission re-check after startup and the OS uid in CLI audit events
     (`details.os_uid`/`os_user`) are done): a client-rendered hub index that carries the proof (closes the cookie-only hub index
-    residual); `dompurify` bump past 3.4.12 (moderate advisory); a `DashboardService.start_run`
-    path restriction; WebAuthn and native TLS flags. No cut-line item was dropped (HLD §24.1).
+    residual); `dompurify` bump past 3.4.12 (moderate advisory) and the `DashboardService.start_run`
+    path restriction (workspace/search roots only) are done; `ui/files.read_file` no longer opens FIFOs/special files; WebAuthn and native TLS flags. No cut-line item was dropped (HLD §24.1).
 
 Still open from the original security list:
 
@@ -355,8 +355,7 @@ These are accepted trade-offs. They are recorded so they are chosen rather than 
   startup warning). With it on: authenticated = full access and same-user processes (including
   agents) can read the credential store (A10, out of scope); a harvested cookie cannot call the
   API but still renders the hub index and cookie tossing can force a logout (A4);
-  `DashboardService.start_run` still accepts an absolute `workflow_path` (the launcher can already
-  run arbitrary agent code); behind a reverse proxy without `AO_UI_AUTH_TRUSTED_PROXIES` all
+  `DashboardService.start_run` is now restricted to the workspace/search roots (closed 2026-10-06); behind a reverse proxy without `AO_UI_AUTH_TRUSTED_PROXIES` all
   remote users share one throttle bucket (account lockout can be used as a DoS), and with
   `trusted_proxies=127.0.0.1` a local process can claim a client address via `X-Forwarded-For`;
   IPv6 clients are throttled per `/64`; the lockout phantom table is a bounded eviction oracle;
