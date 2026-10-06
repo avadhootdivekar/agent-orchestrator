@@ -1,0 +1,173 @@
+{
+ "description": "Hostile cache-entry corpus (T-FJH6LI, AC-5): parse_entry_bytes(file bytes, expected_key) must raise CacheIntegrityError whose .reason equals `reason`, and nothing else.",
+ "entries": [
+  {
+   "file": "deep_nesting_100000.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "100 000 nested arrays: RecursionError"
+  },
+  {
+   "file": "invalid_utf8.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "invalid UTF-8"
+  },
+  {
+   "file": "empty_array.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "top-level array"
+  },
+  {
+   "file": "schema_only.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "wrong schema, nothing else"
+  },
+  {
+   "file": "huge_string_field_1mib.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "1 MiB string field"
+  },
+  {
+   "file": "key_mismatch.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "key_mismatch",
+   "why": "valid entry whose key differs from the expected file name"
+  },
+  {
+   "file": "empty_file.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "zero bytes"
+  },
+  {
+   "file": "truncated.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "truncated mid-document"
+  },
+  {
+   "file": "nul_bytes.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "NUL bytes"
+  },
+  {
+   "file": "json_string.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "top-level string"
+  },
+  {
+   "file": "json_null.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "top-level null"
+  },
+  {
+   "file": "future_schema.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "unknown major schema inside the v1 path"
+  },
+  {
+   "file": "naive_created_at.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "timezone-naive datetime"
+  },
+  {
+   "file": "cost_infinity.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "Infinity literal accepted by json.loads, rejected by the model"
+  },
+  {
+   "file": "cost_nan.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "NaN literal"
+  },
+  {
+   "file": "cost_negative.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "cost < 0"
+  },
+  {
+   "file": "mode_setuid_4777.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "mode above 0o777 (setuid bit)"
+  },
+  {
+   "file": "size_negative.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "size < 0"
+  },
+  {
+   "file": "outputs_empty.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "no outputs"
+  },
+  {
+   "file": "outputs_is_object.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "wrong container type"
+  },
+  {
+   "file": "key_not_hex.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "key is a traversal string"
+  },
+  {
+   "file": "key_uppercase.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "uppercase key"
+  },
+  {
+   "file": "sha_not_hex.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "blob sha is a traversal string"
+  },
+  {
+   "file": "run_id_300_chars.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "over-long run_id"
+  },
+  {
+   "file": "path_5000_chars.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "over-long key_summary path"
+  },
+  {
+   "file": "outputs_5000_items.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "more than MAX_LIST_ITEMS outputs"
+  },
+  {
+   "file": "key_schema_zero.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "key_schema < 1"
+  },
+  {
+   "file": "key_schema_string.json",
+   "expected_key": "6646469e94a695fe1a994d35f54ca74e007262911255552b03c54ce2e5d0319f",
+   "reason": "corrupt_entry",
+   "why": "key_schema is a string"
+  }
+ ]
+}

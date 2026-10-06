@@ -26,6 +26,10 @@
           "enum": ["none", "worktree"],
           "default": "none",
           "description": "Workflow-level default isolation mode. A task's own isolation='inherit' (the default) resolves to this value."
+        },
+        "cache": {
+          "type": "boolean",
+          "description": "Result cache AUTHOR opt-in (E-Rc4Hk8; NOT Claude prompt caching). true = this task's whole effect is captured by its declared outputs, so an identical previous success may be reused when the OPERATOR enabled the result cache (--cache / AO_CACHE / .ao/config.yaml cache.enabled). Task value beats defaults.cache; unset defaults to false; false always means never."
         }
       }
     },
@@ -192,6 +196,10 @@
         "verdict_path": {
           "type": "string",
           "description": "Optional workspace-relative path of a structured verdict sidecar this task writes (for ao report-usage). Not a declared output; read lazily at report time."
+        },
+        "cache": {
+          "type": "boolean",
+          "description": "Result cache AUTHOR opt-in (E-Rc4Hk8; NOT Claude prompt caching). true = this task's whole effect is captured by its declared outputs, so an identical previous success may be reused when the OPERATOR enabled the result cache (--cache / AO_CACHE / .ao/config.yaml cache.enabled). Task value beats defaults.cache; unset defaults to false; false always means never."
         }
       }
     },

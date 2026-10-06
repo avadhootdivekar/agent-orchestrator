@@ -38,8 +38,12 @@ ao-bench = "agent_orchestrator.bench.cli:app"
 packages = ["src/agent_orchestrator"]
 # The built dashboard frontend is data, not Python, so it needs an explicit include to
 # land in the wheel. Committed (see .gitignore) so `pip install` ships a working
-# dashboard without requiring node at install time.
-artifacts = ["src/agent_orchestrator/ui/static/**"]
+# dashboard without requiring node at install time. The hub login-page script and
+# stylesheet (auth/assets) are built-and-committed data the same way.
+artifacts = [
+    "src/agent_orchestrator/ui/static/**",
+    "src/agent_orchestrator/auth/assets/**",
+]
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build.py"
@@ -79,6 +83,7 @@ markers = [
     "e2e: end-to-end test via the ao CLI",
     "browser: opt-in real-browser smoke test (E-k3AMEr); requires /usr/bin/google-chrome and playwright",
     "perf: performance envelope checks",
+    "slow: opt-in informational measurement (E-Da5Tn9 NFR-5); skipped unless selected with -m slow, never a gate",
     "swebench: opt-in real network/HF/git SWE-bench tier; set AO_E2E_SWEBENCH=1 to run",
 ]
 

@@ -13,11 +13,13 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [Spec files](#spec-files)
 - [CLI reference](#cli-reference)
 - [Dashboard (`ao ui`)](#dashboard-ao-ui)
+  - [Authentication](#authentication)
 - [Workflow templates](#workflow-templates)
 - [General instructions](#general-instructions)
 - [Environment variables](#environment-variables)
 - [Per-project config file](#per-project-config-file)
 - [Parallel execution](#parallel-execution)
+- [Result cache (opt-in)](#result-cache-opt-in)
 - [Configuring multiple repos](#configuring-multiple-repos)
 - [Schema reference](#schema-reference)
 - [Advanced workflows](#advanced-workflows)
@@ -215,7 +217,9 @@ ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
+ao cache      Manage the opt-in RESULT cache: ls | stats | show | rm | prune | clear | verify
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
+ao auth       Manage dashboard accounts, TOTP and lockouts (see Authentication)
 ao report-usage     Cross-run cost/retry/rework rollup by (agent, model, effort) + verdicts, feedback, survival
 ao report-survival  How much of a run's code changes survived into a ref (git only)
 ao rate       Record your own good/ok/bad rating of a run or task (local, no telemetry)
@@ -280,11 +284,14 @@ ao ui --port 9000 --workspace /path/to/repo --open
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--host HOST` | `127.0.0.1` | Interface to bind.  Loopback by default — see the warning below |
+| `--host HOST` | `127.0.0.1` | Interface to bind.  Loopback by default; unauthenticated unless `--auth` — see [Authentication](#authentication) |
 | `--port, -p PORT` | `8765` | Port to listen on |
 | `--workspace, -w PATH` | cwd | Workspace root to serve.  Env: `AO_WORKSPACE_ROOT` |
 | `--open` | `false` | Open the dashboard in your browser once it is serving |
 | `--reload` | `false` | Auto-reload on code changes (development) |
+| `--auth / --no-auth` | off | Require login (local accounts). Env: `AO_UI_AUTH`. See [Authentication](#authentication) |
+| `--auth-totp off\|optional\|required` | `off` | TOTP policy with `--auth`. Env: `AO_UI_AUTH_TOTP` |
+| `--auth-dir DIR` | `~/.config/ao/auth` | Credential store directory. Env: `AO_AUTH_DIR` |
 
 **What it does**
 
@@ -324,10 +331,80 @@ ao ui --port 9000 --workspace /path/to/repo --open
 Runs start as separate `ao run` processes, so closing the browser (or restarting the
 dashboard) does not stop them.
 
-> **⚠️ There is no authentication in this release.**  The dashboard can read any file under
-> the workspace and can start runs that cost money, so it binds loopback by default.  Only
-> bind another interface on a network you trust.  Authentication and configurable secrets
-> are the top item on the [roadmap](meta/ROADMAP.md).
+### Authentication
+
+Login is **opt-in** and off by default: until you enable it the dashboard is unauthenticated, can
+read any file under the workspace and can start runs that cost money, so it binds loopback.
+Never bind another interface without enabling auth (and, off-loopback, a TLS proxy). Full guide:
+[`docs-md/dashboard-authentication.md`](docs-md/dashboard-authentication.md).
+
+**Enable (first-user bootstrap).** Accounts are created from the CLI only:
+
+```bash
+ao auth add-user alice            # prompts for a password (min 12 chars); creates the store
+ao ui --auth                      # or AO_UI_AUTH=1, or ui.auth.enabled: true in .ao/config.yaml
+ao auth status                    # effective settings + where each came from, permissions, counts
+```
+
+`ao ui --auth` with no accounts exits 78 (a configuration error) instead of serving. The workspace
+config (`ui.auth` in `.ao/config.yaml`, see [Per-project config](#per-project-config-file)) **may
+only tighten** settings; anything that would weaken a default is refused with exit 78, and
+`trusted_proxies` is env-only. A workspace-config-only `enabled: false` also refuses to start
+while accounts exist; disable on purpose with `--no-auth` or `AO_UI_AUTH=0`.
+
+**Two-factor (TOTP) policy** (`--auth-totp` / `AO_UI_AUTH_TOTP` / `ui.auth.totp`):
+
+- `off` (default) / `optional` / `required`. Users enroll in the account menu (QR code + manual
+  secret) or on the host with `ao auth enable-2fa USER`; ten single-use **recovery codes** are
+  shown once.
+- Under `required`, a user who has not enrolled needs an **operator-issued enrollment token** at
+  first login (`ao auth enrollment-token USER`, valid 60 minutes), even if the account was created
+  without `--require-totp`. To switch an existing deployment to `required`, issue one per
+  unenrolled user and hand it over.
+- Under `off`, users who are already enrolled are **still asked for a code** (enrollment is
+  sticky). `ao auth status` prints these notes.
+- Lost device: sign in with a recovery code and re-enroll, or `ao auth reset-2fa USER` prints a
+  fresh enrollment token. Remote enrollment over plain HTTP is refused; enroll over TLS, on the
+  host, or through an SSH tunnel.
+- A TOTP policy below `required` that comes only from the config file warns; pin it with
+  `AO_UI_AUTH_TOTP` / `--auth-totp`.
+
+**Hub and dashboards are separate logins.** Cookies are scoped by host, not port, so the
+`ao service` hub and every workspace dashboard are separate *realms*, each with its own session
+and login. Sessions live in memory (a restart signs everyone out); the idle limit is 30 minutes
+and the hard limit 12 hours (`AO_UI_AUTH_IDLE_MINUTES`, `AO_UI_AUTH_ABSOLUTE_HOURS`).
+
+**Plain HTTP, TLS proxies.** `ao` serves plain HTTP; a non-loopback bind prints a loud warning.
+For remote access put a TLS reverse proxy in front and set `AO_UI_AUTH_TRUSTED_PROXIES`
+(env only, e.g. `127.0.0.1`); the proxy must keep the `Host` header and send
+`X-Forwarded-Proto`/`-For`. Without it, proxied requests count as remote, the server logs a
+`proxy_suspected` warning, and all remote users share one throttle bucket. With
+`trusted_proxies=127.0.0.1`, bind the app to a unix socket or firewall its port: any local process
+could otherwise claim a client address via `X-Forwarded-For`.
+
+**Where things live.** Credentials (password hashes, **TOTP seeds in clear**, recovery-code
+hashes) are in `~/.config/ao/auth/` (`AO_AUTH_DIR`); lockouts and the audit log in
+`~/.local/state/ao/auth/` (`AO_AUTH_STATE_DIR`). Because a stolen `users.json` holds the second
+factor too, back the credential directory up **encrypted only**. The file browser never serves
+either directory or `~/.config/ao/service.env`.
+
+**Threat model, in one paragraph.** Authenticated means full access (no roles); same-user
+processes, including the agents `ao` runs, are out of scope. A cookie harvested by a local
+listener cannot call the API, because every API call also needs a per-session proof header kept in
+the page; the remaining residuals are that the hub index page still renders for a bare cookie and
+that cookie tossing can force a logout. `/api/docs` (and the hub's `/docs`) cannot be used in a
+browser with auth on; `--port 0` is refused with auth on.
+
+**Service.** `ao service install --auth` bakes `--auth` into the systemd unit (preferred), or put
+`AO_UI_AUTH=1` in `~/.config/ao/service.env`, then `ao auth add-user`, then
+`systemctl --user restart ao`. The unit carries `RestartPreventExitStatus=78`, so a bad auth
+configuration (exit 78) is not restart-looped. **Stale-install warning:** a global `ao` that
+predates this feature silently ignores `AO_UI_AUTH`/`ui.auth` (only an explicit `--auth` flag
+errors), so the dashboards would start *unauthenticated* with no error. After upgrading run
+`bash install.sh --force`, then verify with `ao auth status` (it exists only in new builds).
+
+> **Release note.** Dashboard authentication is new and opt-in: `ao auth`, `--auth`,
+> `--auth-totp`, `--auth-dir`, `ao service install --auth`. Nothing changes unless enabled.
 
 **Deferred:** UI-based dynamic workflow generation (building or editing a DAG in the browser) is
 on the roadmap, not in this release. The run graph above is read-only.
@@ -474,7 +551,16 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
 | `AO_QUOTA_POLL_SECONDS` | `--quota-poll-interval` | Seconds between quota-exhaustion re-run attempts (default: 900 = 15 min) |
 | `AO_GENERAL_INSTRUCTIONS` | `--general-instruction` | `os.pathsep`-separated instruction paths applied to **every** task; **additive**, not an override — see [General instructions](#general-instructions) |
+| `AO_CACHE` | `--cache` / `--no-cache` | Opt-in **result cache** for the run: `1`/`true`/`yes`/`on`, `0`/`false`/`no`/`off`, or `shadow` (measure only); empty = unset; any other value (including `refresh`, which does not exist) = off plus a warning. See [Result cache (opt-in)](#result-cache-opt-in) |
 | `AO_UI_WORKSPACE` | `ao ui --workspace` | Workspace the dashboard serves (used by `ao ui --reload`) |
+| `AO_UI_AUTH` | `ao ui/service run --auth/--no-auth` | Require dashboard/hub login (default off); see [Authentication](#authentication) |
+| `AO_UI_AUTH_TOTP` | `--auth-totp` | TOTP policy: `off` / `optional` / `required` |
+| `AO_AUTH_DIR` | `--auth-dir`, `ao auth --auth-dir` | Credential store directory (default `~/.config/ao/auth`) |
+| `AO_AUTH_STATE_DIR` | — | Lockout/audit state directory (default `~/.local/state/ao/auth`) |
+| `AO_UI_AUTH_TRUSTED_PROXIES` | — (env only) | Comma-separated reverse-proxy addresses whose `X-Forwarded-*` headers are trusted |
+| `AO_UI_AUTH_IDLE_MINUTES`, `AO_UI_AUTH_ABSOLUTE_HOURS` | — | Session idle (default 30) / absolute (default 12) limits |
+| `AO_UI_AUTH_LOCKOUT_THRESHOLD`, `AO_UI_AUTH_LOCKOUT_BASE_SECONDS`, `AO_UI_AUTH_LOCKOUT_MAX_SECONDS`, `AO_UI_AUTH_ADDRESS_THRESHOLD` | — | Account lockout and per-address throttle tuning (defaults 5 / 30 s / 900 s / 20) |
+| `AO_UI_AUTH_MIN_PASSWORD_LENGTH`, `AO_UI_AUTH_TOTP_ISSUER` | — | Minimum password length (default 12); TOTP issuer label (default `ao@<host>`) |
 
 ---
 
@@ -506,6 +592,21 @@ agents:    path/to/agents.json
 # --- Claude usage-quota exhaustion handling ---
 # quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS — give up after 6h
 # quota_poll_seconds: 900         # AO_QUOTA_POLL_SECONDS     — poll every 15 min
+
+# --- Dashboard authentication (opt-in). The workspace file may only TIGHTEN settings: a value
+# that weakens a default is refused at startup (exit 78); trusted_proxies is env-only. ---
+# ui:
+#   auth:
+#     enabled: true                 # AO_UI_AUTH   (enabled: false here, with accounts, refuses to start)
+#     totp: required                # AO_UI_AUTH_TOTP  (below `required` from config only: warns)
+#     session_idle_minutes: 15      # AO_UI_AUTH_IDLE_MINUTES      (default 30; lower only)
+#     session_absolute_hours: 8     # AO_UI_AUTH_ABSOLUTE_HOURS    (default 12; lower only)
+#     lockout_threshold: 3          # AO_UI_AUTH_LOCKOUT_THRESHOLD (default 5; lower only)
+#     min_password_length: 16       # AO_UI_AUTH_MIN_PASSWORD_LENGTH (default 12; raise only)
+# --- Result cache (off by default; see "Result cache (opt-in)" below) ---
+# cache:
+#   enabled: false            # AO_CACHE=1|0|shadow / --cache / --no-cache (CLI/env win)
+#   mode: "on"                # "on" | "shadow" (measure only); quote it, bare on = YAML true
 ```
 
 **Discovery**: AO walks up from your current directory, stopping at the git root
@@ -594,6 +695,124 @@ treatment `--quota-max-wait 0` / `--max-attempts 0` already get. A negative valu
 
 ---
 
+## Result cache (opt-in)
+
+> **New: opt-in result cache.** `ao run --cache` (or `AO_CACHE=1|shadow`) reuses an identical,
+> previously successful task's declared outputs instead of re-dispatching the agent, for tasks
+> whose workflow opts in with `cache: true`. Off by default; `--no-cache` is a kill switch;
+> `ao cache ls|stats|show|rm|prune|clear|verify` manage it. Not Claude prompt caching.
+
+This is a **result** cache: when a task is identical to one that already succeeded (same rendered
+prompt, same `claude` argv and CLI version, same instruction / input files, same prior output
+content, same git HEADs), `ao` restores the earlier run's declared **output files** and marks the
+task `succeeded` without dispatching an agent, spending a retry or charging a budget. It is **not**
+Anthropic *prompt* caching (`cache_read_input_tokens`, `--autocompact`, `ao report-timing`'s cache
+hit rate), which is a separate, always-on provider feature.
+
+Agent output is non-deterministic: **a hit replays ONE earlier successful result**, it does not
+re-sample. That is why the cache is a *double opt-in*.
+
+### Turning it on
+
+| Who | How |
+|-----|-----|
+| **Operator** (per run) | `--cache` / `--no-cache` on `ao run` and `ao resume` > `AO_CACHE` (`1`, `0`, `shadow`) > `.ao/config.yaml` `cache.enabled` + `cache.mode` > **off**. `--no-cache` / `AO_CACHE=0` always win. |
+| **Workflow author** (per task) | `cache: true` on a task, or `defaults.cache: true` with `cache: false` on exclusions. Task beats defaults; `false` always means never. A task nobody opts in is never looked up. |
+
+Both must agree. The author opts in a task only when its **whole effect is captured by its declared
+`outputs`** (see the "Result cache (opt-in)" section of
+[`.claude/skills/workflow-authoring/SKILL.md`](.claude/skills/workflow-authoring/SKILL.md)).
+
+```bash
+ao run --cache --workflow ...            # looks up opted-in tasks, stores their successes
+AO_CACHE=shadow ao run --workflow ...    # measure only: records "would hit", restores nothing
+ao run --no-cache --workflow ...         # kill switch (beats AO_CACHE and config)
+```
+
+`ao run` prints one stderr banner, for example
+`Result cache: on (source=cli), 1 of 2 static task(s) opted in, at <workspace>/.orchestrator/cache`
+(in `on` mode followed by `(agent-writable; avoid for untrusted prompts)`), and a summary line after
+the run, `Result cache: hits=2 (saved ~$1.2345 est., ~54000 tokens, ~312s) would_hits=0 misses=1
+stored=1 ineligible=1`. Per-task detail is in `status.json` (`tasks[].result_cache`), `ao
+report-usage` (`result_cache` in `--json`), `ao report-outcomes` (`settle_reason: cached`) and the
+dashboard ("cached" tag, "Result cache" tile). Avoided spend (`saved_*`) is an estimate and is never
+netted into real cost.
+
+### Configuration (`.ao/config.yaml`)
+
+```yaml
+# cache:
+#   enabled: false            # AO_CACHE=1|0|shadow / --cache / --no-cache (CLI/env win)
+#   mode: "on"                # "on" | "shadow" (measure only); quote it, bare on = YAML true
+#   max_bytes: 1073741824     # total size cap; least-recently-used entries evicted to 90%
+#   max_entry_bytes: null     # results bigger than this are not stored (default min(64 MiB, max_bytes))
+#   ttl_days: 30              # entries older than this are misses (null = never expire)
+#   include_repo_heads: true  # key includes HEAD of each git repo in the repo set
+#   max_input_bytes: 536870912  # per-lookup hashing cap (bigger => task not cacheable)
+#   max_input_files: 20000      # per-lookup file-count cap for directory inputs
+```
+
+`ao init` scaffolds this block (commented). Committing `enabled: true` turns the cache on for every
+clone and service run of the repo; do that only on purpose. The cache lives in
+`<workspace>/.orchestrator/cache/` (mode `0o700`, self-ignoring) and is per workspace.
+
+### Shadow mode
+
+`AO_CACHE=shadow` (or `cache.enabled: true` with `cache.mode: "shadow"`) performs the full lookup and
+key computation but **never restores**: every task still dispatches and still stores, and a valid
+entry is recorded as a *would hit*, with the cost it would have avoided. Use it to measure the hit
+rate before trusting `on`: `ao report-usage --json` -> `result_cache` (`lookups`, `would_hits`,
+`avoidable_cost_usd`), and `ao cache stats --json` for store growth. The procedure, the decision rule
+and a report template are in
+[`docs-md/result-cache-g0-protocol.md`](docs-md/result-cache-g0-protocol.md) (the value check
+itself has not been run yet; running it is a post-merge follow-up).
+
+### `ao cache` commands
+
+Each takes `--workspace/-w PATH` (default `AO_WORKSPACE_ROOT`, then the repo set's `workspace_root`
+of the workflow named in `.ao/config.yaml`, i.e. the workspace `ao run` uses) and `--json` (exactly
+one JSON document, also on a non-zero exit). They work even when the run mode is off. Limits
+(`max_bytes`, `ttl_days`) come from the `.ao/config.yaml` found from the current directory.
+
+| Command | What it does |
+|---------|--------------|
+| `ao cache ls [--limit N] [--sort lru\|created\|size]` | List entries (key prefix, last used, created, outputs, bytes, source task/run, cost) |
+| `ao cache stats` | Entries, bytes, limits, oldest/newest, expired entries, anomalies |
+| `ao cache show KEY_OR_PREFIX` | One entry: provenance, outputs, blob presence, key components (prefix: 4-64 lowercase hex, unique) |
+| `ao cache rm KEY_OR_PREFIX` | Remove exactly one entry: **the way to re-roll a bad cached result** (then re-run) |
+| `ao cache prune [--max-bytes N] [--older-than DAYS] [--dry-run]` | Remove invalid, expired and least-recently-used entries, unreferenced blobs, stale temp files and stale restore leftovers |
+| `ao cache clear [--yes]` | Delete every entry and blob (`--yes` required unless stdin is a terminal) |
+| `ao cache verify` | Read-only integrity check; exit 1 on corruption |
+
+Exit codes: `0` ok; `1` not found / ambiguous / store problem / refused / corruption found; `2`
+bad argument (malformed prefix, bad `--sort`, out-of-range number, a `--workspace` that is not an
+existing directory). `ao prune` does **not** touch the result cache; use `ao cache prune`. There is
+no `refresh` mode, no `rm --run/--task` and no `verify --repair`.
+
+### What to know before you rely on it
+
+- **Deleting an output to force a redo restores the cached copy instead.** Use `ao cache rm <key>`
+  and re-run, or `--no-cache`.
+- With the default `skip_if_outputs_exist: true` the cache only helps when outputs are absent (clean
+  checkout, fresh clone, deleted outputs). Pin full model ids, not aliases.
+- A **fail-closed** eligibility check excludes tasks with hooks, isolation, `emit_tasks`, routing or
+  loops, no outputs, a non-`claude` command, or an output under `.git` / `.claude` / `CLAUDE.md` / CI
+  config; the reason is in `status.json`. Only a final settled success is stored, and only if the key,
+  the repo HEADs and the tracked files outside the declared outputs did not change during the run.
+- Accepted residuals (pass `--no-cache` for untrusted repositories or prompts): provider and endpoint
+  environment (`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, region) is not
+  in the key; the tracked-file guard runs `git status`, which can execute a `filter.<x>.clean` command
+  from the agent-writable git config; uncommitted tracked edits made before the run are not in the key;
+  the cache directory is agent-writable (same-uid forgery is not defended); cached outputs persist
+  until `ao cache rm|clear|prune`.
+- `ao-bench` always runs with `--no-cache` and `AO_CACHE=0`.
+
+Design, threat model and as-built deviations:
+[`docs-md/cross-run-result-cache-hld.md`](docs-md/cross-run-result-cache-hld.md) (read §0 first) and
+[`docs-md/adr/ADR-0019-cross-run-result-cache.md`](docs-md/adr/ADR-0019-cross-run-result-cache.md).
+
+---
+
 ## Configuring multiple repos
 
 A single `reposet.json` can declare several named sets. Each set binds a `workspace_root`
@@ -664,6 +883,7 @@ Full schemas are in `specs/` and are authoritative (validated by `ao validate`):
 | `retries.backoff_seconds` | float | `0` | Delay between attempts |
 | `timeout_seconds` | int | — | Hard wall-clock limit per attempt |
 | `skip_if_outputs_exist` | bool | `true` | Skip this task if all outputs exist (idempotency) |
+| `cache` | bool | unset (= not opted in) | Result-cache **author opt-in** (also `defaults.cache`): `true` = this task's whole effect is captured by its declared outputs, so an identical previous success may be reused **when the operator also enables the cache**; `false` = never. See [Result cache (opt-in)](#result-cache-opt-in) |
 
 ### Trigger types (workflow.json → triggers[])
 
@@ -708,6 +928,7 @@ dynamic fan-out and a bugfix/review loop) lives in [`playground/sum-of-array/`](
 agent-orchestrator/
   src/agent_orchestrator/   Python package (engine, CLI, executors, DAG, …)
     ui/                       Dashboard backend + built frontend (served by `ao ui`)
+    auth/                     Dashboard/hub authentication (`ao auth`, sessions, TOTP)
   ui/                       Dashboard frontend source (React + Vite) — see ui/README.md
   specs/                    JSON schemas + example spec files
     *.schema.json             Authoritative schemas
@@ -767,5 +988,8 @@ See [`ui/README.md`](ui/README.md) for the frontend layout and conventions.
 - **Detailed walkthrough** — from writing your first spec to driving a multi-task epic to
   completion and recovering from failures —
   [`docs-md/guide-epic-walkthrough.md`](docs-md/guide-epic-walkthrough.md)
+- **Dashboard authentication** — user guide
+  [`docs-md/dashboard-authentication.md`](docs-md/dashboard-authentication.md), design
+  [`docs-md/dashboard-auth-hld.md`](docs-md/dashboard-auth-hld.md)
 - **Dashboard & general-instruction design** —
   [`docs-md/dashboard-and-general-instructions-hld.md`](docs-md/dashboard-and-general-instructions-hld.md)

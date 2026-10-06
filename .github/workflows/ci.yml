@@ -1,5 +1,8 @@
 name: CI
 on: [push, pull_request]
+# Least privilege (T-2wE08U): no job needs more than read access to the repository.
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -22,6 +25,16 @@ jobs:
         run: pytest -q --tb=short
       - name: Run bench tests (deterministic, network-free, no real_llm/swebench)
         run: pytest tests/bench -q -m "not real_llm and not swebench" --cov=agent_orchestrator.bench --cov-report=term --cov-fail-under=80
+      - name: Run auth tests with coverage gate
+        run: pytest tests/auth -q --cov=agent_orchestrator.auth --cov-report=term --cov-fail-under=90
+      - name: Result cache tests + coverage (E-Rc4Hk8)
+        run: |
+          pytest tests/cache tests/test_e2e_cli_result_cache.py \
+            tests/test_e2e_cli_result_cache_admin.py -q \
+            --cov=agent_orchestrator.cache --cov-report=term --cov-fail-under=85
+          for m in keys store restore coordinator; do
+            coverage report --include="*/agent_orchestrator/cache/$m.py" --fail-under=90
+          done
       - name: Run dashboard tests (unit + integration + e2e)
         run: pytest tests/ui tests/test_general_instructions.py tests/test_e2e_cli_prompt_and_instructions.py -q --cov=agent_orchestrator.ui --cov-report=term --cov-fail-under=80
       - name: Validate example specs
@@ -51,5 +64,24 @@ jobs:
         # Also proves the committed src/agent_orchestrator/ui/static/ can be regenerated
         # from source — a build break here means the shipped dashboard is unreproducible.
         run: npm run build
+      - name: Verify rebuild produces no diff (AC-30, dev-security #13)
+        run: git diff --exit-code -- ../src/agent_orchestrator/ui/static ../src/agent_orchestrator/auth/assets
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
+
+  pip-audit:
+    # Separate job (like `frontend`): it needs the network (PyPI advisory DB), so an outage there
+    # can never block the engine's own test signal. Audits the locked runtime closure + `ui` extra.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install uv
+        run: pip install uv
+      - name: Export the locked runtime dependencies
+        run: uv export --extra ui --no-dev --no-hashes --no-emit-project -o requirements-audit.txt
+      - name: Audit Python dependencies
+        # --no-deps: the export is already fully pinned, so pip-audit must not re-resolve.
+        run: uvx pip-audit -r requirements-audit.txt --no-deps --disable-pip

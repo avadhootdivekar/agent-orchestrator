@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from agent_orchestrator.errors import EXIT_CONFIG
+from agent_orchestrator.service import systemd
 from agent_orchestrator.service.systemd import (
     DEFAULT_HUB_HOST,
     DEFAULT_HUB_PORT,
@@ -38,6 +40,12 @@ class TestRenderUnit:
     def test_contains_the_exec_start_line_with_hub_host_and_port(self) -> None:
         text = render_unit("/usr/local/bin/ao", hub_port=9999, hub_host="0.0.0.0")
         assert "ExecStart=/usr/local/bin/ao service run --hub-host 0.0.0.0 --hub-port 9999" in text
+
+    def test_auth_appends_the_flag_to_exec_start_only_when_asked(self) -> None:
+        on = render_unit("/usr/local/bin/ao", auth=True)
+        off = render_unit("/usr/local/bin/ao")
+        assert f"--hub-port {DEFAULT_HUB_PORT} --auth\n" in on
+        assert "--auth" not in off
 
     def test_exec_start_uses_the_default_hub_port_when_unspecified(self) -> None:
         text = render_unit("/usr/local/bin/ao")
@@ -69,6 +77,16 @@ class TestRenderUnit:
         assert "RestartSec=5" in text
         assert "StartLimitIntervalSec=120" in text
         assert "StartLimitBurst=5" in text
+
+    def test_config_error_exit_status_is_terminal_right_after_restart_on_failure(self) -> None:
+        # E-Da5Tn9 AC-31: a child/daemon exiting EXIT_CONFIG must not be restarted by systemd.
+        lines = render_unit("/usr/local/bin/ao").splitlines()
+        at = lines.index("Restart=on-failure")
+        assert lines[at + 1] == f"RestartPreventExitStatus={EXIT_CONFIG}"
+        assert EXIT_CONFIG == 78
+
+    def test_systemd_source_has_no_literal_exit_status(self) -> None:
+        assert "RestartPreventExitStatus=78" not in Path(systemd.__file__).read_text("utf-8")
 
     def test_contains_timeout_stop_sec(self) -> None:
         text = render_unit("/usr/local/bin/ao")

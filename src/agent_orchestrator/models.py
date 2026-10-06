@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,25 @@ WINDOW_SECONDS: dict[str, int] = {"minute": 60, "ten_minutes": 600, "hour": 3600
 # "xhigh" (ADR-0003 decision 2 follow-through, per-task settings) sits above "high" for
 # the rare task that genuinely needs a long, many-turn session.
 EFFORT_MAX_TURNS: dict[str, int] = {"low": 15, "medium": 30, "high": 60, "xhigh": 120}
+# Result-cache pointer (E-Rc4Hk8, ADR-0019 D7): the cache key hashes the EXACT claude argv built
+# from these values, so editing them changes cache keys by itself. A behaviour-relevant change that
+# is visible in NEITHER the argv NOR the executor fingerprint (cache/fingerprint.py: CLI version,
+# CLAUDE_FINGERPRINT_ENV_VARS, CLAUDE_CONTEXT_PATHS) MUST bump KEY_SCHEMA_VERSION in
+# cache/constants.py, or stale cache hits will survive the change.
 # Shared Literal so AgentSpec and TaskSpec can't drift on the allowed effort values.
 EffortLevel = Literal["low", "medium", "high", "xhigh"]
+# --- E-Rc4Hk8 result cache (ADR-0019). Outcome values the engine writes (open set on read).
+RESULT_CACHE_HIT: Literal["hit"] = "hit"
+RESULT_CACHE_WOULD_HIT: Literal["would_hit"] = "would_hit"
+RESULT_CACHE_MISS: Literal["miss"] = "miss"
+RESULT_CACHE_INELIGIBLE: Literal["ineligible"] = "ineligible"
+# Record bounds (ADR-0019 D28): an inf/NaN or unbounded value must never reach state.json.
+RESULT_CACHE_MAX_TEXT = 256
+RESULT_CACHE_MAX_REASON = 64
+RESULT_CACHE_MAX_USD = 1_000_000.0
+RESULT_CACHE_MAX_TOKENS = 10**12
+RESULT_CACHE_MAX_SECONDS = 10**8
+RESULT_CACHE_KEY_PATTERN = r"^[0-9a-f]{64}$"
 DEFAULT_CHARS_PER_TOKEN: int = 4
 DEFAULT_PESSIMISM_BUFFER: float = 1.3
 DEFAULT_OUTPUT_ALLOWANCE_TOKENS: int = 1000
@@ -332,6 +349,13 @@ class TaskSpec(BaseModel):
     # (`ao report-usage`, see `usage.verdict_path_for`). NOT a declared output and never a
     # gate: read lazily at report time via `artifacts.read_control`; missing = "no verdict".
     verdict_path: str | None = None
+    # Result cache (E-Rc4Hk8, ADR-0019 D1): AUTHOR opt-in. True = the author vouches that this
+    # task's whole effect is captured by its declared outputs. None = inherit defaults.cache,
+    # then cache.constants.DEFAULT_TASK_CACHE_POLICY (False). False = never. It only matters
+    # when the OPERATOR enabled the result cache (--cache / AO_CACHE / cache.enabled). An
+    # emit_tasks-injected task's True is ignored (narrow-only). StrictBool: the JSON schema is
+    # not packaged, so pydantic is the real gate.
+    cache: StrictBool | None = None
 
 
 # A model id/alias is handed to `claude --model` as ONE argv element. Whitelisting the
@@ -425,6 +449,7 @@ class WorkflowDefaults(BaseModel):
     # Workflow-level default model for every task (static or `emit_tasks`-injected) that sets
     # no `model` of its own; resolved in `resolve_effective_agent`. None = agents decide.
     model: str | None = None
+    cache: StrictBool | None = None  # workflow-wide author opt-in default for TaskSpec.cache
 
     @field_validator("model")
     @classmethod
@@ -1199,6 +1224,49 @@ class RunPrompt(BaseModel):
     captured_at: str
 
 
+class ResultCacheRecord(BaseModel):
+    """One task's result-cache outcome for its most recent lookup (E-Rc4Hk8, ADR-0019 D14).
+
+    Lives on RunState.result_cache keyed by task id, never on TaskRunState (prepare_resume
+    replaces it wholesale). Written ONLY by engine.py on the main thread. `outcome`, `mode`
+    and `mode_source` are open-set strings (SpawnRecord.origin precedent). Read only through
+    `is_current_result_cache_record`; a non-current record is ignored by every reader.
+    `source_run_id` is display-only provenance from an agent-writable entry: never a path.
+    `hit` and `saved_tokens` are the parent brief's exact fields (ADR-0019 D35). They are
+    DERIVED by the validator below on every construction or load, never trusted from input.
+    """
+
+    outcome: str  # hit | would_hit | miss | ineligible
+    mode: str  # on | shadow
+    mode_source: str  # cli | env | config
+    reason: str | None = Field(default=None, max_length=RESULT_CACHE_MAX_REASON)
+    reason_detail: str | None = Field(default=None, max_length=RESULT_CACHE_MAX_TEXT)
+    key: str | None = Field(default=None, pattern=RESULT_CACHE_KEY_PATTERN)
+    hit: bool = False  # derived: outcome == "hit"
+    dispatch_cycle: int = Field(ge=0)  # the TaskRunState.dispatch_cycle it belongs to
+    at: str = Field(max_length=RESULT_CACHE_MAX_REASON)  # ISO-8601 UTC, engine clock
+    # Hit binding: equals ts.ended_at while the record is current (ADR-0019 D14).
+    ended_at: str | None = Field(default=None, max_length=RESULT_CACHE_MAX_REASON)
+    stored: bool = False
+    store_reason: str | None = Field(default=None, max_length=RESULT_CACHE_MAX_REASON)
+    saved_cost_usd: float = Field(default=0.0, ge=0, le=RESULT_CACHE_MAX_USD, allow_inf_nan=False)
+    saved_tokens: int = Field(default=0, ge=0)  # derived: input + output
+    saved_input_tokens: int = Field(default=0, ge=0, le=RESULT_CACHE_MAX_TOKENS)
+    saved_output_tokens: int = Field(default=0, ge=0, le=RESULT_CACHE_MAX_TOKENS)
+    saved_seconds: float = Field(
+        default=0.0, ge=0, le=RESULT_CACHE_MAX_SECONDS, allow_inf_nan=False
+    )
+    source_run_id: str | None = Field(default=None, max_length=RESULT_CACHE_MAX_TEXT)
+
+    @model_validator(mode="after")
+    def _derive_brief_fields(self) -> ResultCacheRecord:
+        # D35: never trust these two from input. model_copy(update=...) skips validators, so
+        # callers must not change outcome or the token split through it (the engine never does).
+        self.hit = self.outcome == RESULT_CACHE_HIT
+        self.saved_tokens = self.saved_input_tokens + self.saved_output_tokens
+        return self
+
+
 class RunState(BaseModel):
     run_id: str
     workflow_id: str
@@ -1264,6 +1332,23 @@ class RunState(BaseModel):
     # intentionally opted out of head recording (so `ao report-survival` can say why attribution
     # is coarser); None = unknown (a run predating this field). Never rewritten on resume.
     record_git_heads: bool | None = None
+    # Result cache records (E-Rc4Hk8): task id -> most recent lookup/store outcome. The default
+    # {} keeps every pre-epic state.json loadable (NFR-6).
+    result_cache: dict[str, ResultCacheRecord] = {}
+
+
+def is_current_result_cache_record(rec: ResultCacheRecord, ts: TaskRunState | None) -> bool:
+    """True iff *rec* describes *ts*'s current incarnation (ADR-0019 D14).
+
+    Shared by every reader (status.json, summary line, usage, outcomes, dashboard) so that
+    they can never disagree.
+    """
+    if ts is None or rec.dispatch_cycle != ts.dispatch_cycle:
+        return False
+    if rec.outcome == RESULT_CACHE_HIT:
+        bound = rec.ended_at is not None and rec.ended_at == ts.ended_at
+        return ts.status == "succeeded" and bound
+    return True
 
 
 class RunUsageTotals(BaseModel):

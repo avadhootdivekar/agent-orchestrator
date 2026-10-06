@@ -24,7 +24,7 @@ import logging
 import posixpath
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -338,6 +338,27 @@ class RunSignalRow(BaseModel):
     survival_rate: float | None = None
 
 
+class ResultCacheUsage(BaseModel):
+    """Cross-run result-cache totals over the scanned runs (E-Rc4Hk8 HLD 13.6; the G0 object).
+
+    `saved_*` are estimates of what the HITS avoided (the source run's cost, retries included);
+    they are NOT part of any group's `cost_usd`. `would_hits / lookups` over shadow-mode runs is
+    the G0 would-hit rate.
+    """
+
+    hits: int = 0
+    saved_cost_usd: float = 0.0
+    saved_tokens: int = 0
+    saved_seconds: float = 0.0
+    lookups: int = 0
+    would_hits: int = 0
+    misses: int = 0
+    ineligible: int = 0
+    avoidable_cost_usd: float = 0.0
+    miss_reasons: dict[str, int] = {}
+    store_skip_reasons: dict[str, int] = {}
+
+
 class UsageReport(BaseModel):
     runs_scanned: int
     verdicts_found: int  # verdicts of any kind that parsed
@@ -352,6 +373,8 @@ class UsageReport(BaseModel):
     survival_unavailable_reason: str | None = None
     survival_ref: str | None = None
     run_signals: list[RunSignalRow] = []
+    # None unless a scanned run has current result-cache records (E-Rc4Hk8); not in the payload.
+    result_cache: ResultCacheUsage | None = None
 
 
 FeedbackInput = Mapping[str, Sequence[FeedbackEntry] | FeedbackFile]
@@ -367,6 +390,47 @@ def _joinable_survival(row: TaskSurvival | None) -> TaskSurvival | None:
     if row.confidence == SURVIVAL_JOIN_EXCLUDED_CONFIDENCE:
         return None
     return row
+
+
+def _current_hit_ids(state: RunState) -> frozenset[str]:
+    """Task ids whose result-cache record is a current hit (E-Rc4Hk8 D12). Empty, and
+    `cache.report` never imported, for a run the cache never touched (D9)."""
+    if not state.result_cache:
+        return frozenset()
+    from .cache.report import current_hit
+
+    return frozenset(tid for tid in state.tasks if current_hit(state, tid))
+
+
+def _run_counters(state: RunState) -> dict[str, object] | None:
+    """One run's contribution to the cross-run `result_cache` object (HLD 13.6)."""
+    if not state.result_cache:
+        return None
+    from .cache.report import usage_counters
+
+    return usage_counters(state)
+
+
+def _sum_result_cache(parts: Sequence[dict[str, object]]) -> ResultCacheUsage | None:
+    """Sum the per-run counters; None when no scanned run has current records."""
+    if not parts:
+        return None
+    total = ResultCacheUsage()
+    for c in parts:
+        total.hits += cast(int, c["hits"])
+        total.saved_cost_usd += cast(float, c["saved_cost_usd"])
+        total.saved_tokens += cast(int, c["saved_tokens"])
+        total.saved_seconds += cast(float, c["saved_seconds"])
+        total.lookups += cast(int, c["lookups"])
+        total.would_hits += cast(int, c["would_hits"])
+        total.misses += cast(int, c["misses"])
+        total.ineligible += cast(int, c["ineligible"])
+        total.avoidable_cost_usd += cast(float, c["avoidable_cost_usd"])
+        for field in ("miss_reasons", "store_skip_reasons"):
+            merged = getattr(total, field)
+            for reason, n in cast(dict[str, int], c[field]).items():
+                merged[reason] = merged.get(reason, 0) + n
+    return total
 
 
 def _key(ts: TaskRunState) -> tuple[str, str, str]:
@@ -395,6 +459,7 @@ def aggregate_usage(
 
     outcomes: list[RunOutcome] = []
     runs = verdicts = reviews = runs_rated = 0
+    rc_parts: list[dict[str, object]] = []
     for state in states:
         runs += 1
         raw_fb = (feedback or {}).get(state.run_id)
@@ -404,30 +469,48 @@ def aggregate_usage(
         runs_rated += bool(entries)
         outcome = RunOutcome(run_id=state.run_id)
         has_outcome = False
+        rc_hits = _current_hit_ids(state)
+        counters = _run_counters(state)
+        if counters is not None:
+            rc_parts.append(counters)
         for tid, ts in state.tasks.items():
             # Never-dispatched tasks (skipped/not_taken/pending) have no usage to attribute.
             if ts.status not in _SETTLED or ts.dispatch_cycle < 1:
                 continue
-            g = group(ts)
-            g.tasks += 1
-            g.succeeded += ts.status == "succeeded"
-            g.failed += ts.status != "succeeded"
-            g.retried += ts.attempts > 1 or ts.dispatch_cycle > 1
-            g.cost_usd += ts.cumulative_cost_usd
-            g.input_tokens += ts.cumulative_input_tokens
-            g.output_tokens += ts.cumulative_output_tokens
-            if entries:
-                eff = effective_for_task(entries, tid)
-                if eff is not None:
-                    g.fb_rated_tasks += 1
-                    setattr(g, f"fb_{eff.rating}", getattr(g, f"fb_{eff.rating}") + 1)
-                    g.fb_unnecessary += "unnecessary" in eff.reasons
-            joined = _joinable_survival((survival or {}).get((state.run_id, tid)))
-            if joined is not None:
-                g.lines_added += joined.lines_added
-                g.lines_survived += joined.lines_survived
-                g.survival_tasks += 1
-                g.survival_low_tasks += FLAG_LIKELY_WORTHLESS in joined.flags
+            if tid in rc_hits:
+                # Site A (E-Rc4Hk8 D12): a result-cache hit is not a dispatched task, so it is not
+                # counted. Spend carried in from an EARLIER paid attempt (hit-after-spend) is
+                # real and still counts; a first-pass hit carries 0 and adds nothing.
+                if (
+                    ts.cumulative_cost_usd
+                    or ts.cumulative_input_tokens
+                    or ts.cumulative_output_tokens
+                ):
+                    hg = group(ts)
+                    hg.cost_usd += ts.cumulative_cost_usd
+                    hg.input_tokens += ts.cumulative_input_tokens
+                    hg.output_tokens += ts.cumulative_output_tokens
+            else:
+                g = group(ts)
+                g.tasks += 1
+                g.succeeded += ts.status == "succeeded"
+                g.failed += ts.status != "succeeded"
+                g.retried += ts.attempts > 1 or ts.dispatch_cycle > 1
+                g.cost_usd += ts.cumulative_cost_usd
+                g.input_tokens += ts.cumulative_input_tokens
+                g.output_tokens += ts.cumulative_output_tokens
+                if entries:
+                    eff = effective_for_task(entries, tid)
+                    if eff is not None:
+                        g.fb_rated_tasks += 1
+                        setattr(g, f"fb_{eff.rating}", getattr(g, f"fb_{eff.rating}") + 1)
+                        g.fb_unnecessary += "unnecessary" in eff.reasons
+                joined = _joinable_survival((survival or {}).get((state.run_id, tid)))
+                if joined is not None:
+                    g.lines_added += joined.lines_added
+                    g.lines_survived += joined.lines_survived
+                    g.survival_tasks += 1
+                    g.survival_low_tasks += FLAG_LIKELY_WORTHLESS in joined.flags
 
             vpath = ts.verdict_path or ts.review_verdict_path
             if vpath is None:
@@ -469,8 +552,8 @@ def aggregate_usage(
             # each reviewer's final verdict once. A producer never dispatched this run is skipped.
             for pid in ts.upstream_producers:
                 producer = state.tasks.get(pid)
-                if producer is None or producer.dispatch_cycle < 1:
-                    continue
+                if producer is None or producer.dispatch_cycle < 1 or pid in rc_hits:
+                    continue  # never dispatched, or a result-cache hit (Site B, E-Rc4Hk8 D12)
                 pg = group(producer)
                 pg.reviewed += 1
                 pg.review_fail += verdict.verdict == "FAIL"
@@ -507,6 +590,7 @@ def aggregate_usage(
         outcomes=outcomes,
         runs_rated=runs_rated,
         survival_available=survival is not None,
+        result_cache=_sum_result_cache(rc_parts),
     )
 
 
@@ -667,6 +751,8 @@ def usage_report_payload(report: UsageReport) -> dict[str, Any]:
     """JSON-ready dict: the model dump plus each group's computed rates (shared by the CLI
     `--json` and the dashboard API so they cannot drift)."""
     payload = report.model_dump()
+    if report.result_cache is None:
+        del payload["result_cache"]  # absent when no scanned run has records (byte-identical)
     for row, g in zip(payload["groups"], report.groups, strict=True):
         row["mean_cost_usd"] = g.mean_cost_usd
         row["retry_rate"] = g.retry_rate

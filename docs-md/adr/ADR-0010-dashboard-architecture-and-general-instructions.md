@@ -3,7 +3,7 @@
 - Status: **Accepted** (2026-07-24 — shipped)
 - Date: 2026-07-24
 - Deciders: Avadhoot Divekar (user), Claude (developer role)
-- Related: **ADR-0003** (settings precedence — this ADR records the one deliberate exception) · **ADR-0007** (parallel execution) · design [`dashboard-and-general-instructions-hld.md`](../dashboard-and-general-instructions-hld.md) · [`meta/ROADMAP.md`](../../meta/ROADMAP.md)
+- Related: **ADR-0003** (settings precedence — this ADR records the one deliberate exception) · **ADR-0007** (parallel execution) · design [`dashboard-and-general-instructions-hld.md`](../dashboard-and-general-instructions-hld.md) · [`meta/ROADMAP.md`](../../meta/ROADMAP.md) · **ADR-0021** (opt-in authentication; amends D7)
 
 ## Context
 
@@ -172,6 +172,9 @@ caller can do.
 **Consequence.** This blocks every hosted or multi-user scenario. Authentication and
 configurable secrets are the top item on the roadmap (§3.1); nothing here should be treated
 as a durable security posture.
+
+**Amendment (2026-10-05, ADR-0021).** Opt-in local-account authentication with optional TOTP
+now exists (`ao ui --auth`); D7 remains the behaviour when it is off (the default).
 
 ---
 

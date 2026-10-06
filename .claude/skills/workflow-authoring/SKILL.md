@@ -33,6 +33,7 @@ field list, read `specs/workflow.schema.json` directly; for CLI flags, `ao --hel
 | Where does grading fit? | Post-run, via `ao report-outcomes --grade <hook-name>` — not wired into the run itself. See "Hooks & grading". |
 | Unknown task count *and* unknown number of rounds, open-ended prompt? | A recursive wave chain (each emitter emits the next), with no static tail, or just `ao new overseer-runner`. See "Recursive waves". |
 | My run has file contention between parallel tasks | Either make `outputs`/`touches` genuinely disjoint, or opt into `isolation: worktree`. `ao` does **not** detect or prevent this for you at `isolation: none`. See "Common failure modes" #4. |
+| Should this task be reusable across runs (`cache: true`)? | Only if its **whole effect is captured by its declared outputs** (a pure document transform), and never for side-effecting or "fresh answer" tasks. Opt-in is per task; the operator must also enable the cache. See "Result cache (opt-in)" — and note this is NOT Claude prompt caching. |
 | Our cache hit rate looks great, are we fine on cost/context? | Not necessarily — a high ratio can still hide tens of millions of re-billed tokens on one long task. Set `--autocompact` explicitly; don't rely on Claude Code's default. See "Cost & context hygiene". |
 
 ---
@@ -267,6 +268,138 @@ section is what to actually DO when authoring a workflow/agent config).
 
 ---
 
+## Result cache (opt-in)
+
+> **Not prompt caching.** The *result* cache (`ao run --cache`, `ao cache ...`, `cache: true` in a
+> spec) reuses a previous, identical, **successful task's declared output files** instead of
+> dispatching the agent again. It has nothing to do with Anthropic prompt caching
+> (`cache_read_input_tokens`, `--autocompact`, "Cost & context hygiene" above). Design and threat
+> model: `docs-md/cross-run-result-cache-hld.md` (§0 lists what shipped and every deviation),
+> `docs-md/adr/ADR-0019-cross-run-result-cache.md`.
+
+**1. Double opt-in — both parties must agree.**
+- The **operator** turns the cache on for a run: `--cache` / `--no-cache`, then `AO_CACHE`
+  (`1|true|yes|on`, `0|false|no|off`, `shadow`), then `.ao/config.yaml` `cache.enabled` + `cache.mode`
+  (`"on"` quoted, or `"shadow"`). `--no-cache` and `AO_CACHE=0` are kill switches.
+- The **author** opts each task in with `cache: true` on the task, or `defaults.cache: true` for the
+  workflow with `cache: false` on tasks to exclude (`TaskSpec.cache` / `WorkflowDefaults.cache`,
+  strict booleans). Task beats defaults; an explicit `false` always means never; a task injected by
+  `emit_tasks` can only narrow (its `true` is ignored). A task nobody opted in is never looked up and
+  gets no record.
+- **The flip point.** The author default when neither level is set is one named constant,
+  `DEFAULT_TASK_CACHE_POLICY` in `src/agent_orchestrator/cache/constants.py`, currently **`False`**
+  (double opt-in). If the project ever flips it, every *eligible* task becomes cached whenever the
+  operator enables the cache, unless it says `cache: false` — so re-read your specs before that
+  change. Flipping it needs an addendum to ADR-0019 (test U-S4 pins it). Do not rely on today's
+  default in a way a flip would silently change: state `cache: false` on tasks that must never be
+  cached.
+
+**2. When to opt a task in.** `cache: true` only when the task's **whole effect is captured by its
+declared `outputs`** and its inputs are all declared: summarisers, extractors, formatters, doc
+transforms. Use `defaults.cache: true` plus per-task `false` only for a workflow that is mostly such
+tasks.
+
+**3. Never opt in a task that:**
+- edits undeclared files (the worktree guard refuses to *store* a task that changed tracked files,
+  but untracked and non-git edits are not detected);
+- has external side effects (network, tickets, git push);
+- exists to produce a fresh answer (status checks, research, "is this still true?");
+- reads ambient state the key does not cover (`~/.claude`, the network, an undeclared repo).
+
+**4. Guards and eligibility (what the engine checks for you).**
+- *The key* (a sha256) covers the rendered prompt, the exact `claude` argv, the effective agent, a
+  fingerprint (CLI version, a small env allowlist, `CLAUDE.md` / `.claude/**` / `.mcp.json`), the
+  content of instruction, general-instruction, input and dynamic-input files, each declared output's
+  **prior** content, and the HEAD of every git repo in the repo set. The task id is not in it.
+- *Three store guards* — a success is stored only if the key is unchanged at settle, no repo HEAD
+  moved, and no tracked file outside the declared outputs changed.
+- *Fail-closed eligibility*: a task is **ineligible** (reason in `status.json`
+  `tasks[].result_cache.reason`) if it has hooks, `isolation: worktree` (or the run's integration is
+  active), `emit_tasks`, routing or loop membership, no outputs, a non-`claude`/`fake` executor or
+  wrapper command, an unresolved model, an output under `.git`/`.claude`/`CLAUDE.md`/CI config
+  (sensitive destinations are never written, matched case-insensitively), a symlink or special file in
+  an input, or an unknown field a newer spec added. `ao validate` does not warn; check the reason.
+- Hits are `succeeded` without consuming an attempt (`attempts` unchanged: 0 on a first-pass hit),
+  charge no budget, feed no breaker and report avoided
+  spend (`saved_*`, an estimate) separately from real cost.
+
+**5. `skip_if_outputs_exist` interplay.**
+- With `true` (the default) the cache only helps when the outputs are **absent**: a clean checkout, a
+  fresh clone sharing the cache, or deleted outputs.
+- With `false` and outputs already present, a hit needs the outputs to start with **identical
+  content** (the prior content is in the key).
+
+**6. Deleting outputs to force a redo does NOT redo the work when the cache is on.** It restores the
+cached result. To re-roll one result: `ao cache rm <key>` (the key is in `status.json`
+`tasks[].result_cache.key`, the `cache.hit` line in `run.log`, or `ao cache ls`), then re-run. To
+bypass everything: `--no-cache`. To reset: `ao cache clear --yes`. (There is no `refresh` mode,
+`rm --run/--task` or `verify --repair`.)
+
+**7. Pin full model ids**, not aliases such as `sonnet`: an alias can be retargeted and still hit.
+The CLI version is in the key (an auto-update is a clean miss), and entries expire after 30 days by
+default (`cache.ttl_days`).
+
+**8. Residuals to know (accepted, not fixed — see ADR-0019 addendum A4).**
+- **Provider and endpoint environment is not in the key** (`ANTHROPIC_BASE_URL`,
+  `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, the region): a hit can be served across a
+  backend switch with the same alias. Pass `--no-cache` or run `ao cache clear` when switching.
+- **The guard-3 probe runs `git status`, which can execute a `filter.<x>.clean` command named in the
+  agent-writable git config** (needs a config writer that cannot already run code). Use `--no-cache`
+  for untrusted repositories.
+- **Dirty tracked edits made *before* the lookup are not in the key**; the guard only sees edits made
+  during the run. Uncommitted edits to declared inputs, the instruction, `CLAUDE.md` or `.claude/**`
+  *do* invalidate it; committed repo changes invalidate it too (unless
+  `cache.include_repo_heads: false`).
+- **The cache directory is agent-writable** (`<workspace>/.orchestrator/cache`): same-uid forgery is
+  not defended, and cached outputs persist until `ao cache rm|clear|prune` (shadow mode stores them
+  too). Never enable it for untrusted prompts.
+- A workspace nested inside a parent git repository is treated as non-git (HEAD not keyed): do not
+  opt tasks in there (the banner warns).
+- Noise files (`.DS_Store`, `__pycache__`) inside a declared input directory cause false misses;
+  declare narrower inputs.
+
+**9. Operational rules.** Do not commit `cache.enabled: true` unless every clone and service run of
+the repo should use the cache. `ao-bench` always runs with `--no-cache`; do the same for cost
+measurements. Measure before trusting: `AO_CACHE=shadow` records a "would hit" without restoring
+anything (`ao report-usage --json` -> `result_cache`; protocol in
+`docs-md/result-cache-g0-protocol.md`, not yet run against a real consumer).
+
+**10. Example.** A workflow that opts in its pure summarisation task and keeps its review task out
+(validated against `specs/workflow.schema.json`):
+
+```json
+{
+  "version": "1.0",
+  "id": "doc-pipeline",
+  "repo_set": "default",
+  "defaults": {"cache": false},
+  "tasks": [
+    {
+      "id": "summarize",
+      "agent": "writer",
+      "instruction": "specs/instr/summarize.md",
+      "inputs": ["docs/notes.md"],
+      "outputs": ["out/summary.md"],
+      "cache": true
+    },
+    {
+      "id": "review",
+      "agent": "reviewer",
+      "instruction": "specs/instr/review.md",
+      "inputs": ["out/summary.md"],
+      "outputs": ["out/review.md"],
+      "depends_on": ["summarize"]
+    }
+  ]
+}
+```
+
+Run it with `ao run --cache ...` (or `AO_CACHE=shadow` to measure first). Only `summarize` is looked
+up; `review` gets no record because it is not opted in (the banner prints `1 of 2 static task(s)
+opted in`). Re-running after deleting `out/summary.md` restores the stored file with 0 dispatches.
+
+---
+
 ## Hooks & grading
 
 `pre_hook`/`post_hook` (`TaskSpec` fields, referencing a named entry in `WorkflowSpec.hooks` via
@@ -352,6 +485,9 @@ calling it done:
     "next batch + tail" from *default* per-unit cost estimates can refuse to start at all when the
     budget is small. This is `overseer-runner`'s DV-1. Check the template's documented floor before
     choosing a small test budget.
+13. **Assuming deleting an output re-runs a cached task.** With the result cache on, deleting
+    `out/summary.md` restores the stored copy instead of redoing the work. See "Result cache
+    (opt-in)" above: `ao cache rm <key>` or `--no-cache`.
 
 ---
 

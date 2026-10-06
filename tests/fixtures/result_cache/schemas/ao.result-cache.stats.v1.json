@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.result-cache.stats/v1",
+  "type": "object",
+  "required": ["schema", "root", "exists"],
+  "properties": {
+    "schema": {"const": "ao.result-cache.stats/v1"},
+    "root": {"type": "string"},
+    "exists": {"type": "boolean"},
+    "entries": {"type": "integer"},
+    "invalid_entries": {"type": "integer"},
+    "expired_entries": {"type": "integer"},
+    "foreign_version_dirs": {"type": "array", "items": {"type": "string"}},
+    "blobs": {"type": "integer"},
+    "orphan_blobs": {"type": "integer"},
+    "tmp_files": {"type": "integer"},
+    "trash_dirs": {"type": "integer"},
+    "anomalies": {"type": "integer"},
+    "bytes": {
+      "type": "object",
+      "properties": {
+        "entries": {"type": "integer"},
+        "blobs": {"type": "integer"},
+        "referenced_blobs": {"type": "integer"},
+        "orphan_blobs": {"type": "integer"},
+        "total": {"type": "integer"}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_bytes": {"type": "integer"},
+        "max_entry_bytes": {"type": "integer"},
+        "ttl_days": {"type": ["integer", "null"]}
+      }
+    },
+    "oldest_created_at": {"type": ["string", "null"]},
+    "newest_created_at": {"type": ["string", "null"]}
+  }
+}

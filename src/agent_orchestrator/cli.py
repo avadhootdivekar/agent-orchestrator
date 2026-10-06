@@ -8,6 +8,7 @@ Commands:
   ao init       — Scaffold a per-project .ao/config.yaml.
   ao prune      — Remove stale run artifacts from a workspace.
   ao ui         — Serve the browser dashboard (needs the optional `ui` extra).
+  ao auth       — Manage dashboard accounts, TOTP enrollment and lockouts (E-Da5Tn9).
   ao templates  — List discovered workflow templates (E-Tpl3x9).
   ao new        — Scaffold (and optionally validate/run) a workflow instance from a template.
   ao hotspots   — Compute the git-churn hotspot signal for soft overlap-aware scheduling
@@ -50,6 +51,9 @@ import typer
 # (C-3, 2026-09-07 review) avoids a third independent spelling of "none"/"worktree"
 # alongside `models.py`'s own `IsolationMode`/`WorkflowIsolation` and
 # `project_config.IsolationConfig.mode`.
+from .auth.cli import app as auth_app
+from .auth.model import TotpPolicy
+from .cache.cli import cache_app
 from .models import ISOLATION_NONE, ISOLATION_WORKTREE
 from .service.cli import app as service_app
 
@@ -57,15 +61,18 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from .artifacts import ArtifactStore
+    from .cache.types import ResultCacheHook
     from .executors.base import Executor
     from .isolation.git import GitRepo
     from .isolation.worktrees import IsolatedRepo
-    from .models import BudgetSpec
+    from .models import BudgetSpec, WorkflowSpec
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
 
 app = typer.Typer(name="ao", help="Agent Orchestrator CLI", add_completion=True)
 app.add_typer(service_app, name="service")
+app.add_typer(auth_app, name="auth")
+app.add_typer(cache_app, name="cache")
 
 _PACKAGE_LOGGER = "agent_orchestrator"
 
@@ -267,6 +274,10 @@ def _print_state(state) -> None:
         f"cache_read={totals.cache_read_input_tokens}"
     )
     typer.echo(f"Total cost:   ${totals.cost_usd:.4f}")
+    if state.result_cache:  # lazy: a run the cache never touched never imports cache.report
+        from .cache.report import run_block
+
+        _echo_result_cache_line(run_block(state))
 
     # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
     integration_counts = {"integrated": 0, "conflict": 0, "failed": 0}
@@ -323,6 +334,7 @@ def _print_status_snapshot(snap: dict) -> None:
         f"cache_read={totals.get('cache_read_input_tokens', 0)}"
     )
     typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
+    _echo_result_cache_line(snap.get("result_cache"))  # present only for a current record
 
     # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
     integ = snap.get("integration") or {}
@@ -380,6 +392,69 @@ def _load_project_config_or_exit() -> ProjectConfig | None:
     except ConfigError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+
+# Appended to the `on`-mode banner (S-5): the trust assumption behind serving cached outputs.
+_RESULT_CACHE_TRUST_NOTE = " (agent-writable; avoid for untrusted prompts)"
+
+
+def _build_result_cache(
+    cache_flag: bool | None, workspace: str, wf: WorkflowSpec
+) -> ResultCacheHook | None:
+    """ONE helper for `ao run` and `ao resume` (FR-1). None => the engine runs no cache code.
+
+    Resolves the run-level mode (flag > env > config > off), echoes each warning, and, only for
+    mode `on`/`shadow`, builds the `ResultCache`, prints the one-line banner and the factory's
+    warnings (e.g. a `.git` marker above the workspace root, A-12). Everything cache-related is
+    imported lazily here, so a cache-off `ao run` loads nothing beyond `cache.constants` /
+    `cache.settings` (NFR-1).
+    """
+    from .cache.constants import MODE_OFF, MODE_ON
+    from .cache.settings import opted_in_count, resolve_result_cache_settings
+
+    cfg = _load_project_config_or_exit()
+    settings, warnings = resolve_result_cache_settings(
+        cache_flag, os.environ, cfg.cache if cfg else None
+    )
+    for w in warnings:
+        typer.echo(f"WARNING: {w}", err=True)
+    if settings.mode == MODE_OFF:
+        return None
+    from .cache.coordinator import ResultCache
+
+    rc = ResultCache.from_settings(workspace_root=workspace, settings=settings)
+    n, m = opted_in_count(wf)
+    note = (
+        f"{n} of {m} static task(s) opted in"
+        if n
+        else "but no task opts in (set defaults.cache: true or tasks[].cache: true)"
+    )
+    # `on` serves stored outputs without running the agent, and the cache dir is writable by the
+    # agent/workspace (accepted residual, SEC G1b S-5): say so. Shadow never serves a hit.
+    trust = _RESULT_CACHE_TRUST_NOTE if settings.mode == MODE_ON else ""
+    typer.echo(
+        f"Result cache: {settings.mode} (source={settings.source}), {note}, at {rc.root}{trust}",
+        err=True,
+    )
+    for w in rc.warnings:
+        typer.echo(f"WARNING: {w}", err=True)
+    return rc
+
+
+def _echo_result_cache_line(block: object) -> None:
+    """Print the run-summary line (HLD 8.8.3) for a run block; nothing when there is none.
+
+    Callers pass a block only when the run has result-cache records, so `cache.report` is
+    imported lazily and never for a run the cache did not touch (D9).
+    """
+    if not block:
+        return
+    from .cache.report import format_summary_line
+    from .cache.safeio import strip_control_chars
+
+    line = format_summary_line(block)  # total: `block` may come from an agent-writable file
+    if line is not None:
+        typer.echo(strip_control_chars(line))
 
 
 # Env var carrying the workspace-scoped general-instruction list, os.pathsep-separated
@@ -1083,6 +1158,17 @@ def run(
             " into the workflow's declared `prompt_path`. Mutually exclusive with --prompt."
         ),
     ),
+    cache: bool | None = typer.Option(
+        None,
+        "--cache/--no-cache",
+        help=(
+            "Result cache: reuse an identical, previously successful task's declared "
+            "outputs across runs instead of re-dispatching the agent (NOT Claude prompt "
+            "caching). Default off. Only tasks the workflow opts in (defaults.cache / "
+            "tasks[].cache: true) are cached. --no-cache is a kill switch that wins over "
+            "env/config. Env: AO_CACHE (1|0|shadow). Config: cache.enabled / cache.mode."
+        ),
+    ),
 ) -> None:
     """Run a workflow from scratch."""
     from datetime import UTC
@@ -1201,6 +1287,9 @@ def run(
         budget_manager = DefaultBudgetManager(effective_budget, clock)
         estimator = HeuristicTokenEstimator(store)
 
+    # Result cache (E-Rc4Hk8): resolve the mode, print the banner/warnings; None when off.
+    result_cache = _build_result_cache(cache, workspace, wf)
+
     # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
     monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
@@ -1225,6 +1314,7 @@ def run(
         isolation_env=eff_isolation_env,
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         run_prompt=run_prompt,
+        result_cache=result_cache,
     )
 
     try:
@@ -1374,6 +1464,17 @@ def resume(
             " fill-in-only semantics). Logs one WARNING naming the overridden task ids."
             f" Env: {ENV_NO_ISOLATION} (1/true/yes/on). No config-file layer (emergency"
             " override, not a setting). Mutually exclusive with --isolation worktree."
+        ),
+    ),
+    cache: bool | None = typer.Option(
+        None,
+        "--cache/--no-cache",
+        help=(
+            "Result cache: reuse an identical, previously successful task's declared "
+            "outputs across runs instead of re-dispatching the agent (NOT Claude prompt "
+            "caching). Default off. Only tasks the workflow opts in (defaults.cache / "
+            "tasks[].cache: true) are cached. --no-cache is a kill switch that wins over "
+            "env/config. Env: AO_CACHE (1|0|shadow). Config: cache.enabled / cache.mode."
         ),
     ),
 ) -> None:
@@ -1540,6 +1641,9 @@ def resume(
 
     executor = DispatchExecutor()
 
+    # Result cache (E-Rc4Hk8): resolve the mode, print the banner/warnings; None when off.
+    result_cache = _build_result_cache(cache, workspace, wf)
+
     # Agent-based monitoring & self-healing (E-XyfjuZ) — config-primary, minimal CLI surface.
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
     monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
@@ -1563,6 +1667,7 @@ def resume(
         isolation_strict=eff_isolation_strict,
         isolation_env=eff_isolation_env,
         record_git_heads=_resolve_record_git_heads(record_git_heads),
+        result_cache=result_cache,
     )
 
     try:
@@ -1623,7 +1728,7 @@ def status(
             snap = json.loads(status_json_path.read_text())
             _print_status_snapshot(snap)
             return
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, KeyError):  # JSONDecodeError / int-digit-limit are ValueErrors
             # Corrupt status.json — fall through to state.json
             pass
 
@@ -1964,6 +2069,17 @@ def report_usage(
     if report.feedback_errors:
         fb_txt += f" ({report.feedback_errors} unreadable)"
     typer.echo(f"{fb_txt} | survival: {survival_txt}")
+    rcu = report.result_cache  # None unless a scanned run has result-cache records
+    if rcu is not None and rcu.hits > 0:
+        typer.echo(
+            f"Result cache: {rcu.hits} hit(s) across scanned runs, ~${rcu.saved_cost_usd:.4f} "
+            "avoided (est.; source-run cost incl. retries; not in costs below)"
+        )
+    if rcu is not None and rcu.would_hits > 0:
+        typer.echo(
+            f"Result cache (shadow): {rcu.would_hits} would-hit(s) of {rcu.lookups} lookup(s), "
+            f"~${rcu.avoidable_cost_usd:.4f} avoidable (est.)"
+        )
     if report.outcomes:
         typer.echo("\nOutcome vs charter")
         for o in report.outcomes:
@@ -2236,8 +2352,8 @@ def ui_cmd(
         UI_DEFAULT_HOST,
         "--host",
         help=(
-            "Interface to bind. Defaults to loopback because the dashboard is unauthenticated"
-            " and can launch runs; only change this on a trusted network."
+            "Interface to bind. Defaults to loopback because the dashboard is"
+            " unauthenticated unless --auth / AO_UI_AUTH; only change this on a trusted network."
         ),
     ),
     port: int = typer.Option(UI_DEFAULT_PORT, "--port", "-p", help="Port to listen on."),
@@ -2250,6 +2366,17 @@ def ui_cmd(
     reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev)."),
     open_browser: bool = typer.Option(
         False, "--open", help="Open the dashboard in the default browser once it is serving."
+    ),
+    auth: bool | None = typer.Option(
+        None,
+        "--auth/--no-auth",
+        help="Require login (local accounts; see `ao auth`). Env: AO_UI_AUTH. Default: off.",
+    ),
+    auth_totp: TotpPolicy | None = typer.Option(
+        None, "--auth-totp", help="TOTP policy with --auth. Env: AO_UI_AUTH_TOTP."
+    ),
+    auth_dir: str | None = typer.Option(
+        None, "--auth-dir", help="Directory of the user store. Env: AO_AUTH_DIR."
     ),
 ) -> None:
     """Serve the browser-based dashboard.
@@ -2273,16 +2400,35 @@ def ui_cmd(
         typer.echo(f"ERROR: workspace root is not a directory: {ws}", err=True)
         raise typer.Exit(1)
 
+    from .auth.constants import AO_UI_BOUND_PORT_ENV
+    from .auth.errors import AuthConfigError
+    from .auth.launch import exit_code_for, prepare_auth
+    from .auth.settings import AuthCliOverrides
     from .ui.app import create_app
     from .ui.security import DEFAULT_ALLOWED_HOSTS, resolve_allowed_hosts
     from .ui.service import DashboardService
+
+    try:  # E-Da5Tn9: the one auth startup sequence (refuses to start with auth on and no users)
+        launch = prepare_auth(
+            cli=AuthCliOverrides(enabled=auth, totp=auth_totp, store_dir=auth_dir),
+            env=os.environ,
+            workspace_root=Path(ws),
+            realm_kind="ui",
+            port=port,
+            bind_host=host,
+        )
+    except AuthConfigError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(exit_code_for(e))
+    for line in launch.warnings:
+        typer.echo(line, err=True)
 
     url = f"http://{host}:{port}"
     typer.echo(f"Agent Orchestrator dashboard — workspace: {ws}")
     typer.echo(f"Serving on {url}  (Ctrl-C to stop)")
     # Single source of truth for the loopback host list: ui/security.py's DEFAULT_ALLOWED_HOSTS
     # (imported lazily, same as the rest of this function — the [ui] extra must stay optional).
-    if host not in DEFAULT_ALLOWED_HOSTS:
+    if launch.runtime is None and host not in DEFAULT_ALLOWED_HOSTS:
         typer.echo(
             f"WARNING: binding {host} exposes an UNAUTHENTICATED dashboard that can browse "
             "files and start runs. Only do this on a trusted network.",
@@ -2306,18 +2452,23 @@ def ui_cmd(
         # string plus the workspace/bound-host handed over via env rather than a live object.
         os.environ["AO_UI_WORKSPACE"] = ws
         os.environ["AO_UI_BOUND_HOST"] = host
+        os.environ[AO_UI_BOUND_PORT_ENV] = str(port)  # names the realm cookie in the child
+        os.environ.update(launch.child_env)  # CLI-sourced auth flags only
         uvicorn.run(
             "agent_orchestrator.ui.app:create_app_from_env",
             host=host,
             port=port,
             reload=True,
             factory=True,
+            **launch.uvicorn_kwargs,
         )
     else:
         app_instance = create_app(
-            DashboardService(ws), allowed_hosts=resolve_allowed_hosts(bound_host=host)
+            DashboardService(ws, denied_paths=[str(p) for p in launch.denied_paths]),
+            allowed_hosts=resolve_allowed_hosts(bound_host=host),
+            auth=launch.runtime,
         )
-        uvicorn.run(app_instance, host=host, port=port)
+        uvicorn.run(app_instance, host=host, port=port, **launch.uvicorn_kwargs)
 
 
 # ---------------------------------------------------------------------------------------

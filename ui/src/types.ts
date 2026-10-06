@@ -92,6 +92,43 @@ export interface RunSummary {
   running_tasks?: RunningTaskBrief[];
 }
 
+/**
+ * Cross-run RESULT cache (E-Rc4Hk8, HLD §13.5) -- unrelated to the prompt-cache fields above.
+ * Every string here (`source_run_id`, `key`, ...) is untrusted text: render as text only.
+ */
+export interface ResultCacheTaskView {
+  hit: boolean;
+  key: string | null;
+  saved_cost_usd: number;
+  saved_tokens: number;
+  saved_seconds: number;
+  outcome?: string;
+  mode?: string;
+  mode_source?: string;
+  reason?: string | null;
+  reason_detail?: string | null;
+  stored?: boolean;
+  store_reason?: string | null;
+  saved_input_tokens?: number;
+  saved_output_tokens?: number;
+  source_run_id?: string | null;
+}
+
+export interface ResultCacheRunBlock {
+  hits: number;
+  saved_cost_usd: number;
+  saved_tokens: number;
+  saved_seconds: number;
+  would_hits: number;
+  misses: number;
+  ineligible: number;
+  stored: number;
+  lookups: number;
+  saved_input_tokens?: number;
+  saved_output_tokens?: number;
+  avoidable_cost_usd?: number;
+}
+
 export interface TaskStat {
   id: string;
   status: string;
@@ -129,6 +166,8 @@ export interface TaskStat {
   agent?: string | null;
   model?: string | null;
   effort?: string | null;
+  /** Current result-cache record of this task (E-Rc4Hk8); null/absent when it has none. */
+  result_cache?: ResultCacheTaskView | null;
 }
 
 /** One currently-running task on a runs-list row (state-derived; E-iafh2F). */
@@ -239,6 +278,8 @@ export interface RunDetail {
   prompt?: RunPrompt | null;
   /** True when the prompt file now differs from the recorded one; null when unknown. */
   prompt_changed_since_start?: boolean | null;
+  /** Result-cache run block (E-Rc4Hk8); null/absent when no current record. */
+  result_cache?: ResultCacheRunBlock | null;
 }
 
 /**
@@ -606,3 +647,123 @@ export interface RunLiveSummary {
   text: string;
   meta: RunSummaryMeta | null;
 }
+
+/* ---------- dashboard authentication (E-Da5Tn9, HLD §2.5 — frozen contract) ---------- */
+
+export type AuthState =
+  | "disabled"
+  | "anonymous"
+  | "second_factor_required"
+  | "enrollment_required"
+  | "authenticated";
+export type AuthMethod = "password" | "password+totp";
+export type SecondFactor = "totp" | "recovery_code";
+export type TotpPolicy = "off" | "optional" | "required";
+
+export interface AuthUser {
+  username: string;
+  auth_method: AuthMethod;
+  roles: string[];
+  totp_enrolled: boolean;
+  recovery_codes_remaining: number | null;
+  totp_required: boolean;
+  can_enroll_totp: boolean;
+  can_disable_totp: boolean;
+}
+
+/** `GET /api/auth/status` body (E1). The disabled body has every key but `enabled`/`state` null. */
+export interface AuthStatus {
+  enabled: boolean;
+  state: AuthState;
+  user: AuthUser | null;
+  pending_username: string | null;
+  second_factors: SecondFactor[] | null;
+  enrollment_token_required: boolean | null;
+  policy: { totp: TotpPolicy; min_password_length: number; max_password_length: number } | null;
+  session: {
+    idle_timeout_seconds: number;
+    idle_expires_at: string;
+    absolute_expires_at: string;
+  } | null;
+  // proxy_suspected: v2.1 (security M2). The banner still keys on `!secure && !client_is_loopback`.
+  transport: { secure: boolean; client_is_loopback: boolean; proxy_suspected: boolean } | null;
+}
+
+/** Body of every session-issuing response (login, TOTP verify, enroll confirm, ...). */
+export interface AuthStepResponse {
+  state: Exclude<AuthState, "disabled" | "anonymous">;
+  user?: AuthUser;
+  second_factors?: SecondFactor[];
+  enrollment_token_required?: boolean;
+  used_recovery_code?: boolean;
+  recovery_codes?: string[];
+  session_proof: string;
+}
+
+export interface TotpEnrollment {
+  secret: string;
+  otpauth_uri: string;
+  issuer: string;
+  account: string;
+  algorithm: "SHA1";
+  digits: 6;
+  period: 30;
+}
+
+/** E4 request body: the CLI enrollment token (forced) or the current password (voluntary), never both. */
+export type EnrollBeginBody = { enrollment_token: string } | { current_password: string };
+
+/** E6 / E7 request body: re-authentication with the password plus a TOTP or recovery code. */
+export interface ReauthBody {
+  current_password: string;
+  code: string;
+}
+
+/** E7 200 body. */
+export interface RecoveryCodesResponse {
+  recovery_codes: string[];
+  user: AuthUser;
+  session_proof: string;
+}
+
+/** `violations` entries of a 400 `password_policy` (HLD §2.2). */
+export type PasswordViolation = "too_short" | "too_long" | "control_characters" | "equals_username";
+
+export interface KeepaliveResponse {
+  idle_expires_at: string;
+  absolute_expires_at: string;
+  idle_timeout_seconds: number;
+}
+
+export type AuthErrorCode =
+  | "invalid_request"
+  | "password_policy"
+  | "not_authenticated"
+  | "second_factor_required"
+  | "enrollment_required"
+  | "invalid_credentials"
+  | "invalid_code"
+  | "origin_required"
+  | "origin_mismatch"
+  | "cross_site_request"
+  | "insecure_transport"
+  | "totp_disabled_by_policy"
+  | "totp_required"
+  | "forbidden"
+  | "already_authenticated"
+  | "totp_already_enrolled"
+  | "totp_not_enrolled"
+  | "no_pending_enrollment"
+  | "body_too_large"
+  | "too_many_attempts"
+  | "busy"
+  | "store_unavailable";
+
+/** 401 codes meaning "your session is gone or incomplete" — the ONLY ones that trigger the global handler. */
+export const SESSION_LOSS_CODES: readonly AuthErrorCode[] = [
+  "not_authenticated",
+  "second_factor_required",
+  "enrollment_required",
+];
+
+export const SESSION_PROOF_HEADER = "X-AO-Session-Proof";

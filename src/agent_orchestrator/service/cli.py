@@ -9,14 +9,16 @@ the hub, needs it, and imports it lazily inside its own function body).
 
 `run` is the one command that blocks, binds a real port, and installs signal handlers -- it
 is deliberately kept thin (HLD §9): everything it calls (`Supervisor.start/tick/shutdown`,
-`hub.build_hub_app`) is independently unit-tested already, so no test in this epic invokes
-`run` itself (AC12).
+`hub.build_hub_app`) is independently unit-tested already. The service epic's own tests
+(AC12) never invoke `run`; the dashboard-auth epic's `tests/auth/test_service_run_auth.py`
+does, with stub `uvicorn`/`Supervisor` modules, to pin the auth startup sequence.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import threading
 import time
@@ -29,6 +31,8 @@ from typing import Any
 
 import typer
 
+from ..auth.model import TotpPolicy
+from ..errors import EXIT_CONFIG, OrchestratorError
 from ..ui.runs import RunRepository
 from .boot_resume import BOOT_RESUME_FILENAME
 from .paths import default_state_dir
@@ -67,6 +71,25 @@ HUB_STATUS_CACHE_TTL_SECONDS = 5.0
 # Short-timeout best-effort probe for "is the hub actually up" (AC8 `list`/`status`) -- long
 # enough for a loopback round trip, short enough that a dead/hung daemon doesn't stall the CLI.
 HUB_PROBE_TIMEOUT_SECONDS = 0.5
+
+# HTTP status the authenticated hub answers an anonymous probe with (HLD §15 row 1).
+HTTP_UNAUTHORIZED = 401
+
+# `list` wording when the hub answered 401 (HLD §15 row 1).
+HUB_AUTH_NOTE = (
+    "Note: hub running with dashboard authentication enabled — live state is shown in the "
+    "browser after login"
+)
+
+
+class HubLoginRequired(OrchestratorError):
+    """The hub answered the status probe with 401: it is up, with dashboard authentication
+    on. Carries only the port (no secret content); `list`/`status` fall back to the
+    persisted state files."""
+
+    def __init__(self, hub_port: int) -> None:
+        super().__init__(f"hub on port {hub_port} requires login")
+        self.hub_port = hub_port
 
 
 # -- shared helpers -----------------------------------------------------------------------
@@ -138,6 +161,8 @@ def _probe_hub_status(
     """Best-effort `GET http://127.0.0.1:<hub_port>/api/service/status`. Returns `None` on
     any failure (daemon not running, extra not installed, timeout, bad JSON) -- every one of
     those collapses to the same "fall back to registry/state files" path for the caller.
+    The one exception: an HTTP 401 means the hub is up with authentication on, so it raises
+    `HubLoginRequired`.
 
     Deliberately stdlib-only (`urllib`, not `httpx`): `list`/`status` must keep working in a
     core install without the optional `[ui]` extra (`httpx` ships with it).
@@ -146,6 +171,10 @@ def _probe_hub_status(
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310
             data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:  # before URLError: HTTPError subclasses it
+        if exc.code == HTTP_UNAUTHORIZED:
+            raise HubLoginRequired(hub_port) from None
+        return None
     except (OSError, urllib.error.URLError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -239,7 +268,11 @@ def list_cmd() -> None:
     registry = ServiceRegistry().load()
     state_dir = default_state_dir()
     hub_port, confirmed = _persisted_hub_port(state_dir)
-    live = _probe_hub_status(hub_port)
+    login_required = False
+    try:
+        live = _probe_hub_status(hub_port)
+    except HubLoginRequired:
+        live, login_required = None, True
     live_by_root = {w["root"]: w for w in live.get("workspaces", [])} if live else {}
 
     if not registry.workspaces:
@@ -253,7 +286,9 @@ def list_cmd() -> None:
             port_str = str(port) if port is not None else "-"
             typer.echo(f"{entry.root:<50} {port_str:<8} {str(entry.autoresume):<12} {state}")
 
-    if live is None:
+    if login_required:
+        typer.echo(HUB_AUTH_NOTE)
+    elif live is None:
         guess = "" if confirmed else " (guessed default port, not confirmed)"
         typer.echo(f"Note: service daemon not confirmed running on port {hub_port}{guess}.")
 
@@ -263,14 +298,19 @@ def status() -> None:
     """Full service status: live from the hub if reachable, else from persisted state files."""
     state_dir = default_state_dir()
     hub_port, confirmed = _persisted_hub_port(state_dir)
-    live = _probe_hub_status(hub_port)
-
-    if live is not None:
-        typer.echo(json.dumps(live, indent=2))
-        return
-
-    guess = "" if confirmed else " (guessed default port, not confirmed)"
-    typer.echo(f"Service daemon not running (or unreachable) on port {hub_port}{guess}.")
+    try:
+        live = _probe_hub_status(hub_port)
+    except HubLoginRequired:
+        typer.echo(
+            f"Service daemon running on port {hub_port} (login required for the live view);"
+            " persisted state:"
+        )
+    else:
+        if live is not None:
+            typer.echo(json.dumps(live, indent=2))
+            return
+        guess = "" if confirmed else " (guessed default port, not confirmed)"
+        typer.echo(f"Service daemon not running (or unreachable) on port {hub_port}{guess}.")
 
     fallback = _read_fallback_status(state_dir)
     if fallback is None:
@@ -295,14 +335,21 @@ def install(
         "--hub-host",
         help=(
             "Hub bind address to bake into the unit's ExecStart. Defaults to loopback; "
-            "use 0.0.0.0 to reach the hub from the LAN (unauthenticated -- trusted "
-            "networks only)."
+            "use 0.0.0.0 to reach the hub from the LAN (unauthenticated unless --auth / "
+            "AO_UI_AUTH -- trusted networks only)."
         ),
+    ),
+    auth: bool = typer.Option(
+        False,
+        "--auth",
+        help="Bake --auth into the unit's ExecStart (dashboard login on the hub and its children).",
     ),
 ) -> None:
     """Generate (and, unless --print, install) the `ao.service` systemd user unit."""
     try:
-        result = install_unit(print_only=print_only, hub_port=hub_port, hub_host=hub_host)
+        result = install_unit(
+            print_only=print_only, hub_port=hub_port, hub_host=hub_host, auth=auth
+        )
     except ServiceError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -322,6 +369,17 @@ def install(
     typer.echo(
         "  Populate ~/.config/ao/service.env with any credentials boot-resumed runs need"
         " (EnvironmentFile is optional -- a missing file will not block startup)."
+    )
+    typer.echo(
+        "  Dashboard login (optional): re-run `ao service install --auth` (bakes --auth into"
+        " ExecStart; preferred), or add AO_UI_AUTH=1 (and optionally AO_UI_AUTH_TOTP=required)"
+        " to ~/.config/ao/service.env. Create an account with `ao auth add-user <name>`, then"
+        " `systemctl --user restart ao`."
+    )
+    typer.echo(
+        "  Warning: env-only enablement (service.env) is ignored by a stale `ao` snapshot that"
+        " predates auth, so the dashboards start UNAUTHENTICATED without any error. After"
+        ' restarting, verify with `ao auth status` or GET /api/auth/status ("enabled": true).'
     )
     typer.echo(
         "  Note: a globally-installed `ao` can be a stale snapshot of a different version"
@@ -373,14 +431,25 @@ def run(
         "--hub-host",
         help=(
             "Interface for the hub HTTP server. Defaults to loopback because the hub is "
-            "unauthenticated and reports every registered workspace's state; use 0.0.0.0 "
-            "to expose it on the LAN (trusted networks only)."
+            "unauthenticated unless --auth / AO_UI_AUTH, and reports every registered "
+            "workspace's state; use 0.0.0.0 to expose it on the LAN (trusted networks only)."
         ),
+    ),
+    auth: bool | None = typer.Option(
+        None,
+        "--auth/--no-auth",
+        help="Require login on the hub and the workspace dashboards. Env: AO_UI_AUTH.",
+    ),
+    auth_totp: TotpPolicy | None = typer.Option(
+        None, "--auth-totp", help="TOTP policy with --auth. Env: AO_UI_AUTH_TOTP."
+    ),
+    auth_dir: str | None = typer.Option(
+        None, "--auth-dir", help="Directory of the user store. Env: AO_AUTH_DIR."
     ),
 ) -> None:
     """Foreground supervisor + hub daemon (HLD §6/§8). Blocks; installs SIGTERM/SIGINT
-    handlers. Not invoked by any test in this epic (AC12) -- its parts (`Supervisor`,
-    `hub.build_hub_app`) are each independently tested."""
+    handlers. Its parts (`Supervisor`, `hub.build_hub_app`, `prepare_auth`) are each
+    independently tested."""
     try:
         import uvicorn
     except ImportError:
@@ -392,11 +461,33 @@ def run(
         )
         raise typer.Exit(1) from None
 
+    from ..auth.errors import AuthConfigError
+    from ..auth.launch import prepare_auth
+    from ..auth.settings import AuthCliOverrides
     from .hub import build_hub_app
+
+    # E-Da5Tn9: the one auth startup sequence, BEFORE the Supervisor exists -- a refusal
+    # takes no singleton lock and spawns no child (HLD §14.8, S14).
+    try:
+        launch = prepare_auth(
+            cli=AuthCliOverrides(enabled=auth, totp=auth_totp, store_dir=auth_dir),
+            env=os.environ,
+            workspace_root=None,
+            realm_kind="hub",
+            port=hub_port,
+            bind_host=hub_host,
+        )
+    except AuthConfigError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(EXIT_CONFIG) from None
+    for line in launch.warnings:
+        typer.echo(line, err=True)
 
     state_dir = default_state_dir()
     registry = ServiceRegistry().load()
-    supervisor = Supervisor(registry, state_dir=state_dir, hub_port=hub_port)
+    supervisor = Supervisor(
+        registry, state_dir=state_dir, hub_port=hub_port, child_env=launch.child_env
+    )
 
     try:
         supervisor.start()
@@ -417,9 +508,11 @@ def run(
         raise
 
     status_provider = build_status_provider(supervisor)
-    hub_app = build_hub_app(status_provider)
+    hub_app = build_hub_app(status_provider, auth=launch.runtime)
     server = uvicorn.Server(
-        uvicorn.Config(hub_app, host=hub_host, port=hub_port, log_level="warning")
+        uvicorn.Config(
+            hub_app, host=hub_host, port=hub_port, log_level="warning", **launch.uvicorn_kwargs
+        )
     )
 
     stop_event = threading.Event()

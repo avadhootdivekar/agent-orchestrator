@@ -6,7 +6,8 @@
   "description": "Browser dashboard for the agent orchestrator. Builds into the Python package at src/agent_orchestrator/ui/static.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.hub.config.ts",
+    "build:hub": "vite build --config vite.hub.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
@@ -18,6 +19,7 @@
     "dompurify": "^3.4.12",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.7",
+    "qrcode-generator": "2.0.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

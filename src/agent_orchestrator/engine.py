@@ -12,7 +12,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from . import hooks
 from .artifacts import (
@@ -112,6 +112,10 @@ from .spec import validate_isolation, validate_task_model_policy
 from .summarizer import RunSummarizer
 from .survival import current_heads, record_git_start, record_landed_ranges
 from .usage import dispatch_provenance
+
+if TYPE_CHECKING:
+    # E-Rc4Hk8: type-only (ADR-0019 D9); the one runtime import is lazy, in the lookup method.
+    from .cache.types import PendingStore, ResultCacheHook
 
 # Valid origin values for injected/loop tasks
 _TaskOrigin = Literal["static", "injected", "loop"]
@@ -486,6 +490,9 @@ class _RunContext:
     # byte-identical non-isolated path (NFR-2) and for `workspace_lock: "off"`/a denied
     # claim, both of which never touch this field.
     workspace_lock: WorkspaceRunLock | None = None
+    # E-Rc4Hk8: task id -> PendingStore for a storable result-cache lookup of the CURRENT
+    # dispatch; popped at the next prepare pass and at a successful settle; unused when off.
+    result_cache_pending: dict[str, PendingStore] = field(default_factory=dict)
 
 
 class Orchestrator:
@@ -562,6 +569,10 @@ class Orchestrator:
         the engine core stays serialized on the main thread; `emit_tasks`/loop-gate/router
         tasks run solo as barriers. The default of 1 is byte-identical to the pre-ADR-0007
         serial engine.
+    result_cache:
+        Optional cross-run result cache hook (E-Rc4Hk8, ADR-0019). When None (the default) no
+        cache code runs and none is imported. When set, a cache hit settles the task without
+        dispatch, budget charge or breaker evaluation (see `_result_cache_lookup`).
     """
 
     def __init__(
@@ -592,8 +603,12 @@ class Orchestrator:
         record_git_heads: bool = True,
         run_prompt: RunPrompt | None = None,
         summarizer: RunSummarizer | None = None,
+        result_cache: ResultCacheHook | None = None,
     ) -> None:
         self._executor = executor
+        # Result cache (E-Rc4Hk8, ADR-0019). None (the default, and what the CLI passes
+        # unless the operator enabled it) means NO cache code runs or is imported (NFR-1).
+        self._result_cache = result_cache
         # Engine-owned live summary for runs above a fixed cost threshold (advisory only;
         # see summarizer.py). Tests inject a stub-backed instance via `summarizer`.
         self._summarizer = summarizer if summarizer is not None else RunSummarizer(executor)
@@ -1201,6 +1216,11 @@ class Orchestrator:
             if dep_ts and dep_ts.dynamic_outputs:
                 dynamic_input_paths.extend(dep_ts.dynamic_outputs)
 
+        # E-Rc4Hk8 result cache (ADR-0019 D11). Approval/human gates (E-Ag7Pw3) run BEFORE this.
+        if self._result_cache is not None and self._result_cache_lookup(
+            tid, task, workflow, state, ctx, ts_pre, dynamic_input_paths, task_log
+        ):
+            return DispatchPrep(signal="skipped")
         # _estimate is declared at task-block scope so the reconcile block can
         # reference it regardless of whether the budget gate ran (T-algywf, NFR-3).
         _estimate = 0
@@ -1227,35 +1247,7 @@ class Orchestrator:
             )
             _estimate = self._estimator.estimate(_est_ctx, _est_cfg)
 
-            # Resume double-charge guard (R2, NFR-3, R-1b): if the PREVIOUS dispatch
-            # cycle of this task was charged but never reconciled (the process crashed
-            # between charge_estimate() and settle), reverse that stale estimate before
-            # re-gating. `ts_pre.dispatch_cycle` was already incremented for THIS
-            # dispatch above, so the stale cycle -- if any -- is exactly one behind it:
-            # `prepare_resume` carries `dispatch_cycle` forward verbatim rather than
-            # resetting it (runstate.py), and nothing can charge cycle N+1 before cycle
-            # N's own settle has run (charge only ever happens here, once per prepare
-            # call). Cycle-keyed (R-1b) rather than task-id-keyed: `charged_estimate`
-            # no longer collapses every cycle of a task onto one dict entry, so the
-            # stale entry must be looked up by ITS OWN cycle, not the current one --
-            # membership alone (no separate `reconciled_tasks` check) is sufficient,
-            # since reconcile()/reverse_estimate() always pop a cycle's key once it is
-            # settled.
-            _stale_cycle = ts_pre.dispatch_cycle - 1
-            _stale_key = cycle_key(tid, _stale_cycle)
-            if _stale_key in state.budget_counters.charged_estimate:
-                self._budget_manager.reverse_estimate(
-                    tid, state.budget_counters, cycle=_stale_cycle
-                )
-                run_log.info(
-                    "Reversed stale estimate for task %s on resume",
-                    tid,
-                    extra={
-                        "event": "budget.resume_reverse",
-                        "task_id": tid,
-                        "cycle": _stale_cycle,
-                    },
-                )
+            self._reverse_stale_charge(tid, ts_pre, state, run_log)
 
             # Single gate check per call (T-VSfAUN, FR-6/ADR-0007 §7.1). Re-gating
             # after a window-roll wait now happens by the CALLER re-invoking this
@@ -1458,6 +1450,117 @@ class Orchestrator:
             env_overlay=(env_overlay or None),
             cycle=ts_pre.dispatch_cycle,
         )
+
+    def _reverse_stale_charge(
+        self,
+        tid: str,
+        ts: TaskRunState,
+        state: RunState,
+        run_log: logging.LoggerAdapter,
+    ) -> None:
+        """Release the previous cycle's charge left by a crash (R2, NFR-3, R-1b).
+
+        Moved verbatim from the budget-gate block so the gate and the result-cache hit path
+        (ADR-0019 D12) can never drift apart. `ts.dispatch_cycle` was already incremented for
+        THIS dispatch, so a stale charge, if any, is exactly one cycle behind it.
+        """
+        if self._budget_manager is None:
+            return
+        stale_cycle = ts.dispatch_cycle - 1
+        if cycle_key(tid, stale_cycle) not in state.budget_counters.charged_estimate:
+            return
+        self._budget_manager.reverse_estimate(tid, state.budget_counters, cycle=stale_cycle)
+        run_log.info(
+            "Reversed stale estimate for task %s on resume",
+            tid,
+            extra={"event": "budget.resume_reverse", "task_id": tid, "cycle": stale_cycle},
+        )
+
+    def _result_cache_lookup(
+        self,
+        tid: str,
+        task: TaskSpec,
+        workflow: WorkflowSpec,
+        state: RunState,
+        ctx: _RunContext,
+        ts: TaskRunState,
+        dynamic_input_paths: list[str],
+        task_log: logging.LoggerAdapter,
+    ) -> bool:
+        """E-Rc4Hk8 (ADR-0019 D11/D12): result-cache lookup; on a hit, settle the task HERE.
+
+        Mirrors the should_skip branch (done + save + "skipped"): a hit never reaches the
+        budget gate, a worker, breaker evaluation or the quota timer. dispatch_cycle keeps the
+        increment made above, so R-21 stays monotonic. Cache contracts are imported lazily, so
+        the cache-off path imports nothing. RULE (HLD 8.7.4): any new success-side effect in
+        `_settle_completed_task` must state whether it applies to hits; a hit skips ALL of them.
+        """
+        from .cache.types import LookupRequest
+
+        assert self._result_cache is not None
+        ctx.result_cache_pending.pop(tid, None)
+        started = self._clock()
+        spawn = state.spawned_by.get(tid)
+        request = LookupRequest(
+            task=task,
+            workflow=workflow,
+            agents=ctx.agents,
+            run_id=state.run_id,
+            # emit_tasks-injected (not a loop clone): a spawn record without loop coordinates
+            injected=spawn is not None and spawn.loop_id is None,
+            integration_active=state.integration.active,
+            artifact_store=self._store,
+            general_instruction_paths=tuple(self._resolve_general_instructions(workflow)),
+            dynamic_input_paths=tuple(dynamic_input_paths),
+            repo_paths=ctx.repo_paths,
+            dispatch_cycle=ts.dispatch_cycle,
+            now=started,
+        )
+        outcome = self._result_cache.lookup(request, task_log)
+        if outcome.record is not None:
+            state.result_cache[tid] = outcome.record
+        if not outcome.hit:
+            if outcome.pending is not None:
+                ctx.result_cache_pending[tid] = outcome.pending
+            return False
+        ended = self._clock().isoformat()
+        ts.status = "succeeded"
+        ts.outputs_present = True
+        if ts.started_at is None:
+            ts.started_at = started.isoformat()
+        ts.ended_at = ended
+        record = outcome.record
+        assert record is not None  # a hit always carries its record (ResultCacheHook contract)
+        state.result_cache[tid] = record.model_copy(update={"ended_at": ended})
+        # crash -> resume -> hit: release the stale cycle's charge, exactly like the gate does
+        self._reverse_stale_charge(tid, ts, state, ctx.run_log)
+        task_log.info(
+            "Task succeeded (result cache hit)",
+            extra={"event": "task.end", "status": "succeeded", "cached": True},
+        )
+        ctx.done.add(tid)
+        self._runstate.save(state)
+        return True
+
+    def _result_cache_store(
+        self,
+        tid: str,
+        ts: TaskRunState,
+        state: RunState,
+        ctx: _RunContext,
+        task_log: logging.LoggerAdapter,
+    ) -> None:
+        """E-Rc4Hk8 (ADR-0019 D13): store this dispatch's FINAL settled success (main thread)."""
+        assert self._result_cache is not None
+        pending = ctx.result_cache_pending.pop(tid, None)
+        if pending is None:
+            return
+        result = self._result_cache.store_success(pending, ts=ts, now=self._clock(), log=task_log)
+        record = state.result_cache.get(tid)
+        if record is not None:
+            state.result_cache[tid] = record.model_copy(
+                update={"stored": result.stored, "store_reason": result.reason}
+            )
 
     def _settle_completed_task(
         self,
@@ -2045,6 +2148,8 @@ class Orchestrator:
                     # operator can `cd <worktree>; git rebase --continue`.
 
         if ts.status == "succeeded":
+            if self._result_cache is not None:
+                self._result_cache_store(tid, ts, state, ctx, task_log)
             task_log.info(
                 "Task succeeded",
                 extra={

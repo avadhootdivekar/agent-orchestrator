@@ -288,7 +288,12 @@ workflow with no `prompt_path`) · `422` schema violation.
 
 Full contract: [`run-graph-canvas-hld.md`](run-graph-canvas-hld.md) §14.2.
 
-### 2.7 Security posture — explicitly deferred
+### 2.7 Security posture — explicitly deferred (superseded by opt-in auth)
+
+> **Update (E-Da5Tn9, 2026-10-05):** opt-in local-account login with optional TOTP now exists
+> (`ao ui --auth`, `ao auth`); see [`dashboard-auth-hld.md`](dashboard-auth-hld.md) and the user
+> guide [`dashboard-authentication.md`](dashboard-authentication.md). The paragraph below is
+> the original posture and remains exact when auth is off (the default).
 
 **No authentication in this release**, per the requirement to leave credentials and login
 out for now. Mitigations: loopback-by-default bind, a startup warning when binding anything

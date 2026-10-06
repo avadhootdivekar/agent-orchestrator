@@ -1205,3 +1205,157 @@ By: dev-epic
 Role: manager
 Date: 2026-10-02
 ---
+
+---
+Learning-ID: LRN-20261005-cookies-scope-by-host-not-port
+Learning: Browsers scope cookies by host, not port, so every local `ao` listener (hub + each
+  dashboard on a different port) receives every other listener's session cookie, even with
+  `SameSite=Strict`. Name the cookie per port, give each server its own session table (realm), and
+  require a second, non-cookie secret (the `X-AO-Session-Proof` header, kept in the page) for API
+  calls, otherwise a cookie harvested by any local listener replays against the API.
+Context: Verified empirically (Chrome 138, Playwright) while designing E-Da5Tn9; shipped as D1/D11
+  in ADR-0021. Residual: a bare cookie still renders the hub index (the one cookie-only route).
+By: manager
+Role: agent
+Learning-ID: LRN-20261005-fail-closed-classification-tripwire-plus-runtime-rule
+Learning: To make "a field added later is not silently cached/trusted" hold, classify EVERY field of the
+  relevant models in an explicit table (KEY / NON_KEY / ANY-value / RULED-default-only) and enforce it twice:
+  a tripwire TEST that fails when `model_fields` differs from the table, and a RUNTIME rule that treats any
+  unclassified field with a non-default value as "ineligible" (reason names the field). The tripwire catches it
+  at the next test run; the runtime rule keeps production safe in the window before anyone re-runs the tests
+  (for example a sibling epic merged into a branch that has not been tested yet). Either alone is not enough.
+Context: `cache/eligibility.py` + `cache/constants.py` (`AGENT_KEY_FIELDS` / `AGENT_NON_KEY_FIELDS`), tests
+  U-E1/U-E2/U-K8, runtime reasons `unknown_task_field` / `unknown_agent_field` / `unknown_workflow_field`
+  (E-Rc4Hk8, ADR-0019 D10). The early-gate review found an unclassified `AgentSpec` field was silently unkeyed.
+By: developer
+Role: developer
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-include-router-hides-routes
+Learning: A deny-by-default check that classifies routes by (method, path) is blind to routes added
+  through FastAPI/Starlette `include_router` (they are nested/opaque to a flat route walk), so auth
+  routes must be registered flat (`app.add_api_route`) and the policy table must be asserted against
+  the *real* app's route enumeration, not just the table.
+Context: Reproduced in the E-Da5Tn9 developer consultation; enforced by
+  `assert_flat_auth_routes` and the `test_route_enumeration_*` suites.
+By: manager
+Role: agent
+Learning-ID: LRN-20261005-cache-key-must-include-prior-output-content
+Learning: A content-addressed cache for tasks that write files in place must put the PRIOR content of each
+  declared output (`absent` or a sha256) in the key. Without it, an update-in-place task gets a hit that
+  overwrites newer edits with an older result. The settle-time recompute must reuse the lookup-time priors
+  (a "preseed"), because by then the task has already overwritten the output.
+Context: E-Rc4Hk8 key schema v1 (`outputs: [{path, prior}]`, ADR-0019 D6); tests I-11 and ADV-2. With
+  `skip_if_outputs_exist: true` the priors are always `absent`, which is why the cache mostly helps clean
+  checkouts and deleted outputs.
+By: developer
+Role: developer
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-log-redaction-keeps-args-shape
+Learning: A `logging` filter that redacts secrets must keep the *shape* of `record.args`. Replacing
+  a tuple with `()` breaks formatters that unpack it (uvicorn's `AccessFormatter` expects a 5-tuple),
+  producing one "Logging error" traceback per request. Keep the tuple length, numeric members and
+  the first string slot (carrying the redacted line); empty the rest.
+Context: Found by the independent security review (H2) and its re-audit (N1: an empty-value
+  `?code=` query made line-level and per-arg redaction disagree); fixed in `auth/scrub.py`, and the
+  real-subprocess e2e now asserts a clean server log.
+By: manager
+Role: agent
+Learning-ID: LRN-20261005-hostile-cache-data-needs-total-parsers
+Learning: A cache directory inside an agent-writable workspace is hostile INPUT, not trusted state. Every
+  parser of it must be total: one parse boundary maps ANY failure (`RecursionError` from nested JSON,
+  `UnicodeDecodeError`, naive datetimes, `inf`/NaN, over-long strings, a FIFO at an entry path that hangs a
+  blocking open) to a typed integrity error, which the caller turns into a miss. Never derive a filesystem path
+  from an entry; open with `O_NOFOLLOW|O_NONBLOCK` and check `S_ISREG`; check every directory component with
+  `lstat` before EVERY operation including `unlink`/`utime`; and never evict through an unsafe path (a link
+  planted at a shard directory turns `unlink` into an arbitrary delete). Anything printed back to a terminal
+  must have control, bidi and zero-width characters stripped. `status.json` is agent-writable too, so even
+  `ao status`'s formatting of it must be total.
+Context: E-Rc4Hk8 ADR-0019 D28/D33, hostile-entry corpus (28 files), gates G1a SEC-01/SEC-09 and G1b S-2.
+  Complements `LRN-20260928-agent-writable-launch-record-path-fallback-risk`.
+By: developer
+Role: developer
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-config-as-attacker-input
+Learning: Treat the workspace `.ao/config.yaml` (and anything a `git pull` can change) as attacker
+  input to any security setting: let it only tighten, refuse (exit 78) when it would silently
+  disable auth while accounts exist, and probe *every* candidate store (including the default one
+  a config-chosen `store_dir` would hide), counting an unreadable store as "accounts may exist".
+Context: E-Da5Tn9 A12/M3; the first implementation probed only the resolved store and a config
+  pointing at an empty dir bypassed the refusal (HIGH H1, fixed in `9e62b5a`).
+By: manager
+Role: agent
+Learning-ID: LRN-20261005-import-poison-finder-must-implement-find-spec
+Learning: A "this process must not import module X" proof built on a `sys.meta_path` finder is vacuous unless
+  the finder implements `find_spec`: Python 3.12 never calls the legacy `find_module`, so a finder with only
+  `find_module` never fires and the test passes whatever the code does. Always ship the proof with (1) a unit
+  test that the finder raises on a poisoned name in a fresh interpreter, (2) a NEGATIVE CONTROL where the code
+  under test really imports a poisoned module mid-run and the run fails, and (3) a positive control that the
+  allowed modules do load. Run it in a
+  subprocess so earlier imports in the test session cannot hide a violation.
+Context: E-Rc4Hk8 T-JCOAsq Part 1: the first I-1 delivery (legacy finder, one 2-task workflow, hand-made goldens)
+  was rejected as vacuous and reworked (ten cache-off workflows, base-captured goldens). Same family as
+  `LRN-20260911-ast-guards-need-import-binding-tracking`.
+By: developer
+Role: developer
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-env-only-enablement-fails-open-on-stale-binary
+Learning: A security feature enabled only through an environment variable or config key fails
+  *open* on a stale binary that predates it (the unknown variable is ignored, the service starts
+  unauthenticated, no error). Prefer enabling through a CLI flag baked into the unit's ExecStart
+  (an old binary rejects an unknown flag), and tell operators to verify with a command that exists
+  only in new builds (`ao auth status`).
+Context: Design assumed `service.env`; the security review (M-1) added `ao service install
+  --auth`. Also: the design docs said `install.sh --reinstall`, a flag that does not exist (the
+  command is `install.sh --force`); docs-refresh verification against the code caught it.
+By: manager
+Role: agent
+Learning-ID: LRN-20261005-agent-test-completion-claims-need-verification
+Learning: A subagent's "tests added, proof complete" is a claim about test CODE, not about the property. For a
+  proof of ABSENCE (no cache code imported, byte-identical output) read the test and ask what would make it
+  fail: inject the violation and watch it go red (mutation check), and recompute any "golden" from the real base
+  commit instead of trusting a hand-made file. Record the exact command and base sha in the ticket so the check
+  is repeatable. Extends `LRN-20260616-subagent-lint-verify` from lint to test evidence.
+Context: E-Rc4Hk8 T-JCOAsq Part 1 ("complete" with a poison that never fired and fabricated goldens) and the
+  gate-report suite figure "7480 passed" that no run reproduced (the true figure was 6572 / 10 skipped).
+By: developer
+Role: developer
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-name-based-exemption-from-content-hash-hides-files
+Learning: Never exempt files from a content hash by NAME pattern when anything can create files with that name.
+  A staging-file exemption (`.ao-result-cache-*.tmp`) in a directory-input digest let any writer hide a file
+  from the cache key, so a result computed while the file was visible was stored under the clean key and
+  replayed later (a demonstrated poisoned hit). Prefer a false miss (hash everything, sweep leftovers
+  separately) over a silent false hit.
+Context: E-Rc4Hk8 G1b S-1 added the exemption to avoid crash-leftover churn; G2-S1 removed it and moved
+  cleanup to `ao cache prune` (ADR-0019 D8 addendum).
+By: developer
+Role: developer
+Date: 2026-10-05
+---
+
+---
+Learning-ID: LRN-20261005-yaml-bare-on-is-boolean
+Learning: In a YAML config template, an enum value spelled `on` (or `off`, `yes`, `no`) must be QUOTED: under
+  YAML 1.1 a bare `on` loads as boolean `true`, so an uncommented template line fails validation of a
+  `Literal["on", "shadow"]` field. Write `mode: "on"`, and test the scaffolded template by uncommenting it and
+  loading it through the real config model.
+Context: E-Rc4Hk8 `ao init` cache block (T-28J9oR deviation 2); caught by acceptance test U-C.
+By: developer
+Role: developer
+Date: 2026-10-05
+---

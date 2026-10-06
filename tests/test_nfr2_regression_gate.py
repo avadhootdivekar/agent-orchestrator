@@ -146,6 +146,11 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
         "help-surface tests now pass COLUMNS=200 (assertions unchanged)"
     ),
     "tests/test_budget.py": "R-1b cycle-keyed estimate ledger (T-Ac6Vd9): key literal only",
+    "tests/test_wave_scheduler.py": (
+        "E-Rc4Hk8 flake fix (962ac51): `test_two_independent_tasks_overlap_at_max_parallel_two` "
+        "only held task `a`, so `b` could finish before `a` started (~2 in 80 runs, unrelated to "
+        "the cache); it now holds both tasks. Assertions unchanged"
+    ),
     # Additive only: DashboardService now asks its supervisor for `describe()`/`get_launch()`
     # (derived launch status + bounded log tail, E-iafh2F T-Lc5Rq8-launch-status), so the shared
     # in-memory StubSupervisor gained those two methods. No existing stub behaviour changed.
@@ -201,6 +206,12 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
         "mostly pre-existing ruff-format drift from `b0cb467` (predates this epic thread, "
         "found undeclared while verifying E-Vt6Lp2); Epic D's own addition on top is "
         "additive only -- one new test method, no pre-existing assertion touched"
+    ),
+    # Additive only (E-Da5Tn9 T-kzEzwy, HLD section 16 row 10): one new autouse fixture,
+    # `_hermetic_auth_env`, appended at the end; it only edits os.environ (never imports
+    # agent_orchestrator.auth), so no pre-existing fixture or test is touched.
+    "tests/conftest.py": (
+        "additive (E-Da5Tn9 T-kzEzwy): autouse `_hermetic_auth_env` fixture appended"
     ),
 }
 

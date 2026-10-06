@@ -64,6 +64,13 @@ src/
     TabBar.tsx        tab strip: close, drag + Alt+Arrow reorder, roving tabindex
     TabLink.tsx       <a href="#/..."> links + the explicit "open in new tab" button
     TabView.tsx       tab -> view component;  TaskTab.tsx / GraphTab.tsx  the two tab-only views
+  auth/               dashboard login + account UI (E-Da5Tn9, docs-md/dashboard-auth-hld.md §17):
+                      AuthGate (the state machine over GET /api/auth/status, authReducer.ts), LoginScreen,
+                      TotpStep, EnrollScreen, AccountMenu and its dialogs, proof.ts (the session proof
+                      header, memory-only fallback), useKeepalive.ts, lazy QrCode.tsx. With auth off the
+                      gate renders <App/> unchanged
+  hub/                the hub's login page (separate IIFE bundle, vite.hub.config.ts, emitted to
+                      src/agent_orchestrator/auth/assets/hub-auth.{js,css}, not to ui/static)
   graph/              run graph canvas (E-k3AMEr) — lazy-loaded chunk, see docs-md/run-graph-canvas-hld.md
     model.ts          PURE (no React, no fetch): named constants, joinNodes/edgesForView/nodesForView,
                       metricFraction, searchNodes, relatedIds, waitSeconds, panelModel, prefs
@@ -99,6 +106,12 @@ the strip at the top of the runs list for 24 h (or until dismissed). Design and 
     ([ADR-0017 D5](../docs-md/adr/ADR-0017-run-graph-provenance-snapshot-and-canvas.md#d5-frontend-canvas--xyflowreact-12--dagrejsdagre-3-layered-auto-layout)).
     They are code-split into the lazy `RunGraph` chunk, so they don't load until the Graph tab
     opens.
+  - `qrcode-generator` (2.0.4, exact pin, MIT, no dependencies), for the TOTP enrollment QR code
+    ([ADR-0021](../docs-md/adr/ADR-0021-dashboard-authentication-and-totp.md), HLD FR-6/NFR-2/A-14). Only
+    `auth/QrCode.tsx` imports it, so it lives in its own lazy `QrCode-*.js` chunk that loads when
+    an enrollment view opens. Measured gzip (T-vCgsU6):
+    lazy chunk 7,548 B (budget 12 KB); main `index-*.js` grew by 6,986 B (6.8 KiB, budget
+    +12 KB). It renders an SVG of the secret locally, so the seed is never sent to a third party.
 
   Adding one means a recorded rationale, a measured gzip budget, and a clean
   `npm audit --omit=dev --audit-level=high`.

@@ -7,6 +7,7 @@ Area-2 fixtures (dynamic injection, loop) will be added by T-5isej3.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -216,3 +217,22 @@ def make_orchestrator(
         return orch, reposets, agents
 
     return _factory
+
+
+# ---------------------------------------------------------------------------
+# Hermetic auth environment (E-Da5Tn9 / T-kzEzwy, HLD section 16 row 10)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_auth_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No test may read the developer's real auth store or auth env.
+
+    Environment operations only; it never imports ``agent_orchestrator.auth``, so non-auth
+    tests are unaffected. The auth state directory resolves to ``<AO_AUTH_DIR>/state``.
+    """
+    for key in [k for k in os.environ if k.startswith("AO_UI_AUTH")]:
+        monkeypatch.delenv(key)
+    monkeypatch.delenv("AO_UI_BOUND_PORT", raising=False)
+    monkeypatch.delenv("AO_AUTH_STATE_DIR", raising=False)
+    monkeypatch.setenv("AO_AUTH_DIR", str(tmp_path / "ao-auth-store"))

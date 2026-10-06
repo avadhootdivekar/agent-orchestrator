@@ -8,16 +8,19 @@ holds no framework imports — see that module's docstring.
 Requires the optional ``[ui]`` extra (``pip install 'agent-orchestrator[ui]'`` /
 ``uv sync --extra ui``); nothing else in the package imports this module at module scope.
 
-Security posture for this release: **no authentication**. The server therefore binds to
-loopback by default (see ``ao ui``) — it exposes the filesystem and can spend money by
-launching runs, so it must not be reachable off-box until the deferred auth work lands.
+Security posture: authentication is **off by default**. With it off (``auth=None``) the
+server has no login and therefore binds to loopback by default (see ``ao ui``) — it exposes
+the filesystem and can spend money by launching runs, so it must not be reachable off-box.
+With ``auth`` given (E-Da5Tn9) every route is deny-by-default behind ``AuthMiddleware``, except
+the small allowlist in ``auth/policy.py``; with it off the app is byte-identical to before
+apart from the new ``GET /api/auth/status``.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -25,6 +28,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .._version import get_version_string
+from ..auth.http.middleware import AuthMiddleware
+from ..auth.http.routes import install_auth_routes
+from ..auth.policy import DASHBOARD_COOKIE_ONLY_NAVIGATION, DASHBOARD_ROUTE_POLICIES
 from ..feedback import MAX_NOTE_CHARS, REASONS, Rating, Reason, Scope
 from .files import PathNotAllowedError, PathNotFoundError
 from .htmlpreview import NotMarkupError
@@ -41,11 +47,19 @@ from .service import (
     DashboardValidationError,
 )
 
+if TYPE_CHECKING:  # annotation only: the runtime module is not imported by an auth-off dashboard
+    from ..auth.runtime import AuthRuntime
+
 # Where the built frontend lands. Populated by `npm run build` in ui/ (see
 # ui/vite.config.ts, whose outDir points here) and shipped inside the wheel.
 STATIC_DIR = Path(__file__).parent / "static"
 
 API_PREFIX = "/api"
+
+# Mirror ``cli.py::UI_DEFAULT_HOST`` / ``UI_DEFAULT_PORT`` (this module cannot import ``cli``):
+# the factory's fallback when ``ao ui --reload`` did not relay a bound host or port.
+FACTORY_DEFAULT_HOST = "127.0.0.1"
+FACTORY_DEFAULT_PORT = 8765
 
 
 class _AllowedHostsUnset:
@@ -124,6 +138,7 @@ def create_app(
     service: DashboardService,
     *,
     allowed_hosts: frozenset[str] | None | _AllowedHostsUnset = _ALLOWED_HOSTS_UNSET,
+    auth: AuthRuntime | None = None,
 ) -> FastAPI:
     """Build the dashboard app around an already-constructed *service*.
 
@@ -138,18 +153,34 @@ def create_app(
             host explicitly so that value is always included too. Pass `None` explicitly
             to disable the Host check outright (equivalent to the `AO_UI_ALLOWED_HOSTS=*`
             escape hatch); this is deliberately distinct from leaving the argument unset.
+        auth: The authentication runtime (``None``, the default, means auth is off and the
+            app behaves exactly as before). When given, ``AuthMiddleware`` gates every
+            route and ``/redoc`` plus ``/docs/oauth2-redirect`` are not registered.
     """
+    # With auth on, drop FastAPI's two extra framework routes outside /api (security L2).
+    auth_on_kwargs: dict[str, Any] = (
+        {"redoc_url": None, "swagger_ui_oauth2_redirect_url": None} if auth is not None else {}
+    )
     app = FastAPI(
         title="Agent Orchestrator Dashboard",
         version=get_version_string(),
         docs_url=f"{API_PREFIX}/docs",
         openapi_url=f"{API_PREFIX}/openapi.json",
+        **auth_on_kwargs,
     )
     app.state.service = service
     effective_hosts = (
         resolve_allowed_hosts() if isinstance(allowed_hosts, _AllowedHostsUnset) else allowed_hosts
     )
+    app.add_middleware(
+        AuthMiddleware,
+        runtime=auth,
+        policies=DASHBOARD_ROUTE_POLICIES,
+        cookie_only_navigation=DASHBOARD_COOKIE_ONLY_NAVIGATION,
+    )
     app.add_middleware(SecurityMiddleware, allowed_hosts=effective_hosts)
+    # Before every route and before the SPA fallback (classification and first-match order).
+    install_auth_routes(app, auth)
 
     # -- health / workspace ----------------------------------------------------
 
@@ -448,10 +479,34 @@ def create_app_from_env() -> FastAPI:
     """
     import os
 
+    from ..auth.constants import AO_UI_BOUND_PORT_ENV
+    from ..auth.errors import AuthConfigError
+    from ..auth.launch import prepare_auth
+    from ..auth.settings import AuthCliOverrides
+
     workspace = os.environ.get("AO_UI_WORKSPACE") or os.getcwd()
     bound_host = os.environ.get("AO_UI_BOUND_HOST")
+    raw_port = os.environ.get(AO_UI_BOUND_PORT_ENV, "")
+    bound_port = int(raw_port) if raw_port.isascii() and raw_port.isdecimal() else None
+    # The CLI-sourced auth flags reach this process through the environment (``child_env``), so
+    # an empty ``AuthCliOverrides`` resolves the same settings the parent checked.
+    launch = prepare_auth(
+        cli=AuthCliOverrides(),
+        env=os.environ,
+        workspace_root=Path(workspace),
+        realm_kind="ui",
+        port=bound_port if bound_port is not None else FACTORY_DEFAULT_PORT,
+        bind_host=bound_host or FACTORY_DEFAULT_HOST,
+    )
+    if launch.runtime is not None and bound_port is None:
+        # A guessed port would mis-name the realm cookie.
+        raise AuthConfigError(f"{AO_UI_BOUND_PORT_ENV} is required (and must be a port number)")
+    for line in launch.warnings:
+        logger.warning("%s", line)
     return create_app(
-        DashboardService(workspace), allowed_hosts=resolve_allowed_hosts(bound_host=bound_host)
+        DashboardService(workspace, denied_paths=[str(p) for p in launch.denied_paths]),
+        allowed_hosts=resolve_allowed_hosts(bound_host=bound_host),
+        auth=launch.runtime,
     )
 
 

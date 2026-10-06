@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { api } from "./api";
+import { AccountMenu, RecoveryBanner } from "./auth/AccountMenu";
 import type { WorkspaceInfo } from "./types";
 import { TabActionsContext, TabActiveContext, type TabActions } from "./tabs/context";
 import {
@@ -129,6 +130,7 @@ export function App() {
           ))}
 
           <div className="sidebar-footer">
+            <AccountMenu />
             <button
               className="nav-item"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -141,6 +143,7 @@ export function App() {
         </nav>
 
         <main className="main">
+          <RecoveryBanner />
           <TabBar
             tabs={state.tabs}
             activeId={active.id}

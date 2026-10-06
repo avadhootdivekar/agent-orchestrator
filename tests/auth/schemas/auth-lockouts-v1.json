@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestrator.local/schemas/auth-lockouts-v1.json",
+  "type": "object", "additionalProperties": true,
+  "required": ["schema_version", "accounts", "phantoms"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "name_key_hex": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "accounts": {"type": "object", "propertyNames": {"pattern": "^[0-9a-f]{32}$"},
+                 "additionalProperties": {"$ref": "#/$defs/lockout"}},
+    "phantoms": {"type": "object", "maxProperties": 4096, "propertyNames": {"pattern": "^[0-9a-f]{64}$"},
+                 "additionalProperties": {"$ref": "#/$defs/lockout"}}
+  },
+  "$defs": {"lockout": {"type": "object", "additionalProperties": true,
+                        "properties": {"failures": {"type": "integer", "minimum": 0},
+                                       "last_failure_at": {"type": ["string", "null"]},
+                                       "locked_until": {"type": ["string", "null"]}}}}
+}

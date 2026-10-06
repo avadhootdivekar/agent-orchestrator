@@ -29,6 +29,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from ..errors import EXIT_CONFIG
 from .paths import XDG_CONFIG_HOME_ENV
 
 # Hub port baked into a freshly-generated unit's `ExecStart` when `ao service install` is
@@ -47,16 +48,18 @@ DEFAULT_HUB_HOST = "127.0.0.1"
 _UNIT_SUBPATH = ("systemd", "user")
 UNIT_FILENAME = "ao.service"
 
-# The exact HLD §7 unit text, including the early-gate corrections. `{ao_executable}` and
-# `{hub_port}` are the only two rendered values -- everything else is fixed by design.
+# The exact HLD §7 unit text, including the early-gate corrections. `{ao_executable}`,
+# `{hub_host}`, `{hub_port}` and `{exit_config}` (the terminal config-error exit status, E-Da5Tn9)
+# are the only rendered values -- everything else is fixed by design.
 _UNIT_TEMPLATE = """[Unit]
 Description=Agent Orchestrator multi-workspace service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart={ao_executable} service run --hub-host {hub_host} --hub-port {hub_port}
+ExecStart={ao_executable} service run --hub-host {hub_host} --hub-port {hub_port}{auth_flag}
 Restart=on-failure
+RestartPreventExitStatus={exit_config}
 RestartSec=5
 StartLimitIntervalSec=120
 StartLimitBurst=5
@@ -67,6 +70,9 @@ EnvironmentFile=-%h/.config/ao/service.env
 [Install]
 WantedBy=default.target
 """
+
+# Appended to ExecStart by `ao service install --auth` (leading space is deliberate).
+AUTH_EXEC_FLAG = " --auth"
 
 # systemd user-unit name (without the `.service` suffix) `ao service start/stop` targets.
 SYSTEMCTL_UNIT_NAME = "ao"
@@ -109,14 +115,23 @@ def render_unit(
     *,
     hub_port: int = DEFAULT_HUB_PORT,
     hub_host: str = DEFAULT_HUB_HOST,
+    auth: bool = False,
 ) -> str:
     """Render the exact HLD §7 unit text for *ao_executable* / *hub_host* / *hub_port*.
 
     Both `hub_host` and `hub_port` are always rendered explicitly (never left to `service
     run`'s own defaults) -- an implicit default that later changed would silently desync a
-    previously-installed unit from a new binary's default (HLD §7, AC16).
+    previously-installed unit from a new binary's default (HLD §7, AC16). With `auth`, the unit's
+    ExecStart carries `--auth`, so enablement does not depend on `service.env` being read by a
+    binary that knows `AO_UI_AUTH` (T-2wE08U M-1).
     """
-    return _UNIT_TEMPLATE.format(ao_executable=ao_executable, hub_port=hub_port, hub_host=hub_host)
+    return _UNIT_TEMPLATE.format(
+        ao_executable=ao_executable,
+        hub_port=hub_port,
+        hub_host=hub_host,
+        auth_flag=AUTH_EXEC_FLAG if auth else "",
+        exit_config=EXIT_CONFIG,
+    )
 
 
 def _default_unit_dir() -> Path:
@@ -133,13 +148,14 @@ def install_unit(
     unit_dir: Path | None = None,
     hub_port: int = DEFAULT_HUB_PORT,
     hub_host: str = DEFAULT_HUB_HOST,
+    auth: bool = False,
 ) -> Path | str:
     """Render the unit and either print it (`print_only=True`, zero filesystem writes -- safe
     for CI/tests) or write it to `unit_dir or _default_unit_dir()` (creating parent dirs) and
     return the written path.
     """
     ao_executable = resolve_ao_executable()
-    text = render_unit(ao_executable, hub_port=hub_port, hub_host=hub_host)
+    text = render_unit(ao_executable, hub_port=hub_port, hub_host=hub_host, auth=auth)
     if print_only:
         return text
 

@@ -111,6 +111,10 @@ class TaskStat:
     agent: str | None = None
     model: str | None = None
     effort: str | None = None
+    # E-Rc4Hk8 (HLD 8.10, additive): `cache.report.task_view` of a CURRENT result-cache record
+    # (the exact D35 fields); None when the task has none. Display-only; every string inside
+    # (source_run_id, key, ...) is untrusted text for the frontend.
+    result_cache: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +193,8 @@ class RunDetail:
     # True/False when the prompt file's current sha256 differs from / matches the recorded one;
     # None when it cannot be determined (no prompt, file gone/unreadable, path rejected).
     prompt_changed_since_start: bool | None = None
+    # E-Rc4Hk8 (HLD 8.10, additive): `cache.report.run_block`; None when no current record.
+    result_cache: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -334,6 +340,13 @@ class RunRepository:
         state = self.load_state(run_id)
         summary = self._summarize_state(run_id, state)
 
+        rc_tasks: dict[str, dict[str, object]] = {}
+        rc_run: dict[str, object] | None = None
+        if state.result_cache:  # lazy: a run the cache never touched never imports cache.report
+            from agent_orchestrator.cache.report import result_cache_status_fields
+
+            rc_tasks, rc_run = result_cache_status_fields(state)
+
         tasks: list[TaskStat] = []
         for tid, ts in state.tasks.items():
             started, ended = _parse_iso(ts.started_at), _parse_iso(ts.ended_at)
@@ -366,6 +379,7 @@ class RunRepository:
                     agent=ts.agent,
                     model=ts.model,
                     effort=ts.effort,
+                    result_cache=rc_tasks.get(tid),
                 )
             )
 
@@ -391,6 +405,7 @@ class RunRepository:
                 else None
             ),
             graph_version=compute_graph_version(state),
+            result_cache=rc_run,
         )
 
     def load_graph(self, run_id: str) -> RunGraph:

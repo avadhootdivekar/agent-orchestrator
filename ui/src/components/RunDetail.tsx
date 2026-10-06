@@ -12,6 +12,7 @@ import { readPrefs, writePrefs, type GraphTab } from "../graph/model";
 import type {
   RunActivity,
   RunDetail as RunDetailData,
+  ResultCacheRunBlock,
   RunIntegration,
   TaskStat,
   RunLiveSummary,
@@ -57,6 +58,43 @@ function IntegrationCell({ task }: { task: TaskStat }) {
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * Cross-run result-cache tag (E-Rc4Hk8, HLD 8.10): shown ONLY for a current hit. Unrelated to
+ * the prompt-cache disclosure below. `source_run_id` is untrusted provenance: it goes into a
+ * plain-text `title` attribute, never into markup.
+ */
+function ResultCacheTag({ task }: { task: TaskStat }) {
+  const rc = task.result_cache;
+  if (rc?.hit !== true) return null;
+  const source = rc.source_run_id ? `served from run ${rc.source_run_id}` : "served from cache";
+  return (
+    <span className="tag" style={{ marginLeft: 6 }} title={source}>
+      cached
+    </span>
+  );
+}
+
+/** "Result cache" tile (E-Rc4Hk8): hits and estimated savings, or the shadow would-hit variant. */
+function ResultCacheTile({ block }: { block: ResultCacheRunBlock | null | undefined }) {
+  if (!block) return null;
+  if (block.would_hits > 0) {
+    return (
+      <Tile
+        label="Result cache"
+        value={`${block.would_hits} would-hit(s) (shadow)`}
+        hint={`~${formatCost(block.avoidable_cost_usd)} avoidable (est.)`}
+      />
+    );
+  }
+  return (
+    <Tile
+      label="Result cache"
+      value={`${block.hits} hit(s)`}
+      hint={`~${formatCost(block.saved_cost_usd)} saved (est.)`}
+    />
   );
 }
 
@@ -255,6 +293,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
             value={formatDuration(summary.active_seconds)}
             hint="summed task execution"
           />
+          <ResultCacheTile block={detail.result_cache} />
         </div>
 
         {detail.integration ? (
@@ -356,6 +395,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                           {task.origin}
                         </span>
                       ) : null}
+                      <ResultCacheTag task={task} />
                       <CacheDetails task={task} />
                     <details className="task-cache-details">
                       <summary>rate</summary>
