@@ -9,14 +9,18 @@ Covered: the CSP console detector and its negative control, the login screen and
 and the cross-port proof check (S21): a cookie captured by a page on another localhost port cannot
 call the dashboard API without the proof, and the victim's own session survives.
 
-Not covered here (forced enrollment with the QR, the hub login page, Firefox/WebKit): they need a
-browser to author and verify against, and the environment this file was written in had none.
+Also covered: forced TOTP enrollment (``add-user --require-totp`` token, real SVG QR, secret,
+confirm with a live code, recovery codes, landing in the dashboard).
+
+Not covered here (the hub login page, Firefox/WebKit).
 """
 
 from __future__ import annotations
 
+import base64
 import re
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -24,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from agent_orchestrator.auth import totp
 from agent_orchestrator.auth.constants import COOKIE_BASENAME
 from agent_orchestrator.ui.security import SPA_CSP
 from tests.auth.test_e2e_subprocess import (
@@ -190,5 +195,70 @@ def test_login_screen_password_login_and_the_cross_port_proof_check(
         page.goto(origin, timeout=NAVIGATION_TIMEOUT_MS)
         page.wait_for_load_state("networkidle")
         assert page.locator("input[name=password]").count() == 0
+        assert errors == []
+        page.close()
+
+
+ENROLLMENT_TOKEN_RE = re.compile(
+    r"^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$", re.MULTILINE
+)
+RECOVERY_CODE_COUNT = 10
+
+
+def test_forced_totp_enrollment_with_the_qr_and_recovery_codes(
+    browser: Any, tmp_path: Path
+) -> None:
+    sandbox = make_sandbox(tmp_path)
+    added = run_ao(
+        sandbox,
+        "auth", "add-user", USERNAME, "--password-stdin", "--require-totp",
+        "--auth-dir", str(sandbox.auth_dir),
+        stdin=PASSWORD + "\n",
+    )  # fmt: skip
+    assert added.returncode == 0, added.stderr
+    token_match = ENROLLMENT_TOKEN_RE.search(added.stdout)
+    assert token_match is not None, added.stdout
+    port = free_port()
+
+    with ao_ui_server(
+        sandbox, port, "--auth", "--auth-totp", "optional", "--auth-dir", str(sandbox.auth_dir)
+    ):
+        page, errors = new_page(browser)
+        page.goto(f"http://{LOOPBACK}:{port}", timeout=NAVIGATION_TIMEOUT_MS)
+        page.wait_for_selector("input[name=password]", timeout=NAVIGATION_TIMEOUT_MS)
+        page.fill("input[name=username]", USERNAME)
+        page.fill("input[name=password]", PASSWORD)
+        page.click("button[type=submit]")
+
+        # forced mode: the one-time token comes first
+        page.wait_for_selector("input[name=enrollment_token]", timeout=NAVIGATION_TIMEOUT_MS)
+        page.fill("input[name=enrollment_token]", token_match.group(0))
+        page.click("button:has-text('Continue')")
+
+        # the real QR (an <svg><path>), the grouped secret and the URI are shown
+        page.wait_for_selector("[data-testid=enroll-secret]", timeout=NAVIGATION_TIMEOUT_MS)
+        page.wait_for_selector("svg path", timeout=NAVIGATION_TIMEOUT_MS)  # lazy QR chunk
+        uri = page.locator("[data-testid=enroll-uri]").inner_text()
+        assert uri.startswith("otpauth://totp/")
+        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        qr_shot = SCREENSHOT_DIR / "enroll-qr.png"
+        if not qr_shot.exists():  # new files only
+            page.screenshot(path=str(qr_shot))
+        grouped = page.locator("[data-testid=enroll-secret]").inner_text()
+        secret = base64.b32decode("".join(grouped.split()))
+
+        page.fill("input[name=code]", totp.hotp(secret, totp.totp_step(time.time())))
+        page.click("button:has-text('Confirm')")
+
+        # ten recovery codes, then Continue is gated on the acknowledgement
+        page.wait_for_selector("ol.recovery-codes", timeout=NAVIGATION_TIMEOUT_MS)
+        assert page.locator("ol.recovery-codes li").count() == RECOVERY_CODE_COUNT
+        assert page.locator("button:has-text('Continue')").is_disabled()
+        page.check("text=I have stored these codes")
+        page.click("button:has-text('Continue')")
+        page.wait_for_selector("ol.recovery-codes", state="detached", timeout=NAVIGATION_TIMEOUT_MS)
+        page.wait_for_load_state("networkidle")
+        assert page.locator("input[name=password]").count() == 0
+        assert page.evaluate("window.__cspViolations") == []
         assert errors == []
         page.close()

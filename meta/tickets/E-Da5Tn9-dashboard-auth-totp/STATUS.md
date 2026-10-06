@@ -1,11 +1,12 @@
 # STATUS
 
 - ID: `E-Da5Tn9-dashboard-auth-totp`
-- Updated At: `2026-10-05`
-- State: `Done` (23/23 tasks; AC-34 browser smoke NOT RUN, carried as a follow-up)
+- Updated At: `2026-10-06`
+- State: `Done` (23/23 tasks; AC-34 browser smoke PASSED 2026-10-06: 3 passed)
 - Owner: `manager`
 
 ## This update
+- By: tester · Role: agent · Date: 2026-10-06 · Comment: **AC-34 run and closed.** 2026-10-06: `pytest -q -m browser tests/auth/test_browser_smoke.py` = **3 passed** (Chrome 138 via Playwright, isolated venv, no prod install; 4 consecutive runs): CSP detector negative control, login + password login + cross-port proof check (S21), and the new forced-enrollment case (`add-user --require-totp` token -> real SVG QR, secret, URI -> confirm with a live code -> 10 recovery codes -> acknowledge -> dashboard; no CSP violation or console error). No defects found in the product code; the only fix was a test race (the QR chunk is lazy-loaded, so the test waits for `svg path`). Screenshots: `output/E-Da5Tn9-dashboard-auth-totp/{login,enroll-qr}.png`. Hub login page and Firefox/WebKit remain uncovered. `tests/auth` full dir: 2182 passed, 1 skipped.
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: **Epic closed: all 23 tasks Done.** The security
   + design review gate (T-2wE08U) signed off (0 CRITICAL; H1/H2/M fixed; accepted residuals listed) and
   T-otjIkJ refreshed the docs to the as-built state (HLD "As built", ADR-0021 Accepted, README,
@@ -81,7 +82,7 @@
 | T-R7JhTL-hub-login-page | Done | S1→S2 | v2.1: 3 d; SPA↔hub contract test; owns `package.json` scripts and `tsconfig` |
 | T-pQ73eO-spa-auth-gate-login | Done | S1 | v2.1: no longer commits `ui/static` |
 | T-vCgsU6-spa-enroll-account-qr | Done | S2 | v2.1: the only `ui/static` committer; baseline check first |
-| T-U2ERMo-auth-e2e-regression-sweep | Done | S3 | v2.1: 3 d; **AC-34 browser smoke NOT RUN** (Playwright not installed), recorded as a follow-up |
+| T-U2ERMo-auth-e2e-regression-sweep | Done | S3 | v2.1: 3 d; **AC-34 browser smoke PASSED 2026-10-06** (3 passed: CSP control, login + cross-port proof, forced enrollment with QR) |
 | T-2wE08U-auth-security-review | Done | S3 | v2.1: 2.5 d; re-verify §28.9; epic merges to `main` only after this |
 | T-otjIkJ-auth-docs-refresh-closure | Done | S3 | Post-implementation docs refresh; v2.1: 2 d |
 
@@ -100,7 +101,7 @@ Counts: 23 tasks · 23 Done · 0 In Progress · 0 Blocked · 0 Not started · 61
 ## Risks / Blockers
 - **No blockers.** Everything below is an accepted residual or a follow-up (full list: HLD "As built"
   section D; ROADMAP section 4):
-  - **AC-34 browser smoke NOT RUN** (Playwright missing); `test_browser_smoke.py` has never executed.
+  - ~~AC-34 browser smoke NOT RUN~~ **Closed 2026-10-06**: 3 passed on Chrome 138 (forced-enrollment/QR case added). Still open: hub login page and Firefox/WebKit browser cases.
   - Cross-epic rows **X1-X6 open until E-Ag7Pw3 (approvals) merges**; merge-order coordination with
     E-Rc4Hk8 (result cache) and E-Ag7Pw3 for `ui/app.py`, `cli.py`, `service/*`, `xdg.py`,
     `ui/files.py`, `ui/static`.
@@ -108,7 +109,7 @@ Counts: 23 tasks · 23 Done · 0 In Progress · 0 Blocked · 0 Not started · 61
     `trusted_proxies=127.0.0.1`; account-lockout DoS and a shared throttle bucket behind an
     unconfigured proxy; IPv6 `/64` rotation; phantom-eviction oracle; hard link vs the denied-path
     check; stale-binary fail-open when auth is enabled only via `service.env`; per-session counter
-    concurrency; `dompurify` moderate advisory; TOTP seeds in clear.
+    concurrency; TOTP seeds in clear. (`dompurify` advisory resolved 2026-10-06: bumped to 3.4.16.)
   - **OQ-11** (calendar basis): settled in practice on the agent-lane basis; manager confirmation
     outstanding. **OQ-4** and **OQ-10** remain open follow-ups.
 
@@ -118,10 +119,8 @@ Counts: 23 tasks · 23 Done · 0 In Progress · 0 Blocked · 0 Not started · 61
    `ui/static` once (`npm ci && npm run build`), never hand-merge hashed assets.
 2. manager: when E-Ag7Pw3 merges, re-verify X1-X6 and re-take the auth-off header snapshot
    (`tests/auth/test_auth_off_regression.py`).
-3. someone with Chrome + Playwright: run AC-34 (`uv sync --extra browser`;
-   `pytest -q -m browser tests/auth/test_browser_smoke.py`), fix, and add the forced-enrollment/QR,
-   hub and Firefox/WebKit cases.
-4. developer: bump `dompurify` past 3.4.12 (moderate advisory GHSA-55q2-fjhq-7xh7).
+3. ~~someone with Chrome + Playwright: run AC-34~~ Done 2026-10-06 (3 passed; forced-enrollment/QR added). Remaining: add the hub-login-page and Firefox/WebKit browser cases.
+4. ~~developer: bump `dompurify` past 3.4.12 (GHSA-55q2-fjhq-7xh7).~~ Done 2026-10-06: now 3.4.16 (also clears GHSA-6688-9rhm-gjv2); `ui/static` rebuilt in a separate commit.
 5. manager: confirm OQ-11 (agent-lane calendar basis) and decide OQ-4 (hub showing child auth state).
 6. Follow-up epics in priority order (ROADMAP section 3.1): the **hub-run handoff**, store-scoped
    SSO, RBAC, API tokens, OIDC, fail-closed remote binds, hub child-auth state, at-rest seed

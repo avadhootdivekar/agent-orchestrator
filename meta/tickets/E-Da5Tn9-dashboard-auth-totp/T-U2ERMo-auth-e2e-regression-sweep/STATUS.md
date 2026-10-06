@@ -1,8 +1,8 @@
 # STATUS
 
 - ID: `T-U2ERMo-auth-e2e-regression-sweep`
-- Updated At: `2026-10-05`
-- State: `Done, with one recorded NOT RUN: AC-34 (browser smoke; Playwright is not installed here)`
+- Updated At: `2026-10-06`
+- State: `Done; AC-34 (browser smoke) was NOT RUN at close and PASSED on 2026-10-06 (3 passed)`
 - Owner: `tester` (lane Q)
 - Scope: `MVP` · Sprint: `S3` · Estimate: `3 d`
 
@@ -50,7 +50,7 @@ All commands run from the worktree root with `.venv/bin/...`. Counts are from th
 | Store busy | `pytest -q tests/auth/test_cli_e2e_busy.py` | 2 passed, 0.67 s total (the busy command itself < 2 s, asserted) |
 | Scrub sweep | `pytest -q tests/auth/test_log_scrub_sweep.py` | 5 passed: the sweep in modes `redacted` and `raw`, plus 3 detector controls |
 | NFR-5 informational | `pytest -q -m slow tests/auth/test_perf_informational.py -s` | 1 passed (numbers below); without `-m slow` it skips |
-| Browser (AC-34) | `pytest -q -m browser tests/auth/test_browser_smoke.py -rs` | **NOT RUN**: 2 skipped, "playwright not installed (uv sync --extra browser)". `/usr/bin/google-chrome` exists. |
+| Browser (AC-34) | `pytest -q -m browser tests/auth/test_browser_smoke.py -rs` | **Originally NOT RUN** (2 skipped, playwright missing). **2026-10-06: 3 passed** (isolated venv `uv sync --extra browser --extra ui --extra dev`, system Chrome 138). |
 | Auth coverage (gate 90 %) | `pytest tests/auth -q --cov=agent_orchestrator.auth --cov-report=term --cov-fail-under=90` | **99.28 %** (2145 passed, 3 skipped); gate met |
 | UI coverage (gate 80 %) | `pytest tests/ui tests/test_general_instructions.py tests/test_e2e_cli_prompt_and_instructions.py -q --cov=agent_orchestrator.ui --cov-report=term --cov-fail-under=80` (the CI command) | **94.42 %** (674 passed, 2 skipped); gate met |
 | ruff | `.venv/bin/ruff check .` / `ruff format --check .` | Clean on every file this task touched. Repo-wide: 1 pre-existing failure each, in the tracked scratch file `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py` (I001 + format); not mine, not changed. `ruff check tests/auth` and `ruff format` on `tests/auth`: clean. |
@@ -141,7 +141,7 @@ above. Frontend ACs name the vitest file.
 | 31 | `tests/service/test_supervisor_auth.py::*` (child env, exit-78 terminal state, other codes restart); `tests/service/test_systemd.py` (`RestartPreventExitStatus`) | covered |
 | 32 | auth coverage 99.28 % (gate 90) and UI coverage 94.42 % (gate 80); both CI steps present | covered |
 | 33 | `test_e2e_subprocess.py::test_login_totp_proof_logout_and_recovery_code_over_a_real_server[1|2|3]`; 3 invocations of the file, 5 passed each | covered (new, real) |
-| 34 | `test_browser_smoke.py` (CSP detector negative control; login screen + password login + cross-port proof check) | **NOT RUN** (Playwright missing). Written but never executed, so treat it as unverified code. Forced-enrollment/QR, hub page, Firefox/WebKit and the other three screenshots are not written. |
+| 34 | `test_browser_smoke.py` (CSP detector negative control; login screen + password login + cross-port proof check) | **PASSED 2026-10-06** (3 passed; forced-enrollment/QR case added). Hub page and Firefox/WebKit are not written. |
 | 35 | `test_proof.py::*` (8); `test_routes_core.py::test_status_needs_the_proof_to_report_a_session`, `test_logout_without_a_proof_clears_the_cookie_but_keeps_the_session`; `test_e2e_subprocess.py` (proof matrix over a real server) | covered |
 | 36 | `test_store.py::test_*enrollment_token*` (issue/consume/expiry/replace); `test_totp_service.py::test_a_bad_enrollment_token_is_one_counted_failure`, `test_a_valid_token_gives_a_challenge_and_is_consumed_by_begin`; `test_routes_second_factor.py::test_a_bad_enrollment_token_is_a_uniform_counted_failure`, `test_a_valid_token_begins_enrollment_exactly_once`; `test_cli_e2e.py::test_lifecycle_and_audit_trail` | covered |
 | 37 | `test_totp_service.py::test_begin_over_remote_http_is_refused_before_any_work`, `test_begin_is_allowed_over_loopback_http_and_remote_https`; `test_routes_second_factor.py::test_e4_e5_e7_refuse_a_remote_client_over_plain_http`, `test_a_remote_client_may_still_log_in_over_plain_http`; CLI `enable-2fa` has no transport check (`test_cli_e2e.py::test_lifecycle_and_audit_trail`) | covered |
@@ -202,8 +202,7 @@ when E-Ag7Pw3 merges.
    `_version.py` mypy errors.
 
 ## Risks / Blockers
-- AC-34 is NOT RUN; install the `browser` extra and run `-m browser` on a machine with Chrome to close it.
-- `test_browser_smoke.py` has never executed; expect selector/timing fixes on first real run.
+- AC-34 closed 2026-10-06: 3 passed (only fix: a wait for the lazy QR chunk). Open: hub-page and Firefox/WebKit cases.
 - The e2e uses real scrypt (about 0.15 s per hash) and real ports; it allows 45 s boot and 15 s stop.
 
 ## Next actions

@@ -142,15 +142,15 @@ None changes the frozen HTTP contract beyond the manager-approved E1 `transport.
 | 6 | File-browser denial is by resolved path: a **hard link** to a store file elsewhere in the workspace would be served (L-2) | Creating one needs same-user write access (out of scope, A10) |
 | 7 | **Stale-binary fail-open:** a global `ao` that predates this feature ignores `AO_UI_AUTH` / `ui.auth` and starts unauthenticated without error | Documented prominently; `ao service install --auth` fails closed on an old binary; verify with `ao auth status` |
 | 8 | Per-session counters (second-factor attempts and similar) are not concurrency-exact (record mutators) | Bounded overshoot; the account lockout is the real limit |
-| 9 | `dompurify` has a moderate advisory (GHSA-55q2-fjhq-7xh7, ≤ 3.4.12), a runtime dependency of the file preview | Below the `--audit-level=high` gate; the bump is a follow-up |
+| 9 | `dompurify` has a moderate advisory (GHSA-55q2-fjhq-7xh7, ≤ 3.4.12), a runtime dependency of the file preview | Resolved 2026-10-06: bumped to 3.4.16 |
 | 10 | L-4 health version hash; DRY header-constant refactor | Cosmetic, deferred |
 | 11 | A cookie harvested by a local listener cannot call the API (D25) but still renders the hub index, and cookie tossing forces a logout (A4); TOTP seeds are in clear in `users.json` (L5); same-user processes read the stores (A10) | By design; follow-ups in the ROADMAP |
 
-**Verification gap (recorded honestly).** AC-34, the real-browser smoke
-(`tests/auth/test_browser_smoke.py`), was **NOT RUN**: Playwright is not installed on the build
-machine (system Chrome exists). The file has never executed, so expect selector/timing fixes on
-the first real run; the forced-enrollment/QR, hub-page and Firefox/WebKit browser cases are not
-written. An `ao service run` hub subprocess e2e is not required by §20.3 (the hub is covered
+**Verification gap (closed 2026-10-06).** AC-34, the real-browser smoke
+(`tests/auth/test_browser_smoke.py`), was NOT RUN at epic close (Playwright missing). It was then run
+on system Chrome 138 via Playwright and **passed (3 passed)**: the CSP detector control, login +
+cross-port proof check, and a forced-enrollment/QR case added that day. Still unwritten: the
+hub-page and Firefox/WebKit browser cases. An `ao service run` hub subprocess e2e is not required by §20.3 (the hub is covered
 in-process). `npm ci` was not re-run (the existing `node_modules` was reused; the rebuild-diff is
 clean). **X1–X6 stay open until E-Ag7Pw3 merges.**
 
