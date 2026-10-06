@@ -33,3 +33,11 @@ that the workspace rule forbids; use A/B instead. Not exercised.
 ## Caveats
 - Don't launch the dashboard/daemon from a beta: ports 8768/8770 belong to prod's `ao service`.
 - Verify prod unchanged: `which ao; ao --version; uv tool list; sha256sum ~/.local/share/uv/tools/agent-orchestrator/bin/ao`.
+
+## Proving prod was untouched (A3 check)
+Compare to the baseline, read-only: `readlink -f $(which ao)`, `ao --version`, `uv tool list`, the sha256 above,
+`systemctl --user show ao.service -p MainPID -p NRestarts -p ActiveEnterTimestamp`, and
+`stat -c %y ~/.local/share/uv/tools/agent-orchestrator/uv-receipt.toml` (the receipt mtime is the last
+`uv tool install`). The baseline is captured *after* any human install, so a pre-run install timestamp
+(receipt mtime / service start) earlier than the run's start is expected, not a violation.
+Also grep the run's unit reports for `install.sh|uv tool install|restart`; reports should only mention them as "not run".
