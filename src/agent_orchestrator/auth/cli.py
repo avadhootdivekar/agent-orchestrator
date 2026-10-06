@@ -20,6 +20,7 @@ import contextlib
 import json
 import logging
 import os
+import pwd
 import re
 import sys
 import unicodedata
@@ -361,6 +362,16 @@ def _checked_password(ctx: _Ctx, username: str, from_stdin: bool) -> str:
     return passwords.hash_password(raw, params=passwords.CURRENT_PARAMS)
 
 
+def _os_identity() -> dict[str, str | int]:
+    """The effective uid (and its passwd name, when resolvable) of the process running the CLI.
+    Never read from ``$USER``/``$LOGNAME``: those are caller-controlled."""
+    uid = os.geteuid()
+    identity: dict[str, str | int] = {"os_uid": uid}
+    with contextlib.suppress(KeyError):  # uid without a passwd entry (containers)
+        identity["os_user"] = pwd.getpwuid(uid).pw_name
+    return identity
+
+
 def _audit(
     ctx: _Ctx, event: AuditEventName, rec_username: str, user_id: str, **details: str | int | bool
 ) -> None:
@@ -373,7 +384,7 @@ def _audit(
             username=rec_username,
             user_id=user_id,
             realm=CLI_REALM,
-            details={"source": SOURCE_CLI, **details},
+            details={"source": SOURCE_CLI, **_os_identity(), **details},
         )
     )
 

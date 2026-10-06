@@ -327,6 +327,7 @@ def test_lifecycle_and_audit_trail(
     for event in events:
         assert event["realm"] == "cli" and event["details"]["source"] == "cli"
         assert HEX32_RE.fullmatch(event["user_id"])
+        assert event["details"]["os_uid"] == os.geteuid()  # D6
     raw_audit = (auth_dir / "state" / "audit.jsonl").read_text()
     secrets = [PW, NEW_PW, totp.b32encode_secret(RFC_KEY), t1, t2, t3, *recovery]
     assert not any(secret in raw_audit for secret in secrets)
@@ -655,6 +656,29 @@ def test_status_flags_nothing_without_accounts(tmp_path: Path, auth_dir: Path) -
     assert result.exit_code == 0
     assert "disabled_by_config" not in result.stdout
     assert "totp_downgraded_by_config" not in result.stdout
+
+
+def test_cli_audit_events_record_the_effective_uid_not_the_environment(
+    auth_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("USER", "forged")
+    monkeypatch.setenv("LOGNAME", "forged")
+    add(auth_dir)
+    (event,) = audit_events(auth_dir)
+    assert event["details"]["os_uid"] == os.geteuid()
+    assert event["details"].get("os_user") != "forged"
+
+
+def test_cli_audit_omits_os_user_when_the_uid_has_no_passwd_entry(
+    auth_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_entry(uid: int) -> Any:
+        raise KeyError(uid)
+
+    monkeypatch.setattr(auth_cli.pwd, "getpwuid", no_entry)
+    add(auth_dir)
+    (event,) = audit_events(auth_dir)
+    assert event["details"]["os_uid"] == os.geteuid() and "os_user" not in event["details"]
 
 
 def test_status_lists_recent_startup_events(auth_dir: Path) -> None:

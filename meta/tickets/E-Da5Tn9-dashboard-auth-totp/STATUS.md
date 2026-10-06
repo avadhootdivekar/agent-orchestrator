@@ -27,7 +27,7 @@
     `COOKIE_ONLY_NAVIGATION` route (hub index); M2 loopback = peer + Host + no forwarding headers;
     M3 config-only disable refused (exit 78) and config-only TOTP downgrade warned/audited; M4 merge
     edges #9 ⇒ #13 and #11 ⇒ #13, epic to `main` only after T-2wE08U; M6 no create/chmod of a
-    config-chosen store; L1–L7 (L7's permission re-check is DONE, see D5 below; the CLI uid remains a follow-up); four test
+    config-chosen store; L1–L7 (L7's permission re-check is DONE, see D5 below; the CLI uid is DONE, see D6 below); four test
     gates as AC-43..AC-45 and AC-11.
   - **Design review (adopted except minor 8, kept by manager decision):** approvals-compatible
     `xdg.resolve_config_dir` and cross-epic rows X1–X6 in HLD §16 (the approvals epic's files were
@@ -124,10 +124,13 @@ Counts: 23 tasks · 23 Done · 0 In Progress · 0 Blocked · 0 Not started · 61
 5. manager: confirm OQ-11 (agent-lane calendar basis) and decide OQ-4 (hub showing child auth state).
 6. Follow-up epics in priority order (ROADMAP section 3.1): the **hub-run handoff**, store-scoped
    SSO, RBAC, API tokens, OIDC, fail-closed remote binds, hub child-auth state, at-rest seed
-   encryption, then the smaller items (OS uid in CLI audit
-   events, client-rendered hub index with the proof).
+   encryption, then the smaller items (client-rendered hub index
+   with the proof; the OS uid in CLI audit events is done, D6).
 7. **D5 done (2026-10-06):** `LocalPasswordProvider` re-checks the store (`check_private_paths`, read-only
    `lstat`) on every login/re-auth and, throttled to 5 s, on each session revalidation; a loosened
    store/`users.json` fails closed (503 `store_unavailable`) and audits `auth.store.permissions_loosened`
    once per episode; it recovers when modes are restored.
 7. operator, after merge: `bash install.sh --force`, restart `ao.service`, verify with `ao auth status`.
+8. **D6 done (2026-10-06):** CLI audit events (`auth/cli.py::_audit`) carry `details.os_uid` (effective uid, never
+   `$USER`) and `details.os_user` (passwd name, omitted if unresolvable); both keys added to `AUTH_DETAIL_KEYS`;
+   web events carry neither. Tests in `test_cli_e2e.py` and `test_routes_core.py`.

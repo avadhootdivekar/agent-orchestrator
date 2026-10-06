@@ -630,3 +630,11 @@ def test_full_login_is_audited_with_the_new_session_id(dash_factory: DashFactory
     assert event["username"] == "alice" and event["auth_method"] == "password"
     (record,) = dash.session_store.records()
     assert event["session_id"] == record.session_id
+
+
+def test_web_originated_audit_events_carry_no_os_identity(dash_factory: DashFactory) -> None:
+    # D6: os_uid/os_user are recorded for CLI events only.
+    dash = dash_factory()
+    dash.login()
+    (event,) = dash.audit_events("auth.login.success")
+    assert "os_uid" not in event["details"] and "os_user" not in event["details"]
