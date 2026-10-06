@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -459,15 +460,24 @@ class DashboardService:
         reposets_path = self._spec_path(
             self._config.reposets if self._config else None, ENV_REPOSETS
         )
+        no_repo = False
         if not reposets_path:
-            return
+            # No reposets file: only a no-repo-set workflow (ADR-0022) can still be
+            # validated here; for a repo-set workflow the engine reports the missing
+            # configuration itself, which this layer should not second-guess.
+            try:
+                no_repo = load_workflow(workflow_path).repo_set is None
+            except (OrchestratorError, OSError, ValueError):
+                no_repo = False
+            if not no_repo:
+                return
         try:
             workflow = load_workflow(workflow_path)
-            reposets = load_reposets(reposets_path)
+            reposets = load_reposets(reposets_path) if reposets_path else {}
         except (OrchestratorError, OSError, ValueError) as exc:
             raise DashboardValidationError(f"cannot launch {workflow_path}: {exc}") from exc
 
-        if workflow.repo_set not in reposets:
+        if workflow.repo_set is not None and workflow.repo_set not in reposets:
             raise DashboardValidationError(
                 f"Unknown repo_set {workflow.repo_set}; available: "
                 f"{', '.join(sorted(reposets)) or '(none)'} (reposets file: {reposets_path})"
@@ -480,6 +490,26 @@ class DashboardService:
             cross_validate(workflow, reposets, load_agents(agents_path))
         except (OrchestratorError, OSError, ValueError) as exc:
             raise DashboardValidationError(f"cannot launch {workflow_path}: {exc}") from exc
+
+    def _no_repo_workspace(self, workflow_path: str | None) -> str | None:
+        """The workspace to forward as ``--workspace`` for a no-repo-set workflow, else None.
+
+        A workflow with a ``repo_set`` keeps its reposet-derived workspace (flag omitted, so
+        its argv is unchanged); a no-repo-set one (ADR-0022) has no reposet to supply it, so
+        the dashboard's own workspace is passed explicitly.
+        """
+        if not workflow_path:
+            return None
+        try:
+            workflow = load_workflow(workflow_path)
+        except (OrchestratorError, OSError, ValueError):
+            return None
+        return str(self.workspace_root) if workflow.repo_set is None else None
+
+    def _workspace_kwargs(self, workflow_path: str | None) -> dict[str, Any]:
+        """``{"workspace": ...}`` for a no-repo-set workflow, else ``{}`` (call shape unchanged)."""
+        workspace = self._no_repo_workspace(workflow_path)
+        return {"workspace": workspace} if workspace else {}
 
     def create_instance(
         self,
@@ -563,6 +593,7 @@ class DashboardService:
                     reposets=self._config.reposets if self._config else None,
                     agents=self._config.agents if self._config else None,
                     options=options or {},
+                    **self._workspace_kwargs(result.workflow_path),
                 )
             except LaunchError as exc:
                 raise DashboardError(str(exc)) from exc
@@ -717,6 +748,7 @@ class DashboardService:
                 reposets=self._config.reposets if self._config else None,
                 agents=self._config.agents if self._config else None,
                 options=options or {},
+                **self._workspace_kwargs(workflow_path),
             )
         except LaunchError as exc:
             raise DashboardError(str(exc)) from exc
@@ -737,6 +769,7 @@ class DashboardService:
                 reposets=self._config.reposets if self._config else None,
                 agents=self._config.agents if self._config else None,
                 options=options or {},
+                **self._workspace_kwargs(workflow_path),
             )
         except LaunchError as exc:
             raise DashboardError(str(exc)) from exc

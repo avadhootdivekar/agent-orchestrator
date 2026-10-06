@@ -67,6 +67,10 @@ class ResumeCandidate:
     agents: str | None = None
     """--agents recovered from the original launch argv (no first-class record field)."""
 
+    workspace: str | None = None
+    """--workspace recovered from the original launch argv. Only a no-repo-set run (ADR-0022)
+    carries one; it must be forwarded so the resumed run finds the same workspace."""
+
 
 def _argv_flag_value(argv: list[str], flag: str) -> str | None:
     """The value following *flag* in *argv*, or None (absent flag, or flag is last)."""
@@ -103,6 +107,15 @@ def _recover_spec_paths(
         reposets = reposets or _argv_flag_value(argv, "--reposets")
         agents = agents or _argv_flag_value(argv, "--agents")
     return workflow_path, reposets, agents
+
+
+def _recover_workspace(records: list[LaunchRecord]) -> str | None:
+    """``--workspace`` from the newest record whose argv carries it (*records* newest-first)."""
+    for record in records:
+        value = _argv_flag_value(list(getattr(record, "argv", None) or []), "--workspace")
+        if value:
+            return value
+    return None
 
 
 def scan_resumable_runs(
@@ -169,6 +182,7 @@ def scan_resumable_runs(
                 workflow_path=workflow_path,
                 reposets=reposets,
                 agents=agents,
+                workspace=_recover_workspace(records),
             )
         )
     return candidates

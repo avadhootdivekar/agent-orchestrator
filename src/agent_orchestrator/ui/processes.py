@@ -403,6 +403,7 @@ class ProcessSupervisor:
         agents: str | None = None,
         options: dict[str, object] | None = None,
         general_instructions: list[str] | None = None,
+        workspace: str | None = None,
     ) -> LaunchRecord:
         """Start ``ao run`` for *workflow_path*, optionally writing *prompt* first.
 
@@ -423,6 +424,8 @@ class ProcessSupervisor:
             argv += ["--reposets", reposets]
         if agents:
             argv += ["--agents", agents]
+        if workspace:
+            argv += ["--workspace", workspace]
 
         prompt_chars = 0
         if prompt is not None and prompt.strip():
@@ -455,6 +458,7 @@ class ProcessSupervisor:
         agents: str | None = None,
         options: dict[str, object] | None = None,
         general_instructions: list[str] | None = None,
+        workspace: str | None = None,
     ) -> LaunchRecord:
         """Start ``ao resume --run-id <run_id>``."""
         launch_id = self._new_launch_id()
@@ -466,6 +470,8 @@ class ProcessSupervisor:
             argv += ["--reposets", reposets]
         if agents:
             argv += ["--agents", agents]
+        if workspace:
+            argv += ["--workspace", workspace]
         for path in general_instructions or []:
             argv += ["--general-instruction", path]
         argv += _render_options(options or {})
