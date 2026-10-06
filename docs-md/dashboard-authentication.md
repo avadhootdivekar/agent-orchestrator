@@ -223,10 +223,10 @@ workspace would be served (a same-user process creating it is out of scope).
 
 > **The TOTP seed is stored in clear next to the password hash.** A stolen `users.json` (or backup)
 > hands over the second factor along with the hashes. Back the credential directory up
-> **encrypted only**. Seeds are not encrypted at rest (a roadmap follow-up). Restoring an older
+> **encrypted only**. Seeds are not encrypted at rest (deferred: key custody is an owner decision; see the HLD "As built" section D). Restoring an older
 > `users.json` lowers credential epochs, which invalidates newer sessions.
 
-Permissions are checked at startup and by `ao auth status`; a loose store refuses to start
+Permissions are checked at startup, by `ao auth status`, and again while running (on login and, throttled, on session revalidation; a loosened store fails closed and is audited); a loose store refuses to start
 (exit 78: `chmod 700 <dir> && chmod 600 <dir>/users.json`). Network or other file systems without
 `flock` are unsupported. Logs and audit lines never contain passwords, codes, seeds, tokens or
 session proofs.

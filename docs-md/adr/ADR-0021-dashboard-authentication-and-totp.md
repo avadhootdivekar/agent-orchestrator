@@ -211,7 +211,7 @@ in the process that issued it, so realms are isolated by construction.
 
 **Consequences.**
 - On Pi-class hardware, logins may take about 1 s.
-- TOTP seeds are stored in clear inside the 0600 file. At-rest seed encryption is a follow-up.
+- TOTP seeds are stored in clear inside the 0600 file. At-rest seed encryption is a follow-up, **deferred 2026-10-06** pending an owner decision on key custody (a key file beside the store adds little against the same-uid attacker of accepted residual A10).
 
 ---
 

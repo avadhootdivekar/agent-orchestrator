@@ -122,3 +122,35 @@ the T-U2ERMo and T-fXWbqg task statuses, and spot-checked code locations (`auth/
 Environment checks today: Playwright is not importable; `/usr/bin/google-chrome` exists; the npm
 registry reports dompurify 3.4.16. Not done: individual per-task STATUS files of every task were not
 read (only the ones cited); no tests were run in this unit; effort figures are estimates.
+
+## 8. Closure status (as-built, end of the 2026-10-06 run)
+
+Written after waves 1-3 on `ad/6-oct-enhancements`. This supersedes the "Close now" labels above; the tables
+in sections 1-3 are kept as the original audit.
+
+| Item | Final status | Evidence |
+|---|---|---|
+| D1 AC-34 browser smoke | **Done** | `pytest -q -m browser tests/auth/test_browser_smoke.py` = 3 passed (Chrome 138, isolated venv); commit `6216c52` |
+| D2 forced-enrollment/QR (Chrome) | **Done** | third smoke case, same commit |
+| D2 hub login page + Firefox/WebKit browser cases | **Deferred** | browsers not installed; hub page covered by HTTP/contract tests |
+| D3 dompurify | **Done** | 3.4.16 (also GHSA-6688-9rhm-gjv2); bundle rebuilt; commits `11dc2f4`, `ff8eaef` |
+| D4 at-rest seed encryption | **Deferred** | key custody undecided (keyring vs key file vs external key); same-uid attacker reads both (accepted residual A10); 12-20 h; owner decision needed. Recorded in the E-Da5Tn9 STATUS |
+| D5 permission re-check | **Done** | commit `9869ec6` |
+| D6 OS uid in CLI audit events | **Done** | commit `d8002e3` |
+| D7, D8, D9, D10, D11, D15, D16 | **Deferred / out of scope** | reasons as in section 1; recorded in the E-Da5Tn9 STATUS |
+| D12 OQ-11 | **Done** | resolution recorded in the E-Da5Tn9 STATUS |
+| D13 `start_run` path restriction | **Done** | commit `19136fe`; other residuals out of scope |
+| D17 install / restart | **Out of scope** | human step |
+| C1 G0 value gate | **Deferred (operator)** | needs consent and multi-day shadow runs of a real workflow |
+| C2 merge verification | **Partly done** | auth half landed in PR #17, bundle rebuilt; approval-ordering pin test **deferred** (no approvals code) |
+| C3 residuals, C4 roadmap features | **Out of scope** | documented residuals / roadmap |
+| C5 NIT hygiene ticket | **Deferred** | low value |
+| C6 FIFO read + lint file | **Done** | commit `19136fe` |
+| C6 `dispatch_cycle` reset in the missing-inputs branch (FU-5) | **Deferred** | engine bug outside the closure scope, no auth impact; needs a regression test (2-3 h); tracked as FU-5 in the cache HLD and the E-Rc4Hk8 STATUS |
+| C7 OQ-4/6/7/8 | **Deferred** | parent decisions |
+| C8 stale cache STATUS blocks | **Done** | cache STATUS reconciled; historical blocks marked as such |
+| G1, G2, G4 approvals implementation, re-gate, reconciliation | **Deferred** | see section 4; decision recorded in the E-Ag7Pw3 STATUS |
+| G3, G5 | **Done** | recorded in the E-Ag7Pw3 STATUS "Decision" section |
+
+Beta test environment doc and baseline (`meta/ao/beta-test-env.md`, `meta/ao/beta-test-baseline.txt`) are on the
+branch (commit `c72ebc8`).

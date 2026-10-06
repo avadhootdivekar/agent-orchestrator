@@ -190,7 +190,7 @@ It is **not** Claude prompt caching (that is ADR-0015's separate scope).
   Until it passes, `on` is not recommended to any consumer. If the would-hit rate is negligible the
   feature stays shipped but off and ADR-0019 ALT-8 (`ao run --reuse-from <run>`) is the next step.
   Owner: parent or operator, post-merge; the parent confirms the decision-rule thresholds (OQ-6).
-- **Merge with E-Ag7Pw3 (approval gates) and E-Da5Tn9 (dashboard auth):** classify new fields RULED,
+- **Merge with E-Ag7Pw3 (approval gates) and E-Da5Tn9 (dashboard auth):** the auth half landed in PR #17 and the UI bundle was rebuilt 2026-10-06; the approvals half is deferred (E-Ag7Pw3 has no code). Remaining checklist: classify new fields RULED,
   keep the approval check before the lookup seam, recapture the I-2 goldens if output changed, rebuild
   the UI bundle (HLD §24.2).
 - **Accepted residuals** (use `--no-cache` for untrusted repositories): provider/endpoint env not in the
@@ -223,7 +223,7 @@ Follow-ups for hosted or multi-user use, **in priority order**:
    provider-contributed public routes and a proof handoff for redirect flows).
 6. **Fail-closed remote binds** — refuse a non-loopback bind without auth (today: deprecation notice).
 7. **Hub showing child auth state** (OQ-4), so a workspace config switching auth off is visible.
-8. **At-rest TOTP seed encryption** (seeds are in clear in `users.json`).
+8. **At-rest TOTP seed encryption** (seeds are in clear in `users.json`). Deferred 2026-10-06: needs an owner decision on key custody; same-uid attackers already read both key and store.
 9. Smaller follow-ups (store-permission re-check after startup and the OS uid in CLI audit events
     (`details.os_uid`/`os_user`) are done): a client-rendered hub index that carries the proof (closes the cookie-only hub index
     residual); `dompurify` bump past 3.4.12 (moderate advisory) and the `DashboardService.start_run`
@@ -325,7 +325,7 @@ default (`isolation: none`) still carries the original gap. To raise the default
     launch controls, a runs-list column, a Usage-tab surface.
   - **Deferred in Rev 3:** a `refresh` mode, `ao cache rm --run R --task T`, `ao cache verify --repair`.
   - Hygiene ticket for the deferred gate NITs (HLD §0.6 FU-4) and the pre-existing missing-inputs
-    `dispatch_cycle` reset (HLD §23.2).
+    `dispatch_cycle` reset (HLD §23.2; FU-5, deferred 2026-10-06 as an engine bug outside the closure scope).
 
 ---
 

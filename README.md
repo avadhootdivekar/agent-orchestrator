@@ -767,7 +767,7 @@ rate before trusting `on`: `ao report-usage --json` -> `result_cache` (`lookups`
 `avoidable_cost_usd`), and `ao cache stats --json` for store growth. The procedure, the decision rule
 and a report template are in
 [`docs-md/result-cache-g0-protocol.md`](docs-md/result-cache-g0-protocol.md) (the value check
-itself has not been run yet; running it is a post-merge follow-up).
+itself has not been run yet; it is a deferred operator task that needs consent and a real workload).
 
 ### `ao cache` commands
 

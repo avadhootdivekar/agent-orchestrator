@@ -5729,6 +5729,7 @@ class Principal:
   arithmetic (§24.1, §25.3). Manager decision.
 - **Done after this epic (D6, 2026-10-06):** OS uid in CLI audit events (security L7): `details.os_uid` /
   `details.os_user`, both in `AUTH_DETAIL_KEYS`, set only by `auth/cli.py`.
+- **At-rest TOTP seed encryption: deferred (2026-10-06 audit D4)**: key custody (keyring vs key file vs external key) is an owner decision; a key file next to the store adds little against a same-uid attacker (A10). Not implemented; seeds remain in clear in the 0600 `users.json`.
 - **Follow-ups recorded, not in this epic:** a client-rendered hub index carrying the proof (removes the last
   cookie-only route, A4); adding `AO_UI_AUTH*`, `AO_AUTH_DIR` and `AO_AUTH_STATE_DIR` to the shared
   config-env denylist once both epics have merged (§16 X6).
