@@ -3121,6 +3121,7 @@ class AuthProvider(ABC):          # FastAPI-free; the only seam type (protocols 
 | `auth.startup.refused` | `prepare_auth` when it raises for exit 78. Best-effort: the state directory may not exist. |
 | `auth.startup.disabled_by_config` (v2.1) | `prepare_auth`, for `ConfigRisk.DISABLED_BY_CONFIG` (row 14), instead of `auth.startup.refused`. Best-effort. |
 | `auth.startup.totp_downgraded_by_config` (v2.1) | `prepare_auth`, for `ConfigRisk.TOTP_DOWNGRADED_BY_CONFIG` (row 15). Best-effort. |
+| `auth.store.permissions_loosened` (post-startup, D5) | `LocalPasswordProvider._recheck_permissions`: re-runs `check_private_paths` on login/re-auth and (throttled, 5 s) on session revalidation; once per loosening episode; the request then fails closed with 503. |
 
 #### 11.15.3 `check_ready()` and `startup_warnings()`
 
@@ -5694,7 +5695,7 @@ class Principal:
 | L4 `--port 0` | LOW | **ADOPTED.** `prepare_auth` refuses port 0 when auth is on (exit 78) | §11.20; §12.6; §19.1; AC-3; T-jVqH8w, T-PDGw9p |
 | L5 TOTP seed stored in clear | LOW | **ADOPTED (documentation).** The README says plainly that the seed is in clear in `users.json` and that backups must be encrypted | §6.3 A7; §18 #7; §27; T-otjIkJ |
 | L6 Parent-directory check on `umask 002` hosts | LOW | **ADOPTED.** A group-writable parent **owned by the euid** warns instead of refusing; other-writable or foreign-owned group-writable parents still refuse; the check judges the resolved parent, so a symlinked `~/.config` is checked at its target. Interpretation note: the manager's "check ln" is read as "verify on a `umask 002` (Debian/Ubuntu-style) home, including a symlinked parent"; T-8NQP8J's tests cover both | D5; §5 A-18; §6.4 S13; §11.3.4 row 13; §11.5; §11.15.3; §19.1; AC-13; T-8NQP8J, T-XchniS |
-| L7 Smaller hygiene items | LOW | **ADOPTED in part.** `~/.config/ao/service.env` (API keys) joins the default denied paths. **Follow-ups (not in this epic):** re-checking store permissions after startup; recording the OS uid in CLI audit events | D5; §3.5 NFR-1; §11.3.5; §11.4; §12.6; AC-13; T-Hd4wQ2; §28.9 D (follow-ups) |
+| L7 Smaller hygiene items | LOW | **ADOPTED in part.** `~/.config/ao/service.env` (API keys) joins the default denied paths. Store permissions are also re-checked after startup (audit `auth.store.permissions_loosened`, fail closed; §11.15.2). **Follow-up (not in this epic):** recording the OS uid in CLI audit events | D5; §3.5 NFR-1; §11.3.5; §11.4; §12.6; AC-13; T-Hd4wQ2; §28.9 D (follow-ups) |
 | L8 `start_run` residual | LOW (note) | **NOTED.** The reviewer confirmed `load_workflow` errors echo only key names or positions; the accepted residual holds, and `service.env` (L7) was the real exposure | §16 (residual; line reference fixed to `ui/service.py:662`); T-2wE08U re-checks |
 | Test gate 1: cookie-without-proof principal enumeration | — | **ADOPTED** as AC-44 | §20.3 #15; AC-44 |
 | Test gate 2: `Principal.roles` aliasing | — | **ADOPTED** in AC-11 | §20.3 #16; AC-11 |
@@ -5725,7 +5726,7 @@ class Principal:
 
 - **OQ-11** (new): whether the 3-sprint calendar uses the agent-lane basis or the human-team
   arithmetic (§24.1, §25.3). Manager decision.
-- **Follow-ups recorded, not in this epic:** re-check store permissions after startup; OS uid in CLI
+- **Follow-ups recorded, not in this epic:** OS uid in CLI
   audit events (security L7); a client-rendered hub index carrying the proof (removes the last
   cookie-only route, A4); adding `AO_UI_AUTH*`, `AO_AUTH_DIR` and `AO_AUTH_STATE_DIR` to the shared
   config-env denylist once both epics have merged (§16 X6).

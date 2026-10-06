@@ -25,6 +25,7 @@ from .audit import AuditEvent, AuditLog, AuditOutcome
 from .constants import (
     LOCAL_PROVIDER_ID,
     MAX_USERNAME_CHARS,
+    PERMISSION_RECHECK_INTERVAL_SECONDS,
     SOURCE_WEB,
 )
 from .errors import (
@@ -34,6 +35,7 @@ from .errors import (
     StoreCorruptError,
     StoreLockTimeoutError,
     StoreUnavailableError,
+    UnsafePermissionsError,
 )
 from .guard import AttemptGuard, AttemptResult, AttemptSubject, lockout_call, ok_if, subject_for
 from .lockouts import USERNAME_RE, LockoutKey, LockoutStore
@@ -93,6 +95,8 @@ class LocalPasswordProvider(AuthProvider):
         self._realm = realm  # audit label only; the guard carries its own for failure events
         self._path_warnings: list[str] = []
         self._unreadable_logged = False
+        self._perms_error: str | None = None  # last re-check verdict; None = private
+        self._perms_checked_at: float | None = None
 
     @property
     def guard(self) -> AttemptGuard:
@@ -350,6 +354,7 @@ class LocalPasswordProvider(AuthProvider):
     def revalidate(self, user_id: str, credential_epoch: int) -> Revalidation:
         """Tri-state, synchronous, cheap on a cache hit (a cache miss re-parses once per change)."""
         try:
+            self._recheck_permissions(force=False)
             rec = self._store.user_by_id(user_id)
         except (StoreCorruptError, StoreUnavailableError, StoreLockTimeoutError, OSError) as exc:
             if not self._unreadable_logged:  # once per outage, not once per request
@@ -381,8 +386,45 @@ class LocalPasswordProvider(AuthProvider):
 
     # -- plumbing -------------------------------------------------------------------------------
 
+    def _recheck_permissions(self, *, force: bool) -> None:
+        """Fail closed (503) once the store stops being private after startup (D5).
+
+        Reuses the startup gate ``check_private_paths`` (read-only, ``lstat`` only, never fixes).
+        ``force`` (login, re-auth) always re-checks; the per-request path re-checks at most every
+        ``PERMISSION_RECHECK_INTERVAL_SECONDS`` and otherwise repeats the last verdict. The first
+        loosening of an episode is audited once; regaining private modes re-opens the store.
+        """
+        now = self._clock.monotonic()
+        last = self._perms_checked_at
+        if not force and last is not None and now - last < PERMISSION_RECHECK_INTERVAL_SECONDS:
+            problem = self._perms_error
+        else:
+            self._perms_checked_at = now
+            paths = self._store.paths
+            try:
+                check_private_paths(paths.store_dir, paths.users_file)
+                problem = None
+            except UnsafePermissionsError as exc:
+                problem = str(exc)
+            if problem is not None and self._perms_error is None:
+                _log.error("auth store permissions loosened after startup: %s", problem)
+                self._audit.record(
+                    AuditEvent(
+                        AuditEventName.STORE_PERMISSIONS_LOOSENED,
+                        AuditOutcome.FAILURE,
+                        realm=self._realm,
+                        details={"reason": "store_permissions_loosened"},
+                    )
+                )
+            elif problem is None and self._perms_error is not None:
+                _log.warning("auth store permissions are private again; serving resumed")
+            self._perms_error = problem
+        if problem is not None:
+            raise StoreUnavailableError(cause_for_log=f"store permissions: {problem}")
+
     def _snapshot(self) -> UserStoreFile:
         """The store snapshot; an unreadable or corrupt store is a 503 (``snapshot_or_503``)."""
+        self._recheck_permissions(force=True)
         try:
             return self._store.snapshot()
         except StoreCorruptError as exc:

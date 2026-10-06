@@ -29,6 +29,9 @@ DEFAULT_SESSION_ABSOLUTE_HOURS = 12
 MAX_IDLE_MINUTES = 1440  # env/CLI ceiling
 MAX_ABSOLUTE_HOURS = 720  # env/CLI ceiling
 
+# --- Store permission re-check after startup (E-Da5Tn9 D5) ---
+PERMISSION_RECHECK_INTERVAL_SECONDS = 5.0  # per-request revalidate path; login always re-checks
+
 # --- Account lockout ---
 DEFAULT_LOCKOUT_THRESHOLD = 5
 DEFAULT_LOCKOUT_BASE_SECONDS = 30

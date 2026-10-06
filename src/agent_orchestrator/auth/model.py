@@ -73,7 +73,7 @@ def denial_code(state: SessionState | None) -> ErrorCode:
 
 
 class AuditEventName(StrEnum):
-    """Every audit event this version emits (HLD section 12.4): 24 in v2.1."""
+    """Every audit event this version emits (HLD section 12.4): 25 (24 of v2.1 + D5 re-check)."""
 
     LOGIN_SUCCESS = "auth.login.success"
     LOGIN_FAILURE = "auth.login.failure"
@@ -99,3 +99,4 @@ class AuditEventName(StrEnum):
     STARTUP_REFUSED = "auth.startup.refused"
     STARTUP_DISABLED_BY_CONFIG = "auth.startup.disabled_by_config"  # v2.1 (security M3)
     STARTUP_TOTP_DOWNGRADED_BY_CONFIG = "auth.startup.totp_downgraded_by_config"  # v2.1
+    STORE_PERMISSIONS_LOOSENED = "auth.store.permissions_loosened"  # post-startup re-check (D5)

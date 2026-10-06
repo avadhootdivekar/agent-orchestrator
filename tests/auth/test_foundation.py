@@ -93,6 +93,7 @@ PINNED_CONSTANTS: list[tuple[str, object]] = [
     ("DEFAULT_LOCKOUT_BASE_SECONDS", 30),
     ("DEFAULT_LOCKOUT_MAX_SECONDS", 900),
     ("MAX_LOCKOUT_THRESHOLD", 100),
+    ("PERMISSION_RECHECK_INTERVAL_SECONDS", 5.0),
     ("MAX_LOCKOUT_BASE_SECONDS", 3600),
     ("MAX_LOCKOUT_MAX_SECONDS", 86_400),
     ("LOCKOUT_RESET_AFTER_SECONDS", 86_400),
@@ -367,6 +368,7 @@ HLD_12_4_EVENTS = {
     "auth.startup.refused",
     "auth.startup.disabled_by_config",
     "auth.startup.totp_downgraded_by_config",
+    "auth.store.permissions_loosened",
 }
 
 
@@ -390,7 +392,7 @@ def test_model_denial_code() -> None:
 
 def test_model_audit_events() -> None:
     values = [e.value for e in AuditEventName]
-    assert len(values) == 24 == len(set(values))
+    assert len(values) == 25 == len(set(values))
     assert set(values) == HLD_12_4_EVENTS
     assert AuditEventName.STARTUP_DISABLED_BY_CONFIG == "auth.startup.disabled_by_config"
     assert AuditEventName.STARTUP_TOTP_DOWNGRADED_BY_CONFIG == (

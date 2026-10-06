@@ -221,7 +221,7 @@ Follow-ups for hosted or multi-user use, **in priority order**:
 6. **Fail-closed remote binds** — refuse a non-loopback bind without auth (today: deprecation notice).
 7. **Hub showing child auth state** (OQ-4), so a workspace config switching auth off is visible.
 8. **At-rest TOTP seed encryption** (seeds are in clear in `users.json`).
-9. Smaller follow-ups: re-check store permissions after startup; record the OS uid in CLI audit
+9. Smaller follow-ups (store-permission re-check after startup is done): record the OS uid in CLI audit
     events; a client-rendered hub index that carries the proof (closes the cookie-only hub index
     residual); `dompurify` bump past 3.4.12 (moderate advisory); a `DashboardService.start_run`
     path restriction; WebAuthn and native TLS flags. No cut-line item was dropped (HLD §24.1).
