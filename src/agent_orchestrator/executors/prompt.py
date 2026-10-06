@@ -10,6 +10,8 @@ only** and never opens an instruction, input, or artifact file.
 
 from __future__ import annotations
 
+import re
+
 from ..models import TaskContext
 
 # Template placeholder an agent's `prompt_template` may use to position the general
@@ -29,6 +31,11 @@ GENERAL_INSTRUCTIONS_FIELD = "general_instructions"
 _GENERAL_INSTRUCTIONS_CLAUSE = (
     " Also follow the general instructions that apply to every task in this workspace: {paths}."
 )
+
+
+# The conventional "Repos: {repos}." sentence, removed from the template when the run has no
+# repos. Templates that use `{repos}` differently still render it (as an empty string).
+_EMPTY_REPOS_CLAUSE = re.compile(r"[ \t]*Repos:[ \t]*\{repos\}\.?")
 
 
 def render_general_instructions(paths: list[str]) -> str:
@@ -53,6 +60,9 @@ def build_prompt(ctx: TaskContext) -> str:
         The fully rendered prompt string (paths/ids only — NFR-1).
     """
     template = ctx.agent.prompt_template
+    if not ctx.repo_paths:
+        # No-repo-set mode: don't tell the agent about phantom repos.
+        template = _EMPTY_REPOS_CLAUSE.sub("", template)
     general = render_general_instructions(ctx.general_instruction_paths)
 
     prompt = template.format(

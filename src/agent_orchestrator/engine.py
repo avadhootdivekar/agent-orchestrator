@@ -752,8 +752,13 @@ class Orchestrator:
         # always the correct "nothing to release" answer.
         ctx: _RunContext | None = None
         try:
-            repo_set = reposets[workflow.repo_set]
-            repo_paths = {r.id: self._store.resolve(r.path) for r in repo_set.repos}
+            # No-repo-set mode (ADR-0022): a workflow without `repo_set` runs workspace-only,
+            # so there are no repo paths; isolation/survival/cache all handle `{}`.
+            repo_paths: dict[str, str] = (
+                {}
+                if workflow.repo_set is None
+                else {r.id: self._store.resolve(r.path) for r in reposets[workflow.repo_set].repos}
+            )
 
             # Merge any previously injected tasks back into the workflow before building
             # the DAG (handles the case where run_state comes from prepare_resume and
