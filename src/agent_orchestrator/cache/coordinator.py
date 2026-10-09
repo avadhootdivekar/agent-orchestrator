@@ -574,6 +574,7 @@ class ResultCache:
             environ=self._environ,
             max_input_bytes=self._settings.max_input_bytes,
             max_input_files=self._settings.max_input_files,
+            operator_notes_path=req.operator_notes_path,
         )
 
     def _control_paths_abs(self, req: LookupRequest) -> frozenset[str]:

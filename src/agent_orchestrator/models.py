@@ -898,6 +898,9 @@ class TaskContext(BaseModel):
     # EVERY task (E-Ui7Kq2 FR-GI1). Paths only — NFR-1 safe. Empty list = none configured,
     # which keeps every pre-epic prompt byte-identical.
     general_instruction_paths: list[str] = []
+    # Absolute path of the run's queued operator notes file (A6), set only when it exists at
+    # dispatch. Path only (NFR-1); None keeps every prompt byte-identical to before notes existed.
+    operator_notes_path: str | None = None
     input_paths: list[str]
     output_paths: list[str]
     output_manifest_path: str | None = None

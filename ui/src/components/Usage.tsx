@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import {
   formatCost,
   formatCountOrNA,
@@ -148,7 +149,7 @@ export function Usage() {
     api
       .runs()
       .then(setRuns)
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)));
+      .catch((err) => setError(errorMessage(err)));
   }, []);
 
   useEffect(() => {
@@ -164,7 +165,7 @@ export function Usage() {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : String(err));
+        setError(errorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -227,6 +228,11 @@ export function Usage() {
         <Empty>Loading…</Empty>
       ) : report ? (
         <>
+          {loading ? (
+            <div className="muted" role="status" style={{ fontSize: 12 }}>
+              Updating…
+            </div>
+          ) : null}
           <div className="muted" style={{ fontSize: 12 }}>
             verdicts found {report.verdicts_found}/{report.reviews_seen} · feedback:{" "}
             {report.runs_rated} of {report.runs_scanned} runs rated · {survivalStatus(report, survival)}

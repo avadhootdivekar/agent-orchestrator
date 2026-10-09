@@ -213,7 +213,7 @@ describe("LaunchResultPanel states", () => {
     const props = panelProps({ initial: STARTED });
     render(
       <TabActionsContext.Provider
-        value={{ available: true, navigate: vi.fn(), open }}
+        value={{ available: true, navigate: vi.fn(), open, retarget: vi.fn() }}
       >
         <LaunchResultPanel {...props} />
       </TabActionsContext.Provider>,
@@ -695,7 +695,7 @@ describe("FailedLaunches strip", () => {
     );
     render(<FailedLaunches launches={[FAILED]} onDismiss={vi.fn()} />);
     await userEvent.click(screen.getByText(/\/ws\/wf.json/));
-    expect(await screen.findByRole("alert")).toHaveTextContent("network down");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Can't reach the dashboard server");
   });
 
   it("an empty log reads as printed-nothing", async () => {

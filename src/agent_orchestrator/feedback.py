@@ -50,6 +50,15 @@ REASONS: tuple[str, ...] = get_args(Reason)
 SCOPES: tuple[str, ...] = get_args(Scope)
 SOURCES: tuple[str, ...] = get_args(Source)
 
+# Queued operator notes (A6): free-form guidance an operator submits to a RUNNING run. The index
+# is the source of truth; the markdown is a derived, human/agent-readable view of it. The engine
+# hands only the markdown's PATH to tasks dispatched later (NFR-1) -- never its content.
+OPERATOR_NOTES_FILE = "operator-notes.md"
+OPERATOR_NOTES_INDEX_FILE = "operator-notes.json"
+MAX_OPERATOR_NOTE_CHARS = 2000
+MAX_OPERATOR_NOTES = 100
+OPERATOR_NOTE_ID_PREFIX = "n"
+
 _ORCHESTRATOR_DIR = ".orchestrator"
 _RUNS_DIR = "runs"
 _STATE_FILE = "state.json"
@@ -62,6 +71,14 @@ class FeedbackError(OrchestratorError):
 
 class FeedbackCapError(FeedbackError):
     """The run already holds MAX_ENTRIES entries; adding more is rejected (never trimmed)."""
+
+
+class OperatorNoteError(FeedbackError):
+    """Invalid operator note, unknown run, cap reached, or an unreadable notes store."""
+
+
+class OperatorNoteCapError(OperatorNoteError, FeedbackCapError):
+    """The run already holds MAX_OPERATOR_NOTES notes; adding more is rejected (never trimmed)."""
 
 
 class FeedbackEntry(BaseModel):
@@ -178,7 +195,11 @@ def _locked(run_dir: Path) -> Iterator[None]:
             os.close(fd)  # closing releases the flock
 
 
-def _atomic_write(path: Path, doc: FeedbackFile) -> None:
+def _atomic_write(path: Path, doc: BaseModel) -> None:
+    _atomic_write_text(path, doc.model_dump_json(indent=2))
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
     _refuse_symlink(path)
     # Unique tmp name in the same directory (=> os.replace is atomic), created exclusively and
     # without following symlinks so a pre-planted link can never redirect the write.
@@ -190,7 +211,7 @@ def _atomic_write(path: Path, doc: FeedbackFile) -> None:
         raise FeedbackError(f"cannot create temp file for {path.name}: {e.strerror}") from e
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(doc.model_dump_json(indent=2))
+            fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
@@ -310,3 +331,105 @@ def summarize(entries: list[FeedbackEntry], task_ids: list[str]) -> FeedbackSumm
         rated_tasks=rated,
         total_tasks=len(task_ids),
     )
+
+
+# -- queued operator notes (A6) ----------------------------------------------------------------
+
+
+class OperatorNote(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    ts: str
+    source: Source
+    text: str
+
+
+class OperatorNotesFile(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = SCHEMA_VERSION
+    notes: list[OperatorNote] = Field(default_factory=list)
+
+
+def operator_notes_path(ws_root: str | Path, run_id: str) -> Path:
+    """Path of the run's markdown notes file (the one handed to tasks by path)."""
+    return _run_dir(ws_root, run_id) / OPERATOR_NOTES_FILE
+
+
+def _read_notes(path: Path) -> OperatorNotesFile:
+    _refuse_symlink(path)
+    if not path.exists():
+        return OperatorNotesFile()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("schema_version", SCHEMA_VERSION) != SCHEMA_VERSION:
+            raise ValueError(f"unsupported schema_version {data.get('schema_version')!r}")
+        return OperatorNotesFile.model_validate(data)
+    except (OSError, ValueError, ValidationError) as e:
+        raise OperatorNoteError(
+            f"corrupt operator notes index {path} (not modified; fix or remove it): {e}"
+        ) from e
+
+
+def load_operator_notes(ws_root: str | Path, run_id: str) -> OperatorNotesFile:
+    """Missing index => empty; corrupt index => OperatorNoteError."""
+    return _read_notes(_run_dir(ws_root, run_id) / OPERATOR_NOTES_INDEX_FILE)
+
+
+def render_operator_notes_markdown(doc: OperatorNotesFile) -> str:
+    """The agent-facing view. Each note is a level-2 section; text is verbatim (never parsed)."""
+    parts = ["# Operator notes\n"]
+    for n in doc.notes:
+        parts.append(f"\n## Note {n.id} ({n.ts}, {n.source})\n\n{n.text}\n")
+    return "".join(parts)
+
+
+def add_operator_note(
+    ws_root: str | Path,
+    run_id: str,
+    *,
+    text: str,
+    source: str = "cli",
+    now: Callable[[], datetime] = _utc_now,
+) -> OperatorNote:
+    """Validate and append one note (append-only). Raises OperatorNoteError on any problem.
+
+    The text is stripped; empty, NUL-containing or over-long text is rejected (never trimmed), as
+    is the (MAX_OPERATOR_NOTES+1)th note. Index and markdown are both replaced atomically under
+    the run's lock; the index goes first so a crash can only leave the (derived) markdown stale.
+    """
+    run_dir = _run_dir(ws_root, run_id)
+    if not isinstance(text, str):
+        raise OperatorNoteError("invalid note: text must be a string")
+    text = text.strip()
+    if not text:
+        raise OperatorNoteError("invalid note: text is empty")
+    if len(text) > MAX_OPERATOR_NOTE_CHARS:
+        raise OperatorNoteError(
+            f"invalid note: text exceeds {MAX_OPERATOR_NOTE_CHARS} characters ({len(text)})"
+        )
+    if "\x00" in text:
+        raise OperatorNoteError("invalid note: text contains a NUL character")
+    if source not in SOURCES:
+        raise OperatorNoteError(f"invalid note: source must be one of {SOURCES}")
+
+    index_path = run_dir / OPERATOR_NOTES_INDEX_FILE
+    md_path = run_dir / OPERATOR_NOTES_FILE
+    with _locked(run_dir):
+        doc = _read_notes(index_path)  # corrupt => raises, file untouched
+        if len(doc.notes) >= MAX_OPERATOR_NOTES:
+            raise OperatorNoteCapError(
+                f"operator note cap reached ({MAX_OPERATOR_NOTES}) for run {run_id!r}"
+            )
+        note = OperatorNote(
+            id=f"{OPERATOR_NOTE_ID_PREFIX}{len(doc.notes) + 1}",
+            ts=now().isoformat(),
+            source=source,  # type: ignore[arg-type]  # checked above
+            text=text,
+        )
+        doc.notes.append(note)
+        doc.schema_version = SCHEMA_VERSION
+        _atomic_write(index_path, doc)
+        _atomic_write_text(md_path, render_operator_notes_markdown(doc))
+    return note

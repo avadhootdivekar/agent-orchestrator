@@ -599,6 +599,33 @@ export interface FeedbackRequest {
   note?: string;
 }
 
+/** Mirrors feedback.py::OperatorNote (E-A6 live steering). */
+export interface OperatorNote {
+  id: string;
+  ts: string;
+  source: string;
+  text: string;
+}
+
+/** GET /api/runs/{id}/notes — `accepting` is false unless the run is live. */
+export interface OperatorNotesState {
+  run_id: string;
+  accepting: boolean;
+  max_chars: number;
+  max_notes: number;
+  notes: OperatorNote[];
+}
+
+/** POST /api/runs/{id}/notes body — `text` only; the server sets `source`. */
+export interface OperatorNoteRequest {
+  text: string;
+}
+
+export interface OperatorNoteResponse {
+  note: OperatorNote;
+  notes: OperatorNotesState;
+}
+
 export interface SurvivalRow {
   run_id: string;
   task_id: string | null;
@@ -767,3 +794,10 @@ export const SESSION_LOSS_CODES: readonly AuthErrorCode[] = [
 ];
 
 export const SESSION_PROOF_HEADER = "X-AO-Session-Proof";
+
+/** Server-side existence class of a candidate path (`POST /api/files/resolve`, A5). */
+export type PathProbeStatus = "file" | "dir" | "missing" | "denied";
+
+export interface PathProbeResponse {
+  results: { path: string; status: PathProbeStatus }[];
+}

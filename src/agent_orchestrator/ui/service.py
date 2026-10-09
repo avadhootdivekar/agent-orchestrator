@@ -28,13 +28,17 @@ from ..auth.paths import default_denied_paths, is_within
 from ..config import load_agents, load_reposets
 from ..errors import OrchestratorError
 from ..feedback import (
+    MAX_OPERATOR_NOTE_CHARS,
+    MAX_OPERATOR_NOTES,
     FeedbackCapError,
     FeedbackEntry,
     FeedbackError,
     add_feedback,
+    add_operator_note,
     effective_for_task,
     effective_ratings,
     load_feedback,
+    load_operator_notes,
     validate_run_id,
 )
 from ..implicit_signals import apply_survival, implicit_signals
@@ -346,6 +350,10 @@ class DashboardService:
     def read_file(self, root: str | None = None, path: str = "") -> dict:
         """File contents for the code viewer (FR-B2)."""
         return asdict(self._browser.read_file(root, path))
+
+    def probe_paths(self, root: str | None, paths: list[str]) -> list[dict]:
+        """Existence class (`file|dir|missing|denied`) per path, order preserved; no contents."""
+        return [{"path": p, "status": self._browser.probe(root, p)} for p in paths]
 
     def read_html_preview(self, root: str | None = None, path: str = "") -> dict:
         """Sanitized, self-contained HTML/SVG preview safe for an `iframe srcdoc`.
@@ -909,6 +917,50 @@ class DashboardService:
             "feedback": self._feedback_view(run_id, state, entries),
         }
 
+    def get_operator_notes(self, run_id: str) -> dict:
+        """Queued operator notes (history, oldest first) plus whether new ones are accepted."""
+        state = self._known_run_state(run_id)
+        try:
+            doc = load_operator_notes(self.workspace_root, run_id)
+        except FeedbackError as exc:
+            raise self._map_feedback_error(exc) from exc
+        return self._operator_notes_view(run_id, state, doc.notes)
+
+    def add_run_operator_note(self, run_id: str, *, text: str) -> dict:
+        """Queue one dashboard-sourced note for a LIVE run via the shared `add_operator_note`.
+
+        A note only ever reaches tasks dispatched after it, so on a run that is not live it would
+        silently do nothing: refuse that (409) rather than accept and ignore it.
+        """
+        state = self._known_run_state(run_id)
+        if not self._notes_accepted(run_id, state):
+            raise DashboardConflictError(
+                f"run {run_id!r} is not live; notes only reach tasks that start while it runs"
+            )
+        try:
+            note = add_operator_note(
+                self.workspace_root, run_id, text=text, source=DASHBOARD_FEEDBACK_SOURCE
+            )
+            doc = load_operator_notes(self.workspace_root, run_id)
+        except FeedbackError as exc:
+            raise self._map_feedback_error(exc) from exc
+        return {
+            "note": note.model_dump(),
+            "notes": self._operator_notes_view(run_id, state, doc.notes),
+        }
+
+    def _notes_accepted(self, run_id: str, state: RunState) -> bool:
+        return state.status == "running" and self._supervisor.is_running(run_id)
+
+    def _operator_notes_view(self, run_id: str, state: RunState, notes: list) -> dict:
+        return {
+            "run_id": run_id,
+            "accepting": self._notes_accepted(run_id, state),
+            "max_chars": MAX_OPERATOR_NOTE_CHARS,
+            "max_notes": MAX_OPERATOR_NOTES,
+            "notes": [n.model_dump() for n in notes],
+        }
+
     def run_signals(self, run_id: str, *, survival: bool = False, ref: str | None = None) -> dict:
         """Implicit signals plus (on demand) diff survival for one run."""
         state = self._known_run_state(run_id)
@@ -966,7 +1018,7 @@ class DashboardService:
             return DashboardConflictError(message)
         if "unknown task" in message or "run not found" in message:
             return DashboardNotFoundError(message)
-        if message.startswith("corrupt feedback file") or "cannot read run state" in message:
+        if message.startswith("corrupt ") or "cannot read run state" in message:
             return DashboardStoreError(message)
         return DashboardValidationError(message)
 

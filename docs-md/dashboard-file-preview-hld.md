@@ -1041,3 +1041,28 @@ Three corrections to how this document should be read:
 3. **The layering is load-bearing, not belt-and-braces.** M1 was neutralized by layer 3 alone;
    H1 was contained (no origin compromise) by layer 1 alone. Both statements are only true
    because the layers were built as independent controls. See ADR-0011's post-audit note.
+
+## 11. Internal path links (A5)
+
+Paths that appear in the task detail panel (the output artifact path, declared `outputs[]`, and
+the "Not taken" reason) are auto-linked to the file viewer **only when the server confirms they
+exist inside the workspace**.
+
+- **Server** — `POST /api/files/resolve` with `{paths: string[≤200], root?}` returns
+  `{results: [{path, status}]}` in request order, `status ∈ file | dir | missing | denied`. It is
+  built on `FileBrowser.probe`, which calls the same `FileBrowser.resolve` guard as
+  `/api/files/content` (traversal, symlink escapes, `denied_paths`, result cache) plus a `stat`.
+  It never returns contents, size or mtime, and reports anything `resolve` refuses (including an
+  unknown root, a NUL byte, an out-of-root path) as `denied` — never `missing` — so it is not an
+  existence oracle outside the roots. Paths over 1024 chars or batches over 200 → 422. It writes
+  nothing and is authenticated like the sibling `/api/files*` routes (absent from the public
+  route table).
+- **Client** — `ui/src/tabs/pathLinks.ts` only *guesses* candidates (conservative token class;
+  `..` segments, URLs/schemes, `~`, control/bidi chars and oversize tokens are dropped; absolute
+  paths are rewritten relative to the workspace root or dropped). `usePathProbe.ts` batches and
+  caches probes; `components/PathText.tsx` (`PathText` for free text, `PathLink` for a known path)
+  renders `file`/`dir` results through the shared `TabLink` + `OpenInNewTabButton`, so
+  ctrl/cmd/middle-click open a background tab and `⧉` opens an active one. Pending, `missing`,
+  `denied` and error states stay plain text.
+- **Not yet covered** — run log, prompt, run summary, markdown viewer and the RunDetail
+  "Quick links" block (the latter is owned by another unit).

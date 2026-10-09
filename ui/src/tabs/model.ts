@@ -72,7 +72,7 @@ const PARAM_SCHEMA: Record<TabKind, Record<string, [ParamKind, boolean]>> = {
 const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:@+-]*$/;
 const ROOT_RE = /^[A-Za-z0-9._@+-]{1,64}$/;
 // eslint-disable-next-line no-control-regex
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/;
+export const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/;
 const CONTROL_RE_G = new RegExp(CONTROL_RE.source, "g");
 const TAB_ID_RE = /^t-[a-z0-9]{1,16}$/;
 
@@ -247,6 +247,7 @@ export function serialize(state: TabsState): string {
 export type TabsAction =
   | { type: "open"; tab: Tab; activate: boolean }
   | { type: "navigate"; tab: Tab }
+  | { type: "retarget"; id: string; tab: Tab }
   | { type: "activate"; id: string }
   | { type: "close"; id: string }
   | { type: "move"; from: number; to: number };
@@ -278,6 +279,18 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
         ),
       };
     }
+    case "retarget": {
+      // In-place sync of a tab whose view changed what it shows (FileBrowser plain click), so
+      // reload / copy-link / dedupe follow the file now on screen. Unlike `navigate` it never
+      // focuses another tab. If a DIFFERENT tab already holds that exact target we leave this one
+      // alone rather than create two identical tabs (dedupe invariant wins over URL freshness).
+      if (!state.tabs.some((t) => t.id === action.id)) return state;
+      if (state.tabs.some((t) => t.id !== action.id && sameTarget(t, action.tab))) return state;
+      return {
+        ...state,
+        tabs: state.tabs.map((t) => (t.id === action.id ? { ...action.tab, id: t.id } : t)),
+      };
+    }
     case "activate":
       return state.tabs.some((t) => t.id === action.id) ? { ...state, activeId: action.id } : state;
     case "close": {
@@ -298,6 +311,15 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       return { ...state, tabs };
     }
   }
+}
+
+/**
+ * React key for a tab's view. Most tabs remount whenever their target changes; a `file` tab is
+ * keyed by id + root only, because FileBrowser follows `params.path` changes itself (a plain
+ * click retargets the tab to the file already on screen -- remounting would reload it).
+ */
+export function viewKey(tab: Tab): string {
+  return tab.kind === "file" ? `file:${tab.id}:${tab.params.root ?? ""}` : encodeHash(tab);
 }
 
 /** Initial state: persisted tabs (validated) or the default, then the URL hash opened+focused. */

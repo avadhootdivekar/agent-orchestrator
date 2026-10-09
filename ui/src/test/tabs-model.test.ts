@@ -14,6 +14,7 @@ import {
   tabsReducer,
   titleFor,
   validateTab,
+  viewKey,
   type Tab,
   type TabsState,
 } from "../tabs/model";
@@ -225,6 +226,36 @@ describe("tabsReducer", () => {
     expect(s.tabs.some((x) => x.id === s.activeId)).toBe(true);
   });
 
+  it("retarget updates a tab's params + derived title in place, without focus or new tabs", () => {
+    const f = t("file", { path: "a.py" }, "t-f");
+    const s = { tabs: [a, f], activeId: "t-a" };
+    const r = tabsReducer(s, { type: "retarget", id: "t-f", tab: t("file", { path: "src/b.py", root: "ws" }) });
+    expect(r.activeId).toBe("t-a"); // never steals focus
+    expect(r.tabs).toHaveLength(2);
+    expect(r.tabs[1]).toMatchObject({ id: "t-f", kind: "file", title: "b.py", params: { path: "src/b.py", root: "ws" } });
+    // dedupe now matches the retargeted tab
+    const again = tabsReducer(r, { type: "open", tab: t("file", { path: "src/b.py", root: "ws" }, "t-x"), activate: true });
+    expect(again.tabs).toHaveLength(2);
+    expect(again.activeId).toBe("t-f");
+    // the hash follows the new target
+    expect(encodeHash(r.tabs[1])).toBe("#/file?path=src%2Fb.py&root=ws");
+  });
+
+  it("retarget is a no-op for an unknown id and when another tab already holds the target", () => {
+    const f1 = t("file", { path: "a.py" }, "t-f1");
+    const f2 = t("file", { path: "b.py" }, "t-f2");
+    const s = { tabs: [f1, f2], activeId: "t-f1" };
+    expect(tabsReducer(s, { type: "retarget", id: "nope", tab: t("file", { path: "c.py" }) })).toBe(s);
+    expect(tabsReducer(s, { type: "retarget", id: "t-f1", tab: t("file", { path: "b.py" }) })).toBe(s);
+  });
+
+  it("viewKey keeps a file tab mounted across path changes but not across root/kind changes", () => {
+    const k = (p: Tab) => viewKey(p);
+    expect(k(t("file", { path: "a" }, "t-f"))).toBe(k(t("file", { path: "b" }, "t-f")));
+    expect(k(t("file", { path: "a" }, "t-f"))).not.toBe(k(t("file", { path: "a", root: "ws" }, "t-f")));
+    expect(k(t("run", { id: "r1" }, "t-r"))).not.toBe(k(t("run", { id: "r2" }, "t-r")));
+  });
+
   it("navigate replaces the active tab in place (keeping its id) or reuses an identical tab", () => {
     const s = { tabs: [a, b], activeId: "t-a" };
     const n = tabsReducer(s, { type: "navigate", tab: t("usage", {}, "ignored") });
@@ -285,5 +316,37 @@ describe("storage guards", () => {
       Object.defineProperty(window, "localStorage", original);
     }
     expect(STORAGE_KEY).toBe("ao-tabs");
+  });
+});
+
+describe("file tabs (A3: optional new tab per file)", () => {
+  const file = (path: string, id: string) => makeTab("file", { path }, id) as Tab;
+
+  it("navigate (plain click) replaces the active file tab instead of adding one", () => {
+    const a = file("a.md", "t-a");
+    let s: TabsState = { tabs: [a], activeId: a.id };
+    s = tabsReducer(s, { type: "navigate", tab: file("b.md", "t-x") });
+    expect(s.tabs).toHaveLength(1);
+    expect(s.tabs[0]).toMatchObject({ id: "t-a", params: { path: "b.md" }, title: "b.md" });
+  });
+
+  it("open (new tab) adds a second file tab; reopening the same file focuses, never duplicates", () => {
+    const a = file("a.md", "t-a");
+    let s: TabsState = { tabs: [a], activeId: a.id };
+    s = tabsReducer(s, { type: "open", tab: file("b.md", "t-b"), activate: true });
+    expect(s.tabs.map((t) => t.params.path)).toEqual(["a.md", "b.md"]);
+    expect(s.activeId).toBe("t-b");
+    s = tabsReducer(s, { type: "open", tab: file("a.md", "t-dup"), activate: true });
+    expect(s.tabs).toHaveLength(2);
+    expect(s.activeId).toBe("t-a");
+  });
+
+  it("file tabs are not singletons and respect MAX_TABS", () => {
+    let s = defaultState();
+    for (let i = 0; i < MAX_TABS + 3; i++) {
+      s = tabsReducer(s, { type: "open", tab: file(`f${i}.md`, `t-f${i}`), activate: true });
+    }
+    expect(s.tabs.length).toBe(MAX_TABS);
+    expect(s.tabs.some((t) => t.id === s.activeId)).toBe(true);
   });
 });

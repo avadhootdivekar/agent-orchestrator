@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import {
   formatCost,
   formatCount,
@@ -19,12 +20,21 @@ import type {
 } from "../types";
 import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
 import { POLL_MS, usePolling } from "../usePolling";
+import { CollapsibleSection } from "./CollapsibleSection";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
 import { NowRunning, nowRunningRows } from "./NowRunning";
 import { RunSummaryPanel } from "./RunSummaryPanel";
 import { PromptPanel } from "./PromptPanel";
-import { RunFeedbackPanel, SignalsPanel, useFeedback } from "./FeedbackPanels";
+import { QuickLinks, type QuickLink } from "./QuickLinks";
+import { RunLog } from "./RunLog";
+import {
+  OperatorNotesBox,
+  RunFeedbackPanel,
+  SignalsPanel,
+  useFeedback,
+  useOperatorNotes,
+} from "./FeedbackPanels";
 
 // React Flow/dagre (and this task's own graph CSS) download only once the Graph tab is
 // opened -- the initial dashboard load is unaffected (NFR-4, TASK.md item 5).
@@ -146,6 +156,19 @@ function IntegrationHeader({ integration }: { integration: RunIntegration }) {
   );
 }
 
+/** The run's key files: workflow.json, the prompt file and every task output (A5). */
+function runQuickLinks(detail: RunDetailData): QuickLink[] {
+  const links: QuickLink[] = [];
+  if (detail.run_dir) {
+    links.push({ path: `${detail.run_dir.replace(/\/+$/, "")}/workflow.json`, label: "workflow.json" });
+  }
+  if (detail.prompt?.path) links.push({ path: detail.prompt.path, label: "prompt" });
+  for (const task of detail.tasks) {
+    for (const output of task.outputs ?? []) links.push({ path: output });
+  }
+  return links;
+}
+
 /** Per-run detail: stats, task table, and the CLI log (FR-R3, FR-R5.2). */
 export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
   const [detail, setDetail] = useState<RunDetailData | null>(null);
@@ -156,6 +179,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const feedback = useFeedback(runId);
+  const notes = useOperatorNotes(runId, detail?.is_live ?? false);
   // Table is the default (TASK.md item 5); persisted globally, not per-run.
   const [activeTab, setActiveTab] = useState<GraphTab>(() => readPrefs().tab);
 
@@ -173,7 +197,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
       setLog(logResponse.text);
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, [runId]);
 
@@ -206,10 +230,16 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
       await action();
       await tick();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
+  };
+
+  // Same wording/pattern as the runs list: stopping a run is hard to undo, so ask first.
+  const confirmCancel = () => {
+    if (!window.confirm(`Cancel run ${runId}? Its running tasks are stopped.`)) return;
+    void act(() => api.cancelRun(runId));
   };
 
   const modelUsage = summarizeModels(detail?.tasks ?? []);
@@ -228,6 +258,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
   }
 
   const { summary } = detail;
+  const quickLinks = runQuickLinks(detail);
 
   return (
     <div className="stack">
@@ -243,8 +274,14 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
           </div>
           <div className="row">
             <button onClick={onBack}>← Back to runs</button>
+          </div>
+        </div>
+
+        <CollapsibleSection id="live-inputs" title="Live inputs" testId="section-live-inputs">
+         <div className="stack" style={{ gap: 12 }}>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
             {detail.is_live ? (
-              <button disabled={busy} onClick={() => void act(() => api.cancelRun(runId))}>
+              <button disabled={busy} onClick={confirmCancel}>
                 Cancel
               </button>
             ) : (
@@ -255,8 +292,19 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
                 Resume
               </button>
             )}
+            <span className="muted" style={{ fontSize: 12 }}>
+              Running tasks can't be changed mid-flight; Cancel stops them, Resume continues a
+              stopped run.
+            </span>
           </div>
-        </div>
+          <OperatorNotesBox
+            state={notes.state}
+            posting={notes.posting}
+            error={notes.error}
+            onSubmit={notes.post}
+          />
+         </div>
+        </CollapsibleSection>
 
         <ErrorBanner message={error} />
 
@@ -265,6 +313,11 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
           <NowRunning rows={nowRunningRows(detail.tasks, activity, Date.now())} />
         </div>
 
+        <div style={{ marginBottom: 12 }}>
+          <QuickLinks links={quickLinks} />
+        </div>
+
+        <CollapsibleSection id="summary" title="Summary" testId="section-summary">
         <div className="tiles">
           <Tile
             label="Tasks"
@@ -301,14 +354,14 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
             <IntegrationHeader integration={detail.integration} />
           </div>
         ) : null}
+        </CollapsibleSection>
       </div>
 
       <RunSummaryPanel summary={liveSummary} />
 
       <PromptPanel prompt={detail.prompt ?? null} changed={detail.prompt_changed_since_start} />
 
-      <div>
-        <h2>Tasks</h2>
+      <CollapsibleSection id="tasks" title="Tasks">
         {/* Feature-detected against the backend (HLD §8.6): an older backend has no
             graph_version, and the Tasks section renders exactly as it always has (AC-6, FR-8). */}
         {detail.graph_version ? (
@@ -449,7 +502,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
             </table>
           </div>
         )}
-      </div>
+      </CollapsibleSection>
 
       <RunFeedbackPanel
         entries={feedback.entries}
@@ -461,32 +514,25 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
       <SignalsPanel runId={runId} />
 
       {detail.tripped_breakers.length > 0 ? (
-        <div>
-          <h2>Tripped breakers</h2>
-          <div className="card">
-            {detail.tripped_breakers.map((breaker, index) => (
-              <div key={index} className="mono" style={{ fontSize: 12 }}>
-                {String(breaker.id)} — {String(breaker.condition)} → {String(breaker.action)}
-              </div>
-            ))}
-          </div>
-        </div>
+        <CollapsibleSection id="breakers" title="Tripped breakers">
+          {detail.tripped_breakers.map((breaker, index) => (
+            <div key={index} className="mono" style={{ fontSize: 12 }}>
+              {String(breaker.id)} — {String(breaker.condition)} → {String(breaker.action)}
+            </div>
+          ))}
+        </CollapsibleSection>
       ) : null}
 
-      <div>
-        <h2>Run log</h2>
+      <CollapsibleSection id="log" title="Run log">
         {log ? (
-          <pre className="code">{log}</pre>
+          <RunLog text={log} />
         ) : (
-          <div className="card">
-            <Empty>
-              No captured log — this run was not started from the dashboard. Task transcripts
-              are on disk under{" "}
-              <code className="mono">{detail.run_dir}</code>.
-            </Empty>
-          </div>
+          <Empty>
+            No captured log — this run was not started from the dashboard. Task transcripts are
+            on disk under <code className="mono">{detail.run_dir}</code>.
+          </Empty>
         )}
-      </div>
+      </CollapsibleSection>
 
       <div className="muted" style={{ fontSize: 12 }}>
         Started {formatTimestamp(summary.started_at)} · updated{" "}

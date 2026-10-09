@@ -55,6 +55,7 @@ class HeuristicTokenEstimator(TokenEstimator):
         input_bytes = self._store.size(ctx.instruction_path)
         for p in (
             *ctx.general_instruction_paths,
+            *([ctx.operator_notes_path] if ctx.operator_notes_path else []),
             *ctx.input_paths,
             *ctx.dynamic_input_paths,
         ):

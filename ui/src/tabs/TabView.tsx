@@ -28,7 +28,18 @@ export function TabView({ tab }: { tab: Tab }) {
     case "graph":
       return <GraphTab runId={tab.params.run} />;
     case "file":
-      return <FileBrowser initialPath={tab.params.path} initialRoot={tab.params.root} />;
+      return (
+        <FileBrowser
+          initialPath={tab.params.path}
+          initialRoot={tab.params.root}
+          onFileOpened={(path) =>
+            actions.retarget(tab.id, {
+              kind: "file",
+              params: { path, ...(tab.params.root ? { root: tab.params.root } : {}) },
+            })
+          }
+        />
+      );
     case "usage":
       return <Usage />;
     case "new":

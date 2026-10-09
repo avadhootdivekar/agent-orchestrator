@@ -333,3 +333,56 @@ class TestClassification:
         browser = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
         content = browser.read_file("workspace", "x.jpg")
         assert content.mime == "image/jpeg"
+
+
+class TestProbe:
+    """`FileBrowser.probe` (A5 link auto-detection): status only, same guard as `resolve`."""
+
+    def test_in_root_file_dir_and_missing(self, browser: FileBrowser) -> None:
+        assert browser.probe("workspace", "src/main.py") == "file"
+        assert browser.probe("workspace", "src") == "dir"
+        assert browser.probe("workspace", "src/nope.py") == "missing"
+
+    def test_absolute_path_inside_root_is_a_file(
+        self, browser: FileBrowser, tmp_path: Path
+    ) -> None:
+        assert browser.probe("workspace", str(tmp_path / "README.md")) == "file"
+
+    @pytest.mark.parametrize(
+        "escape", ["..", "../../etc/passwd", "src/../../..", "/etc/passwd", "a\0b"]
+    )
+    def test_escapes_and_nul_are_denied_never_missing(
+        self, browser: FileBrowser, escape: str
+    ) -> None:
+        assert browser.probe("workspace", escape) == "denied"
+
+    def test_unknown_root_is_denied(self, browser: FileBrowser) -> None:
+        assert browser.probe("nope", "README.md") == "denied"
+
+    def test_symlink_to_outside_is_denied(self, tmp_path: Path) -> None:
+        root, outside = tmp_path / "ws", tmp_path / "outside"
+        root.mkdir()
+        outside.mkdir()
+        (outside / "secret.txt").write_text("classified", encoding="utf-8")
+        os.symlink(outside / "secret.txt", root / "escape.txt")
+        b = FileBrowser(roots=[Root(name="workspace", path=str(root))])
+        assert b.probe("workspace", "escape.txt") == "denied"
+
+    def test_denied_path_and_result_cache_are_denied(self, tmp_path: Path) -> None:
+        (tmp_path / "secret").mkdir()
+        (tmp_path / "secret" / "k.txt").write_text("k", encoding="utf-8")
+        cache = tmp_path / ".orchestrator" / "cache"
+        cache.mkdir(parents=True)
+        (cache / "blob").write_text("b", encoding="utf-8")
+        b = FileBrowser(
+            roots=[Root(name="workspace", path=str(tmp_path))],
+            denied_paths=[str(tmp_path / "secret")],
+        )
+        assert b.probe("workspace", "secret/k.txt") == "denied"
+        assert b.probe("workspace", "secret/not-there.txt") == "denied"
+        assert b.probe("workspace", ".orchestrator/cache/blob") == "denied"
+
+    def test_fifo_is_not_linkable(self, tmp_path: Path) -> None:
+        os.mkfifo(tmp_path / "pipe")
+        b = FileBrowser(roots=[Root(name="workspace", path=str(tmp_path))])
+        assert b.probe("workspace", "pipe") == "missing"

@@ -16,6 +16,10 @@ export interface GraphToolbarProps {
   onShowUnrelatedChange: (value: boolean) => void;
   /** Nodes hidden by the unrelated filter in the CURRENT view (always 0 in the dependency view). */
   hiddenCount: number;
+  hideRedundantEdges: boolean;
+  onHideRedundantEdgesChange: (value: boolean) => void;
+  /** Number of redundant edges in the current view (shown in the toggle label). */
+  redundantEdgeCount: number;
   metric: MetricMode;
   onMetricChange: (value: MetricMode) => void;
   /** Full node set for the current view -- `searchNodes` matches on id/label (model.ts). */
@@ -24,6 +28,8 @@ export interface GraphToolbarProps {
   onSearchSelect: (id: string) => void;
   onFit: () => void;
   onReset: () => void;
+  /** User-initiated re-run of the layout engine; nodes never relayout on their own. */
+  onRelayout: () => void;
 }
 
 const METRIC_OPTIONS: { value: MetricMode; label: string }[] = [
@@ -37,12 +43,16 @@ export function GraphToolbar({
   showUnrelated,
   onShowUnrelatedChange,
   hiddenCount,
+  hideRedundantEdges,
+  onHideRedundantEdgesChange,
+  redundantEdgeCount,
   metric,
   onMetricChange,
   searchableNodes,
   onSearchSelect,
   onFit,
   onReset,
+  onRelayout,
 }: GraphToolbarProps) {
   const [query, setQuery] = useState("");
   const [matchIndex, setMatchIndex] = useState(0);
@@ -90,6 +100,15 @@ export function GraphToolbar({
         </label>
       ) : null}
 
+      <label className="graph-toolbar-checkbox">
+        <input
+          type="checkbox"
+          checked={hideRedundantEdges}
+          onChange={(event) => onHideRedundantEdgesChange(event.target.checked)}
+        />
+        Hide redundant edges ({redundantEdgeCount})
+      </label>
+
       <div className="graph-toolbar-field">
         <label htmlFor="graph-metric">Metric</label>
         <select
@@ -129,6 +148,9 @@ export function GraphToolbar({
       </button>
       <button type="button" onClick={onReset}>
         Reset layout
+      </button>
+      <button type="button" onClick={onRelayout}>
+        Relayout
       </button>
     </div>
   );

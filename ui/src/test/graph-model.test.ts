@@ -340,7 +340,7 @@ describe("readPrefs / writePrefs", () => {
   });
 
   it("round-trips a valid preference object", () => {
-    const prefs: GraphPrefs = { tab: "graph", view: "spawn", metric: "cost", showUnrelated: true };
+    const prefs: GraphPrefs = { tab: "graph", view: "spawn", metric: "cost", showUnrelated: true, hideRedundantEdges: false };
     writePrefs(prefs);
     expect(readPrefs()).toEqual(prefs);
     expect(localStorage.getItem(PREFS_STORAGE_KEY)).toBe(JSON.stringify(prefs));

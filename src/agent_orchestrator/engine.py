@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -36,6 +37,7 @@ from .errors import (
 )
 from .estimator import TokenEstimator
 from .executors.base import Executor
+from .feedback import OPERATOR_NOTES_FILE
 from .isolation import escalation as resolver_escalation
 from .isolation import paths as isolation_paths
 from .isolation.git import GIT_MIN_VERSION, GitRepo
@@ -1244,6 +1246,7 @@ class Orchestrator:
                 general_instruction_paths=self._resolve_general_instructions(
                     workflow, store=ctx_store
                 ),
+                operator_notes_path=self._operator_notes_path(state.run_id),
                 input_paths=_est_inputs,
                 output_paths=[ctx_store.resolve(p) for p in task.outputs],
                 dynamic_input_paths=dynamic_input_paths,
@@ -1521,6 +1524,7 @@ class Orchestrator:
             repo_paths=ctx.repo_paths,
             dispatch_cycle=ts.dispatch_cycle,
             now=started,
+            operator_notes_path=self._operator_notes_path(state.run_id),
         )
         outcome = self._result_cache.lookup(request, task_log)
         if outcome.record is not None:
@@ -2484,6 +2488,20 @@ class Orchestrator:
                 seen.add(path)
                 resolved.append(path)
         return resolved
+
+    def _operator_notes_path(self, run_id: str) -> str | None:
+        """Absolute path of the run's queued operator notes (A6), or None when there are none.
+
+        Existence-only (``lstat``): the file is never opened here (NFR-1), and a symlink or
+        non-regular file is ignored rather than handed to an agent. Evaluated at each dispatch,
+        so a note submitted mid-run reaches tasks dispatched afterwards (including retries) but
+        never one already running.
+        """
+        path = self._runstate._path(run_id).parent / OPERATOR_NOTES_FILE
+        try:
+            return str(path) if stat.S_ISREG(os.lstat(path).st_mode) else None
+        except OSError:
+            return None
 
     def _is_barrier(
         self, task: TaskSpec, workflow: WorkflowSpec, state: RunState | None = None
@@ -4247,6 +4265,9 @@ class Orchestrator:
                 agent=effective_agent,
                 instruction_path=instruction_path,
                 general_instruction_paths=general_instruction_paths,
+                # Run-dir file (outside any worktree): no isolated-view remap, the absolute path is
+                # valid from inside a worktree. Re-read per attempt so a retry sees new notes.
+                operator_notes_path=self._operator_notes_path(state.run_id),
                 input_paths=input_paths,
                 output_paths=output_paths,
                 output_manifest_path=output_manifest_path,

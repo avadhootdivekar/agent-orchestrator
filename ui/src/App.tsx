@@ -9,9 +9,11 @@ import {
   initialState,
   makeTab,
   tabsReducer,
+  viewKey,
   type TabKind,
 } from "./tabs/model";
 import { readStoredTabs, writeStoredTabs } from "./tabs/storage";
+import { ScrollPanel } from "./tabs/ScrollPanel";
 import { TabBar } from "./tabs/TabBar";
 import { TabView } from "./tabs/TabView";
 
@@ -70,6 +72,11 @@ export function App() {
     writeStoredTabs(state);
   }, [state]);
 
+  // Distinguish browser tabs/history entries: the title follows the active in-app tab.
+  useEffect(() => {
+    document.title = `${active.title} · Agent Orchestrator`;
+  }, [active.title]);
+
   // The active tab IS the URL (hash only: the backend SPA fallback is irrelevant to it).
   const activeHash = encodeHash(active);
   useEffect(() => {
@@ -101,9 +108,13 @@ export function App() {
     const tab = makeTab(target.kind, target.params);
     if (tab) dispatch({ type: "open", tab, activate: opts?.activate ?? true });
   }, []);
+  const retarget = useCallback<TabActions["retarget"]>((id, target) => {
+    const tab = makeTab(target.kind, target.params);
+    if (tab) dispatch({ type: "retarget", id, tab });
+  }, []);
   const actions = useMemo<TabActions>(
-    () => ({ available: true, navigate, open }),
-    [navigate, open],
+    () => ({ available: true, navigate, open, retarget }),
+    [navigate, open, retarget],
   );
 
   const go = (kind: TabKind) => open({ kind, params: {} }, { activate: true });
@@ -154,18 +165,16 @@ export function App() {
           {/* Every tab stays mounted (its state survives a switch); inactive ones are hidden
               and, via TabActiveContext, stop polling. The key remounts on a target change. */}
           {state.tabs.map((tab) => (
-            <div
+            <ScrollPanel
               key={tab.id}
               id={`tabpanel-${tab.id}`}
-              role="tabpanel"
-              aria-labelledby={`tab-${tab.id}`}
-              className="tab-panel"
+              labelledBy={`tab-${tab.id}`}
               hidden={tab.id !== active.id}
             >
               <TabActiveContext.Provider value={tab.id === active.id}>
-                <TabView key={encodeHash(tab)} tab={tab} />
+                <TabView key={viewKey(tab)} tab={tab} />
               </TabActiveContext.Provider>
-            </div>
+            </ScrollPanel>
           ))}
         </main>
       </div>

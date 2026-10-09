@@ -37,6 +37,10 @@ function renderToolbar(overrides: Partial<GraphToolbarProps> = {}) {
   const props: GraphToolbarProps = {
     view: "spawn",
     showUnrelated: false,
+    hideRedundantEdges: true,
+    onHideRedundantEdgesChange: vi.fn(),
+    redundantEdgeCount: 3,
+    onRelayout: vi.fn(),
     onShowUnrelatedChange: vi.fn(),
     hiddenCount: 3,
     metric: "duration",
@@ -64,7 +68,7 @@ describe("GraphToolbar", () => {
 
   it("AC-1: does not render the checkbox in the dependency view", () => {
     renderToolbar({ view: "dependency" });
-    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /unrelated/i })).toBeNull();
   });
 
   it("AC-1: reports the new value on toggle", async () => {
@@ -139,6 +143,21 @@ describe("GraphToolbar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Reset layout" }));
     expect(props.onFit).toHaveBeenCalledTimes(1);
     expect(props.onReset).toHaveBeenCalledTimes(1);
+  });
+
+  it("hide-redundant-edges checkbox reflects the pref, shows the count, and reports changes", async () => {
+    const { props } = renderToolbar();
+    const box = screen.getByRole("checkbox", { name: "Hide redundant edges (3)" }) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await userEvent.click(box);
+    expect(props.onHideRedundantEdgesChange).toHaveBeenCalledWith(false);
+  });
+
+  it("Relayout button calls onRelayout (user-initiated only)", async () => {
+    const { props } = renderToolbar();
+    expect(props.onRelayout).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Relayout" }));
+    expect(props.onRelayout).toHaveBeenCalledTimes(1);
   });
 
   it("AC-7: every control has an accessible name reachable via role queries", () => {

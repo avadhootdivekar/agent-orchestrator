@@ -23,6 +23,11 @@ function json(body: unknown, status = 200) {
 }
 
 interface Opts { entries?: unknown[]; postStatus?: number; signals?: unknown }
+/** Feedback and Signals default collapsed (and Signals is lazy); open one before using it. */
+async function openSection(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(name) }));
+}
+
 function setup(opts: Opts = {}) {
   const posts: { url: string; body: unknown }[] = [];
   const fn = vi.fn(async (url: string, init?: RequestInit) => {
@@ -44,6 +49,7 @@ function setup(opts: Opts = {}) {
 }
 
 afterEach(() => {
+  window.localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -52,6 +58,7 @@ describe("run-level feedback", () => {
   it("posts the exact body", async () => {
     const { posts } = setup();
     render(<RunDetail runId="run-1" onBack={() => {}} />);
+    await openSection("Feedback");
     const group = await screen.findByRole("group", { name: "Rate this run" });
     fireEvent.click(within(group).getByRole("button", { name: /bad/ }));
     fireEvent.click(within(group).getByRole("button", { name: "wrong" }));
@@ -65,6 +72,7 @@ describe("run-level feedback", () => {
   it("requires a rating and blocks over-long notes", async () => {
     const { posts } = setup();
     render(<RunDetail runId="run-1" onBack={() => {}} />);
+    await openSection("Feedback");
     const group = await screen.findByRole("group", { name: "Rate this run" });
     const submit = within(group).getByRole("button", { name: /Submit run rating/ });
     expect(submit).toBeDisabled();
@@ -79,6 +87,7 @@ describe("run-level feedback", () => {
   it("surfaces API errors in the banner", async () => {
     setup({ postStatus: 400 });
     render(<RunDetail runId="run-1" onBack={() => {}} />);
+    await openSection("Feedback");
     const group = await screen.findByRole("group", { name: "Rate this run" });
     fireEvent.click(within(group).getByRole("button", { name: /ok/ }));
     fireEvent.click(within(group).getByRole("button", { name: /Submit run rating/ }));
@@ -88,6 +97,7 @@ describe("run-level feedback", () => {
   it("posts a task rating with task_id", async () => {
     const { posts } = setup();
     render(<RunDetail runId="run-1" onBack={() => {}} />);
+    await openSection("Feedback");
     const group = await screen.findByRole("group", { name: "Rate task task-a" });
     fireEvent.click(within(group).getByRole("button", { name: /good/ }));
     fireEvent.click(within(group).getByRole("button", { name: /Submit task rating/ }));
@@ -109,6 +119,7 @@ describe("implicit signals + survival", () => {
   it("fetches survival only on demand and shows unavailable state", async () => {
     const { fn } = setup({ signals: { signals: { run_status: "succeeded", killed: false, tripped_breakers: 1, breaker_pauses: 0, breaker_kills: 0 }, survival: { requested: true, available: false, reason: "not a git repo", ref: null, total: null, tasks: [] } } });
     render(<RunDetail runId="run-1" onBack={() => {}} />);
+    await openSection("Implicit signals");
     expect(await screen.findByText(/breakers tripped: 1/)).toBeInTheDocument();
     expect(fn.mock.calls.some(([u]) => String(u).includes("survival=true"))).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: /Compute survival/ }));
@@ -119,6 +130,7 @@ describe("implicit signals + survival", () => {
   it("renders survival rows", async () => {
     setup({ signals: { signals: { run_status: "succeeded", killed: false, tripped_breakers: 0, breaker_pauses: 0, breaker_kills: 0 }, survival: { requested: true, available: true, reason: null, ref: null, total: null, tasks: [{ run_id: "run-1", task_id: "task-a", attribution: "task", confidence: null, commits: 1, files: 1, lines_added: 10, lines_survived: 5, survival_rate: 0.5, flags: ["likely_worthless"], unavailable: null, note: null }] } } });
     render(<RunDetail runId="run-1" onBack={() => {}} />);
+    await openSection("Implicit signals");
     fireEvent.click(await screen.findByRole("button", { name: /Compute survival/ }));
     expect(await screen.findByText("50.0%")).toBeInTheDocument();
     expect(screen.getByText(/likely_worthless/)).toBeInTheDocument();

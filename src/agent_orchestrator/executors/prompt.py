@@ -32,6 +32,13 @@ _GENERAL_INSTRUCTIONS_CLAUSE = (
     " Also follow the general instructions that apply to every task in this workspace: {paths}."
 )
 
+# Appended when the run has queued operator notes (A6). Advisory: it must not let a note override
+# the task's own instructions or safety rules.
+_OPERATOR_NOTES_CLAUSE = (
+    " The operator left guidance for this run in {path}; read it before starting and follow it"
+    " where it does not conflict with your instructions."
+)
+
 
 # The conventional "Repos: {repos}." sentence, removed from the template when the run has no
 # repos. Templates that use `{repos}` differently still render it (as an empty string).
@@ -78,5 +85,8 @@ def build_prompt(ctx: TaskContext) -> str:
     placeholder = "{" + GENERAL_INSTRUCTIONS_FIELD + "}"
     if general and placeholder not in template:
         prompt += _GENERAL_INSTRUCTIONS_CLAUSE.format(paths=general)
+
+    if ctx.operator_notes_path:
+        prompt += _OPERATOR_NOTES_CLAUSE.format(path=ctx.operator_notes_path)
 
     return prompt

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import { formatCost, formatCount, formatDuration, formatTimestamp } from "../format";
 import { FAILED_LAUNCH_WINDOW_HOURS, readDismissedLaunches } from "../launch";
 import type { AggregateStats, LaunchRecord, RunSummary } from "../types";
@@ -20,11 +21,13 @@ const POLL_MS = 4000;
  */
 export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
   const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [stats, setStats] = useState<AggregateStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [failedLaunches, setFailedLaunches] = useState<LaunchRecord[]>([]);
   const [dismissed, setDismissed] = useState<string[]>(readDismissedLaunches);
+  const [refreshing, setRefreshing] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -39,13 +42,23 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
       setRuns(runList);
       setStats(aggregate);
       setFailedLaunches(Array.isArray(failed) ? failed : []);
+      setLoaded(true);
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, []);
 
   usePolling(refresh, POLL_MS);
+
+  const manualRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const act = async (runId: string, action: () => Promise<unknown>) => {
     setBusy(runId);
@@ -54,7 +67,7 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
       await action();
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(null);
     }
@@ -67,11 +80,18 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
     void act(runId, () => api.deleteRun(runId));
   };
 
+  const cancel = (runId: string) => {
+    if (!window.confirm(`Cancel run ${runId}? Its running tasks are stopped.`)) return;
+    void act(runId, () => api.cancelRun(runId));
+  };
+
   return (
     <div>
       <div className="page-head">
         <h1>Runs</h1>
-        <button onClick={() => void refresh()}>Refresh</button>
+        <button onClick={() => void manualRefresh()} disabled={refreshing}>
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
 
       <ErrorBanner message={error} />
@@ -123,7 +143,13 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
 
       {runs.length === 0 ? (
         <div className="card">
-          <Empty>No runs yet — start one from “New run”.</Empty>
+          {loaded ? (
+            <Empty>No runs yet — start one from “New run”.</Empty>
+          ) : error ? (
+            <Empty>Runs could not be loaded.</Empty>
+          ) : (
+            <Empty>Loading runs…</Empty>
+          )}
         </div>
       ) : (
         <div className="table-wrap">
@@ -135,8 +161,12 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
                 <th className="num">Tasks</th>
                 <th className="num">Cost</th>
                 <th className="num">Tokens</th>
-                <th className="num">Wall</th>
-                <th className="num">Actual</th>
+                <th className="num" title="Start to last update">
+                  Wall
+                </th>
+                <th className="num" title="Summed task execution">
+                  Actual
+                </th>
                 <th>Started</th>
                 <th>Actions</th>
               </tr>
@@ -195,7 +225,7 @@ export function RunsList({ onOpen }: { onOpen: (runId: string) => void }) {
                       {run.is_live ? (
                         <button
                           disabled={busy === run.run_id}
-                          onClick={() => void act(run.run_id, () => api.cancelRun(run.run_id))}
+                          onClick={() => cancel(run.run_id)}
                         >
                           Cancel
                         </button>

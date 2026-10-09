@@ -2,6 +2,7 @@
 
 import { clearProof, readProof, writeProof } from "./auth/proof";
 import type {
+  PathProbeResponse,
   AggregateStats,
   AuthStatus,
   AuthStepResponse,
@@ -11,6 +12,9 @@ import type {
   EnrollBeginBody,
   FeedbackRequest,
   FeedbackState,
+  OperatorNoteRequest,
+  OperatorNoteResponse,
+  OperatorNotesState,
   FileContent,
   GeneralInstruction,
   HtmlPreview,
@@ -181,6 +185,13 @@ export const api = {
     return request<FileContent>(`/files/content?${params}`);
   },
 
+  /** Existence probe for link auto-detection (A5): status per path, never contents. */
+  resolvePaths: (paths: string[], root?: string) =>
+    request<PathProbeResponse>("/files/resolve", {
+      method: "POST",
+      body: JSON.stringify(root ? { paths, root } : { paths }),
+    }),
+
   /** Sanitized, self-contained HTML for markup files (`.html`/`.svg`/etc) — see 1A.2. */
   readFileHtml: (path: string, root?: string) => {
     const params = new URLSearchParams({ path });
@@ -256,6 +267,15 @@ export const api = {
 
   postFeedback: (runId: string, body: FeedbackRequest) =>
     request<unknown>(`/runs/${encodeURIComponent(runId)}/feedback`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  notes: (runId: string) =>
+    request<OperatorNotesState>(`/runs/${encodeURIComponent(runId)}/notes`),
+
+  postNote: (runId: string, body: OperatorNoteRequest) =>
+    request<OperatorNoteResponse>(`/runs/${encodeURIComponent(runId)}/notes`, {
       method: "POST",
       body: JSON.stringify(body),
     }),

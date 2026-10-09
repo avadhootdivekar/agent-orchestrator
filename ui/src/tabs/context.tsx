@@ -21,9 +21,19 @@ export interface TabActions {
   navigate: (target: TabTarget) => void;
   /** New tab (deduplicated by target). `activate` switches to it; ctrl/middle-click does not. */
   open: (target: TabTarget, opts?: { activate?: boolean }) => void;
+  /**
+   * Update tab `tabId`'s own target in place (params + derived title + URL hash) without focusing
+   * or creating anything. For views that change what they show internally (FileBrowser).
+   */
+  retarget: (tabId: string, target: TabTarget) => void;
 }
 
-const NOOP_ACTIONS: TabActions = { available: false, navigate: () => {}, open: () => {} };
+const NOOP_ACTIONS: TabActions = {
+  available: false,
+  navigate: () => {},
+  open: () => {},
+  retarget: () => {},
+};
 
 export const TabActionsContext = createContext<TabActions>(NOOP_ACTIONS);
 export const useTabActions = (): TabActions => useContext(TabActionsContext);

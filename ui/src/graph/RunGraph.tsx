@@ -45,7 +45,8 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import { Empty, ErrorBanner } from "../components/common";
 import type {
   DependencyEdge,
@@ -57,7 +58,7 @@ import type {
 } from "../types";
 import { GraphToolbar } from "./GraphToolbar";
 import { useSelectAndCenter } from "./hooks";
-import { computeLayout } from "./layout";
+import { computeLayout, redundantEdges } from "./layout";
 import {
   EDGE_LABEL_MIN_ZOOM,
   edgesForView,
@@ -275,6 +276,8 @@ function RunGraphCanvas({
 
   const lastFetchedVersionRef = useRef<string | null>(null);
   const layoutRequestRef = useRef(0);
+  // Bumped only by the Relayout button; part of the layout effect's deps so a re-run is always user-initiated.
+  const [relayoutNonce, setRelayoutNonce] = useState(0);
   const recenterPendingRef = useRef(false);
   const openHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -298,7 +301,7 @@ function RunGraphCanvas({
         if (cancelled) return;
         // Keep the last good graph on a fetch failure (HLD §8.5 refetch rule) -- only the
         // error banner changes, the canvas never blanks out from a transient poll failure.
-        setGraphError(err instanceof ApiError ? err.message : String(err));
+        setGraphError(errorMessage(err));
       });
     return () => {
       cancelled = true;
@@ -345,7 +348,7 @@ function RunGraphCanvas({
         /* computeLayout has no documented failure mode today; a defensive no-op keeps a
            future async layout engine (ADR-0017 D5) from surfacing an unhandled rejection. */
       });
-  }, [graph, prefs.view, prefs.showUnrelated, isSupportedSchema]);
+  }, [graph, prefs.view, prefs.showUnrelated, isSupportedSchema, relayoutNonce]);
 
   // ---- Keep the selection centered across a view toggle (Description item 2) --------------
   useEffect(() => {
@@ -387,6 +390,22 @@ function RunGraphCanvas({
       return next;
     });
   }, []);
+
+  const handleHideRedundantEdgesChange = useCallback((value: boolean) => {
+    setPrefs((current) => {
+      const next = { ...current, hideRedundantEdges: value };
+      writePrefs(next);
+      return next;
+    });
+  }, []);
+
+  /** "Relayout": the only way to re-run dagre outside a graph/view/filter change. Clears drag
+   * offsets so the fresh layout is what's shown, then refits the viewport. */
+  const handleRelayout = useCallback(() => {
+    setDraggedPositions(new Map());
+    setRelayoutNonce((n) => n + 1);
+    void reactFlow.fitView();
+  }, [reactFlow]);
 
   const handleMetricChange = useCallback((value: GraphPrefs["metric"]) => {
     setPrefs((current) => {
@@ -594,7 +613,20 @@ function RunGraphCanvas({
     });
   }, [visible, layout, selectedNodeId, draggedPositions, prefs.metric, maxima]);
 
-  const rfEdges = useMemo(() => toRfEdges(edges, showEdgeLabels), [edges, showEdgeLabels]);
+  // Redundant edges (a->c when a longer a->...->c path exists) are drawn straight through the
+  // intermediate nodes; computed over the visible nodes so hidden/unrelated ones don't count.
+  const redundantEdgeIds = useMemo(() => {
+    const shown = edges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+    return new Set(redundantEdges(visibleIds, shown).map((e) => e.id));
+  }, [visibleIds, edges]);
+  const rfEdges = useMemo(
+    () =>
+      toRfEdges(
+        prefs.hideRedundantEdges ? edges.filter((e) => !redundantEdgeIds.has(e.id)) : edges,
+        showEdgeLabels,
+      ),
+    [edges, showEdgeLabels, prefs.hideRedundantEdges, redundantEdgeIds],
+  );
 
   if (graph && !isSupportedSchema) {
     // D-4: an old dashboard build talking to a newer graph payload degrades honestly with a
@@ -620,12 +652,16 @@ function RunGraphCanvas({
           showUnrelated={prefs.showUnrelated}
           onShowUnrelatedChange={handleShowUnrelatedChange}
           hiddenCount={hiddenCount}
+          hideRedundantEdges={prefs.hideRedundantEdges}
+          onHideRedundantEdgesChange={handleHideRedundantEdgesChange}
+          redundantEdgeCount={redundantEdgeIds.size}
           metric={prefs.metric}
           onMetricChange={handleMetricChange}
           searchableNodes={graph?.nodes ?? []}
           onSearchSelect={selectAndCenter}
           onFit={handleFit}
           onReset={handleReset}
+          onRelayout={handleRelayout}
         />
       </div>
       {/* Degraded banners (FR-7, D-4): one line per warnings[] entry, as literal text only --
