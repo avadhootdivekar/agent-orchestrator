@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import { formatTimestamp } from "../format";
 import { dismissLaunch } from "../launch";
 import type { LaunchRecord } from "../types";
@@ -63,7 +64,7 @@ function FailedLaunchItem({
       .then((full) => setLog(full.log_tail || "(the process printed nothing)"))
       .catch((err) =>
         setLoadError(
-          (err instanceof ApiError ? err.message : String(err)) ||
+          errorMessage(err) ||
             "Could not load the log",
         ),
       );

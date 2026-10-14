@@ -1,8 +1,8 @@
 # STATUS
 
 - ID: `E-Rc4Hk8-cross-run-result-cache`
-- Updated At: `2026-10-05`
-- State: `Done` — implementation complete, gates G1a / G1b / G2 PASS, docs reconciled and signed off by the architect (`T-bdQZW4`, APPROVE-WITH-NOTES, 2026-10-05). **Post-merge follow-ups (not done here):** G0 execution and the E-Ag7Pw3 / E-Da5Tn9 merge verification (HLD §24.2).
+- Updated At: `2026-10-06`
+- State: `Done` — implementation complete, gates G1a / G1b / G2 PASS, docs reconciled and signed off by the architect (`T-bdQZW4`, APPROVE-WITH-NOTES, 2026-10-05). **Open after the 2026-10-06 closure run:** G0 execution (deferred: needs an operator and a real workload) and the approval-ordering pin test (deferred: blocked on E-Ag7Pw3 code). The E-Da5Tn9 merge landed in PR #17; the `ui/static` bundle was rebuilt 2026-10-06. Closed 2026-10-06: the `ui/files.read_file` FIFO open and the red lint file. Deferred: the `dispatch_cycle` reset bug (FU-5, see Outstanding follow-ups).
 - Owner: `manager` (execution) · `architect` (design)
 
 ## This update
@@ -104,8 +104,8 @@ history; `ao cache stats --json` supplies the store-growth fields.
    parallel at any time; T-JCOAsq Part 1 any time before T-XpF1pF.
 2. **Parent:** answer OQ-6, OQ-7 and OQ-8; plan the post-merge G0 run.
 3. **Separate bug ticket (recommended):** the missing-inputs branch resets `dispatch_cycle`
-   (engine.py ~1174).
-4. **Follow-up for E-Da5Tn9 or security:** the pre-existing `ui/files.read_file` FIFO open.
+   (engine.py ~1174). **Still deferred (FU-5)**, see Outstanding follow-ups.
+4. ~~Follow-up for E-Da5Tn9 or security: the pre-existing `ui/files.read_file` FIFO open.~~ **Done 2026-10-06** (`read_file` refuses FIFOs/sockets/devices without opening them).
 
 ## Comments
 - By: architect · Role: architect · Date: 2026-10-04 · Comment: Epic STATUS initialized (Rev 1).
@@ -187,19 +187,19 @@ By: developer · Role: developer · Date: 2026-10-05. State: **Done** (the archi
 - **G0** (parent/operator, post-merge): run the shadow-mode protocol on a real consumer workflow with consent;
   confirm the decision-rule thresholds (OQ-6). The protocol now ends with Step 9 (cleanup and retention,
   `ao cache clear --yes`), added at the architect sign-off.
-- **Merge with E-Ag7Pw3 / E-Da5Tn9** (HLD 24.2): classify new fields RULED, approval check before the lookup seam
+- **Merge with E-Ag7Pw3 / E-Da5Tn9** (HLD 24.2; E-Da5Tn9 merged in PR #17 and the UI bundle was rebuilt 2026-10-06; **the approvals half stays deferred** because E-Ag7Pw3 has no code, so the approval-ordering pin test has nothing to pin): classify new fields RULED, approval check before the lookup seam
   (add the pin test then), recapture I-2 goldens if output changed, rebuild the UI bundle, keep the CI
   `permissions:` / `pip-audit` and extend the per-module coverage loop.
 - **Accepted residuals** (HLD 0.4, ADR A4): provider/endpoint env not in the key; git `filter.<x>.clean` executed
   by the guard-3 probe; dirty tracked edits before the lookup; agent-writable cache directory and retention;
   nested workspace; active TOCTOU.
-- **Backlog:** one hygiene ticket for the deferred NITs (HLD 0.6 FU-4); the pre-existing missing-inputs
-  `dispatch_cycle` reset bug; the pre-existing `ui/files.read_file` FIFO open; the pre-existing red lint file
-  `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py`; OQ-4 (E-Ag7Pw3 representation).
+- **Backlog (deferred):** one hygiene ticket for the deferred NITs (HLD 0.6 FU-4; deferred: low value); the pre-existing missing-inputs
+  `dispatch_cycle` reset bug (**FU-5, deferred**: engine bug outside the closure scope, no auth impact; needs a regression test; 2-3 h); OQ-4/OQ-6/OQ-7/OQ-8 (parent decisions; OQ-8 flips the default cache policy).
+  **Closed 2026-10-06:** the `ui/files.read_file` FIFO open; the red lint file `output/E-YAAGhk-overseer-runner-template/repro_emit_lost_on_breaker_trip.py`.
 
 ## Next actions (current)
 1. Done: architect signed off `T-bdQZW4` (AC-7); task and epic `Done`; `EPIC.md` synced.
-2. **parent/operator (post-merge):** merge per HLD 24.2 and run its post-merge verification list; run G0.
-- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-bdQZW4 -> In Review (docs refresh delivered; commits 643ad11, eaead55, 5748316 and follow-ups). Rollup row and counts updated (19 Done, 1 In Review); epic state `In Review`, not Done, until the architect signs off; completion note above; matches the task `TASK.md`, `STATUS.md`, `HANDOFF.md` and `EPIC.md`.
+2. **parent/operator:** run G0 (**deferred**: needs operator consent and multi-day shadow runs of a real workflow). The merge per HLD 24.2 is done for E-Da5Tn9 (PR #17); the approvals half waits for E-Ag7Pw3 code.
+- By: developer · Role: developer · Date: 2026-10-05 · Comment: T-bdQZW4 -> In Review (docs refresh delivered; commits 643ad11, eaead55, 5748316 and follow-ups). Rollup row and counts updated (19 Done, 1 In Review); epic state `In Review` at that time (historical; superseded by the architect sign-off entry below and the `Done` header); completion note above; matches the task `TASK.md`, `STATUS.md`, `HANDOFF.md` and `EPIC.md`.
 - By: architect · Role: architect · Date: 2026-10-05 · Comment: AC-7 sign-off on T-bdQZW4: APPROVE-WITH-NOTES (37 claims independently re-checked against the code; seven doc corrections; manager-authorized G0 protocol Step 9). T-bdQZW4 -> Done; rollup 20 Done; epic State -> `Done`. G0 execution and the sibling-epic merge verification (HLD §24.2) remain post-merge follow-ups. Matches the task `TASK.md`, `STATUS.md`, `HANDOFF.md` and `EPIC.md`.
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Final verification: full suite 6902 passed / 10 skipped / 1 failed on HEAD cccfa53, the failure being the load-dependent test race in tests/test_wave_scheduler.py::TestParallelDispatchProof (test gated only task a, so b could finish before a entered; reproduces ~2/80 file-level runs, independent of the cache, goldens byte-identical). Fixed the test by gating both tasks (0/100 failures after). ruff check src tests clean; ruff format --check flags only the generated _build_info.py; mypy src shows only the 4 _version.py errors. Baseline before epic was 5159 passed / 8 skipped.

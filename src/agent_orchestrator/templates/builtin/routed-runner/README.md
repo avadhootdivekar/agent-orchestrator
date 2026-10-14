@@ -40,9 +40,10 @@ both are part of this template's contract per `breakdown-contract.md`/`template.
 
 - `type` (optional, enum `bug|epic|task|documentation|testing`) — force the route;
   omit to let `classify` decide from the prompt.
-- `repo_set` (**required**, no default) — key into the workspace's reposet config; the
-  repo(s) every stage operates on. Every workspace names its own; there is no sensible
-  cross-workspace default.
+- `repo_set` (optional, default empty) — key into the workspace's reposet config; the
+  repo(s) every stage operates on. Omit it for **workspace-only** (no-repo-set) mode
+  (ADR-0022): the run works on workspace-relative files only; the git-branch-off and
+  git-push stages assume repos and are only useful when `repo_set` is given.
 - `branch_policy` (optional, free text, default `"reuse the current branch unless it is
   already merged into main, in which case start fresh from latest main"`) — plain-English
   guidance for the `git-branch-off` head stage, e.g. `"always branch fresh off main"`,

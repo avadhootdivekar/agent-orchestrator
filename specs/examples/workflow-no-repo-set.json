@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "id": "no-repo-set-example",
+  "name": "Workspace-only (no repo_set) two-task example",
+  "defaults": {
+    "retries": { "max_attempts": 2, "backoff_seconds": 5 },
+    "timeout_seconds": 1800
+  },
+  "triggers": [{ "type": "manual" }],
+  "tasks": [
+    {
+      "id": "design",
+      "agent": "architect",
+      "instruction": "specs/examples/instructions/design.md",
+      "inputs": [],
+      "outputs": ["output/design.md"],
+      "depends_on": []
+    },
+    {
+      "id": "write-up",
+      "agent": "developer",
+      "instruction": "specs/examples/instructions/implement.md",
+      "inputs": ["output/design.md"],
+      "outputs": ["output/write-up.md"],
+      "depends_on": ["design"]
+    }
+  ]
+}

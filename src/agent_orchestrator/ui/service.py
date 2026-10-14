@@ -20,20 +20,25 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import yaml
 
-from ..auth.paths import default_denied_paths
+from ..auth.paths import default_denied_paths, is_within
 from ..config import load_agents, load_reposets
 from ..errors import OrchestratorError
 from ..feedback import (
+    MAX_OPERATOR_NOTE_CHARS,
+    MAX_OPERATOR_NOTES,
     FeedbackCapError,
     FeedbackEntry,
     FeedbackError,
     add_feedback,
+    add_operator_note,
     effective_for_task,
     effective_ratings,
     load_feedback,
+    load_operator_notes,
     validate_run_id,
 )
 from ..implicit_signals import apply_survival, implicit_signals
@@ -346,6 +351,10 @@ class DashboardService:
         """File contents for the code viewer (FR-B2)."""
         return asdict(self._browser.read_file(root, path))
 
+    def probe_paths(self, root: str | None, paths: list[str]) -> list[dict]:
+        """Existence class (`file|dir|missing|denied`) per path, order preserved; no contents."""
+        return [{"path": p, "status": self._browser.probe(root, p)} for p in paths]
+
     def read_html_preview(self, root: str | None = None, path: str = "") -> dict:
         """Sanitized, self-contained HTML/SVG preview safe for an `iframe srcdoc`.
 
@@ -459,15 +468,24 @@ class DashboardService:
         reposets_path = self._spec_path(
             self._config.reposets if self._config else None, ENV_REPOSETS
         )
+        no_repo = False
         if not reposets_path:
-            return
+            # No reposets file: only a no-repo-set workflow (ADR-0022) can still be
+            # validated here; for a repo-set workflow the engine reports the missing
+            # configuration itself, which this layer should not second-guess.
+            try:
+                no_repo = load_workflow(workflow_path).repo_set is None
+            except (OrchestratorError, OSError, ValueError):
+                no_repo = False
+            if not no_repo:
+                return
         try:
             workflow = load_workflow(workflow_path)
-            reposets = load_reposets(reposets_path)
+            reposets = load_reposets(reposets_path) if reposets_path else {}
         except (OrchestratorError, OSError, ValueError) as exc:
             raise DashboardValidationError(f"cannot launch {workflow_path}: {exc}") from exc
 
-        if workflow.repo_set not in reposets:
+        if workflow.repo_set is not None and workflow.repo_set not in reposets:
             raise DashboardValidationError(
                 f"Unknown repo_set {workflow.repo_set}; available: "
                 f"{', '.join(sorted(reposets)) or '(none)'} (reposets file: {reposets_path})"
@@ -480,6 +498,32 @@ class DashboardService:
             cross_validate(workflow, reposets, load_agents(agents_path))
         except (OrchestratorError, OSError, ValueError) as exc:
             raise DashboardValidationError(f"cannot launch {workflow_path}: {exc}") from exc
+
+    def _no_repo_workspace(
+        self, workflow_path: str | None, *, unknown_is_no_repo: bool = False
+    ) -> str | None:
+        """The workspace to forward as ``--workspace`` for a no-repo-set workflow, else None.
+
+        A workflow with a ``repo_set`` keeps its reposet-derived workspace (flag omitted, so
+        its argv is unchanged); a no-repo-set one (ADR-0022) has no reposet to supply it, so
+        the dashboard's own workspace is passed explicitly. With *unknown_is_no_repo* (resume),
+        a run whose workflow path is unknown also gets the workspace, so ``ao resume`` does not
+        fall back to a CLI default chain that can differ from the dashboard's workspace.
+        """
+        if not workflow_path:
+            return str(self.workspace_root) if unknown_is_no_repo else None
+        try:
+            workflow = load_workflow(workflow_path)
+        except (OrchestratorError, OSError, ValueError):
+            return None
+        return str(self.workspace_root) if workflow.repo_set is None else None
+
+    def _workspace_kwargs(
+        self, workflow_path: str | None, *, unknown_is_no_repo: bool = False
+    ) -> dict[str, Any]:
+        """``{"workspace": ...}`` for a no-repo-set workflow, else ``{}`` (call shape unchanged)."""
+        workspace = self._no_repo_workspace(workflow_path, unknown_is_no_repo=unknown_is_no_repo)
+        return {"workspace": workspace} if workspace else {}
 
     def create_instance(
         self,
@@ -563,6 +607,7 @@ class DashboardService:
                     reposets=self._config.reposets if self._config else None,
                     agents=self._config.agents if self._config else None,
                     options=options or {},
+                    **self._workspace_kwargs(result.workflow_path),
                 )
             except LaunchError as exc:
                 raise DashboardError(str(exc)) from exc
@@ -688,6 +733,16 @@ class DashboardService:
             raise DashboardError("no workflow specified and none configured in .ao/config.yaml")
         if not Path(workflow_path).is_file():
             raise DashboardError(f"workflow spec not found: {workflow_path}")
+        # An absolute path from the HTTP caller must not launch a spec from outside the
+        # workspace (or the configured spec search roots). Resolved first so `..` and
+        # symlinks cannot escape. The operator-configured workflow is always launchable
+        # (``list_workflows`` offers it even from outside the roots).
+        resolved_wf = Path(workflow_path).resolve()
+        allowed = [self.workspace_root, *self._search_roots]
+        if self._config and self._config.workflow:
+            allowed.append(str(Path(self._config.workflow).resolve()))
+        if not any(is_within(resolved_wf, Path(root)) for root in allowed):
+            raise DashboardError(f"workflow spec is outside the workspace: {workflow_path}")
 
         if prompt and prompt.strip():
             info = _load_workflow_info(Path(workflow_path))
@@ -708,6 +763,7 @@ class DashboardService:
                 reposets=self._config.reposets if self._config else None,
                 agents=self._config.agents if self._config else None,
                 options=options or {},
+                **self._workspace_kwargs(workflow_path),
             )
         except LaunchError as exc:
             raise DashboardError(str(exc)) from exc
@@ -728,6 +784,7 @@ class DashboardService:
                 reposets=self._config.reposets if self._config else None,
                 agents=self._config.agents if self._config else None,
                 options=options or {},
+                **self._workspace_kwargs(workflow_path, unknown_is_no_repo=True),
             )
         except LaunchError as exc:
             raise DashboardError(str(exc)) from exc
@@ -860,6 +917,50 @@ class DashboardService:
             "feedback": self._feedback_view(run_id, state, entries),
         }
 
+    def get_operator_notes(self, run_id: str) -> dict:
+        """Queued operator notes (history, oldest first) plus whether new ones are accepted."""
+        state = self._known_run_state(run_id)
+        try:
+            doc = load_operator_notes(self.workspace_root, run_id)
+        except FeedbackError as exc:
+            raise self._map_feedback_error(exc) from exc
+        return self._operator_notes_view(run_id, state, doc.notes)
+
+    def add_run_operator_note(self, run_id: str, *, text: str) -> dict:
+        """Queue one dashboard-sourced note for a LIVE run via the shared `add_operator_note`.
+
+        A note only ever reaches tasks dispatched after it, so on a run that is not live it would
+        silently do nothing: refuse that (409) rather than accept and ignore it.
+        """
+        state = self._known_run_state(run_id)
+        if not self._notes_accepted(run_id, state):
+            raise DashboardConflictError(
+                f"run {run_id!r} is not live; notes only reach tasks that start while it runs"
+            )
+        try:
+            note = add_operator_note(
+                self.workspace_root, run_id, text=text, source=DASHBOARD_FEEDBACK_SOURCE
+            )
+            doc = load_operator_notes(self.workspace_root, run_id)
+        except FeedbackError as exc:
+            raise self._map_feedback_error(exc) from exc
+        return {
+            "note": note.model_dump(),
+            "notes": self._operator_notes_view(run_id, state, doc.notes),
+        }
+
+    def _notes_accepted(self, run_id: str, state: RunState) -> bool:
+        return state.status == "running" and self._supervisor.is_running(run_id)
+
+    def _operator_notes_view(self, run_id: str, state: RunState, notes: list) -> dict:
+        return {
+            "run_id": run_id,
+            "accepting": self._notes_accepted(run_id, state),
+            "max_chars": MAX_OPERATOR_NOTE_CHARS,
+            "max_notes": MAX_OPERATOR_NOTES,
+            "notes": [n.model_dump() for n in notes],
+        }
+
     def run_signals(self, run_id: str, *, survival: bool = False, ref: str | None = None) -> dict:
         """Implicit signals plus (on demand) diff survival for one run."""
         state = self._known_run_state(run_id)
@@ -917,7 +1018,7 @@ class DashboardService:
             return DashboardConflictError(message)
         if "unknown task" in message or "run not found" in message:
             return DashboardNotFoundError(message)
-        if message.startswith("corrupt feedback file") or "cannot read run state" in message:
+        if message.startswith("corrupt ") or "cannot read run state" in message:
             return DashboardStoreError(message)
         return DashboardValidationError(message)
 

@@ -171,8 +171,9 @@ def test_template_yaml_params_shape() -> None:
     assert set(type_param["enum"]) == {"bug", "epic", "task", "documentation", "testing"}
 
     repo_set_param = params["repo_set"]
-    assert repo_set_param["required"] is True
-    assert "default" not in repo_set_param  # no sensible cross-workspace default (HLD §2.8)
+    # Optional since no-repo-set mode (ADR-0022 D8): empty default => workspace-only run.
+    assert repo_set_param["required"] is False
+    assert repo_set_param["default"] == ""
 
     branch_policy_param = params["branch_policy"]
     assert branch_policy_param["required"] is False

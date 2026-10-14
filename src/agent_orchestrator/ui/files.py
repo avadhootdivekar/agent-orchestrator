@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import base64
 import os
+import stat as stat_mod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 
 # `agent_orchestrator.cache` is an import-free package marker; `.constants` is a leaf (only `re`).
 from agent_orchestrator.cache.constants import CACHE_DIR_PARTS
@@ -90,6 +91,11 @@ def _is_image_magic(ext: str, head: bytes) -> bool:
     if not prefixes:
         return False
     return any(head.startswith(prefix) for prefix in prefixes)
+
+
+# Result of :meth:`FileBrowser.probe`. ``denied`` deliberately covers BOTH "outside every root /
+# denied path" and "unresolvable input" so the probe is never an existence oracle outside a root.
+ProbeStatus = Literal["file", "dir", "missing", "denied"]
 
 
 class PathNotAllowedError(Exception):
@@ -235,6 +241,26 @@ class FileBrowser:
 
         return root, resolved
 
+    def probe(self, root_name: str | None, rel_path: str) -> ProbeStatus:
+        """Classify *rel_path* for link auto-detection without reading it.
+
+        Reuses :meth:`resolve` (the sole containment/deny authority) and a ``stat`` only: no
+        contents, size or mtime ever leave this method. Anything :meth:`resolve` refuses -- an
+        escape, a symlink out, a denied path, a NUL byte, an unknown root -- is ``"denied"``;
+        ``"missing"`` is only ever reported for a path that is inside the root.
+        """
+        try:
+            _, resolved = self.resolve(root_name, rel_path)
+            mode = resolved.stat().st_mode
+        except (PathNotAllowedError, ValueError):
+            return "denied"
+        except OSError:
+            return "missing"
+        if stat_mod.S_ISDIR(mode):
+            return "dir"
+        # FIFOs/sockets/devices are not viewable (read_file refuses them), so don't link them.
+        return "file" if stat_mod.S_ISREG(mode) else "missing"
+
     def relative(self, root: Root, path: Path) -> str:
         """Return *path* expressed relative to *root*, forward-slashed ('' for the root)."""
         rel = path.relative_to(Path(root.path))
@@ -327,6 +353,11 @@ class FileBrowser:
             raise PathNotFoundError(f"no such file: {rel_path}")
         if resolved.is_dir():
             raise PathNotFoundError(f"is a directory: {rel_path}")
+
+        # A FIFO/socket/device would block `open()` (a FIFO with no writer hangs the request
+        # thread forever), so only regular files are ever opened.
+        if not stat_mod.S_ISREG(resolved.stat().st_mode):
+            raise PathNotFoundError(f"not a regular file: {rel_path}")
 
         ext = resolved.suffix.lower().lstrip(".")
         size = resolved.stat().st_size

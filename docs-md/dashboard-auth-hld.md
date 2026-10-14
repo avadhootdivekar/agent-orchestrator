@@ -134,7 +134,7 @@ None changes the frozen HTTP contract beyond the manager-approved E1 `transport.
 
 | # | Residual | Why accepted / mitigation |
 |---|---|---|
-| 1 | `DashboardService.start_run` accepts an absolute `workflow_path`; launch logs are returned to the browser (it bypasses the file-browser denial for a would-be disclosure through a launch error) | Anyone who may launch runs already executes arbitrary agent code as the OS user (A10); re-evaluated by T-2wE08U, not blocked |
+| 1 | **Path part closed 2026-10-06:** `DashboardService.start_run` now rejects any `workflow_path` resolving (symlinks followed) outside the workspace or spec search roots. Remaining: launch logs are returned to the browser (it bypasses the file-browser denial for a would-be disclosure through a launch error) | Anyone who may launch runs already executes arbitrary agent code as the OS user (A10); re-evaluated by T-2wE08U, not blocked |
 | 2 | Under `trusted_proxies=127.0.0.1`, a **local** process can claim a client address via `X-Forwarded-For` | The per-account lockout still applies; bind the app to a unix socket or firewall its port (README) |
 | 3 | Account-lockout DoS and a shared throttle bucket for all remote users behind a proxy while `AO_UI_AUTH_TRUSTED_PROXIES` is unset (M-2) | Bounded backoff (≤ 15 min), `ao auth unlock`, the `proxy_suspected` warning |
 | 4 | IPv6 throttling is per `/64` (`IPV6_THROTTLE_PREFIX_LEN`): an attacker with a wider prefix can rotate addresses | The per-account lockout still applies |
@@ -142,15 +142,15 @@ None changes the frozen HTTP contract beyond the manager-approved E1 `transport.
 | 6 | File-browser denial is by resolved path: a **hard link** to a store file elsewhere in the workspace would be served (L-2) | Creating one needs same-user write access (out of scope, A10) |
 | 7 | **Stale-binary fail-open:** a global `ao` that predates this feature ignores `AO_UI_AUTH` / `ui.auth` and starts unauthenticated without error | Documented prominently; `ao service install --auth` fails closed on an old binary; verify with `ao auth status` |
 | 8 | Per-session counters (second-factor attempts and similar) are not concurrency-exact (record mutators) | Bounded overshoot; the account lockout is the real limit |
-| 9 | `dompurify` has a moderate advisory (GHSA-55q2-fjhq-7xh7, ≤ 3.4.12), a runtime dependency of the file preview | Below the `--audit-level=high` gate; the bump is a follow-up |
+| 9 | `dompurify` has a moderate advisory (GHSA-55q2-fjhq-7xh7, ≤ 3.4.12), a runtime dependency of the file preview | Resolved 2026-10-06: bumped to 3.4.16 |
 | 10 | L-4 health version hash; DRY header-constant refactor | Cosmetic, deferred |
 | 11 | A cookie harvested by a local listener cannot call the API (D25) but still renders the hub index, and cookie tossing forces a logout (A4); TOTP seeds are in clear in `users.json` (L5); same-user processes read the stores (A10) | By design; follow-ups in the ROADMAP |
 
-**Verification gap (recorded honestly).** AC-34, the real-browser smoke
-(`tests/auth/test_browser_smoke.py`), was **NOT RUN**: Playwright is not installed on the build
-machine (system Chrome exists). The file has never executed, so expect selector/timing fixes on
-the first real run; the forced-enrollment/QR, hub-page and Firefox/WebKit browser cases are not
-written. An `ao service run` hub subprocess e2e is not required by §20.3 (the hub is covered
+**Verification gap (closed 2026-10-06).** AC-34, the real-browser smoke
+(`tests/auth/test_browser_smoke.py`), was NOT RUN at epic close (Playwright missing). It was then run
+on system Chrome 138 via Playwright and **passed (3 passed)**: the CSP detector control, login +
+cross-port proof check, and a forced-enrollment/QR case added that day. Still unwritten: the
+hub-page and Firefox/WebKit browser cases. An `ao service run` hub subprocess e2e is not required by §20.3 (the hub is covered
 in-process). `npm ci` was not re-run (the existing `node_modules` was reused; the rebuild-diff is
 clean). **X1–X6 stay open until E-Ag7Pw3 merges.**
 
@@ -2858,7 +2858,8 @@ ASYNC FUNCTION AttemptGuard.attempt(subject, client, verify, failure_event, rese
 class AuditOutcome(StrEnum): SUCCESS = "success"; FAILURE = "failure"; INFO = "info"
 AUDIT_EVENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 AUTH_DETAIL_KEYS: frozenset[str] = frozenset({"reason", "second_factor", "recovery_codes_remaining", "policy",
-    "retry_after_seconds", "lockout_failures", "source", "target_username", "everywhere", "rehashed", "suppressed"})
+    "retry_after_seconds", "lockout_failures", "source", "target_username", "everywhere", "rehashed", "suppressed",
+    "os_uid", "os_user"})   # os_uid/os_user: CLI events only (D6)
 FAILURE_CLASS_EVENTS: frozenset[AuditEventName]   # the *.failure events (coalescing applies to these only)
 
 @dataclass(frozen=True)
@@ -3121,6 +3122,7 @@ class AuthProvider(ABC):          # FastAPI-free; the only seam type (protocols 
 | `auth.startup.refused` | `prepare_auth` when it raises for exit 78. Best-effort: the state directory may not exist. |
 | `auth.startup.disabled_by_config` (v2.1) | `prepare_auth`, for `ConfigRisk.DISABLED_BY_CONFIG` (row 14), instead of `auth.startup.refused`. Best-effort. |
 | `auth.startup.totp_downgraded_by_config` (v2.1) | `prepare_auth`, for `ConfigRisk.TOTP_DOWNGRADED_BY_CONFIG` (row 15). Best-effort. |
+| `auth.store.permissions_loosened` (post-startup, D5) | `LocalPasswordProvider._recheck_permissions`: re-runs `check_private_paths` on login/re-auth and (throttled, 5 s) on session revalidation; once per loosening episode; the request then fails closed with 503. |
 
 #### 11.15.3 `check_ready()` and `startup_warnings()`
 
@@ -4488,8 +4490,8 @@ definitions were read from `docs-md/human-approval-gates-hld.md` §26 / CE-3 / C
 | X5 | `src/agent_orchestrator/ui/static/**` + `ui/src/**` | `T-pIZq3q` rebuilds and commits the bundle (CE-3: rebuild once after merging all `ui/src` changes; never merge `static/` by hand) | row 15: T-vCgsU6 is this epic's only bundle committer | **Rule:** only the last frontend task of each epic regenerates and commits `ui/static`, after merging. At the second epic's merge, re-run `npm ci && npm run build` on the merged `ui/src` and commit the result; never hand-merge hashed assets. |
 | X6 | `src/agent_orchestrator/project_config.py` | `T-drPIif` row 35: a 6-key `CONFIG_ENV_DENYLIST` in `apply_project_config_env` (CE-4b) | only the optional `_INIT_TEMPLATE` comment (row 9, T-otjIkJ); `apply_project_config_env` is never called on the `ao ui` / `ao service run` paths | No overlap in the same function. Recommended (not required, since those paths never call it): add `AO_UI_AUTH*`, `AO_AUTH_DIR` and `AO_AUTH_STATE_DIR` to that single denylist when both epics have merged. |
 
-**Accepted residual (developer finding):** `DashboardService.start_run` (`ui/service.py:662`)
-accepts an absolute `workflow_path`, and launch logs are returned to the browser. Launching a
+**Accepted residual (developer finding; the path part was closed 2026-10-06 by a workspace/search-root restriction):** `DashboardService.start_run` (`ui/service.py`)
+formerly accepted any absolute `workflow_path`, and launch logs are returned to the browser. Launching a
 "workflow" that points at `users.json` would fail validation, and the error could echo file
 content into the launch log. This is **not** blocked: anyone who may launch runs may already
 execute arbitrary agent code as the OS user (A10, and A6 when auth is off), so this path adds no
@@ -5694,7 +5696,7 @@ class Principal:
 | L4 `--port 0` | LOW | **ADOPTED.** `prepare_auth` refuses port 0 when auth is on (exit 78) | §11.20; §12.6; §19.1; AC-3; T-jVqH8w, T-PDGw9p |
 | L5 TOTP seed stored in clear | LOW | **ADOPTED (documentation).** The README says plainly that the seed is in clear in `users.json` and that backups must be encrypted | §6.3 A7; §18 #7; §27; T-otjIkJ |
 | L6 Parent-directory check on `umask 002` hosts | LOW | **ADOPTED.** A group-writable parent **owned by the euid** warns instead of refusing; other-writable or foreign-owned group-writable parents still refuse; the check judges the resolved parent, so a symlinked `~/.config` is checked at its target. Interpretation note: the manager's "check ln" is read as "verify on a `umask 002` (Debian/Ubuntu-style) home, including a symlinked parent"; T-8NQP8J's tests cover both | D5; §5 A-18; §6.4 S13; §11.3.4 row 13; §11.5; §11.15.3; §19.1; AC-13; T-8NQP8J, T-XchniS |
-| L7 Smaller hygiene items | LOW | **ADOPTED in part.** `~/.config/ao/service.env` (API keys) joins the default denied paths. **Follow-ups (not in this epic):** re-checking store permissions after startup; recording the OS uid in CLI audit events | D5; §3.5 NFR-1; §11.3.5; §11.4; §12.6; AC-13; T-Hd4wQ2; §28.9 D (follow-ups) |
+| L7 Smaller hygiene items | LOW | **ADOPTED in part.** `~/.config/ao/service.env` (API keys) joins the default denied paths. Store permissions are also re-checked after startup (audit `auth.store.permissions_loosened`, fail closed; §11.15.2). **Done (D6, 2026-10-06):** CLI audit events record `os_uid` (effective uid) and `os_user` (passwd name, omitted when unresolvable) in `details`; web events never carry them | D5; §3.5 NFR-1; §11.3.5; §11.4; §12.6; AC-13; T-Hd4wQ2; §28.9 D (follow-ups) |
 | L8 `start_run` residual | LOW (note) | **NOTED.** The reviewer confirmed `load_workflow` errors echo only key names or positions; the accepted residual holds, and `service.env` (L7) was the real exposure | §16 (residual; line reference fixed to `ui/service.py:662`); T-2wE08U re-checks |
 | Test gate 1: cookie-without-proof principal enumeration | — | **ADOPTED** as AC-44 | §20.3 #15; AC-44 |
 | Test gate 2: `Principal.roles` aliasing | — | **ADOPTED** in AC-11 | §20.3 #16; AC-11 |
@@ -5725,8 +5727,10 @@ class Principal:
 
 - **OQ-11** (new): whether the 3-sprint calendar uses the agent-lane basis or the human-team
   arithmetic (§24.1, §25.3). Manager decision.
-- **Follow-ups recorded, not in this epic:** re-check store permissions after startup; OS uid in CLI
-  audit events (security L7); a client-rendered hub index carrying the proof (removes the last
+- **Done after this epic (D6, 2026-10-06):** OS uid in CLI audit events (security L7): `details.os_uid` /
+  `details.os_user`, both in `AUTH_DETAIL_KEYS`, set only by `auth/cli.py`.
+- **At-rest TOTP seed encryption: deferred (2026-10-06 audit D4)**: key custody (keyring vs key file vs external key) is an owner decision; a key file next to the store adds little against a same-uid attacker (A10). Not implemented; seeds remain in clear in the 0600 `users.json`.
+- **Follow-ups recorded, not in this epic:** a client-rendered hub index carrying the proof (removes the last
   cookie-only route, A4); adding `AO_UI_AUTH*`, `AO_AUTH_DIR` and `AO_AUTH_STATE_DIR` to the shared
   config-env denylist once both epics have merged (§16 X6).
 - **Cross-epic:** the approvals epic's tickets are not edited here. The manager relays rows X1–X6

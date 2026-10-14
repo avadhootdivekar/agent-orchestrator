@@ -52,6 +52,40 @@ class TestHealthAndWorkspace:
         assert client.get(f"{API_PREFIX}/openapi.json").status_code == 200
 
 
+class TestResolvePathsApi:
+    """`POST /api/files/resolve` (A5): status-only probe sharing the file API's guard."""
+
+    URL = f"{API_PREFIX}/files/resolve"
+
+    def test_mixed_batch_preserves_order_and_returns_only_status(
+        self, client: TestClient, workspace: Path
+    ) -> None:
+        (workspace / "a.md").write_text("SECRET-CONTENT", encoding="utf-8")
+        (workspace / "d").mkdir()
+        paths = ["d", "../../etc/passwd", "a.md", "nope.txt", "/etc/passwd"]
+        response = client.post(self.URL, json={"paths": paths})
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert [r["path"] for r in results] == paths
+        assert [r["status"] for r in results] == ["dir", "denied", "file", "missing", "denied"]
+        assert all(set(r) == {"path", "status"} for r in results)
+        assert "SECRET-CONTENT" not in response.text
+
+    def test_too_many_paths_is_422(self, client: TestClient) -> None:
+        assert client.post(self.URL, json={"paths": ["a"] * 201}).status_code == 422
+
+    def test_overlong_path_is_422(self, client: TestClient) -> None:
+        assert client.post(self.URL, json={"paths": ["a" * 1025]}).status_code == 422
+
+    def test_unknown_field_and_bad_shape_are_422(self, client: TestClient) -> None:
+        assert client.post(self.URL, json={"paths": [], "x": 1}).status_code == 422
+        assert client.post(self.URL, json={"paths": "a"}).status_code == 422
+
+    def test_unknown_root_is_denied_not_500(self, client: TestClient) -> None:
+        body = client.post(self.URL, json={"paths": ["a"], "root": "nope"}).json()
+        assert body["results"][0]["status"] == "denied"
+
+
 class TestFilesApi:
     def test_lists_the_root_including_hidden_entries(
         self, client: TestClient, workspace: Path

@@ -20,7 +20,8 @@ import {
   formatTimestamp,
 } from "../format";
 import type { RunGraph as RunGraphData, TaskStat } from "../types";
-import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
+import { PathLink, PathText } from "../components/PathText";
+import { OpenInNewTabButton } from "../tabs/TabLink";
 import { PANEL_PENDING_STATUS, panelModel } from "./model";
 
 export interface TaskDetailPanelProps {
@@ -369,7 +370,11 @@ export function TaskDetailPanel({
         <h3>Outcome</h3>
         {panel.hasStat ? (
           <>
-            {panel.outcome.notTakenReason ? <p>Not taken: {panel.outcome.notTakenReason}</p> : null}
+            {panel.outcome.notTakenReason ? (
+              <p>
+                Not taken: <PathText text={panel.outcome.notTakenReason} />
+              </p>
+            ) : null}
             {panel.outcome.integrationStatus ? (
               <p>
                 Integration: {panel.outcome.integrationStatus}
@@ -379,7 +384,7 @@ export function TaskDetailPanel({
             ) : null}
             {panel.outcome.outputArtifactPath ? (
               <p className="mono row">
-                {panel.outcome.outputArtifactPath}
+                <PathLink path={panel.outcome.outputArtifactPath} />
                 <CopyButton text={panel.outcome.outputArtifactPath} />
               </p>
             ) : null}
@@ -387,7 +392,7 @@ export function TaskDetailPanel({
               <ul className="task-detail-outputs">
                 {panel.outcome.outputs.map((path) => (
                   <li key={path} className="mono">
-                    <TabLink target={{ kind: "file", params: { path } }}>{path}</TabLink>
+                    <PathLink path={path} />
                   </li>
                 ))}
               </ul>

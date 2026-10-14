@@ -213,6 +213,13 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
     "tests/conftest.py": (
         "additive (E-Da5Tn9 T-kzEzwy): autouse `_hermetic_auth_env` fixture appended"
     ),
+    # Additive only (6-oct enhancements A5, w02-02): new `TestResolvePathsApi` / `TestProbe`
+    # classes for `POST /api/files/resolve` and `FileBrowser.probe`; git diff vs. base shows
+    # insertions only, no pre-existing test or assertion touched.
+    "tests/ui/test_api_integration.py": (
+        "additive (6-oct A5 w02-02): TestResolvePathsApi for POST /api/files/resolve"
+    ),
+    "tests/ui/test_files.py": ("additive (6-oct A5 w02-02): TestProbe for FileBrowser.probe"),
 }
 
 

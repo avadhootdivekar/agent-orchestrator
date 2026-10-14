@@ -870,3 +870,66 @@ def test_the_default_dir_comparison_survives_an_unresolvable_path(tmp_path: Path
     loop.symlink_to(loop)  # a symlink loop: Path.resolve() raises on it
     assert _differs(loop, tmp_path / "elsewhere") is True
     assert _differs(tmp_path, tmp_path) is False
+
+
+# -- permission re-check after startup (E-Da5Tn9 D5) ---------------------------------------------
+
+
+class TestPermissionRecheck:
+    def _loosen(self, env: ProviderEnv) -> None:
+        env.paths.users_file.chmod(0o644)
+
+    def test_login_fails_closed_and_audits_once_when_users_file_loosens(
+        self, tmp_path: Path
+    ) -> None:
+        env = make_env(tmp_path)
+        env.provider.check_ready()
+        assert login(env).username == "alice"
+        self._loosen(env)
+        for _ in range(2):
+            with pytest.raises(StoreUnavailableError):
+                login(env)
+        events = env.audit_events("auth.store.permissions_loosened")
+        assert len(events) == 1  # once per episode, not once per attempt
+        assert events[0]["outcome"] == "failure"
+
+    def test_login_fails_closed_when_store_dir_loosens(self, tmp_path: Path) -> None:
+        env = make_env(tmp_path)
+        env.provider.check_ready()
+        env.paths.store_dir.chmod(0o755)
+        with pytest.raises(StoreUnavailableError):
+            login(env)
+        assert len(env.audit_events("auth.store.permissions_loosened")) == 1
+
+    def test_revalidate_fails_closed_then_recovers(self, tmp_path: Path) -> None:
+        env = make_env(tmp_path)
+        env.provider.check_ready()
+        rec = env.store.snapshot().users["alice"]
+        assert env.provider.revalidate(rec.user_id, rec.credential_epoch) is Revalidation.VALID
+        self._loosen(env)
+        env.clock.advance(10)  # past the re-check interval
+        verdict = env.provider.revalidate(rec.user_id, rec.credential_epoch)
+        assert verdict is Revalidation.UNAVAILABLE
+        env.paths.users_file.chmod(0o600)
+        env.clock.advance(10)
+        assert env.provider.revalidate(rec.user_id, rec.credential_epoch) is Revalidation.VALID
+        assert len(env.audit_events("auth.store.permissions_loosened")) == 1
+
+    def test_revalidate_is_throttled_but_keeps_the_last_verdict(self, tmp_path: Path) -> None:
+        env = make_env(tmp_path)
+        env.provider.check_ready()
+        rec = env.store.snapshot().users["alice"]
+        assert env.provider.revalidate(rec.user_id, rec.credential_epoch) is Revalidation.VALID
+        self._loosen(env)  # inside the interval: not noticed yet by the cheap path
+        assert env.provider.revalidate(rec.user_id, rec.credential_epoch) is Revalidation.VALID
+        with pytest.raises(StoreUnavailableError):  # but login always re-checks
+            login(env)
+        # the failing verdict is now cached for the per-request path too
+        verdict = env.provider.revalidate(rec.user_id, rec.credential_epoch)
+        assert verdict is Revalidation.UNAVAILABLE
+
+    def test_private_store_emits_no_event(self, tmp_path: Path) -> None:
+        env = make_env(tmp_path)
+        env.provider.check_ready()
+        login(env)
+        assert env.audit_events("auth.store.permissions_loosened") == []

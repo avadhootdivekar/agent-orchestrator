@@ -275,6 +275,9 @@ class KeyRequest:
     environ: Mapping[str, str]  # for the fingerprint env allowlist
     max_input_bytes: int
     max_input_files: int
+    # ABSOLUTE path of the run's queued operator notes file when it exists (A6). Its CONTENT enters
+    # the key (like a general instruction), so a task cached before a note is never served after it.
+    operator_notes_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -487,6 +490,7 @@ class LookupRequest:
     repo_paths: Mapping[str, str]  # ctx.repo_paths (absolute)
     dispatch_cycle: int  # ts.dispatch_cycle AFTER the engine's increment (kept, D12)
     now: datetime  # engine clock
+    operator_notes_path: str | None = None  # absolute; see KeyRequest.operator_notes_path
 
 
 @dataclass(frozen=True)

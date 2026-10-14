@@ -1,17 +1,18 @@
 # STATUS
 
 - ID: `E-Da5Tn9-dashboard-auth-totp`
-- Updated At: `2026-10-05`
-- State: `Done` (23/23 tasks; AC-34 browser smoke NOT RUN, carried as a follow-up)
+- Updated At: `2026-10-06`
+- State: `Done` (23/23 tasks; AC-34 browser smoke PASSED 2026-10-06: 3 passed)
 - Owner: `manager`
 
 ## This update
+- By: tester · Role: agent · Date: 2026-10-06 · Comment: **AC-34 run and closed.** 2026-10-06: `pytest -q -m browser tests/auth/test_browser_smoke.py` = **3 passed** (Chrome 138 via Playwright, isolated venv, no prod install; 4 consecutive runs): CSP detector negative control, login + password login + cross-port proof check (S21), and the new forced-enrollment case (`add-user --require-totp` token -> real SVG QR, secret, URI -> confirm with a live code -> 10 recovery codes -> acknowledge -> dashboard; no CSP violation or console error). No defects found in the product code; the only fix was a test race (the QR chunk is lazy-loaded, so the test waits for `svg path`). Screenshots: `output/E-Da5Tn9-dashboard-auth-totp/{login,enroll-qr}.png`. Hub login page and Firefox/WebKit remain uncovered. `tests/auth` full dir: 2182 passed, 1 skipped.
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: **Epic closed: all 23 tasks Done.** The security
   + design review gate (T-2wE08U) signed off (0 CRITICAL; H1/H2/M fixed; accepted residuals listed) and
   T-otjIkJ refreshed the docs to the as-built state (HLD "As built", ADR-0021 Accepted, README,
   `docs-md/dashboard-authentication.md`, ROADMAP, `ui/README.md`). Full suite 7471 passed / 13
   skipped. Rollup synchronized from each task STATUS (counts 23/23). Open items are follow-ups, not
-  blockers (see Next actions). Branch `ad/dashboard-auth-totp`, not pushed.
+  blockers (see Next actions). (Branch `ad/dashboard-auth-totp` was merged to `main` in PR #17; the 2026-10-06 closure work is on `ad/6-oct-enhancements`.)
 - By: manager · Role: agent · Date: 2026-10-05 · Comment: Independent gates re-verified as NOT previously run (the v2 STATUS 'launched' note referred to the architect's v1 consultations); reviewer + dev-security gates run on v2 and folded into HLD §28.9 (commit 4d2aafd). Implementation started on branch ad/dashboard-auth-totp: Done so far T-kzEzwy (9446c9d), T-pQ73eO (50e0d39), T-R7JhTL (e996c4e), T-s6sJmB (1ce99bf), T-kwwJ82 (3e9e0db), T-8NQP8J (4837d48).
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: **Design package v2.1 (gates
   folded).** Both independent gates the manager ran on v2 are folded in with the manager's final
@@ -26,7 +27,7 @@
     `COOKIE_ONLY_NAVIGATION` route (hub index); M2 loopback = peer + Host + no forwarding headers;
     M3 config-only disable refused (exit 78) and config-only TOTP downgrade warned/audited; M4 merge
     edges #9 ⇒ #13 and #11 ⇒ #13, epic to `main` only after T-2wE08U; M6 no create/chmod of a
-    config-chosen store; L1–L7 (L7's permission re-check and CLI uid are follow-ups); four test
+    config-chosen store; L1–L7 (L7's permission re-check is DONE, see D5 below; the CLI uid is DONE, see D6 below); four test
     gates as AC-43..AC-45 and AC-11.
   - **Design review (adopted except minor 8, kept by manager decision):** approvals-compatible
     `xdg.resolve_config_dir` and cross-epic rows X1–X6 in HLD §16 (the approvals epic's files were
@@ -81,7 +82,7 @@
 | T-R7JhTL-hub-login-page | Done | S1→S2 | v2.1: 3 d; SPA↔hub contract test; owns `package.json` scripts and `tsconfig` |
 | T-pQ73eO-spa-auth-gate-login | Done | S1 | v2.1: no longer commits `ui/static` |
 | T-vCgsU6-spa-enroll-account-qr | Done | S2 | v2.1: the only `ui/static` committer; baseline check first |
-| T-U2ERMo-auth-e2e-regression-sweep | Done | S3 | v2.1: 3 d; **AC-34 browser smoke NOT RUN** (Playwright not installed), recorded as a follow-up |
+| T-U2ERMo-auth-e2e-regression-sweep | Done | S3 | v2.1: 3 d; **AC-34 browser smoke PASSED 2026-10-06** (3 passed: CSP control, login + cross-port proof, forced enrollment with QR) |
 | T-2wE08U-auth-security-review | Done | S3 | v2.1: 2.5 d; re-verify §28.9; epic merges to `main` only after this |
 | T-otjIkJ-auth-docs-refresh-closure | Done | S3 | Post-implementation docs refresh; v2.1: 2 d |
 
@@ -100,31 +101,52 @@ Counts: 23 tasks · 23 Done · 0 In Progress · 0 Blocked · 0 Not started · 61
 ## Risks / Blockers
 - **No blockers.** Everything below is an accepted residual or a follow-up (full list: HLD "As built"
   section D; ROADMAP section 4):
-  - **AC-34 browser smoke NOT RUN** (Playwright missing); `test_browser_smoke.py` has never executed.
+  - ~~AC-34 browser smoke NOT RUN~~ **Closed 2026-10-06**: 3 passed on Chrome 138 (forced-enrollment/QR case added). Still open, **deferred**: hub login page browser case (low marginal value: the hub page is covered by `tests/auth` HTTP tests and the SPA↔hub contract test) and Firefox/WebKit (browsers not installed in the agent environment; Chrome is the supported smoke target).
   - Cross-epic rows **X1-X6 open until E-Ag7Pw3 (approvals) merges**; merge-order coordination with
     E-Rc4Hk8 (result cache) and E-Ag7Pw3 for `ui/app.py`, `cli.py`, `service/*`, `xdg.py`,
     `ui/files.py`, `ui/static`.
-  - Security residuals: `start_run` absolute `workflow_path`; local `X-Forwarded-For` claim under
+  - Closed 2026-10-06 (unit w03-03): `start_run` now rejects a `workflow_path` that resolves outside the workspace/search roots; `ui/files.read_file` refuses FIFOs/sockets/devices without opening them; the red lint file `repro_emit_lost_on_breaker_trip.py` is fixed. **Deferred:** the `dispatch_cycle` reset in the engine's missing-inputs branch (engine bug, not auth; no auth impact; tracked as FU-5 of E-Rc4Hk8).
+  - Security residuals: local `X-Forwarded-For` claim under
     `trusted_proxies=127.0.0.1`; account-lockout DoS and a shared throttle bucket behind an
     unconfigured proxy; IPv6 `/64` rotation; phantom-eviction oracle; hard link vs the denied-path
     check; stale-binary fail-open when auth is enabled only via `service.env`; per-session counter
-    concurrency; `dompurify` moderate advisory; TOTP seeds in clear.
-  - **OQ-11** (calendar basis): settled in practice on the agent-lane basis; manager confirmation
-    outstanding. **OQ-4** and **OQ-10** remain open follow-ups.
+    concurrency; TOTP seeds in clear (**deferred**, see "Disposition of remaining open items"). (`dompurify` advisory resolved 2026-10-06: bumped to 3.4.16.)
+  - **OQ-11** (calendar basis): **resolved 2026-10-06** (manager-delegate record): the agent-lane basis is the calendar basis; the epic was delivered on it. **OQ-4** and **OQ-10** remain open, deferred (see below).
 
 ## Next actions
-1. manager: merge `ad/dashboard-auth-totp` into the target branch. The security gate (M4) is satisfied.
-   Sequence it with E-Rc4Hk8 and E-Ag7Pw3 (shared files above); after both epics are in, rebuild
-   `ui/static` once (`npm ci && npm run build`), never hand-merge hashed assets.
-2. manager: when E-Ag7Pw3 merges, re-verify X1-X6 and re-take the auth-off header snapshot
+1. ~~manager: merge `ad/dashboard-auth-totp`~~ Done: merged to `main` in PR #17 together with E-Rc4Hk8 (the `ui/static` bundle was rebuilt again on 2026-10-06 for dompurify 3.4.16). E-Ag7Pw3 has not merged any code (design only).
+2. manager: **deferred (blocked on E-Ag7Pw3 implementation)**: when it merges, re-verify X1-X6 and re-take the auth-off header snapshot
    (`tests/auth/test_auth_off_regression.py`).
-3. someone with Chrome + Playwright: run AC-34 (`uv sync --extra browser`;
-   `pytest -q -m browser tests/auth/test_browser_smoke.py`), fix, and add the forced-enrollment/QR,
-   hub and Firefox/WebKit cases.
-4. developer: bump `dompurify` past 3.4.12 (moderate advisory GHSA-55q2-fjhq-7xh7).
-5. manager: confirm OQ-11 (agent-lane calendar basis) and decide OQ-4 (hub showing child auth state).
+3. ~~someone with Chrome + Playwright: run AC-34~~ Done 2026-10-06 (3 passed; forced-enrollment/QR added). Remaining hub-login-page and Firefox/WebKit browser cases are deferred (reasons above).
+4. ~~developer: bump `dompurify` past 3.4.12 (GHSA-55q2-fjhq-7xh7).~~ Done 2026-10-06: now 3.4.16 (also clears GHSA-6688-9rhm-gjv2); `ui/static` rebuilt in a separate commit.
+5. ~~manager: confirm OQ-11~~ Resolved 2026-10-06 (agent-lane basis). OQ-4 (hub showing child auth state) stays an open product decision, deferred (it changes the hub status JSON with auth off, NFR-1).
 6. Follow-up epics in priority order (ROADMAP section 3.1): the **hub-run handoff**, store-scoped
    SSO, RBAC, API tokens, OIDC, fail-closed remote binds, hub child-auth state, at-rest seed
-   encryption, then the smaller items (permission re-check after startup, OS uid in CLI audit
-   events, client-rendered hub index with the proof).
-7. operator, after merge: `bash install.sh --force`, restart `ao.service`, verify with `ao auth status`.
+   encryption, then the smaller items (client-rendered hub index
+   with the proof; the OS uid in CLI audit events is done, D6).
+7. **D5 done (2026-10-06):** `LocalPasswordProvider` re-checks the store (`check_private_paths`, read-only
+   `lstat`) on every login/re-auth and, throttled to 5 s, on each session revalidation; a loosened
+   store/`users.json` fails closed (503 `store_unavailable`) and audits `auth.store.permissions_loosened`
+   once per episode; it recovers when modes are restored.
+8. **D6 done (2026-10-06):** CLI audit events (`auth/cli.py::_audit`) carry `details.os_uid` (effective uid, never
+   `$USER`) and `details.os_user` (passwd name, omitted if unresolvable); both keys added to `AUTH_DETAIL_KEYS`;
+   web events carry neither. Tests in `test_cli_e2e.py` and `test_routes_core.py`.
+9. operator, after merge: `bash install.sh --force`, restart `ao.service`, verify with `ao auth status`.
+
+## Disposition of remaining open items (2026-10-06, audit `meta/pending-audit-2026-10-06.md`)
+Closed in the 2026-10-06 closure run: D1 AC-34 (3 passed), D3 dompurify 3.4.16 + bundle rebuild, D5 permission
+re-check, D6 OS uid in CLI audit events, D12 OQ-11, C6/D13 `start_run` path restriction and FIFO read refusal.
+Everything else is explicitly deferred or accepted; none blocks the epic:
+
+| Item | Disposition | Reason |
+|---|---|---|
+| D4 at-rest TOTP seed encryption | **Deferred** | Needs an owner decision on key custody (OS keyring vs a 0600 key file vs externally supplied key). A key file beside the store adds little against a same-uid attacker, who can already read both (accepted residual A10). Doing it properly is 12-20 h (key source, `required_features` schema bump, migration on read, rotation/recovery CLI, tests). Decision question for the owner: which key source? |
+| D2 hub login page and Firefox/WebKit browser cases | **Deferred** | Browsers not installed in the agent environment; hub page covered by HTTP/contract tests |
+| D7 config-env denylist for `AO_UI_AUTH*`, `AO_AUTH_DIR`, `AO_AUTH_STATE_DIR` | **Deferred** | Blocked on E-Ag7Pw3 (the shared denylist does not exist yet) |
+| D8 hub-run login handoff; D9 SSO/RBAC/API tokens/OIDC/WebAuthn | **Deferred / out of scope** | Separate epics, product decisions (ROADMAP section 3.1) |
+| D10 fail-closed non-loopback bind without auth | **Deferred** | Behaviour change for existing users; needs an owner call |
+| D11 hub shows child auth state (OQ-4); client-rendered hub index | **Deferred** | Changes hub JSON with auth off (NFR-1); 8-12 h each |
+| D13 other residuals (XFF claim, lockout DoS, IPv6 /64, phantom oracle, hard link, `service.env` stale binary, per-session counters) | **Out of scope** | Accepted residuals by design, documented in HLD "As built" |
+| D15 cosmetic items | **Deferred** | Cosmetic |
+| D16 X1-X6 re-verification, auth-off header re-snapshot | **Deferred** | Blocked on E-Ag7Pw3 implementation |
+| D17 `install.sh --force`, restart `ao.service`, `ao auth status` | **Out of scope for agent runs** | Human step (self-hosting safety) |

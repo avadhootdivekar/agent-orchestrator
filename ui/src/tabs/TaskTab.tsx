@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import { Empty, ErrorBanner } from "../components/common";
 import { TaskDetailPanel } from "../graph/TaskDetailPanel";
 import type { RunDetail, RunGraph } from "../types";
@@ -24,7 +25,7 @@ export function TaskTab({ runId, taskId }: { runId: string; taskId: string }) {
       setGraph(g);
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, [runId]);
   usePolling(refresh, POLL_MS);

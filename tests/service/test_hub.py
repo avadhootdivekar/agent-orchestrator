@@ -54,6 +54,13 @@ def _fake_payload() -> dict[str, Any]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_allowed_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An operator shell may export AO_UI_ALLOWED_HOSTS=* (disables the Host check), which
+    # would make the 421 assertions below fail; these tests need the default allowlist.
+    monkeypatch.delenv("AO_UI_ALLOWED_HOSTS", raising=False)
+
+
 @pytest.fixture()
 def client() -> Iterator[TestClient]:
     app = build_hub_app(_fake_payload)

@@ -436,10 +436,10 @@ _INIT_TEMPLATE = """\
 # Precedence for every setting: CLI flag > env var > this file > built-in default.
 
 # workflow: path/to/workflow.json   # required for `ao run` / `ao validate`
-# reposets: path/to/reposet.json   # required (or set AO_REPOSETS env var)
+# reposets: path/to/reposet.json   # required for workflows that declare a repo_set (or AO_REPOSETS)
 # agents:   path/to/agents.json    # required (or set AO_AGENTS env var)
 
-# workspace_root: /path/to/workspace  # overrides reposet workspace_root
+# workspace_root: /path/to/workspace  # overrides reposet workspace_root (default for no-repo_set)
 
 # env:                             # environment variable overrides
 #   MY_VAR: value

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import type { GeneralInstruction, WorkspaceInfo } from "../types";
 import { Empty, ErrorBanner } from "./common";
 
@@ -15,6 +16,7 @@ import { Empty, ErrorBanner } from "./common";
 export function Settings() {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [instructions, setInstructions] = useState<GeneralInstruction[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,8 +24,9 @@ export function Settings() {
       .then(([info, list]) => {
         setWorkspace(info);
         setInstructions(list);
+        setLoaded(true);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)));
+      .catch((err) => setError(errorMessage(err)));
   }, []);
 
   const missing = instructions.filter((instruction) => !instruction.exists);
@@ -38,7 +41,7 @@ export function Settings() {
         <ErrorBanner message={error} />
 
         <div className="card">
-          <Row label="Workspace root" value={workspace?.workspace_root} />
+          <Row label="Workspace root" value={loaded ? workspace?.workspace_root : "Loading…"} />
           <Row label="Config file" value={workspace?.config_path ?? "none found"} />
           <Row label="Workflow" value={workspace?.workflow ?? "not configured"} />
           <Row label="Reposets" value={workspace?.reposets ?? "not configured"} />
@@ -64,7 +67,11 @@ export function Settings() {
           </div>
         ) : null}
 
-        {instructions.length === 0 ? (
+        {!loaded ? (
+          <div className="card">
+            <Empty>{error ? "General instructions could not be loaded." : "Loading…"}</Empty>
+          </div>
+        ) : instructions.length === 0 ? (
           <div className="card">
             <Empty>
               None configured. Add{" "}

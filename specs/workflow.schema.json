@@ -5,12 +5,12 @@
   "description": "Declarative DAG spec for the agent-orchestrator. Payloads are referenced by path only; never inline file contents here.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "id", "repo_set", "tasks"],
+  "required": ["version", "id", "tasks"],
   "properties": {
     "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-_]*$" },
     "name": { "type": "string" },
-    "repo_set": { "type": "string", "description": "Key into the reposet config." },
+    "repo_set": { "type": ["string", "null"], "description": "Key into the reposet config. Omit (or null / empty string) for no-repo-set mode: the run uses a workspace directory only, no repo paths." },
     "defaults": {
       "type": "object",
       "additionalProperties": false,

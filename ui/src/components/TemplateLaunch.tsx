@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import type {
   CreateInstanceRequest,
   CreateInstanceResponse,
@@ -104,7 +105,7 @@ export function TemplateLaunch({
         setTemplates(list);
         if (list.length > 0) setTemplateName(list[0].name);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)))
+      .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoaded(true));
   }, []);
 
@@ -150,7 +151,7 @@ export function TemplateLaunch({
         setCreated(response);
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setSubmitting(null);
     }

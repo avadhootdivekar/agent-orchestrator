@@ -211,7 +211,7 @@ in the process that issued it, so realms are isolated by construction.
 
 **Consequences.**
 - On Pi-class hardware, logins may take about 1 s.
-- TOTP seeds are stored in clear inside the 0600 file. At-rest seed encryption is a follow-up.
+- TOTP seeds are stored in clear inside the 0600 file. At-rest seed encryption is a follow-up, **deferred 2026-10-06** pending an owner decision on key custody (a key file beside the store adds little against the same-uid attacker of accepted residual A10).
 
 ---
 
@@ -586,7 +586,6 @@ changed. Code references and the remaining deviations are in the HLD's "As built
 `X-Forwarded-For` under `trusted_proxies=127.0.0.1`; account-lockout DoS and a shared throttle
 bucket behind an unconfigured proxy; IPv6 throttling per `/64`; the phantom-eviction oracle; a
 hard link bypasses the file-browser path denial; a stale binary fails open when auth is enabled
-only through `service.env`; per-session counters are not concurrency-exact; the `dompurify`
-moderate advisory; TOTP seeds in clear in `users.json`. The real-browser smoke (HLD AC-34) has not
-been run (Playwright unavailable on the build machine). Full table:
+only through `service.env`; per-session counters are not concurrency-exact; TOTP seeds in clear in `users.json`. (The `dompurify` advisory was resolved on 2026-10-06 by bumping to 3.4.16.) The real-browser smoke (HLD AC-34) was not
+run at close; on 2026-10-06 it ran and passed (3 passed, Chrome 138; hub-page and Firefox/WebKit cases still unwritten). Full table:
 [HLD "As built" section D](../dashboard-auth-hld.md#as-built-2026-10-05).

@@ -498,11 +498,15 @@ class Supervisor:
             self._record_decision(candidate, "skip_recheck_terminal")
             return
 
+        # --workspace only for a no-repo-set run (ADR-0022); repo-set resumes keep their
+        # exact prior call shape.
+        extra: dict[str, Any] = {"workspace": candidate.workspace} if candidate.workspace else {}
         proc_sup.launch_resume(
             candidate.run_id,
             workflow_path=candidate.workflow_path,
             reposets=candidate.reposets,
             agents=candidate.agents,
+            **extra,
         )
         self._boot_resume_guard.record_attempt(
             candidate, self._boot_id, os_boot_id=self._os_boot_id

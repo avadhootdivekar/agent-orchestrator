@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeLayout } from "../graph/layout";
-import { NODE_HEIGHT, NODE_WIDTH } from "../graph/model";
+import { computeLayout, redundantEdges, transitiveReduction } from "../graph/layout";
+import { NODE_HEIGHT, NODE_SEP, NODE_WIDTH } from "../graph/model";
 
 /**
  * AC-5's perf assertion (≤ 900 ms, 3x the NFR-3 300 ms target to absorb CI variance) needs a
@@ -112,4 +112,106 @@ describe("computeLayout", () => {
     const PERF_BUDGET_MS = 900;
     expect(elapsedMs).toBeLessThanOrEqual(PERF_BUDGET_MS);
   });
+});
+
+// ---- A4 / ADR-0023: no "cone" growth, no movement on append -----------------------------------
+
+type Edge = { source: string; target: string };
+
+/** Overseer-style DAG: intake, then per wave k units u<k>.<i> -> checkpoint ck<k>; wave k units
+ * depend on ck<k-1>. `charter` adds intake -> every unit; `skip` makes the first two units of a
+ * wave also depend on a unit two waves back. Deterministic. */
+function overseerGraph(waveSizes: number[], opts: { charter?: boolean; skip?: boolean } = {}) {
+  const nodes: { id: string }[] = [{ id: "intake" }];
+  const edges: Edge[] = [];
+  waveSizes.forEach((size, w) => {
+    const prev = w === 0 ? "intake" : `ck${w - 1}`;
+    const ck = `ck${w}`;
+    for (let i = 0; i < size; i++) {
+      const id = `u${w}.${i}`;
+      nodes.push({ id });
+      edges.push({ source: prev, target: id });
+      edges.push({ source: id, target: ck });
+      if (opts.charter) edges.push({ source: "intake", target: id });
+      if (opts.skip && i < 2 && w >= 2) edges.push({ source: `u${w - 2}.0`, target: id });
+    }
+    nodes.push({ id: ck });
+  });
+  return { nodes, edges };
+}
+
+const WAVES = [6, 6, 5, 5, 4, 4, 3, 3, 2, 2];
+const PITCH = NODE_HEIGHT + NODE_SEP;
+
+/** Cross-axis (y, LR) extent of each unit wave. */
+function waveSpans(positions: Map<string, { x: number; y: number }>, sizes: number[]): number[] {
+  return sizes.map((size, w) => {
+    const ys = Array.from({ length: size }, (_, i) => positions.get(`u${w}.${i}`)!.y);
+    return Math.max(...ys) + NODE_HEIGHT - Math.min(...ys);
+  });
+}
+
+describe("transitiveReduction", () => {
+  it("drops an edge implied by a longer path and keeps input order", () => {
+    const edges = [
+      { source: "a", target: "c" },
+      { source: "a", target: "b" },
+      { source: "b", target: "c" },
+    ];
+    expect(transitiveReduction(["a", "b", "c"], edges)).toEqual([edges[1], edges[2]]);
+    expect(redundantEdges(["a", "b", "c"], edges)).toEqual([edges[0]]);
+  });
+
+  it("keeps parallel branches and ignores unknown endpoints", () => {
+    const edges = [
+      { source: "a", target: "b" },
+      { source: "a", target: "c" },
+      { source: "a", target: "ghost" },
+    ];
+    expect(transitiveReduction(["a", "b", "c"], edges)).toEqual(edges);
+  });
+
+  it("reports nothing redundant on a cycle", () => {
+    const edges = [
+      { source: "a", target: "b" },
+      { source: "b", target: "a" },
+      { source: "a", target: "c" },
+      { source: "b", target: "c" },
+    ];
+    expect(redundantEdges(["a", "b", "c"], edges)).toEqual([]);
+  });
+});
+
+describe("computeLayout: wave width and stability (A4)", () => {
+  for (const [name, opts] of [
+    ["plain", {}],
+    ["skip", { skip: true }],
+    ["charter", { charter: true }],
+    ["charter+skip", { charter: true, skip: true }],
+  ] as const) {
+    it(`${name}: each wave spans no more than its task count justifies, and never widens`, async () => {
+      const { nodes, edges } = overseerGraph(WAVES, opts);
+      const { positions } = await computeLayout(nodes, edges, "dependency");
+      const spans = waveSpans(positions, WAVES);
+      spans.forEach((span, w) => expect(span, `wave ${w}`).toBeLessThanOrEqual(WAVES[w] * PITCH - NODE_SEP));
+      for (let w = 1; w < WAVES.length; w++) {
+        if (WAVES[w] <= WAVES[w - 1]) expect(spans[w], `wave ${w}`).toBeLessThanOrEqual(spans[w - 1]);
+      }
+    });
+
+    it(`${name}: appending a wave moves no existing node`, async () => {
+      const before = overseerGraph(WAVES, opts);
+      const after = overseerGraph([...WAVES, 2], opts);
+      const first = await computeLayout(before.nodes, before.edges, "dependency");
+      const second = await computeLayout(after.nodes, after.edges, "dependency");
+      for (const n of before.nodes) expect(second.positions.get(n.id), n.id).toEqual(first.positions.get(n.id));
+    });
+
+    it(`${name}: same graph gives the same layout`, async () => {
+      const { nodes, edges } = overseerGraph(WAVES, opts);
+      const a = await computeLayout(nodes, edges, "dependency");
+      const b = await computeLayout(nodes, edges, "dependency");
+      expect(Array.from(a.positions)).toEqual(Array.from(b.positions));
+    });
+  }
 });

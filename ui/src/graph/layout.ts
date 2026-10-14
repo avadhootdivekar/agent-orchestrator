@@ -34,6 +34,70 @@ interface LayoutableEdge {
 }
 
 /**
+ * Edges of `edges` that are transitively redundant: `a -> c` is redundant when a longer path
+ * `a -> ... -> c` (two or more hops) also exists. Pure and deterministic; the result keeps the
+ * input order. Edges with an unknown endpoint, self-loops and duplicates are ignored (never
+ * reported redundant). If the graph has a cycle, reachability is ill-defined, so nothing is
+ * reported redundant (callers then lay out / draw the full edge list unchanged).
+ */
+export function redundantEdges<E extends LayoutableEdge>(nodeIds: Iterable<string>, edges: E[]): E[] {
+  const known = new Set(nodeIds);
+  const successors = new Map<string, string[]>();
+  const inDegree = new Map<string, number>();
+  for (const id of known) {
+    successors.set(id, []);
+    inDegree.set(id, 0);
+  }
+  const seen = new Set<string>();
+  for (const e of edges) {
+    const key = `${e.source}\u0000${e.target}`;
+    if (!known.has(e.source) || !known.has(e.target) || e.source === e.target || seen.has(key)) continue;
+    seen.add(key);
+    successors.get(e.source)!.push(e.target);
+    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
+  }
+
+  // Kahn topological order; a short order means a cycle.
+  const order: string[] = [];
+  const queue = [...known].filter((id) => inDegree.get(id) === 0);
+  for (let head = 0; head < queue.length; head++) {
+    const id = queue[head];
+    order.push(id);
+    for (const next of successors.get(id)!) {
+      const remaining = (inDegree.get(next) ?? 0) - 1;
+      inDegree.set(next, remaining);
+      if (remaining === 0) queue.push(next);
+    }
+  }
+  if (order.length !== known.size) return [];
+
+  // reach(u) = every node reachable from u in one or more hops, built sinks-first.
+  const reach = new Map<string, Set<string>>();
+  for (let i = order.length - 1; i >= 0; i--) {
+    const reached = new Set<string>();
+    for (const next of successors.get(order[i])!) {
+      reached.add(next);
+      for (const r of reach.get(next)!) reached.add(r);
+    }
+    reach.set(order[i], reached);
+  }
+
+  const counted = new Set<string>();
+  return edges.filter((e) => {
+    const key = `${e.source}\u0000${e.target}`;
+    if (!seen.has(key) || counted.has(key)) return false;
+    counted.add(key);
+    return successors.get(e.source)!.some((via) => via !== e.target && reach.get(via)!.has(e.target));
+  });
+}
+
+/** `edges` minus the transitively redundant ones (see `redundantEdges`), input order preserved. */
+export function transitiveReduction<E extends LayoutableEdge>(nodeIds: Iterable<string>, edges: E[]): E[] {
+  const redundant = new Set(redundantEdges(nodeIds, edges));
+  return edges.filter((e) => !redundant.has(e));
+}
+
+/**
  * Lay out `nodes`/`edges` with dagre and return each node's top-left position plus the
  * direction used. Async by contract (ADR-0017 D5), so a later swap to an async/worker layout
  * engine changes no caller.
@@ -44,6 +108,9 @@ interface LayoutableEdge {
  *   the backend graph builder itself makes.
  * - Deterministic: the same `nodes`/`edges`/`view` always produce the same positions, because
  *   nodes are inserted in the given (input) order and dagre's layout has no randomness.
+ * - Dagre only sees the transitive reduction of the edges (ADR-0023): a redundant long edge
+ *   would otherwise get a dummy node per crossed rank, inflating each rank's width and shifting
+ *   columns sideways (the "hyperbolic cone"). Callers still draw every edge.
  * - Tolerates a cycle: dagre's own acyclic pass runs before ranking, so a cyclic edge set lays
  *   out (some way) rather than throwing.
  */
@@ -61,7 +128,7 @@ export async function computeLayout(
   for (const n of nodes) {
     g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
   }
-  for (const e of edges) {
+  for (const e of transitiveReduction(nodes.map((n) => n.id), edges)) {
     if (g.hasNode(e.source) && g.hasNode(e.target)) g.setEdge(e.source, e.target);
   }
 

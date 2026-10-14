@@ -69,6 +69,10 @@ AUTH_DETAIL_KEYS: frozenset[str] = frozenset(
         "everywhere",
         "rehashed",
         "suppressed",
+        # CLI-originated events only (auth/cli.py): the effective OS uid / login name of the
+        # operator running ``ao auth``. Web events have no OS identity and never carry these.
+        "os_uid",
+        "os_user",
     }
 )
 

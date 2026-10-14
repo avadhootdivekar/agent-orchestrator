@@ -1,0 +1,27 @@
+# prod ao baseline captured 2026-10-06T17:08:48Z
+which ao: /home/avadhoot/.local/bin/ao
+readlink: /home/avadhoot/.local/share/uv/tools/agent-orchestrator/bin/ao
+ao --version: ao 0.1.0 (d5a1de9.dirty) built 2026-10-06T16:46:27Z
+--- uv tool list
+agent-orchestrator v0.1.0
+- ao
+- ao-bench
+aider-chat v0.86.2
+- aider
+pipx v1.12.0
+- pipx
+repo-intel v0.1.0
+- repo-intel
+- ri
+--- receipt
+[tool]
+requirements = [{ name = "agent-orchestrator", extras = ["ui"], directory = "/home/avadhoot/mounted/usr-volume/agent-orchestrator" }]
+entrypoints = [
+    { name = "ao", install-path = "/home/avadhoot/.local/bin/ao" },
+    { name = "ao-bench", install-path = "/home/avadhoot/.local/bin/ao-bench" },
+]
+--- sha256 of tool bin
+13e8230cef9ae2368ad5e932d6343dabf7cd483066131a0dad560ed2d2abdf62  /home/avadhoot/.local/share/uv/tools/agent-orchestrator/bin/ao
+--- ao.service
+active
+MainPID=1923024

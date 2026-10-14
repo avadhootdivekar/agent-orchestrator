@@ -394,6 +394,8 @@ export interface GraphPrefs {
   view: GraphView;
   metric: MetricMode;
   showUnrelated: boolean;
+  /** Hide transitively redundant edges (drawn straight through intermediate nodes). */
+  hideRedundantEdges: boolean;
 }
 
 export const DEFAULT_GRAPH_PREFS: GraphPrefs = {
@@ -401,6 +403,7 @@ export const DEFAULT_GRAPH_PREFS: GraphPrefs = {
   view: "dependency",
   metric: "duration",
   showUnrelated: false,
+  hideRedundantEdges: true,
 };
 
 function isGraphTab(value: unknown): value is GraphTab {
@@ -438,6 +441,10 @@ export function readPrefs(): GraphPrefs {
         typeof candidate.showUnrelated === "boolean"
           ? candidate.showUnrelated
           : DEFAULT_GRAPH_PREFS.showUnrelated,
+      hideRedundantEdges:
+        typeof candidate.hideRedundantEdges === "boolean"
+          ? candidate.hideRedundantEdges
+          : DEFAULT_GRAPH_PREFS.hideRedundantEdges,
     };
   } catch {
     return { ...DEFAULT_GRAPH_PREFS };

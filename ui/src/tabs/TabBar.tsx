@@ -98,6 +98,7 @@ export function TabBar({
             <button
               type="button"
               className="tabbar-close"
+              tabIndex={-1}
               aria-label={`Close tab ${tab.title}`}
               onClick={() => onClose(tab.id)}
             >

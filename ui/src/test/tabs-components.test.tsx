@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function actionsSpy(available = true) {
-  const spy: TabActions = { available, navigate: vi.fn(), open: vi.fn() };
+  const spy: TabActions = { available, navigate: vi.fn(), open: vi.fn(), retarget: vi.fn() };
   return spy;
 }
 

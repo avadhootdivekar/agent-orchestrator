@@ -59,6 +59,7 @@ from agent_orchestrator.models import TaskContext
 __all__ = ["build_cache_key", "canonical_json", "summary_from_doc"]
 
 _EXECUTOR_CLAUDE_CLI = "claude_cli"
+OPERATOR_NOTES_KEY_PATH = "operator-notes.md"  # normalized stand-in rendered into the key prompt
 
 
 def _component_digest(value: object) -> str:
@@ -114,6 +115,7 @@ def build_cache_key(
 
     instr = guard(req.task.instruction)
     gis = [guard_abs(p) for p in req.general_instruction_paths]
+    notes = guard_abs(req.operator_notes_path) if req.operator_notes_path else None
     ins = [guard(p) for p in req.task.inputs]
     dyn = [guard(p) for p in req.dynamic_input_paths]
     outs = [guard(p) for p in req.task.outputs]
@@ -166,6 +168,9 @@ def build_cache_key(
         agent=req.agent,
         instruction_path=rel(instr),
         general_instruction_paths=[rel(p) for p in gis],
+        # A fixed placeholder, not the run-specific path: the content digest below carries the
+        # semantics, and a per-run path would make every notes-bearing key unique to its run.
+        operator_notes_path=OPERATOR_NOTES_KEY_PATH if notes else None,
         input_paths=[rel(p) for p in ins],
         output_paths=[rel(p) for p in outs],
         output_manifest_path=None,
@@ -203,6 +208,8 @@ def build_cache_key(
         ),
         "repo_heads": dict(req.repo_heads) if req.include_repo_heads else None,
     }
+    if notes:  # only present when notes exist: a run without notes keeps its pre-feature key
+        doc["operator_notes"] = entry(notes)
     try:
         text = canonical_json(doc)
         components = {name: _component_digest(value) for name, value in doc.items()}

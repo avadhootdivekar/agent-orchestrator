@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import { Empty, ErrorBanner } from "../components/common";
 import type { RunDetail } from "../types";
 import { POLL_MS, usePolling } from "../usePolling";
@@ -18,7 +19,7 @@ export function GraphTab({ runId }: { runId: string }) {
       setDetail(await api.run(runId));
       setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, [runId]);
   usePolling(refresh, POLL_MS);

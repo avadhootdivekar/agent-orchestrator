@@ -1091,7 +1091,7 @@ detail panel (360 px, collapses to a bottom sheet under 720 px width).
 2. "Show unrelated tasks" checkbox, visible only in the spawn view, labeled with the count hidden.
 3. Metric select: **None / Duration / Cost** (default Duration).
 4. Search input: Enter centers the first match, and ↑/↓ cycle through matches (`setCenter` with a zoom of at least 1).
-5. Fit button and "Reset layout" (discard dragged positions).
+5. Fit button and "Reset layout" (discard dragged positions). Plus (w04-02, ADR-0023 amendment): "Hide redundant edges" toggle (default on, persisted as `hideRedundantEdges`) and a user-initiated "Relayout" button (re-runs dagre, clears drags, refits).
 
 **Canvas.** `<ReactFlow>` with `nodeTypes={{task: TaskNode}}`, `fitView` on first layout,
 `minZoom=0.05`, `maxZoom=2`, `nodesDraggable`, `nodesConnectable={false}`,

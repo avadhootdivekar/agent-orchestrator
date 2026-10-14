@@ -728,7 +728,9 @@ class WorkflowSpec(BaseModel):
     version: str
     id: str
     name: str = ""
-    repo_set: str
+    # Key into the reposets config. None (absent / null / "") = no-repo-set mode: the run uses
+    # a workspace directory only, no repo paths (ADR-0022 D1).
+    repo_set: str | None = None
     defaults: WorkflowDefaults = WorkflowDefaults()
     budget: BudgetSpec | None = None
     triggers: list[Trigger] = [Trigger(type="manual")]
@@ -757,6 +759,15 @@ class WorkflowSpec(BaseModel):
     # a task's `pre_hook`/`post_hook: HookRef`. Empty default is a byte-identical no-op for
     # every pre-epic workflow (NFR-2/NFR-5) -- mirrors the `agents`/`reposets` registry pattern.
     hooks: dict[str, HookSpec] = {}
+
+    @field_validator("repo_set", mode="before")
+    @classmethod
+    def _blank_repo_set_is_none(cls, v: object) -> object:
+        # "" / whitespace-only => no-repo-set mode, so a template may render `"repo_set": ""`
+        # without a conditional (ADR-0022 D1).
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
     def task(self, task_id: str) -> TaskSpec:
         for t in self.tasks:
@@ -887,11 +898,18 @@ class TaskContext(BaseModel):
     # EVERY task (E-Ui7Kq2 FR-GI1). Paths only — NFR-1 safe. Empty list = none configured,
     # which keeps every pre-epic prompt byte-identical.
     general_instruction_paths: list[str] = []
+    # Absolute path of the run's queued operator notes file (A6), set only when it exists at
+    # dispatch. Path only (NFR-1); None keeps every prompt byte-identical to before notes existed.
+    operator_notes_path: str | None = None
     input_paths: list[str]
     output_paths: list[str]
     output_manifest_path: str | None = None
     dynamic_input_paths: list[str] = []
     repo_paths: dict[str, str]
+    # True only when the workflow declares no `repo_set` (ADR-0022 no-repo-set mode). Drives
+    # the prompt's "Repos: {repos}." clause strip; an empty reposet or a monitoring/summarizer
+    # context keeps it False so repo_set prompts stay byte-identical.
+    no_repo_set: bool = False
     timeout_seconds: int
     # Resolved absolute working directory the agent process runs in (its cwd).
     # Defaults to the workspace root; honours AgentSpec.working_dir when set.
@@ -1270,7 +1288,7 @@ class ResultCacheRecord(BaseModel):
 class RunState(BaseModel):
     run_id: str
     workflow_id: str
-    repo_set: str
+    repo_set: str | None = None  # None = no-repo-set mode (ADR-0022 D7)
     started_at: str
     updated_at: str
     status: Literal["running", "succeeded", "failed", "cancelled"] = "running"

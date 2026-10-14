@@ -40,6 +40,7 @@ ships a browser dashboard.
 | **General instructions** | **New** | Workspace-scoped rules applied to every task. |
 | **Cross-run result cache (`ao run --cache`, `ao cache`)** | **New, opt-in** | Reuses an identical, previously successful task's declared outputs instead of re-dispatching the agent. Double opt-in (operator flag + `cache: true` per task), default off, `shadow` measure-only mode. NOT prompt caching. E-Rc4Hk8 / ADR-0019 — §2c. **Value unproven: G0 not yet run.** |
 | Authentication / multi-user | **New, opt-in** | Local accounts + optional TOTP 2FA for `ao ui` and the `ao service` hub (E-Da5Tn9, ADR-0021). Per-realm sessions, no roles/SSO yet — §3.1. |
+| **Workspace-only mode (no `repo_set`)** | **New** | A workflow may omit `repo_set`; reposets file optional, `--workspace` on `ao run`/`resume`, all I/O and run state under one workspace dir; git features degrade (isolation → none). ADR-0022, `docs-md/no-repo-set-mode-hld.md`; example `specs/examples/workflow-no-repo-set.json`. |
 | Cron / event triggers | **Designed, not built** | `Trigger` model exists; no daemon runs it yet. Service-owned scheduler designed (E-Sc9Rt4, ADR-0014) — §3.2. |
 
 ### Recently delivered
@@ -54,6 +55,8 @@ ships a browser dashboard.
 - **E-GIytcL — Multi-workspace service** (2026-08-28): `ao service` supervisor daemon (spawn/monitor/restart per-workspace dashboards, bounded auto-resume, hub, systemd install) — see §2a.
 - **E-Rc4Hk8 — Cross-run result cache** (2026-10-05, ADR-0019): opt-in, content-addressed, workspace-local reuse of identical successful tasks' declared outputs; `ao cache` admin commands; `shadow` mode; dashboard tag/tile; `ao-bench` forced off — see §2c.
 - **E-Wk9Tz3 — Per-task git isolation** (2026-09-07, ADR-0013): worktree per task, squash+rebase integration behind a compare-and-swap, tiered conflict ladder, `ao hotspots`, `ao prune --worktrees-only` — see §2b.
+
+- **No-repo-set (workspace-only) mode** (2026-10-07, ADR-0022, overseer run `o-969ifr-requirement` ask A2): optional `repo_set`/reposets, single workspace resolver, `--workspace` on run/resume, dashboard + boot-resume support, optional template param, example workflow, docs.
 
 ### Designed, awaiting implementation (2026-09-07)
 
@@ -187,7 +190,7 @@ It is **not** Claude prompt caching (that is ADR-0015's separate scope).
   Until it passes, `on` is not recommended to any consumer. If the would-hit rate is negligible the
   feature stays shipped but off and ADR-0019 ALT-8 (`ao run --reuse-from <run>`) is the next step.
   Owner: parent or operator, post-merge; the parent confirms the decision-rule thresholds (OQ-6).
-- **Merge with E-Ag7Pw3 (approval gates) and E-Da5Tn9 (dashboard auth):** classify new fields RULED,
+- **Merge with E-Ag7Pw3 (approval gates) and E-Da5Tn9 (dashboard auth):** the auth half landed in PR #17 and the UI bundle was rebuilt 2026-10-06; the approvals half is deferred (E-Ag7Pw3 has no code). Remaining checklist: classify new fields RULED,
   keep the approval check before the lookup seam, recapture the I-2 goldens if output changed, rebuild
   the UI bundle (HLD §24.2).
 - **Accepted residuals** (use `--no-cache` for untrusted repositories): provider/endpoint env not in the
@@ -220,11 +223,11 @@ Follow-ups for hosted or multi-user use, **in priority order**:
    provider-contributed public routes and a proof handoff for redirect flows).
 6. **Fail-closed remote binds** — refuse a non-loopback bind without auth (today: deprecation notice).
 7. **Hub showing child auth state** (OQ-4), so a workspace config switching auth off is visible.
-8. **At-rest TOTP seed encryption** (seeds are in clear in `users.json`).
-9. Smaller follow-ups: re-check store permissions after startup; record the OS uid in CLI audit
-    events; a client-rendered hub index that carries the proof (closes the cookie-only hub index
-    residual); `dompurify` bump past 3.4.12 (moderate advisory); a `DashboardService.start_run`
-    path restriction; WebAuthn and native TLS flags. No cut-line item was dropped (HLD §24.1).
+8. **At-rest TOTP seed encryption** (seeds are in clear in `users.json`). Deferred 2026-10-06: needs an owner decision on key custody; same-uid attackers already read both key and store.
+9. Smaller follow-ups (store-permission re-check after startup and the OS uid in CLI audit events
+    (`details.os_uid`/`os_user`) are done): a client-rendered hub index that carries the proof (closes the cookie-only hub index
+    residual); `dompurify` bump past 3.4.12 (moderate advisory) and the `DashboardService.start_run`
+    path restriction (workspace/search roots only) are done; `ui/files.read_file` no longer opens FIFOs/special files; WebAuthn and native TLS flags. No cut-line item was dropped (HLD §24.1).
 
 Still open from the original security list:
 
@@ -322,7 +325,7 @@ default (`isolation: none`) still carries the original gap. To raise the default
     launch controls, a runs-list column, a Usage-tab surface.
   - **Deferred in Rev 3:** a `refresh` mode, `ao cache rm --run R --task T`, `ao cache verify --repair`.
   - Hygiene ticket for the deferred gate NITs (HLD §0.6 FU-4) and the pre-existing missing-inputs
-    `dispatch_cycle` reset (HLD §23.2).
+    `dispatch_cycle` reset (HLD §23.2; FU-5, deferred 2026-10-06 as an engine bug outside the closure scope).
 
 ---
 
@@ -355,8 +358,7 @@ These are accepted trade-offs. They are recorded so they are chosen rather than 
   startup warning). With it on: authenticated = full access and same-user processes (including
   agents) can read the credential store (A10, out of scope); a harvested cookie cannot call the
   API but still renders the hub index and cookie tossing can force a logout (A4);
-  `DashboardService.start_run` still accepts an absolute `workflow_path` (the launcher can already
-  run arbitrary agent code); behind a reverse proxy without `AO_UI_AUTH_TRUSTED_PROXIES` all
+  `DashboardService.start_run` is now restricted to the workspace/search roots (closed 2026-10-06); behind a reverse proxy without `AO_UI_AUTH_TRUSTED_PROXIES` all
   remote users share one throttle bucket (account lockout can be used as a DoS), and with
   `trusted_proxies=127.0.0.1` a local process can claim a client address via `X-Forwarded-For`;
   IPv6 clients are throttled per `/64`; the lockout phantom table is a bounded eviction oracle;

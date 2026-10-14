@@ -14,8 +14,11 @@ params:
   repo_set:
     description: >-
       Key into this workspace's reposet config -- the repo(s) every stage of the run operates
-      on. No default: every workspace must name its own.
-    required: true
+      on. Optional: omit (or leave empty) for workspace-only (no-repo-set) mode, where the run
+      works only on workspace-relative files and git stages have nothing to operate on
+      (ADR-0022).
+    required: false
+    default: ""
   run_budget_usd:
     description: >-
       Total per-run real-spend USD cap (run_cost_usd circuit breaker threshold, hard stop at

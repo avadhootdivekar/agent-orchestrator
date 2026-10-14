@@ -4,7 +4,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
 import { RunGraph } from "../graph/RunGraph";
-import { NODE_HEIGHT, NODE_WIDTH } from "../graph/model";
+import { NODE_HEIGHT, NODE_WIDTH, PREFS_STORAGE_KEY } from "../graph/model";
 import type { RunGraph as RunGraphData, TaskStat } from "../types";
 import fixtureData from "./fixtures/run-graph.json";
 
@@ -137,7 +137,7 @@ describe("RunGraph unrelated filter (AC-1)", () => {
     vi.spyOn(api, "runGraph").mockResolvedValue(fixture);
     render(<RunGraph runId="run-1" tasks={makeTasks()} graphVersion={fixture.graph_version} />);
     await waitFor(() => expect(capturedProps.current!.nodes.length).toBeGreaterThan(0));
-    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /unrelated/i })).toBeNull();
   });
 });
 
@@ -264,6 +264,10 @@ describe("RunGraph toolbar keyboard reachability (AC-7)", () => {
     await userEvent.tab();
     expect(document.activeElement).toBe(checkbox);
     await userEvent.tab();
+    expect(document.activeElement).toBe(
+      within(toolbarRow).getByRole("checkbox", { name: /redundant edges/i }),
+    );
+    await userEvent.tab();
     expect(document.activeElement).toBe(metric);
     await userEvent.tab();
     expect(document.activeElement).toBe(search);
@@ -271,5 +275,57 @@ describe("RunGraph toolbar keyboard reachability (AC-7)", () => {
     expect(document.activeElement).toBe(fit);
     await userEvent.tab();
     expect(document.activeElement).toBe(reset);
+    await userEvent.tab();
+    expect(document.activeElement).toBe(
+      within(toolbarRow).getByRole("button", { name: "Relayout" }),
+    );
+  });
+});
+
+describe("RunGraph redundant-edge toggle and Relayout (A4)", () => {
+  // cp1 -> triage -> leaf, plus the redundant shortcut cp1 -> leaf.
+  const redundantFixture = {
+    ...fixture,
+    dependency_edges: [
+      ...fixture.dependency_edges,
+      { source: "cp1", target: "leaf\u200b", kind: "explicit", via: null },
+    ],
+  } as unknown as RunGraphData;
+  const edgeIds = () => capturedProps.current!.edges.map((e) => e.id);
+
+  async function renderGraph() {
+    vi.spyOn(api, "runGraph").mockResolvedValue(redundantFixture);
+    render(<RunGraph runId="run-1" tasks={makeTasks()} graphVersion={fixture.graph_version} />);
+    await waitFor(() => expect(capturedProps.current!.nodes.length).toBeGreaterThan(0));
+  }
+
+  it("hides redundant edges by default, shows them when unchecked, and persists the pref", async () => {
+    await renderGraph();
+    const box = screen.getByRole("checkbox", { name: "Hide redundant edges (1)" }) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    const hiddenCount = capturedProps.current!.edges.length;
+
+    await userEvent.click(box);
+    await waitFor(() => expect(capturedProps.current!.edges.length).toBe(hiddenCount + 1));
+    expect(edgeIds().some((id) => id.includes("cp1") && id.includes("leaf"))).toBe(true);
+    expect(JSON.parse(localStorage.getItem(PREFS_STORAGE_KEY)!).hideRedundantEdges).toBe(false);
+
+    await userEvent.click(box);
+    await waitFor(() => expect(capturedProps.current!.edges.length).toBe(hiddenCount));
+  });
+
+  it("Relayout is user-initiated: no relayout on render, one fitView + cleared drags on click", async () => {
+    await renderGraph();
+    const original = { ...findNode("cp1").position };
+    const dragged = { x: original.x + 300, y: original.y + 300 };
+    act(() => {
+      capturedProps.current!.onNodesChange([{ id: "cp1", type: "position", position: dragged }]);
+    });
+    await waitFor(() => expect(findNode("cp1").position).toEqual(dragged));
+    mockReactFlowInstance.fitView.mockClear();
+
+    await userEvent.click(screen.getByRole("button", { name: "Relayout" }));
+    await waitFor(() => expect(findNode("cp1").position).toEqual(original));
+    expect(mockReactFlowInstance.fitView).toHaveBeenCalledTimes(1);
   });
 });

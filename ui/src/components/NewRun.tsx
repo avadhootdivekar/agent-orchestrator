@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, ApiError } from "../api";
+import { api } from "../api";
+import { errorMessage } from "../errors";
 import type { RunOptions, WorkflowInfo } from "../types";
 import { useLaunchPanel } from "../useLaunchPanel";
 import { ErrorBanner } from "./common";
@@ -41,7 +42,7 @@ export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => v
         setWorkflows(list);
         if (list.length > 0) setWorkflowPath(list[0].path);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)));
+      .catch((err) => setError(errorMessage(err)));
   }, []);
 
   const selected = workflows.find((w) => w.path === workflowPath);
@@ -70,7 +71,7 @@ export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => v
     try {
       panel.show(await api.startRun(workflowPath, prompt, options));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setSubmitting(false);
     }

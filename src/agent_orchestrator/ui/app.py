@@ -31,7 +31,7 @@ from .._version import get_version_string
 from ..auth.http.middleware import AuthMiddleware
 from ..auth.http.routes import install_auth_routes
 from ..auth.policy import DASHBOARD_COOKIE_ONLY_NAVIGATION, DASHBOARD_ROUTE_POLICIES
-from ..feedback import MAX_NOTE_CHARS, REASONS, Rating, Reason, Scope
+from ..feedback import MAX_NOTE_CHARS, MAX_OPERATOR_NOTE_CHARS, REASONS, Rating, Reason, Scope
 from .files import PathNotAllowedError, PathNotFoundError
 from .htmlpreview import NotMarkupError
 from .security import SecurityMiddleware, resolve_allowed_hosts
@@ -75,6 +75,20 @@ class _AllowedHostsUnset:
 _ALLOWED_HOSTS_UNSET = _AllowedHostsUnset()
 
 
+# Link auto-detection probe limits (A5): bound the work one request can trigger.
+MAX_PROBE_PATHS = 200
+MAX_PROBE_PATH_CHARS = 1024
+
+
+class ResolvePathsRequest(BaseModel):
+    """Body of ``POST /api/files/resolve`` -- candidate paths the UI wants to turn into links."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    paths: list[str] = Field(max_length=MAX_PROBE_PATHS)
+    root: str | None = None
+
+
 class StartRunRequest(BaseModel):
     """Body for ``POST /api/runs`` (FR-R1)."""
 
@@ -109,6 +123,17 @@ class FeedbackRequest(BaseModel):
     rating: Rating
     reasons: list[Reason] = Field(default_factory=list, max_length=len(REASONS))
     note: str | None = Field(None, max_length=MAX_NOTE_CHARS)
+
+
+class OperatorNoteRequest(BaseModel):
+    """Body for ``POST /api/runs/{run_id}/notes``. The source is NOT client-settable.
+
+    ``max_length`` bounds the body before the service's own (stripped) length check.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(..., min_length=1, max_length=MAX_OPERATOR_NOTE_CHARS * 2)
 
 
 logger = logging.getLogger(__name__)
@@ -223,6 +248,20 @@ def create_app(
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except PathNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post(f"{API_PREFIX}/files/resolve")
+    def resolve_paths(body: ResolvePathsRequest) -> dict:
+        """Read-only existence probe for UI link auto-detection (A5).
+
+        Same containment/deny authority as ``/files/content`` (``FileBrowser.resolve``); returns
+        only a status per path, never contents, size or mtime. POST only to carry a batch --
+        it writes nothing. Authenticated by omission from the route-policy table.
+        """
+        if any(len(p) > MAX_PROBE_PATH_CHARS for p in body.paths):
+            raise HTTPException(
+                status_code=422, detail=f"path longer than {MAX_PROBE_PATH_CHARS} characters"
+            )
+        return {"results": service.probe_paths(body.root, body.paths)}
 
     @app.get(f"{API_PREFIX}/files/html")
     def file_html(
@@ -387,6 +426,22 @@ def create_app(
                 reasons=list(body.reasons),
                 note=body.note,
             )
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    # Queued operator notes (A6): behind the same deny-by-default AuthMiddleware as /feedback
+    # (no route-policy entry => AUTHENTICATED). A note reaches only tasks dispatched later.
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/notes")
+    def get_operator_notes(run_id: str) -> dict:
+        try:
+            return service.get_operator_notes(run_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.post(f"{API_PREFIX}/runs/{{run_id}}/notes", status_code=201)
+    def post_operator_note(run_id: str, body: OperatorNoteRequest) -> dict:
+        try:
+            return service.add_run_operator_note(run_id, text=body.text)
         except DashboardError as exc:
             raise _http_error(exc) from exc
 

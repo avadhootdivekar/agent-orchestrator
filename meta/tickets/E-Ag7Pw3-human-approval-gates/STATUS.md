@@ -1,14 +1,28 @@
 # STATUS
 
 - ID: `E-Ag7Pw3-human-approval-gates`
-- Updated At: 2026-10-05
-- State: **Draft rev 2** — design package revised after the early design Gate 1 (dev-security FAIL,
+- Updated At: 2026-10-06
+- State: **Draft rev 2; implementation DEFERRED (decision 2026-10-06, see "Decision" below)** — design package revised after the early design Gate 1 (dev-security FAIL,
   reviewer PASS-WITH-CHANGES). HLD + LLD rev 2, ADR-0020 rev 2 (D1–D13), 15 task tickets. Awaiting the
   re-gate (reviewer + dev-security) and the parent session's confirmation of OQ-1, OQ-2 (modified:
   gate-scoped policy instead of whole-DAG freeze), OQ-12 (6-key denylist), OQ-13 (gate evidence), OQ-14
   (file-browser denial), OQ-15 (traceback locals) and CE-1 (the result cache never settles a gate).
   0/14 implementation tasks started.
 - Owner: architect → manager
+
+## Decision (2026-10-06, pending-items audit G1-G5)
+- **Implementation is deferred; the design package is kept.** Reason: 33 dev-days planned (critical path 18 d)
+  on the most conflict-prone files (`engine.py`, `models.py`, `project_config.py`, `ui/files.py`, UI bundle) plus
+  new security-critical crypto that needs dev-security gates. This is a new feature, not pending work, and a
+  half-built gate engine is worse than none (resume/policy integrity was the Gate-1 FAIL). Auth (E-Da5Tn9)
+  depends on none of it.
+- **Recorded (G3):** owner already decided OQ-1 (approval requires auth) and OQ-2 (gate-scoped policy);
+  OQ-12..OQ-15 and CE-1 stand as designed (owner relay 2026-10-05, Manager log).
+- **Deferred with reason:** the design re-gate (reviewer + dev-security) on rev 2 and the architect
+  reconciliation against as-built auth (`Principal` contract, `xdg.resolve_config_dir`, X1-X6) are done at the
+  start of the implementation epic, not now (G2, G4).
+- **Status of the tree:** the design package was merged in PR #17; no `src/agent_orchestrator/approvals/` exists.
+  First task when restarted: `T-AGO2L6-spec-model-validation`. The owner confirms priority and the start.
 
 ## This update
 - By: architect · Role: agent · Date: 2026-10-05 · Comment: Gate 1 revision applied (rev 2). Every

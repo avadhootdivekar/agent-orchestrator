@@ -165,6 +165,20 @@ No router library. `ui/src/tabs/` holds a pure model + reducer (`model.ts`), gua
 | Reorder | native HTML5 drag-and-drop **and** keyboard (Alt+←/→ on a focused tab); roving tabindex arrows, Delete/middle-click/× close |
 | Known limits | two browser windows share one `localStorage` key: last writer wins (no cross-window sync). Split-pane / side-by-side tabs are future work. `TaskDetailPanel` now focuses with `preventScroll` so opening a task tab does not scroll its header away |
 
+### 2.1a Addenda (UX pass: scroll, retarget, collapsible sections)
+
+- **Scroll containers.** The app shell does not scroll; the sidebar and tab strip stay put. Each tab
+  renders inside its own `ScrollPanel` (`ui/src/tabs/ScrollPanel.tsx`), which remembers `scrollTop` and
+  restores it when the (display:none) panel becomes visible again. Contract test: `scroll-layout.test.tsx`.
+- **`retarget` action.** Updates an existing tab's params and derived title in place (no focus change, no
+  new tab); a no-op for an unknown id or when another tab already holds the target (dedupe). Used by the
+  file browser to keep its tab in sync with navigation (`file-browser-tab-sync.test.tsx`).
+- **Collapsible run-page sections.** One shared `CollapsibleSection` (`ui/src/components/CollapsibleSection.tsx`)
+  wraps the summary, prompt, live inputs, tasks, graph and outputs sections: a real `<button>` with
+  `aria-expanded`, optional `lazy` mount. Open/closed state persists per section id in
+  `localStorage["ao.ui.sections.v1"]` (allowlisted ids, strict booleans, max 64 keys; untrusted on read).
+  `NowRunning` stays non-collapsible (ADR-0018 D3). Tests: `collapsible-section.test.tsx`.
+
 ### 2.2 Test plan (all landed)
 
 vitest: `tabs-model.test.ts` (64: allowlists, hostile hashes/ids/paths, codec round-trip,

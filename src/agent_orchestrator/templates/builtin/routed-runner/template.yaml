@@ -17,9 +17,12 @@ params:
     enum: [bug, epic, task, documentation, testing]
   repo_set:
     description: >-
-      Key into this workspace's reposet config -- the repo(s) every stage of
-      the run operates on. No default: every workspace must name its own.
-    required: true
+      Key into this workspace's reposet config -- the repo(s) every stage of the run operates
+      on. Optional: omit (or leave empty) for workspace-only (no-repo-set) mode, where the run
+      works only on workspace-relative files and git stages have nothing to operate on
+      (ADR-0022).
+    required: false
+    default: ""
   branch_policy:
     description: >-
       Free-text policy for how the git-branch-off stage should choose between
