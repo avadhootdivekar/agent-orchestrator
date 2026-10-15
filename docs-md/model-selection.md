@@ -12,8 +12,8 @@ Which model a task runs on is resolved in ONE place, `models.resolve_effective_a
 A task- or workflow-level model **replaces** a model baked into the agent's `command_template`
 (`strip_model_flag`), so e.g. `architect-opus` can be pointed at Sonnet for one task.
 
-A model is any well-formed id or alias: `opus`, `sonnet[1m]`, `claude-opus-4-8`,
-`claude-sonnet-4-5`, `claude-sonnet-5-5`, `claude-haiku-4-5-20251001`. Only the character set is
+A model is any well-formed id or alias: `opus`, `sonnet[1m]`, `claude-opus-5-5`,
+`claude-sonnet-5-5`, `claude-haiku-5-5`. Only the character set is
 checked (`models.MODEL_ID_PATTERN`; no leading `-`, so an agent-authored manifest can't smuggle a
 CLI flag); whether the model exists is the `claude` CLI's call. An agent's
 `forbidden_task_models` is enforced against task models **and** the workflow default, at
@@ -22,8 +22,8 @@ CLI flag); whether the model exists is the `claude` CLI's call. An agent's
 ## Custom workflows
 
 ```json
-{ "defaults": { "model": "claude-sonnet-4-5" },
-  "tasks": [ { "id": "design", "agent": "architect", "model": "claude-opus-4-8", "...": "..." } ] }
+{ "defaults": { "model": "claude-sonnet-5-5" },
+  "tasks": [ { "id": "design", "agent": "architect", "model": "claude-opus-5-5", "...": "..." } ] }
 ```
 
 Tasks added at run time through an `emit_tasks` manifest may carry `model` too, or inherit

@@ -78,8 +78,8 @@ def test_ao_epic_plus_subjects_load_via_load_subject() -> None:
     assert sonnet.id == "ao-epic-plus-sonnet"
     assert haiku.id == "ao-epic-plus-haiku"
     assert sonnet.type == haiku.type == "ao_workflow"
-    assert sonnet.model == "claude-sonnet-5"
-    assert haiku.model == "claude-haiku-4-5-20251001"
+    assert sonnet.model == "claude-sonnet-5-5"
+    assert haiku.model == "claude-haiku-5-5"
     assert sonnet.max_turns == 30
 
     # Both variants point at the SAME committed workflow/agents/reposet template --

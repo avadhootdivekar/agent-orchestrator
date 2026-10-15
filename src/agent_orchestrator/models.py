@@ -243,7 +243,7 @@ class AgentSpec(BaseModel):
     )
     context_window: Literal["isolated", "shared"] = "isolated"
     extra_args: list[str] = []
-    model: str | None = None  # e.g. "claude-haiku-4-5-20251001"; passed as --model
+    model: str | None = None  # e.g. "claude-haiku-5-5"; passed as --model
     effort: EffortLevel | None = None  # → --max-turns via EFFORT_MAX_TURNS
     max_turns: int | None = None  # explicit --max-turns; overrides effort-derived value when set
     # Working directory the agent process runs in. Resolved against the workspace root
@@ -361,7 +361,7 @@ class TaskSpec(BaseModel):
 # A model id/alias is handed to `claude --model` as ONE argv element. Whitelisting the
 # character set (and forbidding a leading '-') means an agent-authored `emit_tasks` manifest
 # can never smuggle a flag through the `model` field. Covers aliases ("opus"), dated ids
-# ("claude-haiku-4-5-20251001"), versioned ids ("claude-opus-4-8") and context suffixes
+# ("claude-haiku-5-5"), versioned ids ("claude-opus-4-8") and context suffixes
 # ("sonnet[1m]"). Whether the model actually EXISTS is the CLI's call, not ours.
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-\[\]]{0,127}$")
 
@@ -372,7 +372,7 @@ def validate_model_id(value: str) -> str:
     if not MODEL_ID_PATTERN.match(model):
         raise ValueError(
             f"invalid model id {value!r}: expected letters/digits/'.'/'_'/'-'/':'/'[]' "
-            "(e.g. 'claude-opus-4-8', 'sonnet', 'claude-haiku-4-5-20251001')"
+            "(e.g. 'claude-opus-5-5', 'sonnet', 'claude-haiku-5-5')"
         )
     return model
 

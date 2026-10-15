@@ -124,9 +124,9 @@ def test_claude_cli_subjects_use_bypass_permissions_and_pinned_model_ids() -> No
     `bypassPermissions` (these tasks run tests) and pin a FULL model id, not a bare alias.
     """
     expected_models = {
-        "claude-haiku": "claude-haiku-4-5-20251001",
-        "claude-sonnet": "claude-sonnet-5",
-        "claude-opus": "claude-opus-4-8",
+        "claude-haiku": "claude-haiku-5-5",
+        "claude-sonnet": "claude-sonnet-5-5",
+        "claude-opus": "claude-opus-5-5",
     }
     for name, expected_model in expected_models.items():
         subject = load_subject(_SUBJECTS_DIR / f"{name}.json")
@@ -153,8 +153,8 @@ def test_ao_epic_subjects_pin_model_via_subject_not_per_agent() -> None:
     haiku = load_subject(_SUBJECTS_DIR / "ao-epic-haiku.json")
     sonnet = load_subject(_SUBJECTS_DIR / "ao-epic-sonnet.json")
     assert haiku.type == sonnet.type == "ao_workflow"
-    assert haiku.model == "claude-haiku-4-5-20251001"
-    assert sonnet.model == "claude-sonnet-5"
+    assert haiku.model == "claude-haiku-5-5"
+    assert sonnet.model == "claude-sonnet-5-5"
     # Both variants must point at the SAME committed workflow template (they differ
     # only by model).
     assert haiku.workflow == sonnet.workflow
