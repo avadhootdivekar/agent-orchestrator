@@ -88,6 +88,22 @@ params:
       Optional comma-separated allowlist of model ids a unit may use. Empty allows any
       well-formed id.
     default: ""
+  leverage_haiku:
+    description: >-
+      "Leverage Haiku" mode. Set to `on` so the overseer fills every wave with many small,
+      independent, differently-angled work units that run on Haiku (implement/fix/document/
+      test/verify kinds), and a work item moves to the normal stronger model only after it
+      has failed `haiku_turns` times. Cuts per-unit cost sharply; every configured limit
+      (wave_size, max_waves, budgets, max_injected_tasks, parallelism) still applies. Leave
+      unset for the normal model rule. `ao new --leverage-haiku` sets it.
+    required: false
+    enum: ["on"]
+  haiku_turns:
+    description: >-
+      Leverage-Haiku only: how many FAILED Haiku attempts a work item gets before it escalates
+      to the stronger model.
+    default: "2"
+    enum: ["1", "2", "3"]
   python_bin:
     description: >-
       Interpreter used to invoke tools/overseer_tool.py from every hook. Must be Python >=
@@ -122,6 +138,9 @@ files:
     target: overseer-contract.md
   - source: overseer-config.json.tmpl
     target: overseer-config.json
+  - source: leverage-haiku-contract.md.tmpl
+    target: leverage-haiku-contract.md
+    when: leverage_haiku
   - source: tools/overseer_tool.py
     target: tools/overseer_tool.py
 assets:

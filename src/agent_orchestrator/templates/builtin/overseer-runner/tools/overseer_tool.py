@@ -77,6 +77,19 @@ DEFAULT_TIME_CAP_TASKS: Final[int] = 1_000_000
 STAGE_ORDER: Final[tuple[str, ...]] = ("explore", "converge", "stabilize", "closeout")
 SETTLED_TASK_STATUSES: Final[frozenset[str]] = frozenset({"succeeded", "failed", "skipped"})
 DEFAULT_RUNS_ROOT: Final[str] = ".orchestrator/runs"
+
+# --- Leverage Haiku mode ---------------------------------------------------------------------
+# `leverage_haiku` renders as the string "on" (the template param's only enum value) or "".
+LEVERAGE_ON: Final[str] = "on"
+# The model alias an eligible unit runs on (alias = always the latest Haiku).
+LEVERAGE_HAIKU_MODEL: Final[str] = "haiku"
+# Unit kinds that may run on Haiku. research/design/review/stabilize keep their normal model:
+# they need judgement (and `reviewer`/`architect` agents may forbid Haiku outright).
+LEVERAGE_HAIKU_KINDS: Final[frozenset[str]] = frozenset(
+    {"implement", "fix", "document", "test", "verify"}
+)
+# A work item gets this many Haiku attempts that FAILED before the normal model takes over.
+DEFAULT_HAIKU_TURNS: Final[int] = 2
 RESULT_FILENAME: Final[str] = "prep-result.json"
 
 CONFIG_SCHEMA: Final[str] = "ao.overseer.config/v1"
@@ -602,6 +615,10 @@ class Config:
     # optional allowlist (empty = any well-formed id). See `expected_unit_model`.
     default_unit_model: str = ""
     allowed_models: tuple[str, ...] = ()
+    # Leverage Haiku mode (`leverage_haiku` param): eligible unit kinds run on Haiku until their
+    # work item has failed `haiku_turns` times, then fall back to the normal model rule.
+    leverage_haiku: bool = False
+    haiku_turns: int = DEFAULT_HAIKU_TURNS
 
 
 def _require_number(data: dict[str, Any], field_name: str) -> float:
@@ -699,6 +716,10 @@ def load_config(inst: Path) -> Config:
         kind_map=dict(data.get("kind_map", {})),
         default_unit_model=str(data.get("default_unit_model", "") or "").strip(),
         allowed_models=_parse_allowed_models(data.get("allowed_models", "")),
+        leverage_haiku=str(data.get("leverage_haiku", "") or "").strip().lower() == LEVERAGE_ON,
+        haiku_turns=max(1, int(_require_number(data, "haiku_turns")))
+        if "haiku_turns" in data
+        else DEFAULT_HAIKU_TURNS,
     )
 
 
@@ -3431,15 +3452,35 @@ def _check_entry_r9_pre_hook_and_effort(
     return violations
 
 
-def expected_unit_model(cfg: Config, brief: dict[str, Any] | None, kind: Any) -> str:
+def _failed_attempts(inst: Path, k: int | None, work_item: Any) -> int:
+    """Ledger-recorded FAILED units (`verdict: fail` or `outcome: blocked`) of *work_item*
+    through wave *k* -- the "turns Haiku already lost" count the Leverage Haiku rule keys on.
+    No history exists at intake (`k is None`) or for a new work item."""
+    if k is None or not isinstance(work_item, str) or not work_item:
+        return 0
+    lines = _work_item_sequences(_unit_lines_through(inst, k)).get(work_item, [])
+    return sum(1 for ln in lines if ln.get("verdict") == "fail" or ln.get("outcome") == "blocked")
+
+
+def expected_unit_model(
+    cfg: Config, brief: dict[str, Any] | None, kind: Any, failed_attempts: int = 0
+) -> str:
     """The ONE precedence rule for a unit's model: brief.model > kind_map[kind].model >
-    default_unit_model > "" (inherit the agent's own). The checkpoint agent must emit exactly
-    this on the unit (OV-R9m), so model selection is deterministic and auditable."""
+    Leverage Haiku (eligible kind, work item failed fewer than `haiku_turns` times, Haiku
+    allowed) > default_unit_model > "" (inherit the agent's own). The checkpoint agent must
+    emit exactly this on the unit (OV-R9m), so model selection is deterministic and auditable."""
     if isinstance(brief, dict) and isinstance(brief.get("model"), str) and brief["model"].strip():
         return brief["model"].strip()
     entry = cfg.kind_map.get(kind) if isinstance(kind, str) else None
     if isinstance(entry, dict) and isinstance(entry.get("model"), str) and entry["model"].strip():
         return entry["model"].strip()
+    if (
+        cfg.leverage_haiku
+        and kind in LEVERAGE_HAIKU_KINDS
+        and failed_attempts < cfg.haiku_turns
+        and (not cfg.allowed_models or LEVERAGE_HAIKU_MODEL in cfg.allowed_models)
+    ):
+        return LEVERAGE_HAIKU_MODEL
     return cfg.default_unit_model
 
 
@@ -3454,7 +3495,10 @@ def _check_entry_r9m_model(
     brief_data, brief_violation = _read_brief_for_check(ctx.inst, ctx.next_wave, unit_id)
     if brief_violation is not None or brief_data is None:
         return []  # R6/R15 already reports the unreadable brief
-    expected = expected_unit_model(ctx.cfg, brief_data, brief_data.get("kind"))
+    failed = _failed_attempts(
+        ctx.inst, _ck_wave_of_emitter(ctx.emitter_id), brief_data.get("work_item")
+    )
+    expected = expected_unit_model(ctx.cfg, brief_data, brief_data.get("kind"), failed)
     actual = entry.raw.get("model", "")
     violations: list[RuleViolation] = []
     for label, value in (("brief/kind_map/default", expected), ("unit", actual)):
@@ -3478,7 +3522,7 @@ def _check_entry_r9m_model(
                 "R9m",
                 f"unit {unit_id} model must be {expected!r} "
                 + (
-                    "(brief.model > kind_map model > default_unit_model)"
+                    "(brief.model > kind_map model > Leverage Haiku > default_unit_model)"
                     if expected
                     else "(omit `model`)"
                 )

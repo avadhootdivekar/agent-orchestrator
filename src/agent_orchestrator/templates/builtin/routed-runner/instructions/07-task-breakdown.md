@@ -18,6 +18,13 @@ more than anywhere else in this workflow.
   on its hottest paths; if absent, proceed without it — it is never required for
   task-breakdown to run.
 
+- `leverage-haiku-contract.md` — ONLY present when the run was started in "Leverage Haiku"
+  mode; look for it in the same directory as `breakdown-contract.md` (it is not listed in
+  your inputs because it does not exist otherwise). **If it exists, read it first: it
+  replaces the 5-entry pipeline below with a many-small-tasks Haiku ladder, a higher task
+  cap and per-task briefs, and is authoritative over this file where they differ.** If it
+  does not exist, ignore this paragraph — the standard pipeline applies.
+
 ## Outputs (BOTH required)
 1. `tasks.md` — human-readable task specifications (at the output path provided)
 2. `tasks-manifest.json` — the engine-injected task manifest (at the exact path named

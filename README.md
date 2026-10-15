@@ -440,6 +440,19 @@ The command produces:
 - A `prompt.md` file (user-editable, survives re-scaffolding on the same ID)
 - Shared instruction assets materialized once per workspace
 
+**Leverage Haiku mode** — for an epic, add `--leverage-haiku` (or pick `leverage_haiku = on` in the
+dashboard launcher) to fan the work out into many small tasks that run on Haiku first, with
+differently-angled test/review passes, escalating to the stronger model only for tasks Haiku could
+not close in two turns:
+
+```bash
+ao new routed-runner my-epic --param repo_set=main --param type=epic --leverage-haiku
+```
+
+See the `routed-runner` template README for the ladder, tunables (`haiku_angles`,
+`max_injected_tasks` — raise it for a wider fan-out; limits are never raised for you) and the
+optional `reviewer-haiku` agent. The `overseer-runner` template has the same mode (`--leverage-haiku`).
+
 Then run the instance:
 
 ```bash

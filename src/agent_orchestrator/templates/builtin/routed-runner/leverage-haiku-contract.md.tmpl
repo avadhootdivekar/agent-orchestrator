@@ -1,0 +1,202 @@
+# Leverage-Haiku manifest contract — {{ id }}
+
+Mode: **leverage_haiku = {{ params.leverage_haiku }}** · angles per task: **{{ params.haiku_angles }}** ·
+fan-out cap (`max_injected_tasks`): **{{ params.max_injected_tasks }}**
+
+This file exists only because the run was started in "Leverage Haiku" mode, and it is
+AUTHORITATIVE for stage 7 (task-breakdown). It sits next to `breakdown-contract.md`, which
+stays authoritative for everything this file does not override (paths, the aggregator
+output path, strict-JSON rules, the allowed-field list, `touches`/`isolation`).
+
+## The idea
+Haiku is far cheaper than Sonnet, and each pipeline task runs with an isolated, focused
+context — so win with **quantity**: many small, independent tasks, each attacked from
+several **different angles**, with the stronger model used ONLY for what Haiku could not
+close in its first two turns.
+
+Per epic task `<tid>` the ladder is:
+
+1. **Turn 1 — Haiku implements** (`impl1`).
+2. **Haiku test angles** run in PARALLEL, each writing different tests (`test-<angle>`).
+3. **Haiku review lenses** run in PARALLEL, each reviewing from a different lens (`review-<lens>`).
+4. **Turn 2 — Haiku fixes** everything the tests and reviews found (`impl2`).
+5. **Haiku verifies** (`verify`): re-runs everything. If green and no MUST-FIX is open it
+   pre-writes the two escalation outputs, so the next two entries are SKIPPED (zero cost).
+6. **Escalation — Sonnet** (`impl3`, `retest`) runs ONLY when Haiku could not close it.
+
+Entries per task: `5 + 2 × {{ params.haiku_angles }}` (+ one shared aggregator).
+
+## Slicing: more, smaller, independent
+- **At most `min(40, floor(({{ params.max_injected_tasks }} - 10) / (5 + 2 × {{ params.haiku_angles }})))` epic tasks**
+  (the fan-out cap fails the whole run if exceeded — count the entries before writing the
+  file). If the design needs more, merge the smallest related ones and say so in `tasks.md`.
+- Size each `<tid>` to ~10 minutes of Haiku work: one function / endpoint / handler /
+  module / fixture / doc section. If a slice would need cross-module reasoning, split it
+  or mark it critical (below).
+- **Maximise width.** Slices should be independent problems: separate files, separate
+  concerns. Add a cross-task `depends_on` only for a genuine build-on-top-of dependency
+  (see "Cross-task dependencies"). Prefer `touches` globs that do not overlap.
+
+## Critical tasks stay off Haiku
+A `<tid>` that is security/auth/crypto, money- or data-loss-path, concurrency, a
+migration, or performance-critical is **CRITICAL**: emit the standard 5-entry pipeline
+from `breakdown-contract.md` for it instead of the ladder below (no Haiku). Everything
+else — REST/DB handlers, CRUD, mappers/DTOs, config plumbing, docs, helpers, scripts,
+fixtures — takes the ladder. When unsure whether a slice is critical, it is.
+
+## Different angles, never the same prompt twice
+Haiku is cheap, so repeat — but **every Haiku entry must receive different instructions**.
+The only per-entry free text is a brief you write, so for each `<tid>` you create these
+files under `{{ instance_dir }}/outputs/tasks/<tid>/briefs/` BEFORE finishing (they are
+listed in the entries' `inputs`):
+
+- `impl.md` — the exact files/functions to create or change, the acceptance-criteria ids
+  and design.md sections that apply, what is explicitly OUT of scope.
+- `test-<angle>.md` — one per test angle. Each lists the **specific cases** that angle
+  owns and the test file it must write (a distinct file per angle — angles never edit
+  each other's files).
+- `review-<lens>.md` — one per review lens: what to inspect, concrete files/ACs, what the
+  lens must NOT duplicate from the other lenses.
+
+Test angles (use the first {{ params.haiku_angles }}, in this order):
+`contract` (acceptance-criteria and design-fixture behaviour, happy path) ·
+`edge` (invalid/empty/boundary/error paths, limits) ·
+`regression` (neighbouring code, existing suites, idempotency, ordering) ·
+`property` (invariants and seeded randomised checks).
+
+Review lenses (use the first {{ params.haiku_angles }}, in this order):
+`spec` (acceptance criteria and design conformance) ·
+`correctness` (logic, error handling, concurrency, off-by-one) ·
+`maintainability` (KISS/DRY, no magic literals, security scoping, project conventions) ·
+`testquality` (would the tests fail if the logic were wrong? are expected values from the design?).
+
+Rules for the briefs:
+1. Tailor every brief to its `<tid>` — name real files, functions, fixture ids and AC
+   numbers. A brief that could be pasted unchanged onto another task is a violation.
+2. No two briefs in the whole epic may be identical. Self-check before finishing:
+   `sha256sum {{ instance_dir }}/outputs/tasks/*/briefs/*.md | sort | awk '{print $1}' | uniq -d`
+   must print nothing.
+3. Within one `<tid>`, the angles must cover different ground — if two briefs list the
+   same cases, rewrite one.
+
+## Entries per ladder task `<tid>`
+Write each as one object in `tasks` (shapes below; `<angle>` / `<lens>` run over the first
+{{ params.haiku_angles }} names above — emit one test entry and one review entry for
+each). All paths are under `{{ instance_dir }}/outputs/tasks/<tid>/` unless absolute.
+`"model": "haiku"` is the alias for the latest Haiku (Haiku 5.5 at time of writing).
+
+```json
+{"id": "impl1-<tid>", "agent": "developer", "model": "haiku",
+  "instruction": "workflows/routed-runner/instructions/60-haiku-impl.md",
+  "depends_on": ["task-breakdown"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/briefs/impl.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md"],
+  "timeout_seconds": 5400, "skip_if_outputs_exist": true, "effort": "medium"}
+```
+
+```json
+{"id": "test-<angle>-<tid>", "agent": "tester", "model": "haiku",
+  "instruction": "workflows/routed-runner/instructions/61-haiku-test-angle.md",
+  "depends_on": ["impl1-<tid>"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/briefs/test-<angle>.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/test-<angle>.md"],
+  "timeout_seconds": 5400, "skip_if_outputs_exist": true, "effort": "medium"}
+```
+
+```json
+{"id": "review-<lens>-<tid>", "agent": "reviewer-haiku",
+  "instruction": "workflows/routed-runner/instructions/62-haiku-review-lens.md",
+  "depends_on": ["test-<angle-1>-<tid>", "...every test-<angle>-<tid>..."],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/test-<angle-1>.md", "...every test-<angle>.md...",
+             "{{ instance_dir }}/outputs/tasks/<tid>/briefs/review-<lens>.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/review-<lens>.md"],
+  "timeout_seconds": 3600, "skip_if_outputs_exist": true}
+```
+
+```json
+{"id": "impl2-<tid>", "agent": "developer", "model": "haiku",
+  "instruction": "workflows/routed-runner/instructions/63-haiku-fix.md",
+  "depends_on": ["review-<lens-1>-<tid>", "...every review-<lens>-<tid>..."],
+  "inputs": ["{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-1.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/test-<angle-1>.md", "...every test-<angle>.md...",
+             "{{ instance_dir }}/outputs/tasks/<tid>/review-<lens-1>.md", "...every review-<lens>.md..."],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-2.md"],
+  "timeout_seconds": 5400, "skip_if_outputs_exist": true, "effort": "medium"}
+```
+
+```json
+{"id": "verify-<tid>", "agent": "tester", "model": "haiku",
+  "instruction": "workflows/routed-runner/instructions/64-haiku-verify.md",
+  "depends_on": ["impl2-<tid>"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-2.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/review-<lens-1>.md", "...every review-<lens>.md..."],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/test-pass-2.md"],
+  "timeout_seconds": 5400, "skip_if_outputs_exist": true, "effort": "medium"}
+```
+
+The escalation pair has NO `model` — it inherits the `developer`/`tester` agents' own
+(stronger) model. That is the point. Both are `skip_if_outputs_exist: true` because
+`verify-<tid>` pre-writes their outputs when Haiku closed the task.
+
+```json
+{"id": "impl3-<tid>", "agent": "developer",
+  "instruction": "workflows/routed-runner/instructions/65-escalate-fix.md",
+  "depends_on": ["verify-<tid>"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/test-pass-2.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-2.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-3.md"],
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true, "effort": "medium"}
+```
+
+```json
+{"id": "retest-<tid>", "agent": "tester",
+  "instruction": "workflows/routed-runner/instructions/66-escalate-retest.md",
+  "depends_on": ["impl3-<tid>"],
+  "inputs": ["{{ instance_dir }}/outputs/design.md", "{{ instance_dir }}/outputs/tasks.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/dev-pass-3.md",
+             "{{ instance_dir }}/outputs/tasks/<tid>/test-pass-2.md"],
+  "outputs": ["{{ instance_dir }}/outputs/tasks/<tid>/test-pass-3.md"],
+  "timeout_seconds": 10800, "skip_if_outputs_exist": true, "effort": "medium"}
+```
+
+### If the `reviewer-haiku` agent does not exist
+`reviewer-haiku` is an optional agent (the standard `reviewer` forbids Haiku). Check the
+agents file (`agents:` in `.ao/config.yaml`, usually `specs/agents.json`) BEFORE emitting.
+If `reviewer-haiku` is absent, emit exactly ONE review per ladder task instead of the
+review lenses: `review-spec-<tid>` with `"agent": "reviewer"` (NO `model` — it inherits
+the stronger model), the `spec` brief only, same instruction/inputs/outputs shape.
+`impl2`/`verify` then list that single review. Never put `model: haiku` on `reviewer`.
+
+## Aggregator — exactly one, as in `breakdown-contract.md` with these changes
+```json
+{"id": "aggregate-epic-tasks", "agent": "manager",
+  "instruction": "workflows/routed-runner/instructions/67-haiku-aggregate.md",
+  "depends_on": ["retest-<tid-1>", "...retest-<tid> for each ladder task...",
+                 "test2-<tid-c>", "...test2-<tid> for each CRITICAL (standard-pipeline) task..."],
+  "inputs": ["{{ instance_dir }}/outputs/tasks/<tid-1>/test-pass-3.md", "...ladder tasks (test-pass-3.md)...",
+             "{{ instance_dir }}/outputs/tasks/<tid-c>/test-pass-2.md", "...critical tasks (test-pass-2.md)..."],
+  "outputs": ["{{ instance_dir }}/outputs/all-tasks-complete.md"],
+  "timeout_seconds": 3600, "skip_if_outputs_exist": false}
+```
+The output path and id are unchanged: `full-test` waits on exactly that path.
+
+## Cross-task dependencies
+If task B builds on task A's code, add A's LAST entry to `impl1-<B>`'s `depends_on`
+(`retest-<A>` for a ladder task, `test2-<A>` for a critical one), keeping `task-breakdown`.
+
+## Additional hard rules
+1. Every `depends_on` id must exist in this manifest (or be `task-breakdown`); ids unique.
+2. Only the allowed fields from `breakdown-contract.md`; `model` is allowed ONLY as the
+   literal `"haiku"`, ONLY on `impl1`, `test-<angle>`, `impl2` and `verify` of a ladder task.
+   Never on the aggregator, `impl3`, `retest`, `reviewer`, or any critical-task entry.
+3. Count total emitted entries against the cap ({{ params.max_injected_tasks }}) — leave a
+   margin of at least 5.
+4. Record in `tasks.md`, per `<tid>`: ladder or CRITICAL (+ why), the angles/lenses used,
+   and the brief file paths.

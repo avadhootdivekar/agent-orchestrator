@@ -453,7 +453,7 @@
     {
       "id": "runaway-fanout",
       "condition": "injected_task_count",
-      "threshold": 115,
+      "threshold": {{ params.max_injected_tasks }},
       "action": "fail",
       "mode": "recommend"
     },

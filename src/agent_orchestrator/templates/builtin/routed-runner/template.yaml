@@ -51,6 +51,30 @@ params:
       hard-stops the run).
     required: false
     default: "1500"
+  leverage_haiku:
+    description: >-
+      "Leverage Haiku" mode (epic route). Set to `on` to fan the epic out into many small,
+      independent tasks that run on Haiku first (impl -> several differently-angled test and
+      review passes -> a Haiku fix turn), and escalate to the stronger Sonnet developer/tester
+      ONLY for tasks still failing after those two Haiku turns. Trades a bigger task graph for
+      much lower per-token cost. Raise `max_injected_tasks` (e.g. 400) so the wider fan-out
+      fits (the mode never raises limits itself). Leave unset for the normal pipeline.
+    required: false
+    enum: ["on"]
+  haiku_angles:
+    description: >-
+      Leverage-Haiku only: how many differently-angled test passes AND review passes run in
+      parallel per task (more angles = more independent coverage, more tasks).
+    required: false
+    default: "3"
+    enum: ["2", "3", "4"]
+  max_injected_tasks:
+    description: >-
+      runaway-fanout circuit-breaker threshold: the run FAILS if agents inject more tasks than
+      this. The default fits the normal 5-entries-per-task pipeline (20 tasks); Leverage Haiku
+      emits ~9-11 entries per task, so raise it (e.g. 400) when using that mode -- the breakdown agent otherwise fits fewer tasks under the cap.
+    required: false
+    default: "115"
 dirs:
   - outputs
   - outputs/bug
@@ -69,6 +93,13 @@ files:
     keep_existing: true
   - source: breakdown-contract.md.tmpl
     target: breakdown-contract.md
+  - source: leverage-haiku-contract.md.tmpl
+    target: leverage-haiku-contract.md
+    when: leverage_haiku
+  - source: agents.leverage-haiku.json.tmpl
+    target: agents.leverage-haiku.json
+    when: leverage_haiku
+    keep_existing: true
   - content: "{{ params.type }}\n"
     target: outputs/forced-type.txt
     when: type
