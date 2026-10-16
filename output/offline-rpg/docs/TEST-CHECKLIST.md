@@ -11,8 +11,8 @@ recorded manual walkthrough. Allowed statuses:
 - `fail` — tried and did not work (record the observed behaviour in Evidence).
 - `not applicable` — deliberately out of scope (state why in Evidence).
 
-Only the offline-scan, build and test-suite rows in section C have evidence so far (wave 2 verify, 2026-10-16). All
-gameplay and save rows stay `not tested`.
+Only the offline-scan, build and test-suite rows in section C have evidence so far (C1 and C2 from the wave 2 verify, 2026-10-16;
+C3 re-run in w03-19, 2026-10-16). All gameplay and save rows stay `not tested`.
 
 ## A. Offline scenarios (prompt §24)
 
@@ -61,8 +61,8 @@ These are not in the prompt's numbered list but are required by the offline acce
 | # | Check | Command | Status | Evidence |
 |---|---|---|---|---|
 | C1 | Offline scan finds no remote URL, network API, module or telemetry reference | `npm run check-offline` | automated pass | `npm run check-offline` exit 0 on `dist/index.html`. The scan's own unit tests pass (`tests/scripts/check-offline.test.mjs`, run with `node --test`). |
-| C2 | Build produces a single self-contained `dist/index.html` | `npm run build` | automated pass | `npm run build` exit 0, "built dist/index.html (172305 bytes)"; the build runs the offline guard on its own output. `npm test` also runs `build.mjs --verify` (two in-memory builds byte-identical). |
-| C3 | Test suite passes from a clean checkout | `npm test` | automated pass | Run on the working tree, **not a clean checkout** (uncommitted wave-2 changes present; a clean-checkout run is not done). `npm test` exit 0: `# tests 241`, `# pass 241`, `# fail 0`. This runs `build.mjs --verify` and then `node --test 'tests/**/*.test.js' 'tests/scripts/*.test.mjs'`. |
+| C2 | Build produces a single self-contained `dist/index.html` | `npm run build` | automated pass | Wave 2: `npm run build` exit 0, "built dist/index.html (172305 bytes)"; the build runs the offline guard on its own output. Not re-run in w03-19. `npm test` also runs `build.mjs --verify` (two in-memory builds byte-identical); in w03-19 that verify printed 281724 bytes, so the 172305 figure is stale for the current tree. |
+| C3 | Test suite passes from a clean checkout | `npm run test:unit` (the test half of `npm test`) | automated pass | Run in w03-19, 2026-10-16, on the working tree, **not a clean checkout** (uncommitted changes from other units are present, and the tree was still changing during the run). `npm run test:unit` exit 0: `# tests 471`, `# pass 471`, `# fail 0`. Earlier runs in the same unit read 418, 436 and 446 tests as new test files landed; the 471 figure is the last run. `npm test` in this unit (build verify, then unit tests) exit 0: `# tests 436`, `# pass 436`, `# fail 0`. The unit test glob is `tests/**/*.test.js` and `tests/scripts/*.test.mjs`. A clean-checkout run is not done. |
 
 ## Summary
 
