@@ -182,9 +182,14 @@
     return { ok: true };
   }
 
+  // Optional effect executor (world/skill-effects.js registers itself): execute(world, player, def, rank, aim, params).
+  var executor = null;
+  function setExecutor(fn) { executor = typeof fn === 'function' ? fn : null; }
+
   /** Casts the skill in bar slot `slotIndex`. On success spends resource, starts the (CDR-reduced) cooldown and returns
-      { ok, skillId, def, params }; the caller applies the effect. On failure returns { ok:false, reason }. */
-  function tryCastSkill(world, player, slotIndex) {
+      { ok, skillId, def, params }; with an executor registered and a successful cast the result also carries
+      `applied` (the executor's result). `aim` is the world-space target {x,y}. On failure returns { ok:false, reason }. */
+  function tryCastSkill(world, player, slotIndex, aim) {
     var st = state(player), id = st.bar[slotIndex];
     if (!id) return fail('empty-slot');
     var r = canCast(player, id);
@@ -193,7 +198,9 @@
     player.resource -= d.cost;
     if (!player.cooldowns) player.cooldowns = {};
     player.cooldowns[cdKey(id)] = d.cooldown * (1 - cdr);
-    return { ok: true, skillId: id, def: d, params: resolveSkillParams(player, d) };
+    var out = { ok: true, skillId: id, def: d, params: resolveSkillParams(player, d) };
+    if (executor) out.applied = executor(world, player, d, getSkillRank(player, id), aim, out.params);
+    return out;
   }
 
   /** Ticks skill cooldowns down by dt seconds, dropping finished ones. */
@@ -252,7 +259,7 @@
     canLearn: canLearn, learnSkill: learnSkill, canUpgrade: canUpgrade, upgradeSkill: upgradeSkill,
     equipSkill: equipSkill, respec: respec, respecCost: respecCost,
     applyPassives: applyPassives, resolveSkillParams: resolveSkillParams,
-    canCast: canCast, tryCastSkill: tryCastSkill, updateSkills: updateSkills, cooldownRemaining: cooldownRemaining,
+    setExecutor: setExecutor, canCast: canCast, tryCastSkill: tryCastSkill, updateSkills: updateSkills, cooldownRemaining: cooldownRemaining,
     serialize: serialize, restore: restore
   };
 })(globalThis.RPG = globalThis.RPG || {});
