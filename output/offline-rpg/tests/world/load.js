@@ -20,4 +20,12 @@ function loadRPG(relPaths) {
 
 const WORLD_FILES = ['world/tilemap.js', 'world/collision.js'];
 
-module.exports = { loadRPG, WORLD_FILES };
+// Everything areas.js needs, in build order: data, world helpers, mapgen, difficulty, encounters and the player.
+const AREAS_FILES = [
+  'core/namespace.js', 'core/util.js', 'core/rng.js', 'core/events.js', 'core/pool.js', 'core/entities.js',
+  'core/state.js', 'data/difficulties.js', 'data/monsters.js', 'data/areas.js', 'world/stats.js',
+  'world/tilemap.js', 'world/collision.js', 'world/spatial.js', 'world/mapgen.js', 'world/world.js',
+  'world/difficulty.js', 'world/encounters.js', 'world/areas.js', 'sim/player.js',
+];
+
+module.exports = { loadRPG, WORLD_FILES, AREAS_FILES };
