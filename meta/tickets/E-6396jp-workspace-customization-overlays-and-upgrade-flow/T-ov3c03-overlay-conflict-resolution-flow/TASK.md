@@ -7,11 +7,14 @@
 - Created: `2026-10-16`
 - Last Updated: `2026-10-16`
 - Status: `Draft`
-- Priority: `P2`
+- Priority: `P3 (backlog)`
 - Estimate: `< 3 days` (split further if discovery says otherwise)
 
 ## Requirements Mapping
 - Requirement IDs: see EPIC.md
+
+## Re-triage
+Re-triage 2026-10-16: demoted to backlog; the skill resolves conflicts with `git merge-file` and human review. Revisit only if the skill is used often and conflicts are routine.
 
 ## Description
 When the builtin changes under an overlay patch: show base (version the overlay was written against), theirs (new builtin) and ours (overlay); support `ao templates resolve <ws> <template>` (interactive/--keep-overlay/--take-builtin) and record the resolution. Overlays that only add files or merge fragments should almost never conflict.

@@ -7,11 +7,14 @@
 - Created: `2026-10-16`
 - Last Updated: `2026-10-16`
 - Status: `Draft`
-- Priority: `P1`
+- Priority: `P2`
 - Estimate: `< 3 days` (split further if discovery says otherwise)
 
 ## Requirements Mapping
 - Requirement IDs: see EPIC.md
+
+## Re-triage
+Re-triage 2026-10-16: demoted. A manual skill (`/ao-overlay-sync`) plus an added-files + `post-scaffold.sh` convention covers it today. Build this only if the manual flow proves error-prone. Not required for the FinPlan persona-review work.
 
 ## Description
 Today a workspace template with the same name shadows a builtin wholesale (`docs-md/workflow-templates*`), so customizing e.g. `overseer-runner` for FinPlan means forking it and then silently missing every upstream fix. Add an overlay mechanism: a workspace declares `overlay_of: <builtin>` plus a small set of patches, applied on top of the current builtin at scaffold time:

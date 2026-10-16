@@ -8,6 +8,13 @@
 - Last Updated: `2026-10-16`
 - Status: `Draft`
 
+## Re-triage (2026-10-16, after owner review)
+The operator asked for Claude skills in the self-hosting workspace instead of new `ao` features:
+`ao-runner-ao/.claude/skills/ao-upgrade` and `ao-overlay-sync` (human-invoked) now do install + dashboard verification
++ three-way overlay sync with `git merge-file`. So most of this epic is demoted: build tool features only if the skills
+prove insufficient. Key finding that stays valid: workspace copies of template `instructions/` are `keep_existing`
+assets, so upstream fixes never reach them (silent staleness) -- T-ov2b02 (baseline hashes) is the one cheap, worthwhile tool change.
+
 ## Summary
 - Goal: Let each workspace customize existing builtin workflows/agents (e.g. FinPlan's multi-reviewer overseer) without forking, and have every `ao` update carry customizations forward with conflicts surfaced and dashboards verified.
 - Scope In: Overlay layer, drift detection, conflict resolution, scripted self-update with dashboard refresh and health checks, customization manifest/docs.
@@ -21,11 +28,11 @@
 - NFR-2: Safe: refuses with active runs; never callable from a run.
 
 ## Task List
-- [ ] `T-ov1a01-template-overlay-layer` — Per-workspace overlay on a builtin template (customize, don't fork) (priority: P1)
-- [ ] `T-ov2b02-template-version-stamp-and-drift` — Version-stamp scaffolds and detect drift on upgrade (priority: P1)
-- [ ] `T-ov3c03-overlay-conflict-resolution-flow` — Three-way conflict resolution for overlays (priority: P2)
-- [ ] `T-ov4d04-ao-self-update-command` — One command to install the new `ao` safely and refresh every dashboard (priority: P1)
-- [ ] `T-ov5e05-workspace-customization-manifest-and-docs` — Workspace customization manifest and guide (priority: P2)
+- [ ] `T-ov1a01-template-overlay-layer` — Per-workspace overlay on a builtin template (customize, don't fork) (priority: P2, reframed: overlay for per-run config + instructions; revisit after the skill has been used)
+- [ ] `T-ov2b02-template-version-stamp-and-drift` — Version-stamp scaffolds and detect drift on upgrade (priority: P2, reframed: baseline hashes for keep_existing assets)
+- [ ] `T-ov3c03-overlay-conflict-resolution-flow` — Three-way conflict resolution for overlays (priority: P3 backlog; skill uses git merge-file)
+- [ ] `T-ov4d04-ao-self-update-command` — One command to install the new `ao` safely and refresh every dashboard (priority: P3 backlog; superseded by /ao-upgrade skill)
+- [x] `T-ov5e05-workspace-customization-manifest-and-docs` — Workspace customization manifest and guide (SUPERSEDED by the skills; close)
 
 ## Risks and Dependencies
 - Depends loosely on E-79one2 T-ag1a01 (agent composition) for agent additions.

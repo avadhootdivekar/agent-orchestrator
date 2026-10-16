@@ -7,11 +7,14 @@
 - Created: `2026-10-16`
 - Last Updated: `2026-10-16`
 - Status: `Draft`
-- Priority: `P2`
+- Priority: `Superseded`
 - Estimate: `< 3 days` (split further if discovery says otherwise)
 
 ## Requirements Mapping
 - Requirement IDs: see EPIC.md
+
+## Re-triage
+Re-triage 2026-10-16: superseded. The manifest/convention lives in the `/ao-overlay-sync` skill (`.ao/overlays/<template>/MANIFEST.md`). Close unless the convention is later promoted into the tool.
 
 ## Description
 A single, human-readable manifest per workspace (e.g. `.ao/customizations.md` or `.ao/overlays/README`) generated/maintained by `ao`: which builtin templates/agents are customized, why, and the owning ticket, plus a guide for the common cases (add a kind, add an agent, pin a model for a kind, add instruction files). First worked example: FinPlan 'multi-persona reviewers on overseer-runner' (see FinPlan ticket).

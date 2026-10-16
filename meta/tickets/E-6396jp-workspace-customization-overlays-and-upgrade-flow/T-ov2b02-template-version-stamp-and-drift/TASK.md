@@ -7,11 +7,14 @@
 - Created: `2026-10-16`
 - Last Updated: `2026-10-16`
 - Status: `Draft`
-- Priority: `P1`
+- Priority: `P2`
 - Estimate: `< 3 days` (split further if discovery says otherwise)
 
 ## Requirements Mapping
 - Requirement IDs: see EPIC.md
+
+## Re-triage
+Re-triage 2026-10-16: REFRAMED to the one change worth making in the tool: record a baseline content hash (and template version) for `keep_existing` assets at scaffold time, so `ao` can auto-refresh workspace files the workspace never modified and only flag the modified ones. Today those assets never refresh, silently staleing every workspace's instructions after an upgrade. Reporting/status UI is secondary.
 
 ## Description
 Every scaffolded run and every overlay records the builtin template version/hash it was built against. `ao templates status` (or `ao doctor`) reports, per workspace: builtin changed since the overlay was last verified; overlay patches that no longer apply cleanly (conflict); runs scaffolded from an older template (informational; running runs are never touched).

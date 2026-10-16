@@ -7,11 +7,14 @@
 - Created: `2026-10-16`
 - Last Updated: `2026-10-16`
 - Status: `Draft`
-- Priority: `P1`
+- Priority: `P3 (backlog)`
 - Estimate: `< 3 days` (split further if discovery says otherwise)
 
 ## Requirements Mapping
 - Requirement IDs: see EPIC.md
+
+## Re-triage
+Re-triage 2026-10-16: superseded for now by the `/ao-upgrade` skill, which keeps install a deliberate human step (matches the self-hosting rule). Promote only if the skill proves flaky.
 
 ## Description
 Codify the manual procedure (build UI bundle if UI changed -> `install.sh --force --yes` -> restart `ao.service` -> health check) as a safe, scripted command, e.g. `ao self-update` (human-invoked; never run by workflow runs, preserving the self-hosting rule):
