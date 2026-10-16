@@ -2,7 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadRPG } = require('./load.js');
+// Uses the shared world loader directly: tests/data/load.js is owned by the items/difficulty work and changes under it.
+const { loadRPG } = require('../world/load.js');
 
 const RPG = loadRPG(['data/monsters.js']);
 const MONSTERS = RPG.data.monsters;
