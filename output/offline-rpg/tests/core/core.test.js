@@ -169,6 +169,17 @@ test('state: world skeleton is deterministic and snapshot excludes cosmetic data
   assert.equal(snap.rngState, w1.rng.getState());
 });
 
+test('state: lootRng is a separate deterministic stream; telegraphs and enemyProjectiles start empty', () => {
+  const w1 = RPG.core.state.createWorldState({ seed: 5 });
+  const w2 = RPG.core.state.createWorldState({ seed: 5 });
+  assert.equal(w1.lootRng.next(), w2.lootRng.next());
+  assert.equal(w1.rng.getState(), w2.rng.getState(), 'drawing loot does not advance the gameplay rng');
+  assert.notEqual(w1.lootRng.getState(), w1.rng.getState());
+  deepEq(w1.telegraphs, []);
+  deepEq(w1.enemyProjectiles, []);
+  assert.notEqual(w1.telegraphs, w2.telegraphs);
+});
+
 test('src/core has no window/document/localStorage references and loads headless', () => {
   for (const f of fs.readdirSync(CORE).filter(n => n.endsWith('.js'))) {
     const code = fs.readFileSync(path.join(CORE, f), 'utf8');

@@ -153,3 +153,19 @@ test('drops and iteration helpers', () => {
   assert.equal(W.despawnDead(w), 2);
   assert.equal(w.drops.length, 0);
 });
+
+test('pooled monsters are fully reset on acquire (no stale ai / rewarded / fight / extra fields)', () => {
+  const w = mk();
+  const id = defIds()[0];
+  const a = W.spawnMonster(w, id, 1, 1);
+  a.ai = { stale: true }; a.rewarded = true; a.fight = { phase: 3 }; a.junk = 42; a.dead = true;
+  W.despawnDead(w);
+  const b = W.spawnMonster(w, id, 5, 6);
+  assert.equal(b, a, 'the pooled object is reused');
+  assert.equal(b.ai, undefined);
+  assert.equal(b.rewarded, undefined);
+  assert.equal(b.fight, undefined);
+  assert.equal(b.junk, undefined);
+  assert.equal(b.dead, false);
+  assert.equal(b.x, 5);
+});

@@ -55,6 +55,7 @@
     var damage = s.damage * (elite ? ELITE.damage : 1);
 
     var m = poolsOf(world).monster.acquire();
+    clearKeys(m);   // pooled objects must not carry stale ai / rewarded / fight state into the new monster
     var base = RPG.core.entities.baseEntity('monster', x, y, def.radius * (elite ? ELITE.radius : 1), 1);
     for (var k in base) m[k] = base[k];
     m.id = nextId(world);
