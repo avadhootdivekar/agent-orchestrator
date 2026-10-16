@@ -11,8 +11,8 @@ const RPG = loadRPG([
   'core/state.js', 'data/maps/test-map.js', 'data/monsters.js', 'data/weapons.js', 'data/skills.js',
   'data/difficulties.js', 'data/items.js', 'data/areas.js',
   'world/stats.js', 'world/tilemap.js', 'world/collision.js',
-  'render/palette.js', 'render/camera.js', 'render/draw-map.js', 'render/draw-shapes.js', 'render/renderer.js',
-  'sim/player.js', 'sim/sim.js'
+  'render/palette.js', 'render/camera.js', 'render/draw-map.js', 'render/draw-shapes.js', 'render/draw-entities.js',
+  'render/hud.js', 'render/renderer.js', 'sim/player.js', 'sim/sim.js'
 ]);
 
 const plain = (v) => JSON.parse(JSON.stringify(v));
@@ -136,4 +136,105 @@ test('draw follows the player with the camera when dt is positive', () => {
   world.player.prevY = world.player.y = start.y;
   r.draw(world, 1, 1 / 60);
   assert.ok(r.camera.x > start.x && r.camera.x < start.x + 400, 'camera moved toward the player but not onto it yet');
+});
+
+// Stubs every layer the renderer calls, in a fresh realm so the stubs never leak into the tests above.
+// Each stub appends its name to `log`, which is the order the renderer drew the layers in.
+function stubbedRenderer() {
+  const R = loadRPG([
+    'core/namespace.js', 'core/util.js', 'core/rng.js', 'core/events.js', 'core/pool.js', 'core/entities.js',
+    'core/state.js', 'data/maps/test-map.js', 'data/monsters.js', 'data/weapons.js', 'data/skills.js',
+    'data/difficulties.js', 'data/items.js', 'data/areas.js',
+    'world/stats.js', 'world/tilemap.js', 'world/collision.js',
+    'render/palette.js', 'render/camera.js', 'render/draw-map.js', 'render/draw-shapes.js', 'render/renderer.js',
+    'sim/player.js', 'sim/sim.js'
+  ]);
+  const log = [];
+  const logger = (name) => (...args) => { log.push({ name, args }); };
+  R.render.entities = {
+    drawPlayer: logger('player'), drawMonster: logger('monster'),
+    drawProjectile: logger('projectile'), drawDrop: logger('drop')
+  };
+  R.render.effects = { drawEffects: (ctx, w, a, p, layer) => log.push({ name: 'effects:' + layer }),
+    drawDamageNumbers: logger('damageNumbers') };
+  R.render.hud = { buildHudModel: (w, ui) => ({ ui }), draw: logger('hud') };
+  return { R, log };
+}
+
+test('draw order: map, drops, effects below, enemy shots, monsters, player, player shots, effects above, numbers, HUD', () => {
+  const { R, log } = stubbedRenderer();
+  const { canvas } = recordingCanvas();
+  const r = R.render.create(canvas);
+  r.resize(800, 600, 1);
+  const world = R.sim.createWorld({ seed: 1 });
+  world.drops.push({ x: 10, y: 10 });
+  world.enemyProjectiles.push({ x: 20, y: 20 });
+  world.monsters.push({ x: 30, y: 30 });
+  world.projectiles.push({ x: 40, y: 40 });
+  r.snapTo(world);
+  log.length = 0;
+  r.draw(world, 1, 1 / 60, { debug: true });
+  const names = log.map((e) => e.name);
+  assert.deepEqual(names, [
+    'drop', 'effects:below', 'projectile', 'monster', 'player', 'projectile', 'effects:above', 'damageNumbers', 'hud'
+  ]);
+});
+
+test('the HUD receives the ui inputs and the world, drawn in CSS px after the world transform', () => {
+  const { R, log } = stubbedRenderer();
+  const { canvas, calls } = recordingCanvas();
+  const r = R.render.create(canvas);
+  r.resize(800, 600, 2);
+  const world = R.sim.createWorld({ seed: 1 });
+  const toasts = [{ text: 'Saved' }];
+  r.snapTo(world);
+  calls.length = 0;
+  log.length = 0;
+  r.draw(world, 1, 1 / 60, { debug: true, fps: 60, toasts });
+  const hud = log.find((e) => e.name === 'hud');
+  assert.ok(hud, 'hud drawn');
+  assert.deepEqual(plain(hud.args[1]), { ui: { debug: true, fps: 60, toasts } });
+  assert.equal(hud.args[2], 800);
+  assert.equal(hud.args[3], 600);
+  // The HUD's transform is the dpr scale only: set after the world transform, then reset to identity.
+  const transforms = calls.filter((c) => c.op === 'setTransform');
+  assert.deepEqual(transforms.at(-2).m, [2, 0, 0, 2, 0, 0]);
+  assert.deepEqual(transforms.at(-1).m, [1, 0, 0, 1, 0, 0]);
+});
+
+test('the camera clamps to the map: at the top-left corner the view stops at half a viewport from the edge', () => {
+  const { canvas } = recordingCanvas();
+  const r = RPG.render.create(canvas);
+  r.resize(800, 600, 1);
+  const world = RPG.sim.createWorld({ seed: 1 });
+  world.player.prevX = world.player.x = 0;
+  world.player.prevY = world.player.y = 0;
+  r.snapTo(world);
+  r.draw(world, 1, 1);
+  assert.equal(r.camera.x, 800 / (2 * r.camera.zoom));
+  assert.equal(r.camera.y, 600 / (2 * r.camera.zoom));
+});
+
+test('screen shake follows the sim fx.shake, and a zero shake leaves the view exactly centred on the camera', () => {
+  const { canvas, calls } = recordingCanvas();
+  const r = RPG.render.create(canvas);
+  r.resize(800, 600, 1);
+  const world = RPG.sim.createWorld({ seed: 1 });
+  r.snapTo(world);
+
+  world.fx.shake = 4;
+  r.draw(world, 1, 0);
+  assert.equal(r.camera.shake, 4);
+  // Decay is the sim's: next tick it hands the renderer a smaller amplitude, and the camera follows it.
+  world.fx.shake = 2;
+  r.draw(world, 1, 0);
+  assert.equal(r.camera.shake, 2);
+
+  world.fx.shake = 0;
+  calls.length = 0;
+  r.draw(world, 1, 0);
+  assert.equal(r.camera.shake, 0);
+  const k = r.camera.zoom;
+  const world0 = calls.find((c) => c.op === 'setTransform' && c.m[0] === k);
+  assert.deepEqual(world0.m, [k, 0, 0, k, 400 - r.camera.x * k, 300 - r.camera.y * k]);
 });

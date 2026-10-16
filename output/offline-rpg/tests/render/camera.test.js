@@ -97,3 +97,65 @@ test('screenToWorld inverts worldToScreen the other way round (screen -> world -
     near(s.y, sy, 'sy');
   }
 });
+
+test('clampToMap keeps the viewport inside the map on each axis', () => {
+  const c = cam.create();
+  c.zoom = 1.5;
+  const viewW = 800, viewH = 600; // half-extents in world px at zoom 1.5: 266.67 x 200
+  cam.snap(c, -500, 9000);
+  cam.clampToMap(c, 2000, 1500, viewW, viewH);
+  near(c.x, 800 / 3, 'x pinned to the left edge');
+  near(c.y, 1500 - 600 / 3, 'y pinned to the bottom edge');
+});
+
+test('clampToMap leaves a camera that is already inside the bounds where it is', () => {
+  const c = cam.create();
+  c.zoom = 1;
+  cam.snap(c, 700, 500);
+  cam.clampToMap(c, 2000, 1500, 800, 600);
+  assert.equal(c.x, 700);
+  assert.equal(c.y, 500);
+});
+
+test('clampToMap centres the camera on a map smaller than the viewport instead of clamping', () => {
+  const c = cam.create();
+  c.zoom = 1;
+  cam.snap(c, 10, 10);
+  cam.clampToMap(c, 300, 200, 800, 600);
+  assert.equal(c.x, 150);
+  assert.equal(c.y, 100);
+});
+
+test('setShake stores the amplitude and treats negative or NaN input as no shake', () => {
+  const c = cam.create();
+  cam.setShake(c, 4);
+  assert.equal(c.shake, 4);
+  cam.setShake(c, -3);
+  assert.equal(c.shake, 0);
+  cam.setShake(c, NaN);
+  assert.equal(c.shake, 0);
+});
+
+test('shakeOffset is zero with no shake and does not touch the RNG', () => {
+  const c = cam.create();
+  let draws = 0;
+  const rng = { range() { draws++; return 1; } };
+  const off = cam.shakeOffset(c, rng);
+  assert.equal(off.x, 0);
+  assert.equal(off.y, 0);
+  assert.equal(draws, 0);
+});
+
+test('shakeOffset stays within the amplitude and is reproducible from the same RNG state', () => {
+  const RPG2 = loadRPG(['core/namespace.js', 'core/rng.js', 'render/camera.js']);
+  const c = cam.create();
+  cam.setShake(c, 6);
+  const a = RPG2.core.Rng.create(42), b = RPG2.core.Rng.create(42);
+  for (let i = 0; i < 50; i++) {
+    const oa = cam.shakeOffset(c, a);
+    const ob = cam.shakeOffset(c, b);
+    assert.ok(Math.abs(oa.x) <= 6 && Math.abs(oa.y) <= 6, 'within amplitude');
+    assert.equal(oa.x, ob.x);
+    assert.equal(oa.y, ob.y);
+  }
+});

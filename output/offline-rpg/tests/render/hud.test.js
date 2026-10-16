@@ -152,3 +152,72 @@ test('draw does not throw with a null or partial model and no optional fields', 
     assert.doesNotThrow(() => draw(ctx, model, VIEW_W, VIEW_H));
   }
 });
+
+// Boss detection reads RPG.data.monsters, so this loader adds the monster definitions to the HUD files.
+const RPG_WITH_DATA = loadRPG(['core/namespace.js', 'data/monsters.js', ...RENDER_FILES]);
+const BOSS_ID = 'warden-of-ash';
+const BOSS_NAME = RPG_WITH_DATA.data.monsters[BOSS_ID].name;
+const BOSS_BAR_W = 420;
+
+/** A world-shaped state with the given monsters; the HUD reads only player/difficulty/monsters from it. */
+function withMonsters(monsters) {
+  return { player: { hp: 10, maxHp: 10 }, monsters };
+}
+
+test('the boss bar is in the model only while a boss is alive', () => {
+  const alive = RPG_WITH_DATA.render.hud.buildHudModel(
+    withMonsters([{ defId: BOSS_ID, hp: 50, maxHp: 100 }]));
+  assert.deepEqual(JSON.parse(JSON.stringify(alive.boss)), { name: BOSS_NAME, cur: 50, max: 100 });
+
+  const dead = RPG_WITH_DATA.render.hud.buildHudModel(
+    withMonsters([{ defId: BOSS_ID, hp: 50, maxHp: 100, dead: true }]));
+  assert.equal(dead.boss, null);
+
+  const empty = RPG_WITH_DATA.render.hud.buildHudModel(
+    withMonsters([{ defId: BOSS_ID, hp: 0, maxHp: 100 }]));
+  assert.equal(empty.boss, null);
+
+  const notBoss = RPG_WITH_DATA.render.hud.buildHudModel(
+    withMonsters([{ defId: 'blob', hp: 5, maxHp: 10 }]));
+  assert.equal(notBoss.boss, null);
+});
+
+test('draw paints the boss bar at the fill fraction with the boss name, and paints nothing for it when dead', () => {
+  const { ctx, calls } = recordingContext();
+  const { draw: drawHud, buildHudModel: build } = RPG_WITH_DATA.render.hud;
+  drawHud(ctx, build(withMonsters([{ defId: BOSS_ID, hp: 50, maxHp: 100 }])), VIEW_W, VIEW_H);
+  const fill = calls.find((c) => c.op === 'fillRect' && c.style === pal.enemy && c.w === BOSS_BAR_W * 0.5);
+  assert.ok(fill, 'boss fill at half width');
+  assert.equal(fill.x, (VIEW_W - BOSS_BAR_W) / 2);
+  assert.ok(calls.some((c) => c.op === 'fillText' && c.text === BOSS_NAME), 'boss name drawn');
+
+  const dead = recordingContext();
+  drawHud(dead.ctx, build(withMonsters([{ defId: BOSS_ID, hp: 0, maxHp: 100 }])), VIEW_W, VIEW_H);
+  assert.ok(!dead.calls.some((c) => c.op === 'fillText' && c.text === BOSS_NAME), 'no boss name when dead');
+});
+
+test('the debug FPS line is only in the model while debug is on', () => {
+  const on = buildHudModel(fullState(), { debug: true, fps: 59.6 });
+  assert.equal(on.fps, 59.6);
+  const { ctx, calls } = recordingContext();
+  draw(ctx, on, VIEW_W, VIEW_H);
+  assert.ok(calls.some((c) => c.op === 'fillText' && c.text === 'FPS 60'));
+
+  const off = buildHudModel(fullState(), { fps: 59.6 });
+  assert.equal(off.fps, null);
+  const quiet = recordingContext();
+  draw(quiet.ctx, off, VIEW_W, VIEW_H);
+  assert.ok(!quiet.calls.some((c) => c.op === 'fillText' && c.text.startsWith('FPS')));
+});
+
+test('toasts come from the UI queue, newest last, and only the newest four are kept', () => {
+  const queue = ['a', 'b', 'c', 'd', 'e', 'f'].map((text) => ({ text }));
+  const model = buildHudModel(null, { toasts: queue });
+  assert.deepEqual(JSON.parse(JSON.stringify(model.toasts.map((t) => t.text))), ['c', 'd', 'e', 'f']);
+
+  const { ctx, calls } = recordingContext();
+  draw(ctx, model, VIEW_W, VIEW_H);
+  const drawn = calls.filter((c) => c.op === 'fillText').map((c) => c.text);
+  for (const text of ['c', 'd', 'e', 'f']) assert.ok(drawn.includes(text), `toast ${text} drawn`);
+  assert.ok(!drawn.includes('a') && !drawn.includes('b'), 'older toasts dropped');
+});

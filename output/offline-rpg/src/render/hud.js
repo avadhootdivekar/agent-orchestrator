@@ -19,11 +19,29 @@
   var TRACK_ALPHA = 0.85;
   var LABEL_FONT = '13px system-ui, sans-serif';
   var KEY_FONT = '12px system-ui, sans-serif';
+  var BOSS_BAR_W = 420;
+  var BOSS_BAR_Y = MARGIN;
+  var TOAST_LIMIT = 4;
+  var TOAST_ROW = 22;     // line height of one stacked toast
+  var TOAST_GAP = 12;     // space between the skill row and the newest toast
 
   function clamp01(v) { return v > 0 ? (v < 1 ? v : 1) : 0; }
   function num(v, fallback) { return typeof v === 'number' && isFinite(v) ? v : fallback; }
   function fraction(cur, max) { return max > 0 ? clamp01(cur / max) : 0; }
   function slotRowWidth(count) { return count * SLOT_SIZE + Math.max(0, count - 1) * SLOT_GAP; }
+
+  /** First living boss in `monsters` as { name, cur, max }, or null. Boss-ness is the definition's archetype, as in draw-entities. */
+  function liveBoss(monsters) {
+    var defs = RPG.data && RPG.data.monsters;
+    if (!defs || !Array.isArray(monsters)) return null;
+    for (var i = 0; i < monsters.length; i++) {
+      var m = monsters[i], def = defs[m.defId];
+      if (def && def.archetype === 'boss' && !m.dead && num(m.hp, 0) > 0) {
+        return { name: def.name || m.defId, cur: num(m.hp, 0), max: num(m.maxHp, 0) };
+      }
+    }
+    return null;
+  }
 
   /** Final stat value first, then the flat player field (e.g. maxHp on the entity), then the fallback. */
   function statOf(player, key, fallback) {
@@ -35,6 +53,8 @@
    * buildHudModel(state, opts) -> view model. Pure: reads `state`, never mutates it.
    * opts.xpToNext(level) -> int gives the XP needed for the next level (0 when not supplied).
    * opts.skillCooldowns maps skillId -> base cooldown in seconds, so a slot's sweep can be a fraction.
+   * opts.debug + opts.fps: the debug FPS line is only in the model while debug is on.
+   * opts.toasts: [{ text, colour? }] from the UI queue; the newest TOAST_LIMIT are kept.
    */
   function buildHudModel(state, opts) {
     var o = opts || {};
@@ -73,7 +93,10 @@
       level: level,
       skills: slots,
       weapon: weapon ? (weapon.name || weapon.defId || null) : null,
-      difficulty: difficulty ? (difficulty.name || difficulty.id || null) : null
+      difficulty: difficulty ? (difficulty.name || difficulty.id || null) : null,
+      boss: liveBoss(state && state.monsters),
+      fps: o.debug ? num(o.fps, 0) : null,
+      toasts: Array.isArray(o.toasts) ? o.toasts.slice(-TOAST_LIMIT) : []
     };
   }
 
@@ -124,7 +147,36 @@
     }
   }
 
-  /** draw(ctx, model, viewW, viewH): HP, resource and XP bars top-left; weapon and difficulty top-right; skill slots bottom-centre. */
+  /** Top-centre boss bar with the boss name over the fill. Only drawn while model.boss is set (a boss is alive). */
+  function drawBossBar(ctx, pal, viewW, boss) {
+    var x = (num(viewW, 0) - BOSS_BAR_W) / 2;
+    ctx.globalAlpha = TRACK_ALPHA;
+    ctx.fillStyle = pal.bg;
+    ctx.fillRect(x, BOSS_BAR_Y, BOSS_BAR_W, BAR_H);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = pal.enemy;
+    ctx.fillRect(x, BOSS_BAR_Y, BOSS_BAR_W * fraction(boss.cur, boss.max), BAR_H);
+    ctx.lineWidth = OUTLINE_W;
+    ctx.strokeStyle = pal.playerOutline;
+    ctx.strokeRect(x, BOSS_BAR_Y, BOSS_BAR_W, BAR_H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = pal.ui;
+    ctx.fillText(String(boss.name), num(viewW, 0) / 2, BOSS_BAR_Y + BAR_H + BAR_GAP + BAR_H / 2);
+  }
+
+  /** Stacked toasts centred above the skill row, newest at the bottom. */
+  function drawToasts(ctx, pal, toasts, viewW, viewH) {
+    var baseY = num(viewH, 0) - SLOT_SIZE - MARGIN - TOAST_GAP - TOAST_ROW / 2;
+    ctx.textAlign = 'center';
+    for (var i = 0; i < toasts.length; i++) {
+      var t = toasts[toasts.length - 1 - i];
+      ctx.fillStyle = (t && t.colour) || pal.ui;
+      ctx.fillText(String(t && t.text), num(viewW, 0) / 2, baseY - i * TOAST_ROW);
+    }
+  }
+
+  /** draw(ctx, model, viewW, viewH): HP, resource and XP bars top-left; weapon and difficulty top-right; skill slots bottom-centre.
+      Boss bar top-centre, FPS under the difficulty line, toasts above the skill row. */
   function draw(ctx, model, viewW, viewH) {
     var pal = RPG.render.palette;
     var m = model || buildHudModel(null);
@@ -150,6 +202,11 @@
     var rightX = num(viewW, 0) - MARGIN;
     if (m.weapon) ctx.fillText(String(m.weapon), rightX, MARGIN + BAR_H / 2);
     if (m.difficulty) ctx.fillText(String(m.difficulty), rightX, MARGIN + BAR_H + BAR_GAP + BAR_H / 2);
+    if (m.fps !== null && m.fps !== undefined) {
+      ctx.fillText('FPS ' + Math.round(num(m.fps, 0)), rightX, MARGIN + 2 * (BAR_H + BAR_GAP) + BAR_H / 2);
+    }
+
+    if (m.boss) drawBossBar(ctx, pal, viewW, m.boss);
 
     var slots = m.skills || [];
     var startX = (num(viewW, 0) - slotRowWidth(slots.length)) / 2;
@@ -157,6 +214,7 @@
     for (var i = 0; i < slots.length; i++) {
       drawSlot(ctx, pal, startX + i * (SLOT_SIZE + SLOT_GAP), slotY, slots[i], i);
     }
+    if (m.toasts && m.toasts.length) drawToasts(ctx, pal, m.toasts, viewW, viewH);
     ctx.restore();
   }
 
