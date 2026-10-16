@@ -197,3 +197,56 @@ test('injected bindings replace the keymap defaults', () => {
   assert.equal(m.handleKey('KeyU'), true);
   assert.equal(m.top(), 'inventory');
 });
+
+test('dead and victory are known modal ids that pause the sim', () => {
+  assert.ok(screens.SCREEN_IDS.includes('dead'));
+  assert.ok(screens.SCREEN_IDS.includes('victory'));
+  assert.equal(screens.isKnown('dead'), true);
+  assert.equal(screens.isModal('victory'), true);
+  const m = playing();
+  m.open('dead');
+  assert.equal(m.top(), 'dead');
+  assert.equal(m.paused(), true);
+  m.close('dead');
+  assert.equal(m.paused(), false);
+});
+
+test('register accepts the terminal ids and still rejects unknown ones', () => {
+  const m = playing();
+  m.register({ id: 'victory', draw: () => {} });
+  assert.throws(() => m.register({ id: 'death' }), /unknown screen id: death/);
+});
+
+test('handleAction applies keymap actions the same way handleKey does', () => {
+  const m = playing();
+  assert.equal(m.handleAction('toggleInventory'), true);
+  assert.equal(m.top(), 'inventory');
+  assert.equal(m.handleAction('pause'), true, 'Esc closes the top modal');
+  assert.equal(m.top(), 'playing');
+  assert.equal(m.handleAction('pause'), true, 'Esc opens pause from playing');
+  assert.equal(m.top(), 'pause');
+  assert.equal(m.handleAction(null), false);
+  assert.equal(m.handleAction('unboundAction'), false);
+  assert.equal(m.top(), 'pause');
+});
+
+test('terminal screens ignore keymap actions, so pause and toggles cannot open over death', () => {
+  const m = playing();
+  m.open('dead');
+  assert.equal(m.handleAction('pause'), false);
+  assert.equal(m.handleAction('toggleInventory'), false);
+  assert.equal(m.handleKey('Escape'), false);
+  assert.equal(m.handleKey('KeyI'), false);
+  assert.equal(m.top(), 'dead');
+});
+
+test('a terminal screen onKey still gets first refusal and can consume keys', () => {
+  const m = playing();
+  const seen = [];
+  m.register({ id: 'victory', onKey: (code) => { seen.push(code); return code === 'Enter'; } });
+  m.open('victory');
+  assert.equal(m.handleKey('Enter'), true);
+  assert.equal(m.handleKey('KeyZ'), false);
+  assert.deepEqual(seen, ['Enter', 'KeyZ']);
+  assert.equal(m.top(), 'victory');
+});

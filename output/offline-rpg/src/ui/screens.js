@@ -1,7 +1,8 @@
 /*
  * Screen manager (ARCHITECTURE §9 key bindings). A stack of screens drawn on the game canvas; no DOM.
  * Base screens ('mainmenu', 'playing') are not modal. Overlays ('pause', 'inventory', 'character', 'skills',
- * 'settings', 'saveload') are modal: while any is on the stack the simulation is paused.
+ * 'settings', 'saveload', 'dead', 'victory') are modal: while any is on the stack the simulation is paused.
+ * 'dead' and 'victory' are terminal: keymap actions do nothing while they are on top, so only their own onKey acts.
  * Later units plug in by calling register({ id, update, draw, onKey }) for one of SCREEN_IDS. Headless: no window or
  * document access at load time.
  */
@@ -10,8 +11,9 @@
 
   RPG.ui = RPG.ui || {};
 
-  var SCREEN_IDS = Object.freeze(['mainmenu', 'playing', 'pause', 'inventory', 'character', 'skills', 'settings', 'saveload']);
+  var SCREEN_IDS = Object.freeze(['mainmenu', 'playing', 'pause', 'inventory', 'character', 'skills', 'settings', 'saveload', 'dead', 'victory']);
   var BASE_IDS = Object.freeze(['mainmenu', 'playing']);
+  var TERMINAL_IDS = Object.freeze(['dead', 'victory']);
 
   // Which keymap action toggles which overlay. 'pause' is handled separately (Esc closes the top screen first).
   var TOGGLE_SCREEN = Object.freeze({
@@ -149,15 +151,13 @@
     }
 
     /**
-     * Routes one key code. The top screen's onKey gets first refusal: returning true consumes the key. Otherwise Esc
-     * (the 'pause' action) closes the top modal, or opens pause from 'playing'; toggle keys open/close their overlay.
-     * Returns true when the key was used.
+     * Applies one keymap action (e.g. 'pause', 'toggleInventory') to the stack. Esc ('pause') closes the top modal, or
+     * opens pause from 'playing'; toggle actions open/close their overlay. Terminal screens ('dead', 'victory') and the
+     * main menu ignore keymap actions. Returns true when the action changed the stack.
      */
-    function handleKey(code) {
-      var action = actionFor(bindings, code);
-      var h = handlers[top()];
-      if (h && h.onKey && h.onKey(code, action) === true) return true;
-      if (action === null) return false;
+    function handleAction(action) {
+      if (action === null || action === undefined) return false;
+      if (TERMINAL_IDS.indexOf(top()) !== -1) return false;
 
       if (action === 'pause') {
         if (top() !== null && isModal(top())) return close();
@@ -171,6 +171,17 @@
       return false;
     }
 
+    /**
+     * Routes one key code. The top screen's onKey gets first refusal: returning true consumes the key. Otherwise the
+     * code is mapped to its keymap action and passed to handleAction. Returns true when the key was used.
+     */
+    function handleKey(code) {
+      var action = actionFor(bindings, code);
+      var h = handlers[top()];
+      if (h && h.onKey && h.onKey(code, action) === true) return true;
+      return handleAction(action);
+    }
+
     return {
       open: open,
       close: close,
@@ -182,6 +193,7 @@
       update: update,
       draw: draw,
       handleKey: handleKey,
+      handleAction: handleAction,
       stack: function () { return stack.slice(); }
     };
   }
