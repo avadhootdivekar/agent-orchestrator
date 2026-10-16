@@ -7,37 +7,6 @@
 
   var TWO_PI = Math.PI * 2;
   var DEFAULT_ZOOM = 1.5;
-  var TILE = null; // RPG.world.tilemap.TILE, resolved on first draw
-
-  function drawTiles(ctx, map, cam, viewW, viewH, pal) {
-    var ts = map.tileSize;
-    var halfW = viewW / 2 / cam.zoom, halfH = viewH / 2 / cam.zoom;
-    var tx0 = Math.max(0, Math.floor((cam.x - halfW) / ts));
-    var tx1 = Math.min(map.w - 1, Math.floor((cam.x + halfW) / ts));
-    var ty0 = Math.max(0, Math.floor((cam.y - halfH) / ts));
-    var ty1 = Math.min(map.h - 1, Math.floor((cam.y + halfH) / ts));
-    var wallH = Math.max(2, Math.round(ts * 0.18));
-    for (var ty = ty0; ty <= ty1; ty++) {
-      for (var tx = tx0; tx <= tx1; tx++) {
-        var id = map.tiles[ty * map.w + tx];
-        var x = tx * ts, y = ty * ts;
-        if (id === TILE.WALL) {
-          ctx.fillStyle = pal.wall;
-          ctx.fillRect(x, y, ts, ts);
-          ctx.fillStyle = pal.wallTop;
-          ctx.fillRect(x, y, ts, wallH);
-          ctx.fillStyle = pal.wallEdge;
-          ctx.fillRect(x, y + ts - 2, ts, 2);
-        } else if (id === TILE.WATER) {
-          ctx.fillStyle = pal.water;
-          ctx.fillRect(x, y, ts, ts);
-        } else {
-          ctx.fillStyle = ((tx + ty) & 1) ? pal.floorAlt : pal.floor;
-          ctx.fillRect(x, y, ts, ts);
-        }
-      }
-    }
-  }
 
   function drawPlayer(ctx, p, x, y, pal) {
     var r = p.r;
@@ -94,7 +63,6 @@
 
     /** alpha: 0..1 progress between the last two sim ticks. dt: real frame seconds, drives camera follow. */
     r.draw = function (world, alpha, dt) {
-      TILE = TILE || RPG.world.tilemap.TILE;
       var pal = RPG.render.palette;
       var p = world.player;
       var px = p.prevX + (p.x - p.prevX) * alpha;
@@ -108,7 +76,7 @@
       // World space -> device px, equivalent to camera.worldToScreen scaled by dpr.
       var k = r.dpr * cam.zoom;
       ctx.setTransform(k, 0, 0, k, r.dpr * (r.viewW / 2) - cam.x * k, r.dpr * (r.viewH / 2) - cam.y * k);
-      drawTiles(ctx, world.area.map, cam, r.viewW, r.viewH, pal);
+      RPG.render.drawMap(ctx, world.area.map, cam, r.viewW, r.viewH, pal);
       drawPlayer(ctx, p, px, py, pal);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     };
