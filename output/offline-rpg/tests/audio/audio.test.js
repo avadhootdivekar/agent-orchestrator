@@ -3,77 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadAudio } = require('./load.js');
+const { FakeAudioContext } = require('./fake-audio-context.js');
 
-const SOUND_NAMES = ['attack', 'hit', 'kill', 'skill', 'levelup', 'pickup', 'bossWarn', 'ui'];
-
-// Minimal stand-ins for the Web Audio graph. They record what the module schedules and nothing else.
-class Param {
-  constructor(value) {
-    this.value = value;
-    this.log = [];
-  }
-  setValueAtTime(v, t) { this.log.push(['set', v, t]); return this; }
-  exponentialRampToValueAtTime(v, t) { this.log.push(['exp', v, t]); return this; }
-  linearRampToValueAtTime(v, t) { this.log.push(['lin', v, t]); return this; }
-}
-
-class Node {
-  constructor(kind) {
-    this.kind = kind;
-    this.connections = [];
-  }
-  connect(dest) { this.connections.push(dest); return dest; }
-}
-
-class GainNode extends Node {
-  constructor() { super('gain'); this.gain = new Param(1); }
-}
-
-class OscillatorNode extends Node {
-  constructor() {
-    super('oscillator');
-    this.type = 'sine';
-    this.frequency = new Param(0);
-    this.started = null;
-    this.stopped = null;
-  }
-  start(t) { this.started = t; }
-  stop(t) { this.stopped = t; }
-}
-
-class BiquadFilterNode extends Node {
-  constructor() { super('biquad'); this.type = 'lowpass'; this.frequency = new Param(0); }
-}
-
-class BufferSourceNode extends Node {
-  constructor() { super('buffer-source'); this.buffer = null; this.started = null; this.stopped = null; }
-  start(t) { this.started = t; }
-  stop(t) { this.stopped = t; }
-}
-
-class FakeAudioContext {
-  constructor() {
-    FakeAudioContext.instances++;
-    FakeAudioContext.last = this;
-    this.created = [];
-    this.currentTime = 2;
-    this.sampleRate = 1000;
-    this.state = 'running';
-    this.destination = new Node('destination');
-    this.resumeCalls = 0;
-  }
-  make(node) { this.created.push(node); return node; }
-  createGain() { return this.make(new GainNode()); }
-  createOscillator() { return this.make(new OscillatorNode()); }
-  createBiquadFilter() { return this.make(new BiquadFilterNode()); }
-  createBufferSource() { return this.make(new BufferSourceNode()); }
-  createBuffer(channels, length, rate) {
-    const data = new Float32Array(length);
-    return { sampleRate: rate, getChannelData: () => data };
-  }
-  resume() { this.resumeCalls++; this.state = 'running'; return Promise.resolve(); }
-  ofKind(kind) { return this.created.filter((n) => n.kind === kind); }
-}
+const SOUND_NAMES = ['attack', 'hit', 'hurt', 'kill', 'skill', 'levelup', 'pickup', 'bossWarn', 'ui'];
 
 // Loads the module with the fake installed as the browser's AudioContext and resets the instance counter.
 function withFakeContext(globals) {
@@ -86,7 +18,6 @@ test('without AudioContext every call is a silent no-op and never throws', () =>
   const audio = loadAudio({});
   assert.equal(audio.init(), false);
   for (const name of SOUND_NAMES) assert.equal(audio.play(name), false, name);
-  assert.equal(audio.play('hurt'), false);
   assert.equal(audio.play('ui', null), false);
   assert.equal(audio.play('ui', { vol: 'loud', pitch: NaN }), false);
   assert.doesNotThrow(() => {
@@ -109,10 +40,17 @@ test('a constructor that throws leaves audio disabled and silent, with the reaso
   assert.equal(audio.init(), false);
   assert.equal(audio.play('attack'), false);
   assert.equal(audio.status().available, false);
+  assert.equal(audio.status().failed, true);
   assert.equal(audio.status().error, 'blocked by policy');
 });
 
-test('exposes exactly the eight named sounds', () => {
+test('a context that was never requested reports neither available nor failed', () => {
+  const status = withFakeContext().status();
+  assert.equal(status.available, false);
+  assert.equal(status.failed, false);
+});
+
+test('exposes exactly the nine named sounds', () => {
   const audio = loadAudio({});
   assert.deepEqual([...audio.SOUND_NAMES].sort(), [...SOUND_NAMES].sort());
 });
@@ -135,6 +73,19 @@ test('each named sound is generated from oscillators or noise bursts, and every 
     assert.ok(src.stopped > src.started, 'noise burst stops after it starts');
     assert.equal(src.buffer.sampleRate, ctx.sampleRate);
   }
+});
+
+test('hurt is procedural: a falling tone plus a noise crunch, with no file or buffer source of its own', () => {
+  const audio = withFakeContext();
+  audio.init();
+  assert.equal(audio.play('hurt'), true);
+  const ctx = FakeAudioContext.last;
+  const tone = ctx.ofKind('oscillator').pop();
+  const crunch = ctx.ofKind('buffer-source').pop();
+  const start = tone.frequency.log[0][1];
+  const end = tone.frequency.log.find(([kind]) => kind === 'exp')[1];
+  assert.ok(end < start, 'the tone falls');
+  assert.ok(crunch.stopped > crunch.started, 'the noise crunch is scheduled');
 });
 
 test('context is created lazily, once, on init() or the first play()', () => {
@@ -221,7 +172,7 @@ test('pitch scales frequencies and vol scales the envelope peak, both clamped', 
 test('an unknown name is ignored and a non-numeric vol falls back to full volume', () => {
   const audio = withFakeContext();
   audio.init();
-  assert.equal(audio.play('hurt'), false, 'not one of the eight');
+  assert.equal(audio.play('nope'), false, 'not one of the nine');
   assert.equal(audio.play('ui', { vol: NaN }), true, 'non-numeric vol means 1');
   assert.equal(audio.play('ui', { vol: 0 }), false, 'zero vol schedules nothing');
 });

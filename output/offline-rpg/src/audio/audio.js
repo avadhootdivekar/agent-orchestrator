@@ -50,6 +50,11 @@
     pickup: [
       { type: 'sine', at: 0, dur: 0.12, f0: 900, f1: 1500, peak: 0.3 }
     ],
+    // Player damage: a dull crunch over a falling tone. Used for player-hit and player-death (lower pitch).
+    hurt: [
+      { noise: true, at: 0, dur: 0.1, filter: 'lowpass', cutoff: 700, peak: 0.5 },
+      { type: 'sawtooth', at: 0, dur: 0.2, f0: 220, f1: 80, peak: 0.25 }
+    ],
     // Two close square tones beat against each other, which reads as an ominous warning.
     bossWarn: [
       { type: 'square', at: 0, dur: 0.9, f0: 90, peak: 0.18 },
@@ -211,6 +216,7 @@
   function status() {
     return {
       available: state.ctx !== null,
+      failed: state.failed,
       muted: state.muted,
       master: state.master,
       sfx: state.sfx,
