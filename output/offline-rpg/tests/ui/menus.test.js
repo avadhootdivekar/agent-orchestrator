@@ -337,3 +337,13 @@ test('Settings in the pause menu is disabled until a settings screen is supplied
   press(enabled.screens, 'KeyS', 'KeyS', 'KeyS', 'Enter');
   assert.equal(opened, 1);
 });
+
+test('Continue with only a corrupt save says so and leaves the data in place', () => {
+  const { screens, game, storage } = setup();
+  storage.write('1', 'this is not json');
+  press(screens, 'KeyS', 'Enter');
+  assert.deepEqual(game.calls, []);
+  assert.match(drawn(screens), /corrupt/);
+  assert.doesNotMatch(drawn(screens), /No save to continue/);
+  assert.equal(storage.read('1'), 'this is not json');
+});

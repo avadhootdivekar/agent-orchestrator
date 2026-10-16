@@ -48,14 +48,14 @@ startWeapons:[weaponId x3 with ilvl 1], startSkills:[skillId], skillBar:[...]
 ```
 id: string                      'easy'|'normal'|'hard'|'nightmare'|'custom'
 name: string
-enemyHp: number                 multiplier   (easy .7, normal 1, hard 1.5, nightmare 2.3)
-enemyDamage: number             multiplier   (.7, 1, 1.4, 2.0)
+enemyHp: number                 multiplier   (easy .7, normal 1, hard 1.3, nightmare 2.0)
+enemyDamage: number             multiplier   (.55, 1, 1.2, 1.7)
 enemySpeed: number              multiplier   (.9, 1, 1.1, 1.2; clamp .5..1.5)
-spawnDensity: number            multiplier on encounter budget (.7, 1, 1.3, 1.7)
-eliteChance: number             0..1 per group (.05, .10, .20, .30)
-bossHp: number                  multiplier on the Warden's HP, applied on top of enemyHp (.8, 1, 1.25, 1.5)
+spawnDensity: number            multiplier on encounter budget (.7, 1, 1.15, 1.45)
+eliteChance: number             0..1 per group (.05, .10, .16, .25)
+bossHp: number                  multiplier on the Warden's HP, applied on top of enemyHp (.7, 1, 1.25, 1.5)
 bossTelegraph: number           multiplier on telegraph duration (1.3, 1, .85, .7) — never < 0.5 s absolute
-lootQuality: number             rarity-roll boost and drop count (0.8, 1, 1.25, 1.6)
+lootQuality: number             rarity-roll boost and drop count (0.8, 1, 1.25, 1.4)
 xpMultiplier: number            (.9, 1, 1.25, 1.6)
 goldMultiplier: number          (.9, 1, 1.25, 1.5)
 playerDeathPenalty: 'none'|'gold10'|'gold25'     // respawn in town; never deletes the save
@@ -172,6 +172,10 @@ Rule: every boss `AttackDef` has `telegraph` with `windup >= 0.8 s`, enforcing n
 
 Starter monsters as shipped in `src/data/monsters.js` (≥ 5 plus boss; all 7 archetypes are present): Husk Grunt (melee), Skitter (fast/flanker),
 Bone Archer (ranged), Stone Brute (tank), Cinder Bomb (exploder), Hexcaller (summoner), Warden of Ash (boss).
+- **Base XP per kill** (before difficulty/level scaling): Husk Grunt 40, Skitter 30, Bone Archer 70, Stone Brute 120, Cinder Bomb 60, Hexcaller 150, Warden of Ash 400.
+  Monsters do not respawn within a visit, so these are tuned to the XP curve (`100 * L^1.5` per level; 903 XP total for level 4, 2821 for level 6):
+  a seeded normal-difficulty forest holds ~1500-1620 XP and the caves ~2700-3100 XP, so clearing about 60% of the forest opens the caves gate and
+  about 45% of the caves then opens the arena gate (`node scripts/balance.mjs`, "Gate route").
 - **Hexcaller** summons **Skitters**, not Imps. There is no Imp monster in `src/data`. `call-skitters` is a `summon` attack with `summonDefId: 'skitter'`;
   `aiParams` sets `summonInterval: 6`, `summonMax: 4`, `retreatBelowHp: 0.3`. Its bolt `hex-bolt` is a homing projectile.
 - **Warden of Ash** (`warden-of-ash`, 1800 HP base, arena `arena`) has four attacks: `ember-circles` (aoe, from phase 1), `ash-charge` (charge, from phase 2),
@@ -179,8 +183,17 @@ Bone Archer (ranged), Stone Brute (tank), Cinder Bomb (exploder), Hexcaller (sum
   below 66% (adds, speed ×1.15); below 33% (enrage, speed ×1.3). Mechanic `cinder-brand`: every third ember circle is brighter, lasts 4 s,
   and opens a 2 s vulnerable window. "Rotating zones" are **(planned)**; no shipped phase uses the `zones` special.
 
-Elite affixes: `ELITE_AFFIXES` lives in `src/world/encounters.js` (not `src/data`): `fast`, `shielded`, `vampiric`, `explosive-death`, `regenerating`.
-Elite scaling is `ELITE` in `src/world/world.js`: `hp ×2.5`, `damage ×1.5`, `radius ×1.15`. Each elite rolls one random affix from `ELITE_AFFIXES`.
+Elite affixes live in `RPG.data.eliteAffixes` (`src/data/monsters.js`, declaration order = roll order); `ELITE_AFFIXES` in `src/world/encounters.js` is its key list. Each entry is `{ id, name, color, <effect> }`; `color` is a render token (`affix-*`) for the affix outline ring and tint. Effects, read by `src/sim/monsters.js` (stage `affixes`, between `statuses` and `resolve`) and `hurtPlayer`:
+
+| id | effect field | behaviour |
+|---|---|---|
+| `fast` | `speedMult: 1.25` | moves 25 % faster |
+| `shielded` | `shieldFraction: 0.3` | a shield of 30 % max HP soaks damage before HP (`m.shield`) |
+| `vampiric` | `leechFraction: 0.5` | heals by half of the damage it deals to the player (melee, area and shots) |
+| `explosive-death` | `deathRadius: 70`, `deathDamageMult: 1` | on death, one fire blast of `damage × mult` if the player is within the radius |
+| `regenerating` | `regenPerSecond: 0.04` | heals 4 % of max HP per second |
+
+Elite scaling is `ELITE` in `src/world/world.js`: `hp ×2.5`, `damage ×1.5`, `radius ×1.15`. Each elite rolls one random affix from `ELITE_AFFIXES` (seeded: one seed gives the same elites and affixes).
 
 ## 6. ItemDefinition and ItemInstance
 

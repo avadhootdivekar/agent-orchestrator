@@ -263,3 +263,26 @@ test('applySettings reaches audio and input; settings come back from a load', ()
   assert.deepStrictEqual(calls.filter((c) => c[0] === 'mute').pop(), ['mute', true]);
   assert.deepStrictEqual(calls.pop(), ['bind', 'skills', 'KeyK']);
 });
+
+test('loading a slot never overwrites slot auto with pre-load state (restore re-enters the area)', () => {
+  const e = makeEnv();
+  e.game.newGame({ seed: 1 });
+  e.game.world.level = 7;
+  assert.strictEqual(e.game.saveToSlot('2').ok, true);
+  e.game.world.level = 3;
+  e.game.autosave('test');
+  const autoBefore = e.backend.getItem('offline-rpg:v1:slot:auto');
+  assert.notStrictEqual(autoBefore, null);
+  e.game.world.level = 5; // pre-load state now differs from what auto holds
+  // Real restore re-enters the area, which emits AREA_CHANGED while the old world is still current.
+  const real = e.persistence.restore;
+  e.persistence.restore = function (b) { const r = real(b); e.events.emit(e.events.NAMES.AREA_CHANGED, {}); return r; };
+  assert.strictEqual(e.game.loadFromSlot('2').ok, true);
+  assert.strictEqual(e.game.world.level, 7);
+  assert.strictEqual(e.backend.getItem('offline-rpg:v1:slot:auto'), autoBefore, 'auto unchanged by load');
+  // a real autosave trigger afterwards still writes auto, from the loaded state
+  e.events.emit(e.events.NAMES.AREA_CHANGED, {});
+  assert.notStrictEqual(e.backend.getItem('offline-rpg:v1:slot:auto'), autoBefore);
+  assert.strictEqual(e.game.loadFromSlot('auto').ok, true);
+  assert.strictEqual(e.game.world.level, 7);
+});

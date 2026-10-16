@@ -66,10 +66,10 @@ test('buildHudModel copies hp, resource, xp, level, weapon and difficulty from t
 test('skill slots carry the cooldown fraction of remaining over base, with empty slots as null', () => {
   const m = buildHudModel(fullState(), { skillCooldowns: BASE_COOLDOWNS });
   assert.equal(m.skills.length, 7);
-  assert.deepEqual(plain(m.skills[0]), { skillId: 'fireball', cooldown: 2, cooldownFrac: 0.5 });
-  assert.deepEqual(plain(m.skills[1]), { skillId: 'whirlwind', cooldown: 0, cooldownFrac: 0 });
-  assert.deepEqual(plain(m.skills[2]), { skillId: null, cooldown: 0, cooldownFrac: 0 });
-  assert.deepEqual(plain(m.skills[5]), { skillId: 'mend', cooldown: 0, cooldownFrac: 0 });
+  assert.deepEqual(plain(m.skills[0]), { skillId: 'fireball', name: 'fireball', cooldown: 2, cooldownFrac: 0.5 });
+  assert.deepEqual(plain(m.skills[1]), { skillId: 'whirlwind', name: 'whirlwind', cooldown: 0, cooldownFrac: 0 });
+  assert.deepEqual(plain(m.skills[2]), { skillId: null, name: '', cooldown: 0, cooldownFrac: 0 });
+  assert.deepEqual(plain(m.skills[5]), { skillId: 'mend', name: 'mend', cooldown: 0, cooldownFrac: 0 });
 });
 
 test('a cooldown with no known base time shows as fully covered, and remaining is clamped at zero', () => {
@@ -220,4 +220,25 @@ test('toasts come from the UI queue, newest last, and only the newest four are k
   const drawn = calls.filter((c) => c.op === 'fillText').map((c) => c.text);
   for (const text of ['c', 'd', 'e', 'f']) assert.ok(drawn.includes(text), `toast ${text} drawn`);
   assert.ok(!drawn.includes('a') && !drawn.includes('b'), 'older toasts dropped');
+});
+
+test('hotbar slots show the skill name and the remaining cooldown, and leave empty slots blank', () => {
+  const m = buildHudModel(fullState(), { skillCooldowns: BASE_COOLDOWNS });
+  const { ctx, calls } = recordingContext();
+  draw(ctx, m, VIEW_W, VIEW_H);
+  const texts = calls.filter((c) => c.op === 'fillText').map((c) => c.text);
+  for (const t of ['fireball', 'whirlwind', 'mend', '2s']) assert.ok(texts.includes(t), 'missing ' + t + ' in ' + texts.join('|'));
+  assert.equal(texts.filter((t) => /^(fireball|whirlwind|mend)$/.test(t)).length, 3);
+});
+
+test('hotbar uses the skill definition display name when the data is loaded', () => {
+  RPG.data = RPG.data || {};
+  RPG.data.skills = { fireball: { name: 'Fireball' }, whirlwind: { name: 'Whirlwind Slash' } };
+  try {
+    const m = buildHudModel(fullState(), { skillCooldowns: BASE_COOLDOWNS });
+    assert.equal(m.skills[0].name, 'Fireball');
+    assert.equal(m.skills[1].name, 'Whirlwind');
+  } finally {
+    delete RPG.data.skills;
+  }
 });

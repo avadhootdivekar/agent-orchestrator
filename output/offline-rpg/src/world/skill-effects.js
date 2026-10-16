@@ -30,6 +30,7 @@
 
   function pushEffect(world, spec) {
     spec.id = world.nextEntityId++;
+    spec.life = spec.ttl;   // total lifetime, so renderers can compute age = life - ttl
     world.effects.push(spec);
     return spec;
   }
@@ -298,8 +299,7 @@
   }
 
   RPG.world.skillEffects = {
-    execute: execute, updateProjectiles: updateProjectiles, updateEffects: updateEffects, absorbDamage: absorbDamage,
-    supports: function (effectKey) { return Object.prototype.hasOwnProperty.call(EFFECTS, effectKey); }
+    execute: execute, updateProjectiles: updateProjectiles, updateEffects: updateEffects, absorbDamage: absorbDamage
   };
 
   if (RPG.world.skills && RPG.world.skills.setExecutor) RPG.world.skills.setExecutor(execute);

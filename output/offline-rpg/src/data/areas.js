@@ -197,6 +197,7 @@
         { monsterId: 'bone-archer', weight: 5, min: 1, max: 2 },
         { monsterId: 'stone-brute', weight: 4, min: 1, max: 1 },
         { monsterId: 'cinder-bomb', weight: 5, min: 1, max: 3 },
+        { monsterId: 'hexcaller', weight: 3, min: 1, max: 1 },
       ],
       budget: 60,
       eliteChance: 0.12,

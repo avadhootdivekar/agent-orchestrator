@@ -19,6 +19,7 @@
     ITEM_DROPPED: 'itemDropped',
     SAVE: 'save',
     LOAD: 'load',
+    VICTORY: 'victory',
     UI_SOUND: 'uiSound'
   });
 

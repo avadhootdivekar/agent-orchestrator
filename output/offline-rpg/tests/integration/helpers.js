@@ -14,9 +14,9 @@ const DT = 1 / 60;
 const BOSS_ID = 'warden-of-ash';
 
 // build.mjs is an ES module; its JS_ORDER is the single source of truth, so tests load exactly what the page loads.
-async function loadEngine() {
+async function loadEngine(globals) {
   const { JS_ORDER } = await import(pathToFileURL(BUILD).href);
-  const ctx = vm.createContext({});
+  const ctx = vm.createContext(Object.assign({}, globals));
   ctx.globalThis = ctx;
   for (const rel of JS_ORDER) {
     if (rel === 'src/main.js' || !fs.existsSync(path.join(ROOT, rel))) continue; // main.js needs a canvas
@@ -40,29 +40,20 @@ function stubRenderer() {
   return { camera: {}, viewW: 800, viewH: 600, draw() {}, snapTo() {}, resize() {} };
 }
 
-// STOPGAP, not engine behaviour (followups recorded in the w04-20 report):
-//  - INTEGRATION-PLAN §2.3 says createWorld gives a fresh player a sword in slot 0; sim/sim.js does not do it.
-// Without a weapon the player never attacks, so the sword comes from a private RNG (the world's streams are untouched).
-// Remove this once the engine grants the starting weapon itself.
-function grantStartingWeapon(RPG, world) {
-  const p = world.player;
-  if (p.weaponSlots[0]) return;
-  p.weaponSlots[0] = RPG.world.loot.generateItem(RPG.core.Rng.create(1), { baseId: 'sword', rarity: 'common', ilvl: 1 });
-}
-
 /**
  * Builds a headless Game in a fresh engine. `drive(n, intentFn)` ticks n fixed steps, feeding intentFn(game) as the
  * intent each tick. A death is answered with game.respawn() (the real death-screen action) and counted.
  */
 async function makeGame(opts) {
   opts = opts || {};
-  const RPG = await loadEngine();
+  const RPG = await loadEngine(opts.globals);
   const backend = opts.backend || memoryBackend();
   const storage = RPG.persistence.storage.createStorage({ backend });
   const ctl = { source: null, deaths: 0 };
   const input = { buildFrame: () => ctl.source(game) };
   const game = RPG.core.game.create({
-    input, renderer: stubRenderer(), storage, clock: { now: () => 0 }, screens: null
+    input, renderer: stubRenderer(), storage, clock: { now: () => 0 }, screens: null,
+    audio: opts.withAudio ? RPG.audio : null
   });
   const api = {
     RPG, game, backend, storage,
@@ -71,7 +62,6 @@ async function makeGame(opts) {
     newGame(seed, difficulty) {
       const r = game.newGame({ seed: seed, difficulty: difficulty || 'normal' });
       if (!r.ok) throw new Error('newGame failed: ' + JSON.stringify(r));
-      grantStartingWeapon(RPG, game.world);
       return game.world;
     },
     drive(n, intentFn) {

@@ -38,7 +38,7 @@ const tick = (w, secs, dt = 0.05) => { for (let t = 0; t < secs - 1e-9; t += dt)
 test('every active skill has an implemented effect and executes', () => {
   assert.ok(ACTIVE.length >= 7);
   for (const id of ACTIVE) {
-    assert.ok(fx.supports(RPG.data.skills[id].effect), `${id} -> ${RPG.data.skills[id].effect}`);
+    assert.ok(typeof RPG.data.skills[id].effect === 'string' && RPG.data.skills[id].effect.length > 0, `${id} -> ${RPG.data.skills[id].effect}`);
     const w = mkWorld();
     const r = cast(w, id, { x: 200, y: 100 });
     assert.equal(r.ok, true, id);

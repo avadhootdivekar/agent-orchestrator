@@ -82,7 +82,7 @@
       goldDrop.gold = gold;
     }
     var items = RPG.world.loot.rollMonsterDrops(rng, def, {
-      areaLevel: areaLevelOf(world),
+      areaLevel: m.areaLevel || areaLevelOf(world),
       difficulty: diff,
       eliteBoost: m.elite ? ELITE_LOOT_BOOST : 0,
     });
@@ -109,7 +109,13 @@
       var xp = Math.floor(killXp(m, def, diff) * (1 + player.statBlock.get('xpGain')));
       world.progress.kills++;
       dropLoot(world, m, def, diff, requireLootRng(world), player);
-      if (isBoss) world.progress.bossesDefeated[m.defId] = true;
+      var areas = RPG.world.areas;
+      if (areas) {
+        areas.onMonsterDead(world, m);
+        if (isBoss) areas.markBossDefeated(world, m.defId);
+      } else if (isBoss) {
+        world.progress.bossesDefeated[m.defId] = true;
+      }
       events.emit(events.NAMES.KILL, { defId: m.defId, elite: !!m.elite, x: m.x, y: m.y, xp: xp, boss: isBoss });
       var levelUps = grantXp(player, xp);
       for (var l = 0; l < levelUps.length; l++) {

@@ -129,3 +129,56 @@ test('import is pure: it never calls saveGame/deleteSave and never mutates the f
   assert.equal(read(P, f, P.exportJson(sampleState())).ok, true);
   assert.equal(writes, 0);
 });
+
+test('downloadText clicks an anchor with the given name and revokes the URL', () => {
+  const P = loadWithFiles();
+  const d = fakeDom();
+  const r = P.files.downloadText('x.json', '{"a":1}', d.env);
+  assert.deepEqual({ ...r }, { ok: true, name: 'x.json', bytes: 7 });
+  assert.deepEqual(d.log.clicked, [{ href: 'blob:fake/1', download: 'x.json' }]);
+  assert.deepEqual(d.log.revoked, ['blob:fake/1']);
+  assert.equal(P.files.downloadText('x.json', '{}', {}).code, 'unsupported');
+});
+
+function fakePicker(files, readerMode) {
+  const handlers = {};
+  const input = { style: {}, addEventListener: (t, fn) => { handlers[t] = fn; }, click() {}, files };
+  return {
+    handlers, input,
+    env: { document: { createElement: (t) => { assert.equal(t, 'input'); return input; } }, FileReader: fakeReader('{"ok":true}', readerMode) }
+  };
+}
+
+test('pickSaveText resolves the chosen file text, null on cancel or empty selection', async () => {
+  const P = loadWithFiles();
+  const picked = fakePicker([JSON_FILE]);
+  const pending = P.files.pickSaveText(picked.env);
+  picked.handlers.change();
+  assert.equal(await pending, '{"ok":true}');
+  assert.equal(picked.input.type, 'file');
+
+  const cancelled = fakePicker([]);
+  const p2 = P.files.pickSaveText(cancelled.env);
+  cancelled.handlers.cancel();
+  assert.equal(await p2, null);
+
+  const empty = fakePicker([]);
+  const p3 = P.files.pickSaveText(empty.env);
+  empty.handlers.change();
+  assert.equal(await p3, null);
+});
+
+test('pickSaveText rejects wrong type, read errors and a missing DOM', async () => {
+  const P = loadWithFiles();
+  const wrong = fakePicker([{ name: 'pic.png', type: 'image/png', size: 5 }]);
+  const p1 = P.files.pickSaveText(wrong.env);
+  wrong.handlers.change();
+  await assert.rejects(p1, /not a JSON save file/);
+
+  const bad = fakePicker([JSON_FILE], 'error');
+  const p2 = P.files.pickSaveText(bad.env);
+  bad.handlers.change();
+  await assert.rejects(p2, /could not read file/);
+
+  await assert.rejects(P.files.pickSaveText({ document: null, FileReader: null }), /not available/);
+});

@@ -19,6 +19,13 @@
   var PANEL_PAD = 16;
   var ROW_H = 36;
   var LIST_TOP = 80;
+  var FOOTER_H = 24; // presses in this bottom strip fall through to the manager as "back"
+  var BUTTONS = Object.freeze([ // pointer stand-ins for the X / G / D keys, drawn above the status line
+    { op: 'export', label: 'Export' }, { op: 'import', label: 'Import' }, { op: 'delete', label: 'Delete' }]);
+  var BUTTON_W = 90;
+  var BUTTON_H = 22;
+  var BUTTON_GAP = 8;
+  var BUTTON_ABOVE_BOTTOM = 76;
   var PANEL_COLOR = 'rgba(16, 14, 20, 0.92)';
   var TEXT_COLOR = '#d8d2c4';
   var DIM_COLOR = '#7d7768';
@@ -193,6 +200,49 @@
       return action !== 'pause'; // Esc/P falls through so the manager closes this screen
     }
 
+    function buttonRect(i) {
+      return { x: layout.x + PANEL_PAD + i * (BUTTON_W + BUTTON_GAP), y: layout.y + layout.h - PANEL_PAD - BUTTON_ABOVE_BOTTOM,
+        w: BUTTON_W, h: BUTTON_H };
+    }
+
+    function inRect(r, x, y) { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; }
+
+    function rowAt(x, y) {
+      for (var i = 0; i < SLOTS.length; i++) {
+        var top = layout.y + LIST_TOP + i * ROW_H - 4;
+        if (inRect({ x: layout.x + PANEL_PAD - 4, y: top, w: layout.w - PANEL_PAD * 2 + 8, h: ROW_H - 4 }, x, y)) return i;
+      }
+      return -1;
+    }
+
+    // A press on a slot selects it and runs the mode's action (Enter); Export/Import/Delete act on the selected slot.
+    // While a question is open, a press on the selected slot answers yes (Enter) and anything else cancels.
+    function onPointer(x, y) {
+      if (y >= layout.y + layout.h - FOOTER_H) return false;
+      var row = rowAt(x, y);
+      if (state.busy || state.confirm) {
+        onKey(row === state.cursor ? KEY.primary : '', null);
+        return true;
+      }
+      if (row >= 0) { state.cursor = row; request(state.mode); return true; }
+      for (var b = 0; b < BUTTONS.length; b++) {
+        if (inRect(buttonRect(b), x, y)) { request(BUTTONS[b].op); break; }
+      }
+      return true;
+    }
+
+    function drawButtons(ctx) {
+      ctx.font = LABEL_FONT;
+      BUTTONS.forEach(function (btn, i) {
+        var r = buttonRect(i);
+        ctx.strokeStyle = DIM_COLOR;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = TEXT_COLOR;
+        ctx.fillText(btn.label, r.x + 10, r.y + 16);
+      });
+    }
+
     function drawRows(ctx, list) {
       var x = layout.x + PANEL_PAD;
       ctx.font = LABEL_FONT;
@@ -209,6 +259,8 @@
     }
 
     function draw(ctx) {
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
       var x = layout.x + PANEL_PAD, bottom = layout.y + layout.h - PANEL_PAD;
       ctx.fillStyle = PANEL_COLOR;
       ctx.fillRect(layout.x, layout.y, layout.w, layout.h);
@@ -221,11 +273,12 @@
         ctx.fillText(MEMORY_WARNING, x, layout.y + PANEL_PAD + 42);
       }
       drawRows(ctx, rows());
+      drawButtons(ctx);
       ctx.font = LABEL_FONT;
       ctx.fillStyle = state.confirm ? WARN_COLOR : TEXT_COLOR;
       ctx.fillText(state.status, x, bottom - 36);
       ctx.fillStyle = DIM_COLOR;
-      ctx.fillText('Up/Down choose | Enter ' + PRIMARY_LABEL[state.mode] + ' | X export | G import | D delete | Esc back',
+      ctx.fillText('Up/Down choose | Enter/click ' + PRIMARY_LABEL[state.mode] + ' | X export | G import | D delete | Esc/tap here back',
         x, bottom);
     }
 
@@ -234,6 +287,7 @@
       start: start,
       draw: draw,
       onKey: onKey,
+      onPointer: onPointer,
       rows: rows
     };
   }

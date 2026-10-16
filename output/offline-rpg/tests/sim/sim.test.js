@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { FULL_FILES, loadSim, intent, DT } = require('./load.js');
 
 const NAMES = ['begin', 'input', 'player', 'weapons', 'skills', 'spatial', 'monsters', 'movement', 'projectiles',
-  'statuses', 'resolve', 'rewards', 'pickups', 'playerDeath', 'cleanup', 'areas', 'end'];
+  'statuses', 'affixes', 'resolve', 'rewards', 'pickups', 'playerDeath', 'cleanup', 'areas', 'end'];
 
 test('step runs with no optional stages registered and advances tick/time/playtime', () => {
   const RPG = loadSim();

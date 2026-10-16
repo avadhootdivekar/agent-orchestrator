@@ -11,12 +11,23 @@
   var SLOT_GAP = 8;
   var PANEL_PAD = 12;
   var COMPARE_W = 220;
+  var HEADER_H = 24; // the title line above the grid; slots are laid out from y + HEADER_H
+  var HUD_INSET = 80; // the HUD bars (HP/resource/XP) occupy y 16..74 at the top left; panels start below them
+  var EQ_COLS = 4;    // equipment slots are laid out in a block of EQ_COLS columns under the bag grid
+  var EQ_HEAD_H = 18; // the 'Equipment' sub-title line
+  var DROP_BTN = Object.freeze({ w: 60, h: 22 }); // pointer stand-in for the drop key, drawn under the comparison text
   var GOOD_COLOR = '#6fcf6f';
   var BAD_COLOR = '#e06c6c';
   var TEXT_COLOR = '#d8d2c4';
   var PANEL_COLOR = 'rgba(16, 14, 20, 0.92)';
   var SLOT_COLOR = '#2b2730';
   var CURSOR_COLOR = '#e8c15a';
+  var EMPTY_COLOR = '#7a7584';
+  var SLOT_LABEL_FONT = '10px system-ui, sans-serif';
+  var NAME_FONT = '9px system-ui, sans-serif'; // item names in cells: about 8 characters per line across a SLOT_SIZE cell
+  var NAME_CHARS = 8;
+  var NAME_LINES = 3;
+  var NAME_LINE_H = 10;
   var LABEL_FONT = '12px system-ui, sans-serif';
   var TITLE_FONT = '16px system-ui, sans-serif';
 
@@ -164,13 +175,41 @@
     throw new Error('inventory: unknown action ' + action);
   }
 
+  /** Item name split into at most NAME_LINES lines of NAME_CHARS characters: breaks at spaces, hard-splits long words,
+      and ends with an ellipsis when the name still does not fit (the cursor item's full name is in the panel text). */
+  function nameLines(name) {
+    var words = String(name).split(/\s+/).filter(Boolean), lines = [], cur = '';
+    words.forEach(function (w) {
+      while (w.length > NAME_CHARS) {
+        if (cur) { lines.push(cur); cur = ''; }
+        lines.push(w.slice(0, NAME_CHARS));
+        w = w.slice(NAME_CHARS);
+      }
+      if (!cur) cur = w;
+      else if ((cur + ' ' + w).length <= NAME_CHARS) cur += ' ' + w;
+      else { lines.push(cur); cur = w; }
+    });
+    if (cur) lines.push(cur);
+    if (lines.length > NAME_LINES) {
+      lines = lines.slice(0, NAME_LINES);
+      var last = lines[NAME_LINES - 1];
+      lines[NAME_LINES - 1] = last.slice(0, NAME_CHARS - 1) + '\u2026';
+    }
+    return lines;
+  }
+
+  function drawName(ctx, name, r, dx) {
+    var lines = nameLines(name), top = r.y + (r.h - lines.length * NAME_LINE_H) / 2 + NAME_LINE_H - 2;
+    ctx.font = NAME_FONT;
+    lines.forEach(function (l, i) { ctx.fillText(l, r.x + dx, top + i * NAME_LINE_H); });
+  }
+
   function drawSlot(ctx, item, r, selected) {
     ctx.fillStyle = SLOT_COLOR;
     ctx.fillRect(r.x, r.y, r.w, r.h);
     if (item) {
       ctx.fillStyle = TEXT_COLOR;
-      ctx.font = LABEL_FONT;
-      ctx.fillText(String(item.name || item.baseId).slice(0, 6), r.x + 4, r.y + r.h / 2 + 4);
+      drawName(ctx, item.name || item.baseId, r, 3);
     }
     if (selected) {
       ctx.strokeStyle = CURSOR_COLOR;
@@ -179,27 +218,93 @@
     }
   }
 
+  function gridWidth() { return GRID_COLS * SLOT_SIZE + (GRID_COLS - 1) * SLOT_GAP + PANEL_PAD * 2; }
+
+  /** Whole-panel rectangle at (x, y); presses outside it are "back" to the screen manager. */
+  function panelRect(player, x, y) {
+    var rows = Math.ceil(invSize(player) / GRID_COLS);
+    return { x: x, y: y, w: gridWidth() + COMPARE_W, h: bagHeight(rows) + equipBlockHeight() + PANEL_PAD * 2 + HEADER_H };
+  }
+
+  function bagHeight(rows) { return rows * SLOT_SIZE + (rows - 1) * SLOT_GAP; }
+
+  function equipBlockHeight() {
+    var rows = Math.ceil(RPG.data.itemSlots.length / EQ_COLS);
+    return EQ_HEAD_H + rows * SLOT_SIZE + (rows - 1) * SLOT_GAP + SLOT_GAP;
+  }
+
+  /** Rectangle of the equipment slot `name` (one of RPG.data.itemSlots), inside a panel at (x, y). */
+  function equipSlotRect(player, name, x, y) {
+    var i = RPG.data.itemSlots.indexOf(name);
+    var rows = Math.ceil(invSize(player) / GRID_COLS);
+    var top = y + HEADER_H + PANEL_PAD + bagHeight(rows) + SLOT_GAP + EQ_HEAD_H;
+    return { x: x + PANEL_PAD + (i % EQ_COLS) * (SLOT_SIZE + SLOT_GAP), y: top + Math.floor(i / EQ_COLS) * (SLOT_SIZE + SLOT_GAP),
+      w: SLOT_SIZE, h: SLOT_SIZE };
+  }
+
+  /** The equipment slot name under a pixel, or null. */
+  function equipHitTest(player, px, py, x, y) {
+    var slots = RPG.data.itemSlots;
+    for (var i = 0; i < slots.length; i++) {
+      var r = equipSlotRect(player, slots[i], x, y);
+      if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return slots[i];
+    }
+    return null;
+  }
+
+  function dropRect(player, x, y) {
+    var p = panelRect(player, x, y);
+    return { x: x + gridWidth() + PANEL_PAD, y: p.y + p.h - PANEL_PAD - DROP_BTN.h, w: DROP_BTN.w, h: DROP_BTN.h };
+  }
+
+  function inRect(r, px, py) { return px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h; }
+
+  /** The equipped item per slot, under the bag grid; an empty slot shows its slot name dimmed. */
+  function drawEquipment(ctx, player, x, y) {
+    var rows = Math.ceil(invSize(player) / GRID_COLS);
+    ctx.fillStyle = TEXT_COLOR;
+    ctx.font = LABEL_FONT;
+    ctx.fillText('Equipment', x + PANEL_PAD, y + HEADER_H + PANEL_PAD + bagHeight(rows) + SLOT_GAP + 12);
+    RPG.data.itemSlots.forEach(function (name) {
+      var r = equipSlotRect(player, name, x, y);
+      var item = player.equipment && player.equipment[name];
+      ctx.fillStyle = SLOT_COLOR;
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.fillStyle = item ? TEXT_COLOR : EMPTY_COLOR;
+      if (item) drawName(ctx, item.name || item.baseId, r, 3);
+      else { ctx.font = SLOT_LABEL_FONT; ctx.fillText(name, r.x + 3, r.y + r.h / 2 + 3); }
+    });
+  }
+
   /** Canvas draw: the grid of inventory slots, plus the comparison text for the cursor's item. */
   function draw(ctx, player, view) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     var x = view.x, y = view.y, cursor = view.cursor || 0;
-    var rows = Math.ceil(invSize(player) / GRID_COLS);
-    var gridW = GRID_COLS * SLOT_SIZE + (GRID_COLS - 1) * SLOT_GAP + PANEL_PAD * 2;
-    var gridH = rows * SLOT_SIZE + (rows - 1) * SLOT_GAP + PANEL_PAD * 2 + 24;
+    var gridW = gridWidth();
+    var panel = panelRect(player, x, y);
     ctx.fillStyle = PANEL_COLOR;
-    ctx.fillRect(x, y, gridW + COMPARE_W, gridH);
+    ctx.fillRect(x, y, panel.w, panel.h);
     ctx.fillStyle = TEXT_COLOR;
     ctx.font = TITLE_FONT;
     ctx.fillText('Inventory', x + PANEL_PAD, y + PANEL_PAD + 12);
     for (var i = 0; i < invSize(player); i++) {
-      drawSlot(ctx, player.inventory[i], slotRect(i, x, y + 24), i === cursor);
+      drawSlot(ctx, player.inventory[i], slotRect(i, x, y + HEADER_H), i === cursor);
     }
+    drawEquipment(ctx, player, x, y);
     var lines = formatDeltas(compareSlot(player, cursor));
     var cx = x + gridW + PANEL_PAD;
     ctx.font = LABEL_FONT;
     for (var j = 0; j < lines.length; j++) {
       ctx.fillStyle = lines[j].tone === 'up' ? GOOD_COLOR : BAD_COLOR;
-      ctx.fillText(lines[j].text, cx, y + 24 + PANEL_PAD + j * 16);
+      ctx.fillText(lines[j].text, cx, y + HEADER_H + PANEL_PAD + j * 16);
     }
+    var drop = dropRect(player, x, y);
+    ctx.strokeStyle = TEXT_COLOR;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(drop.x, drop.y, drop.w, drop.h);
+    ctx.fillStyle = TEXT_COLOR;
+    ctx.fillText('Drop', drop.x + 14, drop.y + 15);
   }
 
   /**
@@ -208,12 +313,28 @@
    * 'drop' act on the cursor's slot; 'unequip' takes the equipment slot name as its second argument.
    * The registry is a factory with no global, so the owner of the screen manager calls register(createScreen(...)).
    */
-  function createScreen(player, layout) {
+  function createScreen(player, layout, report) {
     var origin = layout || { x: 0, y: 0 };
     var state = { cursor: 0 };
+    function top() { return origin.y + HUD_INSET; }
+    var noReport = function () {};
+    var show = report || noReport;
     return {
       id: 'inventory',
-      draw: function (ctx) { draw(ctx, player, { x: origin.x, y: origin.y, cursor: state.cursor }); },
+      // A press on a slot selects it; a press on the selected slot equips it (Enter). The Drop button drops the
+      // selected slot (X). Other presses inside the panel are ignored; outside it they are "back". Results go to `report`.
+      onPointer: function (px, py) {
+        if (!inRect(panelRect(player, origin.x, top()), px, py)) return false;
+        if (inRect(dropRect(player, origin.x, top()), px, py)) { show(act(player, 'drop', state.cursor)); return true; }
+        var eqSlot = equipHitTest(player, px, py, origin.x, top());
+        if (eqSlot) { show(act(player, 'unequip', eqSlot)); return true; }
+        var hit = hitTest(px, py, origin.x, top() + HEADER_H, invSize(player));
+        if (hit < 0) return true;
+        if (hit === state.cursor) show(act(player, 'equip', hit));
+        else state.cursor = hit;
+        return true;
+      },
+      draw: function (ctx) { draw(ctx, player, { x: origin.x, y: top(), cursor: state.cursor }); },
       onKey: function (action, arg) {
         if (action === 'left') state.cursor = moveCursor(state.cursor, -1, 0, invSize(player));
         else if (action === 'right') state.cursor = moveCursor(state.cursor, 1, 0, invSize(player));
@@ -230,7 +351,8 @@
     GRID_COLS: GRID_COLS, SLOT_SIZE: SLOT_SIZE, SLOT_GAP: SLOT_GAP,
     pickup: pickup, equipFromSlot: equipFromSlot, unequipToInventory: unequipToInventory,
     dropFromSlot: dropFromSlot, compareSlot: compareSlot, formatDeltas: formatDeltas,
-    slotRect: slotRect, hitTest: hitTest, moveCursor: moveCursor, act: act, draw: draw,
+    slotRect: slotRect, equipSlotRect: equipSlotRect, equipHitTest: equipHitTest, panelRect: panelRect,
+    HUD_INSET: HUD_INSET, nameLines: nameLines, NAME_LINES: NAME_LINES, NAME_CHARS: NAME_CHARS, hitTest: hitTest, moveCursor: moveCursor, act: act, draw: draw,
     createScreen: createScreen
   };
 })(globalThis.RPG = globalThis.RPG || {});

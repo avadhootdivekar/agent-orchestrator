@@ -7,7 +7,8 @@
 
   RPG.world = RPG.world || {};
 
-  var ELITE_AFFIXES = ['fast', 'shielded', 'vampiric', 'explosive-death', 'regenerating'];
+  // Affix ids come from data/monsters.js (RPG.data.eliteAffixes, declaration order), so adding an affix is a data change.
+  var ELITE_AFFIXES = Object.keys(RPG.data.eliteAffixes);
   // Elite chance of the 'normal' difficulty preset. An area's eliteChance is scaled by diff.eliteChance / this value.
   var BASE_ELITE_CHANCE = 0.1;
   // Extra budget points an elite costs on top of its monster tier.

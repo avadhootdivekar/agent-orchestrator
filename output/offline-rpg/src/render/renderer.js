@@ -1,5 +1,5 @@
 /* Canvas renderer. Reads the world, never mutates it. Draw order (INTEGRATION-PLAN §3, W4-11):
-   map -> drops -> effects below (telegraphs) -> enemy projectiles -> monsters -> player -> player projectiles
+   map -> drops -> effects below (telegraphs) -> enemy projectiles -> dying monsters -> monsters -> player -> player projectiles
    -> effects above -> damage numbers -> HUD. Entity and effect drawers are looked up by name at call time and
    skipped when absent, so a layer that has not landed yet leaves the rest of the frame intact. */
 (function (RPG) {
@@ -8,6 +8,7 @@
   RPG.render = RPG.render || {};
 
   var DEFAULT_ZOOM = 1.5;
+  var HURT_FLASH_RENDER_SECONDS = 0.4; // draw-effects.js decay length; the sim's hurtFlash countdown is stretched onto it
 
   /** Calls RPG.render[mod][fn](...args) if both exist. Looked up per call so tests can stub them. */
   function call(mod, fn, args) {
@@ -15,12 +16,13 @@
     if (m && typeof m[fn] === 'function') m[fn].apply(m, args);
   }
 
-  /** Draws every item of `list` as fn(ctx, item, ...tail). A missing list is an empty layer. */
-  function each(mod, fn, list, ctx, tail) {
-    if (!list) return;
-    for (var i = 0; i < list.length; i++) {
-      call(mod, fn, [ctx, list[i]].concat(tail));
-    }
+  /** Draws every item of `list` as fn(ctx, item, a, b). A missing list or drawer is an empty layer.
+   *  The drawer is resolved once per layer, not per item, so the loop allocates nothing. */
+  function each(mod, fn, list, ctx, a, b) {
+    var m = RPG.render[mod];
+    if (!list || !m || typeof m[fn] !== 'function') return;
+    var draw = m[fn];
+    for (var i = 0; i < list.length; i++) draw.call(m, ctx, list[i], a, b);
   }
 
   /** create(canvas) -> { camera, viewW, viewH, resize(cssW, cssH, dpr), snapTo(world), draw(world, alpha, dt, ui) } */
@@ -56,6 +58,7 @@
       camera.follow(cam, px, py, dt || 0);
       camera.clampToMap(cam, map.w * map.tileSize, map.h * map.tileSize, r.viewW, r.viewH);
       camera.setShake(cam, world.fx ? world.fx.shake : 0);
+      if (world.fx && r.settings && r.settings.quality) world.fx.quality = r.settings.quality; // cosmetic particle budget
       var jitter = camera.shakeOffset(cam, world.fx && world.fx.rng);
       var view = { x: cam.x + jitter.x, y: cam.y + jitter.y, zoom: cam.zoom };
 
@@ -68,17 +71,25 @@
       ctx.setTransform(k, 0, 0, k, r.dpr * (r.viewW / 2) - view.x * k, r.dpr * (r.viewH / 2) - view.y * k);
       RPG.render.drawMap(ctx, map, view, r.viewW, r.viewH, pal);
 
-      each('entities', 'drawDrop', world.drops, ctx, [world.time, pal]);
+      each('entities', 'drawDrop', world.drops, ctx, world.time, pal);
       call('effects', 'drawEffects', [ctx, world, alpha, pal, 'below']);
-      each('entities', 'drawProjectile', world.enemyProjectiles, ctx, [alpha, pal]);
-      each('entities', 'drawMonster', world.monsters, ctx, [alpha, pal]);
+      each('entities', 'drawProjectile', world.enemyProjectiles, ctx, alpha, pal);
+      each('entities', 'drawDying', world.fx && world.fx.deaths, ctx, alpha, pal);
+      each('entities', 'drawMonster', world.monsters, ctx, alpha, pal);
       call('entities', 'drawPlayer', [ctx, p, px, py, pal]);
-      each('entities', 'drawProjectile', world.projectiles, ctx, [alpha, pal]);
+      each('entities', 'drawProjectile', world.projectiles, ctx, alpha, pal);
       call('effects', 'drawEffects', [ctx, world, alpha, pal, 'above']);
-      call('effects', 'drawDamageNumbers', [ctx, world, alpha, pal]);
+      if (!r.settings || r.settings.showDamageNumbers !== false) {
+        call('effects', 'drawDamageNumbers', [ctx, world.fx && world.fx.damageNumbers]);
+      }
 
       // HUD is laid out in CSS px, so it gets the dpr scale only, not the world view.
       ctx.setTransform(r.dpr, 0, 0, r.dpr, 0, 0);
+      var flash = world.fx && world.fx.hurtFlash;
+      if (flash > 0) {
+        var fxMax = world.fx.hurtFlashMax || flash;
+        call('effects', 'drawHurtFlash', [ctx, r.viewW, r.viewH, (1 - flash / fxMax) * HURT_FLASH_RENDER_SECONDS, pal.enemy]);
+      }
       if (RPG.render.hud) {
         RPG.render.hud.draw(ctx, RPG.render.hud.buildHudModel(world, ui), r.viewW, r.viewH);
       }

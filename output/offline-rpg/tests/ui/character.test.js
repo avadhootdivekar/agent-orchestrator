@@ -81,3 +81,17 @@ test('the character screen registers with the screen manager and opens as a moda
   mgr.draw(ctx);
   assert.ok(texts.includes('Character'));
 });
+
+test('character sheet fits 640x480 below the HUD bars, with no line overlapping another', () => {
+  const p = newPlayer();
+  const size = ch.panelSize(p);
+  assert.ok(ch.HUD_INSET + size.h <= 480, `height ${ch.HUD_INSET + size.h} fits 480`);
+  assert.ok(size.w <= 640);
+  const calls = [];
+  const ctx = new Proxy({}, { get: (_t, k) => (k === 'fillText' ? (s, x, y) => calls.push({ s: String(s), x, y }) : () => {}), set: () => true });
+  ch.createScreen(p, { x: 0, y: 0 }).draw(ctx);
+  const keys = calls.map((c) => c.x + ',' + c.y);
+  assert.equal(new Set(keys).size, keys.length, 'no two text lines share a position');
+  assert.ok(Math.min(...calls.map((c) => c.y)) >= 74, 'text starts below the HUD bars');
+  assert.ok(Math.max(...calls.map((c) => c.y)) <= 480);
+});

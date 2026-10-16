@@ -236,7 +236,158 @@
     ctx.restore();
   }
 
+  // ---- World wiring: reads world.effects / world.telegraphs / world.fx, steps cosmetic particle state ---------------
+
+  var HIT_BURST = 3;                 // particles per landed hit
+  var DEATH_ANIM_SECONDS = 0.4;      // how long a dead monster's ghost plays its shrink/fade
+  var DEATH_GHOST_CAP = 40;
+  var DEATH_BURST = 12;              // particles when a monster dies
+  var HIT_BURST_PLAYER_TOKEN = 'player';
+  var HIT_BURST_MONSTER_TOKEN = 'enemy';
+  var DEATH_BURST_TOKEN = 'hazard';
+  var TELEGRAPH_TOKEN = 'enemy';
+  var ZONE_TOKEN = 'hazard';
+  var ZONE_GLOW_ALPHA = 0.22;
+  var WHIRL_SPIN = 10;               // radians per second of world time
+  var AURA_SCALE = 1.6;              // shield/heal rings sit outside the player body
+  var AURA_ALPHA = 0.6;
+  var AURA_WIDTH = 2;
+  var DASH_WIDTH = 3;
+
+  var scratchTg = { shape: null, x: 0, y: 0, dirX: 0, dirY: 0, radius: 0, range: 0, t: 0, duration: 0 };
+
+  function liveFraction(e) {
+    return usable(e.life) ? clamp01((e.life - e.ttl) / e.life) : 0;
+  }
+
+  function drawWarning(ctx, e, colour) {
+    var tg = scratchTg;
+    tg.shape = e.shape; tg.x = e.x; tg.y = e.y; tg.dirX = e.dirX; tg.dirY = e.dirY; tg.range = e.range;
+    tg.radius = usable(e.radius) ? e.radius : e.r;
+    if (e.kind === 'warning') {   // boss warning: counts `remaining` down from `duration`
+      tg.duration = e.duration;
+      tg.t = usable(e.duration) ? e.duration - e.remaining : e.remaining;
+    } else {                      // pooled monster telegraph: `t` counts up to `duration`
+      tg.duration = e.duration; tg.t = e.t;
+    }
+    drawTelegraph(ctx, tg, colour);
+  }
+
+  function drawBelow(ctx, world, pal) {
+    var list = world.telegraphs, i, e;
+    if (list) {
+      for (i = 0; i < list.length; i++) {
+        e = list[i];
+        if (e.kind === 'warning' && !e.done) drawWarning(ctx, e, pal[TELEGRAPH_TOKEN]);
+        else if (e.kind === 'zone' && !e.done && usable(e.radius)) {
+          RPG.render.shapes.glow(ctx, e.x, e.y, e.radius, pal[ZONE_TOKEN], ZONE_GLOW_ALPHA);
+          RPG.render.shapes.ring(ctx, e.x, e.y, e.radius, RING_WIDTH, pal[ZONE_TOKEN], 1);
+        }
+      }
+    }
+    list = world.effects;
+    if (!list) return;
+    for (i = 0; i < list.length; i++) {
+      e = list[i];
+      if (e.type === 'telegraph' && !e.dead) drawWarning(ctx, e, pal[TELEGRAPH_TOKEN]);
+    }
+  }
+
+  function drawSkillEffect(ctx, world, e, pal) {
+    var colour = e.color || pal.ui, p = liveFraction(e), ttl = e.life;
+    switch (e.kind) {
+      case 'aoe': drawNova(ctx, e.x, e.y, e.radius, e.life - e.ttl, ttl, colour); break;
+      case 'ring': drawAoeRing(ctx, e.x, e.y, e.radius, e.life - e.ttl, ttl, colour); break;
+      case 'whirl': drawWhirl(ctx, e.x, e.y, e.radius, world.time * WHIRL_SPIN, colour); break;
+      case 'aura':
+      case 'heal':
+        RPG.render.shapes.ring(ctx, e.x, e.y, (e.radius || 1) * AURA_SCALE, AURA_WIDTH, colour, AURA_ALPHA * (1 - p * p));
+        break;
+      case 'arc':   // blink strike: a streak from start to landing that fades out
+        if (!finite(e.x2) || !finite(e.y2)) break;
+        ctx.save();
+        ctx.globalAlpha = 1 - p;
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = DASH_WIDTH;
+        ctx.beginPath();
+        ctx.moveTo(e.x, e.y);
+        ctx.lineTo(e.x2, e.y2);
+        ctx.stroke();
+        ctx.restore();
+        break;
+    }
+  }
+
+  function drawAbove(ctx, world, pal) {
+    var list = world.effects, i, e;
+    if (list) {
+      for (i = 0; i < list.length; i++) {
+        e = list[i];
+        if (e.skillId && usable(e.life)) drawSkillEffect(ctx, world, e, pal);
+        else if (!e.dead && e.type === 'blast' && usable(e.r)) drawNova(ctx, e.x, e.y, e.r, e.t, e.duration, pal[ZONE_TOKEN]);
+        else if (!e.dead && (e.type === 'aoe' || e.type === 'zone') && usable(e.r)) {
+          drawAoeRing(ctx, e.x, e.y, e.r, e.t, e.duration, pal[ZONE_TOKEN]);
+        }
+      }
+    }
+    if (world.fx) drawParticles(ctx, world.fx.particles);
+  }
+
+  /** Renderer entry: draws the world's effects for one layer, 'below' the creatures (ground warnings) or 'above' them. */
+  function drawEffects(ctx, world, alpha, pal, layer) {
+    if (!world || !pal) return;
+    if (layer === 'below') drawBelow(ctx, world, pal);
+    else if (layer === 'above') drawAbove(ctx, world, pal);
+  }
+
+  /** Cosmetic copy of a monster that just died; draw-entities.drawDying plays it out after the sim has removed the monster. */
+  function addDeathGhost(fx, m) {
+    if (!fx.deaths) fx.deaths = [];
+    if (fx.deaths.length >= DEATH_GHOST_CAP) fx.deaths.shift();
+    fx.deaths.push({ defId: m.defId, x: m.x, y: m.y, r: m.r, facing: m.facing || 0, elite: !!m.elite, age: 0, life: DEATH_ANIM_SECONDS });
+  }
+
+  function stepDeaths(fx, dt) {
+    var list = fx.deaths;
+    if (!list) return;
+    var step = finite(dt) && dt > 0 ? dt : 0;
+    for (var i = list.length - 1; i >= 0; i--) {
+      list[i].age += step;
+      if (list[i].age >= list[i].life) list.splice(i, 1);
+    }
+  }
+
+  /**
+   * Cosmetic per-tick step, called from the sim's cleanup stage: spawns hit and death bursts from this tick's hits and
+   * newly dead monsters, then advances every particle. Uses only world.fx.rng, so gameplay streams and saves are unaffected.
+   */
+  function stepWorldFx(world, ctx) {
+    var fx = world.fx;
+    if (!fx) return;
+    if (!fx.particles) fx.particles = [];
+    var hits = ctx && ctx.hits, i, h, quality = fx.quality;
+    if (hits) {
+      for (i = 0; i < hits.length; i++) {
+        h = hits[i];
+        if (h.dot || !(h.dealt > 0)) continue;
+        spawnBurst(fx.particles, fx.rng, h.x, h.y, HIT_BURST, colourOf(h.team === 1 ? HIT_BURST_MONSTER_TOKEN : HIT_BURST_PLAYER_TOKEN), quality);
+      }
+    }
+    var mons = world.monsters;
+    for (i = 0; mons && i < mons.length; i++) {
+      if (mons[i].dead && !mons[i].fxDied) {
+        mons[i].fxDied = true;
+        spawnBurst(fx.particles, fx.rng, mons[i].x, mons[i].y, DEATH_BURST, colourOf(DEATH_BURST_TOKEN), quality);
+        addDeathGhost(fx, mons[i]);
+      }
+    }
+    stepDeaths(fx, ctx && ctx.dt);
+    stepParticles(fx.particles, ctx && ctx.dt);
+  }
+
   RPG.render.effects = Object.freeze({
+    drawEffects: drawEffects,
+    stepWorldFx: stepWorldFx,
     DAMAGE_NUMBER_CAP: DAMAGE_NUMBER_CAP,
     PARTICLE_CAP: PARTICLE_CAP,
     HURT_FLASH_PEAK: HURT_FLASH_PEAK,

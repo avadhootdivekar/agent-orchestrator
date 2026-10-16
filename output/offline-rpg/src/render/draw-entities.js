@@ -18,22 +18,28 @@
   var BOSS_RING_WIDTH = 3;
   var TINT_ALPHA = 0.3;
   var AFFIX_TINT_ALPHA = 0.25;
+  var AFFIX_RING_GAP = 3;          // each affix adds its own outline ring this far outside the elite ring
   var ITEM_BOB_AMPLITUDE = 1.5;
   var ITEM_BOB_RATE = 3;
   var DROP_RADIUS = 6;
   var GOLD_RADIUS = 4;
+  var SWING_WIDTH = 4;             // stroke of the swing arc's leading edge
+  var SWING_FILL_ALPHA = 0.28;     // translucent wedge trailing behind the leading edge
+  var SWING_WINDUP_ALPHA = 0.3;    // faint marker at the swing's start angle while winding up
+  var SWING_PHASES = { windup: true, active: true, recover: true };
+  var HIT_FLASH_SECONDS = 0.12;    // matches world/combat.js HIT_FLASH; scales the flash glow and pop
+  var HIT_POP = 0.12;              // body grows by this fraction at the instant of a hit
+  var DEATH_END_SCALE = 0.35;      // a dying monster shrinks to this fraction of its size
+  var DEATH_FLASH_PORTION = 0.25;  // first part of the death animation drawn flash-white
 
   // Colour tokens the palette does not define yet (monster body colours, loot rarity colours, affix tints). The palette
   // is looked up first, so a token added there later wins over these defaults.
   var FALLBACK_COLOURS = {
     bone: '#c9c3a8', moss: '#6b8f5e', slate: '#7b8494', ember: '#d0743c', violet: '#8f6fb0',
-    'rarity-common': '#b8bcc6', 'rarity-uncommon': '#7fb76a', 'rarity-rare': '#6a9fd6',
-    'rarity-epic': '#a880d0', 'rarity-legendary': '#e0a458'
-  };
-
-  // Tint drawn over an elite that carries the matching affix (ELITE_AFFIXES in world/encounters.js).
-  var AFFIX_TINTS = {
-    fast: '#6fb6c9', shielded: '#c9c3a8', vampiric: '#b04a6a', 'explosive-death': '#e0a458', regenerating: '#6b8f5e'
+    steel: '#aab4c4', 'rarity-common': '#b8bcc6', 'rarity-uncommon': '#7fb76a', 'rarity-rare': '#6a9fd6',
+    'rarity-epic': '#a880d0', 'rarity-legendary': '#e0a458',
+    'affix-fast': '#6fb6c9', 'affix-shielded': '#c9c3a8', 'affix-vampiric': '#b04a6a',
+    'affix-explosive': '#e0a458', 'affix-regenerating': '#6b8f5e'
   };
 
   // Tint drawn over an entity while a status is active (status ids from world/combat.js and data/skills.js).
@@ -46,6 +52,12 @@
   function tone(pal, token, fallback) {
     if (!token) return fallback;
     return pal[token] || FALLBACK_COLOURS[token] || fallback;
+  }
+
+  // Outline/tint colour of an elite affix: the `color` token in RPG.data.eliteAffixes, hazard colour for an unknown id.
+  function affixTone(pal, id) {
+    var def = RPG.data.eliteAffixes && RPG.data.eliteAffixes[id];
+    return tone(pal, def && def.color, pal.hazard);
   }
 
   /** Draw position for an entity: linear blend from prev to current by alpha when both prev values are known. */
@@ -73,6 +85,47 @@
     S.outlinedRect(ctx, x - w / 2, top, w * frac, HP_BAR_HEIGHT, pal.enemy, null);
   }
 
+  function easeOut(p) { var q = 1 - p; return 1 - q * q; }
+
+  /** attackSpeed from a StatBlock (stats.get) or a plain snapshot; 1 when unknown. Mirrors world/weapons.js speedFactor. */
+  function attackSpeedOf(p) {
+    var s = p.stats, v = s && (typeof s.get === 'function' ? s.get('attackSpeed') : s.attackSpeed);
+    return finite(v) && v > 0 ? Math.max(0.1, v) : 1;
+  }
+
+  /**
+   * Melee swing arc, driven by the player's attack state machine (player.attack: state, t, dir, weaponId) and the weapon's
+   * arc/range/phase lengths. Windup shows a faint marker at the start edge; active sweeps a wedge and a bright leading
+   * edge across the cone; recover holds the full arc while it fades. Non-swing weapons and idle players draw nothing.
+   */
+  function drawSwing(ctx, p, x, y, pal) {
+    var atk = p.attack;
+    if (!atk || !SWING_PHASES[atk.state]) return;
+    var def = RPG.data.weapons && RPG.data.weapons[atk.weaponId];
+    if (!def || def.behavior !== 'swing' || !finite(atk.dir) || !(def.arc > 0) || !(def.range > 0)) return;
+    var dur = (def[atk.state] || 0) / attackSpeedOf(p);
+    var prog = dur > 0 && finite(atk.t) ? Math.min(1, Math.max(0, atk.t / dur)) : 1;
+    var half = def.arc / 2, start = atk.dir - half;
+    var colour = tone(pal, def.color, pal.ui);
+    var S = RPG.render.shapes;
+    var reach = def.range + p.r * 0.5;
+    ctx.save();
+    if (atk.state === 'windup') {
+      ctx.globalAlpha = SWING_WINDUP_ALPHA * prog;
+      S.arc(ctx, x, y, reach, start - 0.05, start + 0.05, colour, SWING_WIDTH);
+    } else {
+      var sweep = atk.state === 'active' ? def.arc * easeOut(prog) : def.arc;
+      ctx.globalAlpha = atk.state === 'active' ? 1 : 1 - prog;
+      if (sweep > 0.01) {
+        ctx.globalAlpha *= SWING_FILL_ALPHA;
+        S.cone(ctx, x, y, reach, start + sweep / 2, sweep / 2, colour, null, 0);
+        ctx.globalAlpha = atk.state === 'active' ? 1 : 1 - prog;
+        S.arc(ctx, x, y, reach, Math.max(start, start + sweep - 0.35), start + sweep, colour, SWING_WIDTH);
+      }
+    }
+    ctx.restore();
+  }
+
   /** Player: soft contact shadow, body disc, outline, and a facing wedge just inside the rim. */
   function drawPlayer(ctx, p, x, y, pal) {
     var S = RPG.render.shapes;
@@ -81,6 +134,7 @@
     S.softShadow(ctx, x, y + r * 0.55, r * 1.25, r * 0.62, 1);
     S.outlinedCircle(ctx, x, y, r, pal.player, pal.playerOutline, 2);
     statusTints(ctx, p, x, y, r);
+    drawSwing(ctx, p, x, y, pal);
 
     // Facing marker: a small dark wedge just inside the rim, pointing along `facing`.
     var c = Math.cos(p.facing), s = Math.sin(p.facing);
@@ -152,23 +206,49 @@
     var paint = MONSTER_SHAPES[shape] || MONSTER_SHAPES.blob;
     var isBoss = !!def && def.archetype === 'boss';
     var pos = position(m, alpha);
-    var r = m.r;
+    var flash = m.flash > 0 ? Math.min(1, m.flash / HIT_FLASH_SECONDS) : 0;
+    var r = m.r * (1 + HIT_POP * flash);
     var body = m.flash > 0 ? FLASH_COLOUR : tone(pal, def && def.color, pal.enemy);
     var line = pal.playerOutline;
 
     S.softShadow(ctx, pos.x, pos.y + r * 0.55, r * 1.1, r * 0.5, 1);
     if (m.elite) S.ring(ctx, pos.x, pos.y, r + ELITE_RING_GAP, ELITE_RING_WIDTH, pal.hazard, 0.9);
+    var affixes = m.elite && m.affixes ? m.affixes : [];
+    for (var a = 0; a < affixes.length; a++) {
+      S.ring(ctx, pos.x, pos.y, r + ELITE_RING_GAP + AFFIX_RING_GAP * (a + 1), ELITE_RING_WIDTH, affixTone(pal, affixes[a]), 0.9);
+    }
     if (isBoss) S.ring(ctx, pos.x, pos.y, r + ELITE_RING_GAP, BOSS_RING_WIDTH, pal.hazard, 0.9);
 
     paint(ctx, pos.x, pos.y, r, m.facing || 0, body, line, pal);
+    if (flash > 0) S.glow(ctx, pos.x, pos.y, r * 1.5, FLASH_COLOUR, 0.6 * flash);
 
-    if (m.elite && m.affixes) {
-      for (var i = 0; i < m.affixes.length; i++) {
-        RPG.render.shapes.glow(ctx, pos.x, pos.y, r * 1.3, AFFIX_TINTS[m.affixes[i]] || pal.hazard, AFFIX_TINT_ALPHA);
-      }
+    for (var i = 0; i < affixes.length; i++) {
+      S.glow(ctx, pos.x, pos.y, r * 1.3, affixTone(pal, affixes[i]), AFFIX_TINT_ALPHA);
     }
     statusTints(ctx, m, pos.x, pos.y, r);
     if (m.elite || isBoss) hpBar(ctx, pos.x, pos.y, r, m.hp, m.maxHp, pal);
+  }
+
+  /**
+   * Death animation for one entry of world.fx.deaths ({ defId, x, y, r, facing, elite, age, life }). The sim removes a
+   * dead monster the tick it dies, so these are cosmetic copies: they are not in world.monsters, never collide and
+   * cannot be targeted. Flashes white, then shrinks and fades out over `life`.
+   */
+  function drawDying(ctx, g, alpha, pal) {
+    var S = RPG.render.shapes;
+    pal = pal || RPG.render.palette;
+    if (!g || !(g.life > 0) || !finite(g.age) || !finite(g.x) || !finite(g.y) || !(g.r > 0)) return;
+    var p = Math.min(1, Math.max(0, g.age / g.life));
+    if (p >= 1) return;
+    var def = RPG.data.monsters[g.defId];
+    var paint = MONSTER_SHAPES[(def && def.shape) || 'blob'] || MONSTER_SHAPES.blob;
+    var r = g.r * (1 - (1 - DEATH_END_SCALE) * easeOut(p));
+    var body = p < DEATH_FLASH_PORTION ? FLASH_COLOUR : tone(pal, def && def.color, pal.enemy);
+    ctx.save();
+    ctx.globalAlpha = 1 - p * p;
+    if (g.elite) S.ring(ctx, g.x, g.y, r + ELITE_RING_GAP, ELITE_RING_WIDTH, pal.hazard, 0.9);
+    paint(ctx, g.x, g.y, r, g.facing || 0, body, pal.playerOutline, pal);
+    ctx.restore();
   }
 
   /** Projectile: 'arrow' is a triangle along its flight; anything else is an orb, glowing when it trails. */
@@ -204,6 +284,7 @@
   RPG.render.entities = Object.freeze({
     drawPlayer: drawPlayer,
     drawMonster: drawMonster,
+    drawDying: drawDying,
     drawProjectile: drawProjectile,
     drawDrop: drawDrop
   });

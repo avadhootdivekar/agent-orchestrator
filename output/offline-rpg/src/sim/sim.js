@@ -9,19 +9,39 @@
 
   // Fixed execution order. Numbers are the plan's stage numbers (0 begin ... 16 end).
   var ORDER = ['begin', 'input', 'player', 'weapons', 'skills', 'spatial', 'monsters', 'movement', 'projectiles',
-    'statuses', 'resolve', 'rewards', 'pickups', 'playerDeath', 'cleanup', 'areas', 'end'];
+    'statuses', 'affixes', 'resolve', 'rewards', 'pickups', 'playerDeath', 'cleanup', 'areas', 'end'];
 
   var DAMAGE_NUMBER_CAP = 40;
   var DAMAGE_NUMBER_LIFE = 1.2;  // seconds
 
-  /** World on the named map (RPG.data.maps), player standing on its spawn tile. opts: { seed, mapId }. */
+  // Plan §2.3: sword in slot 0, bow and staff in slots 1-2 so every weapon is usable from minute one.
+  var STARTING_WEAPONS = ['sword', 'hunting-bow', 'arc-staff'];
+
+  // Loot items carry baseId only and world/weapons.js resolves weaponId/defId, so the grant sets weaponId itself.
+  // A private Rng keeps the world's streams untouched.
+  function grantStartingWeapons(player) {
+    var rng = RPG.core.Rng.create(1);
+    for (var i = 0; i < STARTING_WEAPONS.length; i++) {
+      if (player.weaponSlots[i]) continue;
+      var item = RPG.world.loot.generateItem(rng, { baseId: STARTING_WEAPONS[i], rarity: 'common', ilvl: 1 });
+      item.weaponId = STARTING_WEAPONS[i];
+      player.weaponSlots[i] = item;
+    }
+  }
+
+  /** World on the named map (RPG.data.maps), player standing on its spawn tile.
+   *  opts: { seed, mapId, areaId, difficulty (id or config) }; a bare string is shorthand for { areaId }.
+   *  With `areaId` the world is built through areas.enter (generated map, populated); with only `mapId` it stays the
+   *  empty hand-authored test map. */
   function createWorld(opts) {
+    if (typeof opts === 'string') opts = { areaId: opts };
     opts = opts || {};
     var def = RPG.data.maps[opts.mapId || 'test-map'];
     var tm = RPG.world.tilemap;
     var map = tm.fromRows(def.layout, def.tileSize);
     map.theme = def.theme;
     var world = RPG.core.state.createWorldState({ seed: opts.seed });
+    if (opts.difficulty) world.difficulty = RPG.world.difficulty.resolve(opts.difficulty);
     var s = tm.findTile(map, tm.TILE.SPAWN) || { tx: 1, ty: 1 };
     var spawn = { x: (s.tx + 0.5) * map.tileSize, y: (s.ty + 0.5) * map.tileSize };
     world.area = { id: def.id, map: map, spawn: spawn, exits: [], visited: {} };
@@ -35,6 +55,8 @@
     if (RPG.world.spatial) world.grid = RPG.world.spatial.create(64);
     // skills.tryCastSkill does nothing without an executor (INTEGRATION-PLAN M10).
     if (RPG.world.skills && RPG.world.skillEffects) RPG.world.skills.setExecutor(RPG.world.skillEffects.execute);
+    if (RPG.world.loot) grantStartingWeapons(world.player);
+    if (opts.areaId) RPG.world.areas.enter(world, opts.areaId, { silent: true });
     return world;
   }
 
@@ -52,6 +74,9 @@
       d.age = (d.age || 0) + dt;
       if (d.ttl !== undefined && d.ttl !== null && d.age > d.ttl) d.dead = true;
     }
+    // Cosmetic particles read this tick's hits and fresh deaths, so they step before dead monsters are removed.
+    if (RPG.render && RPG.render.effects && RPG.render.effects.stepWorldFx) RPG.render.effects.stepWorldFx(world, ctx);
+    if (RPG.world.capEffects) RPG.world.capEffects(world);
     if (RPG.world.despawnDead) RPG.world.despawnDead(world);
     var nums = world.fx && world.fx.damageNumbers;
     if (nums) {

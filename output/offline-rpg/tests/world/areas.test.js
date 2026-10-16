@@ -246,3 +246,72 @@ test('areas.enter accepts the snapshot call shape and rejects unknown areas', ()
   assert.equal(w.area.id, 'town');
   assert.throws(() => areas.enter(w, 'nowhere'), /unknown area/);
 });
+
+// ---- runtime difficulty change (A4.3) ---------------------------------------------------------------------------
+
+function liveStats(w) {
+  return plain(w.monsters.map((m) => [m.id, m.hp, m.maxHp, m.damage, m.speed, m.xp, m.x, m.y]));
+}
+
+test('rescaleMonsters applies a new difficulty to live monsters, keeping the HP ratio', () => {
+  const w = mkWorld(21, 5, 'normal');
+  areas.enter(w, 'forest');
+  const elite = w.monsters.find((m) => m.elite);
+  const m0 = w.monsters[0];
+  m0.hp = Math.round(m0.maxHp * 0.4); // wounded before the change
+  const before = w.monsters.map((m) => ({ maxHp: m.maxHp, hp: m.hp, damage: m.damage, speed: m.speed, xp: m.xp }));
+  const frac0 = m0.hp / m0.maxHp;
+  w.difficulty = RPG.world.difficulty.resolve('hard');
+  assert.equal(areas.rescaleMonsters(w, 'hard'), w.monsters.length);
+  const hard = RPG.data.difficulties.hard;
+  w.monsters.forEach((m, i) => {
+    const b = before[i];
+    assert.ok(Math.abs(m.maxHp / b.maxHp - hard.enemyHp) < 0.02 * hard.enemyHp + 1 / b.maxHp, `${m.defId} maxHp`);
+    assert.ok(Math.abs(m.damage / b.damage - hard.enemyDamage) < 1e-9, `${m.defId} damage`);
+    assert.ok(Math.abs(m.speed / b.speed - hard.enemySpeed) < 1e-9, `${m.defId} speed`);
+    assert.ok(m.xp >= b.xp);
+    assert.equal(m.stats.base.maxHp, m.maxHp);
+  });
+  assert.ok(Math.abs(m0.hp / m0.maxHp - frac0) < 0.01, 'HP ratio preserved');
+  if (elite) assert.ok(elite.maxHp > 0);
+});
+
+test('rescaleMonsters matches monsters spawned fresh at the new difficulty and round-trips', () => {
+  // spawnDensity and eliteChance stay at normal, so both worlds place the same monsters; only the stat multipliers differ
+  const tough = { id: 'custom', enemyHp: 2, enemyDamage: 1.7, enemySpeed: 1.2, xpMultiplier: 1.6, bossHp: 1.5 };
+  const a = mkWorld(33, 6, 'normal'), b = mkWorld(33, 6, tough);
+  areas.enter(a, 'caves'); areas.enter(b, 'caves');
+  const original = liveStats(a);
+  areas.rescaleMonsters(a, tough);
+  const sa = liveStats(a), sb = liveStats(b);
+  assert.equal(sa.length, sb.length);
+  sa.forEach((row, i) => {
+    assert.ok(Math.abs(row[2] - sb[i][2]) <= 1, 'maxHp within rounding');
+    assert.ok(Math.abs(row[3] - sb[i][3]) < 1e-6, 'damage');
+    assert.ok(Math.abs(row[4] - sb[i][4]) < 1e-6, 'speed');
+    assert.equal(row[5], sb[i][5], 'xp');
+  });
+  areas.rescaleMonsters(a, 'normal');
+  liveStats(a).forEach((row, i) => {
+    assert.ok(Math.abs(row[2] - original[i][2]) <= 1, 'maxHp restored');
+    assert.ok(Math.abs(row[3] - original[i][3]) < 1e-6, 'damage restored');
+  });
+});
+
+test('rescaleMonsters to the current difficulty changes nothing and draws no randomness', () => {
+  const w = mkWorld(8, 4, 'hard');
+  areas.enter(w, 'forest');
+  const before = liveStats(w), rngState = JSON.stringify(w.rng && w.rng.state ? w.rng.state : null);
+  areas.rescaleMonsters(w, 'hard');
+  assert.deepEqual(liveStats(w), before);
+  assert.equal(JSON.stringify(w.rng && w.rng.state ? w.rng.state : null), rngState);
+});
+
+test('rescaleMonsters leaves unscaled monsters (summons) alone', () => {
+  const w = mkWorld(9, 3, 'normal');
+  areas.enter(w, 'forest');
+  const summon = RPG.world.spawnMonster(w, w.monsters[0].defId, 10, 10, { level: 1 });
+  const hp = summon.maxHp;
+  areas.rescaleMonsters(w, 'nightmare');
+  assert.equal(summon.maxHp, hp);
+});

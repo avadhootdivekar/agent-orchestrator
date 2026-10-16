@@ -13,12 +13,14 @@
   var BAR_W = 220;
   var BAR_H = 14;
   var BAR_GAP = 8;
-  var SLOT_SIZE = 44;
+  var SLOT_SIZE = 56;
   var SLOT_GAP = 8;
   var OUTLINE_W = 2;
   var TRACK_ALPHA = 0.85;
   var LABEL_FONT = '13px system-ui, sans-serif';
   var KEY_FONT = '12px system-ui, sans-serif';
+  var NAME_FONT = '10px system-ui, sans-serif';
+  var NAME_CHARS = 9;     // abbreviation length that fits a SLOT_SIZE box in NAME_FONT ('Whirlwind' fits)
   var BOSS_BAR_W = 420;
   var BOSS_BAR_Y = MARGIN;
   var TOAST_LIMIT = 4;
@@ -29,6 +31,12 @@
   function num(v, fallback) { return typeof v === 'number' && isFinite(v) ? v : fallback; }
   function fraction(cur, max) { return max > 0 ? clamp01(cur / max) : 0; }
   function slotRowWidth(count) { return count * SLOT_SIZE + Math.max(0, count - 1) * SLOT_GAP; }
+
+  /** cooldownReduction from a StatBlock or plain snapshot, clamped below 1 so the total never collapses to 0. */
+  function playerCdr(player) {
+    var s = player.stats, v = s ? (typeof s.get === 'function' ? s.get('cooldownReduction') : s.cooldownReduction) : 0;
+    return typeof v === 'number' && isFinite(v) ? Math.min(Math.max(v, 0), 0.95) : 0;
+  }
 
   /** First living boss in `monsters` as { name, cur, max }, or null. Boss-ness is the definition's archetype, as in draw-entities. */
   function liveBoss(monsters) {
@@ -41,6 +49,14 @@
       }
     }
     return null;
+  }
+
+  /** Short label for a hotbar slot: the skill's display name when known, else its id, cut to NAME_CHARS. */
+  function skillLabel(skillId) {
+    if (!skillId) return '';
+    var defs = RPG.data && RPG.data.skills;
+    var def = defs && defs[skillId];
+    return String((def && def.name) || skillId).slice(0, NAME_CHARS);
   }
 
   /** Final stat value first, then the flat player field (e.g. maxHp on the entity), then the fallback. */
@@ -62,16 +78,21 @@
     var level = num(player.level, 1);
     var skills = player.skills || {};
     var bar = Array.isArray(skills.bar) ? skills.bar : [];
-    var cooldowns = skills.cooldowns || {};
+    // The sim keeps seconds left in player.cooldowns['skill:<id>']; skills.cooldowns[<id>] is the legacy shape.
+    var simCooldowns = player.cooldowns || {};
+    var legacyCooldowns = skills.cooldowns || {};
     var baseCooldowns = o.skillCooldowns || {};
+    var cdr = playerCdr(player);
 
     var slots = [];
     for (var i = 0; i < SKILL_SLOTS; i++) {
       var skillId = bar[i] || null;
-      var remaining = skillId ? Math.max(0, num(cooldowns[skillId], 0)) : 0;
-      var total = skillId ? num(baseCooldowns[skillId], 0) : 0;
+      var remaining = skillId ? Math.max(0, num(simCooldowns['skill:' + skillId], num(legacyCooldowns[skillId], 0))) : 0;
+      // A cast starts at base * (1 - cooldownReduction) (world/skills.tryCastSkill), so that is the sweep's full span.
+      var total = skillId ? num(baseCooldowns[skillId], 0) * (1 - cdr) : 0;
       slots.push({
         skillId: skillId,
+        name: skillLabel(skillId),
         cooldown: remaining,
         // Unknown base cooldown with time left: show the slot as fully covered rather than guessing.
         cooldownFrac: total > 0 ? clamp01(remaining / total) : (remaining > 0 ? 1 : 0)
@@ -140,7 +161,14 @@
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText(String((index + 1) % 10), x + 4, y + 3);
+    if (slot.name) {
+      ctx.font = NAME_FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(slot.name, cx, y + SLOT_SIZE - 3);
+    }
     if (slot.cooldown > 0) {
+      ctx.font = KEY_FONT;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(Math.ceil(slot.cooldown) + 's', cx, cy);

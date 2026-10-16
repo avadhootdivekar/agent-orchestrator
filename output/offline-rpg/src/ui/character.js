@@ -7,7 +7,8 @@
   RPG.ui = RPG.ui || {};
 
   var PANEL_PAD = 12;
-  var PANEL_W = 300;
+  var COL_W = 200;
+  var HUD_INSET = 80; // the HUD bars occupy y 16..74 at the top left; the sheet starts below them
   var LINE_H = 16;
   var SECTION_GAP = 10;
   var TEXT_COLOR = '#d8d2c4';
@@ -51,33 +52,50 @@
     return { stats: stats, resistances: resistances, equipment: equipment };
   }
 
-  /** Canvas draw of the sheet: stats on top, resistances, then equipment. */
-  function draw(ctx, player, view) {
-    var data = sheet(player), x = view.x, y = view.y;
-    var lines = [];
-    lines.push({ head: true, text: 'Stats' });
-    data.stats.forEach(function (r) { lines.push({ text: r.label + ': ' + r.text }); });
-    lines.push({ gap: true });
-    lines.push({ head: true, text: 'Resistances' });
-    data.resistances.forEach(function (r) { lines.push({ text: r.label + ': ' + r.text }); });
-    lines.push({ gap: true });
-    lines.push({ head: true, text: 'Equipment' });
-    data.equipment.forEach(function (e) { lines.push({ text: e.label + ': ' + (e.item || '-') }); });
+  /** Column contents of the sheet: stats on the left, resistances then equipment on the right. Pure, for layout and tests. */
+  function columns(player) {
+    var data = sheet(player);
+    var left = [{ head: true, text: 'Stats' }];
+    data.stats.forEach(function (r) { left.push({ text: r.label + ': ' + r.text }); });
+    var right = [{ head: true, text: 'Resistances' }];
+    data.resistances.forEach(function (r) { right.push({ text: r.label + ': ' + r.text }); });
+    right.push({ gap: true });
+    right.push({ head: true, text: 'Equipment' });
+    data.equipment.forEach(function (e) { right.push({ text: e.label + ': ' + (e.item || '-') }); });
+    return [left, right];
+  }
 
-    var height = PANEL_PAD * 2 + 24 + lines.length * LINE_H + SECTION_GAP * 2;
+  function columnHeight(lines) {
+    return lines.reduce(function (h, l) { return h + (l.gap ? SECTION_GAP : LINE_H); }, 0);
+  }
+
+  /** Panel size for the sheet: two columns side by side, so it fits a 640x480 window below the HUD bars. */
+  function panelSize(player) {
+    var cols = columns(player);
+    return { w: PANEL_PAD * 2 + COL_W * cols.length, h: PANEL_PAD * 2 + 24 + Math.max(columnHeight(cols[0]), columnHeight(cols[1])) };
+  }
+
+  /** Canvas draw of the sheet: stats in the left column; resistances and equipment in the right. */
+  function draw(ctx, player, view) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    var x = view.x, y = view.y;
+    var size = panelSize(player);
     ctx.fillStyle = PANEL_COLOR;
-    ctx.fillRect(x, y, PANEL_W, height);
+    ctx.fillRect(x, y, size.w, size.h);
     ctx.font = TITLE_FONT;
     ctx.fillStyle = TEXT_COLOR;
     ctx.fillText('Character', x + PANEL_PAD, y + PANEL_PAD + 12);
 
-    var cy = y + PANEL_PAD + 24;
-    lines.forEach(function (line) {
-      if (line.gap) { cy += SECTION_GAP; return; }
-      ctx.font = LABEL_FONT;
-      ctx.fillStyle = line.head ? HEAD_COLOR : TEXT_COLOR;
-      ctx.fillText(line.text, x + PANEL_PAD, cy + LINE_H - 4);
-      cy += LINE_H;
+    columns(player).forEach(function (lines, c) {
+      var cy = y + PANEL_PAD + 24;
+      lines.forEach(function (line) {
+        if (line.gap) { cy += SECTION_GAP; return; }
+        ctx.font = LABEL_FONT;
+        ctx.fillStyle = line.head ? HEAD_COLOR : TEXT_COLOR;
+        ctx.fillText(line.text, x + PANEL_PAD + c * COL_W, cy + LINE_H - 4);
+        cy += LINE_H;
+      });
     });
   }
 
@@ -86,12 +104,12 @@
     var origin = layout || { x: 0, y: 0 };
     return {
       id: 'character',
-      draw: function (ctx) { draw(ctx, player, { x: origin.x, y: origin.y }); }
+      draw: function (ctx) { draw(ctx, player, { x: origin.x, y: origin.y + HUD_INSET }); }
     };
   }
 
   RPG.ui.character = {
-    RESIST_STATS: RESIST_STATS, labelOf: labelOf, formatValue: formatValue, sheet: sheet, draw: draw,
+    RESIST_STATS: RESIST_STATS, labelOf: labelOf, formatValue: formatValue, sheet: sheet, columns: columns, panelSize: panelSize, HUD_INSET: HUD_INSET, draw: draw,
     createScreen: createScreen
   };
 })(globalThis.RPG = globalThis.RPG || {});

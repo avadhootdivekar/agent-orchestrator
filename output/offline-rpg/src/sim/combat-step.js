@@ -23,9 +23,6 @@
     return typeof v === 'number' ? v : 0;
   }
 
-  /** `{stats: view}` shape that combat.js reads. The player's `stats` is a plain snapshot with no `get`. */
-  function statView(ent) { return { get: function (key) { return statOf(ent, key); } }; }
-
   /** Accepts a DamageSpec, a bare number, or nothing. Returns a DamageSpec-shaped object. */
   function damageSpec(d) {
     if (typeof d === 'number') return { amount: d };
@@ -84,7 +81,10 @@
         hurtPlayer(world, spec.amount, { type: spec.type, ignoreArmor: spec.ignoreArmor, source: source });
       }
       var lifetime = shot.lifetime === undefined ? ENEMY_SHOT_LIFETIME : shot.lifetime;
-      if (reached || hitWall || shot.age >= lifetime) RPG.core.util.removeAt(list, i);
+      if (reached || hitWall || shot.age >= lifetime) {
+        RPG.core.util.removeAt(list, i);
+        RPG.world.releaseProjectile(world, shot);      // enemy shots are pooled; without this the pool leaks one per shot
+      }
     }
   }
 
@@ -121,13 +121,11 @@
 
   // ---- Stage 9: statuses / cooldowns / flash ----
 
-  /** Ticks the player's statuses through combat.tickStatuses on a shim (its `stats` view is what combat reads). */
+  /** Ticks the player's statuses through combat.tickStatuses (combat reads a StatBlock or a snapshot). */
   function tickPlayerStatuses(world, dt) {
     var p = world.player, combat = RPG.world.combat;
     var shield = p.status && p.status.shield;
-    var shim = { id: p.id, x: p.x, y: p.y, hp: p.hp, maxHp: p.maxHp, dead: p.dead, flash: p.flash, status: p.status, stats: statView(p) };
-    var events = combat.tickStatuses(shim, dt);
-    p.hp = shim.hp; p.dead = shim.dead; p.flash = shim.flash;
+    var events = combat.tickStatuses(p, dt);
     for (var i = 0; i < events.length; i++) {
       if (!events[i].dot) continue;
       pushDamageNumber(world, p.x, p.y, events[i].amount, events[i].damageType);
@@ -142,7 +140,7 @@
     if (p) {
       tickPlayerStatuses(world, dt);
       combat.tickCooldowns(p, dt);
-      p.flash = Math.max(0, (p.flash || 0) - dt);
+      combat.tickFlash(p, dt);
     }
     var fx = world.fx;
     if (fx && fx.hurtFlash > 0) fx.hurtFlash = Math.max(0, fx.hurtFlash - dt);
@@ -157,22 +155,47 @@
         pushDamageNumber(world, m.x, m.y, events[j].amount, events[j].damageType);
         recordHit(world, { targetId: m.id, dealt: events[j].amount, crit: false, type: events[j].damageType, x: m.x, y: m.y, team: m.team, dot: events[j].dot });
       }
-      m.flash = Math.max(0, (m.flash || 0) - dt);
+      combat.tickFlash(m, dt);
     }
   }
 
   // ---- Stage 10: resolve ----
 
+  /**
+   * Bosses take damage through boss.damageTakenMult (phase shields, the vulnerable window). Weapons, skills and statuses
+   * write HP directly, so the loss since the last resolve (`m.hpSeen`) is rescaled here, a death the scaling undoes is
+   * revived, and the HIT entries aimed at the boss are scaled to match.
+   */
+  function scaleBossDamage(world, hits) {
+    var boss = RPG.world.boss, list = world.monsters || [];
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i], def = m.def || RPG.data.monsters[m.defId];
+      if (!def || def.ai !== 'boss' || !boss) continue;
+      var seen = m.hpSeen;
+      if (typeof seen === 'number' && m.hp < seen) {
+        var mult = boss.damageTakenMult(m);
+        if (mult !== 1) {
+          m.hp = Math.min(m.maxHp, Math.max(0, seen - (seen - m.hp) * mult));
+          if (m.hp > 0 && m.dead && !m.rewarded) m.dead = false;
+          else if (m.hp <= 0) m.dead = true;
+          for (var h = 0; h < hits.length; h++) if (hits[h].targetId === m.id) hits[h].dealt *= mult;
+        }
+      }
+      m.hpSeen = m.hp;
+    }
+  }
+
   /** Turns the hits recorded this tick (ctx.hits) into HIT events. Begin clears the list next tick. */
   function resolve(world, ctx) {
     var bus = RPG.core.events, hits = ctx.hits || [];
+    scaleBossDamage(world, hits);
     for (var i = 0; i < hits.length; i++) bus.emit(bus.NAMES.HIT, hits[i]);
   }
 
   /** Reflects `amount` back at the monster that hit the player, through the same combat resolution path. */
   function reflectDamage(world, p, m, amount) {
     var combat = RPG.world.combat;
-    var result = combat.resolveHit({ x: p.x, y: p.y, stats: statView(p) }, m,
+    var result = combat.resolveHit(p, m,
       { amount: amount, type: 'phys', canCrit: false, ignoreArmor: true }, world.rng);
     // No attacker: the player's life steal must not apply to reflected damage.
     combat.applyHit(null, m, result);
@@ -204,7 +227,7 @@
 
     var mitigation = 0;
     if (type === 'phys') { if (!info.ignoreArmor) mitigation = combat.armorMitigation(statOf(p, 'armor')); }
-    else mitigation = combat.resistance({ stats: statView(p) }, type);
+    else mitigation = combat.resistance(p, type);
     var dealt = Math.max(0, raw * (1 - mitigation));
     if (dealt > p.hp) dealt = Math.max(0, p.hp);
     p.hp -= dealt;
@@ -220,10 +243,18 @@
       if (out.reflected > 0) reflectDamage(world, p, source, out.reflected);
     }
 
-    p.flash = Math.max(p.flash || 0, combat.HIT_FLASH);
+    // Vampiric elites heal from the damage they land (melee carries attackerId, enemy shots carry the source entity).
+    if (dealt > 0 && RPG.sim.monsters && RPG.sim.monsters.onPlayerHurt) {
+      var attacker = info.source && typeof info.source === 'object' ? info.source
+        : info.attackerId !== undefined && info.attackerId !== null ? RPG.world.findEntity(world, info.attackerId) : null;
+      if (attacker && attacker.team === 1) RPG.sim.monsters.onPlayerHurt(attacker, dealt);
+    }
+
+    combat.triggerFlash(p);
     var fx = world.fx;
     if (fx) {
       fx.hurtFlash = Math.max(fx.hurtFlash || 0, HURT_FLASH_SECONDS);
+      fx.hurtFlashMax = HURT_FLASH_SECONDS;
       fx.shake = Math.min(SHAKE_CAP, (fx.shake || 0) + SHAKE_BASE + SHAKE_PER_DAMAGE * dealt);
     }
     pushDamageNumber(world, p.x, p.y, dealt, type);

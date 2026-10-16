@@ -1,6 +1,6 @@
 # Build, run and offline guarantees
 
-Status: describes the build and guard as shipped in `scripts/`. Rules or flags marked **(planned)** are not implemented yet.
+Status: describes the build and guard as shipped in `scripts/` (every command and path below was run or checked in w06-08; `build`, `check-offline` and `preview` work, and `npm test` / `check-all` currently report 2 failing unit tests from other units, not a build problem). Rules or flags marked **(planned)** are not implemented yet.
 
 ## 1. Tooling
 
@@ -11,6 +11,7 @@ Status: describes the build and guard as shipped in `scripts/`. Rules or flags m
   - `npm test` → `node scripts/build.mjs --verify && npm run test:unit`: builds twice in memory and fails unless the output is byte-identical, then runs the unit suites.
   - `npm run test:unit` → `node --test 'tests/**/*.test.js' 'tests/scripts/*.test.mjs'`: unit suites only.
   - `npm run check-offline` → `node scripts/check-offline.mjs dist/index.html`: the offline guard.
+  - `npm run bench` → `node scripts/bench.mjs`: headless timing of sim and draw against a canvas stub (`--entities`, `--frames`, `--warmup`, `--seed`, `--json`). Not part of `check-all`.
   - `npm run check-all` → `node scripts/run-all-checks.mjs`: runs the `build`, `test` and `check-offline` steps in order, prints one `PASS`/`FAIL` line per step, and exits 1 if any step failed.
 - Source of truth for file order: `JS_ORDER` in `scripts/build.mjs` (see §2). Only the JavaScript order is listed there;
   CSS is concatenated from `styles/*.css` in sorted order.
@@ -36,7 +37,7 @@ write dist/index.html, then run scripts/check-offline.mjs on it; a finding fails
 - **One classic script block, no `type="module"`, no `src=`.** Every source file is an IIFE that attaches to `window.RPG`.
 - **Deterministic.** There are no timestamps in the output. `npm test` checks this on every run.
 - **Not written yet (planned):** `dist/BUILD-INFO.json` (version, git sha, sha256, size) and a `--min` flag.
-- **Keeping `JS_ORDER` current:** a file on disk that is missing from `JS_ORDER` is still bundled, but it is appended last with a warning. Load order matters only for load-time dependencies between files.
+- **Keeping `JS_ORDER` current:** a file on disk that is missing from `JS_ORDER` is still bundled, but it is appended last with a warning, and `npm test` (`build.mjs --verify`) fails on it, on a duplicate entry, and on a listed file that is missing. Load order matters only for load-time dependencies between files.
 
 ## 3. file:// strategy
 
@@ -45,10 +46,10 @@ write dist/index.html, then run scripts/check-offline.mjs on it; a finding fails
 1. All JS and CSS are inlined in classic (non-module) `<script>` and `<style>` blocks, so there are no cross-file loads.
 2. The runtime code avoids `fetch()`, `XMLHttpRequest`, `WebSocket`, `import()` and module scripts. The guard enforces the first four and dynamic import (see §4).
 3. Data is JavaScript, not JSON loaded at runtime. Fonts use the system stack (no `@font-face` or `url()`).
-4. Graphics are drawn on Canvas 2D. Audio is planned as WebAudio-synthesised (`src/audio/` is not written yet).
-5. **`localStorage` under `file://` is browser-dependent.** Firefox keys `file://` storage per file path, and moving or renaming the file can lose saves. Chrome shares storage across `file://` URLs. The save UI is not written yet; the planned mitigation is Export/Import (see `src/persistence/exportimport.js`) and a banner when storage is unavailable.
+4. Graphics are drawn on Canvas 2D. Audio is WebAudio-synthesised (`src/audio/audio.js`), started on the first key or pointer press.
+5. **`localStorage` under `file://` is browser-dependent.** Firefox keys `file://` storage per file path, and moving or renaming the file can lose saves. Chrome shares storage across `file://` URLs. The mitigation is Export/Import in the Save/Load menu (`src/ui/saveload.js`, `src/persistence/files.js`); when `localStorage` is unusable the storage adapter falls back to memory for the session.
    For stable saves, serve the folder with `npm run preview` or `python3 -m http.server -d dist`.
-6. Clipboard and download use only user-gesture APIs (planned for the UI layer).
+6. Export uses a Blob download and import uses a file picker, both started from a key press in the Save/Load menu (`src/persistence/files.js`). There is no clipboard path.
 
 ## 4. Offline guard (`scripts/check-offline.mjs`)
 

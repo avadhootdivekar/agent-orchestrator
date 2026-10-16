@@ -2,6 +2,8 @@
      RPG.sim.stage.spatial(world, ctx)   5  rebuild world.grid (player + living monsters), count summons per summoner
      RPG.sim.stage.monsters(world, ctx)  6  ai.think -> intent, applied: desired velocity, telegraphs, melee, enemy
                                             projectiles, summons (capped), exploder; bosses go through world/boss.js
+     RPG.sim.stage.affixes(world, ctx)   10a elite affixes (data/monsters.js RPG.data.eliteAffixes): shielded damage cut,
+                                            explosive death blast, regeneration (runs between statuses and resolve)
      RPG.sim.stage.movement(world, ctx)  7  integrate desired + knockback velocity through the tilemap, decay knockback,
                                             separate packs
    `ctx` is world.scratch ({ dt, events, ... }); only `ctx.dt` is required. Stages never throw on missing optional data.
@@ -34,6 +36,8 @@
     return ctx;
   }
 
+  var BLAST_CUE_SECONDS = 0.4;  // lifetime of the explosive-death ring
+
   function emit(type, payload) {
     if (RPG.core && RPG.core.events) RPG.core.events.emit(type, payload);
   }
@@ -51,7 +55,7 @@
     if (!p || p.dead || amount <= 0 || c.hasStatus(p, 'invuln')) return 0;
     var dealt = amount * (1 - c.armorMitigation(p.stats ? p.stats.armor : 0));
     p.hp -= dealt;
-    p.flash = Math.max(p.flash || 0, c.HIT_FLASH);
+    c.triggerFlash(p);
     if (p.hp <= 0) { p.hp = 0; p.dead = true; }
     return dealt;
   }
@@ -66,6 +70,83 @@
     var n = 0, list = world.monsters;
     for (var i = 0; i < list.length; i++) if (!list[i].dead) n++;
     return n;
+  }
+
+  // ---- elite affixes -----------------------------------------------------------------------------------------------
+
+  // Merged numbers of every affix the monster carries, e.g. { speedMult: 1.5 }. Non-elites and unknown ids add nothing.
+  function affixData(m, key) {
+    var table = RPG.data.eliteAffixes, list = m.elite && m.affixes;
+    if (!table || !list) return undefined;
+    for (var i = 0; i < list.length; i++) {
+      var a = table[list[i]];
+      if (a && a[key] !== undefined) return a[key];
+    }
+    return undefined;
+  }
+
+  // m.speed over the def's base speed: 1 for unscaled monsters (summons) and for anything without a usable speed.
+  function difficultySpeedRatio(m, def) {
+    var base = def.baseStats && def.baseStats.speed;
+    return typeof m.speed === 'number' && base > 0 ? m.speed / base : 1;
+  }
+
+  /** Movement speed factor from the monster's affixes (1 when it has none). */
+  function affixSpeedMult(m) { var v = affixData(m, 'speedMult'); return v === undefined ? 1 : v; }
+
+  /** Vampiric: heals the attacker by a fraction of the damage it dealt to the player. Called from combat-step hurtPlayer. */
+  function onPlayerHurt(attacker, dealt) {
+    if (!attacker || attacker.dead || !(dealt > 0)) return 0;
+    var f = affixData(attacker, 'leechFraction');
+    if (f === undefined) return 0;
+    var before = attacker.hp;
+    attacker.hp = Math.min(attacker.maxHp, attacker.hp + dealt * f);
+    return attacker.hp - before;
+  }
+
+  // Shielded: a shield worth `shieldFraction` of max HP soaks damage before HP does. Weapons, skills and statuses write HP
+  // directly, so the loss since the last affix pass is handed back from the shield; a blow the shield fully covers that
+  // had killed the elite is undone. The loss is capped at the HP left (combat.resolveHit), so the shield is finite and a
+  // shielded elite always dies once it is spent. `affixHp` is the HP the previous pass left behind.
+  function soakDamage(m) {
+    var fraction = affixData(m, 'shieldFraction');
+    if (fraction === undefined) return;
+    if (typeof m.shield !== 'number') m.shield = m.maxHp * fraction;
+    var seen = m.affixHp;
+    if (typeof seen !== 'number' || !(m.hp < seen) || m.shield <= 0) return;
+    var absorbed = Math.min(m.shield, seen - m.hp);
+    m.shield -= absorbed;
+    m.hp += absorbed;
+    if (m.hp > 0 && m.dead && !m.rewarded) m.dead = false;
+  }
+
+  // Explosive death: once, when an elite with the affix dies, the player takes a blast around the corpse.
+  function deathBlast(world, m) {
+    var radius = affixData(m, 'deathRadius');
+    if (radius === undefined || m.affixBlasted) return;
+    m.affixBlasted = true;
+    var mult = affixData(m, 'deathDamageMult') || 1;
+    // Cue: a short expanding ring the size of the blast (drawn by render/draw-effects, aged by combat-step) plus a sound.
+    if (RPG.world.spawnEffect) RPG.world.spawnEffect(world, { type: 'blast', x: m.x, y: m.y, r: radius, team: 1, duration: BLAST_CUE_SECONDS });
+    emit(RPG.core.events.NAMES.UI_SOUND, { name: 'hit' });
+    if (playerInCircle(world, m.x, m.y, radius)) {
+      hurt(world, m.damage * mult, { source: 'monster', attackerId: m.id, defId: m.defId, attackId: 'affix-explosive-death', type: 'fire' });
+    }
+  }
+
+  function affixesStage(world, ctx) {
+    ctx = ctxOf(world, ctx);
+    var list = world.monsters;
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      if (!m.elite || !m.affixes || m.affixes.length === 0) continue;
+      if (m.dead && m.affixBlasted) continue;
+      soakDamage(m);
+      if (m.dead) { deathBlast(world, m); continue; }
+      var regen = affixData(m, 'regenPerSecond');
+      if (regen !== undefined) m.hp = Math.min(m.maxHp, m.hp + m.maxHp * regen * ctx.dt);
+      m.affixHp = m.hp;
+    }
   }
 
   // ---- stage 5 -----------------------------------------------------------------------------------------------------
@@ -267,7 +348,9 @@
         it = { vx: 0, vy: 0, facing: m.facing, actions: [] };
       } else {
         it = ai.think(m, view, world.rng, dt);
-        var f = c.moveSpeedFactor(m);
+        // The AI works from the def's speed; m.speed is that speed after difficulty (spawn and rescaleMonsters keep it
+        // current), so the ratio carries the difficulty's enemySpeed into every walk, flee and charge.
+        var f = c.moveSpeedFactor(m) * affixSpeedMult(m) * difficultySpeedRatio(m, def);
         m.dvx = it.vx * f; m.dvy = it.vy * f;
         m.facing = it.facing;
       }
@@ -282,7 +365,8 @@
 
   // ---- stage 7 -----------------------------------------------------------------------------------------------------
 
-  function separate(world, ctx, m) {
+  // Writes the push into `out` ({x, y}) so the per-tick loop allocates nothing.
+  function separate(world, ctx, m, out) {
     var near = ctx.nearby || (ctx.nearby = []);
     RPG.world.spatial.queryCircle(world.grid, m.x, m.y, m.r, near);
     var px = 0, py = 0;
@@ -295,7 +379,8 @@
       px += dx / d * overlap * SEPARATION_PUSH;
       py += dy / d * overlap * SEPARATION_PUSH;
     }
-    return { x: px, y: py };
+    out.x = px; out.y = py;
+    return out;
   }
 
   function movementStage(world, ctx) {
@@ -305,17 +390,21 @@
     var decay = Math.pow(KNOCKBACK_DECAY, dt * 60);
     var list = world.monsters, i, m;
     if (!world.grid) spatialStage(world, ctx);
-    var pushes = [];
+    // Pushes live in two reused arrays on ctx: all are computed before any monster moves (order-independent result).
+    var pushX = ctx.pushX || (ctx.pushX = []), pushY = ctx.pushY || (ctx.pushY = []);
+    var push = ctx.pushTmp || (ctx.pushTmp = { x: 0, y: 0 });
     for (i = 0; i < list.length; i++) {
       m = list[i];
-      pushes.push(m.dead ? null : separate(world, ctx, m));
+      if (m.dead) { pushX[i] = 0; pushY[i] = 0; continue; }
+      separate(world, ctx, m, push);
+      pushX[i] = push.x; pushY[i] = push.y;
     }
     for (i = 0; i < list.length; i++) {
       m = list[i];
       if (m.dead) continue;
       m.prevX = m.x; m.prevY = m.y;
       var kx = m.vx || 0, ky = m.vy || 0;
-      col.moveCircle(map, m, ((m.dvx || 0) + kx) * dt + pushes[i].x, ((m.dvy || 0) + ky) * dt + pushes[i].y);
+      col.moveCircle(map, m, ((m.dvx || 0) + kx) * dt + pushX[i], ((m.dvy || 0) + ky) * dt + pushY[i]);
       m.vx = kx * decay; m.vy = ky * decay;
       if (Math.abs(m.vx) < KNOCKBACK_EPS) m.vx = 0;
       if (Math.abs(m.vy) < KNOCKBACK_EPS) m.vy = 0;
@@ -325,5 +414,7 @@
   RPG.sim.stage.spatial = spatialStage;
   RPG.sim.stage.monsters = monstersStage;
   RPG.sim.stage.movement = movementStage;
-  RPG.sim.monsters = { BOSS_ADD_CAP: BOSS_ADD_CAP, SUMMON_CAP_DEFAULT: SUMMON_CAP_DEFAULT, MAX_MONSTERS: MAX_MONSTERS, MELEE_HALF_ARC: MELEE_HALF_ARC };
+  RPG.sim.stage.affixes = affixesStage;
+  RPG.sim.monsters = { BOSS_ADD_CAP: BOSS_ADD_CAP, SUMMON_CAP_DEFAULT: SUMMON_CAP_DEFAULT, MAX_MONSTERS: MAX_MONSTERS, MELEE_HALF_ARC: MELEE_HALF_ARC,
+    onPlayerHurt: onPlayerHurt, affixSpeedMult: affixSpeedMult };
 })(globalThis.RPG = globalThis.RPG || {});

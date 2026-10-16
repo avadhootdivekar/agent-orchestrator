@@ -183,6 +183,11 @@
       return difficulty.resolve(state.difficultyId);
     }
 
+    /** The clamped custom config, whether or not custom is the selected preset (what the custom sliders show). */
+    function customConfig() {
+      return Object.assign({}, state.custom || defaultCustom());
+    }
+
     function customRanges() {
       return presets.custom.ranges;
     }
@@ -278,6 +283,7 @@
       setDifficultyPreset: setDifficultyPreset,
       setCustomField: setCustomField,
       currentDifficulty: currentDifficulty,
+      customConfig: customConfig,
       customRanges: customRanges,
       snapshot: snapshot,
       save: save,
@@ -285,5 +291,251 @@
     };
   }
 
-  RPG.ui.settings = { create: create, STORAGE_KEY: STORAGE_KEY, QUALITY_LEVELS: QUALITY_LEVELS };
+  // ---- settings screen (canvas, id 'settings') ----------------------------------------------------------------------
+  // Draws and edits the model above; no DOM. Two columns: general options and custom sliders on the left, key
+  // bindings on the right. Every change is saved at once, so closing the screen needs no extra step.
+
+  var SCREEN_LAYOUT = Object.freeze({ x: 0, y: 0, w: 640, h: 480 });
+  var PANEL_PAD = 16;
+  var TITLE_BASELINE = 28;
+  var ROWS_TOP = 52;
+  var ROW_H = 15;
+  var COL_W = 300;
+  var VALUE_OFFSET = 150;
+  var FOOTER_H = 24; // presses in this bottom strip fall through to the manager as "back"
+  var ROW_BASELINE = 11; // a row's hit box starts this far above its text baseline
+  var VOLUME_STEP = 0.05;
+  var CUSTOM_STEPS = 20; // one Left/Right press moves a custom slider by 1/20 of its range
+  var PANEL_COLOR = 'rgba(16, 14, 20, 0.95)';
+  var TEXT_COLOR = '#d8d2c4';
+  var DIM_COLOR = '#5f5a4f';
+  var CURSOR_COLOR = '#e8c15a';
+  var TITLE_FONT = '16px system-ui, sans-serif';
+  var LABEL_FONT = '12px system-ui, sans-serif';
+
+  var CUSTOM_LABEL = Object.freeze({
+    enemyHp: 'Enemy HP', enemyDamage: 'Enemy damage', enemySpeed: 'Enemy speed', spawnDensity: 'Spawn density',
+    eliteChance: 'Elite chance', bossHp: 'Boss HP', bossTelegraph: 'Boss telegraph', lootQuality: 'Loot quality',
+    xpMultiplier: 'XP multiplier', goldMultiplier: 'Gold multiplier'
+  });
+
+  function wrap(i, n) { return (i + n) % n; }
+  function onOff(v) { return v ? 'On' : 'Off'; }
+  function percent(v) { return Math.round(v * 100) + '%'; }
+  function round2(v) { return Math.round(v * 100) / 100; }
+  function clamp01(v) { return Math.min(1, Math.max(0, v)); }
+  function cycle(list, current, dir) { return list[wrap(list.indexOf(current) + dir, list.length)]; }
+
+  // 'moveUp' -> 'Move up', 'skill6' -> 'Skill 6'.
+  function actionLabel(action) {
+    var spaced = action.replace(/([A-Z0-9])/g, ' $1').toLowerCase();
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  }
+
+  function buildRows(settings) {
+    var general = [
+      { kind: 'volume', label: 'Master volume' },
+      { kind: 'sfx', label: 'Sound effects' },
+      { kind: 'muted', label: 'Mute' },
+      { kind: 'quality', label: 'Quality' },
+      { kind: 'damageNumbers', label: 'Damage numbers' },
+      { kind: 'screenShake', label: 'Screen shake' },
+      { kind: 'difficulty', label: 'Difficulty' }
+    ];
+    Object.keys(settings.customRanges()).forEach(function (field) {
+      general.push({ kind: 'custom', field: field, label: CUSTOM_LABEL[field] || field });
+    });
+    var keys = RPG.input.keymap.ACTIONS.map(function (action) {
+      return { kind: 'key', action: action, label: actionLabel(action) };
+    });
+    keys.push({ kind: 'resetKeys', label: 'Reset keys to defaults' });
+    return { general: general, all: general.concat(keys) };
+  }
+
+  var VALUE = Object.freeze({
+    volume: function (s) { return percent(s.volume); },
+    sfx: function (s) { return percent(s.sfx); },
+    muted: function (s) { return onOff(s.muted); },
+    quality: function (s) { return s.quality; },
+    damageNumbers: function (s) { return onOff(s.showDamageNumbers); },
+    screenShake: function (s) { return onOff(s.screenShake); },
+    difficulty: function (s) { return RPG.data.difficulties[s.difficulty].name; }
+  });
+
+  /**
+   * Creates the Settings screen. opts: { settings, layout? }; `settings` is a model from create(). Returns the
+   * definition for screens.register(). Esc is not consumed, so the manager closes the screen.
+   */
+  function createScreen(opts) {
+    var settings = opts.settings;
+    var layout = opts.layout || SCREEN_LAYOUT;
+    var rows = buildRows(settings);
+    var presetIds = Object.keys(RPG.data.difficulties);
+    var state = { cursor: 0, status: '', capture: null };
+
+    function setStatus(text) { state.status = text; }
+
+    // A failed write is reported in the status line and never blocks play.
+    function persist() {
+      var r = settings.save();
+      if (!r.ok) setStatus('Could not save settings: ' + r.error);
+    }
+
+    function valueText(row) {
+      if (row.kind === 'custom') return settings.customConfig()[row.field].toFixed(2);
+      if (row.kind === 'key') {
+        return state.capture === row.action ? 'press a key...' : settings.bindingsOf(row.action).join(' / ');
+      }
+      if (row.kind === 'resetKeys') return '';
+      return VALUE[row.kind](settings.snapshot());
+    }
+
+    function toggle(row) {
+      var s = settings.snapshot();
+      if (row.kind === 'muted') settings.setMuted(!s.muted);
+      else if (row.kind === 'damageNumbers') settings.setShowDamageNumbers(!s.showDamageNumbers);
+      else settings.setScreenShake(!s.screenShake);
+    }
+
+    // Left/Right: step a slider, flip a toggle or cycle a choice. Enter does the same, but cycles choices forward.
+    function change(row, dir) {
+      var s = settings.snapshot();
+      if (row.kind === 'volume') settings.setVolume(clamp01(round2(s.volume + dir * VOLUME_STEP)));
+      else if (row.kind === 'sfx') settings.setSfx(clamp01(round2(s.sfx + dir * VOLUME_STEP)));
+      else if (row.kind === 'quality') settings.setQuality(cycle(QUALITY_LEVELS, s.quality, dir));
+      else if (row.kind === 'difficulty') settings.setDifficultyPreset(cycle(presetIds, s.difficulty, dir));
+      else if (row.kind === 'custom') {
+        var range = settings.customRanges()[row.field];
+        var step = (range[1] - range[0]) / CUSTOM_STEPS;
+        settings.setCustomField(row.field, round2(settings.customConfig()[row.field] + dir * step));
+      } else if (row.kind === 'key' || row.kind === 'resetKeys') return;
+      else toggle(row);
+      setStatus('');
+      persist();
+    }
+
+    function activate(row) {
+      if (row.kind === 'key') {
+        state.capture = row.action;
+        setStatus('Press a key for ' + row.label + '. Esc cancels.');
+      } else if (row.kind === 'resetKeys') {
+        settings.resetKeys();
+        setStatus('Keys reset to defaults.');
+        persist();
+      } else if (row.kind !== 'volume' && row.kind !== 'sfx' && row.kind !== 'custom') {
+        change(row, 1); // sliders only respond to Left/Right
+      }
+    }
+
+    // The next key is the new binding. A key another action holds is refused and capture stays open for another key.
+    function finishCapture(code) {
+      var action = state.capture;
+      if (code === 'Escape') {
+        state.capture = null;
+        setStatus('Rebinding cancelled.');
+        return;
+      }
+      var r = settings.rebind(action, code);
+      if (!r.ok) {
+        setStatus(code + ' is already used by ' + actionLabel(r.conflictsWith) + '. Press another key or Esc.');
+        return;
+      }
+      state.capture = null;
+      setStatus(actionLabel(action) + ' is now ' + code + '.');
+      persist();
+    }
+
+    function onKey(code, action) {
+      if (state.capture) {
+        finishCapture(code);
+        return true;
+      }
+      if (action === 'moveUp' || action === 'moveDown') {
+        state.cursor = wrap(state.cursor + (action === 'moveUp' ? -1 : 1), rows.all.length);
+        setStatus('');
+        return true;
+      }
+      var row = rows.all[state.cursor];
+      if (action === 'moveLeft' || action === 'moveRight') {
+        change(row, action === 'moveLeft' ? -1 : 1);
+        return true;
+      }
+      if (code === 'Enter') {
+        activate(row);
+        return true;
+      }
+      return action !== 'pause'; // Esc/P falls through so the manager closes the screen
+    }
+
+    function rowGeometry(i) {
+      var right = i >= rows.general.length;
+      var line = right ? i - rows.general.length : i;
+      return { x: layout.x + PANEL_PAD + (right ? COL_W : 0) - 4, y: layout.y + ROWS_TOP + line * ROW_H - ROW_BASELINE };
+    }
+
+    function rowAt(x, y) {
+      for (var i = 0; i < rows.all.length; i++) {
+        var g = rowGeometry(i);
+        if (x >= g.x && x < g.x + COL_W - 16 && y >= g.y && y < g.y + ROW_H) return i;
+      }
+      return -1;
+    }
+
+    // A press selects the row and does what Enter does. Sliders have no Enter action, so their left half steps down and
+    // their right half up (like Left/Right). During key capture a press cancels it. The footer is "back".
+    function onPointer(x, y) {
+      if (y >= layout.y + layout.h - FOOTER_H) return false;
+      if (state.capture) { finishCapture('Escape'); return true; }
+      var i = rowAt(x, y);
+      if (i < 0) return true;
+      state.cursor = i;
+      setStatus('');
+      var row = rows.all[i];
+      if (row.kind === 'volume' || row.kind === 'sfx' || row.kind === 'custom') {
+        change(row, x < rowGeometry(i).x + (COL_W - 16) / 2 ? -1 : 1);
+      } else {
+        activate(row);
+      }
+      return true;
+    }
+
+    function draw(ctx) {
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      var x = layout.x + PANEL_PAD;
+      ctx.fillStyle = PANEL_COLOR;
+      ctx.fillRect(layout.x, layout.y, layout.w, layout.h);
+      ctx.fillStyle = TEXT_COLOR;
+      ctx.font = TITLE_FONT;
+      ctx.fillText('Settings', x, layout.y + TITLE_BASELINE);
+      ctx.font = LABEL_FONT;
+      rows.all.forEach(function (row, i) {
+        var right = i >= rows.general.length;
+        var cx = x + (right ? COL_W : 0);
+        var line = right ? i - rows.general.length : i;
+        var y = layout.y + ROWS_TOP + line * ROW_H;
+        if (i === state.cursor) {
+          ctx.strokeStyle = CURSOR_COLOR;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(cx - 4, y - 11, COL_W - 16, ROW_H);
+        }
+        ctx.fillStyle = TEXT_COLOR;
+        ctx.fillText(row.label, cx, y);
+        ctx.fillText(valueText(row), cx + VALUE_OFFSET, y);
+      });
+      ctx.fillStyle = TEXT_COLOR;
+      ctx.fillText(state.status, x, layout.y + layout.h - 40);
+      ctx.fillStyle = DIM_COLOR;
+      ctx.fillText('Up/Down choose | Left/Right adjust | Enter select | click rows | Esc/tap here back', x, layout.y + layout.h - 16);
+    }
+
+    return { id: 'settings', draw: draw, onKey: onKey, onPointer: onPointer };
+  }
+
+  RPG.ui.settings = {
+    create: create,
+    createScreen: createScreen,
+    STORAGE_KEY: STORAGE_KEY,
+    QUALITY_LEVELS: QUALITY_LEVELS
+  };
 })(globalThis.RPG = globalThis.RPG || {});

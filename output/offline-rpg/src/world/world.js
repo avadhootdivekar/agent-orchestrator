@@ -9,6 +9,7 @@
   // Elite multipliers applied on top of level scaling.
   var ELITE = { hp: 2.5, damage: 1.5, radius: 1.15 };
 
+  var MAX_EFFECTS = 64;        // hard cap on world.effects; the oldest are retired first (cleanup stage)
   var pools = new WeakMap();   // world -> { monster, projectile, effect }
 
   function clearKeys(o) { for (var k in o) delete o[k]; }
@@ -139,6 +140,18 @@
       sweep(world.effects, p.effect) + sweep(world.drops, null);
   }
 
+  /** Marks the oldest effects dead until at most MAX_EFFECTS live ones remain; despawnDead then sweeps and pools them. */
+  function capEffects(world) {
+    var list = world.effects, over = list.length - MAX_EFFECTS;
+    for (var i = 0; over > 0 && i < list.length; i++) {
+      if (list[i].dead) continue;
+      list[i].dead = true; over--;
+    }
+  }
+
+  /** Returns an enemy projectile (spliced out of world.projectiles by sim/monsters.js) to the projectile pool. */
+  function releaseProjectile(world, shot) { return poolsOf(world).projectile.release(shot); }
+
   /** Calls fn(monster) for each living monster. Safe against fn marking monsters dead (not against spawning). */
   function forEachMonster(world, fn) {
     var l = world.monsters;
@@ -174,8 +187,11 @@
   RPG.world.spawnMonster = spawnMonster;
   RPG.world.spawnProjectile = spawnProjectile;
   RPG.world.spawnEffect = spawnEffect;
+  RPG.world.capEffects = capEffects;
+  RPG.world.MAX_EFFECTS = MAX_EFFECTS;
   RPG.world.spawnItemDrop = spawnItemDrop;
   RPG.world.despawnDead = despawnDead;
+  RPG.world.releaseProjectile = releaseProjectile;
   RPG.world.forEachMonster = forEachMonster;
   RPG.world.livingMonsters = livingMonsters;
   RPG.world.forEachEntity = forEachEntity;

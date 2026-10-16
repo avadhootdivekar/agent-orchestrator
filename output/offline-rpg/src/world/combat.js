@@ -8,11 +8,18 @@
 
   var ARMOR_K = 100;            // physical mitigation = armor / (armor + ARMOR_K)
   var HIT_FLASH = 0.12;         // seconds of white flash on a hit
+  var FLASH_REST = 0.25;        // seconds a sprite must stay un-flashed after a flash, so rapid multi-hits cannot strobe (<3 Hz)
   var STATUS_TICK = 0.5;        // seconds between damage-over-time ticks
   var RESIST_STAT = { fire: 'resFire', cold: 'resCold', lightning: 'resLightning', poison: 'resPoison', arcane: 'resArcane' };
   var DOT_TYPE = { burn: 'fire', poison: 'poison' };
 
-  function stat(ent, key) { return ent && ent.stats ? ent.stats.get(key) : 0; }
+  /** Reads a stat from a StatBlock (`stats.get`) or from a plain snapshot (`stats[key]`, as sim/player.js keeps on the player). */
+  function stat(ent, key) {
+    var s = ent && ent.stats;
+    if (!s) return 0;
+    var v = typeof s.get === 'function' ? s.get(key) : s[key];
+    return typeof v === 'number' ? v : 0;
+  }
 
   /** Fraction of incoming damage removed by armor (physical only). */
   function armorMitigation(armor) { return armor <= 0 ? 0 : armor / (armor + ARMOR_K); }
@@ -67,12 +74,25 @@
     };
   }
 
+  /** Starts a hit flash unless the sprite is still inside its rest window after the last one (caps flashing at ~3 Hz). */
+  function triggerFlash(ent) {
+    if ((ent.flashLock || 0) > 0) return;
+    ent.flash = Math.max(ent.flash || 0, HIT_FLASH);
+    ent.flashLock = HIT_FLASH + FLASH_REST;
+  }
+
+  /** Counts the flash and its rest window down by dt. */
+  function tickFlash(ent, dt) {
+    ent.flash = Math.max(0, (ent.flash || 0) - dt);
+    ent.flashLock = Math.max(0, (ent.flashLock || 0) - dt);
+  }
+
   /** Writes a resolveHit result onto the entities: hp, death, knockback velocity, flash, life steal, statuses. */
   function applyHit(attacker, target, result) {
     target.hp -= result.dealt;
     if (target.hp <= 0) { target.hp = 0; target.dead = true; }
     if (result.knockback) { target.vx = (target.vx || 0) + result.knockback.vx; target.vy = (target.vy || 0) + result.knockback.vy; }
-    target.flash = Math.max(target.flash || 0, HIT_FLASH);
+    triggerFlash(target);
     if (attacker && result.lifeSteal > 0 && !attacker.dead) attacker.hp = Math.min(attacker.maxHp, attacker.hp + result.lifeSteal);
     for (var i = 0; i < result.statuses.length; i++) applyStatus(target, result.statuses[i]);
     return result;
@@ -111,7 +131,7 @@
           var type = DOT_TYPE[id] || 'phys';
           var dealt = Math.min(ent.hp, s.dps * STATUS_TICK * (1 - resistance(ent, type)));
           ent.hp -= dealt;
-          ent.flash = Math.max(ent.flash || 0, HIT_FLASH);
+          triggerFlash(ent);
           events.push({ type: 'damageNumber', x: ent.x, y: ent.y, amount: Math.round(dealt), crit: false, damageType: type, dot: id });
           if (ent.hp <= 0) { ent.hp = 0; ent.dead = true; }
         }
@@ -145,8 +165,8 @@
   }
 
   RPG.world.combat = {
-    ARMOR_K: ARMOR_K, HIT_FLASH: HIT_FLASH, STATUS_TICK: STATUS_TICK,
-    armorMitigation: armorMitigation, resistance: resistance, directionFrom: directionFrom,
+    ARMOR_K: ARMOR_K, HIT_FLASH: HIT_FLASH, FLASH_REST: FLASH_REST, triggerFlash: triggerFlash, tickFlash: tickFlash, STATUS_TICK: STATUS_TICK,
+    stat: stat, armorMitigation: armorMitigation, resistance: resistance, directionFrom: directionFrom,
     resolveHit: resolveHit, applyHit: applyHit, applyStatus: applyStatus, tickStatuses: tickStatuses,
     hasStatus: hasStatus, moveSpeedFactor: moveSpeedFactor,
     startCooldown: startCooldown, isReady: isReady, tickCooldowns: tickCooldowns

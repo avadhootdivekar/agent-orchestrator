@@ -21,7 +21,16 @@
   var ENTRY_GAP = 22;
   var DEAD_TITLE = 'You have fallen';
   var VICTORY_TITLE = 'The Warden of Ash is slain';
-  var CONFIRM_HINT = 'Press Enter to continue';
+  var CONFIRM_HINT = 'Press Enter or click to continue';
+  var BUTTON_SIZE = 32;       // on-canvas HUD buttons (bottom-right corner), CSS px
+  var BUTTON_GAP = 6;
+  var BUTTON_MARGIN = 10;
+  var BUTTONS = Object.freeze([
+    Object.freeze({ id: 'inventory', label: 'I', title: 'Inventory' }),
+    Object.freeze({ id: 'skills', label: 'S', title: 'Skills' }),
+    Object.freeze({ id: 'character', label: 'C', title: 'Character' }),
+    Object.freeze({ id: 'pause', label: '||', title: 'Pause' })
+  ]);
   var CONFIRM_KEYS = Object.freeze(['Enter', 'NumpadEnter']);
 
   /**
@@ -83,13 +92,23 @@
       if (screens) screens.open('victory');
     }
 
+    /** Forgets queued messages and the once-per-run latches; the game calls this when it adopts a new or loaded world. */
+    function reset() {
+      entries = [];
+      deathInfo = null;
+      victoryShown = false;
+    }
+
     /** Closes a terminal screen and runs its callback. Keys other than the confirm keys fall through to the manager. */
     function confirm(id, callback) {
-      return function (code) {
-        if (CONFIRM_KEYS.indexOf(code) === -1) return false;
+      function accept() {
         if (screens) screens.close(id);
         if (callback) callback();
         return true;
+      }
+      return {
+        onKey: function (code) { return CONFIRM_KEYS.indexOf(code) === -1 ? false : accept(); },
+        onPointer: accept // a tap or click is the same "continue" as Enter, so touch play can leave these screens
       };
     }
 
@@ -136,6 +155,38 @@
       });
     }
 
+    /** Rectangles of the HUD buttons for a view of `size` { w, h } (CSS px): [{ id, x, y, w, h, label }], left to right. */
+    function buttonRects(size) {
+      var w = size && size.w > 0 ? size.w : DEFAULT_WIDTH, h = size && size.h > 0 ? size.h : DEFAULT_HEIGHT;
+      var x0 = w - BUTTON_MARGIN - BUTTONS.length * BUTTON_SIZE - (BUTTONS.length - 1) * BUTTON_GAP;
+      return BUTTONS.map(function (b, i) {
+        return { id: b.id, label: b.label, x: x0 + i * (BUTTON_SIZE + BUTTON_GAP), y: h - BUTTON_MARGIN - BUTTON_SIZE, w: BUTTON_SIZE, h: BUTTON_SIZE };
+      });
+    }
+
+    /** The id ('inventory' | 'skills' | 'character' | 'pause') of the button under (x, y), or null. */
+    function hitButton(x, y, size) {
+      var rects = buttonRects(size);
+      for (var i = 0; i < rects.length; i++) {
+        var r = rects[i];
+        if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return r.id;
+      }
+      return null;
+    }
+
+    /** Draws the small translucent HUD buttons on the canvas (no DOM). `size` is the view in CSS px (the layout). */
+    function drawButtons(ctx, size) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = HINT_FONT;
+      buttonRects(size).forEach(function (r) {
+        ctx.fillStyle = 'rgba(8, 6, 10, 0.45)';
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = TEXT_COLOR;
+        ctx.fillText(r.label, r.x + r.w / 2, r.y + r.h / 2);
+      });
+    }
+
     function drawDead(ctx) {
       var gold = deathInfo ? deathInfo.gold : 0;
       drawCentered(ctx, [
@@ -160,8 +211,9 @@
     }
 
     if (screens) {
-      screens.register({ id: 'dead', draw: drawDead, onKey: confirm('dead', onRespawn) });
-      screens.register({ id: 'victory', draw: drawVictory, onKey: confirm('victory', onContinue) });
+      var dead = confirm('dead', onRespawn), won = confirm('victory', onContinue);
+      screens.register({ id: 'dead', draw: drawDead, onKey: dead.onKey, onPointer: dead.onPointer });
+      screens.register({ id: 'victory', draw: drawVictory, onKey: won.onKey, onPointer: won.onPointer });
     }
     if (events) {
       var NAMES = events.NAMES;
@@ -172,6 +224,7 @@
       offs.push(events.on(NAMES.LOAD, function () { toast('Loaded'); }));
       offs.push(events.on(NAMES.LEVEL_UP, function (p) { banner('Level ' + (p && p.level)); }));
       offs.push(events.on(NAMES.PLAYER_DIED, function (p) { showDead(p); }));
+      offs.push(events.on(NAMES.VICTORY, function () { showVictory(); }));
     }
 
     /** Unsubscribes from the event bus. Call when the game is torn down. */
@@ -184,10 +237,14 @@
       toast: toast,
       banner: banner,
       update: update,
+      reset: reset,
       list: list,
       showDead: showDead,
       showVictory: showVictory,
       drawToasts: drawToasts,
+      buttonRects: buttonRects,
+      hitButton: hitButton,
+      drawButtons: drawButtons,
       prompt: prompt,
       dispose: dispose
     };

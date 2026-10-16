@@ -1,5 +1,5 @@
 /* Skill tree: point spending, prerequisites, respec, passives, active-cast gating (DATA-DEFINITIONS §4). Headless: no DOM.
-   Player state used (matches SAVE-SCHEMA): player.level, player.resource, player.gold, player.stats (StatBlock),
+   Player state used (matches SAVE-SCHEMA): player.level, player.resource, player.gold, player.statBlock or player.stats (StatBlock; a plain `stats` snapshot is accepted for reads),
    player.cooldowns, and player.skills = { learned:{id:rank}, upgrades:{id:{upgradeId:rank}}, bar:[id|null x 7],
    points, spentPoints }. Skill points per rank = 1 for the skill itself, `upgrade.cost` per upgrade rank. */
 (function (RPG) {
@@ -36,6 +36,14 @@
   function findUpgrade(d, upId) {
     for (var i = 0; i < d.upgrades.length; i++) if (d.upgrades[i].id === upId) return d.upgrades[i];
     return null;
+  }
+
+  /** Stat from a StatBlock or a plain snapshot (0 when absent); skills.js stays loadable without combat.js. */
+  function statOf(player, key) {
+    var s = player.stats;
+    if (!s) return 0;
+    var v = typeof s.get === 'function' ? s.get(key) : s[key];
+    return typeof v === 'number' ? v : 0;
   }
 
   function fail(reason) { return { ok: false, reason: reason }; }
@@ -136,18 +144,27 @@
     return order.map(function (k) { return sums[k]; });
   }
 
-  /** Rebuilds every 'skill:<id>' modifier on player.stats from the learned state. Idempotent. */
+  /** The modifier-bearing StatBlock: `player.statBlock` (sim player, whose `stats` is a snapshot) or `player.stats` itself. */
+  function blockOf(player) {
+    if (player.statBlock && typeof player.statBlock.addModifier === 'function') return player.statBlock;
+    return player.stats && typeof player.stats.addModifier === 'function' ? player.stats : null;
+  }
+
+  /** Rebuilds every 'skill:<id>' modifier on the player's StatBlock from the learned state, then refreshes the
+      `player.stats` snapshot when that is how the player carries its stats. Idempotent. */
   function applyPassives(player) {
-    if (!player.stats) return;
+    var block = blockOf(player);
+    if (!block) return;
     var id, i, mods;
     var all = defs();
-    for (id in all) if (all[id].type === 'passive') player.stats.removeModifiersBySource('skill:' + id);
+    for (id in all) if (all[id].type === 'passive') block.removeModifiersBySource('skill:' + id);
     for (id in all) {
       mods = passiveModifiers(player, id);
       for (i = 0; i < mods.length; i++) {
-        player.stats.addModifier({ source: 'skill:' + id, stat: mods[i].stat, kind: mods[i].kind, value: mods[i].value });
+        block.addModifier({ source: 'skill:' + id, stat: mods[i].stat, kind: mods[i].kind, value: mods[i].value });
       }
     }
+    if (block !== player.stats && player.stats && typeof player.stats.get !== 'function') player.stats = block.snapshot();
   }
 
   /** Base params + rankScaling per rank above 1 + upgrade paramDeltas per upgrade rank ({mult} compounds per rank). */
@@ -194,7 +211,7 @@
     if (!id) return fail('empty-slot');
     var r = canCast(player, id);
     if (!r.ok) return r;
-    var d = def(id), cdr = player.stats ? player.stats.get('cooldownReduction') : 0;
+    var d = def(id), cdr = statOf(player, 'cooldownReduction');
     player.resource -= d.cost;
     if (!player.cooldowns) player.cooldowns = {};
     player.cooldowns[cdKey(id)] = d.cooldown * (1 - cdr);

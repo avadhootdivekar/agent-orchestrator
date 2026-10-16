@@ -24,8 +24,8 @@
   RPG.data.difficulties = freeze({
     easy: preset({
       id: 'easy', name: 'Easy',
-      enemyHp: 0.7, enemyDamage: 0.7, enemySpeed: 0.9, spawnDensity: 0.7, eliteChance: 0.05,
-      bossHp: 0.8, bossTelegraph: 1.3, lootQuality: 0.8, xpMultiplier: 0.9, goldMultiplier: 0.9,
+      enemyHp: 0.7, enemyDamage: 0.55, enemySpeed: 0.9, spawnDensity: 0.7, eliteChance: 0.05,
+      bossHp: 0.7, bossTelegraph: 1.3, lootQuality: 0.8, xpMultiplier: 0.9, goldMultiplier: 0.9,
       playerDeathPenalty: 'none',
     }),
     normal: preset({
@@ -36,14 +36,14 @@
     }),
     hard: preset({
       id: 'hard', name: 'Hard',
-      enemyHp: 1.5, enemyDamage: 1.4, enemySpeed: 1.1, spawnDensity: 1.3, eliteChance: 0.20,
+      enemyHp: 1.3, enemyDamage: 1.2, enemySpeed: 1.1, spawnDensity: 1.15, eliteChance: 0.16,
       bossHp: 1.25, bossTelegraph: 0.85, lootQuality: 1.25, xpMultiplier: 1.25, goldMultiplier: 1.25,
       playerDeathPenalty: 'gold25',
     }),
     nightmare: preset({
       id: 'nightmare', name: 'Nightmare',
-      enemyHp: 2.3, enemyDamage: 2.0, enemySpeed: 1.2, spawnDensity: 1.7, eliteChance: 0.30,
-      bossHp: 1.5, bossTelegraph: 0.7, lootQuality: 1.6, xpMultiplier: 1.6, goldMultiplier: 1.5,
+      enemyHp: 2.0, enemyDamage: 1.7, enemySpeed: 1.2, spawnDensity: 1.45, eliteChance: 0.25,
+      bossHp: 1.5, bossTelegraph: 0.7, lootQuality: 1.4, xpMultiplier: 1.6, goldMultiplier: 1.5,
       playerDeathPenalty: 'gold25',
     }),
     custom: preset({

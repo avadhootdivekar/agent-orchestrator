@@ -1,12 +1,35 @@
 # Offline RPG — Wave-4 integration plan
 
-Status: design (unit `w03-18-integration-plan`). Written against the tree as it stands at the end of wave 3 (files on disk,
-including uncommitted ones). It tells wave 4 how to join the shipped modules into a playable game. It does not change code.
-Where this plan and [`ARCHITECTURE.md`](ARCHITECTURE.md) disagree, this plan wins until wave 4's docs unit folds it back in.
+Status: **implemented (waves 4–5); this document is now a record, reconciled in wave 6 (unit `w06-08-docs-reconcile`).**
+It was written as the wave-4 design (unit `w03-18-integration-plan`) against the tree at the end of wave 3. Sections 0–5 and 8
+describe the intent; the "Done" table below says what happened to each item. Where this plan and the code differ, the code and
+[`ARCHITECTURE.md`](ARCHITECTURE.md) (now reconciled) win. Wording in sections 0–9 that says "today", "not yet" or "missing" refers to
+the end of wave 3 and is left as written.
 
-Not yet on disk when this was written (so wave 4 must not assume them): `src/persistence/snapshot.js` (unit w03-16 had no
-breadcrumb), `tests/ui/*` beyond screens/inventory, tests for `core/loop`, `core/pool`, `render/camera`, `render/renderer` (w03-17).
-Section 7 says what to do if either lands or does not.
+## Done table (checked against the tree)
+
+| Item | Status | Where it landed / deviation |
+|---|---|---|
+| W4-00 `JS_ORDER` + checks | **done** | `scripts/build.mjs`, `tests/scripts/build-order.test.js`. `--verify` fails on unlisted, duplicate and missing files; `PENDING_JS` is empty, so strict mode is on |
+| W4-01 sim stage dispatch, `createWorld` additions | **done** | `src/sim/sim.js` (`ORDER`, `stage.*`), `core/state.js`; stage list in ARCHITECTURE §3.1 |
+| W4-02 player stage | **done** | `src/sim/player.js`; it also performs the work of the unregistered `weapons` and `skills` stages |
+| W4-03 monster stages | **done** | `src/sim/monsters.js` (`spatial`, `monsters`, `movement`) |
+| W4-04 combat stages | **done** | `src/sim/combat-step.js` (`projectiles`, `statuses`, `resolve`, `RPG.sim.hurtPlayer`) |
+| W4-05 rewards stages | **done** | `src/sim/rewards.js` (`rewards`, `pickups`, `playerDeath`) |
+| W4-06 areas | **done** | `src/world/areas.js`; deviation: `restore()` does not pass `restorePos`, it sets the position itself after `enter` (SAVE-SCHEMA notes the cleared-slot consequence) |
+| W4-07 `core/game.js` | **done** | state machine, autosave, quick save/load, export/import/delete, settings; slot `1` is the quick slot as planned |
+| W4-08 snapshot, files | **done** | `src/persistence/snapshot.js`, `files.js` |
+| W4-09 / 09b / 10 / 11 rendering and audio | **done** | `render/draw-entities.js`, `draw-effects.js`, `renderer.js`, `hud.js`, `camera.js`; `audio/audio.js`, `audio/bridge.js` |
+| W4-12 input | **done** | `switchWeapon` (`Tab`, `Shift+Tab`, wheel) and `interact` (`F`) added; the `R` alternative was not bound |
+| W4-13 / 13a / 13b / 13c UI | **done** | `ui/screens.js`, `hud-overlays.js`, `mainmenu.js`, `pause.js`, `saveload.js`, `character.js`, `skills-screen.js`, `settings.js`. Deviation: text entry is a seed field typed in the main menu and a file picker for import, not `window.prompt` |
+| W4-14 integration tests | **done** | `tests/integration/` (headless run, determinism, boss, areas, save round trips) |
+| W4-15 `main.js`, strict build | **done** | `src/main.js` calls `RPG.core.game.start`; `npm run check-all` passes |
+| W4-16 docs | **done (this unit)** | ARCHITECTURE, README, SAVE-SCHEMA, GAMEPLAY-SYSTEMS, BUILD-OFFLINE, TEST-CHECKLIST and this file reconciled |
+| W4-17 verify (22 steps in a real build) | **not evidenced** | only headless tests exist; no manual browser walkthrough is recorded (TEST-CHECKLIST) |
+| Wave 5 additions | **done** | `scripts/bench.mjs` (`npm run bench`), boot test `tests/scripts/boot.test.js`, settings screen and key rebinding, boss-combat and pipeline tests |
+| Touch input (`input/touch.js`) | **not planned for v1** | desktop only |
+
+Section 9 risk 1 ("no live-play evidence") still stands: the tests are headless (894 at the time of writing, all passing; see TEST-CHECKLIST C3).
 
 ## 0. Reading the brief against the code
 

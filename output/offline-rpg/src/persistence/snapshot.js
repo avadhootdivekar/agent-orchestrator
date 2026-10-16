@@ -52,7 +52,7 @@
       player: {
         classId: p.classId, level: p.level, xp: p.xp, gold: p.gold,
         attrs: clone(p.attrs || { might: 0, agility: 0, spirit: 0 }),
-        hp: p.hp, resource: p.resource, pos: { x: p.x, y: p.y },
+        hp: p.hp, resource: p.resource, pos: { x: p.x, y: p.y }, vel: { x: p.vx || 0, y: p.vy || 0 },
         weaponSlots: clone(p.weaponSlots), activeWeapon: p.activeWeapon,
         equipment: clone(p.equipment || {}), inventory: clone(p.inventory),
         skills: {
@@ -64,7 +64,8 @@
       area: { id: world.area.id, visited: clone(world.area.visited || {}), cleared: clone(world.cleared || {}) },
       progress: {
         bossesDefeated: clone(pr.bossesDefeated || {}), areasUnlocked: clone(pr.areasUnlocked || {}),
-        kills: pr.kills || 0, deaths: pr.deaths || 0
+        kills: pr.kills || 0, deaths: pr.deaths || 0,
+        time: typeof world.time === 'number' && isFinite(world.time) && world.time >= 0 ? world.time : 0
       },
       settings: clone(game.settings || {})
     };
@@ -142,11 +143,13 @@
   }
 
   // World on the saved area. Defined areas are regenerated from hash(seed, areaId); bare maps come from createWorld.
-  function buildWorld(seed, areaId) {
+  function buildWorld(seed, areaId, cleared) {
     var def = RPG.data && RPG.data.areas && RPG.data.areas[areaId];
     var world = RPG.sim.createWorld({ seed: seed, mapId: def ? undefined : areaId });
     if (!def) return world;
     var visited = world.area.visited;
+    // Cleared slots must be in place before the area is populated, or their monsters spawn again.
+    world.cleared = cleared;
     if (RPG.world.areas && typeof RPG.world.areas.enter === 'function') {
       RPG.world.areas.enter(world, areaId);
     } else if (RPG.world.mapgen) {
@@ -179,7 +182,7 @@
       var diff = RPG.world.difficulty ? RPG.world.difficulty.resolve(s.difficulty) : clone(s.difficulty);
 
       var areaId = resolveAreaId(s.area.id, warnings);
-      var world = buildWorld(s.seed, areaId);
+      var world = buildWorld(s.seed, areaId, clone(s.area.cleared));
       world.difficulty = diff;
       world.area.visited = clone(s.area.visited);
       world.area.visited[areaId] = true;
@@ -188,6 +191,7 @@
         bossesDefeated: clone(s.progress.bossesDefeated), areasUnlocked: clone(s.progress.areasUnlocked),
         kills: s.progress.kills, deaths: s.progress.deaths, playtime: s.meta.playtime
       };
+      world.time = typeof s.progress.time === 'number' ? s.progress.time : 0;
 
       dropUnknownItems(pd, warnings);
       var p = world.player;
@@ -200,6 +204,13 @@
       p.statBlock = new RPG.world.StatBlock();
       var equipped = Object.keys(pd.equipment).map(function (k) { return pd.equipment[k]; }).filter(Boolean);
       if (RPG.world.equipment) applyItemMods(p.statBlock, equipped);
+      // Level growth is a 'level' modifier per stat (see sim/rewards.js applyLevelGrowth); it is derived, not saved, so reapply it.
+      var growth = RPG.world.progression && RPG.world.progression.LEVEL_STAT_GROWTH;
+      if (growth && pd.level > 1) {
+        Object.keys(growth).forEach(function (stat) {
+          p.statBlock.addModifier({ source: 'level', stat: stat, kind: 'flat', value: growth[stat] * (pd.level - 1) });
+        });
+      }
       var shim = { level: pd.level, stats: p.statBlock, skills: null };
       if (RPG.world.skills) {
         RPG.world.skills.restore(shim, pd.skills);
@@ -226,6 +237,9 @@
         pos = world.area.spawn;
       }
       p.x = pos.x; p.y = pos.y; p.prevX = pos.x; p.prevY = pos.y;
+      // Velocity (optional; absent in older saves = at rest). Only meaningful at the saved position, not after a move to spawn.
+      var vel = pd.vel && pos === pd.pos ? pd.vel : null;
+      p.vx = vel ? vel.x : 0; p.vy = vel ? vel.y : 0;
 
       world.rng.setState(s.rngState.world);
       if (!world.lootRng) world.lootRng = RPG.core.Rng.create(s.rngState.loot);

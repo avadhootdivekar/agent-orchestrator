@@ -57,7 +57,7 @@
         else state.status = 'Settings arrive with the settings screen (W4-13c).';
       } else if (item === 'quit') {
         state.confirmQuit = true;
-        state.status = 'Quit to menu without saving? Enter confirms, any other key cancels.';
+        state.status = 'Quit to menu without saving? Enter (or click Quit again) confirms, anything else cancels.';
       }
     }
 
@@ -78,10 +78,47 @@
       return action !== 'pause'; // Esc/P falls through so the manager closes the overlay
     }
 
+    function panel() {
+      var h = PANEL_PAD * 2 + 40 + ITEMS.length * ROW_H + 40;
+      return { x: layout.x + (layout.w - PANEL_W) / 2, y: layout.y + (layout.h - h) / 2, w: PANEL_W, h: h };
+    }
+
+    // Row i is drawn with its baseline at panel.y + PANEL_PAD + 40 + i * ROW_H and its cursor box starts 20 above that.
+    function rowAt(x, y) {
+      var p = panel();
+      for (var i = 0; i < ITEMS.length; i++) {
+        var top = p.y + PANEL_PAD + 40 + i * ROW_H - 20;
+        if (x >= p.x + PANEL_PAD - 6 && x < p.x + p.w - PANEL_PAD + 6 && y >= top && y < top + ROW_H - 6) return i;
+      }
+      return -1;
+    }
+
+    // A press on a row selects and activates it. Outside the panel it is "back" (resume). While the quit question is
+    // open a second press on the Quit row confirms; any other press cancels, like keys do.
+    function onPointer(x, y) {
+      var p = panel();
+      if (x < p.x || x >= p.x + p.w || y < p.y || y >= p.y + p.h) {
+        if (!state.confirmQuit) return false;
+        state.confirmQuit = false;
+        state.status = '';
+        return true;
+      }
+      var i = rowAt(x, y);
+      if (state.confirmQuit) {
+        state.confirmQuit = false;
+        state.status = '';
+        if (i >= 0 && ITEMS[i] === 'quit') game.quitToMenu();
+        return true;
+      }
+      if (i >= 0) { state.cursor = i; state.status = ''; activate(ITEMS[i]); }
+      return true;
+    }
+
     function draw(ctx) {
-      var panelX = layout.x + (layout.w - PANEL_W) / 2;
-      var panelH = PANEL_PAD * 2 + 40 + ITEMS.length * ROW_H + 40;
-      var panelY = layout.y + (layout.h - panelH) / 2;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      var p = panel();
+      var panelX = p.x, panelY = p.y, panelH = p.h;
       var x = panelX + PANEL_PAD;
       ctx.fillStyle = DIM_OVERLAY;
       ctx.fillRect(layout.x, layout.y, layout.w, layout.h);
@@ -108,7 +145,8 @@
     return {
       id: 'pause',
       draw: draw,
-      onKey: onKey
+      onKey: onKey,
+      onPointer: onPointer
     };
   }
 

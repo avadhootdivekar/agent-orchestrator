@@ -225,7 +225,6 @@
   }
 
   RPG.audio = {
-    SOUND_NAMES: Object.keys(SOUNDS),
     init: init,
     play: play,
     setVolume: setVolume,

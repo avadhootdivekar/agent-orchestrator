@@ -169,3 +169,28 @@ test('the screen registers with the real screen manager and draws when opened', 
   mgr.draw(ctx);
   assert.ok(texts.some((t) => t.startsWith('Skills')));
 });
+
+test('a newly learned active skill takes the first free bar slot', () => {
+  const p = newPlayer(3);
+  ss.learn(p, 'fireball');
+  assert.equal(p.skills.bar[0], 'fireball');
+  ss.learn(p, 'fireball'); // a second rank does not move or duplicate it
+  assert.equal(p.skills.bar.filter((b) => b === 'fireball').length, 1);
+});
+
+test('the screen starts below the HUD bars (y 74) and its pointer hit areas move with it', () => {
+  const p = newPlayer(2);
+  const calls = [];
+  const ctx = new Proxy({}, { get: (_t, k) => (k === 'fillRect' || k === 'strokeRect' ? (...a) => calls.push(a) : () => {}), set: () => true });
+  const screen = ss.createScreen(p, { x: 0, y: 0 });
+  screen.draw(ctx);
+  assert.ok(calls.length > 0);
+  assert.ok(Math.min(...calls.map((c) => c[1])) >= 74, 'no fill or stroke above the bottom of the XP bar (y 74)');
+  assert.equal(screen.onPointer(10, 40), false, 'a press over the HUD bars is outside the panel (back)');
+  assert.equal(screen.onPointer(10, ss.HUD_INSET + 5), true, 'a press just inside the panel top is handled');
+});
+
+test('the whole panel, bar included, fits a 1280x720 window below the HUD bars', () => {
+  const h = ss.panelHeight(ss.treeRows().length);
+  assert.ok(ss.HUD_INSET + h <= 720, `panel bottom ${ss.HUD_INSET + h} must be <= 720`);
+});

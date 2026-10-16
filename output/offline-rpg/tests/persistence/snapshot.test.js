@@ -34,6 +34,10 @@ function buildWorld() {
   const p = w.player;
   w.difficulty = RPG.world.difficulty.resolve('hard');
   p.level = 7; p.xp = 340; p.gold = 512; p.attrs = { might: 8, agility: 6, spirit: 5 };
+  // A real level-up writes one 'level' modifier per stat (sim/rewards.js); restore must reapply the same ones.
+  Object.keys(RPG.world.progression.LEVEL_STAT_GROWTH).forEach((stat) => {
+    p.statBlock.addModifier({ source: 'level', stat, kind: 'flat', value: RPG.world.progression.LEVEL_STAT_GROWTH[stat] * (p.level - 1) });
+  });
   const rng = new RPG.core.Rng(42);
   const chest = RPG.world.loot.generateItem(rng, { ilvl: 12, rarity: 'rare', baseId: 'chain-mail', uid: 101 });
   const vest = RPG.world.loot.generateItem(rng, { ilvl: 3, rarity: 'uncommon', baseId: 'leather-vest', uid: 102 });
@@ -99,7 +103,7 @@ test('round trip preserves every schema field', () => {
   assert.deepEqual(plain(p.skills.bar), plain(o.skills.bar));
   assert.deepEqual(plain(p.cooldowns), { 'skill:fireball': 1.5 });
   assert.equal(r.world.difficulty.id, 'hard');
-  assert.equal(r.world.difficulty.enemyHp, 1.5);
+  assert.equal(r.world.difficulty.enemyHp, RPG.data.difficulties.hard.enemyHp); // the preset's value, so retuning the data does not break this
   assert.equal(r.world.area.id, w.area.id);
   assert.deepEqual(plain(r.world.area.visited), plain(w.area.visited));
   assert.deepEqual(plain(r.world.cleared), { forest: ['slot-3', 'slot-5'] });

@@ -9,12 +9,15 @@
 
   var PANEL_PAD = 12;
   var PANEL_W = 460;
-  var ROW_H = 18;
+  var HUD_INSET = 80; // the HUD bars (HP/resource/XP) occupy y 16..74 at the top left; the panel starts below them
+  var ROW_H = 16; // 30 rows + chrome must fit under the HUD bars at 1280x720
   var TITLE_H = 24;
   var DETAIL_H = 34;
   var BAR_H = 36;
   var BAR_SLOT_W = 60;
   var BAR_SLOT_H = 22;
+  var BAR_SLOT_GAP = 4;
+  var RESPEC_BTN = Object.freeze({ w: 70, h: 20 }); // pointer stand-in for the respec key, drawn at the title row's right edge
   var INDENT = 16;
   var GOOD_COLOR = '#6fcf6f';
   var LOCKED_COLOR = '#7a7480';
@@ -59,11 +62,22 @@
     return rows;
   }
 
+  /** A newly learned active skill takes the first free bar slot, so hotkeys work without a separate slotting step. */
+  function autoSlot(player, skillId) {
+    var bar = player.skills.bar;
+    for (var i = 0; i < bar.length; i++) if (bar[i] === skillId) return;
+    for (var j = 0; j < bar.length; j++) {
+      if (!bar[j]) { S().equipSkill(player, skillId, j); return; }
+    }
+  }
+
   /** Learns the next rank of a skill. Returns { ok, reason? }; the reason is the canLearn gate that failed. */
   function learn(player, skillId) {
     var gate = S().canLearn(player, skillId);
     if (!gate.ok) return { ok: false, reason: gate.reason };
+    var firstRank = S().getSkillRank(player, skillId) < 1;
     S().learnSkill(null, player, skillId);
+    if (firstRank) autoSlot(player, skillId);
     return { ok: true };
   }
 
@@ -135,10 +149,22 @@
     return TITLE_H + rowCount * ROW_H + DETAIL_H + BAR_H + PANEL_PAD * 2;
   }
 
+  function barTop(rowCount, y) { return y + panelHeight(rowCount) - BAR_H - PANEL_PAD + 6; }
+
+  function barSlotRect(i, rowCount, x, y) {
+    return { x: x + PANEL_PAD + i * (BAR_SLOT_W + BAR_SLOT_GAP), y: barTop(rowCount, y), w: BAR_SLOT_W, h: BAR_SLOT_H };
+  }
+
+  function respecRect(x, y) {
+    return { x: x + PANEL_W - PANEL_PAD - RESPEC_BTN.w, y: y + PANEL_PAD - 2, w: RESPEC_BTN.w, h: RESPEC_BTN.h };
+  }
+
+  function inRect(r, px, py) { return px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h; }
+
   function drawBar(ctx, player, x, y) {
     var bar = player.skills.bar;
     for (var i = 0; i < S().BAR_SIZE; i++) {
-      var sx = x + i * (BAR_SLOT_W + 4);
+      var sx = x + i * (BAR_SLOT_W + BAR_SLOT_GAP);
       ctx.fillStyle = SLOT_COLOR;
       ctx.fillRect(sx, y, BAR_SLOT_W, BAR_SLOT_H);
       ctx.fillStyle = TEXT_COLOR;
@@ -150,6 +176,8 @@
 
   /** Canvas draw: skill rows with rank and lock state, a detail line for the cursor row, and the hotkey bar. */
   function draw(ctx, player, view) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     var rows = treeRows(), x = view.x, y = view.y, cursor = view.cursor || 0;
     var cursorRow = rows[cursor];
     ctx.fillStyle = PANEL_COLOR;
@@ -157,6 +185,12 @@
     ctx.fillStyle = TEXT_COLOR;
     ctx.font = TITLE_FONT;
     ctx.fillText('Skills  (points: ' + player.skills.points + ')', x + PANEL_PAD, y + PANEL_PAD + 12);
+    var rb = respecRect(x, y);
+    ctx.strokeStyle = TEXT_COLOR;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rb.x, rb.y, rb.w, rb.h);
+    ctx.font = LABEL_FONT;
+    ctx.fillText('Respec', rb.x + 12, rb.y + 14);
 
     var rowsTop = y + PANEL_PAD + TITLE_H;
     ctx.font = LABEL_FONT;
@@ -187,7 +221,7 @@
         ctx.fillText(why, x + PANEL_PAD, detailY + 14);
       }
     }
-    drawBar(ctx, player, x + PANEL_PAD, y + panelHeight(rows.length) - BAR_H - PANEL_PAD + 6);
+    drawBar(ctx, player, x + PANEL_PAD, barTop(rows.length, y));
   }
 
   /**
@@ -196,12 +230,34 @@
    * the cursor upgrade; 'equip' puts the cursor skill on the bar (arg = 0-based slot); 'respec' refunds for gold.
    * Results are returned for the caller to show; navigation returns null.
    */
-  function createScreen(player, layout) {
-    var origin = layout || { x: 0, y: 0 };
+  function createScreen(player, layout, report) {
+    var base = layout || { x: 0, y: 0 };
     var state = { cursor: 0 };
     var count = treeRows().length;
+    var show = report || function () {};
+    var origin = { get x() { return base.x; }, get y() { return base.y + HUD_INSET; } }; // base is live: read at draw time
     return {
       id: 'skills',
+      // A press on a row selects it; a press on the selected row learns/buys it (Enter). A bar slot puts the selected
+      // skill there (digit key) and Respec refunds (Backspace). Other presses in the panel are ignored; outside it
+      // they are "back". Results go to `report`.
+      onPointer: function (px, py) {
+        var x = origin.x, y = origin.y, rowsTop = y + PANEL_PAD + TITLE_H;
+        if (!inRect({ x: x, y: y, w: PANEL_W, h: panelHeight(count) }, px, py)) return false;
+        var rows = treeRows(), row = rows[state.cursor];
+        if (inRect(respecRect(x, y), px, py)) { show(respec(player)); return true; }
+        for (var s = 0; s < S().BAR_SIZE; s++) {
+          if (inRect(barSlotRect(s, count, x, y), px, py)) {
+            show(row.kind === 'skill' ? equipToBar(player, row.skillId, s) : { ok: false, reason: 'not-slottable' });
+            return true;
+          }
+        }
+        var i = Math.floor((py - rowsTop) / ROW_H);
+        if (py < rowsTop || i >= count || px < x + PANEL_PAD - 2 || px >= x + PANEL_W - PANEL_PAD + 2) return true;
+        if (i === state.cursor) show(row.kind === 'skill' ? learn(player, row.skillId) : upgrade(player, row.skillId, row.upgradeId));
+        else state.cursor = i;
+        return true;
+      },
       draw: function (ctx) { draw(ctx, player, { x: origin.x, y: origin.y, cursor: state.cursor }); },
       onKey: function (action, arg) {
         var row = treeRows()[state.cursor];
@@ -219,6 +275,6 @@
 
   RPG.ui.skillsScreen = {
     REASON_TEXT: REASON_TEXT, treeRows: treeRows, learn: learn, upgrade: upgrade, equipToBar: equipToBar,
-    respec: respec, requirementText: requirementText, lockReason: lockReason, draw: draw, createScreen: createScreen
+    HUD_INSET: HUD_INSET, panelHeight: panelHeight, respec: respec, requirementText: requirementText, lockReason: lockReason, draw: draw, createScreen: createScreen
   };
 })(globalThis.RPG = globalThis.RPG || {});

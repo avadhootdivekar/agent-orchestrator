@@ -3,7 +3,7 @@
  * Base screens ('mainmenu', 'playing') are not modal. Overlays ('pause', 'inventory', 'character', 'skills',
  * 'settings', 'saveload', 'dead', 'victory') are modal: while any is on the stack the simulation is paused.
  * 'dead' and 'victory' are terminal: keymap actions do nothing while they are on top, so only their own onKey acts.
- * Later units plug in by calling register({ id, update, draw, onKey }) for one of SCREEN_IDS. Headless: no window or
+ * Later units plug in by calling register({ id, update, draw, onKey, onPointer }) for one of SCREEN_IDS. Headless: no window or
  * document access at load time.
  */
 (function (RPG) {
@@ -23,6 +23,9 @@
     toggleSettings: 'settings',
     saveMenu: 'saveload'
   });
+
+  var SECONDARY_BUTTON = 2; // MouseEvent.button of the right mouse button
+  var BACK_CODE = 'Escape';
 
   function isKnown(id) {
     return SCREEN_IDS.indexOf(id) !== -1;
@@ -61,7 +64,7 @@
     var handlers = {};
 
     SCREEN_IDS.forEach(function (id) {
-      handlers[id] = { id: id, update: null, draw: null, onKey: null };
+      handlers[id] = { id: id, update: null, draw: null, onKey: null, onPointer: null };
     });
 
     function top() {
@@ -123,7 +126,7 @@
         throw new Error('screen registration must be an object');
       }
       assertKnown(def.id);
-      ['update', 'draw', 'onKey'].forEach(function (key) {
+      ['update', 'draw', 'onKey', 'onPointer'].forEach(function (key) {
         if (def[key] !== undefined && typeof def[key] !== 'function') {
           throw new Error('screen ' + def.id + ': ' + key + ' must be a function');
         }
@@ -132,7 +135,8 @@
         id: def.id,
         update: def.update || null,
         draw: def.draw || null,
-        onKey: def.onKey || null
+        onKey: def.onKey || null,
+        onPointer: def.onPointer || null
       };
     }
 
@@ -146,7 +150,13 @@
     function draw(ctx) {
       stack.forEach(function (id) {
         var h = handlers[id];
-        if (h && h.draw) h.draw(ctx);
+        if (!h || !h.draw) return;
+        // Each screen starts from the canvas defaults: a neighbour's centred/right-aligned text must not leak in.
+        if (ctx.save) ctx.save();
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        h.draw(ctx);
+        if (ctx.restore) ctx.restore();
       });
     }
 
@@ -182,6 +192,18 @@
       return handleAction(action);
     }
 
+    /**
+     * Routes one press at (x, y) in canvas CSS px (the layout's units). The top screen's onPointer(x, y, button) gets
+     * first refusal: returning true consumes it. Otherwise the press acts as Esc ("back"), so a tap outside a panel
+     * or on a footer closes it and the pointer alone can always leave a screen. A secondary button (2) is always
+     * Esc. Returns true when the press was used.
+     */
+    function handlePointer(x, y, button) {
+      var h = handlers[top()];
+      if (button !== SECONDARY_BUTTON && h && h.onPointer && h.onPointer(x, y, button || 0) === true) return true;
+      return handleKey(BACK_CODE);
+    }
+
     return {
       open: open,
       close: close,
@@ -193,6 +215,7 @@
       update: update,
       draw: draw,
       handleKey: handleKey,
+      handlePointer: handlePointer,
       handleAction: handleAction,
       stack: function () { return stack.slice(); }
     };

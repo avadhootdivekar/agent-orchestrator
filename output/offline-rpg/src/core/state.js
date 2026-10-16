@@ -24,7 +24,7 @@
       telegraphs: [],        // boss/monster ground warnings; boss.js reassigns its `effects`, so it gets this array, never world.effects
       enemyProjectiles: [],  // team-1 shots (kept apart from `projectiles`, which weapons.updateProjectiles resolves against monsters)
       progress: { bossesDefeated: {}, areasUnlocked: {}, kills: 0, deaths: 0, playtime: 0 },
-      fx: { rng: RPG.core.Rng.create(RPG.core.Rng.hashString('fx:' + seed)), shake: 0, damageNumbers: [] },
+      fx: { rng: RPG.core.Rng.create(RPG.core.Rng.hashString('fx:' + seed)), shake: 0, damageNumbers: [], particles: [], hurtFlash: 0, hurtFlashMax: 0 },
       grid: null
     };
   }

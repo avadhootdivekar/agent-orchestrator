@@ -102,7 +102,10 @@
     clearList(world.drops);
     RPG.world.despawnDead(world);
     if (world.telegraphs) world.telegraphs.length = 0;
-    if (world.enemyProjectiles) world.enemyProjectiles.length = 0;
+    if (world.enemyProjectiles) {
+      for (var i = 0; i < world.enemyProjectiles.length; i++) RPG.world.releaseProjectile(world, world.enemyProjectiles[i]);
+      world.enemyProjectiles.length = 0;
+    }
     if (world.fx && world.fx.damageNumbers) world.fx.damageNumbers.length = 0;
     if (world.grid && RPG.world.spatial) RPG.world.spatial.clear(world.grid);
   }
@@ -128,7 +131,47 @@
     m.xp = Math.round((def.xp || 0) * f.xp);
     m.lootQuality = f.lootQuality;
     m.goldMult = f.gold;
+    // What the difficulty multiplied in, so a later difficulty change can rescale this monster (rescaleMonsters).
+    m.diffScale = { playerLevel: playerLevel(world), hp: f.hp, damage: f.damage, speed: f.speed, xp: f.xp, lootQuality: f.lootQuality, gold: f.gold };
     return m;
+  }
+
+  /**
+   * Applies a new difficulty to the live monsters (A4.3). Each monster that came from `spawnScaled` is multiplied by
+   * newFactor / spawnFactor for hp, damage and speed: the HP ratio (and any elite shield) is preserved, a monster keeps
+   * the player level and area level it spawned with, and no RNG is drawn. Summons and other unscaled monsters are left
+   * alone. Reward multipliers (xp, loot quality, gold) follow, so what a kill pays matches the difficulty then in force.
+   * Rescaling to the difficulty a monster already has is a no-op, and rescaling there and back restores its stats.
+   */
+  function rescaleMonsters(world, diffIn) {
+    var diff = RPG.world.difficulty.resolve(diffIn);
+    var count = 0;
+    for (var i = 0; i < world.monsters.length; i++) {
+      var m = world.monsters[i], old = m.diffScale;
+      if (!old || m.dead) continue;
+      var def = RPG.data.monsters[m.defId];
+      if (!def) continue;
+      var f = RPG.world.difficulty.scaleMonster(def, old.playerLevel, diff, m.areaLevel);
+      var rHp = f.hp / old.hp, rDmg = f.damage / old.damage, rSpd = f.speed / old.speed;
+      var oldMax = m.maxHp, newMax = Math.max(1, Math.round(oldMax * rHp));
+      m.hp = m.hp * (newMax / oldMax);
+      m.maxHp = newMax;
+      if (typeof m.shield === 'number') m.shield *= newMax / oldMax;
+      if (typeof m.affixHp === 'number') m.affixHp = m.hp;
+      m.damage *= rDmg;
+      m.speed *= rSpd;
+      if (m.stats) {
+        m.stats.setBase('maxHp', newMax);
+        m.stats.setBase('damage', m.damage);
+        m.stats.setBase('moveSpeed', m.speed);
+      }
+      m.xp = Math.round((def.xp || 0) * f.xp);
+      m.lootQuality = f.lootQuality;
+      m.goldMult = f.gold;
+      m.diffScale = { playerLevel: old.playerLevel, hp: f.hp, damage: f.damage, speed: f.speed, xp: f.xp, lootQuality: f.lootQuality, gold: f.gold };
+      count++;
+    }
+    return count;
   }
 
   function nearestSlot(slots, x, y) {
@@ -245,7 +288,7 @@
 
     world.area = {
       id: areaId, def: def, map: gen.map, spawn: gen.spawn, exits: gen.exits || [], visited: visited,
-      slotOf: {}, slotLeft: []
+      slotOf: {}, slotLeft: [], level: def.level[1]
     };
     if (gen.bossSlot) world.area.bossSlot = gen.bossSlot;
     world.area.visited[areaId] = true;
@@ -292,7 +335,7 @@
   /** Call once per monster death. Returns true when this death emptied its encounter slot (now recorded as cleared). */
   function onMonsterDead(world, monster) {
     var area = world.area;
-    if (!area || area.slotOf[monster.id] === undefined) return false;
+    if (!area || !area.slotOf || area.slotOf[monster.id] === undefined) return false;
     var slot = area.slotOf[monster.id];
     delete area.slotOf[monster.id];
     area.slotLeft[slot]--;
@@ -309,6 +352,7 @@
     markBossDefeated: markBossDefeated,
     onMonsterDead: onMonsterDead,
     restorePos: restorePos,
+    rescaleMonsters: rescaleMonsters,
     EXIT_RADIUS_TILES: EXIT_RADIUS_TILES
   };
 })(globalThis.RPG);

@@ -50,14 +50,9 @@ export const JS_ORDER = [
   'src/main.js',
 ];
 
-// Wave-4 files that units create later. `--verify` accepts these as missing; any other listed file
-// that is missing is an error. W4-15 empties this list when it flips the strict check on.
-export const PENDING_JS = [
-  'src/sim/combat-step.js', 'src/sim/monsters.js', 'src/sim/rewards.js', 'src/world/areas.js',
-  'src/persistence/files.js', 'src/audio/bridge.js', 'src/render/draw-entities.js', 'src/render/draw-effects.js',
-  'src/ui/character.js', 'src/ui/skills-screen.js', 'src/ui/settings.js', 'src/ui/saveload.js',
-  'src/ui/pause.js', 'src/ui/mainmenu.js', 'src/ui/hud-overlays.js', 'src/core/game.js',
-];
+// Listed files that may be missing. Empty: every JS_ORDER entry must exist, so `--verify` is strict
+// (docs/INTEGRATION-PLAN.md §5). Kept as an exported list so tests can exercise the pending mechanism.
+export const PENDING_JS = [];
 
 // Recursively lists files with the given extension as project-relative POSIX paths, sorted by name.
 function listFiles(dir, extension) {

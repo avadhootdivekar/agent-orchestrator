@@ -8,7 +8,7 @@
     "world": 1740228517,
     "loot": 305419896
   },
-  "checksum": "fnv1a:c5d7fd37",
+  "checksum": "fnv1a:93425fd0",
   "meta": {
     "level": 5,
     "area": "forest",
@@ -66,7 +66,7 @@
           {
             "id": "spd-pct",
             "stat": "attackSpeed",
-            "kind": "pct",
+            "kind": "inc",
             "value": 0.08
           }
         ],
@@ -164,7 +164,7 @@
           {
             "id": "dmg-pct",
             "stat": "damage",
-            "kind": "pct",
+            "kind": "inc",
             "value": 0.1
           }
         ],
@@ -211,6 +211,10 @@
       ],
       "points": 1,
       "spentPoints": 3
+    },
+    "vel": {
+      "x": 0,
+      "y": 0
     }
   },
   "area": {
@@ -221,8 +225,8 @@
     },
     "cleared": {
       "forest": [
-        "slot-3",
-        "slot-5"
+        3,
+        5
       ]
     }
   },
@@ -241,7 +245,7 @@
     "muted": false,
     "quality": "high",
     "showDamageNumbers": true,
-    "screenShake": 0.7,
+    "screenShake": true,
     "keys": {}
   }
 }

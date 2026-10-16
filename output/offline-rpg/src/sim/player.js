@@ -212,6 +212,25 @@
     SK.updateSkills(world, p, dt);
   }
 
+  /** Living monster HP keyed by id, taken before the player's swings and casts act this tick. */
+  function monsterHpSnapshot(world) {
+    var snap = {}, list = world.monsters || [];
+    for (var i = 0; i < list.length; i++) if (!list[i].dead) snap[list[i].id] = list[i].hp;
+    return snap;
+  }
+
+  /** Weapons and skills apply damage without reporting it, so stage 3-4 hits are derived from HP that went down and
+      pushed into ctx.hits (the same shape combat-step stage 8 records); stage 10 turns them into HIT events. */
+  function reportHits(world, ctx, before) {
+    if (!ctx.hits) return;
+    var list = world.monsters || [];
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i], was = before[m.id];
+      if (was === undefined || !(m.hp < was)) continue;
+      ctx.hits.push({ targetId: m.id, dealt: was - m.hp, crit: false, type: 'phys', x: m.x, y: m.y, team: m.team });
+    }
+  }
+
   /** Stages 1-4 of the tick, in plan order. `ctx` is `world.scratch` from sim/sim.js: { intent, dt, ... }. */
   function stagePlayer(world, ctx) {
     var p = world.player;
@@ -222,8 +241,10 @@
     movePlayer(world, s, dt);
     regen(p, dt);
     switchWeapon(world, p, s);
+    var before = monsterHpSnapshot(world);
     attack(world, p, s, dt);
     castSkills(world, p, s, dt);
+    reportHits(world, ctx, before);
   }
 
   /**

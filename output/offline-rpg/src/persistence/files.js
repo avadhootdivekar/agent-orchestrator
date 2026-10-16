@@ -17,12 +17,11 @@
     };
   }
 
-  // downloadSave(state, env?, opts?) -> {ok:true, name, bytes} | {ok:false, code, error}. `state` is a save body (snapshot output).
-  function downloadSave(state, env, opts) {
+  // downloadText(name, text, env?) -> {ok:true, name, bytes} | {ok:false, code, error}. Blob + <a download> click.
+  function downloadText(name, text, env) {
     var e = envOf(env), url = null;
     try {
       if (!e.document || !e.URL || !e.Blob) return fail('unsupported', 'file download is not available in this environment');
-      var text = P.exportJson(state, opts), name = P.exportFileName(state);
       var blob = new e.Blob([text], { type: 'application/json' });
       url = e.URL.createObjectURL(blob);
       var a = e.document.createElement('a');
@@ -36,6 +35,15 @@
       return { ok: true, name: name, bytes: text.length };
     } catch (err) {
       if (url) { try { e.URL.revokeObjectURL(url); } catch (ignore) { /* best effort */ } }
+      return fail(err && err.code ? err.code : 'download', msg(err));
+    }
+  }
+
+  // downloadSave(state, env?, opts?) -> same result as downloadText. `state` is a save body (snapshot output).
+  function downloadSave(state, env, opts) {
+    try {
+      return downloadText(P.exportFileName(state), P.exportJson(state, opts), env);
+    } catch (err) {
       return fail(err && err.code ? err.code : 'download', msg(err));
     }
   }
@@ -81,5 +89,34 @@
     }
   }
 
-  P.files = { MAX_IMPORT_BYTES: MAX_IMPORT_BYTES, downloadSave: downloadSave, readSaveFile: readSaveFile };
+  // pickSaveText(env?, opts?) -> Promise<string|null>: opens the browser file picker and resolves to the chosen file's
+  // text, or null when the dialog is cancelled. Rejects with an Error for an unusable or oversized file. Never writes a slot.
+  function pickSaveText(env, opts) {
+    var e = envOf(env);
+    var maxBytes = opts && opts.maxBytes > 0 ? opts.maxBytes : MAX_IMPORT_BYTES;
+    return new Promise(function (resolve, reject) {
+      if (!e.document || !e.FileReader) return reject(new Error('file import is not available in this environment'));
+      var input = e.document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+      input.style.display = 'none';
+      input.addEventListener('cancel', function () { resolve(null); });
+      input.addEventListener('change', function () {
+        var file = input.files && input.files[0];
+        if (!file) return resolve(null);
+        var bad = checkFile(file, maxBytes);
+        if (bad) return reject(new Error(bad.error));
+        var reader = new e.FileReader();
+        reader.onload = function () { typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('file could not be read as text')); };
+        reader.onerror = function () { reject(new Error('could not read file')); };
+        reader.readAsText(file);
+      });
+      input.click();
+    });
+  }
+
+  P.files = {
+    MAX_IMPORT_BYTES: MAX_IMPORT_BYTES, downloadText: downloadText, downloadSave: downloadSave,
+    readSaveFile: readSaveFile, pickSaveText: pickSaveText
+  };
 })(globalThis.RPG = globalThis.RPG || {});

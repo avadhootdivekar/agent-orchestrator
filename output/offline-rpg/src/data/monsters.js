@@ -44,7 +44,7 @@
     attacks: [
       { id: 'husk-claw', kind: 'melee', damageMult: 1, range: 36, radius: 0, windup: 0.35, telegraph: 'cone', weight: 1 },
     ],
-    xp: 8,
+    xp: 40,
     gold: [1, 3],
     lootTable: { id: 'loot-melee-common', dropChance: 0.25, rolls: 1, rarityBoost: 0 },
     sfx: { hit: 'hit-soft', death: 'death-thud', attack: 'swipe-dull' },
@@ -72,7 +72,7 @@
     attacks: [
       { id: 'skitter-bite', kind: 'melee', damageMult: 1, range: 28, radius: 0, windup: 0.2, weight: 1 },
     ],
-    xp: 6,
+    xp: 30,
     gold: [0, 2],
     lootTable: { id: 'loot-fast-common', dropChance: 0.12, rolls: 1, rarityBoost: 0 },
     sfx: { hit: 'hit-light', death: 'death-skitter', attack: 'snap-light' },
@@ -110,7 +110,7 @@
         projectile: { speed: 260, radius: 4, lifetime: 1.5, pierce: 0, bounce: 0, homing: 0, shape: 'arrow', trail: false },
       },
     ],
-    xp: 14,
+    xp: 70,
     gold: [2, 5],
     lootTable: { id: 'loot-ranged-common', dropChance: 0.3, rolls: 1, rarityBoost: 0 },
     sfx: { hit: 'hit-soft', death: 'death-thud', attack: 'bow-twang' },
@@ -138,7 +138,7 @@
     attacks: [
       { id: 'stone-slam', kind: 'melee', damageMult: 1.3, range: 44, radius: 0, windup: 0.7, telegraph: 'cone', weight: 1 },
     ],
-    xp: 24,
+    xp: 120,
     gold: [4, 8],
     lootTable: { id: 'loot-tank-uncommon', dropChance: 0.4, rolls: 2, rarityBoost: 1 },
     sfx: { hit: 'hit-heavy', death: 'death-rumble', attack: 'slam-heavy' },
@@ -166,7 +166,7 @@
     attacks: [
       { id: 'cinder-detonate', kind: 'aoe', damageMult: 1.5, range: 0, radius: 70, windup: 1.0, telegraph: 'circle', weight: 1 },
     ],
-    xp: 12,
+    xp: 60,
     gold: [1, 4],
     lootTable: { id: 'loot-exploder-common', dropChance: 0.15, rolls: 1, rarityBoost: 0 },
     sfx: { hit: 'hit-light', death: 'death-blast', attack: 'fuse-hiss' },
@@ -181,7 +181,7 @@
     name: 'Hexcaller',
     archetype: 'summoner',
     tier: 3,
-    areas: ['ruins', 'dungeon'],
+    areas: ['caves', 'ruins', 'dungeon'],
     shape: 'caster',
     radius: 15,
     color: 'violet',
@@ -218,7 +218,7 @@
         summonDefId: 'skitter',
       },
     ],
-    xp: 30,
+    xp: 150,
     gold: [5, 10],
     lootTable: { id: 'loot-summoner-uncommon', dropChance: 0.45, rolls: 2, rarityBoost: 1 },
     sfx: { hit: 'hit-soft', death: 'death-whisper', attack: 'hex-chant' },
@@ -313,6 +313,18 @@
     spawnWeight: 0,
     groupSize: [1, 1],
     eliteAllowed: false,
+  });
+
+  // Elite affixes (docs/DATA-DEFINITIONS.md §5). Each elite rolls one id from this table in world/encounters.js; the
+  // effect numbers are read by sim/monsters.js (stage 'affixes' and the speed/vampiric hooks). `color` is a render
+  // token for the affix outline and tint (render/draw-entities.js resolves it; the palette wins when it defines it).
+  // Declaration order is the roll order, so reordering changes which affix a given seed picks.
+  RPG.data.eliteAffixes = deepFreeze({
+    fast:               { id: 'fast', name: 'Fast', color: 'affix-fast', speedMult: 1.25 },
+    shielded:           { id: 'shielded', name: 'Shielded', color: 'affix-shielded', shieldFraction: 0.3 },
+    vampiric:           { id: 'vampiric', name: 'Vampiric', color: 'affix-vampiric', leechFraction: 0.5 },
+    'explosive-death':  { id: 'explosive-death', name: 'Explosive', color: 'affix-explosive', deathRadius: 70, deathDamageMult: 1 },
+    regenerating:       { id: 'regenerating', name: 'Regenerating', color: 'affix-regenerating', regenPerSecond: 0.04 },
   });
 
   RPG.data.monsters = Object.freeze(RPG.data.monsters);

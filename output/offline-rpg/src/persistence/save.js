@@ -86,6 +86,7 @@
       if (!isNum(p.hp) || p.hp < 0) errs.push('player.hp: non-negative finite number required');
       if (!isNum(p.resource) || p.resource < 0) errs.push('player.resource: non-negative finite number required');
       if (!isObj(p.pos) || !isNum(p.pos.x) || !isNum(p.pos.y)) errs.push('player.pos: {x,y} finite numbers required');
+      if (p.vel !== undefined && (!isObj(p.vel) || !isNum(p.vel.x) || !isNum(p.vel.y))) errs.push('player.vel: {x,y} finite numbers required when present');
       if (!Array.isArray(p.weaponSlots) || p.weaponSlots.length !== 3) errs.push('player.weaponSlots: array of length 3 required');
       else p.weaponSlots.forEach(function (it, i) { checkItem(it, 'player.weaponSlots[' + i + ']', errs); });
       if (!isInt(p.activeWeapon) || p.activeWeapon < 0 || p.activeWeapon > 2) errs.push('player.activeWeapon: integer 0..2 required');
@@ -110,6 +111,7 @@
     else {
       if (!isObj(doc.progress.bossesDefeated) || !isObj(doc.progress.areasUnlocked)) errs.push('progress: bossesDefeated and areasUnlocked objects required');
       if (!isInt(doc.progress.kills) || doc.progress.kills < 0) errs.push('progress.kills: non-negative integer required');
+      if (doc.progress.time !== undefined && (!isNum(doc.progress.time) || doc.progress.time < 0)) errs.push('progress.time: non-negative number required when present');
       if (!isInt(doc.progress.deaths) || doc.progress.deaths < 0) errs.push('progress.deaths: non-negative integer required');
     }
     if (!isObj(doc.settings)) errs.push('settings: object required');

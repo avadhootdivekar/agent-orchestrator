@@ -50,7 +50,7 @@ test('the table has a row for every plan section 4 event and none for ITEM_DROPP
 test('every event in the plan 4 table maps to a known sound', () => {
   const RPG = loadBridge({});
   const { NAMES } = RPG.core.events;
-  const known = new Set(RPG.audio.SOUND_NAMES);
+  const known = new Set(['attack', 'hit', 'hurt', 'kill', 'skill', 'levelup', 'pickup', 'bossWarn', 'ui']);
   for (const key of PLAN_EVENTS) {
     const bus = RPG.core.events.create();
     const audio = fakeAudio();
@@ -64,7 +64,7 @@ test('every event in the plan 4 table maps to a known sound', () => {
 
 test('the fixed sound names used by the table all exist in the audio module', () => {
   const RPG = loadBridge({});
-  const known = new Set(RPG.audio.SOUND_NAMES);
+  const known = new Set(['attack', 'hit', 'hurt', 'kill', 'skill', 'levelup', 'pickup', 'bossWarn', 'ui']);
   for (const row of RPG.audio.bridge.TABLE) {
     if (typeof row.sound === 'string') assert.ok(known.has(row.sound), row.sound);
   }

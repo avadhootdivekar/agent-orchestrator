@@ -1,21 +1,15 @@
 # Offline RPG — Architecture (v1 design contract)
 
-Status: design contract for parallel implementation. Plain JavaScript (ES2019, no TypeScript, no bundler
-dependency). Units building modules MUST use the file names and signatures below; changes go through a
-design amendment, not ad-hoc drift.
+Status: design contract, reconciled with the code at the end of wave 5. Plain JavaScript (ES2019, no TypeScript, no bundler
+dependency). Where a signature in §4 differs from the source, **the source and the header comment of its file win**;
+the known differences are listed in [`INTEGRATION-PLAN.md`](INTEGRATION-PLAN.md) §1.
 
-**Implementation status (wave 1–2).** Sections below describe the target design. Where the code differs, the
-shipped form is given in the "shipped" notes and the design text is marked **(planned)**. Shipped today:
-
-- `src/core/` (namespace, util, rng, pool, entities, state, loop), `src/input/` (raw, intent, keymap, input),
-  `src/sim/` (player, sim), `src/world/` (stats, tilemap, collision, combat, progression), `src/persistence/` (save,
-  migrate, storage, exportimport), `src/render/` (camera, palette, renderer, hud), `src/audio/audio.js`,
-  `src/data/` (weapons, skills, monsters, items, difficulties, maps/test-map), `src/main.js`.
-- Build, preview and offline guard in `scripts/`. The `build/` directory and `index.src.html` in the layout below
-  do not exist; the shipped names are in §2.
-- The simulation moves the player and records aim. The combat, progression, HUD and audio modules and the data
-  definitions are shipped, but `sim/sim.js` does not call them yet. Attacks, skills, AI, spawning, loot, areas and
-  the UI screens are planned. See [`GAMEPLAY-SYSTEMS.md`](GAMEPLAY-SYSTEMS.md).
+**Implementation status.** Everything in `src/` listed in §2 exists and is wired into one playable page: `core/game.js` owns the
+state machine and the fixed-step loop; `sim/sim.js` runs the stage pipeline (§3.1) over weapons, skills, AI, bosses, loot, rewards
+and areas; `render/` draws the world and HUD; `ui/` holds the canvas menu screens (§3.2); `persistence/` saves, loads, exports and
+imports; `audio/` plays Web Audio effects from sim events. 972 unit and headless integration tests exist (`npm test`; all passed on 2026-10-16 in w14-01, see VERIFICATION-REPORT.md). Not implemented:
+a virtual-stick touch input (only four on-canvas buttons exist), weapon behaviours `thrust`/`smash`/`beam`/`arc`/`explosive`, and multiplayer. No manual browser walkthrough is recorded
+([`TEST-CHECKLIST.md`](TEST-CHECKLIST.md)). Gameplay systems: [`GAMEPLAY-SYSTEMS.md`](GAMEPLAY-SYSTEMS.md).
 
 **Why plain JS:** the build is a zero-dependency node script (see BUILD-OFFLINE.md); TypeScript would force a
 compiler dependency and an `npm install` that needs the network. JSDoc typedefs in each file give editor hints.
@@ -25,7 +19,7 @@ compiler dependency and an `npm install` that needs the network. JSDoc typedefs 
 1. **Separation (prompt §19/§20):** State (`world`) is plain data. Simulation mutates state only through
    `step(world, inputFrame, dt)`. Input produces an `InputFrame`. Rendering reads state, never mutates it.
    Persistence serializes a subset of state. No module in `render/` or `input/` may be imported by `core/`, `world/`
-   or `persistence/` logic. Enforced by load order only; the lint check in the build script is **(planned)**.
+   or `persistence/` logic. Enforced by load order only; there is no lint check.
 2. **Determinism:** all gameplay randomness goes through a seeded `Rng` (mulberry32) stored in `world.rng`.
    Rendering/particles use a separate cosmetic `Rng` (`world.fx.rng`) so visuals never perturb gameplay replay.
 3. **Fixed timestep:** simulation runs at 60 Hz (`DT = 1/60`), accumulator capped at 5 steps/frame; render
@@ -36,64 +30,39 @@ compiler dependency and an `npm install` that needs the network. JSDoc typedefs 
 5. **Classic scripts, one global namespace `RPG`:** every file is an IIFE `(function(RPG){ ... })(window.RPG = window.RPG || {});`
    attaching exports to `RPG.<ns>`. No `import`/`export`, no `fetch`, no `type="module"` → works on `file://`.
 6. **No DOM in hot paths:** gameplay is on one `<canvas>`; HUD is drawn on the canvas, menu screens
-   (inventory/skills/…) are DOM overlays updated only while open.
+   (main menu, pause, inventory, skills, …) are also drawn on that canvas by the screen manager (`ui/screens.js`); there is no DOM UI.
 
 ## 2. Directory layout
 
-Shipped layout (`✓` = exists; `(planned)` = design only, not written yet):
+Layout (every file listed exists):
 
 ```
 output/offline-rpg/
-  package.json              scripts: build, preview, test, check-offline   (no dependencies)  ✓
-  README.md                 ✓
-  index.html                template with <!--@CSS--> and <!--@JS--> markers                   ✓
+  package.json              scripts: build, preview, test, test:unit, check-offline, check-all, bench (no dependencies)
+  README.md
+  index.html                template with <!--@CSS--> and <!--@JS--> markers
   scripts/
-    build.mjs               single-file build -> dist/index.html; JS_ORDER lists the load order  ✓
-    preview.mjs             static server for dist/ (127.0.0.1:8777)                            ✓
-    check-offline.mjs       offline guard (see BUILD-OFFLINE.md §4)                             ✓
-  styles/main.css           layout and overlays; system fonts only                              ✓
+    build.mjs               single-file build -> dist/index.html; JS_ORDER lists the load order; --verify
+    preview.mjs             static server for dist/ (127.0.0.1:8777)
+    check-offline.mjs       offline guard (see BUILD-OFFLINE.md §4)
+    run-all-checks.mjs      build, test and check-offline in order
+    bench.mjs               headless sim + draw timing
+  styles/main.css           page layout; system fonts only
   src/
-    data/
-      maps/test-map.js      the only map definition so far                                      ✓
-      weapons.js  skills.js  monsters.js  items.js  difficulties.js                             ✓
-      areas.js  stats.js  keymap.js                                                              (planned)
-    core/
-      namespace.js  util.js  rng.js  pool.js  entities.js  state.js  loop.js                     ✓
-      events.js  game.js                                                                         (planned)
-    input/
-      raw.js                raw key/pointer state, no DOM                                       ✓
-      keymap.js             ACTIONS, defaults, rebinding helpers (pure)                         ✓
-      intent.js             raw state + camera -> InputFrame (pure)                             ✓
-      input.js              DOM wiring; RPG.input.create() -> per-game input object              ✓
-      keyboard.js  mouse.js                                                                      (folded into input.js)
-    world/
-      stats.js              StatBlock: base + modifiers -> derived stats                        ✓
-      tilemap.js            tile grid, solid queries, TILE constants                            ✓
-      collision.js          circle-vs-tile movement (moveCircle)                                ✓
-      combat.js             damage resolution, statuses, cooldowns (not yet called by sim)       ✓
-      progression.js        XP curve, level-up grants (not yet called by sim)                    ✓
-      spatial.js  mapgen.js  world.js  weapons.js  skills.js  ai.js  boss.js
-      loot.js  equipment.js  difficulty.js  encounters.js  areas.js  sim.js                     (planned)
-    sim/
-      player.js             player entity, acceleration movement, aim facing                    ✓
-      sim.js                RPG.sim.createWorld(opts), RPG.sim.step(world, intent, dt)          ✓
-    render/
-      renderer.js           RPG.render.create(canvas) -> renderer                               ✓
-      camera.js             follow / snap / world<->screen                                      ✓
-      palette.js            colour tokens                                                       ✓
-      hud.js                buildHudModel (pure) and draw                                       ✓
-      draw-shapes.js  draw-entities.js  draw-map.js  draw-effects.js                          (planned)
-    persistence/
-      save.js               serialize / deserialize / validate / checksum                       ✓
-      migrate.js            SAVE_VERSION and migration table                                    ✓
-      storage.js            localStorage adapter (+ in-memory fallback), saveGame / loadGame    ✓
-      exportimport.js       exportJson / importJson / exportFileName (string functions)         ✓
-    audio/audio.js          procedural Web Audio sound effects (not yet called by main)         ✓
-    ui/                                                                                          (planned)
-    main.js                 entry: builds world, wires input -> sim -> renderer into the loop  ✓
+    data/                   weapons skills monsters items difficulties areas (frozen definitions), maps/test-map.js
+    core/                   namespace util rng events pool entities state loop game (state machine, autosave, wiring)
+    input/                  raw (key/pointer state) keymap (actions, defaults) intent (-> InputFrame) input (DOM wiring)
+    world/                  stats tilemap collision spatial mapgen world combat weapons skills skill-effects ai boss loot
+                            equipment progression difficulty encounters areas   (rules; mutate the world they are handed)
+    sim/                    player combat-step monsters rewards sim   (the stage pipeline, §3.1)
+    persistence/            save migrate storage exportimport snapshot (world <-> save body) files (Blob download, file picker)
+    audio/                  audio (Web Audio synthesis) bridge (sim events -> sounds)
+    render/                 renderer camera palette hud draw-shapes draw-entities draw-map draw-effects
+    ui/                     screens (manager) mainmenu pause saveload settings inventory character skills-screen hud-overlays
+    main.js                 entry: finds the canvas, passes localStorage for the settings key, calls RPG.core.game.start
   tests/
-    core/ input/ persistence/ scripts/ sim/ world/    one folder per area                      ✓
-    <area>/load.js          some areas: loads the area's src files into a vm context (e.g. tests/world/load.js)
+    audio core data input integration persistence render scripts sim ui world    one folder per area
+    <area>/load.js          some areas: loads the area's src files into a vm context
     *.test.js  *.test.mjs   run with npm run test:unit (node --test)
     fixtures/offline/       inputs for the offline guard
   docs/                     design and test documents
@@ -102,14 +71,10 @@ output/offline-rpg/
 
 ### Load order (authoritative copy: `JS_ORDER` in `scripts/build.mjs`)
 
-`core/namespace → core/util → core/rng → core/events → core/pool → data/* → world/stats → world/tilemap → world/collision →
-world/spatial → world/mapgen → world/world → world/combat → world/weapons → world/skills → world/ai → world/boss →
-world/loot → world/equipment → world/progression → world/difficulty → world/encounters → world/areas → world/sim →
-sim/player → sim/sim → persistence/* → input/* → audio/audio → render/palette → render/camera → render/draw-* → render/hud →
-render/renderer → ui/* → core/loop → core/game → main`.
-
-`JS_ORDER` also lists files not yet written (they are skipped), and the build appends any unlisted file with a warning.
-The list above is the design order; the shipped order is whatever `JS_ORDER` says.
+`core/namespace → core/util → core/rng → core/events → core/pool → core/entities → core/state → data/* (maps/test-map first) →
+world/* (stats … areas) → sim/player → sim/combat-step → sim/monsters → sim/rewards → sim/sim → persistence/* → input/* →
+audio/* → render/* → ui/* → core/loop → core/game → main`. The exact list is `JS_ORDER`; `npm test` fails if a file in `src/` is
+missing from it, listed twice, or listed but absent.
 
 Every module may call only modules earlier in the list at *load* time; at *run* time, calls through `RPG.<ns>`
 resolve lazily, so cross-references between peers in the same layer are fine.
@@ -121,11 +86,73 @@ them in a `vm` context with only `{RPG: {}}`-style globals. `namespace.js` uses 
 ## 3. Game loop (core/loop.js)
 
 ```js
-RPG.core.createLoop({ step, render, dt = 1/60, maxSteps = 5 }) -> { start(), stop(), running }
-// per rAF(ts): acc += min(ts-last, 0.25); n=0; while (acc >= dt && n++ < maxSteps) { step(dt); acc -= dt; }
+RPG.core.createLoop({ step, render, shouldStep, dt = 1/60, maxSteps = 5 }) -> { start(), stop(), reset(), running }
+// per rAF(ts): acc += min(ts-last, 0.25); n=0; while (shouldStep() && acc >= dt && n++ < maxSteps) { step(dt); acc -= dt; }
 //              render(acc/dt)   // alpha in [0,1)
 ```
-`step` is a no-op while a blocking overlay is open (`Game.paused`). `visibilitychange` → auto-pause + resets `last`.
+`core/game.js` supplies `step` (`game.tick`), `render` (`game.render`) and `shouldStep` (state is `playing`, a world exists and no
+modal screen is open). While a screen is open the sim does not advance but `render` still reads input so `Esc` can resume.
+`visibilitychange` → auto-pause (if playing) and `loop.reset()`.
+
+### 3.1 Sim pipeline (`sim/sim.js`, `RPG.sim.step(world, intent, dt)`)
+
+`step` runs `RPG.sim.ORDER` in this fixed order, calling `RPG.sim.stage.<name>(world, ctx)` with `ctx = world.scratch`. A name with
+no registered function is skipped. Registered stages and their files:
+
+| # | Stage | Registered by | Does |
+|---|---|---|---|
+| 0 | `begin` | `sim/sim.js` | clears per-tick scratch (events, hits, killed) |
+| 1 | `input` | *(nothing registered; skipped)* | |
+| 2 | `player` | `sim/player.js` | sanitises the intent, dash and i-frames, regen, movement, weapon switch, basic attack and skill casts. Stages 3 and 4 below are done inside it through `world/weapons` and `world/skills` |
+| 3 | `weapons` | *(not registered; done in `player`)* | |
+| 4 | `skills` | *(not registered; done in `player`)* | |
+| 5 | `spatial` | `sim/monsters.js` | rebuilds the spatial grid |
+| 6 | `monsters` | `sim/monsters.js` | `world/ai` → telegraphs, melee, enemy projectiles, summons, exploders; bosses via `world/boss` |
+| 7 | `movement` | `sim/monsters.js` | integrates monster velocity through the tilemap, knockback, pack separation |
+| 8 | `projectiles` | `sim/combat-step.js` | player and enemy projectiles, effects, ground zones |
+| 9 | `statuses` | `sim/combat-step.js` | status ticks (burn, poison, slow, …) |
+| 9b | `affixes` | `sim/monsters.js` | elite affix effects: shield, regeneration, leech and the explosive-death blast (data: `RPG.data.eliteAffixes`) |
+| 10 | `resolve` | `sim/combat-step.js` | hits become HIT events; `RPG.sim.hurtPlayer` is the single entry for player damage |
+| 11 | `rewards` | `sim/rewards.js` | kill XP, gold, drops, level-ups, boss bookkeeping |
+| 12 | `pickups` | `sim/rewards.js` | walk-over pickup (gold, items; `F` widens the radius) |
+| 13 | `playerDeath` | `sim/rewards.js` | death penalty (gold %), `progress.deaths` |
+| 14 | `cleanup` | `sim/sim.js` | ages drops and damage numbers, removes dead entities |
+| 15 | `areas` | `sim/sim.js` | `world/areas.checkExits`: portal collision enters the next unlocked area |
+| 16 | `end` | `sim/sim.js` | `tick++`, `time += dt`, `progress.playtime`, shake decay |
+
+`RPG.sim.createWorld({seed, areaId?, mapId?, difficulty?})` builds the world, grants the three starting weapons, installs the skill
+executor, and (with `areaId`) enters that area. The whole pipeline is headless and deterministic for a seed and an intent sequence
+(`tests/integration/headless.test.js`, `tests/sim/pipeline.test.js`).
+
+### 3.2 Game states and the screen registry (`core/game.js`, `ui/screens.js`)
+
+States: `mainmenu | playing | paused | dead | victory`. `game.tick` samples the intent, routes queued key codes to open screens,
+handles global toggles (pause, overlays, quick save/load, debug), then calls `sim.step` only if `shouldStep()`. A throwing sim step
+pauses the game and records `game.lastError`; the loop keeps running. Death comes from the `playerDied` event; the final boss
+(`warden-of-ash`) autosaves and switches to `victory`.
+
+`RPG.ui.screens.create()` is a stack of canvas screens. Registry (`SCREEN_IDS`), with the file that registers each and who registers it:
+
+| Id | Kind | File | Opened by |
+|---|---|---|---|
+| `mainmenu` | base (replaces the stack) | `ui/mainmenu.js` | start, `quitToMenu` |
+| `playing` | base | toasts/banners from `ui/hud-overlays.js` | new game, load, resume |
+| `pause` | modal | `ui/pause.js` | `Esc`/`P` |
+| `inventory` | modal | `ui/inventory.js` | `I` |
+| `character` | modal | `ui/character.js` | `C` |
+| `skills` | modal | `ui/skills-screen.js` | `K` |
+| `settings` | modal | `ui/settings.js` | `O`, main menu, pause menu |
+| `saveload` | modal | `ui/saveload.js` | `M`, main menu (Continue, Import), pause menu |
+| `dead` | modal, terminal | `ui/hud-overlays.js` | `dead` state (Enter respawns in town) |
+| `victory` | modal, terminal | `ui/hud-overlays.js` | `victory` state (Enter keeps playing) |
+
+Layout: the inventory, character and skills panels all start `HUD_INSET` = 80 px down so they sit below the HUD bars (y 16..74). The Skills panel
+is 460 px wide and `24 + 16 * rows + 34 + 36 + 24` px tall (30 rows: 598 px), which fits 1280x720 but not 640x480. Inventory cells wrap item names to at most 3 lines of 8
+characters (`nameLines` in `ui/inventory.js`; break at spaces, hard-split long words, end with an ellipsis).
+
+While any modal id is on the stack the sim is paused. `core/game.js` registers the screens in `registerScreens()`; inventory,
+skills and character are re-registered on every new game or load because they act on `world.player`. `RPG.ui.settings` owns the
+settings model and the standalone settings key (SAVE-SCHEMA "Settings key"); the game re-applies it when the Settings screen closes.
 
 ## 4. Public API by module (contract)
 
@@ -156,23 +183,26 @@ Rng.prototype: next() -> [0,1)   int(lo, hi) -> integer inclusive   range(lo, hi
 Rng.hashString(str) -> uint32
 Rng.seedFromString(str) -> uint32      // for user-typed seeds
 ```
-`src/core/events.js` — `RPG.core.bus`
+`src/core/events.js` — `RPG.core.events` (shipped name; the design said `bus`)
 ```js
-bus.on(type, fn) -> unsubscribe    bus.emit(type, payload)    bus.clear()
+events.on(type, fn) -> unsubscribe    events.off(type, fn)    events.emit(type, payload)    events.drain()    events.NAMES
 // event types: 'hit','kill','playerDied','levelUp','pickup','skillUsed','bossPhase','bossWarn','areaChanged',
-//              'itemDropped','save','load','uiSound'
+//              'itemDropped','save','load','victory','uiSound'
 ```
 `src/core/pool.js` — `RPG.core.Pool`
 ```js
 Pool.create(factory: ()=>obj, reset: (obj)=>void, prealloc=0) -> { acquire() -> obj, release(obj), active: obj[] }
 ```
-`src/core/game.js` — `RPG.core.Game`
+`src/core/game.js` — `RPG.core.game`
 ```js
-Game.start(canvasEl: HTMLCanvasElement, rootEl: HTMLElement) -> Game
-Game.state: 'menu'|'playing'|'paused'|'dead'|'victory'
-game.newGame({ seed?: uint32|string, difficulty?: string|DifficultyConfig }) 
-game.loadFromSlot(slot) -> {ok, error?}   game.saveToSlot(slot) -> {ok, error?}
-game.setPaused(bool)    game.world    game.settings
+create(deps) -> game      // headless: every collaborator (events, persistence, sim, input, renderer, screens, audio, storage, settingsStore, …) injectable
+start(canvas, { settingsStorage }) -> game    // browser entry used by main.js: builds renderer, input, screens, settings store, loop
+game.state: 'mainmenu'|'playing'|'paused'|'dead'|'victory'     game.world   game.settings   game.difficultyId   game.lastError
+game.newGame({ seed?: uint32|string, difficulty?: string|DifficultyConfig, name? }) -> {ok}
+game.saveToSlot(slot)  game.loadFromSlot(slot)  game.quickSave()  game.quickLoad()  game.autosave(reason)
+game.exportSave(slot?) -> {ok, filename, text}   game.importSave(text, slot?)   game.deleteSave(slot)
+game.setPaused(bool)  game.respawn()  game.continuePlaying()  game.quitToMenu()  game.setDifficulty(idOrConfig)
+game.applySettings(s)  game.persistSettings()  game.queueKey(code)  game.tick(dt)  game.render(alpha)
 ```
 
 ### input
@@ -185,7 +215,7 @@ clearHeld(state)                        clearPressed(state)                  // 
 ```
 `src/input/keymap.js` — `RPG.input.keymap` (pure)
 ```js
-ACTIONS: moveUp moveDown moveLeft moveRight attack skill1..skill7 dash toggleInventory toggleCharacter toggleSkills
+ACTIONS: moveUp moveDown moveLeft moveRight attack skill1..skill7 dash switchWeapon switchWeaponPrev interact toggleInventory toggleCharacter toggleSkills
          toggleSettings pause saveMenu quickSave quickLoad debug
 defaultBindings() -> {action: code[]}    copyBindings(b)    withBinding(b, action, code) -> new bindings   isAction(name)
 // Codes are KeyboardEvent.code values, or 'Mouse0'..'Mouse2'. Defaults are in §9.
@@ -200,6 +230,8 @@ SKILL_SLOTS = ['skill1'..'skill7']          TOGGLES = { inventory, character, sk
  *   attack: bool          level-triggered (held)
  *   skills: bool[7]       edge-triggered; index 0 = slot 1 … index 6 = E
  *   dash: bool            edge-triggered
+ *   switchWeapon: -1|0|1  previous / none / next (key presses plus wheel notches, clamped per frame)
+ *   interact: bool        edge-triggered
  *   toggles: { inventory, character, skills, settings, pause, saveMenu, debug, quickSave, quickLoad }   edge-triggered
  */
 ```
@@ -209,22 +241,21 @@ attach(windowTarget, canvas?)  detach()
 buildFrame(camera, viewW, viewH) -> InputFrame    // samples intent, then clears edges
 getBindings() -> {action: code[]}   setBinding(action, code)   resetBindings()
 ```
-Still planned: `switchWeapon` and `interact` actions and their frame fields, touch input (`input/touch.js`), and
-persisting bindings in `settings`.
-Shipped note: `sim/player.js` reads `move` and `aim` only. `attack`, `skills`, `dash` and `toggles` are produced
-but not yet acted on.
+`switchWeapon` (`Tab`, `Shift+Tab` and mouse wheel) and `interact` (`F`) are shipped. Touch input (`input/touch.js`) is not.
+`sim/player.js` reads `move`, `aim`, `attack`, `skills`, `dash`, `switchWeapon` and `interact`; `core/game.js` consumes `toggles`.
 
 ### data (see DATA-DEFINITIONS.md for fields)
 ```js
-RPG.data.difficulties, .weapons, .skills, .monsters, .items, .areas, .stats, .keymap   // id -> definition (frozen)
-RPG.data.get(kind: 'weapon'|'skill'|'monster'|'item'|'difficulty'|'area', id) -> def | throws Error(`unknown ${kind} ${id}`)
-RPG.data.validate() -> string[]    // cross-reference + range checks; tests assert it returns []
+RPG.data.difficulties, .weapons, .skills, .monsters, .items, .areas, .maps   // id -> definition (frozen)
+// Shipped extras: .difficultyMultiplierFields, .itemSlots, .rarities, .modifierPool. There is no RPG.data.get / .validate (INTEGRATION-PLAN M3);
+// per-file checks are exercised by tests/data/. Stats live in world/stats.js and the keymap in input/keymap.js.
 ```
 
 ### world
-Shipped: `world/stats.js` (`RPG.world.StatBlock`, `RPG.world.stats`), `world/tilemap.js`, `world/collision.js`.
-`sim/sim.js` builds the world directly: `RPG.sim.createWorld({seed, mapId})` returns a `core/state.js` world with
-`area`, `player` and the `progress` block. The `createWorld` and entity factory signatures below are planned.
+All modules below exist. The world is built by `RPG.sim.createWorld` (§3.1), not by `RPG.world.createWorld`. The signatures in
+this section are the original design; **the header comment of each `src/world/*.js` file is authoritative** where they differ
+(`stats` is a `StatBlock` class, `combat` has `resolveHit/applyHit`, `difficulty.scaleMonster` takes `(def, level, diff, areaLevel)`,
+`encounters` and `areas.enter` take extra options, and `weapons` implements only `swing`, `projectile`, `spread` and `aoeGround`).
 
 `src/world/stats.js` — `RPG.world.stats`
 ```js
@@ -356,19 +387,12 @@ enter(world, areaId, fromAreaId?) -> void   // generate map (seed = hash(world.s
 checkExits(world) -> void                   // portal collision -> enter(); gated by progress flags
 markBossDefeated(world, bossId)  isUnlocked(world, areaId) -> bool
 ```
-`src/world/sim.js` — `RPG.world.sim`
-```js
-step(world, input: InputFrame, dt) -> void
-// FIXED ORDER: time += dt
-//  1 movePlayer(input)           2 weapons.tryAttack / updateAttack    3 skills.tryCastSkill / updateSkills
-//  4 ai.updateMonster* + boss    5 projectiles advance + collide       6 effects (aoe/zone/telegraph) tick
-//  7 combat.tickStatuses         8 spatial rebuild (before 5)          9 pickups / interact / areas.checkExits
-// 10 progression/cleanup (swap-remove dead, release pooled)  11 camera targets (render-side reads only)
-```
+`src/world/sim.js` does not exist; the step function is `RPG.sim.step` (§3.1).
 
 ### persistence
-Shipped: the save body is passed in and out directly. Building it from a World, and the `settings` block, are the
-caller's job (not yet written). All functions below are on `RPG.persistence`.
+All functions below are on `RPG.persistence`. `snapshot(world, {settings, name})` builds the save body from a world and
+`restore(doc)` rebuilds a world from a body, a document or JSON text (`persistence/snapshot.js`; never mutates its input or a live world,
+returns `{ok, world, game, warnings}`). `core/game.js` calls both.
 
 `src/persistence/save.js`
 ```js
@@ -381,7 +405,7 @@ FORMAT = 'offline-rpg-save'
 `src/persistence/migrate.js`
 ```js
 migrate(raw: object) -> object            // runs MIGRATIONS[v] -> v+1 until SAVE_VERSION; fails on unknown or newer version
-MIGRATIONS = { /* fromVersion: (save)=>save */ }     SAVE_VERSION = 1
+MIGRATIONS = { 0: (save)=>save /* fromVersion: step to fromVersion+1 */ }     SAVE_VERSION = 1
 ```
 `src/persistence/storage.js` — slot storage over `localStorage`, with in-memory fallback
 ```js
@@ -395,13 +419,13 @@ deleteSave(slot, opts?)      -> {ok:true} | {ok:false, code:'storage', error}
 Slots: `'auto'`, `'1'`, `'2'`, `'3'`. Key prefix: `offline-rpg:v1:`. An unreadable slot is moved to `:corrupt`; a newer-version
 save is left alone.
 
-`src/persistence/exportimport.js` — string functions only (Blob download and file picker are planned in the UI layer)
+`src/persistence/exportimport.js` — string functions only (Blob download and file picker are in `persistence/files.js`: `downloadText`, `downloadSave`, `readSaveFile`, `pickSaveText`)
 ```js
 exportJson(state, opts?) -> string          // pretty JSON (indent 2)
 importJson(text) -> deserialize result      // validates and migrates only; the caller writes it with saveGame
 exportFileName(state) -> string             // e.g. game-save-7-2026-10-16.json
 ```
-Planned: `exportSave(slot)` (Blob + `<a download>`), `importSaveFile(file)` (FileReader), clipboard fallback.
+The UI side is `ui/saveload.js`; there is no clipboard fallback.
 
 ### audio
 `src/audio/audio.js` — `RPG.audio`
@@ -410,6 +434,14 @@ init() -> void                 // lazily on first user gesture (autoplay policy)
 play(name: 'attack'|'hit'|'kill'|'skill'|'levelup'|'pickup'|'bossWarn'|'ui'|'hurt', opts?{pitch, vol})
 setVolume(master, sfx)  mute(bool)
 ```
+`src/audio/bridge.js` — `RPG.audio.bridge.attach(events, audio) -> detach`: a table of event -> sound rows. `core/game.js` `create` calls
+`attachAudioBridge()` once, after the `PLAYER_DIED` listener. The attach is guarded: it is skipped when `audio` or `RPG.audio.bridge` is
+missing or `audio` lacks `play`/`status`, and a throwing `attach` is caught and recorded in `game.lastWarnings` (`audio bridge: ...`).
+The returned `detach` is pushed onto the same `offs` list as the game's other listeners, so `game.destroy()` detaches it. The bridge
+subscribes to the event bus, not to a world, so it survives `newGame` and `loadFromSlot` and is never attached twice. No sound plays until
+the first key or pointer press creates the `AudioContext`; with no context it is a no-op. Known limits: only gameplay events
+(including `UI_SOUND` from the sim, e.g. inventory-full) reach the bridge; menu, inventory and pause screen actions emit nothing and are silent;
+the `bossWarn` row was checked with a synthetic `BOSS_WARN` emit only.
 
 ### render
 `src/render/renderer.js` — `RPG.render`
@@ -429,12 +461,14 @@ glow(ctx, x, y, r, color, alpha)  arcSweep(ctx, x, y, r0, r1, a0, a1)  ring(ctx,
 ```
 `src/render/draw-entities.js`
 ```js
-drawPlayer(ctx, p, alpha)  drawMonster(ctx, m, alpha)  drawProjectile(ctx, pr)  drawDrop(ctx, d, t)  drawProp(ctx, prop)
+drawPlayer(ctx, p, x, y, pal)  drawMonster(ctx, m, alpha, pal)  drawDying(ctx, ghost, alpha, pal)  drawProjectile(ctx, pr, alpha, pal)  drawDrop(ctx, d, t, pal)
+// drawPlayer includes the melee swing arc (drawSwing); drawDying plays a world.fx.deaths ghost (white flash, shrink, fade over 0.4 s)
 // monster drawing dispatches on def.shape: 'blob'|'dart'|'archer'|'brute'|'bomb'|'caster'|'boss-colossus'
 ```
 `src/render/draw-effects.js`
 ```js
-drawEffects(ctx, world, alpha)   // telegraphs (always on top of floor, below entities), aoe rings, particles, damage numbers
+drawEffects(ctx, world, alpha, pal, layer)   // layer "below": telegraphs, ember zones, ground effects; "above": rings, novas, particles
+drawDamageNumbers(ctx, list)  drawHurtFlash(ctx, w, h, t, colour)  stepWorldFx(world, ctx)   // sim-side: particles, death ghosts, damage numbers; called from sim/sim.js
 ```
 `src/render/hud.js`
 ```js
@@ -504,7 +538,7 @@ rejection, headless 60 s sim with scripted input (no exceptions, monsters die, X
 ## 9. Key bindings
 
 S is both "move down" (WASD) and the prompt's "Skills" screen. Resolution: **WASD keeps movement; the Skills screen is `K`.**
-(`S` is not bound to any UI action.) Full map, all rebindable in Settings (stored in `settings.keys`, defaults in `data/keymap.js`):
+(`S` is not bound to any UI action.) Full map, all rebindable in Settings (stored as non-default `keys` in the settings key, defaults in `input/keymap.js`):
 
 | Action | Default | Notes |
 |---|---|---|
@@ -523,7 +557,7 @@ S is both "move down" (WASD) and the prompt's "Skills" screen. Resolution: **WAS
 | Save / Load menu | `M` (menu) · `F5` quick save · `F9` quick load | |
 | Pause | `Esc` (also `P`) | closes top overlay first |
 | Toggle debug (fps, seed) | `F3` | |
-| Touch (Android) | v1: virtual stick + buttons rendered by `input/touch.js` — OPTIONAL stretch, desktop is the primary target | (planned) |
+| Touch (Android) | v1: virtual stick + buttons rendered by `input/touch.js` — OPTIONAL stretch, desktop is the primary target | not implemented |
 
 Shipped defaults match this table except: `Tab`/`Shift+Tab`/`R` weapon switching, `F` interact and `Esc`-closes-overlay
 behaviour are not bound yet (no `switchWeapon`/`interact` action in `input/keymap.js`). Actions that exist in the keymap

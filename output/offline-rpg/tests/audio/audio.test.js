@@ -50,9 +50,9 @@ test('a context that was never requested reports neither available nor failed', 
   assert.equal(status.failed, false);
 });
 
-test('exposes exactly the nine named sounds', () => {
+test('does not export a sound-name list (derive names from the play() contract instead)', () => {
   const audio = loadAudio({});
-  assert.deepEqual([...audio.SOUND_NAMES].sort(), [...SOUND_NAMES].sort());
+  assert.equal(audio.SOUND_NAMES, undefined);
 });
 
 test('each named sound is generated from oscillators or noise bursts, and every source is stopped', () => {

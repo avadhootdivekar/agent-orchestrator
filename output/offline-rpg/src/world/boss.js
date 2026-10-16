@@ -13,6 +13,7 @@
 
   var EMBER_TICK_EVERY = 1;       // seconds between burning-ground ticks
   var EMBER_TICK_MULT = 0.25;     // each tick deals this fraction of the boss's base damage
+  var MIN_DAMAGE_TAKEN_MULT = 0.1; // floor for a phase's authored damageTakenMult (0 = explicit immunity is kept)
   var VULNERABLE_MULT = 1.5;      // damage multiplier on the boss while the vulnerable window is open
   var ENRAGE_DAMAGE_MULT = 1.25;  // outgoing damage after the 'enrage' phase special
   var ADD_RING = 70;              // summoned adds appear this far from the boss, spread evenly
@@ -136,7 +137,7 @@
       if (a.type === 'telegraph') {
         world.effects.push({
           kind: 'warning', owner: boss, attackId: a.attackId, shape: a.shape, x: a.x, y: a.y,
-          dirX: a.dirX, dirY: a.dirY, radius: a.radius, range: a.range, remaining: a.duration, armed: false,
+          dirX: a.dirX, dirY: a.dirY, radius: a.radius, range: a.range, remaining: a.duration, duration: a.duration, armed: false,
         });
       } else if (a.type === 'attack') doAttack(world, boss, a);
       else if (a.type === 'summon') doSummon(world, boss, a);
@@ -149,11 +150,17 @@
     return function () { var i = hooks.indexOf(fn); if (i >= 0) hooks.splice(i, 1); };
   }
 
-  /** Multiplier to apply to damage the boss takes right now. */
-  function damageTakenMult(boss) { return boss.fight && boss.fight.vulnerableT > 0 ? VULNERABLE_MULT : 1; }
+  /** Multiplier to apply to damage the boss takes right now: the current phase's optional `damageTakenMult` (a shield
+   *  or invulnerability phase, 0 = immune) times the vulnerable window's bonus. */
+  function damageTakenMult(boss) {
+    var def = defOf(boss), phases = def && def.phases, ph = phases && phases[boss.ai ? boss.ai.phase : 0];
+    var mult = ph && typeof ph.damageTakenMult === 'number' ? ph.damageTakenMult : 1;
+    if (mult > 0 && mult < MIN_DAMAGE_TAKEN_MULT) mult = MIN_DAMAGE_TAKEN_MULT; // 0 stays a deliberate immunity window
+    return boss.fight && boss.fight.vulnerableT > 0 ? mult * VULNERABLE_MULT : mult;
+  }
 
   RPG.world.boss = {
     update: update, onPhaseChange: onPhaseChange, damageTakenMult: damageTakenMult, inShape: inShape,
-    EMBER_TICK_EVERY: EMBER_TICK_EVERY, VULNERABLE_MULT: VULNERABLE_MULT,
+    MIN_DAMAGE_TAKEN_MULT: MIN_DAMAGE_TAKEN_MULT, EMBER_TICK_EVERY: EMBER_TICK_EVERY, VULNERABLE_MULT: VULNERABLE_MULT,
   };
 })(globalThis.RPG = globalThis.RPG || {});

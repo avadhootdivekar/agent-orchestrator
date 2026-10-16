@@ -195,3 +195,80 @@ test('the screen definition moves its cursor and runs equip/unequip/drop from ke
   assert.equal(p.inventory[0], null);
   assert.equal(p.inventory[1].baseId, 'leather-vest');
 });
+
+// ---- layout regressions (w12-01): equipment slots visible, nothing overlapping the HUD or itself ----
+
+const rectsOverlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+test('inventory panel shows every equipment slot, inside the panel, clear of the bag grid, at 640x480 and 1280x720', () => {
+  for (const [vw, vh] of [[640, 480], [1280, 720]]) {
+    const p = newPlayer();
+    const y0 = inv.HUD_INSET;
+    const panel = inv.panelRect(p, 0, y0);
+    assert.ok(panel.y + panel.h <= vh, `panel bottom ${panel.y + panel.h} fits ${vw}x${vh}`);
+    assert.ok(panel.x + panel.w <= vw);
+    const bagRows = Math.ceil(p.inventory.length / inv.GRID_COLS);
+    const bagBottom = inv.slotRect((bagRows - 1) * inv.GRID_COLS, 0, y0 + 24).y + inv.SLOT_SIZE;
+    const seen = [];
+    for (const slot of RPG.data.itemSlots) {
+      const r = inv.equipSlotRect(p, slot, 0, y0);
+      assert.ok(r.y >= bagBottom, `${slot} below the bag grid`);
+      assert.ok(r.x >= panel.x && r.x + r.w <= panel.x + panel.w && r.y + r.h <= panel.y + panel.h, `${slot} inside the panel`);
+      seen.forEach((o) => assert.equal(rectsOverlap(r, o), false, `${slot} overlaps another equipment slot`));
+      seen.push(r);
+    }
+  }
+});
+
+test('panel starts below the HUD bars so the HP/resource/XP lines stay visible', () => {
+  const p = newPlayer();
+  const calls = [];
+  const ctx = new Proxy({}, { get: (_t, k) => (k === 'fillRect' ? (...a) => calls.push(a) : () => {}), set: () => true });
+  inv.createScreen(p, { x: 0, y: 0 }).draw(ctx);
+  assert.ok(calls.length > 0);
+  assert.ok(Math.min(...calls.map((c) => c[1])) >= 74, 'no fill above the bottom of the XP bar (y 74)');
+});
+
+test('after equipping loot the item is drawn in its equipment slot, and clicking the slot unequips it', () => {
+  const p = newPlayer();
+  inv.pickup(p, item('leather-vest'));
+  const screen = inv.createScreen(p, { x: 0, y: 0 });
+  screen.onKey('equip');
+  const texts = [];
+  const ctx = new Proxy({}, { get: (_t, k) => (k === 'fillText' ? (s, x, y) => texts.push({ s: String(s), x, y }) : () => {}), set: () => true });
+  screen.draw(ctx);
+  const r = inv.equipSlotRect(p, 'chest', 0, inv.HUD_INSET);
+  const drawn = texts.find((t) => t.s === 'leather-' && t.x >= r.x && t.x < r.x + r.w && t.y >= r.y && t.y < r.y + r.h);
+  assert.ok(drawn, 'equipped item name drawn inside the chest slot');
+  assert.ok(texts.some((t) => t.s === 'Equipment'));
+  assert.equal(screen.onPointer(r.x + 5, r.y + 5), true);
+  assert.equal(p.equipment.chest, undefined);
+  assert.equal(p.inventory[0].baseId, 'leather-vest');
+});
+
+test('item names wrap onto up to three short lines that fit a cell, ending in an ellipsis when too long', () => {
+  assert.deepEqual(plain(inv.nameLines('Sword')), ['Sword']);
+  assert.deepEqual(plain(inv.nameLines('Iron Sword')), ['Iron', 'Sword']);
+  assert.deepEqual(plain(inv.nameLines('Leather Vest of Might')), ['Leather', 'Vest of', 'Might']);
+  const long = inv.nameLines('Extraordinarily Long Unbroken Name Here');
+  assert.equal(long.length, inv.NAME_LINES);
+  assert.ok(long.every((l) => l.length <= inv.NAME_CHARS));
+  assert.ok(long[long.length - 1].endsWith('…'));
+});
+
+test('bag and equipment cells draw the readable item name, not a 6/8-character cut', () => {
+  const p = newPlayer();
+  const vest = item('leather-vest');
+  vest.name = 'Gilded Leather Vest';
+  inv.pickup(p, vest);
+  inv.equipFromSlot(p, 0);
+  const second = item('leather-vest');
+  second.name = 'Gilded Leather Vest';
+  inv.pickup(p, second);
+  const texts = [];
+  const ctx = new Proxy({}, { get: (_t, k) => (k === 'fillText' ? (s) => texts.push(String(s)) : () => {}), set: () => true });
+  inv.createScreen(p, { x: 0, y: 0 }).draw(ctx);
+  assert.equal(texts.filter((t) => t === 'Gilded').length, 2, 'bag cell and equipment cell both show the first name line');
+  assert.equal(texts.filter((t) => t === 'Leather').length, 2);
+  assert.ok(!texts.includes('Gilded '), 'no truncated slice');
+});

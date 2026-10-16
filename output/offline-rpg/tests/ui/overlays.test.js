@@ -191,3 +191,18 @@ test('a missing screen manager still queues toasts and opens nothing', () => {
   overlays.toast('still works');
   assert.equal(overlays.list()[0].text, 'still works');
 });
+
+test('HUD button rectangles sit inside the view, do not overlap, and hit-test to their ids', () => {
+  const { overlays } = fresh();
+  const size = { w: 800, h: 600 };
+  const rects = plain(overlays.buttonRects(size));
+  assert.deepEqual(rects.map((r) => r.id), ['inventory', 'skills', 'character', 'pause']);
+  rects.forEach((r, i) => {
+    assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.w <= 800 && r.y + r.h <= 600);
+    if (i) assert.ok(r.x >= rects[i - 1].x + rects[i - 1].w);
+    assert.equal(overlays.hitButton(r.x + 1, r.y + 1, size), r.id);
+    assert.equal(overlays.hitButton(r.x + r.w - 1, r.y + r.h - 1, size), r.id);
+    assert.equal(overlays.hitButton(r.x - 1, r.y + 1, size) === r.id, false);
+  });
+  assert.equal(overlays.hitButton(400, 300, size), null);
+});

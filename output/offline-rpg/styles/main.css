@@ -13,4 +13,5 @@ body {
   display: block;
   width: 100vw;
   height: 100vh;
+  touch-action: none; /* taps are menu presses; the page must not scroll or zoom under them */
 }
