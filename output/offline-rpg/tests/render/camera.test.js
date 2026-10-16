@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRPG } = require('./load.js');
+const { FULL_FILES, loadSim, intent, DT } = require('../sim/load.js');
 
 // camera.js is pure math and attaches to RPG.render; it needs no other module.
 const RPG = loadRPG(['render/camera.js']);
@@ -158,4 +159,71 @@ test('shakeOffset stays within the amplitude and is reproducible from the same R
     assert.equal(oa.x, ob.x);
     assert.equal(oa.y, ob.y);
   }
+});
+
+test('clampToMap pins the viewport to the right and top edges', () => {
+  const c = cam.create();
+  c.zoom = 1.5;
+  const viewW = 800, viewH = 600; // half-extents in world px at zoom 1.5: 266.67 x 200
+  cam.snap(c, 9000, -500);
+  cam.clampToMap(c, 2000, 1500, viewW, viewH);
+  near(c.x, 2000 - 800 / 3, 'x pinned to the right edge');
+  near(c.y, 600 / 3, 'y pinned to the top edge');
+});
+
+test('clampToMap centres a map that is only short on one axis, and still clamps the other', () => {
+  const c = cam.create();
+  c.zoom = 1;
+  cam.snap(c, 1900, -900);
+  cam.clampToMap(c, 2000, 300, 800, 600); // width 2000 > 800 clamps; height 300 < 600 centres
+  near(c.x, 2000 - 400, 'x clamped to the right edge');
+  near(c.y, 150, 'y centred on the short axis');
+});
+
+test('shakeOffset at the 8 px cap never exceeds the cap on either axis', () => {
+  const RPG2 = loadRPG(['core/namespace.js', 'core/rng.js', 'render/camera.js']);
+  const c = cam.create();
+  cam.setShake(c, 8);
+  const rng = RPG2.core.Rng.create(7);
+  let maxAbs = 0;
+  for (let i = 0; i < 500; i++) {
+    const o = cam.shakeOffset(c, rng);
+    maxAbs = Math.max(maxAbs, Math.abs(o.x), Math.abs(o.y));
+  }
+  assert.ok(maxAbs <= 8, `max offset ${maxAbs} exceeds the cap`);
+  assert.ok(maxAbs > 4, `offsets never reached the upper half of the cap (max ${maxAbs}); range may be broken`);
+});
+
+test('repeated hits raise world.fx.shake to the cap of 8 and never past it', () => {
+  // combat-step.js owns the cap (SHAKE_CAP); the camera only reads world.fx.shake.
+  const RPG = loadSim([...FULL_FILES, 'sim/combat-step.js', 'render/camera.js']);
+  const w = RPG.sim.createWorld({ seed: 3 });
+  w.player.hp = 1e6;
+  w.player.maxHp = 1e6;
+  for (let i = 0; i < 20; i++) {
+    delete w.player.status.iframe; // hits inside the 0.4 s invulnerability window are blocked, so clear it per hit
+    RPG.sim.hurtPlayer(w, 30, { type: 'phys' });
+    assert.ok(w.fx.shake <= 8, `fx.shake ${w.fx.shake} passed the cap after hit ${i + 1}`);
+  }
+  near(w.fx.shake, 8, 'shake saturates at the cap');
+});
+
+test('fx.shake decays by 0.9 per sim tick, so a capped shake is ~0 after 60 ticks and the offset follows it', () => {
+  // The decay lives in sim.js's end stage (`world.fx.shake *= 0.9`), not in the camera.
+  const RPG = loadSim();
+  const w = RPG.sim.createWorld({ seed: 3 });
+  w.fx.shake = 8;
+  let prev = w.fx.shake;
+  for (let tick = 1; tick <= 60; tick++) {
+    RPG.sim.step(w, intent(0, 0), DT);
+    assert.ok(w.fx.shake < prev, `shake did not decrease on tick ${tick}`);
+    prev = w.fx.shake;
+  }
+  near(w.fx.shake, 8 * Math.pow(0.9, 60), 'shake after 60 ticks');
+  assert.ok(w.fx.shake < 0.02, `shake ${w.fx.shake} is not ~0 after 60 ticks`);
+
+  const c = cam.create();
+  cam.setShake(c, w.fx.shake);
+  const off = cam.shakeOffset(c, w.fx.rng);
+  assert.ok(Math.abs(off.x) <= w.fx.shake && Math.abs(off.y) <= w.fx.shake, 'offset bounded by the decayed shake');
 });
