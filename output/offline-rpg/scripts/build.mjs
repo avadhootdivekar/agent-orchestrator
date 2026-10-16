@@ -1,7 +1,8 @@
 // Single-file build: inlines styles/*.css and src/**/*.js into one classic-script dist/index.html.
 //
 // Usage: node scripts/build.mjs            write dist/index.html, then run the offline guard on it
-//        node scripts/build.mjs --verify   build twice in memory and fail unless the output is byte-identical
+//        node scripts/build.mjs --verify   fail on JS_ORDER problems, then build twice in memory and fail unless
+//                                          the output is byte-identical
 //
 // Deterministic: inputs are read in sorted/ordered sequence and the output carries no timestamps.
 // Zero dependencies; node >= 18.
@@ -22,34 +23,40 @@ const OFFLINE_GUARD = join(ROOT, 'scripts', 'check-offline.mjs');
 const CSS_MARKER = '<!--@CSS-->';
 const JS_MARKER = '<!--@JS-->';
 
-// JS load order, mirroring the load order in docs/ARCHITECTURE.md §2. Every module is an IIFE that
+// JS load order, the resulting order from docs/INTEGRATION-PLAN.md §5. Every module is an IIFE that
 // attaches to window.RPG, so this order only has to satisfy load-time dependencies. Listed files
-// that do not exist yet are skipped. Files on disk that are not listed are appended after the
-// ordered ones, in sorted order, with a warning on stderr.
-const JS_ORDER = [
+// that do not exist yet are skipped by a normal build. Files on disk that are not listed are appended
+// after the ordered ones, in sorted order, with a warning on stderr; `--verify` treats them as errors.
+export const JS_ORDER = [
   'src/core/namespace.js', 'src/core/util.js', 'src/core/rng.js', 'src/core/events.js', 'src/core/pool.js',
   'src/core/entities.js', 'src/core/state.js',
-  'src/data/maps/test-map.js',
-  'src/data/difficulties.js', 'src/data/weapons.js', 'src/data/skills.js', 'src/data/monsters.js',
-  'src/data/items.js', 'src/data/areas.js', 'src/data/stats.js', 'src/data/keymap.js',
+  'src/data/maps/test-map.js', 'src/data/difficulties.js', 'src/data/weapons.js', 'src/data/skills.js',
+  'src/data/monsters.js', 'src/data/items.js', 'src/data/areas.js',
   'src/world/stats.js', 'src/world/tilemap.js', 'src/world/collision.js', 'src/world/spatial.js',
   'src/world/mapgen.js', 'src/world/world.js', 'src/world/combat.js', 'src/world/weapons.js',
   'src/world/skills.js', 'src/world/skill-effects.js', 'src/world/ai.js', 'src/world/boss.js', 'src/world/loot.js',
-  'src/world/equipment.js', 'src/world/progression.js', 'src/world/difficulty.js',
-  'src/world/encounters.js', 'src/world/areas.js', 'src/world/sim.js',
-  'src/sim/player.js', 'src/sim/sim.js',
+  'src/world/equipment.js', 'src/world/progression.js', 'src/world/difficulty.js', 'src/world/encounters.js',
+  'src/world/areas.js',
+  'src/sim/player.js', 'src/sim/combat-step.js', 'src/sim/monsters.js', 'src/sim/rewards.js', 'src/sim/sim.js',
   'src/persistence/save.js', 'src/persistence/migrate.js', 'src/persistence/storage.js',
-  'src/persistence/exportimport.js', 'src/persistence/snapshot.js',
-  'src/input/keyboard.js', 'src/input/mouse.js', 'src/input/keymap.js', 'src/input/raw.js',
-  'src/input/intent.js', 'src/input/input.js',
-  'src/audio/audio.js',
-  'src/render/palette.js', 'src/render/camera.js', 'src/render/draw-shapes.js',
-  'src/render/draw-entities.js', 'src/render/draw-map.js', 'src/render/draw-effects.js',
-  'src/render/hud.js', 'src/render/renderer.js',
+  'src/persistence/exportimport.js', 'src/persistence/snapshot.js', 'src/persistence/files.js',
+  'src/input/raw.js', 'src/input/keymap.js', 'src/input/intent.js', 'src/input/input.js',
+  'src/audio/audio.js', 'src/audio/bridge.js',
+  'src/render/palette.js', 'src/render/camera.js', 'src/render/draw-shapes.js', 'src/render/draw-entities.js',
+  'src/render/draw-map.js', 'src/render/draw-effects.js', 'src/render/hud.js', 'src/render/renderer.js',
   'src/ui/screens.js', 'src/ui/inventory.js', 'src/ui/character.js', 'src/ui/skills-screen.js',
-  'src/ui/settings.js', 'src/ui/saveload.js', 'src/ui/pause.js', 'src/ui/mainmenu.js',
+  'src/ui/settings.js', 'src/ui/saveload.js', 'src/ui/pause.js', 'src/ui/mainmenu.js', 'src/ui/hud-overlays.js',
   'src/core/loop.js', 'src/core/game.js',
   'src/main.js',
+];
+
+// Wave-4 files that units create later. `--verify` accepts these as missing; any other listed file
+// that is missing is an error. W4-15 empties this list when it flips the strict check on.
+export const PENDING_JS = [
+  'src/sim/combat-step.js', 'src/sim/monsters.js', 'src/sim/rewards.js', 'src/world/areas.js',
+  'src/persistence/files.js', 'src/audio/bridge.js', 'src/render/draw-entities.js', 'src/render/draw-effects.js',
+  'src/ui/character.js', 'src/ui/skills-screen.js', 'src/ui/settings.js', 'src/ui/saveload.js',
+  'src/ui/pause.js', 'src/ui/mainmenu.js', 'src/ui/hud-overlays.js', 'src/core/game.js',
 ];
 
 // Recursively lists files with the given extension as project-relative POSIX paths, sorted by name.
@@ -66,6 +73,26 @@ function listFiles(dir, extension) {
   };
   if (existsSync(dir)) walk(dir);
   return found;
+}
+
+// Compares the src/ files on disk with the load order. Reports duplicate entries, files on disk that are
+// not listed, and listed files that are missing and not pending. A missing pending file is not a problem.
+export function findJsOrderProblems(onDisk, order = JS_ORDER, pending = PENDING_JS) {
+  const duplicates = [...new Set(order.filter((file, index) => order.indexOf(file) !== index))];
+  const unlisted = onDisk.filter((file) => !order.includes(file));
+  const missing = order.filter((file) => !onDisk.includes(file) && !pending.includes(file));
+  return { duplicates, unlisted, missing };
+}
+
+function verifyJsOrder() {
+  const { duplicates, unlisted, missing } = findJsOrderProblems(listFiles(SRC_DIR, '.js'));
+  const problems = [
+    duplicates.length > 0 && `listed twice in JS_ORDER: ${duplicates.join(', ')}`,
+    unlisted.length > 0 && `in src/ but not in JS_ORDER: ${unlisted.join(', ')}`,
+    missing.length > 0 && `in JS_ORDER but missing and not in PENDING_JS: ${missing.join(', ')}`,
+  ].filter(Boolean);
+  if (problems.length > 0) throw new Error(`JS_ORDER: ${problems.join('; ')}`);
+  console.log(`verify: JS_ORDER ok (${JS_ORDER.length} listed, ${PENDING_JS.length} pending)`);
 }
 
 function orderedJsFiles() {
@@ -113,6 +140,7 @@ function main() {
   const mode = process.argv[2];
 
   if (mode === '--verify') {
+    verifyJsOrder();
     const first = buildHtml();
     const second = buildHtml();
     if (first !== second) throw new Error('build is not deterministic: two builds differ');
@@ -131,9 +159,12 @@ function main() {
   execFileSync(process.execPath, [OFFLINE_GUARD, OUT_FILE], { stdio: 'inherit' });
 }
 
-try {
-  main();
-} catch (err) {
-  console.error(`build failed: ${err.message}`);
-  process.exitCode = 1;
+// Runs only when executed as a script; the tests import JS_ORDER and findJsOrderProblems from this module.
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (err) {
+    console.error(`build failed: ${err.message}`);
+    process.exitCode = 1;
+  }
 }
