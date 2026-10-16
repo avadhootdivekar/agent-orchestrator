@@ -37,16 +37,20 @@ python3 -m http.server -d dist 8000     # then open http://127.0.0.1:8000/
 The planned `npm run preview` will serve the same files from `127.0.0.1:8777` and also a development page that loads
 each source file separately.
 
-## Build and test
+## Commands
 
-| Command | What it does | Status |
-|---|---|---|
-| `npm run build` | Runs `node scripts/build.mjs`: produces `dist/index.html`. | script not yet present |
-| `npm run preview` | Runs `node scripts/preview.mjs`: static server with no external requests. | script not yet present |
-| `npm test` | Runs `node scripts/build.mjs --verify`: the test entry point. | depends on `build.mjs` |
-| `npm run check-offline` | Runs `node scripts/check-offline.mjs dist/index.html`: fails on any remote URL, network API, module import or telemetry reference. | present |
+Run from `output/offline-rpg/`. There are no dependencies to install.
 
-The build is intended to be deterministic: the same sources produce byte-identical HTML.
+| Command | What it does |
+|---|---|
+| `npm run build` | Runs `node scripts/build.mjs`: writes `dist/index.html`, then runs the offline scan on it. |
+| `npm run preview` | Runs `node scripts/preview.mjs`: static server with no external requests. |
+| `npm test` | Runs `node scripts/build.mjs --verify` (two in-memory builds must be byte-identical), then `npm run test:unit`. |
+| `npm run test:unit` | Runs `node --test` over `tests/**/*.test.js` and `tests/scripts/*.test.mjs`, without the build check. |
+| `npm run check-offline` | Runs `node scripts/check-offline.mjs dist/index.html`: fails on any remote URL, network API, module import or telemetry reference. |
+| `npm run check-all` | Runs `node scripts/run-all-checks.mjs`: the `build`, `test` and `check-offline` steps in order. Prints one `PASS`/`FAIL` line per step and exits 1 if any step failed. |
+
+`dist/` is git-ignored. The build is deterministic: the same sources produce byte-identical HTML.
 
 ## Offline behaviour
 

@@ -9,7 +9,9 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "preview": "node scripts/preview.mjs",
-    "test": "node scripts/build.mjs --verify",
-    "check-offline": "node scripts/check-offline.mjs dist/index.html"
+    "test": "node scripts/build.mjs --verify && npm run test:unit",
+    "test:unit": "node --test 'tests/**/*.test.js' 'tests/scripts/*.test.mjs'",
+    "check-offline": "node scripts/check-offline.mjs dist/index.html",
+    "check-all": "node scripts/run-all-checks.mjs"
   }
 }
