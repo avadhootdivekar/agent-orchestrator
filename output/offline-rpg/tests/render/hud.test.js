@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRPG, RENDER_FILES } = require('./load.js');
+const { recordingContext } = require('./fakectx.js');
 
 const RPG = loadRPG(RENDER_FILES);
 const { buildHudModel, draw } = RPG.render.hud;
@@ -14,20 +15,6 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
 const VIEW_W = 800;
 const VIEW_H = 600;
 const TWO_PI = Math.PI * 2;
-
-/** Records the calls the drawer makes, with the fill style that was active for each fillRect. */
-function recordingContext() {
-  const calls = [];
-  const ctx = {
-    fillStyle: null, strokeStyle: null, globalAlpha: 1, lineWidth: 1, font: '', textAlign: '', textBaseline: '',
-    fillRect(x, y, w, h) { calls.push({ op: 'fillRect', x, y, w, h, style: this.fillStyle }); },
-    strokeRect(x, y, w, h) { calls.push({ op: 'strokeRect', x, y, w, h }); },
-    fillText(text) { calls.push({ op: 'fillText', text: String(text) }); },
-    arc(cx, cy, r, a0, a1) { calls.push({ op: 'arc', a0, a1 }); },
-    beginPath() {}, moveTo() {}, closePath() {}, fill() {}, save() {}, restore() {}
-  };
-  return { ctx, calls };
-}
 
 /** A full player/world state in the shapes ARCHITECTURE §5 and DATA-DEFINITIONS §1 describe. */
 function fullState() {
