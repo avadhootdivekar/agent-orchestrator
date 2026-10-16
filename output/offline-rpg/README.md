@@ -4,10 +4,12 @@ A single-player, top-down 2D hack-and-slash action RPG that runs in a desktop br
 connection** after the files are obtained. Gameplay is drawn on a Canvas 2D surface; the game is plain JavaScript
 with no runtime dependencies.
 
-> **Status: in progress.** The design documents are in [`docs/`](docs/). `package.json` and parts of `src/`,
-> `scripts/` and `tests/` exist, but the build and preview scripts they reference are not all present yet, and there
-> is no playable `dist/index.html` yet. Commands below are the intended interface; a command is only usable once its
-> script file exists. Test status per scenario is tracked in [`docs/TEST-CHECKLIST.md`](docs/TEST-CHECKLIST.md).
+> **Status: in progress.** Shipped so far: the build (`npm run build` writes `dist/index.html`), the static preview
+> server, the offline guard, a Canvas 2D map with circle-vs-tile collision, and player movement with aiming. The
+> save/load and export/import code is written and tested, but no UI calls it yet. Data definitions for weapons,
+> skills, monsters, items and difficulties are shipped, but the simulation does not use them yet, and the menu
+> screens are not written. See [`docs/GAMEPLAY-SYSTEMS.md`](docs/GAMEPLAY-SYSTEMS.md) for what is wired and what is not.
+> Test status per scenario is tracked in [`docs/TEST-CHECKLIST.md`](docs/TEST-CHECKLIST.md).
 
 ## Requirements
 
@@ -34,8 +36,8 @@ Use this when saves must stay put across moves, or when the browser behaves diff
 python3 -m http.server -d dist 8000     # then open http://127.0.0.1:8000/
 ```
 
-The planned `npm run preview` will serve the same files from `127.0.0.1:8777` and also a development page that loads
-each source file separately.
+`npm run preview` serves `dist/` from `127.0.0.1:8777` (run `npm run build` first). It does not yet serve a development
+page that loads each source file separately.
 
 ## Commands
 
@@ -56,15 +58,16 @@ Run from `output/offline-rpg/`. There are no dependencies to install.
 
 - **No runtime network use.** No CDN, Google Fonts, remote images, audio, APIs, telemetry or authentication. Fonts
   are the system font stack; sprites, sounds and effects are drawn in code (Canvas 2D and Web Audio).
-- **Enforced by tooling.** The offline scan (`npm run check-offline`) rejects remote URLs, `fetch`/`XMLHttpRequest`/`WebSocket`, ES modules
-  and `eval`. The built page also carries a Content-Security-Policy with `connect-src 'none'`, so the browser blocks
-  any network request the scan might miss.
+- **Enforced by tooling.** The offline scan (`npm run check-offline`) rejects remote URLs, CDN and font hosts,
+  `fetch`/`XMLHttpRequest`/`WebSocket` and dynamic `import()`. The built page also carries a Content-Security-Policy
+  with `connect-src 'none'`, so the browser blocks any network request the scan might miss. ES module syntax and
+  `eval` are not checked by the scan yet (see [`docs/BUILD-OFFLINE.md`](docs/BUILD-OFFLINE.md) §4).
 - **Playable with the network removed.** The intended check is: load the game, disconnect the network, reload, and
   play through save, reload, export, delete and import. The checklist is in
   [`docs/TEST-CHECKLIST.md`](docs/TEST-CHECKLIST.md).
-- **`file://` statement: TO-BE-CONFIRMED-BY-VERIFY.** The design intends `dist/index.html` to run from `file://`
-  without a server. This is not yet confirmed by a test. The final verification pass must confirm or correct this
-  statement; until then, treat a local static server as the supported way to run the game.
+- **`file://` works for loading.** Headless Google Chrome 138 loads `dist/index.html` from `file://` with no page
+  exceptions, no console errors and no non-local requests (wave 1 verify, Chrome check over CDP). Only the page load
+  was checked, not gameplay or saves. Saves under `file://` are still browser-dependent, as described above.
 
 ## Saves
 
@@ -85,18 +88,19 @@ quick load `F9`, pause `Esc`. All keys can be rebound in Settings. The full map 
 ```
 output/offline-rpg/
   README.md               this file
-  docs/                   design and test documents (present now)
-    ARCHITECTURE.md       module boundaries, game loop, public API contract
+  docs/                   design and test documents
+    ARCHITECTURE.md       module boundaries, game loop, public API contract (shipped vs planned marked)
     DATA-DEFINITIONS.md   weapon, skill, monster, item and difficulty data definitions
+    GAMEPLAY-SYSTEMS.md   the five gameplay systems: what is shipped as data and what is wired
     SAVE-SCHEMA.md        save-state schema and migration rules
     BUILD-OFFLINE.md      build pipeline, file:// strategy and offline-scan rules
     TEST-CHECKLIST.md     8 offline test scenarios and 22 acceptance steps with status
   package.json            npm scripts only, no dependencies
-  scripts/                build, preview and offline-scan scripts (check-offline.mjs present)
-  src/                    game source (core/ and persistence/ present so far)
+  scripts/                build, preview, offline-scan and run-all-checks scripts
+  src/                    game source: core, data, input, sim, world, persistence, render, audio, main.js
   styles/                 stylesheet source
-  tests/                  test suites and offline-scan fixtures
-  dist/                   generated build output (git-ignored, not yet produced)
+  tests/                  unit suites per area, plus offline-scan fixtures
+  dist/                   generated by npm run build (git-ignored)
 ```
 
 Game state, input, simulation, rendering and persistence are kept in separate modules so a later multiplayer mode
