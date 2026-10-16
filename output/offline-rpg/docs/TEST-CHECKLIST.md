@@ -11,7 +11,8 @@ recorded manual walkthrough. Allowed statuses:
 - `fail` — tried and did not work (record the observed behaviour in Evidence).
 - `not applicable` — deliberately out of scope (state why in Evidence).
 
-No row is marked passed yet, because no implementation or test exists yet.
+Only the offline-scan, build and test-suite rows in section C have evidence so far (wave 2 verify, 2026-10-16). All
+gameplay and save rows stay `not tested`.
 
 ## A. Offline scenarios (prompt §24)
 
@@ -59,9 +60,9 @@ These are not in the prompt's numbered list but are required by the offline acce
 
 | # | Check | Command | Status | Evidence |
 |---|---|---|---|---|
-| C1 | Offline scan finds no remote URL, network API, module or telemetry reference | `npm run check-offline` | not tested | |
-| C2 | Build produces a single self-contained `dist/index.html` | `npm run build` | not tested | |
-| C3 | Test suite passes from a clean checkout | `npm test` | not tested | |
+| C1 | Offline scan finds no remote URL, network API, module or telemetry reference | `npm run check-offline` | automated pass | `npm run check-offline` exit 0 on `dist/index.html`. The scan's own unit tests pass (`tests/scripts/check-offline.test.mjs`, run with `node --test`). |
+| C2 | Build produces a single self-contained `dist/index.html` | `npm run build` | automated pass | `npm run build` exit 0, "built dist/index.html (172305 bytes)"; the build runs the offline guard on its own output. `npm test` also runs `build.mjs --verify` (two in-memory builds byte-identical). |
+| C3 | Test suite passes from a clean checkout | `npm test` | automated pass | Run on the working tree, **not a clean checkout** (uncommitted wave-2 changes present; a clean-checkout run is not done). `npm test` exit 0: `# tests 241`, `# pass 241`, `# fail 0`. This runs `build.mjs --verify` and then `node --test 'tests/**/*.test.js' 'tests/scripts/*.test.mjs'`. |
 
 ## Summary
 
@@ -69,4 +70,4 @@ These are not in the prompt's numbered list but are required by the offline acce
 |---|---|---|---|---|---|
 | Offline scenarios (S1–S8) | 8 | 8 | 0 | 0 | 0 |
 | Acceptance steps (1–22) | 22 | 22 | 0 | 0 | 0 |
-| Offline-scan and build (C1–C3) | 3 | 3 | 0 | 0 | 0 |
+| Offline-scan, build and tests (C1–C3) | 3 | 0 | 3 | 0 | 0 |
