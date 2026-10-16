@@ -42,16 +42,12 @@ function stubRenderer() {
 
 // STOPGAP, not engine behaviour (followups recorded in the w04-20 report):
 //  - INTEGRATION-PLAN §2.3 says createWorld gives a fresh player a sword in slot 0; sim/sim.js does not do it.
-//  - loot.generateItem sets baseId but not weaponId, and world/weapons.js defFromSlot resolves only weaponId/defId,
-//    so a generated weapon can never attack. The harness sets weaponId on the granted item to work around that.
 // Without a weapon the player never attacks, so the sword comes from a private RNG (the world's streams are untouched).
-// Remove both lines once the engine grants and resolves weapons itself.
+// Remove this once the engine grants the starting weapon itself.
 function grantStartingWeapon(RPG, world) {
   const p = world.player;
   if (p.weaponSlots[0]) return;
-  const sword = RPG.world.loot.generateItem(RPG.core.Rng.create(1), { baseId: 'sword', rarity: 'common', ilvl: 1 });
-  sword.weaponId = 'sword';
-  p.weaponSlots[0] = sword;
+  p.weaponSlots[0] = RPG.world.loot.generateItem(RPG.core.Rng.create(1), { baseId: 'sword', rarity: 'common', ilvl: 1 });
 }
 
 /**

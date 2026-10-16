@@ -101,6 +101,8 @@
       if (!rarity) throw new Error('loot: unknown rarity ' + rarityId);
       var mods = rollMods(rng, def, ilvl, rarity);
       item = { baseId: def.id, ilvl: ilvl, rarity: rarityId, mods: mods, name: buildName(rng, def, rarity) };
+      // Weapon bases carry their WeaponDefinition id (data/items.js), so world/weapons.js can attack with the item.
+      if (def.weaponId) item.weaponId = def.weaponId;
     }
     item.uid = opts.uid !== undefined ? opts.uid : (rng.getState() & 0x7fffffff);
     item.seedTag = seedTag;

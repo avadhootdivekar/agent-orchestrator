@@ -22,11 +22,14 @@
     return typeof v === 'number' ? v : 0;
   }
 
-  /** Resolves a weaponSlots entry (weapon id, { weaponId }, or an ItemInstance { defId }) to a WeaponDefinition. */
+  /**
+   * Resolves a weaponSlots entry (weapon id, { weaponId }, { defId }, or a looted ItemInstance { baseId, weaponId? })
+   * to a WeaponDefinition.
+   */
   function defFromSlot(slot) {
     if (!slot) return null;
     var defs = weaponDefs();
-    var id = typeof slot === 'string' ? slot : slot.weaponId || slot.defId;
+    var id = typeof slot === 'string' ? slot : slot.weaponId || slot.defId || slot.baseId;
     if (!id) return null;
     if (defs[id]) return defs[id];
     var item = RPG.data && RPG.data.items && RPG.data.items[id];
