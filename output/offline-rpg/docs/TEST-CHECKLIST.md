@@ -59,7 +59,7 @@ These are not in the prompt's numbered list but are required by the offline acce
 
 | # | Check | Command | Status | Evidence |
 |---|---|---|---|---|
-| C1 | Offline scan finds no remote URL, network API, module or telemetry reference | `npm run scan` | not tested | |
+| C1 | Offline scan finds no remote URL, network API, module or telemetry reference | `npm run check-offline` | not tested | |
 | C2 | Build produces a single self-contained `dist/index.html` | `npm run build` | not tested | |
 | C3 | Test suite passes from a clean checkout | `npm test` | not tested | |
 

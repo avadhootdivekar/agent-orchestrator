@@ -4,16 +4,16 @@ A single-player, top-down 2D hack-and-slash action RPG that runs in a desktop br
 connection** after the files are obtained. Gameplay is drawn on a Canvas 2D surface; the game is plain JavaScript
 with no runtime dependencies.
 
-> **Status: early scaffold.** This directory currently holds the design documents in [`docs/`](docs/). The source
-> tree, build script, preview server and tests are specified there but **not implemented yet**. Commands below are
-> the planned interface and are marked as such until they exist. Test status per scenario is tracked in
-> [`docs/TEST-CHECKLIST.md`](docs/TEST-CHECKLIST.md).
+> **Status: in progress.** The design documents are in [`docs/`](docs/). `package.json` and parts of `src/`,
+> `scripts/` and `tests/` exist, but the build and preview scripts they reference are not all present yet, and there
+> is no playable `dist/index.html` yet. Commands below are the intended interface; a command is only usable once its
+> script file exists. Test status per scenario is tracked in [`docs/TEST-CHECKLIST.md`](docs/TEST-CHECKLIST.md).
 
 ## Requirements
 
 - A modern desktop browser (Chromium- or Firefox-based; Safari is expected to work but is not a primary target).
-- Node.js `>= 18` **only** for the planned build, preview and test scripts. Playing the built game needs no Node.
-- No `npm install` step: the project is planned to have zero dependencies.
+- Node.js `>= 18` **only** for the build, preview and test scripts. Playing the built game needs no Node.
+- No `npm install` step: the project has zero dependencies.
 
 ## Running the game
 
@@ -37,23 +37,22 @@ python3 -m http.server -d dist 8000     # then open http://127.0.0.1:8000/
 The planned `npm run preview` will serve the same files from `127.0.0.1:8777` and also a development page that loads
 each source file separately.
 
-## Build and test (planned)
+## Build and test
 
-| Command | What it will do |
-|---|---|
-| `npm run build` | Runs `node build/build.js`: inlines `index.src.html` + sources into `dist/index.html` and writes `dist/BUILD-INFO.json`. |
-| `npm run preview` | Runs `node build/preview.js`: static server on `127.0.0.1:8777`, no external requests. |
-| `npm test` | Runs `node tests/run.js`: headless unit and simulation tests (no browser needed). |
-| `npm run scan` | Runs `node build/scan-offline.js dist/index.html` plus the `src/` tree: fails on any remote URL, network API, module import or telemetry reference. |
-| `npm run check` | Build, then test, then scan. |
+| Command | What it does | Status |
+|---|---|---|
+| `npm run build` | Runs `node scripts/build.mjs`: produces `dist/index.html`. | script not yet present |
+| `npm run preview` | Runs `node scripts/preview.mjs`: static server with no external requests. | script not yet present |
+| `npm test` | Runs `node scripts/build.mjs --verify`: the test entry point. | depends on `build.mjs` |
+| `npm run check-offline` | Runs `node scripts/check-offline.mjs dist/index.html`: fails on any remote URL, network API, module import or telemetry reference. | present |
 
-The build is deterministic: the same sources produce byte-identical HTML.
+The build is intended to be deterministic: the same sources produce byte-identical HTML.
 
 ## Offline behaviour
 
 - **No runtime network use.** No CDN, Google Fonts, remote images, audio, APIs, telemetry or authentication. Fonts
   are the system font stack; sprites, sounds and effects are drawn in code (Canvas 2D and Web Audio).
-- **Enforced by tooling.** The offline scan rejects remote URLs, `fetch`/`XMLHttpRequest`/`WebSocket`, ES modules
+- **Enforced by tooling.** The offline scan (`npm run check-offline`) rejects remote URLs, `fetch`/`XMLHttpRequest`/`WebSocket`, ES modules
   and `eval`. The built page also carries a Content-Security-Policy with `connect-src 'none'`, so the browser blocks
   any network request the scan might miss.
 - **Playable with the network removed.** The intended check is: load the game, disconnect the network, reload, and
@@ -88,12 +87,12 @@ output/offline-rpg/
     SAVE-SCHEMA.md        save-state schema and migration rules
     BUILD-OFFLINE.md      build pipeline, file:// strategy and offline-scan rules
     TEST-CHECKLIST.md     8 offline test scenarios and 22 acceptance steps with status
-  package.json            planned: scripts only, no dependencies
-  index.src.html          planned: HTML template with CSS and JS markers
-  build/                  planned: build, preview and offline-scan scripts
-  src/                    planned: data/, core/, input/, world/, combat/, persistence/, render/, audio/, ui/
-  tests/                  planned: headless test runner and suites
-  dist/                   generated build output (git-ignored)
+  package.json            npm scripts only, no dependencies
+  scripts/                build, preview and offline-scan scripts (check-offline.mjs present)
+  src/                    game source (core/ and persistence/ present so far)
+  styles/                 stylesheet source
+  tests/                  test suites and offline-scan fixtures
+  dist/                   generated build output (git-ignored, not yet produced)
 ```
 
 Game state, input, simulation, rendering and persistence are kept in separate modules so a later multiplayer mode
