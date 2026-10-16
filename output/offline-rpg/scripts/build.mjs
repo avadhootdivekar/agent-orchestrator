@@ -28,6 +28,8 @@ const JS_MARKER = '<!--@JS-->';
 // ordered ones, in sorted order, with a warning on stderr.
 const JS_ORDER = [
   'src/core/namespace.js', 'src/core/util.js', 'src/core/rng.js', 'src/core/events.js', 'src/core/pool.js',
+  'src/core/entities.js', 'src/core/state.js',
+  'src/data/maps/test-map.js',
   'src/data/difficulties.js', 'src/data/weapons.js', 'src/data/skills.js', 'src/data/monsters.js',
   'src/data/items.js', 'src/data/areas.js', 'src/data/stats.js', 'src/data/keymap.js',
   'src/world/stats.js', 'src/world/tilemap.js', 'src/world/collision.js', 'src/world/spatial.js',
@@ -35,9 +37,11 @@ const JS_ORDER = [
   'src/world/skills.js', 'src/world/ai.js', 'src/world/boss.js', 'src/world/loot.js',
   'src/world/equipment.js', 'src/world/progression.js', 'src/world/difficulty.js',
   'src/world/encounters.js', 'src/world/areas.js', 'src/world/sim.js',
+  'src/sim/player.js', 'src/sim/sim.js',
   'src/persistence/save.js', 'src/persistence/migrate.js', 'src/persistence/storage.js',
   'src/persistence/exportimport.js',
-  'src/input/keyboard.js', 'src/input/mouse.js', 'src/input/input.js',
+  'src/input/keyboard.js', 'src/input/mouse.js', 'src/input/keymap.js', 'src/input/raw.js',
+  'src/input/intent.js', 'src/input/input.js',
   'src/audio/audio.js',
   'src/render/palette.js', 'src/render/camera.js', 'src/render/draw-shapes.js',
   'src/render/draw-entities.js', 'src/render/draw-map.js', 'src/render/draw-effects.js',
