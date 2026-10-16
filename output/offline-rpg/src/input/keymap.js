@@ -1,6 +1,7 @@
 /*
  * Input actions -> physical codes. Pure data and pure helpers, no DOM.
- * Codes are KeyboardEvent.code values, or 'Mouse0'..'Mouse2' for mouse buttons.
+ * Codes are KeyboardEvent.code values, 'Mouse0'..'Mouse2' for mouse buttons, or 'Shift+Tab' (Tab with Shift held,
+ * synthesized by input.js since Shift is not a code of its own).
  * Defaults follow ARCHITECTURE.md §9: S is move-down, so the Skills screen is K.
  */
 (function (RPG) {
@@ -12,6 +13,7 @@
     'attack',
     'skill1', 'skill2', 'skill3', 'skill4', 'skill5', 'skill6', 'skill7',
     'dash',
+    'switchWeapon', 'switchWeaponPrev', 'interact',
     'toggleInventory', 'toggleCharacter', 'toggleSkills', 'toggleSettings',
     'pause', 'saveMenu', 'quickSave', 'quickLoad', 'debug'
   ]);
@@ -30,6 +32,9 @@
     skill6: ['KeyQ'],
     skill7: ['KeyE'],
     dash: ['Space'],
+    switchWeapon: ['Tab'],
+    switchWeaponPrev: ['Shift+Tab'],
+    interact: ['KeyF'],
     toggleInventory: ['KeyI'],
     toggleCharacter: ['KeyC'],
     toggleSkills: ['KeyK'],

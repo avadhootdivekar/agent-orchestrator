@@ -70,12 +70,20 @@
       toggles[name] = anyPressed(raw, b[TOGGLES[name]]);
     });
 
+    // Next (+1) and previous (-1) presses plus wheel notches (down = next), clamped to one step per frame.
+    var weaponStep = (anyPressed(raw, b.switchWeapon) ? 1 : 0)
+      - (anyPressed(raw, b.switchWeaponPrev) ? 1 : 0)
+      + raw.wheelSteps;
+    weaponStep = Math.max(-1, Math.min(1, weaponStep));
+
     return {
       move: { x: dx, y: dy },
       aim: aim,
       attack: anyHeld(raw, b.attack),
       skills: skills,
       dash: anyPressed(raw, b.dash),
+      switchWeapon: weaponStep,
+      interact: anyPressed(raw, b.interact),
       toggles: toggles
     };
   }

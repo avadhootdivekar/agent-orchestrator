@@ -11,6 +11,8 @@
   var intent = input.intent;
 
   var MOUSE_CODE_PREFIX = 'Mouse';
+  // Shift is a modifier, not a code, so Tab with Shift held is recorded under its own code.
+  var SHIFT_TAB = 'Shift+Tab';
   // Keystrokes aimed at a form control must not move the character or fire skills.
   var TEXT_TAGS = /^(INPUT|TEXTAREA|SELECT)$/;
 
@@ -19,13 +21,18 @@
     var listeners = [];
     var canvasEl = null;
 
-    function on(target, type, fn) {
-      target.addEventListener(type, fn);
-      listeners.push({ target: target, type: type, fn: fn });
+    function on(target, type, fn, options) {
+      target.addEventListener(type, fn, options);
+      listeners.push({ target: target, type: type, fn: fn, options: options });
     }
 
     function isTyping(e) {
-      return !!(e.target && e.target.tagName && TEXT_TAGS.test(e.target.tagName));
+      var t = e.target;
+      return !!(t && ((t.tagName && TEXT_TAGS.test(t.tagName)) || t.isContentEditable));
+    }
+
+    function codeOf(e) {
+      return e.code === 'Tab' && e.shiftKey ? SHIFT_TAB : e.code;
     }
 
     function isBound(code) {
@@ -46,11 +53,14 @@
 
       on(windowTarget, 'keydown', function (e) {
         if (isTyping(e)) return;
-        if (isBound(e.code)) e.preventDefault();
-        raw.setCode(state, e.code, true);
+        var code = codeOf(e);
+        if (isBound(code)) e.preventDefault();
+        raw.setCode(state, code, true);
       });
       on(windowTarget, 'keyup', function (e) {
         raw.setCode(state, e.code, false);
+        // Shift may be released before Tab, so the synthesized code must be cleared by the Tab keyup.
+        if (e.code === 'Tab') raw.setCode(state, SHIFT_TAB, false);
       });
       on(windowTarget, 'blur', function () {
         raw.clearHeld(state);
@@ -73,12 +83,18 @@
         on(canvasEl, 'contextmenu', function (e) {
           e.preventDefault();
         });
+        // Non-passive so the wheel does not scroll the page while it cycles weapons over the canvas.
+        on(canvasEl, 'wheel', function (e) {
+          e.preventDefault();
+          if (e.deltaY === 0) return;
+          raw.addWheel(state, e.deltaY > 0 ? 1 : -1);
+        }, { passive: false });
       }
     }
 
     function detach() {
       listeners.forEach(function (l) {
-        l.target.removeEventListener(l.type, l.fn);
+        l.target.removeEventListener(l.type, l.fn, l.options);
       });
       listeners = [];
       canvasEl = null;

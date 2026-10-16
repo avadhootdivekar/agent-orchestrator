@@ -9,7 +9,7 @@ const VIEW_H = 600;
 
 // Event.target is a getter on the host Event, so fake properties are defined as own properties to shadow it.
 function makeEvent(type, props) {
-  const e = new Event(type);
+  const e = new Event(type, { cancelable: true });
   for (const [name, value] of Object.entries(props)) {
     Object.defineProperty(e, name, { value, configurable: true, writable: true });
   }
@@ -213,4 +213,121 @@ test('getBindings returns a copy that cannot change the live map', () => {
   copy.moveUp.length = 0;
   key('keydown', 'KeyW');
   assert.deepEqual(frame().move, { x: 0, y: -1 });
+});
+
+test('Tab and wheel step the weapon for exactly one frame, Shift+Tab steps back', () => {
+  const { key, canvas, frame } = setup();
+  key('keydown', 'Tab');
+  assert.equal(frame().switchWeapon, 1);
+  assert.equal(frame().switchWeapon, 0, 'edge is consumed by buildFrame');
+  key('keyup', 'Tab');
+
+  key('keydown', 'Tab');
+  key('keyup', 'Tab');
+  canvas.dispatchEvent(makeEvent('wheel', { deltaY: 120 }));
+  assert.equal(frame().switchWeapon, 1, 'wheel down is next');
+  assert.equal(frame().switchWeapon, 0);
+
+  canvas.dispatchEvent(makeEvent('wheel', { deltaY: -120 }));
+  assert.equal(frame().switchWeapon, -1, 'wheel up is previous');
+  assert.equal(frame().switchWeapon, 0);
+});
+
+test('Shift+Tab steps the weapon back by one', () => {
+  const { key, frame } = setup();
+  key('keydown', 'Tab', { shiftKey: true });
+  assert.equal(frame().switchWeapon, -1);
+  assert.equal(frame().switchWeapon, 0);
+});
+
+test('Shift released before Tab does not leave Shift+Tab held', () => {
+  const { key, frame } = setup();
+  key('keydown', 'Tab', { shiftKey: true });
+  assert.equal(frame().switchWeapon, -1);
+  key('keyup', 'Tab', { shiftKey: false });
+  key('keydown', 'Tab');
+  assert.equal(frame().switchWeapon, 1, 'plain Tab after releasing Shift steps forward');
+});
+
+test('weapon steps in one frame net out and clamp to one step', () => {
+  const { key, canvas, frame } = setup();
+  key('keydown', 'Tab');
+  canvas.dispatchEvent(makeEvent('wheel', { deltaY: 1 }));
+  assert.equal(frame().switchWeapon, 1, 'two forward steps clamp to one');
+
+  key('keyup', 'Tab');
+  key('keydown', 'Tab');
+  key('keydown', 'Tab', { shiftKey: true });
+  canvas.dispatchEvent(makeEvent('wheel', { deltaY: 1 }));
+  assert.equal(frame().switchWeapon, 1, 'forward, back and wheel-forward net to +1');
+});
+
+test('a wheel event with no vertical delta does not step the weapon', () => {
+  const { canvas, frame } = setup();
+  canvas.dispatchEvent(makeEvent('wheel', { deltaY: 0 }));
+  assert.equal(frame().switchWeapon, 0);
+});
+
+test('the interact key (F) is edge-triggered', () => {
+  const { key, frame } = setup();
+  key('keydown', 'KeyF');
+  assert.equal(frame().interact, true);
+  assert.equal(frame().interact, false, 'edge is consumed by buildFrame');
+  key('keydown', 'KeyF', { repeat: true });
+  assert.equal(frame().interact, false, 'auto-repeat while held creates no edge');
+});
+
+test('new weapon and interact keys are ignored when a text field has focus', () => {
+  const { win, frame } = setup();
+  for (const target of [{ tagName: 'INPUT' }, { tagName: 'TEXTAREA' }, { tagName: 'DIV', isContentEditable: true }]) {
+    win.dispatchEvent(makeEvent('keydown', { code: 'Tab', repeat: false, target }));
+    win.dispatchEvent(makeEvent('keydown', { code: 'KeyF', repeat: false, target }));
+    const f = frame();
+    assert.equal(f.switchWeapon, 0, `Tab in ${target.tagName}`);
+    assert.equal(f.interact, false, `F in ${target.tagName}`);
+    win.dispatchEvent(makeEvent('keyup', { code: 'Tab', repeat: false, target }));
+  }
+});
+
+test('Tab keeps its browser default focus movement while a text field has focus', () => {
+  const { win } = setup();
+  const e = makeEvent('keydown', { code: 'Tab', repeat: false, target: { tagName: 'INPUT' } });
+  win.dispatchEvent(e);
+  assert.equal(e.defaultPrevented, false);
+});
+
+test('bound weapon keys suppress the browser default, unbound keys do not', () => {
+  const { key } = setup();
+  assert.equal(key('keydown', 'Tab').defaultPrevented, true);
+  assert.equal(key('keydown', 'Tab', { shiftKey: true }).defaultPrevented, true);
+  assert.equal(key('keydown', 'KeyZ').defaultPrevented, false);
+});
+
+test('wheel over the canvas is consumed so the page does not scroll', () => {
+  const { canvas } = setup();
+  const e = makeEvent('wheel', { deltaY: 120 });
+  canvas.dispatchEvent(e);
+  assert.equal(e.defaultPrevented, true);
+});
+
+test('detach removes the wheel listener', () => {
+  const { game, canvas, frame } = setup();
+  game.detach();
+  canvas.dispatchEvent(makeEvent('wheel', { deltaY: 120 }));
+  assert.equal(frame().switchWeapon, 0);
+});
+
+test('weapon and interact keys can be rebound and the defaults restored', () => {
+  const { game, key, frame } = setup();
+  game.setBinding('interact', 'KeyG');
+  key('keydown', 'KeyF');
+  assert.equal(frame().interact, false, 'F was unbound from interact');
+  key('keyup', 'KeyF');
+  key('keydown', 'KeyG');
+  assert.equal(frame().interact, true);
+  key('keyup', 'KeyG');
+
+  game.resetBindings();
+  key('keydown', 'KeyF');
+  assert.equal(frame().interact, true);
 });
