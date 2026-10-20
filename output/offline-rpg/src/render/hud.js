@@ -1,0 +1,250 @@
+/* Canvas HUD (ARCHITECTURE §4, render/hud). buildHudModel is pure: it turns the world state into a plain view model.
+   draw(ctx, model, viewW, viewH) only reads that model, so the drawer never touches game state. Missing optional
+   fields fall back to zero or empty values instead of throwing. */
+(function (RPG) {
+  'use strict';
+
+  RPG.render = RPG.render || {};
+
+  var SKILL_SLOTS = 7;
+  var TWO_PI = Math.PI * 2;
+  var START_ANGLE = -Math.PI / 2; // cooldown sweeps clockwise from 12 o'clock
+  var MARGIN = 16;
+  var BAR_W = 220;
+  var BAR_H = 14;
+  var BAR_GAP = 8;
+  var SLOT_SIZE = 56;
+  var SLOT_GAP = 8;
+  var OUTLINE_W = 2;
+  var TRACK_ALPHA = 0.85;
+  var LABEL_FONT = '13px system-ui, sans-serif';
+  var KEY_FONT = '12px system-ui, sans-serif';
+  var NAME_FONT = '10px system-ui, sans-serif';
+  var NAME_CHARS = 9;     // abbreviation length that fits a SLOT_SIZE box in NAME_FONT ('Whirlwind' fits)
+  var BOSS_BAR_W = 420;
+  var BOSS_BAR_Y = MARGIN;
+  var TOAST_LIMIT = 4;
+  var TOAST_ROW = 22;     // line height of one stacked toast
+  var TOAST_GAP = 12;     // space between the skill row and the newest toast
+
+  function clamp01(v) { return v > 0 ? (v < 1 ? v : 1) : 0; }
+  function num(v, fallback) { return typeof v === 'number' && isFinite(v) ? v : fallback; }
+  function fraction(cur, max) { return max > 0 ? clamp01(cur / max) : 0; }
+  function slotRowWidth(count) { return count * SLOT_SIZE + Math.max(0, count - 1) * SLOT_GAP; }
+
+  /** cooldownReduction from a StatBlock or plain snapshot, clamped below 1 so the total never collapses to 0. */
+  function playerCdr(player) {
+    var s = player.stats, v = s ? (typeof s.get === 'function' ? s.get('cooldownReduction') : s.cooldownReduction) : 0;
+    return typeof v === 'number' && isFinite(v) ? Math.min(Math.max(v, 0), 0.95) : 0;
+  }
+
+  /** First living boss in `monsters` as { name, cur, max }, or null. Boss-ness is the definition's archetype, as in draw-entities. */
+  function liveBoss(monsters) {
+    var defs = RPG.data && RPG.data.monsters;
+    if (!defs || !Array.isArray(monsters)) return null;
+    for (var i = 0; i < monsters.length; i++) {
+      var m = monsters[i], def = defs[m.defId];
+      if (def && def.archetype === 'boss' && !m.dead && num(m.hp, 0) > 0) {
+        return { name: def.name || m.defId, cur: num(m.hp, 0), max: num(m.maxHp, 0) };
+      }
+    }
+    return null;
+  }
+
+  /** Short label for a hotbar slot: the skill's display name when known, else its id, cut to NAME_CHARS. */
+  function skillLabel(skillId) {
+    if (!skillId) return '';
+    var defs = RPG.data && RPG.data.skills;
+    var def = defs && defs[skillId];
+    return String((def && def.name) || skillId).slice(0, NAME_CHARS);
+  }
+
+  /** Final stat value first, then the flat player field (e.g. maxHp on the entity), then the fallback. */
+  function statOf(player, key, fallback) {
+    if (player.stats && typeof player.stats[key] === 'number') return player.stats[key];
+    return num(player[key], fallback);
+  }
+
+  /**
+   * buildHudModel(state, opts) -> view model. Pure: reads `state`, never mutates it.
+   * opts.xpToNext(level) -> int gives the XP needed for the next level (0 when not supplied).
+   * opts.skillCooldowns maps skillId -> base cooldown in seconds, so a slot's sweep can be a fraction.
+   * opts.debug + opts.fps: the debug FPS line is only in the model while debug is on.
+   * opts.toasts: [{ text, colour? }] from the UI queue; the newest TOAST_LIMIT are kept.
+   */
+  function buildHudModel(state, opts) {
+    var o = opts || {};
+    var player = (state && state.player) || {};
+    var level = num(player.level, 1);
+    var skills = player.skills || {};
+    var bar = Array.isArray(skills.bar) ? skills.bar : [];
+    // The sim keeps seconds left in player.cooldowns['skill:<id>']; skills.cooldowns[<id>] is the legacy shape.
+    var simCooldowns = player.cooldowns || {};
+    var legacyCooldowns = skills.cooldowns || {};
+    var baseCooldowns = o.skillCooldowns || {};
+    var cdr = playerCdr(player);
+
+    var slots = [];
+    for (var i = 0; i < SKILL_SLOTS; i++) {
+      var skillId = bar[i] || null;
+      var remaining = skillId ? Math.max(0, num(simCooldowns['skill:' + skillId], num(legacyCooldowns[skillId], 0))) : 0;
+      // A cast starts at base * (1 - cooldownReduction) (world/skills.tryCastSkill), so that is the sweep's full span.
+      var total = skillId ? num(baseCooldowns[skillId], 0) * (1 - cdr) : 0;
+      slots.push({
+        skillId: skillId,
+        name: skillLabel(skillId),
+        cooldown: remaining,
+        // Unknown base cooldown with time left: show the slot as fully covered rather than guessing.
+        cooldownFrac: total > 0 ? clamp01(remaining / total) : (remaining > 0 ? 1 : 0)
+      });
+    }
+
+    var weapons = Array.isArray(player.weaponSlots) ? player.weaponSlots : [];
+    var weapon = weapons[num(player.activeWeapon, 0)] || null;
+    var difficulty = (state && state.difficulty) || null;
+
+    return {
+      hp: { cur: num(player.hp, 0), max: statOf(player, 'maxHp', 0) },
+      resource: {
+        kind: player.resourceKind || null,
+        cur: num(player.resource, 0),
+        max: statOf(player, 'maxResource', 0)
+      },
+      xp: { cur: num(player.xp, 0), next: typeof o.xpToNext === 'function' ? num(o.xpToNext(level), 0) : 0 },
+      level: level,
+      skills: slots,
+      weapon: weapon ? (weapon.name || weapon.defId || null) : null,
+      difficulty: difficulty ? (difficulty.name || difficulty.id || null) : null,
+      boss: liveBoss(state && state.monsters),
+      fps: o.debug ? num(o.fps, 0) : null,
+      toasts: Array.isArray(o.toasts) ? o.toasts.slice(-TOAST_LIMIT) : []
+    };
+  }
+
+  /** Outlined horizontal bar with a labelled fill. Fill width is proportional to cur / max. */
+  function drawBar(ctx, pal, x, y, cur, max, color, label) {
+    ctx.globalAlpha = TRACK_ALPHA;
+    ctx.fillStyle = pal.bg;
+    ctx.fillRect(x, y, BAR_W, BAR_H);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, BAR_W * fraction(cur, max), BAR_H);
+    ctx.lineWidth = OUTLINE_W;
+    ctx.strokeStyle = pal.playerOutline;
+    ctx.strokeRect(x, y, BAR_W, BAR_H);
+    ctx.fillStyle = pal.ui;
+    ctx.fillText(label, x + BAR_W + BAR_GAP, y + BAR_H / 2);
+  }
+
+  /** One hotkey slot: outlined box, key number, and a clockwise radial cooldown sweep over the icon. */
+  function drawSlot(ctx, pal, x, y, slot, index) {
+    ctx.fillStyle = slot.skillId ? pal.floor : pal.bg;
+    ctx.fillRect(x, y, SLOT_SIZE, SLOT_SIZE);
+    ctx.lineWidth = OUTLINE_W;
+    ctx.strokeStyle = pal.playerOutline;
+    ctx.strokeRect(x, y, SLOT_SIZE, SLOT_SIZE);
+
+    var cx = x + SLOT_SIZE / 2, cy = y + SLOT_SIZE / 2, r = SLOT_SIZE / 2 - OUTLINE_W;
+    if (slot.cooldownFrac > 0) {
+      ctx.globalAlpha = 0.6;
+      ctx.fillStyle = pal.shadow;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, START_ANGLE, START_ANGLE + TWO_PI * slot.cooldownFrac);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.fillStyle = pal.ui;
+    ctx.font = KEY_FONT;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(String((index + 1) % 10), x + 4, y + 3);
+    if (slot.name) {
+      ctx.font = NAME_FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(slot.name, cx, y + SLOT_SIZE - 3);
+    }
+    if (slot.cooldown > 0) {
+      ctx.font = KEY_FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(Math.ceil(slot.cooldown) + 's', cx, cy);
+    }
+  }
+
+  /** Top-centre boss bar with the boss name over the fill. Only drawn while model.boss is set (a boss is alive). */
+  function drawBossBar(ctx, pal, viewW, boss) {
+    var x = (num(viewW, 0) - BOSS_BAR_W) / 2;
+    ctx.globalAlpha = TRACK_ALPHA;
+    ctx.fillStyle = pal.bg;
+    ctx.fillRect(x, BOSS_BAR_Y, BOSS_BAR_W, BAR_H);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = pal.enemy;
+    ctx.fillRect(x, BOSS_BAR_Y, BOSS_BAR_W * fraction(boss.cur, boss.max), BAR_H);
+    ctx.lineWidth = OUTLINE_W;
+    ctx.strokeStyle = pal.playerOutline;
+    ctx.strokeRect(x, BOSS_BAR_Y, BOSS_BAR_W, BAR_H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = pal.ui;
+    ctx.fillText(String(boss.name), num(viewW, 0) / 2, BOSS_BAR_Y + BAR_H + BAR_GAP + BAR_H / 2);
+  }
+
+  /** Stacked toasts centred above the skill row, newest at the bottom. */
+  function drawToasts(ctx, pal, toasts, viewW, viewH) {
+    var baseY = num(viewH, 0) - SLOT_SIZE - MARGIN - TOAST_GAP - TOAST_ROW / 2;
+    ctx.textAlign = 'center';
+    for (var i = 0; i < toasts.length; i++) {
+      var t = toasts[toasts.length - 1 - i];
+      ctx.fillStyle = (t && t.colour) || pal.ui;
+      ctx.fillText(String(t && t.text), num(viewW, 0) / 2, baseY - i * TOAST_ROW);
+    }
+  }
+
+  /** draw(ctx, model, viewW, viewH): HP, resource and XP bars top-left; weapon and difficulty top-right; skill slots bottom-centre.
+      Boss bar top-centre, FPS under the difficulty line, toasts above the skill row. */
+  function draw(ctx, model, viewW, viewH) {
+    var pal = RPG.render.palette;
+    var m = model || buildHudModel(null);
+    var hp = m.hp || {}, res = m.resource || {}, xp = m.xp || {};
+
+    ctx.save();
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+
+    var y = MARGIN;
+    drawBar(ctx, pal, MARGIN, y, num(hp.cur, 0), num(hp.max, 0), pal.enemy,
+      'HP ' + Math.ceil(num(hp.cur, 0)) + '/' + Math.ceil(num(hp.max, 0)));
+    y += BAR_H + BAR_GAP;
+    drawBar(ctx, pal, MARGIN, y, num(res.cur, 0), num(res.max, 0), pal.player,
+      (res.kind || 'RES') + ' ' + Math.ceil(num(res.cur, 0)) + '/' + Math.ceil(num(res.max, 0)));
+    y += BAR_H + BAR_GAP;
+    drawBar(ctx, pal, MARGIN, y, num(xp.cur, 0), num(xp.next, 0), pal.hazard,
+      'XP ' + Math.floor(num(xp.cur, 0)) + '/' + Math.floor(num(xp.next, 0)) + '  Lv ' + num(m.level, 1));
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = pal.ui;
+    var rightX = num(viewW, 0) - MARGIN;
+    if (m.weapon) ctx.fillText(String(m.weapon), rightX, MARGIN + BAR_H / 2);
+    if (m.difficulty) ctx.fillText(String(m.difficulty), rightX, MARGIN + BAR_H + BAR_GAP + BAR_H / 2);
+    if (m.fps !== null && m.fps !== undefined) {
+      ctx.fillText('FPS ' + Math.round(num(m.fps, 0)), rightX, MARGIN + 2 * (BAR_H + BAR_GAP) + BAR_H / 2);
+    }
+
+    if (m.boss) drawBossBar(ctx, pal, viewW, m.boss);
+
+    var slots = m.skills || [];
+    var startX = (num(viewW, 0) - slotRowWidth(slots.length)) / 2;
+    var slotY = num(viewH, 0) - SLOT_SIZE - MARGIN;
+    for (var i = 0; i < slots.length; i++) {
+      drawSlot(ctx, pal, startX + i * (SLOT_SIZE + SLOT_GAP), slotY, slots[i], i);
+    }
+    if (m.toasts && m.toasts.length) drawToasts(ctx, pal, m.toasts, viewW, viewH);
+    ctx.restore();
+  }
+
+  RPG.render.hud = { buildHudModel: buildHudModel, draw: draw };
+})(globalThis.RPG);

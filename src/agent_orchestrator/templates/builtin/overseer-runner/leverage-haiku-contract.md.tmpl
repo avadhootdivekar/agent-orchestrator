@@ -1,0 +1,53 @@
+# Leverage-Haiku contract (overseer) — {{ id }}
+
+Mode: **leverage_haiku = {{ params.leverage_haiku }}** · Haiku turns per work item: **{{ params.haiku_turns }}**
+
+This file exists only because the run was started in "Leverage Haiku" mode. It ADDS to
+`overseer-contract.md` (which stays authoritative for ids, paths, shapes and every hard rule)
+and is authoritative where it speaks. It changes two things: which model a unit runs on, and
+how you compose a wave.
+
+## Every configured limit still applies
+Nothing here relaxes a limit. Waves stay ≤ `wave_size` ({{ params.wave_size }}) units, the run
+stays ≤ `max_waves` ({{ params.max_waves }}), spend follows the budget stages of
+`run_budget_usd` ({{ params.run_budget_usd }}) and `task_budget_usd` ({{ params.task_budget_usd }}),
+injected tasks stay ≤ `max_injected_tasks` ({{ params.max_injected_tasks }}), a wave's size is
+still capped by `wave_max_minutes` ({{ params.wave_max_minutes }}), work items still hit
+`max_attempts_per_item` ({{ params.max_attempts_per_item }}), and the engine's parallelism
+(`max_parallel`) is unchanged. Leverage Haiku fills those limits with cheaper units; it never
+raises them.
+
+## Model rule (tool-enforced, OV-R9m)
+A unit's model is the first that applies:
+
+1. the brief's `model`, 2. `kind_map[kind].model`, 3. **Leverage Haiku**: `"haiku"` when the
+unit's `kind` ∈ {`implement`, `fix`, `document`, `test`, `verify`} AND its work item has
+FAILED fewer than **{{ params.haiku_turns }}** times so far (a failed unit = ledger
+`verdict: fail` or `outcome: blocked`), 4. `default_unit_model`, 5. none (omit `model`).
+
+Emit exactly the resolved value on the unit — `ckpt-check` rejects a mismatch and tells you
+the expected value. `research`, `design`, `review` and `stabilize` units never get step 3, so
+they keep their normal agent model; once a work item has failed {{ params.haiku_turns }} time(s), its next
+unit moves up to the normal model automatically (that IS the escalation — do not set a brief
+`model` just to force Haiku or the stronger model unless the work genuinely needs it).
+If `allowed_models` is set and does not list `haiku`, step 3 is skipped.
+
+## Composing a wave: many small, independent, different
+- **Fill the wave.** Up to `allowed_wave_size` units per checkpoint, each ~10 minutes of work
+  and independent of its wave-mates (separate files/modules; record `touches`). Prefer
+  ten small work items to three big ones; a unit that needs cross-module reasoning is too big —
+  split it or leave it to a `design`/`research` unit that runs on the normal model.
+- **Attack from different angles.** For one ask, decompose into independent work items
+  (`A<n>/<slug>`), and give an item several units over its life that differ in what they do:
+  `implement` → `test` (contract/happy-path), `test` (edge/invalid input), `test`
+  (regression/neighbours), `verify` (acceptance criteria) — never the same unit twice.
+- **No repeated briefs.** Every brief's `goal` and `acceptance` must name concrete files,
+  functions, fixtures or criteria for THAT unit. Two units whose briefs could be swapped are a
+  defect; a re-attempt after a failure must state a different `approach_change` (R13 already
+  requires it at the attempt cap — do it on every re-attempt).
+- **Cycles.** Dev/test/verify cycles across consecutive waves are expected: a failed unit is
+  followed by a `fix` unit on the same work item (cite the failure in `prior_attempts`), and a
+  `verify` unit closes it. Early closeout still needs the OV-R14 evidence.
+- **Critical work stays on the normal model.** Security, auth, money/data-loss paths,
+  concurrency, migrations and performance-critical code: set the brief's `model` to the
+  stronger model alias (e.g. `"sonnet"`) so Haiku never touches it.

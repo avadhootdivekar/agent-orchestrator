@@ -3429,6 +3429,11 @@ def hotspots_cmd(
         )
 
 
+# `ao new --leverage-haiku` (routed-runner "Leverage Haiku" mode): the template params it sets.
+LEVERAGE_HAIKU_PARAM = "leverage_haiku"
+LEVERAGE_HAIKU_ON = "on"
+
+
 def _parse_param_options(raw: list[str]) -> dict[str, str]:
     """Parse repeated `--param key=value` options into a dict. Raises ValueError on a
     malformed entry (no `=`, or an empty key) so the caller can report a clean CLI error."""
@@ -3528,6 +3533,15 @@ def new_cmd(
     param: list[str] = typer.Option(
         [], "--param", help="Template param as key=value (repeatable)."
     ),
+    leverage_haiku: bool = typer.Option(
+        False,
+        "--leverage-haiku",
+        help="Leverage Haiku mode (routed-runner epic route): fan out into many small tasks "
+        "that run on Haiku, with differently-angled test/review passes, and escalate to the "
+        "stronger model only after two failed Haiku turns. Sugar for --param leverage_haiku=on "
+        "(templates that declare it: routed-runner, overseer-runner). All configured limits "
+        "(task cap, budgets, wave size, parallelism) still apply.",
+    ),
     prompt_file: str | None = typer.Option(
         None,
         "--prompt-file",
@@ -3576,6 +3590,10 @@ def new_cmd(
     except ValueError as e:
         typer.echo(f"ERROR: {e}", err=True)
         raise typer.Exit(1)
+    if leverage_haiku:
+        # Sugar for the template param; an explicit --param always wins. Limits are never
+        # touched: the mode must fit the configured caps, not raise them.
+        parsed_params.setdefault(LEVERAGE_HAIKU_PARAM, LEVERAGE_HAIKU_ON)
 
     prompt_text: str | None = None
     if prompt_file is not None:
@@ -3591,7 +3609,10 @@ def new_cmd(
             tmpl, ws_root, slug_or_id=slug_or_id, params=parsed_params, prompt_text=prompt_text
         )
     except TemplateError as e:
-        typer.echo(f"ERROR: {e}", err=True)
+        hint = ""
+        if leverage_haiku and LEVERAGE_HAIKU_PARAM in str(e):
+            hint = " (this template has no Leverage Haiku mode; see `ao templates`)"
+        typer.echo(f"ERROR: {e}{hint}", err=True)
         raise typer.Exit(1)
 
     # No-repo-set mode (ADR-0022): the template's `repo_set` param is optional, so omitting it

@@ -44,13 +44,25 @@ agent's own setting for it).
   the agent's own values unchanged.
 
 ### Haiku tier (cheap model) — opt-in, narrow
-`"model": "claude-haiku-4-5-20251001"` is allowed ONLY on `impl1-<tid>` and `test1-<tid>`
+`"model": "haiku"` (alias = latest Haiku, currently Haiku 5.5 — far cheaper than Sonnet and
+clearly stronger than Haiku 4.5) is allowed ONLY on `impl1-<tid>` and `test1-<tid>`
 (the first implement / first test pass) of a task that meets ALL of:
 - its interface/shape is fully fixed by `design.md` (signatures, schemas, endpoints) —
   no design decisions left to the implementer;
 - one module/layer, following an existing pattern in the repo (CRUD/API handlers,
   small unit tests, fixtures, mappers, DTOs, config plumbing);
-- no concurrency, security, migration, or cross-module reasoning.
+- no concurrency, security, migration, or cross-module reasoning;
+- non-critical and not performance-sensitive.
+
+**Advisory — prefer Haiku for easy work.** Good fits: simple REST/DB handlers and CRUD
+endpoints, documentation and docstrings, small "dumb" helpers/utilities, simple scripts,
+fixtures and mappers. A failed Haiku first pass is escalated automatically (`impl2` runs on
+the stronger `developer` model), so the downside is bounded. Keep Sonnet (omit `model`)
+for anything hot-path, concurrent, security-relevant, or needing design judgement.
+
+**Leverage Haiku mode overrides this tier.** If `leverage-haiku-contract.md` sits next to
+this file, follow it instead: it uses Haiku far more widely (and on `impl2`/verify passes),
+with its own ladder and escalation rules.
 
 Hard limits — never set Haiku on: `review-<tid>`, `impl2-<tid>` (the fix pass),
 `test2-<tid>`, the aggregator, or any non-pipeline task. Because `impl2` inherits the

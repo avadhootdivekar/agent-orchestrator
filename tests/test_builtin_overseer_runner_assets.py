@@ -82,6 +82,8 @@ ALLOWED_VARIABLES = frozenset(
         "params.overseer_model",
         "params.default_unit_model",
         "params.allowed_models",
+        "params.leverage_haiku",
+        "params.haiku_turns",
         "params.python_bin",
         "params.branch_policy",
     }
@@ -106,6 +108,8 @@ EXPECTED_PARAM_NAMES = frozenset(
         "overseer_model",
         "default_unit_model",
         "allowed_models",
+        "leverage_haiku",
+        "haiku_turns",
         "python_bin",
         "branch_policy",
     }
@@ -209,6 +213,8 @@ DUMMY_VALUES: dict[str, str] = {
     "params.overseer_model": "",
     "params.default_unit_model": "",
     "params.allowed_models": "",
+    "params.leverage_haiku": "",
+    "params.haiku_turns": "2",
     "params.python_bin": "python3",
     "params.branch_policy": "",
 }
@@ -291,7 +297,7 @@ def test_template_yaml_params_shape_matches_hld_13_1() -> None:
     params = manifest["params"]
     assert isinstance(params, dict)
     assert set(params) == EXPECTED_PARAM_NAMES
-    assert len(params) == 19
+    assert len(params) == 21
 
     allowed_param_keys = {"description", "required", "enum", "default"}
     for name, spec in params.items():
@@ -355,7 +361,7 @@ def test_template_yaml_files_shape() -> None:
     # currently-shipped/permanent behavior this file otherwise guards.
     manifest = _load_manifest()
     files = manifest["files"]
-    assert isinstance(files, list) and len(files) == 5
+    assert isinstance(files, list) and len(files) == 6
 
     by_target = {f["target"]: f for f in files}
     assert set(by_target) == {
@@ -363,6 +369,7 @@ def test_template_yaml_files_shape() -> None:
         "prompt.md",
         "overseer-contract.md",
         "overseer-config.json",
+        "leverage-haiku-contract.md",
         "tools/overseer_tool.py",
     }
     assert by_target["workflow.json"]["source"] == "workflow.json.tmpl"

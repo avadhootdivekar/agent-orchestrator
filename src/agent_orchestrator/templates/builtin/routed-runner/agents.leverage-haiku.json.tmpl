@@ -1,0 +1,13 @@
+{
+  "_note": "Generated only when the run was started in Leverage Haiku mode. A MERGE REFERENCE, not a live config: copy the `reviewer-haiku` entry below into your agents.json (the file `agents:` in .ao/config.yaml points at). It is an OPTIONAL Haiku reviewer for the parallel review lenses -- the standard `reviewer` forbids Haiku, so Haiku review needs its own agent. Mirror your own `reviewer` entry (prompt_template etc.) and keep `--model haiku` and NO forbidden_task_models. Without this agent the mode falls back to ONE stronger-model review per task. Written once (keep_existing).",
+  "version": "1.0",
+  "agents": {
+    "reviewer-haiku": {
+      "executor": "claude_cli",
+      "command_template": ["claude", "--dangerously-skip-permissions", "--model", "haiku", "-p", "{prompt}"],
+      "prompt_template": "Read and strictly follow the agent instructions in `.claude/agents/reviewer.md`. Then execute the task described in {instruction}. Input artifacts are at: {inputs}. Write all outputs to the exact paths listed in: {outputs}. Working repos: {repos}.",
+      "context_window": "isolated",
+      "extra_args": ["--autocompact", "180000"]
+    }
+  }
+}

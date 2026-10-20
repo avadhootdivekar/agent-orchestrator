@@ -58,8 +58,8 @@ ASSUMPTION A5: A task's LLM solution is inherently stochastic; only the harness 
    identical scores across runs. Mitigation: document explicitly; make the result DIRECTORY layout
    + inputs reproducible from spec, not the score.
 ASSUMPTION A6: Model ids are pass-through strings to `--model`/`AO_MODEL`. The Claude Code CLI
-   accepts both aliases (`opus`/`sonnet`/`haiku`) and full ids (`claude-opus-4-8`,
-   `claude-sonnet-5`, `claude-haiku-4-5`). Risk: an id drifts/retires. Mitigation: model id lives
+   accepts both aliases (`opus`/`sonnet`/`haiku`) and full ids (`claude-opus-5-5`,
+   `claude-sonnet-5-5`, `claude-haiku-5-5`). Risk: an id drifts/retires. Mitigation: model id lives
    only in committed subject configs; never hard-code in code; record the resolved value in run.json.
 ```
 
@@ -713,8 +713,8 @@ confirm G6/G1/G2 end to end for real (not just `FakeSubject`).
   richer template — kept minimal for cost control as proposed; a richer epic template remains available as a future
   subject variant (add a new `ao-epic-*` config, no framework change needed).
 - **Q2 (model ids):** resolved to **full pinned ids in every committed subject config**, exactly as proposed — no
-  bare aliases anywhere. Actual pinned values: `claude-opus-4-8` (`claude-opus.json`), `claude-sonnet-5`
-  (`claude-sonnet.json`, `ao-epic-sonnet.json`), `claude-haiku-4-5-20251001` (`claude-haiku.json`,
+  bare aliases anywhere. Pinned values (refreshed 2026-10-15; earlier results used `claude-opus-4-8`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`, so re-baseline before comparing across the change): `claude-opus-5-5` (`claude-opus.json`), `claude-sonnet-5-5`
+  (`claude-sonnet.json`, `ao-epic-sonnet.json`), `claude-haiku-5-5` (`claude-haiku.json`,
   `ao-epic-haiku.json`) — note the haiku id carries a date suffix (`-20251001`) not shown in this doc's original
   `claude-haiku-4-5` example; the CLI accepted it without issue, so the "revisit if the CLI rejects a full id"
   contingency never triggered. `SubjectResult.resolved_model` records the value actually used per run.

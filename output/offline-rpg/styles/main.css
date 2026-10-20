@@ -1,0 +1,17 @@
+/* Page shell. System fonts only: no @font-face, no url(), no remote resources (docs/BUILD-OFFLINE.md §3). */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #14161c;
+  color: #d8dee9;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  touch-action: none; /* taps are menu presses; the page must not scroll or zoom under them */
+}

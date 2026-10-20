@@ -38,6 +38,9 @@ ALLOWED_VARIABLES = frozenset(
         "params.branch_policy",
         "params.task_budget_usd",
         "params.run_budget_usd",
+        "params.leverage_haiku",
+        "params.haiku_angles",
+        "params.max_injected_tasks",
     }
 )
 
@@ -94,6 +97,7 @@ DUMMY_VALUES = {
     "params.repo_set": "default-set",
     "params.task_budget_usd": "75",
     "params.run_budget_usd": "1500",
+    "params.max_injected_tasks": "115",
 }
 
 
@@ -158,6 +162,9 @@ def test_template_yaml_params_shape() -> None:
         "branch_policy",
         "task_budget_usd",
         "run_budget_usd",
+        "leverage_haiku",
+        "haiku_angles",
+        "max_injected_tasks",
     }
 
     allowed_param_keys = {"description", "required", "enum", "default"}
@@ -209,7 +216,7 @@ def test_template_yaml_dirs_mirror_bash_mkdir_list() -> None:
 def test_template_yaml_files_shape() -> None:
     manifest = _load_manifest()
     files = manifest["files"]
-    assert isinstance(files, list) and len(files) == 5
+    assert isinstance(files, list) and len(files) == 7
 
     by_target = {f["target"]: f for f in files}
     assert set(by_target) == {
@@ -218,6 +225,8 @@ def test_template_yaml_files_shape() -> None:
         "breakdown-contract.md",
         "outputs/forced-type.txt",
         "outputs/branch-policy.txt",
+        "leverage-haiku-contract.md",
+        "agents.leverage-haiku.json",
     }
 
     for entry in files:
@@ -307,9 +316,9 @@ def test_every_manifest_referenced_file_exists() -> None:
             assert any(source_path.glob("*.md")), f"{asset['source']} asset dir has no content"
 
 
-def test_instructions_dir_has_all_31_stage_files() -> None:
+def test_instructions_dir_has_all_39_stage_files() -> None:
     instruction_files = sorted((TEMPLATE_DIR / "instructions").glob("*.md"))
-    assert len(instruction_files) == 31
+    assert len(instruction_files) == 39
 
 
 # ---------------------------------------------------------------------------

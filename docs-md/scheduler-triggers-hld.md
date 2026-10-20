@@ -209,7 +209,7 @@ schedules:
     jitter_seconds: 300
     run_args:                    # allowlisted keys ONLY — see §5.1.1
       max_parallel: 4
-      model: claude-sonnet-5
+      model: claude-sonnet-5-5
     until:
       gate_file: workflows/epic-runner/runs/e-abc123-x/control/status.json
       gate_field: done

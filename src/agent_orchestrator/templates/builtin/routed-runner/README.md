@@ -199,12 +199,30 @@ artificial split. See the contract's "Effort & model per task" section.
 
 **Haiku tier.** The contract lets the breakdown agent put `haiku` on
 `impl1-<tid>`/`test1-<tid>` only, for tasks whose shape `design.md` already fixes (CRUD/API
-handlers, small tests, fixtures). Review, fix (`impl2`), re-test and the aggregator never use
+handlers and simple DB handlers, documentation, small helpers/scripts, small tests, fixtures — non-critical, non-performance-sensitive work; `haiku` = latest Haiku, now 5.5). Review, fix (`impl2`), re-test and the aggregator never use
 it, so a weak first pass is repaired by the stronger `developer` model. The recommended
 `agents.recommended.json` sets `forbidden_task_models: ["haiku"]` on every architect,
 `reviewer`, `reviewer-opus`, `full-tester` and `manager`; the engine rejects a violating
 `model` at `ao validate` time and when the `emit_tasks` manifest is injected. Merge that
 field into your own agents file to get the guard (an agent without it accepts any model).
+
+**Leverage Haiku mode (opt-in).** `ao new routed-runner <slug> --leverage-haiku` (or
+`--param leverage_haiku=on`; in the dashboard launcher pick `leverage_haiku = on`) turns the
+epic route into a many-small-tasks Haiku ladder: the breakdown agent slices the epic into up
+to ~35 independent tasks and, per task, emits Haiku `impl1` -> N parallel differently-angled
+Haiku test passes (`contract`/`edge`/`regression`/`property`) -> N parallel Haiku review lenses
+(`spec`/`correctness`/`maintainability`/`testquality`) -> a Haiku fix turn -> a Haiku `verify`.
+Only when `verify` is not clean do the Sonnet-tier `impl3`/`retest` run (when it is clean it
+pre-writes their outputs and `skip_if_outputs_exist` skips them at zero cost). Every Haiku
+entry gets its own tailored brief (`outputs/tasks/<tid>/briefs/*.md`) so no two prompts repeat;
+security/concurrency/migration/hot-path slices are marked CRITICAL and keep the standard
+pipeline. Tunables: `haiku_angles` (2-4, default 3) and `max_injected_tasks` (the
+runaway-fanout cap, default 115 — all configured limits still apply; the breakdown agent fits
+the ladder under the cap, so raise it, e.g. 400, for a wider fan-out). Haiku reviewers use the optional
+`reviewer-haiku` agent (see `agents.recommended.json`); without it each task gets one
+stronger-model review. The contract lives in `leverage-haiku-contract.md`, written next to
+`breakdown-contract.md` only when the mode is on. Epic route only — the bug/task/doc/testing
+routes are unchanged. Design: `docs-md/template-cost-hygiene-hld.md` section 10.
 
 Each entry may also set `touches` (a best-effort glob-list hint) and `isolation`
 (`none`/`worktree`/`inherit`) — see the contract's "`touches` & `isolation` per task"

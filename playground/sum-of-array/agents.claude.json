@@ -6,7 +6,7 @@
       "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the architect agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
-      "model": "claude-haiku-4-5-20251001",
+      "model": "claude-haiku-5-5",
       "effort": "medium"
     },
     "reviewer": {
@@ -14,7 +14,7 @@
       "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the reviewer agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
-      "model": "claude-haiku-4-5-20251001",
+      "model": "claude-haiku-5-5",
       "effort": "medium"
     },
     "developer": {
@@ -22,7 +22,7 @@
       "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the developer agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
-      "model": "claude-haiku-4-5-20251001",
+      "model": "claude-haiku-5-5",
       "effort": "medium"
     },
     "test-writer": {
@@ -30,7 +30,7 @@
       "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the test-writer agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
-      "model": "claude-haiku-4-5-20251001",
+      "model": "claude-haiku-5-5",
       "effort": "medium"
     },
     "integrator": {
@@ -38,7 +38,7 @@
       "command_template": ["claude", "-p", "{prompt}", "--permission-mode", "bypassPermissions"],
       "prompt_template": "Act as the integrator agent. Follow the instructions in {instruction}. Input artifacts: {inputs}. Write outputs to: {outputs}. Repos: {repos}.",
       "context_window": "isolated",
-      "model": "claude-haiku-4-5-20251001",
+      "model": "claude-haiku-5-5",
       "effort": "medium"
     }
   }

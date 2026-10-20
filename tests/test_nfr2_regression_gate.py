@@ -134,6 +134,10 @@ _MIN_PRE_EPIC_TEST_FILES = 50
 # gate"; every entry here is a declared, reviewable exception to that -- not a silent
 # exclusion. Adding an entry is a deliberate act that shows up in review.
 _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
+    # Deliberate model-pin refresh (2026-10-15): benchmark subject configs moved to the latest
+    # ids (haiku-5-5 / sonnet-5-5 / opus-5-5); these tests assert the committed pin literals.
+    "tests/bench/test_ao_epic_plus_subject.py": "model-pin refresh: committed subject ids only",
+    "tests/bench/test_dev_core_suite.py": "model-pin refresh: committed subject ids only",
     # Contract change, unavoidable: T-Ac6Vd9/R-1b re-keyed `BudgetCounters.charged_estimate`
     # from the bare task_id to `cycle_key(task_id, dispatch_cycle)` so a conflict-ladder
     # redispatch of the SAME task is independently chargeable. These tests assert the key

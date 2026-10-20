@@ -1,6 +1,6 @@
 **instructions-version: 1**
 
-The per-run `overseer-contract.md` is authoritative for ids, paths, and JSON shapes. Where this file and the contract disagree, the contract wins.
+The per-run `overseer-contract.md` is authoritative for ids, paths, and JSON shapes. Where this file and the contract disagree, the contract wins. If a `leverage-haiku-contract.md` exists next to `overseer-contract.md` (Leverage Haiku mode), read it too: it adds the wave-composition and model rules for this run and is authoritative where it speaks.
 
 # Intake — split the prompt into a locked charter, plan wave 1
 

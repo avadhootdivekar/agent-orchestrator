@@ -300,3 +300,25 @@ silently wins over both. For this template, that means a global `--model`/`AO_MO
 can silently override this run's `overseer_model` param and any per-checkpoint `model` an
 emitted `ck-*` entry sets. If you rely on `overseer_model`, do not also pass a global
 `--model`/`AO_MODEL` for this workflow's `ao run`/`ao resume` invocations.
+
+## Leverage Haiku mode (opt-in)
+
+`ao new overseer-runner <slug> --leverage-haiku` (or `--param leverage_haiku=on`; in the dashboard
+launcher pick `leverage_haiku = on`) makes the overseer fill every wave with many small,
+independent, differently-angled work units that run on Haiku, and move a work item to the normal
+model only after it has failed `haiku_turns` (default 2) times.
+
+- **Model rule (tool-enforced, OV-R9m):** brief `model` > `kind_map[kind].model` > Leverage Haiku
+  (`implement`/`fix`/`document`/`test`/`verify` units whose work item has failed fewer than
+  `haiku_turns` times — a failure is ledger `verdict: fail` or `outcome: blocked`) >
+  `default_unit_model` > none. `research`/`design`/`review`/`stabilize` never run on Haiku. If
+  `allowed_models` is set without `haiku`, the mode is inert. The checker rejects a manifest
+  whose unit `model` differs, so the escalation is deterministic, not left to the agent.
+- **Wave composition:** `leverage-haiku-contract.md` (rendered only when the mode is on) tells the
+  checkpoint agent to fill waves with independent ~10-minute units, to give each work item units
+  that differ in angle (implement → contract/edge/regression tests → verify), to write a distinct
+  brief per unit, and to pin critical work to the stronger model via a brief `model`.
+- **Limits are unchanged:** `wave_size`, `max_waves`, `wave_max_minutes`, the budget stages,
+  `max_injected_tasks`, `max_attempts_per_item` and engine parallelism all still apply; the mode
+  never raises them.
+

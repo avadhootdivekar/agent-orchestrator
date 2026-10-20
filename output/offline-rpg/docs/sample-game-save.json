@@ -1,0 +1,251 @@
+{
+  "format": "offline-rpg-save",
+  "version": 1,
+  "gameVersion": "1.0.0",
+  "savedAt": "2026-10-16T12:00:00.000Z",
+  "seed": 20261016,
+  "rngState": {
+    "world": 1740228517,
+    "loot": 305419896
+  },
+  "checksum": "fnv1a:93425fd0",
+  "meta": {
+    "level": 5,
+    "area": "forest",
+    "difficulty": "normal",
+    "playtime": 1260.5,
+    "name": "Wayfarer"
+  },
+  "difficulty": {
+    "id": "normal",
+    "enemyHp": 1,
+    "enemyDamage": 1,
+    "enemySpeed": 1,
+    "spawnDensity": 1,
+    "eliteChance": 0.1,
+    "bossHp": 1,
+    "bossTelegraph": 1,
+    "lootQuality": 1,
+    "xpMultiplier": 1,
+    "goldMultiplier": 1,
+    "playerDeathPenalty": "gold10"
+  },
+  "player": {
+    "classId": "wayfarer",
+    "level": 5,
+    "xp": 180,
+    "gold": 240,
+    "attrs": {
+      "might": 8,
+      "agility": 6,
+      "spirit": 5
+    },
+    "hp": 72,
+    "resource": 30,
+    "pos": {
+      "x": 640,
+      "y": 480.5
+    },
+    "weaponSlots": [
+      {
+        "uid": 101,
+        "baseId": "short-sword",
+        "ilvl": 5,
+        "rarity": "common",
+        "name": "Short Sword",
+        "mods": [],
+        "seedTag": "sample-101"
+      },
+      {
+        "uid": 102,
+        "baseId": "hunting-bow",
+        "ilvl": 5,
+        "rarity": "magic",
+        "name": "Hunting Bow",
+        "mods": [
+          {
+            "id": "spd-pct",
+            "stat": "attackSpeed",
+            "kind": "inc",
+            "value": 0.08
+          }
+        ],
+        "seedTag": "sample-102"
+      },
+      {
+        "uid": 103,
+        "baseId": "oak-staff",
+        "ilvl": 5,
+        "rarity": "common",
+        "name": "Oak Staff",
+        "mods": [],
+        "seedTag": "sample-103"
+      }
+    ],
+    "activeWeapon": 0,
+    "equipment": {
+      "head": null,
+      "chest": null,
+      "legs": null,
+      "boots": null,
+      "ring1": null,
+      "ring2": null,
+      "amulet": null,
+      "offhand": null
+    },
+    "inventory": [
+      {
+        "uid": 104,
+        "baseId": "leather-cap",
+        "ilvl": 5,
+        "rarity": "magic",
+        "name": "Sturdy Leather Cap",
+        "mods": [
+          {
+            "id": "hp-flat",
+            "stat": "maxHp",
+            "kind": "flat",
+            "value": 12
+          }
+        ],
+        "seedTag": "sample-104"
+      },
+      {
+        "uid": 105,
+        "baseId": "iron-ring",
+        "ilvl": 5,
+        "rarity": "magic",
+        "name": "Ring of Vigor",
+        "mods": [
+          {
+            "id": "hp-flat",
+            "stat": "maxHp",
+            "kind": "flat",
+            "value": 8
+          }
+        ],
+        "seedTag": "sample-105"
+      },
+      {
+        "uid": 106,
+        "baseId": "rusty-dagger",
+        "ilvl": 5,
+        "rarity": "common",
+        "name": "Rusty Dagger",
+        "mods": [],
+        "seedTag": "sample-106"
+      },
+      {
+        "uid": 107,
+        "baseId": "cloth-robe",
+        "ilvl": 5,
+        "rarity": "common",
+        "name": "Cloth Robe",
+        "mods": [],
+        "seedTag": "sample-107"
+      },
+      {
+        "uid": 108,
+        "baseId": "health-potion",
+        "ilvl": 5,
+        "rarity": "common",
+        "name": "Health Potion",
+        "mods": [],
+        "seedTag": "sample-108",
+        "qty": 3
+      },
+      {
+        "uid": 109,
+        "baseId": "oak-staff",
+        "ilvl": 5,
+        "rarity": "magic",
+        "name": "Oak Staff of Embers",
+        "mods": [
+          {
+            "id": "dmg-pct",
+            "stat": "damage",
+            "kind": "inc",
+            "value": 0.1
+          }
+        ],
+        "seedTag": "sample-109"
+      },
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "skills": {
+      "learned": {
+        "fireball": 2,
+        "whirlwind": 1,
+        "mend": 1
+      },
+      "upgrades": {
+        "fireball": {
+          "bigger-explosion": 1
+        }
+      },
+      "bar": [
+        "fireball",
+        "whirlwind",
+        null,
+        null,
+        null,
+        "mend",
+        null
+      ],
+      "points": 1,
+      "spentPoints": 3
+    },
+    "vel": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "area": {
+    "id": "forest",
+    "visited": {
+      "town": true,
+      "forest": true
+    },
+    "cleared": {
+      "forest": [
+        3,
+        5
+      ]
+    }
+  },
+  "progress": {
+    "bossesDefeated": {},
+    "areasUnlocked": {
+      "town": true,
+      "forest": true
+    },
+    "kills": 64,
+    "deaths": 1
+  },
+  "settings": {
+    "volume": 0.6,
+    "sfx": 0.8,
+    "muted": false,
+    "quality": "high",
+    "showDamageNumbers": true,
+    "screenShake": true,
+    "keys": {}
+  }
+}

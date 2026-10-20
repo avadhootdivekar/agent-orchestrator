@@ -113,4 +113,4 @@ def test_recommended_agents_forbid_haiku_on_rigour_roles() -> None:
     for role in ("developer", "tester"):
         assert "forbidden_task_models" not in agents[role], role
     contract = (tmpl / "breakdown-contract.md.tmpl").read_text()
-    assert "claude-haiku-4-5-20251001" in contract and "Haiku tier" in contract
+    assert '"model": "haiku"' in contract and "Haiku tier" in contract
