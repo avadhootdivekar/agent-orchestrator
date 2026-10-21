@@ -631,6 +631,8 @@ label {
     height: auto;
     min-height: 100vh;
     overflow: visible;
+    /* Default stretch spreads the spare 100vh across both auto rows, inflating the collapsed bar. */
+    align-content: start;
   }
   .main {
     min-height: auto;

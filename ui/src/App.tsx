@@ -158,6 +158,8 @@ export function App() {
             <button
               key={item.kind}
               className="nav-item"
+              aria-label={item.label}
+              title={item.label}
               aria-current={active.kind === item.kind ? "page" : undefined}
               onClick={() => go(item.kind)}
             >
