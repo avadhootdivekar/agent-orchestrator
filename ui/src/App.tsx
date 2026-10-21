@@ -13,6 +13,7 @@ import {
   type TabKind,
 } from "./tabs/model";
 import { readStoredTabs, writeStoredTabs } from "./tabs/storage";
+import { useSectionOpen } from "./sections";
 import { ScrollPanel } from "./tabs/ScrollPanel";
 import { TabBar } from "./tabs/TabBar";
 import { TabView } from "./tabs/TabView";
@@ -38,10 +39,22 @@ function readTheme(): "light" | "dark" | null {
   }
 }
 
+const SIDEBAR_SECTION_ID = "sidebar";
+
+/** Phones/narrow windows (matches the 900px stacking breakpoint in styles.css) start collapsed. */
+function defaultSidebarOpen(): boolean {
+  try {
+    return !window.matchMedia("(max-width: 900px)").matches;
+  } catch {
+    return true;
+  }
+}
+
 export function App() {
   const [state, dispatch] = useReducer(tabsReducer, undefined, () =>
     initialState(readStoredTabs(), window.location.hash),
   );
+  const [sidebarOpen, toggleSidebar] = useSectionOpen(SIDEBAR_SECTION_ID, defaultSidebarOpen());
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [theme, setTheme] = useState<"light" | "dark" | null>(readTheme);
 
@@ -122,7 +135,20 @@ export function App() {
   return (
     <TabActionsContext.Provider value={actions}>
       <div className="app">
-        <nav className="sidebar">
+        <nav className={sidebarOpen ? "sidebar" : "sidebar sidebar-collapsed"} aria-label="Primary">
+          <button
+            type="button"
+            className="sidebar-toggle nav-item"
+            aria-expanded={sidebarOpen}
+            aria-controls="sidebar-body"
+            onClick={toggleSidebar}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            data-testid="sidebar-toggle"
+          >
+            <span aria-hidden="true">{sidebarOpen ? "«" : "»"}</span>
+            <span className="sidebar-label">{sidebarOpen ? "Collapse" : "Menu"}</span>
+          </button>
+          <div id="sidebar-body" className="sidebar-body">
           <div className="brand">Agent Orchestrator</div>
           <div className="brand-sub" title={workspace?.workspace_root ?? ""}>
             {workspace?.workspace_root ?? "…"}
@@ -136,7 +162,7 @@ export function App() {
               onClick={() => go(item.kind)}
             >
               <span aria-hidden="true">{item.glyph}</span>
-              {item.label}
+              <span className="sidebar-label">{item.label}</span>
             </button>
           ))}
 
@@ -150,6 +176,7 @@ export function App() {
               <span aria-hidden="true">{theme === "dark" ? "☀" : "☾"}</span>
               {theme === "dark" ? "Light theme" : "Dark theme"}
             </button>
+          </div>
           </div>
         </nav>
 

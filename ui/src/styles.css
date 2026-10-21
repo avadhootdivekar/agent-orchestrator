@@ -111,7 +111,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: 216px 1fr;
+  grid-template-columns: auto 1fr;
   /* Fixed viewport: the sidebar and tab bar never scroll away; each tab panel scrolls itself. */
   height: 100vh;
   height: 100dvh;
@@ -119,6 +119,8 @@ body {
 }
 
 .sidebar {
+  width: 216px;
+  box-sizing: border-box;
   background: var(--surface-1);
   border-right: 1px solid var(--hairline);
   padding: 20px 12px;
@@ -167,6 +169,32 @@ body {
   background: var(--accent-soft);
   color: var(--text-primary);
   font-weight: 500;
+}
+
+.sidebar-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar-toggle {
+  margin-bottom: 8px;
+}
+
+/* Collapsed: a narrow icon rail on desktop (labels, brand and workspace path hidden). */
+.sidebar-collapsed {
+  width: 56px;
+  padding: 20px 6px;
+}
+.sidebar-collapsed .brand,
+.sidebar-collapsed .brand-sub,
+.sidebar-collapsed .sidebar-label {
+  display: none;
+}
+.sidebar-collapsed .nav-item {
+  justify-content: center;
 }
 
 .sidebar-footer {
@@ -606,6 +634,24 @@ label {
   }
   .main {
     min-height: auto;
+  }
+  /* Collapsed on mobile: only the toggle bar remains, so the main view gets the screen. */
+  .sidebar,
+  .sidebar-collapsed {
+    width: auto;
+  }
+  .sidebar-collapsed {
+    padding: 6px 12px;
+  }
+  .sidebar-collapsed .sidebar-body {
+    display: none;
+  }
+  .sidebar-collapsed .sidebar-toggle {
+    margin-bottom: 0;
+    justify-content: flex-start;
+  }
+  .sidebar-collapsed .sidebar-label {
+    display: inline;
   }
   .tab-panel {
     overflow-y: visible;
