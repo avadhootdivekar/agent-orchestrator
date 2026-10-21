@@ -296,6 +296,114 @@ class AgentSpec(BaseModel):
     forbidden_task_models: list[str] = []
 
 
+# --- Awaiting-input (docs-md/awaiting-input-hld.md §4). Limits are named, enforced by the models.
+INPUT_SCHEMA = "ao.input.request/v1"
+INPUT_NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")  # used with fullmatch
+INPUT_REQUEST_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")  # used with fullmatch
+INPUT_MAX_PROMPT_CHARS = 2000
+INPUT_MAX_FIELDS = 20
+INPUT_MAX_CHOICES = 20
+INPUT_MAX_CHOICE_CHARS = 200
+INPUT_MAX_LABEL_CHARS = 200
+INPUT_MAX_TEXT_CHARS = 4000
+INPUT_MAX_FILE_BYTES = 64 * 1024
+InputFieldType = Literal["text", "choice", "bool"]
+InputMode = Literal["blocking", "nonblocking"]
+InputRequestState = Literal["open", "answered", "assumed", "cancelled"]
+InputSource = Literal["cli", "web", "default"]
+INPUT_MODES: tuple[str, ...] = ("blocking", "nonblocking")
+
+
+class InputField(BaseModel):
+    """One answerable field of an `InputRequestSpec` (plain data; front ends render it)."""
+
+    name: str
+    type: InputFieldType = "text"
+    label: str = ""
+    choices: list[str] = []
+    default: str | bool | None = None
+    max_chars: int = INPUT_MAX_TEXT_CHARS
+    required: bool = True
+
+    @model_validator(mode="after")
+    def _check_field(self) -> InputField:
+        if INPUT_NAME_RE.fullmatch(self.name) is None:
+            raise ValueError(f"field name {self.name!r} must match {INPUT_NAME_RE.pattern}")
+        if len(self.label) > INPUT_MAX_LABEL_CHARS:
+            raise ValueError(f"field {self.name!r}: label exceeds {INPUT_MAX_LABEL_CHARS} chars")
+        if not 1 <= self.max_chars <= INPUT_MAX_TEXT_CHARS:
+            raise ValueError(f"field {self.name!r}: max_chars must be 1..{INPUT_MAX_TEXT_CHARS}")
+        if self.type == "choice":
+            if not 1 <= len(self.choices) <= INPUT_MAX_CHOICES:
+                raise ValueError(f"field {self.name!r}: need 1..{INPUT_MAX_CHOICES} choices")
+            if any(not c or len(c) > INPUT_MAX_CHOICE_CHARS for c in self.choices):
+                raise ValueError(
+                    f"field {self.name!r}: choices must be 1..{INPUT_MAX_CHOICE_CHARS} chars"
+                )
+            if len(set(self.choices)) != len(self.choices):
+                raise ValueError(f"field {self.name!r}: duplicate choices")
+        elif self.choices:
+            raise ValueError(f"field {self.name!r}: choices are only valid for type 'choice'")
+        if self.default is not None:
+            self._check_default()
+        return self
+
+    def _check_default(self) -> None:
+        d = self.default
+        if self.type == "bool":
+            ok = isinstance(d, bool)
+        elif self.type == "choice":
+            ok = isinstance(d, str) and d in self.choices
+        else:
+            ok = isinstance(d, str) and len(d) <= self.max_chars
+        if not ok:
+            raise ValueError(f"field {self.name!r}: default is not valid for type {self.type!r}")
+
+
+class InputRequestSpec(BaseModel):
+    """What a task asks for: a plain-text prompt and typed fields (no HTML, ADR-2)."""
+
+    prompt: str
+    fields: list[InputField] = []
+
+    @model_validator(mode="after")
+    def _check_spec(self) -> InputRequestSpec:
+        if not self.prompt.strip() or len(self.prompt) > INPUT_MAX_PROMPT_CHARS:
+            raise ValueError(f"prompt must be 1..{INPUT_MAX_PROMPT_CHARS} chars")
+        if len(self.fields) > INPUT_MAX_FIELDS:
+            raise ValueError(f"at most {INPUT_MAX_FIELDS} fields")
+        names = [f.name for f in self.fields]
+        if len(set(names)) != len(names):
+            raise ValueError("duplicate field names")
+        return self
+
+
+class InputAnswer(BaseModel):
+    values: dict[str, str | bool] = {}
+    assumed: bool = False
+    source: InputSource = "cli"
+    by: str = ""
+
+
+class InputRequest(InputRequestSpec):
+    """An open/answered request. The on-disk file under ``<run>/inputs/`` is the source of
+    truth for the answer; ``RunState.input_requests`` mirrors it."""
+
+    schema_version: str = INPUT_SCHEMA
+    request_id: str
+    task_id: str
+    state: InputRequestState = "open"
+    created_at: str = ""
+    answered_at: str | None = None
+    answer: InputAnswer | None = None
+
+    @model_validator(mode="after")
+    def _check_id(self) -> InputRequest:
+        if INPUT_REQUEST_ID_RE.fullmatch(self.request_id) is None:
+            raise ValueError(f"invalid request_id {self.request_id!r}")
+        return self
+
+
 class TaskSpec(BaseModel):
     id: str
     agent: str
@@ -307,6 +415,11 @@ class TaskSpec(BaseModel):
     retries: RetryPolicy | None = None
     timeout_seconds: int | None = None
     skip_if_outputs_exist: bool = True
+    # Awaiting-input (HLD §4.3). `input`: the engine opens this request before dispatch (no
+    # executor runs; the answer becomes <task dir>/answer.json). `can_request_input`: the task
+    # may write `input-request.json` into its output dir and exit 0 to park as awaiting_input.
+    input: InputRequestSpec | None = None
+    can_request_input: bool = False
     # Dynamic task injection (FR-7, FR-8, Area 2).
     emit_tasks: bool = False
     task_manifest_path: str | None = None
@@ -908,6 +1021,11 @@ class TaskContext(BaseModel):
     # advertised only when RetryPolicy.honor_marker. None keeps prompts byte-identical.
     prior_attempts_path: str | None = None
     outcome_marker_path: str | None = None
+    # Awaiting-input (path only): where the task may write `input-request.json`, advertised only
+    # when TaskSpec.can_request_input. None keeps prompts byte-identical.
+    input_request_path: str | None = None
+    # Answered request file of this task's previous dispatch (data, not instructions).
+    input_answer_path: str | None = None
     input_paths: list[str]
     output_paths: list[str]
     output_manifest_path: str | None = None
@@ -1021,6 +1139,8 @@ TaskStatus = Literal[
     # Never "skipped"+reason: skipped self-heals from should_skip on every run; not_taken is
     # a routing verdict that must survive resume unchanged (source of truth: route_decisions).
     "not_taken",
+    # Parked on a human answer (HLD ADR-1): not failed, not terminal, no executor slot held.
+    "awaiting_input",
 ]
 
 
@@ -1360,6 +1480,29 @@ class RunState(BaseModel):
     # Result cache records (E-Rc4Hk8): task id -> most recent lookup/store outcome. The default
     # {} keeps every pre-epic state.json loadable (NFR-6).
     result_cache: dict[str, ResultCacheRecord] = {}
+    # Awaiting-input (HLD §4.1): run-level blocking/non-blocking mode and the mirror of every
+    # request (key = request_id). Defaults keep every older state.json loadable (ADR-6).
+    input_mode: InputMode = "blocking"
+    input_requests: dict[str, InputRequest] = {}
+
+
+def run_waiting_for_input(state: RunState) -> bool:
+    """Derived flag (ADR-1): a running run whose only unfinished work is awaiting_input tasks."""
+    if state.status != "running":
+        return False
+    # getattr: service-layer callers/tests may hand a minimal state stand-in with no tasks.
+    statuses = [t.status for t in getattr(state, "tasks", {}).values()]
+    return "awaiting_input" in statuses and "running" not in statuses
+
+
+def assumption_lines(state: RunState) -> list[str]:
+    """One ``task.field=value (default)`` line per assumed answer (non-blocking mode, HLD §7)."""
+    return [
+        f"{r.task_id}.{name}={value!r} (default)"
+        for r in state.input_requests.values()
+        if r.state == "assumed" and r.answer is not None
+        for name, value in r.answer.values.items()
+    ]
 
 
 def is_current_result_cache_record(rec: ResultCacheRecord, ts: TaskRunState | None) -> bool:

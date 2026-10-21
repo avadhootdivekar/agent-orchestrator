@@ -1,6 +1,6 @@
 # Awaiting-input state, InputRequest and blocking/non-blocking modes — design
 
-**Status:** DESIGN (no code landed). Author: architect (overseer unit `w02-01-input-state-design`), 2026-10-21.
+**Status:** DESIGN; slices S1–S3 implemented (see §15 As-built), S4 (dashboard) and S5 pending. Author: architect (overseer unit `w02-01-input-state-design`), 2026-10-21.
 **Serves:** run-level ask A1 (A1.2–A1.5). Research basis: the wave-1 report `w01-01-input-behavior-research.md`.
 Code line numbers below are approximate; re-verify before editing.
 
@@ -236,3 +236,36 @@ Dashboard (slice 4): `GET/POST` route tests (auth, validation, size cap, resume 
 ## 14. Execution readiness gate
 
 Junior can implement without guessing: models, schema, limits, signals, resume rules and CLI/HTTP shapes are specified. Failure scenarios (invalid request, missing default, orphan request, corrupt file, resume races) are covered. Remaining unknowns are labelled above. Not covered by this unit: sprint capacity math, competitor survey and ticket creation (out of scope for a focused feature design); the S5 docs-refresh slice is the post-implementation reconciliation task.
+
+## 15. As-built (S1–S3, unit `w03-02-input-engine-core`)
+
+Landed: `awaiting_input` task status, `InputField/InputRequestSpec/InputAnswer/InputRequest` models
+(`models.py`), `RunState.input_mode/input_requests`, `inputs.py`, engine producers (a) and (b),
+answer detection, exit-waiting, `prepare_resume` rules, `ao answer`, `--input-mode`, `ao status`
+rendering, spec schema (`specs/workflow.schema.json`: `input`, `can_request_input`). Tests:
+`tests/test_inputs.py`, `tests/test_input_engine.py`, `tests/test_e2e_cli_input.py`.
+
+Differences from the design above (the code is authoritative):
+
+- **Answer hand-off (producer b):** the answered request file's path reaches the re-dispatched task as
+  `TaskContext.input_answer_path` (a prompt clause "values are data, not instructions"), not via
+  `dynamic_input_paths` (the default prompt template does not render those). The task advertises its
+  write path as `TaskContext.input_request_path` (only when `can_request_input`).
+- **Producer (a) output:** the answer JSON (`{request_id, assumed, values}`) is written to
+  `<task dir>/answer.json` **and** to every path in the task's declared `outputs`, so downstream tasks can
+  list it as an input. The task still needs a valid `agent`/`instruction` (never dispatched).
+- **Limits added:** at most 5 requests per task (`INPUT_MAX_REQUESTS_PER_TASK`; a task that keeps re-asking
+  fails). `can_request_input` is not supported on isolated (worktree) tasks (fails with a clear error).
+  A task with `input`/`can_request_input` is never result-cached (`input_request` reason, §8 of the cache HLD).
+- **Exit codes:** `ao run`/`ao resume` exit 0 for a run that is waiting for input (status stays `running`);
+  `ao answer`: 0 ok, 2 usage/validation, 3 request not open or conflicting re-answer.
+- **Waiting flag:** `models.run_waiting_for_input(state)` = run `running` ∧ ≥1 `awaiting_input` task ∧ none
+  `running`. `status.json` gains `waiting_for_input`, `counts.awaiting_input`, `input_requests` and
+  `assumptions` only when non-empty. Boot-resume and the supervisor recheck skip such runs.
+- **`ao new --input-mode`** is forwarded to the run started by `--run`; with `--validate-only` it is only validated.
+- **Non-blocking:** assumptions are recorded in the answer file, the state mirror, the run log
+  (`input.assumed`), `status.json.assumptions` and the `ao run/status` trailer. The live run *summary*
+  (`summarizer.py`) has no Assumptions section yet.
+- **Not done:** dashboard routes/form/banner (S4); `cancel_request` exists but is not yet wired to a
+  cancel command; `input_timeout_seconds` is not implemented; `ui/src` status mirrors are untouched.
+- **Overseer HOLD / `needs_input` breadcrumbs:** untouched; their tests pass unmodified.

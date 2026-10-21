@@ -38,7 +38,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
@@ -54,7 +54,13 @@ import typer
 from .auth.cli import app as auth_app
 from .auth.model import TotpPolicy
 from .cache.cli import cache_app
-from .models import ISOLATION_NONE, ISOLATION_WORKTREE
+from .models import (
+    INPUT_MODES,
+    ISOLATION_NONE,
+    ISOLATION_WORKTREE,
+    assumption_lines,
+    run_waiting_for_input,
+)
 from .service.cli import app as service_app
 
 if TYPE_CHECKING:
@@ -65,7 +71,7 @@ if TYPE_CHECKING:
     from .executors.base import Executor
     from .isolation.git import GitRepo
     from .isolation.worktrees import IsolatedRepo
-    from .models import BudgetSpec, WorkflowSpec
+    from .models import BudgetSpec, InputMode, WorkflowSpec
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
 
@@ -318,6 +324,42 @@ def _echo_integration_summary(
     )
 
 
+EXIT_USAGE = 2  # `ao answer` / --input-mode: usage or validation error
+EXIT_NOT_OPEN = 3  # `ao answer`: request is not open (already answered / cancelled)
+
+
+def _resolve_input_mode(value: str | None) -> InputMode | None:
+    """Validate ``--input-mode``; None = keep the run's persisted mode (default blocking)."""
+    if value is None:
+        return None
+    if value not in INPUT_MODES:
+        typer.echo(f"ERROR: --input-mode must be one of {INPUT_MODES}, got {value!r}", err=True)
+        raise typer.Exit(EXIT_USAGE)
+    return cast("InputMode", value)
+
+
+def _exit_code_for(state) -> int:
+    """0 on success, and also when the run is merely waiting for input (not a failure)."""
+    if state.status == "succeeded" or run_waiting_for_input(state):
+        return 0
+    return 1
+
+
+def _echo_input_block(
+    run_id: str, requests: list[tuple[str, str, str]], assumptions: list[str]
+) -> None:
+    """Awaiting-input trailer shared by the state and status.json renderers."""
+    if requests:
+        typer.echo(f"\nWaiting for input: {len(requests)} request(s)")
+        for rid, task_id, prompt in requests:
+            typer.echo(f"  [{rid}] {task_id}: {prompt}")
+        typer.echo(f"  answer with: ao answer --run-id {run_id} --list   (then --set name=value)")
+    if assumptions:
+        typer.echo("\nAssumptions (non-blocking mode, defaults applied):")
+        for line in assumptions:
+            typer.echo(f"  ASSUMED: {line}")
+
+
 def _print_state(state) -> None:
     from .models import compute_run_usage_totals
 
@@ -346,6 +388,15 @@ def _print_state(state) -> None:
         f"cache_read={totals.cache_read_input_tokens}"
     )
     typer.echo(f"Total cost:   ${totals.cost_usd:.4f}")
+    _echo_input_block(
+        state.run_id,
+        [
+            (r.request_id, r.task_id, r.prompt)
+            for r in state.input_requests.values()
+            if r.state == "open"
+        ],
+        assumption_lines(state),
+    )
     if state.result_cache:  # lazy: a run the cache never touched never imports cache.report
         from .cache.report import run_block
 
@@ -406,6 +457,11 @@ def _print_status_snapshot(snap: dict) -> None:
         f"cache_read={totals.get('cache_read_input_tokens', 0)}"
     )
     typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
+    _echo_input_block(
+        snap.get("run_id", ""),
+        [(r["request_id"], r["task_id"], r["prompt"]) for r in snap.get("input_requests", [])],
+        snap.get("assumptions", []),
+    )
     _echo_result_cache_line(snap.get("result_cache"))  # present only for a current record
 
     # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
@@ -1192,6 +1248,15 @@ def run(
             " which activates purely from a workflow's own circuit_breakers[].mode."
         ),
     ),
+    input_mode: str | None = typer.Option(
+        None,
+        "--input-mode",
+        help=(
+            "How tasks that need human input behave: 'blocking' (default) parks them as"
+            " awaiting_input until `ao answer`; 'nonblocking' answers every field with its"
+            " declared default, records the assumption and proceeds."
+        ),
+    ),
     record_git_heads: bool | None = typer.Option(
         None,
         "--record-git-heads/--no-record-git-heads",
@@ -1329,6 +1394,7 @@ def run(
     # (None) makes no change; ISOLATION_NONE/ISOLATION_WORKTREE become the new
     # WorkflowSpec.defaults.isolation, a fill-in only for tasks left at isolation="inherit"
     # (never a task's own explicit isolation -- ADR-0006, resolve_task_isolation).
+    eff_input_mode = _resolve_input_mode(input_mode)
     eff_no_isolation = _resolve_no_isolation(no_isolation)
     if eff_no_isolation and isolation == ISOLATION_WORKTREE:
         typer.echo(
@@ -1407,6 +1473,7 @@ def run(
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         run_prompt=run_prompt,
         result_cache=result_cache,
+        input_mode=eff_input_mode,
     )
 
     try:
@@ -1416,7 +1483,7 @@ def run(
         raise typer.Exit(1)
 
     _print_state(state)
-    raise typer.Exit(0 if state.status == "succeeded" else 1)
+    raise typer.Exit(_exit_code_for(state))
 
 
 @app.command()
@@ -1527,6 +1594,15 @@ def resume(
             "Enable/disable task-failure self-healing (Consult Point B, E-XyfjuZ);"
             " overrides env/config in either direction. Env: AO_SELF_HEAL (1/0)."
             " Default: off."
+        ),
+    ),
+    input_mode: str | None = typer.Option(
+        None,
+        "--input-mode",
+        help=(
+            "How tasks that need human input behave: 'blocking' (default) parks them as"
+            " awaiting_input until `ao answer`; 'nonblocking' answers every field with its"
+            " declared default, records the assumption and proceeds."
         ),
     ),
     record_git_heads: bool | None = typer.Option(
@@ -1662,6 +1738,7 @@ def resume(
 
     # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9) -- same
     # chain and fill-in-only semantics as `ao run` (see there for the full rationale).
+    eff_input_mode = _resolve_input_mode(input_mode)
     eff_no_isolation = _resolve_no_isolation(no_isolation)
     if eff_no_isolation and isolation == ISOLATION_WORKTREE:
         typer.echo(
@@ -1773,6 +1850,7 @@ def resume(
         isolation_env=eff_isolation_env,
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         result_cache=result_cache,
+        input_mode=eff_input_mode,
     )
 
     try:
@@ -1782,7 +1860,7 @@ def resume(
         raise typer.Exit(1)
 
     _print_state(state)
-    raise typer.Exit(0 if state.status == "succeeded" else 1)
+    raise typer.Exit(_exit_code_for(state))
 
 
 @app.command()
@@ -3498,7 +3576,9 @@ def templates_cmd(
         typer.echo("")
 
 
-def _invoke_run_in_process(workflow_path: str, reposets: str | None, agents: str | None) -> int:
+def _invoke_run_in_process(
+    workflow_path: str, reposets: str | None, agents: str | None, input_mode: str | None = None
+) -> int:
     """Invoke the existing `run` command in-process for `ao new --run`.
 
     Deliberately does NOT subprocess to an `ao` binary (the global snapshot can be stale and
@@ -3516,6 +3596,8 @@ def _invoke_run_in_process(workflow_path: str, reposets: str | None, agents: str
         args += ["--reposets", reposets]
     if agents:
         args += ["--agents", agents]
+    if input_mode:
+        args += ["--input-mode", input_mode]
     command = typer.main.get_command(app)
     return int(command.main(args=args, standalone_mode=False))
 
@@ -3567,6 +3649,11 @@ def new_cmd(
         help="Scaffold, validate, then run the rendered workflow in-process "
         "(equivalent to `ao run --workflow <rendered>`).",
     ),
+    input_mode: str | None = typer.Option(
+        None,
+        "--input-mode",
+        help="blocking (default) or nonblocking; passed to the run started by --run.",
+    ),
     reposets: str | None = typer.Option(
         None, help="Path to reposets config JSON/YAML (used only by --validate-only/--run)"
     ),
@@ -3581,6 +3668,7 @@ def new_cmd(
     if validate_only and run:
         typer.echo("ERROR: --validate-only and --run are mutually exclusive", err=True)
         raise typer.Exit(1)
+    _resolve_input_mode(input_mode)  # fail fast on a bad value, before scaffolding anything
 
     ws_root = _resolve_templates_workspace_root(workspace)
     cfg = _load_project_config_or_exit()
@@ -3669,8 +3757,137 @@ def new_cmd(
         return
 
     typer.echo("Running (in-process, equivalent to `ao run --workflow <rendered>`)...")
-    exit_code = _invoke_run_in_process(result.workflow_path, reposets, agents)
+    exit_code = _invoke_run_in_process(result.workflow_path, reposets, agents, input_mode)
     raise typer.Exit(exit_code)
+
+
+def _parse_set_options(items: list[str]) -> dict[str, object]:
+    out: dict[str, object] = {}
+    for item in items:
+        name, sep, value = item.partition("=")
+        if not sep or not name.strip():
+            raise ValueError(f"--set expects name=value, got {item!r}")
+        out[name.strip()] = value
+    return out
+
+
+def _prompt_for_fields(req) -> dict[str, object]:
+    """Interactive TTY renderer: ask each field of *req* in turn (task text is shown as data)."""
+    typer.echo(req.prompt)
+    values: dict[str, object] = {}
+    for f in req.fields:
+        label = f.label or f.name
+        if f.type == "bool":
+            values[f.name] = typer.confirm(label, default=bool(f.default))
+        elif f.type == "choice":
+            import click
+
+            values[f.name] = typer.prompt(
+                label, default=f.default, type=click.Choice(f.choices), show_choices=True
+            )
+        else:
+            values[f.name] = typer.prompt(
+                label,
+                default=f.default if f.default is not None else "",
+                show_default=bool(f.default),
+            )
+    return values
+
+
+@app.command(name="answer")
+def answer_cmd(
+    run_id: str = typer.Option(..., "--run-id", help="Run that is waiting for input"),
+    request_id: str | None = typer.Option(
+        None, "--request-id", help="Request to answer (optional when exactly one is open)"
+    ),
+    set_values: list[str] = typer.Option(
+        [], "--set", "--choice", help="Field value as name=value (repeatable)"
+    ),
+    json_file: str | None = typer.Option(
+        None, "--json", help="JSON object of field values from FILE, or '-' for stdin"
+    ),
+    list_open: bool = typer.Option(False, "--list", help="List open requests and exit"),
+    resume_after: bool = typer.Option(
+        False, "--resume", help="Resume the run after a successful answer"
+    ),
+    workspace: str | None = typer.Option(
+        None, "--workspace", "-w", help="Workspace root (or set AO_WORKSPACE_ROOT)"
+    ),
+    workflow: str | None = typer.Option(None, help="Workflow JSON/YAML (for --resume)"),
+    reposets: str | None = typer.Option(None, help="Reposets config (for --resume)"),
+    agents: str | None = typer.Option(None, help="Agents config (for --resume)"),
+) -> None:
+    """Answer a task's input request (awaiting_input) and optionally resume the run.
+
+    Exit codes: 0 ok; 2 usage/validation error; 3 request not open / already answered.
+    """
+    import json
+    import sys
+
+    from . import inputs
+
+    ws_root = workspace or os.environ.get("AO_WORKSPACE_ROOT")
+    if ws_root is None:
+        ws_root = _resolve_workspace_root(None, workflow, reposets, agents, no_repo_default=True)
+    run_dir = _runs_dir(ws_root) / run_id
+    if not run_dir.is_dir():
+        typer.echo(f"ERROR: run not found: {run_id}", err=True)
+        raise typer.Exit(EXIT_USAGE)
+
+    try:
+        open_reqs = inputs.list_requests(run_dir, state="open")
+        if list_open:
+            lines = inputs.render_summary(open_reqs)
+            typer.echo("\n".join(lines) if lines else "No open input requests.")
+            return
+        if request_id is None:
+            if len(open_reqs) != 1:
+                have = ", ".join(r.request_id for r in open_reqs) or "none open"
+                typer.echo(f"ERROR: --request-id required ({have})", err=True)
+                raise typer.Exit(EXIT_USAGE)
+            request_id = open_reqs[0].request_id
+        req = inputs.load_request(run_dir, request_id)
+
+        try:
+            values = _parse_set_options(set_values)
+            if json_file is not None:
+                raw = sys.stdin.read() if json_file == "-" else Path(json_file).read_text("utf-8")
+                doc = json.loads(raw)
+                if not isinstance(doc, dict):
+                    raise ValueError("--json must contain an object")
+                values = {**doc, **values}
+        except (ValueError, OSError) as e:
+            typer.echo(f"ERROR: {e}", err=True)
+            raise typer.Exit(EXIT_USAGE)
+        if not values and not set_values and json_file is None:
+            if not sys.stdin.isatty():
+                typer.echo("ERROR: no values given (use --set name=value or --json)", err=True)
+                raise typer.Exit(EXIT_USAGE)
+            values = _prompt_for_fields(req)
+        done = inputs.answer_request(run_dir, request_id, values, source="cli", by="cli")
+    except inputs.InputNotOpenError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(EXIT_NOT_OPEN)
+    except inputs.InputError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(EXIT_USAGE)
+
+    typer.echo(f"Answered {done.request_id} (task {done.task_id}).")
+    if not resume_after:
+        typer.echo(f"Continue the run with: ao resume --run-id {run_id}")
+        return
+    from typer.main import get_command
+
+    args = ["resume", "--run-id", run_id]
+    for flag, val in (
+        ("--workspace", workspace),
+        ("--workflow", workflow),
+        ("--reposets", reposets),
+        ("--agents", agents),
+    ):
+        if val:
+            args += [flag, val]
+    raise typer.Exit(int(get_command(app).main(args=args, standalone_mode=False)))
 
 
 if __name__ == "__main__":

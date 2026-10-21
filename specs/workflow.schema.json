@@ -87,6 +87,34 @@
         "backoff_seconds": { "type": "number", "minimum": 0, "default": 0 }
       }
     },
+    "inputRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt"],
+      "description": "Awaiting-input request (docs-md/awaiting-input-hld.md): plain-text prompt plus typed fields, rendered by the CLI (`ao answer`) and the dashboard. No HTML.",
+      "properties": {
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "fields": {
+          "type": "array",
+          "maxItems": 20,
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+              "type": { "enum": ["text", "choice", "bool"], "default": "text" },
+              "label": { "type": "string", "maxLength": 200 },
+              "choices": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 }, "maxItems": 20 },
+              "default": { "type": ["string", "boolean"] },
+              "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 },
+              "required": { "type": "boolean", "default": true }
+            }
+          }
+        }
+      }
+    },
     "hook": {
       "type": "object",
       "additionalProperties": false,
@@ -153,6 +181,15 @@
         "retries": { "$ref": "#/$defs/retryPolicy" },
         "timeout_seconds": { "type": "integer", "minimum": 1 },
         "skip_if_outputs_exist": { "type": "boolean", "default": true },
+        "input": {
+          "$ref": "#/$defs/inputRequest",
+          "description": "Spec-level human input gate: the engine opens this request before dispatch (no executor runs); the answer becomes <task dir>/answer.json and every declared output. Blocking mode parks the task as awaiting_input; nonblocking mode assumes the declared defaults."
+        },
+        "can_request_input": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true the task may write input-request.json (path advertised in its prompt) and exit 0 to park as awaiting_input; it is re-run with the answer. Not supported on isolated tasks."
+        },
         "emit_tasks": {
           "type": "boolean",
           "default": false,

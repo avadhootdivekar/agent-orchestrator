@@ -1954,6 +1954,7 @@ set(TaskSpec.model_fields) == TASK_ANY_VALUE | set(TASK_VALUE_RULED)
 | `depends_on`, `retries`, `timeout_seconds`, `skip_if_outputs_exist`, `join`, `touches` | any | scheduling or execution bounds only |
 | `cache` | any | author policy (`settings.task_cache_policy`) |
 | `emit_tasks` | ruled | must be `False` → `emit_tasks` |
+| `input` / `can_request_input` | ruled | must be `None` / `False` → `input_request` (result depends on a human answer; awaiting-input HLD) |
 | `task_manifest_path` | ruled | must be `None` → `task_manifest_path` |
 | `output_manifest` | ruled | must be `None` → `output_manifest` |
 | `pre_hook`, `post_hook` | ruled | must be `None` → `pre_hook` / `post_hook` |

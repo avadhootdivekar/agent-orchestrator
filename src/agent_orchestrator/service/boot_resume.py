@@ -22,6 +22,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ..models import run_waiting_for_input
 from ..ui.processes import LaunchRecord, ProcessSupervisor
 from ..ui.runs import RunNotFoundError, RunRepository
 
@@ -172,8 +173,8 @@ def scan_resumable_runs(
                 root,
             )
             continue  # run directory pruned/missing since -- defensive, not expected
-        if state.status != "running":
-            continue
+        if state.status != "running" or run_waiting_for_input(state):
+            continue  # a run parked on a human answer is idle, not interrupted (HLD ADR-1)
         workflow_path, reposets, agents = _recover_spec_paths(records)
         candidates.append(
             ResumeCandidate(

@@ -43,6 +43,7 @@ from .constants import (
     REASON_COMMAND_NOT_CACHEABLE,
     REASON_EMIT_TASKS,
     REASON_EXECUTOR_NOT_CACHEABLE,
+    REASON_INPUT_REQUEST,
     REASON_ISOLATION_WORKTREE,
     REASON_LOOP_MEMBER,
     REASON_MODEL_UNRESOLVED,
@@ -116,6 +117,8 @@ TASK_ANY_VALUE: frozenset[str] = frozenset(
 # default (inert) value is cacheable.
 TASK_VALUE_RULED: dict[str, Rule] = {
     "emit_tasks": Rule(lambda v: not v, REASON_EMIT_TASKS),
+    "input": Rule(lambda v: v is None, REASON_INPUT_REQUEST),
+    "can_request_input": Rule(lambda v: not v, REASON_INPUT_REQUEST),
     "task_manifest_path": Rule(lambda v: v is None, REASON_TASK_MANIFEST_PATH),
     "output_manifest": Rule(lambda v: v is None, REASON_OUTPUT_MANIFEST),
     "pre_hook": Rule(lambda v: v is None, REASON_PRE_HOOK),

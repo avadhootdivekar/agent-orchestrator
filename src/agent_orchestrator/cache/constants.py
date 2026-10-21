@@ -215,6 +215,7 @@ REASON_UNKNOWN_TASK_FIELD = "unknown_task_field"
 REASON_UNKNOWN_AGENT_FIELD = "unknown_agent_field"
 REASON_UNKNOWN_WORKFLOW_FIELD = "unknown_workflow_field"
 REASON_EMIT_TASKS = "emit_tasks"
+REASON_INPUT_REQUEST = "input_request"  # result depends on a human answer
 REASON_TASK_MANIFEST_PATH = "task_manifest_path"
 REASON_OUTPUT_MANIFEST = "output_manifest"
 REASON_PRE_HOOK = "pre_hook"

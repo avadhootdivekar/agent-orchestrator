@@ -218,6 +218,7 @@ ao validate   Validate workflow, reposets, and agents specs (no execution)
 ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
+ao answer     Answer a task's input request (run is waiting for input) and optionally --resume
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
 ao cache      Manage the opt-in RESULT cache: ls | stats | show | rm | prune | clear | verify
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
@@ -226,6 +227,13 @@ ao report-usage     Cross-run cost/retry/rework rollup by (agent, model, effort)
 ao report-survival  How much of a run's code changes survived into a ref (git only)
 ao rate       Record your own good/ok/bad rating of a run or task (local, no telemetry)
 ```
+
+**Human input.** A task can park itself as `awaiting_input` (spec `input:` block, or a task that writes
+`input-request.json`) instead of failing the run. The run stays `running`, exits 0 and `ao status` lists the
+open requests; `ao answer --run-id R --list` shows them, `ao answer --run-id R --set name=value --resume`
+answers and continues. `ao run|resume --input-mode nonblocking` instead applies each field's declared default,
+records the assumption (`ASSUMED: task.field=value (default)`) and proceeds. Design and as-built notes:
+[`docs-md/awaiting-input-hld.md`](docs-md/awaiting-input-hld.md).
 
 Usefulness signals (verdicts, diff survival, your ratings) are documented in
 [`docs-md/usage-signals-hld.md`](docs-md/usage-signals-hld.md); the dashboard's **Usage** tab shows the same rollup.

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .artifacts import ArtifactStore
 from .dag import build_dag, compute_cones
+from .inputs import cancel_request
 from .models import (
     RunState,
     SpecSession,
@@ -20,7 +21,9 @@ from .models import (
     TaskSpec,
     WorkflowSnapshot,
     WorkflowSpec,
+    assumption_lines,
     compute_run_usage_totals,
+    run_waiting_for_input,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,6 +226,8 @@ class RunStateStore:
         }
         for ts in state.tasks.values():
             counts[ts.status] = counts.get(ts.status, 0) + 1
+        # NB: "awaiting_input" is not pre-seeded -- it appears in `counts` only when non-zero, so
+        # a run that never asked for input keeps its exact status.json shape (HLD §8).
 
         # First task that is running or pending (left-to-right dict insertion order)
         current_task: str | None = None
@@ -320,6 +325,19 @@ class RunStateStore:
 
         if rc_run is not None:
             snapshot["result_cache"] = rc_run
+
+        # Awaiting-input observability -- present only when there is something to report.
+        if run_waiting_for_input(state):
+            snapshot["waiting_for_input"] = True
+        open_requests = [r for r in state.input_requests.values() if r.state == "open"]
+        if open_requests:
+            snapshot["input_requests"] = [
+                {"request_id": r.request_id, "task_id": r.task_id, "prompt": r.prompt}
+                for r in open_requests
+            ]
+        assumptions = assumption_lines(state)
+        if assumptions:
+            snapshot["assumptions"] = assumptions
 
         sp = self._status_path(state.run_id)
         sp.parent.mkdir(parents=True, exist_ok=True)
@@ -476,6 +494,13 @@ class RunStateStore:
             elif ts.status == "not_taken":
                 # Keep — never reset a routing verdict (LLD §9, FR-CB5).
                 pass
+            elif ts.status == "awaiting_input" and any(
+                r.task_id == task.id and r.state in ("open", "answered", "assumed")
+                for r in state.input_requests.values()
+            ):
+                # Keep (HLD §6.4): an unanswered request must not be re-asked and an answered one
+                # is picked up by the engine's first scheduling pass (-> pending).
+                pass
             elif ts.status != "pending":
                 # R-21/AC-17: preserve dispatch_cycle explicitly. This branch replaces the
                 # TaskRunState wholesale with a FRESH object -- exactly the "resume wipes
@@ -516,6 +541,13 @@ class RunStateStore:
                     cumulative_cost_usd=ts.cumulative_cost_usd,
                     origin=ts.origin,
                 )
+
+        # A request whose task no longer exists in the spec is cancelled (HLD §6.4).
+        task_ids = {t.id for t in workflow.tasks}
+        for req in state.input_requests.values():
+            if req.state == "open" and req.task_id not in task_ids:
+                req.state = "cancelled"
+                cancel_request(self._root / state.run_id, req.request_id)
 
         # E-Wk9Tz3 AC-17: state.integration and state.task_integration are otherwise
         # preserved VERBATIM (this is precisely why integration bookkeeping lives on
