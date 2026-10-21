@@ -188,6 +188,10 @@ export function App() {
             onActivate={(id) => dispatch({ type: "activate", id })}
             onClose={(id) => dispatch({ type: "close", id })}
             onMove={(from, to) => dispatch({ type: "move", from, to })}
+            onPin={(id) => dispatch({ type: "pin", id })}
+            onUnpin={(id) => dispatch({ type: "unpin", id })}
+            onCloseAll={() => dispatch({ type: "closeAll" })}
+            onCloseToRight={(id) => dispatch({ type: "closeToRight", id })}
           />
           {/* Every tab stays mounted (its state survives a switch); inactive ones are hidden
               and, via TabActiveContext, stop polling. The key remounts on a target change. */}

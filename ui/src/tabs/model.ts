@@ -30,6 +30,8 @@ export interface Tab {
   params: TabParams;
   /** Derived (`titleFor`), never accepted from storage or the URL. */
   title: string;
+  /** Pinned tabs sit leftmost, are never evicted/replaced, and need unpinning before closing. */
+  pinned?: boolean;
 }
 
 export interface TabsState {
@@ -165,7 +167,10 @@ export function validateTab(raw: unknown): Tab | null {
   if (typeof raw !== "object" || raw === null) return null;
   const rec = raw as Record<string, unknown>;
   const id = typeof rec.id === "string" && TAB_ID_RE.test(rec.id) ? rec.id : newTabId();
-  return makeTab(rec.kind, rec.params, id);
+  const tab = makeTab(rec.kind, rec.params, id);
+  // Strict boolean only: anything else (hostile or legacy data) means "not pinned".
+  if (tab && rec.pinned === true) tab.pinned = true;
+  return tab;
 }
 
 export function sameTarget(a: Pick<Tab, "kind" | "params">, b: Pick<Tab, "kind" | "params">): boolean {
@@ -227,7 +232,7 @@ export function parsePersisted(raw: string | null): TabsState | null {
     }
     if (tabs.length === 0) return null;
     const activeId = tabs.some((t) => t.id === rec.activeId) ? (rec.activeId as string) : tabs[0].id;
-    return { tabs, activeId };
+    return { tabs: pinnedFirst(tabs), activeId };
   } catch {
     return null;
   }
@@ -238,7 +243,12 @@ export function serialize(state: TabsState): string {
     v: STORAGE_VERSION,
     activeId: state.activeId,
     // `title` is derived, so it is not stored.
-    tabs: state.tabs.map(({ id, kind, params }) => ({ id, kind, params })),
+    tabs: state.tabs.map(({ id, kind, params, pinned }) => ({
+      id,
+      kind,
+      params,
+      ...(pinned ? { pinned: true } : {}),
+    })),
   });
 }
 
@@ -250,12 +260,47 @@ export type TabsAction =
   | { type: "retarget"; id: string; tab: Tab }
   | { type: "activate"; id: string }
   | { type: "close"; id: string }
-  | { type: "move"; from: number; to: number };
+  | { type: "move"; from: number; to: number }
+  | { type: "pin"; id: string }
+  | { type: "unpin"; id: string }
+  | { type: "closeAll" }
+  | { type: "closeToRight"; id: string };
 
-function evictIfFull(tabs: Tab[], activeId: string): Tab[] {
+/** Stable partition: pinned tabs first, relative order otherwise preserved. */
+function pinnedFirst(tabs: Tab[]): Tab[] {
+  return [...tabs.filter((t) => t.pinned), ...tabs.filter((t) => !t.pinned)];
+}
+
+/** Number of leading pinned tabs (pinned tabs are always a prefix). */
+export function pinnedCount(tabs: readonly Tab[]): number {
+  return tabs.filter((t) => t.pinned).length;
+}
+
+/** Whether `closeToRight(id)` would close anything (for disabling the UI). */
+export function hasClosableToRight(tabs: readonly Tab[], id: string): boolean {
+  const index = tabs.findIndex((t) => t.id === id);
+  return index !== -1 && tabs.slice(index + 1).some((t) => !t.pinned);
+}
+
+/**
+ * Drop the oldest INACTIVE, UNPINNED tab when at the cap. If none qualifies (every other tab is
+ * pinned) nothing is evicted and the new tab is refused by the caller (`null`).
+ */
+function evictIfFull(tabs: Tab[], activeId: string): Tab[] | null {
   if (tabs.length < MAX_TABS) return tabs;
-  const victim = tabs.findIndex((t) => t.id !== activeId); // oldest INACTIVE tab
-  return victim === -1 ? tabs : tabs.filter((_, i) => i !== victim);
+  const victim = tabs.findIndex((t) => t.id !== activeId && !t.pinned);
+  return victim === -1 ? null : tabs.filter((_, i) => i !== victim);
+}
+
+/** Keep only `keep`-ed tabs; falls back to the nearest surviving tab if the active one went. */
+function retainTabs(state: TabsState, keep: (tab: Tab, index: number) => boolean): TabsState {
+  const tabs = state.tabs.filter(keep);
+  if (tabs.length === state.tabs.length) return state;
+  if (tabs.length === 0) return defaultState(); // never leave the workspace tab-less
+  if (tabs.some((t) => t.id === state.activeId)) return { ...state, tabs };
+  const activeIndex = state.tabs.findIndex((t) => t.id === state.activeId);
+  const next = tabs.find((t) => state.tabs.indexOf(t) > activeIndex) ?? tabs[tabs.length - 1];
+  return { tabs, activeId: next.id };
 }
 
 export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
@@ -265,13 +310,19 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       if (existing) {
         return action.activate ? { ...state, activeId: existing.id } : state;
       }
-      const tabs = [...evictIfFull(state.tabs, state.activeId), action.tab];
+      const kept = evictIfFull(state.tabs, state.activeId);
+      if (!kept) return state; // every other tab is pinned: refuse rather than evict one
+      // Unpinned tabs are always a suffix, so appending lands after the pinned block.
+      const tabs = [...kept, action.tab];
       return { tabs, activeId: action.activate ? action.tab.id : state.activeId };
     }
     case "navigate": {
       // Plain in-tab navigation: reuse an identical existing tab, else replace the active one.
       const existing = state.tabs.find((t) => sameTarget(t, action.tab));
       if (existing) return { ...state, activeId: existing.id };
+      const current = state.tabs.find((t) => t.id === state.activeId);
+      // A pinned tab keeps its content: navigation opens a separate tab instead.
+      if (current?.pinned) return tabsReducer(state, { type: "open", tab: action.tab, activate: true });
       return {
         ...state,
         tabs: state.tabs.map((t) =>
@@ -284,7 +335,8 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       // reload / copy-link / dedupe follow the file now on screen. Unlike `navigate` it never
       // focuses another tab. If a DIFFERENT tab already holds that exact target we leave this one
       // alone rather than create two identical tabs (dedupe invariant wins over URL freshness).
-      if (!state.tabs.some((t) => t.id === action.id)) return state;
+      const target = state.tabs.find((t) => t.id === action.id);
+      if (!target || target.pinned) return state; // pinned tabs never change content
       if (state.tabs.some((t) => t.id !== action.id && sameTarget(t, action.tab))) return state;
       return {
         ...state,
@@ -295,7 +347,7 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       return state.tabs.some((t) => t.id === action.id) ? { ...state, activeId: action.id } : state;
     case "close": {
       const index = state.tabs.findIndex((t) => t.id === action.id);
-      if (index === -1) return state;
+      if (index === -1 || state.tabs[index].pinned) return state; // unpin first
       const tabs = state.tabs.filter((t) => t.id !== action.id);
       if (tabs.length === 0) return defaultState(); // never leave the workspace tab-less
       if (action.id !== state.activeId) return { ...state, tabs };
@@ -305,10 +357,40 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       const { from, to } = action;
       const n = state.tabs.length;
       if (from === to || from < 0 || to < 0 || from >= n || to >= n) return state;
+      // A tab may not cross the pinned/unpinned boundary.
+      if (Boolean(state.tabs[from].pinned) !== Boolean(state.tabs[to].pinned)) return state;
       const tabs = [...state.tabs];
       const [moved] = tabs.splice(from, 1);
       tabs.splice(to, 0, moved);
       return { ...state, tabs };
+    }
+    case "pin": {
+      const tab = state.tabs.find((t) => t.id === action.id);
+      if (!tab || tab.pinned) return state;
+      const rest = state.tabs.filter((t) => t.id !== action.id);
+      const at = pinnedCount(rest); // end of the pinned block
+      return {
+        ...state,
+        tabs: [...rest.slice(0, at), { ...tab, pinned: true }, ...rest.slice(at)],
+      };
+    }
+    case "unpin": {
+      const tab = state.tabs.find((t) => t.id === action.id);
+      if (!tab || !tab.pinned) return state;
+      const rest = state.tabs.filter((t) => t.id !== action.id);
+      const at = pinnedCount(rest); // first slot after the remaining pinned tabs
+      const { pinned: _pinned, ...unpinned } = tab;
+      return {
+        ...state,
+        tabs: [...rest.slice(0, at), unpinned, ...rest.slice(at)],
+      };
+    }
+    case "closeAll":
+      return retainTabs(state, (t) => Boolean(t.pinned));
+    case "closeToRight": {
+      const index = state.tabs.findIndex((t) => t.id === action.id);
+      if (index === -1) return state;
+      return retainTabs(state, (t, i) => i <= index || Boolean(t.pinned));
     }
   }
 }

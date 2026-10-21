@@ -25,7 +25,7 @@ describe("fixed-viewport shell (CSS contract)", () => {
   });
 
   it("keeps the tab bar fixed and makes each panel its own scroll container", () => {
-    expect(rule(".tabbar")).toMatch(/flex:\s*none/);
+    expect(rule(".tabbar-row")).toMatch(/flex:\s*none/);
     expect(rule(".main")).toMatch(/flex-direction:\s*column/);
     expect(rule(".main")).toMatch(/min-height:\s*0/);
     const panel = rule(".tab-panel");

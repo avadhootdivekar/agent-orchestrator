@@ -1762,13 +1762,68 @@ pre.code {
 
 /* ---------- workspace tabs (E-iafh2F Phase 2) ---------- */
 
+.tabbar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  flex: none; /* stays above the scrolling panels */
+}
+
 .tabbar {
   display: flex;
   gap: 2px;
-  margin: 0 0 16px;
-  border-bottom: 1px solid var(--hairline);
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-x: auto;
-  flex: none; /* pinned above the scrolling panels */
+}
+
+.tabbar-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+  padding-bottom: 4px;
+}
+
+.tabbar-action {
+  border: 1px solid var(--hairline);
+  background: none;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tabbar-action:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+
+.tabbar-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tabbar-pin {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tabbar-pin[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.tabbar-item.is-pinned .tabbar-tab {
+  padding-right: 2px;
 }
 
 .tabbar-item {
@@ -2130,4 +2185,11 @@ pre.launch-log {
 
 .section-body[hidden] {
   display: none;
+}
+
+/* Confirmed in-workspace paths inside the code viewer (A4.5). */
+.code-lines a.path-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
