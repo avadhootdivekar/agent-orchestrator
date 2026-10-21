@@ -84,7 +84,8 @@
       "additionalProperties": false,
       "properties": {
         "max_attempts": { "type": "integer", "minimum": 1, "default": 1 },
-        "backoff_seconds": { "type": "number", "minimum": 0, "default": 0 }
+        "backoff_seconds": { "type": "number", "minimum": 0, "default": 0 },
+        "honor_marker": { "type": "boolean", "default": false }
       }
     },
     "inputRequest": {

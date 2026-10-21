@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_orchestrator.engine import Orchestrator
 from agent_orchestrator.executors.base import Executor
 from agent_orchestrator.executors.prompt import build_prompt
@@ -99,3 +101,34 @@ def test_default_transient_failure_retries_and_marker_clause_gated(tmp_path) -> 
     ex2 = _Recorder(fail_times=0)
     _run(tmp_path / "h", ex2, honor=True)
     assert OUTCOME_FILENAME in build_prompt(ex2.ctxs[0])
+
+
+def _schema() -> dict:
+    return json.loads((Path(__file__).parent.parent / "specs" / "workflow.schema.json").read_text())
+
+
+def test_schema_accepts_retry_honor_marker() -> None:
+    import jsonschema
+
+    wf = {
+        "version": "1.0",
+        "id": "w",
+        "repo_set": "rs",
+        "tasks": [
+            {
+                "id": "t",
+                "agent": "ag",
+                "instruction": "i.md",
+                "retries": {"max_attempts": 3, "backoff_seconds": 1.5, "honor_marker": True},
+            }
+        ],
+    }
+    jsonschema.validate(wf, _schema())
+    wf["tasks"][0]["retries"]["honor_marker"] = "yes"
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(wf, _schema())
+
+
+def test_schema_retry_policy_covers_every_model_field() -> None:
+    props = _schema()["$defs"]["retryPolicy"]["properties"]
+    assert set(props) == set(RetryPolicy.model_fields)
