@@ -86,6 +86,8 @@ export interface RunSummary {
   is_terminal: boolean;
   is_live: boolean;
   launch_id: string | null;
+  /** Additive: run is parked on open input requests (status stays "running"). Absent on old backends. */
+  waiting_for_input?: boolean;
   /** One-line preview of the run prompt (list rows carry only this, never the full text). */
   prompt_preview?: string | null;
   /** First few running tasks (state-derived) for the compact list view; `task_counts.running` is the total. */
@@ -800,4 +802,55 @@ export type PathProbeStatus = "file" | "dir" | "missing" | "denied";
 
 export interface PathProbeResponse {
   results: { path: string; status: PathProbeStatus }[];
+}
+
+/** Mirrors models.py::InputField (awaiting-input HLD §4.2). All text is plain data. */
+export interface InputField {
+  name: string;
+  type: "text" | "choice" | "bool";
+  label: string;
+  choices: string[];
+  default: string | boolean | null;
+  max_chars: number;
+  required: boolean;
+}
+
+export type InputValue = string | boolean;
+
+export interface InputAnswer {
+  values: Record<string, InputValue>;
+  assumed: boolean;
+  source: string;
+  by: string;
+}
+
+/** Mirrors models.py::InputRequest. `prompt` and labels are NEVER rendered as HTML. */
+export interface InputRequest {
+  request_id: string;
+  task_id: string;
+  state: "open" | "answered" | "assumed" | "cancelled";
+  prompt: string;
+  fields: InputField[];
+  created_at: string;
+  answered_at: string | null;
+  answer: InputAnswer | null;
+}
+
+/** GET /api/runs/{id}/inputs. */
+export interface RunInputsState {
+  run_id: string;
+  waiting_for_input: boolean;
+  requests: InputRequest[];
+}
+
+/** POST /api/runs/{id}/inputs/{request_id} body — `source` is set by the server. */
+export interface AnswerInputBody {
+  values: Record<string, InputValue>;
+  resume?: boolean;
+}
+
+export interface AnswerInputResponse {
+  request: InputRequest;
+  resumed: boolean;
+  launch?: LaunchRecord;
 }

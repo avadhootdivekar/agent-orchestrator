@@ -20,6 +20,7 @@ import type {
 } from "../types";
 import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
 import { POLL_MS, usePolling } from "../usePolling";
+import { NeedsInputBanner, useRunInputs } from "./InputRequestForm";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
@@ -201,6 +202,9 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
     }
   }, [runId]);
 
+  const waiting = detail?.summary.waiting_for_input ?? false;
+  const inputs = useRunInputs(runId, waiting, () => void refresh());
+
   const refreshActivity = useCallback(async () => {
     try {
       setActivity(await api.runActivity(runId));
@@ -307,6 +311,13 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
         </CollapsibleSection>
 
         <ErrorBanner message={error} />
+
+        <NeedsInputBanner
+          state={inputs.state}
+          error={inputs.error}
+          submitting={inputs.submitting}
+          onAnswer={inputs.answer}
+        />
 
         {/* Top of the page, fixed 3-row height, never collapsible (E-iafh2F FR-4). */}
         <div style={{ marginBottom: 12 }}>

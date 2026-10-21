@@ -77,6 +77,7 @@ const NODE_BADGE_ROWS: { glyph: string; text: string }[] = [
 const STATUS_LEGEND_ORDER = [
   "pending",
   "running",
+  "awaiting_input",
   "succeeded",
   "failed",
   "timed_out",

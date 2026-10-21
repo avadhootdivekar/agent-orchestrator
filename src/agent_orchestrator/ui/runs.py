@@ -26,6 +26,7 @@ from ..models import (
     WorkflowSnapshot,
     compute_run_active_seconds,
     compute_run_usage_totals,
+    run_waiting_for_input,
 )
 from ..reporting import cache_effectiveness
 from ..run_prompt import file_sha256
@@ -166,6 +167,9 @@ class RunSummary:
     is_terminal: bool
     # One-line preview of the run prompt; None for runs with no recorded prompt.
     prompt_preview: str | None = None
+    # Awaiting-input HLD §5.3: True when the run is parked on open input requests (status stays
+    # "running" while the engine process has exited).
+    waiting_for_input: bool = False
     # E-iafh2F: the first MAX_RUNNING_BRIEFS running tasks (compact "now running" list view);
     # `task_counts["running"]` still carries the true total.
     running_tasks: list[RunningTaskBrief] = field(default_factory=list)
@@ -313,6 +317,7 @@ class RunRepository:
             active_seconds=compute_run_active_seconds(state),
             is_terminal=state.status in TERMINAL_STATUSES,
             prompt_preview=prompt_preview(state.prompt.text) if state.prompt else None,
+            waiting_for_input=run_waiting_for_input(state),
             running_tasks=[
                 RunningTaskBrief(id=tid, model=ts.model, effort=ts.effort, started_at=ts.started_at)
                 for tid, ts in state.tasks.items()

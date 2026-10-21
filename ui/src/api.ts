@@ -12,6 +12,9 @@ import type {
   EnrollBeginBody,
   FeedbackRequest,
   FeedbackState,
+  AnswerInputBody,
+  AnswerInputResponse,
+  RunInputsState,
   OperatorNoteRequest,
   OperatorNoteResponse,
   OperatorNotesState,
@@ -279,6 +282,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  runInputs: (runId: string) =>
+    request<RunInputsState>(`/runs/${encodeURIComponent(runId)}/inputs`),
+
+  answerInput: (runId: string, requestId: string, body: AnswerInputBody) =>
+    request<AnswerInputResponse>(
+      `/runs/${encodeURIComponent(runId)}/inputs/${encodeURIComponent(requestId)}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 
   runSignals: (runId: string, survival: boolean) =>
     request<RunSignalsResponse>(

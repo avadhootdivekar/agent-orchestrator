@@ -61,6 +61,8 @@ PRE_CHANGE_OPENAPI_PATHS = {
     "/api/runs/{run_id}/cancel",
     "/api/runs/{run_id}/feedback",
     "/api/runs/{run_id}/graph",
+    "/api/runs/{run_id}/inputs",
+    "/api/runs/{run_id}/inputs/{request_id}",
     "/api/runs/{run_id}/log",
     "/api/runs/{run_id}/notes",
     "/api/runs/{run_id}/resume",

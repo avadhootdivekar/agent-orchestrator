@@ -1,6 +1,6 @@
 # Awaiting-input state, InputRequest and blocking/non-blocking modes — design
 
-**Status:** DESIGN; slices S1–S3 implemented (see §15 As-built), S4 (dashboard) and S5 pending. Author: architect (overseer unit `w02-01-input-state-design`), 2026-10-21.
+**Status:** DESIGN; slices S1–S4 implemented (see §15–§16 As-built), S5 (docs reconciliation) pending. Author: architect (overseer unit `w02-01-input-state-design`), 2026-10-21.
 **Serves:** run-level ask A1 (A1.2–A1.5). Research basis: the wave-1 report `w01-01-input-behavior-research.md`.
 Code line numbers below are approximate; re-verify before editing.
 
@@ -266,6 +266,35 @@ Differences from the design above (the code is authoritative):
 - **Non-blocking:** assumptions are recorded in the answer file, the state mirror, the run log
   (`input.assumed`), `status.json.assumptions` and the `ao run/status` trailer. The live run *summary*
   (`summarizer.py`) has no Assumptions section yet.
-- **Not done:** dashboard routes/form/banner (S4); `cancel_request` exists but is not yet wired to a
-  cancel command; `input_timeout_seconds` is not implemented; `ui/src` status mirrors are untouched.
+- **Not done (at S1–S3; S4 landed, see §16):** `cancel_request` exists but is not yet wired to a
+  cancel command; `input_timeout_seconds` is not implemented.
 - **Overseer HOLD / `needs_input` breadcrumbs:** untouched; their tests pass unmodified.
+
+## 16. As-built (S4 dashboard, unit `w04-01-input-dashboard`)
+
+Landed: `GET /api/runs/{id}/inputs`, `POST /api/runs/{id}/inputs/{request_id}`, the form component, the
+`awaiting_input` badge and the "Needs your input" banner. Tests: `tests/ui/test_run_inputs_api.py`,
+`tests/auth/test_run_inputs_auth.py`, `ui/src/test/input-request.test.tsx`; the static bundle is rebuilt.
+
+- **Routes** (`ui/app.py`, `ui/service.py`): no route-policy entry, so they sit behind the same deny-by-default
+  `AuthMiddleware` as `/notes` and `/feedback` (CSRF gate on POST). `GET` returns
+  `{run_id, waiting_for_input, requests: [InputRequest...]}` (all states, sorted by id). `POST` body is
+  `{values: {name: str|bool}, resume?: bool}` (`extra="forbid"`, at most `INPUT_MAX_FIELDS` values); the response is
+  `{request, resumed, launch?}`. The handler only calls `inputs.answer_request(..., source="web", by="dashboard")`
+  -- the source is server-set, so validation, size caps and idempotency are exactly `ao answer`'s.
+- **Status codes:** 404 unknown run/request; 400 invalid value / unknown field / missing required / bad id;
+  409 request not open or conflicting re-answer, and 409 when `resume` is refused (e.g. the run is already live)
+  -- the answer is already recorded in that case ("answer recorded, but resume failed: ..."), so a later
+  `ao resume` or retry of the resume picks it up. 422 for a malformed body.
+- **Run summary:** `RunSummary.waiting_for_input` (always present, default false) is `run_waiting_for_input(state)`.
+  The run `status` stays `running`; `task_counts` carries `awaiting_input`.
+- **UI:** `components/InputRequestForm.tsx` renders the structured request: `select` (choice), checkbox (bool),
+  textarea (text, `maxLength` = field `max_chars`). Prompt, labels, choices and defaults are React text/attribute
+  values only -- no `dangerouslySetInnerHTML` (tested with a hostile prompt). Required fields without a default are
+  checked client-side; optional empty fields are omitted so the server default applies. "Answer & continue" posts
+  with `resume: true`, then refetches the run. `RunDetail` shows the banner above "Now running" while any request
+  is open; `useRunInputs` polls on the usual cadence.
+- **Status mirrors:** `awaiting_input` gets its own `waiting` tone (amber chip, `?` glyph, amber node stripe) in
+  `format.ts`/`TaskNode.tsx`, is listed in the graph legend, and `types.ts` gains `InputRequest`/`RunInputsState`.
+  `graph/model.ts` needed no change (statuses are opaque strings there).
+- **Unchanged:** retry code, overseer `HOLD`, `needs_input` breadcrumbs and the existing Resume button.

@@ -32,6 +32,7 @@ from ..auth.http.middleware import AuthMiddleware
 from ..auth.http.routes import install_auth_routes
 from ..auth.policy import DASHBOARD_COOKIE_ONLY_NAVIGATION, DASHBOARD_ROUTE_POLICIES
 from ..feedback import MAX_NOTE_CHARS, MAX_OPERATOR_NOTE_CHARS, REASONS, Rating, Reason, Scope
+from ..models import INPUT_MAX_FIELDS
 from .files import PathNotAllowedError, PathNotFoundError
 from .htmlpreview import NotMarkupError
 from .security import SecurityMiddleware, resolve_allowed_hosts
@@ -134,6 +135,19 @@ class OperatorNoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(..., min_length=1, max_length=MAX_OPERATOR_NOTE_CHARS * 2)
+
+
+class AnswerInputRequest(BaseModel):
+    """Body for ``POST /api/runs/{run_id}/inputs/{request_id}``. The source is NOT client-settable.
+
+    Per-field validation (types, choices, lengths) is the shared ``inputs.validate_values``; this
+    only bounds the body before it gets there.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    values: dict[str, str | bool] = Field(default_factory=dict, max_length=INPUT_MAX_FIELDS)
+    resume: bool = False
 
 
 logger = logging.getLogger(__name__)
@@ -442,6 +456,23 @@ def create_app(
     def post_operator_note(run_id: str, body: OperatorNoteRequest) -> dict:
         try:
             return service.add_run_operator_note(run_id, text=body.text)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    # Awaiting-input (S4): same deny-by-default AuthMiddleware as /notes and /feedback.
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/inputs")
+    def get_run_inputs(run_id: str) -> dict:
+        try:
+            return service.get_run_inputs(run_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.post(f"{API_PREFIX}/runs/{{run_id}}/inputs/{{request_id}}")
+    def post_run_input(run_id: str, request_id: str, body: AnswerInputRequest) -> dict:
+        try:
+            return service.answer_run_input(
+                run_id, request_id, dict(body.values), resume=body.resume
+            )
         except DashboardError as exc:
             raise _http_error(exc) from exc
 

@@ -322,6 +322,29 @@ h2 {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+.chip.waiting {
+  color: var(--text-primary);
+  border-color: var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 18%, transparent);
+}
+
+.banner.needs-input {
+  border: 1px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.input-request {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.input-request-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .chip.neutral {
   color: var(--text-secondary);
   border-color: var(--hairline);

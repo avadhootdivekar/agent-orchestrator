@@ -100,6 +100,8 @@ function toneToken(tone: StatusTone): string {
       return "var(--status-critical)";
     case "active":
       return "var(--accent)";
+    case "waiting":
+      return "var(--status-warning)";
     default:
       return "var(--text-muted)";
   }
