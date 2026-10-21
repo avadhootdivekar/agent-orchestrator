@@ -40,6 +40,16 @@ _OPERATOR_NOTES_CLAUSE = (
 )
 
 
+_PRIOR_ATTEMPTS_CLAUSE = (
+    " A previous attempt of this task failed; read {path} first and avoid repeating its"
+    " blocking step."
+)
+_OUTCOME_MARKER_CLAUSE = (
+    " If the task cannot succeed and retrying would not help, write {path} as"
+    ' {{"schema":"ao.task.outcome/v1","retry":false,"reason":"<short reason>"}} before exiting.'
+)
+
+
 # The conventional "Repos: {repos}." sentence, removed from the template when the run has no
 # repos. Templates that use `{repos}` differently still render it (as an empty string).
 _EMPTY_REPOS_CLAUSE = re.compile(r"[ \t]*Repos:[ \t]*\{repos\}\.?")
@@ -88,5 +98,10 @@ def build_prompt(ctx: TaskContext) -> str:
 
     if ctx.operator_notes_path:
         prompt += _OPERATOR_NOTES_CLAUSE.format(path=ctx.operator_notes_path)
+
+    if ctx.prior_attempts_path:
+        prompt += _PRIOR_ATTEMPTS_CLAUSE.format(path=ctx.prior_attempts_path)
+    if ctx.outcome_marker_path:
+        prompt += _OUTCOME_MARKER_CLAUSE.format(path=ctx.outcome_marker_path)
 
     return prompt

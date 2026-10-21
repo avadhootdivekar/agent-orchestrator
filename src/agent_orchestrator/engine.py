@@ -108,6 +108,12 @@ from .monitoring import (
     RuleBasedMonitor,
     build_task_failure_summary,
 )
+from .retry_context import (
+    OUTCOME_FILENAME,
+    AttemptRecord,
+    read_no_retry_marker,
+    write_prior_attempts,
+)
 from .runstate import RunStateStore
 from .scheduling.overlap import overlap_score, rank_wave
 from .spec import validate_isolation, validate_task_model_policy
@@ -4241,6 +4247,8 @@ class Orchestrator:
         cum_cost_usd = 0.0
         any_actuals = False
 
+        prior_attempts: list[AttemptRecord] = []
+
         for attempt in range(1, retry.max_attempts + 1):
             if self._cancel_fn():
                 # Post-hook deliberately does NOT fire here (HLD §6): nothing meaningful
@@ -4259,12 +4267,22 @@ class Orchestrator:
             # noise to discard.
             attempt_output_dir = os.path.join(output_dir, f"attempt-{attempt}")
 
+            prior_attempts_path = (
+                write_prior_attempts(attempt_output_dir, prior_attempts) if prior_attempts else None
+            )
+
             ctx = TaskContext(
                 run_id=state.run_id,
                 task_id=task.id,
                 agent=effective_agent,
                 instruction_path=instruction_path,
                 general_instruction_paths=general_instruction_paths,
+                prior_attempts_path=prior_attempts_path,
+                outcome_marker_path=(
+                    os.path.join(attempt_output_dir, OUTCOME_FILENAME)
+                    if retry.honor_marker
+                    else None
+                ),
                 # Run-dir file (outside any worktree): no isolated-view remap, the absolute path is
                 # valid from inside a worktree. Re-read per attempt so a retry sees new notes.
                 operator_notes_path=self._operator_notes_path(state.run_id),
@@ -4326,6 +4344,26 @@ class Orchestrator:
                 attempt,
                 retry.max_attempts,
                 result.error,
+            )
+
+            no_retry_reason = read_no_retry_marker(attempt_output_dir)
+            if no_retry_reason is not None:
+                logger.warning(
+                    "Task %s attempt %d: task.retry_suppressed (marker): %s",
+                    task.id,
+                    attempt,
+                    no_retry_reason,
+                )
+                break
+
+            prior_attempts.append(
+                AttemptRecord(
+                    attempt=attempt,
+                    status=result.status,
+                    exit_code=result.exit_code,
+                    error=result.error,
+                    output_dir=attempt_output_dir,
+                )
             )
 
             if attempt < retry.max_attempts and retry.backoff_seconds > 0:

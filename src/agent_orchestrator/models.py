@@ -179,6 +179,9 @@ class RepoSet(BaseModel):
 class RetryPolicy(BaseModel):
     max_attempts: int = 1
     backoff_seconds: float = 0.0
+    # Advertise the `outcome.json` retry=false marker in the prompt. The engine honours a valid
+    # marker regardless; False keeps first-attempt prompts byte-identical.
+    honor_marker: bool = False
 
 
 class HookSpec(BaseModel):
@@ -901,6 +904,10 @@ class TaskContext(BaseModel):
     # Absolute path of the run's queued operator notes file (A6), set only when it exists at
     # dispatch. Path only (NFR-1); None keeps every prompt byte-identical to before notes existed.
     operator_notes_path: str | None = None
+    # Retry context (paths only, NFR-1): prior-attempts file, set only on attempt >= 2; marker path
+    # advertised only when RetryPolicy.honor_marker. None keeps prompts byte-identical.
+    prior_attempts_path: str | None = None
+    outcome_marker_path: str | None = None
     input_paths: list[str]
     output_paths: list[str]
     output_manifest_path: str | None = None
