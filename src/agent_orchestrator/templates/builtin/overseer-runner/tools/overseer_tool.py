@@ -77,6 +77,30 @@ HANDOFF_REMAINING_CAP: Final[int] = 300
 HANDOFF_NEXT_HINT_CAP: Final[int] = 300
 MAX_HANDOFFS_PER_ITEM: Final[int] = 3  # trailing handoff chain length that trips `handoff_chain`.
 
+# A2 limit insight (design w01-01 section 3). Mirrors `models.EFFORT_MAX_TURNS` (this tool is
+# stdlib-only and cannot import the engine); the contract's unit shape fixes `timeout_seconds`.
+EFFORT_MAX_TURNS: Final[dict[str, int]] = {"low": 15, "medium": 30, "high": 60, "xhigh": 120}
+UNIT_TIMEOUT_S: Final[int] = 7200
+TIME_LIMIT_NEAR_RATIO: Final[float] = 0.95  # failed unit at >= this share of timeout => time hit.
+LIMIT_EVENTS_CAP: Final[int] = 20  # digest.limit_events cap (current wave only).
+LIMIT_GAPS: Final[tuple[str, ...]] = (
+    "engine does not persist which limit ended a failed/timed-out unit (TaskResult.status/error "
+    "are not mirrored into state.json): basis=inferred rows are approximations from duration and "
+    "cost against the caps",
+    "turns used per unit is not recorded in state.json: turn_cap is derived from effort "
+    "(an explicit agent max_turns override is not visible) and a turn-cap hit cannot be observed",
+    "a self-split exits 0, so no limit is actually tripped: basis=self_reported rows show the "
+    "unit's own stated trigger, with cost/duration proximity as context",
+    "task_budget_usd is a recommend-mode breaker evaluated at task boundaries, not mid-task: "
+    "'cost limit hit' means cost >= cap when the unit settled",
+    "state.json keeps only the LAST dispatch's model: a unit retried on another model reports "
+    "that last model (model=null means the CLI default)",
+    "run_spent_usd/run_budget_usd are the settled-cost values at ledger-ingest time "
+    "(in-flight spend is not visible)",
+    "recommended engine follow-up: persist last task status/error in TaskRunState so the "
+    "tripped limit is observed instead of inferred",
+)
+
 TAIL_TASKS_WITH_FINAL_PUSH: Final[int] = 3  # final-verify + closeout + final-push (S8.2).
 TAIL_TASKS_WITHOUT_FINAL_PUSH: Final[int] = 2  # final-verify + closeout only.
 
@@ -746,6 +770,10 @@ class TaskInfo:
     started_at: str | None
     ended_at: str | None
     cumulative_cost_usd: float
+    # A2: dispatch provenance, tolerant (absent in old state.json / None = CLI default).
+    model: str | None = None
+    effort: str | None = None
+    agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -755,10 +783,15 @@ class State:
     breaker_overrides: dict[str, float]
     spent: float
     status: str
+    tripped_breakers: list[dict[str, Any]] = field(default_factory=list)
 
 
 def state_path(workspace_root: Path, cfg: Config, run_id: str) -> Path:
     return workspace_root / cfg.runs_root / run_id / "state.json"
+
+
+def _opt_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def load_state(path: Path) -> State:
@@ -800,6 +833,9 @@ def load_state(path: Path) -> State:
             started_at=raw.get("started_at"),
             ended_at=raw.get("ended_at"),
             cumulative_cost_usd=cost,
+            model=_opt_str(raw.get("model")),
+            effort=_opt_str(raw.get("effort")),
+            agent=_opt_str(raw.get("agent")),
         )
         spent += cost
 
@@ -819,6 +855,11 @@ def load_state(path: Path) -> State:
         raise Violation("ST-2", detail="field=breaker_overrides")
     breaker_overrides = {str(k): float(v) for k, v in raw_overrides.items()}
 
+    raw_trips = data.get("tripped_breakers")
+    tripped = (
+        [dict(t) for t in raw_trips if isinstance(t, dict)] if isinstance(raw_trips, list) else []
+    )
+
     status = str(data.get("status", "running"))
     return State(
         tasks=tasks,
@@ -826,6 +867,7 @@ def load_state(path: Path) -> State:
         breaker_overrides=breaker_overrides,
         spent=spent,
         status=status,
+        tripped_breakers=tripped,
     )
 
 
@@ -1037,6 +1079,70 @@ def unit_state(line: dict[str, Any]) -> str:
     return str(outcome) if outcome else "unknown"
 
 
+def _num(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _ratio(num: float | None, den: float | None) -> float | None:
+    return round(num / den, 4) if num is not None and den else None
+
+
+def compute_limit_block(
+    *,
+    unit_id: str,
+    status: str,
+    handoff: dict[str, Any] | None,
+    cost_usd: float,
+    duration_s: float | None,
+    task_cost_limit_usd: float | None,
+    timeout_s: int,
+    tripped_breakers: list[dict[str, Any]],
+    run_spent_usd: float,
+    run_budget_usd: float | None,
+) -> dict[str, Any]:
+    """Pure A2 `limit` block for one ledger unit line (design w01-01 section 3.3).
+
+    `basis` says how far to trust `reason`: `observed` (a recorded breaker trip names this
+    unit), `self_reported` (the unit's own handoff reason), `inferred` (approximated from
+    duration/cost against the caps -- see `LIMIT_GAPS`) or `none`.
+    """
+    breaker: dict[str, Any] | None = None
+    breaker_cond = ""
+    for trip in tripped_breakers:
+        detail = trip.get("detail")
+        if isinstance(detail, dict) and detail.get("task_id") == unit_id:
+            breaker = {"id": trip.get("id"), "at": trip.get("at"), "detail": detail}
+            breaker_cond = str(trip.get("condition") or "")
+            break
+    cost_hit = bool(task_cost_limit_usd) and cost_usd >= (task_cost_limit_usd or 0.0)
+    time_hit = (
+        status == "failed"
+        and duration_s is not None
+        and duration_s >= TIME_LIMIT_NEAR_RATIO * timeout_s
+    )
+    basis, reason = "none", "none"
+    if breaker is not None:
+        basis, reason = (
+            "observed",
+            "cost" if breaker_cond and "task_cost" in breaker_cond else "breaker",
+        )
+    elif handoff is not None:
+        basis, reason = "self_reported", str(handoff.get("reason"))
+    elif time_hit:
+        basis, reason = "inferred", "time"
+    elif cost_hit:
+        basis, reason = "inferred", "cost"
+    return {
+        "basis": basis,
+        "reason": reason,
+        "cost_vs_task_cap": _ratio(cost_usd, task_cost_limit_usd),
+        "duration_vs_timeout": _ratio(duration_s, float(timeout_s)),
+        "run_spent_usd": round(run_spent_usd, 6),
+        "run_budget_usd": run_budget_usd,
+        "breaker": breaker,
+    }
+
+
 def _effective_attempt_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Ledger lines that count as attempts: handoffs are continuations, not attempts."""
     return [ln for ln in lines if not is_handoff(ln)]
@@ -1054,7 +1160,15 @@ def _handoff_chain(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def ingest_ledger(
-    inst: Path, units: list[str], state: State, k: int, now: datetime, *, dry_run: bool = False
+    inst: Path,
+    units: list[str],
+    state: State,
+    k: int,
+    now: datetime,
+    *,
+    dry_run: bool = False,
+    task_cost_limit_usd: float | None = None,
+    run_budget_usd: float | None = None,
 ) -> int:
     """HLD S8.4 M1 `ingest_ledger`: idempotent (keyed by `unit_id`), folds each newly-settled
     wave unit's brief + breadcrumb into one `type:"unit"` ledger line.
@@ -1119,6 +1233,30 @@ def ingest_ledger(
         if handoff_invalid is not None:
             line["handoff_invalid"] = handoff_invalid
         line["state"] = unit_state(line)
+        duration_s = line["duration_s"]
+        line.update(
+            {
+                "model": task_info.model,
+                "effort": task_info.effort,
+                "started_at": task_info.started_at,
+                "ended_at": task_info.ended_at,
+                "task_cost_limit_usd": task_cost_limit_usd,
+                "turn_cap": EFFORT_MAX_TURNS.get(task_info.effort or ""),
+                "timeout_s": UNIT_TIMEOUT_S,
+                "limit": compute_limit_block(
+                    unit_id=unit_id,
+                    status=task_info.status,
+                    handoff=handoff,
+                    cost_usd=task_info.cumulative_cost_usd,
+                    duration_s=duration_s,
+                    task_cost_limit_usd=task_cost_limit_usd,
+                    timeout_s=UNIT_TIMEOUT_S,
+                    tripped_breakers=state.tripped_breakers,
+                    run_spent_usd=state.spent,
+                    run_budget_usd=run_budget_usd,
+                ),
+            }
+        )
         append_chained(inst, line, now, dry_run=dry_run)
         have.add(unit_id)
         appended += 1
@@ -2321,6 +2459,112 @@ def open_handoffs(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
     out.sort(key=lambda h: (str(h["work_item"]), str(h["unit_id"])))
     return out
+
+
+def limit_events(unit_lines: list[dict[str, Any]], wave: int | None = None) -> list[dict[str, Any]]:
+    """A2: one row per self-split / partial / limit-hit unit, from ledger data only (no LLM).
+
+    Sorted by `(wave, unit_id)`; `wave` restricts to one wave. Lines written before A2 lack the
+    limit keys and yield rows with null fields (a labelled gap, never an error).
+    """
+    rows: list[dict[str, Any]] = []
+    for ln in unit_lines:
+        if wave is not None and ln.get("wave") != wave:
+            continue
+        limit = ln.get("limit") if isinstance(ln.get("limit"), dict) else {}
+        reason = limit.get("reason", "none")
+        if not (is_handoff(ln) or ln.get("outcome") == "partial" or reason != "none"):
+            continue
+        handoff = ln.get("handoff") if isinstance(ln.get("handoff"), dict) else {}
+        rows.append(
+            {
+                "unit_id": ln.get("unit_id"),
+                "wave": ln.get("wave"),
+                "work_item": ln.get("work_item"),
+                "kind": ln.get("kind"),
+                "state": ln.get("state") or unit_state(ln),
+                "model": ln.get("model"),
+                "effort": ln.get("effort"),
+                "reason": reason,
+                "basis": limit.get("basis", "none"),
+                "handoff_reason": handoff.get("reason"),
+                "cost_usd": ln.get("cost_usd"),
+                "task_cost_limit_usd": ln.get("task_cost_limit_usd"),
+                "duration_s": ln.get("duration_s"),
+                "timeout_s": ln.get("timeout_s"),
+                "turn_cap": ln.get("turn_cap"),
+                "run_spent_usd": limit.get("run_spent_usd"),
+                "run_budget_usd": limit.get("run_budget_usd"),
+                "ended_at": ln.get("ended_at"),
+                "breaker": limit.get("breaker"),
+            }
+        )
+    rows.sort(key=lambda r: (int(r["wave"] or 0), str(r["unit_id"])))
+    return rows
+
+
+def _fmt(value: Any, spec: str = "") -> str:
+    if value is None:
+        return "n/a"
+    return format(value, spec) if spec else str(value)
+
+
+def render_limit_report_md(events: list[dict[str, Any]], cfg: Config) -> str:
+    """Deterministic markdown for `limit-report --format md` (embedded by close-out)."""
+    out = [
+        "# Limit report",
+        "",
+        f"- Configured task cost limit: {_fmt(cfg.task_budget_usd, '.2f')} USD "
+        f"(unit timeout {UNIT_TIMEOUT_S}s)",
+        f"- Configured run budget: {_fmt(cfg.run_budget_usd, '.2f')} USD",
+        f"- Limited/split units: {len(events)}",
+        "",
+    ]
+    if not events:
+        out.append("No self-split or limit-hit units recorded.")
+    for ev in events:
+        out += [
+            f"## {ev['unit_id']} (wave {ev['wave']}, {ev['state']})",
+            f"- work_item: {_fmt(ev['work_item'])}, kind: {_fmt(ev['kind'])}",
+            f"- model: {_fmt(ev['model']) if ev['model'] else 'n/a (CLI default or unrecorded)'}"
+            f", effort: {_fmt(ev['effort'])}",
+            f"- limit hit: {ev['reason']} [{ev['basis']}]"
+            + (f" (self-reported: {ev['handoff_reason']})" if ev["handoff_reason"] else ""),
+            f"- task limit: cost {_fmt(ev['cost_usd'], '.4f')} / "
+            f"{_fmt(ev['task_cost_limit_usd'], '.2f')} USD; "
+            f"duration {_fmt(ev['duration_s'])}s / {_fmt(ev['timeout_s'])}s; "
+            f"turn cap {_fmt(ev['turn_cap'])} (derived, turns used unknown)",
+            f"- run limit: spent {_fmt(ev['run_spent_usd'], '.4f')} / "
+            f"{_fmt(ev['run_budget_usd'], '.2f')} USD (at ingest)",
+            f"- when: {_fmt(ev['ended_at'])}",
+            "",
+        ]
+    out += ["## Known gaps", ""] + [f"- {gap}" for gap in LIMIT_GAPS] + [""]
+    return "\n".join(out)
+
+
+def limit_report(args: argparse.Namespace) -> None:
+    """A2 `limit-report`: read-only (never appends), derived from the ledger + config only."""
+    _, inst = confine_workspace(args.workspace_root, args.instance_dir)
+    cfg = load_config(inst)
+    verify_ledger_chain(inst)
+    lines = [ln for ln in read_ledger_lines(inst) if ln.get("type") == "unit"]
+    events = limit_events(lines, args.wave)
+    if args.format == "md":
+        print(render_limit_report_md(events, cfg))
+        return
+    print(
+        json.dumps(
+            {
+                "task_budget_usd": cfg.task_budget_usd,
+                "run_budget_usd": cfg.run_budget_usd,
+                "limit_events": events,
+                "limit_gaps": list(LIMIT_GAPS),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def compute_progress(cfg: Config, inst: Path, k: int) -> dict[str, Any]:
@@ -4521,7 +4765,17 @@ def ckpt_prep(args: argparse.Namespace) -> None:
         verify_charter_lock(inst)
         state = load_state(state_path(ws, cfg, ctx.run_id))
         units = wave_units(state, k)
-        ingest_ledger(inst, units, state, k, now, dry_run=args.dry_run)
+        run_budget_now, _ = effective_budget(cfg, state, inst, now, record=False)
+        ingest_ledger(
+            inst,
+            units,
+            state,
+            k,
+            now,
+            dry_run=args.dry_run,
+            task_cost_limit_usd=cfg.task_budget_usd,
+            run_budget_usd=run_budget_now,
+        )
         update_path_history(inst, k, ctx.repo_paths, units, now, dry_run=args.dry_run)
         budget = compute_budget(cfg, state, inst, k, now, dry_run=args.dry_run)
         signals = detect_signals(cfg, inst, k)
@@ -4543,6 +4797,8 @@ def ckpt_prep(args: argparse.Namespace) -> None:
             "progress": progress,
             "capped_work_items": [],
             "handoffs": open_handoffs(_unit_lines_through(inst, k)),
+            "limit_events": limit_events(_unit_lines_through(inst, k), k)[:LIMIT_EVENTS_CAP],
+            "limit_gaps": list(LIMIT_GAPS),
             "signals": signals,
         }
         if args.dry_run:
@@ -4695,6 +4951,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "ckpt-check",
         "unit-gate",
         "request-closeout",
+        "limit-report",
     ):
         sub = subparsers.add_parser(name)
         sub.add_argument("--workspace-root", required=True)
@@ -4702,6 +4959,9 @@ def _build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--now", default=None)
         sub.add_argument("--dry-run", action="store_true")
         sub.add_argument("--task-id", default=None)
+        if name == "limit-report":
+            sub.add_argument("--wave", type=int, default=None)
+            sub.add_argument("--format", choices=("json", "md"), default="json")
         if name == "request-closeout":
             sub.add_argument("--reason", required=True)
         else:
@@ -4716,6 +4976,7 @@ _DISPATCH: Final[dict[str, Any]] = {
     "ckpt-check": ckpt_check,
     "unit-gate": unit_gate,
     "request-closeout": request_closeout,
+    "limit-report": limit_report,
 }
 
 
