@@ -336,4 +336,22 @@ def test_unit_instructions_carry_self_split_guidance(name: str) -> None:
     assert "Stage/commit" in text and "current branch" in text, name
     assert "`outcome: partial`" in text and "`followups`" in text, name
     assert "Still exit 0" in text, name
-    assert "do not invent new ones" in text, name
+    assert "do not invent new ones" not in text, name
+    assert "`handoff`" in text and '"staged"' in text and '"remaining"' in text, name
+    assert "`followups[0]`" in text, name
+
+
+def test_checkpoint_instruction_reads_handoffs_and_plans_continuation() -> None:
+    text = _normalize_whitespace(_read("20-checkpoint.md"))
+    assert "## Reading self-split handoffs" in text
+    assert "`digest.handoffs[]`" in text
+    assert "same `work_item` key" in text and "`approach_change: null`" in text
+    assert "`handoff_chain`" in text
+    assert "does not exist as a subcommand yet" not in text
+
+
+def test_final_verify_and_closeout_mention_partial_remainder_and_limit_insights() -> None:
+    assert "partial remainder" in _normalize_whitespace(_read("40-final-verify.md"))
+    closeout = _normalize_whitespace(_read("41-closeout.md"))
+    assert "partial remainder" in closeout
+    assert "limit-report" in closeout

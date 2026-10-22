@@ -1143,3 +1143,11 @@ def test_readme_breaker_table_thresholds_match_rendered_defaults() -> None:
 
     assert breakers_by_id["runaway-fanout"]["threshold"] == config["max_injected_tasks"] == 160
     assert "160" in text
+
+
+def test_overseer_contract_tmpl_documents_handoff_object_and_signal() -> None:
+    text = " ".join(_render_contract().split())
+    assert "optional `handoff`" in text
+    assert "`handoff_chain`" in text
+    assert "Handoffs are not attempts" in text
+    assert "`state`" in text

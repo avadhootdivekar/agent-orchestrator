@@ -67,9 +67,15 @@ nothing to show for it. Instead:
    never leave half-applied edits in the working tree; revert or finish anything that
    would leave the tree broken. Follow the repo's own commit rules and push only if they
    (or the task) say to.
-3. **Report `outcome: partial`** in your breadcrumb with an honest remainder: say
-   exactly what is done, what is left, and where to pick up, in the report and in
-   `followups`. Use only the existing breadcrumb fields — do not invent new ones.
+3. **Report a handoff** in your breadcrumb: `outcome: partial`, `verdict: pass` (or `na`),
+   `needs_input: false`, and a `handoff` object (optional field; schema stays `v1`):
+   `{"reason": "time|cost|turns|scope|other", "stopped_at": "<≤200 chars>",
+   "staged": ["<repo_id>:<commit sha or path>"], "remaining": "<≤300 chars>",
+   "next_hint": "<≤300 chars, optional>"}`. `reason` is the trigger that fired (your own
+   judgment, not engine fact); `staged` and `changed_paths` must evidence the work you left
+   (a handoff with nothing staged is treated as a plain partial). Mirror the remainder as
+   `followups[0]`, and say what is done, what is left, and where to pick up in the report.
+   Use only the existing breadcrumb fields plus this optional `handoff` object. The tree must stay green (revert partial edits) and the continuation stays `stabilize` kind.
 4. **Still exit 0.** Self-splitting is the normal way to hand off a big unit; the
    checkpoint can schedule the remainder as a further unit that builds on your work.
    It never justifies a non-zero exit.

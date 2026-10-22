@@ -26,6 +26,8 @@ For **every ask** in the charter:
   criteria.
 - Check its `usable_bar` — is the deliverable actually usable right now, or only
   usable if you squint?
+- An unresolved handoff (`digest.handoffs[]` / ledger `state: handoff`) is a **partial
+  remainder**, never done: report that ask as `partial` and name the `remaining` text.
 - Record a clear per-ask verdict: fully met, partially met (name exactly what's
   missing), or not met.
 

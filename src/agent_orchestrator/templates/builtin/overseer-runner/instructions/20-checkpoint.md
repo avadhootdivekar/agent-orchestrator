@@ -44,10 +44,31 @@ own charter `statement`** back — not a paraphrase — so the judgment is trace
 anchored to the exact text intake locked in. If you mark an ask `deferred`, give a
 `deferred_reason` (`out_of_budget|blocked_needs_input|human_descoped|infeasible`).
 
+## Reading self-split handoffs
+A unit that stopped on purpose writes `outcome: partial` with a valid `handoff` object; the
+ledger records it as state `handoff`, and `digest.handoffs[]` lists every **open** one (the
+last unit on its work item) with `work_item`, `unit_id`, `reason`, `stopped_at`, `staged`,
+`remaining`, `next_hint` and `chain`. A handoff is **not** a failed attempt. For each open
+handoff, decide:
+- **Continue** (default): emit a unit with the **same `work_item` key** (never rename it —
+  OV-R13c) and the same kind (stabilize continues as stabilize), `prior_attempts` = the
+  chain's unit ids, `approach_change: null` (handoffs do not count toward the attempt cap),
+  `goal` = `remaining` + `next_hint`, `context_paths` from `staged`, and the original
+  acceptance items still unmet.
+- **Descope**, or **verify** if the remainder looks effectively complete.
+- If the remainder cannot fit the budget or a `closeout`/`must_close` is due, emit no
+  continuation: mark the ask `deferred` with `deferred_reason: out_of_budget` and quote
+  `remaining` in the evidence (≥40 chars).
+
+A handed-off ask is `on_track`, and a handoff never makes a criterion `met`. The
+`handoff_chain` signal (3 consecutive handoffs on one item) must be answered like any other:
+`redirect` (re-slice, with a non-empty `approach_change` — required by OV-R13 at the cap) or
+`descope`; `accept` needs a ≥40-char rationale. A continuation occupies a wave slot.
+
 ## Answer every signal — no exceptions
 Your verdict's `signal_responses[]` must contain **one entry per signal id** in
 `digest.signals[]` — every signal, with no exceptions; this is mechanically checked
-(`OV-R12`, once the checker lands). For each: pick a `response`
+(`OV-R12`). For each: pick a `response`
 (`redirect|descope|accept|hold`); `accept` on a `high`-severity signal requires a
 `rationale` of at least 40 characters explaining why accepting the repeat/stall/drift
 is actually the right call, not a shrug.
@@ -105,8 +126,7 @@ writes `control/hold-answer.md` and resumes the run — see this template's `REA
 "Human-in-the-loop (hold)".
 
 ## Self-check before you exit
-Once the checker lands, run this template's own checker in dry-run mode and fix every
-violation it reports:
+Run this template's own checker in dry-run mode and fix every violation it reports:
 
 ```bash
 <python_bin> <workspace_root>/<instance_dir>/tools/overseer_tool.py \
@@ -114,9 +134,6 @@ violation it reports:
   --workspace-root <workspace_root> --instance-dir <instance_dir>
 ```
 
-**Note:** `ckpt-check` does not exist as a subcommand yet in this epic (a later, M3
-task adds it) — until then, re-read `overseer-contract.md`'s "Hard rules" section by
-hand (the `OV-R*` rules) and check your own manifest and verdict against them before
-you exit, rather than trying to run a command that isn't wired up yet. If a previous
+If a previous
 `check-result.json` exists in your own checkpoint directory, you already read it in
 step 6 above — fix exactly what it named before you emit anything new.

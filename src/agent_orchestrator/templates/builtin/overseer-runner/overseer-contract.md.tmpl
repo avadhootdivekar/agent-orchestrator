@@ -181,6 +181,14 @@ written by the unit itself, a declared output the engine enforces exists:
   `verdict` (`pass|fail|na`), `summary` (≤300 chars)
 - `changed_paths` (≤50, each `"<repo_id>:<rel path>"`), `acceptance_met` (list of ints indexing
   the brief's `acceptance`), `followups` (≤5, each ≤200 chars), `needs_input` (bool)
+- optional `handoff` (schema stays `v1`) for a deliberate self-split: `outcome: partial`,
+  `verdict ∈ {pass, na}`, `needs_input: false`, and
+  `{reason: time|cost|turns|scope|other, stopped_at (≤200), staged (≤10 × ≤200,
+  "<repo_id>:<sha or path>"), remaining (≤300), next_hint? (≤300)}`. Work must be evidenced by
+  `staged` or `changed_paths`, else it is a plain partial. Put the remainder in `followups[0]`.
+  A handoff is not a failed attempt. The ledger unit line gains `handoff`, `handoff_invalid`
+  (only if invalid) and `state` (`done|handoff|partial|failed|blocked|no_op`); old ledgers
+  without them read as non-handoff.
 
 **verdict** — `outputs/checkpoints/ck-JJ/verdict.json`, `schema: "ao.overseer.verdict/v1"` —
 written by the checkpoint (you), once per checkpoint:
@@ -243,7 +251,8 @@ signal requires a `rationale` of at least 40 characters.
 | `breadcrumb_integrity` | a breadcrumb `changed_paths` entry is malformed, out of its repo root, or names an unknown repo | high |
 | `stall` | no work item finished (`outcome: done`, `verdict ∈ {pass, na}`) and criteria-met did not rise, for `stall_waves` consecutive waves | high |
 | `repeated_failure` | the same work item's last 2 units both have `verdict: fail` | medium |
-| `attempt_cap` | a work item reached `max_attempts_per_item` | high |
+| `attempt_cap` | a work item reached `max_attempts_per_item` (handoffs are not counted) | high |
+| `handoff_chain` | a work item has ≥ 3 consecutive handoffs (medium at 2); answer with `redirect` + `approach_change` or `descope` | high (medium at 2) |
 | `ask_starvation` | a non-met, non-deferred ask got zero units in the last `stall_waves` waves | medium |
 | `blocked_units` | a unit in the last wave reported `outcome: blocked` or `needs_input: true` | medium |
 | `prompt_changed` | `prompt.md`'s hash no longer matches the locked charter | high |
@@ -324,11 +333,11 @@ subcommands; run them yourself in dry-run mode before you finish, per "Self-chec
   stabilize/verify/document only).
 - **OV-R12** — the verdict answers every signal id; `accept` on high needs a rationale ≥40
   chars; `deferred` needs `deferred_reason` plus evidence ≥40 chars.
-- **OV-R13** — attempt cap (`approach_change` required at the cap; forbidden above cap+1).
+- **OV-R13** — attempt cap (`approach_change` required at the cap; forbidden above cap+1). Handoffs are not attempts, so a same-`work_item` continuation needs no `approach_change` — unless the trailing handoff chain is at its cap.
 - **OV-R13c** — rename dodge: a new work-item whose brief goal is too similar to, or whose
   prior attempts/touches intersect, a capped item's — reuse the capped key with
   `approach_change`, descope it, or hold instead.
-- **OV-R14** — decision ↔ manifest consistency, including verified early closeout.
+- **OV-R14** — decision ↔ manifest consistency, including verified early closeout (a `partial` verify, or an open handoff on a non-deferred ask, does not count as verification).
 - **OV-R15** — all JSON within 1 MiB, schema version `v1`.
 - **OV-R16** — `must_close` ⇒ `closeout`.
 

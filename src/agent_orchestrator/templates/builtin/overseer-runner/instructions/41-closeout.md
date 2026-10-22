@@ -36,6 +36,13 @@ For every ask, whatever its status, also state **how to continue**: what a human
 future run would need to do next to finish or improve it. Never leave an ask's section
 without this — even a "done" ask can note what a natural next iteration would be.
 
+For an ask with an unresolved handoff, report the partial remainder (the handoff's
+`remaining` text) under **how to continue**, not as done.
+
+### Limit insights
+If the run produced limit-report output (time/cost/turn limits that triggered handoffs,
+from ledger `handoff.reason` and `state`), include it in the closeout insights.
+
 ### Budget summary
 Total spent (from the ledger/state) against `run_budget_usd`, and the stage history of
 this run (`explore → converge → stabilize → closeout`, with the wave/checkpoint at
