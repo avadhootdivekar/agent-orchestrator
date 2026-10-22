@@ -1151,3 +1151,31 @@ def test_overseer_contract_tmpl_documents_handoff_object_and_signal() -> None:
     assert "`handoff_chain`" in text
     assert "Handoffs are not attempts" in text
     assert "`state`" in text
+
+
+_OVERSEER_README = (
+    Path(__file__).resolve().parent.parent
+    / "src/agent_orchestrator/templates/builtin/overseer-runner/README.md"
+)
+_OVERSEER_HLD = Path(__file__).resolve().parent.parent / "docs-md/overseer-runner-hld.md"
+
+
+@pytest.mark.parametrize("path", [_OVERSEER_README, _OVERSEER_HLD])
+def test_docs_describe_handoff_state_scope_and_limit_report(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    for needle in (
+        "handoff",
+        "template-level",
+        "succeeded",
+        "limit-report",
+        "basis",
+        "TaskRunState",
+        "handoff_chain",
+    ):
+        assert needle in text, f"{path.name} must mention {needle!r}"
+
+
+def test_hld_documents_handoff_schemas_and_rules() -> None:
+    text = _OVERSEER_HLD.read_text(encoding="utf-8")
+    for needle in ("limit_events", "work_items_handed_off", "R13", "R14", "handoff_invalid"):
+        assert needle in text, f"HLD must mention {needle!r}"

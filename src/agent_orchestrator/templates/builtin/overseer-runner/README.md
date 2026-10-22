@@ -181,6 +181,34 @@ options:
    already at least the override's new total. Both must be present; the override alone is a
    no-op refusal, and the flag alone doesn't change what the tool treats as the budget.
 
+## Partial / handoff state and the limit report
+
+A work unit that must stop early **on purpose** (it hit a time, cost or turn limit, or the work
+is larger than one unit) reports `outcome: partial` plus a `handoff` object in its breadcrumb
+(`reason: time|cost|turns|scope|other`, `stopped_at`, `staged`, `remaining`, optional
+`next_hint`). It must evidence real work in `staged` or `changed_paths`, with `verdict` `pass`/`na`
+and `needs_input: false`; anything else degrades to a plain `partial` (never a run failure).
+
+- **Scope choice: template-level.** The engine task still settles `succeeded` (the unit exits 0);
+  the "partial / handoff" state exists only in the overseer ledger (`state: handoff`), the digest
+  (`handoffs[]`, `progress.work_items_handed_off`) and the checkpoint's decisions. The engine's
+  `TaskResult` status is not changed, and a handoff is not a failed attempt.
+- **Continuation.** The next checkpoint continues the item under the **same `work_item` key**; a
+  handoff does not count toward `max_attempts_per_item` (OV-R13), but a chain of 3 consecutive
+  handoffs on one item raises the high-severity `handoff_chain` signal. Closeout cannot be
+  declared early (OV-R14) while an ask has an open handoff, and the remainder is reported under
+  "how to continue".
+- **Limit report.** `overseer_tool.py limit-report [--wave N] [--format json|md]` is read-only and
+  lists every self-split / partial / limit-hit unit with its limit `reason`, `basis`
+  (`observed|self_reported|inferred|none`), cost vs task cap, duration vs timeout, derived turn cap
+  and run spend vs budget. The digest carries the current wave's rows as `limit_events`, and
+  closeout embeds the report.
+- **Gaps in engine limit data.** The engine does not persist which limit ended a failed or
+  timed-out unit (`TaskResult.status`/`error` are not mirrored into `state.json`), nor the turns
+  used, so `basis: inferred` rows are approximations and a turn-cap hit cannot be observed. The
+  report lists these under "Known gaps" (`limit_gaps`). **Open engine follow-up:** persist the
+  last task status/error in `TaskRunState` so the tripped limit is observed rather than inferred.
+
 ## Engine gaps designed around
 
 - **G1** (no cadence primitive) — cadence is structural: each wave holds ≤ N units plus one
