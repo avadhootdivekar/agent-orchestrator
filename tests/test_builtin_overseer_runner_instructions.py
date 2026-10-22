@@ -319,3 +319,21 @@ def test_final_verify_documents_optional_verdict_sidecar() -> None:
     assert "ao.overseer.final-verify/v1" in text and "met|partial|not_met" in text
     assert "optional, not a declared output, and never a gate" in text
     assert "After `verify.md` is written" in text
+
+
+# ---------------------------------------------------------------------------
+# Self-split / stage / handoff guidance for oversized units
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["10-work-unit.md", "11-stabilize-unit.md"])
+def test_unit_instructions_carry_self_split_guidance(name: str) -> None:
+    text = _normalize_whitespace(_read(name))
+    assert "## Self-split" in text, name
+    for trigger in ("**Time**", "**Cost**", "**Turns**"):
+        assert trigger in text, (name, trigger)
+    assert "logical boundary" in text, name
+    assert "Stage/commit" in text and "current branch" in text, name
+    assert "`outcome: partial`" in text and "`followups`" in text, name
+    assert "Still exit 0" in text, name
+    assert "do not invent new ones" in text, name
