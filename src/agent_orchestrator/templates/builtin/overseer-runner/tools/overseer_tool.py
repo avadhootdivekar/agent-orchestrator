@@ -66,6 +66,17 @@ HASH_SKIP_BYTES: Final[int] = 50 * 1024 * 1024  # NFR-6: skip content-hashing fi
 GIT_TIMEOUT_S: Final[int] = 30  # Reserved for T-C6uQJW's bounded `git diff`/`git status` calls.
 MAX_CHANGED_PATHS_PER_UNIT: Final[int] = 50  # Mirrors the breadcrumb schema's own cap (S13.4).
 
+# A3 self-split handoff (design w01-02 sections 2-4): a unit that stops early ON PURPOSE with
+# its work staged reports `outcome: partial` + a valid `handoff` object; it is neither a failure
+# nor finished work.
+HANDOFF_REASONS: Final[frozenset[str]] = frozenset({"time", "cost", "turns", "scope", "other"})
+HANDOFF_MAX_STAGED: Final[int] = 10
+HANDOFF_STAGED_ITEM_CAP: Final[int] = 200
+HANDOFF_STOPPED_AT_CAP: Final[int] = 200
+HANDOFF_REMAINING_CAP: Final[int] = 300
+HANDOFF_NEXT_HINT_CAP: Final[int] = 300
+MAX_HANDOFFS_PER_ITEM: Final[int] = 3  # trailing handoff chain length that trips `handoff_chain`.
+
 TAIL_TASKS_WITH_FINAL_PUSH: Final[int] = 3  # final-verify + closeout + final-push (S8.2).
 TAIL_TASKS_WITHOUT_FINAL_PUSH: Final[int] = 2  # final-verify + closeout only.
 
@@ -950,6 +961,98 @@ def _duration_seconds(started_at: str | None, ended_at: str | None) -> float | N
     return (end - start).total_seconds()
 
 
+def validate_handoff(crumb: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Pure/deterministic check of a breadcrumb's optional `handoff` object (A3 design S2).
+
+    Returns `(handoff, None)` for a valid one (over-long strings are truncated, not rejected),
+    `(None, reason)` for a malformed one, and `(None, None)` when the unit is not a handoff
+    candidate at all (no `handoff` key, or the breadcrumb is not `outcome: partial` with
+    `verdict` in pass/na and `needs_input` false). Never raises: a bad handoff degrades to a
+    plain partial so the run is never failed over it.
+    """
+    raw = crumb.get("handoff")
+    if raw is None:
+        return None, None
+    if crumb.get("outcome") != "partial":
+        return None, "handoff requires outcome=partial"
+    if crumb.get("verdict") not in _DONE_VERDICTS:
+        return None, "handoff requires verdict pass or na"
+    if bool(crumb.get("needs_input", False)):
+        return None, "handoff requires needs_input=false"
+    if not isinstance(raw, dict):
+        return None, "handoff must be an object"
+    reason = raw.get("reason")
+    if reason not in HANDOFF_REASONS:
+        return None, f"handoff.reason must be one of {sorted(HANDOFF_REASONS)}"
+    stopped_at = raw.get("stopped_at")
+    remaining = raw.get("remaining")
+    if not isinstance(stopped_at, str) or not stopped_at.strip():
+        return None, "handoff.stopped_at must be a non-empty string"
+    if not isinstance(remaining, str) or not remaining.strip():
+        return None, "handoff.remaining must be a non-empty string"
+    staged_raw = raw.get("staged", [])
+    if not isinstance(staged_raw, list) or not all(isinstance(x, str) for x in staged_raw):
+        return None, "handoff.staged must be a list of strings"
+    staged = [x[:HANDOFF_STAGED_ITEM_CAP] for x in staged_raw[:HANDOFF_MAX_STAGED]]
+    changed = crumb.get("changed_paths")
+    if not staged and not (isinstance(changed, list) and changed):
+        return None, "handoff has nothing staged (empty staged and empty changed_paths)"
+    next_hint = raw.get("next_hint")
+    if next_hint is not None and not isinstance(next_hint, str):
+        return None, "handoff.next_hint must be a string"
+    return {
+        "reason": reason,
+        "stopped_at": stopped_at[:HANDOFF_STOPPED_AT_CAP],
+        "staged": staged,
+        "remaining": remaining[:HANDOFF_REMAINING_CAP],
+        "next_hint": (next_hint or "")[:HANDOFF_NEXT_HINT_CAP],
+    }, None
+
+
+def is_handoff(line: dict[str, Any]) -> bool:
+    """True iff a ledger unit line is a validated self-split handoff (A3 design S3)."""
+    return (
+        isinstance(line.get("handoff"), dict)
+        and line.get("outcome") == "partial"
+        and line.get("verdict") != "fail"
+        and not bool(line.get("needs_input"))
+    )
+
+
+def unit_state(line: dict[str, Any]) -> str:
+    """One shared definition of a ledger unit's state: done|handoff|partial|failed|blocked|no_op."""
+    if is_handoff(line):
+        return "handoff"
+    outcome = line.get("outcome")
+    if line.get("verdict") == "fail" or outcome == "failed":
+        return "failed"
+    if outcome == "blocked" or bool(line.get("needs_input")):
+        return "blocked"
+    if outcome == "done":
+        return "done"
+    if outcome == "no_op":
+        return "no_op"
+    if outcome == "partial":
+        return "partial"
+    return str(outcome) if outcome else "unknown"
+
+
+def _effective_attempt_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ledger lines that count as attempts: handoffs are continuations, not attempts."""
+    return [ln for ln in lines if not is_handoff(ln)]
+
+
+def _handoff_chain(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The trailing run of handoff lines on one work item (`lines` already ordered)."""
+    chain: list[dict[str, Any]] = []
+    for ln in reversed(lines):
+        if not is_handoff(ln):
+            break
+        chain.append(ln)
+    chain.reverse()
+    return chain
+
+
 def ingest_ledger(
     inst: Path, units: list[str], state: State, k: int, now: datetime, *, dry_run: bool = False
 ) -> int:
@@ -995,6 +1098,7 @@ def ingest_ledger(
                 "BC-1", detail=f"unit_id={unit_id} breadcrumb.unit_id={crumb.get('unit_id')!r}"
             )
 
+        handoff, handoff_invalid = validate_handoff(crumb)
         line = {
             "type": "unit",
             "wave": k,
@@ -1010,7 +1114,11 @@ def ingest_ledger(
             "duration_s": _duration_seconds(task_info.started_at, task_info.ended_at),
             "changed_paths": list(crumb.get("changed_paths", []))[:MAX_CHANGED_PATHS_PER_UNIT],
             "needs_input": bool(crumb.get("needs_input", False)),
+            "handoff": handoff,
         }
+        if handoff_invalid is not None:
+            line["handoff_invalid"] = handoff_invalid
+        line["state"] = unit_state(line)
         append_chained(inst, line, now, dry_run=dry_run)
         have.add(unit_id)
         appended += 1
@@ -1570,13 +1678,19 @@ def returns_to_earlier(hist: list[str]) -> list[int]:
     return hits
 
 
-def _work_item_sequences(unit_lines: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def _work_item_sequences(
+    unit_lines: list[dict[str, Any]], *, exclude_handoffs: bool = False
+) -> dict[str, list[dict[str, Any]]]:
     """Group ledger `unit` lines by `work_item`, each group ordered by `(wave, unit_id)`
     (HLD S8.3's per-work-item sequence `S[w]`). Lines with a missing/blank `work_item` are
-    excluded -- a malformed brief is BR-1's problem (M1), not a detector's.
+    excluded -- a malformed brief is BR-1's problem (M1), not a detector's. With
+    `exclude_handoffs`, self-split handoff lines are dropped (they are transparent to
+    period/mirror/failure/attempt detectors; `handoff_chain` bounds them instead).
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for line in unit_lines:
+        if exclude_handoffs and is_handoff(line):
+            continue
         work_item = line.get("work_item")
         if isinstance(work_item, str) and work_item:
             groups.setdefault(work_item, []).append(line)
@@ -1629,7 +1743,7 @@ def _assign_signal_ids(candidates: list[dict[str, Any]], k: int) -> list[dict[st
 
 def _period_mirror_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    for work_item, lines in _work_item_sequences(unit_lines).items():
+    for work_item, lines in _work_item_sequences(unit_lines, exclude_handoffs=True).items():
         seq = [f"{ln.get('kind')}:{ln.get('verdict')}" for ln in lines]
         period = detect_period(seq)
         if period is not None:
@@ -1666,7 +1780,7 @@ def _period_mirror_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, A
 
 def _repeated_failure_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    for work_item, lines in _work_item_sequences(unit_lines).items():
+    for work_item, lines in _work_item_sequences(unit_lines, exclude_handoffs=True).items():
         if len(lines) < 2:
             continue
         if lines[-1].get("verdict") == "fail" and lines[-2].get("verdict") == "fail":
@@ -1688,7 +1802,7 @@ def _repeated_failure_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str
 
 def _attempt_cap_signals(cfg: Config, unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    for work_item, lines in _work_item_sequences(unit_lines).items():
+    for work_item, lines in _work_item_sequences(unit_lines, exclude_handoffs=True).items():
         if len(lines) >= cfg.max_attempts_per_item:
             signals.append(
                 {
@@ -1707,6 +1821,36 @@ def _attempt_cap_signals(cfg: Config, unit_lines: list[dict[str, Any]]) -> list[
                     ),
                 }
             )
+    return signals
+
+
+def _handoff_chain_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A3 `handoff_chain`: a work item's trailing run of self-split handoffs reached
+    `MAX_HANDOFFS_PER_ITEM` (`medium` one short of it) -- bounds unbounded self-splitting."""
+    signals: list[dict[str, Any]] = []
+    for work_item, lines in _work_item_sequences(unit_lines).items():
+        chain = _handoff_chain(lines)
+        if len(chain) < MAX_HANDOFFS_PER_ITEM - 1:
+            continue
+        signals.append(
+            {
+                "type": "handoff_chain",
+                "severity": "high" if len(chain) >= MAX_HANDOFFS_PER_ITEM else "medium",
+                "work_item": work_item,
+                "ask_id": None,
+                "path": None,
+                "evidence": {
+                    "chain": len(chain),
+                    "max_handoffs_per_item": MAX_HANDOFFS_PER_ITEM,
+                    "unit_ids": [ln.get("unit_id") for ln in chain],
+                    "reasons": [(ln.get("handoff") or {}).get("reason") for ln in chain],
+                },
+                "message": (
+                    f"work item {work_item} has {len(chain)} consecutive self-split handoffs "
+                    f"(max_handoffs_per_item={MAX_HANDOFFS_PER_ITEM})"
+                ),
+            }
+        )
     return signals
 
 
@@ -2006,7 +2150,9 @@ def _consecutive_stall_waves(
     for wave in waves_with_units:
         wave_units = [line for line in unit_lines if line.get("wave") == wave]
         done = any(
-            u.get("outcome") == "done" and u.get("verdict") in _DONE_VERDICTS for u in wave_units
+            (u.get("outcome") == "done" and u.get("verdict") in _DONE_VERDICTS)
+            or (is_handoff(u) and bool(u.get("changed_paths")))  # staged handoff = progress
+            for u in wave_units
         )
         cmet = _criteria_met_count(inst, wave)
         rose = False
@@ -2121,6 +2267,7 @@ def detect_signals(cfg: Config, inst: Path, k: int) -> list[dict[str, Any]]:
     candidates.extend(_period_mirror_signals(unit_lines))
     candidates.extend(_repeated_failure_signals(unit_lines))
     candidates.extend(_attempt_cap_signals(cfg, unit_lines))
+    candidates.extend(_handoff_chain_signals(unit_lines))
     candidates.extend(_content_oscillation_signals(inst, k))
     candidates.extend(_breadcrumb_integrity_signals(inst, k))
 
@@ -2146,6 +2293,34 @@ def detect_signals(cfg: Config, inst: Path, k: int) -> list[dict[str, Any]]:
     candidates.extend(_prompt_changed_signal(inst))
 
     return _assign_signal_ids(candidates, k)
+
+
+def open_handoffs(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Open handoffs: a handoff that is the LAST unit on its work item, sorted by
+    `(work_item, unit_id)` (A3 design S4 `digest.handoffs`)."""
+    out: list[dict[str, Any]] = []
+    for work_item, lines in _work_item_sequences(unit_lines).items():
+        if not lines or not is_handoff(lines[-1]):
+            continue
+        last = lines[-1]
+        handoff = last.get("handoff") or {}
+        out.append(
+            {
+                "work_item": work_item,
+                "unit_id": last.get("unit_id"),
+                "wave": last.get("wave"),
+                "kind": last.get("kind"),
+                "ask_ids": list(last.get("ask_ids") or []),
+                "reason": handoff.get("reason"),
+                "stopped_at": handoff.get("stopped_at"),
+                "remaining": handoff.get("remaining"),
+                "next_hint": handoff.get("next_hint"),
+                "staged": list(handoff.get("staged") or []),
+                "chain": len(_handoff_chain(lines)),
+            }
+        )
+    out.sort(key=lambda h: (str(h["work_item"]), str(h["unit_id"])))
+    return out
 
 
 def compute_progress(cfg: Config, inst: Path, k: int) -> dict[str, Any]:
@@ -2199,6 +2374,7 @@ def compute_progress(cfg: Config, inst: Path, k: int) -> dict[str, Any]:
     return {
         "work_items_total": len(work_items_all),
         "work_items_done": len(done_through_k),
+        "work_items_handed_off": len(open_handoffs(unit_lines)),
         "newly_done": len(done_through_k - done_before_k),
         "stall_waves": _consecutive_stall_waves(cfg, inst, k, unit_lines),
         "criteria_met_prev": _criteria_met_count(inst, k - 1) or 0,
@@ -2994,10 +3170,22 @@ def _check_early_closeout_evidence(
         verified_after = any(
             line.get("kind") == "verify"
             and line.get("verdict") == "pass"
+            and line.get("outcome") != "partial"
             and isinstance(line.get("seq"), int)
             and int(line["seq"]) > last_change_seq
             for line in ask_lines
         )
+        open_handoff = [h for h in open_handoffs(unit_lines) if ask_id in h["ask_ids"]]
+        if open_handoff:
+            violations.append(
+                RuleViolation(
+                    "R14",
+                    f"early closeout (stage={_digest_stage(ctx.digest)!r}) is not allowed while "
+                    f"ask {ask_id!r} has an open self-split handoff on work item(s) "
+                    f"{sorted(h['work_item'] for h in open_handoff)}",
+                    path,
+                )
+            )
         if not verified_after:
             violations.append(
                 RuleViolation(
@@ -3619,7 +3807,7 @@ def _capped_work_item_lines(
     return {
         work_item: lines
         for work_item, lines in _work_item_sequences(unit_lines).items()
-        if len(lines) >= cfg.max_attempts_per_item
+        if len(_effective_attempt_lines(lines)) >= cfg.max_attempts_per_item
     }
 
 
@@ -3696,7 +3884,9 @@ def _check_entry_r13_attempt_cap(
         return []  # a malformed work_item isn't R13's problem to report
 
     groups = _work_item_sequences(_unit_lines_through(ctx.inst, k))
-    count = len(groups.get(work_item, []))
+    item_lines = groups.get(work_item, [])
+    count = len(_effective_attempt_lines(item_lines))  # handoffs are not attempts
+    chain = len(_handoff_chain(item_lines))
     path = str(brief_path(ctx.inst, ctx.next_wave, unit_id))
 
     if count > ctx.cfg.max_attempts_per_item + _ATTEMPT_CAP_HARD_STOP_OFFSET:
@@ -3710,14 +3900,22 @@ def _check_entry_r13_attempt_cap(
                 path,
             )
         ]
-    if count >= ctx.cfg.max_attempts_per_item:
+    at_attempt_cap = count >= ctx.cfg.max_attempts_per_item
+    at_chain_cap = chain >= MAX_HANDOFFS_PER_ITEM
+    if at_attempt_cap or at_chain_cap:
         approach_change = brief_data.get("approach_change")
         if not isinstance(approach_change, str) or not approach_change.strip():
+            what = (
+                f"its attempt cap ({count} >= max_attempts_per_item="
+                f"{ctx.cfg.max_attempts_per_item})"
+                if at_attempt_cap
+                else f"its handoff-chain cap ({chain} >= max_handoffs_per_item="
+                f"{MAX_HANDOFFS_PER_ITEM})"
+            )
             return [
                 RuleViolation(
                     "R13",
-                    f"unit {unit_id} targets work_item {work_item!r} at/above its attempt cap "
-                    f"({count} >= max_attempts_per_item={ctx.cfg.max_attempts_per_item}) but its "
+                    f"unit {unit_id} targets work_item {work_item!r} at/above {what} but its "
                     "brief has no non-empty approach_change",
                     path,
                 )
@@ -4344,6 +4542,7 @@ def ckpt_prep(args: argparse.Namespace) -> None:
             "stabilize_passes": budget["stabilize_passes"],
             "progress": progress,
             "capped_work_items": [],
+            "handoffs": open_handoffs(_unit_lines_through(inst, k)),
             "signals": signals,
         }
         if args.dry_run:
