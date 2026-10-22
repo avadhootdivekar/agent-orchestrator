@@ -208,6 +208,17 @@ class TestCreateInstanceService:
         )
         assert Path(response["instance_dir"]).name.endswith("-hello-world")
 
+    def test_long_first_prompt_line_yields_a_bounded_slug(
+        self, service_with_template: DashboardService
+    ) -> None:
+        # Regression: an uncapped slug overflowed the 255-byte filename limit -> HTTP 500.
+        response = service_with_template.create_instance(
+            "mini", params={}, prompt="word " * 200, start=False
+        )
+        name = Path(response["instance_dir"]).name
+        assert len(name) < 100
+        assert name.endswith("-word")
+
     def test_unknown_template_raises_a_distinct_not_found_error(
         self, service_with_template: DashboardService
     ) -> None:

@@ -104,6 +104,9 @@ FAILED_LAUNCH_WINDOW_HOURS = 24.0
 
 # Non-alnum run -> single hyphen, for deriving a slug from a free-text prompt (HLD §2.6).
 _SLUG_DERIVE_RE = re.compile(r"[^a-z0-9]+")
+# Cap on a prompt-derived slug. The slug becomes part of the instance directory / run id, and a
+# long first prompt line otherwise overflows the 255-byte filename limit (ENAMETOOLONG -> HTTP 500).
+_SLUG_MAX_CHARS = 60
 
 
 # Survival shells out to git per run/task. Sync routes already run in Starlette's threadpool
@@ -207,14 +210,20 @@ def _derive_slug_from_prompt(prompt: str | None) -> str | None:
     single hyphen, leading/trailing hyphens stripped. A line with no alnum characters at
     all (e.g. "!!!") yields ``None`` rather than an empty string, so the caller's
     "missing slug" error fires instead of `instantiate()` rejecting an empty slug less
-    clearly.
+    clearly. The result is capped at ``_SLUG_MAX_CHARS``, cut at a hyphen boundary where one
+    exists so the slug does not end mid-word.
     """
     if not prompt:
         return None
     for line in prompt.splitlines():
         stripped = line.strip()
         if stripped:
-            return _SLUG_DERIVE_RE.sub("-", stripped.lower()).strip("-") or None
+            slug = _SLUG_DERIVE_RE.sub("-", stripped.lower()).strip("-")
+            if len(slug) > _SLUG_MAX_CHARS:
+                head = slug[:_SLUG_MAX_CHARS]
+                # Prefer the last whole word; fall back to the hard cut for one giant token.
+                slug = (head.rsplit("-", 1)[0] if "-" in head else head).strip("-")
+            return slug or None
     return None
 
 
