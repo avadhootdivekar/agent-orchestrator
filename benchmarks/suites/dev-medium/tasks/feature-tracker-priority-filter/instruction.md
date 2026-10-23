@@ -24,6 +24,4 @@ store itself (`tracker/store.py`). `--status` filtering already works end to end
 
 Fix both so that `tests/test_tracker.py` passes.
 
-Do not modify `tests/test_tracker.py`, and do not modify anything under `.grading/` —
-it is a held-out grading harness the run is scored against and is not part of what you
-are asked to implement or test against directly.
+Do not modify `tests/test_tracker.py`.

@@ -11,6 +11,4 @@ assume the bug is necessarily in the eviction logic itself -- trace through what
 actually end up stored before concluding where the fix belongs. Whichever module turns
 out to be at fault, fix it so `tests/test_cache.py` passes.
 
-Do not modify `tests/test_cache.py`, and do not modify anything under `.grading/` — it
-is a held-out grading harness the run is scored against and is not part of what you are
-asked to implement or test against directly.
+Do not modify `tests/test_cache.py`.

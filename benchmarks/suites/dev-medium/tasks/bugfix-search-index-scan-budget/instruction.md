@@ -21,6 +21,4 @@ AND query (space-separated terms) by intersecting the postings for each term.
 
 Fix `search/query.py` so that `tests/test_search.py` passes.
 
-Do not modify `tests/test_search.py`, and do not modify anything under `.grading/` — it
-is a held-out grading harness the run is scored against and is not part of what you are
-asked to implement or test against directly.
+Do not modify `tests/test_search.py`.

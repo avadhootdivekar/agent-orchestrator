@@ -1,5 +1,5 @@
-"""Grader script for test-write-validation-spec (invoked by the suite's `command`
-grader: `uv run python .grading/run.py`, cwd = the mutated repo root).
+"""Grader script for test-write-validation-spec, run by the suite's `command` grader as
+`uv run python {grading_dir}/run.py --repo {repo_dir}` (cwd = the mutated repo root).
 
 Proves a NEW test file was written AND that it actually exercises each of the four
 `validation.rules` functions' real behavior (scaled-up version of dev-core's
@@ -26,13 +26,13 @@ disposable tempdir copy.
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-REPO_DIR = Path(__file__).resolve().parent.parent
 NEW_TEST_REL = Path("tests") / "test_validation.py"
 MODULE_REL = Path("validation") / "rules.py"
 
@@ -195,14 +195,18 @@ def normalize_phone(value: str) -> str | None:
 
 def _run_pytest(cwd: Path) -> int:
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--tb=no", "tests"],
+        [sys.executable, "-m", "pytest", "-q", "--tb=no", "-p", "no:cacheprovider", "tests"],
         cwd=cwd,
     )
     return result.returncode
 
 
-def main() -> int:
-    new_test_path = REPO_DIR / NEW_TEST_REL
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path.cwd(), help="mutated repo (default: cwd)")
+    repo_dir = parser.parse_args(argv).repo.resolve()
+
+    new_test_path = repo_dir / NEW_TEST_REL
     if not new_test_path.is_file():
         print(f"FAIL: {NEW_TEST_REL} not found -- no new test written")
         return 1
@@ -211,7 +215,7 @@ def main() -> int:
         return 1
 
     # (1) the new test(s) must pass against the CORRECT implementation.
-    if _run_pytest(REPO_DIR) != 0:
+    if _run_pytest(repo_dir) != 0:
         print("FAIL: new test(s) do not pass against the correct implementation")
         return 1
 
@@ -221,7 +225,7 @@ def main() -> int:
     for mutant_name, buggy_module in _MUTANTS.items():
         with tempfile.TemporaryDirectory(prefix="bench-mutation-") as tmp:
             mutated_dir = Path(tmp) / "repo"
-            shutil.copytree(REPO_DIR, mutated_dir)
+            shutil.copytree(repo_dir, mutated_dir)
             (mutated_dir / MODULE_REL).write_text(buggy_module)
             mutation_rc = _run_pytest(mutated_dir)
         if mutation_rc == 0:
