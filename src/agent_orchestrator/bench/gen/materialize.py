@@ -69,5 +69,8 @@ def write_instance(instance: Instance, repo_dir: Path, grading_dir: Path) -> Non
             INSTANCE_FILENAME: instance.instance_json_text(),
             PROBES_FILENAME: instance.probes_json_text(),
             **{f"{REFERENCE_DIRNAME}/{rel}": text for rel, text in instance.reference.items()},
+            # A copy next to the reference program: the reference then also works when it is
+            # copied elsewhere as a whole (FakeSubject `copy-reference`) without INSTANCE_JSON.
+            f"{REFERENCE_DIRNAME}/{INSTANCE_FILENAME}": instance.instance_json_text(),
         },
     )

@@ -13,7 +13,8 @@ REFERENCE_DIR = Path(__file__).resolve().parent / "reference"
 REFERENCE_PROGRAM = "server.py"
 REFERENCE_RUN_SH = (
     "#!/bin/sh\n"
-    "# Reference run.sh (grader-owned). INSTANCE_JSON points at the generated instance.json.\n"
+    "# Reference run.sh (grader-owned). INSTANCE_JSON points at the generated instance.json\n"
+    "# (default: the instance.json next to server.py).\n"
     'cd "$(dirname "$0")" || exit 1\n'
     f"exec python3 {REFERENCE_PROGRAM}\n"
 )

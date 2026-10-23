@@ -20,11 +20,13 @@ import unicodedata
 import uuid
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 INT_RE = re.compile(r"^-?[0-9]+$")
+ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UINT_RE = re.compile(r"^[0-9]+$")
 IDEMPOTENCY_KEY_MAX = 255
 LISTEN_BACKLOG = 256
@@ -135,9 +137,12 @@ class Store:
             raise bad("invalid Idempotency-Key")
         fields = {f["name"]: f for f in e["fields"]}
         fks = {r["fk"]: r for r in self.parents[entity]}
-        unknown = sorted(set(body) - set(fields) - set(fks))
+        unknown = sorted(set(body) - set(fields) - set(fks) - {"id"})
         if unknown:
             raise bad(f"unknown field(s): {', '.join(unknown)}")
+        client_id = body.get("id")
+        if "id" in body and (not isinstance(client_id, str) or not ID_RE.match(client_id)):
+            raise bad("'id' must be a string of 1 to 64 characters from A-Z a-z 0-9 _ -")
         fingerprint = json.dumps(body, sort_keys=True)
         with self.lock:
             if idem_key is not None:
@@ -165,7 +170,9 @@ class Store:
                     raise bad(f"'{fk}' must be the id of an existing {rel['parent']}")
                 row[fk] = pid
             self._check_unique(entity, row, own_id=None)
-            rid = str(uuid.uuid4())
+            if client_id is not None and client_id in self.rows[entity]:
+                raise ApiError(409, "conflict", f"{entity} '{client_id}' already exists")
+            rid = client_id if client_id is not None else str(uuid.uuid4())
             created = now_iso()
             full = {"id": rid, "created_at": created, "version": 1}
             full.update(row)
@@ -506,8 +513,13 @@ def make_handler(store: Store) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+def instance_path() -> str:
+    """``$INSTANCE_JSON`` (set by the grader), else the instance.json next to this file."""
+    return os.environ.get("INSTANCE_JSON") or str(Path(__file__).with_name("instance.json"))
+
+
 def main() -> None:
-    with open(os.environ["INSTANCE_JSON"], encoding="utf-8") as fh:
+    with open(instance_path(), encoding="utf-8") as fh:
         inst = json.load(fh)
     store = Store(inst)
 
@@ -515,7 +527,8 @@ def main() -> None:
         daemon_threads = True
         request_queue_size = LISTEN_BACKLOG
 
-    server = Server(("0.0.0.0", int(os.environ.get("PORT", "8080"))), make_handler(store))
+    host = os.environ.get("HOST", "127.0.0.1")
+    server = Server((host, int(os.environ.get("PORT", "8080"))), make_handler(store))
     signal.signal(
         signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start()
     )

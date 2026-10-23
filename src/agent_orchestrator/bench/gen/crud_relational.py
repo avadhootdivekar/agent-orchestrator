@@ -42,6 +42,7 @@ PAGE_SIZE_DEFAULT_CHOICES = (10, 20)
 LABEL_MAX_LENGTH_CHOICES = (40, 60, 80)
 TEXT_MAX_LENGTH_CHOICES = (100, 200, 300)
 PERF_LIST_PAGE = 20
+PERF_ID_PREFIX = "perf-"
 NIL_UUID = "00000000-0000-4000-8000-000000000000"
 SAMPLE_DATETIMES = ("2026-03-15T09:30:00Z", "2027-01-02T03:04:05Z")
 OPTIONAL_KINDS = ("int", "bool", "datetime", "text")
@@ -254,7 +255,13 @@ def _constraint(f: JsonDict, schema: Schema, entity: str) -> str:
 def _entity_section(schema: Schema, e: JsonDict) -> str:
     name = e["name"]
     rows = [
-        ["`id`", "string", "server", "UUID v4, lowercase, canonical form; assigned on creation"],
+        [
+            "`id`",
+            "string",
+            "optional on create",
+            "1 to 64 characters from `A-Z a-z 0-9 _ -`. If the client sends none, the server "
+            "assigns a UUID v4 (lowercase, canonical form). Cannot be changed",
+        ],
         ["`created_at`", "string", "server", "UTC time of creation, millisecond precision"],
         ["`version`", "integer", "server", "1 on creation; +1 on every successful PATCH"],
     ]
@@ -342,9 +349,14 @@ def _error_rows(schema: Schema) -> list[list[str]]:
         ["400", "`invalid_request`", "The request is invalid in any way (see the field rules)"],
         ["404", "`not_found`", "Unknown id, unknown route, or removing a link that does not exist"],
     ]
-    has_restrict = any(r["on_delete"] == "restrict" for _, r in schema.cascade_relations())
-    if "unique_constraint" in schema.traps or has_restrict:
-        rows.append(["409", "`conflict`", "A uniqueness rule or a delete restriction is violated"])
+    rows.append(
+        [
+            "409",
+            "`conflict`",
+            "A client-supplied `id` is already used in the collection, a uniqueness rule is "
+            "violated, or a delete restriction applies",
+        ]
+    )
     if "lost_update" in schema.traps:
         rows.append(["412", "`precondition_failed`", "`If-Match` does not match the version"])
     if "idempotency_key" in schema.traps:
@@ -431,8 +443,9 @@ def _trap_requirements(schema: Schema) -> list[str]:
             "**Strict validation.** Invalid input is never coerced, truncated or ignored and "
             "never causes a server error: the response is 400 `invalid_request` and nothing "
             "changes. This covers: a body that is not a JSON object; a missing required field; "
-            "`null` for a required field; an unknown or read-only field (`id`, `created_at`, "
-            "`version`, relation ids on PATCH); a value of the wrong JSON type (a boolean, a "
+            "`null` for a required field; an unknown or read-only field (`created_at`, `version`; "
+            "`id` and relation ids on PATCH); an `id` that is not a string of 1 to 64 allowed "
+            "characters; a value of the wrong JSON type (a boolean, a "
             "float or a numeric string for an integer field; a number for a string field; a "
             "string for a boolean field); an integer outside its range; a value that is not one "
             "of the enum values; an empty or too long string; a datetime that is malformed, "
@@ -477,8 +490,8 @@ def render_spec(schema: Schema, language: str, allow: Sequence[str]) -> str:
         "time, and are stored and returned unchanged.",
         "- String values are stored and returned exactly as sent (no trimming, no case change). "
         "Integer values are JSON integers; booleans are JSON `true`/`false`.",
-        "- Server-assigned fields (`id`, `created_at`, `version`) are always present in every "
-        "record; optional fields that were never set are present with the value `null`.",
+        "- `id`, `created_at` and `version` are always present in every record; optional "
+        "fields that were never set are present with the value `null`.",
         '- Error responses carry a JSON body `{"error": {"code": "<code>", "message": '
         '"<text>"}}` and one of these statuses:',
         "",
@@ -571,9 +584,12 @@ class Probes:
         variant: int = 0,
         label: str | None = None,
         omit: Sequence[str] = (),
+        client_id: str | None = None,
     ) -> JsonDict:
         e = self.s.by_name[entity]
         body: JsonDict = {}
+        if client_id is not None:
+            body["id"] = client_id
         for rel in self.s.belongs_to(entity):
             body[rel["fk"]] = tmpl(fk_vars[rel["parent"]])
         for f in e["fields"]:
@@ -703,6 +719,7 @@ class Probes:
         ]
         for e in s.entities:
             out += self._core_entity(e["name"])
+        out.append(self._core_client_id())
         out.append(self._core_pagination())
         for a, b in s.many_to_many():
             out.append(self._core_m2n(a, b))
@@ -792,6 +809,37 @@ class Probes:
                 ),
             ]
         return probe(f"core-{name}-list-filter", steps)
+
+    def _core_client_id(self) -> JsonDict:
+        root = self.s.root["name"]
+        path = self.s.path(root)
+        want = self.expected(root, {}, overrides={"id": "client-id-one"})
+        return probe(
+            "core-client-supplied-id",
+            [
+                step(
+                    http_op("POST", path, self.body(root, {}, client_id="client-id-one")),
+                    status=201,
+                    match=want,
+                ),
+                step(http_op("GET", f"{path}/client-id-one"), status=200, match=want),
+                step(
+                    http_op("POST", path, self.body(root, {}, client_id="client-id-one")),
+                    status=409,
+                    match=self.error("conflict"),
+                ),
+                step(
+                    http_op("POST", path, self.body(root, {}, client_id="client-id-two")),
+                    status=201,
+                    match={"id": "client-id-two"},
+                ),
+                step(
+                    http_op("GET", f"{path}?limit={self.page_max}"),
+                    status=200,
+                    match={"items": {"$len": 2}},
+                ),
+            ],
+        )
 
     def _core_pagination(self) -> JsonDict:
         root = self.s.root["name"]
@@ -1181,8 +1229,12 @@ class Probes:
             bad_post(**{label["name"]: "x" * (label["max_length"] + 1)}),
             bad_post(**{label["name"]: 12345}),
             bad_post(bogus_field=1),
-            bad_post(id="client-chosen"),
+            bad_post(id=123),
+            bad_post(id=""),
+            bad_post(id="has space"),
+            bad_post(id="x" * 65),
             bad_post(version=7),
+            bad_post(created_at="2026-01-15T09:30:00.123Z"),
             bad_post(**{enum["name"]: "not-a-listed-value"}),
             bad_post(**{enum["name"]: _DROP}),
         ]
@@ -1234,7 +1286,9 @@ class Probes:
         s = self.s
         root = s.root["name"]
         asc = {"items": {"$sorted_by": "created_at", "order": "asc", "tiebreak": "id"}}
-        desc = {"items": {"$sorted_by": "created_at", "order": "desc", "tiebreak": "id"}}
+        # The DSL does not say in which direction `tiebreak` runs under order=desc, so only the
+        # created_at order is asserted there (the spec still defines the descending id order).
+        desc = {"items": {"$sorted_by": "created_at", "order": "desc"}}
         lim = self.page_max
         checks = [
             self.list_(root, f"limit={lim}", match=asc),
@@ -1260,13 +1314,19 @@ class Probes:
         root = s.root["name"]
         path = s.path(root)
         body = self.body(root, {})
-        load = step(http_op("POST", path, body), status=201, save={"item_id": "$.id"}, repeat=1)
+        # The load step stores records under client-chosen ids `perf-0 .. perf-(N-1)`; a mix
+        # step's `{{i}}` is a random index in [0, N), so `perf-{{i}}` always names a record.
+        load = step(
+            http_op("POST", path, {**body, "id": f"{PERF_ID_PREFIX}{tmpl('i')}"}),
+            status=201,
+            repeat=1,
+        )
         mix = [
             mix_entry(
                 0.5,
                 "get",
                 "indexed_get",
-                step(http_op("GET", f"{path}/{tmpl('item_id')}"), status=200),
+                step(http_op("GET", f"{path}/{PERF_ID_PREFIX}{tmpl('i')}"), status=200),
             ),
             mix_entry(0.2, "create", "write", step(http_op("POST", path, body), status=201)),
             mix_entry(

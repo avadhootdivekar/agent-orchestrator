@@ -13,6 +13,7 @@ import heapq
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 WORKER_MAX_LENGTH = 64
@@ -233,8 +234,13 @@ class Queue:
         raise OpError("unknown_op", f"unknown op {op!r}")
 
 
+def instance_path() -> str:
+    """``$INSTANCE_JSON`` (set by the grader), else the instance.json next to this file."""
+    return os.environ.get("INSTANCE_JSON") or str(Path(__file__).with_name("instance.json"))
+
+
 def main() -> None:
-    with open(os.environ["INSTANCE_JSON"], encoding="utf-8") as fh:
+    with open(instance_path(), encoding="utf-8") as fh:
         queue = Queue(json.load(fh)["limits"])
     out = sys.stdout
     for line in sys.stdin:

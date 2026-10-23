@@ -3,11 +3,13 @@
 The agent receives ``run.sh``, one manifest limited to the dependency allow-list and a stub entry
 point.  ``run.sh`` is the *only* interface the grader uses.
 
-Allow-list source: the suite ``stack`` block, ``stack.<language>.allow`` (a list of strings).  An
-entry is a package / module path, optionally pinned (``montydb==2.5.3``,
-``modernc.org/sqlite@v1.34.4``).
-Entries that name a language built-in (Python's ``sqlite3``, Node's ``node:*``) are documented in
-SPEC.md but never written into the manifest.  Absent => :data:`DEFAULT_ALLOW`.
+Dependency source: the suite ``stack`` block, ``stack.<language>.deps`` (third-party packages
+only -- exactly what the sandbox installs into the language image; an entry may be pinned, e.g.
+``montydb==2.5.3``).  ``ao-bench gen`` copies it into each task's ``source.deps``; the provider
+turns it into the full allow-list (:func:`allow_from_deps`: the language built-ins in
+:data:`BUILTIN_ALLOW` first, then the deps).  The allow-list is what SPEC.md states and what the
+manifest is limited to (built-ins are documented, never written into a manifest).  Absent =>
+:data:`DEFAULT_DEPS`.
 
 TypeScript note: the task language is called ``typescript`` but ``run.sh`` executes ``node app.js``
 (Node 22, ES modules, built-ins only).  The agent may write plain JavaScript or TypeScript that it
@@ -24,10 +26,24 @@ DEFAULT_ALLOW: dict[str, tuple[str, ...]] = {
     "python": ("sqlite3", "montydb"),
     "typescript": ("node:sqlite",),
     "go": ("modernc.org/sqlite",),
+}  # == BUILTIN_ALLOW + DEFAULT_DEPS per language
+
+# Language built-ins the specs allow (embedded SQL), documented but never installed.
+BUILTIN_ALLOW: dict[str, tuple[str, ...]] = {
+    "python": ("sqlite3",),
+    "typescript": ("node:sqlite",),
+    "go": (),
+}
+# Default third-party deps per language == the default `stack.<language>.deps`.
+DEFAULT_DEPS: dict[str, tuple[str, ...]] = {
+    "python": ("montydb",),
+    "typescript": (),
+    "go": ("modernc.org/sqlite",),
 }
 
 PYTHON_BUILTIN_MODULES = frozenset({"sqlite3"})
 PORT_ENV = "PORT"
+HOST_ENV = "HOST"
 RUN_SH_MODE = 0o755
 
 _RUN_SH: dict[str, str] = {
@@ -41,6 +57,13 @@ _RUNTIME: dict[str, str] = {
     "typescript": "Node.js 22 (ES modules; plain JavaScript or TypeScript compiled to `app.js`)",
     "go": "Go 1.22 or newer (module `app`, `package main` in the repository root)",
 }
+
+
+def allow_from_deps(language: str, deps: Sequence[str]) -> list[str]:
+    """Full allow-list for *language* given its third-party ``deps`` (built-ins first)."""
+    if language not in BUILTIN_ALLOW:
+        raise ValueError(f"unknown language {language!r}; known: {sorted(BUILTIN_ALLOW)}")
+    return [*BUILTIN_ALLOW[language], *deps]
 
 
 def resolve_allow(language: str, allow: Sequence[str] | None) -> list[str]:
@@ -96,8 +119,9 @@ def run_contract_text(contract: str, language: str) -> str:
     if contract == "http":
         body = (
             f"{start}\n\n"
-            f"- The service listens on all interfaces (`0.0.0.0`) on the TCP port given by the "
-            f"`{PORT_ENV}` environment variable and speaks HTTP/1.1.\n"
+            f"- The service binds `${HOST_ENV}:${PORT_ENV}`: the address in the `{HOST_ENV}` "
+            f"environment variable and the TCP port in the `{PORT_ENV}` environment variable "
+            "(both are always set), and speaks HTTP/1.1.\n"
             '- `GET /healthz` returns `200` with body `{"status": "ok"}` as soon as the '
             "service is ready; it must be ready within 30 seconds of start.\n"
             "- Requests and responses with a body use `Content-Type: application/json`.\n"
@@ -127,7 +151,14 @@ def skeleton_files(
         raise ValueError(f"unknown language {language!r}; known: {sorted(_RUN_SH)}")
     external = third_party(language, allow)
     stub_note = f"{title}: implement SPEC.md. Contract: see 'Run contract' in SPEC.md."
-    files: dict[str, str] = {"run.sh": _RUN_SH[language]}
+    if contract == "http":
+        stub_note += f" Bind ${HOST_ENV}:${PORT_ENV}."
+    run_sh = _RUN_SH[language]
+    if contract == "http":
+        shebang, rest = run_sh.split("\n", 1)
+        note = f"# Contract: the service must bind ${HOST_ENV}:${PORT_ENV} (see SPEC.md)."
+        run_sh = f"{shebang}\n{note}\n{rest}"
+    files: dict[str, str] = {"run.sh": run_sh}
     if language == "python":
         deps = ", ".join(json.dumps(dep) for dep in external)
         files["pyproject.toml"] = (

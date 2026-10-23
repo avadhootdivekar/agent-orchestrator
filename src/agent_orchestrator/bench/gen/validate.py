@@ -28,6 +28,8 @@ PERF_KEYS = frozenset(
 )  # fmt: skip
 PERF_CHECKS = frozenset({"alpha", "ref_ratio", "timeout"})
 BUILTIN_VARS = frozenset({"rand", "now_iso"})
+# Perf mix steps additionally get `i` (a seeded random index in [0, N)) and `N` (current size).
+MIX_VARS = frozenset({"i", "N"})
 JSON_TYPES = frozenset({"string", "number", "integer", "boolean", "array", "object", "null"})
 DIRECTIVES = frozenset(
     {
@@ -186,6 +188,7 @@ def _check_step(
     errs: list[str],
     *,
     allow_index: bool | None = None,
+    extra_vars: frozenset[str] = frozenset(),
 ) -> set[str]:
     """Validate one step against the variables in *scope*; return the names it saves."""
     if not isinstance(s, dict):
@@ -206,7 +209,7 @@ def _check_step(
     if sleep is not None and (isinstance(sleep, bool) or not isinstance(sleep, int) or sleep < 0):
         errs.append(f"{where}: sleep_ms must be a non-negative integer")
     has_index = (repeat is not None) if allow_index is None else allow_index
-    visible = set(scope) | BUILTIN_VARS | ({"i"} if has_index else set())
+    visible = set(scope) | BUILTIN_VARS | extra_vars | ({"i"} if has_index else set())
     used = _template_names(s.get("op")) | _template_names(s.get("expect"))
     used |= _var_refs(s.get("expect"))
     for name in sorted(used - visible):
@@ -305,11 +308,10 @@ def _check_perf(perf: Any, contract: str, errs: list[str]) -> None:
         if isinstance(v, bool) or not isinstance(v, int) or v < 1:
             errs.append(f"{where}.{key}: must be a positive int")
     load = perf.get("load")
-    load_saved: set[str] = set()
     if isinstance(load, dict):
         if not isinstance(load.get("repeat"), int) or isinstance(load.get("repeat"), bool):
             errs.append(f"{where}.load: needs an integer 'repeat' (placeholder for N)")
-        load_saved = _check_step(load, contract, f"{where}.load", set(), errs)
+        _check_step(load, contract, f"{where}.load", set(), errs)
     else:
         errs.append(f"{where}.load: must be a step object")
     mix = perf.get("mix")
@@ -339,8 +341,13 @@ def _check_perf(perf: Any, contract: str, errs: list[str]) -> None:
                 classes.add(m["class"])
             if isinstance(m["step"], dict) and "repeat" in m["step"]:
                 errs.append(f"{mw}.step: repeat is not allowed in a mix step")
-            # A drawn op may come first, so it may only use variables the load step saved.
-            _check_step(m["step"], contract, f"{mw}.step", load_saved, errs, allow_index=False)
+            # A drawn op may come first and the grader does not promise that variables saved by
+            # the load step (or an earlier draw) are visible, so a mix step may only use the
+            # built-ins plus `{{i}}` / `{{N}}`.
+            _check_step(
+                m["step"], contract, f"{mw}.step", set(), errs, allow_index=False,
+                extra_vars=MIX_VARS,
+            )  # fmt: skip
         if abs(total - 1.0) > 1e-6 + _WEIGHT_EPS:
             errs.append(f"{where}.mix: weights sum to {total}, expected 1.0")
     alpha = perf.get("expected_alpha")

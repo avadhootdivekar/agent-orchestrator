@@ -612,19 +612,28 @@ class Probes:
         return probe("trap-at-least-once", steps, trap="at_least_once")
 
     def _t_duplicate_claim(self) -> JsonDict:
+        # Exactly as many jobs as claims (2 sequential + 2 per worker), so if any job were handed
+        # out twice another job would be left queued: `after` then sees queued > 0.
+        jobs = 2 + 2 * self.workers if self.workers else 5
         steps = [
-            self.enqueue(rank=0, repeat=5),
+            self.enqueue(rank=0, repeat=jobs),
             self.claim(worker="w1", save_id="first"),
             self.claim(worker="w2", not_id="first"),
-            self.stats(queued=3, in_flight=2, done=0, dead=0, total=5),
+            self.stats(queued=jobs - 2, in_flight=2, done=0, dead=0, total=jobs),
         ]
         parallel = after = None
         if self.workers:
             parallel = [
-                [jsonl_step(_request("claim", worker=f"worker-{k}"), match=dict(OK), repeat=2)]
+                [
+                    jsonl_step(
+                        _request("claim", worker=f"worker-{k}"),
+                        match={"ok": True, "job": {"state": "in_flight"}},
+                        repeat=2,
+                    )
+                ]
                 for k in range(self.workers)
             ]
-            after = [self.stats(queued=0, in_flight=5, done=0, dead=0, total=5)]
+            after = [self.stats(queued=0, in_flight=jobs, done=0, dead=0, total=jobs)]
         return probe(
             "trap-duplicate-claim", steps, trap="duplicate_claim", parallel=parallel, after=after
         )
@@ -712,12 +721,12 @@ class Probes:
     def perf(self) -> JsonDict:
         lo = self.levels - 1
         ok = {"ok": True}
-        # The load step seeds `claimed_id`/`receipt` (receipt = the id, i.e. not a valid receipt)
-        # so an `ack` drawn before the first `claim` is still a well-formed request.
+        # No mix step depends on a variable: job ids and receipts are server-chosen, so `ack`
+        # addresses a job that does not exist (`unknown_job`).  That still exercises the job
+        # lookup, which an implementation that scans all jobs serves in O(n).
         load = jsonl_step(
             _request("enqueue", payload={"n": "{{i}}"}, priority=self.prio(lo)),
             match=dict(ok),
-            save={"claimed_id": "$.job.id", "receipt": "$.job.id"},
             repeat=1,
         )
         mix = [
@@ -741,16 +750,13 @@ class Probes:
                 0.25,
                 "claim",
                 "claim",
-                jsonl_step(
-                    _request("claim", worker=PERF_WORKER),
-                    save={"claimed_id": "$.job.id", "receipt": "$.job.receipt"},
-                ),
+                jsonl_step(_request("claim", worker=PERF_WORKER)),
             ),
             mix_entry(
                 0.15,
                 "ack",
                 "ack",
-                jsonl_step(_request("ack", id="{{claimed_id}}", receipt="{{receipt}}")),
+                jsonl_step(_request("ack", id="job-missing-{{i}}", receipt="r-missing")),
             ),
             mix_entry(0.2, "stats", "read", jsonl_step(_request("stats"), match=dict(ok))),
         ]
