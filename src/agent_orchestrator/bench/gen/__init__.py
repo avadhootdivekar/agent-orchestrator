@@ -13,6 +13,7 @@ from . import (
     crud_relational as _crud_relational,  # noqa: F401 -- registers "crud-relational"
 )
 from . import (
+    job_queue as _job_queue,  # noqa: F401 -- registers "job-queue"
 )
 from .base import FAMILY_REGISTRY, Difficulty, Family, Instance, register_family
 
