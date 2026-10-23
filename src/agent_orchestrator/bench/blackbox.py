@@ -1728,6 +1728,12 @@ class BlackboxGrader(Grader):
                 ref = measure_perf(perf_spec, ref_runner, seed=seed, budget_seconds=budget)
                 if ref.error:
                     raise GraderError(f"reference implementation failed the perf run: {ref.error}")
+                silent = {e["class"] for e in perf_spec["mix"]} - set(ref.class_p95)
+                if silent:
+                    raise GraderError(
+                        f"reference implementation produced no perf samples for op class(es) "
+                        f"{sorted(silent)} (mix steps failing their expect: {ref.failed_ops})"
+                    )
             art = measure_perf(perf_spec, art_runner, seed=seed, budget_seconds=budget)
         detail, passed, total = evaluate_perf(perf_spec, art, ref, enforce_ref=enforce_ref)
         return detail, (passed, total)

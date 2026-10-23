@@ -86,8 +86,8 @@ STOP_GRACE_SECONDS = 2.0
 DOCKER_INFO_TIMEOUT_SECONDS = 20
 DOCKER_PULL_TIMEOUT_SECONDS = 900
 DOCKER_BUILD_TIMEOUT_SECONDS = 1800
-DOCKER_PORT_RETRIES = 3
-_PORT_CONFLICT_RE = re.compile(r"port is already allocated|address already in use")
+PORT_RETRIES = 3
+_PORT_CONFLICT_RE = re.compile(r"port is already allocated|address already in use", re.IGNORECASE)
 LOG_TAIL_CHARS = 1500
 LOG_TAIL_LINES = 6
 LOG_LINE_CHARS = 200
@@ -447,6 +447,48 @@ def _wait_http_ready(
         time.sleep(READINESS_POLL_SECONDS)
 
 
+class _PortConflict(ArtefactStartError):
+    """The published/bound port was taken between `free_port()` and the artefact binding it
+    (race with another grader or process): retry on a fresh port, not an artefact failure."""
+
+
+def _start_http_attempt(
+    handle: Handle,
+    launch: Callable[[], subprocess.Popen[bytes]],
+    stop: Callable[[Handle], None],
+    timeout: float,
+) -> Handle:
+    """Launch, wait for `/healthz`. On failure the handle is stopped (resources released)
+    before raising; a failure whose log shows a port clash raises `_PortConflict`."""
+    assert handle.port is not None
+    try:
+        proc = launch()
+        handle.proc = proc
+        _wait_http_ready(
+            handle.port, timeout, alive=lambda: proc.poll() is None, diag=handle.log_tail
+        )
+        return handle
+    except ArtefactStartError as exc:
+        conflict = _PORT_CONFLICT_RE.search(_tail(handle.log_path)) is not None
+        stop(handle)
+        if conflict:
+            raise _PortConflict(str(exc)) from exc
+        raise
+    except BaseException:
+        stop(handle)
+        raise
+
+
+def _start_http_retrying(attempt: Callable[[int], Handle]) -> Handle:
+    for n in range(PORT_RETRIES):
+        try:
+            return attempt(free_port())
+        except _PortConflict:
+            if n == PORT_RETRIES - 1:
+                raise
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 class _LineReader:
     """Timeout-capable line reader over a raw fd (a buffered text stream cannot be
     `select`ed reliably)."""
@@ -724,30 +766,25 @@ class ProcessSandbox(Sandbox):
 
     def start_http(self, artefact_dir: Path, env: Mapping[str, str] | None = None) -> Handle:
         argv = run_sh_argv(artefact_dir)
-        port = free_port()
-        handle = Handle(kind=self.kind, base_url=f"http://{LOOPBACK}:{port}", port=port)
-        _new_log(handle)
-        proc = None
-        try:
-            proc = self._spawn(
-                artefact_dir,
-                argv,
-                {**(env or {}), "PORT": str(port), "HOST": HTTP_BIND_HOST_PROCESS},
-                stdin=subprocess.DEVNULL,
-                stdout=handle.log_file,
-                stderr=subprocess.STDOUT,
-            )
-            handle.proc = proc
-            _wait_http_ready(
-                port,
+
+        def attempt(port: int) -> Handle:
+            handle = Handle(kind=self.kind, base_url=f"http://{LOOPBACK}:{port}", port=port)
+            _new_log(handle)
+            return _start_http_attempt(
+                handle,
+                lambda: self._spawn(
+                    artefact_dir,
+                    argv,
+                    {**(env or {}), "PORT": str(port), "HOST": HTTP_BIND_HOST_PROCESS},
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle.log_file,
+                    stderr=subprocess.STDOUT,
+                ),
+                self.stop,
                 self.cfg.startup_timeout_seconds,
-                alive=lambda: proc.poll() is None,
-                diag=handle.log_tail,
             )
-        except BaseException:
-            self.stop(handle)
-            raise
-        return handle
+
+        return _start_http_retrying(attempt)
 
     def start_jsonl(self, artefact_dir: Path, env: Mapping[str, str] | None = None) -> JsonlHandle:
         argv = run_sh_argv(artefact_dir)
@@ -877,8 +914,8 @@ class DockerSandbox(Sandbox):
         command = run_sh_argv(artefact_dir)
         self.ensure_image()
         full_env = {**(env or {}), "PORT": str(CONTAINER_PORT), "HOST": HTTP_BIND_HOST_DOCKER}
-        for attempt in range(DOCKER_PORT_RETRIES):
-            port = free_port()
+
+        def attempt(port: int) -> Handle:
             name = self._name()
             argv = build_docker_run_argv(
                 self.spec.image,
@@ -893,32 +930,19 @@ class DockerSandbox(Sandbox):
                 kind=self.kind, base_url=f"http://{LOOPBACK}:{port}", port=port, container=name
             )
             _new_log(handle)
-            try:
-                proc = subprocess.Popen(  # noqa: S603
+            return _start_http_attempt(
+                handle,
+                lambda: subprocess.Popen(  # noqa: S603
                     argv,
                     stdin=subprocess.DEVNULL,
                     stdout=handle.log_file,
                     stderr=subprocess.STDOUT,
-                )
-                handle.proc = proc
-                _wait_http_ready(
-                    port,
-                    self.cfg.startup_timeout_seconds,
-                    alive=lambda: proc.poll() is None,  # the attached CLI exits with the container
-                    diag=handle.log_tail,
-                )
-                return handle
-            except ArtefactStartError:
-                conflict = _PORT_CONFLICT_RE.search(_tail(handle.log_path)) is not None
-                self.stop(handle)
-                if not (conflict and attempt < DOCKER_PORT_RETRIES - 1):
-                    raise
-            except BaseException:
-                self.stop(handle)
-                raise
-        raise SandboxUnavailable(
-            "docker run kept losing the published-port race"
-        )  # pragma: no cover
+                ),
+                self.stop,
+                self.cfg.startup_timeout_seconds,  # the attached CLI exits with the container
+            )
+
+        return _start_http_retrying(attempt)
 
     def start_jsonl(self, artefact_dir: Path, env: Mapping[str, str] | None = None) -> JsonlHandle:
         command = run_sh_argv(artefact_dir)

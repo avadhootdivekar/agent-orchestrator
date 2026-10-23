@@ -832,6 +832,26 @@ class TestGraderInfraErrors:
         result = BlackboxGrader().grade(_cfg(), Ctx(str(repo), str(grading)))
         assert result.detail["reference_trap_failed"] == ["pagination-stable-under-delete"]
 
+    def test_reference_perf_mix_that_never_meets_its_expect_is_infra(
+        self, tmp_path: Path, subject_factory: Any
+    ) -> None:
+        def impossible(data: dict[str, Any]) -> None:
+            data["groups"]["perf"]["mix"][0]["step"]["expect"] = {"status": 418}
+
+        grading, repo = _stage(tmp_path, subject_factory, lambda g: _edit_probes(g, impossible))
+        with pytest.raises(GraderError, match="no perf samples for op class"):
+            BlackboxGrader().grade(_cfg(), Ctx(str(repo), str(grading)))
+
+    def test_reference_perf_load_failure_is_infra(
+        self, tmp_path: Path, subject_factory: Any
+    ) -> None:
+        def bad_load(data: dict[str, Any]) -> None:
+            data["groups"]["perf"]["load"]["expect"] = {"status": 418}
+
+        grading, repo = _stage(tmp_path, subject_factory, lambda g: _edit_probes(g, bad_load))
+        with pytest.raises(GraderError, match="reference implementation failed the perf run"):
+            BlackboxGrader().grade(_cfg(), Ctx(str(repo), str(grading)))
+
     def test_missing_reference_dir(self, tmp_path: Path, subject_factory: Any) -> None:
         grading, repo = _stage(tmp_path, subject_factory)
         shutil.rmtree(grading / "reference")

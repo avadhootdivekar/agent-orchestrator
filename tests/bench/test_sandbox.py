@@ -13,6 +13,7 @@ import json
 import os
 import resource
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -491,6 +492,48 @@ class TestProcessHttp:
         with pytest.raises(ArtefactStartError) as err:
             _proc().start_http(tmp_path, {})
         assert not isinstance(err.value, GraderError) and isinstance(err.value, ArtefactFailure)
+
+    def test_port_race_is_retried_on_a_fresh_port(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        art = _artefact(tmp_path, HTTP_SERVER, name="server.py")
+        busy = socket.socket()
+        busy.bind(("127.0.0.1", 0))
+        busy.listen(1)
+        busy_port = busy.getsockname()[1]
+        offered: list[int] = []
+        real = sb.free_port
+
+        def flaky() -> int:
+            port = busy_port if not offered else real()  # first offer is already taken
+            offered.append(port)
+            return port
+
+        monkeypatch.setattr(sb, "free_port", flaky)
+        sandbox = _proc()
+        try:
+            handle = sandbox.start_http(art, {})
+            try:
+                assert handle.port != busy_port and len(offered) == 2
+                assert _get(handle, "/healthz") == (200, "ok")
+            finally:
+                sandbox.stop(handle)
+        finally:
+            busy.close()
+
+    def test_port_race_gives_up_after_the_retry_budget(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        art = _artefact(tmp_path, HTTP_SERVER, name="server.py")
+        busy = socket.socket()
+        busy.bind(("127.0.0.1", 0))
+        busy.listen(1)
+        monkeypatch.setattr(sb, "free_port", lambda: busy.getsockname()[1])
+        try:
+            with pytest.raises(ArtefactStartError, match="exited before becoming ready"):
+                _proc().start_http(art, {})
+        finally:
+            busy.close()
 
     def test_stop_kills_grandchildren_in_the_process_group(self, tmp_path: Path) -> None:
         art = tmp_path / "a"
