@@ -140,6 +140,10 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
     # grader key is REJECTED now asserts it lands in `model_extra`; every other assertion in
     # the file is unchanged.
     "tests/bench/test_spec.py": "E-Bn7Dsc: grader-specific keys pass through (extra=allow)",
+    # Additive only (2026-10-22, dashboard fix a0101a8): one regression test appended for the
+    # prompt-derived run slug being capped at 60 chars (previously a 255-byte filename overflow
+    # -> HTTP 500 on `POST /api/templates/<name>/instances`). No existing test changed.
+    "tests/ui/test_templates_api.py": "slug-length regression test appended; existing tests unchanged",
     # Deliberate model-pin refresh (2026-10-15): benchmark subject configs moved to the latest
     # ids (haiku-5-5 / sonnet-5-5 / opus-5-5); these tests assert the committed pin literals.
     "tests/bench/test_ao_epic_plus_subject.py": "model-pin refresh: committed subject ids only",
