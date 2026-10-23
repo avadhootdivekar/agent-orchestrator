@@ -95,7 +95,7 @@ PAIRWISE_METRIC_SCORE = "score"
 # Statuses where the subject never made a real attempt: excluded from attempted-based
 # (capability) stats. Mirrors `metrics.aggregate`'s own `attempted` definition.
 STATUS_SKIPPED_BUDGET = "skipped_budget"
-_NOT_ATTEMPTED_STATUSES = frozenset({INFRA_ERROR_STATUS, STATUS_SKIPPED_BUDGET})
+NOT_ATTEMPTED_STATUSES = frozenset({INFRA_ERROR_STATUS, STATUS_SKIPPED_BUDGET})
 # `ComparisonTaskCell.subject_status` for a cell whose repeats ended in different statuses.
 STATUS_MIXED = "mixed"
 
@@ -149,7 +149,7 @@ class ComparisonTaskCell(BaseModel):
         if not isinstance(data, dict) or "score_mean" in data:
             return data
         upgraded = dict(data)
-        attempted = data.get("subject_status") not in _NOT_ATTEMPTED_STATUSES
+        attempted = data.get("subject_status") not in NOT_ATTEMPTED_STATUSES
         upgraded["score_mean"] = data.get("score", 0.0)
         upgraded["score_sd"] = 0.0
         upgraded["n"] = 1 if attempted else 0
@@ -426,7 +426,7 @@ def _derive_subject_id(run_dir: Path, known_suite_id: str | None) -> str:
 
 def _is_attempted(task: BenchTaskRecord) -> bool:
     """True iff the subject made a real attempt (not an infra error / budget skip)."""
-    return task.subject_status not in _NOT_ATTEMPTED_STATUSES
+    return task.subject_status not in NOT_ATTEMPTED_STATUSES
 
 
 def _median_or_none(values: list[float]) -> float | None:
