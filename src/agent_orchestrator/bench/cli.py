@@ -13,6 +13,7 @@ inside the function body, mirroring `validate`'s own existing pattern and core
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -316,12 +317,28 @@ def _print_campaign_summary(result: CampaignResult) -> None:
         if sr.launched:
             solve_rate = "—" if sr.solve_rate is None else f"{sr.solve_rate * 100:.1f}%"
             cost = "—" if sr.total_cost_usd is None else f"${sr.total_cost_usd:.4f}"
+            repeat_note = (
+                f" +{len(sr.repeat_run_dirs)} repeat(s) ${sr.repeat_cost_usd:.4f}"
+                if sr.repeat_run_dirs
+                else ""
+            )
             typer.echo(
                 f"  {sr.subject_id}: {sr.status} solved={sr.solved}/{sr.total} "
-                f"({solve_rate}) cost={cost} run_dir={sr.run_dir}"
+                f"({solve_rate}) cost={cost}{repeat_note} run_dir={sr.run_dir}"
             )
         else:
             typer.echo(f"  {sr.subject_id}: {sr.status} (not launched)")
+    if record.repeats_requested > 1:
+        mode = "staged" if record.staged else "non-staged"
+        typer.echo(
+            f"Repeats ({mode}): {record.repeats_done}/{record.repeats_requested} done;"
+            f" stopped: {record.stage_stop_reason or '—'}"
+        )
+        for entry in record.stage_log:
+            typer.echo(
+                f"  repeat {entry.repeat}: {len(entry.task_ids)} task(s) "
+                f"[{', '.join(entry.task_ids)}] -- {entry.reason}"
+            )
     typer.echo(f"Total spent: ${record.total_spent_usd:.4f} / ${record.whole_run_cap_usd:.4f}")
     if record.comparison_json is not None:
         typer.echo(f"Comparison: {record.comparison_json}")
@@ -380,6 +397,22 @@ def campaign(
         help="Parity bundle applied to EVERY subject in the campaign (HLD §2b). Default:"
         " the suite's own `parity` field.",
     ),
+    repeats: int = typer.Option(
+        1,
+        "--repeats",
+        min=1,
+        help="Maximum repeats per (subject x task) (HLD §6). 1 = the single-pass campaign."
+        " With N>1, repeats 2..N run only while some subject pair's paired-bootstrap 95% CI"
+        " on the score difference still includes 0, and (unless --no-staged) only on the"
+        " tasks where subjects disagree or are noisy. Each repeat lands in its own"
+        " <bench_run_id>-r<n> dir; the whole-run cap covers all repeats.",
+    ),
+    no_staged: bool = typer.Option(
+        False,
+        "--no-staged",
+        help="With --repeats N>1: run EVERY task for EVERY subject at every repeat up to N"
+        " (the non-adaptive protocol) instead of the staged one.",
+    ),
 ) -> None:
     """Run a suite against a LIST of subjects, enforcing a whole-run USD cap across all
     of them (ADR-0009 D3); writes each subject's own run.json/summary.md plus a
@@ -403,6 +436,8 @@ def campaign(
             force=force,
             enable_xlarge=enable_xlarge,
             parity=parity,
+            repeats=repeats,
+            staged=not no_staged,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -412,35 +447,57 @@ def campaign(
     raise typer.Exit(EXIT_OK)
 
 
-# `<date>-<suite_id>-<subject_id>` (runner.compute_bench_run_id) -- suite_id is a known,
-# literal string here (the caller's own `--suite`), so this only needs to recover the
-# subject id, exactly mirroring `results._derive_subject_id`'s own approach.
+# `<date>-<suite_id>-<subject_id>[-r<n>]` (runner.compute_bench_run_id) -- suite_id is a
+# known, literal string here (the caller's own `--suite`), so this only needs to recover the
+# subject id (+ repeat), exactly mirroring `results._derive_subject_id`'s own approach.
+_REPEAT_DIR_SUFFIX_RE = re.compile(r"^(?P<subject>.+)-r(?P<repeat>\d+)$")
+# Dirs a campaign/report writes NEXT TO the run dirs: outputs, never subjects to compare.
+_NON_SUBJECT_DIR_SUFFIXES = frozenset({"compare", "campaign"})
+
+
+def _classify_result_dir(entry: Path, rest: str) -> tuple[str, int]:
+    """`(subject_id, repeat)` of a result dir. A readable `run.json` is authoritative (a
+    subject id may itself end in `-r2`); otherwise fall back to the name's `-r<n>` suffix."""
+    run_json = entry / "run.json"
+    if run_json.is_file():
+        try:
+            data = json.loads(run_json.read_text())
+            return str(data["subject"]["id"]), int(data.get("repeat", 1))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    match = _REPEAT_DIR_SUFFIX_RE.match(rest)
+    if match:
+        return match.group("subject"), int(match.group("repeat"))
+    return rest, 1
+
+
 def _discover_latest_run_dirs(results_root: Path, suite_id: str) -> list[Path]:
-    """Auto-discover the LATEST result dir per subject for *suite_id* under
+    """Auto-discover the LATEST result dirs per subject for *suite_id* under
     *results_root* (T-Cli8Nf design note: "auto-discover latest per subject for a
     suite -- keep simple"). Directory names sort lexicographically the same as their
-    embedded ISO date, so a single forward sorted pass -- keeping the last match per
-    subject id -- is exactly "latest wins", no date parsing required. The compare
-    directory itself (`<date>-<suite_id>-compare`) is excluded -- it is a report
-    OUTPUT, never a subject to compare.
+    embedded ISO date, so "latest" needs no date parsing. A subject's repeats
+    (`<bench_run_id>-r<n>`) are returned together: every dir of the subject's latest date,
+    so a staged campaign's repeat dirs travel with their repeat-1 dir (a campaign that ran
+    across UTC midnight should be reported with explicit `--run-dir`s). The compare/campaign
+    output dirs are excluded -- they are report OUTPUTS, never subjects to compare.
     """
-    from .results import COMPARE_DIR_SUFFIX
-
     if not results_root.is_dir():
         return []
-    pattern = re.compile(rf"^\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(suite_id)}-(.+)$")
-    latest_by_subject: dict[str, Path] = {}
+    pattern = re.compile(rf"^(\d{{4}}-\d{{2}}-\d{{2}})-{re.escape(suite_id)}-(.+)$")
+    # subject -> date -> dirs of that date (repeats)
+    by_subject: dict[str, dict[str, list[Path]]] = {}
     for entry in sorted(results_root.iterdir(), key=lambda p: p.name):
         if not entry.is_dir():
             continue
         match = pattern.match(entry.name)
-        if not match:
+        if not match or match.group(2) in _NON_SUBJECT_DIR_SUFFIXES:
             continue
-        subject_id = match.group(1)
-        if subject_id == COMPARE_DIR_SUFFIX:
-            continue
-        latest_by_subject[subject_id] = entry  # later (sorted) match overwrites -> latest date
-    return sorted(latest_by_subject.values(), key=lambda p: p.name)
+        subject_id, _repeat = _classify_result_dir(entry, match.group(2))
+        by_subject.setdefault(subject_id, {}).setdefault(match.group(1), []).append(entry)
+    latest: list[Path] = []
+    for dates in by_subject.values():
+        latest.extend(dates[max(dates)])  # ISO dates: max() == latest
+    return sorted(latest, key=lambda p: p.name)
 
 
 @app.command()
@@ -469,13 +526,21 @@ def report(
     allow_mixed: bool = typer.Option(
         False,
         "--allow-mixed",
-        help="Allow comparing two runs for the same subject id with different"
-        " config_fingerprint (default: refused).",
+        help="Allow comparing runs that are not apples-to-apples: two runs for the same"
+        " subject id with different config_fingerprint, or runs produced under different"
+        " parity bundles (HLD §2b; the report is then stamped NON-PARITY). Default: refused.",
     ),
 ) -> None:
-    """Compare result dirs for the same suite; writes comparison.json + comparison.md."""
+    """Compare result dirs for the same suite; writes comparison.json + comparison.md.
+
+    Several dirs for one subject are its repeats (`<bench_run_id>-r<n>`, from `ao-bench
+    run --repeat n` or `ao-bench campaign --repeats N`): they are aggregated per task, and
+    every subject pair gets a paired bootstrap CI + Wilcoxon p over the per-task score
+    differences. Infra errors are excluded from the rates and listed separately.
+    """
     from .results import build_comparison, compute_compare_id, render_winners, write_comparison
     from .runner import resolve_result_dir
+    from .stats import format_ci
 
     if run_dir:
         dirs = [Path(d) for d in run_dir]
@@ -513,6 +578,21 @@ def report(
     typer.echo(f"            {md_path}")
     for line in render_winners(comparison):
         typer.echo(line)
+    for entry in comparison.pairwise:
+        if entry.mean_diff is None or entry.ci_lo is None or entry.ci_hi is None:
+            typer.echo(f"- {entry.a} vs {entry.b}: no common attempted task")
+            continue
+        p_text = "—" if entry.p_wilcoxon is None else f"{entry.p_wilcoxon:.3f}"
+        typer.echo(
+            f"- {entry.a} vs {entry.b}: {format_ci(entry.mean_diff, entry.ci_lo, entry.ci_hi)}"
+            f" p={p_text} (n={entry.n_tasks})"
+        )
+    if comparison.parity_mixed:
+        typer.echo("WARNING: runs used different parity bundles -- NON-PARITY comparison")
+    if comparison.unreliable_subjects:
+        typer.echo(
+            "WARNING: UNRELIABLE (>10% infra errors): " + ", ".join(comparison.unreliable_subjects)
+        )
 
 
 @app.command(name="list")
