@@ -9,6 +9,11 @@ files and run-contract prose), ``dsl`` (probe builders), ``validate`` (probes.js
 
 from __future__ import annotations
 
+from . import (
+    crud_relational as _crud_relational,  # noqa: F401 -- registers "crud-relational"
+)
+from . import (
+)
 from .base import FAMILY_REGISTRY, Difficulty, Family, Instance, register_family
 
 __all__ = ["FAMILY_REGISTRY", "Difficulty", "Family", "Instance", "register_family"]
