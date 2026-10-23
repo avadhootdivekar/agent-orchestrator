@@ -7,9 +7,11 @@ here are fake-tier only (no network, no real LLM) per CLAUDE.md's determinism ru
 
 Also gates the opt-in `swebench` marker (E-Bt4Xk9 T-Sw5Hd9): tests that hit the real
 HuggingFace dataset or a real GitHub clone are skipped unless `AO_E2E_SWEBENCH=1` is
-set -- mirrors `tests/playground/conftest.py`'s `real_llm` gate exactly (a separate
-hook here, not a shared one, since pytest conftest hooks are scoped to their own
-directory subtree and tests/playground's hook never reaches tests/bench).
+set, and the `docker` marker (E-Bn7Dsc T-Bx2Cd3): tests that need a docker daemon are
+skipped unless `AO_E2E_DOCKER=1` is set -- both mirror `tests/playground/conftest.py`'s
+`real_llm` gate exactly (a separate hook here, not a shared one, since pytest conftest
+hooks are scoped to their own directory subtree and tests/playground's hook never reaches
+tests/bench).
 """
 
 from __future__ import annotations
@@ -22,21 +24,26 @@ from typing import Any
 
 import pytest
 
+# marker -> (opt-in env var, example invocation). Each gated tier is skipped unless its env
+# var is "1" -- mirrors tests/playground/conftest.py's `real_llm` gate.
+_OPT_IN_GATES: dict[str, tuple[str, str]] = {
+    "swebench": ("AO_E2E_SWEBENCH", "AO_E2E_SWEBENCH=1 uv run pytest -m swebench"),
+    # Needs a reachable docker daemon + the python:3.12-slim image (T-Bx2Cd3 sandbox tests).
+    "docker": ("AO_E2E_DOCKER", "AO_E2E_DOCKER=1 uv run pytest -m docker tests/bench"),
+}
+
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip `swebench`-marked items unless AO_E2E_SWEBENCH=1 is set in the environment."""
-    if os.environ.get("AO_E2E_SWEBENCH") == "1":
-        return  # gate open -- let all tests run on their own merits
-
-    skip_marker = pytest.mark.skip(
-        reason=(
-            "swebench real-network tier disabled; set AO_E2E_SWEBENCH=1 to enable "
-            "(e.g. AO_E2E_SWEBENCH=1 uv run pytest -m swebench)"
+    """Skip `swebench`-/`docker`-marked items unless their AO_E2E_* gate is set to 1."""
+    for marker, (env_var, example) in _OPT_IN_GATES.items():
+        if os.environ.get(env_var) == "1":
+            continue  # gate open -- let these tests run on their own merits
+        skip_marker = pytest.mark.skip(
+            reason=f"{marker} tier disabled; set {env_var}=1 to enable (e.g. {example})"
         )
-    )
-    for item in items:
-        if "swebench" in item.keywords:
-            item.add_marker(skip_marker)
+        for item in items:
+            if marker in item.keywords:
+                item.add_marker(skip_marker)
 
 
 def _default_task(task_id: str = "bugfix-off-by-one") -> dict[str, Any]:
