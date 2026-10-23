@@ -14,9 +14,13 @@ Like `swebench`, but over a locally mined `instances.json` (`ao-bench import-prs
      instance is solvable at zero cost; never visible to the agent);
   4. re-snapshots the tree as one parentless commit so neither `git log --all` nor
      `git fetch origin` can reach the merge commit (`tier2_common` docstring);
-  5. writes `recipe.resolved.json` with `fail_to_pass: []` and `test_targets` = the PR's test
-     modules: node ids are unknown without running the tests at both commits, so the
-     `pytest_targeted` grader runs those whole files and `solved` = every test in them passes.
+  5. writes `recipe.resolved.json`. By default `fail_to_pass: []` and `test_targets` = the PR's
+     test modules: node ids are unknown without running the tests at both commits, so the
+     `pytest_targeted` grader runs those whole files and `solved` = every test in them passes
+     (note: such a score is dominated by tests that already passed before the change). If an
+     instance carries verified `fail_to_pass` / `pass_to_pass` node-id lists (a calibration
+     step that ran the tests at both commits), those are used instead, giving the precise
+     0.7/0.3 scoring and no whole-file targets.
 
 Hidden tests never touch `repo_dir`; only the grader restores them (at grade time).
 """
@@ -100,6 +104,8 @@ class PrMinedProvider(WorkspaceProvider):
             gold.write_bytes(read_blob(repo_dir, meta["merge_commit"], rel, provider=_PROVIDER))
 
         baseline_commit = snapshot_single_commit(repo_dir, provider=_PROVIDER)
+        fail_to_pass = list(meta.get("fail_to_pass") or [])
+        test_modules = [f for f in test_files if is_test_module(f)]
         write_resolved(
             grading_dir,
             {
@@ -110,9 +116,9 @@ class PrMinedProvider(WorkspaceProvider):
                 "base_commit": base_commit,
                 "baseline_commit": baseline_commit,
                 "merge_commit": meta["merge_commit"],
-                "fail_to_pass": [],
-                "pass_to_pass": [],
-                "test_targets": [f for f in test_files if is_test_module(f)],
+                "fail_to_pass": fail_to_pass,
+                "pass_to_pass": list(meta.get("pass_to_pass") or []),
+                "test_targets": [] if fail_to_pass else test_modules,
                 "hidden_paths": sorted(test_files),
             },
         )

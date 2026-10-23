@@ -168,6 +168,27 @@ def test_unsolved_at_base_then_solved_with_the_gold_patch(tmp_path: Path, bench_
     assert after.detail["collateral"]["files_touched"] == 1
 
 
+def test_verified_node_ids_on_the_instance_replace_whole_file_targets(
+    tmp_path: Path, bench_ws: Path
+) -> None:
+    repo_uri, base, merge = _make_pr_origin(tmp_path)
+    f2p = ["tests/test_added.py::test_added_behaviour"]
+    p2p = ["tests/test_text.py::test_slugify"]  # untouched by the PR, passes before and after
+    suite = _write_suite(tmp_path, repo_uri, base, merge, fail_to_pass=f2p, pass_to_pass=p2p)
+    task = _task()
+    ctx = materialize(task, suite, bench_ws)
+    resolved = json.loads((Path(ctx.grading_dir or "") / RESOLVED_RECIPE_FILENAME).read_text())
+    assert (resolved["fail_to_pass"], resolved["pass_to_pass"], resolved["test_targets"]) == (
+        f2p,
+        p2p,
+        [],
+    )
+    result = grade(task, ctx)
+    assert result.detail["mode"] == "node_ids"
+    assert result.solved is False
+    assert result.score == pytest.approx(0.3)  # 0 of 1 f2p, 1 of 1 p2p -- precise, not ~0.95
+
+
 def test_a_target_module_that_never_collects_is_unsolved(tmp_path: Path, bench_ws: Path) -> None:
     repo_uri, base, merge = _make_pr_origin(tmp_path)
     suite = _write_suite(tmp_path, repo_uri, base, merge)
@@ -259,3 +280,67 @@ def test_runner_end_to_end(tmp_path: Path, effect: str, solved: bool) -> None:
     (task,) = record.tasks
     assert task.solved is solved
     assert task.grader_detail["mode"] == "test_targets"
+
+
+# ------------------------------------------------------------- real-network tier
+
+# A real merged PR of pallets/click (pinned): `ao-bench import-prs` produced this record
+# (`gh api` shapes verified against the live API), the tests below prove the provider +
+# grader work on real history.
+_REAL_INSTANCE = {
+    "instance_id": "pallets__click-3884",
+    "repo": "pallets/click",
+    "pr_number": 3884,
+    "base_commit": "bb695aaecdef95832d167fc1d508921745aa824e",
+    "merge_commit": "8c73ff134480f436faa0d041bd19aaf949aac22c",
+    "title": "Fix show_envvar output for a sequence or an empty envvar",
+    "body": "",
+    "test_files": ["tests/test_options.py"],
+    "source_files": ["src/click/core.py"],
+    "merged_at": "2026-10-06T20:59:00Z",
+}
+
+
+@pytest.mark.network
+@pytest.mark.parametrize(("effect", "solved"), [("noop", False), ("copy-reference", True)])
+def test_real_pr_unsolved_at_base_solved_with_the_gold_patch(
+    tmp_path: Path, effect: str, solved: bool
+) -> None:
+    suite = tmp_path / "suite"
+    task_id = _REAL_INSTANCE["instance_id"]
+    (suite / "tasks" / task_id).mkdir(parents=True)
+    (suite / "tasks" / task_id / "instruction.md").write_text("Fix it.\n")
+    (suite / "instances.json").write_text(
+        json.dumps(
+            {"dataset": "pr-mined", "cutoff_date": "2026-08-01", "instances": [_REAL_INSTANCE]}
+        )
+    )
+    (suite / "suite.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "id": "pr-mined-real",
+                "domain": "software",
+                "tier": "large",
+                "tasks": [
+                    {
+                        "id": task_id,
+                        "category": "bugfix",
+                        "instruction": f"tasks/{task_id}/instruction.md",
+                        "source": {"type": "pr_mined", "instance_id": task_id},
+                        "grader": {
+                            "type": "pytest_targeted",
+                            "install": "uv venv .venv && uv pip install -e . pytest pytest-timeout",
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    subject = tmp_path / "subject.json"
+    subject.write_text(
+        json.dumps({"version": "1.0", "id": "fake", "type": "fake", "scripted_effect": effect})
+    )
+    record = run_suite(suite / "suite.json", subject, out_dir=tmp_path / "out")
+    (result,) = record.tasks
+    assert result.solved is solved, result.grader_raw_tail
