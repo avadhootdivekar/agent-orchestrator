@@ -1,7 +1,6 @@
 """Held-out tests for `attr.converters.to_bool` single-letter answers (y/n)."""
 
 import pytest
-
 from attr.converters import to_bool
 
 

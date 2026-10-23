@@ -1,7 +1,6 @@
 """Held-out tests: unit selection at exact powers of 1000 / 1024."""
 
 import pytest
-
 from rich import filesize
 from rich.progress import TaskProgressColumn
 
