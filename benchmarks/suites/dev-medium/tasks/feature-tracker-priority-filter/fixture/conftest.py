@@ -1,4 +1,4 @@
-"""Puts the fixture root on sys.path so tests/ and .grading/tests/ can `import tracker`
+"""Puts the fixture root on sys.path so tests/ can `import tracker`
 directly (pytest's default "prepend" import mode only adds the nearest __init__.py-free
 ancestor of the test file itself, not this directory). Every bench dev-medium fixture
 that splits code/tests across directories carries an identical copy of this file

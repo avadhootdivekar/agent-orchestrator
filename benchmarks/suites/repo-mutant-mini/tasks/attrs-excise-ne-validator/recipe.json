@@ -1,0 +1,76 @@
+{
+  "mode": "excise",
+  "description": "attrs.validators.ne (+ its tests) removed; docs/changelog entry still describe it",
+  "edits": [
+    {
+      "file": "src/attr/validators.py",
+      "find": "    \"min_len\",\n    \"ne\",\n    \"not_\",\n",
+      "replace": "    \"min_len\",\n    \"not_\",\n"
+    },
+    {
+      "file": "src/attr/validators.py",
+      "find": "def ne(val):\n    \"\"\"\n    A validator that raises `ValueError` if the initializer is called with a\n    number equal to *val*.\n\n    The validator uses `operator.ne` to compare the values.\n\n    Args:\n       val: The value that is not allowed.\n\n    .. versionadded:: 26.2.0\n    \"\"\"\n    return _NumberValidator(val, \"!=\", operator.ne)\n\n\n",
+      "replace": ""
+    },
+    {
+      "file": "src/attr/validators.pyi",
+      "find": "def ne(val: _T) -> _ValidatorType[_T]: ...\n",
+      "replace": ""
+    }
+  ],
+  "hidden_from_repo": [
+    "tests/test_validators.py"
+  ],
+  "test_targets": [
+    "tests/test_validators.py"
+  ],
+  "install": "uv venv .venv && uv pip install -e . pytest pytest-timeout hypothesis",
+  "fail_to_pass": [],
+  "pass_to_pass": [
+    "tests/test_converters.py::TestConverter::test_fmt_converter_call[scenario0]",
+    "tests/test_converters.py::TestConverter::test_fmt_converter_call[scenario2]",
+    "tests/test_converters.py::TestConverter::test_pickle[False-False]",
+    "tests/test_converters.py::TestConverter::test_works_as_adapter",
+    "tests/test_converters.py::TestDefaultIfNone::test_factory_takes_self",
+    "tests/test_converters.py::TestDefaultIfNone::test_none_factory",
+    "tests/test_converters.py::TestDefaultIfNone::test_not_none[True]",
+    "tests/test_converters.py::TestDefaultIfNone::test_not_none[foo]",
+    "tests/test_converters.py::TestDefaultIfNone::test_too_many_defaults",
+    "tests/test_converters.py::TestOptional::test_converter_instance",
+    "tests/test_converters.py::TestOptional::test_success_with_type",
+    "tests/test_converters.py::TestOptionalPipe::test_instance",
+    "tests/test_converters.py::TestOptionalPipe::test_optional",
+    "tests/test_converters.py::TestOptionalPipe::test_pipe",
+    "tests/test_converters.py::TestPipe::test_fail",
+    "tests/test_converters.py::TestToBool::test_falsy",
+    "tests/test_funcs.py::TestAsDict::test_lists_tuples",
+    "tests/test_funcs.py::TestAsDict::test_nested_dicts",
+    "tests/test_funcs.py::TestAsDict::test_nested_lists",
+    "tests/test_funcs.py::TestAsTuple::test_dicts_retain_type",
+    "tests/test_funcs.py::TestAsTuple::test_named_tuple_retain_type",
+    "tests/test_funcs.py::TestAssoc::test_change",
+    "tests/test_funcs.py::TestAssoc::test_frozen",
+    "tests/test_funcs.py::TestAssoc::test_unknown",
+    "tests/test_funcs.py::TestEvolve::test_can_change_inst",
+    "tests/test_funcs.py::TestEvolve::test_no_inst",
+    "tests/test_funcs.py::TestEvolve::test_private",
+    "tests/test_funcs.py::TestHas::test_generics",
+    "tests/test_filters.py::TestExclude::test_drop_class[excl1-hello]",
+    "tests/test_filters.py::TestExclude::test_drop_class[excl2-42]",
+    "tests/test_filters.py::TestExclude::test_drop_class[excl3-hello]",
+    "tests/test_filters.py::TestExclude::test_drop_class[excl7-hello]",
+    "tests/test_filters.py::TestInclude::test_allow[incl7-hello]",
+    "tests/test_filters.py::TestInclude::test_drop_class[incl0-42]",
+    "tests/test_hooks.py::TestTransformHook::test_hook_applied_auto_attrib",
+    "tests/test_hooks.py::TestTransformHook::test_hook_applied_modify_attrib",
+    "tests/test_hooks.py::TestTransformHook::test_hook_evolve_name_keeps_explicit_alias",
+    "tests/test_hooks.py::TestTransformHook::test_hook_evolve_name_updates_auto_alias",
+    "tests/test_hooks.py::TestTransformHook::test_hook_remove_field",
+    "tests/test_hooks.py::TestTransformHook::test_hook_with_inheritance"
+  ],
+  "verified": {
+    "date": "2026-10-23",
+    "network": true,
+    "note": "Real clone + install + runner e2e (python 3.12, uv 0.5.9): with the mutation unfixed (noop) solved=false; with the pristine files restored (FakeSubject copy-reference) solved=true, score 1.0. Targeted pytest run ~4s."
+  }
+}

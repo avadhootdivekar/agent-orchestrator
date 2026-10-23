@@ -1,0 +1,71 @@
+{
+  "mode": "inject",
+  "description": "boundary flip (< -> <=) in filesize.pick_unit_and_suffix",
+  "edits": [
+    {
+      "file": "rich/filesize.py",
+      "find": "if size < unit * base:",
+      "replace": "if size <= unit * base:"
+    }
+  ],
+  "hidden": {
+    "tests/test_rate_unit_boundary.py": "tasks/rich-rate-unit-boundary/hidden/test_rate_unit_boundary.py"
+  },
+  "install": "uv venv .venv && uv pip install -e . pytest pytest-timeout attrs",
+  "fail_to_pass": [
+    "tests/test_progress.py::test_download_progress_uses_binary_units",
+    "tests/test_progress.py::test_download_progress_uses_decimal_units",
+    "tests/test_rate_unit_boundary.py::test_pick_unit_and_suffix_at_binary_boundaries[exactly-1k]",
+    "tests/test_rate_unit_boundary.py::test_pick_unit_and_suffix_at_binary_boundaries[exactly-1m]",
+    "tests/test_rate_unit_boundary.py::test_render_speed_unit_switches_at_exact_powers_of_1000[exactly-1g]",
+    "tests/test_rate_unit_boundary.py::test_render_speed_unit_switches_at_exact_powers_of_1000[exactly-1k]",
+    "tests/test_rate_unit_boundary.py::test_render_speed_unit_switches_at_exact_powers_of_1000[exactly-1m]"
+  ],
+  "pass_to_pass": [
+    "tests/test_filesize.py::test_pick_unit_and_suffix",
+    "tests/test_filesize.py::test_traditional",
+    "tests/test_progress.py::test_bar_columns",
+    "tests/test_progress.py::test_compact_time_remaining_column[4210-1:10:10]",
+    "tests/test_progress.py::test_compact_time_remaining_column[59-00:59]",
+    "tests/test_progress.py::test_compact_time_remaining_column[71-01:11]",
+    "tests/test_progress.py::test_live_is_started_if_progress_is_enabled",
+    "tests/test_progress.py::test_no_output_if_progress_is_disabled_non_interactive",
+    "tests/test_progress.py::test_progress_track",
+    "tests/test_progress.py::test_render",
+    "tests/test_progress.py::test_renderable_column",
+    "tests/test_progress.py::test_reset",
+    "tests/test_progress.py::test_spinner_column",
+    "tests/test_progress.py::test_task_zero_total",
+    "tests/test_progress.py::test_text_column",
+    "tests/test_progress.py::test_time_elapsed_column",
+    "tests/test_progress.py::test_time_remaining_column",
+    "tests/test_progress.py::test_track",
+    "tests/test_progress.py::test_using_default_columns",
+    "tests/test_progress.py::test_wrap_file_task_total",
+    "tests/test_text.py::test_add",
+    "tests/test_text.py::test_emoji",
+    "tests/test_text.py::test_highlight_regex",
+    "tests/test_text.py::test_markup_switch",
+    "tests/test_text.py::test_plain_property",
+    "tests/test_text.py::test_repr",
+    "tests/test_text.py::test_set_length",
+    "tests/test_text.py::test_soft_wrap",
+    "tests/test_text.py::test_span",
+    "tests/test_text.py::test_span_move",
+    "tests/test_text.py::test_span_split",
+    "tests/test_text.py::test_styled",
+    "tests/test_text.py::test_wrap_overflow_long",
+    "tests/test_text.py::test_wrap_wrapped_word_length_greater_than_available_width",
+    "tests/test_cells.py::test_chop_cells_double_width_boundary",
+    "tests/test_cells.py::test_non_printable",
+    "tests/test_cells.py::test_split_graphemes[ab-expected_spans2-2]",
+    "tests/test_cells.py::test_split_text[-0--]",
+    "tests/test_cells.py::test_split_text[x--1--x]",
+    "tests/test_cells.py::test_split_text[x-1-x-]"
+  ],
+  "verified": {
+    "date": "2026-10-23",
+    "network": true,
+    "note": "Real clone + install + runner e2e (python 3.12, uv 0.5.9): with the mutation unfixed (noop) solved=false; with the pristine files restored (FakeSubject copy-reference) solved=true, score 1.0. Targeted pytest run ~0.8s."
+  }
+}

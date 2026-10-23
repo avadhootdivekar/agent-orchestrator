@@ -7,34 +7,43 @@ here are fake-tier only (no network, no real LLM) per CLAUDE.md's determinism ru
 
 Also gates the opt-in `swebench` marker (E-Bt4Xk9 T-Sw5Hd9): tests that hit the real
 HuggingFace dataset or a real GitHub clone are skipped unless `AO_E2E_SWEBENCH=1` is
-set, and the `docker` marker (E-Bn7Dsc T-Bx2Cd3): tests that need a docker daemon are
-skipped unless `AO_E2E_DOCKER=1` is set -- both mirror `tests/playground/conftest.py`'s
-`real_llm` gate exactly (a separate hook here, not a shared one, since pytest conftest
-hooks are scoped to their own directory subtree and tests/playground's hook never reaches
-tests/bench).
+set, the `docker` marker (E-Bn7Dsc T-Bx2Cd3): tests that need a docker daemon are
+skipped unless `AO_E2E_DOCKER=1` is set, and the Tier-2 `network` marker (E-Bn7Dsc
+T-T2-5Ij6: real clones of public repos for repo-mutant recipes) is gated identically by
+`AO_E2E_NETWORK=1` -- all mirror `tests/playground/conftest.py`'s `real_llm` gate exactly
+(a separate hook here, not a shared one, since pytest conftest hooks are scoped to their
+own directory subtree and tests/playground's hook never reaches tests/bench).
 """
 
 from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
+import shutil
+import uuid
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import agent_orchestrator.bench.swebench_provider as swebench_provider
+from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT
+
 # marker -> (opt-in env var, example invocation). Each gated tier is skipped unless its env
-# var is "1" -- mirrors tests/playground/conftest.py's `real_llm` gate.
+# var is "1" -- mirrors tests/playground/conftest.py's `real_llm` gate, so the default
+# `pytest tests/bench` run stays hermetic (no network, no docker, no LLM).
 _OPT_IN_GATES: dict[str, tuple[str, str]] = {
     "swebench": ("AO_E2E_SWEBENCH", "AO_E2E_SWEBENCH=1 uv run pytest -m swebench"),
     # Needs a reachable docker daemon + the python:3.12-slim image (T-Bx2Cd3 sandbox tests).
     "docker": ("AO_E2E_DOCKER", "AO_E2E_DOCKER=1 uv run pytest -m docker tests/bench"),
+    # Clones public GitHub repos (T-T2-5Ij6 repo-mutant recipes / pr-mined provider).
+    "network": ("AO_E2E_NETWORK", "AO_E2E_NETWORK=1 uv run pytest -m network tests/bench"),
 }
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip `swebench`-/`docker`-marked items unless their AO_E2E_* gate is set to 1."""
+    """Skip `swebench`/`docker`/`network`-marked items unless their AO_E2E_* gate is 1."""
     for marker, (env_var, example) in _OPT_IN_GATES.items():
         if os.environ.get(env_var) == "1":
             continue  # gate open -- let these tests run on their own merits
@@ -155,3 +164,20 @@ def subject_factory(tmp_path: Path) -> SubjectFactory:
         return subject_path
 
     return _make
+
+
+@pytest.fixture()
+def isolated_repo_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Tier-2 tests: a private clone-cache root so a developer's real cache is never read
+    or written. Opt in per module via `pytestmark = pytest.mark.usefixtures(...)`."""
+    cache_root = tmp_path / "cache-root"
+    monkeypatch.setattr(swebench_provider, "SWEBENCH_REPO_CACHE_ROOT", cache_root)
+    return cache_root
+
+
+@pytest.fixture()
+def bench_ws() -> Iterator[Path]:
+    """A throwaway workspace root under the (guarded) bench sandbox, cleaned afterwards."""
+    root = BENCH_WORKSPACE_ROOT / f"tier2-test-{uuid.uuid4().hex[:10]}"
+    yield root
+    shutil.rmtree(root, ignore_errors=True)

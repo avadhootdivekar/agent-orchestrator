@@ -160,17 +160,26 @@ DAG is itself internally serial or parallel) — they compose, they don't share 
 
 ### Held-out grading for discriminating (`medium`+) suites
 
-There is no dedicated `grading_overlay` framework feature (non-MVP — see the "Non-MVP / roadmap" section near the
-end of this doc). `dev-medium` instead uses a **per-fixture `.grading/` honor-system convention** (same shape as `dev-core`'s
-`check.py`/`check_tests.py` precedent, generalized): each task's `fixture/.grading/{run.py,tests/}` is a held-out
-harness the agent's own instruction never points at and is never told to run — `run.py` re-runs the *visible*
-`tests/` plus the held-out `.grading/tests/` (or, for a test-writing task, mutation-tests the agent's own test file
-against several independently seeded single-bug variants). `solved` is gated by the full grading harness passing,
-not by the visible suite alone — verified per-task at authoring time (`.grading/run.py` must FAIL on the unmodified
-fixture and PASS once the task's own `.bench-solution/` reference fix is applied; `dev-medium`'s own
-`tests/bench/test_dev_medium_suite.py` asserts this for all 6 committed tasks). This is an honor-system convention,
-not a schema-enforced one — nothing stops a task's grader `command` from pointing only at the visible `tests/`, so
-new held-out-graded tasks must wire their `grader.command` to the `.grading/run.py` entry point explicitly.
+Anything the agent must not see lives in the task's **`grading_dir`**: a per-(subject x task) directory the runner
+creates next to — never inside — the agent-visible workspace (HLD §8 "Hidden-asset rule"). A grader reaches it via
+`{grading_dir}` / `{repo_dir}` placeholders in its `command`, and a task seeds it from `grader.assets` (a
+suite-relative dir that `materialize_workspace` copies into `grading_dir`).
+
+`dev-medium` uses exactly that (migrated from the old agent-readable `fixture/.grading/` on 2026-10-23; every task's
+`config_fingerprint` changed with it, so pre-migration results are not run-for-run comparable): each task has
+`tasks/<id>/grading/{run.py,tests/}` and
+
+```json
+"grader": {"type": "command", "assets": "tasks/<id>/grading",
+           "command": "uv run python {grading_dir}/run.py --repo {repo_dir}", "cwd": "."}
+```
+
+`run.py --repo <repo>` (default: cwd) re-runs the *visible* `tests/` plus the held-out `tests/` next to it (or, for a
+test-writing task, mutation-tests the agent's own test file against several independently seeded single-bug
+variants). `solved` is gated by the full harness, not the visible suite alone — verified per task at authoring time
+(`run.py` must FAIL on the unmodified fixture and PASS once the task's `.bench-solution/` reference fix is applied;
+`tests/bench/test_dev_medium_suite.py` asserts this for all 6 tasks, plus that nothing grader-owned is reachable from
+the agent's workspace).
 
 ## Authoring a subject
 
@@ -381,6 +390,62 @@ parallelizes normally).
 
 ---
 
+## Tier-2 brownfield suites (`repo_mutation`, `pr_mined`, `pytest_targeted`)
+
+HLD `docs-md/benchmark-discriminating-suites-hld.md` §4.2. The agent gets a real repo at a pinned commit plus an
+instruction; hidden tests and mutation metadata stay in the task's `grading_dir`. Hermetic tests build a local git
+repo (`tests/bench/test_mutation_provider.py`, `test_pr_mined.py`); the real-clone tier is opt-in:
+`AO_E2E_NETWORK=1 uv run pytest -m network tests/bench`.
+
+**Workspace shape (both providers).** The repo is checked out through the shared cache
+(`playground/.tmp/swebench-repo-cache/`), mutated, then **re-snapshotted as one parentless commit**: `git diff` shows
+exactly the agent's own work, and `git stash` / `git checkout .` / `git log --all` / `git fetch origin` can neither
+undo an injected bug nor reach a merge commit. Hidden tests are never in `repo_dir`; the `pytest_targeted` grader
+restores `grading_dir/hidden/**` at grade time. The provider also parks the pristine/gold files in
+`grading_dir/reference/`, so `FakeSubject(scripted_effect="copy-reference")` proves a task is solvable at zero cost.
+
+**`repo_mutation`** — `source: {"type": "repo_mutation", "repo": "<clone URL or owner/name>", "base_commit": "<40-hex>",
+"recipe": "tasks/<id>/recipe.json"}`. Recipe keys (unknown keys are rejected):
+
+| key | meaning |
+|---|---|
+| `mode` | `inject` (bug), `excise` (feature + tests removed), `enhance` (new behaviour, hidden tests) |
+| `edits` | `[{"file","find","replace","count"=1}]` — literal find/replace; the `find` text must occur exactly `count` times |
+| `remove` | repo paths deleted from the checkout (not restored) |
+| `hidden` | `{repo path: suite-relative source}` — copied to `grading_dir/hidden/<path>` |
+| `hidden_from_repo` | repo paths taken from the checkout into `grading_dir/hidden/` and deleted from `repo_dir` (e.g. the existing tests that catch the injected bug) |
+| `fail_to_pass` / `pass_to_pass` / `test_targets` | node ids, and whole files/dirs that must pass |
+| `install`, `test_command` | optional; grader defaults |
+| `verified` | `{"date","note"}` — how the recipe was proven (`null` if not) |
+
+**`pytest_targeted` grader** (suite.json `grader` block; omitted keys come from the provider's `recipe.resolved.json`):
+`fail_to_pass`, `pass_to_pass`, `test_targets`, `pass_to_pass_sample` (30), `install`, `test_command`
+(`{python} -m pytest -q -p no:cacheprovider {targets}`), `per_test_timeout_seconds` (60, needs `pytest-timeout`),
+`total_timeout_seconds` (900), `install_timeout_seconds` (900), `baseline_commit`. It restores hidden tests, runs
+`install` once, runs ONE bounded pytest invocation, and scores `0.7 * f2p_rate + 0.3 * p2p_rate` (an empty group's weight
+renormalises away); `solved` = every f2p id / every test in `test_targets` / every sampled p2p id passed. A failing
+`install` is a `GraderError` (infrastructure), failing tests are an ordinary unsolved grade. Reported, never scored:
+`collateral` (`files_touched`/`lines_added`/`lines_deleted` of the agent's diff vs the snapshot), `agent_tests_added`.
+
+**`pr_mined`** — `source: {"type": "pr_mined", "instance_id": "owner__name-<pr>"}`; metadata in the suite's
+`instances.json`, written by
+
+```bash
+uv run ao-bench import-prs --repo owner/name --since 2026-06-01 --out benchmarks/suites/<suite> --limit 20 \
+    [--min-test-files 1] [--install "uv venv .venv && uv pip install -e . pytest pytest-timeout"]
+```
+
+(needs the `gh` CLI, authenticated). It selects merged PRs that change >= `--min-test-files` pytest modules AND a
+non-test `.py` file, pins `base_commit` to the merge commit's first parent, strips links/@mentions/`#123` from the
+text and generates `tasks/<id>/instruction.md` — **review those for solution hints before committing**. Without
+verified node ids an instance is graded by whole test files (`test_targets`), whose score is dominated by tests that
+already passed; a calibration step that fills `fail_to_pass`/`pass_to_pass` on the instance upgrades it to precise
+scoring (the provider honours them when present).
+
+**`repo-mutant-mini`** (`benchmarks/suites/repo-mutant-mini/`) — 3 inject + 1 excise recipes on pinned
+`pallets/click`, `python-attrs/attrs`, `Textualize/rich`, each under 5 s of targeted pytest and network-verified
+(unsolved with the mutation, solved with the pristine files; see each recipe's `verified`).
+
 ## Results layout + committed-results policy
 
 ```
@@ -540,8 +605,8 @@ Non-dev domains (biology/physics/legal/...) need **no code change at all**: add 
 `LlmJudgeGrader` · an inspect-ai bridge · Aider/EvalPlus subset importers · non-dev domain suites (framework
 supports via `domain`+`CommandGrader`, ships none) · HTTP/API subjects · multi-seed/bootstrap-CI/pass@k statistical
 rigor · a results dashboard/`ao-bench serve` · a nightly cron trigger · a `grading_overlay` held-out-test
-*framework* feature (medium's per-fixture `.grading/` honor-system convention is used instead, matching
-`dev-core`'s `check.py` precedent) · the full ~500-instance SWE-bench Verified run (`xlarge`, defined but disabled
+*framework* feature beyond `grader.assets` + `grading_dir` (dev-medium's held-out harness uses those; see
+[Held-out grading](#held-out-grading-for-discriminating-medium-suites)) · the full ~500-instance SWE-bench Verified run (`xlarge`, defined but disabled
 — disk-infeasible here) · a cross-process lockfile for concurrent `ao-bench run`/`campaign` invocations against the
 same result dir (see [Running](#running)) · `keep_images`/`GraderConfig` becoming suite-driven (today it's an env
 var + test-only constructor arg — see ADR-0009's Outcome section) · widening `RunContext`/`runner.py` to carry

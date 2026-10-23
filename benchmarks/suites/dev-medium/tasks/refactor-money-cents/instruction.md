@@ -31,6 +31,4 @@ individual line amounts `receipt.py` prints for each item.
 
 Keep `tests/test_shop.py` passing exactly as it is (it already passes on the
 unmodified fixture — the numbers it uses happen not to expose either bug). Do not
-modify `tests/test_shop.py`, and do not modify anything under `.grading/` — it is a
-held-out grading harness the run is scored against and is not part of what you are
-asked to implement or test against directly.
+modify `tests/test_shop.py`.

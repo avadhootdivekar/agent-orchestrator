@@ -47,7 +47,9 @@ never touch it). Still repo-local + gitignored (constraint C2 -- mirrors
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -80,11 +82,16 @@ _cache_lock = threading.Lock()
 
 
 def _run_git(
-    args: list[str], *, cwd: Path | None = None, timeout: int = _GIT_CHECKOUT_TIMEOUT_SECONDS
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int = _GIT_CHECKOUT_TIMEOUT_SECONDS,
+    provider: str = "swebench",
 ) -> str:
     """Run a `git` subcommand, raising `SubjectError` (never a raw exception) on any
     failure -- mirrors `FixtureProvider`'s own `SubjectError`-on-failure convention
-    (bench/workspace.py).
+    (bench/workspace.py). *provider* only labels the error message (the tier-2
+    providers reuse this helper).
     """
     try:
         result = subprocess.run(  # noqa: S603 -- fixed argv, no shell, bounded timeout
@@ -97,44 +104,86 @@ def _run_git(
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         joined = " ".join(args)
-        raise SubjectError(f"swebench provider: `git {joined}` failed to run: {exc}") from exc
+        raise SubjectError(f"{provider} provider: `git {joined}` failed to run: {exc}") from exc
     if result.returncode != 0:
         raise SubjectError(
-            f"swebench provider: `git {' '.join(args)}` failed (exit {result.returncode}): "
+            f"{provider} provider: `git {' '.join(args)}` failed (exit {result.returncode}): "
             f"{result.stderr.strip()}"
         )
     return result.stdout
 
 
-def _load_instances_index(suite_base_dir: Path) -> dict[str, dict]:
-    """Load `<suite_base_dir>/instances.json` and index it by `instance_id`."""
+def _load_instances_index(
+    suite_base_dir: Path,
+    *,
+    provider: str = "swebench",
+    importer: str = "ao-bench import-swebench",
+) -> dict[str, dict]:
+    """Load `<suite_base_dir>/instances.json` and index it by `instance_id`.
+
+    *provider*/*importer* only shape the error messages, so the sibling `pr_mined`
+    provider (which reads the same `instances.json` layout, written by `ao-bench
+    import-prs`) can reuse this loader instead of copying it.
+    """
     path = suite_base_dir / INSTANCES_FILENAME
     if not path.is_file():
         raise SubjectError(
-            f"swebench provider: {INSTANCES_FILENAME} not found at {path} "
-            "(expected alongside suite.json; generate it with `ao-bench import-swebench`)"
+            f"{provider} provider: {INSTANCES_FILENAME} not found at {path} "
+            f"(expected alongside suite.json; generate it with `{importer}`)"
         )
     try:
         data = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        raise SubjectError(f"swebench provider: failed to read {path}: {exc}") from exc
+        raise SubjectError(f"{provider} provider: failed to read {path}: {exc}") from exc
     instances = data.get("instances")
     if not isinstance(instances, list):
-        raise SubjectError(f"swebench provider: malformed {path}: missing 'instances' list")
+        raise SubjectError(f"{provider} provider: malformed {path}: missing 'instances' list")
     return {inst["instance_id"]: inst for inst in instances if "instance_id" in inst}
 
 
+# `https://github.com/<owner>/<name>[.git]` -- canonicalised so a GitHub repo named by URL
+# (tier-2 recipes) and by `owner/name` (swebench/pr_mined instances) share ONE cache dir.
+_GITHUB_URL_RE = re.compile(r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$")
+
+
+def _is_explicit_location(repo: str) -> bool:
+    """True when *repo* is a full clone URL or an absolute local path rather than the
+    `owner/name` shorthand (tier-2 tests point recipes at a local `file://` origin)."""
+    return "://" in repo or repo.startswith("/")
+
+
 def _repo_clone_url(repo: str) -> str:
-    """The URL `_ensure_repo_cache` clones *repo* from. A separate, trivially
-    monkeypatchable function (rather than inlined into `_ensure_repo_cache`) purely so
-    a test can redirect it at a local `file://` fake origin -- a real GitHub network
-    clone is never exercised by the unit test suite (only the opt-in `swebench`-marked
-    real test does).
+    """The URL `_ensure_repo_cache` clones *repo* from. *repo* is `owner/name` (GitHub
+    shorthand), a GitHub URL (canonicalised), or any other explicit URL/absolute path
+    (used as-is). A separate, trivially monkeypatchable function (rather than inlined
+    into `_ensure_repo_cache`) purely so a test can redirect it at a local `file://`
+    fake origin -- a real GitHub network clone is never exercised by the unit test suite
+    (only the opt-in `swebench`-marked real test does).
     """
+    match = _GITHUB_URL_RE.match(repo)
+    if match:
+        return f"https://github.com/{match.group(1)}/{match.group(2)}.git"
+    if _is_explicit_location(repo):
+        return repo
     return f"https://github.com/{repo}.git"
 
 
-def _ensure_repo_cache(repo: str, *, cache_root: Path | None = None) -> Path:
+def _cache_dirname(repo: str) -> str:
+    """Cache subdirectory name for *repo*: `owner__name` for GitHub (URL or shorthand,
+    unchanged from the swebench-only behaviour), else a slug + short hash of the location
+    so two distinct local/other origins can never collide."""
+    match = _GITHUB_URL_RE.match(repo)
+    if match:
+        return f"{match.group(1)}__{match.group(2)}"
+    if _is_explicit_location(repo):
+        slug = re.sub(r"[^A-Za-z0-9._-]+", "_", repo.rstrip("/")).strip("_")[-60:]
+        return f"{slug}-{hashlib.sha1(repo.encode()).hexdigest()[:8]}"  # noqa: S324 -- not security
+    return repo.replace("/", "__")
+
+
+def _ensure_repo_cache(
+    repo: str, *, cache_root: Path | None = None, provider: str = "swebench"
+) -> Path:
     """Clone (once) or reuse a persistent local git cache of *repo*.
 
     *cache_root* defaults to the module-level `SWEBENCH_REPO_CACHE_ROOT`, read via a
@@ -145,17 +194,21 @@ def _ensure_repo_cache(repo: str, *, cache_root: Path | None = None) -> Path:
     `playground/.tmp/` tree used directly by tests too, per that module's test file).
     """
     root = cache_root if cache_root is not None else SWEBENCH_REPO_CACHE_ROOT
-    cache_dir = root / repo.replace("/", "__")
+    cache_dir = root / _cache_dirname(repo)
     with _cache_lock:
         if not (cache_dir / ".git").exists():
             cache_dir.parent.mkdir(parents=True, exist_ok=True)
             _run_git(
-                ["clone", _repo_clone_url(repo), str(cache_dir)], timeout=_GIT_CLONE_TIMEOUT_SECONDS
+                ["clone", _repo_clone_url(repo), str(cache_dir)],
+                timeout=_GIT_CLONE_TIMEOUT_SECONDS,
+                provider=provider,
             )
     return cache_dir
 
 
-def _checkout_into(cache_dir: Path, base_commit: str, repo_dir: Path) -> None:
+def _checkout_into(
+    cache_dir: Path, base_commit: str, repo_dir: Path, *, provider: str = "swebench"
+) -> None:
     """Local (network-free), independent clone from *cache_dir* into *repo_dir*,
     checked out with a clean working tree at exactly *base_commit* (module docstring).
     *repo_dir* must not already exist (mirrors `FixtureProvider`/`shutil.copytree`'s
@@ -165,8 +218,9 @@ def _checkout_into(cache_dir: Path, base_commit: str, repo_dir: Path) -> None:
     _run_git(
         ["clone", "--no-checkout", str(cache_dir), str(repo_dir)],
         timeout=_GIT_CLONE_TIMEOUT_SECONDS,
+        provider=provider,
     )
-    _run_git(["checkout", "--quiet", base_commit], cwd=repo_dir)
+    _run_git(["checkout", "--quiet", base_commit], cwd=repo_dir, provider=provider)
     _exclude_instruction_file(repo_dir)
 
 
