@@ -652,7 +652,10 @@ haiku.** That is the expected first-pass outcome and exactly what `ao-bench cali
 regenerate at a higher difficulty vector (more entities/traps, concurrency ≥ 2, scale ≥ 2, and the TS/Go variants)
 and calibrate against haiku + opus until pooled pass rate sits in the 20–80 % band (HLD §7). What this run DOES
 establish: the full Tier-1 pipeline (parity → generated spec → agent → Docker blackbox grade → repeat-aware
-comparison with infra/pairwise/family tables) works end to end for about $0.25 per subject.
+comparison with infra/pairwise/family tables) works end to end for about $0.25 per subject. One more calibration note from the
+perf data: at `scale:1` (sizes 100 / 1000) the fitted α was ≈ −0.4 for every op class — latency *fell* with N,
+i.e. JIT/warm-up noise dominates at these sizes — so the perf group only carries signal from `scale ≥ 2`
+(sizes up to 10⁴–10⁵); treat `scale:1` perf as a smoke check.
 
 ### Total epic spend
 
