@@ -134,6 +134,12 @@ _MIN_PRE_EPIC_TEST_FILES = 50
 # gate"; every entry here is a declared, reviewable exception to that -- not a silent
 # exclusion. Adding an entry is a deliberate act that shows up in review.
 _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
+    # Contract change, deliberate (E-Bn7Dsc core seams, 2026-10-23): `GraderConfig` now passes
+    # grader-specific keys through (`extra="allow"`, mirroring `Source`) so the `blackbox` /
+    # `pytest_targeted` graders can carry their own fields. The one test asserting an unknown
+    # grader key is REJECTED now asserts it lands in `model_extra`; every other assertion in
+    # the file is unchanged.
+    "tests/bench/test_spec.py": "E-Bn7Dsc: grader-specific keys pass through (extra=allow)",
     # Deliberate model-pin refresh (2026-10-15): benchmark subject configs moved to the latest
     # ids (haiku-5-5 / sonnet-5-5 / opus-5-5); these tests assert the committed pin literals.
     "tests/bench/test_ao_epic_plus_subject.py": "model-pin refresh: committed subject ids only",
