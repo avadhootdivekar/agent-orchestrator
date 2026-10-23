@@ -85,6 +85,7 @@ markers = [
     "perf: performance envelope checks",
     "slow: opt-in informational measurement (E-Da5Tn9 NFR-5); skipped unless selected with -m slow, never a gate",
     "swebench: opt-in real network/HF/git SWE-bench tier; set AO_E2E_SWEBENCH=1 to run",
+    "docker: opt-in blackbox-sandbox tests that need a docker daemon + python:3.12-slim; set AO_E2E_DOCKER=1 to run",
 ]
 
 [tool.coverage.run]

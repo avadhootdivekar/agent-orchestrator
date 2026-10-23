@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "family": "crud-relational",
+  "seed": 4242,
+  "difficulty": {"entities": 1, "traps": 2, "concurrency": 1, "scale": 1},
+  "language": "python",
+  "contract": "http",
+  "entities": [
+    {
+      "name": "widget",
+      "plural": "widgets",
+      "fields": [
+        {"name": "name", "type": "string", "unique": true},
+        {"name": "qty", "type": "integer"}
+      ],
+      "relations": []
+    }
+  ],
+  "traps": ["pagination_stability", "unique_constraint"],
+  "limits": {"page_size_max": 50},
+  "reference": {"language": "python", "entry": "reference/run.sh"}
+}
