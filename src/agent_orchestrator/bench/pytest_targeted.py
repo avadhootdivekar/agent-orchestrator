@@ -291,11 +291,14 @@ def collateral_stats(
         if rc != 0:
             return {"error": f"git diff --numstat: {numstat.strip()}"}
         added = deleted = files = 0
-        for line in numstat.splitlines():
-            plus, minus, _path = line.split("\t", 2)
-            files += 1
-            added += int(plus) if plus.isdigit() else 0  # binary files show "-"
-            deleted += int(minus) if minus.isdigit() else 0
+        try:
+            for line in numstat.splitlines():
+                plus, minus, _path = line.split("\t", 2)
+                files += 1
+                added += int(plus) if plus.isdigit() else 0  # binary files show "-"
+                deleted += int(minus) if minus.isdigit() else 0
+        except ValueError:
+            return {"error": f"unparsable git numstat output: {numstat[:200]!r}"}
         # New test files the agent wrote -- hidden paths included (it still authored them).
         rc, names = _git(
             repo_dir,
@@ -544,6 +547,10 @@ class PytestTargetedGrader(Grader):
 
         enforce_timeout = _has_pytest_timeout(python, repo_dir)
         template = settings.test_command or DEFAULT_TEST_COMMAND
+        if "{targets}" not in template:
+            raise GraderError(
+                f"pytest_targeted: test_command lacks a {{targets}} placeholder: {template!r}"
+            )
         junit = grading_dir / JUNIT_FILENAME
 
         def argv_for(current: list[str]) -> list[str]:

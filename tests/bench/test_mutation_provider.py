@@ -8,6 +8,7 @@ pytest subprocess. No network, no LLM.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -436,6 +437,34 @@ def test_suite_json_grader_keys_override_the_resolved_recipe(
     assert result.solved is True  # only test_add is required now
     assert result.detail["pass_to_pass"]["total"] == 0
     assert result.score == pytest.approx(1.0)  # empty p2p weight renormalises away
+
+
+def test_custom_test_command_template_is_honoured_and_validated(
+    tmp_path: Path, bench_ws: Path
+) -> None:
+    template = "{python} -m pytest -q -p no:cacheprovider --maxfail=5 {targets}"
+    task, ctx, _, _ = _prepare(tmp_path, bench_ws, _inject_recipe(test_command=template))
+    _copy_reference(task, ctx)
+    assert grade(task, ctx).solved is True
+
+    (tmp_path / "b").mkdir()
+    bad_task, bad_ctx, _, _ = _prepare(
+        tmp_path / "b", bench_ws / "b", _inject_recipe(test_command="{python} -m pytest -q")
+    )
+    with pytest.raises(GraderError, match=r"lacks a \{targets\} placeholder"):
+        grade(bad_task, bad_ctx)
+
+
+def test_collateral_degrades_to_an_error_note_without_a_git_repo(
+    tmp_path: Path, bench_ws: Path
+) -> None:
+    task, ctx, _, _ = _prepare(tmp_path, bench_ws, _inject_recipe())
+    _copy_reference(task, ctx)
+    shutil.rmtree(Path(ctx.repo_dir) / ".git")  # e.g. the agent wiped it
+    result = grade(task, ctx)
+    assert result.solved is True  # collateral is advisory
+    assert "error" in result.detail["collateral"]
+    assert result.detail["agent_tests_added"] is None
 
 
 def test_pass_to_pass_sample_is_bounded(tmp_path: Path, bench_ws: Path) -> None:
