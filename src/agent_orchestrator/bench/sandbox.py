@@ -86,8 +86,8 @@ STOP_GRACE_SECONDS = 2.0
 DOCKER_INFO_TIMEOUT_SECONDS = 20
 DOCKER_PULL_TIMEOUT_SECONDS = 900
 DOCKER_BUILD_TIMEOUT_SECONDS = 1800
-DOCKER_RUN_START_TIMEOUT_SECONDS = 120
 DOCKER_PORT_RETRIES = 3
+_PORT_CONFLICT_RE = re.compile(r"port is already allocated|address already in use")
 LOG_TAIL_CHARS = 1500
 LOG_TAIL_LINES = 6
 LOG_LINE_CHARS = 200
@@ -333,7 +333,6 @@ def build_docker_run_argv(
     cfg: SandboxConfig,
     name: str,
     env: Mapping[str, str],
-    detach: bool = False,
     interactive: bool = False,
     publish: tuple[int, int] | None = None,
 ) -> list[str]:
@@ -341,8 +340,6 @@ def build_docker_run_argv(
     publishes `127.0.0.1:host -> container` on the default bridge (the only reachable port).
     Pure function so the flag set is unit-testable without docker."""
     argv = ["docker", "run", "--rm", "--name", name]
-    if detach:
-        argv.append("-d")
     if interactive:
         argv.append("-i")
     argv += [
@@ -492,7 +489,6 @@ class Handle:
     port: int | None = None
     proc: subprocess.Popen[bytes] | None = None
     container: str | None = None
-    follower: subprocess.Popen[bytes] | None = None  # docker: `docker logs -f` -> log file
     log_path: Path | None = None
     log_dir: Path | None = None
     log_file: Any = None
@@ -873,22 +869,15 @@ class DockerSandbox(Sandbox):
         except SandboxUnavailable:
             pass  # best effort; the container dies with --rm when its process ends
 
-    def _follow_logs(self, handle: Handle) -> None:
-        """Stream the container's output into the handle's log file (survives `--rm`)."""
-        assert handle.container is not None
-        handle.follower = subprocess.Popen(  # noqa: S603
-            ["docker", "logs", "-f", handle.container],  # noqa: S607
-            stdout=handle.log_file,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-        )
-
     def start_http(self, artefact_dir: Path, env: Mapping[str, str] | None = None) -> Handle:
+        """Foreground `docker run --rm` driven through Popen (not `-d`): the CLI is attached
+        from the first instant, so a container that crashes at boot still leaves its stderr in
+        the log -- with `-d --rm` the container was gone before `docker logs` could read it in
+        8 of 10 trials. `docker rm -f` is the stop."""
         command = run_sh_argv(artefact_dir)
         self.ensure_image()
         full_env = {**(env or {}), "PORT": str(CONTAINER_PORT), "HOST": HTTP_BIND_HOST_DOCKER}
-        last_err = ""
-        for _ in range(DOCKER_PORT_RETRIES):
+        for attempt in range(DOCKER_PORT_RETRIES):
             port = free_port()
             name = self._name()
             argv = build_docker_run_argv(
@@ -898,41 +887,38 @@ class DockerSandbox(Sandbox):
                 cfg=self.cfg,
                 name=name,
                 env=full_env,
-                detach=True,
                 publish=(port, CONTAINER_PORT),
             )
-            proc = subprocess.run(  # noqa: S603
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=DOCKER_RUN_START_TIMEOUT_SECONDS,
-                check=False,
+            handle = Handle(
+                kind=self.kind, base_url=f"http://{LOOPBACK}:{port}", port=port, container=name
             )
-            if proc.returncode == 0:
-                break
-            last_err = (proc.stderr or proc.stdout)[-LOG_TAIL_CHARS:]
-            if "already allocated" not in last_err and "address already in use" not in last_err:
-                raise SandboxUnavailable(f"docker run failed: {last_err}")
-        else:
-            raise SandboxUnavailable(f"docker run failed after port retries: {last_err}")
-        handle = Handle(
-            kind=self.kind, base_url=f"http://{LOOPBACK}:{port}", port=port, container=name
-        )
-        _new_log(handle)
-        try:
-            self._follow_logs(handle)
-            follower = handle.follower
-            assert follower is not None
-            _wait_http_ready(
-                port,
-                self.cfg.startup_timeout_seconds,
-                alive=lambda: follower.poll() is None,  # `logs -f` ends when the container does
-                diag=handle.log_tail,
-            )
-        except BaseException:
-            self.stop(handle)
-            raise
-        return handle
+            _new_log(handle)
+            try:
+                proc = subprocess.Popen(  # noqa: S603
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle.log_file,
+                    stderr=subprocess.STDOUT,
+                )
+                handle.proc = proc
+                _wait_http_ready(
+                    port,
+                    self.cfg.startup_timeout_seconds,
+                    alive=lambda: proc.poll() is None,  # the attached CLI exits with the container
+                    diag=handle.log_tail,
+                )
+                return handle
+            except ArtefactStartError:
+                conflict = _PORT_CONFLICT_RE.search(_tail(handle.log_path)) is not None
+                self.stop(handle)
+                if not (conflict and attempt < DOCKER_PORT_RETRIES - 1):
+                    raise
+            except BaseException:
+                self.stop(handle)
+                raise
+        raise SandboxUnavailable(
+            "docker run kept losing the published-port race"
+        )  # pragma: no cover
 
     def start_jsonl(self, artefact_dir: Path, env: Mapping[str, str] | None = None) -> JsonlHandle:
         command = run_sh_argv(artefact_dir)
@@ -1008,9 +994,8 @@ class DockerSandbox(Sandbox):
         handle.stopped = True
         if handle.container is not None:
             self._rm(handle.container)
-        for proc in (handle.proc, handle.follower):
-            if proc is None:
-                continue
+        proc = handle.proc
+        if proc is not None:
             if proc.poll() is None:
                 proc.kill()
             try:

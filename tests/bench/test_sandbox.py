@@ -369,11 +369,11 @@ class TestDockerArgv:
             cfg=self.CFG,
             name="n1",
             env={"PORT": "8080", "K": "v"},
-            detach=True,
             publish=(40001, 8080),
         )
         text = " ".join(argv)
-        assert argv[:5] == ["docker", "run", "--rm", "--name", "n1"] and "-d" in argv
+        assert argv[:5] == ["docker", "run", "--rm", "--name", "n1"]
+        assert "-d" not in argv  # foreground: attached from the first instant (see start_http)
         assert "--cpus 1.5" in text and "--memory 512m" in text and "--memory-swap 512m" in text
         assert "--pids-limit 64" in text and "--cap-drop ALL" in text
         assert "no-new-privileges" in text
@@ -752,8 +752,12 @@ class TestDocker:
         art = _docker_artefact(
             tmp_path, "import sys\nprint('import failed: nope', file=sys.stderr)\nsys.exit(2)\n"
         )
-        with pytest.raises(ArtefactStartError, match="exited before becoming ready"):
-            docker_sandbox.start_http(art, {})
+        # the crash output must reach the error every time (it was lost in 8/10 runs with -d --rm)
+        for _ in range(5):
+            with pytest.raises(
+                ArtefactStartError, match="exited before becoming ready.*import failed"
+            ):
+                docker_sandbox.start_http(art, {})
 
     def test_jsonl_roundtrip_and_no_network(
         self, tmp_path: Path, docker_sandbox: DockerSandbox
