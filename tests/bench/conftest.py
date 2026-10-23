@@ -9,34 +9,46 @@ Also gates the opt-in `swebench` marker (E-Bt4Xk9 T-Sw5Hd9): tests that hit the 
 HuggingFace dataset or a real GitHub clone are skipped unless `AO_E2E_SWEBENCH=1` is
 set -- mirrors `tests/playground/conftest.py`'s `real_llm` gate exactly (a separate
 hook here, not a shared one, since pytest conftest hooks are scoped to their own
-directory subtree and tests/playground's hook never reaches tests/bench).
+directory subtree and tests/playground's hook never reaches tests/bench). The Tier-2
+`network` marker (E-Bn7Dsc: real clones of public repos for repo-mutant recipes) is gated
+identically by `AO_E2E_NETWORK=1`.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
+import shutil
+import uuid
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import agent_orchestrator.bench.swebench_provider as swebench_provider
+from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT
+
+# marker -> (env var that opens the gate, human hint). Real-network/real-service tiers are
+# opt-in so the default `pytest tests/bench` run is hermetic.
+_OPT_IN_GATES: dict[str, tuple[str, str]] = {
+    "swebench": ("AO_E2E_SWEBENCH", "swebench real-network tier"),
+    "network": ("AO_E2E_NETWORK", "tier-2 real-network tier (clones public GitHub repos)"),
+}
+
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip `swebench`-marked items unless AO_E2E_SWEBENCH=1 is set in the environment."""
-    if os.environ.get("AO_E2E_SWEBENCH") == "1":
-        return  # gate open -- let all tests run on their own merits
-
-    skip_marker = pytest.mark.skip(
-        reason=(
-            "swebench real-network tier disabled; set AO_E2E_SWEBENCH=1 to enable "
-            "(e.g. AO_E2E_SWEBENCH=1 uv run pytest -m swebench)"
+    """Skip `swebench`/`network`-marked items unless their AO_E2E_* env var is set to 1."""
+    for marker, (env_var, what) in _OPT_IN_GATES.items():
+        if os.environ.get(env_var) == "1":
+            continue  # gate open -- let these tests run on their own merits
+        skip_marker = pytest.mark.skip(
+            reason=f"{what} disabled; set {env_var}=1 to enable "
+            f"(e.g. {env_var}=1 uv run pytest -m {marker})"
         )
-    )
-    for item in items:
-        if "swebench" in item.keywords:
-            item.add_marker(skip_marker)
+        for item in items:
+            if marker in item.keywords:
+                item.add_marker(skip_marker)
 
 
 def _default_task(task_id: str = "bugfix-off-by-one") -> dict[str, Any]:
@@ -148,3 +160,20 @@ def subject_factory(tmp_path: Path) -> SubjectFactory:
         return subject_path
 
     return _make
+
+
+@pytest.fixture()
+def isolated_repo_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Tier-2 tests: a private clone-cache root so a developer's real cache is never read
+    or written. Opt in per module via `pytestmark = pytest.mark.usefixtures(...)`."""
+    cache_root = tmp_path / "cache-root"
+    monkeypatch.setattr(swebench_provider, "SWEBENCH_REPO_CACHE_ROOT", cache_root)
+    return cache_root
+
+
+@pytest.fixture()
+def bench_ws() -> Iterator[Path]:
+    """A throwaway workspace root under the (guarded) bench sandbox, cleaned afterwards."""
+    root = BENCH_WORKSPACE_ROOT / f"tier2-test-{uuid.uuid4().hex[:10]}"
+    yield root
+    shutil.rmtree(root, ignore_errors=True)

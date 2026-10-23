@@ -85,6 +85,7 @@ markers = [
     "perf: performance envelope checks",
     "slow: opt-in informational measurement (E-Da5Tn9 NFR-5); skipped unless selected with -m slow, never a gate",
     "swebench: opt-in real network/HF/git SWE-bench tier; set AO_E2E_SWEBENCH=1 to run",
+    "network: opt-in tier-2 real-network tier (clones public GitHub repos); set AO_E2E_NETWORK=1 to run",
 ]
 
 [tool.coverage.run]
