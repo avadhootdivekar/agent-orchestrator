@@ -282,7 +282,10 @@ class TestImages:
         assert "npm install" in render_dockerfile(
             "typescript", "node:22-alpine", ["better-sqlite3@11"]
         )
-        assert "NODE_PATH=" in render_dockerfile("typescript", "node:22-alpine", ["x"])
+        ts = render_dockerfile("typescript", "node:22-alpine", ["x"])
+        assert (
+            "NODE_PATH=" in ts and "ln -s /opt/deps/node_modules /node_modules" in ts
+        )  # CJS + ESM
         go = render_dockerfile("go", "golang:1.23-alpine", ["modernc.org/sqlite@v1.33.1"])
         assert "go get modernc.org/sqlite@v1.33.1" in go and "GOPROXY=off" in go
         with pytest.raises(SandboxUnavailable):

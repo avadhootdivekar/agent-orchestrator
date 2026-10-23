@@ -2,7 +2,7 @@
 
 - Epic: `E-Bn7Dsc-discriminating-benchmark-suites`
 - Title: Sandbox (docker/process) + blackbox grader + probe DSL + perf
-- Status: In Progress
+- Status: Done (branch `ad/bench-blackbox`, awaiting review/merge)
 - Design: `docs-md/benchmark-discriminating-suites-hld.md` (§8 maps each piece), `docs-md/bench-probe-dsl.md`
 
 ## Acceptance

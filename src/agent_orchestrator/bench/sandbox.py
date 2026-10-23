@@ -217,10 +217,13 @@ def render_dockerfile(language: str, base: str, deps: Sequence[str]) -> str:
     if language == "python":
         body = f"RUN pip install --no-cache-dir {quoted}\n"
     elif language == "typescript":
+        # NODE_PATH serves CommonJS `require`; ESM `import` ignores it but walks up from /app
+        # to `/node_modules`, hence the symlink -- both resolve the pre-installed deps.
         body = (
             f"ENV NODE_PATH={LANGUAGE_NODE_DEPS_DIR}/node_modules\n"
             f"RUN mkdir -p {LANGUAGE_NODE_DEPS_DIR} && cd {LANGUAGE_NODE_DEPS_DIR} "
-            f"&& npm init -y >/dev/null && npm install --no-audit --no-fund {quoted}\n"
+            f"&& npm init -y >/dev/null && npm install --no-audit --no-fund {quoted} "
+            f"&& ln -s {LANGUAGE_NODE_DEPS_DIR}/node_modules /node_modules\n"
         )
     elif language == "go":
         # Module cache is populated at build time; offline (GOPROXY=off) at run time.
