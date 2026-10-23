@@ -23,10 +23,19 @@ import typer
 
 from ..errors import SpecValidationError
 from . import (
+    blackbox,  # noqa: F401 -- registers "blackbox" grader (E-Bn7Dsc)
+    generated_provider,  # noqa: F401 -- registers "generated" workspace provider (E-Bn7Dsc)
+    mutation_provider,  # noqa: F401 -- registers "repo_mutation" workspace provider (E-Bn7Dsc)
+    pr_mined_provider,  # noqa: F401 -- registers "pr_mined" workspace provider (E-Bn7Dsc)
+    pytest_targeted,  # noqa: F401 -- registers "pytest_targeted" grader (E-Bn7Dsc)
     swebench_grader,  # noqa: F401 -- registers "swebench" grader (T-Sg6Jf2)
     swebench_provider,  # noqa: F401 -- registers "swebench" workspace provider (T-Sw5Hd9)
 )
+from .calibrate import calibrate_command
 from .errors import BenchError
+from .gen.cli import gen_command
+from .pr_mined_import import import_prs_command
+from .sandbox import images_command
 from .spec import load_subject, load_suite
 from .swebench_import import import_swebench_command
 
@@ -37,6 +46,11 @@ if TYPE_CHECKING:
 
 app = typer.Typer(name="ao-bench", help="Benchmark harness CLI for agent-orchestrator subjects.")
 app.command(name="import-swebench")(import_swebench_command)  # T-Sw5Hd9
+# E-Bn7Dsc verbs live in their own modules (one owner each) and only register here.
+app.command(name="gen")(gen_command)
+app.command(name="calibrate")(calibrate_command)
+app.command(name="images")(images_command)
+app.command(name="import-prs")(import_prs_command)
 
 # Exit codes (design doc §7 / this task's own AC): 0 ok, 1 usage/spec error, 2 a run
 # completed but at least one task's SUBJECT (not grader-verdict) status indicates a
@@ -200,6 +214,20 @@ def run(
         " benchmarks/tiers.json (enabled=false, e.g. xlarge). Gates ANY disabled tier,"
         " not only xlarge -- the flag name is historical/literal per the epic.",
     ),
+    parity: str | None = typer.Option(
+        None,
+        "--parity",
+        help="Path to a parity bundle (dir or parity.json) applied to this subject -- same"
+        " CLAUDE.md/.claude/env/limits every subject must share (HLD §2b). Default: the"
+        " suite's own `parity` field, if any.",
+    ),
+    repeat: int = typer.Option(
+        1,
+        "--repeat",
+        min=1,
+        help="Which repeat of this (suite x subject) this run is (HLD §6). 1 = the usual"
+        " result dir; n>1 lands in <bench_run_id>-r<n>.",
+    ),
 ) -> None:
     """Run a benchmark suite against a subject; writes run.json + summary.md.
 
@@ -254,6 +282,8 @@ def run(
             default_timeout=timeout,
             cost_budget_usd=effective_cost_budget_usd,
             max_parallel=effective_max_parallel,
+            parity=parity,
+            repeat=repeat,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -344,6 +374,12 @@ def campaign(
         " benchmarks/tiers.json (enabled=false, e.g. xlarge). Gates ANY disabled tier,"
         " not only xlarge -- the flag name is historical/literal per the epic.",
     ),
+    parity: str | None = typer.Option(
+        None,
+        "--parity",
+        help="Parity bundle applied to EVERY subject in the campaign (HLD §2b). Default:"
+        " the suite's own `parity` field.",
+    ),
 ) -> None:
     """Run a suite against a LIST of subjects, enforcing a whole-run USD cap across all
     of them (ADR-0009 D3); writes each subject's own run.json/summary.md plus a
@@ -366,6 +402,7 @@ def campaign(
             out_dir=out_dir,
             force=force,
             enable_xlarge=enable_xlarge,
+            parity=parity,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)

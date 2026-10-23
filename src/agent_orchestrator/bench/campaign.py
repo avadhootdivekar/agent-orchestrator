@@ -165,6 +165,7 @@ def run_campaign(
     force: bool = False,
     enable_xlarge: bool = False,
     clock: Callable[[], datetime] | None = None,
+    parity: str | Path | None = None,
 ) -> CampaignResult:
     """Run *suite* against every subject in *subject_paths*, IN THE GIVEN ORDER,
     enforcing a whole-run USD cap across all of them (ADR-0009 D3).
@@ -273,6 +274,7 @@ def run_campaign(
             cost_budget_usd=per_subject_cap,
             max_parallel=effective_max_parallel,
             clock=resolved_clock,
+            parity=parity,
         )
         spent += run_record.aggregate.total_cost_usd
         subject_records.append(

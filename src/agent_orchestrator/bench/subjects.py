@@ -77,6 +77,7 @@ DEFAULT_CLAUDE_PROMPT_TEMPLATE = "Solve the task described in {instruction}. Rep
 # so it rides along with the normal fixture copytree) onto the workspace repo, then
 # removes the marker so it never pollutes what the grader sees.
 _SOLUTION_MARKER_DIR = ".bench-solution"
+_REFERENCE_DIRNAME = "reference"  # under grading_dir; see docs-md/bench-probe-dsl.md §1
 # Extra scripted_effect values (beyond copy-solution/noop) that report a subject-level
 # outcome directly, with no repo mutation -- lets the runner/grader/reporting paths be
 # exercised deterministically for the failed/timed_out/error branches without a real
@@ -235,7 +236,11 @@ class ClaudeCliSubject(Subject):
 
         prompt_template = self.spec.prompt_template or DEFAULT_CLAUDE_PROMPT_TEMPLATE
         prompt = prompt_template.format(instruction=ctx.instruction_path, repo=ctx.repo_dir)
-        permission_mode = self.spec.permission_mode or DEFAULT_CLAUDE_PERMISSION_MODE
+        # Parity (HLD §2b) wins over the subject's own default: every subject in a
+        # campaign must run under the same permission mode.
+        permission_mode = (
+            ctx.permission_mode or self.spec.permission_mode or DEFAULT_CLAUDE_PERMISSION_MODE
+        )
         # ctx.max_turns is a bench-run-level override (e.g. `ao-bench run --max-turns`);
         # spec.max_turns is this subject's own committed default. CLI/run-level wins,
         # mirroring core cli.py's own "CLI > spec > unset" precedence for --max-turns.
@@ -268,6 +273,7 @@ class ClaudeCliSubject(Subject):
                 stdout_path=transcript_path,
                 stderr_path=stderr_path,
                 timeout_seconds=ctx.timeout_seconds,
+                env={**os.environ, **ctx.env},  # parity env knobs (HLD §2b)
             )
         except OSError as exc:
             return SubjectResult(
@@ -468,6 +474,7 @@ class AoWorkflowSubject(Subject):
         env = dict(os.environ)
         env["AO_WORKSPACE_ROOT"] = ctx.workspace
         env[ENV_CACHE] = _AO_CACHE_OFF_VALUE  # overrides any AO_CACHE inherited from the operator
+        env.update(ctx.env)  # parity env knobs (HLD §2b) -- identical for every subject
         if self.spec.model:
             env["AO_MODEL"] = self.spec.model
         max_turns = ctx.max_turns if ctx.max_turns is not None else self.spec.max_turns
@@ -555,7 +562,9 @@ class AoWorkflowSubject(Subject):
         )
 
 
-def _apply_scripted_effect(effect: str | None, repo_dir: Path) -> None:
+def _apply_scripted_effect(
+    effect: str | None, repo_dir: Path, grading_dir: Path | None = None
+) -> None:
     """Apply a `FakeSubject` `scripted_effect` to *repo_dir* (design doc §4.2).
 
     Raises `SubjectError` for an unrecognized effect string -- a spec typo should fail
@@ -573,6 +582,23 @@ def _apply_scripted_effect(effect: str | None, repo_dir: Path) -> None:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest)
         shutil.rmtree(solution_dir)
+        return
+    if effect == "copy-reference":
+        # Overlay-copies `<grading_dir>/reference/**` onto `<repo_dir>/`: the hidden
+        # reference implementation a generated task's provider wrote (HLD §4.1) becomes
+        # the "agent's" artefact, so a black-box grade of it must come out solved=True.
+        # The one deliberate exception to "FakeSubject never reads outside repo_dir",
+        # and only ever in CI/e2e tests.
+        if grading_dir is None:
+            raise SubjectError("FakeSubject: copy-reference requires a grading_dir")
+        reference_dir = grading_dir / _REFERENCE_DIRNAME
+        if not reference_dir.is_dir():
+            raise SubjectError(f"FakeSubject: no reference dir at {reference_dir}")
+        for src in reference_dir.rglob("*"):
+            if src.is_file():
+                dest = repo_dir / src.relative_to(reference_dir)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
         return
     raise SubjectError(f"FakeSubject: unknown scripted_effect {effect!r}")
 
@@ -620,7 +646,11 @@ class FakeSubject(Subject):
                 resolved_model=self.spec.model,
             )
 
-        _apply_scripted_effect(effect, Path(ctx.repo_dir))
+        _apply_scripted_effect(
+            effect,
+            Path(ctx.repo_dir),
+            Path(ctx.grading_dir) if ctx.grading_dir else None,
+        )
         return SubjectResult(
             status="succeeded",
             wall_clock_seconds=time.monotonic() - t0,

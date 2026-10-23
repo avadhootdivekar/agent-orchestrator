@@ -61,6 +61,7 @@ class GraderContext(Protocol):
     """
 
     repo_dir: str
+    grading_dir: str | None
 
 
 class GradeResult(BaseModel):
@@ -85,6 +86,21 @@ class _CommandRun:
     output: str
     timed_out: bool = False
     missing: bool = False
+
+
+def expand_command(command: str, ctx: GraderContext) -> str:
+    """Expand the `{repo_dir}` / `{grading_dir}` placeholders a grader `command` may use
+    (HLD §8: held-out assets live in `grading_dir`, so a command grader needs a way to
+    reach them without hard-coding a layout). Plain `str.replace`, not `str.format`, so
+    any other braces in a shell command are left alone.
+    """
+    out = command.replace("{repo_dir}", ctx.repo_dir)
+    grading = getattr(ctx, "grading_dir", None)
+    if "{grading_dir}" in out:
+        if not grading:
+            raise GraderError("grader command references {grading_dir} but no grading_dir was set")
+        out = out.replace("{grading_dir}", grading)
+    return out
 
 
 def _resolve_cwd(repo_dir: str, cfg_cwd: str | None) -> Path:
@@ -194,7 +210,7 @@ class PytestGrader(Grader):
         command = cfg.command or _DEFAULT_PYTEST_COMMAND
         cwd = _resolve_cwd(ctx.repo_dir, cfg.cwd)
         timeout = cfg.timeout_seconds or _DEFAULT_GRADER_TIMEOUT_SECONDS
-        run = _run_command(command, cwd, timeout)
+        run = _run_command(expand_command(command, ctx), cwd, timeout)
 
         detail: dict[str, Any] = {"returncode": run.returncode}
         if run.timed_out:
@@ -227,7 +243,7 @@ class CommandGrader(Grader):
             )
         cwd = _resolve_cwd(ctx.repo_dir, cfg.cwd)
         timeout = cfg.timeout_seconds or _DEFAULT_GRADER_TIMEOUT_SECONDS
-        run = _run_command(cfg.command, cwd, timeout)
+        run = _run_command(expand_command(cfg.command, ctx), cwd, timeout)
 
         detail: dict[str, Any] = {"returncode": run.returncode}
         if run.timed_out:

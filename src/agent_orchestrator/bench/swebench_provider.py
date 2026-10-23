@@ -199,6 +199,7 @@ class SweBenchWorkspaceProvider(WorkspaceProvider):
         *,
         suite_base_dir: Path,
         subject_base_dir: Path | None = None,
+        grading_dir: Path | None = None,
     ) -> None:
         if task.source is None or task.source.type != SWEBENCH_PROVIDER_TYPE:
             raise SubjectError(

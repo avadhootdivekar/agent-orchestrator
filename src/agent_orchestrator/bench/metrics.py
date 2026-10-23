@@ -27,6 +27,11 @@ from pydantic import BaseModel, Field
 from .graders import GradeResult
 from .spec import BenchTask
 
+# The subject_status value the harness uses for "no real attempt happened" (see
+# `Aggregate.infra_errors`). Kept as the pre-existing literal "error" rather than a new
+# status so every committed run.json and every status-based test keeps its meaning.
+INFRA_ERROR_STATUS = "error"
+
 
 @runtime_checkable
 class SubjectResultLike(Protocol):
@@ -94,6 +99,15 @@ class Aggregate(BaseModel):
     total_output_tokens: int
     total_cache_creation_input_tokens: int
     total_cache_read_input_tokens: int
+    # Infra-aware view (HLD §5.1): `subject_status == "error"` means the harness/CLI/
+    # sandbox failed before the subject got a real attempt (CLI missing, spawn failure,
+    # quota exhausted, grader infrastructure error) -- never a capability signal. These
+    # are excluded from the `*_attempted` rates; `total`/`solve_rate` above keep their
+    # original all-tasks semantics for backward compatibility of committed results.
+    infra_errors: int = 0
+    attempted: int = 0
+    solve_rate_attempted: float = Field(default=0.0, ge=0.0, le=1.0)
+    mean_score_attempted: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 def build_task_metric(
@@ -155,8 +169,20 @@ def aggregate(metrics: list[TaskMetric]) -> Aggregate:
     cost_available = all(c is not None for c in cost_values)
     total_cost_usd = sum(c for c in cost_values if c is not None)
     cost_per_solved = (total_cost_usd / solved) if solved > 0 else None
+    infra_errors = sum(1 for m in metrics if m.subject_status == INFRA_ERROR_STATUS)
+    attempted_metrics = [
+        m for m in metrics if m.subject_status not in (INFRA_ERROR_STATUS, "skipped_budget")
+    ]
+    attempted = len(attempted_metrics)
+    solved_attempted = sum(1 for m in attempted_metrics if m.solved)
 
     return Aggregate(
+        infra_errors=infra_errors,
+        attempted=attempted,
+        solve_rate_attempted=(solved_attempted / attempted) if attempted > 0 else 0.0,
+        mean_score_attempted=(sum(m.score for m in attempted_metrics) / attempted)
+        if attempted > 0
+        else 0.0,
         solved=solved,
         total=total,
         solve_rate=solve_rate,

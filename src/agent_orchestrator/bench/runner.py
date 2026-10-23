@@ -79,10 +79,17 @@ from ..logging_setup import attach_run_handler, detach_run_handler, get_run_logg
 from .errors import BenchError
 from .graders import GradeResult
 from .metrics import Aggregate, SubjectResultLike, TaskMetric, aggregate, build_task_metric
+from .parity import ParityBundle, load_parity, parity_fingerprint
 from .registries import GRADER_REGISTRY, SUBJECT_REGISTRY
 from .spec import BenchSuite, BenchTask, SubjectSpec, load_subject, load_suite
 from .subjects import SubjectResult, _budget_skipped_result
-from .workspace import BENCH_WORKSPACE_ROOT, CAPTURE_DIRNAME, REPO_ROOT, materialize_workspace
+from .workspace import (
+    BENCH_WORKSPACE_ROOT,
+    CAPTURE_DIRNAME,
+    GRADING_DIRNAME,
+    REPO_ROOT,
+    materialize_workspace,
+)
 
 # ---------------------------------------------------------------------------
 # Named constants (CLAUDE.md: no magic literals)
@@ -129,6 +136,10 @@ class BenchTaskRecord(TaskMetric):
     raw_error: str | None = None
     grader_detail: dict[str, Any] = {}
     grader_raw_tail: str = ""
+    # Discriminating-suite metadata (HLD §5.1/§6): family/language roll-ups and repeats.
+    family: str | None = None
+    language: str | None = None
+    repeat: int = 1
 
 
 class BenchRunSubjectInfo(BaseModel):
@@ -172,6 +183,12 @@ class BenchRunRecord(BaseModel):
     env: BenchRunEnv
     tasks: list[BenchTaskRecord] = []
     aggregate: Aggregate
+    # Parity bundle fingerprint (HLD §2b) -- `build_comparison` refuses to compare runs
+    # whose fingerprints differ. None = no bundle was applied.
+    parity_fingerprint: str | None = None
+    # Which repeat of this (suite x subject) this run is (HLD §6 staged repeats); 1 = the
+    # first/only one (byte-identical id to the pre-repeats harness).
+    repeat: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +377,10 @@ def _persist_record(path: Path, record: BenchRunRecord) -> None:
 
 
 def compute_bench_run_id(
-    suite: BenchSuite, subject_spec: SubjectSpec, clock: Callable[[], datetime]
+    suite: BenchSuite,
+    subject_spec: SubjectSpec,
+    clock: Callable[[], datetime],
+    repeat: int = 1,
 ) -> str:
     """`<utc-date>-<suite.id>-<subject.id>` (design §4.5) -- stable within a day so a
     same-day re-run resumes into the same result dir/record; a new day mints a fresh
@@ -368,7 +388,9 @@ def compute_bench_run_id(
     Exposed (not `_`-prefixed) so `T-Cli8Nf`'s CLI can predict/report the result dir
     without duplicating this derivation.
     """
-    return f"{clock().strftime(_BENCH_RUN_ID_DATE_FORMAT)}-{suite.id}-{subject_spec.id}"
+    base = f"{clock().strftime(_BENCH_RUN_ID_DATE_FORMAT)}-{suite.id}-{subject_spec.id}"
+    # Repeat 1 keeps the historical id byte-identical; later repeats get their own dir.
+    return base if repeat <= 1 else f"{base}-r{repeat}"
 
 
 def resolve_result_dir(bench_run_id: str, *, out_dir: str | Path | None = None) -> Path:
@@ -433,6 +455,8 @@ def run_suite(
     cost_budget_usd: float | None = None,
     max_parallel: int = 1,
     clock: Callable[[], datetime] | None = None,
+    parity: str | Path | None = None,
+    repeat: int = 1,
 ) -> BenchRunRecord:
     """Run *suite* against *subject* end to end (design §4.5).
 
@@ -509,6 +533,13 @@ def run_suite(
     clock:
         Injectable UTC clock (CLAUDE.md determinism rule) -- defaults to
         `datetime.now(UTC)`.
+    parity:
+        Path to a parity bundle (`bench/parity.py`, HLD §2b). Explicit value wins over
+        the suite's own `parity` field; `None` + no suite field = no bundle. The bundle's
+        fingerprint is part of the run fingerprint and recorded on the run record.
+    repeat:
+        Which repeat of this (suite x subject) this is (HLD §6). `1` is byte-identical to
+        the pre-repeats harness; `>1` lands in its own `<bench_run_id>-r<n>` result dir.
 
     Raises
     ------
@@ -534,13 +565,26 @@ def run_suite(
     suite_base_dir = Path(suite_path).resolve().parent
     subject_base_dir = Path(subject_path).resolve().parent
 
-    bench_run_id = compute_bench_run_id(suite, subject_spec, resolved_clock)
+    # Parity bundle (HLD §2b): explicit arg > suite field > none.
+    parity_path: Path | None = None
+    if parity is not None:
+        parity_path = Path(parity)
+    elif suite.parity is not None:
+        parity_path = suite_base_dir / suite.parity
+    bundle: ParityBundle | None = load_parity(parity_path) if parity_path is not None else None
+    bundle_fingerprint = parity_fingerprint(bundle) if bundle is not None else None
+
+    bench_run_id = compute_bench_run_id(suite, subject_spec, resolved_clock, repeat)
     result_path = resolve_result_dir(bench_run_id, out_dir=out_dir) / RUN_JSON_FILENAME
     # Mirrors design §4.5's own `ws_root/subject_spec.id/task.id` layout (the subject
     # id also already appears inside `bench_run_id` -- kept as specified so downstream
     # tooling/consumers expecting this exact shape are not surprised).
     run_workspace_root = BENCH_WORKSPACE_ROOT / bench_run_id
     subject_ws_root = run_workspace_root / subject_spec.id
+    # Grader-owned, agent-hidden tree (HLD §8): a sibling of the subject workspaces, so
+    # nothing under a subject's `ws/` (what `claude -p` cwd's into / `ao` is rooted at)
+    # ever contains probes, reference implementations or held-out tests.
+    grading_root = run_workspace_root / GRADING_DIRNAME / subject_spec.id
 
     attach_run_handler(bench_run_id, str(run_workspace_root / BENCH_RUN_LOG_FILENAME))
     run_log = get_run_logger(bench_run_id)
@@ -574,7 +618,7 @@ def run_suite(
             (t.cost_usd or 0.0) for t in tasks_dict.values() if t.subject_status != "skipped_budget"
         )
 
-        tasks_to_consider = sorted(suite.tasks, key=lambda t: t.id)
+        tasks_to_consider = sorted((t for t in suite.tasks if t.enabled), key=lambda t: t.id)
         if task_filter is not None:
             filter_set = set(task_filter)
             tasks_to_consider = [t for t in tasks_to_consider if t.id in filter_set]
@@ -591,6 +635,14 @@ def run_suite(
             "max_turns": max_turns,
             "default_timeout": default_timeout,
         }
+        if bundle_fingerprint is not None:
+            # Config-affecting (it changes what every subject sees), so a changed bundle
+            # between two same-day runs must trip the W4 guard like any other config.
+            overrides["parity_fingerprint"] = bundle_fingerprint
+        # Parity max_turns applies to every subject unless the CLI overrides it for all.
+        effective_max_turns = (
+            max_turns if max_turns is not None else (bundle.max_turns if bundle else None)
+        )
         run_fingerprint = _run_config_fingerprint(
             suite, subject_spec, overrides, ao_version, claude_version
         )
@@ -641,6 +693,8 @@ def run_suite(
                 ended_at=ended_at,
                 env=env,
                 tasks=ordered_tasks,
+                parity_fingerprint=bundle_fingerprint,
+                repeat=repeat,
                 # `TaskMetric`-typed by `aggregate`'s signature; `BenchTaskRecord` IS
                 # one (adds fields, drops none) -- safe covariant read-only usage,
                 # `list` invariance is the only reason mypy needs the cast.
@@ -731,6 +785,9 @@ def run_suite(
                         raw_error=None,
                         grader_detail=skip_gr.detail,
                         grader_raw_tail=skip_gr.raw_tail,
+                        family=task.family,
+                        language=task.language,
+                        repeat=repeat,
                     )
                     # `running_cost` is unchanged: a skipped_budget task always costs $0.
                     record = _build_record(budget_skip_at)
@@ -783,8 +840,10 @@ def run_suite(
                     suite_base_dir=suite_base_dir,
                     timeout_seconds=_effective_timeout(task, suite, default_timeout),
                     budget_total=budget_total,
-                    max_turns=max_turns,
+                    max_turns=effective_max_turns,
                     subject_base_dir=subject_base_dir,
+                    grading_dir=grading_root / task.id,
+                    parity=bundle,
                 )
                 subject_cls = SUBJECT_REGISTRY[subject_spec.type]
                 sr = subject_cls(subject_spec).run(task, ctx)
@@ -823,6 +882,9 @@ def run_suite(
                 raw_error=sr.raw_error,
                 grader_detail=gr.detail,
                 grader_raw_tail=gr.raw_tail,
+                family=task.family,
+                language=task.language,
+                repeat=repeat,
             )
 
             with _run_lock:

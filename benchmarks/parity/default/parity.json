@@ -1,0 +1,9 @@
+{
+  "version": "1.0",
+  "claude_dir": "claude",
+  "claude_md": "CLAUDE.md",
+  "env": {},
+  "max_turns": 30,
+  "permission_mode": "bypassPermissions",
+  "wrapper_prompt_max_chars": 600
+}

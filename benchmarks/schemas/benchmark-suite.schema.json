@@ -39,6 +39,19 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/task" }
+    },
+    "parity": {
+      "type": "string",
+      "description": "PATH (relative to this suite.json) to a parity bundle dir/parity.json applied to every subject (bench/parity.py; HLD §2b)."
+    },
+    "stack": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Per-language sandbox image + dependency allow-list for generated tasks (bench/sandbox.py, bench/gen). Open: validated by the sandbox/generator."
+    },
+    "cutoff_date": {
+      "type": "string",
+      "description": "Tier 2a contamination control: ISO date; only PRs merged on/after it were mined."
     }
   },
   "$defs": {
@@ -81,17 +94,30 @@
           "type": "array",
           "items": { "type": "string" },
           "default": []
-        }
+        },
+        "family": { "type": "string", "description": "Generator family (Tier 1) or task source family (Tier 2)." },
+        "language": { "enum": ["python", "typescript", "go"] },
+        "difficulty": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "description": "Difficulty vector (HLD §4.1), e.g. entities/traps/concurrency/scale each 0-3."
+        },
+        "enabled": { "type": "boolean", "default": true, "description": "false = retired task; kept in git, never run." },
+        "calibration": { "type": "object", "additionalProperties": true, "description": "Last `ao-bench calibrate` record for this task." }
       }
     },
     "grader": {
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": true,
       "required": ["type"],
       "properties": {
         "type": {
           "type": "string",
-          "description": "Grader type key into GRADER_REGISTRY (e.g. \"pytest\", \"command\", \"file_assertion\", \"fake\"). Closed list enforced by the loader (bench/spec.py KNOWN_GRADER_TYPES), not this schema, so new types can be added ahead of registry wiring without a schema edit."
+          "description": "Grader type key into GRADER_REGISTRY (e.g. \"pytest\", \"command\", \"file_assertion\", \"fake\", \"blackbox\", \"pytest_targeted\"). Closed list enforced by the loader (bench/spec.py KNOWN_GRADER_TYPES), not this schema. Grader-specific fields are open here (additionalProperties) -- each grader validates its own, mirroring `source`."
+        },
+        "assets": {
+          "type": "string",
+          "description": "PATH (relative to this suite.json) to grader-owned, agent-hidden assets copied into the task's grading_dir (never under the agent-visible workspace)."
         },
         "command": {
           "type": "string",

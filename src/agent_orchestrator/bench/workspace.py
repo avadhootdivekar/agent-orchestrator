@@ -38,13 +38,16 @@ read-only inputs, never write targets.
 
 from __future__ import annotations
 
+import inspect
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
 from .errors import SubjectError
+from .parity import ParityBundle, apply_parity, parity_fingerprint
 from .registries import WORKSPACE_PROVIDER_REGISTRY, register_workspace_provider
 from .spec import BenchTask
 
@@ -60,6 +63,9 @@ BENCH_WORKSPACE_ROOT: Path = REPO_ROOT / "playground" / ".tmp" / "bench"
 # Named, not magic literals (CLAUDE.md).
 REPO_DIRNAME = "repo"
 CAPTURE_DIRNAME = "capture"
+# Grader-owned, agent-hidden tree under the run workspace root (HLD §8); runner.py
+# places it as a SIBLING of the per-subject `ws/` dirs, never inside one.
+GRADING_DIRNAME = "_grading"
 INSTRUCTION_FILENAME = "INSTRUCTION.md"
 
 # The provider a task without a `source` field dispatches to (T-Wp4Nz5) -- matches
@@ -95,6 +101,16 @@ class RunContext(BaseModel):
     workflow_json: str | None = None
     rendered_reposet: str | None = None
     subject_base_dir: str | None = None
+    # Grader-owned, agent-hidden dir (HLD §8 "Hidden-asset rule"): sibling tree of the
+    # subject workspaces, never under `workspace`. None only for a RunContext built by a
+    # caller that predates it.
+    grading_dir: str | None = None
+    # Parity bundle (bench/parity.py, HLD §2b) applied to this run: fingerprint recorded
+    # in run.json; `env`/`permission_mode` are applied by every subject so all subjects
+    # run under identical knobs.
+    parity_fingerprint: str | None = None
+    env: dict[str, str] = {}
+    permission_mode: str | None = None
 
 
 def _assert_under_bench_root(path: Path) -> Path:
@@ -138,8 +154,14 @@ class WorkspaceProvider(ABC):
         *,
         suite_base_dir: Path,
         subject_base_dir: Path | None = None,
+        grading_dir: Path | None = None,
     ) -> None:
         """Create and populate *repo_dir* for *task*.
+
+        `grading_dir` (when the provider's signature accepts it -- `materialize_workspace`
+        checks, so a legacy provider without the parameter keeps working) is the
+        grader-owned dir the provider may populate with agent-hidden assets (probes,
+        reference implementation, held-out tests). It already exists and is empty.
 
         `repo_dir` does NOT exist yet when this is called (mirrors `shutil.copytree`'s
         own precondition that its destination must not already exist) -- a provider is
@@ -170,6 +192,7 @@ class FixtureProvider(WorkspaceProvider):
         *,
         suite_base_dir: Path,
         subject_base_dir: Path | None = None,
+        grading_dir: Path | None = None,
     ) -> None:
         if task.fixture is None:
             # Guarded at suite-load time by bench/spec.py's load_suite (a fixture-less,
@@ -199,6 +222,8 @@ def materialize_workspace(
     max_turns: int | None = None,
     subject_base_dir: Path | str | None = None,
     workflow_json: str | None = None,
+    grading_dir: Path | str | None = None,
+    parity: ParityBundle | None = None,
 ) -> RunContext:
     """Materialize a fresh, disposable workspace for one (subject, task) run.
 
@@ -239,9 +264,32 @@ def materialize_workspace(
     resolved_subject_base_dir = Path(subject_base_dir) if subject_base_dir is not None else None
 
     repo_dir = ws_path / REPO_DIRNAME
-    provider_cls().prepare(
-        task, repo_dir, suite_base_dir=base, subject_base_dir=resolved_subject_base_dir
-    )
+    # Grader-owned dir (HLD §8): wiped + recreated per materialization like `ws` itself.
+    # Passed to the provider only when its `prepare` accepts the parameter, so a
+    # third-party/legacy provider with the pre-grading_dir signature keeps working.
+    grading_path: Path | None = None
+    if grading_dir is not None:
+        grading_path = Path(grading_dir)
+        if grading_path.exists():
+            shutil.rmtree(grading_path)
+        grading_path.mkdir(parents=True)
+    provider = provider_cls()
+    prepare_kwargs: dict[str, Any] = {
+        "suite_base_dir": base,
+        "subject_base_dir": resolved_subject_base_dir,
+    }
+    if grading_path is not None and "grading_dir" in inspect.signature(provider.prepare).parameters:
+        prepare_kwargs["grading_dir"] = grading_path
+    provider.prepare(task, repo_dir, **prepare_kwargs)
+    if task.grader.assets is not None:
+        if grading_path is None:
+            raise SubjectError(
+                f"Task {task.id!r}: grader.assets requires a grading_dir (caller passed none)"
+            )
+        assets_src = (base / task.grader.assets).resolve()
+        if not assets_src.is_dir():
+            raise SubjectError(f"Task {task.id!r}: grader.assets directory not found: {assets_src}")
+        shutil.copytree(assets_src, grading_path, dirs_exist_ok=True)
 
     instruction_src = (base / task.instruction).resolve()
     if not instruction_src.is_file():
@@ -251,6 +299,13 @@ def materialize_workspace(
 
     capture_dir = ws_path / CAPTURE_DIRNAME
     capture_dir.mkdir()
+
+    # Parity (HLD §2b) is applied AFTER the provider + instruction copy so the bundle wins
+    # over anything the repo ships, and its paths are excluded from the repo's git diff.
+    fingerprint: str | None = None
+    if parity is not None:
+        apply_parity(parity, repo_dir=repo_dir, workspace=ws_path)
+        fingerprint = parity_fingerprint(parity)
 
     return RunContext(
         workspace=str(ws_path),
@@ -264,4 +319,8 @@ def materialize_workspace(
         subject_base_dir=str(resolved_subject_base_dir)
         if resolved_subject_base_dir is not None
         else None,
+        grading_dir=str(grading_path) if grading_path is not None else None,
+        parity_fingerprint=fingerprint,
+        env=dict(parity.env) if parity is not None else {},
+        permission_mode=parity.permission_mode if parity is not None else None,
     )

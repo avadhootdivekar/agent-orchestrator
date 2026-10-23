@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import jsonschema
 from pydantic import BaseModel, ConfigDict
@@ -54,7 +54,7 @@ _ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_]*$")
 # errored task, never a crash) -- `ao-bench validate` (spec-level only) is unaffected
 # and is what this task's acceptance criteria require to pass.
 KNOWN_GRADER_TYPES: frozenset[str] = frozenset(
-    {"pytest", "command", "file_assertion", "fake", "swebench"}
+    {"pytest", "command", "file_assertion", "fake", "swebench", "blackbox", "pytest_targeted"}
 )
 KNOWN_SUBJECT_TYPES: frozenset[str] = frozenset({"claude_cli", "ao_workflow", "fake"})
 
@@ -77,7 +77,12 @@ KNOWN_TIERS: frozenset[str] = frozenset({"small", "medium", "large", "xlarge"})
 # (bench/swebench_provider.py's `SweBenchWorkspaceProvider`, registered at that
 # module's import time -- both the registration AND this closed-list entry are
 # required together, see that module's own trailing comment).
-KNOWN_WORKSPACE_PROVIDER_TYPES: frozenset[str] = frozenset({"fixture", "swebench"})
+KNOWN_WORKSPACE_PROVIDER_TYPES: frozenset[str] = frozenset(
+    {"fixture", "swebench", "generated", "repo_mutation", "pr_mined"}
+)
+# Languages a generated (Tier 1) task may target (benchmark-discriminating-suites-hld.md §4.1
+# "Stack"). Closed list so a typo in a suite fails at load time, not at grade time.
+KNOWN_LANGUAGES: frozenset[str] = frozenset({"python", "typescript", "go"})
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +103,21 @@ class Assertion(BaseModel):
 
 
 class GraderConfig(BaseModel):
+    """Grader directive. Grader-specific fields beyond the common ones below (e.g. the
+    `blackbox` grader's `contract`/`perf`/`sandbox`, the `pytest_targeted` grader's
+    `fail_to_pass`/`pass_to_pass`) pass through via `extra="allow"` -- each grader
+    validates its own, mirroring `Source`. `command` may reference `{repo_dir}` and
+    `{grading_dir}` placeholders (expanded by the command/pytest graders at grade time).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
     type: str  # validated against KNOWN_GRADER_TYPES in load_suite (registry is empty here)
+    # PATH (relative to the suite.json) to a dir of grader-owned, agent-hidden assets
+    # (held-out tests, probes, goldens). `materialize_workspace` copies it into the
+    # task's `grading_dir`, which is never under the agent-visible workspace
+    # (benchmark-discriminating-suites-hld.md §8 "Hidden-asset rule").
+    assets: str | None = None
     command: str | None = None
     cwd: str | None = None
     timeout_seconds: int | None = None
@@ -137,6 +156,13 @@ class BenchTask(BaseModel):
     grader: GraderConfig
     timeout_seconds: int | None = None
     tags: list[str] = []
+    # Discriminating-suite metadata (benchmark-discriminating-suites-hld.md §4/§7). All
+    # optional so every pre-existing suite loads unchanged.
+    family: str | None = None  # generator family (Tier 1) or task source family (Tier 2)
+    language: str | None = None  # validated against KNOWN_LANGUAGES in load_suite when set
+    difficulty: dict[str, int] | None = None  # e.g. {"entities": 2, "traps": 2, ...}
+    enabled: bool = True  # False = retired (kept for reproducibility, never run)
+    calibration: dict[str, Any] | None = None  # last `ao-bench calibrate` record for this task
 
 
 class BenchSuiteDefaults(BaseModel):
@@ -153,6 +179,15 @@ class BenchSuite(BaseModel):
     tier: str = "small"
     defaults: BenchSuiteDefaults = BenchSuiteDefaults()
     tasks: list[BenchTask]
+    # PATH (relative to the suite.json) to a parity bundle (`bench/parity.py`) applied to
+    # EVERY subject run against this suite -- same instructions/skills/env/limits for all,
+    # so a measured difference is not just "better instructions" (HLD §2b).
+    parity: str | None = None
+    # Allowed runtime stack for generated tasks: per-language sandbox image + dependency
+    # allow-list (HLD §4.1 "Stack"). Consumed by bench/sandbox.py and bench/gen.
+    stack: dict[str, Any] | None = None
+    # Tier 2a: only PRs merged on/after this ISO date were mined (contamination control).
+    cutoff_date: str | None = None
 
     def task(self, task_id: str) -> BenchTask:
         for t in self.tasks:
@@ -296,6 +331,21 @@ def load_suite(path: str | Path) -> BenchSuite:
                 path=f"tasks.{t.id}.id",
             )
         seen_task_ids.add(t.id)
+
+        if t.grader.assets is not None:
+            assets_path = base / t.grader.assets
+
+            if not assets_path.is_dir():
+                raise SpecValidationError(
+                    f"Task {t.id!r}: grader.assets directory not found: {assets_path}",
+                    path=f"tasks[{t.id}].grader.assets",
+                )
+
+        if t.language is not None and t.language not in KNOWN_LANGUAGES:
+            raise SpecValidationError(
+                f"Task {t.id!r}: unknown language {t.language!r}; known: {sorted(KNOWN_LANGUAGES)}",
+                path=f"tasks[{t.id}].language",
+            )
 
         instruction_path = base / t.instruction
         if not instruction_path.exists():
