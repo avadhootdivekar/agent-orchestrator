@@ -14,9 +14,11 @@
   PR's merge commit (see HLD §4.2a). `swebench_provider` still has that history exposure (not changed).
 
 ## Evidence
-- `uv run pytest -q tests/bench`: 555 passed, 4 skipped (baseline before this ticket: 472 passed,
-  4 skipped... the 4 skips are the opt-in swebench/network tiers). `AO_E2E_NETWORK=1 uv run pytest -m network
-  tests/bench`: 10 passed (8 repo-mutant-mini clone+install+runner e2e, 2 real-PR provider/grader).
+- `uv run pytest -q tests/bench` (in the worktree): 526 passed, 14 skipped -- the skips are the opt-in tiers
+  (10 `network`, 3 `swebench`, 1 `real_llm`). `AO_E2E_NETWORK=1 uv run pytest -m network tests/bench`: 10 passed
+  (8 repo-mutant-mini clone + install + runner e2e, 2 real-PR provider/grader). New tests this ticket:
+  41 (mutation provider/grader) + 14 (pr_mined) + 12 (import-prs) + 22 (repo-mutant-mini, 8 network) + 12 net-new
+  dev-medium tests.
 - `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy src/agent_orchestrator/bench`: clean.
 - `uv run ao-bench validate` passes for `dev-medium` and `repo-mutant-mini`; `ao-bench import-prs` exercised against
   the live GitHub API (pallets/click, via a curl-backed `gh` shim) and the produced instances ran through the
