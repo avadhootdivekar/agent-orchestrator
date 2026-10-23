@@ -84,6 +84,14 @@ _GIT_CALL_ALLOWED: dict[Path, str] = {
     _SRC_ROOT / "_version.py": "pre-epic version stamping",
     # Pre-epic bench harness: records the subject repo's `git rev-parse --short HEAD`.
     _SRC_ROOT / "bench" / "runner.py": "pre-epic bench harness commit stamping",
+    # E-Bn7Dsc Tier-2 bench providers (outside the engine import graph, SI-1): clone/checkout
+    # PUBLIC repos into the bench sandbox and snapshot them as a single parentless commit; the
+    # grader diffs the agent's workspace against that snapshot for collateral stats. Never the
+    # user's own repos, never from the engine.
+    _SRC_ROOT / "bench" / "tier2_common.py": "E-Bn7Dsc tier-2 provider clone/snapshot helpers",
+    _SRC_ROOT
+    / "bench"
+    / "pytest_targeted.py": "E-Bn7Dsc collateral `git diff --numstat` vs snapshot",
     # Pre-epic SWE-bench import/grade harness: clones and diffs third-party subject repos.
     _SRC_ROOT / "bench" / "swebench_provider.py": "pre-epic SWE-bench subject checkout",
     _SRC_ROOT / "bench" / "swebench_grader.py": "pre-epic SWE-bench patch extraction",
