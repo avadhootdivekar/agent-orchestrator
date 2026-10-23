@@ -1,0 +1,141 @@
+"""Trap catalogue (HLD §4.1 "Intrinsic traps").
+
+A trap is a behaviour that a plausible-but-naive implementation gets wrong.  The *key* is shared
+across families (``invalid_input_4xx`` exists for both an HTTP and a JSONL contract); each family
+owns the concrete requirement text and probe.  Descriptions here are for maintainers -- the
+agent-visible ``SPEC.md`` states the behaviour as a plain requirement and never uses the word.
+"""
+
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass
+
+# Trap-count by ``difficulty.traps`` level (0..3); never 0 so the `trap` group is never empty.
+TRAP_COUNT_BY_LEVEL: tuple[int, ...] = (1, 2, 4, 6)
+
+
+@dataclass(frozen=True)
+class Trap:
+    key: str
+    description: str
+    families: tuple[str, ...]
+    requires: tuple[str, ...] = ()
+
+
+_CRUD = "crud-relational"
+_QUEUE = "job-queue"
+
+TRAP_CATALOGUE: dict[str, Trap] = {
+    t.key: t
+    for t in (
+        Trap(
+            "pagination_stability",
+            "Offset/page-number cursors skip or duplicate items when rows are deleted/inserted "
+            "between page requests; a keyset cursor survives even deletion of the cursor row.",
+            (_CRUD,),
+        ),
+        Trap(
+            "unique_constraint",
+            "Uniqueness enforced by read-then-write races under concurrency, or not enforced "
+            "on PATCH, or blocks a self-PATCH.",
+            (_CRUD,),
+        ),
+        Trap(
+            "cascade_delete",
+            "Cascade vs restrict on parent delete, all-or-nothing across the cascade closure.",
+            (_CRUD,),
+        ),
+        Trap(
+            "patch_null_vs_absent",
+            "PATCH must distinguish an absent key (leave) from an explicit null (clear).",
+            (_CRUD,),
+        ),
+        Trap(
+            "idempotency_key",
+            "POST with Idempotency-Key must be processed once, including concurrent duplicates.",
+            (_CRUD,),
+        ),
+        Trap(
+            "lost_update",
+            "Concurrent conditional updates (If-Match/version) must not both win.",
+            (_CRUD,),
+        ),
+        Trap(
+            "invalid_input_4xx",
+            "Strict validation: wrong types (bool-as-int), ranges, enums, unknown fields, bad "
+            "limits/cursors must be rejected with the specified error, never coerced or 500.",
+            (_CRUD, _QUEUE),
+        ),
+        Trap(
+            "sort_tiebreak",
+            "Equal sort keys (same-millisecond created_at) need a deterministic id tiebreak.",
+            (_CRUD,),
+        ),
+        Trap(
+            "unicode_casefold",
+            "Uniqueness is on the NFKC+casefold key (ß/SS, composed/decomposed accents), which "
+            "lower() / COLLATE NOCASE do not give.",
+            (_CRUD,),
+            requires=("unique_constraint",),
+        ),
+        Trap(
+            "visibility_timeout",
+            "Leases on claim: boundary-inclusive expiry on an injected clock, stale receipts "
+            "rejected after redelivery, per-claim timeout override.",
+            (_QUEUE,),
+        ),
+        Trap(
+            "at_least_once",
+            "Expired leases redeliver and burn an attempt; the last attempt expiring moves the "
+            "job to dead (never lost, never redelivered forever); acked jobs never return.",
+            (_QUEUE,),
+            requires=("visibility_timeout",),
+        ),
+        Trap(
+            "duplicate_claim",
+            "Concurrent claims must never hand the same job to two workers.",
+            (_QUEUE,),
+        ),
+        Trap(
+            "starvation",
+            "Strict priority starves low-priority jobs; the spec'd fair-share rule must hold.",
+            (_QUEUE,),
+        ),
+        Trap(
+            "dedupe_key",
+            "Enqueue with a live dedupe_key returns the existing job; terminal jobs free the key.",
+            (_QUEUE,),
+        ),
+    )
+}
+
+
+def traps_for_family(family: str) -> list[str]:
+    """Trap keys usable by *family*, in catalogue order."""
+    return [t.key for t in TRAP_CATALOGUE.values() if family in t.families]
+
+
+def trap_count(level: int) -> int:
+    return TRAP_COUNT_BY_LEVEL[level]
+
+
+def sample_traps(rng: random.Random, family: str, count: int) -> list[str]:
+    """Pick about *count* traps for *family*, plus any trap they `require`.
+
+    The shuffle is the first RNG consumption of a family's ``generate`` so, for one seed, a higher
+    ``count`` yields a superset of a lower one.  Result is in catalogue order (stable spec/probe
+    ordering).
+    """
+    candidates = traps_for_family(family)
+    if not candidates:
+        raise ValueError(f"no traps registered for family {family!r}")
+    order = list(candidates)
+    rng.shuffle(order)
+    chosen: set[str] = set()
+    for key in order:
+        if len(chosen) >= count:
+            break
+        chosen.add(key)
+        chosen.update(TRAP_CATALOGUE[key].requires)
+    return [k for k in candidates if k in chosen]

@@ -1,10 +1,20 @@
-"""Generated-task families (HLD §4.1) -- STUB package, owner: generators track.
+"""Generated-task families (HLD §4.1): seed + difficulty + language -> spec, skeleton, hidden
+probes and a hidden reference implementation.
 
-One module per family (`crud_relational.py`, `job_queue.py`, ...), a shared trap
-catalogue, word lists and per-language skeletons. Each family: seed + difficulty +
-language -> Instance (spec, skeleton, probes.json, reference implementation).
+One module per family (``crud_relational``, ``job_queue``); shared pieces: ``base`` (instance,
+registry), ``traps`` (catalogue + sampling), ``wordlists``, ``skeleton`` (per-language project
+files and run-contract prose), ``dsl`` (probe builders), ``validate`` (probes.json shape check),
+``refs`` (reference programs under ``reference/``).  Importing this package registers every family.
 """
 
 from __future__ import annotations
 
-FAMILY_REGISTRY: dict[str, type] = {}
+from . import (
+    crud_relational as _crud_relational,  # noqa: F401 -- registers "crud-relational"
+)
+from . import (
+    job_queue as _job_queue,  # noqa: F401 -- registers "job-queue"
+)
+from .base import FAMILY_REGISTRY, Difficulty, Family, Instance, register_family
+
+__all__ = ["FAMILY_REGISTRY", "Difficulty", "Family", "Instance", "register_family"]
