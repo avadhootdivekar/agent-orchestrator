@@ -17,13 +17,21 @@ builds ON TOP of that already-landed shape:
                                       per-subject matrix plus per-subject aggregates and
                                       a "winner" line per axis.
 
+`build_comparison` is also where the discriminating-suites statistics (HLD §2b/§5/§6) live:
+several run dirs for the SAME subject are accepted as *repeats* (aggregated per task into
+mean/sd/n cells), runs are refused unless they share one parity bundle fingerprint, infra
+errors are excluded from the capability (attempted-based) rates and listed in their own
+table, and every subject pair gets a paired bootstrap CI + Wilcoxon p over per-task score
+differences (`bench/stats.py`). `load_comparison` reads any `comparison.json` back,
+including the pre-repeats 1.0 shape.
+
 Results are committed to git for preservation (design §9); every task's `workspace` is
 already just a path POINTER (`BenchTaskRecord.workspace`, set by the runner from
 `SubjectResult.capture_dir`) -- this module never reads or copies transcript content,
 only the already-bounded `run.json` fields.
 
 Import direction (SI-1): reads only from core-adjacent sibling `bench/` modules
-(`runner`, `metrics`, `errors`); nothing in core or in `bench/{spec,subjects,graders,
+(`runner`, `metrics`, `errors`, `stats`); nothing in core or in `bench/{spec,subjects,graders,
 metrics,runner}.py` imports this module.
 """
 
@@ -34,12 +42,14 @@ import re
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
+from . import stats
 from .errors import ResultsError
-from .metrics import Aggregate
-from .runner import RUN_JSON_FILENAME, BenchRunRecord
+from .metrics import INFRA_ERROR_STATUS, Aggregate, TaskMetric, aggregate
+from .runner import RUN_JSON_FILENAME, BenchRunRecord, BenchTaskRecord
 
 # ---------------------------------------------------------------------------
 # Named constants (CLAUDE.md: no magic literals)
@@ -48,7 +58,10 @@ from .runner import RUN_JSON_FILENAME, BenchRunRecord
 SUMMARY_MD_FILENAME = "summary.md"
 COMPARISON_JSON_FILENAME = "comparison.json"
 COMPARISON_MD_FILENAME = "comparison.md"
-COMPARISON_SCHEMA_VERSION = "1.0"
+# 2.0: repeat-aggregated cells + parity/pairwise/per-family/infra blocks (HLD §6). 1.0 files
+# (one run per subject, no stats) still load via `load_comparison` / `ComparisonRecord`.
+COMPARISON_SCHEMA_VERSION = "2.0"
+LEGACY_COMPARISON_SCHEMA_VERSIONS = frozenset({"1.0"})
 
 # `<date>-<suite.id>-compare` (design §9) -- mirrors runner.py's own
 # `<date>-<suite.id>-<subject.id>` bench_run_id convention/date format, kept as a local
@@ -60,6 +73,31 @@ COMPARE_DIR_SUFFIX = "compare"
 # `compute_compare_id`) -- used to best-effort recover a subject id from a run dir that
 # has no `run.json` at all (AC4: "missing subject run.json -> shown as not run").
 _RUN_DIR_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-(.+)$")
+# `compute_bench_run_id(..., repeat=n>1)` appends `-r<n>` -- a missing repeat dir must not
+# be mistaken for a separate, never-run subject.
+_REPEAT_SUFFIX_RE = re.compile(r"^(.+)-r\d+$")
+
+# Infra heuristic (HLD §1/§5.1): a run that did not solve, cost almost nothing and ended
+# quickly looks like an abort rather than a capability miss (the `django-11138` $0.09
+# case). Suspects are REPORTED, never excluded -- only `subject_status == "error"` is.
+SUSPECT_MAX_COST_USD = 0.15
+SUSPECT_MAX_WALL_SECONDS = 180.0
+# HLD §6: a campaign with more than this share of infra errors is marked unreliable.
+UNRELIABLE_INFRA_SHARE = 0.10
+
+# Bootstrap parameters for the pairwise CIs. Fixed (not user knobs) so a report
+# regenerated from the same run dirs is byte-identical.
+BOOTSTRAP_N = stats.DEFAULT_N_BOOT
+BOOTSTRAP_ALPHA = stats.DEFAULT_ALPHA
+BOOTSTRAP_SEED = stats.DEFAULT_SEED
+PAIRWISE_METRIC_SCORE = "score"
+
+# Statuses where the subject never made a real attempt: excluded from attempted-based
+# (capability) stats. Mirrors `metrics.aggregate`'s own `attempted` definition.
+STATUS_SKIPPED_BUDGET = "skipped_budget"
+_NOT_ATTEMPTED_STATUSES = frozenset({INFRA_ERROR_STATUS, STATUS_SKIPPED_BUDGET})
+# `ComparisonTaskCell.subject_status` for a cell whose repeats ended in different statuses.
+STATUS_MIXED = "mixed"
 
 
 def _utc_now() -> datetime:
@@ -78,6 +116,17 @@ class ComparisonTaskCell(BaseModel):
     sets across subjects, or the subject didn't run at all) -- design §4.6 risk:
     "divergent task sets across subjects -> key the matrix by union of task ids, mark
     missing cells explicitly."
+
+    A cell aggregates every repeat of the task for that subject (HLD §6). The original
+    fields keep their meaning for a single repeat (verbatim copies of the run record) and
+    degrade sensibly for several: `solved` = a strict majority of the attempted repeats
+    solved it, `score` = `score_mean`, `cost_usd` = `cost_median`, `wall_clock_seconds` =
+    `wall_median`, `subject_status` = the common status or `"mixed"`.
+
+    The new fields are capability statistics over the ATTEMPTED repeats only (infra errors
+    and budget skips are not evidence about the subject): `n` is how many repeats that
+    is -- `0` means every repeat was an infra error / budget skip, so the cell takes no
+    part in rates, roll-ups or the pairwise tests.
     """
 
     subject_status: str
@@ -85,12 +134,96 @@ class ComparisonTaskCell(BaseModel):
     score: float
     cost_usd: float | None
     wall_clock_seconds: float
+    score_mean: float = 0.0
+    score_sd: float = 0.0
+    n: int = 1
+    solve_rate: float = 0.0
+    cost_median: float | None = None
+    wall_median: float = 0.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _upgrade_legacy_cell(cls, data: Any) -> Any:
+        """A 1.0 cell (or one built with only the original five fields) is exactly one
+        repeat: derive the new statistics from the original values."""
+        if not isinstance(data, dict) or "score_mean" in data:
+            return data
+        upgraded = dict(data)
+        attempted = data.get("subject_status") not in _NOT_ATTEMPTED_STATUSES
+        upgraded["score_mean"] = data.get("score", 0.0)
+        upgraded["score_sd"] = 0.0
+        upgraded["n"] = 1 if attempted else 0
+        upgraded["solve_rate"] = 1.0 if data.get("solved") else 0.0
+        upgraded["cost_median"] = data.get("cost_usd")
+        upgraded["wall_median"] = data.get("wall_clock_seconds", 0.0)
+        return upgraded
+
+
+class RollupCell(BaseModel):
+    """One (family|language x subject) roll-up: mean over the tasks of that group the
+    subject attempted, each task counting once (equal weight, HLD §6)."""
+
+    score_mean: float
+    solve_rate: float
+    n: int
+
+
+class PairwiseEntry(BaseModel):
+    """Paired comparison of two subjects over the tasks both attempted (HLD §6): per-task
+    difference of the repeat-mean score `a - b`, its paired-bootstrap 95% CI and the
+    Wilcoxon signed-rank p. Statistics are `None` when the pair shares no attempted task.
+    """
+
+    a: str
+    b: str
+    metric: str = PAIRWISE_METRIC_SCORE
+    mean_diff: float | None = None
+    ci_lo: float | None = None
+    ci_hi: float | None = None
+    p_wilcoxon: float | None = None
+    n_tasks: int = 0
+
+
+class InfraEntry(BaseModel):
+    """Infra picture of one subject. `count` = task runs (repeats included) that ended
+    `subject_status == "error"` (excluded from attempted rates); `task_ids` = distinct
+    tasks affected. `suspect_task_ids` = tasks with a NON-error run that was unsolved,
+    cost < `SUSPECT_MAX_COST_USD` and finished in < `SUSPECT_MAX_WALL_SECONDS` -- it looks
+    like an abort but is reported only, never excluded."""
+
+    count: int = 0
+    task_ids: list[str] = []
+    suspect_task_ids: list[str] = []
+
+
+class SubjectStats(BaseModel):
+    """Per-subject capability stats over ATTEMPTED work (infra errors / budget skips out).
+
+    `solve_rate_attempted` / `score_mean_attempted` average the per-task cell values, so a
+    task re-run in later repeats still counts once. `task_runs` counts every record
+    (repeats included); `infra_share = infra_errors / task_runs`.
+    """
+
+    repeats: int = 1
+    task_runs: int = 0
+    attempted: int = 0
+    infra_errors: int = 0
+    infra_share: float = 0.0
+    tasks_attempted: int = 0
+    solve_rate_attempted: float = 0.0
+    score_mean_attempted: float = 0.0
+    cost_per_score_point: float | None = None
+    cost_median: float | None = None
+    wall_median: float | None = None
 
 
 class ComparisonRecord(BaseModel):
     """The persisted `comparison.json` shape (design §4.6): a per-task x per-subject
     matrix plus per-subject aggregates, all keyed by the union of task ids / requested
     subjects so a caller never has to guess which cells are legitimately absent.
+
+    Everything beyond `per_subject` is the 2.0 statistics layer and defaults to empty, so
+    a hand-built or 1.0 record is still valid (see `load_comparison`).
     """
 
     schema_version: str = COMPARISON_SCHEMA_VERSION
@@ -104,8 +237,24 @@ class ComparisonRecord(BaseModel):
     task_ids: list[str] = []
     # task_id -> subject_id -> cell (None = that subject never ran that task).
     matrix: dict[str, dict[str, ComparisonTaskCell | None]] = {}
-    # subject_id -> aggregate (None = that subject is in `not_run`).
+    # subject_id -> aggregate over every repeat of that subject (None = in `not_run`).
     per_subject: dict[str, Aggregate | None] = {}
+    # --- 2.0 statistics layer (HLD §2b, §6) -------------------------------------------
+    # The one parity bundle fingerprint every loaded run shares (None = no bundle was
+    # applied, OR the runs were mixed -- see `parity_mixed` / `parity_by_subject`).
+    parity_fingerprint: str | None = None
+    parity_mixed: bool = False
+    parity_by_subject: dict[str, str | None] = {}
+    # subject_id -> number of repeat runs loaded for it.
+    repeats_per_subject: dict[str, int] = {}
+    subject_stats: dict[str, SubjectStats | None] = {}
+    # group -> subject_id -> roll-up (tasks without family/language metadata are left out).
+    per_family: dict[str, dict[str, RollupCell]] = {}
+    per_language: dict[str, dict[str, RollupCell]] = {}
+    infra: dict[str, InfraEntry] = {}
+    pairwise: list[PairwiseEntry] = []
+    # Subjects whose infra-error share exceeds `UNRELIABLE_INFRA_SHARE` (HLD §6).
+    unreliable_subjects: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -275,19 +424,194 @@ def _derive_subject_id(run_dir: Path, known_suite_id: str | None) -> str:
     return rest
 
 
+def _is_attempted(task: BenchTaskRecord) -> bool:
+    """True iff the subject made a real attempt (not an infra error / budget skip)."""
+    return task.subject_status not in _NOT_ATTEMPTED_STATUSES
+
+
+def _median_or_none(values: list[float]) -> float | None:
+    return stats.median(values) if values else None
+
+
+def _build_cell(recs: list[BenchTaskRecord]) -> ComparisonTaskCell:
+    """Aggregate every repeat of one (task x subject) into a `ComparisonTaskCell`.
+
+    A single record keeps the legacy fields verbatim (byte-compatible with the pre-repeats
+    comparison); several are summarised as documented on the model. The statistics cover
+    the attempted repeats only.
+    """
+    attempted = [r for r in recs if _is_attempted(r)]
+    # Cost/wall medians describe attempted work; an all-infra cell falls back to what it
+    # did spend so the column is not blank for a task that ran.
+    basis = attempted or recs
+    cost_median = _median_or_none([r.cost_usd for r in basis if r.cost_usd is not None])
+    wall_median = stats.median([r.wall_clock_seconds for r in basis])
+    if attempted:
+        scores = [r.score for r in attempted]
+        score_mean = stats.mean(scores)
+        score_sd = stats.sd(scores)
+        solve_rate = stats.mean([1.0 if r.solved else 0.0 for r in attempted])
+    else:
+        score_mean, score_sd, solve_rate = 0.0, 0.0, 0.0
+
+    if len(recs) == 1:
+        only = recs[0]
+        return ComparisonTaskCell(
+            subject_status=only.subject_status,
+            solved=only.solved,
+            score=only.score,
+            cost_usd=only.cost_usd,
+            wall_clock_seconds=only.wall_clock_seconds,
+            score_mean=score_mean,
+            score_sd=score_sd,
+            n=len(attempted),
+            solve_rate=solve_rate,
+            cost_median=cost_median,
+            wall_median=wall_median,
+        )
+    statuses = {r.subject_status for r in recs}
+    return ComparisonTaskCell(
+        subject_status=statuses.pop() if len(statuses) == 1 else STATUS_MIXED,
+        solved=solve_rate > 0.5,
+        score=score_mean,
+        cost_usd=cost_median,
+        wall_clock_seconds=wall_median,
+        score_mean=score_mean,
+        score_sd=score_sd,
+        n=len(attempted),
+        solve_rate=solve_rate,
+        cost_median=cost_median,
+        wall_median=wall_median,
+    )
+
+
+def _is_suspect(task: BenchTaskRecord) -> bool:
+    """HLD §1/§5.1 infra heuristic on a NON-error run: unsolved, cheap and quick."""
+    return (
+        _is_attempted(task)
+        and not task.solved
+        and task.cost_usd is not None
+        and task.cost_usd < SUSPECT_MAX_COST_USD
+        and task.wall_clock_seconds < SUSPECT_MAX_WALL_SECONDS
+    )
+
+
+def _subject_stats(
+    task_ids: list[str],
+    subject_id: str,
+    matrix: dict[str, dict[str, ComparisonTaskCell | None]],
+    records: list[BenchTaskRecord],
+    repeats: int,
+) -> SubjectStats:
+    cells = [c for tid in task_ids if (c := matrix[tid].get(subject_id)) is not None]
+    attempted_cells = [c for c in cells if c.n > 0]
+    attempted_recs = [r for r in records if _is_attempted(r)]
+    infra = sum(1 for r in records if r.subject_status == INFRA_ERROR_STATUS)
+    score_sum = sum(r.score for r in attempted_recs)
+    costs = [r.cost_usd for r in attempted_recs if r.cost_usd is not None]
+    return SubjectStats(
+        repeats=repeats,
+        task_runs=len(records),
+        attempted=len(attempted_recs),
+        infra_errors=infra,
+        infra_share=(infra / len(records)) if records else 0.0,
+        tasks_attempted=len(attempted_cells),
+        solve_rate_attempted=(
+            stats.mean([c.solve_rate for c in attempted_cells]) if attempted_cells else 0.0
+        ),
+        score_mean_attempted=(
+            stats.mean([c.score_mean for c in attempted_cells]) if attempted_cells else 0.0
+        ),
+        cost_per_score_point=(sum(costs) / score_sum) if costs and score_sum > 0 else None,
+        cost_median=_median_or_none(
+            [c.cost_median for c in attempted_cells if c.cost_median is not None]
+        ),
+        wall_median=_median_or_none([c.wall_median for c in attempted_cells]),
+    )
+
+
+def _rollup(
+    group_of_task: dict[str, str | None],
+    subjects: list[str],
+    matrix: dict[str, dict[str, ComparisonTaskCell | None]],
+) -> dict[str, dict[str, RollupCell]]:
+    """`group -> subject -> RollupCell`, groups sorted; tasks with no group are skipped and
+    a (group, subject) with no attempted task is omitted."""
+    groups = sorted({g for g in group_of_task.values() if g is not None})
+    out: dict[str, dict[str, RollupCell]] = {}
+    for group in groups:
+        group_tasks = [tid for tid, g in group_of_task.items() if g == group]
+        per_subject: dict[str, RollupCell] = {}
+        for sid in subjects:
+            cells = [
+                c for tid in group_tasks if (c := matrix[tid].get(sid)) is not None and c.n > 0
+            ]
+            if cells:
+                per_subject[sid] = RollupCell(
+                    score_mean=stats.mean([c.score_mean for c in cells]),
+                    solve_rate=stats.mean([c.solve_rate for c in cells]),
+                    n=len(cells),
+                )
+        out[group] = per_subject
+    return out
+
+
+def _pairwise(
+    task_ids: list[str],
+    ran_subjects: list[str],
+    matrix: dict[str, dict[str, ComparisonTaskCell | None]],
+) -> list[PairwiseEntry]:
+    """One `PairwiseEntry` per ordered pair of subjects that ran (paired per task on the
+    repeat-mean score, over tasks BOTH attempted)."""
+    entries: list[PairwiseEntry] = []
+    for i, a in enumerate(ran_subjects):
+        for b in ran_subjects[i + 1 :]:
+            diffs: list[float] = []
+            for tid in task_ids:
+                ca, cb = matrix[tid].get(a), matrix[tid].get(b)
+                if ca is not None and cb is not None and ca.n > 0 and cb.n > 0:
+                    diffs.append(ca.score_mean - cb.score_mean)
+            if not diffs:
+                entries.append(PairwiseEntry(a=a, b=b))
+                continue
+            mean_diff, lo, hi = stats.paired_bootstrap_ci(
+                diffs, n_boot=BOOTSTRAP_N, alpha=BOOTSTRAP_ALPHA, seed=BOOTSTRAP_SEED
+            )
+            _, p_value = stats.wilcoxon_signed_rank(diffs)
+            entries.append(
+                PairwiseEntry(
+                    a=a,
+                    b=b,
+                    mean_diff=mean_diff,
+                    ci_lo=lo,
+                    ci_hi=hi,
+                    p_wilcoxon=p_value,
+                    n_tasks=len(diffs),
+                )
+            )
+    return entries
+
+
 def build_comparison(
     run_dirs: Sequence[str | Path],
     *,
     allow_mixed: bool = False,
     clock: Callable[[], datetime] | None = None,
 ) -> ComparisonRecord:
-    """Build a cross-subject `ComparisonRecord` over *run_dirs* (design §4.6).
+    """Build a cross-subject `ComparisonRecord` over *run_dirs* (design §4.6, HLD §6).
 
-    Each entry is a result dir (as `run_suite`/`resolve_result_dir` produce). Refuses
-    (raises `ResultsError`) to compare:
+    Each entry is a result dir (as `run_suite`/`resolve_result_dir` produce). Several dirs
+    for the SAME subject id are *repeats* of one (suite x subject) -- distinct `repeat`
+    values, identical run-level `config_fingerprint` -- and are aggregated per task
+    (`ComparisonTaskCell`: mean/sd/n of the score, solve rate, cost/wall medians). Two dirs
+    with the same subject AND the same `repeat` collapse (last wins), as before.
+
+    Refuses (raises `ResultsError`) to compare:
 
       - runs from different suite ids or different `schema_version`s -- comparing them
         would silently mix incompatible task sets/shapes;
+      - runs whose `parity_fingerprint` differs (HLD §2b: not apples-to-apples), unless
+        `allow_mixed=True`, which stamps the record `parity_mixed=True` instead;
       - two runs for the SAME subject id whose run-level `config_fingerprint` differs,
         unless `allow_mixed=True` -- e.g. two different-day re-runs of one subject with
         different overrides; the later one wins once explicitly allowed.
@@ -303,13 +627,17 @@ def build_comparison(
     resolved_clock = clock or _utc_now
     dirs = [Path(d) for d in run_dirs]
 
-    loaded: dict[str, BenchRunRecord] = {}
+    # subject -> repeat number -> record (same (subject, repeat) twice: last wins).
+    loaded: dict[str, dict[int, BenchRunRecord]] = {}
     fingerprints: dict[str, str] = {}
+    parity_by_subject: dict[str, str | None] = {}
     ordered_subjects: list[str] = []
     not_run: list[str] = []
     missing_dirs: list[Path] = []
     known_suite_id: str | None = None
     known_schema_version: str | None = None
+    reference_parity: str | None = None
+    parity_mixed = False
 
     for d in dirs:
         if not (d / RUN_JSON_FILENAME).exists():
@@ -320,6 +648,7 @@ def build_comparison(
         if known_suite_id is None:
             known_suite_id = record.suite_id
             known_schema_version = record.schema_version
+            reference_parity = record.parity_fingerprint
         elif record.suite_id != known_suite_id:
             raise ResultsError(
                 f"Refusing to compare runs from different suites: {known_suite_id!r} "
@@ -330,6 +659,16 @@ def build_comparison(
                 f"Refusing to compare runs with different schema_version: "
                 f"{known_schema_version!r} (seen first) vs {record.schema_version!r} ({d})"
             )
+
+        if record.parity_fingerprint != reference_parity:
+            if not allow_mixed:
+                raise ResultsError(
+                    f"Refusing to compare runs with different parity_fingerprint (not "
+                    f"apples-to-apples, HLD §2b; pass allow_mixed=True / --allow-mixed to "
+                    f"override and stamp the report non-parity): {reference_parity!r} "
+                    f"(seen first) vs {record.parity_fingerprint!r} ({d})"
+                )
+            parity_mixed = True
 
         subject_id = record.subject.id
         if (
@@ -344,8 +683,10 @@ def build_comparison(
             )
         if subject_id not in loaded:
             ordered_subjects.append(subject_id)
-        loaded[subject_id] = record  # last-wins for an explicitly-allowed mixed dup
+            loaded[subject_id] = {}
+        loaded[subject_id][record.repeat] = record  # last-wins per (subject, repeat)
         fingerprints[subject_id] = record.config_fingerprint
+        parity_by_subject[subject_id] = record.parity_fingerprint
 
     if known_suite_id is None:
         raise ResultsError(
@@ -355,33 +696,66 @@ def build_comparison(
 
     for d in missing_dirs:
         subject_id = _derive_subject_id(d, known_suite_id)
+        repeat_match = _REPEAT_SUFFIX_RE.match(subject_id)
+        if repeat_match and repeat_match.group(1) in loaded:
+            continue  # a repeat dir of a subject that did run, not a separate subject
+        if subject_id in ordered_subjects:
+            continue
         ordered_subjects.append(subject_id)
         not_run.append(subject_id)
 
-    task_ids = sorted({t.task_id for record in loaded.values() for t in record.tasks})
+    ran_subjects = [sid for sid in ordered_subjects if sid in loaded]
+    records_of: dict[str, list[BenchTaskRecord]] = {
+        sid: [t for rep in sorted(loaded[sid]) for t in loaded[sid][rep].tasks]
+        for sid in ran_subjects
+    }
+    task_ids = sorted({t.task_id for recs in records_of.values() for t in recs})
 
     matrix: dict[str, dict[str, ComparisonTaskCell | None]] = {tid: {} for tid in task_ids}
+    family_of: dict[str, str | None] = {}
+    language_of: dict[str, str | None] = {}
     for subject_id in ordered_subjects:
-        subject_record = loaded.get(subject_id)
-        by_task = {t.task_id: t for t in subject_record.tasks} if subject_record is not None else {}
+        by_task: dict[str, list[BenchTaskRecord]] = {}
+        for t in records_of.get(subject_id, []):
+            by_task.setdefault(t.task_id, []).append(t)
+            family_of.setdefault(t.task_id, t.family)
+            language_of.setdefault(t.task_id, t.language)
         for task_id in task_ids:
-            t = by_task.get(task_id)
-            matrix[task_id][subject_id] = (
-                None
-                if t is None
-                else ComparisonTaskCell(
-                    subject_status=t.subject_status,
-                    solved=t.solved,
-                    score=t.score,
-                    cost_usd=t.cost_usd,
-                    wall_clock_seconds=t.wall_clock_seconds,
-                )
-            )
+            recs = by_task.get(task_id)
+            matrix[task_id][subject_id] = None if not recs else _build_cell(recs)
 
-    per_subject: dict[str, Aggregate | None] = {
-        subject_id: (loaded[subject_id].aggregate if subject_id in loaded else None)
-        for subject_id in ordered_subjects
+    per_subject: dict[str, Aggregate | None] = {}
+    for subject_id in ordered_subjects:
+        if subject_id not in loaded:
+            per_subject[subject_id] = None
+        elif len(loaded[subject_id]) == 1:
+            # One run: its own persisted aggregate, untouched (byte-compatible).
+            per_subject[subject_id] = next(iter(loaded[subject_id].values())).aggregate
+        else:
+            # Repeats: totals (cost, wall, counts) over every repeat's task runs.
+            per_subject[subject_id] = aggregate(cast("list[TaskMetric]", records_of[subject_id]))
+
+    subject_stats: dict[str, SubjectStats | None] = {
+        sid: (
+            _subject_stats(task_ids, sid, matrix, records_of[sid], len(loaded[sid]))
+            if sid in loaded
+            else None
+        )
+        for sid in ordered_subjects
     }
+    infra: dict[str, InfraEntry] = {}
+    for sid in ran_subjects:
+        recs = records_of[sid]
+        infra[sid] = InfraEntry(
+            count=sum(1 for r in recs if r.subject_status == INFRA_ERROR_STATUS),
+            task_ids=sorted({r.task_id for r in recs if r.subject_status == INFRA_ERROR_STATUS}),
+            suspect_task_ids=sorted({r.task_id for r in recs if _is_suspect(r)}),
+        )
+    unreliable = [
+        sid
+        for sid in ran_subjects
+        if (st := subject_stats[sid]) is not None and st.infra_share > UNRELIABLE_INFRA_SHARE
+    ]
 
     return ComparisonRecord(
         suite_id=known_suite_id,
@@ -391,6 +765,16 @@ def build_comparison(
         task_ids=task_ids,
         matrix=matrix,
         per_subject=per_subject,
+        parity_fingerprint=None if parity_mixed else reference_parity,
+        parity_mixed=parity_mixed,
+        parity_by_subject=parity_by_subject,
+        repeats_per_subject={sid: len(loaded[sid]) for sid in ran_subjects},
+        subject_stats=subject_stats,
+        per_family=_rollup(family_of, ran_subjects, matrix),
+        per_language=_rollup(language_of, ran_subjects, matrix),
+        infra=infra,
+        pairwise=_pairwise(task_ids, ran_subjects, matrix),
+        unreliable_subjects=unreliable,
     )
 
 
@@ -402,6 +786,10 @@ def build_comparison(
 def _fmt_matrix_cell(cell: ComparisonTaskCell | None) -> str:
     if cell is None:
         return "—"
+    if cell.n > 1:
+        # Repeats: "k/n" solved, then the median cost -- the single-repeat shape below is
+        # kept verbatim for the common r=1 case.
+        return f"{round(cell.solve_rate * cell.n)}/{cell.n} / {_fmt_cost(cell.cost_median)}"
     return f"{_fmt_bool(cell.solved)} / {_fmt_cost(cell.cost_usd)}"
 
 
@@ -424,11 +812,38 @@ def _tie_count(candidates: list[tuple[float, str]], value: float) -> int:
     return sum(1 for v, _ in candidates if v == value)
 
 
+def _attempted_rates(
+    comparison: ComparisonRecord, subject_id: str, agg: Aggregate
+) -> tuple[float, float] | None:
+    """`(solve_rate, mean_score)` over ATTEMPTED work for *subject_id*, or `None` when it
+    made no real attempt at all (nothing to rank on).
+
+    Prefers the comparison's own `subject_stats` (task-level, repeat-aware). A record
+    without it (hand-built / 1.0) falls back to the `Aggregate`: its `*_attempted` fields,
+    or -- when those were never recorded (`attempted == 0` with no infra errors, i.e. a
+    pre-seam aggregate) -- the all-task rates, which are then the attempted ones by
+    definition.
+    """
+    st = comparison.subject_stats.get(subject_id)
+    if st is not None:
+        return (st.solve_rate_attempted, st.score_mean_attempted) if st.attempted > 0 else None
+    if agg.attempted == 0 and agg.infra_errors == 0:
+        return (agg.solve_rate, agg.mean_score)
+    if agg.attempted == 0:
+        return None
+    return (agg.solve_rate_attempted, agg.mean_score_attempted)
+
+
 def render_winners(comparison: ComparisonRecord) -> list[str]:
-    """A "winner" line per axis (solve_rate, total cost, cost per solved, wall-clock) --
-    TASK.md T-Rpt3Wq bullet (c). Only subjects that actually ran are candidates; an axis
-    with no eligible candidate (e.g. every subject not run, or nobody solved anything so
-    every `cost_per_solved` is `None`) renders "n/a" rather than raising.
+    """A "winner" line per axis (solve rate, mean score, total cost, cost per solved,
+    wall-clock) -- TASK.md T-Rpt3Wq bullet (c). Only subjects that actually ran are
+    candidates; an axis with no eligible candidate (e.g. every subject not run, or nobody
+    solved anything so every `cost_per_solved` is `None`) renders "n/a" rather than
+    raising.
+
+    Solve rate and mean score rank on ATTEMPTED work (infra errors / budget skips
+    excluded, HLD §5.1) with each task counted once however many repeats it had (HLD §6);
+    a subject that never made a real attempt is not a candidate on those two axes.
 
     Not `_`-prefixed: `bench/cli.py`'s `ao-bench report` (T-Cli8Nf) reuses this directly
     to print the same winner lines to stdout, rather than re-deriving them or scraping
@@ -438,14 +853,22 @@ def render_winners(comparison: ComparisonRecord) -> list[str]:
     if not ran:
         return ["- no subjects were run; nothing to compare."]
 
-    solve_candidates = [(agg.solve_rate, sid) for sid, agg in ran.items()]
-    cost_candidates = [(agg.total_cost_usd, sid) for sid, agg in ran.items()]
+    rates = {sid: _attempted_rates(comparison, sid, agg) for sid, agg in ran.items()}
+    # A subject with no attempted work at all (every task an infra error / budget skip) says
+    # nothing on ANY axis -- not even "cheapest" -- so it is no candidate on any of them.
+    eligible = {sid: agg for sid, agg in ran.items() if rates[sid] is not None}
+    solve_candidates = [(r[0], sid) for sid, r in rates.items() if r is not None]
+    score_candidates = [(r[1], sid) for sid, r in rates.items() if r is not None]
+    cost_candidates = [(agg.total_cost_usd, sid) for sid, agg in eligible.items()]
     cost_per_solved_candidates = [
-        (agg.cost_per_solved, sid) for sid, agg in ran.items() if agg.cost_per_solved is not None
+        (agg.cost_per_solved, sid)
+        for sid, agg in eligible.items()
+        if agg.cost_per_solved is not None
     ]
-    wall_candidates = [(agg.total_wall_clock_seconds, sid) for sid, agg in ran.items()]
+    wall_candidates = [(agg.total_wall_clock_seconds, sid) for sid, agg in eligible.items()]
 
     best_solve = _best(solve_candidates, minimize=False)
+    best_score = _best(score_candidates, minimize=False)
     best_cost = _best(cost_candidates, minimize=True)
     best_cost_per_solved = _best(cost_per_solved_candidates, minimize=True)
     best_wall = _best(wall_candidates, minimize=True)
@@ -465,7 +888,18 @@ def render_winners(comparison: ComparisonRecord) -> list[str]:
         return f"- {label}: {best[1]} ({fmt(best[0])}{tie_note})"
 
     return [
-        _line("Highest solve rate", best_solve, _fmt_pct, solve_candidates),
+        _line(
+            "Highest solve rate",
+            best_solve,
+            lambda v: f"{_fmt_pct(v)} of attempted",
+            solve_candidates,
+        ),
+        _line(
+            "Highest mean score",
+            best_score,
+            lambda v: f"{v:.3f} over attempted",
+            score_candidates,
+        ),
         _line("Lowest total cost", best_cost, lambda v: f"${v:.4f}", cost_candidates),
         _line(
             "Lowest cost per solved",
@@ -477,13 +911,172 @@ def render_winners(comparison: ComparisonRecord) -> list[str]:
     ]
 
 
+def _fmt_opt_float(value: float | None, digits: int = 3) -> str:
+    return "—" if value is None else f"{value:.{digits}f}"
+
+
+def _fmt_p(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return "<0.001" if value < 0.001 else f"{value:.3f}"
+
+
+def _fmt_rollup_cell(cell: RollupCell | None) -> str:
+    if cell is None:
+        return "—"
+    return f"{cell.score_mean:.2f} / {_fmt_pct(cell.solve_rate)} (n={cell.n})"
+
+
+def _render_parity_md(comparison: ComparisonRecord) -> list[str]:
+    lines = ["", "## Parity", ""]
+    if comparison.parity_mixed:
+        lines.append(
+            "- **NON-PARITY comparison**: the runs used different parity bundles"
+            " (--allow-mixed), so a difference may reflect instructions/skills/limits"
+            " rather than the subjects themselves (HLD §2b)."
+        )
+        for sid, fp in comparison.parity_by_subject.items():
+            lines.append(f"- {sid}: {f'`{fp}`' if fp else 'none'}")
+    elif comparison.parity_fingerprint is not None:
+        lines.append(
+            f"- parity_fingerprint: `{comparison.parity_fingerprint}` (shared by every run)"
+        )
+    else:
+        lines.append(
+            "- no parity bundle applied: subjects ran under their own instructions/skills/"
+            "limits, so a difference may not isolate orchestration (HLD §2b)."
+        )
+    if comparison.repeats_per_subject:
+        per = ", ".join(f"{sid}={n}" for sid, n in comparison.repeats_per_subject.items())
+        lines.append(f"- repeats per subject: {per}")
+    return lines
+
+
+def _not_run_label(comparison: ComparisonRecord, subject_id: str) -> str:
+    """`"<id> (not run)"` for a subject with no run, plain `<id>` for one that ran but has
+    no stats block (a 1.0 comparison read back via `load_comparison`)."""
+    return (
+        f"{subject_id} (not run)" if comparison.per_subject.get(subject_id) is None else subject_id
+    )
+
+
+def _render_attempted_md(comparison: ComparisonRecord) -> list[str]:
+    lines = [
+        "",
+        "## Attempted-based rates (infra excluded)",
+        "",
+        "Rates average per-task values over the tasks a subject actually attempted"
+        " (infra errors and budget skips are not capability evidence); each task counts once"
+        " however many repeats it had.",
+        "",
+        "| Subject | Task runs | Attempted | Infra errors | Solve rate | Mean score"
+        " | Cost/score-pt($) | Median cost/task($) | Median wall/task(s) |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for sid in comparison.subjects:
+        st = comparison.subject_stats.get(sid)
+        if st is None:
+            lines.append(f"| {_not_run_label(comparison, sid)} | — | — | — | — | — | — | — | — |")
+            continue
+        lines.append(
+            f"| {sid} | {st.task_runs} | {st.attempted} | {st.infra_errors} "
+            f"| {_fmt_pct(st.solve_rate_attempted)} | {st.score_mean_attempted:.3f} "
+            f"| {_fmt_cost(st.cost_per_score_point)} | {_fmt_cost(st.cost_median)} "
+            f"| {_fmt_opt_float(st.wall_median, 2)} |"
+        )
+    return lines
+
+
+def _render_pairwise_md(comparison: ComparisonRecord) -> list[str]:
+    lines = [
+        "",
+        "## Pairwise (paired bootstrap 95% CI, Wilcoxon p)",
+        "",
+        "Per-task difference of the repeat-mean score, A minus B, over tasks both attempted;"
+        " `CI excludes 0` is the staged-repeat stopping rule (HLD §6). Reported, not gated.",
+        "",
+        "| A | B | Metric | Mean diff (A-B) | 95% CI | Wilcoxon p | Tasks | CI excludes 0 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    if not comparison.pairwise:
+        lines.append("| — | — | — | — | — | — | — | — |")
+    for e in comparison.pairwise:
+        if e.mean_diff is None or e.ci_lo is None or e.ci_hi is None:
+            lines.append(f"| {e.a} | {e.b} | {e.metric} | — | — | — | 0 | — |")
+            continue
+        lines.append(
+            f"| {e.a} | {e.b} | {e.metric} | {e.mean_diff:+.3f} "
+            f"| [{e.ci_lo:.3f}, {e.ci_hi:.3f}] | {_fmt_p(e.p_wilcoxon)} | {e.n_tasks} "
+            f"| {_fmt_bool(stats.ci_excludes_zero(e.ci_lo, e.ci_hi))} |"
+        )
+    return lines
+
+
+def _render_rollup_md(
+    title: str,
+    label: str,
+    plural: str,
+    rollup: dict[str, dict[str, RollupCell]],
+    subjects: list[str],
+) -> list[str]:
+    lines = ["", f"## {title}", ""]
+    if not rollup:
+        lines.append(f"_No {label} metadata on this suite's tasks._")
+        return lines
+    lines.append(
+        "Cells: mean score / solve rate (n = tasks attempted)."
+        f" {plural.capitalize()} weigh equally."
+    )
+    lines.append("")
+    lines.append(f"| {label.title()} | " + " | ".join(subjects) + " |")
+    lines.append("| --- | " + " | ".join("---" for _ in subjects) + " |")
+    for group, per_subject in rollup.items():
+        cells = [_fmt_rollup_cell(per_subject.get(sid)) for sid in subjects]
+        lines.append(f"| {group} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def _render_infra_md(comparison: ComparisonRecord) -> list[str]:
+    lines = [
+        "",
+        "## Infra errors / suspects",
+        "",
+        f"Infra errors (`subject_status == error`) are excluded from the rates above."
+        f" Suspects are unsolved non-error runs under ${SUSPECT_MAX_COST_USD:.2f} and"
+        f" {SUSPECT_MAX_WALL_SECONDS:.0f}s -- they look like aborts but stay IN the rates.",
+        "",
+        "| Subject | Infra errors | Share | Infra tasks | Suspect tasks |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for sid in comparison.subjects:
+        entry = comparison.infra.get(sid)
+        st = comparison.subject_stats.get(sid)
+        if entry is None or st is None:
+            lines.append(f"| {_not_run_label(comparison, sid)} | — | — | — | — |")
+            continue
+        lines.append(
+            f"| {sid} | {entry.count} | {_fmt_pct(st.infra_share)} "
+            f"| {', '.join(entry.task_ids) or '—'} | {', '.join(entry.suspect_task_ids) or '—'} |"
+        )
+    return lines
+
+
 def _render_comparison_md(comparison: ComparisonRecord) -> str:
     """Design §4.6: side-by-side subject table + per-task solved/cost matrix, plus a
-    "winner" line per axis (this task's own acceptance criteria)."""
+    "winner" line per axis (this task's own acceptance criteria), then the HLD §6
+    statistics sections (parity, attempted rates, pairwise CIs, family/language roll-ups,
+    infra) after the original three tables, which keep their shape."""
     lines: list[str] = [f"# Bench comparison — {comparison.suite_id}", ""]
     lines.append(f"- generated_at: {comparison.generated_at}")
     if comparison.not_run:
         lines.append(f"- not run: {', '.join(comparison.not_run)}")
+    if comparison.unreliable_subjects:
+        lines += [
+            "",
+            f"> **UNRELIABLE**: infra errors exceed {UNRELIABLE_INFRA_SHARE * 100:.0f}% of task"
+            f" runs for {', '.join(comparison.unreliable_subjects)} -- treat the rankings below"
+            " with caution.",
+        ]
     lines += [
         "",
         "## Per-subject",
@@ -514,6 +1107,17 @@ def _render_comparison_md(comparison: ComparisonRecord) -> str:
 
     lines += ["", "## Winners", ""]
     lines += render_winners(comparison)
+
+    lines += _render_parity_md(comparison)
+    lines += _render_attempted_md(comparison)
+    lines += _render_pairwise_md(comparison)
+    lines += _render_rollup_md(
+        "Per family", "family", "families", comparison.per_family, comparison.subjects
+    )
+    lines += _render_rollup_md(
+        "Per language", "language", "languages", comparison.per_language, comparison.subjects
+    )
+    lines += _render_infra_md(comparison)
     return "\n".join(lines) + "\n"
 
 
@@ -531,3 +1135,35 @@ def write_comparison(comparison: ComparisonRecord, out_dir: str | Path) -> tuple
     json_path.write_text(comparison.model_dump_json(indent=2))
     md_path.write_text(_render_comparison_md(comparison))
     return json_path, md_path
+
+
+def load_comparison(path: str | Path) -> ComparisonRecord:
+    """Read a `comparison.json` back into a `ComparisonRecord` (*path* is the file or the
+    directory holding it).
+
+    Understands the current 2.0 shape and the pre-repeats 1.0 one: a 1.0 file loads with
+    its cells upgraded to single-repeat cells (see `ComparisonTaskCell`) and an empty
+    statistics layer, keeping `schema_version == "1.0"` so nobody mistakes it for a
+    comparison that had pairwise stats computed. Any other version, unreadable JSON or a
+    shape mismatch raises `ResultsError`.
+    """
+    p = Path(path)
+    json_path = p / COMPARISON_JSON_FILENAME if p.is_dir() else p
+    if not json_path.exists():
+        raise ResultsError(f"No {COMPARISON_JSON_FILENAME} found at {json_path}")
+    try:
+        data = json.loads(json_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ResultsError(f"Failed to read {json_path}: {exc}") from exc
+    version = data.get("schema_version") if isinstance(data, dict) else None
+    if version != COMPARISON_SCHEMA_VERSION and version not in LEGACY_COMPARISON_SCHEMA_VERSIONS:
+        raise ResultsError(
+            f"{json_path} has unsupported comparison schema_version {version!r} (supported:"
+            f" {COMPARISON_SCHEMA_VERSION!r}, legacy {sorted(LEGACY_COMPARISON_SCHEMA_VERSIONS)})"
+        )
+    try:
+        return ComparisonRecord.model_validate(data)
+    except Exception as exc:  # pydantic.ValidationError et al.
+        raise ResultsError(
+            f"{json_path} does not match the expected comparison.json schema: {exc}"
+        ) from exc

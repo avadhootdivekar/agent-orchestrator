@@ -526,7 +526,7 @@ def test_render_winners_discloses_ties() -> None:
 
     # Deterministic tiebreak (ascending subject id) names "fk-tie-a" as the line's
     # winner; the tie with the other 2 subjects must still be disclosed on every axis.
-    assert len(winners) == 4
+    assert len(winners) == 5  # solve rate, mean score, total cost, cost/solved, wall-clock
     for line in winners:
         assert line.startswith("- ")
         assert "fk-tie-a" in line
@@ -542,6 +542,7 @@ def test_render_winners_no_tie_omits_tie_note(tmp_path: Path) -> None:
     loser_agg = winner_agg.model_copy(
         update={
             "solve_rate": 0.5,
+            "mean_score": 0.5,
             "solved": 1,
             "total_cost_usd": 0.5,
             "cost_per_solved": 0.5,
