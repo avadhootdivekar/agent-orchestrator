@@ -1,0 +1,259 @@
+{
+  "version": "1.0",
+  "contract": "http",
+  "startup_timeout_seconds": 20,
+  "groups": {
+    "core": [
+      {
+        "id": "healthz",
+        "steps": [
+          {"op": {"method": "GET", "path": "/healthz"}, "expect": {"status": 200}}
+        ]
+      },
+      {
+        "id": "create-then-get",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "w-{{rand}}", "qty": 3}},
+            "expect": {
+              "status": 201,
+              "json": {
+                "id": {"$type": "integer"},
+                "name": {"$regex": "^w-[0-9a-f]{8}$"},
+                "qty": 3,
+                "created_at": {"$regex": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"}
+              }
+            },
+            "save": {"id": "$.id", "name": "$.name"}
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets/{{id}}"},
+            "expect": {"status": 200, "json": {"id": {"$var": "id"}, "name": {"$var": "name"}, "qty": 3}}
+          }
+        ]
+      },
+      {
+        "id": "list-is-sorted-and-complete",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "l-{{i}}-{{rand}}"}},
+            "expect": {"status": 201},
+            "repeat": 5
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=10"},
+            "expect": {
+              "status": 200,
+              "json": {"items": {"$sorted_by": "id", "order": "asc"}, "next_cursor": null}
+            }
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=10"},
+            "expect": {
+              "status": 200,
+              "json": {"items": {"$each": {"qty": {"$gte": 0}}}}
+            }
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=10"},
+            "expect": {"status": 200, "json": {"items": {"$len": 5}}}
+          }
+        ]
+      },
+      {
+        "id": "list-pages-with-cursor",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "p-{{i}}-{{rand}}"}},
+            "expect": {"status": 201},
+            "repeat": 5
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=2"},
+            "expect": {
+              "status": 200,
+              "json": {"items": {"$len": 2}, "next_cursor": {"$type": "integer"}}
+            },
+            "save": {"cursor": "$.next_cursor"}
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=2&cursor={{cursor}}"},
+            "expect": {"status": 200, "json": {"items": {"$len": 2}}}
+          }
+        ]
+      },
+      {
+        "id": "patch-updates-field",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "pa-{{rand}}", "qty": 1}},
+            "expect": {"status": 201},
+            "save": {"id": "$.id", "name": "$.name"}
+          },
+          {
+            "op": {"method": "PATCH", "path": "/widgets/{{id}}", "json": {"qty": 9}},
+            "expect": {"status": 200, "json": {"qty": 9, "name": {"$var": "name"}}}
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets/{{id}}"},
+            "expect": {"status": 200, "json": {"qty": 9}}
+          }
+        ]
+      },
+      {
+        "id": "delete-then-404",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "d-{{rand}}"}},
+            "expect": {"status": 201},
+            "save": {"id": "$.id"}
+          },
+          {"op": {"method": "DELETE", "path": "/widgets/{{id}}"}, "expect": {"status": 204}},
+          {
+            "op": {"method": "GET", "path": "/widgets/{{id}}"},
+            "expect": {"status": 404, "json": {"error": {"$type": "string"}}}
+          }
+        ]
+      },
+      {
+        "id": "validation-and-limits",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"qty": 1}},
+            "expect": {"status": 400, "json": {"error": {"$type": "string"}}}
+          },
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "v-{{rand}}", "qty": "x"}},
+            "expect": {"status": 400}
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=1000"},
+            "expect": {"status": 400}
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets/99999"},
+            "expect": {"status": [404], "json": {"id": {"$not": {"$any": true}}}}
+          }
+        ]
+      },
+      {
+        "id": "duplicate-name-conflicts",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "dup-{{rand}}"}},
+            "expect": {"status": 201},
+            "save": {"name": "$.name"}
+          },
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "{{name}}"}},
+            "expect": {"status": 409}
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=10"},
+            "expect": {
+              "status": 200,
+              "json": {"items": {"$contains": {"name": {"$var": "name"}}}}
+            }
+          }
+        ]
+      }
+    ],
+    "trap": [
+      {
+        "id": "pagination-stable-under-delete",
+        "trap": "pagination_stability",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "ps-a-{{rand}}"}},
+            "expect": {"status": 201},
+            "save": {"id_a": "$.id"}
+          },
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "ps-b-{{rand}}"}},
+            "expect": {"status": 201},
+            "save": {"id_b": "$.id"}
+          },
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "ps-c-{{rand}}"}},
+            "expect": {"status": 201},
+            "save": {"id_c": "$.id"}
+          },
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "ps-d-{{rand}}"}},
+            "expect": {"status": 201},
+            "save": {"id_d": "$.id"}
+          },
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=2"},
+            "expect": {
+              "status": 200,
+              "json": {
+                "items": [{"id": {"$var": "id_a"}}, {"id": {"$var": "id_b"}}],
+                "next_cursor": {"$any": true}
+              }
+            },
+            "save": {"cursor": "$.next_cursor"}
+          },
+          {"op": {"method": "DELETE", "path": "/widgets/{{id_a}}"}, "expect": {"status": 204}},
+          {
+            "op": {"method": "GET", "path": "/widgets?limit=2&cursor={{cursor}}"},
+            "expect": {
+              "status": 200,
+              "json": {
+                "items": [{"id": {"$var": "id_c"}}, {"id": {"$var": "id_d"}}],
+                "next_cursor": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "unique-name-under-concurrent-create",
+        "trap": "unique_constraint",
+        "steps": [
+          {
+            "op": {"method": "POST", "path": "/widgets", "json": {"name": "seed-{{rand}}"}},
+            "expect": {"status": 201},
+            "save": {"seed_name": "$.name"}
+          }
+        ],
+        "parallel": [
+          [{"op": {"method": "POST", "path": "/widgets", "json": {"name": "uq-{{seed_name}}"}}, "expect": {"status": [201, 409]}}],
+          [{"op": {"method": "POST", "path": "/widgets", "json": {"name": "uq-{{seed_name}}"}}, "expect": {"status": [201, 409]}}],
+          [{"op": {"method": "POST", "path": "/widgets", "json": {"name": "uq-{{seed_name}}"}}, "expect": {"status": [201, 409]}}],
+          [{"op": {"method": "POST", "path": "/widgets", "json": {"name": "uq-{{seed_name}}"}}, "expect": {"status": [201, 409]}}]
+        ],
+        "after": [
+          {
+            "op": {"method": "GET", "path": "/widgets?name=uq-{{seed_name}}"},
+            "expect": {"status": 200, "json": {"items": {"$len": 1}}}
+          }
+        ]
+      }
+    ],
+    "perf": {
+      "sizes": [50, 500],
+      "load": {
+        "op": {"method": "POST", "path": "/widgets", "json": {"name": "n-{{i}}-{{rand}}", "qty": 1}},
+        "expect": {"status": 201},
+        "repeat": 500
+      },
+      "mix": [
+        {"weight": 0.6, "name": "get", "class": "indexed_get",
+         "step": {"op": {"method": "GET", "path": "/widgets/{{i}}"}, "expect": {"status": [200, 404]}}},
+        {"weight": 0.2, "name": "create", "class": "write",
+         "step": {"op": {"method": "POST", "path": "/widgets", "json": {"name": "c-{{rand}}"}}, "expect": {"status": 201}}},
+        {"weight": 0.2, "name": "list", "class": "paginated_list",
+         "step": {"op": {"method": "GET", "path": "/widgets?limit=10&cursor={{i}}"}, "expect": {"status": 200}}}
+      ],
+      "ops_per_size": 60,
+      "repeats": 1,
+      "expected_alpha": {"indexed_get": 0.3, "write": 0.3, "paginated_list": 0.3},
+      "alpha_slack": 1.5,
+      "ref_ratio_max": 50.0,
+      "checks": ["alpha", "ref_ratio", "timeout"]
+    }
+  },
+  "weights": {"core": 0.5, "trap": 0.35, "perf": 0.15},
+  "pass_threshold": 0.8
+}
