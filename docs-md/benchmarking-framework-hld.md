@@ -880,7 +880,9 @@ resolves from each suite's own tier default (§20.1/§20.3).
 `benchmarks/suites/dev-medium/` — 6 multi-file, 30–90-min-of-agent-work tasks (feature/refactor/misleading-symptom
 bugfix/performance-correctness bugfix/integration-point feature/test-writing), tier `medium`, pytest/command-graded
 via a **per-fixture `.grading/` honor-system convention** (no dedicated `grading_overlay` framework feature — that
-remains non-MVP, §12) — see `benchmarks/README.md`'s "Held-out grading" subsection for the full shape. `ao-epic-plus`
+remains non-MVP, §12) — see `benchmarks/README.md`'s "Held-out grading" subsection for the full shape.
+*(Superseded 2026-10-23: the held-out harness moved out of the fixture to the grader-owned `tasks/<id>/grading/`, copied
+into the agent-hidden `grading_dir` via `grader.assets` -- see `benchmark-discriminating-suites-hld.md` §8.)* `ao-epic-plus`
 (`benchmarks/subjects/ao-epic-plus/`) is a 4-agent `plan→implement→review→fix` `ao_workflow` subject, uniform-model
 (no per-agent `model`, sidestepping the live model-override-clobber defect exactly as `ao-epic` already does — §4.2
 deviation, `meta/learnings.md`).

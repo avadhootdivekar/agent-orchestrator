@@ -214,6 +214,16 @@ shared bare-clone cache (as `swebench_provider` does), no Docker unless the repo
 **Reported but not scored:** diff size outside the needed change (collateral), whether the agent's own added tests
 pass, number of files touched. These are quality signals for the human reader; scoring them would invite gaming.
 
+#### 4.2a As-built notes (Tier-2 providers, 2026-10-23, `T-T2-5Ij6`)
+
+Deviations/additions relative to the text above; code in `src/agent_orchestrator/bench/{tier2_common,mutation_provider,pr_mined_provider,pr_mined_import,pytest_targeted}.py`, usage in `benchmarks/README.md`.
+
+- **Single-commit workspace snapshot.** After mutation/pruning, the provider replaces `.git` with a fresh one-commit repo. Otherwise `git diff` shows the injected bug (and `git stash`/`git checkout .` undoes it), and for PR-mined tasks `git log --all`/`git fetch origin` reaches the merge commit. The grader's collateral baseline is that snapshot commit (`baseline_commit` in `recipe.resolved.json`), not the upstream `base_commit`. `swebench_provider` still exposes full history to the agent (pre-existing; not changed here).
+- **Recipe additions:** `hidden_from_repo` (stash existing tests from the checkout, remove them from `repo_dir`, restore at grade time -- avoids committing copies of upstream tests), `description`, `test_targets`. The provider also parks pristine files in `grading_dir/reference/` so `FakeSubject copy-reference` can prove a recipe solvable.
+- **`pr_mined`:** `base_commit` is the merge commit's first parent (exact pre-merge state; the PR API `base.sha` is kept as `pr_base_sha` and used only if the parent lookup fails). Whole-file `test_targets` grading unless the instance carries verified `fail_to_pass`/`pass_to_pass` lists; the merge commit's version of each changed source file is parked as the gold patch in `reference/`.
+- **`pytest_targeted`:** vanished node ids grade `missing` (pytest exits 4 on an unknown id; the grader drops it and re-runs), `--continue-on-collection-errors` so one broken module cannot blank the run, `VIRTUAL_ENV` is scrubbed from install/test subprocesses so `uv pip install` can never touch the harness's own environment, a failing `install` is `GraderError`, skipped `fail_to_pass` ids count as failures but skipped `pass_to_pass` ids are excluded.
+- **Scoring caveat:** the spec'd `0.7*f2p + 0.3*p2p` gives a do-nothing run 0.3 on a freshly injected bug (its p2p sample passes); rankings should lean on `solved`/f2p until calibrated.
+
 ## 5. Metrics
 
 ### 5.1 Per (subject × task × repeat) record — extends `SubjectResult` / `GradeResult.detail`
