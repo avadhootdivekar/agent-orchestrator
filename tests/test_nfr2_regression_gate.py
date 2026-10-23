@@ -148,6 +148,14 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
     # attempted-based rates and add a "Highest mean score" line; two winner-line assertions
     # updated to the new rendering. Per-task numbers and every other assertion are unchanged.
     "tests/bench/test_results.py": "E-Bn7Dsc: winners section adds mean-score line / attempted rates",
+    # Additive only (E-Bn7Dsc T-Bx2Cd3 / T-T2-5Ij6): the bench conftest gained two opt-in gates
+    # (`docker` -> AO_E2E_DOCKER, `network` -> AO_E2E_NETWORK) beside the existing `swebench`
+    # one, plus shared fixtures for the new tracks. No existing fixture or gate changed.
+    "tests/bench/conftest.py": "E-Bn7Dsc: docker/network opt-in gates + shared fixtures added",
+    # Contract change, deliberate (E-Bn7Dsc T-T2-5Ij6): dev-medium's held-out `.grading/` moved
+    # out of the agent-visible fixture into the grader-owned grading_dir (HLD §8 hidden-asset
+    # rule); the suite tests now assert the new layout. Task ids/instructions unchanged.
+    "tests/bench/test_dev_medium_suite.py": "E-Bn7Dsc: held-out grading moved to grading_dir",
     # Deliberate model-pin refresh (2026-10-15): benchmark subject configs moved to the latest
     # ids (haiku-5-5 / sonnet-5-5 / opus-5-5); these tests assert the committed pin literals.
     "tests/bench/test_ao_epic_plus_subject.py": "model-pin refresh: committed subject ids only",
