@@ -636,6 +636,24 @@ we call out `max_attempts` for `ao_workflow` benchmark subjects as a follow-up (
   discrimination** (see above) — not raw capability, which is what the `large` tier's external, harder suite is
   for.
 
+### `medium` — `gen-services-mini` haiku campaign (2026-10-23, E-Bn7Dsc first real run)
+
+`benchmarks/results/2026-10-23-gen-services-mini-{claude-haiku,ao-epic-haiku,campaign}/` — the first real-LLM run
+of the Tier-1 path under the default parity bundle (fingerprint `06aaf5ad…`, shared by both runs), graded in Docker.
+
+| Subject | Solved | Mean score | Cost | Wall (2 tasks) | Notes |
+|---|---|---|---|---|---|
+| claude-haiku | 2/2 | 1.000 | $0.229 | 453 s | crud 69 turns / 316 s; job-queue 46 turns / 136 s |
+| ao-epic-haiku | 2/2 | 1.000 | $0.245 | 632 s | implement→verify DAG; +7 % cost, +40 % wall |
+
+Every probe group was 100 % for both (crud 21 core / 4 trap / 5 perf, job-queue 11 / 4 / 6), so the pairwise CI is
+[0, 0]: **at difficulty `{entities:2, traps:2, concurrency:1, scale:1}` these two instances are saturated even for
+haiku.** That is the expected first-pass outcome and exactly what `ao-bench calibrate` is for — the next step is to
+regenerate at a higher difficulty vector (more entities/traps, concurrency ≥ 2, scale ≥ 2, and the TS/Go variants)
+and calibrate against haiku + opus until pooled pass rate sits in the 20–80 % band (HLD §7). What this run DOES
+establish: the full Tier-1 pipeline (parity → generated spec → agent → Docker blackbox grade → repeat-aware
+comparison with infra/pairwise/family tables) works end to end for about $0.25 per subject.
+
 ### Total epic spend
 
 Across the whole `E-Bt4Xk9` epic (framework authoring smoke/gold-patch verification + both PLAN campaigns above):

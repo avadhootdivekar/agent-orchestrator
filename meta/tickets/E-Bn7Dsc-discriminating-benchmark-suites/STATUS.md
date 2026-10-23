@@ -2,7 +2,7 @@
 
 - ID: `E-Bn7Dsc-discriminating-benchmark-suites`
 - Updated At: 2026-10-23
-- State: **In Progress** (5/6 merged; T-Dk6Lm7 docs/skill/smoke in progress)
+- State: **Done** (6/6; follow-ons in HLD §12)
 - Owner: Claude (manager) for avadhoot
 
 ## This update

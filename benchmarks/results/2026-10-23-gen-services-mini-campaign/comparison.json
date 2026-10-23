@@ -1,0 +1,213 @@
+{
+  "schema_version": "2.0",
+  "suite_id": "gen-services-mini",
+  "generated_at": "2026-10-23T15:41:28.715456+00:00",
+  "subjects": [
+    "claude-haiku",
+    "ao-epic-haiku"
+  ],
+  "not_run": [],
+  "task_ids": [
+    "crud-relational-py-s4242",
+    "job-queue-py-s4242"
+  ],
+  "matrix": {
+    "crud-relational-py-s4242": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.19430625,
+        "wall_clock_seconds": 316.32199183799094,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.19430625,
+        "wall_median": 316.32199183799094
+      },
+      "ao-epic-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.18397924,
+        "wall_clock_seconds": 392.7588398329972,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.18397924,
+        "wall_median": 392.7588398329972
+      }
+    },
+    "job-queue-py-s4242": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.03484749,
+        "wall_clock_seconds": 136.30969597498188,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.03484749,
+        "wall_median": 136.30969597498188
+      },
+      "ao-epic-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.06143061,
+        "wall_clock_seconds": 239.35195176198613,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.06143061,
+        "wall_median": 239.35195176198613
+      }
+    }
+  },
+  "per_subject": {
+    "claude-haiku": {
+      "solved": 2,
+      "total": 2,
+      "solve_rate": 1.0,
+      "mean_score": 1.0,
+      "total_cost_usd": 0.22915374000000002,
+      "cost_available": true,
+      "cost_per_solved": 0.11457687000000001,
+      "total_wall_clock_seconds": 452.6316878129728,
+      "total_input_tokens": 82,
+      "total_output_tokens": 98670,
+      "total_cache_creation_input_tokens": 177355,
+      "total_cache_read_input_tokens": 3033010,
+      "infra_errors": 0,
+      "attempted": 2,
+      "solve_rate_attempted": 1.0,
+      "mean_score_attempted": 1.0
+    },
+    "ao-epic-haiku": {
+      "solved": 2,
+      "total": 2,
+      "solve_rate": 1.0,
+      "mean_score": 1.0,
+      "total_cost_usd": 0.24540984999999998,
+      "cost_available": true,
+      "cost_per_solved": 0.12270492499999999,
+      "total_wall_clock_seconds": 632.1107915949833,
+      "total_input_tokens": 104,
+      "total_output_tokens": 141354,
+      "total_cache_creation_input_tokens": 263668,
+      "total_cache_read_input_tokens": 3293001,
+      "infra_errors": 0,
+      "attempted": 2,
+      "solve_rate_attempted": 1.0,
+      "mean_score_attempted": 1.0
+    }
+  },
+  "parity_fingerprint": "06aaf5ad1df7f6fc7534259a337e4fec4a9bc9785aea42e8079b2742e8dcec16",
+  "parity_mixed": false,
+  "parity_by_subject": {
+    "claude-haiku": "06aaf5ad1df7f6fc7534259a337e4fec4a9bc9785aea42e8079b2742e8dcec16",
+    "ao-epic-haiku": "06aaf5ad1df7f6fc7534259a337e4fec4a9bc9785aea42e8079b2742e8dcec16"
+  },
+  "repeats_per_subject": {
+    "claude-haiku": 1,
+    "ao-epic-haiku": 1
+  },
+  "subject_stats": {
+    "claude-haiku": {
+      "repeats": 1,
+      "task_runs": 2,
+      "attempted": 2,
+      "infra_errors": 0,
+      "infra_share": 0.0,
+      "tasks_attempted": 2,
+      "solve_rate_attempted": 1.0,
+      "score_mean_attempted": 1.0,
+      "cost_per_score_point": 0.11457687000000001,
+      "cost_median": 0.11457687000000001,
+      "wall_median": 226.3158439064864
+    },
+    "ao-epic-haiku": {
+      "repeats": 1,
+      "task_runs": 2,
+      "attempted": 2,
+      "infra_errors": 0,
+      "infra_share": 0.0,
+      "tasks_attempted": 2,
+      "solve_rate_attempted": 1.0,
+      "score_mean_attempted": 1.0,
+      "cost_per_score_point": 0.12270492499999999,
+      "cost_median": 0.12270492499999999,
+      "wall_median": 316.05539579749166
+    }
+  },
+  "per_family": {
+    "crud-relational": {
+      "claude-haiku": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 1
+      },
+      "ao-epic-haiku": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 1
+      }
+    },
+    "job-queue": {
+      "claude-haiku": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 1
+      },
+      "ao-epic-haiku": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 1
+      }
+    }
+  },
+  "per_language": {
+    "python": {
+      "claude-haiku": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 2
+      },
+      "ao-epic-haiku": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 2
+      }
+    }
+  },
+  "infra": {
+    "claude-haiku": {
+      "count": 0,
+      "task_ids": [],
+      "suspect_task_ids": []
+    },
+    "ao-epic-haiku": {
+      "count": 0,
+      "task_ids": [],
+      "suspect_task_ids": []
+    }
+  },
+  "pairwise": [
+    {
+      "a": "claude-haiku",
+      "b": "ao-epic-haiku",
+      "metric": "score",
+      "mean_diff": 0.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": 1.0,
+      "n_tasks": 2
+    }
+  ],
+  "unreliable_subjects": []
+}

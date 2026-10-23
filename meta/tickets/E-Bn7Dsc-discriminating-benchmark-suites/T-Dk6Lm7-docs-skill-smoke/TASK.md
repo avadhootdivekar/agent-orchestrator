@@ -2,7 +2,7 @@
 
 - Epic: `E-Bn7Dsc-discriminating-benchmark-suites`
 - Title: Docs/README reconcile, bench skill, memories, real haiku smoke
-- Status: Todo
+- Status: Done
 - Design: `docs-md/benchmark-discriminating-suites-hld.md` (§8 maps each piece), `docs-md/bench-probe-dsl.md`
 
 ## Acceptance
