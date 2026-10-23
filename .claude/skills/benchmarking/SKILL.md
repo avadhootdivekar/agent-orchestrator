@@ -31,6 +31,9 @@ repo checkout with `uv run ao-bench …` — never the global `ao`.
 
 ## Common commands
 ```bash
+make bench-images          # build sandbox images for gen-services-mini (docker)
+make bench-gen-smoke       # no-LLM proof: hidden reference graded by the blackbox grader in docker (must be 2/2)
+AO_BENCH_CONFIRM=1 make bench-gen-haiku   # real haiku campaign, parity bundle, confirm-gated
 uv run ao-bench validate --suite benchmarks/suites/gen-services-mini/suite.json
 uv run ao-bench images --build --suite benchmarks/suites/gen-services-mini/suite.json   # sandbox images
 uv run ao-bench run --suite <suite.json> --subject benchmarks/subjects/claude-haiku.json --cost-budget-usd 3

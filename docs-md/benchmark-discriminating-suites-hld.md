@@ -1,6 +1,6 @@
 # HLD — Discriminating benchmark suites (behavioural-spec + large-codebase tiers)
 
-- Status: **ACCEPTED 2026-10-23** (review decisions folded into §2b, §4.3, §5.5, §8; §9 records the outcomes). Implementation tracked in `meta/tickets/E-Bn7Dsc-discriminating-benchmark-suites/`.
+- Status: **IMPLEMENTED (P1–P3 as-built, 2026-10-23)** — review decisions in §2b/§4.1/§9; as-built deviations and what is still open in §12. Tracked in `meta/tickets/E-Bn7Dsc-discriminating-benchmark-suites/`.
 - Builds on: [`benchmarking-framework-hld.md`](benchmarking-framework-hld.md) (harness, as-built),
   [ADR-0008](adr/ADR-0008-benchmark-harness-approach.md), [ADR-0009](adr/ADR-0009-benchmark-tiers-external-suites-budgets-parallelism.md),
   `benchmarks/README.md`.
@@ -373,3 +373,38 @@ accepted, with §9 answers folded in.
 - Calibrating against today's models bakes today's difficulty in; the band check per campaign is what keeps the
   suite from silently saturating next year.
 - `api_seconds` depends on what the subject CLI exposes; may be null for bare `claude -p`.
+
+## 12. As-built notes (2026-10-23) — deviations from the design above
+
+Delivered on `ad/enhancements-20oct` by four parallel tracks plus the core seams; bench suite 1144 tests
+(21 opt-in skips), docker tier 7/7, network tier 10/10, mypy clean. **Integration evidence:** `gen-services-mini`
+(crud-relational http + job-queue jsonl, python) graded end-to-end in Docker with the hidden reference copied in
+as the artefact: 2/2 solved, score 1.0, crud 21 core / 4 trap / 5 perf checks, job-queue 11 / 4 / 6,
+`ref_ratio_p95` 0.39 / 0.82 (reference vs itself), derived image `ao-bench-python-<hash>` with `montydb`.
+
+| Area | Design said | As built | Why |
+|---|---|---|---|
+| Infra status | new `infra_error` status | `subject_status="error"` IS the infra status; `Aggregate.infra_errors/attempted/*_attempted` added; `total`/`solve_rate` keep old semantics | every committed `run.json` and status-based test keeps its meaning |
+| Grader config | typed per-grader fields | `GraderConfig` is `extra="allow"` (mirrors `source`); each grader validates its own keys | no spec.py edit per new grader |
+| Suite `stack` → grader | runner passes it | the generator embeds a copy at `grader.sandbox.stack` | graders only see `GraderConfig` |
+| Parity `CLAUDE.md` | into the repo | into `<ws>/CLAUDE.md` (parent of `repo/`); `.claude/` into the repo + `.git/info/exclude` | no diff pollution for Tier-2 checkouts; both CLIs read ancestor CLAUDE.md |
+| Docker http artefact | `docker run -d` | foreground `docker run --rm` via Popen, plus `--user`, `--cap-drop ALL`, `no-new-privileges`, `--memory-swap` | a container that crashed at boot lost its logs with `-d` (8/10 trials) |
+| Templating | strings | a `{{var}}` that is the whole string keeps its JSON type; in perf `mix`, `{{i}}` is a seeded index in [0, N) and `{{N}}` the size | probes need typed ids and addressable perf records |
+| Perf scoring | fraction of checks | one check per `expected_alpha` class + `ref_ratio` (only same-language) + `timeout`; weights renormalise over non-empty groups | `ref_ratio` across languages is informational |
+| crud ids | server-assigned | optional client-supplied `id` (1–64 `[A-Za-z0-9_-]`, 409 on reuse) | perf `get` must address `perf-{{i}}` deterministically |
+| Perf sizes | 3 fixed sizes | by `difficulty.scale`: [100,500] / [100,1000] / [100,10000] / [100,10000,100000] | keep the mini suite fast |
+| Tier-2 history | repo at `base_commit` | both providers replace `.git` with ONE parentless snapshot commit; collateral measured against `baseline_commit` | `git diff/stash/log --all` would expose or undo the injected bug / reach the PR merge |
+| Tier-2 hidden tests | copied into `tasks/<id>/hidden/` | also `hidden_from_repo` (stash existing upstream tests out of the checkout, restore at grade) | avoids committing copies of upstream tests |
+| pr-mined `base_commit` | PR `base.sha` | merge commit's first parent (`pr_base_sha` kept) | matches the tree the PR was merged onto |
+| Comparison | extend 1.0 | `comparison.json` schema 2.0 (1.0 still loads): `parity_*`, `repeats_per_subject`, `subject_stats`, `infra`, `per_family`, `per_language`, `pairwise`, `unreliable_subjects`; cells gain `score_mean/score_sd/n/solve_rate/cost_median/wall_median`; `solved` under repeats = strict majority of attempted repeats | |
+| Staged repeats | "tasks where subjects disagree" | disagree ∪ own-repeat variance ∪ no attempted sample (infra retry); stop when all pairwise CIs exclude 0, max repeats, cap spent, < 2 subjects, or no candidates | |
+
+**Still open (next epic tasks):** the six remaining Tier-1 families (§4.1); TypeScript/Go derived images built and
+run (Dockerfiles only `--check`ed; process fallback has no pre-installed deps for them); `ao-bench gen` does not yet
+run the generation-time "reference passes its probes" check (the structural validator runs; the full check is the
+`bench-gen-smoke` make target); `api_seconds`/`agent_seconds_sum` (§5.3) have no record seam yet; Tier-2 scoring
+gives a do-nothing run 0.3 on inject tasks (p2p passes) — `solved` is exact, treat `score` as secondary there;
+agent-modified `conftest.py`/pytest config is not reset before Tier-2 grading; `calibrate --write` re-indents a
+hand-compacted suite.json once; `.bench-solution/` is still readable inside `dev-core`/`dev-medium` fixtures
+(pre-existing). Real-LLM calibration of the perf thresholds (§9 Q6) has not been run.
+
