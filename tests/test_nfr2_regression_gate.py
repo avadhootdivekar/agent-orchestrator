@@ -144,6 +144,10 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
     # prompt-derived run slug being capped at 60 chars (previously a 255-byte filename overflow
     # -> HTTP 500 on `POST /api/templates/<name>/instances`). No existing test changed.
     "tests/ui/test_templates_api.py": "slug-length regression test appended; existing tests unchanged",
+    # Contract change, deliberate (E-Bn7Dsc T-St4Gh5): comparison "Winners" now rank on
+    # attempted-based rates and add a "Highest mean score" line; two winner-line assertions
+    # updated to the new rendering. Per-task numbers and every other assertion are unchanged.
+    "tests/bench/test_results.py": "E-Bn7Dsc: winners section adds mean-score line / attempted rates",
     # Deliberate model-pin refresh (2026-10-15): benchmark subject configs moved to the latest
     # ids (haiku-5-5 / sonnet-5-5 / opus-5-5); these tests assert the committed pin literals.
     "tests/bench/test_ao_epic_plus_subject.py": "model-pin refresh: committed subject ids only",
