@@ -48,6 +48,12 @@ BENCH_LARGE_SUBJECTS ?= benchmarks/subjects/claude-sonnet.json benchmarks/subjec
 # No xlarge suite is committed (EPIC: xlarge is defined-only, disk-infeasible) -- this
 # path exists solely to exercise the --enable-xlarge override plumbing end to end.
 BENCH_XLARGE_SUITE ?= benchmarks/suites/xlarge/suite.json
+# E-Bn7Dsc discriminating suites: generated Tier-1 tasks graded by the blackbox grader in docker.
+BENCH_GEN_SUITE ?= benchmarks/suites/gen-services-mini/suite.json
+BENCH_GEN_SUITE_ID ?= gen-services-mini
+BENCH_FAKE_REFERENCE_SUBJECT_PATH ?= benchmarks/subjects/fake-copy-reference.json
+BENCH_GEN_SUBJECTS ?= benchmarks/subjects/claude-haiku.json benchmarks/subjects/ao-epic-haiku.json
+BENCH_GEN_REPEATS ?= 1
 AO_BENCH_CONFIRM ?=
 FORCE_XLARGE ?=
 
@@ -177,6 +183,27 @@ bench-large:
 # infeasible on ~37GB of disk here) -- refuses unconditionally unless FORCE_XLARGE=1,
 # which only demonstrates the --enable-xlarge override plumbing (no xlarge suite is
 # committed, so the underlying `ao-bench campaign` call will still fail to load one).
+# --- E-Bn7Dsc discriminating suites ------------------------------------------------------
+# Sandbox images for a generated suite (base pulls + derived images with the suite's `stack` deps).
+bench-images:
+	uv run ao-bench images --build --suite $(BENCH_GEN_SUITE)
+
+# No-LLM end-to-end proof of the Tier-1 path: the hidden reference implementation is copied in as
+# the "agent's" artefact (FakeSubject copy-reference) and graded by the blackbox grader in docker;
+# every task must come out solved. Needs a docker daemon; results go to a scratch dir, never committed.
+bench-gen-smoke:
+	uv run ao-bench run --suite $(BENCH_GEN_SUITE) --subject $(BENCH_FAKE_REFERENCE_SUBJECT_PATH) --out-dir playground/.tmp/bench-results --force
+
+# Real-LLM Tier-1 campaign at haiku (cheap): bare claude vs ao-epic under the suite's parity bundle,
+# staged repeats. Spends real money -> confirm gate like bench-medium.
+bench-gen-haiku:
+	@echo "=== bench-gen-haiku: $(BENCH_GEN_SUITE_ID) campaign x $(words $(BENCH_GEN_SUBJECTS)) subjects, repeats=$(BENCH_GEN_REPEATS) ==="
+	@if [ "$(AO_BENCH_CONFIRM)" != "1" ]; then \
+		echo "Refusing to launch: this spends real money. Set AO_BENCH_CONFIRM=1 to actually run."; \
+		exit 1; \
+	fi
+	uv run ao-bench campaign --suite $(BENCH_GEN_SUITE) $(foreach s,$(BENCH_GEN_SUBJECTS),--subject $(s)) --repeats $(BENCH_GEN_REPEATS) --out-dir $(RESULTS)
+
 bench-xlarge:
 	@echo "xlarge is disabled by design (disk); see benchmarks/tiers.json + ADR-0009"
 	@if [ "$(FORCE_XLARGE)" != "1" ]; then exit 1; fi

@@ -5,7 +5,7 @@
 - Title: Discriminating benchmark suites (behavioural-spec + large-codebase tiers, parity, stats)
 - Owner: Claude (architect/manager) for the owner (avadhoot)
 - Created: 2026-10-23
-- Last Updated: 2026-10-23
+- Last Updated: 2026-10-23 (5/6 tracks merged)
 - Status: In Progress
 
 ## Summary
@@ -30,10 +30,10 @@
 ## Task List
 - [x] `T-Cs1Ab2-core-seams` — spec/schema extensions, grading_dir, parity module + bundle, infra-aware aggregate,
       FakeSubject copy-reference, CLI stubs (this commit).
-- [ ] `T-Bx2Cd3-blackbox-sandbox` — sandbox.py (docker/process), blackbox grader, probe DSL evaluator, perf/α/ref ratio, `ao-bench images`.
-- [ ] `T-Gn3Ef4-generators` — bench/gen: base, traps, wordlists, skeletons (py/ts/go), crud-relational + job-queue, generated provider, `ao-bench gen`, `gen-services-mini` suite.
-- [ ] `T-St4Gh5-stats-campaign` — stats.py, comparison parity check + repeats + CIs + family/infra tables, campaign staged repeats, `ao-bench calibrate`.
-- [ ] `T-T2-5Ij6-tier2-providers` — repo_mutation + pr_mined providers, pytest_targeted grader, import-prs, recipes, dev-medium `.grading/` migration.
+- [x] `T-Bx2Cd3-blackbox-sandbox` — sandbox.py (docker/process), blackbox grader, probe DSL evaluator, perf/α/ref ratio, `ao-bench images`.
+- [x] `T-Gn3Ef4-generators` — bench/gen: base, traps, wordlists, skeletons (py/ts/go), crud-relational + job-queue, generated provider, `ao-bench gen`, `gen-services-mini` suite.
+- [x] `T-St4Gh5-stats-campaign` — stats.py, comparison parity check + repeats + CIs + family/infra tables, campaign staged repeats, `ao-bench calibrate`.
+- [x] `T-T2-5Ij6-tier2-providers` — repo_mutation + pr_mined providers, pytest_targeted grader, import-prs, recipes, dev-medium `.grading/` migration.
 - [ ] `T-Dk6Lm7-docs-skill-smoke` — README/HLD reconcile, bench skill, memories, real haiku smoke on gen-services-mini.
 
 ## Risks and Dependencies

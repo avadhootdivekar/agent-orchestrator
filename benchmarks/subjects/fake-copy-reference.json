@@ -1,0 +1,7 @@
+{
+  "version": "1.0",
+  "id": "fake-copy-reference",
+  "type": "fake",
+  "scripted_effect": "copy-reference",
+  "fake_cost": 0.0
+}

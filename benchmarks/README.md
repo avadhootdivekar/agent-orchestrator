@@ -446,6 +446,68 @@ scoring (the provider honours them when present).
 `pallets/click`, `python-attrs/attrs`, `Textualize/rich`, each under 5 s of targeted pytest and network-verified
 (unsolved with the mutation, solved with the pristine files; see each recipe's `verified`).
 
+## Discriminating suites (E-Bn7Dsc): parity, generated tasks, repeats
+
+Design: [`../docs-md/benchmark-discriminating-suites-hld.md`](../docs-md/benchmark-discriminating-suites-hld.md);
+probe contract: [`../docs-md/bench-probe-dsl.md`](../docs-md/bench-probe-dsl.md); generator internals:
+[`../docs-md/bench-generators.md`](../docs-md/bench-generators.md). Motivation in one line: the committed
+2026-07-22 results saturate (every subject 6/6 on `dev-core` and `dev-medium`, 9/10 on `swe-verified-mini` at
+n=10/r=1), so they rank subjects by price, not capability.
+
+### Parity bundle (hard rule)
+Every subject in a comparison runs under ONE bundle — `benchmarks/parity/default/` (`parity.json`, a shared
+`CLAUDE.md`, a `claude/` tree of skills/settings, env knobs, `max_turns`, `permission_mode`). A suite names it
+with `"parity": "../../parity/default"`; `--parity <dir>` overrides it for *all* subjects of a run/campaign. The
+bundle's content fingerprint is recorded in `run.json` (`parity_fingerprint`) and in the run config fingerprint;
+`build_comparison` / `ao-bench report` refuse to compare runs whose fingerprints differ (`--allow-mixed` stamps
+the report `parity_mixed`). Mechanics: `CLAUDE.md` lands at `<ws>/CLAUDE.md` (parent of `repo/`, read by both
+`claude -p` and every `ao` agent, never in the repo diff), `claude/` lands at `<repo>/.claude/` and is added to
+`.git/info/exclude` for git checkouts. Keep subject `prompt_template`s thin — instructions belong in the bundle.
+
+### Hidden assets: `grading_dir`
+Probes, reference implementations and held-out tests live in a grader-owned dir
+(`<bench ws root>/<run>/_grading/<subject>/<task>/`), a sibling of the agent-visible `ws/` — never inside it.
+A task's `grader.assets` (suite-relative dir) is copied there; `command`/`pytest` graders may reference it as
+`{grading_dir}` (and the repo as `{repo_dir}`). `dev-medium` was migrated to this layout on 2026-10-23.
+
+### Tier 1 — generated behavioural-spec tasks (`generated` provider + `blackbox` grader)
+```bash
+uv run ao-bench gen --out benchmarks/suites/gen-services --family crud-relational --family job-queue \
+    --count 2 --languages python,typescript,go --seed 20261023 --parity ../../parity/default
+uv run ao-bench images --build --suite benchmarks/suites/gen-services/suite.json   # per-language sandbox images
+uv run ao-bench run --suite benchmarks/suites/gen-services-mini/suite.json --subject benchmarks/subjects/claude-haiku.json
+```
+- A task is `(family, seed, difficulty{entities,traps,concurrency,scale}, language)`; the suite stores only
+  those parameters — SPEC.md + skeleton are regenerated into `repo/`, and `instance.json` + `probes.json` +
+  the stdlib Python `reference/` into `grading_dir`, at materialize time. Nothing hidden is ever committed.
+- The agent must make `./run.sh` serve the spec (`http`: bind `$HOST:$PORT`, `/healthz`; `jsonl`: stdin→stdout;
+  `cli`: argv) using only the suite `stack` allow-list (default: stdlib + `sqlite3`, `montydb` for Python;
+  `node:sqlite`; `modernc.org/sqlite`). No external services.
+- Grading is behaviour-only, inside Docker (`python:3.12-slim` / `node:22-alpine` / `golang:1.23-alpine`, deps
+  pre-installed into a derived image, cpu/mem/pid limits, no network except the published port; `process`
+  fallback is tagged in `grader_detail.sandbox`). Score = 0.5·core + 0.35·trap + 0.15·perf; `solved` = all core
+  probes pass and score ≥ 0.8. Perf fits a scaling exponent α per op class over N ∈ sizes and compares p95 to
+  the hidden reference (`ref_ratio`, enforced only for same-language artefacts).
+- Families today: `crud-relational` (http) and `job-queue` (jsonl); six more are specified in the HLD §4.1.
+
+### Repeats, paired statistics, calibration
+```bash
+uv run ao-bench campaign --suite S --subject A --subject B --repeats 3            # staged: repeat only undecided tasks
+uv run ao-bench run --suite S --subject A --repeat 2                              # one explicit repeat (dir <id>-r2)
+uv run ao-bench report --results-root benchmarks/results --suite <suite-id>       # groups -r<n> dirs per subject
+uv run ao-bench calibrate --suite S --subject haiku --subject opus --repeats 2 --band 0.2,0.8 --write
+```
+`comparison.json` schema 2.0 adds `parity_*`, `repeats_per_subject`, `subject_stats` (attempted-based rates —
+`subject_status="error"` runs are infra, excluded), `infra` (counts + "suspect" unsolved runs under $0.15 / 180 s),
+`per_family`, `per_language`, `pairwise` (paired bootstrap 95 % CI + Wilcoxon p on per-task score diffs) and
+`unreliable_subjects` (> 10 % infra). Staged campaigns re-run only tasks where subjects disagree, a subject's own
+repeats vary, or a subject has no attempted sample; `campaign.json` records the `stage_log`.
+
+### Opt-in test tiers
+`AO_E2E_DOCKER=1 uv run pytest -m docker tests/bench` (sandbox + blackbox in a real container),
+`AO_E2E_NETWORK=1 uv run pytest -m network tests/bench` (Tier-2 recipes against real clones). Default
+`pytest tests/bench` is hermetic.
+
 ## Results layout + committed-results policy
 
 ```
