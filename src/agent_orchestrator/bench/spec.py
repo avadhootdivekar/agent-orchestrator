@@ -91,10 +91,10 @@ KNOWN_WORKSPACE_PROVIDER_TYPES: frozenset[str] = frozenset(
 )
 # Languages a generated (Tier 1) task may target (benchmark-discriminating-suites-hld.md §4.1
 # "Stack"). Closed list so a typo in a suite fails at load time, not at grade time.
-# Generated tasks use python/typescript/go; imported exercises add rust/cpp/javascript (T-Pf4Mix).
-KNOWN_LANGUAGES: frozenset[str] = frozenset(
-    {"python", "typescript", "go", "rust", "cpp", "javascript"}
-)
+# Languages a generated (Tier 1) family can target (skeletons, run contracts, grading images).
+GENERATED_LANGUAGES: frozenset[str] = frozenset({"python", "typescript", "go"})
+# Any task's `language`: generated ones plus the imported Exercism tracks (T-Pf4Mix).
+KNOWN_LANGUAGES: frozenset[str] = GENERATED_LANGUAGES | frozenset({"rust", "cpp", "javascript"})
 
 
 # ---------------------------------------------------------------------------

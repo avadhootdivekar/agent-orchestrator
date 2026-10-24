@@ -10,10 +10,16 @@ files and run-contract prose), ``dsl`` (probe builders), ``validate`` (probes.js
 from __future__ import annotations
 
 from . import (
+    bug_hunt as _bug_hunt,  # noqa: F401 -- registers "bug-hunt" (T-Pf4Mix)
+)
+from . import (
     crud_relational as _crud_relational,  # noqa: F401 -- registers "crud-relational"
 )
 from . import (
     job_queue as _job_queue,  # noqa: F401 -- registers "job-queue"
+)
+from . import (
+    order_book as _order_book,  # noqa: F401 -- registers "order-book" (T-Pf4Mix)
 )
 from .base import FAMILY_REGISTRY, Difficulty, Family, Instance, register_family
 

@@ -19,7 +19,7 @@ from typing import Any
 import typer
 
 from ..errors import BenchError
-from ..spec import KNOWN_LANGUAGES, KNOWN_TIERS
+from ..spec import GENERATED_LANGUAGES, KNOWN_TIERS
 from .base import DIFFICULTY_AXES, FAMILY_REGISTRY, Difficulty, Family, dump_json
 from .materialize import generate_instance
 from .skeleton import DEFAULT_DEPS, allow_from_deps
@@ -60,8 +60,32 @@ _INSTRUCTION_TAIL = {
 }
 
 
-def instruction_text(contract: str) -> str:
-    return _INSTRUCTION_COMMON + _INSTRUCTION_TAIL[contract]
+_INSTRUCTION_DEBUG = """\
+# Task: find and fix the bugs in the service described in `SPEC.md`
+
+This directory already contains a complete implementation of `SPEC.md` (see `run.sh` and the
+`app/` package), but it has several bugs: in places it does not behave as `SPEC.md` requires.
+
+- `SPEC.md` is the only specification. Every statement in it is a requirement and is checked:
+  the normal cases, error responses, ordering and behaviour as the amount of data grows.
+- Find and fix every deviation from `SPEC.md`. Fix the existing code rather than rewriting it
+  from scratch; keep `./run.sh` starting the service and keep the run contract.
+- Use only the dependencies allowed in `SPEC.md`. No network access or external service will be
+  available when the service is run.
+- Test your work before you finish: start the service through `./run.sh` and exercise it.
+- Do not modify `SPEC.md`. There is nothing to commit or hand in; leave the fixed project in this
+  directory.
+"""
+
+
+def instruction_text(contract: str, kind: str = "build") -> str:
+    head = _INSTRUCTION_DEBUG if kind == "debug" else _INSTRUCTION_COMMON
+    return head + _INSTRUCTION_TAIL[contract]
+
+
+def instruction_relpath(contract: str, kind: str = "build") -> str:
+    suffix = contract if kind == "build" else f"{kind}-{contract}"
+    return f"{INSTRUCTION_DIR}/instruction-{suffix}.md"
 
 
 def parse_difficulty(text: str) -> Difficulty:
@@ -86,9 +110,9 @@ def _parse_languages(text: str) -> list[str]:
     langs = [x.strip() for x in text.split(",") if x.strip()]
     if not langs:
         raise ValueError("--languages must name at least one language")
-    unknown = sorted(set(langs) - KNOWN_LANGUAGES)
+    unknown = sorted(set(langs) - GENERATED_LANGUAGES)
     if unknown:
-        raise ValueError(f"unknown language(s) {unknown}; known: {sorted(KNOWN_LANGUAGES)}")
+        raise ValueError(f"unknown language(s) {unknown}; known: {sorted(GENERATED_LANGUAGES)}")
     return langs
 
 
@@ -110,7 +134,7 @@ def build_suite(
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Return (suite.json body, {relpath: instruction text}).  Pure; validates every instance."""
     tasks: list[dict[str, Any]] = []
-    contracts: set[str] = set()
+    contracts: set[tuple[str, str]] = set()
     # The sandbox reads `stack.<language>.deps` (third-party packages it installs into the image);
     # the runner does not hand the suite `stack` to graders, so every task's grader carries a copy.
     stack = {
@@ -120,7 +144,8 @@ def build_suite(
     k = 0
     for family in families:
         contract = FAMILY_REGISTRY[family].contract
-        contracts.add(contract)
+        kind = FAMILY_REGISTRY[family].instruction_kind
+        contracts.add((contract, kind))
         for i in range(count):
             language = languages[k % len(languages)]
             k += 1
@@ -133,7 +158,7 @@ def build_suite(
                 {
                     "id": task_id(family, language, seed),
                     "category": "feature",
-                    "instruction": f"{INSTRUCTION_DIR}/instruction-{contract}.md",
+                    "instruction": instruction_relpath(contract, kind),
                     "source": {
                         "type": "generated",
                         "family": family,
@@ -168,9 +193,7 @@ def build_suite(
         "stack": stack,
         "tasks": tasks,
     }
-    instructions = {
-        f"{INSTRUCTION_DIR}/instruction-{c}.md": instruction_text(c) for c in sorted(contracts)
-    }
+    instructions = {instruction_relpath(c, k): instruction_text(c, k) for c, k in sorted(contracts)}
     return suite, instructions
 
 
@@ -227,7 +250,9 @@ def _write(path: Path, text: str) -> None:
 def gen_command(
     out: str = typer.Option(..., "--out", help="Suite dir to (re)generate into."),
     family: list[str] = typer.Option(
-        [], "--family", help="Family to include (repeatable). Default: every registered family."
+        [],
+        "--family",
+        help="Family to include (repeatable). Default: crud-relational and job-queue.",
     ),
     count: int = typer.Option(2, "--count", min=1, help="Instances per family."),
     languages: str = typer.Option(
@@ -251,7 +276,8 @@ def gen_command(
 ) -> None:
     """Materialise a generated suite (suite.json + instructions + README; nothing hidden)."""
     try:
-        families = sorted(set(family)) if family else sorted(FAMILY_REGISTRY)
+        default = sorted(n for n, cls in FAMILY_REGISTRY.items() if cls.in_default_set)
+        families = sorted(set(family)) if family else default
         unknown = sorted(set(families) - set(FAMILY_REGISTRY))
         if unknown:
             raise ValueError(f"unknown family {unknown}; known: {sorted(FAMILY_REGISTRY)}")

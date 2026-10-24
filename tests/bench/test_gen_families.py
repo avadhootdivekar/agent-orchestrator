@@ -27,7 +27,7 @@ from agent_orchestrator.bench.gen.dsl import (
 from agent_orchestrator.bench.gen.materialize import generate_instance, write_instance
 from agent_orchestrator.bench.gen.traps import TRAP_COUNT_BY_LEVEL, traps_for_family
 from agent_orchestrator.bench.gen.validate import validate_probes
-from agent_orchestrator.bench.spec import KNOWN_LANGUAGES
+from agent_orchestrator.bench.spec import GENERATED_LANGUAGES
 
 from .dsl_runner import (
     InProcessHttp,
@@ -51,7 +51,7 @@ SWEEP: list[tuple[int, int, int, int, int]] = [
     (5, 0, 3, 3, 1), (6, 1, 2, 3, 3), (7, 2, 0, 1, 2), (8, 3, 1, 2, 0), (9, 2, 3, 1, 1),
     (10, 1, 3, 2, 3), (11, 3, 2, 0, 2),
 ]  # fmt: skip
-LANGUAGES = sorted(KNOWN_LANGUAGES)
+LANGUAGES = sorted(GENERATED_LANGUAGES)
 BANNED = re.compile(r"probe|reference|grading|trap", re.IGNORECASE)
 
 

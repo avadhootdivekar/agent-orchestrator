@@ -28,7 +28,7 @@ from agent_orchestrator.bench.gen.traps import (
     traps_for_family,
 )
 from agent_orchestrator.bench.gen.validate import check_probes, validate_probes
-from agent_orchestrator.bench.spec import KNOWN_LANGUAGES
+from agent_orchestrator.bench.spec import GENERATED_LANGUAGES
 
 REQUIRED_TRAPS = {
     "pagination_stability", "unique_constraint", "cascade_delete", "patch_null_vs_absent",
@@ -132,7 +132,7 @@ class TestRegistry:
 
 
 class TestSkeleton:
-    @pytest.mark.parametrize("language", sorted(KNOWN_LANGUAGES))
+    @pytest.mark.parametrize("language", sorted(GENERATED_LANGUAGES))
     @pytest.mark.parametrize("contract", ["http", "jsonl"])
     def test_files_and_run_sh(self, language: str, contract: str) -> None:
         run_sh_has_bind_note = (
@@ -188,7 +188,7 @@ class TestSkeleton:
         assert third_party("go", ["modernc.org/sqlite"]) == ["modernc.org/sqlite"]
         assert third_party("python", ["sqlite3"]) == []
 
-    @pytest.mark.parametrize("language", sorted(KNOWN_LANGUAGES))
+    @pytest.mark.parametrize("language", sorted(GENERATED_LANGUAGES))
     def test_run_contract_text_per_contract(self, language: str) -> None:
         http = run_contract_text("http", language)
         assert "/healthz" in http and "SIGTERM" in http

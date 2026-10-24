@@ -123,6 +123,12 @@ class Family(ABC):
 
     name: ClassVar[str]
     contract: ClassVar[Contract]
+    # Which task instruction the suite gives: "build" (implement SPEC.md from a skeleton) or
+    # "debug" (the repo already implements SPEC.md, with planted faults to find and fix).
+    instruction_kind: ClassVar[str] = "build"
+    # Part of `ao-bench gen`'s default family set (families added later are opt-in via
+    # `--family`, so the default output -- and committed suites -- stay byte-identical).
+    in_default_set: ClassVar[bool] = True
 
     @abstractmethod
     def generate(

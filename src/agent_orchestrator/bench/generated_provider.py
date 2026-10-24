@@ -23,7 +23,7 @@ from .gen.base import Difficulty
 from .gen.materialize import generate_instance, write_instance
 from .gen.skeleton import allow_from_deps
 from .registries import register_workspace_provider
-from .spec import KNOWN_LANGUAGES, BenchTask
+from .spec import GENERATED_LANGUAGES, BenchTask
 from .workspace import WorkspaceProvider
 
 GENERATED_PROVIDER_TYPE = "generated"
@@ -45,9 +45,9 @@ def _parse_source(task: BenchTask) -> tuple[str, int, Difficulty, str, list[str]
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise SubjectError(f"Task {task.id!r}: source.seed must be an integer, got {seed!r}")
     language = src.get("language")
-    if language not in KNOWN_LANGUAGES:
+    if language not in GENERATED_LANGUAGES:
         raise SubjectError(
-            f"Task {task.id!r}: source.language {language!r} not in {sorted(KNOWN_LANGUAGES)}"
+            f"Task {task.id!r}: source.language {language!r} not in {sorted(GENERATED_LANGUAGES)}"
         )
     raw_diff = src.get("difficulty", {})
     if not isinstance(raw_diff, dict):

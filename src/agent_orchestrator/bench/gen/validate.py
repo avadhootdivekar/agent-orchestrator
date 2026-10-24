@@ -37,7 +37,7 @@ DIRECTIVES = frozenset(
         "$sorted_by", "$set_equals", "$each", "$contains", "$var", "$not",
     }
 )  # fmt: skip
-_TEMPLATE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_TEMPLATE = re.compile(r"\{\{\s*(?:int:\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 _JSONPATH_LITE = re.compile(r"^\$(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])*$")
 _WEIGHT_EPS = 1e-9
 

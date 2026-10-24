@@ -99,6 +99,9 @@ _GIT_CALL_ALLOWED: dict[Path, str] = {
     # throwaway repo copy into a one-commit git repo with a LOCAL bare origin (workflows like
     # overseer-runner branch off main). Bench sandbox only, never the user's repos or the engine.
     _SRC_ROOT / "bench" / "subjects.py": "E-Bn7Dsc bench subject init_git (local bare origin)",
+    # T-Pf4Mix: the exercism provider reads ONE exercise dir of the pinned public polyglot repo
+    # from the shared bench clone cache (`git ls-tree` / `git archive` / `git show`), read-only.
+    _SRC_ROOT / "bench" / "exercism.py": "T-Pf4Mix exercism: read-only cache archive",
     # E-YAAGhk (overseer-runner template), T-C6uQJW: the template's own governance tool
     # computes `repo_heads`/git-derived "tracked paths" for its content_oscillation
     # detector (HLD S8.3) via bounded `git rev-parse HEAD` / `git diff --name-only` /

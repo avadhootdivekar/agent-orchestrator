@@ -155,10 +155,13 @@ class TestGenCli:
         }  # fmt: skip
         assert not (out / "tasks/_generated/instruction-http.md").exists()
 
-    def test_default_families_are_all_registered_ones(self, tmp_path: Path) -> None:
+    def test_default_families_are_the_default_set(self, tmp_path: Path) -> None:
+        # T-Pf4Mix: families added later (order-book, bug-hunt) are opt-in via --family.
         out = tmp_path / "all"
         assert run_gen(out, "--count", "1").exit_code == 0
-        assert {t.family for t in load_suite(out / "suite.json").tasks} == set(FAMILY_REGISTRY)
+        default = {n for n, cls in FAMILY_REGISTRY.items() if cls.in_default_set}
+        assert default == {"crud-relational", "job-queue"}
+        assert {t.family for t in load_suite(out / "suite.json").tasks} == default
 
     @pytest.mark.parametrize(
         "args",

@@ -25,6 +25,7 @@ Interpretations of points the DSL leaves open (all documented in the ticket STAT
 - `{{name}}` that is the *whole* string and names a saved variable keeps the variable's
   JSON type (so a saved integer id can be sent as an integer); embedded in a longer string
   it is stringified. `{{i}}`, `{{rand}}`, `{{now_iso}}` always render to strings.
+- `{{int:name}}` as the whole string renders the variable (or `i`) as an integer.
 - In the perf mix, `{{i}}` is a seeded pseudo-random index in `[0, N)` (so
   `GET /things/{{i}}` hits existing keys); `{{N}}` is the current size.
 - Latencies of mix ops whose `expect` failed are excluded from percentiles (a fast error
@@ -532,6 +533,8 @@ def json_path_get(doc: Any, path: str) -> Any:
 # ===========================================================================
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+# `{{int:i}}` -- a whole-string reference rendered as an integer (e.g. a numeric price).
+_INT_TEMPLATE_RE = re.compile(r"\{\{\s*int:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _STEP_KEYS = frozenset({"op", "expect", "save", "repeat", "sleep_ms", "description"})
@@ -566,7 +569,7 @@ _MIX_KEYS = frozenset({"weight", "name", "class", "step"})
 def template_refs(obj: Any) -> set[str]:
     """Every `{{name}}` referenced by a string value anywhere inside `obj`."""
     if isinstance(obj, str):
-        return set(_TEMPLATE_RE.findall(obj))
+        return set(_TEMPLATE_RE.findall(obj)) | set(_INT_TEMPLATE_RE.findall(obj))
     if isinstance(obj, dict):
         return set().union(*(template_refs(v) for v in obj.values())) if obj else set()
     if isinstance(obj, list):
@@ -891,6 +894,16 @@ class Templater:
         return None
 
     def _render_str(self, s: str, variables: Mapping[str, Any], i: int) -> Any:
+        typed = _INT_TEMPLATE_RE.fullmatch(s)
+        if typed:  # `{{int:name}}`: the whole string becomes an integer (T-Pf4Mix)
+            name = typed.group(1)
+            raw = self._builtin(name, i) if name in BUILTIN_VARS else variables.get(name)
+            if raw is None:
+                raise GraderError(f"unknown template variable {{{{int:{name}}}}}")
+            try:
+                return int(raw)
+            except (TypeError, ValueError) as exc:
+                raise GraderError(f"{{{{int:{name}}}}} is not an integer: {raw!r}") from exc
         whole = _TEMPLATE_RE.fullmatch(s)
         if whole and whole.group(1) in variables and whole.group(1) not in BUILTIN_VARS:
             return variables[whole.group(1)]  # typed substitution

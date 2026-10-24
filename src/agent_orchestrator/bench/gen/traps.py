@@ -25,6 +25,8 @@ class Trap:
 
 _CRUD = "crud-relational"
 _QUEUE = "job-queue"
+_BOOK = "order-book"
+_BUG = "bug-hunt"  # reuses the order-book instance, traps and probes
 
 TRAP_CATALOGUE: dict[str, Trap] = {
     t.key: t
@@ -65,7 +67,7 @@ TRAP_CATALOGUE: dict[str, Trap] = {
             "invalid_input_4xx",
             "Strict validation: wrong types (bool-as-int), ranges, enums, unknown fields, bad "
             "limits/cursors must be rejected with the specified error, never coerced or 500.",
-            (_CRUD, _QUEUE),
+            (_CRUD, _QUEUE, _BOOK, _BUG),
         ),
         Trap(
             "sort_tiebreak",
@@ -107,6 +109,59 @@ TRAP_CATALOGUE: dict[str, Trap] = {
             "Enqueue with a live dedupe_key returns the existing job; terminal jobs free the key.",
             (_QUEUE,),
         ),
+        # order-book (T-Pf4Mix): each is a plain requirement in SPEC.md; see gen/order_book.py.
+        Trap(
+            "fifo_within_level", "Same-price resting orders fill first-in-first-out.", (_BOOK, _BUG)
+        ),
+        Trap(
+            "maker_price",
+            "Trades execute at the resting order's price, not the taker's.",
+            (_BOOK, _BUG),
+        ),
+        Trap(
+            "partial_fill_rests",
+            "A partially filled GTC limit rests its remainder at its "
+            "limit, behind earlier orders at that price.",
+            (_BOOK, _BUG),
+        ),
+        Trap("ioc_remainder", "IOC remainders are cancelled, never rested.", (_BOOK, _BUG)),
+        Trap(
+            "fok_atomic",
+            "FOK is all-or-nothing with no side effects; own liquidity does not count.",
+            (_BOOK, _BUG),
+        ),
+        Trap(
+            "market_empty_book",
+            "A market order with no liquidity is cancelled, not rested.",
+            (_BOOK, _BUG),
+        ),
+        Trap(
+            "post_only_cross",
+            "Post-only orders that would trade are rejected, including on replace.",
+            (_BOOK, _BUG),
+        ),
+        Trap(
+            "replace_priority",
+            "A same-price size reduction keeps time priority; any other "
+            "replace loses it and may trade.",
+            (_BOOK, _BUG),
+        ),
+        Trap(
+            "self_trade",
+            "Self-trade prevention policy (cancel resting / cancel incoming).",
+            (_BOOK, _BUG),
+        ),
+        Trap("stop_cascade", "Stops trigger in placement order and can cascade.", (_BOOK, _BUG)),
+        Trap(
+            "price_improvement_refund",
+            "A limit buy filled below its limit gets the difference back.",
+            (_BOOK, _BUG),
+        ),
+        Trap(
+            "cancel_releases_funds",
+            "Cancelling releases exactly the unfilled reservation.",
+            (_BOOK, _BUG),
+        ),  # fmt: skip
     )
 }
 

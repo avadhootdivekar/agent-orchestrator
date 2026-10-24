@@ -23,3 +23,14 @@ the long/complex tasks where `ao` is expected to shine. Design: `docs-md/benchma
 5. Anchor calibration (haiku + opus) for new generated families with disjoint seeds; one portfolio campaign over
    haiku / sonnet / opus / ao-overseer-sonnet; report with per-band tables and the tuning-vs-fitting statement.
 6. Everything committed + pushed as it lands; spend ledger kept; total agent spend <= $300.
+
+## Pre-registration (2026-10-24, before any spend on the new generated families)
+Same rules as T-Cb8Rk2 (anchors haiku + opus only, disjoint seeds, grader frozen, accept when pooled anchor pass
+rate in [0.2, 0.8] or anchor mean scores differ by >= 0.10 with neither > 0.95, max 3 rounds, report saturation
+rather than fit). Every suite passes `make bench-refcheck` (reference 1.0 everywhere, do-nothing solves none) first.
+- `order-book`: start at `entities=3,traps=3,concurrency=2,scale=2`; calibration seeds 7401+, ranking seeds 9611+.
+- `bug-hunt`: start at `entities=3,traps=2` (5 planted faults), `concurrency=2,scale=1`; calibration seeds 7451+,
+  ranking seeds 9651+.
+- `polyglot-mini` (external, fixed sample drawn by seed 20261024 before any agent ran) is not tuned at all.
+- Ranking languages for generated build tasks: python + typescript + go (toolchains on the agent host since
+  `b2dc911`); bug-hunt is Python only.

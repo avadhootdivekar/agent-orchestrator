@@ -76,7 +76,7 @@ captures are not merged, by design).
 }
 ```
 
-Templating: any string value in `op`/`expect` may contain `{{var}}` (saved variable), `{{i}}` (repeat index),
+Templating (`{{int:i}}` / `{{int:var}}` as a whole string renders an integer, e.g. a numeric price): any string value in `op`/`expect` may contain `{{var}}` (saved variable), `{{i}}` (repeat index),
 `{{rand}}` (8 hex chars, fresh per evaluation), `{{now_iso}}`. Unknown variables are a probe-definition error
 (the grader raises `GraderError` — never a silent miss).
 
