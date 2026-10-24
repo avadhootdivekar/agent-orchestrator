@@ -1,5 +1,6 @@
 .PHONY: test test-fast test-playground test-real-llm lint format typecheck validate-sum-of-array \
         bench-validate bench-smoke bench-run bench-report bench-medium bench-large bench-xlarge \
+        bench-refcheck \
         ui ui-install ui-build ui-dev ui-test ui-typecheck test-ui
 
 # Configurable knobs for the real-LLM tier (override on the command line):
@@ -193,6 +194,14 @@ bench-images:
 # every task must come out solved. Needs a docker daemon; results go to a scratch dir, never committed.
 bench-gen-smoke:
 	uv run ao-bench run --suite $(BENCH_GEN_SUITE) --subject $(BENCH_FAKE_REFERENCE_SUBJECT_PATH) --out-dir playground/.tmp/bench-results --force
+
+# Reference self-check for ANY generated suite (T-Cb8Rk2): the hidden reference implementation is
+# copied in as the artefact and graded in docker; must be N/N before spending on agents. A miss
+# is a generator/grader validity bug, never a calibration signal.
+#   make bench-refcheck SUITE=benchmarks/suites/gen-calib-v1/suite.json
+bench-refcheck:
+	@if [ -z "$(SUITE)" ]; then echo "usage: make bench-refcheck SUITE=<suite.json>"; exit 1; fi
+	uv run ao-bench run --suite $(SUITE) --subject $(BENCH_FAKE_REFERENCE_SUBJECT_PATH) --out-dir playground/.tmp/bench-refcheck --force
 
 # Real-LLM Tier-1 campaign at haiku (cheap): bare claude vs ao-epic under the suite's parity bundle,
 # staged repeats. Spends real money -> confirm gate like bench-medium.

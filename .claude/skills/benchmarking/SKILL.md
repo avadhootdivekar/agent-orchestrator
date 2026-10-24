@@ -32,6 +32,13 @@ repo checkout with `uv run ao-bench …` — never the global `ao`.
    (`grep -rn '"seed"' benchmarks/suites`) and record it in the results entry; keep at least one generated family
    unseen while tuning `ao` templates/instructions. Committed suites are for smoke, calibration and anchors.
 
+7. **Reference self-check before any spend.** Every generated suite must grade its hidden reference N/N
+   (`make bench-refcheck SUITE=<suite.json>`). Below N/N is a generator/grader bug (fix it, model-blind);
+   never treat it as difficulty.
+8. **Tune, don't fit.** Difficulty is tuned with the `bench-tune` skill (global vector, anchors only,
+   calibration seeds disjoint from ranking seeds, grader weights/threshold frozen). Campaigns and write-ups follow
+   the `bench-campaign-report` skill.
+
 ## Suites
 | Suite | Tier | What | Grader |
 |---|---|---|---|
@@ -40,6 +47,13 @@ repo checkout with `uv run ao-bench …` — never the global `ao`.
 | `gen-services-mini` / `gen-services` | medium | generated behavioural-spec tasks (crud-relational http, job-queue jsonl, …) in py/ts/go | `blackbox` (Docker sandbox) |
 | `repo-mutant-mini` | large | bug injection / feature excision on pinned public repos | `pytest_targeted` |
 | `swe-verified-mini` | large | 10 pinned SWE-bench Verified instances | swebench (Docker) |
+| `gen-calib-v*` / `gen-rank-*` | medium | calibration / ranking suites from `ao-bench gen` (python; TS/Go need Node>=22/Go on the agent host) | `blackbox` |
+
+## Subjects
+Bare models: `claude-haiku|sonnet|opus.json` (`claude_cli`). `ao` workflows: `ao-epic-*.json` (fixed implement→verify
+DAG) and `ao-overseer-sonnet.json` — the builtin `overseer-runner` template in **template mode** (`template`,
+`template_params`, `prompt_file`, `init_git`: the subject runs `ao new overseer-runner bench --workspace <ws> ...
+--run` inside the task workspace, every agent on Sonnet, per-task budget `run_budget_usd`).
 
 ## Common commands
 ```bash
