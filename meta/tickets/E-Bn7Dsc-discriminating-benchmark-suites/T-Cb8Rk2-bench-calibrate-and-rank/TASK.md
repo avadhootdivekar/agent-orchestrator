@@ -20,7 +20,8 @@ tell subjects apart) or *fitting* (shaping the instrument until it shows a ranki
 Fixed for the whole task — not tuned on results:
 - Grader: `blackbox` defaults (weights core 0.5 / trap 0.35 / perf 0.15, `pass_threshold` 0.8,
   `solved` also needs every core probe). Parity bundle `benchmarks/parity/default` (max_turns 30,
-  bypassPermissions). Subject configs as committed. Suite timeout 3600 s.
+  bypassPermissions, and — amended before any spend — `CLAUDE_CODE_EFFORT_LEVEL=high` so the operator's
+  user-level `effortLevel: xhigh` no longer silently applies to every subject). Subject configs as committed. Suite timeout 3600 s.
 - Language: Python only. The agent's host has Node 18 (no `node:sqlite`) and no Go toolchain, so TS/Go
   tasks would measure working around a missing toolchain, not capability (known limit).
 - Families: `crud-relational` (http) + `job-queue` (jsonl), equal counts.
