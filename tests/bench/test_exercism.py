@@ -108,13 +108,18 @@ def fake_polyglot(tmp_path: Path) -> tuple[str, str]:
     return str(repo), _git(repo, "rev-parse", "HEAD")
 
 
-def _task(repo: str, commit: str, language: str, exercise: str) -> BenchTask:
+def _task(repo: str, commit: str, language: str, exercise: str, **extra: str) -> BenchTask:
     return BenchTask(
         id=f"ex-{language}-{exercise}",
         category="feature",
         instruction="i.md",
         source=Source(
-            type="exercism", repo=repo, commit=commit, language=language, exercise=exercise
+            type="exercism",
+            repo=repo,
+            commit=commit,
+            language=language,
+            exercise=exercise,
+            **extra,
         ),  # fmt: skip
         grader=GraderConfig(type="exercism"),
     )
@@ -147,6 +152,27 @@ def test_go_test_data_files_are_hidden_too(tmp_path: Path, fake_polyglot: tuple[
         _task(repo, commit, "go", "leap"), repo_dir, suite_base_dir=tmp_path, grading_dir=grading
     )
     assert sorted(p.name for p in repo_dir.iterdir()) == ["README.md", "go.mod", "leap.go"]
+    assert sorted(p.name for p in (grading / "hidden").iterdir()) == [
+        "cases_test.go",
+        "leap_test.go",
+    ]
+
+
+def test_visible_tests_mode_shows_the_official_tests(
+    tmp_path: Path, fake_polyglot: tuple[str, str]
+) -> None:
+    repo, commit = fake_polyglot
+    repo_dir, grading = tmp_path / "repo", tmp_path / "g"
+    grading.mkdir()
+    task = _task(repo, commit, "go", "leap", tests="visible")
+    ex.ExercismProvider().prepare(task, repo_dir, suite_base_dir=tmp_path, grading_dir=grading)
+    names = sorted(p.name for p in repo_dir.iterdir())
+    assert names == ["README.md", "cases_test.go", "go.mod", "leap.go", "leap_test.go"]
+    assert (
+        "official tests are in `cases_test.go`, `leap_test.go`"
+        in (repo_dir / "README.md").read_text()
+    )
+    # the grader still owns (and re-copies) its own unmodified tests
     assert sorted(p.name for p in (grading / "hidden").iterdir()) == [
         "cases_test.go",
         "leap_test.go",

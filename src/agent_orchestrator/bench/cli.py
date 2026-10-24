@@ -716,6 +716,18 @@ def toolchains_cmd(
         typer.echo(f"{tc.name:6s} {tc.version:10s} {state:9s} {install_dir(tc)}")
 
 
+@app.command(name="portfolio")
+def portfolio_cmd(
+    run: list[str] = typer.Option(..., "--run", help="Run dir (run.json); repeatable."),
+    subject: list[str] | None = typer.Option(None, "--subject", help="Subject ids, in order."),
+    out: str | None = typer.Option(None, "--out", help="Write the markdown report here."),
+) -> None:
+    """Cross-suite portfolio report: per suite / area / language and item-difficulty bands."""
+    from .portfolio import portfolio_command_impl
+
+    typer.echo(portfolio_command_impl(run, subject or [], out))
+
+
 @app.command(name="list")
 def list_cmd(
     suite: str = typer.Option(..., "--suite", help="Path to a suite.json/.yaml to list."),

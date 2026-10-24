@@ -9,7 +9,10 @@ shared clone cache the Tier-2 providers use.
 Provider (`source.type = "exercism"`): extracts ONE exercise directory at the pinned commit. The
 agent gets the stub + build files + a `README.md` rendered from `.docs/`; the official tests go to
 `grading_dir/hidden/` and the example solution to `grading_dir/reference/` (so `FakeSubject
-copy-reference` must score 1.0 and the untouched stub must not), never into the repo.
+copy-reference` must score 1.0 and the untouched stub must not). `source.tests`: `visible`
+(Exercism's own setting, the importer default) also copies the official tests into the repo;
+`hidden` (the first protocol, `polyglot-mini`) does not -- which left some APIs unguessable (C++
+stubs are empty namespaces, so names like `diamond::rows` exist only in the tests).
 
 Grader (`grader.type = "exercism"`): copies the agent's repo (without build artefacts), restores the
 hidden tests, enables every test (Rust `--include-ignored`, JS `xtest` -> `test`, C++
@@ -17,8 +20,8 @@ hidden tests, enables every test (Rust `--include-ignored`, JS `xtest` -> `test`
 network, and scores `passed / total`; `solved` = every test passed. A build failure scores 0.
 
 Contamination: public long before every current model's cutoff -- results are reported as a
-separate "contaminated" tier; hidden tests and the agentic setting (no second chance with the test
-output, unlike Aider's harness) are what keep it informative.
+separate "contaminated" tier; the grader's own enabled-everything copy of the tests and the
+agentic setting (one autonomous attempt) are what keep it informative.
 """
 
 from __future__ import annotations
@@ -81,6 +84,8 @@ class LangSpec:
     env: dict[str, str] = field(default_factory=dict)
     # How the agent can test on its own host (rendered into the task instruction).
     host_hint: str = ""
+    # The same, when the official tests are visible (they are the tests to run).
+    visible_hint: str = ""
 
     def image_spec(self) -> ImageSpec:
         if self.dockerfile_body is None:
@@ -164,6 +169,7 @@ LANGUAGES: dict[str, LangSpec] = {
         f"> {_R}/out.txt 2>&1",
         _parse_junit,
         host_hint="Write your own tests in a new `test_*.py` file and run `python3 -m pytest`.",
+        visible_hint="Run the tests with `python3 -m pytest`.",
     ),
     "go": LangSpec(
         "go",
@@ -180,6 +186,7 @@ LANGUAGES: dict[str, LangSpec] = {
             "CGO_ENABLED": "0",
         },  # fmt: skip
         host_hint="Write your own tests in a new `*_test.go` file and run `go test ./...`.",
+        visible_hint="Run the tests with `go test ./...`.",
     ),
     "rust": LangSpec(
         "rust",
@@ -189,6 +196,7 @@ LANGUAGES: dict[str, LangSpec] = {
         _parse_rust,
         env={"CARGO_HOME": "/tmp/cargo", "CARGO_TARGET_DIR": "/tmp/target"},
         host_hint="Write your own tests (e.g. in `tests/`) and run `cargo test`.",
+        visible_hint="Run the tests with `cargo test -- --include-ignored`.",
     ),
     "cpp": LangSpec(
         "cpp",
@@ -205,6 +213,10 @@ LANGUAGES: dict[str, LangSpec] = {
             "`test/`: put your own Catch tests in that file and run "
             "`mkdir -p build && cd build && cmake .. && make`."
         ),
+        visible_hint=(
+            "Build and run the tests with `mkdir -p build && cd build && cmake "
+            "-DEXERCISM_RUN_ALL_TESTS=ON .. && make` (the build runs the test binary)."
+        ),
     ),
     "javascript": LangSpec(
         "javascript",
@@ -220,6 +232,10 @@ LANGUAGES: dict[str, LangSpec] = {
         _parse_jest,
         env={"HOME": "/tmp"},
         host_hint="Run `npm install` once, write tests in a `*.spec.js` file and run `npx jest`.",
+        visible_hint=(
+            "Run `npm install` once, then `npx jest` (`xtest` marks skipped tests: change them to "
+            "`test` in your working copy to run them all)."
+        ),
     ),
 }
 KNOWN_EXERCISM_LANGUAGES = frozenset(LANGUAGES)
@@ -302,7 +318,8 @@ def _reference_map(files: dict[str, list[str]]) -> dict[str, str]:
     return out
 
 
-def render_readme(root: Path, solutions: list[str]) -> str:
+def render_readme(root: Path, solutions: list[str], tests: list[str] | None = None) -> str:
+    """README for the agent; `tests` = the official test files when they are visible."""
     docs = root / ".docs"
     parts: list[str] = []
     for name, heading in (
@@ -316,11 +333,19 @@ def render_readme(root: Path, solutions: list[str]) -> str:
         if path.is_file():
             text = path.read_text(errors="replace").strip()
             parts.append(f"## {heading}\n\n{text}" if heading else text)
-    parts.append(
-        "## Files\n\nImplement the exercise in: "
-        + ", ".join(f"`{s}`" for s in solutions)
-        + ". Keep the existing names and signatures; hidden tests exercise every requirement above."
-    )
+    files = "## Files\n\nImplement the exercise in: " + ", ".join(f"`{s}`" for s in solutions)
+    if tests:
+        files += (
+            ". The official tests are in " + ", ".join(f"`{t}`" for t in tests) + ": they define "
+            "the required names and signatures (follow them over the solution stub if the two "
+            "differ). The grader runs every test in them -- including ones marked skipped, ignored "
+            "or disabled -- against its own unmodified copy."
+        )
+    else:
+        files += (
+            ". Keep the existing names and signatures; hidden tests exercise every requirement."
+        )
+    parts.append(files)
     return "\n\n".join(parts) + "\n"
 
 
@@ -333,11 +358,15 @@ def _source(task: BenchTask) -> dict[str, Any]:
         raise SubjectError(
             f"Task {task.id!r}: exercism source needs language in {sorted(LANGUAGES)} and exercise"
         )
+    tests = src.get("tests", TESTS_HIDDEN)
+    if tests not in (TESTS_HIDDEN, TESTS_VISIBLE):
+        raise SubjectError(f"Task {task.id!r}: exercism source.tests must be hidden or visible")
     return {
         "repo": src.get("repo") or DEFAULT_REPO,
         "commit": src.get("commit") or DEFAULT_COMMIT,
         "language": language,
         "exercise": exercise,
+        "tests": tests,
     }
 
 
@@ -370,7 +399,8 @@ class ExercismProvider(WorkspaceProvider):
                 dest = grading_dir / REFERENCE_DIRNAME / sol
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(root / ex, dest)
-            skip = set(hidden)
+            visible = src["tests"] == TESTS_VISIBLE
+            skip = set() if visible else set(hidden)  # the grader re-copies its own tests anyway
             repo_dir.mkdir(parents=True)
             for path in sorted(root.rglob("*")):
                 relp = path.relative_to(root)
@@ -379,7 +409,9 @@ class ExercismProvider(WorkspaceProvider):
                 dest = repo_dir / relp
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, dest)
-            (repo_dir / README_FILENAME).write_text(render_readme(root, files.get("solution", [])))
+            (repo_dir / README_FILENAME).write_text(
+                render_readme(root, files.get("solution", []), hidden if visible else None)
+            )
             meta = {**src, "hidden": hidden, "solution": files.get("solution", [])}
             (grading_dir / META_FILENAME).write_text(
                 json.dumps(meta, indent=2, sort_keys=True) + "\n"
@@ -517,6 +549,23 @@ def _rust_has_deps(repo: str, commit: str, exercise: str) -> bool:
     return False
 
 
+# Exercism's own setting: the learner sees the official tests. Hidden tests (the first protocol,
+# polyglot-mini) left some APIs unguessable -- e.g. C++ stubs are empty namespaces and the required
+# function names appear only in the tests -- so they measured name-guessing, not capability.
+TESTS_HIDDEN, TESTS_VISIBLE = "hidden", "visible"
+
+VISIBLE_INSTRUCTION_TEMPLATE = """# Task
+
+Implement the programming exercise described in `README.md` in this directory, in {language}.
+
+- Edit the solution file(s) named in the README's "Files" section; do not rename or move files.
+- The official tests are in this directory (see the README's "Files" section). They define the
+  required API; make every one of them pass, including tests marked skipped, ignored or disabled
+  (the grader enables all of them and runs its own unmodified copy, so editing the tests has no
+  effect).
+- {host_hint}
+"""
+
 INSTRUCTION_TEMPLATE = """# Task
 
 Implement the programming exercise described in `README.md` in this directory, in {language}.
@@ -544,6 +593,7 @@ def build_suite(
     tier: str = "medium",
     parity: str = "../../parity/default",
     exclude: frozenset[tuple[str, str]] = frozenset(),
+    tests: str = TESTS_VISIBLE,
 ) -> dict[str, Any]:
     """Draw `per_language` exercises per language with `random.Random(seed)` from the sorted pool
     of `eligible` exercises (offline-gradeable, reference-validatable) and write the suite.
@@ -566,8 +616,15 @@ def build_suite(
         picked = sorted(rng.sample(pool, min(per_language, len(pool))))
         sample[language] = picked
         (instructions / f"{language}.md").write_text(
-            INSTRUCTION_TEMPLATE.format(
-                language=_LANGUAGE_NAMES[language], host_hint=LANGUAGES[language].host_hint
+            (
+                VISIBLE_INSTRUCTION_TEMPLATE if tests == TESTS_VISIBLE else INSTRUCTION_TEMPLATE
+            ).format(
+                language=_LANGUAGE_NAMES[language],
+                host_hint=(
+                    LANGUAGES[language].visible_hint
+                    if tests == TESTS_VISIBLE
+                    else LANGUAGES[language].host_hint
+                ),
             )
         )
         for ex in picked:
@@ -582,6 +639,7 @@ def build_suite(
                         "commit": commit,
                         "language": language,
                         "exercise": ex,
+                        "tests": tests,
                     },  # fmt: skip
                     "grader": {"type": EXERCISM_GRADER_TYPE},
                     "family": "exercism",
@@ -597,7 +655,8 @@ def build_suite(
         "description": (
             f"Exercism practice exercises from {repo}@{commit[:12]} (Aider polyglot set), "
             f"sampled {per_language}/language with seed {seed} from {', '.join(languages)}; "
-            "hidden official tests run in per-language Docker images, score = fraction of tests "
+            f"official tests ({tests} to the agent; the grader runs its own copy with every test "
+            "enabled) run in per-language Docker images, score = fraction of tests "
             "passed. Contaminated tier (public exercises). Exercism tracks are MIT licensed; "
             "content (c) Exercism."
         ),
@@ -645,11 +704,17 @@ def import_exercism_command(
     exclude_suites: list[str] = typer.Option(
         [], "--exclude-suite", help="Suite whose exercises to leave out (repeatable)."
     ),
+    tests: str = typer.Option(
+        TESTS_VISIBLE,
+        "--tests",
+        help="visible (Exercism's setting) or hidden (API may be unguessable).",
+    ),
 ) -> None:
     """Import a seeded sample of Exercism (Aider polyglot) exercises as a suite."""
     try:
         res = build_suite(
             exclude=used_exercises(exclude_suites),
+            tests=tests,
             out=Path(out),
             suite_id=suite_id,
             languages=languages.split(","),
