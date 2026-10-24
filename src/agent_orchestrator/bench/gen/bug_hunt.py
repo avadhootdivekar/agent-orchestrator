@@ -20,8 +20,9 @@ tier; ``concurrency`` = fuzz depth; ``scale`` = perf book depth. Python only (th
 from __future__ import annotations
 
 import ast
+import json
 import random
-import signal
+import subprocess
 import sys
 import types
 from collections.abc import Sequence
@@ -34,9 +35,9 @@ from .refs import REFERENCE_DIR
 FAMILY_NAME = "bug-hunt"
 BUGS_BY_LEVEL = (2, 3, 5, 8)
 APP_ENTRY = "app/__main__.py"
-# Wall-clock budget for replaying every probe through one candidate mutant (the unmutated
-# engine needs well under 0.1 s).
-MUTANT_TIME_LIMIT_SECONDS = 3.0
+# Wall-clock budget for replaying every probe through one candidate mutant in a subprocess
+# (interpreter start + the unmutated engine take well under 1 s).
+MUTANT_TIME_LIMIT_SECONDS = 10.0
 _CMP_FLIPS: dict[type[ast.cmpop], type[ast.cmpop]] = {
     ast.Lt: ast.LtE,
     ast.LtE: ast.Lt,
@@ -170,38 +171,55 @@ def _matches(expected: Any, actual: Any) -> bool:
     return bool(expected == actual and type(expected) is type(actual))
 
 
-class _MutantTimeout(Exception):
-    pass
+# Replays every probe through one candidate engine in a fresh interpreter (thread-safe, and a
+# hang or crash cannot touch the caller). Prints "killed", "clean" or "error".
+_CHECK_SCRIPT = r"""
+import json, sys, types
+data = json.loads(sys.stdin.read())
+mod = types.ModuleType("ao_bench_mutant")
+sys.modules["ao_bench_mutant"] = mod
+try:
+    exec(compile(data["source"], "<mutant>", "exec"), mod.__dict__)
+except Exception:
+    print("error"); sys.exit(0)
+
+def matches(e, a):
+    if isinstance(e, dict):
+        return isinstance(a, dict) and all(k in a and matches(v, a[k]) for k, v in e.items())
+    if isinstance(e, list):
+        return isinstance(a, list) and len(e) == len(a) and all(map(matches, e, a))
+    return e == a and type(e) is type(a)
+
+killed = False
+try:
+    for p in data["probes"]:
+        eng = mod.Engine(data["limits"])
+        for st in p["steps"]:
+            if not matches(st["expect"]["json"], eng.handle(st["op"]["json"])):
+                killed = True
+except Exception:
+    print("error"); sys.exit(0)
+print("killed" if killed else "clean")
+"""
 
 
-def _on_alarm(signum: int, frame: Any) -> None:
-    raise _MutantTimeout
-
-
-def _killed(module: types.ModuleType, limits: JsonDict, probes: list[JsonDict]) -> bool | None:
+def _killed(source: str, limits: JsonDict, probes: list[JsonDict]) -> bool | None:
     """True if some probe step differs, False if none does, None if the engine raised or
     hung (a fault can turn a matching loop infinite; such a mutant is rejected)."""
-    killed = False
-    previous = signal.signal(signal.SIGALRM, _on_alarm)
-    signal.setitimer(signal.ITIMER_REAL, MUTANT_TIME_LIMIT_SECONDS)
+    payload = json.dumps({"source": source, "limits": limits, "probes": probes})
     try:
-        for p in probes:
-            engine = module.Engine(limits)
-            for step in p["steps"]:
-                try:
-                    resp = engine.handle(step["op"]["json"])
-                except _MutantTimeout:
-                    return None
-                except Exception:  # noqa: BLE001 -- a crashing mutant is rejected
-                    return None
-                if not _matches(step["expect"]["json"], resp):
-                    killed = True
-    except _MutantTimeout:
+        proc = subprocess.run(  # noqa: S603 -- our own interpreter + script
+            [sys.executable, "-I", "-c", _CHECK_SCRIPT],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=MUTANT_TIME_LIMIT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
         return None
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
-    return killed
+    verdict = proc.stdout.strip()
+    return {"killed": True, "clean": False}.get(verdict)
 
 
 def plant_bugs(source: str, rng: random.Random, count: int, limits: JsonDict,
@@ -217,8 +235,8 @@ def plant_bugs(source: str, rng: random.Random, count: int, limits: JsonDict,
         tree = ast.parse(source)
         if not _mutate(tree, site):
             continue
-        module = _load(ast.unparse(tree))
-        if module is None or _killed(module, limits, probes) is not True:
+        candidate = ast.unparse(tree)
+        if _load(candidate) is None or _killed(candidate, limits, probes) is not True:
             continue
         combined = ast.parse(source)
         # Apply in descending node order so earlier indices stay valid after a drop.

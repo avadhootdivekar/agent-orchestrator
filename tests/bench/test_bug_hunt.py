@@ -37,10 +37,11 @@ def test_instance_matches_order_book_except_the_buggy_app() -> None:
 def test_buggy_app_imports_and_fails_probes_but_reference_passes() -> None:
     bug = FAMILY_REGISTRY["bug-hunt"]().generate(12, D, "python")
     probes = bug.probes["groups"]["core"] + bug.probes["groups"]["trap"]
-    mutant = _load(bug.skeleton[APP_ENTRY])
-    assert mutant is not None and _killed(mutant, bug.limits, probes) is True
-    reference = _load((REFERENCE_DIR / REFERENCE_PROGRAM).read_text())
-    assert reference is not None and _killed(reference, bug.limits, probes) is False
+    assert _load(bug.skeleton[APP_ENTRY]) is not None
+    assert _killed(bug.skeleton[APP_ENTRY], bug.limits, probes) is True
+    reference = (REFERENCE_DIR / REFERENCE_PROGRAM).read_text()
+    assert _killed(reference, bug.limits, probes) is False
+    assert _killed("while True:\n    pass\n", bug.limits, probes) is None  # hang -> rejected
 
 
 def test_deterministic_and_python_only() -> None:
@@ -54,3 +55,15 @@ def test_too_many_faults_requested_is_an_error() -> None:
     source = "class Engine:\n    def __init__(self, limits):\n        pass\n"
     with pytest.raises(ValueError, match="valid faults"):
         plant_bugs(source, random.Random(0), 1, {}, [])
+
+
+def test_generation_works_off_the_main_thread() -> None:
+    import threading
+
+    out: list[object] = []
+    th = threading.Thread(
+        target=lambda: out.append(FAMILY_REGISTRY["bug-hunt"]().generate(14, D, "python"))
+    )
+    th.start()
+    th.join(120)
+    assert out and len(out[0].limits["planted_faults"]) == BUGS_BY_LEVEL[1]  # type: ignore[attr-defined]
