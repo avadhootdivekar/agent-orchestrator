@@ -36,3 +36,7 @@ rather than fit). Every suite passes `make bench-refcheck` (reference 1.0 everyw
   `b2dc911`); bug-hunt is Python only.
 - `rules-engine` (added before any spend on it): start at `entities=3,traps=3,concurrency=2,scale=1`; calibration
   seeds 7501+, ranking seeds 9701+.
+- `algo-puzzle` (added before any spend on it): start at `entities=3,traps=3,concurrency=2,scale=3` (6 problems,
+  200k-element generated cases); calibration seeds 7551+, ranking seeds 9751+.
+- Round-1 outcome so far: order-book, bug-hunt (5 faults) and rules-engine all saturate at their starting vectors
+  (haiku and opus 1.0 on every calibration task). Recorded as saturation, not tuned towards a target.
