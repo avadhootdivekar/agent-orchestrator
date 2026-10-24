@@ -19,6 +19,15 @@ repo checkout with `uv run ao-bench …` — never the global `ao`.
    `grading_dir`, never under the agent-visible workspace. Do not put `.grading/` inside fixtures.
 4. **Fake tier for CI.** Tests use `FakeSubject` (`scripted_effect`: `noop|copy-solution|copy-reference|fail|
    timeout|error`); Docker/network tests are gated by `AO_E2E_DOCKER=1` / `AO_E2E_NETWORK=1`.
+5. **Environment isolation (open: `T-Ws7Iso`).** Until that task lands, `BENCH_WORKSPACE_ROOT` is inside the checkout,
+   so agents inherit the repo's and the control plane's `CLAUDE.md`, skills and agents. Before trusting a ranking,
+   check every transcript's `system/init` event: `skills`/`agents` must contain only the parity bundle's entries plus
+   Claude Code built-ins. Quick check (prints skills per transcript):
+   `grep -h -m1 '"subtype":"init"' <run-root>/**/transcript.jsonl | python3 -c 'import sys,json;[print(json.loads(l).get("skills")) for l in sys.stdin]'`.
+   Running from the branch checkout is required (the `ao` under test is `uv run ao` from `REPO_ROOT`); run from a
+   clean tree so `ao_version` has no `.dirty`.
+6. **Held-out seeds.** Ranking campaigns use a `--seed` that appears in no committed suite and record it in the results
+   entry; keep at least one generated family unseen while tuning `ao` templates/instructions.
 
 ## Suites
 | Suite | Tier | What | Grader |

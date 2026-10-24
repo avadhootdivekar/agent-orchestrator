@@ -1,11 +1,18 @@
 # STATUS
 
 - ID: `E-Bn7Dsc-discriminating-benchmark-suites`
-- Updated At: 2026-10-23
-- State: **Done** (6/6; follow-ons in HLD §12)
+- Updated At: 2026-10-24
+- State: **Done** (6/6 tracks; follow-ons in HLD §12) · `T-Ws7Iso-bench-env-isolation` **Open**
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-10-24 · Comment: **Follow-on `T-Ws7Iso` opened.** Owner asked whether
+  benchmarking `ao` from the same branch/workspace contaminates scores. Running from the checkout is *required*
+  (`uv run ao` from `REPO_ROOT` is the `ao` under test, stamped `ao_version`), but the workspace root
+  `<repo>/playground/.tmp/bench` leaks ancestor `CLAUDE.md`s and all repo/control-plane skills+agents into every
+  subject — confirmed in every 2026-10-23 transcript `init` event (`skills` lists `benchmarking`, `repo-intel`,
+  `workflow-authoring`; `agents` lists the repo roster). No `_grading` access seen, but one ao agent ran
+  `cat ../../.gitignore`. 2026-10-23 results annotated as a pipeline proof only. Fix scope in TASK.md.
 - By: Claude · Role: manager · Date: 2026-10-23 · Comment: **Four parallel tracks merged** into
   `ad/enhancements-20oct` (merge commits `dc874d0` stats, blackbox, `3db0e07` tier-2, `8be2a6d` gen).
   Bench suite 1144 passed / 21 skipped (opt-in tiers: docker 7/7, network 10/10 on the merged tree);

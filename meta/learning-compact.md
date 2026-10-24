@@ -106,3 +106,5 @@
 - Agent "tests complete" claims are about test code, not the property: mutation-check absence proofs and recompute goldens from the real base commit. (By: developer, developer, 2026-10-05)
 - Never exempt files from a content hash by name pattern; any writer can use the name to hide a file (poisoned cache hit). Prefer a false miss. (By: developer, developer, 2026-10-05)
 - Quote enum values like `"on"` in YAML templates: bare `on` is boolean `true` under YAML 1.1. (By: developer, developer, 2026-10-05)
+- An agent whose cwd is under a repo inherits every ancestor `CLAUDE.md`/`.claude` skill/agent — keep bench workspaces outside such trees and verify via the transcript `init` event's `skills`/`agents`; agents probe parents, so hidden assets must not be a few `..` away. (By: Claude, manager, 2026-10-24)
+- `pytest | tail` returns tail's exit code — use `set -o pipefail` or log + `echo exit=$?`. (By: Claude, manager, 2026-10-24)

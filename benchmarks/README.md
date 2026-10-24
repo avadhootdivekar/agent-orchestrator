@@ -657,6 +657,11 @@ perf data: at `scale:1` (sizes 100 / 1000) the fitted α was ≈ −0.4 for ever
 i.e. JIT/warm-up noise dominates at these sizes — so the perf group only carries signal from `scale ≥ 2`
 (sizes up to 10⁴–10⁵); treat `scale:1` perf as a smoke check.
 
+**Environment caveat (found 2026-10-24, `T-Ws7Iso`):** these workspaces lived under `<repo>/playground/.tmp/bench`, so
+both agents also had the two ancestor `CLAUDE.md` files and every repo/control-plane skill and agent loaded (see the
+`init` event in each transcript). Parity held (identical leak for both subjects) and nothing read `_grading/`, so the
+pipeline proof stands, but treat these numbers as *non-clean*; do not cite them as a ranking.
+
 ### Total epic spend
 
 Across the whole `E-Bt4Xk9` epic (framework authoring smoke/gold-patch verification + both PLAN campaigns above):

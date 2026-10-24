@@ -1359,3 +1359,30 @@ By: developer
 Role: developer
 Date: 2026-10-05
 ---
+
+---
+Learning-ID: LRN-20261024-agent-cwd-inside-repo-inherits-ancestor-instructions
+Learning: Any `claude -p` (or `ao`) agent whose cwd sits under a repo inherits EVERY ancestor `CLAUDE.md`,
+  `.claude/skills` and `.claude/agents` — a benchmark workspace under `<repo>/playground/.tmp/bench` therefore ran
+  with the repo's and the control plane's instructions, skills (`benchmarking`, `repo-intel`, …) and agent roster
+  loaded, silently. Put agent workspaces outside any tree containing `CLAUDE.md`/`AGENTS.md`/`.claude/`, and verify
+  with the transcript's `system/init` event (`skills`, `agents`, `slash_commands`) rather than by reasoning about
+  paths; agents also probe parents (`cat ../../.gitignore` observed), so hidden assets must not be a few `..` away.
+Context: E-Bn7Dsc first real `gen-services-mini` run (2026-10-23) — found 2026-10-24 when the owner asked whether
+  benchmarking `ao` from its own branch contaminates scores; parity held (same leak for both subjects) but the
+  "same instructions" guarantee did not. Follow-on `T-Ws7Iso-bench-env-isolation`.
+By: Claude
+Role: manager
+Date: 2026-10-24
+---
+
+---
+Learning-ID: LRN-20261024-pipe-to-tail-hides-pytest-exit-code
+Learning: `pytest … | tail` returns tail's exit status, so a red suite looks green and a commit lands on a failing
+  gate. Use `set -o pipefail`, or write to a log and `echo "exit=$?"` on its own line, and read the summary line,
+  not the exit of the last pipe stage.
+Context: E-Bn7Dsc merge verification — the NFR-2 gate failure was masked once this way and needed a follow-up commit.
+By: Claude
+Role: manager
+Date: 2026-10-24
+---

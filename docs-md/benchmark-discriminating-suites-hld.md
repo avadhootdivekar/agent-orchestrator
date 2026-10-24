@@ -399,6 +399,25 @@ as the artefact: 2/2 solved, score 1.0, crud 21 core / 4 trap / 5 perf checks, j
 | Comparison | extend 1.0 | `comparison.json` schema 2.0 (1.0 still loads): `parity_*`, `repeats_per_subject`, `subject_stats`, `infra`, `per_family`, `per_language`, `pairwise`, `unreliable_subjects`; cells gain `score_mean/score_sd/n/solve_rate/cost_median/wall_median`; `solved` under repeats = strict majority of attempted repeats | |
 | Staged repeats | "tasks where subjects disagree" | disagree ∪ own-repeat variance ∪ no attempted sample (infra retry); stop when all pairwise CIs exclude 0, max repeats, cap spent, < 2 subjects, or no candidates | |
 
+**Environment-isolation finding (2026-10-24, `T-Ws7Iso-bench-env-isolation`, blocks ranking):** the bench workspace
+root is `<repo>/playground/.tmp/bench`, inside the checkout and inside the `ao-runner-ao` control-plane workspace.
+Claude Code loads `CLAUDE.md`/`.claude/` from every ancestor, so every agent under test — both subjects — ran with
+`ao-runner-ao/CLAUDE.md` and `agent-orchestrator/CLAUDE.md` on top of the parity `<ws>/CLAUDE.md`, and with the repo's
+skills (`benchmarking`, `repo-intel`, `workflow-authoring`), the repo's agent roster and the control-plane skills
+(`git-commit-push`, `memorize`, `verify`, …) available. Evidence: the `system/init` event (`skills`, `agents`) of every
+2026-10-23 transcript. One ao `verify` agent ran `cat ../../.gitignore`, so parent probing happens; `_grading/` is
+three levels up and not blocked under `bypassPermissions` (no access observed). Parity (§2b) still held — both
+subjects got the identical leak — so the 2026-10-23 comparison is fair but not clean, and the "same instructions"
+claim is violated. Fix: (1) default root outside any tree with `CLAUDE.md`/`AGENTS.md`/`.claude/`
+(`AO_BENCH_WORKSPACE_ROOT`, refuse otherwise), `_grading/` as a sibling root; (2) record an environment fingerprint
+parsed from the `init` event per task and refuse mixed-fingerprint comparisons; (3) mark any task whose tool calls
+touch the grading root `suspect`; (4) decide `CLAUDE_CONFIG_DIR` handling for user-level settings/skills/memory
+(today `~/.claude/settings.json` `model`/`effortLevel`/`enabledPlugins` and user skills apply to every subject,
+unfingerprinted). Note that running from the branch checkout is *required*: `AoWorkflowSubject` runs `uv run ao` from
+`REPO_ROOT`, so the branch's `ao` is the subject (`ao_version` stamped; run from a clean tree). Developer-side
+overfitting (tuning `ao` templates against a known trap catalogue) is a policy matter: ranking campaigns use a
+fresh `--seed` absent from every committed suite, and at least one generated family stays unseen during tuning.
+
 **Still open (next epic tasks):** the six remaining Tier-1 families (§4.1); TypeScript/Go derived images built and
 run (Dockerfiles only `--check`ed; process fallback has no pre-installed deps for them); `ao-bench gen` does not yet
 run the generation-time "reference passes its probes" check (the structural validator runs; the full check is the
