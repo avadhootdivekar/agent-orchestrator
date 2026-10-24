@@ -26,6 +26,7 @@ class Trap:
 _CRUD = "crud-relational"
 _QUEUE = "job-queue"
 _BOOK = "order-book"
+_RULES = "rules-engine"
 _BUG = "bug-hunt"  # reuses the order-book instance, traps and probes
 
 TRAP_CATALOGUE: dict[str, Trap] = {
@@ -161,6 +162,25 @@ TRAP_CATALOGUE: dict[str, Trap] = {
             "cancel_releases_funds",
             "Cancelling releases exactly the unfilled reservation.",
             (_BOOK, _BUG),
+        ),  # fmt: skip
+        # rules-engine (T-Pf4Mix): long-spec interaction traps; see gen/rules_engine.py.
+        Trap("merge_duplicate_lines", "Repeated SKUs merge into one line.", (_RULES,)),
+        Trap("best_line_discount", "Only the largest applicable line rule applies.", (_RULES,)),
+        Trap("bogo_excludes_discounted", "Buy-k-get-1 counts only undiscounted lines.", (_RULES,)),
+        Trap("coupon_not_best", "Only the best percentage/fixed coupon applies.", (_RULES,)),
+        Trap("discount_cap", "Cap reduces coupon, then bundle, then bogo.", (_RULES,)),
+        Trap("tax_exempt", "Exempt categories are untaxed per region.", (_RULES,)),
+        Trap(
+            "free_shipping_after_coupon",
+            "The free-shipping threshold uses merchandise after the coupon.",
+            (_RULES,),
+        ),
+        Trap(
+            "age_restriction", "Alcohol needs the region's minimum age (or is not sold).", (_RULES,)
+        ),
+        Trap("coupon_window_inclusive", "Coupon validity dates are inclusive.", (_RULES,)),
+        Trap(
+            "rounding_mode", "Every percentage uses the instance's rounding mode.", (_RULES,)
         ),  # fmt: skip
     )
 }

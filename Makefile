@@ -207,6 +207,9 @@ bench-refcheck:
 	@uv run python -c "import json,glob,sys; \
 	  ref=json.load(open(glob.glob('playground/.tmp/bench-refcheck/*/run.json')[0]))['tasks']; \
 	  noop=json.load(open(glob.glob('playground/.tmp/bench-noopcheck/*/run.json')[0]))['tasks']; \
+	  skip=[t['task_id'] for t in ref if t.get('language') in ('typescript','go') and t.get('family')!='exercism']; \
+	  ref=[t for t in ref if t['task_id'] not in skip]; \
+	  skip and print(f'refcheck: {len(skip)} TS/Go generated task(s) skipped -- the Python reference cannot run in their image; the grader validates it against the probes before every grade'); \
 	  bad=[(t['task_id'],t['score']) for t in ref if t['score']<1.0]; \
 	  free=[t['task_id'] for t in noop if t['solved']]; \
 	  print(f'refcheck: reference 1.0 on all {len(ref)}' if not bad else f'refcheck FAILED (reference below 1.0 = validity bug): {bad}'); \

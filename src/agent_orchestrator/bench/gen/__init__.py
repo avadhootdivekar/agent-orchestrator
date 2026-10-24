@@ -21,6 +21,9 @@ from . import (
 from . import (
     order_book as _order_book,  # noqa: F401 -- registers "order-book" (T-Pf4Mix)
 )
+from . import (
+    rules_engine as _rules_engine,  # noqa: F401 -- registers "rules-engine" (T-Pf4Mix)
+)
 from .base import FAMILY_REGISTRY, Difficulty, Family, Instance, register_family
 
 __all__ = ["FAMILY_REGISTRY", "Difficulty", "Family", "Instance", "register_family"]
