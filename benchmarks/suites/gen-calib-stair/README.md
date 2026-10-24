@@ -7,16 +7,16 @@ and [`docs-md/bench-probe-dsl.md`](../../../docs-md/bench-probe-dsl.md).
 Regenerate (byte-identical):
 
 ```
-ao-bench gen --out <suite dir> --id gen-calib-stair --family algo-staircase --count 3 --languages python --seed 52000 --difficulty entities=3,traps=1,concurrency=1,scale=1 --tier large --parity ../../parity/default
+ao-bench gen --out <suite dir> --id gen-calib-stair --family algo-staircase --count 3 --languages python --seed 52000 --difficulty entities=3,traps=1,concurrency=1,scale=2 --tier large --parity ../../parity/default
 ```
 
 ## Tasks
 
 | Task | Family | Language | Seed | Difficulty |
 |---|---|---|---|---|
-| `algo-staircase-py-s52000` | algo-staircase | python | 52000 | entities=3, traps=1, concurrency=1, scale=1 |
-| `algo-staircase-py-s52001` | algo-staircase | python | 52001 | entities=3, traps=1, concurrency=1, scale=1 |
-| `algo-staircase-py-s52002` | algo-staircase | python | 52002 | entities=3, traps=1, concurrency=1, scale=1 |
+| `algo-staircase-py-s52000` | algo-staircase | python | 52000 | entities=3, traps=1, concurrency=1, scale=2 |
+| `algo-staircase-py-s52001` | algo-staircase | python | 52001 | entities=3, traps=1, concurrency=1, scale=2 |
+| `algo-staircase-py-s52002` | algo-staircase | python | 52002 | entities=3, traps=1, concurrency=1, scale=2 |
 
 ## How it works
 
