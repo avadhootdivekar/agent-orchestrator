@@ -285,7 +285,8 @@ class OptLadderFamily(Family):
             language=language,
             contract="jsonl",
             entities=[],
-            traps=["degenerate_inputs"] if difficulty.traps else [],
+            traps=(["capacity_bound"] if "facility" in problems else [])
+            + (["degenerate_inputs"] if difficulty.traps else []),
             limits=limits,
             allow=allow_list,
             spec_md=render_spec(limits, language, allow_list),

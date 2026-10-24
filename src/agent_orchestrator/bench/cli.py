@@ -729,6 +729,27 @@ def portfolio_cmd(
     typer.echo(portfolio_command_impl(run, subject or [], out))
 
 
+@app.command(name="regrade")
+def regrade_cmd(
+    run: str = typer.Option(
+        ..., "--run", help="Run dir (run.json) whose saved workspaces to grade."
+    ),
+    suite: str = typer.Option(..., "--suite", help="The suite.json the run used."),
+    out: str | None = typer.Option(None, "--out", help="New run dir (default <run>-regrade)."),
+    max_parallel: int = typer.Option(3, "--max-parallel", min=1, help="Tasks graded at once."),
+) -> None:
+    """Grade a finished run's artefacts again with the current grader (no subject is run)."""
+    from .regrade import regrade_run
+    from .results import load_run
+
+    out_dir, skipped = regrade_run(run, suite, out, max_parallel)
+    rec = load_run(out_dir)
+    typer.echo(f"Regraded run: {out_dir}")
+    agg = rec.aggregate
+    kept = f" (kept unchanged: {', '.join(skipped)})" if skipped else ""
+    typer.echo(f"solved {agg.solved}/{agg.total} mean_score={agg.mean_score:.3f}{kept}")
+
+
 @app.command(name="list")
 def list_cmd(
     suite: str = typer.Option(..., "--suite", help="Path to a suite.json/.yaml to list."),

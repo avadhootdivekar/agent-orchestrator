@@ -29,6 +29,7 @@ _BOOK = "order-book"
 _RULES = "rules-engine"
 _ALGO = "algo-puzzle"
 _ALGO_HARD = "algo-hard"
+_OPT = "opt-ladder"
 _BUG = "bug-hunt"  # reuses the order-book instance, traps and probes
 
 TRAP_CATALOGUE: dict[str, Trap] = {
@@ -192,6 +193,17 @@ TRAP_CATALOGUE: dict[str, Trap] = {
         ),
         Trap("blocked_cells", "Walks around blocked cells (incl. repeats).", (_ALGO_HARD,)),
         Trap("negative_values", "Negative values and bounds in range counting.", (_ALGO,)),
+        # opt-ladder (T-Os5Lad): see gen/opt_ladder.py.
+        Trap(
+            "degenerate_inputs",
+            "Duplicate points, isolated vertices, a free tiny-capacity site: still feasible.",
+            (_OPT,),
+        ),
+        Trap(
+            "capacity_bound",
+            "Site capacities bind: nearest-site assignment is infeasible.",
+            (_OPT,),
+        ),
     )
 }
 

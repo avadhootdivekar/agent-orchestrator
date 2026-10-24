@@ -32,14 +32,20 @@ from typing import Any
 Case = dict[str, Any]
 Answer = list[int]
 
-RUNGS = ("trivial", "greedy", "local_search", "strong_short", "strong_long")
+RUNGS = ("trivial", "greedy", "local_search", "metaheuristic", "strong")
 TOP_RUNG = len(RUNGS) - 1
 SOLVER_SEED = 20261024
 EPS = 1e-9
 TOUR_NEIGHBOURS = 8
-TOUR_ILS_ROUNDS = 1000
-FACILITY_SA_ITERS = (100, 1000)  # rung 3, rung 4: iterations per customer
-PARTITION_SA_ITERS = (20_000, 200_000)
+# Budgets of rung 3 (metaheuristic, ~1 s) and rung 4 (strong, continued from rung 3 for a CPU time
+# comparable to the agent's per-case limit on a typical host). Iteration counts, never wall clock.
+TOUR_ILS_ROUNDS = (1, 12)  # per point
+TOUR_KICK_WINDOW = 100  # double-bridge cut points lie within this many positions (local kick)
+FACILITY_SA_ITERS = (1000, 3000)  # per customer
+PARTITION_SA_ITERS = (220, 2200)  # per vertex
+# Above the top rung, one point per this fraction of the top value, or the last gap if larger
+# (a tiny last gap would otherwise make the open end of the scale explode).
+TOP_UNIT_FRACTION = 0.01
 SA_START_TEMP_FRACTION = 0.05  # facility: start temperature = this x the mean opening cost
 
 
@@ -244,19 +250,31 @@ def tour_ladder(case: Case) -> list[Answer]:
     t2.local_search(or_opt=False)
     t3 = _Tour(pts, t2.t, neigh)
     t3.local_search()
-    best = list(t3.t)
+    meta = _ils(pts, t3.t, neigh, TOUR_ILS_ROUNDS[0] * n, SOLVER_SEED)
+    strong = _ils(pts, meta, neigh, TOUR_ILS_ROUNDS[1] * n, SOLVER_SEED + 1)
+    return [trivial, greedy, list(t2.t), meta, strong]
+
+
+def _ils(
+    pts: list[list[int]], start: Answer, neigh: list[list[int]], rounds: int, seed: int
+) -> Answer:
+    """Iterated local search: local double-bridge kick + 2-opt repair, keep if shorter."""
+    n = len(start)
+    best = list(start)
     best_len = tour_length(pts, best)
-    rng = random.Random(SOLVER_SEED)
-    for _ in range(TOUR_ILS_ROUNDS if n >= 8 else 0):
-        a, b, c = sorted(rng.sample(range(1, n), 3))
-        kicked = best[:a] + best[b:c] + best[a:b] + best[c:]
+    rng = random.Random(seed)
+    for _ in range(rounds if n >= 8 else 0):
+        r = rng.randrange(n)
+        base = best[r:] + best[:r]
+        a, b, c = sorted(rng.sample(range(1, min(n, TOUR_KICK_WINDOW)), 3))
+        kicked = base[:a] + base[b:c] + base[a:b] + base[c:]
         tr = _Tour(pts, kicked, neigh)
-        ends = {kicked[x % n] for x in (a - 1, a, b - 1, b, c - 1, c)}
+        ends = {kicked[x % n] for x in (0, a - 1, a, b - 1, b, c - 1, c, n - 1)}
         tr.local_search(deque(sorted(ends)), or_opt=False)
         length = tour_length(pts, tr.t)
         if length < best_len - EPS:
             best, best_len = list(tr.t), length
-    return [trivial, greedy, list(t2.t), list(t3.t), best]
+    return best
 
 
 # =============================================================================================
@@ -467,9 +485,9 @@ def facility_ladder(case: Case) -> list[Answer]:
     greedy = fac.greedy()
     local = fac.local_search(greedy)
     temp0 = SA_START_TEMP_FRACTION * sum(fac.f) / fac.m
-    short = fac.anneal(local, FACILITY_SA_ITERS[0] * fac.n, SOLVER_SEED, temp0)
-    long = fac.anneal(local, FACILITY_SA_ITERS[1] * fac.n, SOLVER_SEED + 1, temp0)
-    return [trivial, greedy, local, short, long]
+    meta = fac.anneal(local, FACILITY_SA_ITERS[0] * fac.n, SOLVER_SEED, temp0)
+    strong = fac.anneal(meta, FACILITY_SA_ITERS[1] * fac.n, SOLVER_SEED + 1, temp0)
+    return [trivial, greedy, local, meta, strong]
 
 
 # =============================================================================================
@@ -587,9 +605,9 @@ def partition_ladder(case: Case) -> list[Answer]:
     trivial = [u % g.k for u in range(g.n)]
     greedy = g.bfs_grow()
     local = g.local_search(greedy)
-    short = g.anneal(local, PARTITION_SA_ITERS[0], SOLVER_SEED)
-    long = g.anneal(local, PARTITION_SA_ITERS[1], SOLVER_SEED + 1)
-    return [trivial, greedy, local, short, long]
+    meta = g.anneal(local, PARTITION_SA_ITERS[0] * g.n, SOLVER_SEED)
+    strong = g.anneal(meta, PARTITION_SA_ITERS[1] * g.n, SOLVER_SEED + 1)
+    return [trivial, greedy, local, meta, strong]
 
 
 # =============================================================================================
@@ -621,15 +639,16 @@ def ladder_values(problem: str, case: Case) -> list[float]:
 
 def ladder_points(y: float, ladder: list[float]) -> float:
     """Design §3.1: piecewise-linear rung position of objective `y` (minimisation); beyond the top
-    rung the last gap keeps extrapolating, so the scale has no upper limit. Rungs must be strictly
-    decreasing."""
+    rung one more point per `max(last gap, TOP_UNIT_FRACTION x top value)` of improvement, so the
+    scale has no upper limit but stays stable. Rungs must be strictly decreasing."""
     if y >= ladder[0]:
         return 0.0
     for k in range(len(ladder) - 1):
         if y >= ladder[k + 1]:
             return k + (ladder[k] - y) / (ladder[k] - ladder[k + 1])
     top = len(ladder) - 1
-    return top + (ladder[top] - y) / (ladder[top - 1] - ladder[top])
+    unit = max(ladder[top - 1] - ladder[top], TOP_UNIT_FRACTION * abs(ladder[top]))
+    return top + (ladder[top] - y) / unit
 
 
 def solve(problem: str, case: Case) -> Answer:
