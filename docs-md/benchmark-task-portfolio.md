@@ -88,3 +88,37 @@ band in the headline score, not per task).
 - Generated suites: the bench-tune protocol (anchors only, disjoint seeds, frozen grader).
 - New families are accepted on reference/noop checks only; their difficulty vector is calibrated on anchors.
 - The headline uses equal band weights fixed in advance; per-band tables are always shown.
+
+## 8. Findings while building (2026-10-24)
+
+**Spec-complete generated tasks saturate, however rich the spec.** Every new generated family scored 1.0 for
+both anchors (haiku and opus) at its pre-registered starting vector, which was already the hardest valid setting
+on the axes that matter:
+
+| Family | What it demands | Vector | haiku | opus |
+|---|---|---|---|---|
+| `order-book` | matching engine: price-time priority, IOC/FOK/post-only, self-trade policy, stops with cascades, replace, funds reservation; seeded fuzz scenarios | entities 3, traps 3 | 1.0, 1.0 ($0.17/task) | 1.0, 1.0 ($0.78/task) |
+| `bug-hunt` | find and fix 5 (then 8) planted faults in ~600 lines of unfamiliar engine code | traps 2 → 3 | 1.0 ×4 | 1.0 ×4 |
+| `rules-engine` | ~10k-character pricing spec: 16 interacting rules, coupon stacking, cap reduction order, shipping, tax, rounding | entities 3, traps 3 | 1.0, 1.0 ($0.05/task) | 1.0, 1.0 |
+
+Mechanism: when every rule is written down and the program can be run locally, the task is clerical. A model
+that reads carefully and tests against its own reading converges, and the hidden probes check exactly what was
+written. More rules, more interactions and more planted faults raise cost and time, not failure rate. Under the
+pre-registered protocol this is reported as saturation; the vectors were not pushed further on a subject's score.
+
+**Hidden tests can measure the wrong thing.** On `polyglot-mini` (hidden official tests) haiku's C++ failures were
+compile errors against names such as `diamond::rows` that exist only in the tests: the C++ stubs are empty
+namespaces. Go `trinary`'s stub signature differs from its tests, and the task instruction told agents to keep stub
+signatures. Part of that spread therefore measured name-guessing (or memory of Exercism), which section 3 rejects as
+under-specification. Fix: `source.tests = visible`, Exercism's own setting and now the importer default. The agent
+sees the official tests; the grader runs its own unmodified copy with every test enabled. `polyglot-b` (hidden) and
+`polyglot-bv` (visible) are the same 48-task draw, so the effect of the change is measured directly, not assumed.
+
+**What is left that can discriminate:** behaviour not fully determined by a written spec, such as real exercises
+whose tests encode conventions; algorithmic depth under efficiency constraints (`algo-puzzle`); long-horizon work.
+`algo-puzzle` adds seeded variants of classic problems plus 200k-element generated inputs, so recalled textbook code
+is subtly wrong and quadratic code times out.
+
+**Reporting:** `ao-bench portfolio --run DIR ...` pools runs across suites. It reports per suite, area and language,
+plus *item-difficulty bands*: the number of subjects that solve each task. Discrimination shows as mass in the
+middle bands. The bands describe the instrument only; they are never used to select or re-weight tasks.
