@@ -287,3 +287,15 @@ def test_run_then_regrade_with_a_new_par(tmp_path: Path) -> None:
         assert regraded["cost_usd"] == record.tasks[0].cost_usd
     finally:
         shutil.rmtree(run_root, ignore_errors=True)
+
+
+def test_portfolio_cell_shows_mean_points_when_present() -> None:
+    from agent_orchestrator.bench.portfolio import Cell, TaskOutcome
+
+    cell = Cell()
+    for pts in (3.0, 5.0, None):
+        cell.add(TaskOutcome("s", "t", "opt-ladder", "python", 0.5, True, 1.0, 1.0, pts))
+    assert cell.render().endswith("· 4.00 pts")
+    plain = Cell()
+    plain.add(TaskOutcome("s", "t", "crud", "python", 1.0, True, 1.0, 1.0))
+    assert "pts" not in plain.render()

@@ -72,11 +72,15 @@ objective, an answer `y` earns:
 ```
 points(y) = 0                                              if infeasible, timed out, or y >= v_0
           = k + (v_k - y) / (v_k - v_{k+1})                if v_{k+1} <= y < v_k
-          = K + (v_K - y) / (v_{K-1} - v_K)                if y < v_K   (beyond the strongest reference)
+          = K + (v_K - y) / max(v_{K-1} - v_K, 0.01 * v_K)  if y < v_K   (beyond the strongest reference)
 ```
 
-Maximisation mirrors this. Points beyond `K` are unbounded: an answer that improves on the strongest reference
-by another "last gap" earns K+1. A task's points are the mean over its cases. The normalised score is
+Maximisation mirrors this.
+
+- Points beyond `K` are unbounded: each further "last gap" of improvement earns one more point, where the
+  gap is at least 1% of the top value.
+- The floor matters. Before it was added, a tour case whose last gap was 0.5% gave an answer 4% better than
+  rung K a score of 23 points. A task's points are the mean over its cases. The normalised score is
 `min(1, points / par)`. `par` defaults to K, and `points` is kept raw in `detail`.
 
 Each rung is a known algorithm tier, so the points read as a sentence: "2.6 = local-search quality plus 60% of
@@ -137,16 +141,21 @@ Each system is a generated family. It is a pure function of `(seed, difficulty, 
 | `facility` | `m` sites with opening costs and `n` customers; assignment cost = distance × demand | an open site for each customer | opening + assignment cost (min) |
 | `partition` | weighted sparse graph, `k` parts | part per vertex, sizes balanced to within ±1 | weight of cut edges (min) |
 
-- **Reference ladder:**
-  - rung 0, trivial: identity order, the cheapest single site for everyone, round-robin parts;
-  - rung 1, greedy: nearest neighbour, greedy add/drop, BFS-grown parts;
-  - rung 2, local search: 2-opt and Or-opt, swap/flip local search, pairwise swap refinement;
-  - rung 3, a short simulated-annealing budget;
-  - rung 4, a long simulated-annealing budget.
+- **Reference ladder** (as built):
+  - rung 0, trivial: identity order, first fit in site order, round-robin parts;
+  - rung 1, greedy: nearest neighbour, cheapest feasible site (largest customers first), BFS-grown parts;
+  - rung 2, local search: 2-opt; customer moves and swaps; vertex swaps; each run to a local optimum;
+  - rung 3, metaheuristic, about 1 s of reference CPU: 2-opt plus Or-opt plus short ILS; simulated annealing
+    with compound open/close-site moves; annealing on swaps;
+  - rung 4, strong: rung 3 continued with a budget proportional to `n`, about 2–6 s of reference CPU at the
+    largest size. It is deliberately comparable to what an agent's program gets from the 10 s limit (§10).
+- `facility` is capacitated (single source). Uncapacitated facility location was dropped because greedy
+  already matched annealing, so its ladder collapsed.
 - **Execution:** the reference server runs the rung-4 solver. Refcheck therefore scores exactly K points
   (score 1.0), and the no-op subject scores 0.
 - **Difficulty knobs:**
-  - `scale` sets the instance size: `tour` n = 200/500/1000/2000; others proportionally;
+  - `scale` sets the instance size: `tour` n = 150/300/600/1000, facility customers 80/160/300/500,
+    partition vertices 120/250/500/900;
   - `entities` sets the number of problems (1–3);
   - `concurrency` sets the cases per problem (1–4);
   - `traps` adds feasibility edge cases, such as duplicate points, zero-weight edges and sites nobody can
@@ -269,13 +278,14 @@ A new grader type next to `blackbox`. It reuses the sandbox, `Session` and the j
 ```
 grading_dir/
   instance.json            family, seed, difficulty, language, limits (problems, case_seconds, par)
-  cases.json               [{id, problem, case, sense, rungs: [v_0..v_K]}]   (grader-owned)
+  probes.json              {kind: "objective", case_seconds, par, solved_points, rungs,
+                            cases: [{id, problem, case, sense, ladder: [v_0..v_K]}]}  (grader-owned)
   reference/run.sh, server.py   strongest-rung solver + evaluate(problem, case, answer)
 ```
 
 Grading:
 
-1. Load `cases.json`. Import `reference/server.py` in-process, only for `evaluate`; it runs the
+1. Load `probes.json`. Import `reference/server.py` in-process, only for `evaluate`; it runs the
    grader's own checker on the grader's own files.
 2. Start the artefact in the sandbox (jsonl).
 3. For each case, send `solve` with a timeout of `case_seconds`, then run `evaluate`:

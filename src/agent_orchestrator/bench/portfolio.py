@@ -11,6 +11,9 @@ loaded run and rolls the tasks up by band:
   in band N is saturation, all in band 0 is a floor. The bands are computed from the results, so
   they describe the instrument and are never used to choose or re-weight tasks (no fitting).
 
+Open-scale graders (`objective`, T-Os5Lad) also report raw **points** (unbounded) in
+`grader_detail.points`; cells then add the mean points over the tasks that have them.
+
 Repeats of one (suite, subject) are pooled per task (mean score, solved if solved in most repeats).
 Infra errors, budget skips and audit-flagged tasks are not attempts (`results.is_attempted`). The
 cheap-and-quick "suspect" heuristic is NOT applied: a cheap model failing fast is a real failure.
@@ -39,6 +42,7 @@ class TaskOutcome:
     solved: bool
     cost: float
     wall: float
+    points: float | None = None
 
 
 @dataclass
@@ -48,6 +52,8 @@ class Cell:
     score_sum: float = 0.0
     cost: float = 0.0
     wall: float = 0.0
+    points_n: int = 0
+    points_sum: float = 0.0
 
     def add(self, o: TaskOutcome) -> None:
         self.tasks += 1
@@ -55,13 +61,17 @@ class Cell:
         self.score_sum += o.score
         self.cost += o.cost
         self.wall += o.wall
+        if o.points is not None:
+            self.points_n += 1
+            self.points_sum += o.points
 
     def render(self) -> str:
         if not self.tasks:
             return "—"
         per_solved = f"${self.cost / self.solved:.2f}" if self.solved else "n/a"
+        pts = f" · {self.points_sum / self.points_n:.2f} pts" if self.points_n else ""
         return (f"{self.score_sum / self.tasks:.3f} · {self.solved}/{self.tasks} · "
-                f"${self.cost:.2f} · {per_solved}/solved")  # fmt: skip
+                f"${self.cost:.2f} · {per_solved}/solved{pts}")  # fmt: skip
 
 
 def _pool(suite: str, recs: list[BenchTaskRecord]) -> TaskOutcome | None:
@@ -69,6 +79,12 @@ def _pool(suite: str, recs: list[BenchTaskRecord]) -> TaskOutcome | None:
     if not attempted:
         return None
     first = attempted[0]
+    pts = [
+        float(r.grader_detail["points"])
+        for r in attempted
+        if isinstance(r.grader_detail, dict)
+        and isinstance(r.grader_detail.get("points"), int | float)
+    ]
     return TaskOutcome(
         suite=suite,
         task_id=first.task_id,
@@ -78,6 +94,7 @@ def _pool(suite: str, recs: list[BenchTaskRecord]) -> TaskOutcome | None:
         solved=2 * sum(r.solved for r in attempted) > len(attempted),
         cost=sum(r.cost_usd or 0.0 for r in attempted) / len(attempted),
         wall=sum(r.wall_clock_seconds or 0.0 for r in attempted) / len(attempted),
+        points=sum(pts) / len(pts) if pts else None,
     )
 
 
@@ -99,7 +116,8 @@ def load_outcomes(run_dirs: Iterable[str | Path]) -> dict[str, dict[tuple[str, s
 
 def _table(title: str, label: str, keys: list[str], subjects: list[str],
            cells: dict[str, dict[str, Cell]]) -> list[str]:  # fmt: skip
-    lines = [f"## {title}", "", "Cell: mean score · solved/attempted · cost · $/solved.", ""]
+    legend = "Cell: mean score · solved/attempted · cost · $/solved (· mean open-scale points)."
+    lines = [f"## {title}", "", legend, ""]
     lines.append(f"| {label} | " + " | ".join(subjects) + " |")
     lines.append("|---|" + "---|" * len(subjects))
     for key in keys:
