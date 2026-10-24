@@ -202,6 +202,9 @@ bench-gen-smoke:
 bench-refcheck:
 	@if [ -z "$(SUITE)" ]; then echo "usage: make bench-refcheck SUITE=<suite.json>"; exit 1; fi
 	uv run ao-bench run --suite $(SUITE) --subject $(BENCH_FAKE_REFERENCE_SUBJECT_PATH) --out-dir playground/.tmp/bench-refcheck --force
+	@uv run python -c "import json,glob,sys; f=max(glob.glob('playground/.tmp/bench-refcheck/*/run.json'),key=lambda p:__import__('os').path.getmtime(p)); \
+	  bad=[(t['task_id'],t['score']) for t in json.load(open(f))['tasks'] if t['score']<1.0]; \
+	  print('refcheck: every instance scores 1.0' if not bad else f'refcheck FAILED (reference below 1.0 = validity bug): {bad}'); sys.exit(1 if bad else 0)"
 
 # Real-LLM Tier-1 campaign at haiku (cheap): bare claude vs ao-epic under the suite's parity bundle,
 # staged repeats. Spends real money -> confirm gate like bench-medium.

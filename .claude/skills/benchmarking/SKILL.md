@@ -32,8 +32,8 @@ repo checkout with `uv run ao-bench …` — never the global `ao`.
    (`grep -rn '"seed"' benchmarks/suites`) and record it in the results entry; keep at least one generated family
    unseen while tuning `ao` templates/instructions. Committed suites are for smoke, calibration and anchors.
 
-7. **Reference self-check before any spend.** Every generated suite must grade its hidden reference N/N
-   (`make bench-refcheck SUITE=<suite.json>`). Below N/N is a generator/grader bug (fix it, model-blind);
+7. **Reference self-check before any spend.** Every generated suite must grade its hidden reference at score 1.0 on
+   every instance (`make bench-refcheck SUITE=<suite.json>` checks the score, not just `solved`). Below N/N is a generator/grader bug (fix it, model-blind);
    never treat it as difficulty.
 8. **Tune, don't fit.** Difficulty is tuned with the `bench-tune` skill (global vector, anchors only,
    calibration seeds disjoint from ranking seeds, grader weights/threshold frozen). Campaigns and write-ups follow

@@ -39,7 +39,7 @@ Reference: `docs-md/benchmark-discriminating-suites-hld.md` §2c, §7 and the wo
 2. **Generate** a calibration suite at the candidate vector with calibration seeds:
    `uv run ao-bench gen --out benchmarks/suites/gen-calib-v<n> --id gen-calib-v<n> --family crud-relational
    --family job-queue --count 2 --languages python --seed <calib-base> --difficulty entities=3,traps=3,concurrency=2,scale=2`
-3. **Reference self-check (mandatory, free):** the hidden reference must score 1.0 on every instance —
+3. **Reference self-check (mandatory, free):** the hidden reference must score **1.0** on every instance (not merely `solved`: 0.85 still passes the 0.8 threshold and once hid a broken perf group) —
    `make bench-refcheck SUITE=benchmarks/suites/gen-calib-v<n>/suite.json` (fake `copy-reference` subject,
    Docker). Anything below N/N is a generator/grader bug: fix it (validity fix) before any agent spend.
 4. **Anchors only:** run the cheapest and the strongest bare subjects (e.g. haiku + opus) at r=1:

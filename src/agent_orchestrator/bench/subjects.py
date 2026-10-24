@@ -438,9 +438,24 @@ def init_git_with_local_origin(repo_dir: Path, workspace: Path) -> Path:
     append_git_exclude(repo_dir, [f"/{CLAUDE_DIRNAME}/"])
     _git("add", "-A")
     _git("commit", "-q", "--allow-empty", "-m", _INIT_COMMIT_MESSAGE)
+    # A provider may hand over a repo that is already git (Tier-2 snapshots sit on
+    # `master`): normalise the branch name and (re)point `origin` at the local bare repo.
+    _git("branch", "-M", GIT_MAIN_BRANCH)
     origin = workspace / GIT_ORIGIN_DIRNAME
     _git("clone", "-q", "--bare", str(repo_dir), str(origin), cwd=workspace)
-    _git("remote", "add", "origin", str(origin))
+    remotes = subprocess.run(  # noqa: S603 -- fixed argv, no shell, bounded timeout
+        ["git", "remote"],
+        cwd=str(repo_dir),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_SECONDS,
+        check=True,
+    ).stdout.split()
+    if "origin" in remotes:
+        _git("remote", "set-url", "origin", str(origin))
+    else:
+        _git("remote", "add", "origin", str(origin))
     _git("fetch", "-q", "origin")
     _git("branch", "-q", "--set-upstream-to", f"origin/{GIT_MAIN_BRANCH}")
     return origin

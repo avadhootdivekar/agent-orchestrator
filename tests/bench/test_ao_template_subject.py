@@ -160,3 +160,30 @@ def test_committed_overseer_subject_is_sonnet_only_and_thin() -> None:
         assert "--model" not in agent["command_template"]  # AO_MODEL applies to every agent
     prompt = (base / "ao-overseer" / "prompt.md").read_text()
     assert len(prompt) <= 600  # parity wrapper budget (benchmarks/parity/default)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_init_git_on_an_existing_master_repo_with_an_origin(tmp_path: Path) -> None:
+    """Tier-2 providers hand over a one-commit snapshot on `master` (T-Cb8Rk2 campaign bug)."""
+    ws = tmp_path / "ws"
+    repo = ws / "repo"
+    repo.mkdir(parents=True)
+    env_git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", "-q", "-b", "master"], cwd=repo, check=True)
+    (repo / "a.py").write_text("x = 1\n")
+    subprocess.run([*env_git, "add", "-A"], cwd=repo, check=True)
+    subprocess.run([*env_git, "commit", "-q", "-m", "snapshot"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "origin", "/nonexistent"], cwd=repo, check=True)
+    (repo / "INSTRUCTION.md").write_text("do it\n")
+
+    init_git_with_local_origin(repo, ws)
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    assert git("branch", "--show-current") == "main"
+    assert git("rev-parse", "--abbrev-ref", "@{u}") == "origin/main"
+    assert git("remote", "get-url", "origin") == str(ws / GIT_ORIGIN_DIRNAME)
+    assert git("rev-list", "--count", "HEAD") == "2"  # snapshot + the hand-over commit
