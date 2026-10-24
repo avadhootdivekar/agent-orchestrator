@@ -30,6 +30,7 @@ _RULES = "rules-engine"
 _ALGO = "algo-puzzle"
 _ALGO_HARD = "algo-hard"
 _OPT = "opt-ladder"
+_STAIR = "algo-staircase"  # the algo-hard problems on a size ladder
 _BUG = "bug-hunt"  # reuses the order-book instance, traps and probes
 
 TRAP_CATALOGUE: dict[str, Trap] = {
@@ -189,9 +190,9 @@ TRAP_CATALOGUE: dict[str, Trap] = {
         Trap(
             "variant_semantics",
             "The seeded problem variant, not the textbook one.",
-            (_ALGO, _ALGO_HARD),
+            (_ALGO, _ALGO_HARD, _STAIR),
         ),
-        Trap("blocked_cells", "Walks around blocked cells (incl. repeats).", (_ALGO_HARD,)),
+        Trap("blocked_cells", "Walks around blocked cells (incl. repeats).", (_ALGO_HARD, _STAIR)),
         Trap("negative_values", "Negative values and bounds in range counting.", (_ALGO,)),
         # opt-ladder (T-Os5Lad): see gen/opt_ladder.py.
         Trap(

@@ -16,6 +16,9 @@ from . import (
     algo_puzzle as _algo_puzzle,  # noqa: F401 -- registers "algo-puzzle" (T-Pf4Mix)
 )
 from . import (
+    algo_staircase as _algo_staircase,  # noqa: F401 -- registers "algo-staircase" (T-Os5Lad)
+)
+from . import (
     bug_hunt as _bug_hunt,  # noqa: F401 -- registers "bug-hunt" (T-Pf4Mix)
 )
 from . import (

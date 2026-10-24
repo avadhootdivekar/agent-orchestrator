@@ -21,6 +21,11 @@ generation time.
 
 Result: ``score = min(1, points / par)``, ``solved = points >= solved_points``, raw ``points`` (the
 open-scale number) in ``detail``.
+
+Staircase tasks (design §3.3, §11.1) use the same grader: a case carries ``"expect"`` (the exact
+answer) instead of a ladder, plus its ``"rung"``; with ``"aggregate": "rungs"`` a problem's points
+are the number of consecutive rungs, from rung 0, whose cases are all answered exactly in time.
+After a timeout, the problem's higher rungs are skipped (they would only time out too).
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ DEFAULT_CASE_SECONDS = 10.0
 # Transport slack on top of the stated limit: JSON encode/decode of a large answer + pipe latency.
 REQUEST_GRACE_SECONDS = 1.0
 DEFAULT_SOLVED_POINTS = 2.0
+AGGREGATES = ("mean", "rungs")
 # Give up on an artefact that cannot even start this many times in a row (remaining cases score 0).
 MAX_START_FAILURES = 2
 
@@ -93,24 +99,50 @@ def validate_cases(probes: dict[str, Any]) -> list[dict[str, Any]]:
     cases = probes.get("cases")
     if not isinstance(cases, list) or not cases:
         raise GraderError("objective grader: probes.json has no cases")
+    if probes.get("aggregate", "mean") not in AGGREGATES:
+        raise GraderError(f"objective grader: aggregate must be one of {AGGREGATES}")
+    rungs = probes.get("aggregate") == "rungs"
     for c in cases:
         ladder = c.get("ladder") if isinstance(c, dict) else None
-        if (
-            not isinstance(c, dict)
-            or not isinstance(c.get("id"), str)
-            or not isinstance(c.get("problem"), str)
-            or not isinstance(c.get("case"), dict)
-            or c.get("sense", "min") != "min"
-            or not isinstance(ladder, list)
-            or len(ladder) < 2
-            or any(not isinstance(v, int | float) for v in ladder)
-            or any(a <= b for a, b in zip(ladder, ladder[1:]))
-        ):
+        ok = (
+            isinstance(c, dict)
+            and isinstance(c.get("id"), str)
+            and isinstance(c.get("problem"), str)
+            and isinstance(c.get("case"), dict)
+        )
+        if ok and "expect" in c:
+            ok = not rungs or (isinstance(c.get("rung"), int) and c["rung"] >= 0)
+        elif ok:
+            ok = (
+                not rungs
+                and c.get("sense", "min") == "min"
+                and isinstance(ladder, list)
+                and len(ladder) >= 2
+                and all(isinstance(v, int | float) for v in ladder)
+                and all(a > b for a, b in zip(ladder, ladder[1:]))
+            )
+        if not ok:
             raise GraderError(
                 f"objective grader: malformed case {c.get('id') if isinstance(c, dict) else c!r} "
-                "(needs id, problem, case, sense 'min' and a strictly decreasing ladder)"
+                "(needs id, problem, case, and either sense 'min' + a strictly decreasing ladder, "
+                "or expect (+ rung >= 0 when aggregate is 'rungs'))"
             )
     return cases
+
+
+def staircase_points(results: list[dict[str, Any]]) -> dict[str, float]:
+    """problem -> consecutive rungs cleared from rung 0 (every case of a rung scored 1)."""
+    by: dict[str, dict[int, bool]] = {}
+    for r in results:
+        rung = by.setdefault(r["problem"], {})
+        rung[r["rung"]] = rung.get(r["rung"], True) and r["points"] >= 1.0
+    out: dict[str, float] = {}
+    for problem, rungs in by.items():
+        k = 0
+        while rungs.get(k):
+            k += 1
+        out[problem] = float(k)
+    return out
 
 
 class ObjectiveGrader(Grader):
@@ -127,7 +159,12 @@ class ObjectiveGrader(Grader):
         cases = validate_cases(probes)
         instance_path = grading_dir / INSTANCE_FILE
         instance = _load_json(instance_path, "instance") if instance_path.is_file() else {}
-        checker = load_checker(grading_dir / REFERENCE_DIRNAME)
+        checker = (
+            load_checker(grading_dir / REFERENCE_DIRNAME)
+            if any("ladder" in c for c in cases)
+            else None
+        )
+        aggregate = probes.get("aggregate", "mean")
 
         sandbox_raw = dict(extra.get("sandbox") or {})
         language = instance.get("language") or extra.get("language") or sandbox_raw.get("language")
@@ -136,7 +173,9 @@ class ObjectiveGrader(Grader):
         case_seconds = float(
             extra.get("case_seconds") or probes.get("case_seconds") or DEFAULT_CASE_SECONDS
         )
-        par = float(extra.get("par") or probes.get("par") or len(cases[0]["ladder"]) - 1)
+        par = float(
+            extra.get("par") or probes.get("par") or len(cases[0].get("ladder", [0, 0])) - 1
+        )
         solved_points = float(
             extra.get("solved_points") or probes.get("solved_points") or DEFAULT_SOLVED_POINTS
         )
@@ -154,12 +193,18 @@ class ObjectiveGrader(Grader):
         session = Session(sandbox, "jsonl", artefact_dir, work_root)
         start_failures = 0
         give_up = artefact_error  # set: every remaining case scores 0 with this reason
+        timed_out: set[str] = set()  # staircase: problems that already timed out
         try:
             for c in cases:
                 if give_up:
                     results.append(self._zero(c, give_up))
                     continue
+                if aggregate == "rungs" and c["problem"] in timed_out:
+                    results.append(self._zero(c, "skipped: a lower rung timed out"))
+                    continue
                 results.append(self._run_case(c, session, checker, case_seconds))
+                if results[-1].get("timed_out"):
+                    timed_out.add(c["problem"])
                 if results[-1].get("start_failed"):
                     start_failures += 1
                     artefact_error = results[-1]["reason"]
@@ -171,10 +216,15 @@ class ObjectiveGrader(Grader):
             session.close()
             shutil.rmtree(work_root, ignore_errors=True)
 
-        points = sum(r["points"] for r in results) / len(results)
         per_problem: dict[str, list[float]] = {}
         for r in results:
             per_problem.setdefault(r["problem"], []).append(r["points"])
+        if aggregate == "rungs":
+            by_problem = staircase_points(results)
+            points = sum(by_problem.values()) / len(by_problem)
+        else:
+            by_problem = {p: sum(v) / len(v) for p, v in per_problem.items()}
+            points = sum(r["points"] for r in results) / len(results)
         score = round(min(1.0, max(0.0, points / par)), 6) if par > 0 else 0.0
         detail: dict[str, Any] = {
             "grader": OBJECTIVE_GRADER_TYPE,
@@ -185,7 +235,8 @@ class ObjectiveGrader(Grader):
             "solved_points": solved_points,
             "case_seconds": case_seconds,
             "rungs": probes.get("rungs"),
-            "points_by_problem": {p: round(sum(v) / len(v), 6) for p, v in per_problem.items()},
+            "aggregate": aggregate,
+            "points_by_problem": {p: round(v, 6) for p, v in by_problem.items()},
             "cases": results,
         }
         if artefact_error:
@@ -203,18 +254,16 @@ class ObjectiveGrader(Grader):
 
     @staticmethod
     def _zero(c: dict[str, Any], reason: str, **more: Any) -> dict[str, Any]:
-        return {
-            "id": c["id"],
-            "problem": c["problem"],
-            "points": 0.0,
-            "objective": None,
-            "ladder": c["ladder"],
-            "reason": reason,
-            **more,
-        }
+        return {**ObjectiveGrader._base(c), "points": 0.0, "objective": None, "reason": reason,
+                **more}  # fmt: skip
+
+    @staticmethod
+    def _base(c: dict[str, Any]) -> dict[str, Any]:
+        keys = ("id", "problem", "ladder", "rung")
+        return {k: c[k] for k in keys if k in c}
 
     def _run_case(
-        self, c: dict[str, Any], session: Session, checker: ModuleType, case_seconds: float
+        self, c: dict[str, Any], session: Session, checker: ModuleType | None, case_seconds: float
     ) -> dict[str, Any]:
         req = {"op": "solve", "problem": c["problem"], "case": c["case"]}
         try:
@@ -226,7 +275,7 @@ class ObjectiveGrader(Grader):
             outcome = transport.send({"json": req}, case_seconds + REQUEST_GRACE_SECONDS)
         except ArtefactTimeout:
             session.close()  # a late answer would misalign the next request: restart
-            return self._zero(c, f"no answer within {case_seconds:g}s")
+            return self._zero(c, f"no answer within {case_seconds:g}s", timed_out=True)
         except ArtefactFailure as exc:
             session.close()
             return self._zero(c, f"artefact failed: {exc}"[:300])
@@ -234,6 +283,12 @@ class ObjectiveGrader(Grader):
         body = outcome.body
         if not isinstance(body, dict) or body.get("ok") is not True or "answer" not in body:
             return self._zero(c, f"not an ok answer: {outcome.text[:120]!r}", seconds=seconds)
+        if "expect" in c:
+            right = body["answer"] == c["expect"] and type(body["answer"]) is type(c["expect"])
+            if not right:
+                return self._zero(c, f"wrong answer {str(body['answer'])[:60]!r}", seconds=seconds)
+            return {**self._base(c), "points": 1.0, "objective": None, "seconds": seconds}
+        assert checker is not None  # loaded whenever a case has a ladder
         try:
             y = float(checker.evaluate(c["problem"], c["case"], body["answer"]))
         except Exception as exc:  # noqa: BLE001 -- the checker's OpError or a malformed answer
@@ -241,16 +296,15 @@ class ObjectiveGrader(Grader):
                 c, f"infeasible: {getattr(exc, 'message', exc)}"[:300], seconds=seconds
             )
         points = float(checker.ladder_points(y, c["ladder"]))
-        return {
-            "id": c["id"],
-            "problem": c["problem"],
-            "points": round(points, 6),
-            "objective": y,
-            "ladder": c["ladder"],
-            "seconds": seconds,
-        }
+        return {**self._base(c), "points": round(points, 6), "objective": y, "seconds": seconds}
 
 
 register_grader(OBJECTIVE_GRADER_TYPE, ObjectiveGrader)
 
-__all__ = ["OBJECTIVE_GRADER_TYPE", "ObjectiveGrader", "load_checker", "validate_cases"]
+__all__ = [
+    "OBJECTIVE_GRADER_TYPE",
+    "ObjectiveGrader",
+    "load_checker",
+    "staircase_points",
+    "validate_cases",
+]
