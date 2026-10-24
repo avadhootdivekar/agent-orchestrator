@@ -344,3 +344,130 @@ provides it.
   the mean.
 - **Models may all write annealing.** If haiku also anneals well, the band test fails and the knobs move:
   larger n, so that neighbour lists are needed; or less time. This is exactly what §5 is for.
+
+## 11. Appendix: implementable specs for the remaining systems
+
+Each spec below gives what a family module needs:
+
+- the protocol, which is jsonl like the other generated families;
+- the generated inputs: hidden, drawn from `random.Random(seed)`, never shown to the agent;
+- the reference ladder or oracle;
+- the grading rule;
+- the knobs.
+
+All of them plug into the `objective` grader, extended as noted, or into a sibling grader that shares
+`Session` and the sandbox.
+
+### 11.1 `scale-staircase` (algorithms and performance)
+
+- **Protocol:** the same as `algo-puzzle` and `algo-hard`: `{"op":"solve","problem","case":{"gen":{...}}}`
+  returns `{"ok":true,"answer":int}`. The LCG generator is stated in SPEC.md, so a size-10⁷ case is a
+  one-line request.
+- **Inputs:**
+  - per problem, rungs `j = 0..J` with `n_j = 1000 · 4^j`, so J=5 reaches about 10⁶ and J=6 about 4·10⁶;
+  - two seeds per rung.
+  The expected answers come from the `algo_hard_server` / `algo_server` engines at generation time. This is
+  already cross-checked against brute force on small cases.
+- **Grader extension:** `objective` cases gain `"expect": <int>` instead of `ladder`. A case scores 1 if its
+  answer is exact and arrives within `case_seconds`. Task points are the sum over rungs of
+  `min(seed results)`, reported per problem, so the points are the "highest rung cleared".
+- **Knobs:**
+  - `case_seconds`: 2/5/10;
+  - J;
+  - the problem set (`PUZZLE` or `HARD`);
+  - the language, which is fixed per task.
+- **Cost:** generation at J=6 needs the reference to solve n=4·10⁶. Cache the expected answers by
+  `(problem, variant, gen params)` in a grader-side cache directory, since the inputs are deterministic.
+
+### 11.2 `game-arena` (search and strategy)
+
+- **Protocol:**
+  - `{"op":"new","game":{rules},"you":0|1,"ms_per_move":int}` returns `{"ok":true}`;
+  - `{"op":"move","state":{board, to_move, history}}` returns `{"ok":true,"move":<move>}`.
+- **Games:** generated from the seed.
+  - Connection games: board `w×h` from {7×6, 8×7, 9×7, 10×8}, win length {4, 5}, gravity on or off.
+  - Sowing games: pits per side 5–8, seeds per pit 3–6, capture rule (opposite / count-equals-2-or-3) and
+    an extra-turn rule.
+  - SPEC.md states the drawn rules exactly, and states nothing about strategy.
+- **Reference bots, in Python, deterministic from a seed:** random, greedy one-ply, then alpha-beta at depth
+  2, 4 and 6 with the same heuristic evaluation (material, threats).
+- **Elo:** frozen per game *class*, from an offline round robin of 200 games per pair. The ratings ship as
+  constants in the family and are re-rated only when a bot changes. They are not fitted to any subject.
+- **Grading:** 2 × 10 games against each rung, alternating sides, from seeded openings (the first 2 moves
+  random). An illegal move or a timeout forfeits the game. Points are the maximum-likelihood Elo against the
+  frozen ladder, by Newton steps on the logistic likelihood. Report the 95% interval, and score
+  `rating / rating(par bot)`.
+- **Grader:** a new `arena` grader that runs a match runner over two `Session`s, artefact against reference.
+  Games run in parallel, at most `max_parallel_games`.
+- **Knobs:** board size and branching factor, `ms_per_move` (100–1000), and rule complexity.
+
+### 11.3 `oracle-clone` (investigation)
+
+- **What the agent gets:** `oracle` (a stripped static binary built from generated Go at materialise time,
+  with the toolchain bundle's Go) plus a one-paragraph description of the domain: "a shipping-fee
+  calculator", "a log-line tokenizer", "a cache that evicts entries".
+  - The oracle answers jsonl `{"op":"eval","input":{...}}` and returns `{"ok":true,"output":...}`.
+  - The agent writes `run.sh`, which implements the same function.
+- **Hidden rules:** generated. Example, fee: base by zone, weight bands with drawn thresholds, a surcharge if
+  `fragile && weight > t`, a discount for `count >= k` applied before or after tax (a drawn order), rounding
+  mode, and cap and floor. `R` rules out of a catalogue of 12, with drawn interactions.
+- **Grading:**
+  1. Delete `oracle` from the artefact copy; the sandbox has no network.
+  2. Run 2,000 inputs from a held-out sampler that covers every rule boundary.
+  3. Points are the number of rules whose boundary inputs all agree, plus the overall agreement %.
+- **Anti-wrapping:** grade in a copy without the oracle binary. Hashing the oracle's outputs into a lookup
+  table cannot cover held-out inputs.
+- **Knobs:**
+  - `R` (3–12);
+  - hidden state, such as fees that depend on the previous request, or an LRU cache;
+  - an optional query budget: the oracle refuses after Q calls, which rewards experiment design.
+
+### 11.4 `change-chain` (long horizon)
+
+- **Inputs:** a base service spec from `rules-engine` or `order-book`, plus K amendments drawn from a
+  catalogue of change types:
+  - add a field;
+  - change an ordering rule;
+  - deprecate an op with a compatibility error;
+  - split a rule by a condition;
+  - add an idempotency key;
+  - change rounding.
+  Each amendment is a markdown section that refers to earlier sections by number, and later amendments may
+  override earlier ones.
+- **Grading:** the reference applies every amendment. The hidden probes per stage are blackbox probes in the
+  existing DSL. Stage `s` passes if its probes pass and the earlier probes still valid under amendment `s`
+  pass. Points are the number of stages passed, out of K.
+- **Multi-turn mode (runner feature `stages`):** the subject is invoked K times on the same workspace, each
+  time with the next amendment as the instruction. Cost and turns are summed, and grading runs after every
+  stage. This measures maintenance under change rather than one-shot reading.
+
+### 11.5 `fault-field` (debugging at scale)
+
+- **Inputs:** a generated service of 2–5k lines (the order-book or rules-engine reference rendered into a
+  multi-module package) with `N` faults planted by AST mutation operators:
+  - comparison flip;
+  - off-by-one in a slice;
+  - a dropped `else`;
+  - a wrong default;
+  - shared mutable state;
+  - an error swallowed.
+  Each fault is tied to the probes that detect it. The instruction lists user-visible symptoms only: one
+  line per fault, deliberately vague, with no failing test.
+- **Grading:** points are the faults whose probes pass with no regression in other probes. N runs 5–40.
+- **Knob:** N, plus symptom vagueness (exact error, behaviour only, or nothing for some faults).
+
+### 11.6 `compress` and `numerics`
+
+- **`compress`:**
+  - Ops: `{"op":"compress","data_b64"}` and `{"op":"decompress","blob_b64"}`.
+  - Corpora are generated per seed: structured logs from templates with drawn fields, sensor CSV with
+    drawn autocorrelation, and Markov text.
+  - Grading: an exact round trip on 5 held-out corpora of about 1 MB each, then bits per byte on the ladder
+    (§3.1): raw 8.0, zlib-9, bz2-9, lzma-9, and an order-2 context-mixing reference.
+- **`numerics`:**
+  - Op: `{"op":"compute","task":{...}}` returns a float.
+  - Tasks are drawn from oscillatory integrals ∫ f(x) sin(ωx) dx with large ω, the smallest eigenvalue of a
+    generated SPD band matrix, an ODE end state after a stiff transient, and a root of a special-function
+    equation.
+  - The reference value is computed with `mpmath` at 50 digits at generation time.
+  - Points per case are `min(15, -log10(|y - ref| / |ref|))`; the task mean is the "digits of accuracy".
