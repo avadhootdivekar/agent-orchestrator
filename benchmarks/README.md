@@ -508,7 +508,7 @@ uv run ao-bench run --suite benchmarks/suites/gen-services-mini/suite.json --sub
 - The agent must make `./run.sh` serve the spec (`http`: bind `$HOST:$PORT`, `/healthz`; `jsonl`: stdin→stdout;
   `cli`: argv) using only the suite `stack` allow-list (default: stdlib + `sqlite3`, `montydb` for Python;
   `node:sqlite`; `modernc.org/sqlite`). No external services.
-- Grading is behaviour-only, inside Docker (`python:3.12-slim` / `node:22-alpine` / `golang:1.23-alpine`, deps
+- Grading is behaviour-only, inside Docker (`python:3.12-slim` / `node:22-alpine` / `golang:1.26-alpine`, deps
   pre-installed into a derived image, cpu/mem/pid limits, no network except the published port; `process`
   fallback is tagged in `grader_detail.sandbox`). Score = 0.5·core + 0.35·trap + 0.15·perf; `solved` = all core
   probes pass and score ≥ 0.8. Perf fits a scaling exponent α per op class over N ∈ sizes and compares p95 to

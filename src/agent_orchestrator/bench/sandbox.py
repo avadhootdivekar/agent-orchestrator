@@ -64,7 +64,7 @@ from .errors import GraderError
 DEFAULT_IMAGES: dict[str, str] = {
     "python": "python:3.12-slim",
     "typescript": "node:22-alpine",
-    "go": "golang:1.23-alpine",
+    "go": "golang:1.26-alpine",
 }
 DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
 DEFAULT_RUN_TIMEOUT_SECONDS = 30.0

@@ -229,7 +229,7 @@ class TestImages:
         [
             ("python", "python:3.12-slim"),
             ("typescript", "node:22-alpine"),
-            ("go", "golang:1.23-alpine"),
+            ("go", "golang:1.26-alpine"),
         ],
     )
     def test_default_images(self, language: str, image: str) -> None:
@@ -669,7 +669,7 @@ class TestImagesCommand:
         self._no_docker(monkeypatch)
         result = CliRunner().invoke(app, ["images", "--list"])
         assert result.exit_code == 0, result.output
-        for image in ("python:3.12-slim", "node:22-alpine", "golang:1.23-alpine"):
+        for image in ("python:3.12-slim", "node:22-alpine", "golang:1.26-alpine"):
             assert image in result.output
         assert "unknown (docker unavailable)" in result.output
 
@@ -694,7 +694,7 @@ class TestImagesCommand:
             "python", SandboxConfig.parse({"stack": {"python": {"deps": ["montydb==2.5.2"]}}})
         )
         assert derived.image in result.output and "(derived from python:3.12-slim)" in result.output
-        assert "golang:1.23-alpine" in result.output and "node:22-alpine" not in result.output
+        assert "golang:1.26-alpine" in result.output and "node:22-alpine" not in result.output
 
     def test_build_without_docker_exits_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._no_docker(monkeypatch)
