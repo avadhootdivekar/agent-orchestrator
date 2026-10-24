@@ -494,6 +494,12 @@ transcript, matched the baseline and flagged a planted `_ao_bench_grading` acces
 | Parity bundle | user `effortLevel` applied silently | `CLAUDE_CODE_EFFORT_LEVEL=high` pinned | equal, declared effort for every subject |
 | Go sandbox | `golang:1.23-alpine` (could not build: `modernc.org/sqlite` needs Go ≥ 1.26) | `golang:1.26-alpine` | image builds; TS/Go still unfair while the agent host lacks Node ≥ 22 / Go |
 
+**Ranking outcome (2026-10-24, `T-Cb8Rk2`):** haiku / sonnet / opus / ao-overseer-sonnet all solved 10/10 (gen-rank-v1 +
+repo-mutant-mini); quality is tied at the instrument's ceiling, cost and time separate them (see `benchmarks/README.md`).
+New open items: (1) a harder instrument for quality signal (below); (2) perf-phase `ConnectionRefused` flake under
+parallel grading (1 of 40 gradings, not reproducible alone); (3) crud perf at `scale=3` (reference exceeds the perf
+budget at 100k); (4) `overseer-runner` budget staging at small `run_budget_usd` (backstop fired in 5/6 runs at $2).
+
 **Still open (next epic tasks):** the six remaining Tier-1 families (§4.1); TypeScript/Go derived images built and
 run (Dockerfiles only `--check`ed; process fallback has no pre-installed deps for them); `ao-bench gen` does not yet
 run the generation-time "reference passes its probes" check (the structural validator runs; the full check is the

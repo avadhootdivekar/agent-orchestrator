@@ -713,6 +713,8 @@ def _group_scores(records: list[BenchTaskRecord]) -> dict[str, float]:
 
 # A probe group whose between-subject spread is at least this is called out as discriminating.
 OBSERVATION_GROUP_SPREAD = 0.10
+# Mean score at/above which a subject is at the suite's ceiling (saturation call-out).
+OBSERVATION_CEILING_SCORE = 0.95
 
 
 def _observations(
@@ -761,7 +763,15 @@ def _observations(
             + ", ".join(f"{e.a} vs {e.b} ({e.mean_diff:+.3f}, n={e.n_tasks})" for e in decided)
             + "."
         )
-    if undecided:
+    scores = [e.score_mean for e in ran.values()]
+    at_ceiling = len(scores) >= 2 and min(scores) >= OBSERVATION_CEILING_SCORE
+    if at_ceiling and max(scores) - min(scores) < OBSERVATION_GROUP_SPREAD:
+        out.append(
+            f"Every subject scores >= {OBSERVATION_CEILING_SCORE:.2f}: the suite is at its "
+            "ceiling and does not separate these subjects on quality -- repeats will not "
+            "change that; a harder instrument would. Compare them on cost and time."
+        )
+    elif undecided:
         out.append(
             f"{len(undecided)} pair(s) not distinguishable at this n (CI straddles 0): add "
             "tasks or repeats before ranking them."

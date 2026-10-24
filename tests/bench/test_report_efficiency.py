@@ -86,3 +86,11 @@ def test_group_scores_and_observations(two_runs: list[Path], tmp_path: Path) -> 
     body = md.read_text()
     assert "## Cost & efficiency" in body and "### Observations (rule-based)" in body
     assert "| strong | 4.0000 | 2 | 2 | 0.950 |" in body
+
+
+def test_ceiling_observation_replaces_the_add_repeats_advice(two_runs: list[Path]) -> None:
+    for run_dir in two_runs:
+        _rewrite(run_dir, {"t1": (1.0, 1.0, True, _breakdown(1, 1, 1)),
+                           "t2": (0.97, 1.0, True, _breakdown(1, 1, 0.8))})  # fmt: skip
+    text = " ".join(build_comparison(two_runs).observations)
+    assert "at its ceiling" in text and "add tasks or repeats" not in text

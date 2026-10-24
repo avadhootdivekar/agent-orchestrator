@@ -1404,3 +1404,18 @@ By: Claude
 Role: developer
 Date: 2026-10-24
 ---
+
+---
+Learning-ID: LRN-20261024-reference-selfcheck-before-calibration-spend
+Learning: Before spending on agents for a generated benchmark suite, grade the hidden reference against its own probes and
+  require score 1.0 on every instance (not merely `solved`). At untested difficulty levels the instrument itself was broken
+  in ways that look like task difficulty: a probe the grader could not express, ephemeral-port exhaustion through
+  `docker-proxy` after ~28k short connections (resets the ~28k-th request), and a seeded random label colliding with a
+  unique-field trap (0.85 still counted as `solved`). Separately: when every subject is at the ceiling, more repeats do not
+  help — only a harder instrument does — and fixes to the grader are legitimate only when justified by the reference or
+  the harness failing, never by a subject's score.
+Context: E-Bn7Dsc T-Cb8Rk2 calibration + ranking campaign, 2026-10-24.
+By: Claude
+Role: manager
+Date: 2026-10-24
+---

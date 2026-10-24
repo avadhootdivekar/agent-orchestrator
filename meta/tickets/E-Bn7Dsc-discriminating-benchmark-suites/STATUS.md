@@ -6,6 +6,11 @@
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-10-24 · Comment: **`T-Ov3Sbj` + `T-Cb8Rk2` done.** ao overseer bench subject
+  (template mode); pre-registered calibration found the generated families and repo-mutant-mini saturated for haiku and
+  opus at the maximum valid vector; 4-subject ranking (haiku/sonnet/opus/ao-overseer-sonnet) ties on quality (10/10 each)
+  and separates on cost ($0.07 → $1.79 per task) and time (56 → 560 s per task). Six model-blind validity fixes landed.
+  Skills `bench-tune` + `bench-campaign-report`. Next: a harder instrument (HLD §12 still open).
 - By: Claude · Role: developer · Date: 2026-10-24 · Comment: **`T-Ws7Iso` done** — bench workspaces moved outside
   the checkout (`/var/tmp/ao-bench/<uid>`, `AO_BENCH_WORKSPACE_ROOT`), grading under a sibling root, init-event
   environment fingerprint + baseline probe + user-config fingerprint with comparison refusals, grading-access

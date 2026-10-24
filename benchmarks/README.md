@@ -691,6 +691,93 @@ pipeline proof stands, but treat these numbers as *non-clean*; do not cite them 
 init fingerprints equal to the run's baseline, with no repo or control-plane skill/agent, no MCP server and
 auto-memory off ($0.013 total, scratch results not committed).
 
+### `medium`/`large` — calibration + 4-subject ranking (2026-10-24, `T-Cb8Rk2`)
+
+**Question.** Can the generated suites be tuned to tell `claude-haiku`, `claude-sonnet`, `claude-opus` and an `ao`
+overseer on Sonnet only (`ao-overseer-sonnet`) apart, within $20 per subject?
+**Answer: not on quality.** Every subject solved all 10 ranking tasks. The suites are at their ceiling for current
+models even at the maximum valid difficulty. The subjects separate clearly on **cost and time**.
+
+**Setup.** The protocol was pre-registered in the ticket before any spend. The default parity bundle applies to
+everyone: `max_turns` 30, `bypassPermissions`, `CLAUDE_CODE_EFFORT_LEVEL=high`, claude.ai connectors off,
+auto-memory off. All four subjects share the init fingerprint `62181309c7b1`, which equals each run's baseline. There
+were no foreign entries and no grading-access suspects. Tasks ran three at a time; subjects ran one after another
+from a clean tree. The ranking used two suites, ten tasks in all:
+- `gen-rank-v1`: 6 generated Python tasks (3 crud-relational http, 3 job-queue jsonl). Fresh seeds 9511-9513 at
+  the maximum valid vector `entities=3, traps=3, concurrency=3, scale=2`.
+- `repo-mutant-mini`: 4 Tier-2 tasks (bugs injected into or a feature excised from click, attrs, rich).
+`ao-overseer-sonnet` is the builtin `overseer-runner` with `run_budget_usd=2`, `wave_size=3`, `max_waves=2` and
+`final_push=false`.
+
+**Calibration (anchors haiku + opus only, seeds 7301-7322).**
+
+| Round | Vector | Reference self-check | haiku | opus | Spend |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 3,3,2,2 | failed 4/4 (two harness bugs, fixed) | 4/4 at 1.0 | 4/4 at 1.0 | $2.64 |
+| 2 | 3,3,3,2 | 4/4 at 1.0 | 4/4 at 1.0 | 4/4 at 1.0 | $3.29 |
+| scale 3 | 3,3,3,3 | crud perf not gradeable (reference over budget at 100k; label collisions) | — | — | $0 |
+| Tier 2 | `repo-mutant-mini` | 4/4, do-nothing 0/4 | 4/4 | 4/4 | $0.84 |
+
+**Ranking results** (`2026-10-24-gen-rank-v1-compare/`, `2026-10-24-repo-mutant-mini-compare/`):
+
+| Subject | Solved | Mean score | Spend ($) | $/task | $/solved | Wall/task (s) | Output tokens/task (gen) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| claude-haiku | 10/10 | 0.985 | 0.71 | 0.071 | 0.071 | 205 | 58.7k |
+| claude-sonnet | 10/10 | 0.985 | 1.66 | 0.166 | 0.166 | 56 | 10.3k |
+| claude-opus | 10/10 | 0.970 | 4.55 | 0.455 | 0.455 | 147 | 15.9k |
+| ao-overseer-sonnet | 10/10 | 0.985 | 17.93 | 1.793 | 1.793 | 560 | 74.6k |
+
+Core and trap probes passed 100% for every subject. Every pairwise CI is centred on zero.
+
+**Insights**
+- **The score gaps are not capability.** All 4 subjects lost perf points on `crud-relational-py-s9512`. A generator
+  bug made the reference itself fail there, because the perf load's random label collided with the unique-label
+  trap; this is fixed after the campaign. Opus also lost perf points on `s9513`, and that was a grading flake: the
+  artefact refused connections under parallel grading, then scored 1.0 twice when re-graded alone. With both
+  removed, every subject scores 1.0 on every task.
+- **Cost frontier.** Haiku dominates on cost: 2.3x cheaper than sonnet, 6.4x cheaper than opus and 25x cheaper than
+  the overseer, at equal quality. Sonnet dominates on time, at 56 s per task against 147 s for opus and 205 s for
+  haiku. Haiku needs 4 to 6 times more turns and output tokens than sonnet, and hit `max_turns` on one task while
+  still solving it.
+- **Orchestration overhead.** The overseer costs 10.8x and takes 10x the wall time of bare Sonnet, for the same
+  outcome. On the generated suite, implementation units take only about 22% of its spend. Verify units take 27%,
+  checkpoints 18%, intake 17%, final-verify 8%, branch-off 5% and closeout 4%. At this difficulty the extra
+  stages buy nothing measurable.
+- **ao finding.** The `run-budget-backstop` breaker stopped 5 of 6 overseer runs on the generated suite at $2,
+  before the close-out tail. The graceful budget staging (explore through closeout) never engaged. The template's
+  cost heuristics, `default_unit_cost_usd` 8 and `default_ckpt_cost_usd` 5, are sized for large runs. The work was
+  already done, so it was graded solved.
+
+**Validity and the tuning-versus-fitting check**
+- Every tuned knob was global, chosen on anchor data only, and never moved after Sonnet or the overseer ran.
+  Calibration seeds are disjoint from ranking seeds. Grader weights and threshold were frozen.
+- Six harness or grader validity fixes were made. Each was triggered by the reference failing its own probes or
+  by an infrastructure error, never by a subject's score:
+  - jsonl requests may now be any JSON value;
+  - HTTP grading connects to the container IP with `SO_LINGER 0`, after about 30k connections exhausted the
+    ephemeral ports through `docker-proxy`;
+  - a grader exception keeps the subject's real cost;
+  - `init_git` now works on repos that are already git;
+  - the crud perf load label embeds the load index;
+  - the reference self-check now requires a score of 1.0.
+- Some levers were deliberately not used, because each would have manufactured a ranking. A lower `max_turns`
+  would favour `ao`, since its limit applies per agent. Up-weighting perf would amplify timing noise. Dropping
+  instances, or tightening timeouts after seeing results, would also have fitted the instrument.
+- Declared asymmetries and reuse:
+  - only the overseer's repo is a git repo, which its branch-off stage requires;
+  - its per-task budget was lowered from 3 to 2 before ranking, to fit the cap;
+  - haiku's and opus's `repo-mutant-mini` ranking runs are their calibration runs, with nothing selected by them.
+- Limitations: n=10, Python only, r=1, and two families at their ceiling.
+
+**What it would take to get quality signal:**
+- the six unbuilt Tier-1 families, or multi-service tasks;
+- TS/Go, once the agent host has Node 22 or later and Go, or agents run inside the sandbox image;
+- recent `pr_mined` instances from after the model cutoff, imported with `ao-bench import-prs`;
+- a larger brownfield suite.
+
+**Spend:** $32.75 in total, including $0.80 estimated for two unrecorded invalid runs, against the $250 ceiling.
+Ranking spend per subject was haiku $0.71, sonnet $1.66, opus $4.55 and overseer $17.93, each within its $20 cap.
+
 ### Total epic spend
 
 Across the whole `E-Bt4Xk9` epic (framework authoring smoke/gold-patch verification + both PLAN campaigns above):
