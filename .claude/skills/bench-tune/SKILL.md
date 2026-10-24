@@ -62,3 +62,23 @@ Reference: `docs-md/benchmark-discriminating-suites-hld.md` §2c, §7 and the wo
 - Per-family consistency: does the order hold in each family, or does one family produce it?
 - Was any knob moved after a non-anchor subject ran? (Must be "no".)
 - Did calibration instances leak into ranking? (Seeds must differ.)
+
+## Before building another family: what does and does not discriminate (T-Pf4Mix, 2026-10-24)
+- **Spec-complete + locally runnable = saturated, whatever the depth.** Haiku and opus both scored 1.0, at the
+  maximum vector, on every family tried:
+  - order-book: matching engine, stops, FOK, funds;
+  - bug-hunt: 5 or 8 planted faults;
+  - rules-engine: a 10k-character pricing spec;
+  - algo-puzzle: 6 problems, seeded variants, 200k inputs;
+  - algo-hard: story-form slope trick, suffix automaton, combinatorics.
+
+  Haiku often costs $0.02–0.20 per task. More rules, traps or faults raise cost and time, not failure rate. Do not
+  expect a new family of this kind to fix saturation.
+- **Hidden tests can measure guessing.** On the same 48 Exercism tasks, haiku solved 28 with hidden tests and 48
+  with visible tests; sonnet and opus solved 48/48 with visible tests. The spread came from API names that appear
+  only in the tests (empty C++ stub namespaces) and from misleading stubs. Before attributing a spread to
+  capability, read the failing tasks' grader output: compile errors against unknown names mean under-specification.
+- **Remaining candidates for real spread** (unproven): convention inference that a competent human could do from the
+  materials given; research-level problems; long-horizon multi-component work; tasks without a local oracle.
+- Use `ao-bench portfolio` item-difficulty bands to see where a suite discriminates. The bands come from results, so
+  never select or re-weight tasks by them.
