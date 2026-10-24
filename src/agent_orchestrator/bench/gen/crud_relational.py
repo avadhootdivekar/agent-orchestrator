@@ -1316,8 +1316,11 @@ class Probes:
         body = self.body(root, {})
         # The load step stores records under client-chosen ids `perf-0 .. perf-(N-1)`; a mix
         # step's `{{i}}` is a random index in [0, N), so `perf-{{i}}` always names a record.
+        # Load labels embed `{{i}}` too: with the unique-label trap, a seeded `{{rand}}` label
+        # collided at N=10k (gen-rank-v1 s9512: the reference itself got 409, T-Cb8Rk2).
+        load_body = self.body(root, {}, label=f"{root}-{tmpl('i')}")
         load = step(
-            http_op("POST", path, {**body, "id": f"{PERF_ID_PREFIX}{tmpl('i')}"}),
+            http_op("POST", path, {**load_body, "id": f"{PERF_ID_PREFIX}{tmpl('i')}"}),
             status=201,
             repeat=1,
         )

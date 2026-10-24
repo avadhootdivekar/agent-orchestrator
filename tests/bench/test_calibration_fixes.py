@@ -125,3 +125,19 @@ def test_http_transport_many_short_connections_do_not_fail(local_server: int) ->
     transport = HttpTransport(Handle(kind="http", port=local_server))
     for _ in range(2000):
         assert transport.send({"method": "POST", "path": "/x", "json": {}}, 5.0).status == 201
+
+
+# ---------------------------------------------------------------------------
+# 4. crud perf load labels are unique by construction (gen-rank-v1 s9512 collision)
+# ---------------------------------------------------------------------------
+
+
+def test_crud_perf_load_label_embeds_the_load_index() -> None:
+    from agent_orchestrator.bench.gen import FAMILY_REGISTRY
+    from agent_orchestrator.bench.gen.base import Difficulty
+
+    family = FAMILY_REGISTRY["crud-relational"]()
+    inst = family.generate(9512, Difficulty(entities=3, traps=3, concurrency=3, scale=2), "python")
+    load_body = inst.probes["groups"]["perf"]["load"]["op"]["json"]
+    labels = [v for k, v in load_body.items() if k != "id" and isinstance(v, str) and "{{" in v]
+    assert labels and all("{{i}}" in v and "{{rand}}" not in v for v in labels)
