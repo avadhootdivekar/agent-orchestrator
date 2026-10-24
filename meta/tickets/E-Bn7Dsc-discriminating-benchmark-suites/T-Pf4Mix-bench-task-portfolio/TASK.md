@@ -34,3 +34,5 @@ rather than fit). Every suite passes `make bench-refcheck` (reference 1.0 everyw
 - `polyglot-mini` (external, fixed sample drawn by seed 20261024 before any agent ran) is not tuned at all.
 - Ranking languages for generated build tasks: python + typescript + go (toolchains on the agent host since
   `b2dc911`); bug-hunt is Python only.
+- `rules-engine` (added before any spend on it): start at `entities=3,traps=3,concurrency=2,scale=1`; calibration
+  seeds 7501+, ranking seeds 9701+.
