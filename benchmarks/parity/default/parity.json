@@ -9,5 +9,9 @@
   },
   "max_turns": 30,
   "permission_mode": "bypassPermissions",
-  "wrapper_prompt_max_chars": 600
+  "wrapper_prompt_max_chars": 600,
+  "toolchains": [
+    "go",
+    "node"
+  ]
 }

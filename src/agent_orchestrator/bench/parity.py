@@ -53,6 +53,9 @@ class ParityBundle(BaseModel):
     # Applied to every subject unless the CLI overrides it for ALL of them.
     max_turns: int | None = None
     permission_mode: str | None = None
+    # Language toolchains every subject gets on its host (`bench/toolchains.py`), e.g.
+    # ["go", "node"]; installed under the bench root and exposed via PATH + CLAUDE_ENV_FILE.
+    toolchains: list[str] = []
     # Lint budget for subject wrapper prompts (`ao-bench validate --parity`): a wrapper
     # longer than this is treated as smuggling instructions past the bundle.
     wrapper_prompt_max_chars: int = 600

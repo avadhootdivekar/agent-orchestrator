@@ -104,6 +104,7 @@ from .subjects import (
     SubjectResult,
     _budget_skipped_result,
 )
+from .toolchains import ensure_installed
 from .workspace import (
     CAPTURE_DIRNAME,
     ENV_BENCH_WORKSPACE_ROOT,
@@ -113,6 +114,7 @@ from .workspace import (
     bench_grading_root,
     bench_workspace_root,
     materialize_workspace,
+    parity_env,
 )
 
 # `probe_env_baseline`'s signature (keyword-only cwd/env/model/permission_mode); injectable
@@ -695,6 +697,8 @@ def run_suite(
         parity_path = suite_base_dir / suite.parity
     bundle: ParityBundle | None = load_parity(parity_path) if parity_path is not None else None
     bundle_fingerprint = parity_fingerprint(bundle) if bundle is not None else None
+    if bundle is not None and bundle.toolchains:
+        ensure_installed(bundle.toolchains)  # downloads once into <bench base>/toolchains
 
     bench_run_id = compute_bench_run_id(suite, subject_spec, resolved_clock, repeat)
     result_path = resolve_result_dir(bench_run_id, out_dir=out_dir) / RUN_JSON_FILENAME
@@ -824,7 +828,7 @@ def run_suite(
         user_config: UserConfigFingerprint | None = None
         env_baseline: EnvFingerprint | None = None
         if is_agent_subject:
-            child_env = subject_env(bundle.env if bundle is not None else {})
+            child_env = subject_env(parity_env(bundle) if bundle is not None else {})
             user_config = user_config_fingerprint(child_env)
             env_baseline = probe_baseline(
                 run_workspace_root,

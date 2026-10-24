@@ -77,6 +77,13 @@ CAPTURE_DIRNAME = "capture"
 INSTRUCTION_FILENAME = "INSTRUCTION.md"
 
 
+def parity_env(bundle: ParityBundle) -> dict[str, str]:
+    """The bundle's env knobs plus its toolchains' environment (identical for every subject)."""
+    from .toolchains import toolchain_env
+
+    return {**toolchain_env(bundle.toolchains), **bundle.env}
+
+
 def _uid_component() -> str:
     getuid = getattr(os, "getuid", None)
     return str(getuid()) if getuid is not None else os.environ.get("USERNAME", "user")
@@ -358,6 +365,6 @@ def materialize_workspace(
         else None,
         grading_dir=str(grading_path) if grading_path is not None else None,
         parity_fingerprint=fingerprint,
-        env=dict(parity.env) if parity is not None else {},
+        env=parity_env(parity) if parity is not None else {},
         permission_mode=parity.permission_mode if parity is not None else None,
     )

@@ -662,7 +662,7 @@ def env_cmd(
     from .envcheck import check_isolation, subject_env, user_config_fingerprint
     from .parity import load_parity
     from .runner import probe_baseline
-    from .workspace import REPO_ROOT, bench_grading_root, bench_workspace_root
+    from .workspace import REPO_ROOT, bench_grading_root, bench_workspace_root, parity_env
 
     parity_path = Path(parity) if parity else REPO_ROOT / "benchmarks" / "parity" / "default"
     try:
@@ -672,7 +672,7 @@ def env_cmd(
         raise typer.Exit(EXIT_USAGE_ERROR) from exc
     ws_root, grading_root = bench_workspace_root(), bench_grading_root()
     isolation = check_isolation(ws_root, grading_root)
-    child_env = subject_env(bundle.env if bundle is not None else {})
+    child_env = subject_env(parity_env(bundle) if bundle is not None else {})
     payload: dict[str, object] = {
         "workspace_root": str(ws_root),
         "grading_root": str(grading_root),
@@ -687,6 +687,31 @@ def env_cmd(
         payload["baseline"] = baseline.model_dump(mode="json") if baseline else None
     typer.echo(json.dumps(payload, indent=2))
     raise typer.Exit(EXIT_ENV_CONTAMINATED if isolation.contaminated else EXIT_OK)
+
+
+@app.command(name="toolchains")
+def toolchains_cmd(
+    install: bool = typer.Option(False, "--install", help="Download + verify every toolchain."),
+    name: list[str] | None = typer.Option(None, "--name", help="Limit to these toolchains."),
+) -> None:
+    """List (or --install) the bench-owned language toolchains agents get on their host."""
+    from .toolchains import TOOLCHAINS, install_dir, is_installed
+    from .toolchains import install as install_one
+
+    names = name or sorted(TOOLCHAINS)
+    for n in names:
+        if n not in TOOLCHAINS:
+            typer.echo(f"ERROR: unknown toolchain {n!r}; known: {sorted(TOOLCHAINS)}", err=True)
+            raise typer.Exit(EXIT_USAGE_ERROR)
+        tc = TOOLCHAINS[n]
+        if install and not is_installed(tc):
+            try:
+                install_one(tc)
+            except BenchError as exc:
+                typer.echo(f"ERROR: {exc}", err=True)
+                raise typer.Exit(EXIT_USAGE_ERROR) from exc
+        state = "installed" if is_installed(tc) else "missing"
+        typer.echo(f"{tc.name:6s} {tc.version:10s} {state:9s} {install_dir(tc)}")
 
 
 @app.command(name="list")
