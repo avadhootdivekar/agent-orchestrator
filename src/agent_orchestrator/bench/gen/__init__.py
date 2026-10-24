@@ -10,6 +10,9 @@ files and run-contract prose), ``dsl`` (probe builders), ``validate`` (probes.js
 from __future__ import annotations
 
 from . import (
+    algo_hard as _algo_hard,  # noqa: F401 -- registers "algo-hard" (T-Pf4Mix)
+)
+from . import (
     algo_puzzle as _algo_puzzle,  # noqa: F401 -- registers "algo-puzzle" (T-Pf4Mix)
 )
 from . import (

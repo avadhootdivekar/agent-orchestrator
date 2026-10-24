@@ -28,6 +28,7 @@ _QUEUE = "job-queue"
 _BOOK = "order-book"
 _RULES = "rules-engine"
 _ALGO = "algo-puzzle"
+_ALGO_HARD = "algo-hard"
 _BUG = "bug-hunt"  # reuses the order-book instance, traps and probes
 
 TRAP_CATALOGUE: dict[str, Trap] = {
@@ -184,7 +185,12 @@ TRAP_CATALOGUE: dict[str, Trap] = {
             "rounding_mode", "Every percentage uses the instance's rounding mode.", (_RULES,)
         ),  # fmt: skip
         # algo-puzzle (T-Pf4Mix): see gen/algo_puzzle.py.
-        Trap("variant_semantics", "The seeded problem variant, not the textbook one.", (_ALGO,)),
+        Trap(
+            "variant_semantics",
+            "The seeded problem variant, not the textbook one.",
+            (_ALGO, _ALGO_HARD),
+        ),
+        Trap("blocked_cells", "Walks around blocked cells (incl. repeats).", (_ALGO_HARD,)),
         Trap("negative_values", "Negative values and bounds in range counting.", (_ALGO,)),
     )
 }

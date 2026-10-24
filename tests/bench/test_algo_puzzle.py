@@ -66,3 +66,28 @@ def test_generator_valid_deterministic() -> None:
     assert a == fam.generate(5, d, "python")
     assert validate_probes(a.probes) == [] and len(a.limits["problems"]) == 4
     assert a.traps and all(p in a.spec_md for p in a.limits["problems"])
+
+
+def test_algo_hard_hand_computed_and_brute_force() -> None:
+    from agent_orchestrator.bench.gen.algo_hard import HARD
+
+    def hard(problem: str, case: dict, variant: str) -> object:
+        variants = {p: v[0] for p, v in HARD.variants.items()} | {problem: variant}
+        resp = new_engine({"variants": variants}, HARD).handle(
+            {"op": "solve", "problem": problem, "case": case}
+        )
+        return resp.get("answer")
+
+    assert hard("smoothing", {"heights": [3, 1, 2]}, "non_decreasing") == 2  # -> 1,1,2 or 2,2,2
+    assert hard("smoothing", {"heights": [1, 1, 1]}, "strict") == 2  # -> 0,1,2
+    assert hard("substrings", {"text": "aaa"}, "all") == 3
+    assert hard("substrings", {"text": "aaa"}, "repeated") == 2  # "a", "aa"
+    assert hard("grid_paths", {"rows": 2, "cols": 3, "blocked": [[0, 1]]}, "count") == 1
+    assert hard("window_medians", {"values": [1, 5, 2, 8], "w": 2}, "lower") == 1 + 2 + 2
+    assert hard("window_medians", {"values": [1, 5, 2, 8], "w": 2}, "upper") == 5 + 5 + 8
+    assert hard("lis_count", {"values": [1, 3, 2, 4]}, "strict") == 2
+    assert hard("lis_count", {"values": [2, 2]}, "non_decreasing") == 1
+    cross_check(random.Random(4), HARD)
+    fam = FAMILY_REGISTRY["algo-hard"]()
+    inst = fam.generate(9, Difficulty(entities=1, traps=1, concurrency=0, scale=1), "python")
+    assert validate_probes(inst.probes) == [] and len(inst.limits["problems"]) == 3

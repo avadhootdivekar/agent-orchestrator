@@ -40,3 +40,8 @@ rather than fit). Every suite passes `make bench-refcheck` (reference 1.0 everyw
   200k-element generated cases); calibration seeds 7551+, ranking seeds 9751+.
 - Round-1 outcome so far: order-book, bug-hunt (5 faults) and rules-engine all saturate at their starting vectors
   (haiku and opus 1.0 on every calibration task). Recorded as saturation, not tuned towards a target.
+- `algo-puzzle` round 1: saturated (haiku and opus 1.0, haiku $0.02/task) at the max vector.
+- `algo-hard` (added after the above, before any spend on it): story-form problems that never name their technique
+  (slope trick, suffix automaton, combinatorics over blocked cells, sliding-window order statistics, LIS counting).
+  Start at `entities=3,traps=3,concurrency=2,scale=3` (5 problems, 200k inputs); calibration seeds 7601+, ranking
+  seeds 9801+. One round only; if it saturates it is reported as such.

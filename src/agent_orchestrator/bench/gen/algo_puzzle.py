@@ -22,6 +22,7 @@ import random
 import sys
 from collections import deque
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from functools import cache
 from types import ModuleType
 from typing import Any
@@ -49,15 +50,14 @@ VARIANTS: dict[str, tuple[str, ...]] = {
     "free_edges_path": ("directed", "undirected"),
     "connected_at": ("inclusive", "exclusive"),
 }
-PROBLEM_ORDER = tuple(VARIANTS)
 
 JsonDict = dict[str, Any]
 
 
 @cache
-def _engine_module() -> ModuleType:
-    path = REFERENCE_DIR / REFERENCE_PROGRAM
-    spec = importlib.util.spec_from_file_location("ao_bench_algo_reference", path)
+def load_reference(program: str) -> ModuleType:
+    path = REFERENCE_DIR / program
+    spec = importlib.util.spec_from_file_location(f"ao_bench_ref_{path.stem}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -65,8 +65,12 @@ def _engine_module() -> ModuleType:
     return module
 
 
-def new_engine(limits: JsonDict) -> Any:
-    return _engine_module().Engine(limits)
+def _engine_module() -> ModuleType:
+    return load_reference(REFERENCE_PROGRAM)
+
+
+def new_engine(limits: JsonDict, ps: ProblemSet | None = None) -> Any:
+    return load_reference((ps or PUZZLE).reference).Engine(limits)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -220,15 +224,16 @@ def gen_params(rng: random.Random, problem: str, n: int) -> JsonDict:
     return {"seed": seed, "n": max(2, n // 2), "m": n // 2, "q": n, "max_t": 10**6}
 
 
-def cross_check(rng: random.Random) -> None:
+def cross_check(rng: random.Random, ps: ProblemSet | None = None) -> None:
     """The reference's efficient solvers agree with brute force on every problem and variant."""
-    module = _engine_module()
-    for problem, variants in VARIANTS.items():
+    ps = ps or PUZZLE
+    module = load_reference(ps.reference)
+    for problem, variants in ps.variants.items():
         for variant in variants:
             for _ in range(CROSS_CHECK_CASES):
-                case = small_case(rng, problem)
+                case = ps.small_case(rng, problem)
                 got = module.PROBLEMS[problem][1](case, variant)
-                want = BRUTE[problem](case, variant)
+                want = ps.brute[problem](case, variant)
                 if got != want:
                     raise AssertionError(
                         f"{problem}/{variant}: reference {got} != brute {want} on {case}"
@@ -301,17 +306,20 @@ _GEN = {
 }
 
 
-def render_spec(limits: JsonDict, language: str, allow: Sequence[str]) -> str:
+def render_spec(
+    limits: JsonDict, language: str, allow: Sequence[str], ps: ProblemSet | None = None
+) -> str:
+    ps = ps or PUZZLE
     sections = []
     for i, problem in enumerate(limits["problems"], start=1):
         variant = limits["variants"][problem]
         sections += [
             f"### 4.{i} `{problem}`",
             "",
-            f"Answer: {_STATEMENT[(problem, variant)]}",
+            f"Answer: {ps.statement[(problem, variant)]}",
             "",
-            f"- Explicit case: {_EXPLICIT[problem]}.",
-            f'- Generated case: `{{"gen": {{...}}}}` with {_GEN[problem]}',
+            f"- Explicit case: {ps.explicit[problem]}.",
+            f'- Generated case: `{{"gen": {{...}}}}` with {ps.gen_text[problem]}',
             "",
         ]
     parts = [
@@ -340,9 +348,8 @@ def render_spec(limits: JsonDict, language: str, allow: Sequence[str]) -> str:
         "`unknown_problem` (a name not in section 4) or `invalid_request` (the line is not JSON, "
         "or "
         "`case` is not an object). Cases are otherwise always well-formed.",
-        f"- **Size and time.** Inputs have up to {LARGE_N_BY_LEVEL[-1]:,} values, edges, links, "
-        f"queries or jobs; every request must be answered within {REQUEST_SECONDS} seconds. "
-        "Answers fit in a signed 64-bit integer.",
+        f"- **Size and time.** {ps.size_text} Every request must be answered within "
+        f"{REQUEST_SECONDS} seconds. Answers fit in a signed 64-bit integer.",
         '- **Generated cases.** A case may be `{"gen": {...}}` instead of the explicit fields: the '
         "input is then produced from this stream of 32-bit numbers: `x_0 = seed`, "
         "`x_{k+1} = (1664525 * x_k + 1013904223) mod 2^32`. Each *draw* advances the stream once "
@@ -366,11 +373,47 @@ def _expect(resp: JsonDict) -> JsonDict:
     return {"ok": False, "error": resp["error"]} if resp.get("ok") is False else resp
 
 
+@dataclass(frozen=True)
+class ProblemSet:
+    """Everything a problem family needs besides the shared protocol, probes and spec frame."""
+
+    reference: str
+    variants: dict[str, tuple[str, ...]]
+    brute: dict[str, Callable[[JsonDict, str], int]]
+    small_case: Callable[[random.Random, str], JsonDict]
+    gen_params: Callable[[random.Random, str, int], JsonDict]
+    statement: dict[tuple[str, str], str]
+    explicit: dict[str, str]
+    gen_text: dict[str, str]
+    size_text: str
+    problems_by_level: tuple[int, ...]
+    single_variant_trap: str = "negative_values"
+
+    @property
+    def order(self) -> tuple[str, ...]:
+        return tuple(self.variants)
+
+
+PUZZLE = ProblemSet(
+    reference=REFERENCE_PROGRAM,
+    variants=VARIANTS,
+    brute=BRUTE,
+    small_case=small_case,
+    gen_params=gen_params,
+    statement=_STATEMENT,
+    explicit=_EXPLICIT,
+    gen_text=_GEN,
+    size_text=f"Inputs have up to {LARGE_N_BY_LEVEL[-1]:,} values, edges, links, queries or jobs.",
+    problems_by_level=PROBLEMS_BY_LEVEL,
+)
+
+
 class Probes:
-    def __init__(self, rng: random.Random, limits: JsonDict) -> None:
+    def __init__(self, rng: random.Random, limits: JsonDict, ps: ProblemSet | None = None) -> None:
         self.rng = rng
         self.limits = limits
-        self.engine = new_engine(limits)
+        self.ps = ps or PUZZLE
+        self.engine = new_engine(limits, self.ps)
 
     def scenario(self, requests: Sequence[Any]) -> list[JsonDict]:
         return [jsonl_step(r, match=_expect(self.engine.handle(r))) for r in requests]
@@ -390,30 +433,36 @@ class Probes:
         ]  # fmt: skip
         for problem in self.limits["problems"]:
             slug = problem.replace("_", "-")
-            reqs = [self.solve(problem, small_case(self.rng, problem)) for _ in range(n_small)]
-            reqs.append(self.solve(problem, {"gen": gen_params(self.rng, problem, 25)}))
+            reqs = [self.solve(problem, self.ps.small_case(self.rng, problem))
+                    for _ in range(n_small)]  # fmt: skip
+            reqs.append(self.solve(problem, {"gen": self.ps.gen_params(self.rng, problem, 25)}))
             out.append(probe(f"core-{slug}", self.scenario(reqs)))
-            large = self.solve(problem, {"gen": gen_params(self.rng, problem, large_n)})
+            large = self.solve(problem, {"gen": self.ps.gen_params(self.rng, problem, large_n)})
             out.append(probe(f"core-large-{slug}", self.scenario([large])))
         return out
 
     def variant_cases(self, problem: str, count: int) -> list[JsonDict]:
         """Small cases on which the other variant(s) of `problem` give a different answer."""
-        module = _engine_module()
+        module = load_reference(self.ps.reference)
         own = self.limits["variants"][problem]
-        others = [v for v in VARIANTS[problem] if v != own]
+        others = [v for v in self.ps.variants[problem] if v != own]
         found: list[JsonDict] = []
         for _ in range(SEARCH_ATTEMPTS):
             if len(found) == count:
                 break
-            case = small_case(self.rng, problem)
+            case = self.ps.small_case(self.rng, problem)
             want = module.PROBLEMS[problem][1](case, own)
-            if not others:  # no sibling variant: negative values and a negative lower bound
-                if case.get("lo", 0) < 0 and any(v < 0 for v in case.get("values", [])) and want:
+            if not others:  # no sibling variant: an edge case (negative values / blocked ends)
+                if self._edge(case, want):
                     found.append(case)
             elif any(module.PROBLEMS[problem][1](case, o) != want for o in others):
                 found.append(case)
         return found
+
+    def _edge(self, case: JsonDict, want: int) -> bool:
+        if "blocked" in case:  # grid paths: a blocked cell on many paths, answer still nonzero
+            return bool(want) and len(case["blocked"]) >= 2
+        return case.get("lo", 0) < 0 and any(v < 0 for v in case.get("values", [])) and bool(want)
 
     def trap(self, count: int) -> list[JsonDict]:
         out = []
@@ -421,14 +470,15 @@ class Probes:
             cases = self.variant_cases(problem, count)
             if not cases:
                 continue
-            key = "negative_values" if len(VARIANTS[problem]) == 1 else "variant_semantics"
+            single = len(self.ps.variants[problem]) == 1
+            key = self.ps.single_variant_trap if single else "variant_semantics"
             reqs = [self.solve(problem, c) for c in cases]
             out.append(probe(f"trap-{problem.replace('_', '-')}", self.scenario(reqs), trap=key))
         return out
 
     def perf(self, scale: int) -> JsonDict:
         problem = self.limits["problems"][0]
-        quick = self.solve(problem, small_case(self.rng, problem))
+        quick = self.solve(problem, self.ps.small_case(self.rng, problem))
         load = jsonl_step({"op": "ping"}, match={"ok": True}, repeat=1)
         step = jsonl_step(quick, match={"ok": True})
         return perf_spec(scale, load, [mix_entry(1.0, "solve", "solve", step)])
@@ -439,6 +489,7 @@ class AlgoPuzzleFamily(Family):
     name = FAMILY_NAME
     contract = "jsonl"
     in_default_set = False
+    problem_set = PUZZLE
 
     def generate(
         self,
@@ -449,14 +500,15 @@ class AlgoPuzzleFamily(Family):
     ) -> Instance:
         allow_list = resolve_allow(language, allow)
         rng = random.Random(seed)
-        cross_check(random.Random(seed ^ 0x5EED))
-        chosen = rng.sample(PROBLEM_ORDER, PROBLEMS_BY_LEVEL[difficulty.entities])
-        problems = sorted(chosen, key=PROBLEM_ORDER.index)
+        ps = self.problem_set
+        cross_check(random.Random(seed ^ 0x5EED), ps)
+        chosen = rng.sample(ps.order, ps.problems_by_level[difficulty.entities])
+        problems = sorted(chosen, key=ps.order.index)
         limits: JsonDict = {
             "problems": problems,
-            "variants": {p: rng.choice(VARIANTS[p]) for p in problems},
+            "variants": {p: rng.choice(ps.variants[p]) for p in problems},
         }
-        builder = Probes(rng, limits)
+        builder = Probes(rng, limits, ps)
         core = builder.core(SMALL_CASES_BY_LEVEL[difficulty.concurrency],
                             LARGE_N_BY_LEVEL[difficulty.scale])  # fmt: skip
         trap = builder.trap(VARIANT_CASES_BY_LEVEL[difficulty.traps])
@@ -471,11 +523,11 @@ class AlgoPuzzleFamily(Family):
             traps=sorted({p["trap"] for p in trap}),
             limits=limits,
             allow=allow_list,
-            spec_md=render_spec(limits, language, allow_list),
+            spec_md=render_spec(limits, language, allow_list, ps),
             skeleton=skeleton_files("jsonl", language, allow_list, title="algorithmic solver"),
             probes=probes,
-            reference=reference_files(REFERENCE_PROGRAM),
+            reference=reference_files(ps.reference),
         )
 
 
-__all__ = ["FAMILY_NAME", "AlgoPuzzleFamily", "new_engine", "render_spec"]
+__all__ = ["FAMILY_NAME", "PUZZLE", "AlgoPuzzleFamily", "ProblemSet", "new_engine", "render_spec"]
