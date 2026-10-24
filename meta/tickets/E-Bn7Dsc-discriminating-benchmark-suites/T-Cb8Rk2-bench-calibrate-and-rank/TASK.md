@@ -51,3 +51,15 @@ instance alike:
 
 ## Dependencies
 - `T-Ov3Sbj-bench-ao-template-subject` (the overseer subject) before the ranking campaign.
+
+## Amendment 1 (2026-10-24, after calibration rounds 1-2, before any non-anchor subject ran)
+Rounds 1 (3,3,2,2) and 2 (3,3,3,2 = max valid; scale 3 is not gradeable for crud) saturated: 16/16 anchor runs
+scored 1.0 on every probe group. Per rule 3 the generated families are reported as saturated and the grader is
+not touched. Changes:
+- The generated ranking suite is still run (fresh seeds 9511+, max valid vector); it measures cost/time, and any
+  quality difference there is a bonus, not the design.
+- `repo-mutant-mini` (Tier 2: injected bugs / excised feature in pinned click/attrs/rich, hidden tests) is added as a
+  second instrument: reference self-check (copy-reference) first, then the anchors at r=1. It is included in the
+  ranking as a whole suite if the anchors do not both saturate (no per-instance selection). Its 4 instances are
+  fixed, so the haiku-vs-opus contrast on it is not independent of the inclusion decision (declared); sonnet and
+  the `ao` subject never influence it. All runs use `--parity benchmarks/parity/default`.
