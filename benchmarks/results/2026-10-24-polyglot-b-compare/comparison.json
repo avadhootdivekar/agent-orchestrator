@@ -1,0 +1,2410 @@
+{
+  "schema_version": "2.0",
+  "suite_id": "polyglot-b",
+  "generated_at": "2026-10-24T14:49:20.783964+00:00",
+  "subjects": [
+    "claude-haiku",
+    "claude-opus",
+    "claude-sonnet"
+  ],
+  "not_run": [],
+  "task_ids": [
+    "ex-cpp-all-your-base",
+    "ex-cpp-allergies",
+    "ex-cpp-binary-search-tree",
+    "ex-cpp-complex-numbers",
+    "ex-cpp-crypto-square",
+    "ex-cpp-dnd-character",
+    "ex-cpp-grade-school",
+    "ex-cpp-knapsack",
+    "ex-cpp-queen-attack",
+    "ex-cpp-robot-name",
+    "ex-go-beer-song",
+    "ex-go-food-chain",
+    "ex-go-forth",
+    "ex-go-kindergarten-garden",
+    "ex-go-pov",
+    "ex-go-react",
+    "ex-go-robot-simulator",
+    "ex-go-say",
+    "ex-javascript-forth",
+    "ex-javascript-list-ops",
+    "ex-javascript-phone-number",
+    "ex-javascript-queen-attack",
+    "ex-javascript-resistor-color-trio",
+    "ex-javascript-simple-linked-list",
+    "ex-javascript-transpose",
+    "ex-javascript-two-bucket",
+    "ex-javascript-wordy",
+    "ex-javascript-zebra-puzzle",
+    "ex-python-bottle-song",
+    "ex-python-forth",
+    "ex-python-go-counting",
+    "ex-python-phone-number",
+    "ex-python-pig-latin",
+    "ex-python-poker",
+    "ex-python-scale-generator",
+    "ex-python-transpose",
+    "ex-python-variable-length-quantity",
+    "ex-python-zipper",
+    "ex-rust-accumulate",
+    "ex-rust-acronym",
+    "ex-rust-book-store",
+    "ex-rust-doubly-linked-list",
+    "ex-rust-forth",
+    "ex-rust-grade-school",
+    "ex-rust-luhn-from",
+    "ex-rust-parallel-letter-frequency",
+    "ex-rust-react",
+    "ex-rust-two-bucket"
+  ],
+  "matrix": {
+    "ex-cpp-all-your-base": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.028550319999999997,
+        "wall_clock_seconds": 82.06030841199936,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.028550319999999997,
+        "wall_median": 82.06030841199936
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.3141996,
+        "wall_clock_seconds": 74.96303122099926,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.3141996,
+        "wall_median": 74.96303122099926
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.09997569999999999,
+        "wall_clock_seconds": 34.24829022300037,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.09997569999999999,
+        "wall_median": 34.24829022300037
+      }
+    },
+    "ex-cpp-allergies": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.01201423,
+        "wall_clock_seconds": 58.50475086299957,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.01201423,
+        "wall_median": 58.50475086299957
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.20722699999999997,
+        "wall_clock_seconds": 49.20755824800108,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.20722699999999997,
+        "wall_median": 49.20755824800108
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0848415,
+        "wall_clock_seconds": 29.48722084700057,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0848415,
+        "wall_median": 29.48722084700057
+      }
+    },
+    "ex-cpp-binary-search-tree": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.02863512,
+        "wall_clock_seconds": 107.69058613900052,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.02863512,
+        "wall_median": 107.69058613900052
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.3327570000000001,
+        "wall_clock_seconds": 305.8219422379989,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.3327570000000001,
+        "wall_median": 305.8219422379989
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.12160370000000001,
+        "wall_clock_seconds": 49.387731322000036,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.12160370000000001,
+        "wall_median": 49.387731322000036
+      }
+    },
+    "ex-cpp-complex-numbers": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.02971699,
+        "wall_clock_seconds": 82.72214964399973,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.02971699,
+        "wall_median": 82.72214964399973
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.3936388,
+        "wall_clock_seconds": 80.30334753100033,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.3936388,
+        "wall_median": 80.30334753100033
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1043471,
+        "wall_clock_seconds": 33.95842364799864,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1043471,
+        "wall_median": 33.95842364799864
+      }
+    },
+    "ex-cpp-crypto-square": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.014805410000000001,
+        "wall_clock_seconds": 84.02387581699986,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.014805410000000001,
+        "wall_median": 84.02387581699986
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.2755322,
+        "wall_clock_seconds": 62.84643558099924,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.2755322,
+        "wall_median": 62.84643558099924
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.09642529999999999,
+        "wall_clock_seconds": 31.746729624999716,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.09642529999999999,
+        "wall_median": 31.746729624999716
+      }
+    },
+    "ex-cpp-dnd-character": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.012887730000000002,
+        "wall_clock_seconds": 67.35194291900007,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.012887730000000002,
+        "wall_median": 67.35194291900007
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.20019640000000005,
+        "wall_clock_seconds": 46.84850496999934,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.20019640000000005,
+        "wall_median": 46.84850496999934
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0934739,
+        "wall_clock_seconds": 30.748115116999543,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0934739,
+        "wall_median": 30.748115116999543
+      }
+    },
+    "ex-cpp-grade-school": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.01027963,
+        "wall_clock_seconds": 49.05780694199893,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.01027963,
+        "wall_median": 49.05780694199893
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.32048639999999995,
+        "wall_clock_seconds": 69.19938352999998,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.32048639999999995,
+        "wall_median": 69.19938352999998
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.08948189999999999,
+        "wall_clock_seconds": 30.698308515000463,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.08948189999999999,
+        "wall_median": 30.698308515000463
+      }
+    },
+    "ex-cpp-knapsack": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.01180331,
+        "wall_clock_seconds": 62.63137185800042,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.01180331,
+        "wall_median": 62.63137185800042
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.2334418,
+        "wall_clock_seconds": 48.134956791998775,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.2334418,
+        "wall_median": 48.134956791998775
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.08160809999999999,
+        "wall_clock_seconds": 25.235297645000173,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.08160809999999999,
+        "wall_median": 25.235297645000173
+      }
+    },
+    "ex-cpp-queen-attack": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.028992950000000003,
+        "wall_clock_seconds": 88.47379020900007,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.028992950000000003,
+        "wall_median": 88.47379020900007
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.20456039999999998,
+        "wall_clock_seconds": 48.89716746799968,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.20456039999999998,
+        "wall_median": 48.89716746799968
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.08601510000000001,
+        "wall_clock_seconds": 29.4899292909995,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.08601510000000001,
+        "wall_median": 29.4899292909995
+      }
+    },
+    "ex-cpp-robot-name": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.01763025,
+        "wall_clock_seconds": 96.83414819500103,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.01763025,
+        "wall_median": 96.83414819500103
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.3309928,
+        "wall_clock_seconds": 83.01584356000058,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.3309928,
+        "wall_median": 83.01584356000058
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.09670059999999998,
+        "wall_clock_seconds": 35.76334171800045,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.09670059999999998,
+        "wall_median": 35.76334171800045
+      }
+    },
+    "ex-go-beer-song": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.8333333333333334,
+        "cost_usd": 0.008925949999999998,
+        "wall_clock_seconds": 32.39053602700005,
+        "score_mean": 0.8333333333333334,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.008925949999999998,
+        "wall_median": 32.39053602700005
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.187436,
+        "wall_clock_seconds": 34.60547590799979,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.187436,
+        "wall_median": 34.60547590799979
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.8333333333333334,
+        "cost_usd": 0.0910003,
+        "wall_clock_seconds": 17.210253434999686,
+        "score_mean": 0.8333333333333334,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.0910003,
+        "wall_median": 17.210253434999686
+      }
+    },
+    "ex-go-food-chain": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.01373304,
+        "wall_clock_seconds": 58.74191756499931,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.01373304,
+        "wall_median": 58.74191756499931
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1651714,
+        "wall_clock_seconds": 25.77663173199835,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1651714,
+        "wall_median": 25.77663173199835
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0687421,
+        "wall_clock_seconds": 14.046195957998862,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0687421,
+        "wall_median": 14.046195957998862
+      }
+    },
+    "ex-go-forth": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.9583333333333334,
+        "cost_usd": 0.014633789999999999,
+        "wall_clock_seconds": 72.58367026300039,
+        "score_mean": 0.9583333333333334,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.014633789999999999,
+        "wall_median": 72.58367026300039
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.347213,
+        "wall_clock_seconds": 318.6159753440006,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.347213,
+        "wall_median": 318.6159753440006
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.9583333333333334,
+        "cost_usd": 0.0898084,
+        "wall_clock_seconds": 26.490912113999002,
+        "score_mean": 0.9583333333333334,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.0898084,
+        "wall_median": 26.490912113999002
+      }
+    },
+    "ex-go-kindergarten-garden": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.5,
+        "cost_usd": 0.01606773,
+        "wall_clock_seconds": 74.20996188499885,
+        "score_mean": 0.5,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.01606773,
+        "wall_median": 74.20996188499885
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.20265919999999998,
+        "wall_clock_seconds": 36.55679191499985,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.20265919999999998,
+        "wall_median": 36.55679191499985
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0747837,
+        "wall_clock_seconds": 19.219755273001283,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0747837,
+        "wall_median": 19.219755273001283
+      }
+    },
+    "ex-go-pov": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.011535289999999998,
+        "wall_clock_seconds": 51.45611717900101,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.011535289999999998,
+        "wall_median": 51.45611717900101
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.22425,
+        "wall_clock_seconds": 39.815011714999855,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.22425,
+        "wall_median": 39.815011714999855
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0833017,
+        "wall_clock_seconds": 20.417917583001326,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0833017,
+        "wall_median": 20.417917583001326
+      }
+    },
+    "ex-go-react": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.012818099999999999,
+        "wall_clock_seconds": 62.572268817000804,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.012818099999999999,
+        "wall_median": 62.572268817000804
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.2498584,
+        "wall_clock_seconds": 59.33770941699913,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.2498584,
+        "wall_median": 59.33770941699913
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.08038669999999999,
+        "wall_clock_seconds": 21.724995590999242,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.08038669999999999,
+        "wall_median": 21.724995590999242
+      }
+    },
+    "ex-go-robot-simulator": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.9,
+        "cost_usd": 0.03227426,
+        "wall_clock_seconds": 163.25726786300038,
+        "score_mean": 0.9,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.03227426,
+        "wall_median": 163.25726786300038
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.44752300000000006,
+        "wall_clock_seconds": 113.38138179599991,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.44752300000000006,
+        "wall_median": 113.38138179599991
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.20722980000000002,
+        "wall_clock_seconds": 81.98575493300086,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.20722980000000002,
+        "wall_median": 81.98575493300086
+      }
+    },
+    "ex-go-say": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.00521994,
+        "wall_clock_seconds": 20.462161560999448,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.00521994,
+        "wall_median": 20.462161560999448
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1493156,
+        "wall_clock_seconds": 29.29082950799966,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1493156,
+        "wall_median": 29.29082950799966
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0668702,
+        "wall_clock_seconds": 15.95991470899935,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0668702,
+        "wall_median": 15.95991470899935
+      }
+    },
+    "ex-javascript-forth": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.6122448979591837,
+        "cost_usd": 0.016052799999999996,
+        "wall_clock_seconds": 83.43337515699932,
+        "score_mean": 0.6122448979591837,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.016052799999999996,
+        "wall_median": 83.43337515699932
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.8775510204081632,
+        "cost_usd": 0.2334752,
+        "wall_clock_seconds": 55.11240083600023,
+        "score_mean": 0.8775510204081632,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.2334752,
+        "wall_median": 55.11240083600023
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.08082099999999999,
+        "wall_clock_seconds": 38.667365853001684,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.08082099999999999,
+        "wall_median": 38.667365853001684
+      }
+    },
+    "ex-javascript-list-ops": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.019470389999999997,
+        "wall_clock_seconds": 98.35911008200128,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.019470389999999997,
+        "wall_median": 98.35911008200128
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.19188320000000003,
+        "wall_clock_seconds": 36.251269043999855,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.19188320000000003,
+        "wall_median": 36.251269043999855
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.08433049999999999,
+        "wall_clock_seconds": 28.801400909000222,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.08433049999999999,
+        "wall_median": 28.801400909000222
+      }
+    },
+    "ex-javascript-phone-number": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.4444444444444444,
+        "cost_usd": 0.009182309999999999,
+        "wall_clock_seconds": 60.766989366000416,
+        "score_mean": 0.4444444444444444,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.009182309999999999,
+        "wall_median": 60.766989366000416
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1538426,
+        "wall_clock_seconds": 30.3409324940003,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1538426,
+        "wall_median": 30.3409324940003
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.8888888888888888,
+        "cost_usd": 0.06893529999999999,
+        "wall_clock_seconds": 19.424627696000243,
+        "score_mean": 0.8888888888888888,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.06893529999999999,
+        "wall_median": 19.424627696000243
+      }
+    },
+    "ex-javascript-queen-attack": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.04034975,
+        "wall_clock_seconds": 87.61818140600008,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.04034975,
+        "wall_median": 87.61818140600008
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.19134479999999998,
+        "wall_clock_seconds": 35.45300539299933,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.19134479999999998,
+        "wall_median": 35.45300539299933
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.7894736842105263,
+        "cost_usd": 0.07878160000000001,
+        "wall_clock_seconds": 22.89150322599926,
+        "score_mean": 0.7894736842105263,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.07878160000000001,
+        "wall_median": 22.89150322599926
+      }
+    },
+    "ex-javascript-resistor-color-trio": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.16666666666666666,
+        "cost_usd": 0.007584370000000001,
+        "wall_clock_seconds": 33.77811774300062,
+        "score_mean": 0.16666666666666666,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.007584370000000001,
+        "wall_median": 33.77811774300062
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.2482292,
+        "wall_clock_seconds": 53.50326909599971,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.2482292,
+        "wall_median": 53.50326909599971
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.16666666666666666,
+        "cost_usd": 0.07962120000000002,
+        "wall_clock_seconds": 24.186754826998367,
+        "score_mean": 0.16666666666666666,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.07962120000000002,
+        "wall_median": 24.186754826998367
+      }
+    },
+    "ex-javascript-simple-linked-list": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.5217391304347826,
+        "cost_usd": 0.02213387,
+        "wall_clock_seconds": 58.37890890299968,
+        "score_mean": 0.5217391304347826,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.02213387,
+        "wall_median": 58.37890890299968
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.17948,
+        "wall_clock_seconds": 33.03389361100017,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.17948,
+        "wall_median": 33.03389361100017
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0691723,
+        "wall_clock_seconds": 20.473738032000256,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0691723,
+        "wall_median": 20.473738032000256
+      }
+    },
+    "ex-javascript-transpose": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.0071072800000000005,
+        "wall_clock_seconds": 37.63450354399902,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.0071072800000000005,
+        "wall_median": 37.63450354399902
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.153845,
+        "wall_clock_seconds": 33.14034295700003,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.153845,
+        "wall_median": 33.14034295700003
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0634272,
+        "wall_clock_seconds": 17.577777108999726,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0634272,
+        "wall_median": 17.577777108999726
+      }
+    },
+    "ex-javascript-two-bucket": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.03646405,
+        "wall_clock_seconds": 140.634702972,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.03646405,
+        "wall_median": 140.634702972
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.17274199999999998,
+        "wall_clock_seconds": 30.86040846600008,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.17274199999999998,
+        "wall_median": 30.86040846600008
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.7,
+        "cost_usd": 0.0788371,
+        "wall_clock_seconds": 21.57700938800008,
+        "score_mean": 0.7,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.0788371,
+        "wall_median": 21.57700938800008
+      }
+    },
+    "ex-javascript-wordy": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.6521739130434783,
+        "cost_usd": 0.0124114,
+        "wall_clock_seconds": 65.72607337800036,
+        "score_mean": 0.6521739130434783,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.0124114,
+        "wall_median": 65.72607337800036
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.17801660000000002,
+        "wall_clock_seconds": 32.131153656000606,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.17801660000000002,
+        "wall_median": 32.131153656000606
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0941003,
+        "wall_clock_seconds": 30.170976565001183,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0941003,
+        "wall_median": 30.170976565001183
+      }
+    },
+    "ex-javascript-zebra-puzzle": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.00969099,
+        "wall_clock_seconds": 45.99209302999952,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.00969099,
+        "wall_median": 45.99209302999952
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1489958,
+        "wall_clock_seconds": 30.753969288000008,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1489958,
+        "wall_median": 30.753969288000008
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0704331,
+        "wall_clock_seconds": 18.570139004999874,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0704331,
+        "wall_median": 18.570139004999874
+      }
+    },
+    "ex-python-bottle-song": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.007394029999999999,
+        "wall_clock_seconds": 29.10995008199825,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.007394029999999999,
+        "wall_median": 29.10995008199825
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1383156,
+        "wall_clock_seconds": 24.587376704001144,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1383156,
+        "wall_median": 24.587376704001144
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.07663869999999999,
+        "wall_clock_seconds": 20.442691315000047,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.07663869999999999,
+        "wall_median": 20.442691315000047
+      }
+    },
+    "ex-python-forth": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.01239586,
+        "wall_clock_seconds": 59.8042742079997,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.01239586,
+        "wall_median": 59.8042742079997
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.20502700000000001,
+        "wall_clock_seconds": 38.109324559000015,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.20502700000000001,
+        "wall_median": 38.109324559000015
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0889788,
+        "wall_clock_seconds": 24.68510342599984,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0889788,
+        "wall_median": 24.68510342599984
+      }
+    },
+    "ex-python-go-counting": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.01597233,
+        "wall_clock_seconds": 71.17622493499948,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.01597233,
+        "wall_median": 71.17622493499948
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1641202,
+        "wall_clock_seconds": 25.439496672999667,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1641202,
+        "wall_median": 25.439496672999667
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.0,
+        "cost_usd": 0.12877019999999997,
+        "wall_clock_seconds": 40.44659651599977,
+        "score_mean": 0.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.12877019999999997,
+        "wall_median": 40.44659651599977
+      }
+    },
+    "ex-python-phone-number": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.9347826086956522,
+        "cost_usd": 0.011455960000000001,
+        "wall_clock_seconds": 54.85807292000027,
+        "score_mean": 0.9347826086956522,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.011455960000000001,
+        "wall_median": 54.85807292000027
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1731592,
+        "wall_clock_seconds": 31.74749639699985,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1731592,
+        "wall_median": 31.74749639699985
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0740802,
+        "wall_clock_seconds": 17.51206726700002,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0740802,
+        "wall_median": 17.51206726700002
+      }
+    },
+    "ex-python-pig-latin": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.009818740000000001,
+        "wall_clock_seconds": 51.96572414200091,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.009818740000000001,
+        "wall_median": 51.96572414200091
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1326414,
+        "wall_clock_seconds": 21.116945648998808,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1326414,
+        "wall_median": 21.116945648998808
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0618841,
+        "wall_clock_seconds": 13.34861560599893,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0618841,
+        "wall_median": 13.34861560599893
+      }
+    },
+    "ex-python-poker": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.01173842,
+        "wall_clock_seconds": 53.71170557200094,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.01173842,
+        "wall_median": 53.71170557200094
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.21541280000000002,
+        "wall_clock_seconds": 49.60113484300018,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.21541280000000002,
+        "wall_median": 49.60113484300018
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0709885,
+        "wall_clock_seconds": 19.310493332999613,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0709885,
+        "wall_median": 19.310493332999613
+      }
+    },
+    "ex-python-scale-generator": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.010358919999999999,
+        "wall_clock_seconds": 51.79812676500114,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.010358919999999999,
+        "wall_median": 51.79812676500114
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1948776,
+        "wall_clock_seconds": 36.31974045199968,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1948776,
+        "wall_median": 36.31974045199968
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0781615,
+        "wall_clock_seconds": 19.51513880499988,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0781615,
+        "wall_median": 19.51513880499988
+      }
+    },
+    "ex-python-transpose": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0101615,
+        "wall_clock_seconds": 50.99731628599875,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0101615,
+        "wall_median": 50.99731628599875
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1348446,
+        "wall_clock_seconds": 27.022839549999844,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1348446,
+        "wall_median": 27.022839549999844
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0750439,
+        "wall_clock_seconds": 20.116877211999963,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0750439,
+        "wall_median": 20.116877211999963
+      }
+    },
+    "ex-python-variable-length-quantity": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.006790569999999999,
+        "wall_clock_seconds": 26.25576042600005,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.006790569999999999,
+        "wall_median": 26.25576042600005
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1447848,
+        "wall_clock_seconds": 24.23009333200025,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1447848,
+        "wall_median": 24.23009333200025
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0632607,
+        "wall_clock_seconds": 12.70221951900021,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0632607,
+        "wall_median": 12.70221951900021
+      }
+    },
+    "ex-python-zipper": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.01143933,
+        "wall_clock_seconds": 59.083020919000774,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.01143933,
+        "wall_median": 59.083020919000774
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1779832,
+        "wall_clock_seconds": 33.90770999000051,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1779832,
+        "wall_median": 33.90770999000051
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.072325,
+        "wall_clock_seconds": 20.2235375629989,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.072325,
+        "wall_median": 20.2235375629989
+      }
+    },
+    "ex-rust-accumulate": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0055477600000000005,
+        "wall_clock_seconds": 21.84962618299869,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0055477600000000005,
+        "wall_median": 21.84962618299869
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.14299499999999998,
+        "wall_clock_seconds": 24.527393600999858,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.14299499999999998,
+        "wall_median": 24.527393600999858
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.06266820000000001,
+        "wall_clock_seconds": 13.491306669999176,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.06266820000000001,
+        "wall_median": 13.491306669999176
+      }
+    },
+    "ex-rust-acronym": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.9,
+        "cost_usd": 0.006765830000000001,
+        "wall_clock_seconds": 33.01934894899932,
+        "score_mean": 0.9,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.006765830000000001,
+        "wall_median": 33.01934894899932
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.13564779999999999,
+        "wall_clock_seconds": 25.036688115998913,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.13564779999999999,
+        "wall_median": 25.036688115998913
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0663536,
+        "wall_clock_seconds": 21.57414598200012,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0663536,
+        "wall_median": 21.57414598200012
+      }
+    },
+    "ex-rust-book-store": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.01189718,
+        "wall_clock_seconds": 57.24512893700012,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.01189718,
+        "wall_median": 57.24512893700012
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.2242234,
+        "wall_clock_seconds": 46.17814339399956,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.2242234,
+        "wall_median": 46.17814339399956
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0803409,
+        "wall_clock_seconds": 21.674677562001307,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0803409,
+        "wall_median": 21.674677562001307
+      }
+    },
+    "ex-rust-doubly-linked-list": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.04016769,
+        "wall_clock_seconds": 262.03951989300003,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.04016769,
+        "wall_median": 262.03951989300003
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.5187052,
+        "wall_clock_seconds": 112.58020622299955,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.5187052,
+        "wall_median": 112.58020622299955
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1346893,
+        "wall_clock_seconds": 34.909123461999116,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1346893,
+        "wall_median": 34.909123461999116
+      }
+    },
+    "ex-rust-forth": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.96,
+        "cost_usd": 0.02379602,
+        "wall_clock_seconds": 126.32073814500109,
+        "score_mean": 0.96,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.02379602,
+        "wall_median": 126.32073814500109
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.2784686,
+        "wall_clock_seconds": 64.73307689099966,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.2784686,
+        "wall_median": 64.73307689099966
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.96,
+        "cost_usd": 0.1129049,
+        "wall_clock_seconds": 35.97155447499972,
+        "score_mean": 0.96,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.1129049,
+        "wall_median": 35.97155447499972
+      }
+    },
+    "ex-rust-grade-school": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": false,
+        "score": 0.85,
+        "cost_usd": 0.008732680000000001,
+        "wall_clock_seconds": 37.41261666100036,
+        "score_mean": 0.85,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 0.0,
+        "cost_median": 0.008732680000000001,
+        "wall_median": 37.41261666100036
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.15664820000000002,
+        "wall_clock_seconds": 28.190933136998865,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.15664820000000002,
+        "wall_median": 28.190933136998865
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.06917000000000001,
+        "wall_clock_seconds": 17.66326227100035,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.06917000000000001,
+        "wall_median": 17.66326227100035
+      }
+    },
+    "ex-rust-luhn-from": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.009412879999999998,
+        "wall_clock_seconds": 44.623181382999974,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.009412879999999998,
+        "wall_median": 44.623181382999974
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.15403440000000002,
+        "wall_clock_seconds": 28.332907334999618,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.15403440000000002,
+        "wall_median": 28.332907334999618
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0638639,
+        "wall_clock_seconds": 16.048367515999416,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0638639,
+        "wall_median": 16.048367515999416
+      }
+    },
+    "ex-rust-parallel-letter-frequency": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.009993579999999998,
+        "wall_clock_seconds": 39.2094486269998,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.009993579999999998,
+        "wall_median": 39.2094486269998
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.19483379999999997,
+        "wall_clock_seconds": 30.949490930999673,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.19483379999999997,
+        "wall_median": 30.949490930999673
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.06924490000000001,
+        "wall_clock_seconds": 18.615613467998628,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.06924490000000001,
+        "wall_median": 18.615613467998628
+      }
+    },
+    "ex-rust-react": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.0280476,
+        "wall_clock_seconds": 130.67926072400041,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.0280476,
+        "wall_median": 130.67926072400041
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.48153520000000005,
+        "wall_clock_seconds": 96.929005598,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.48153520000000005,
+        "wall_median": 96.929005598
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.1335093,
+        "wall_clock_seconds": 40.015125863999856,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.1335093,
+        "wall_median": 40.015125863999856
+      }
+    },
+    "ex-rust-two-bucket": {
+      "claude-haiku": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.017307780000000002,
+        "wall_clock_seconds": 103.56880429699959,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.017307780000000002,
+        "wall_median": 103.56880429699959
+      },
+      "claude-opus": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.16790960000000002,
+        "wall_clock_seconds": 29.59601145600027,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.16790960000000002,
+        "wall_median": 29.59601145600027
+      },
+      "claude-sonnet": {
+        "subject_status": "succeeded",
+        "solved": true,
+        "score": 1.0,
+        "cost_usd": 0.07432349999999999,
+        "wall_clock_seconds": 18.56751856399933,
+        "score_mean": 1.0,
+        "score_sd": 0.0,
+        "n": 1,
+        "solve_rate": 1.0,
+        "cost_median": 0.07432349999999999,
+        "wall_median": 18.56751856399933
+      }
+    }
+  },
+  "per_subject": {
+    "claude-haiku": {
+      "solved": 28,
+      "total": 48,
+      "solve_rate": 0.5833333333333334,
+      "mean_score": 0.7757024651648098,
+      "total_cost_usd": 0.76016591,
+      "cost_available": true,
+      "cost_per_solved": 0.0271487825,
+      "total_wall_clock_seconds": 3392.0745377929998,
+      "total_input_tokens": 856,
+      "total_output_tokens": 599620,
+      "total_cache_creation_input_tokens": 1166578,
+      "total_cache_read_input_tokens": 12133031,
+      "infra_errors": 0,
+      "attempted": 48,
+      "solve_rate_attempted": 0.5833333333333334,
+      "mean_score_attempted": 0.7757024651648098
+    },
+    "claude-opus": {
+      "solved": 46,
+      "total": 48,
+      "solve_rate": 0.9583333333333334,
+      "mean_score": 0.9766156462585034,
+      "total_cost_usd": 10.774481,
+      "cost_available": true,
+      "cost_per_solved": 0.23422784782608694,
+      "total_wall_clock_seconds": 2696.3346381459905,
+      "total_input_tokens": 520,
+      "total_output_tokens": 209186,
+      "total_cache_creation_input_tokens": 684318,
+      "total_cache_read_input_tokens": 5570685,
+      "infra_errors": 0,
+      "attempted": 48,
+      "solve_rate_attempted": 0.9583333333333334,
+      "mean_score_attempted": 0.9766156462585034
+    },
+    "claude-sonnet": {
+      "solved": 37,
+      "total": 48,
+      "solve_rate": 0.7708333333333334,
+      "mean_score": 0.8811811647173489,
+      "total_cost_usd": 4.1422555,
+      "cost_available": true,
+      "cost_per_solved": 0.11195285135135136,
+      "total_wall_clock_seconds": 1236.9944165529942,
+      "total_input_tokens": 448,
+      "total_output_tokens": 133300,
+      "total_cache_creation_input_tokens": 591259,
+      "total_cache_read_input_tokens": 4433235,
+      "infra_errors": 0,
+      "attempted": 48,
+      "solve_rate_attempted": 0.7708333333333334,
+      "mean_score_attempted": 0.8811811647173489
+    }
+  },
+  "parity_fingerprint": "7f60b7d7cd0b86cbe7384d2ba9d18037f6e0cd9830e1c279d8fee3adb17376ed",
+  "parity_mixed": false,
+  "parity_by_subject": {
+    "claude-haiku": "7f60b7d7cd0b86cbe7384d2ba9d18037f6e0cd9830e1c279d8fee3adb17376ed",
+    "claude-opus": "7f60b7d7cd0b86cbe7384d2ba9d18037f6e0cd9830e1c279d8fee3adb17376ed",
+    "claude-sonnet": "7f60b7d7cd0b86cbe7384d2ba9d18037f6e0cd9830e1c279d8fee3adb17376ed"
+  },
+  "repeats_per_subject": {
+    "claude-haiku": 1,
+    "claude-opus": 1,
+    "claude-sonnet": 1
+  },
+  "subject_stats": {
+    "claude-haiku": {
+      "repeats": 1,
+      "task_runs": 48,
+      "attempted": 48,
+      "infra_errors": 0,
+      "infra_share": 0.0,
+      "tasks_attempted": 48,
+      "solve_rate_attempted": 0.5833333333333334,
+      "score_mean_attempted": 0.7757024651648098,
+      "cost_per_score_point": 0.020416062218265477,
+      "cost_median": 0.012205045000000001,
+      "wall_median": 59.443647563500235
+    },
+    "claude-opus": {
+      "repeats": 1,
+      "task_runs": 48,
+      "attempted": 48,
+      "infra_errors": 0,
+      "infra_share": 0.0,
+      "tasks_attempted": 48,
+      "solve_rate_attempted": 0.9583333333333334,
+      "score_mean_attempted": 0.9766156462585034,
+      "cost_per_score_point": 0.2298430861993905,
+      "cost_median": 0.1948557,
+      "wall_median": 36.28550474799977
+    },
+    "claude-sonnet": {
+      "repeats": 1,
+      "task_runs": 48,
+      "attempted": 48,
+      "infra_errors": 0,
+      "infra_share": 0.0,
+      "tasks_attempted": 48,
+      "solve_rate_attempted": 0.7708333333333334,
+      "score_mean_attempted": 0.8811811647173489,
+      "cost_per_score_point": 0.09793331160342526,
+      "cost_median": 0.07998105000000001,
+      "wall_median": 21.625843475000693
+    }
+  },
+  "per_family": {
+    "exercism": {
+      "claude-haiku": {
+        "score_mean": 0.7757024651648098,
+        "solve_rate": 0.5833333333333334,
+        "n": 48
+      },
+      "claude-opus": {
+        "score_mean": 0.9766156462585034,
+        "solve_rate": 0.9583333333333334,
+        "n": 48
+      },
+      "claude-sonnet": {
+        "score_mean": 0.8811811647173489,
+        "solve_rate": 0.7708333333333334,
+        "n": 48
+      }
+    }
+  },
+  "per_language": {
+    "cpp": {
+      "claude-haiku": {
+        "score_mean": 0.6,
+        "solve_rate": 0.6,
+        "n": 10
+      },
+      "claude-opus": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 10
+      },
+      "claude-sonnet": {
+        "score_mean": 0.8,
+        "solve_rate": 0.8,
+        "n": 10
+      }
+    },
+    "go": {
+      "claude-haiku": {
+        "score_mean": 0.7739583333333333,
+        "solve_rate": 0.375,
+        "n": 8
+      },
+      "claude-opus": {
+        "score_mean": 0.875,
+        "solve_rate": 0.875,
+        "n": 8
+      },
+      "claude-sonnet": {
+        "score_mean": 0.8489583333333334,
+        "solve_rate": 0.625,
+        "n": 8
+      }
+    },
+    "javascript": {
+      "claude-haiku": {
+        "score_mean": 0.6397269052548555,
+        "solve_rate": 0.4,
+        "n": 10
+      },
+      "claude-opus": {
+        "score_mean": 0.9877551020408163,
+        "solve_rate": 0.9,
+        "n": 10
+      },
+      "claude-sonnet": {
+        "score_mean": 0.8545029239766082,
+        "solve_rate": 0.6,
+        "n": 10
+      }
+    },
+    "python": {
+      "claude-haiku": {
+        "score_mean": 0.8934782608695653,
+        "solve_rate": 0.8,
+        "n": 10
+      },
+      "claude-opus": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 10
+      },
+      "claude-sonnet": {
+        "score_mean": 0.9,
+        "solve_rate": 0.9,
+        "n": 10
+      }
+    },
+    "rust": {
+      "claude-haiku": {
+        "score_mean": 0.9710000000000001,
+        "solve_rate": 0.7,
+        "n": 10
+      },
+      "claude-opus": {
+        "score_mean": 1.0,
+        "solve_rate": 1.0,
+        "n": 10
+      },
+      "claude-sonnet": {
+        "score_mean": 0.9960000000000001,
+        "solve_rate": 0.9,
+        "n": 10
+      }
+    }
+  },
+  "infra": {
+    "claude-haiku": {
+      "count": 0,
+      "task_ids": [],
+      "suspect_task_ids": [
+        "ex-cpp-all-your-base",
+        "ex-cpp-binary-search-tree",
+        "ex-cpp-crypto-square",
+        "ex-cpp-robot-name",
+        "ex-go-beer-song",
+        "ex-go-food-chain",
+        "ex-go-forth",
+        "ex-go-kindergarten-garden",
+        "ex-go-robot-simulator",
+        "ex-javascript-forth",
+        "ex-javascript-phone-number",
+        "ex-javascript-resistor-color-trio",
+        "ex-javascript-simple-linked-list",
+        "ex-javascript-transpose",
+        "ex-javascript-wordy",
+        "ex-python-go-counting",
+        "ex-python-phone-number",
+        "ex-rust-acronym",
+        "ex-rust-forth",
+        "ex-rust-grade-school"
+      ]
+    },
+    "claude-opus": {
+      "count": 0,
+      "task_ids": [],
+      "suspect_task_ids": []
+    },
+    "claude-sonnet": {
+      "count": 0,
+      "task_ids": [],
+      "suspect_task_ids": [
+        "ex-cpp-all-your-base",
+        "ex-cpp-robot-name",
+        "ex-go-beer-song",
+        "ex-go-forth",
+        "ex-javascript-phone-number",
+        "ex-javascript-queen-attack",
+        "ex-javascript-resistor-color-trio",
+        "ex-javascript-two-bucket",
+        "ex-python-go-counting",
+        "ex-rust-forth"
+      ]
+    }
+  },
+  "pairwise": [
+    {
+      "a": "claude-haiku",
+      "b": "claude-opus",
+      "metric": "score",
+      "mean_diff": -0.20091318109369352,
+      "ci_lo": -0.31874800817065957,
+      "ci_hi": -0.0886478084742351,
+      "p_wilcoxon": 0.0001678466796875,
+      "n_tasks": 48
+    },
+    {
+      "a": "claude-haiku",
+      "b": "claude-sonnet",
+      "metric": "score",
+      "mean_diff": -0.10547869955253904,
+      "ci_lo": -0.20478091458265227,
+      "ci_hi": -0.013669112826925843,
+      "p_wilcoxon": 0.02081298828125,
+      "n_tasks": 48
+    },
+    {
+      "a": "claude-opus",
+      "b": "claude-sonnet",
+      "metric": "score",
+      "mean_diff": 0.09543448154115447,
+      "ci_lo": 0.02882541267603532,
+      "ci_hi": 0.17621369084914662,
+      "p_wilcoxon": 0.0068359375,
+      "n_tasks": 48
+    }
+  ],
+  "unreliable_subjects": [],
+  "env_by_subject": {
+    "claude-haiku": {
+      "legacy": false,
+      "contaminated": false,
+      "fingerprint_digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be",
+      "baseline_digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be",
+      "user_config_digest": "fa4bfaf5ac45d169fbef37951cdfbca976e458eebc296e88843a6af006619f5d",
+      "foreign": {},
+      "divergent": false,
+      "grading_access_task_ids": []
+    },
+    "claude-opus": {
+      "legacy": false,
+      "contaminated": false,
+      "fingerprint_digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be",
+      "baseline_digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be",
+      "user_config_digest": "fa4bfaf5ac45d169fbef37951cdfbca976e458eebc296e88843a6af006619f5d",
+      "foreign": {},
+      "divergent": false,
+      "grading_access_task_ids": []
+    },
+    "claude-sonnet": {
+      "legacy": false,
+      "contaminated": false,
+      "fingerprint_digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be",
+      "baseline_digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be",
+      "user_config_digest": "fa4bfaf5ac45d169fbef37951cdfbca976e458eebc296e88843a6af006619f5d",
+      "foreign": {},
+      "divergent": false,
+      "grading_access_task_ids": []
+    }
+  },
+  "env_mixed": false,
+  "env_problems": [],
+  "efficiency": {
+    "claude-haiku": {
+      "spend_usd": 0.76016591,
+      "runs_attempted": 48,
+      "solved_runs": 28,
+      "score_mean": 0.7757024651648098,
+      "cost_per_task_mean": 0.015836789791666667,
+      "cost_per_task_median": 0.012205045000000001,
+      "cost_per_solved": 0.0271487825,
+      "cost_per_score_point": 0.020416062218265477,
+      "wall_per_task_mean": 70.66821953735416,
+      "output_tokens_per_task_mean": 12492.083333333334
+    },
+    "claude-opus": {
+      "spend_usd": 10.774481,
+      "runs_attempted": 48,
+      "solved_runs": 46,
+      "score_mean": 0.9766156462585034,
+      "cost_per_task_mean": 0.22446835416666666,
+      "cost_per_task_median": 0.1948557,
+      "cost_per_solved": 0.23422784782608694,
+      "cost_per_score_point": 0.2298430861993905,
+      "wall_per_task_mean": 56.173638294708134,
+      "output_tokens_per_task_mean": 4358.041666666667
+    },
+    "claude-sonnet": {
+      "spend_usd": 4.1422555,
+      "runs_attempted": 48,
+      "solved_runs": 37,
+      "score_mean": 0.8811811647173489,
+      "cost_per_task_mean": 0.08629698958333333,
+      "cost_per_task_median": 0.07998105000000001,
+      "cost_per_solved": 0.11195285135135136,
+      "cost_per_score_point": 0.09793331160342526,
+      "wall_per_task_mean": 25.770717011520713,
+      "output_tokens_per_task_mean": 2777.0833333333335
+    }
+  },
+  "group_scores": {
+    "claude-haiku": {},
+    "claude-opus": {},
+    "claude-sonnet": {}
+  },
+  "observations": [
+    "Highest mean score: claude-opus (0.977).",
+    "Cheapest per score point: claude-haiku ($0.020); most expensive: claude-opus ($0.230), 11.3x.",
+    "Pairs whose 95% CI excludes 0: claude-haiku vs claude-opus (-0.201, n=48), claude-haiku vs claude-sonnet (-0.105, n=48), claude-opus vs claude-sonnet (+0.095, n=48)."
+  ]
+}

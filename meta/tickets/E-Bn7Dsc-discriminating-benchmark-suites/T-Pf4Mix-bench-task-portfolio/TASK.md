@@ -5,7 +5,7 @@
 - Epic ID: `E-Bn7Dsc-discriminating-benchmark-suites`
 - Owner: Claude (architect/developer/manager) for avadhoot
 - Created: 2026-10-24
-- Status: In Progress
+- Status: Done
 - Budget: $300 of agent spend for this task (owner, 2026-10-24)
 
 ## Description

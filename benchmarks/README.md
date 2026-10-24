@@ -778,6 +778,108 @@ Core and trap probes passed 100% for every subject. Every pairwise CI is centred
 **Spend:** $32.75 in total, including $0.80 estimated for two unrecorded invalid runs, against the $250 ceiling.
 Ranking spend per subject was haiku $0.71, sonnet $1.66, opus $4.55 and overseer $17.93, each within its $20 cap.
 
+### Task portfolio: new families, Exercism, and what actually discriminates (2026-10-24, `T-Pf4Mix`)
+
+**Question.** The `T-Cb8Rk2` suites saturated. Would broader task types and languages discriminate between
+`claude-haiku`, `claude-sonnet`, `claude-opus` and `ao-overseer-sonnet`? The new material:
+- generated in-memory engines, long specs, debugging and algorithm families;
+- Exercism exercises in Python, Go, Rust, C++ and JavaScript;
+- a mix of difficulty and area.
+
+**Answer.** Not when a task fully specifies the target and the agent can test locally. Every such task saturated,
+for every model, at every difficulty tried. Capability spread appeared only when the agent had to *infer* conventions
+it could not see. That spread is real and monotone, but it measures recall of public conventions, not clean
+capability.
+
+**Setup.** Same parity bundle as `T-Cb8Rk2` (fingerprint `62181309c7b1` on every run, no foreign entries, no
+grading-access suspects), plus Go 1.26 and Node 22 on the agent host (`bench/toolchains.py`). The pre-registration
+is in the ticket; it was written before any spend on each family. Every suite passed `make bench-refcheck` before
+any agent ran: the reference solution scored 1.0 and the untouched workspace solved nothing. Disabled before any run:
+JS `ledger` and Go `markdown` (the stub already passes) and Go `counter` (the reference fails as run). Ranking
+subjects ran one after another; tasks ran 3–4 at a time.
+
+**1. Generated families: calibration on anchors (haiku and opus, 2 fresh seeds each, Python).**
+
+| Family (new) | What it demands | Vector | haiku | opus |
+|---|---|---|---|---|
+| `order-book` | matching engine: price-time priority, IOC/FOK/post-only, self-trade, stop cascades, replace, funds; seeded fuzz | 3,3,2,2 | 1.0, 1.0 ($0.18/task) | 1.0, 1.0 ($0.78/task) |
+| `bug-hunt` | find and fix planted faults in about 600 lines of unfamiliar engine code | 5 faults, then 8 | 1.0 ×4 ($0.23/task) | 1.0 ×4 ($0.71/task) |
+| `rules-engine` | 10k-character pricing spec: 16 interacting rules, coupon stacking, cap order, shipping, tax, rounding | 3,3,2,1 | 1.0, 1.0 ($0.05/task) | 1.0, 1.0 ($0.47/task) |
+| `algo-puzzle` | 6 algorithmic problems in seeded variants; 200k-element LCG-generated inputs (quadratic times out) | 3,3,2,3 | 1.0, 1.0 ($0.03/task) | 1.0, 1.0 ($0.44/task) |
+| `algo-hard` | story-form, technique never named: slope trick, suffix automaton, combinatorics on a 1e5 grid, window medians, LIS counting | 3,3,2,3 | 1.0, 1.0 ($0.03/task) | 1.0, 1.0 ($0.47/task) |
+
+Every family was at, or within one step of, its hardest valid vector, and both anchors scored 1.0 on all 24 tasks.
+Following the protocol, saturation is reported; vectors were not pushed further and no seeds were re-drawn. With
+the anchors this far above the band, a sonnet/overseer ranking on these families would only measure cost.
+
+**2. Exercism (Aider polyglot set, 5 languages).** Three suites, sampled by recorded seeds before any run:
+- `polyglot-mini`: 29 tasks, hidden tests.
+- `polyglot-b`: 48 different tasks, hidden tests.
+- `polyglot-bv`: the same 48 tasks as `polyglot-b`, with the official tests visible. This is Exercism's own setting,
+  and the grader still runs its own unmodified copy with every test enabled.
+
+| Subject | polyglot-mini (hidden) | polyglot-b (hidden) | polyglot-bv (visible) | $/solved (bv) | wall/task (bv) |
+|---|---|---|---|---|---|
+| claude-haiku | 22/29, mean 0.827, $0.40 | 28/48, 0.776, $0.76 | **48/48**, $0.45 | $0.009 | 43 s |
+| claude-sonnet | 25/29, 0.926, $2.40 | 37/48, 0.881, $4.14 | **48/48**, $3.81 | $0.079 | 21 s |
+| claude-opus | 29/29, 1.000, $5.90 | 46/48, 0.977, $10.77 | **48/48**, $8.13 | $0.169 | 28 s |
+| ao-overseer-sonnet | 25/29, 0.947, $40.55 | — | **48/48**, $61.58 | $1.283 | 252 s |
+
+Wall per task is the mean task wall time (tasks ran in parallel). Pairwise results (`*-compare/comparison.md`):
+- **polyglot-b (hidden):** opus beats sonnet by +0.095 [0.029, 0.176], p=0.007; sonnet beats haiku by +0.105
+  [0.014, 0.205], p=0.021. Both are decided.
+- **polyglot-mini (n=29):** same direction, but the Wilcoxon p-values are about 0.13–0.16.
+- **polyglot-bv:** every difference is exactly 0.
+
+**Insights**
+- **The hidden-test spread is convention recall, not coding.** On the same 48 tasks, hiding the tests takes haiku from
+  48 to 28 and sonnet from 48 to 37. The failing grader output shows why: error-message capitalisation
+  (`"Exchange code…"` vs `"exchange code…"`), a getter versus a method (`label`), constant names the tests import
+  (`WHITE`), panic-versus-return choices, and C++ APIs that exist only in the tests (`diamond::rows`; the stubs are
+  empty namespaces). A Go stub (`trinary`) even contradicts its tests. Opus recalls Exercism's conventions best,
+  hence the monotone ranking. It is a real skill, but it is entangled with memorisation of a public corpus.
+- **With full information, the models tie at 100% across five languages.** Language alone does not discriminate:
+  C++ was the hardest language only under hidden tests.
+- **Cost and time still separate cleanly.** On polyglot-bv, haiku is 9× cheaper than sonnet and 19× cheaper than
+  opus at equal quality. Sonnet is fastest. The overseer costs 16× bare sonnet and takes about 12× its wall time,
+  for the same 48/48.
+- **Orchestration bought nothing measurable on short tasks.** Under hidden tests the overseer, which uses Sonnet,
+  matched bare sonnet on polyglot-mini (25/29 each, mean 0.947 vs 0.926) at 17× the cost. At least 3 of its 4
+  misses were the same convention problem.
+
+**Validity and the tuning-versus-fitting check**
+- No knob was moved after a non-anchor subject ran. Generated-family vectors were pre-registered, and calibration
+  seeds (7401+, 7451+, 7461+, 7501+, 7551+, 7601+) are disjoint from the reserved ranking seeds.
+- One instrument fix was triggered by results: Exercism hidden → visible. It is a validity fix, not a fit. The
+  failing material was unguessable from what the agent was given (empty stubs, contradicting signatures), so a
+  competent human would have failed too. It was applied to a fresh suite (`polyglot-bv`), and the hidden-test
+  results are kept and reported side by side rather than replaced.
+- Harness fixes caught by reference self-checks before any agent ran:
+  - order-book: spec-versus-engine order of replace checks; FOK under `cancel_incoming`;
+  - bug-hunt: an infinite-loop mutant guard, now a subprocess check;
+  - the `{{int:i}}` DSL template for numeric perf loads;
+  - the refcheck now runs the no-op check and cleans stale rows.
+- `ao-bench portfolio` excludes only true non-attempts. The "cheap and quick" suspect heuristic would have hidden
+  every real haiku failure.
+- Limitations: r=1 everywhere; generated families were calibrated on 2 seeds and Python only; Exercism is public
+  (contaminated tier); the overseer ran only on the Exercism suites.
+
+**Item difficulty** (`output/bench/2026-10-24-portfolio.md`, tasks all 4 subjects attempted). 68 of 77 tasks were
+solved by everyone. All 9 tasks that separate subjects are hidden-test `polyglot-mini` tasks.
+
+**What is left that could discriminate (not yet built):**
+- convention inference that is *fair*: the conventions are discoverable in the given material, such as a brownfield
+  codebase's own style, error formats and tests;
+- post-cutoff hard problems (LiveCodeBench-style);
+- long-horizon, multi-component work, where orchestration is supposed to matter;
+- tasks without a local oracle, where the agent cannot run the target check.
+
+**Spend:** $147.58 of agent spend against the $300 budget:
+- generated calibration: $8.66 (12 runs);
+- Exercism hidden: $64.94 (7 runs);
+- Exercism visible: $73.98 (4 runs);
+- the toolchain probe: $0.002.
+
 ### Total epic spend
 
 Across the whole `E-Bt4Xk9` epic (framework authoring smoke/gold-patch verification + both PLAN campaigns above):

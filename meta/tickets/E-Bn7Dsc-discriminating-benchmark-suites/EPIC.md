@@ -5,7 +5,7 @@
 - Title: Discriminating benchmark suites (behavioural-spec + large-codebase tiers, parity, stats)
 - Owner: Claude (architect/manager) for the owner (avadhoot)
 - Created: 2026-10-23
-- Last Updated: 2026-10-24 (6/6 tracks done; follow-on `T-Ws7Iso` done)
+- Last Updated: 2026-10-24 (6/6 tracks done; follow-ons `T-Ws7Iso`, `T-Ov3Sbj`, `T-Cb8Rk2`, `T-Pf4Mix` done)
 - Status: Done (P1–P3 as-built; follow-ons listed in HLD §12) · follow-on `T-Ws7Iso-bench-env-isolation` **Done** (2026-10-24) — ranking campaigns unblocked
 
 ## Summary
@@ -38,6 +38,7 @@
 - [x] `T-Ws7Iso-bench-env-isolation` — workspace root outside the checkout, environment fingerprint from the transcript `init` event, hidden-asset access audit, held-out seeds policy (finding 2026-10-24, HLD §12).
 - [x] `T-Ov3Sbj-bench-ao-template-subject` — `ao_workflow` template mode (`ao new … --run`) + `init_git`; `ao-overseer-sonnet` subject.
 - [x] `T-Cb8Rk2-bench-calibrate-and-rank` — pre-registered difficulty calibration (anchors haiku/opus) and a haiku/sonnet/opus/ao-overseer-sonnet ranking campaign with report; skills `bench-tune`, `bench-campaign-report`.
+- [x] `T-Pf4Mix-bench-task-portfolio` — Go/Node toolchains, Exercism provider/grader/importer (visible-tests default), families order-book / rules-engine / bug-hunt / algo-puzzle / algo-hard, `ao-bench portfolio`; finding: spec-complete tasks saturate, hidden-test spread = convention recall (`docs-md/benchmark-task-portfolio.md` §8).
 
 ## Risks and Dependencies
 - Docker availability on dev machines (fallback: process sandbox, tagged).

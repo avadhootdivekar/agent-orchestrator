@@ -509,3 +509,13 @@ agent-modified `conftest.py`/pytest config is not reset before Tier-2 grading; `
 hand-compacted suite.json once; `.bench-solution/` is still readable inside `dev-core`/`dev-medium` fixtures
 (pre-existing). Real-LLM calibration of the perf thresholds (§9 Q6) has not been run.
 
+
+### 12d. Task portfolio follow-on (`T-Pf4Mix`, 2026-10-24)
+
+- **Added:** the `exercism` source and grader type (per-language Docker test runners; tests visible by default); the
+  `toolchains` field on the parity bundle; families `order-book`, `rules-engine`, `bug-hunt` (instruction kind
+  `debug`), `algo-puzzle` and `algo-hard` (opt-in, `in_default_set = False`); the `{{int:i}}` template in the probe
+  DSL; `ao-bench portfolio`.
+- **Finding:** spec-complete, locally testable tasks saturate for haiku through opus at every vector tried. The only
+  quality spread observed came from hidden-test conventions. Design consequences and next candidates:
+  `benchmark-task-portfolio.md` §8.
