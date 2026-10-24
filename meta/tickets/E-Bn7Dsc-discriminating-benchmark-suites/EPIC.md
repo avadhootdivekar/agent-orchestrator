@@ -36,6 +36,8 @@
 - [x] `T-T2-5Ij6-tier2-providers` — repo_mutation + pr_mined providers, pytest_targeted grader, import-prs, recipes, dev-medium `.grading/` migration.
 - [x] `T-Dk6Lm7-docs-skill-smoke` — README/HLD reconcile, bench skill, memories, real haiku smoke on gen-services-mini.
 - [x] `T-Ws7Iso-bench-env-isolation` — workspace root outside the checkout, environment fingerprint from the transcript `init` event, hidden-asset access audit, held-out seeds policy (finding 2026-10-24, HLD §12).
+- [x] `T-Ov3Sbj-bench-ao-template-subject` — `ao_workflow` template mode (`ao new … --run`) + `init_git`; `ao-overseer-sonnet` subject.
+- [ ] `T-Cb8Rk2-bench-calibrate-and-rank` — pre-registered difficulty calibration (anchors haiku/opus) and a haiku/sonnet/opus/ao-overseer-sonnet ranking campaign with report; skills `bench-tune`, `bench-campaign-report`.
 
 ## Risks and Dependencies
 - Docker availability on dev machines (fallback: process sandbox, tagged).

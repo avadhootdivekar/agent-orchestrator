@@ -481,6 +481,19 @@ transcript, matched the baseline and flagged a planted `_ao_bench_grading` acces
 `dev-core` task per subject (see the `T-Ws7Iso` STATUS for the init-event comparison). Fake-tier tests:
 `tests/bench/test_env_isolation.py`. The 2026-10-23 results stay a pipeline proof only (README caveat).
 
+**Calibration + ranking work (2026-10-24, `T-Cb8Rk2`, `T-Ov3Sbj`):**
+
+| Area | Before | As built | Why |
+|---|---|---|---|
+| Reference self-check | not run by `ao-bench gen`; only `bench-gen-smoke` at the easy vector | `make bench-refcheck SUITE=…` is a mandatory free gate before any agent spend (N/N or it is a validity bug) | the first calibration round at `traps=3,scale=2` failed the *reference* on 4/4 instances |
+| jsonl probes | `json` had to be an object | any JSON value | job-queue `trap-invalid-input` (traps ≥ 3) sends non-object lines, as SPEC.md promises |
+| HTTP transport | short-lived connection per request via the published port | same semantics, but direct to the container bridge IP when reachable + `SO_LINGER 0` | ~30k connections at perf `scale=2` left TIME_WAIT on the `docker-proxy`→container leg (container IP reused) and reset the ~28k-th request; keep-alive was tried and rejected (Nagle + delayed ACK = ~40 ms floor per request on Python servers) |
+| Grader exception | subject cost recorded as $0 | the finished subject's cost/tokens are kept | budgets and $/task must reflect real spend |
+| `ao` subjects | fixed `workflow.json` only | template mode (`template`, `template_params`, `prompt_file`, `init_git`) — e.g. `ao-overseer-sonnet` runs the builtin `overseer-runner` via `ao new … --run` | the overseer is a template, not a static DAG |
+| Report | rates, pairwise, roll-ups | + Cost & efficiency ($/task mean/median, $/solved, $/score-pt, wall/task, out-tokens/task), per-probe-group pass fractions, rule-based observations | the ranking question is quality *and* cost |
+| Parity bundle | user `effortLevel` applied silently | `CLAUDE_CODE_EFFORT_LEVEL=high` pinned | equal, declared effort for every subject |
+| Go sandbox | `golang:1.23-alpine` (could not build: `modernc.org/sqlite` needs Go ≥ 1.26) | `golang:1.26-alpine` | image builds; TS/Go still unfair while the agent host lacks Node ≥ 22 / Go |
+
 **Still open (next epic tasks):** the six remaining Tier-1 families (§4.1); TypeScript/Go derived images built and
 run (Dockerfiles only `--check`ed; process fallback has no pre-installed deps for them); `ao-bench gen` does not yet
 run the generation-time "reference passes its probes" check (the structural validator runs; the full check is the
