@@ -12,6 +12,7 @@
   "wrapper_prompt_max_chars": 600,
   "toolchains": [
     "go",
-    "node"
+    "node",
+    "cmake"
   ]
 }

@@ -61,6 +61,14 @@ TOOLCHAINS: dict[str, Toolchain] = {
         # Module/build caches inside the bench tree, never the operator's ~/go.
         env={"GOPATH": "{home}/gopath", "GOCACHE": "{home}/gocache", "GOTOOLCHAIN": "local"},
     ),
+    # Exercism C++ exercises are CMake projects; Debian's host has g++ but no cmake.
+    "cmake": Toolchain(
+        name="cmake",
+        version="3.31.8",
+        url="https://github.com/Kitware/CMake/releases/download/v3.31.8/cmake-3.31.8-linux-x86_64.tar.gz",
+        sha256="630615d8e98ac33eba7fbe472626dff5c899c85af3c024585ae109166a6909d0",
+        bin_dir="cmake-3.31.8-linux-x86_64/bin",
+    ),
     "node": Toolchain(
         name="node",
         version="22.23.4",

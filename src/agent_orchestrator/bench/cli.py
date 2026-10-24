@@ -25,6 +25,7 @@ import typer
 from ..errors import SpecValidationError
 from . import (
     blackbox,  # noqa: F401 -- registers "blackbox" grader (E-Bn7Dsc)
+    exercism,  # noqa: F401 -- registers "exercism" provider + grader (T-Pf4Mix)
     generated_provider,  # noqa: F401 -- registers "generated" workspace provider (E-Bn7Dsc)
     mutation_provider,  # noqa: F401 -- registers "repo_mutation" workspace provider (E-Bn7Dsc)
     pr_mined_provider,  # noqa: F401 -- registers "pr_mined" workspace provider (E-Bn7Dsc)
@@ -52,6 +53,7 @@ app.command(name="gen")(gen_command)
 app.command(name="calibrate")(calibrate_command)
 app.command(name="images")(images_command)
 app.command(name="import-prs")(import_prs_command)
+app.command(name="import-exercism")(exercism.import_exercism_command)  # T-Pf4Mix
 
 # Exit codes (design doc §7 / this task's own AC): 0 ok, 1 usage/spec error, 2 a run
 # completed but at least one task's SUBJECT (not grader-verdict) status indicates a

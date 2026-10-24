@@ -54,7 +54,16 @@ _ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_]*$")
 # errored task, never a crash) -- `ao-bench validate` (spec-level only) is unaffected
 # and is what this task's acceptance criteria require to pass.
 KNOWN_GRADER_TYPES: frozenset[str] = frozenset(
-    {"pytest", "command", "file_assertion", "fake", "swebench", "blackbox", "pytest_targeted"}
+    {
+        "pytest",
+        "command",
+        "file_assertion",
+        "fake",
+        "swebench",
+        "blackbox",
+        "pytest_targeted",
+        "exercism",
+    }
 )
 KNOWN_SUBJECT_TYPES: frozenset[str] = frozenset({"claude_cli", "ao_workflow", "fake"})
 
@@ -78,11 +87,14 @@ KNOWN_TIERS: frozenset[str] = frozenset({"small", "medium", "large", "xlarge"})
 # module's import time -- both the registration AND this closed-list entry are
 # required together, see that module's own trailing comment).
 KNOWN_WORKSPACE_PROVIDER_TYPES: frozenset[str] = frozenset(
-    {"fixture", "swebench", "generated", "repo_mutation", "pr_mined"}
+    {"fixture", "swebench", "generated", "repo_mutation", "pr_mined", "exercism"}
 )
 # Languages a generated (Tier 1) task may target (benchmark-discriminating-suites-hld.md §4.1
 # "Stack"). Closed list so a typo in a suite fails at load time, not at grade time.
-KNOWN_LANGUAGES: frozenset[str] = frozenset({"python", "typescript", "go"})
+# Generated tasks use python/typescript/go; imported exercises add rust/cpp/javascript (T-Pf4Mix).
+KNOWN_LANGUAGES: frozenset[str] = frozenset(
+    {"python", "typescript", "go", "rust", "cpp", "javascript"}
+)
 
 
 # ---------------------------------------------------------------------------

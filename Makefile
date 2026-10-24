@@ -201,10 +201,17 @@ bench-gen-smoke:
 #   make bench-refcheck SUITE=benchmarks/suites/gen-calib-v1/suite.json
 bench-refcheck:
 	@if [ -z "$(SUITE)" ]; then echo "usage: make bench-refcheck SUITE=<suite.json>"; exit 1; fi
+	rm -rf playground/.tmp/bench-refcheck playground/.tmp/bench-noopcheck
 	uv run ao-bench run --suite $(SUITE) --subject $(BENCH_FAKE_REFERENCE_SUBJECT_PATH) --out-dir playground/.tmp/bench-refcheck --force
-	@uv run python -c "import json,glob,sys; f=max(glob.glob('playground/.tmp/bench-refcheck/*/run.json'),key=lambda p:__import__('os').path.getmtime(p)); \
-	  bad=[(t['task_id'],t['score']) for t in json.load(open(f))['tasks'] if t['score']<1.0]; \
-	  print('refcheck: every instance scores 1.0' if not bad else f'refcheck FAILED (reference below 1.0 = validity bug): {bad}'); sys.exit(1 if bad else 0)"
+	uv run ao-bench run --suite $(SUITE) --subject benchmarks/subjects/fake-noop.json --out-dir playground/.tmp/bench-noopcheck --force
+	@uv run python -c "import json,glob,sys; \
+	  ref=json.load(open(glob.glob('playground/.tmp/bench-refcheck/*/run.json')[0]))['tasks']; \
+	  noop=json.load(open(glob.glob('playground/.tmp/bench-noopcheck/*/run.json')[0]))['tasks']; \
+	  bad=[(t['task_id'],t['score']) for t in ref if t['score']<1.0]; \
+	  free=[t['task_id'] for t in noop if t['solved']]; \
+	  print(f'refcheck: reference 1.0 on all {len(ref)}' if not bad else f'refcheck FAILED (reference below 1.0 = validity bug): {bad}'); \
+	  print(f'noopcheck: untouched workspace solves none of {len(noop)}' if not free else f'noopcheck FAILED (solved without work = invalid task): {free}'); \
+	  sys.exit(1 if bad or free else 0)"
 
 # Real-LLM Tier-1 campaign at haiku (cheap): bare claude vs ao-epic under the suite's parity bundle,
 # staged repeats. Spends real money -> confirm gate like bench-medium.

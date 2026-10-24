@@ -1,0 +1,735 @@
+{
+  "version": "1.0",
+  "id": "polyglot-mini",
+  "domain": "software",
+  "description": "Exercism practice exercises from Aider-AI/polyglot-benchmark@7e0611e77b54 (Aider polyglot set), sampled 6/language with seed 20261024 from python, go, rust, cpp, javascript; hidden official tests run in per-language Docker images, score = fraction of tests passed. Contaminated tier (public exercises). Exercism tracks are MIT licensed; content (c) Exercism.",
+  "tier": "medium",
+  "parity": "../../parity/default",
+  "defaults": {
+    "timeout_seconds": 2400
+  },
+  "tasks": [
+    {
+      "id": "ex-python-affine-cipher",
+      "category": "feature",
+      "instruction": "instructions/python.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "python",
+        "exercise": "affine-cipher"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "python",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "python",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-python-bowling",
+      "category": "feature",
+      "instruction": "instructions/python.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "python",
+        "exercise": "bowling"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "python",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "python",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-python-dominoes",
+      "category": "feature",
+      "instruction": "instructions/python.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "python",
+        "exercise": "dominoes"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "python",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "python",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-python-grade-school",
+      "category": "feature",
+      "instruction": "instructions/python.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "python",
+        "exercise": "grade-school"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "python",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "python",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-python-pov",
+      "category": "feature",
+      "instruction": "instructions/python.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "python",
+        "exercise": "pov"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "python",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "python",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-python-proverb",
+      "category": "feature",
+      "instruction": "instructions/python.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "python",
+        "exercise": "proverb"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "python",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "python",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-go-bottle-song",
+      "category": "feature",
+      "instruction": "instructions/go.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "go",
+        "exercise": "bottle-song"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "go",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "go",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-go-connect",
+      "category": "feature",
+      "instruction": "instructions/go.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "go",
+        "exercise": "connect"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "go",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "go",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-go-pig-latin",
+      "category": "feature",
+      "instruction": "instructions/go.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "go",
+        "exercise": "pig-latin"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "go",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "go",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-go-tree-building",
+      "category": "feature",
+      "instruction": "instructions/go.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "go",
+        "exercise": "tree-building"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "go",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "go",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-go-trinary",
+      "category": "feature",
+      "instruction": "instructions/go.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "go",
+        "exercise": "trinary"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "go",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "go",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-go-variable-length-quantity",
+      "category": "feature",
+      "instruction": "instructions/go.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "go",
+        "exercise": "variable-length-quantity"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "go",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "go",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-rust-nucleotide-codons",
+      "category": "feature",
+      "instruction": "instructions/rust.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "rust",
+        "exercise": "nucleotide-codons"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "rust",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "rust",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-rust-ocr-numbers",
+      "category": "feature",
+      "instruction": "instructions/rust.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "rust",
+        "exercise": "ocr-numbers"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "rust",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "rust",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-rust-scale-generator",
+      "category": "feature",
+      "instruction": "instructions/rust.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "rust",
+        "exercise": "scale-generator"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "rust",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "rust",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-rust-word-count",
+      "category": "feature",
+      "instruction": "instructions/rust.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "rust",
+        "exercise": "word-count"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "rust",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "rust",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-rust-wordy",
+      "category": "feature",
+      "instruction": "instructions/rust.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "rust",
+        "exercise": "wordy"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "rust",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "rust",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-rust-xorcism",
+      "category": "feature",
+      "instruction": "instructions/rust.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "rust",
+        "exercise": "xorcism"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "rust",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "rust",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-cpp-clock",
+      "category": "feature",
+      "instruction": "instructions/cpp.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "cpp",
+        "exercise": "clock"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "cpp",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "cpp",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-cpp-diamond",
+      "category": "feature",
+      "instruction": "instructions/cpp.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "cpp",
+        "exercise": "diamond"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "cpp",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "cpp",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-cpp-linked-list",
+      "category": "feature",
+      "instruction": "instructions/cpp.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "cpp",
+        "exercise": "linked-list"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "cpp",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "cpp",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-cpp-phone-number",
+      "category": "feature",
+      "instruction": "instructions/cpp.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "cpp",
+        "exercise": "phone-number"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "cpp",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "cpp",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-cpp-sublist",
+      "category": "feature",
+      "instruction": "instructions/cpp.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "cpp",
+        "exercise": "sublist"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "cpp",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "cpp",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-cpp-zebra-puzzle",
+      "category": "feature",
+      "instruction": "instructions/cpp.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "cpp",
+        "exercise": "zebra-puzzle"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "cpp",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "cpp",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-javascript-beer-song",
+      "category": "feature",
+      "instruction": "instructions/javascript.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "javascript",
+        "exercise": "beer-song"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "javascript",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "javascript",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-javascript-book-store",
+      "category": "feature",
+      "instruction": "instructions/javascript.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "javascript",
+        "exercise": "book-store"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "javascript",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "javascript",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-javascript-ledger",
+      "category": "feature",
+      "instruction": "instructions/javascript.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "javascript",
+        "exercise": "ledger"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "javascript",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "javascript",
+        "contaminated",
+        "algorithms",
+        "disabled:stub-already-passes"
+      ],
+      "enabled": false
+    },
+    {
+      "id": "ex-javascript-meetup",
+      "category": "feature",
+      "instruction": "instructions/javascript.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "javascript",
+        "exercise": "meetup"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "javascript",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "javascript",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-javascript-parallel-letter-frequency",
+      "category": "feature",
+      "instruction": "instructions/javascript.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "javascript",
+        "exercise": "parallel-letter-frequency"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "javascript",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "javascript",
+        "contaminated",
+        "algorithms"
+      ]
+    },
+    {
+      "id": "ex-javascript-pig-latin",
+      "category": "feature",
+      "instruction": "instructions/javascript.md",
+      "source": {
+        "type": "exercism",
+        "repo": "Aider-AI/polyglot-benchmark",
+        "commit": "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f",
+        "language": "javascript",
+        "exercise": "pig-latin"
+      },
+      "grader": {
+        "type": "exercism"
+      },
+      "family": "exercism",
+      "language": "javascript",
+      "timeout_seconds": 2400,
+      "tags": [
+        "exercism",
+        "javascript",
+        "contaminated",
+        "algorithms"
+      ]
+    }
+  ]
+}

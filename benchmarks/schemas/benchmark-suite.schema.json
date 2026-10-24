@@ -96,7 +96,7 @@
           "default": []
         },
         "family": { "type": "string", "description": "Generator family (Tier 1) or task source family (Tier 2)." },
-        "language": { "enum": ["python", "typescript", "go"] },
+        "language": { "enum": ["python", "typescript", "go", "rust", "cpp", "javascript"] },
         "difficulty": {
           "type": "object",
           "additionalProperties": { "type": "integer", "minimum": 0 },
