@@ -56,6 +56,24 @@
       "type": ["integer", "null"],
       "minimum": 1
     },
+    "template": {
+      "type": "string",
+      "description": "ao_workflow subject, template mode (T-Ov3Sbj): builtin template name (e.g. \"overseer-runner\") or a template dir relative to this subject.json. The subject runs `ao new <template> ... --run` in the task workspace instead of `ao run --workflow`; `workflow` is then unused."
+    },
+    "template_params": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "ao_workflow template mode: `--param key=value` pairs. `repo_set` defaults to the first repo_set in `reposets`."
+    },
+    "prompt_file": {
+      "type": "string",
+      "description": "ao_workflow template mode: PATH (relative to this subject.json) whose content becomes the instance's prompt.md (`--prompt-file`). Keep it thin: task content belongs in INSTRUCTION.md and the parity bundle."
+    },
+    "init_git": {
+      "type": "boolean",
+      "default": false,
+      "description": "ao_workflow subject: make repo/ a git repo (one commit of the task as handed over) with a local bare `origin` outside repo/, for workflows whose stages need git."
+    },
     "scripted_effect": {
       "type": "string",
       "description": "fake subject (test-only): scripted side-effect to apply to the workspace."

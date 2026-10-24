@@ -95,6 +95,10 @@ _GIT_CALL_ALLOWED: dict[Path, str] = {
     # Pre-epic SWE-bench import/grade harness: clones and diffs third-party subject repos.
     _SRC_ROOT / "bench" / "swebench_provider.py": "pre-epic SWE-bench subject checkout",
     _SRC_ROOT / "bench" / "swebench_grader.py": "pre-epic SWE-bench patch extraction",
+    # E-Bn7Dsc T-Ov3Sbj: an `ao_workflow` bench subject with `init_git` turns the bench task's
+    # throwaway repo copy into a one-commit git repo with a LOCAL bare origin (workflows like
+    # overseer-runner branch off main). Bench sandbox only, never the user's repos or the engine.
+    _SRC_ROOT / "bench" / "subjects.py": "E-Bn7Dsc bench subject init_git (local bare origin)",
     # E-YAAGhk (overseer-runner template), T-C6uQJW: the template's own governance tool
     # computes `repo_heads`/git-derived "tracked paths" for its content_oscillation
     # detector (HLD S8.3) via bounded `git rev-parse HEAD` / `git diff --name-only` /

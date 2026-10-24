@@ -61,6 +61,7 @@ from ..models import compute_run_usage_totals
 from ..runstate import RunStateStore
 from .envcheck import subject_env
 from .errors import SubjectError
+from .parity import CLAUDE_DIRNAME, append_git_exclude
 from .registries import register_subject
 from .spec import BenchTask, SubjectSpec
 from .workspace import REPO_ROOT, RunContext
@@ -396,13 +397,80 @@ def _latest_run_dir(runs_root: Path) -> Path:
     return candidates[0]
 
 
+# --- ao_workflow template mode (T-Ov3Sbj) -------------------------------------------
+# Instance slug passed to `ao new` (the template's id_pattern adds a random prefix); one
+# instance per task workspace, so a fixed slug is unambiguous.
+TEMPLATE_INSTANCE_SLUG = "bench"
+TEMPLATE_REPO_SET_PARAM = "repo_set"
+# `init_git`: the local bare remote lives in the workspace, OUTSIDE repo/ (never graded).
+GIT_ORIGIN_DIRNAME = "_origin.git"
+GIT_MAIN_BRANCH = "main"
+_GIT_TIMEOUT_SECONDS = 120
+_GIT_IDENTITY_ENV = {
+    "GIT_AUTHOR_NAME": "ao-bench",
+    "GIT_AUTHOR_EMAIL": "ao-bench@localhost",
+    "GIT_COMMITTER_NAME": "ao-bench",
+    "GIT_COMMITTER_EMAIL": "ao-bench@localhost",
+}
+_INIT_COMMIT_MESSAGE = "bench task as handed over"
+
+
+def init_git_with_local_origin(repo_dir: Path, workspace: Path) -> Path:
+    """Make *repo_dir* a git repo whose single commit is the task as handed over, with a
+    local bare `origin` at `<workspace>/_origin.git` tracking `main` (T-Ov3Sbj). For
+    workflows whose stages need git (e.g. `overseer-runner`'s branch-off). The parity
+    `.claude/` tree is excluded so it never shows in the agent's diff. Returns the origin
+    path; raises `subprocess.CalledProcessError`/`OSError` on failure."""
+    env = {**os.environ, **_GIT_IDENTITY_ENV}
+
+    def _git(*args: str, cwd: Path = repo_dir) -> None:
+        subprocess.run(  # noqa: S603 -- fixed argv, no shell, bounded timeout
+            ["git", *args],
+            cwd=str(cwd),
+            env=env,
+            check=True,
+            capture_output=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+
+    if not (repo_dir / ".git").exists():
+        _git("init", "-q", "-b", GIT_MAIN_BRANCH)
+    append_git_exclude(repo_dir, [f"/{CLAUDE_DIRNAME}/"])
+    _git("add", "-A")
+    _git("commit", "-q", "--allow-empty", "-m", _INIT_COMMIT_MESSAGE)
+    origin = workspace / GIT_ORIGIN_DIRNAME
+    _git("clone", "-q", "--bare", str(repo_dir), str(origin), cwd=workspace)
+    _git("remote", "add", "origin", str(origin))
+    _git("fetch", "-q", "origin")
+    _git("branch", "-q", "--set-upstream-to", f"origin/{GIT_MAIN_BRANCH}")
+    return origin
+
+
+def _first_repo_set(rendered: dict) -> str | None:
+    names = list((rendered.get("repo_sets") or {}).keys())
+    return names[0] if names else None
+
+
 class AoWorkflowSubject(Subject):
-    """An `ao` DAG is the system under test (design doc §4.2)."""
+    """An `ao` DAG is the system under test (design doc §4.2).
+
+    Two modes. Workflow mode (`workflow` set): `uv run ao run --workflow ...`. Template mode
+    (`template` set, T-Ov3Sbj): `uv run ao new <template> bench --workspace <ws> --param ...
+    --prompt-file <prompt> --run`, which scaffolds the template instance (workflow, tools,
+    instructions) inside the task workspace and runs it; `budget_total` does not apply there
+    (`ao new` has no such flag -- budget the run through the template's own params).
+    """
 
     def run(self, task: BenchTask, ctx: RunContext) -> SubjectResult:
         # `task`'s instruction/fixture are already materialized into ctx.repo_dir by
         # workspace.py; `task` itself is unused beyond that (see Subject.run protocol).
-        missing = [f for f in ("workflow", "reposets", "agents") if getattr(self.spec, f) is None]
+        template_mode = self.spec.template is not None
+        required = (
+            ("reposets", "agents", "prompt_file")
+            if template_mode
+            else ("workflow", "reposets", "agents")
+        )
+        missing = [f for f in required if getattr(self.spec, f) is None]
         if missing:
             return SubjectResult(
                 status="error",
@@ -421,12 +489,13 @@ class AoWorkflowSubject(Subject):
             )
 
         base_dir = Path(ctx.subject_base_dir) if ctx.subject_base_dir else Path.cwd()
-        # mypy: the `missing` check above guarantees these three are non-None strings.
-        workflow_path = _resolve_template_path(cast(str, self.spec.workflow), base_dir)
+        # mypy: the `missing` check above guarantees the required fields are non-None strings.
+        main_field = "prompt_file" if template_mode else "workflow"
+        main_path = _resolve_template_path(cast(str, getattr(self.spec, main_field)), base_dir)
         reposets_template_path = _resolve_template_path(cast(str, self.spec.reposets), base_dir)
         agents_path = _resolve_template_path(cast(str, self.spec.agents), base_dir)
         for label, resolved in (
-            ("workflow", workflow_path),
+            (main_field, main_path),
             ("reposets", reposets_template_path),
             ("agents", agents_path),
         ):
@@ -455,19 +524,48 @@ class AoWorkflowSubject(Subject):
         rendered_path = Path(ctx.workspace) / "reposet.rendered.json"
         rendered_path.write_text(json.dumps(rendered, indent=2))
 
-        argv = [
-            "uv",
-            "run",
-            "ao",
-            "run",
-            "--workflow",
-            str(workflow_path),
-            "--reposets",
-            str(rendered_path),
-            "--agents",
-            str(agents_path),
-            _AO_NO_CACHE_FLAG,
-        ]
+        if self.spec.init_git:
+            try:
+                init_git_with_local_origin(Path(ctx.repo_dir), Path(ctx.workspace))
+            except (OSError, subprocess.SubprocessError) as exc:
+                return SubjectResult(
+                    status="error",
+                    wall_clock_seconds=0.0,
+                    capture_dir=ctx.capture_dir,
+                    raw_error=f"ao_workflow subject {self.spec.id!r}: init_git failed: {exc}",
+                )
+
+        if template_mode:
+            params = dict(self.spec.template_params)
+            repo_set = params.pop(TEMPLATE_REPO_SET_PARAM, None) or _first_repo_set(rendered)
+            template_dir = base_dir / cast(str, self.spec.template)
+            template_ref = (
+                str(template_dir.resolve())
+                if template_dir.is_dir()
+                else cast(str, self.spec.template)
+            )
+            argv = ["uv", "run", "ao", "new", template_ref, TEMPLATE_INSTANCE_SLUG]
+            argv += ["--workspace", ctx.workspace]
+            if repo_set:
+                argv += ["--param", f"{TEMPLATE_REPO_SET_PARAM}={repo_set}"]
+            for key in sorted(params):
+                argv += ["--param", f"{key}={params[key]}"]
+            argv += ["--prompt-file", str(main_path), "--run"]
+            argv += ["--reposets", str(rendered_path), "--agents", str(agents_path)]
+        else:
+            argv = [
+                "uv",
+                "run",
+                "ao",
+                "run",
+                "--workflow",
+                str(main_path),
+                "--reposets",
+                str(rendered_path),
+                "--agents",
+                str(agents_path),
+                _AO_NO_CACHE_FLAG,
+            ]
         # Deviation from design doc §4.2 pseudocode's `AO_BUDGET_TOTAL` env var: core
         # `cli.py`'s `run`/`resume` commands read budget ONLY as the `--budget-total`
         # CLI flag (no env var is wired for it -- see `_resolve_run_settings`), so it
@@ -475,7 +573,7 @@ class AoWorkflowSubject(Subject):
         # wins over spec.budget_total (this subject's own default), same CLI>spec
         # precedence as core's own `_build_effective_budget`.
         budget_total = ctx.budget_total if ctx.budget_total is not None else self.spec.budget_total
-        if budget_total is not None:
+        if budget_total is not None and not template_mode:
             argv += ["--budget-total", str(budget_total)]
 
         env = subject_env()  # operator-session vars scrubbed (T-Ws7Iso), as for claude_cli

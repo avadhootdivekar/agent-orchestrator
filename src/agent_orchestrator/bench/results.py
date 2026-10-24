@@ -219,6 +219,22 @@ class SubjectStats(BaseModel):
     wall_median: float | None = None
 
 
+class EfficiencyRow(BaseModel):
+    """Per-subject cost/time efficiency (T-Cb8Rk2). `spend_usd` counts every task run (infra
+    errors cost money too); the per-task figures cover attempted runs only."""
+
+    spend_usd: float = 0.0
+    runs_attempted: int = 0
+    solved_runs: int = 0
+    score_mean: float = 0.0
+    cost_per_task_mean: float | None = None
+    cost_per_task_median: float | None = None
+    cost_per_solved: float | None = None
+    cost_per_score_point: float | None = None
+    wall_per_task_mean: float | None = None
+    output_tokens_per_task_mean: float | None = None
+
+
 class EnvSubjectSummary(BaseModel):
     """Environment-isolation picture of one subject across its repeats (T-Ws7Iso)."""
 
@@ -281,6 +297,13 @@ class ComparisonRecord(BaseModel):
     # `env_problems` says which.
     env_mixed: bool = False
     env_problems: list[str] = []
+    # --- efficiency + probe-group view (T-Cb8Rk2) ----------------------------------------
+    efficiency: dict[str, EfficiencyRow] = {}
+    # subject_id -> probe group (core/trap/perf) -> mean pass fraction over attempted runs
+    # that had that group. Shows WHERE subjects differ (perf is timing-noisy).
+    group_scores: dict[str, dict[str, float]] = {}
+    # Deterministic, rule-based observations; a write-up adds judgement on top.
+    observations: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +671,104 @@ def _pairwise(
     return entries
 
 
+def _mean_or_none(values: list[float]) -> float | None:
+    return stats.mean(values) if values else None
+
+
+def _efficiency(records: list[BenchTaskRecord]) -> EfficiencyRow:
+    attempted = [r for r in records if is_attempted(r)]
+    costs = [r.cost_usd for r in attempted if r.cost_usd is not None]
+    solved = sum(1 for r in attempted if r.solved)
+    score_sum = sum(r.score for r in attempted)
+    spend = sum(r.cost_usd or 0.0 for r in records)
+    out_tokens = [float(r.output_tokens) for r in attempted if r.output_tokens is not None]
+    return EfficiencyRow(
+        spend_usd=spend,
+        runs_attempted=len(attempted),
+        solved_runs=solved,
+        score_mean=stats.mean([r.score for r in attempted]) if attempted else 0.0,
+        cost_per_task_mean=_mean_or_none(costs),
+        cost_per_task_median=_median_or_none(costs),
+        cost_per_solved=(sum(costs) / solved) if costs and solved else None,
+        cost_per_score_point=(sum(costs) / score_sum) if costs and score_sum > 0 else None,
+        wall_per_task_mean=_mean_or_none([r.wall_clock_seconds for r in attempted]),
+        output_tokens_per_task_mean=_mean_or_none(out_tokens),
+    )
+
+
+def _group_scores(records: list[BenchTaskRecord]) -> dict[str, float]:
+    """Mean pass fraction per probe group (`grader_detail.score_breakdown`, blackbox grader)."""
+    per_group: dict[str, list[float]] = {}
+    for r in records:
+        if not is_attempted(r):
+            continue
+        breakdown = r.grader_detail.get("score_breakdown")
+        if not isinstance(breakdown, dict):
+            continue
+        for group, cell in breakdown.items():
+            if isinstance(cell, dict) and cell.get("total"):
+                per_group.setdefault(group, []).append(float(cell.get("fraction", 0.0)))
+    return {g: stats.mean(v) for g, v in sorted(per_group.items())}
+
+
+# A probe group whose between-subject spread is at least this is called out as discriminating.
+OBSERVATION_GROUP_SPREAD = 0.10
+
+
+def _observations(
+    efficiency: dict[str, EfficiencyRow],
+    group_scores: dict[str, dict[str, float]],
+    pairwise: list[PairwiseEntry],
+) -> list[str]:
+    """Rule-based observations (no judgement): leaders, cost efficiency, which probe group
+    separates the subjects, and which pairwise differences are statistically decided."""
+    out: list[str] = []
+    ran = {sid: e for sid, e in efficiency.items() if e.runs_attempted}
+    if not ran:
+        return out
+    best = max(ran.items(), key=lambda kv: kv[1].score_mean)
+    out.append(f"Highest mean score: {best[0]} ({best[1].score_mean:.3f}).")
+    priced = {sid: e.cost_per_score_point for sid, e in ran.items() if e.cost_per_score_point}
+    if priced:
+        cheapest = min(priced.items(), key=lambda kv: kv[1])
+        dearest = max(priced.items(), key=lambda kv: kv[1])
+        out.append(
+            f"Cheapest per score point: {cheapest[0]} (${cheapest[1]:.3f}); most expensive: "
+            f"{dearest[0]} (${dearest[1]:.3f}), {dearest[1] / cheapest[1]:.1f}x."
+        )
+    groups = sorted({g for gs in group_scores.values() for g in gs})
+    for g in groups:
+        vals = {sid: gs[g] for sid, gs in group_scores.items() if g in gs}
+        if len(vals) >= 2:
+            spread = max(vals.values()) - min(vals.values())
+            if spread >= OBSERVATION_GROUP_SPREAD:
+                lo = min(vals.items(), key=lambda kv: kv[1])
+                hi = max(vals.items(), key=lambda kv: kv[1])
+                out.append(
+                    f"Probe group '{g}' separates subjects by {spread:.2f} "
+                    f"({hi[0]} {hi[1]:.2f} vs {lo[0]} {lo[1]:.2f})"
+                    + ("; perf is timing-sensitive, weigh it lightly." if g == "perf" else ".")
+                )
+    decided = [
+        e
+        for e in pairwise
+        if e.ci_lo is not None and e.ci_hi is not None and stats.ci_excludes_zero(e.ci_lo, e.ci_hi)
+    ]
+    undecided = [e for e in pairwise if e not in decided and e.n_tasks]
+    if decided:
+        out.append(
+            "Pairs whose 95% CI excludes 0: "
+            + ", ".join(f"{e.a} vs {e.b} ({e.mean_diff:+.3f}, n={e.n_tasks})" for e in decided)
+            + "."
+        )
+    if undecided:
+        out.append(
+            f"{len(undecided)} pair(s) not distinguishable at this n (CI straddles 0): add "
+            "tasks or repeats before ranking them."
+        )
+    return out
+
+
 def _env_summary(runs: list[BenchRunRecord]) -> EnvSubjectSummary:
     """Fold one subject's repeat records into an `EnvSubjectSummary`."""
     if all(r.env_isolation is None for r in runs):
@@ -879,6 +1000,10 @@ def build_comparison(
         if (st := subject_stats[sid]) is not None and st.infra_share > UNRELIABLE_INFRA_SHARE
     ]
 
+    efficiency = {sid: _efficiency(records_of[sid]) for sid in ran_subjects}
+    group_scores = {sid: _group_scores(records_of[sid]) for sid in ran_subjects}
+    pairwise = _pairwise(task_ids, ran_subjects, matrix)
+
     env_by_subject = {sid: _env_summary(list(loaded[sid].values())) for sid in ran_subjects}
     subject_types = {sid: next(iter(loaded[sid].values())).subject.type for sid in ran_subjects}
     env_problems = _env_problems(env_by_subject, subject_types)
@@ -905,8 +1030,11 @@ def build_comparison(
         per_family=_rollup(family_of, ran_subjects, matrix),
         per_language=_rollup(language_of, ran_subjects, matrix),
         infra=infra,
-        pairwise=_pairwise(task_ids, ran_subjects, matrix),
+        pairwise=pairwise,
         unreliable_subjects=unreliable,
+        efficiency=efficiency,
+        group_scores=group_scores,
+        observations=_observations(efficiency, group_scores, pairwise),
         env_by_subject=env_by_subject,
         env_mixed=bool(env_problems),
         env_problems=env_problems,
@@ -1084,6 +1212,46 @@ def _render_parity_md(comparison: ComparisonRecord) -> list[str]:
     if comparison.repeats_per_subject:
         per = ", ".join(f"{sid}={n}" for sid, n in comparison.repeats_per_subject.items())
         lines.append(f"- repeats per subject: {per}")
+    return lines
+
+
+def _render_efficiency_md(comparison: ComparisonRecord) -> list[str]:
+    lines = ["", "## Cost & efficiency", ""]
+    if not comparison.efficiency:
+        lines.append("_No efficiency data on this comparison._")
+        return lines
+    lines += [
+        "Per-task figures cover attempted runs (repeats included); spend counts every run.",
+        "",
+        "| Subject | Spend($) | Runs | Solved | Mean score | $/task (mean) | $/task (median)"
+        " | $/solved | $/score-pt | Wall/task(s) | Out tokens/task |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for sid, e in comparison.efficiency.items():
+        out_tok = e.output_tokens_per_task_mean
+        tokens = "—" if out_tok is None else f"{out_tok:.0f}"
+        lines.append(
+            f"| {sid} | {e.spend_usd:.4f} | {e.runs_attempted} | {e.solved_runs} "
+            f"| {e.score_mean:.3f} | {_fmt_cost(e.cost_per_task_mean)} "
+            f"| {_fmt_cost(e.cost_per_task_median)} | {_fmt_cost(e.cost_per_solved)} "
+            f"| {_fmt_cost(e.cost_per_score_point)} | {_fmt_opt_float(e.wall_per_task_mean, 1)} "
+            f"| {tokens} |"
+        )
+    if comparison.group_scores:
+        groups = sorted({g for gs in comparison.group_scores.values() for g in gs})
+        lines += [
+            "",
+            "Mean pass fraction per probe group (attempted runs):",
+            "",
+            "| Subject | " + " | ".join(groups) + " |",
+            "| --- | " + " | ".join("---" for _ in groups) + " |",
+        ]
+        for sid, gs in comparison.group_scores.items():
+            cells = [f"{gs[g]:.3f}" if g in gs else "—" for g in groups]
+            lines.append(f"| {sid} | " + " | ".join(cells) + " |")
+    if comparison.observations:
+        lines += ["", "### Observations (rule-based)", ""]
+        lines += [f"- {o}" for o in comparison.observations]
     return lines
 
 
@@ -1280,6 +1448,7 @@ def _render_comparison_md(comparison: ComparisonRecord) -> str:
     lines += ["", "## Winners", ""]
     lines += render_winners(comparison)
 
+    lines += _render_efficiency_md(comparison)
     lines += _render_parity_md(comparison)
     lines += _render_env_md(comparison)
     lines += _render_attempted_md(comparison)

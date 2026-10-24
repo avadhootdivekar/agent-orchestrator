@@ -114,7 +114,7 @@ def parity_fingerprint(bundle: ParityBundle) -> str:
     return h.hexdigest()
 
 
-def _append_git_exclude(repo_dir: Path, rel_paths: list[str]) -> None:
+def append_git_exclude(repo_dir: Path, rel_paths: list[str]) -> None:
     git_dir = repo_dir / ".git"
     if not git_dir.is_dir():
         return
@@ -148,7 +148,7 @@ def apply_parity(bundle: ParityBundle, *, repo_dir: Path, workspace: Path) -> li
         dest_dir = repo_dir / CLAUDE_DIRNAME
         shutil.copytree(claude_dir, dest_dir, dirs_exist_ok=True)
         written.append(dest_dir)
-        _append_git_exclude(repo_dir, [f"/{CLAUDE_DIRNAME}/"])
+        append_git_exclude(repo_dir, [f"/{CLAUDE_DIRNAME}/"])
     return written
 
 
@@ -157,6 +157,7 @@ __all__ = [
     "CLAUDE_MD_FILENAME",
     "PARITY_FILENAME",
     "ParityBundle",
+    "append_git_exclude",
     "apply_parity",
     "load_parity",
     "parity_fingerprint",

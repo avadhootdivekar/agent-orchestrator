@@ -586,6 +586,7 @@ def test_comparison_md_keeps_original_sections_then_adds_stats_sections(tmp_path
         "## Per-subject",
         "## Per-task (solved / cost)",
         "## Winners",
+        "## Cost & efficiency",  # T-Cb8Rk2
         "## Parity",
         "## Environment isolation",  # T-Ws7Iso
         "## Attempted-based rates (infra excluded)",

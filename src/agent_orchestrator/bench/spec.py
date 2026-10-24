@@ -211,6 +211,16 @@ class SubjectSpec(BaseModel):
     agents: str | None = None
     max_parallel: int | None = None
     budget_total: int | None = None
+    # ao_workflow subject, template mode (T-Ov3Sbj): instead of `ao run --workflow`, scaffold
+    # and run a template instance (`ao new <template> ... --run`) inside the task workspace.
+    # `template` is a builtin name (e.g. "overseer-runner") or a template dir relative to the
+    # subject.json; `prompt_file` (relative to the subject.json) becomes the instance's
+    # prompt.md; `init_git` turns repo/ into a git repo with a local bare `origin` for
+    # templates whose stages need git (the repo's first commit is the task as handed over).
+    template: str | None = None
+    template_params: dict[str, str] = {}
+    prompt_file: str | None = None
+    init_git: bool = False
     # fake subject (test-only).
     scripted_effect: str | None = None
     fake_cost: float | None = None

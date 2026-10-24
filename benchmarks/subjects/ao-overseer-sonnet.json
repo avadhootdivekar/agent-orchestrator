@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "id": "ao-overseer-sonnet",
+  "type": "ao_workflow",
+  "template": "overseer-runner",
+  "template_params": {
+    "run_budget_usd": "3",
+    "task_budget_usd": "1.5",
+    "wave_size": "3",
+    "max_waves": "2",
+    "final_push": "false",
+    "branch_policy": "Benchmark repo whose origin is a local bare repository: branch fresh off main."
+  },
+  "prompt_file": "ao-overseer/prompt.md",
+  "reposets": "ao-overseer/reposet.json",
+  "agents": "ao-overseer/agents.json",
+  "init_git": true,
+  "model": "claude-sonnet-5-5",
+  "max_turns": 30
+}

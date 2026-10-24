@@ -464,7 +464,10 @@ def _effective_timeout(task: BenchTask, suite: BenchSuite, default_timeout: int 
 
 
 def _errored_result(
-    ws_path: Path, wall_clock_seconds: float, raw_error: str
+    ws_path: Path,
+    wall_clock_seconds: float,
+    raw_error: str,
+    subject_result: SubjectResult | None = None,
 ) -> tuple[SubjectResult, GradeResult]:
     """Design §4.5: `EXCEPT BenchError as e: sr=SubjectResult("error",...);
     gr=GradeResult(False,0.0,...,str(e))`. One shared error path for a `Subject.run`
@@ -473,11 +476,28 @@ def _errored_result(
     as errored rather than keeping a possibly-misleading partial subject result.
     """
     capture_dir = str(ws_path / CAPTURE_DIRNAME)
+    # When the SUBJECT finished and the GRADER raised, the subject's spend is real: keep its
+    # cost/tokens/turns so budgets and $/task stay truthful (T-Cb8Rk2: a probe-definition
+    # error used to record a paid haiku run as $0).
+    spent: dict[str, Any] = {}
+    if subject_result is not None:
+        spent = subject_result.model_dump(
+            include={
+                "cost_usd",
+                "input_tokens",
+                "output_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+                "attempts",
+                "turns",
+            }
+        )
     sr = SubjectResult(
         status="error",
         wall_clock_seconds=wall_clock_seconds,
         capture_dir=capture_dir,
         raw_error=raw_error,
+        **spent,
     )
     gr = GradeResult(solved=False, score=0.0, detail={}, raw_tail=raw_error)
     return sr, gr
@@ -972,6 +992,7 @@ def run_suite(
 
             sr: SubjectResult
             gr: GradeResult
+            finished: SubjectResult | None = None
             try:
                 ctx = materialize_workspace(
                     task,
@@ -986,10 +1007,11 @@ def run_suite(
                 )
                 subject_cls = SUBJECT_REGISTRY[subject_spec.type]
                 sr = subject_cls(subject_spec).run(task, ctx)
+                finished = sr
                 grader_cls = GRADER_REGISTRY[task.grader.type]
                 gr = grader_cls().grade(task.grader, ctx)
             except BenchError as exc:
-                sr, gr = _errored_result(ws_path, time.monotonic() - t0, str(exc))
+                sr, gr = _errored_result(ws_path, time.monotonic() - t0, str(exc), finished)
             except Exception as exc:  # noqa: BLE001 -- per-task isolation boundary (§4.5)
                 task_log.error(
                     "bench.task.unexpected_error",
@@ -997,7 +1019,7 @@ def run_suite(
                     exc_info=True,
                 )
                 sr, gr = _errored_result(
-                    ws_path, time.monotonic() - t0, f"unexpected error: {exc!r}"
+                    ws_path, time.monotonic() - t0, f"unexpected error: {exc!r}", finished
                 )
 
             env_fp, env_foreign, audit = _inspect_task_env(ws_path, env_baseline)

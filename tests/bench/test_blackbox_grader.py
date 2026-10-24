@@ -252,7 +252,7 @@ class TestValidateProbeSpec:
         ("contract", "step", "needle"),
         [
             ("jsonl", {"op": {"path": "/x"}}, "not valid for contract"),
-            ("jsonl", {"op": {"json": "ping"}}, "`json` object"),
+            ("jsonl", {"op": {}}, "`json` value"),  # any JSON value is a valid line (T-Cb8Rk2)
             ("jsonl", {"op": {"json": {"op": "x"}}, "expect": {"status": 200}}, "not valid"),
             ("cli", {"op": {"args": "add"}}, "array of strings"),
             ("cli", {"op": {"args": ["a"], "stdin": 5}}, "stdin"),

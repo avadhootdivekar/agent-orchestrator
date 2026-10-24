@@ -85,7 +85,7 @@ Templating: any string value in `op`/`expect` may contain `{{var}}` (saved varia
 | contract | op shape |
 |---|---|
 | `http` | `{"method": "GET\|POST\|PUT\|PATCH\|DELETE", "path": "/items?limit=10&cursor={{cursor}}", "json": {...} \| null, "headers": {...}}` |
-| `jsonl` | `{"json": {"op": "create", "entity": "item", "body": {...}}}` — one request line; response = next line |
+| `jsonl` | `{"json": {"op": "create", "entity": "item", "body": {...}}}` — one request line (`json.dumps` of the value; any JSON value, so a non-object line such as `[1, 2]` can be probed); response = next line |
 | `cli` | `{"args": ["add", "--name", "{{rand}}"], "stdin": "..."}` |
 
 ### 3.3 `expect`

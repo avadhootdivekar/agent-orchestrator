@@ -70,6 +70,8 @@ DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
 DEFAULT_RUN_TIMEOUT_SECONDS = 30.0
 RUN_SCRIPT = "run.sh"
 READINESS_PATH = "/healthz"
+# `docker inspect` + a TCP connect to the container IP (T-Cb8Rk2 direct address).
+DIRECT_PROBE_TIMEOUT_SECONDS = 5
 READINESS_POLL_SECONDS = 0.05
 READINESS_REQUEST_TIMEOUT_SECONDS = 1.0
 PING_REQUEST = '{"op":"ping"}'
@@ -538,6 +540,10 @@ class Handle:
     log_dir: Path | None = None
     log_file: Any = None
     stopped: bool = False
+    # Docker only (T-Cb8Rk2): the container's own bridge address, when reachable from the
+    # host. HTTP clients prefer it over the published port to bypass `docker-proxy`.
+    direct_host: str | None = None
+    direct_port: int | None = None
 
     def log_tail(self) -> str:
         """Last few non-empty log lines on one line (tracebacks end with the useful part)."""
@@ -945,7 +951,40 @@ class DockerSandbox(Sandbox):
                 self.cfg.startup_timeout_seconds,  # the attached CLI exits with the container
             )
 
-        return _start_http_retrying(attempt)
+        handle = _start_http_retrying(attempt)
+        self._attach_direct_address(handle)
+        return handle
+
+    def _attach_direct_address(self, handle: Handle) -> None:
+        """Record the container's bridge IP when the host can reach it (Linux docker; not
+        Docker Desktop). Best effort: on any failure the published port stays in use."""
+        if handle.container is None:
+            return
+        try:
+            out = subprocess.run(  # noqa: S603 -- fixed argv, no shell, bounded timeout
+                [
+                    "docker",
+                    "inspect",
+                    "-f",
+                    "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+                    handle.container,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=DIRECT_PROBE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        ips = out.stdout.split()
+        if out.returncode != 0 or not ips:
+            return
+        try:
+            with socket.create_connection((ips[0], CONTAINER_PORT), DIRECT_PROBE_TIMEOUT_SECONDS):
+                pass
+        except OSError:
+            return
+        handle.direct_host, handle.direct_port = ips[0], CONTAINER_PORT
 
     def start_jsonl(self, artefact_dir: Path, env: Mapping[str, str] | None = None) -> JsonlHandle:
         command = run_sh_argv(artefact_dir)

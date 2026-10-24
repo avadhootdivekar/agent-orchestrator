@@ -39,7 +39,9 @@ import math
 import random
 import re
 import shutil
+import socket
 import statistics
+import struct
 import tempfile
 import threading
 import time
@@ -595,8 +597,10 @@ def _validate_op_expect(step: Mapping[str, Any], contract: str, where: str) -> N
         ):
             raise _fail(where, "http op `headers` must be an object of strings")
     elif contract == "jsonl":
-        if not isinstance(op.get("json"), dict):
-            raise _fail(where, "jsonl op needs a `json` object (the request line)")
+        # Any JSON value: probes for "a line that is not a JSON object" (T-Cb8Rk2) send an
+        # array or a bare string; the transport writes `json.dumps(value)` either way.
+        if "json" not in op:
+            raise _fail(where, "jsonl op needs a `json` value (the request line)")
     else:
         args = op.get("args", [])
         if not (isinstance(args, list) and all(isinstance(a, str) for a in args)):
@@ -931,11 +935,24 @@ class Transport(ABC):
 
 class HttpTransport(Transport):
     """One short-lived connection per request: no stale keep-alive state, thread-safe, and
-    the same cost model for the artefact and the reference."""
+    the same cost model for the artefact and the reference.
+
+    T-Cb8Rk2: at perf `scale >= 2` a grading makes ~30k requests. Through `docker-proxy`
+    (the published port) every connection left a TIME_WAIT socket on the proxy -> container
+    leg, whose container IP is reused across restarts, and the ~28k-th connection was reset
+    once the ephemeral range ran out -- even the reference "failed". So when the sandbox
+    knows the container's own address (`Handle.direct_host`) we connect there, bypassing
+    the proxy, and every socket is closed abortively (`SO_LINGER` 0) so no TIME_WAIT is left
+    on either leg. Keep-alive was rejected: Python servers' Nagle + delayed-ACK put a
+    ~40 ms floor under every reused-connection request, which would distort perf timings.
+    """
 
     def __init__(self, handle: Handle) -> None:
         assert handle.port is not None
-        self._port = handle.port
+        if handle.direct_host is not None and handle.direct_port is not None:
+            self._host, self._port = handle.direct_host, handle.direct_port
+        else:
+            self._host, self._port = "127.0.0.1", handle.port
 
     def send(self, op: Mapping[str, Any], timeout: float) -> StepOutcome:
         method = str(op.get("method", "GET")).upper()
@@ -944,7 +961,7 @@ class HttpTransport(Transport):
         if op.get("json") is not None:
             body = json.dumps(op["json"]).encode("utf-8")
             headers.setdefault("Content-Type", "application/json")
-        conn = http.client.HTTPConnection("127.0.0.1", self._port, timeout=timeout)
+        conn = http.client.HTTPConnection(self._host, self._port, timeout=timeout)
         t0 = time.perf_counter()
         try:
             conn.request(method, op["path"], body=body, headers=headers)
@@ -955,10 +972,25 @@ class HttpTransport(Transport):
         except (OSError, http.client.HTTPException) as exc:
             raise ArtefactFailure(f"{method} {op['path']} failed: {exc!r}") from exc
         finally:
-            conn.close()
+            _abortive_close(conn)
         ms = (time.perf_counter() - t0) * 1000.0
         text = raw.decode("utf-8", errors="replace")
         return StepOutcome(ms=ms, status=resp.status, body=_parse_json(text), text=text)
+
+
+_LINGER_ABORT = struct.pack("ii", 1, 0)
+
+
+def _abortive_close(conn: http.client.HTTPConnection) -> None:
+    """Close with RST instead of FIN so the client side keeps no TIME_WAIT (see
+    `HttpTransport`). The response has been read in full by then."""
+    sock = conn.sock
+    if sock is not None:
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, _LINGER_ABORT)
+        except OSError:
+            pass
+    conn.close()
 
 
 class JsonlTransport(Transport):
@@ -1105,7 +1137,10 @@ def _describe(op: Mapping[str, Any], contract: str) -> str:
     if contract == "http":
         return f"{str(op.get('method', 'GET')).upper()} {op.get('path')}"
     if contract == "jsonl":
-        return f"op={op.get('json', {}).get('op')}"
+        line = op.get("json")
+        if isinstance(line, dict):
+            return f"op={line.get('op')}"
+        return f"line={json.dumps(line)[:40]}"  # a deliberately non-object request line
     return "run.sh " + " ".join(str(a) for a in op.get("args", []))
 
 
