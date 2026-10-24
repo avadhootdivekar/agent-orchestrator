@@ -129,6 +129,9 @@ class Family(ABC):
     # Part of `ao-bench gen`'s default family set (families added later are opt-in via
     # `--family`, so the default output -- and committed suites -- stay byte-identical).
     in_default_set: ClassVar[bool] = True
+    # Grader the suite gives this family's tasks: "blackbox" (probe DSL in probes.json) or
+    # "objective" (open-scale cases + reference ladder in probes.json, T-Os5Lad).
+    grader_type: ClassVar[str] = "blackbox"
 
     @abstractmethod
     def generate(

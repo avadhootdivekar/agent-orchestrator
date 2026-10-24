@@ -37,6 +37,8 @@ def generate_instance(
         raise ValueError(f"unknown generator family {family!r}; known: {sorted(FAMILY_REGISTRY)}")
     diff = difficulty if isinstance(difficulty, Difficulty) else Difficulty.from_mapping(difficulty)
     instance = cls().generate(seed, diff, language, allow)
+    if cls.grader_type != "blackbox":  # objective cases are checked by the family itself
+        return instance
     try:
         check_probes(instance.probes)
     except ValueError as exc:

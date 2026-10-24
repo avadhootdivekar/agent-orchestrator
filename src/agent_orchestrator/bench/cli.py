@@ -28,6 +28,7 @@ from . import (
     exercism,  # noqa: F401 -- registers "exercism" provider + grader (T-Pf4Mix)
     generated_provider,  # noqa: F401 -- registers "generated" workspace provider (E-Bn7Dsc)
     mutation_provider,  # noqa: F401 -- registers "repo_mutation" workspace provider (E-Bn7Dsc)
+    objective,  # noqa: F401 -- registers "objective" grader (T-Os5Lad)
     pr_mined_provider,  # noqa: F401 -- registers "pr_mined" workspace provider (E-Bn7Dsc)
     pytest_targeted,  # noqa: F401 -- registers "pytest_targeted" grader (E-Bn7Dsc)
     swebench_grader,  # noqa: F401 -- registers "swebench" grader (T-Sg6Jf2)

@@ -25,6 +25,9 @@ from . import (
     job_queue as _job_queue,  # noqa: F401 -- registers "job-queue"
 )
 from . import (
+    opt_ladder as _opt_ladder,  # noqa: F401 -- registers "opt-ladder" (T-Os5Lad)
+)
+from . import (
     order_book as _order_book,  # noqa: F401 -- registers "order-book" (T-Pf4Mix)
 )
 from . import (
