@@ -57,8 +57,17 @@ OBJECTIVE_GRADER_TYPE = "objective"
 PROBES_FILE = "probes.json"
 REFERENCE_PROGRAM = "server.py"
 DEFAULT_CASE_SECONDS = 10.0
-# Transport slack on top of the stated limit: JSON encode/decode of a large answer + pipe latency.
-REQUEST_GRACE_SECONDS = 1.0
+# Transport slack on top of the stated limit (JSON encode/decode of a large answer, pipe latency):
+# 20% of the limit, between 0.1 s and 1 s, so a sub-second limit is not dominated by the slack.
+REQUEST_GRACE_FRACTION = 0.2
+REQUEST_GRACE_SECONDS = (0.1, 1.0)
+
+
+def request_timeout(case_seconds: float) -> float:
+    lo, hi = REQUEST_GRACE_SECONDS
+    return case_seconds + min(hi, max(lo, REQUEST_GRACE_FRACTION * case_seconds))
+
+
 DEFAULT_SOLVED_POINTS = 2.0
 AGGREGATES = ("mean", "rungs")
 # Give up on an artefact that cannot even start this many times in a row (remaining cases score 0).
@@ -272,7 +281,7 @@ class ObjectiveGrader(Grader):
             return self._zero(c, f"artefact did not start: {exc}"[:300], start_failed=True)
         t0 = time.perf_counter()
         try:
-            outcome = transport.send({"json": req}, case_seconds + REQUEST_GRACE_SECONDS)
+            outcome = transport.send({"json": req}, request_timeout(case_seconds))
         except ArtefactTimeout:
             session.close()  # a late answer would misalign the next request: restart
             return self._zero(c, f"no answer within {case_seconds:g}s", timed_out=True)

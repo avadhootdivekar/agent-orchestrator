@@ -125,3 +125,11 @@ def test_wrong_from_a_size_stops_the_staircase(tmp_path: Path) -> None:
     expected = 2.0 if problem != "grid_paths" else float(RUNGS)
     assert result.detail["points"] == pytest.approx(expected)
     assert result.score == pytest.approx(expected / RUNGS)
+
+
+def test_request_grace_is_proportional() -> None:
+    from agent_orchestrator.bench.objective import request_timeout
+
+    assert request_timeout(10) == pytest.approx(11.0)
+    assert request_timeout(1) == pytest.approx(1.2)
+    assert request_timeout(0.2) == pytest.approx(0.3)
