@@ -32,8 +32,9 @@ from agent_orchestrator.bench.spec import (
     load_suite,
 )
 from agent_orchestrator.bench.workspace import (
-    BENCH_WORKSPACE_ROOT,
     REPO_ROOT,
+    bench_grading_root,
+    bench_workspace_root,
     materialize_workspace,
 )
 
@@ -57,8 +58,8 @@ def file_tree(root: Path) -> dict[str, bytes]:
 
 @pytest.fixture()
 def bench_ws(tmp_path: Path) -> Iterator[Path]:
-    """A workspace root under BENCH_WORKSPACE_ROOT (the provider's sandbox guard), cleaned up."""
-    root = BENCH_WORKSPACE_ROOT / "_test_gen_provider" / tmp_path.name
+    """A workspace root under bench_workspace_root() (the provider's sandbox guard), cleaned up."""
+    root = bench_workspace_root() / "_test_gen_provider" / tmp_path.name
     yield root
     shutil.rmtree(root, ignore_errors=True)
 
@@ -433,18 +434,18 @@ class TestThroughTheRunner:
     def test_noop_subject_run_materialises_the_grading_dir(self, tmp_path: Path) -> None:
         suite_path = self._fake_graded_suite(tmp_path)
         record = run_suite(suite_path, self._subject(tmp_path, "noop"), out_dir=tmp_path / "res")
-        run_root = BENCH_WORKSPACE_ROOT / record.bench_run_id
+        run_root = bench_workspace_root() / record.bench_run_id
         try:
             assert len(record.tasks) == 2
             for t in record.tasks:
-                grading = run_root / "_grading" / "fake-noop" / t.task_id
+                grading = bench_grading_root() / record.bench_run_id / "fake-noop" / t.task_id
                 assert (grading / "instance.json").is_file()
                 assert (grading / "probes.json").is_file()
                 assert (grading / "reference" / "run.sh").is_file()
                 ws_repo = run_root / "fake-noop" / t.task_id / "repo"
                 assert (ws_repo / "SPEC.md").is_file() and (ws_repo / "INSTRUCTION.md").is_file()
-                # the hidden tree is a sibling of the subject workspaces, not inside them
-                assert not list((run_root / "fake-noop").rglob("probes.json"))
+                # the hidden tree is under a sibling root, not under the workspace root at all
+                assert not list(run_root.rglob("probes.json"))
         finally:
             shutil.rmtree(run_root, ignore_errors=True)
 
@@ -453,7 +454,7 @@ class TestThroughTheRunner:
         record = run_suite(
             suite_path, self._subject(tmp_path, "copy-reference"), out_dir=tmp_path / "res"
         )
-        run_root = BENCH_WORKSPACE_ROOT / record.bench_run_id
+        run_root = bench_workspace_root() / record.bench_run_id
         try:
             by_family = {t.task_id: t for t in record.tasks}
             queue_id = next(i for i in by_family if i.startswith("job-queue"))

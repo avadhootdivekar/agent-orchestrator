@@ -2,10 +2,15 @@
 
 - ID: `E-Bn7Dsc-discriminating-benchmark-suites`
 - Updated At: 2026-10-24
-- State: **Done** (6/6 tracks; follow-ons in HLD §12) · `T-Ws7Iso-bench-env-isolation` **Open**
+- State: **Done** (6/6 tracks; follow-ons in HLD §12) · `T-Ws7Iso-bench-env-isolation` **Done** (2026-10-24)
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: developer · Date: 2026-10-24 · Comment: **`T-Ws7Iso` done** — bench workspaces moved outside
+  the checkout (`/var/tmp/ao-bench/<uid>`, `AO_BENCH_WORKSPACE_ROOT`), grading under a sibling root, init-event
+  environment fingerprint + baseline probe + user-config fingerprint with comparison refusals, grading-access
+  audit (`suspect`, excluded from stats), held-out-seed policy. Real haiku check: both subjects' fingerprints equal
+  the baseline, no repo/control-plane skills. Ranking campaigns are unblocked (use a fresh `--seed`). HLD §2c.
 - By: Claude · Role: manager · Date: 2026-10-24 · Comment: **Follow-on `T-Ws7Iso` opened.** Owner asked whether
   benchmarking `ao` from the same branch/workspace contaminates scores. Running from the checkout is *required*
   (`uv run ao` from `REPO_ROOT` is the `ao` under test, stamped `ao_version`), but the workspace root

@@ -158,6 +158,19 @@ def _print_run_summary(record: BenchRunRecord, result_dir: Path, summary_path: P
         f"total_cost=${agg.total_cost_usd:.4f} cost_per_solved={cost_per_solved} "
         f"total_wall={agg.total_wall_clock_seconds:.2f}s"
     )
+    iso = record.env_isolation
+    if iso is not None:
+        baseline = record.env_baseline.digest[:12] if record.env_baseline else "—"
+        typer.echo(
+            f"Environment: workspace_root={iso.workspace_root}"
+            f" contaminated={'yes' if record.env_contaminated else 'no'} baseline={baseline}"
+        )
+    foreign = [t.task_id for t in record.tasks if t.env_foreign]
+    suspects = [t.task_id for t in record.tasks if t.suspect]
+    if foreign:
+        typer.echo(f"WARNING: agents loaded entries absent from the baseline in: {foreign}")
+    if suspects:
+        typer.echo(f"WARNING: grading-root access in {suspects} -- excluded from comparison stats")
 
 
 @app.command()
@@ -229,6 +242,14 @@ def run(
         help="Which repeat of this (suite x subject) this run is (HLD §6). 1 = the usual"
         " result dir; n>1 lands in <bench_run_id>-r<n>.",
     ),
+    allow_contaminated_env: bool = typer.Option(
+        False,
+        "--allow-contaminated-env",
+        help="Run agent subjects even if the bench workspace root (AO_BENCH_WORKSPACE_ROOT,"
+        " default /var/tmp/ao-bench/<uid>) or an ancestor holds CLAUDE.md/AGENTS.md/.claude"
+        " (T-Ws7Iso). The run is stamped env_contaminated and `report` refuses it without"
+        " --allow-mixed.",
+    ),
 ) -> None:
     """Run a benchmark suite against a subject; writes run.json + summary.md.
 
@@ -285,6 +306,7 @@ def run(
             max_parallel=effective_max_parallel,
             parity=parity,
             repeat=repeat,
+            allow_contaminated_env=allow_contaminated_env,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -343,6 +365,10 @@ def _print_campaign_summary(result: CampaignResult) -> None:
     if record.comparison_json is not None:
         typer.echo(f"Comparison: {record.comparison_json}")
         typer.echo(f"            {record.comparison_md}")
+    if record.env_problems:
+        typer.echo("WARNING: comparison stamped NON-ISOLATED (T-Ws7Iso):")
+        for problem in record.env_problems:
+            typer.echo(f"  - {problem}")
 
 
 @app.command()
@@ -413,6 +439,14 @@ def campaign(
         help="With --repeats N>1: run EVERY task for EVERY subject at every repeat up to N"
         " (the non-adaptive protocol) instead of the staged one.",
     ),
+    allow_contaminated_env: bool = typer.Option(
+        False,
+        "--allow-contaminated-env",
+        help="Run agent subjects even if the bench workspace root (AO_BENCH_WORKSPACE_ROOT,"
+        " default /var/tmp/ao-bench/<uid>) or an ancestor holds CLAUDE.md/AGENTS.md/.claude"
+        " (T-Ws7Iso). The run is stamped env_contaminated and `report` refuses it without"
+        " --allow-mixed.",
+    ),
 ) -> None:
     """Run a suite against a LIST of subjects, enforcing a whole-run USD cap across all
     of them (ADR-0009 D3); writes each subject's own run.json/summary.md plus a
@@ -438,6 +472,7 @@ def campaign(
             parity=parity,
             repeats=repeats,
             staged=not no_staged,
+            allow_contaminated_env=allow_contaminated_env,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -527,8 +562,9 @@ def report(
         False,
         "--allow-mixed",
         help="Allow comparing runs that are not apples-to-apples: two runs for the same"
-        " subject id with different config_fingerprint, or runs produced under different"
-        " parity bundles (HLD §2b; the report is then stamped NON-PARITY). Default: refused.",
+        " subject id with different config_fingerprint, runs produced under different"
+        " parity bundles (HLD §2b; stamped NON-PARITY), or runs whose agents did not share"
+        " one clean environment (T-Ws7Iso; stamped NON-ISOLATED). Default: refused.",
     ),
 ) -> None:
     """Compare result dirs for the same suite; writes comparison.json + comparison.md.
@@ -593,6 +629,64 @@ def report(
         typer.echo(
             "WARNING: UNRELIABLE (>10% infra errors): " + ", ".join(comparison.unreliable_subjects)
         )
+
+
+# Exit code of `ao-bench env` when the workspace root would leak instructions (T-Ws7Iso).
+EXIT_ENV_CONTAMINATED = 2
+
+
+@app.command(name="env")
+def env_cmd(
+    parity: str | None = typer.Option(
+        None,
+        "--parity",
+        help="Parity bundle whose env knobs/files apply (default: benchmarks/parity/default"
+        " in this checkout, when present).",
+    ),
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help="Also start a throwaway `claude -p` in an empty parity-applied workspace under"
+        " the bench root, read its init event and kill it: prints the baseline every agent"
+        " subject is compared against (skills/agents/slash commands/MCP servers/plugins).",
+    ),
+    model: str | None = typer.Option(None, "--model", help="Model for the --probe session."),
+) -> None:
+    """Preflight the bench environment (T-Ws7Iso); prints JSON.
+
+    Shows where workspaces and grading assets go (`AO_BENCH_WORKSPACE_ROOT`, default
+    /var/tmp/ao-bench/<uid>), any CLAUDE.md/AGENTS.md/.claude in that root or an ancestor
+    (which Claude Code would load into every agent under test), the user-level config
+    fingerprint, and with --probe the baseline. Exit 0 when clean, 2 when contaminated.
+    """
+    from .envcheck import check_isolation, subject_env, user_config_fingerprint
+    from .parity import load_parity
+    from .runner import probe_baseline
+    from .workspace import REPO_ROOT, bench_grading_root, bench_workspace_root
+
+    parity_path = Path(parity) if parity else REPO_ROOT / "benchmarks" / "parity" / "default"
+    try:
+        bundle = load_parity(parity_path) if (parity or parity_path.exists()) else None
+    except SpecValidationError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(EXIT_USAGE_ERROR) from exc
+    ws_root, grading_root = bench_workspace_root(), bench_grading_root()
+    isolation = check_isolation(ws_root, grading_root)
+    child_env = subject_env(bundle.env if bundle is not None else {})
+    payload: dict[str, object] = {
+        "workspace_root": str(ws_root),
+        "grading_root": str(grading_root),
+        "contaminated": isolation.contaminated,
+        "instruction_ancestors": isolation.instruction_ancestors,
+        "parity_bundle": str(parity_path) if bundle is not None else None,
+        "user_config": user_config_fingerprint(child_env).model_dump(mode="json"),
+    }
+    if probe:
+        ws_root.mkdir(parents=True, exist_ok=True)
+        baseline = probe_baseline(ws_root, bundle, env=child_env, model=model)
+        payload["baseline"] = baseline.model_dump(mode="json") if baseline else None
+    typer.echo(json.dumps(payload, indent=2))
+    raise typer.Exit(EXIT_ENV_CONTAMINATED if isolation.contaminated else EXIT_OK)
 
 
 @app.command(name="list")

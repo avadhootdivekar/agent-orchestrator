@@ -5,8 +5,8 @@
 - Title: Discriminating benchmark suites (behavioural-spec + large-codebase tiers, parity, stats)
 - Owner: Claude (architect/manager) for the owner (avadhoot)
 - Created: 2026-10-23
-- Last Updated: 2026-10-24 (6/6 tracks done; follow-on `T-Ws7Iso` open)
-- Status: Done (P1–P3 as-built; follow-ons listed in HLD §12) · follow-on `T-Ws7Iso-bench-env-isolation` **Open** — must land before any ranking campaign
+- Last Updated: 2026-10-24 (6/6 tracks done; follow-on `T-Ws7Iso` done)
+- Status: Done (P1–P3 as-built; follow-ons listed in HLD §12) · follow-on `T-Ws7Iso-bench-env-isolation` **Done** (2026-10-24) — ranking campaigns unblocked
 
 ## Summary
 - Goal: make `ao-bench` able to tell subjects apart on speed, cost and correctness at a cost a single developer
@@ -35,13 +35,13 @@
 - [x] `T-St4Gh5-stats-campaign` — stats.py, comparison parity check + repeats + CIs + family/infra tables, campaign staged repeats, `ao-bench calibrate`.
 - [x] `T-T2-5Ij6-tier2-providers` — repo_mutation + pr_mined providers, pytest_targeted grader, import-prs, recipes, dev-medium `.grading/` migration.
 - [x] `T-Dk6Lm7-docs-skill-smoke` — README/HLD reconcile, bench skill, memories, real haiku smoke on gen-services-mini.
-- [ ] `T-Ws7Iso-bench-env-isolation` — workspace root outside the checkout, environment fingerprint from the transcript `init` event, hidden-asset access audit, held-out seeds policy (finding 2026-10-24, HLD §12).
+- [x] `T-Ws7Iso-bench-env-isolation` — workspace root outside the checkout, environment fingerprint from the transcript `init` event, hidden-asset access audit, held-out seeds policy (finding 2026-10-24, HLD §12).
 
 ## Risks and Dependencies
 - Docker availability on dev machines (fallback: process sandbox, tagged).
 - Generator bias: mitigated by seed rotation + family roll-up; calibration against ≥2 model tiers before ranking.
 - Tier-2 recipes need network to validate against real repos; unit tests use a committed mini fixture repo.
-- **Environment leak (found 2026-10-24):** workspaces under `<repo>/playground/.tmp/bench` inherit both ancestor `CLAUDE.md` files and every repo/control-plane skill and agent (verified in the 2026-10-23 `init` events). Parity held but §2b's "same instructions" is violated — `T-Ws7Iso`.
+- **Environment leak (found 2026-10-24):** workspaces under `<repo>/playground/.tmp/bench` inherit both ancestor `CLAUDE.md` files and every repo/control-plane skill and agent (verified in the 2026-10-23 `init` events). Parity held but §2b's "same instructions" is violated — fixed by `T-Ws7Iso` (HLD §2c).
 
 ## Links
 - Design doc: `docs-md/benchmark-discriminating-suites-hld.md`, `docs-md/bench-probe-dsl.md`

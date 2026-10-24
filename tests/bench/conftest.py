@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 
 import agent_orchestrator.bench.swebench_provider as swebench_provider
-from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT
+from agent_orchestrator.bench.workspace import ENV_BENCH_WORKSPACE_ROOT, bench_workspace_root
 
 # marker -> (opt-in env var, example invocation). Each gated tier is skipped unless its env
 # var is "1" -- mirrors tests/playground/conftest.py's `real_llm` gate, so the default
@@ -40,6 +40,18 @@ _OPT_IN_GATES: dict[str, tuple[str, str]] = {
     # Clones public GitHub repos (T-T2-5Ij6 repo-mutant recipes / pr-mined provider).
     "network": ("AO_E2E_NETWORK", "AO_E2E_NETWORK=1 uv run pytest -m network tests/bench"),
 }
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _bench_root_outside_checkout(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """Point every bench test at a throwaway bench root (T-Ws7Iso): `AO_BENCH_WORKSPACE_ROOT`
+    under pytest's own temp dir, so tests never write to the real `/var/tmp/ao-bench/<uid>`
+    and the root has no instruction-file ancestor. A test that needs another root (e.g. the
+    contamination guard's own tests) overrides the env var with `monkeypatch`."""
+    root = tmp_path_factory.mktemp("ao-bench-root")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv(ENV_BENCH_WORKSPACE_ROOT, str(root))
+        yield root
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -178,6 +190,6 @@ def isolated_repo_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
 @pytest.fixture()
 def bench_ws() -> Iterator[Path]:
     """A throwaway workspace root under the (guarded) bench sandbox, cleaned afterwards."""
-    root = BENCH_WORKSPACE_ROOT / f"tier2-test-{uuid.uuid4().hex[:10]}"
+    root = bench_workspace_root() / f"tier2-test-{uuid.uuid4().hex[:10]}"
     yield root
     shutil.rmtree(root, ignore_errors=True)

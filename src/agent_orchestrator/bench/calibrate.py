@@ -136,6 +136,7 @@ def calibrate_suite(
     force: bool = False,
     enable_xlarge: bool = False,
     clock: Callable[[], datetime] | None = None,
+    allow_contaminated_env: bool = False,
 ) -> CalibrationReport:
     """Run every subject x repeat over the suite and pool the outcomes per task.
 
@@ -148,7 +149,7 @@ def calibrate_suite(
     """
     from .campaign import enforce_tier_enabled
     from .errors import BenchError
-    from .results import NOT_ATTEMPTED_STATUSES
+    from .results import is_attempted
     from .runner import compute_bench_run_id, resolve_result_dir, run_suite
     from .spec import load_subject, load_suite
     from .tiers import load_tier_config, resolve_effective
@@ -194,6 +195,7 @@ def calibrate_suite(
                 clock=resolved_clock,
                 parity=parity,
                 repeat=repeat,
+                allow_contaminated_env=allow_contaminated_env,
             )
             run_dirs.append(
                 str(
@@ -205,9 +207,7 @@ def calibrate_suite(
             )
             for t in record.tasks:
                 if t.task_id in outcomes:
-                    outcomes[t.task_id].append(
-                        (t.subject_status not in NOT_ATTEMPTED_STATUSES, t.solved)
-                    )
+                    outcomes[t.task_id].append((is_attempted(t), t.solved))
 
     results: list[TaskCalibration] = []
     for task in live:
@@ -371,6 +371,12 @@ def calibrate_command(
         "--enable-xlarge",
         help="Allow a suite whose tier is disabled in benchmarks/tiers.json.",
     ),
+    allow_contaminated_env: bool = typer.Option(
+        False,
+        "--allow-contaminated-env",
+        help="Run agent subjects even if the bench workspace root has an instruction-file"
+        " ancestor (T-Ws7Iso); the runs are stamped env_contaminated.",
+    ),
 ) -> None:
     """Calibrate a suite's tasks against anchor subjects (pooled pass-rate band check).
 
@@ -397,6 +403,7 @@ def calibrate_command(
             parity=parity,
             force=force,
             enable_xlarge=enable_xlarge,
+            allow_contaminated_env=allow_contaminated_env,
         )
         written = write_calibration(suite, report) if write else []
     except (ValueError, SpecValidationError, BenchError) as exc:

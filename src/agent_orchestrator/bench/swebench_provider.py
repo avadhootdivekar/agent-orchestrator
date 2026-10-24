@@ -38,11 +38,12 @@ needed, and `git -C repo_dir rev-parse HEAD == base_commit` holds immediately af
      `git checkout <base_commit>`.
 
 Cache location: `playground/.tmp/swebench-repo-cache/<owner>__<name>/` -- a SIBLING of
-`bench/workspace.py`'s `BENCH_WORKSPACE_ROOT` (`playground/.tmp/bench/`), not nested
-inside it (T-Wp4Nz5 STATUS.md forward note: a checkout cache must live outside the
-per-run `ws` tree so `materialize_workspace`'s per-run `shutil.rmtree(ws_path)` can
-never touch it). Still repo-local + gitignored (constraint C2 -- mirrors
-`playground/.tmp/`'s existing gitignore entry).
+`bench/workspace.py`'s bench workspace root (historically `playground/.tmp/bench/`; since
+T-Ws7Iso `bench_workspace_root()`, outside the checkout), not nested inside it (T-Wp4Nz5
+STATUS.md forward note: a checkout cache must live outside the per-run `ws` tree so
+`materialize_workspace`'s per-run `shutil.rmtree(ws_path)` can never touch it). Still
+repo-local + gitignored (mirrors `playground/.tmp/`'s existing gitignore entry): it is a
+read-only clone source that no agent ever runs inside.
 """
 
 from __future__ import annotations
@@ -64,8 +65,9 @@ SWEBENCH_PROVIDER_TYPE = "swebench"
 # Suite-relative, written by `swebench_import.py` alongside `suite.json`.
 INSTANCES_FILENAME = "instances.json"
 
-# Sibling of workspace.py's BENCH_WORKSPACE_ROOT (playground/.tmp/bench/) -- see
-# module docstring for why this must NOT be nested inside it.
+# NOT nested inside workspace.py's `bench_workspace_root()` -- see module docstring. A
+# read-only clone source: it stays repo-local (agents never cwd into it; `_checkout_into`
+# makes a full local clone into the external workspace).
 SWEBENCH_REPO_CACHE_ROOT: Path = REPO_ROOT / "playground" / ".tmp" / "swebench-repo-cache"
 
 # Generous bound for a real GitHub clone of a mature OSS repo (django/sympy-sized).
@@ -189,9 +191,8 @@ def _ensure_repo_cache(
     *cache_root* defaults to the module-level `SWEBENCH_REPO_CACHE_ROOT`, read via a
     plain global lookup (not a bound default-parameter value) so a test that
     monkeypatches the module attribute affects this function without needing to pass
-    an explicit override on every call -- mirrors `bench/workspace.py`'s own
-    `BENCH_WORKSPACE_ROOT` convention (a plain module constant, real repo-local
-    `playground/.tmp/` tree used directly by tests too, per that module's test file).
+    an explicit override on every call (a real repo-local `playground/.tmp/` tree used
+    directly by tests too).
     """
     root = cache_root if cache_root is not None else SWEBENCH_REPO_CACHE_ROOT
     cache_dir = root / _cache_dirname(repo)

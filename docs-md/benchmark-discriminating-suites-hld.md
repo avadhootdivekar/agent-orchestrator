@@ -100,6 +100,56 @@ repo is a git checkout (Tier 2) the copied paths are added to `.git/info/exclude
 agent's diff or in collateral-diff statistics. Both Claude Code (`claude -p`, cwd = `repo_dir`) and every `ao`
 agent (`working_dir: repo`) therefore read identical `CLAUDE.md` + `.claude/` from the same place.
 
+### 2c. Environment isolation (`T-Ws7Iso`, as built 2026-10-24)
+
+Parity controls what the harness *ships*; isolation makes sure the environment *adds nothing*. Claude Code loads
+context the harness never wrote: `CLAUDE.md`/`CLAUDE.local.md`/`AGENTS.md`/`.claude/` from every ancestor of the
+agent's cwd, user-level config (`~/.claude`), account-level claude.ai connectors and auto-memory. Four mechanisms
+(`bench/envcheck.py`), all recorded in `run.json`:
+
+1. **Root outside any instruction tree.** Workspaces live under `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws`
+   and grader-owned assets under the sibling `<base>/_ao_bench_grading` (never under the workspace root).
+   `run_suite` refuses an agent subject (`claude_cli`, `ao_workflow`) when the workspace root or any ancestor holds
+   one of those markers; `--allow-contaminated-env` runs anyway and stamps `env_contaminated=true`. The user config
+   dir is exempt from the ancestor check (it loads regardless of cwd; item 4 records it). `ao-bench env [--probe]`
+   is the preflight (exit 2 when contaminated).
+2. **Environment fingerprint.** Every transcript's `system/init` event (`skills`, `agents`, `slash_commands`,
+   `mcp_servers` by name, `plugins` by source) is parsed after the subject runs — `capture/transcript.jsonl` for
+   `claude -p`, every `.orchestrator/runs/*/*/attempt-*/transcript.jsonl` for `ao` — and stored per task as the
+   union (`divergent` when sessions disagree). The *expected set* is measured, not hard-coded: once per run a
+   **baseline probe** starts `claude -p` in an empty parity-applied workspace under the same root, reads its init
+   event and kills the process group (≈1 s; Claude Code built-ins + user-level config + the bundle). Entries a task
+   saw beyond the baseline are `env_foreign`.
+3. **Hidden-asset audit.** A `tool_use` whose input contains `_ao_bench_grading` marks the task
+   `suspect=true, suspect_reason="grading_access"`; `tool_result` mentions are counted as exposure only. Suspect
+   tasks are not capability evidence: `results.is_attempted` is false for them, so they leave cells, rates,
+   roll-ups, pairwise tests and calibration pooling (they are listed, never silently dropped).
+4. **User-level config — decision: record, do not relocate `CLAUDE_CONFIG_DIR`.** A bench-owned config dir needs
+   the operator's OAuth credentials copied or linked; a copy forks the refresh token (whichever copy refreshes
+   first can invalidate the other, logging the operator out or failing a campaign midway) and a link is replaced
+   on rewrite. Instead `user_config_fingerprint` records the user `settings.json` keys that change behaviour
+   (`model`, `effortLevel`, `alwaysThinkingEnabled`, `outputStyle`, `autoMemoryEnabled`,
+   `disableClaudeAiConnectors` verbatim; `enabledPlugins`/`hooks`/`env`/`permissions` as sha256), the user
+   `CLAUDE.md` hash and the `ANTHROPIC_*`/`CLAUDE_*` env (secret-looking names redacted). User skills and plugins are
+   already visible in the init event. The default bundle neutralises the two account-level leaks through env:
+   `ENABLE_CLAUDEAI_MCP_SERVERS=false` (connectors such as Google Drive loaded asynchronously — present for some
+   agents and not others in the 2026-10-23 run) and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. Subjects also get the
+   operator's environment minus Claude Code's *session* variables (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`,
+   `CLAUDE_CODE_SESSION_*`, messaging/bridge sockets, `CLAUDE_EFFORT`, …) so an `ao-bench` launched from inside a
+   Claude Code session does not make every agent a child of it (`envcheck.subject_env`, shared by both subjects and
+   the probe).
+
+`build_comparison` refuses (`EnvMismatchError`; `--allow-mixed` stamps `env_mixed` + `env_problems`, rendered as a
+**NON-ISOLATED** banner): an `env_contaminated` run; any foreign entry; agent subjects whose init-event, baseline
+or user-config digests differ; a pre-`T-Ws7Iso` agent run mixed with fingerprinted ones (legacy-only reports still
+render, marked "not fingerprinted"). A campaign that hits this after stage 1 stops its repeat rounds
+(`stage_stop_reason="environment_mismatch"`) and still writes the stamped comparison.
+
+Limits: names cannot tell a repo skill from a same-named built-in (`workflow-authoring` exists in both) — item 1
+is what rules that out; the audit matches the literal grading dir name, so a glob such as `../../_ao*` evades it
+(exposure through `ls` output is still counted); and model-side contamination (the public trap catalogue in future
+training data) is not fixable by layout — fresh seeds and hidden probes are the defence (§7).
+
 ## 3. Design principles (inherited + added)
 
 Inherited from the harness HLD: subjects are subprocesses; workspaces repo-local, gitignored; declarative JSON
@@ -299,6 +349,11 @@ the latter under-rewards near-misses.
    age exceeds a configurable window. Retired instances stay in git for reproducibility but `enabled: false`.
 5. **Rotate** Tier 1 seeds every campaign by default (`--rotate-seeds`), keeping a small set of *anchor*
    instances fixed across campaigns for longitudinal tracking.
+6. **Held-out seeds (policy, `T-Ws7Iso`).** A campaign meant to *rank* subjects uses a `--seed` that appears in no
+   committed suite (`grep -rn '"seed"' benchmarks/suites` before generating) and records it in its
+   `benchmarks/README.md` results entry. While `ao` templates/instructions are being tuned, at least one generated
+   family stays unseen (never generated, run or inspected) so a ranking can include instances the tuning could
+   not have overfit to. Committed suites are for smoke, calibration and longitudinal anchors, not for ranking.
 
 ## 8. Integration with the existing harness
 
@@ -318,8 +373,9 @@ All additions register through the existing registries; nothing in the engine ch
 | `ao-bench calibrate` | new CLI verb | runs §7 step 2 for a suite or instance. |
 
 **Hidden-asset rule (hard):** providers may write only the skeleton/repo into `repo_dir`. The runner creates a
-sibling `grading_dir` per (subject × task × repeat) that subjects cannot see (not under the workspace root given to
-the subject, excluded from any reposet). `dev-medium`'s in-fixture `.grading/` is migrated to this in P1 as a
+`grading_dir` per (subject × task × repeat) under the grading root `<base>/_ao_bench_grading`, a sibling of the
+workspace root `<base>/ws` (since `T-Ws7Iso`; before, `_grading/` sat inside the run's workspace root), excluded
+from any reposet. Same-user processes can still reach it, so the transcript audit (§2c item 3) flags any access. `dev-medium`'s in-fixture `.grading/` is migrated to this in P1 as a
 side-effect (small, mechanical).
 
 **Suites (proposed):**
@@ -417,6 +473,13 @@ unfingerprinted). Note that running from the branch checkout is *required*: `AoW
 `REPO_ROOT`, so the branch's `ao` is the subject (`ao_version` stamped; run from a clean tree). Developer-side
 overfitting (tuning `ao` templates against a known trap catalogue) is a policy matter: ranking campaigns use a
 fresh `--seed` absent from every committed suite, and at least one generated family stays unseen during tuning.
+
+**Resolved 2026-10-24 (`T-Ws7Iso`):** all four fixes landed as §2c describes, plus the held-out-seed policy (§7
+step 6). Evidence: `make bench-gen-smoke` 2/2 from `/var/tmp/ao-bench/<uid>/ws`; a no-cost end-to-end run of both
+real subject adapters (`claude_cli` and `ao_workflow` through `uv run ao run`) against a `claude` shim found every
+transcript, matched the baseline and flagged a planted `_ao_bench_grading` access for both; a real haiku run of one
+`dev-core` task per subject (see the `T-Ws7Iso` STATUS for the init-event comparison). Fake-tier tests:
+`tests/bench/test_env_isolation.py`. The 2026-10-23 results stay a pipeline proof only (README caveat).
 
 **Still open (next epic tasks):** the six remaining Tier-1 families (§4.1); TypeScript/Go derived images built and
 run (Dockerfiles only `--check`ed; process fallback has no pre-installed deps for them); `ao-bench gen` does not yet

@@ -39,7 +39,7 @@ from agent_orchestrator.bench.subjects import (
     FakeSubject,
     SubjectResult,
 )
-from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT, RunContext
+from agent_orchestrator.bench.workspace import RunContext, bench_workspace_root
 from agent_orchestrator.models import RunState, TaskRunState
 from agent_orchestrator.runstate import RunStateStore
 
@@ -767,8 +767,8 @@ def test_run_with_timeout_returns_zero_on_success(tmp_path: Path) -> None:
 
 @pytest.fixture()
 def bench_ws_target() -> Path:
-    (BENCH_WORKSPACE_ROOT / "tests").mkdir(parents=True, exist_ok=True)
-    return BENCH_WORKSPACE_ROOT / "tests" / f"ws-{uuid.uuid4().hex[:12]}"
+    (bench_workspace_root() / "tests").mkdir(parents=True, exist_ok=True)
+    return bench_workspace_root() / "tests" / f"ws-{uuid.uuid4().hex[:12]}"
 
 
 @pytest.mark.real_llm

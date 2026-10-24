@@ -1386,3 +1386,21 @@ By: Claude
 Role: manager
 Date: 2026-10-24
 ---
+
+---
+Learning-ID: LRN-20261024-agent-env-beyond-cwd-account-connectors-session-vars
+Learning: Moving an agent's cwd out of every instruction tree is not enough for a clean benchmark environment.
+  Claude Code also adds (a) account-level claude.ai connectors (Google Drive, Docs) that load ASYNCHRONOUSLY, so the
+  same subject's agents see `mcp_servers` `[]`, `pending` or `connected` depending on a race; (b) user
+  `~/.claude/settings.json` knobs such as `effortLevel`, which apply to every subject unseen; (c) auto-memory keyed to
+  the git root above the cwd; and (d) when the harness itself runs inside a Claude Code session, that session's env
+  (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, messaging sockets) leaks into every child.
+  Neutralise (a)/(c) with `ENABLE_CLAUDEAI_MCP_SERVERS=false` + `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, scrub (d), and
+  record (b). To learn what a session loads without paying for a turn, start `claude -p --output-format stream-json
+  --verbose` and kill its process group as soon as the `system/init` line arrives (~0.7 s).
+Context: E-Bn7Dsc `T-Ws7Iso` (bench env isolation), 2026-10-24; observed in the 2026-10-23 transcripts and in the
+  probe while implementing `bench/envcheck.py`.
+By: Claude
+Role: developer
+Date: 2026-10-24
+---

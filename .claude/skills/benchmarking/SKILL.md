@@ -19,15 +19,18 @@ repo checkout with `uv run ao-bench …` — never the global `ao`.
    `grading_dir`, never under the agent-visible workspace. Do not put `.grading/` inside fixtures.
 4. **Fake tier for CI.** Tests use `FakeSubject` (`scripted_effect`: `noop|copy-solution|copy-reference|fail|
    timeout|error`); Docker/network tests are gated by `AO_E2E_DOCKER=1` / `AO_E2E_NETWORK=1`.
-5. **Environment isolation (open: `T-Ws7Iso`).** Until that task lands, `BENCH_WORKSPACE_ROOT` is inside the checkout,
-   so agents inherit the repo's and the control plane's `CLAUDE.md`, skills and agents. Before trusting a ranking,
-   check every transcript's `system/init` event: `skills`/`agents` must contain only the parity bundle's entries plus
-   Claude Code built-ins. Quick check (prints skills per transcript):
-   `grep -h -m1 '"subtype":"init"' <run-root>/**/transcript.jsonl | python3 -c 'import sys,json;[print(json.loads(l).get("skills")) for l in sys.stdin]'`.
-   Running from the branch checkout is required (the `ao` under test is `uv run ao` from `REPO_ROOT`); run from a
-   clean tree so `ao_version` has no `.dirty`.
-6. **Held-out seeds.** Ranking campaigns use a `--seed` that appears in no committed suite and record it in the results
-   entry; keep at least one generated family unseen while tuning `ao` templates/instructions.
+5. **Environment isolation (`T-Ws7Iso`).** Workspaces live under `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws`,
+   grading assets under the sibling `<base>/_ao_bench_grading`. Never point the root inside a checkout or any tree
+   with `CLAUDE.md`/`AGENTS.md`/`.claude/` — agent runs refuse it (`--allow-contaminated-env` only for debugging; the
+   run is stamped and `report` refuses it). Run `uv run ao-bench env --probe` before a campaign. Every run records
+   each task's init-event fingerprint, a baseline probe and the user-level config; `report` refuses foreign
+   entries or differing digests (read the **Environment isolation** table in `comparison.md`), and tasks whose agent
+   touched the grading root are `suspect` and excluded. User `~/.claude/settings.json` (`effortLevel`, `model`)
+   still applies to every subject — it is recorded, not overridden. Running from the branch checkout is required
+   (the `ao` under test is `uv run ao` from `REPO_ROOT`); run from a clean tree so `ao_version` has no `.dirty`.
+6. **Held-out seeds.** Ranking campaigns use a `--seed` that appears in no committed suite
+   (`grep -rn '"seed"' benchmarks/suites`) and record it in the results entry; keep at least one generated family
+   unseen while tuning `ao` templates/instructions. Committed suites are for smoke, calibration and anchors.
 
 ## Suites
 | Suite | Tier | What | Grader |
@@ -42,6 +45,7 @@ repo checkout with `uv run ao-bench …` — never the global `ao`.
 ```bash
 make bench-images          # build sandbox images for gen-services-mini (docker)
 make bench-gen-smoke       # no-LLM proof: hidden reference graded by the blackbox grader in docker (must be 2/2)
+uv run ao-bench env --probe   # preflight: bench root clean? what does an empty workspace load? (exit 2 = contaminated)
 AO_BENCH_CONFIRM=1 make bench-gen-haiku   # real haiku campaign, parity bundle, confirm-gated
 uv run ao-bench validate --suite benchmarks/suites/gen-services-mini/suite.json
 uv run ao-bench images --build --suite benchmarks/suites/gen-services-mini/suite.json   # sandbox images

@@ -59,6 +59,7 @@ from ..executors.claude_cli import (
 )
 from ..models import compute_run_usage_totals
 from ..runstate import RunStateStore
+from .envcheck import subject_env
 from .errors import SubjectError
 from .registries import register_subject
 from .spec import BenchTask, SubjectSpec
@@ -88,6 +89,10 @@ _STATUS_SCRIPTED_EFFECTS: dict[str, Literal["failed", "timed_out", "error"]] = {
     "timeout": "timed_out",
     "error": "error",
 }
+
+# Subject types that run a real Claude Code agent (and so can be contaminated by the
+# environment, T-Ws7Iso): `run_suite` applies the isolation guard + baseline probe to these.
+AGENT_SUBJECT_TYPES: frozenset[str] = frozenset({"claude_cli", "ao_workflow"})
 
 # The bench must measure real dispatch cost, never a result-cache hit (E-Rc4Hk8, ADR-0019 D23):
 # `AoWorkflowSubject` passes the flag (wins over env/config) AND sets AO_CACHE=0 (belt and braces,
@@ -273,7 +278,9 @@ class ClaudeCliSubject(Subject):
                 stdout_path=transcript_path,
                 stderr_path=stderr_path,
                 timeout_seconds=ctx.timeout_seconds,
-                env={**os.environ, **ctx.env},  # parity env knobs (HLD §2b)
+                # Operator-session vars scrubbed + parity env knobs (HLD §2b, T-Ws7Iso);
+                # the SAME builder AoWorkflowSubject uses, so both subjects match.
+                env=subject_env(ctx.env),
             )
         except OSError as exc:
             return SubjectResult(
@@ -471,7 +478,7 @@ class AoWorkflowSubject(Subject):
         if budget_total is not None:
             argv += ["--budget-total", str(budget_total)]
 
-        env = dict(os.environ)
+        env = subject_env()  # operator-session vars scrubbed (T-Ws7Iso), as for claude_cli
         env["AO_WORKSPACE_ROOT"] = ctx.workspace
         env[ENV_CACHE] = _AO_CACHE_OFF_VALUE  # overrides any AO_CACHE inherited from the operator
         env.update(ctx.env)  # parity env knobs (HLD §2b) -- identical for every subject

@@ -61,7 +61,7 @@ they're spend-gated and should be run via `make bench-medium`/`make bench-large`
 | **Tier** | A suite's `tier` field (`small`\|`medium`\|`large`\|`xlarge`, default `small`) selects its default USD caps + parallelism from the committed `benchmarks/tiers.json`. See [Tiers](#tiers). |
 | **Campaign** | `ao-bench campaign` runs a suite against a *list* of subjects under one whole-run USD cap → `benchmarks/results/<date>-<suite>-campaign/{campaign.json,comparison.json,comparison.md}`, committed. |
 | **Workspace provider** | How a task's mutable `repo/` is materialized: `fixture` (default — copy a committed dir) or `swebench` (git checkout a repo at a pinned `base_commit`). See [SWE-bench import](#swe-bench-import-the-large-tier). |
-| **Workspace** | A disposable, path-guarded copy under `playground/.tmp/bench/` (gitignored) — the subject mutates it, the grader reads it. The committed fixture itself is never touched. |
+| **Workspace** | A disposable, path-guarded copy under `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws/` — outside the checkout so no repo `CLAUDE.md`/skills leak into the agent (`T-Ws7Iso`); the subject mutates it, the grader reads it. The committed fixture itself is never touched. |
 
 ---
 
@@ -464,9 +464,34 @@ the report `parity_mixed`). Mechanics: `CLAUDE.md` lands at `<ws>/CLAUDE.md` (pa
 `claude -p` and every `ao` agent, never in the repo diff), `claude/` lands at `<repo>/.claude/` and is added to
 `.git/info/exclude` for git checkouts. Keep subject `prompt_template`s thin — instructions belong in the bundle.
 
+### Environment isolation (`T-Ws7Iso`, hard rule for ranking)
+Parity fixes what the harness ships; isolation makes sure nothing else reaches the agent (HLD §2c). Preflight:
+```bash
+uv run ao-bench env --probe --model claude-haiku-5-5   # JSON; exit 2 if the bench root would leak instructions
+```
+- **Root.** Workspaces: `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws`; grading assets: the sibling
+  `<base>/_ao_bench_grading`. `run`/`campaign`/`calibrate` refuse an agent subject when that root or any ancestor
+  holds `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or `.claude/`; `--allow-contaminated-env` runs anyway and stamps
+  `env_contaminated`.
+- **Fingerprint.** Each task records the union of its transcripts' `system/init` events (skills, agents, slash
+  commands, MCP servers, plugins); each run records a baseline from a throwaway `claude -p` in an empty
+  parity-applied workspace (killed at its init event) and the user-level config (`~/.claude/settings.json` keys
+  such as `model`/`effortLevel`/`enabledPlugins`, user `CLAUDE.md` hash, `CLAUDE_*`/`ANTHROPIC_*` env).
+  `report` refuses foreign entries, contaminated runs and differing digests between agent subjects
+  (`--allow-mixed` stamps the report **NON-ISOLATED**); a campaign stops its repeats instead.
+- **Audit.** A tool call whose input names `_ao_bench_grading` marks the task `suspect` (`grading_access`); it is
+  excluded from every rate, roll-up, pairwise test and calibration pool.
+- **Default bundle env.** `ENABLE_CLAUDEAI_MCP_SERVERS=false` (no claude.ai connectors such as Google Drive) and
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. `CLAUDE_CONFIG_DIR` is deliberately *not* relocated (it would fork the
+  operator's OAuth credentials); user-level settings are recorded instead, so e.g. `effortLevel` applies to every
+  subject and is visible in `summary.md`.
+- **Held-out seeds.** Ranking campaigns use a `--seed` absent from every committed suite and record it in the
+  results entry below; keep at least one generated family unseen while tuning `ao` templates/instructions.
+
 ### Hidden assets: `grading_dir`
 Probes, reference implementations and held-out tests live in a grader-owned dir
-(`<bench ws root>/<run>/_grading/<subject>/<task>/`), a sibling of the agent-visible `ws/` — never inside it.
+(`<base>/_ao_bench_grading/<run>/<subject>/<task>/`), under a sibling root of the agent-visible workspace root
+`<base>/ws` — never inside it.
 A task's `grader.assets` (suite-relative dir) is copied there; `command`/`pytest` graders may reference it as
 `{grading_dir}` (and the repo as `{repo_dir}`). `dev-medium` was migrated to this layout on 2026-10-23.
 
@@ -527,8 +552,9 @@ benchmarks/results/
 ```
 **Everything under `benchmarks/results/` is committed** (git-preserved) — a result is evidence, not scratch output.
 Transcripts/captures are **not** committed (large, may contain noise); `run.json` records the workspace path as a
-pointer only. Workspaces themselves live under `playground/.tmp/bench/` (gitignored) and are **not auto-deleted**
-— preserved for audit; clean up manually.
+pointer only. Workspaces themselves live under `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws/` (runs
+before 2026-10-24: `playground/.tmp/bench/`, gitignored) and are **not auto-deleted** — preserved for audit; clean
+up manually.
 
 ### Known limitation: comparison-dir naming is not subject-set-aware
 `comparison`'s directory name is `<date>-<suite>-compare` — derived from only the UTC date + suite id, with no
@@ -660,7 +686,10 @@ i.e. JIT/warm-up noise dominates at these sizes — so the perf group only carri
 **Environment caveat (found 2026-10-24, `T-Ws7Iso`):** these workspaces lived under `<repo>/playground/.tmp/bench`, so
 both agents also had the two ancestor `CLAUDE.md` files and every repo/control-plane skill and agent loaded (see the
 `init` event in each transcript). Parity held (identical leak for both subjects) and nothing read `_grading/`, so the
-pipeline proof stands, but treat these numbers as *non-clean*; do not cite them as a ranking.
+pipeline proof stands, but treat these numbers as *non-clean*; do not cite them as a ranking. Fixed on 2026-10-24
+(`T-Ws7Iso`): a re-run of one `dev-core` task per subject from `/var/tmp/ao-bench/<uid>/ws` showed both subjects'
+init fingerprints equal to the run's baseline, with no repo or control-plane skill/agent, no MCP server and
+auto-memory off ($0.013 total, scratch results not committed).
 
 ### Total epic spend
 

@@ -63,7 +63,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from .errors import BenchError
+from .errors import BenchError, EnvMismatchError
 from .results import ComparisonRecord, build_comparison, write_comparison
 from .runner import compute_bench_run_id, resolve_result_dir, run_suite
 from .spec import SubjectSpec, load_subject, load_suite
@@ -98,6 +98,9 @@ STOP_BUDGET = "budget_exhausted"  # the whole-run cap is spent
 STOP_MAX_REPEATS = "max_repeats"  # `repeats` reached with some pair still undecided
 STOP_NON_STAGED = "non_staged_complete"  # `staged=False` ran every requested repeat
 STOP_NOT_REQUESTED = "single_repeat"  # `repeats == 1`
+# T-Ws7Iso: stage 1 showed the subjects did not share one clean environment, so more repeats
+# would only buy a comparison `build_comparison` refuses -- stop and report instead.
+STOP_ENV_MISMATCH = "environment_mismatch"
 
 FIRST_REPEAT = 1
 # Tolerance for "scores are identical" (they are means of floats in [0, 1]).
@@ -193,6 +196,8 @@ class CampaignRecord(BaseModel):
     staged: bool = True
     stage_log: list[StageLogEntry] = []
     stage_stop_reason: str | None = None
+    # T-Ws7Iso: why the comparison is stamped non-isolated (empty = clean, shared env).
+    env_problems: list[str] = []
 
 
 class CampaignResult(BaseModel):
@@ -312,6 +317,7 @@ def run_campaign(
     parity: str | Path | None = None,
     repeats: int = 1,
     staged: bool = True,
+    allow_contaminated_env: bool = False,
 ) -> CampaignResult:
     """Run *suite* against every subject in *subject_paths*, IN THE GIVEN ORDER,
     enforcing a whole-run USD cap across all of them (ADR-0009 D3).
@@ -344,6 +350,11 @@ def run_campaign(
         write, not just the underlying task work.
     enable_xlarge:
         Allow a disabled tier (`enforce_tier_enabled`).
+    allow_contaminated_env:
+        Threaded to every `run_suite` call (T-Ws7Iso; see there). Whatever its value, a
+        campaign whose subjects turn out not to share one clean environment stops its
+        repeat rounds (`STOP_ENV_MISMATCH`) and writes a comparison stamped `env_mixed`
+        rather than failing after the spend.
     clock:
         Injectable UTC clock (CLAUDE.md determinism rule); also threaded into every
         `run_suite` call so a same-day campaign resume lands on the same `bench_run_id`s
@@ -435,6 +446,7 @@ def run_campaign(
             clock=resolved_clock,
             parity=parity,
             repeat=FIRST_REPEAT,
+            allow_contaminated_env=allow_contaminated_env,
         )
         budget.spent += run_record.aggregate.total_cost_usd
         subject_record = CampaignSubjectRecord(
@@ -484,6 +496,7 @@ def run_campaign(
                 clock=resolved_clock,
                 parity=parity,
                 repeat=repeat,
+                allow_contaminated_env=allow_contaminated_env,
             )
             cost = repeat_record.aggregate.total_cost_usd
             budget.spent += cost
@@ -522,7 +535,12 @@ def run_campaign(
         # budget-skipped subject's never-materialized predicted dir looks like. This
         # reuses that existing machinery rather than re-deriving a parallel notion of
         # "didn't run" here. Repeat dirs of the same subject are aggregated per task.
-        comparison = build_comparison(comparison_dirs)
+        try:
+            comparison = build_comparison(comparison_dirs)
+        except EnvMismatchError:
+            # T-Ws7Iso: the runs are already paid for -- keep them, but stamp the report
+            # NON-ISOLATED (env_mixed + env_problems) instead of failing the campaign.
+            comparison = build_comparison(comparison_dirs, allow_mixed=True)
         comparison_json_path, comparison_md_path = write_comparison(comparison, campaign_dir)
     # else: nothing launched at all (e.g. the whole-run cap was already exhausted
     # before subject 1) -- no comparison to build; campaign.json alone still records
@@ -545,6 +563,7 @@ def run_campaign(
         staged=staged,
         stage_log=stage_log,
         stage_stop_reason=stop_reason,
+        env_problems=comparison.env_problems if comparison is not None else [],
     )
     _persist_campaign_record(campaign_dir, record)
 
@@ -570,7 +589,10 @@ def _run_repeat_rounds(
         if budget.remaining <= 0:
             return STOP_BUDGET
         if staged:
-            comparison = build_comparison(list(comparison_dirs))
+            try:
+                comparison = build_comparison(list(comparison_dirs))
+            except EnvMismatchError:
+                return STOP_ENV_MISMATCH
             if not comparison.pairwise:
                 return STOP_NO_PAIRS
             pairs = undecided_pairs(comparison)

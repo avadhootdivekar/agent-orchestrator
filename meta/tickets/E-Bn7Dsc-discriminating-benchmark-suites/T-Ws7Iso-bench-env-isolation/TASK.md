@@ -2,8 +2,8 @@
 
 - Epic: `E-Bn7Dsc-discriminating-benchmark-suites`
 - Title: Isolate the agent-under-test from the repo's own instructions, skills and hidden assets
-- Status: Open (blocks any ranking campaign)
-- Design: `docs-md/benchmark-discriminating-suites-hld.md` §2b (parity), §12 (finding, 2026-10-24)
+- Status: Done (2026-10-24) — ranking campaigns are unblocked
+- Design: `docs-md/benchmark-discriminating-suites-hld.md` §2b (parity), §2c (isolation, as built), §7 step 6 (held-out seeds), §12 (finding + resolution)
 
 ## Finding (2026-10-24)
 `BENCH_WORKSPACE_ROOT` is `<repo>/playground/.tmp/bench`, so every task workspace sits *inside* the
@@ -45,3 +45,13 @@ guarantee of §2b is violated and the `benchmarking` skill describes how grading
   `ao_version`, e.g. `ao 0.1.0 (a6b569a.dirty)`). Run from a clean tree so the stamp is reproducible.
 - Model-side contamination (the public repo's trap catalogue in future training data) is not fixable by layout;
   instance randomisation + hidden probes + fresh seeds are the defence.
+
+## As built (2026-10-24)
+| AC | Delivered |
+|---|---|
+| 1 | `bench_workspace_root()` = `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws`, grading under the sibling `<base>/_ao_bench_grading`; `run_suite` refuses agent subjects on a root with an instruction-file ancestor, `--allow-contaminated-env` (run/campaign/calibrate) stamps `env_contaminated`; path guard kept; `ao-bench env [--probe]` preflight |
+| 2 | `bench/envcheck.py`: per-task union of init events (`skills`, `agents`, `slash_commands`, `mcp_servers` by name, `plugins` by source) for both transcript layouts; per-run **baseline probe** (empty parity-applied workspace, `claude -p` killed at init) is the "expected set", so built-ins need no hand-kept list; `build_comparison` raises `EnvMismatchError` on foreign entries, contaminated runs, differing fingerprint/baseline/user-config digests or legacy+fingerprinted mixes; campaigns stop repeats (`environment_mismatch`) and write a stamped report |
+| 3 | `audit_grading_access`: `tool_use` input naming `_ao_bench_grading` → `suspect=true, suspect_reason="grading_access"`; `results.is_attempted` excludes it from cells, rates, roll-ups, pairwise and calibration |
+| 4 | Decision: do **not** relocate `CLAUDE_CONFIG_DIR` (OAuth credential fork risk); record user settings keys, user `CLAUDE.md` hash and `CLAUDE_*`/`ANTHROPIC_*` env (secrets redacted) as `user_config`; default bundle env adds `ENABLE_CLAUDEAI_MCP_SERVERS=false` + `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`; subject env scrubs the operator's Claude Code session vars (`envcheck.subject_env`, shared by both subjects) |
+| 5 | Policy in HLD §7 step 6, the `benchmarking` skill rule 6 and README |
+| 6 | `make bench-gen-smoke` 2/2 from `/var/tmp/ao-bench/1000/ws`; README caveat + resolution note; `tests/bench/test_env_isolation.py` (34 fake-tier tests); ruff/format clean repo-wide, mypy bench clean, `pytest tests/bench` 1178 passed / 21 skipped |

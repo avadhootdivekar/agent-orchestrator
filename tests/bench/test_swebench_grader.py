@@ -760,13 +760,13 @@ def test_real_grade_gold_patch_resolves_smallest_pinned_instance() -> None:
     `keep_images=False` (the default) so the pulled image is removed afterward.
     """
     from agent_orchestrator.bench.spec import load_suite
-    from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT, materialize_workspace
+    from agent_orchestrator.bench.workspace import bench_workspace_root, materialize_workspace
 
     assert _GOLD_PATCH_FIXTURE.is_file()
     suite = load_suite(_COMMITTED_SUITE_DIR / "suite.json")
     task = suite.task("psf__requests-2931")
 
-    ws = BENCH_WORKSPACE_ROOT / "tests" / "swebench-grader-real-opt-in" / task.id
+    ws = bench_workspace_root() / "tests" / "swebench-grader-real-opt-in" / task.id
     ctx = materialize_workspace(
         task, ws, suite_base_dir=_COMMITTED_SUITE_DIR.resolve(), timeout_seconds=120
     )

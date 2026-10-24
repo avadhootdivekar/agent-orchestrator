@@ -2,13 +2,17 @@
 `WorkspaceProvider` seam added by T-Wp4Nz5, FR-4).
 
 For each (subject x task) run, `materialize_workspace` builds a fresh, disposable
-workspace under the repo-local, gitignored `playground/.tmp/bench/` tree (constraint
-C2: workspaces are never `/tmp` -- mirrors `tests/playground/conftest.py`'s
-`_REAL_LLM_TMP_BASE` convention, since a spawned `claude`/`ao` subprocess's own sandbox
-allow-list is the repo working directory, not the system temp dir):
+workspace under `bench_workspace_root()` -- `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/
+<uid>}/ws` (T-Ws7Iso). The root is deliberately OUTSIDE the checkout: Claude Code loads
+`CLAUDE.md`/`AGENTS.md`/`.claude/` from every ancestor of an agent's cwd, so the old
+repo-local `playground/.tmp/bench/` root leaked the repo's and the control plane's
+instructions, skills and agents into every subject (HLD §12, 2026-10-24). `runner.run_suite`
+refuses a root with such an ancestor (`bench/envcheck.py`). Grader-owned assets live in a
+SIBLING root, `bench_grading_root()` (`<base>/_ao_bench_grading`), never under the
+workspace root; its distinctive name is what the hidden-asset audit greps for.
 
     ws/                     caller-composed target, e.g.
-                            playground/.tmp/bench/<runid>/<subject>/<task>/
+                            <base>/ws/<runid>/<subject>/<task>/
       repo/                 mutable repo populated by a `WorkspaceProvider` (never a
                             committed source touched in place -- AC6) + a copied
                             INSTRUCTION.md so every subject (bare `claude -p` via
@@ -27,10 +31,10 @@ instead has its provider materialize `ws/repo` however it needs to (a `git` chec
 for instance); `materialize_workspace`'s own signature/return (`RunContext`) is
 unchanged either way, so `runner.py`'s call site needs no edit.
 
-The target `ws` path is path-guarded to stay under `BENCH_WORKSPACE_ROOT` (mirrors
+The target `ws` path is path-guarded to stay under `bench_workspace_root()` (mirrors
 `LocalFsArtifactStore.resolve`'s escape guard) -- a `..` traversal or a symlinked path
 component that resolves outside the sandbox raises `SubjectError` rather than silently
-writing outside `playground/.tmp/bench/` (AC6). The guard applies to the WORKSPACE
+writing outside the bench root (AC6). The guard applies to the WORKSPACE
 target for every provider: the task's fixture/instruction/source inputs live elsewhere
 in the repo (or, for a non-fixture provider, at some external location) and are
 read-only inputs, never write targets.
@@ -39,6 +43,7 @@ read-only inputs, never write targets.
 from __future__ import annotations
 
 import inspect
+import os
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -56,17 +61,49 @@ from .spec import BenchTask
 # modules agree on where "the repo" is without hardcoding an absolute path.
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent.parent.parent
 
-# Repo-local, gitignored sandbox for every bench workspace (constraint C2). Already
-# covered by the existing `playground/.tmp/` gitignore entry.
-BENCH_WORKSPACE_ROOT: Path = REPO_ROOT / "playground" / ".tmp" / "bench"
+# Bench sandbox base (T-Ws7Iso): `$AO_BENCH_WORKSPACE_ROOT`, else `/var/tmp/ao-bench/<uid>`.
+# Outside any checkout so no ancestor CLAUDE.md/.claude leaks into the agent under test;
+# /var/tmp rather than /tmp so a long campaign's workspaces survive a reboot for inspection.
+ENV_BENCH_WORKSPACE_ROOT = "AO_BENCH_WORKSPACE_ROOT"
+DEFAULT_BENCH_BASE_DIR: Path = Path("/var/tmp") / "ao-bench"
+# Sibling sub-roots of the base: agent-visible workspaces vs grader-owned hidden assets.
+WORKSPACES_DIRNAME = "ws"
+# Distinctive on purpose: `bench/envcheck.audit_grading_access` greps transcripts for it.
+GRADING_ROOT_DIRNAME = "_ao_bench_grading"
 
 # Named, not magic literals (CLAUDE.md).
 REPO_DIRNAME = "repo"
 CAPTURE_DIRNAME = "capture"
-# Grader-owned, agent-hidden tree under the run workspace root (HLD §8); runner.py
-# places it as a SIBLING of the per-subject `ws/` dirs, never inside one.
-GRADING_DIRNAME = "_grading"
 INSTRUCTION_FILENAME = "INSTRUCTION.md"
+
+
+def _uid_component() -> str:
+    getuid = getattr(os, "getuid", None)
+    return str(getuid()) if getuid is not None else os.environ.get("USERNAME", "user")
+
+
+def bench_base_dir() -> Path:
+    """`$AO_BENCH_WORKSPACE_ROOT` (expanded, absolute) or `/var/tmp/ao-bench/<uid>`.
+
+    Read on every call (not frozen at import) so a test or a wrapper script can point a
+    single `ao-bench` process at a different root by setting the env var.
+    """
+    override = os.environ.get(ENV_BENCH_WORKSPACE_ROOT)
+    if override:
+        return Path(override).expanduser().absolute()
+    return DEFAULT_BENCH_BASE_DIR / _uid_component()
+
+
+def bench_workspace_root() -> Path:
+    """Root of every agent-visible bench workspace (`<base>/ws`)."""
+    return bench_base_dir() / WORKSPACES_DIRNAME
+
+
+def bench_grading_root() -> Path:
+    """Root of every grader-owned, agent-hidden tree (`<base>/_ao_bench_grading`), a sibling
+    of `bench_workspace_root()` -- never under it (HLD §8 "Hidden-asset rule")."""
+    return bench_base_dir() / GRADING_ROOT_DIRNAME
+
 
 # The provider a task without a `source` field dispatches to (T-Wp4Nz5) -- matches
 # `bench/spec.py`'s `KNOWN_WORKSPACE_PROVIDER_TYPES` default member.
@@ -114,14 +151,14 @@ class RunContext(BaseModel):
 
 
 def _assert_under_bench_root(path: Path) -> Path:
-    """Resolve *path* and assert it stays under `BENCH_WORKSPACE_ROOT`.
+    """Resolve *path* and assert it stays under `bench_workspace_root()`.
 
     Catches both a caller-composed `..` traversal and a symlinked path component that
     would otherwise resolve outside the sandbox (AC6; mirrors
     `LocalFsArtifactStore.resolve`'s path-escape guard in `artifacts.py`). Raises
     `SubjectError` naming both the requested and resolved path -- never silently clamps.
     """
-    root = BENCH_WORKSPACE_ROOT.resolve()
+    root = bench_workspace_root().resolve()
     resolved = path.resolve()
     if resolved != root and root not in resolved.parents:
         raise SubjectError(
@@ -227,7 +264,7 @@ def materialize_workspace(
 ) -> RunContext:
     """Materialize a fresh, disposable workspace for one (subject, task) run.
 
-    - Guards `ws` under `BENCH_WORKSPACE_ROOT` (raises `SubjectError` on escape, AC6).
+    - Guards `ws` under `bench_workspace_root()` (raises `SubjectError` on escape, AC6).
     - Removes any pre-existing `ws` (fresh workspace per (subject, task) -- ASSUMPTION
       A4: exactly one `ao` run_id must land under this workspace, so a stale prior run
       cannot linger and confuse cost attribution).

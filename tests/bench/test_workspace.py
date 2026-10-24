@@ -24,10 +24,10 @@ from agent_orchestrator.bench.registries import (
 )
 from agent_orchestrator.bench.spec import BenchTask, GraderConfig, Source
 from agent_orchestrator.bench.workspace import (
-    BENCH_WORKSPACE_ROOT,
     FixtureProvider,
     RunContext,
     WorkspaceProvider,
+    bench_workspace_root,
     materialize_workspace,
 )
 
@@ -38,8 +38,8 @@ def bench_ws_target() -> Path:
     resolves under `BENCH_WORKSPACE_ROOT` so `materialize_workspace`'s guard passes.
     Not created here: `materialize_workspace` itself must create it.
     """
-    (BENCH_WORKSPACE_ROOT / "tests").mkdir(parents=True, exist_ok=True)
-    return BENCH_WORKSPACE_ROOT / "tests" / f"ws-{uuid.uuid4().hex[:12]}"
+    (bench_workspace_root() / "tests").mkdir(parents=True, exist_ok=True)
+    return bench_workspace_root() / "tests" / f"ws-{uuid.uuid4().hex[:12]}"
 
 
 def _task(
@@ -158,13 +158,13 @@ def test_materialize_workspace_passes_through_run_knobs(
 def test_materialize_workspace_rejects_dotdot_traversal(tmp_path: Path) -> None:
     task = _task()
     _materialize_fixture(tmp_path, task)
-    evil_ws = BENCH_WORKSPACE_ROOT / "tests" / ".." / ".." / ".." / "escaped-bench-test"
+    evil_ws = bench_workspace_root() / "tests" / ".." / ".." / ".." / "escaped-bench-test"
 
     with pytest.raises(SubjectError, match="escapes the sandbox"):
         materialize_workspace(task, evil_ws, suite_base_dir=tmp_path, timeout_seconds=60)
 
     # Never actually created outside the sandbox.
-    assert not (BENCH_WORKSPACE_ROOT.parent.parent / "escaped-bench-test").exists()
+    assert not (bench_workspace_root().parent.parent / "escaped-bench-test").exists()
 
 
 def test_materialize_workspace_rejects_symlink_escape(tmp_path: Path) -> None:
@@ -173,7 +173,7 @@ def test_materialize_workspace_rejects_symlink_escape(tmp_path: Path) -> None:
 
     outside = tmp_path / "outside-the-sandbox"
     outside.mkdir()
-    link_parent = BENCH_WORKSPACE_ROOT / "tests"
+    link_parent = bench_workspace_root() / "tests"
     link_parent.mkdir(parents=True, exist_ok=True)
     link = link_parent / f"evil-symlink-{uuid.uuid4().hex[:8]}"
     link.symlink_to(outside, target_is_directory=True)
@@ -187,14 +187,14 @@ def test_materialize_workspace_rejects_symlink_escape(tmp_path: Path) -> None:
 
 
 def test_materialize_workspace_allows_root_itself() -> None:
-    # Boundary case: ws == BENCH_WORKSPACE_ROOT resolves as "under" its own root
+    # Boundary case: ws == bench_workspace_root() resolves as "under" its own root
     # (mirrors LocalFsArtifactStore.resolve's `full == self._root` allowance) --
     # exercised via the private guard directly to avoid clobbering the shared root
     # other tests rely on existing.
     from agent_orchestrator.bench.workspace import _assert_under_bench_root
 
-    resolved = _assert_under_bench_root(BENCH_WORKSPACE_ROOT)
-    assert resolved == BENCH_WORKSPACE_ROOT.resolve()
+    resolved = _assert_under_bench_root(bench_workspace_root())
+    assert resolved == bench_workspace_root().resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +364,7 @@ def test_materialize_workspace_sandbox_guard_applies_before_provider_dispatch(
             source=Source(type="_never_called_provider"),
             grader=GraderConfig(type="fake"),
         )
-        evil_ws = BENCH_WORKSPACE_ROOT / "tests" / ".." / ".." / ".." / "escaped-bench-test-2"
+        evil_ws = bench_workspace_root() / "tests" / ".." / ".." / ".." / "escaped-bench-test-2"
 
         with pytest.raises(SubjectError, match="escapes the sandbox"):
             materialize_workspace(task, evil_ws, suite_base_dir=tmp_path, timeout_seconds=60)

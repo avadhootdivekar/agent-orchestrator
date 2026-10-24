@@ -20,17 +20,17 @@ from agent_orchestrator.bench.runner import compute_bench_run_id, run_suite
 from agent_orchestrator.bench.spec import load_subject, load_suite
 from agent_orchestrator.bench.subjects import FakeSubject
 from agent_orchestrator.bench.workspace import (
-    BENCH_WORKSPACE_ROOT,
     RunContext,
     WorkspaceProvider,
+    bench_workspace_root,
     materialize_workspace,
 )
 from agent_orchestrator.errors import SpecValidationError
 
 
 def _ws(tmp_path: Path, name: str) -> Path:
-    # materialize_workspace guards `ws` under BENCH_WORKSPACE_ROOT (repo-local, gitignored).
-    return BENCH_WORKSPACE_ROOT / "_test_core_seams" / tmp_path.name / name
+    # materialize_workspace guards `ws` under bench_workspace_root() (repo-local, gitignored).
+    return bench_workspace_root() / "_test_core_seams" / tmp_path.name / name
 
 
 def _write_parity(root: Path, *, md: str = "# shared\n", skill: str = "s1") -> Path:

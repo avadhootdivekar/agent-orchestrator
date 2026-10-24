@@ -47,9 +47,11 @@ from typing import Any, cast
 from pydantic import BaseModel, model_validator
 
 from . import stats
-from .errors import ResultsError
+from .envcheck import EnvFingerprint, foreign_entries, merge_fingerprints
+from .errors import EnvMismatchError, ResultsError
 from .metrics import INFRA_ERROR_STATUS, Aggregate, TaskMetric, aggregate
 from .runner import RUN_JSON_FILENAME, BenchRunRecord, BenchTaskRecord
+from .subjects import AGENT_SUBJECT_TYPES
 
 # ---------------------------------------------------------------------------
 # Named constants (CLAUDE.md: no magic literals)
@@ -217,6 +219,24 @@ class SubjectStats(BaseModel):
     wall_median: float | None = None
 
 
+class EnvSubjectSummary(BaseModel):
+    """Environment-isolation picture of one subject across its repeats (T-Ws7Iso)."""
+
+    # The subject's runs predate T-Ws7Iso (no `env_isolation` on the record).
+    legacy: bool = False
+    contaminated: bool = False
+    # Union of every task's init-event fingerprint (None: no transcript at all).
+    fingerprint_digest: str | None = None
+    baseline_digest: str | None = None
+    user_config_digest: str | None = None
+    # Entries the subject's agents loaded that the run's baseline did not.
+    foreign: dict[str, list[str]] = {}
+    # Sessions of this subject did not all load the same sets (reported, not refused).
+    divergent: bool = False
+    # Tasks whose transcripts reached for grader-owned assets (excluded from the stats).
+    grading_access_task_ids: list[str] = []
+
+
 class ComparisonRecord(BaseModel):
     """The persisted `comparison.json` shape (design §4.6): a per-task x per-subject
     matrix plus per-subject aggregates, all keyed by the union of task ids / requested
@@ -255,6 +275,12 @@ class ComparisonRecord(BaseModel):
     pairwise: list[PairwiseEntry] = []
     # Subjects whose infra-error share exceeds `UNRELIABLE_INFRA_SHARE` (HLD §6).
     unreliable_subjects: list[str] = []
+    # --- environment isolation (T-Ws7Iso) -----------------------------------------------
+    env_by_subject: dict[str, EnvSubjectSummary] = {}
+    # True when an environment check failed and --allow-mixed let the comparison through;
+    # `env_problems` says which.
+    env_mixed: bool = False
+    env_problems: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +377,35 @@ def _render_summary_md(record: BenchRunRecord) -> str:
         f"- cost_per_solved: {_fmt_cost(agg.cost_per_solved)}",
         f"- total_wall_clock: {agg.total_wall_clock_seconds:.2f}s",
     ]
+    lines += _render_run_env_md(record)
     return "\n".join(lines) + "\n"
+
+
+def _render_run_env_md(record: BenchRunRecord) -> list[str]:
+    """Environment-isolation footer of `summary.md` (T-Ws7Iso); empty for older records."""
+    iso = record.env_isolation
+    if iso is None:
+        return []
+    lines = [
+        "",
+        "## Environment isolation",
+        "",
+        f"- workspace_root: `{iso.workspace_root}`",
+        f"- grading_root: `{iso.grading_root}`",
+        f"- env_contaminated: {_fmt_bool(record.env_contaminated)}"
+        + (f" ({', '.join(iso.instruction_ancestors)})" if iso.instruction_ancestors else ""),
+    ]
+    if record.env_baseline is not None:
+        lines.append(f"- baseline fingerprint: `{record.env_baseline.digest[:12]}`")
+    if record.user_config is not None:
+        shown = {k: v for k, v in record.user_config.settings.items() if not k.endswith("_sha256")}
+        lines.append(f"- user config: `{record.user_config.digest[:12]}` {shown or ''}".rstrip())
+    for t in sorted(record.tasks, key=lambda t: t.task_id):
+        if t.env_foreign:
+            lines.append(f"- {t.task_id}: foreign entries {t.env_foreign}")
+        if t.suspect:
+            lines.append(f"- {t.task_id}: **suspect ({t.suspect_reason})** -- excluded from stats")
+    return lines
 
 
 def write_summary_md(
@@ -424,9 +478,11 @@ def _derive_subject_id(run_dir: Path, known_suite_id: str | None) -> str:
     return rest
 
 
-def _is_attempted(task: BenchTaskRecord) -> bool:
-    """True iff the subject made a real attempt (not an infra error / budget skip)."""
-    return task.subject_status not in NOT_ATTEMPTED_STATUSES
+def is_attempted(task: BenchTaskRecord) -> bool:
+    """True iff the record is capability evidence: the subject made a real attempt (not an
+    infra error / budget skip) AND the hidden-asset audit did not flag it (T-Ws7Iso: a task
+    whose agent reached for grader-owned assets says nothing about capability)."""
+    return task.subject_status not in NOT_ATTEMPTED_STATUSES and not task.suspect
 
 
 def _median_or_none(values: list[float]) -> float | None:
@@ -440,7 +496,7 @@ def _build_cell(recs: list[BenchTaskRecord]) -> ComparisonTaskCell:
     comparison); several are summarised as documented on the model. The statistics cover
     the attempted repeats only.
     """
-    attempted = [r for r in recs if _is_attempted(r)]
+    attempted = [r for r in recs if is_attempted(r)]
     # Cost/wall medians describe attempted work; an all-infra cell falls back to what it
     # did spend so the column is not blank for a task that ran.
     basis = attempted or recs
@@ -488,7 +544,7 @@ def _build_cell(recs: list[BenchTaskRecord]) -> ComparisonTaskCell:
 def _is_suspect(task: BenchTaskRecord) -> bool:
     """HLD §1/§5.1 infra heuristic on a NON-error run: unsolved, cheap and quick."""
     return (
-        _is_attempted(task)
+        is_attempted(task)
         and not task.solved
         and task.cost_usd is not None
         and task.cost_usd < SUSPECT_MAX_COST_USD
@@ -505,7 +561,7 @@ def _subject_stats(
 ) -> SubjectStats:
     cells = [c for tid in task_ids if (c := matrix[tid].get(subject_id)) is not None]
     attempted_cells = [c for c in cells if c.n > 0]
-    attempted_recs = [r for r in records if _is_attempted(r)]
+    attempted_recs = [r for r in records if is_attempted(r)]
     infra = sum(1 for r in records if r.subject_status == INFRA_ERROR_STATUS)
     score_sum = sum(r.score for r in attempted_recs)
     costs = [r.cost_usd for r in attempted_recs if r.cost_usd is not None]
@@ -592,6 +648,65 @@ def _pairwise(
     return entries
 
 
+def _env_summary(runs: list[BenchRunRecord]) -> EnvSubjectSummary:
+    """Fold one subject's repeat records into an `EnvSubjectSummary`."""
+    if all(r.env_isolation is None for r in runs):
+        return EnvSubjectSummary(legacy=True)
+    task_fps: list[EnvFingerprint | None] = [t.env_fingerprint for r in runs for t in r.tasks]
+    merged = merge_fingerprints(task_fps)
+    foreign: dict[str, set[str]] = {}
+    for r in runs:
+        run_fp = merge_fingerprints(t.env_fingerprint for t in r.tasks)
+        for field, names in foreign_entries(run_fp, r.env_baseline).items():
+            foreign.setdefault(field, set()).update(names)
+    baselines = {r.env_baseline.digest for r in runs if r.env_baseline is not None}
+    user_configs = {r.user_config.digest for r in runs if r.user_config is not None}
+    return EnvSubjectSummary(
+        contaminated=any(r.env_contaminated for r in runs),
+        fingerprint_digest=merged.digest if merged is not None else None,
+        # Several distinct values across repeats are joined so a mismatch stays visible.
+        baseline_digest="+".join(sorted(baselines)) or None,
+        user_config_digest="+".join(sorted(user_configs)) or None,
+        foreign={f: sorted(v) for f, v in sorted(foreign.items())},
+        divergent=merged.divergent if merged is not None else False,
+        grading_access_task_ids=sorted({t.task_id for r in runs for t in r.tasks if t.suspect}),
+    )
+
+
+def _env_problems(
+    summaries: dict[str, EnvSubjectSummary], subject_types: dict[str, str]
+) -> list[str]:
+    """Every reason the subjects did not run in one clean, shared environment (T-Ws7Iso)."""
+    problems: list[str] = []
+    for sid, env in summaries.items():
+        if env.contaminated:
+            problems.append(
+                f"{sid}: workspace root had instruction-file ancestors (env_contaminated)"
+            )
+        if env.foreign:
+            problems.append(f"{sid}: loaded entries absent from the baseline: {env.foreign}")
+    agent_sids = [sid for sid in summaries if subject_types.get(sid) in AGENT_SUBJECT_TYPES]
+    legacy = [sid for sid in agent_sids if summaries[sid].legacy]
+    if legacy and len(legacy) < len(agent_sids):
+        problems.append(
+            f"{', '.join(legacy)}: run predates environment fingerprinting while other "
+            "subjects were fingerprinted"
+        )
+    for label, attr in (
+        ("init-event fingerprint", "fingerprint_digest"),
+        ("baseline", "baseline_digest"),
+        ("user-level config", "user_config_digest"),
+    ):
+        values = {
+            sid: getattr(summaries[sid], attr)
+            for sid in agent_sids
+            if getattr(summaries[sid], attr) is not None
+        }
+        if len(set(values.values())) > 1:
+            problems.append(f"subjects differ in {label}: {values}")
+    return problems
+
+
 def build_comparison(
     run_dirs: Sequence[str | Path],
     *,
@@ -614,7 +729,14 @@ def build_comparison(
         `allow_mixed=True`, which stamps the record `parity_mixed=True` instead;
       - two runs for the SAME subject id whose run-level `config_fingerprint` differs,
         unless `allow_mixed=True` -- e.g. two different-day re-runs of one subject with
-        different overrides; the later one wins once explicitly allowed.
+        different overrides; the later one wins once explicitly allowed;
+      - (T-Ws7Iso) runs whose ENVIRONMENT differs or is unclean: an `env_contaminated` run,
+        a subject whose agents loaded skills/agents/commands/MCP servers/plugins absent
+        from its run's baseline probe, agent subjects whose init-event fingerprint,
+        baseline or user-level config digests differ, or a pre-T-Ws7Iso agent run mixed
+        with fingerprinted ones -- unless `allow_mixed=True`, which stamps `env_mixed=True`
+        and lists `env_problems`. Tasks flagged by the hidden-asset audit (`suspect`) are
+        never refused; they are excluded from every capability statistic.
 
     A run dir with no `run.json` at all is never an error: that subject is recorded in
     `ComparisonRecord.not_run` and shown as "not run" everywhere in the report (AC4). A
@@ -757,6 +879,16 @@ def build_comparison(
         if (st := subject_stats[sid]) is not None and st.infra_share > UNRELIABLE_INFRA_SHARE
     ]
 
+    env_by_subject = {sid: _env_summary(list(loaded[sid].values())) for sid in ran_subjects}
+    subject_types = {sid: next(iter(loaded[sid].values())).subject.type for sid in ran_subjects}
+    env_problems = _env_problems(env_by_subject, subject_types)
+    if env_problems and not allow_mixed:
+        raise EnvMismatchError(
+            "Refusing to compare runs whose environments differ or leaked (T-Ws7Iso; pass "
+            "allow_mixed=True / --allow-mixed to override and stamp the report): "
+            + "; ".join(env_problems)
+        )
+
     return ComparisonRecord(
         suite_id=known_suite_id,
         generated_at=resolved_clock().isoformat(),
@@ -775,6 +907,9 @@ def build_comparison(
         infra=infra,
         pairwise=_pairwise(task_ids, ran_subjects, matrix),
         unreliable_subjects=unreliable,
+        env_by_subject=env_by_subject,
+        env_mixed=bool(env_problems),
+        env_problems=env_problems,
     )
 
 
@@ -952,6 +1087,43 @@ def _render_parity_md(comparison: ComparisonRecord) -> list[str]:
     return lines
 
 
+def _render_env_md(comparison: ComparisonRecord) -> list[str]:
+    lines = ["", "## Environment isolation", ""]
+    if comparison.env_mixed:
+        lines.append(
+            "- **NON-ISOLATED comparison** (--allow-mixed): the subjects did not run in one"
+            " clean, shared environment, so a difference may reflect what the agents loaded"
+            " rather than the subjects themselves:"
+        )
+        lines += [f"  - {p}" for p in comparison.env_problems]
+    if not comparison.env_by_subject:
+        lines.append("_No environment data on this comparison._")
+        return lines
+    if comparison.env_mixed:
+        lines.append("")
+    lines += [
+        "| Subject | Fingerprint | Baseline | User config | Contaminated | Foreign"
+        " | Grading-access tasks (excluded) |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+
+    def _short(value: str | None) -> str:
+        return f"`{value[:12]}`" if value else "—"
+
+    for sid, env in comparison.env_by_subject.items():
+        if env.legacy:
+            lines.append(f"| {sid} | not fingerprinted (pre-T-Ws7Iso) | — | — | ? | ? | — |")
+            continue
+        foreign = "; ".join(f"{f}: {', '.join(v)}" for f, v in env.foreign.items()) or "—"
+        lines.append(
+            f"| {sid} | {_short(env.fingerprint_digest)}{' (divergent)' if env.divergent else ''}"
+            f" | {_short(env.baseline_digest)} | {_short(env.user_config_digest)}"
+            f" | {_fmt_bool(env.contaminated)} | {foreign}"
+            f" | {', '.join(env.grading_access_task_ids) or '—'} |"
+        )
+    return lines
+
+
 def _not_run_label(comparison: ComparisonRecord, subject_id: str) -> str:
     """`"<id> (not run)"` for a subject with no run, plain `<id>` for one that ran but has
     no stats block (a 1.0 comparison read back via `load_comparison`)."""
@@ -1109,6 +1281,7 @@ def _render_comparison_md(comparison: ComparisonRecord) -> str:
     lines += render_winners(comparison)
 
     lines += _render_parity_md(comparison)
+    lines += _render_env_md(comparison)
     lines += _render_attempted_md(comparison)
     lines += _render_pairwise_md(comparison)
     lines += _render_rollup_md(

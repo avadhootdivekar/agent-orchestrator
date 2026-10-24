@@ -143,15 +143,34 @@ _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
     # Additive only (2026-10-22, dashboard fix a0101a8): one regression test appended for the
     # prompt-derived run slug being capped at 60 chars (previously a 255-byte filename overflow
     # -> HTTP 500 on `POST /api/templates/<name>/instances`). No existing test changed.
-    "tests/ui/test_templates_api.py": "slug-length regression test appended; existing tests unchanged",
+    "tests/ui/test_templates_api.py": (
+        "slug-length regression test appended; existing tests unchanged"
+    ),
     # Contract change, deliberate (E-Bn7Dsc T-St4Gh5): comparison "Winners" now rank on
     # attempted-based rates and add a "Highest mean score" line; two winner-line assertions
     # updated to the new rendering. Per-task numbers and every other assertion are unchanged.
-    "tests/bench/test_results.py": "E-Bn7Dsc: winners section adds mean-score line / attempted rates",
+    "tests/bench/test_results.py": (
+        "E-Bn7Dsc: winners section adds mean-score line / attempted rates"
+    ),
     # Additive only (E-Bn7Dsc T-Bx2Cd3 / T-T2-5Ij6): the bench conftest gained two opt-in gates
     # (`docker` -> AO_E2E_DOCKER, `network` -> AO_E2E_NETWORK) beside the existing `swebench`
     # one, plus shared fixtures for the new tracks. No existing fixture or gate changed.
     "tests/bench/conftest.py": "E-Bn7Dsc: docker/network opt-in gates + shared fixtures added",
+    # Contract change, deliberate (E-Bn7Dsc T-Ws7Iso, 2026-10-24): the bench workspace root
+    # moved OUT of the checkout (Claude Code loaded the repo's CLAUDE.md/skills/agents into
+    # every agent under test) and is now resolved per call from AO_BENCH_WORKSPACE_ROOT, so
+    # the module constant `BENCH_WORKSPACE_ROOT` became the function `bench_workspace_root()`.
+    # These files only swap that name (the conftest also gained an autouse fixture pointing
+    # every bench test at a pytest temp root); every assertion is unchanged.
+    "tests/bench/test_runner.py": "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()",
+    "tests/bench/test_subjects.py": "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()",
+    "tests/bench/test_swebench_grader.py": (
+        "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()"
+    ),
+    "tests/bench/test_swebench_provider.py": (
+        "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()"
+    ),
+    "tests/bench/test_workspace.py": "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()",
     # Contract change, deliberate (E-Bn7Dsc T-T2-5Ij6): dev-medium's held-out `.grading/` moved
     # out of the agent-visible fixture into the grader-owned grading_dir (HLD §8 hidden-asset
     # rule); the suite tests now assert the new layout. Task ids/instructions unchanged.
