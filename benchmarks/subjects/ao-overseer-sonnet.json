@@ -4,7 +4,7 @@
   "type": "ao_workflow",
   "template": "overseer-runner",
   "template_params": {
-    "run_budget_usd": "3",
+    "run_budget_usd": "2",
     "task_budget_usd": "1.5",
     "wave_size": "3",
     "max_waves": "2",

@@ -24,7 +24,7 @@ into a workspace and whose first stage branches the repo off `main`.
    `<ws>/_origin.git` tracking `main` (outside the graded repo).
 3. `benchmarks/subjects/ao-overseer-sonnet.json`: every agent on Sonnet (`AO_MODEL`, no per-agent/per-unit model
    override, no leverage-haiku), thin role prompts, prompt.md under the 600-char wrapper budget, per-task budget
-   `run_budget_usd=3`, `wave_size=3`, `max_waves=2`, `final_push=false`.
+   `run_budget_usd=2` (lowered from 3 before ranking so 10 tasks fit the $20 cap), `wave_size=3`, `max_waves=2`, `final_push=false`.
 4. Fake-tier tests; a real smoke shows the full overseer path (branch-off → intake → wave → checkpoint →
    final-verify → closeout) and Sonnet in every init event.
 
