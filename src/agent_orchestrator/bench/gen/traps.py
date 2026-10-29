@@ -31,6 +31,8 @@ _ALGO = "algo-puzzle"
 _ALGO_HARD = "algo-hard"
 _OPT = "opt-ladder"
 _STAIR = "algo-staircase"  # the algo-hard problems on a size ladder
+_ARENA = "game-arena"
+_ARENA_HELDOUT = "game-arena-heldout"
 _BUG = "bug-hunt"  # reuses the order-book instance, traps and probes
 
 TRAP_CATALOGUE: dict[str, Trap] = {
@@ -204,6 +206,17 @@ TRAP_CATALOGUE: dict[str, Trap] = {
             "capacity_bound",
             "Site capacities bind: nearest-site assignment is infeasible.",
             (_OPT,),
+        ),
+        # game-arena (T-Ga4Rna): see gen/game_arena.py.
+        Trap(
+            "random_opening",
+            "Games start from random opening moves: no opening book, positions are never repeated.",
+            (_ARENA, _ARENA_HELDOUT),
+        ),
+        Trap(
+            "move_time_limit",
+            "A late, illegal or malformed move forfeits the game: speed and legality count.",
+            (_ARENA, _ARENA_HELDOUT),
         ),
     )
 }

@@ -47,6 +47,7 @@ repo checkout with `uv run ao-bench …` — never the global `ao`.
 | `gen-services-mini` / `gen-services` | medium | generated behavioural-spec tasks (crud-relational http, job-queue jsonl, …) in py/ts/go | `blackbox` (Docker sandbox) |
 | `repo-mutant-mini` | large | bug injection / feature excision on pinned public repos | `pytest_targeted` |
 | `swe-verified-mini` | large | 10 pinned SWE-bench Verified instances | swebench (Docker) |
+| `game-arena` / `game-arena-heldout` (families) | large | write a game bot (Othello / Connect-K dev pool, Breakthrough held-out pool); rated by Elo against a frozen ladder of reference bots, unbounded | `arena` |
 | `gen-calib-v*` / `gen-rank-*` | medium | calibration / ranking suites from `ao-bench gen` (python; TS/Go need Node>=22/Go on the agent host) | `blackbox` |
 
 ## Subjects
@@ -79,6 +80,14 @@ uv run ao-bench import-prs --repo pallets/click --since 2026-06-01 --out benchma
   straddles 0 means "not distinguishable at this n" — add repeats, not conclusions.
 - **Per family / per language** show where a subject wins; a single family dominating is a bias flag.
 - A campaign banner `unreliable` (> 10 % infra for a subject) means fix the harness before reading numbers.
+
+## Game arena
+`game-arena` (dev pool) and `game-arena-heldout` (held-out pool, final comparisons only; never tune against it) use the
+`arena` grader (`docs-md/benchmark-game-arena-design.md`). Ratings of the reference bots are frozen per game in
+`src/agent_orchestrator/bench/games/ratings/`; generation refuses a missing or stale file. After changing a game, a
+reference bot or `BOTS_VERSION`, re-rate: `uv run ao-bench arena-rate --pool dev --games-per-pair 40 --workers 24
+--write` (CPU only, no LLM spend; Othello 8x8 takes a while). Add a game: a module under `bench/games/`, a line in
+`pools.py`, a rules test, then `arena-rate`. Subjects get `--max-turns 80` like other open-ended tasks.
 
 ## Adding things
 - **New generated family**: `src/agent_orchestrator/bench/gen/<family>.py` (subclass `Family`, register), a stdlib

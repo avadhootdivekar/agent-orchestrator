@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .base import Game, GameError
 from .bots import BOTS_VERSION, spec_label
+from .roundrobin import RoundRobin
 
 RATINGS_DIR = Path(__file__).resolve().parent / "ratings"
 VERSION_HEX = 12
@@ -38,6 +39,8 @@ class FrozenLadder:
     labels: list[str]
     ratings: list[float]
     games_per_pair: int
+    opening_plies: int
+    first_player_score: float
 
     def par_rating(self, game: Game) -> float:
         return self.ratings[game.par_rung()]
@@ -57,6 +60,8 @@ def load_ladder(game: Game, root: Path | None = None) -> FrozenLadder:
         data = json.loads(path.read_text(encoding="utf-8"))
         version, ratings = data["version"], [float(r) for r in data["ratings"]]
         pairs = int(data["games_per_pair"])
+        plies = int(data["opening_plies"])
+        first = float(data["first_player_score"])
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise GameError(f"unreadable ratings file {path}: {exc}") from exc
     live = ladder_version(game)
@@ -68,20 +73,20 @@ def load_ladder(game: Game, root: Path | None = None) -> FrozenLadder:
     labels = [spec_label(spec) for spec in game.ladder()]
     if len(ratings) != len(labels):
         raise GameError(f"ratings file {path} has {len(ratings)} rungs, ladder has {len(labels)}")
-    return FrozenLadder(game.key, version, labels, ratings, pairs)
+    return FrozenLadder(game.key, version, labels, ratings, pairs, plies, first)
 
 
-def write_ladder(
-    game: Game, ratings: list[float], games_per_pair: int, root: Path | None = None
-) -> Path:
+def write_ladder(game: Game, rr: RoundRobin, root: Path | None = None) -> Path:
     path = ratings_path(game, root)
     path.parent.mkdir(parents=True, exist_ok=True)
     body = {
         "game": game.wire(),
         "version": ladder_version(game),
         "labels": [spec_label(spec) for spec in game.ladder()],
-        "ratings": [round(r, 1) for r in ratings],
-        "games_per_pair": games_per_pair,
+        "ratings": [round(r, 1) for r in rr.ratings],
+        "games_per_pair": rr.games_per_pair,
+        "opening_plies": rr.opening_plies,
+        "first_player_score": round(rr.first_player_score, 3),
     }
     path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     return path

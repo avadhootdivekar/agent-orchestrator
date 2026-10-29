@@ -24,6 +24,7 @@ import typer
 
 from ..errors import SpecValidationError
 from . import (
+    arena,  # noqa: F401 -- registers "arena" grader (T-Ga4Rna)
     blackbox,  # noqa: F401 -- registers "blackbox" grader (E-Bn7Dsc)
     exercism,  # noqa: F401 -- registers "exercism" provider + grader (T-Pf4Mix)
     generated_provider,  # noqa: F401 -- registers "generated" workspace provider (E-Bn7Dsc)
@@ -748,6 +749,49 @@ def regrade_cmd(
     agg = rec.aggregate
     kept = f" (kept unchanged: {', '.join(skipped)})" if skipped else ""
     typer.echo(f"solved {agg.solved}/{agg.total} mean_score={agg.mean_score:.3f}{kept}")
+
+
+@app.command(name="arena-rate")
+def arena_rate_cmd(
+    game: list[str] = typer.Option(
+        [], "--game", help='Game as JSON, e.g. \'{"id":"othello","size":8}\' (repeatable).'
+    ),
+    pool: str | None = typer.Option(None, "--pool", help="Rate every game of a pool: dev|heldout."),
+    games_per_pair: int = typer.Option(40, "--games-per-pair", min=2, help="Even number."),
+    seed: int = typer.Option(1, "--seed", help="Round-robin seed (openings and bot ties)."),
+    workers: int = typer.Option(8, "--workers", min=1, help="Parallel processes."),
+    write: bool = typer.Option(
+        False, "--write", help="Store the ratings under bench/games/ratings."
+    ),
+) -> None:
+    """Rate the reference bots of `game-arena` games by an offline round robin (no LLM spend)."""
+    from .games import game_from_wire
+    from .games.bots import spec_label
+    from .games.ladder import ladder_version, write_ladder
+    from .games.pools import POOLS, pool_games
+    from .games.roundrobin import run_round_robin
+
+    games = [game_from_wire(json.loads(g)) for g in game]
+    if pool:
+        if pool not in POOLS:
+            typer.echo(f"ERROR: unknown pool {pool!r}; known: {sorted(POOLS)}", err=True)
+            raise typer.Exit(EXIT_USAGE_ERROR)
+        games += pool_games(POOLS[pool])
+    if not games:
+        typer.echo("ERROR: give --game or --pool", err=True)
+        raise typer.Exit(EXIT_USAGE_ERROR)
+    for g in games:
+        typer.echo(f"{g.key}: round robin, {games_per_pair} games per pair, seed {seed}")
+        rr = run_round_robin(g, games_per_pair, seed, workers, progress=typer.echo)
+        for spec, r in zip(g.ladder(), rr.ratings, strict=True):
+            typer.echo(f"  {spec_label(spec):<10} {r:8.1f}")
+        typer.echo(
+            f"  first-player score in mirror matches: {rr.first_player_score:.2f} "
+            f"(accepted {g.balance_bounds()}), ladder version {ladder_version(g)}, "
+            f"{rr.seconds:.0f}s"
+        )
+        if write:
+            typer.echo(f"  wrote {write_ladder(g, rr)}")
 
 
 @app.command(name="list")

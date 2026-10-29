@@ -39,7 +39,7 @@
 - [x] `T-Ov3Sbj-bench-ao-template-subject` — `ao_workflow` template mode (`ao new … --run`) + `init_git`; `ao-overseer-sonnet` subject.
 - [x] `T-Cb8Rk2-bench-calibrate-and-rank` — pre-registered difficulty calibration (anchors haiku/opus) and a haiku/sonnet/opus/ao-overseer-sonnet ranking campaign with report; skills `bench-tune`, `bench-campaign-report`.
 - [x] `T-Pf4Mix-bench-task-portfolio` — Go/Node toolchains, Exercism provider/grader/importer (visible-tests default), families order-book / rules-engine / bug-hunt / algo-puzzle / algo-hard, `ao-bench portfolio`; finding: spec-complete tasks saturate, hidden-test spread = convention recall (`docs-md/benchmark-task-portfolio.md` §8).
-- [ ] `T-Ga4Rna-bench-game-arena` — games plugin (`bench/games/`: Othello, Connect-K, Breakthrough), reference bots, referee + Elo rating, `arena` grader, `game-arena` / `game-arena-heldout` families (follow-on of `T-Os5Lad`; design `docs-md/benchmark-game-arena-design.md`).
+- [~] `T-Ga4Rna-bench-game-arena` — games plugin (`bench/games/`: Othello, Connect-K, Breakthrough), reference bots, referee + Elo rating, `arena` grader, `game-arena` / `game-arena-heldout` families (follow-on of `T-Os5Lad`; design `docs-md/benchmark-game-arena-design.md`).
 
 ## Risks and Dependencies
 - Docker availability on dev machines (fallback: process sandbox, tagged).

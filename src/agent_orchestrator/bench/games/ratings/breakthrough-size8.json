@@ -1,0 +1,26 @@
+{
+  "game": {
+    "id": "breakthrough",
+    "size": 8
+  },
+  "version": "5e38e850ca59",
+  "labels": [
+    "random",
+    "greedy",
+    "ab1",
+    "ab2",
+    "ab3",
+    "ab4"
+  ],
+  "ratings": [
+    0.0,
+    603.5,
+    649.7,
+    893.2,
+    1163.0,
+    1271.1
+  ],
+  "games_per_pair": 40,
+  "opening_plies": 4,
+  "first_player_score": 0.48
+}

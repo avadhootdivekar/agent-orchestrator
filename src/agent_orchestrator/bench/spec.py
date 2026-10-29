@@ -64,6 +64,7 @@ KNOWN_GRADER_TYPES: frozenset[str] = frozenset(
         "pytest_targeted",
         "exercism",
         "objective",
+        "arena",
     }
 )
 KNOWN_SUBJECT_TYPES: frozenset[str] = frozenset({"claude_cli", "ao_workflow", "fake"})

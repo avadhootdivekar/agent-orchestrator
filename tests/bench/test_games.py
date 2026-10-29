@@ -23,6 +23,7 @@ from agent_orchestrator.bench.games.referee import (
     replay,
     score_for_a,
 )
+from agent_orchestrator.bench.games.roundrobin import RoundRobin
 
 SAMPLE_GAMES = [
     {"id": "othello", "size": 8},
@@ -351,7 +352,8 @@ def test_ladder_version_tracks_rules_and_ladder(tmp_path) -> None:
     g = Othello(8)
     v = ladder_version(g)
     assert v == ladder_version(Othello(8)) and v != ladder_version(Othello(6))
-    path = write_ladder(g, [0.0] * len(g.ladder()), 10, root=tmp_path)
+    rr = RoundRobin([0.0] * len(g.ladder()), {}, 0.5, 0.0, 10)
+    path = write_ladder(g, rr, root=tmp_path)
     assert load_ladder(g, root=tmp_path).version == v
     with pytest.raises(GameError, match="no frozen ratings"):
         load_ladder(Othello(6), root=tmp_path)

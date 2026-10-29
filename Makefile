@@ -1,6 +1,6 @@
 .PHONY: test test-fast test-playground test-real-llm lint format typecheck validate-sum-of-array \
         bench-validate bench-smoke bench-run bench-report bench-medium bench-large bench-xlarge \
-        bench-refcheck \
+        bench-refcheck bench-arena-rate \
         ui ui-install ui-build ui-dev ui-test ui-typecheck test-ui
 
 # Configurable knobs for the real-LLM tier (override on the command line):
@@ -194,6 +194,12 @@ bench-images:
 # every task must come out solved. Needs a docker daemon; results go to a scratch dir, never committed.
 bench-gen-smoke:
 	uv run ao-bench run --suite $(BENCH_GEN_SUITE) --subject $(BENCH_FAKE_REFERENCE_SUBJECT_PATH) --out-dir playground/.tmp/bench-results --force
+
+# Re-rate the `game-arena` reference ladders (CPU only, no LLM spend; T-Ga4Rna). Run after changing a game,
+# a reference bot or BOTS_VERSION; generation refuses stale ratings.
+#   make bench-arena-rate POOL=dev GAMES=40 WORKERS=16
+bench-arena-rate:
+	uv run ao-bench arena-rate --pool $(or $(POOL),dev) --games-per-pair $(or $(GAMES),40) --workers $(or $(WORKERS),16) --write
 
 # Reference self-check for ANY generated suite (T-Cb8Rk2): the hidden reference implementation is
 # copied in as the artefact and graded in docker; must be N/N before spending on agents. A miss
