@@ -7,16 +7,16 @@ and [`docs-md/bench-probe-dsl.md`](../../../docs-md/bench-probe-dsl.md).
 Regenerate (byte-identical):
 
 ```
-ao-bench gen --out <suite dir> --id gen-calib-arena --family game-arena --count 3 --languages python --seed 43000 --difficulty entities=2,traps=0,concurrency=1,scale=0 --tier large --parity ../../parity/default
+ao-bench gen --out <suite dir> --id gen-calib-arena --family game-arena --count 3 --languages python --seed 43008 --difficulty entities=2,traps=0,concurrency=1,scale=0 --tier large --parity ../../parity/default
 ```
 
 ## Tasks
 
 | Task | Family | Language | Seed | Difficulty |
 |---|---|---|---|---|
-| `game-arena-py-s43000` | game-arena | python | 43000 | entities=2, traps=0, concurrency=1, scale=0 |
-| `game-arena-py-s43001` | game-arena | python | 43001 | entities=2, traps=0, concurrency=1, scale=0 |
-| `game-arena-py-s43002` | game-arena | python | 43002 | entities=2, traps=0, concurrency=1, scale=0 |
+| `game-arena-py-s43008` | game-arena | python | 43008 | entities=2, traps=0, concurrency=1, scale=0 |
+| `game-arena-py-s43009` | game-arena | python | 43009 | entities=2, traps=0, concurrency=1, scale=0 |
+| `game-arena-py-s43010` | game-arena | python | 43010 | entities=2, traps=0, concurrency=1, scale=0 |
 
 ## How it works
 
