@@ -6,6 +6,7 @@
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-10-29 · Comment: **Follow-on `T-Ga4Rna-bench-game-arena` opened** (owner ask: games plugin, Othello dev + held-out games, Elo ladder).
 - By: Claude · Role: manager · Date: 2026-10-24 · Comment: **`T-Pf4Mix` done.** All 6 ACs met.
   - New pieces: toolchains (Go and Node on the agent host); the `exercism` provider, grader and importer;
     generated families `order-book`, `rules-engine`, `bug-hunt`, `algo-puzzle` and `algo-hard`; the
