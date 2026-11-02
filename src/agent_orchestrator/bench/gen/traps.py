@@ -33,6 +33,8 @@ _OPT = "opt-ladder"
 _STAIR = "algo-staircase"  # the algo-hard problems on a size ladder
 _ARENA = "game-arena"
 _ARENA_HELDOUT = "game-arena-heldout"
+_SCEN = "game-scenarios"
+_SCEN_HELDOUT = "game-scenarios-heldout"
 _BUG = "bug-hunt"  # reuses the order-book instance, traps and probes
 
 TRAP_CATALOGUE: dict[str, Trap] = {
@@ -216,7 +218,12 @@ TRAP_CATALOGUE: dict[str, Trap] = {
         Trap(
             "move_time_limit",
             "A late, illegal or malformed move forfeits the game: speed and legality count.",
-            (_ARENA, _ARENA_HELDOUT),
+            (_ARENA, _ARENA_HELDOUT, _SCEN, _SCEN_HELDOUT),
+        ),
+        Trap(
+            "random_positions",
+            "Positions come from random play: no opening book, the set is regenerable from a seed.",
+            (_SCEN, _SCEN_HELDOUT),
         ),
     )
 }

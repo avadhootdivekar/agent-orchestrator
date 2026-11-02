@@ -116,6 +116,7 @@ def _bits(mask: int) -> list[int]:
 class Othello(Game):
     id = "othello"
     rules_version = 1
+    scenario_depth = 6
 
     def __init__(self, size: int = 8) -> None:
         if size < MIN_SIZE or size > MAX_SIZE or size % EVEN:

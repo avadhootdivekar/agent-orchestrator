@@ -28,6 +28,9 @@ from . import (
     game_arena as _game_arena,  # noqa: F401 -- registers "game-arena" (T-Ga4Rna)
 )
 from . import (
+    game_scenarios as _game_scenarios,  # noqa: F401 -- registers "game-scenarios" (T-Ga4Rna)
+)
+from . import (
     job_queue as _job_queue,  # noqa: F401 -- registers "job-queue"
 )
 from . import (

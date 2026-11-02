@@ -32,6 +32,7 @@ from . import (
     objective,  # noqa: F401 -- registers "objective" grader (T-Os5Lad)
     pr_mined_provider,  # noqa: F401 -- registers "pr_mined" workspace provider (E-Bn7Dsc)
     pytest_targeted,  # noqa: F401 -- registers "pytest_targeted" grader (E-Bn7Dsc)
+    scenarios_grader,  # noqa: F401 -- registers "scenarios" grader (T-Ga4Rna)
     swebench_grader,  # noqa: F401 -- registers "swebench" grader (T-Sg6Jf2)
     swebench_provider,  # noqa: F401 -- registers "swebench" workspace provider (T-Sw5Hd9)
 )

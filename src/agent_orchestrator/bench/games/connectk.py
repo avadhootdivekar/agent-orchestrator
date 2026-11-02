@@ -41,6 +41,7 @@ DIRS = ((0, 1), (1, 0), (1, 1), (1, -1))
 class ConnectK(Game):
     id = "connectk"
     rules_version = 1
+    scenario_depth = 6
 
     def __init__(self, width: int = 7, height: int = 6, k: int = 4, gravity: int = 1) -> None:
         if not (MIN_DIM <= width <= MAX_DIM and MIN_DIM <= height <= MAX_DIM):

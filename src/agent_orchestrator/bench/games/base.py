@@ -124,6 +124,8 @@ class Game(ABC):
 
     # Rung indices used by the grader: `par` maps to score 1.0; `solved` needs at least this rung.
     solved_rung: ClassVar[int] = 2
+    # Alpha-beta depth of the reference values behind `game-scenarios` (design §11).
+    scenario_depth: ClassVar[int] = 4
 
     def par_rung(self) -> int:
         return len(self.ladder()) - 1

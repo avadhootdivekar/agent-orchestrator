@@ -65,6 +65,7 @@ KNOWN_GRADER_TYPES: frozenset[str] = frozenset(
         "exercism",
         "objective",
         "arena",
+        "scenarios",
     }
 )
 KNOWN_SUBJECT_TYPES: frozenset[str] = frozenset({"claude_cli", "ao_workflow", "fake"})
