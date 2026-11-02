@@ -133,7 +133,7 @@ class _ArenaBase(Family):
             "games_per_rung": games,
             "opening_plies": frozen.opening_plies,
             "par": par,
-            "reference_rung": game.par_rung(),
+            "reference_rung": game.reference_rung(),
         }
         probes = {
             "version": "1.0",

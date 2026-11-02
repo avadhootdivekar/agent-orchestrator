@@ -242,7 +242,13 @@ class Othello(Game):
 
     # -- ladder -----------------------------------------------------------------------------
     def ladder(self) -> Sequence[BotSpec]:
-        return (
+        base: list[BotSpec] = [
             ("random",), ("greedy",), ("ab", 1), ("ab", 2), ("ab", 3), ("ab", 4), ("ab", 5),
             ("ab", 6),
-        )  # fmt: skip
+        ]  # fmt: skip
+        if self.size >= 8:  # two harder rungs where search depth still pays (seconds per move)
+            base += [("ab", 7), ("ab", 8)]
+        return base
+
+    def reference_rung(self) -> int:
+        return 7  # ab6: deeper rungs do not fit a one-second move

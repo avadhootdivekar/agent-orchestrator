@@ -205,4 +205,12 @@ class ConnectK(Game):
 
     # -- ladder -----------------------------------------------------------------------------
     def ladder(self) -> Sequence[BotSpec]:
-        return (("random",), ("greedy",), ("ab", 1), ("ab", 2), ("ab", 4), ("ab", 6), ("ab", 8))
+        base: list[BotSpec] = [
+            ("random",), ("greedy",), ("ab", 1), ("ab", 2), ("ab", 4), ("ab", 6), ("ab", 8),
+        ]  # fmt: skip
+        if self.k >= 5:  # playout search is a different axis than depth: the heuristic saturates
+            base += [("mcts", 5000), ("mcts", 20000)]
+        return base
+
+    def reference_rung(self) -> int:
+        return 5  # ab6: deeper rungs do not fit a one-second move

@@ -128,6 +128,10 @@ class Game(ABC):
     def par_rung(self) -> int:
         return len(self.ladder()) - 1
 
+    def reference_rung(self) -> int:
+        """Rung the bundled reference bot plays: the strongest one that fits the move time limit."""
+        return self.par_rung()
+
     def balance_bounds(self) -> tuple[float, float]:
         """Accepted first-player score of mirror matches of a mid-ladder bot (design §9)."""
         return (0.35, 0.65)
