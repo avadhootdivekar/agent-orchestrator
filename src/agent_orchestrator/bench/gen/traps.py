@@ -33,6 +33,7 @@ _OPT = "opt-ladder"
 _STAIR = "algo-staircase"  # the algo-hard problems on a size ladder
 _ARENA = "game-arena"
 _ARENA_HELDOUT = "game-arena-heldout"
+_CVRP = "cvrp-ladder"
 _SCEN = "game-scenarios"
 _SCEN_HELDOUT = "game-scenarios-heldout"
 _BUG = "bug-hunt"  # reuses the order-book instance, traps and probes
@@ -208,6 +209,17 @@ TRAP_CATALOGUE: dict[str, Trap] = {
             "capacity_bound",
             "Site capacities bind: nearest-site assignment is infeasible.",
             (_OPT,),
+        ),
+        # cvrp-ladder (T-Ga4Rna): see gen/cvrp_ladder.py.
+        Trap(
+            "vehicle_capacity",
+            "Vehicle capacity binds: a route over capacity is infeasible and scores 0.",
+            (_CVRP,),
+        ),
+        Trap(
+            "cvrp_degenerate",
+            "Duplicate locations and a customer whose demand fills a vehicle: still feasible.",
+            (_CVRP,),
         ),
         # game-arena (T-Ga4Rna): see gen/game_arena.py.
         Trap(

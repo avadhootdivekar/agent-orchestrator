@@ -25,6 +25,9 @@ from . import (
     crud_relational as _crud_relational,  # noqa: F401 -- registers "crud-relational"
 )
 from . import (
+    cvrp_ladder as _cvrp_ladder,  # noqa: F401 -- registers "cvrp-ladder" (T-Ga4Rna)
+)
+from . import (
     game_arena as _game_arena,  # noqa: F401 -- registers "game-arena" (T-Ga4Rna)
 )
 from . import (
