@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from agent_orchestrator.cache import safeio
 from agent_orchestrator.cache.constants import (
     AGENT_KEY_FIELDS,
+    AGENT_KEY_OMIT_WHEN_NONE,
     CACHE_DIR_PARTS,
     COMPONENT_DIGEST_CHARS,
     KEY_PLACEHOLDER_ID,
@@ -188,7 +189,11 @@ def build_cache_key(
     fingerprint = claude_cli_fingerprint(req, deps, budget) if is_claude else None
     doc: dict[str, Any] = {
         "key_schema": KEY_SCHEMA_VERSION,
-        "agent": {f: getattr(req.agent, f) for f in sorted(AGENT_KEY_FIELDS)},
+        "agent": {
+            f: getattr(req.agent, f)
+            for f in sorted(AGENT_KEY_FIELDS)
+            if not (f in AGENT_KEY_OMIT_WHEN_NONE and getattr(req.agent, f) is None)
+        },
         "argv": argv,
         "executor_fingerprint": fingerprint,
         "prompt": prompt,

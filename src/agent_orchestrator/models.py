@@ -27,6 +27,12 @@ EFFORT_MAX_TURNS: dict[str, int] = {"low": 15, "medium": 30, "high": 60, "xhigh"
 # cache/constants.py, or stale cache hits will survive the change.
 # Shared Literal so AgentSpec and TaskSpec can't drift on the allowed effort values.
 EffortLevel = Literal["low", "medium", "high", "xhigh"]
+# Provider-neutral "how hard should the model think" knob, DISTINCT from `EffortLevel` (which only
+# derives a --max-turns cap). Each executor translates it: claude_cli -> `--effort <level>`.
+# None (the default) injects nothing, so argv/cache keys stay byte-identical and the CLI's own
+# default (e.g. ~/.claude/settings.json `effortLevel`) applies.
+ThinkingEffort = Literal["low", "medium", "high", "xhigh", "max"]
+THINKING_EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 # --- E-Rc4Hk8 result cache (ADR-0019). Outcome values the engine writes (open set on read).
 RESULT_CACHE_HIT: Literal["hit"] = "hit"
 RESULT_CACHE_WOULD_HIT: Literal["would_hit"] = "would_hit"
@@ -249,6 +255,8 @@ class AgentSpec(BaseModel):
     model: str | None = None  # e.g. "claude-haiku-5-5"; passed as --model
     effort: EffortLevel | None = None  # → --max-turns via EFFORT_MAX_TURNS
     max_turns: int | None = None  # explicit --max-turns; overrides effort-derived value when set
+    # Model reasoning depth (provider-neutral); claude_cli maps it to `--effort`. Unset = no flag.
+    thinking_effort: ThinkingEffort | None = None
     # Working directory the agent process runs in. Resolved against the workspace root
     # (reposet.workspace_root) and path-guarded to stay inside it. None -> workspace root.
     # Lets agents' relative output paths (from specs/instructions) resolve deterministically.
@@ -434,6 +442,7 @@ class TaskSpec(BaseModel):
     model: str | None = None
     effort: EffortLevel | None = None
     max_turns: int | None = None
+    thinking_effort: ThinkingEffort | None = None
 
     @field_validator("model")
     @classmethod
@@ -539,7 +548,12 @@ def resolve_effective_agent(
     (no per-task tuning) allocates nothing new.
     """
     model = task.model if task.model is not None else default_model
-    if model is None and task.effort is None and task.max_turns is None:
+    if (
+        model is None
+        and task.effort is None
+        and task.max_turns is None
+        and task.thinking_effort is None
+    ):
         return agent
     return agent.model_copy(
         update={
@@ -551,6 +565,9 @@ def resolve_effective_agent(
             "model": model if model is not None else agent.model,
             "effort": task.effort if task.effort is not None else agent.effort,
             "max_turns": task.max_turns if task.max_turns is not None else agent.max_turns,
+            "thinking_effort": (
+                task.thinking_effort if task.thinking_effort is not None else agent.thinking_effort
+            ),
         }
     )
 

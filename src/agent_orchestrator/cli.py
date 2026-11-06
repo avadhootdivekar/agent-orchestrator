@@ -761,6 +761,21 @@ def _capture_run_prompt(
     )
 
 
+def _resolve_thinking_effort(flag: str | None) -> str | None:
+    """CLI flag > AO_THINKING_EFFORT > project config; validated. None = leave agents untouched."""
+    from .models import THINKING_EFFORTS
+
+    cfg = _load_project_config_or_exit()
+    value = flag or os.environ.get("AO_THINKING_EFFORT") or (cfg.thinking_effort if cfg else None)
+    if value is not None and value not in THINKING_EFFORTS:
+        typer.echo(
+            f"ERROR: --thinking-effort must be one of {THINKING_EFFORTS}, got '{value}'",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return value
+
+
 def _resolve_run_settings(
     max_attempts: int | None,
     max_turns: int | None,
@@ -1214,6 +1229,14 @@ def run(
         "--effort",
         help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
     ),
+    thinking_effort: str | None = typer.Option(
+        None,
+        "--thinking-effort",
+        help=(
+            "Model reasoning depth for all agents: low, medium, high, xhigh or max "
+            "(claude: --effort). Env: AO_THINKING_EFFORT"
+        ),
+    ),
     quota_max_wait: int | None = typer.Option(
         None,
         "--quota-max-wait",
@@ -1390,6 +1413,11 @@ def run(
         for spec in agent_map.values():
             spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
 
+    eff_thinking = _resolve_thinking_effort(thinking_effort)
+    if eff_thinking is not None:
+        for spec in agent_map.values():
+            spec.thinking_effort = cast("Any", eff_thinking)
+
     # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9). Unset
     # (None) makes no change; ISOLATION_NONE/ISOLATION_WORKTREE become the new
     # WorkflowSpec.defaults.isolation, a fill-in only for tasks left at isolation="inherit"
@@ -1545,6 +1573,14 @@ def resume(
         None,
         "--effort",
         help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+    ),
+    thinking_effort: str | None = typer.Option(
+        None,
+        "--thinking-effort",
+        help=(
+            "Model reasoning depth for all agents: low, medium, high, xhigh or max "
+            "(claude: --effort). Env: AO_THINKING_EFFORT"
+        ),
     ),
     quota_max_wait: int | None = typer.Option(
         None,
@@ -1735,6 +1771,11 @@ def resume(
 
         for spec in agent_map.values():
             spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
+
+    eff_thinking = _resolve_thinking_effort(thinking_effort)
+    if eff_thinking is not None:
+        for spec in agent_map.values():
+            spec.thinking_effort = cast("Any", eff_thinking)
 
     # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9) -- same
     # chain and fill-in-only semantics as `ao run` (see there for the full rationale).

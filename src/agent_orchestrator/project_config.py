@@ -239,6 +239,9 @@ class ProjectConfig(BaseModel):
     effort: str | None = None
     """Effort level for all agents: low, medium, or high."""
 
+    thinking_effort: str | None = None
+    """Model reasoning depth for all agents: low, medium, high, xhigh, or max (claude: --effort)."""
+
     quota_max_wait_seconds: int | None = None
     """Max seconds to wait across a quota-exhaustion episode before failing."""
 
@@ -449,7 +452,8 @@ _INIT_TEMPLATE = """\
 # max_attempts: 1          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
 # model: sonnet # AO_MODEL        — claude model for all agents
-# effort: medium           # AO_EFFORT       — low / medium / high
+# effort: medium           # AO_EFFORT       — low / medium / high (derives the --max-turns cap)
+# thinking_effort: high    # AO_THINKING_EFFORT — low/medium/high/xhigh/max (reasoning depth)
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 # record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival
 

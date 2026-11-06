@@ -651,6 +651,7 @@ class ProcessSupervisor:
 ALLOWED_OPTIONS: dict[str, str] = {
     "model": "--model",
     "effort": "--effort",
+    "thinking_effort": "--thinking-effort",
     "max_attempts": "--max-attempts",
     "max_turns": "--max-turns",
     "max_parallel": "--max-parallel",

@@ -567,6 +567,7 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_WORKSPACE_ROOT` | — | Override the `workspace_root` from the reposet (useful in CI) |
 | `AO_MODEL` | `--model` | Claude model for all agents (alias `sonnet`/`opus`/`haiku` = latest; or a pinned id e.g. `claude-sonnet-5-5`) |
 | `AO_EFFORT` | `--effort` | Effort level: `low`, `medium`, or `high` |
+| `AO_THINKING_EFFORT` | `--thinking-effort` | Model reasoning depth: `low`, `medium`, `high`, `xhigh`, or `max`. Passed to the claude CLI as `--effort`; unset = CLI default (e.g. `effortLevel` in `~/.claude/settings.json`). Also settable per agent/task (`thinking_effort`). Distinct from `AO_EFFORT`, which only derives a `--max-turns` cap |
 | `AO_MAX_ATTEMPTS` | `--max-attempts` | Max task attempts (overrides workflow `defaults.retries.max_attempts`) |
 | `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides effort-derived value) |
 | `AO_MAX_PARALLEL` | `--max-parallel` | Max independent ready tasks to run at once (default: `1` = serial); see [Parallel execution](#parallel-execution) |

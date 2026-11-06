@@ -100,6 +100,7 @@ TASK_ANY_VALUE: frozenset[str] = frozenset(
         "model",
         "effort",
         "max_turns",
+        "thinking_effort",
         "instruction",
         "inputs",
         "outputs",

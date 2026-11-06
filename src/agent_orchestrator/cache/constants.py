@@ -137,12 +137,16 @@ AGENT_KEY_FIELDS = frozenset(
         "model",
         "effort",
         "max_turns",
+        "thinking_effort",
         "working_dir",
         "disallowed_tools",
         "forced_disallowed_tools",
         "exclude_dynamic_system_prompt_sections",
     }
 )
+# Key fields added after the key schema shipped: left OUT of the key document while None, so
+# pre-existing cache entries stay valid (no KEY_SCHEMA_VERSION bump); once set they enter the key.
+AGENT_KEY_OMIT_WHEN_NONE = frozenset({"thinking_effort"})
 AGENT_NON_KEY_FIELDS = frozenset({"forbidden_task_models"})  # validation-only, never in argv
 
 # ---- eligibility and restore (D10, D29)

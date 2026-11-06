@@ -573,6 +573,11 @@ def build_claude_argv(agent: AgentSpec, prompt: str) -> list[str]:
         if max_turns is not None:
             argv = argv + ["--max-turns", str(max_turns)]
 
+    # Thinking effort -> `--effort` (the claude CLI's own reasoning-depth flag). Opt-in; an explicit
+    # --effort in command_template/extra_args wins.
+    if agent.thinking_effort and "--effort" not in argv:
+        argv = argv + ["--effort", agent.thinking_effort]
+
     # Apply the agent's opt-in tool-disable list (default: none → allow all) and
     # the engine's non-overridable forced set, BEFORE the stream flags, so the
     # variadic --disallowedTools list is terminated by --output-format rather than
