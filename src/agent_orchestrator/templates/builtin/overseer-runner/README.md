@@ -58,7 +58,7 @@ All 17 are declared in `template.yaml`, which is the source of truth for current
 | `max_expanders_per_wave` | FR-15 opt-in sub-DAG expansion per wave; `0` (default) disables it |
 | `max_injected_tasks` | structural fan-out cap (the `runaway-fanout` breaker's threshold) |
 | `final_push` | whether the close-out tail includes a final git push |
-| `overseer_effort` | effort level the checkpoint task itself dispatches at |
+| `overseer_effort` | turn-budget tier (`--max-turns` cap: medium=30, high=60, xhigh=120) the checkpoint task dispatches at — *not* thinking effort; the parameter name is kept for compatibility and is emitted as the task's legacy `effort` key (a deprecated alias of `turn_budget`) |
 | `overseer_model` | optional per-checkpoint model override (see "The `overseer_model` rule" in the contract) |
 | `default_unit_model` | optional default model for wave work units; per-kind (`kind_map[kind].model`) and per-brief `model` win (OV-R9m, see `docs-md/model-selection.md`) |
 | `allowed_models` | optional comma-separated allowlist for unit models (empty = any well-formed id) |

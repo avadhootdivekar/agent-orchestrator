@@ -312,9 +312,19 @@ ao ui --port 9000 --workspace /path/to/repo --open
   or symlinks) are refused.
 - **Runs** — workspace-wide totals (runs, tasks, cost, tokens, wall time, actual execution
   time) and the same breakdown per run, with a per-task table and the captured CLI log.
-- **New run** — pick a workflow, type a prompt, optionally override model / effort /
-  parallelism / budget, and start it.  The prompt is written to the workflow's declared
-  `prompt_path`, exactly as `ao run --prompt` does.
+- **New run** — pick a workflow, type a prompt, optionally override model / **thinking effort** /
+  **turn budget** / **max turns** / **autocompact** / parallelism / attempts / quota / self-heal /
+  token budget, and start it.  The prompt is written to the workflow's declared `prompt_path`,
+  exactly as `ao run --prompt` does.  The form is generated from the run-options registry
+  (`GET /api/schema/run-options`), so every setting is also a CLI flag; **From template** launches
+  and the **Resume** panel use the same form (resume shows only options that can change on
+  resume). Details: [`docs-md/run-options-and-limits-guide.md`](docs-md/run-options-and-limits-guide.md).
+- **Limits & settings** — every run page has a panel listing each effective setting with the layer
+  it came from (`cli`/`env`/`config`/`workflow`/`default`) and each limit with consumption vs cap
+  (run cost, tokens, wall/active time, injected tasks, parallelism, timeouts, quota), for running
+  and completed runs; a resumed run also lists the settings of every earlier start/resume. Runs
+  from before this feature show "—". The task panel shows thinking effort, turn budget / max turns,
+  autocompact, timeout, cost vs cap and attempts per task.
 - **Run graph** — in a run's detail view, switch the Tasks section from **Table** to **Graph**
   for a pannable, zoomable canvas of every task, including dynamically injected ones. Toggle
   between **Execution order** (the dependency DAG, with each task's actual start order `#n`) and
@@ -325,7 +335,7 @@ ao ui --port 9000 --workspace /path/to/repo --open
   still render, with a banner explaining which data is missing. See
   [`docs-md/run-graph-canvas-hld.md`](docs-md/run-graph-canvas-hld.md).
 - **Live task activity** — a fixed three-row **Now running** box tops every run page (and a
-  compact one sits under each live run in the list): per running task the model, effort, turns,
+  compact one sits under each live run in the list): per running task the model, thinking effort, turn budget / max turns,
   live tokens (`~` = estimate, a lower bound until the task settles), cost of finished attempts,
   elapsed time, the last tool call, and an *idle* chip after 5 minutes without transcript output.
   More than three running tasks scroll inside the same box; it never grows or collapses. Polling

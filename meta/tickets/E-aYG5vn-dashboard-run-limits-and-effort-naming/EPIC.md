@@ -5,8 +5,8 @@
 - Title: Effective run/task limits visible everywhere; "effort" = thinking effort, "turn budget" = max-turn tier; first-class autocompact
 - Owner: avadhoot
 - Created: 2026-11-09
-- Last Updated: 2026-11-09 (Rev 2 — owner decisions recorded, autocompact added, tasks created)
-- Status: Ready for implementation (T-zP28k9, T-f0d7gm, T-xNFBww, T-pMpo4O Done; next: T-mQs7CQ). 6 tasks (4 Done, 1 Draft, 1 Blocked by owner gate).
+- Last Updated: 2026-11-09 (Rev 3 — T-mQs7CQ done, §5 checklist ticked)
+- Status: Implemented — 5 of 6 tasks Done (T-zP28k9, T-f0d7gm, T-pMpo4O, T-xNFBww, T-mQs7CQ); T-9ymKja Blocked by owner gate.
 - **Co-delivery:** `E-Sn7tL2-sentinel-long-running-overseer`. Implement in the **same run**: same components
   (run-settings plumbing in `cli.py`, `state.json` settings snapshot, `ui/processes.py` allow-list, NewRun /
   TemplateLaunch / RunDetail). Combined order: `../E-Sn7tL2-sentinel-long-running-overseer/HANDOFF.md`.
@@ -85,13 +85,13 @@ registry test fails if an option lacks either surface (unless explicitly marked 
 | 6 | `T-9ymKja-effort-means-thinking-flip` | FR-10 | T-f0d7gm + owner gate | — (Blocked) |
 
 ## 5. Final checklist (definition of done)
-- [ ] `pytest`, `ruff`, `mypy`, UI `npm test` + `npm run build` green; registry regression test proves every pre-existing option resolves identically.
-- [ ] `state.effective_settings` + per-task effective fields written on run and resume; old states render.
-- [ ] Dashboard: Limits & settings panel for a running and a completed run; task panel + NowRunning show thinking effort, turn budget/max turns (+ used), autocompact, timeout, cost vs cap, attempts.
-- [ ] New Run, Resume and Template Launch forms are schema-driven and include Thinking effort, Turn budget, Max turns, Autocompact, quota, self-heal (+ Sentinel group from E-Sn7tL2).
-- [ ] CLI: `--turn-budget`, `--thinking-effort`, `--autocompact` on run/resume/new --run; `--effort` deprecation warning; conflict error; `ao migrate effort-keys` dry-run/apply.
-- [ ] Autocompact: provider-neutral field, executor capability, claude mapping, extra_args precedence, unsupported-executor warning.
-- [ ] NFR-4 test: every registry option has CLI + dashboard surfaces.
-- [ ] Docs: CLI reference, dashboard guide, template READMEs (autocompact now a field), cost-hygiene HLD note, migration note.
-- [ ] Tickets + STATUS rollups consistent; E-Sn7tL2 cross-links intact.
-- [ ] T-9ymKja remains Blocked until owner gate; recorded in STATUS.md.
+- [x] `pytest`, `ruff`, `mypy`, UI `npm test` + `npm run build` green; registry regression test proves every pre-existing option resolves identically.
+- [x] `state.effective_settings` + per-task effective fields written on run and resume; old states render.
+- [x] Dashboard: Limits & settings panel for a running and a completed run; task panel + NowRunning show thinking effort, turn budget/max turns (+ used), autocompact, timeout, cost vs cap, attempts.
+- [x] New Run, Resume and Template Launch forms are schema-driven and include Thinking effort, Turn budget, Max turns, Autocompact, quota, self-heal (+ Sentinel group from E-Sn7tL2).
+- [x] CLI: `--turn-budget`, `--thinking-effort`, `--autocompact` on run/resume/new --run; `--effort` deprecation warning; conflict error; `ao migrate effort-keys` dry-run/apply.
+- [x] Autocompact: provider-neutral field, executor capability, claude mapping, extra_args precedence, unsupported-executor warning.
+- [x] NFR-4 test: every registry option has CLI + dashboard surfaces.
+- [x] Docs: CLI reference, dashboard guide, template READMEs (autocompact now a field), cost-hygiene HLD note, migration note.
+- [x] Tickets + STATUS rollups consistent; E-Sn7tL2 cross-links intact.
+- [x] T-9ymKja remains Blocked until owner gate; recorded in STATUS.md.

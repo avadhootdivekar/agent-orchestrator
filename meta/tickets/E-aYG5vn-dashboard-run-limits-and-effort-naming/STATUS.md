@@ -2,7 +2,7 @@
 
 - ID: `E-aYG5vn-dashboard-run-limits-and-effort-naming`
 - Updated At: `2026-11-09`
-- State: `Draft` (ready for implementation)
+- State: `Implemented` (all tasks Done except T-9ymKja, Blocked by owner gate)
 - Owner: `avadhoot`
 
 ## This update
@@ -17,16 +17,19 @@
 | T-f0d7gm-turn-budget-rename-and-autocompact | Done |
 | T-pMpo4O-schema-driven-launch-forms | Done |
 | T-xNFBww-dashboard-limits-panels | Done |
-| T-mQs7CQ-dashboard-epic-e2e-and-docs | Draft |
+| T-mQs7CQ-dashboard-epic-e2e-and-docs | Done |
 | T-9ymKja-effort-means-thinking-flip | Blocked (owner gate: all workspaces migrated + one deprecation release) |
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: T-pMpo4O Done (schema-driven launch forms).
 
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: T-mQs7CQ Done (e2e + docs + migration note). EPIC §5 checklist ticked. T-9ymKja remains Blocked until the owner gate (all workspaces migrated + one deprecation release) — not executed.
+
 ## Evidence
 - EPIC §1 code findings.
+- E2E: `tests/ui/test_e2e_run_options_dashboard.py`; guide: `docs-md/run-options-and-limits-guide.md`.
 
 ## Risks / Blockers
 - T-zP28k9 refactors central CLI wiring; must be behaviour-identical (registry regression test).
 
 ## Next actions
-1. Start T-zP28k9 (in parallel with E-Sn7tL2 T-Sn0Spk).
+1. Owner gate for T-9ymKja: confirm all workspaces ran `ao migrate effort-keys --apply` and one deprecation release shipped.

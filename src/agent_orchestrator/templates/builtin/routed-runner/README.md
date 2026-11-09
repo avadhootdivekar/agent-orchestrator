@@ -196,7 +196,7 @@ ids/paths/JSON shapes to emit — a malformed manifest (dangling `depends_on`, r
 aggregator) crashes or hangs the run, so the contract is authoritative over the general
 instruction where they'd ever disagree.
 
-Each emitted entry may also set `effort` (`low`/`medium`/`high`/`xhigh`) and `model`,
+Each emitted entry may also set `turn_budget` (`low`/`medium`/`high`/`xhigh`; the legacy key `effort` is still accepted as a deprecated alias of the turn budget and logs a warning — it is **not** thinking effort until the gated T-9ymKja flip) and `model`,
 which win over the dispatched agent's own values for that one task (ADR-0003 decision 2).
 The contract defaults `impl`/`test` passes to `"effort": "medium"` — a task sized to
 finish in roughly 10 minutes — and leaves the breakdown agent free to mark a genuinely

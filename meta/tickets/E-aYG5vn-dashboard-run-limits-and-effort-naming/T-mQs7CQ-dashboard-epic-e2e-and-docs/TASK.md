@@ -6,7 +6,7 @@
 - Owner: `unassigned`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `< 3 days`
 - Phase: close
 - Agent: tester + developer
@@ -21,9 +21,9 @@ history. Docs: dashboard guide, CLI reference, template READMEs, migration note 
 and STATUS rollups synced.
 
 ## Acceptance Criteria
-1. E2E green (API + CliRunner level).
-2. Docs updated.
-3. Epic STATUS reflects completion.
+1. [x] E2E green (API + CliRunner level) — `tests/ui/test_e2e_run_options_dashboard.py`.
+2. [x] Docs updated — README, `docs-md/run-options-and-limits-guide.md` (incl. effort→turn_budget migration note), template READMEs.
+3. [x] Epic STATUS reflects completion (all but gated T-9ymKja).
 
 ## Risks
 - None notable.
