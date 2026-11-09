@@ -6,7 +6,7 @@
 - Owner: `unassigned`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Partial` (docs done; default flip + final sync pending T-SnXAcc evidence)
 - Estimate: `< 3 days`
 - Phase: each phase close
 - Agent: developer / architect

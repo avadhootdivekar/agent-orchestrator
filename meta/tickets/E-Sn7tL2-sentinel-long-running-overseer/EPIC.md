@@ -385,8 +385,8 @@ rule), not assumed.
 ## 11. Final checklist (definition of done — every box ticked with evidence before closing)
 
 **Gates**
-- [ ] P0 spike result recorded (go / go-with-changes / no-go) in STATUS.md.
-- [ ] ADR-0024 + `docs-md/sentinel-hld.md` approved by owner (STATUS.md entry).
+- [x] P0 spike result recorded (go / go-with-changes / no-go) in STATUS.md. — STATUS.md: GO-WITH-CHANGES (T-Sn0Spk).
+- [x] ADR-0024 + `docs-md/sentinel-hld.md` approved by owner (STATUS.md entry). — STATUS.md owner sign-off 2026-11-09.
 - [ ] Full `pytest -q`, `ruff check .`, `ruff format --check .`, `mypy .` green; UI `npm test` + `npm run build` green.
 - [ ] NFR-1 golden test: no `sentinel:` / disabled ⇒ byte-identical workflow.json/state.json/run log for existing workflows.
 
@@ -395,7 +395,7 @@ rule), not assumed.
 - [ ] Stalled task → kill → retry → escalate → fail; systemic alarm stops kills.
 - [ ] `ao ctl` set / pause-llm / resume-llm / note / kill / release / cancel round-trip, incl. live `max_parallel`.
 - [ ] Dashboard control API: auth + CSRF enforced; actions audited with actor.
-- [ ] Heavy-tail fixture: idle-slot-seconds-with-work-available reduced ≥50% vs disabled (NFR-13).
+- [x] Heavy-tail fixture: idle-slot-seconds-with-work-available reduced ≥50% vs disabled (NFR-13). — `tests/test_sentinel_backlog.py::test_heavy_tail_*`: 3.5 s -> 0.01 s (>99%), HLD §6.9.
 - [ ] Backlog release + expiry; early checkpoint with carry-over, never re-schedules stragglers.
 - [ ] Pending-edit accept/reject matrix (all FR-12 rules) + stage gating (FR-11).
 - [ ] Soft-barrier emitter with tasks in flight (or documented fallback).
@@ -407,12 +407,17 @@ rule), not assumed.
 
 **Evidence & docs**
 - [ ] FR-23 live smoke under `output/E-Sn7tL2-sentinel-long-running-overseer/smoke/`: utilisation vs §1 baseline, cost split, combined overhead.
-- [ ] HLD "Deviations" reconciled; template READMEs, dynamic-injection guide, CLI reference, `.ao/config.yaml` sample updated.
+- [x] HLD "Deviations" reconciled; template READMEs, dynamic-injection guide, CLI reference, `.ao/config.yaml` sample updated. — HLD §21, `docs-md/guide-sentinel.md`, both template READMEs, injection guide, README, `.ao/config.yaml` sample (T-SnXDoc 2026-11-09).
 - [ ] Mechanical-sentinel default flipped on in both builtin templates (after evidence).
 - [ ] Settings visible in all surfaces: `ao validate`, `ao run/resume/new --run` flags, `ao ctl status`, New Run / Resume / Template Launch forms, run page (via E-aYG5vn limits panel).
 - [ ] All task TASK.md/STATUS.md + this EPIC/STATUS rollup consistent; learnings added only where new.
 - [ ] Co-delivered epic `E-aYG5vn` checklist complete (shared foundation).
 - [ ] PR from the branch to `main` opened; no `install.sh` / `ao.service` restart from runs (owner promotes).
+
+**Unticked at T-SnXDoc (2026-11-09), with reasons:** full gates / NFR-1 golden / E2E scenarios — owned by T-SnXAcc, whose
+`tests/test_sentinel_e2e_matrix.py` is in progress and its golden test was failing on the shared tree during the doc run; FR-23 live smoke and
+the **default flip** — no evidence exists, so the flip was deliberately not made; settings-surfaces item — `ao config show` was never built
+(HLD §21) and run-page limits panel is unverified; ticket-consistency / co-delivered epic / PR items — open until T-SnXAcc closes.
 
 ## 12. Links
 - Design doc: `docs-md/sentinel-hld.md` + `docs-md/adr/ADR-0024-sentinel-overseer-lane.md` (written by `T-Sn1Adr`, Proposed — awaiting owner sign-off; HLD supersedes §4 where they differ).

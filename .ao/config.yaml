@@ -19,3 +19,19 @@ agents:   ../specs/self-dev/agents.json
 
 # env:
 #   ANTHROPIC_API_KEY: ...   # if not already in your shell environment
+
+# Sentinel (opt-in run-long overseer lane; see docs-md/guide-sentinel.md). Off unless enabled here, by --sentinel,
+# AO_SENTINEL_ENABLED, a workflow `sentinel:` block or a template param. Same keys in all of them.
+# sentinel:
+#   enabled: true
+#   max_parallel_ceiling: 8        # upper bound for `ao ctl set max_parallel=N`
+#   recovery:
+#     idle_kill_minutes: 15        # floor 12 unless recovery.force
+#     max_recovery_kills_per_task: 2
+#   bandwidth:
+#     backlog_release: true
+#     early_checkpoint: true
+#   llm:                           # LLM lane stays opt-in
+#     enabled: false
+#     powers: advise               # advise | act
+#     budget_usd: 5

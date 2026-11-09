@@ -383,6 +383,20 @@ status or cost.
 
 ---
 
+## Soft barrier and sentinel-origin injection (opt-in)
+
+With the sentinel (`docs-md/guide-sentinel.md`) an emitter may be `barrier: "soft"` (default is hard). A soft emitter settles only after
+all its predecessors have, so nothing in flight is its predecessor and injecting does not need a drained pool; in-flight tasks are
+untouched. Its manifest is validated by the shared checker (`graph_check.py`, `GE-*` rule ids: duplicate id/producer, cycle, edge into
+a non-pending task, stage rules, `GE-LIMIT`); a rejection fails the emitter exactly like an `InjectionError`. Routers, loop gates and
+integration barriers stay hard. Hard emitters behave as before, byte for byte.
+
+The sentinel itself can also inject (`inbox` kinds `inject`, `edit_pending`; backlog release; the LLM planner). Those tasks carry
+`origin: "sentinel"` (`SPAWN_ORIGIN_SENTINEL`); their `SpawnRecord.parent_task_id` is `sentinel-gNN` (LLM) or `ctl:<actor>`, with
+`parent_dispatch_cycle` 0. They are excluded from the `injected_task_count` breaker and the tool's FANOUT count, and have their own cap
+(`sentinel.max_injected_tasks`, breaker condition `sentinel_injected_task_count`). Edits are persisted in `RunState.graph_edits` and replayed
+on resume. The UI graph shows sentinel-origin nodes with a shield badge and dashed border.
+
 ## Gotchas
 
 - **Injected tasks skip the strict schema/reference checks static tasks get.** `workflow.json`'s

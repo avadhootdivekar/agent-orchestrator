@@ -249,6 +249,23 @@ Known limit: carry-over units are not predecessors of the next checkpoint, so a 
 be running when a tail starts. Intake cannot see a digest: its `ck-01` must be `barrier: soft` on a
 sentinel run, which `intake-check` enforces (it reads the run state) — fix and re-run on `OV-R10`.
 
+## Sentinel params (opt-in; default OFF)
+
+Operator guide: `docs-md/guide-sentinel.md`. All params are optional; unset/`false` leaves `workflow.json` byte-identical to a
+sentinel-less run.
+
+| Param | Effect | Recommended |
+|---|---|---|
+| `sentinel_enabled` (`true`/`false`) | renders a `sentinel:` block: mechanical lane (tick, liveness kill/retry/escalate ladder, utilisation metrics, `ao ctl`, dashboard panel, backlog release and early checkpoints with carry-over, directive acknowledgement at checkpoints) | `true` for runs longer than ~1 h |
+| `sentinel_llm` (`true`) | also enable the LLM lane (rotating generations, bounded spend) | keep off unless you want judgement support |
+| `sentinel_powers` (`advise`\|`act`) | `advise` = notes/directives/hold/cancel; `act` adds inject/edit_pending/kill | `advise` first |
+| `sentinel_budget_pct` (0-100] | LLM spend cap as % of the lowest `run_cost_usd` breaker | 10 (engine default) |
+
+Other knobs (`idle_kill_minutes` 15, `tick_seconds` 15, ceilings, escalation) come from `--sentinel-set`, env `AO_SENTINEL_*` or
+`.ao/config.yaml`. **Default enablement:** the owner decision is to make the mechanical lane default-on in this template after the
+FR-23 live smoke; that smoke has not been run, so the flip has *not* been made — pass `--param sentinel_enabled=true` explicitly.
+Live control: `ao ctl status|set|kill|release|note|pause-llm|resume-llm|cancel <run>`.
+
 ## Completion marker
 
 `outputs/final/closeout.md` is what actually marks a run as done — it is written by the tail's

@@ -1419,3 +1419,12 @@ By: Claude
 Role: manager
 Date: 2026-10-24
 ---
+
+---
+Learning-ID: LRN-20261109-sentinel-doc-reconcile
+Learning: When a design doc names surfaces (`ao config show`, `/api/schema/sentinel`) before the tasks land, grep the CLI `--help` and routes at doc-close — two named surfaces never shipped, and a stale `--help` string ("not_enabled_yet until T-… lands") outlived its task.
+Context: E-Sn7tL2 T-SnXDoc reconciliation; deviations table in docs-md/sentinel-hld.md §21. Also: do not flip a default "after evidence" until the evidence file exists — record the deferral instead.
+By: claude-sonnet-5-5
+Role: developer
+Date: 2026-11-09
+---

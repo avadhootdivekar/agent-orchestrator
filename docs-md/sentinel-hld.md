@@ -1,6 +1,6 @@
 # Sentinel — High-Level Design
 
-- Status: **Proposed — awaiting owner sign-off** (with ADR-0024). Author: architect, 2026-11-09.
+- Status: **Accepted** (owner sign-off 2026-11-09; with ADR-0024); P1–P3 implemented, as-built sections and §21 reconcile it. Author: architect, 2026-11-09. Operator guide: `docs-md/guide-sentinel.md`.
 - Epic: `meta/tickets/E-Sn7tL2-sentinel-long-running-overseer/` · ADR: `docs-md/adr/ADR-0024-sentinel-overseer-lane.md`
 - Evidence: `output/E-Sn7tL2-sentinel-long-running-overseer/spike/RESULT.md` (T-Sn0Spk, GO-WITH-CHANGES)
 - Seed: EPIC §4 (this HLD supersedes it where they differ; differences are the spike changes in §3.1).
@@ -483,12 +483,12 @@ model (`run_options.sentinel_options`, names `sentinel.<dotted>`, env `AO_SENTIN
 `recovery.escalate` are config/workflow/`--sentinel-set` only), sources `workflow|cli|env|config|default` in
 `state.effective_settings`, `recovery.force` (floor escape), template params rendered via the `raw.sentinel_member`
 fragment (absent => byte-identical workflow.json). Bad CLI/env value => exit 2. The engine stores the resolved settings
-only; consumption lands in T-Sn3Tck+. Not yet: `ao config show`, dashboard forms (T-Sn5Ui1).
+only; consumption landed in T-Sn3Tck+. Dashboard forms landed in T-Sn5Ui1 (§12.2). There is no `ao config show` command (see §21).
 `ao run`/`resume`/`new --run` share `_resolve_sentinel_settings`; flags `--sentinel/--no-sentinel`,
 `--sentinel-llm/--no-sentinel-llm`, `--sentinel-powers`, `--sentinel-budget-usd`, `--max-parallel-ceiling`,
-`--sentinel-set key=value`; template params; `ao validate`; `ao config show`; dashboard forms from
-`GET /api/schema/sentinel` (or the registry schema endpoint). Default enablement: off until FR-23 evidence, then
-mechanical on in both builtin templates (T-SnXDoc), LLM opt-in.
+`--sentinel-set key=value`; template params; `ao validate`; dashboard forms from the registry endpoint
+`GET /api/schema/run-options` (no separate `/api/schema/sentinel`). Default enablement: **off** — the flip to mechanical-on in
+both builtin templates (LLM stays opt-in) is deferred until FR-23 live-smoke evidence exists (T-SnXAcc); see §21.
 
 ## 12. CLI `ao ctl` and dashboard control API
 
@@ -572,7 +572,7 @@ Thin routes over the same `control.py` as `ao ctl` (`DashboardService.sentinel_s
   the argv allow-list follows from the registry (no hand-written fields). Tuning knobs stay on config/env/workflow.
 - Fixed on the way: `ao ctl kill --no-retry` sent `payload.retry` while the engine reads `payload.no_retry` (flag was
   silently ignored); the CLI now sends `no_retry`.
-- Panel v2 (generations list, quarantined proposals, backlog) remains T-Sn9Pow / T-Sn7Bkl.
+- Panel v2 (generations, proposals, directives) landed in T-Sn9Pow (§8.7); the backlog is exposed in `ao ctl status` (`backlog.held`) and `released/expired/rejected` in `state.sentinel`.
 
 ## 13. Observability (FR-21, NFR-9, NFR-6)
 Run-log: `sentinel.*`, `ctl.*`. Ledger (overseer workflows): `sentinel_trigger`, `sentinel_applied`,
@@ -624,7 +624,7 @@ tasks, HANDOFF §3).
 
 ## 20. Ownership / handoffs
 Tasks per EPIC §8: Sn2Set settings → Sn3Tck tick/inbox → {Sn3Ctl, Sn4Rec, Sn8Gen} → Sn5Ui1/Sn6Brr → Sn7Bkl/Sn9Pow →
-SnXAcc/SnXDoc. SnXDoc reconciles this HLD ("Deviations") with the implementation.
+SnXAcc/SnXDoc. SnXDoc reconciled this HLD with the implementation (§21).
 
 ---
 
@@ -778,3 +778,21 @@ Sibling top-level `RunState.graph_edits` (not inside `sentinel`, so non-sentinel
 ```
 Per-task addition: `state.tasks[tid].recovery{kills:int, last_reason:str, escalation_step:int}`; per-task
 `activity{last_activity_at, running_seconds}` (liveness).
+
+## 21. As-built reconciliation (T-SnXDoc, 2026-11-09)
+
+Where this design text and the code differ, the as-built sections (§5.4.1, §6.8, §6.9, §8.6, §8.7, §12.1, §12.2) win. Deviations:
+
+| Design text | As built |
+|---|---|
+| Checker rule ids `CK-*` (§7.2) | `GE-*` (`graph_check.py`); charter-only rules stay in the overseer tool |
+| `ao config show`, `GET /api/schema/sentinel` (§11.3) | Neither exists. Settings are visible via `ao ctl status`, `state.effective_settings` and the run-options registry schema (`GET /api/schema/run-options`) |
+| Panel "idle timeline" (§12) | Stacked bar from cumulative slot-seconds; the state keeps no time series |
+| `release` / `kill` answered `not_enabled_yet` until later tasks | Both enabled (T-Sn7Bkl / T-Sn4Rec). The `ao ctl --help` text for `kill`/`release` still says "not_enabled_yet until … lands" — stale help string (code, tracked as a follow-up) |
+| `backlog{held}` "placeholder" (§12.1) | Populated by T-Sn7Bkl |
+| Triggers `new_signal`, `stage_change` (§8) | Not implemented; `stuck_task`, `unit_failed`, `human_note`, `heartbeat`, `idle_slots_no_backlog` are |
+| Sentinel-origin graph styling incl. edited edges (FR-14) | Node badge/border and spawn-edge style done; styling of *edited* edges is not (graph API does not expose `graph_edits`) |
+| Cost kill (FR-5) | Sees settled earlier-attempt cost only; live attempt spend is known at exit |
+| Generation `max_tokens` stop | Effective only for drivers that report progress; CLI driver is bounded by TTL and `--max-budget-usd` |
+| Default enablement (§10.1) | Not flipped: no FR-23 live smoke has run. Templates keep `sentinel_enabled` opt-in |
+| Live-LLM behaviour | Verified with a fake `claude` executable and scripted drivers only |

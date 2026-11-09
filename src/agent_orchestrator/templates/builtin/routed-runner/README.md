@@ -56,6 +56,24 @@ both are part of this template's contract per `breakdown-contract.md`/`template.
 - `task_budget_usd` (optional, default `75`) — per-task real-spend USD cap.
 - `run_budget_usd` (optional, default `1500`) — per-run real-spend USD cap.
 
+## Sentinel params (opt-in; default OFF)
+
+Operator guide: `docs-md/guide-sentinel.md`. All params are optional; unset/`false` leaves `workflow.json` byte-identical to a
+sentinel-less run.
+
+| Param | Effect | Recommended |
+|---|---|---|
+| `sentinel_enabled` (`true`/`false`) | renders a `sentinel:` block: mechanical lane (tick, liveness kill/retry/escalate ladder, utilisation metrics, `ao ctl`, dashboard panel) | `true` for runs longer than ~1 h |
+| `sentinel_llm` (`true`) | also enable the LLM lane (rotating generations, bounded spend) | keep off unless you want judgement support |
+| `sentinel_powers` (`advise`\|`act`) | `advise` = notes/directives/hold/cancel; `act` adds inject/edit_pending/kill | `advise` first |
+| `sentinel_budget_pct` (0-100] | LLM spend cap as % of the lowest `run_cost_usd` breaker | 10 (engine default) |
+| `sentinel_planner` (`true`) | LLM planner: when slots idle with nothing ready, a generation may inject follow-up units (origin `sentinel`); needs `sentinel_llm=true` and `sentinel_powers=act` | off |
+
+Other knobs (`idle_kill_minutes` 15, `tick_seconds` 15, ceilings, escalation) come from `--sentinel-set`, env `AO_SENTINEL_*` or
+`.ao/config.yaml`. **Default enablement:** the owner decision is to make the mechanical lane default-on in this template after the
+FR-23 live smoke; that smoke has not been run, so the flip has *not* been made — pass `--param sentinel_enabled=true` explicitly.
+Live control: `ao ctl status|set|kill|release|note|pause-llm|resume-llm|cancel <run>`.
+
 ## Limits & breaker rationale
 
 Generous by policy — the run should stop on real problems, not on tight defaults.

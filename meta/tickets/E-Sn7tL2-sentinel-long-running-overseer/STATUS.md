@@ -49,7 +49,7 @@
 | T-Sn8Gen-llm-generations-pack-handoff | P3 | Done |
 | T-Sn9Pow-llm-powers-directives-routed | P3 | Done (edited-edge styling deferred) |
 | T-SnXAcc-e2e-and-live-smoke | P3 close | Draft |
-| T-SnXDoc-docs-readme-learnings | each phase | Draft |
+| T-SnXDoc-docs-readme-learnings | each phase | Partial (docs done; default flip pending evidence) |
 
 ## Evidence
 - Utilisation baseline (EPIC §1): 7–41% slot utilisation at P=6 over the last 10 overseer-runner runs; 50–80% of
@@ -66,3 +66,5 @@
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn6Brr done** — soft barrier, shared checker, `inject`/`edit_pending`, persisted graph edits (HLD §6.8). Graph-UI styling (AC5) deferred.
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn9Pow done (see its STATUS for evidence and the honest gaps)** — LLM powers gate, directives + OV-R12b, routed-runner planner, panel v2, sentinel graph styling (HLD §8.7).
+
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-SnXDoc partial** — docs/READMEs/guide/HLD §21 reconciled; EPIC §11 ticked only for spike, ADR sign-off, NFR-13 fixture, docs; default flip deferred (no FR-23 evidence).
