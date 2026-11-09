@@ -181,6 +181,30 @@ Barrier/emitter tasks: alarm-only unless `recovery.include_barriers`. Systemic a
 tasks (default 3) ⇒ stop mechanical kills, pause LLM, raise directive (env/quota problem). `idle_kill_minutes`
 validated ≥ 12 unless `force`. LLM never selects the retry shape; it may `inject` a replacement through the checker.
 
+### 5.4.1 As built (T-Sn4Rec, 2026-11-09)
+- **Executor**: `TaskContext.cancel_event` is a `models.CancelToken` (a `threading.Event` + `reason/source/no_retry/
+  grace_seconds`) and `activity_path` is the attempt's `transcript.jsonl`; both are `None` unless the sentinel is on.
+  `ClaudeCliExecutor` starts the child with `start_new_session=True` only when a token is wired, waits in 0.2 s slices,
+  and on cancel/timeout does `killpg(SIGTERM)` → grace → `killpg(SIGKILL)` (the group is always SIGKILLed so grandchildren
+  never orphan) and returns `status="killed"` + `kill_reason/kill_source`. Other executors (fake, custom) ignore the
+  token: best-effort, they simply run to completion and no kill is recorded.
+- **Worker/settle**: `_run_with_retries` returns a killed result immediately (no `max_attempts` consumed, no post-hook);
+  `_settle_killed` advances the ladder, accumulates the dispatch's actuals, reverses the budget estimate, then requeues
+  with `ts.status="killed"` (the scheduler treats `killed` as ready) or rewrites the result to `failed`.
+- **Ladder**: kill 1 → retry (retry-context note `prior-attempts.md` "previous dispatch was killed…"); kill k≥2 →
+  `escalate[min(k-2, len-1)]` applied as agent-field overrides (`effort` = legacy alias of `turn_budget`); kill >
+  `max_recovery_kills_per_task` or `--no-retry` → normal failure. `recovery{kills,last_reason,last_source,
+  escalation_step,overrides,no_retry}` is carried across `prepare_resume`; the consumed-id ring prevents a replayed
+  `kill` entry re-firing.
+- **Triggers** (`sentinel_tick`): idle = no growth of `activity_path` for `idle_kill_minutes` (clock = engine clock;
+  first sample of a dispatch starts the idle clock); stuck-factor = running > factor × median of ≥3 settled same-agent
+  tasks and ≥ `stuck_min_minutes`; cost = already-settled cost of earlier attempts ≥ `cost_kill_pct` × task cap (the live
+  attempt's spend is only known when it ends — a known limit). Barrier tasks: alarm once (`sentinel.alarm`), no kill.
+- **Systemic alarm**: `systemic_kill_alarm` kills (any source) within 3600 s → `sentinel.systemic_alarm=True`, LLM paused,
+  `sentinel.alarm` log line + `control/sentinel-alarms.jsonl`; mechanical kills stop, manual kills still work.
+- **Inbox**: `kill` enabled (`payload.task_id` must be a running task with an un-fired token, else `CTL-PAYLOAD`;
+  `payload.no_retry`, reason from rationale/`payload.reason`).
+
 ### 5.5 Metrics (FR-20)
 `state.metrics{slot_seconds_busy, slot_seconds_idle_with_ready, slot_seconds_idle_no_ready, utilisation_pct}`
 accrued per tick by Δt × counts (using the injectable clock). Surfaced in `ao status`, summary, dashboard. KPI.

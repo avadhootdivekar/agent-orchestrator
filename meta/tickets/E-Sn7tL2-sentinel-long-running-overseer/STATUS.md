@@ -40,7 +40,7 @@
 | T-Sn2Set-sentinel-settings-plumbing | P1 | Done |
 | T-Sn3Tck-main-loop-tick-inbox-overrides | P1 | Done |
 | T-Sn3Ctl-ao-ctl-cli | P1 | Done |
-| T-Sn4Rec-liveness-kill-recovery-ladder | P1 | Draft |
+| T-Sn4Rec-liveness-kill-recovery-ladder | P1 | Done (gates: see its STATUS) |
 | T-Sn5Ui1-sentinel-panel-and-control-api | P1 | Draft |
 | T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Draft |
 | T-Sn7Bkl-backlog-and-early-checkpoint | P2 | Draft |
