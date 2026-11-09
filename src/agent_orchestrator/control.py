@@ -22,13 +22,16 @@ from pathlib import Path
 from typing import Any, Final
 
 from . import sentinel_tick
-from .models import RunState, sentinel_generation_spend_usd
+from .models import RunState, SentinelState, sentinel_generation_spend_usd
 from .run_options import OPTIONS_BY_NAME, Option
 
 STATUS_SCHEMA: Final = "ao.ctl.status/v1"
 """``schema`` of ``ao ctl status --json`` (documented in ``docs-md/sentinel-hld.md`` §12.1)."""
 
 ACTOR_PREFIX: Final = "cli:"
+DASHBOARD_ACTOR_PREFIX: Final = "dashboard:"
+DASHBOARD_ACTOR_ANON: Final = "local"
+"""Actor suffix when the dashboard runs without auth (no principal to attribute)."""
 RUNS_SUBPATH: Final = (".orchestrator", "runs")
 STATE_FILE: Final = "state.json"
 DEFAULT_WAIT_SECONDS: Final = 60.0
@@ -46,6 +49,15 @@ KIND_BY_COMMAND: Final = {
     "release": "release_backlog",
     "cancel": "request_cancel",
 }
+
+# Kinds the operator surfaces (CLI + dashboard) may submit -- a subset of the engine's
+# ``KINDS_ALL``: ``inject`` / ``edit_pending`` / ``directive`` are LLM-lane proposals and
+# ``request_hold`` is engine-internal. ``cancel`` stays a CLI-only alias of ``request_cancel``.
+CONTROL_KINDS: Final = frozenset(KIND_BY_COMMAND.values())
+KILL_REASON_MAX: Final = 200
+RELEASE_IDS_MAX: Final = 200
+ENTRY_ID_RE: Final = re.compile(r"^[a-z0-9][a-z0-9-]{4,95}$")
+"""Shape of ids minted by :func:`new_entry_id` (also keeps a path segment from escaping)."""
 
 _ID_SAFE = re.compile(r"[^a-z0-9]+")
 
@@ -106,6 +118,12 @@ def default_actor() -> str:
     except Exception:  # noqa: BLE001 -- no passwd entry / odd container: never block a control action
         user = os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
     return f"{ACTOR_PREFIX}{user}"
+
+
+def dashboard_actor(username: str | None) -> str:
+    """``dashboard:<principal>`` (``dashboard:local`` when auth is off): the entry audit trail."""
+    name = (username or "").strip()
+    return f"{DASHBOARD_ACTOR_PREFIX}{name or DASHBOARD_ACTOR_ANON}"
 
 
 def new_entry_id(
@@ -232,6 +250,73 @@ def run_ceiling(state: RunState) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _scalar_text(value: Any) -> str:
+    """A JSON scalar as the ``k=v`` text :func:`parse_set_items` expects (bools lower-cased)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float | str):
+        return str(value)
+    raise ControlError(f"unsupported value {value!r}: expected a number, string or boolean")
+
+
+def validate_request(
+    kind: str,
+    payload: Mapping[str, Any] | None,
+    rationale: str | None,
+    state: RunState,
+) -> tuple[dict[str, Any], str | None]:
+    """Validate one operator control request against *state* and return the clean
+    ``(payload, rationale)`` to put into the entry.
+
+    The dashboard API's counterpart of :func:`parse_set_items` (same ceiling / typing rules; the
+    engine still re-validates, the inbox is not trusted). Raises :class:`ControlError`.
+    """
+    if kind not in CONTROL_KINDS:
+        raise ControlError(
+            f"unsupported control kind {kind!r}; allowed: {', '.join(sorted(CONTROL_KINDS))}"
+        )
+    data = dict(payload or {})
+    why = (rationale or "").strip() or None
+    out: dict[str, Any]
+    if kind == "set":
+        values = data.get("values")
+        if not isinstance(values, Mapping) or not values:
+            raise ControlError("set requires payload.values (a non-empty object)")
+        items = [f"{k}={_scalar_text(v)}" for k, v in values.items()]
+        out = {"values": parse_set_items(items, ceiling=run_ceiling(state))}
+    elif kind == "kill":
+        task_id = data.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            raise ControlError("kill requires payload.task_id")
+        task = state.tasks.get(task_id)
+        if task is None or task.status != "running":
+            raise ControlError(f"task {task_id!r} is not running")
+        if why is None:
+            raise ControlError("kill requires a reason")
+        no_retry = data.get("no_retry", False)
+        if not isinstance(no_retry, bool):
+            raise ControlError("kill payload.no_retry must be a boolean")
+        out = {"task_id": task_id, "no_retry": no_retry}
+    elif kind == "note":
+        text = data.get("text")
+        text = text.strip() if isinstance(text, str) else ""
+        if not text or len(text) > sentinel_tick.NOTE_TEXT_MAX:
+            raise ControlError(f"note text must be 1..{sentinel_tick.NOTE_TEXT_MAX} chars")
+        out = {"text": text}
+    elif kind == "release_backlog":
+        ids = data.get("ids", [])
+        if not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
+            raise ControlError("release_backlog payload.ids must be a list of ids")
+        if len(ids) > RELEASE_IDS_MAX:
+            raise ControlError(f"release_backlog accepts at most {RELEASE_IDS_MAX} ids")
+        out = {"ids": ids}
+    else:  # pause_llm / resume_llm / request_cancel carry no payload
+        out = {}
+    if why is not None and len(why) > KILL_REASON_MAX:
+        raise ControlError(f"reason must be at most {KILL_REASON_MAX} characters")
+    return out, why
+
+
 # -- waiting for the engine's verdict ----------------------------------------------------------
 
 
@@ -274,6 +359,18 @@ def wait_outcome(
         sleep(poll)
 
 
+def entry_outcome(run_dir: Path, entry_id: str) -> dict[str, Any]:
+    """Non-blocking verdict of one entry: ``consumed`` / ``rejected`` (+ rule) / ``pending``.
+
+    Unlike :func:`wait_outcome` a missing verdict is ``pending`` (the dashboard polls); the id is
+    shape-checked because it reaches a filesystem path from an HTTP segment.
+    """
+    if not ENTRY_ID_RE.fullmatch(entry_id):
+        raise ControlError(f"invalid control entry id {entry_id!r}")
+    result = wait_outcome(run_dir, entry_id, timeout=0.0, poll=0.0)
+    return {"outcome": "pending"} if result["outcome"] == "timeout" else result
+
+
 # -- status snapshot ---------------------------------------------------------------------------
 
 
@@ -284,12 +381,51 @@ def _pending_inbox(run_dir: Path) -> list[str]:
     return sorted(p.stem for p in inbox.iterdir() if p.suffix == ".json" and p.is_file())
 
 
-def build_status(state: RunState, run_dir: Path) -> dict[str, Any]:
+def _age_seconds(iso: str | None, now: datetime) -> float | None:
+    if not iso:
+        return None
+    try:
+        when = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return round(max((now - when).total_seconds(), 0.0), 1)
+
+
+def _effective(state: RunState, key: str) -> Any:
+    eff = state.effective_settings.get(key)
+    return eff.value if eff is not None else None
+
+
+def _recent_actions(sent: SentinelState | None) -> list[dict[str, Any]]:
+    """Operator notes and recorded kills, oldest first, bounded to :data:`RECENT_ACTIONS_MAX`."""
+    if sent is None:
+        return []
+    rows = [
+        {"id": n.id, "kind": "note", "actor": n.actor, "at": n.at, "text": n.text}
+        for n in sent.notes[-RECENT_ACTIONS_MAX:]
+    ] + [
+        {
+            "id": f"kill-{k.task_id}-{k.at}",
+            "kind": "kill",
+            "actor": k.source,
+            "at": k.at,
+            "text": f"{k.task_id}: {k.reason}",
+        }
+        for k in sent.kill_log[-RECENT_ACTIONS_MAX:]
+    ]
+    rows.sort(key=lambda r: r["at"])
+    return rows[-RECENT_ACTIONS_MAX:]
+
+
+def build_status(state: RunState, run_dir: Path, now: datetime | None = None) -> dict[str, Any]:
     """The ``ao ctl status --json`` document (``ao.ctl.status/v1``, HLD §12.1).
 
-    Fields owned by later tasks (liveness age, ladder, backlog, LLM generations) are present
-    with an empty/null value now, so the schema is stable and consumers need no feature probes.
+    Fields owned by later tasks (backlog) are present with an empty value now, so the schema is
+    stable and consumers need no feature probes. *now* is injectable for deterministic ages.
     """
+    now = now or datetime.now(UTC)
     sent = state.sentinel
     metrics = state.metrics
     ceiling = run_ceiling(state)
@@ -314,6 +450,7 @@ def build_status(state: RunState, run_dir: Path) -> dict[str, Any]:
             "last_tick_at": sent.last_tick_at if sent else None,
             "llm_paused": bool(sent and sent.llm_paused),
             "hold_requested": bool(sent and sent.hold_requested),
+            "systemic_alarm": bool(sent and sent.systemic_alarm),
         },
         "concurrency": {
             "running": len(running),
@@ -334,9 +471,22 @@ def build_status(state: RunState, run_dir: Path) -> dict[str, Any]:
         },
         "tasks": {
             "counts": dict(sorted(counts.items())),
-            "running": [{"id": tid, "liveness_age_s": None} for tid in running],
+            "running": [
+                {"id": tid, "liveness_age_s": _age_seconds(state.tasks[tid].last_activity_at, now)}
+                for tid in running
+            ],
         },
-        "ladder": {},
+        "ladder": {
+            tid: {
+                "kills": rec.kills,
+                "last_reason": rec.last_reason,
+                "last_source": rec.last_source,
+                "escalation_step": rec.escalation_step,
+                "no_retry": rec.no_retry,
+            }
+            for tid, ts in sorted(state.tasks.items())
+            if (rec := ts.recovery) is not None and rec.kills > 0
+        },
         "backlog": {"held": []},
         "llm": {
             "generation": (sent.generation or None) if sent else None,
@@ -344,15 +494,16 @@ def build_status(state: RunState, run_dir: Path) -> dict[str, Any]:
             if sent and sent.generation
             else None,
             "paused": bool(sent and sent.llm_paused),
+            "pause_reason": sent.llm_pause_reason if sent else None,
+            "budget_exhausted": bool(sent and sent.llm_budget_exhausted),
+            "enabled": _effective(state, "sentinel.llm.enabled"),
+            "powers": _effective(state, "sentinel.llm.powers"),
         },
         "inbox": {
             "pending": _pending_inbox(run_dir),
             "consumed_count": len(sent.inbox_consumed) if sent else 0,
         },
-        "recent_actions": [
-            {"id": n.id, "kind": "note", "actor": n.actor, "at": n.at, "text": n.text}
-            for n in (sent.notes[-RECENT_ACTIONS_MAX:] if sent else [])
-        ],
+        "recent_actions": _recent_actions(sent),
     }
 
 

@@ -206,8 +206,16 @@ def test_allow_list_unchanged_and_registry_derived():
         "budget_total": "--budget-total",
         "quota_max_wait": "--quota-max-wait",
         "quota_poll_interval": "--quota-poll-interval",
+        # T-Sn5Ui1: the Sentinel group of the launch form
+        "sentinel.max_parallel_ceiling": "--max-parallel-ceiling",
+        "sentinel.llm.powers": "--sentinel-powers",
+        "sentinel.llm.budget_usd": "--sentinel-budget-usd",
     }
-    assert ALLOWED_BOOL_OPTIONS == {"self_heal": ("--self-heal", "--no-self-heal")}
+    assert ALLOWED_BOOL_OPTIONS == {
+        "self_heal": ("--self-heal", "--no-self-heal"),
+        "sentinel.enabled": ("--sentinel", "--no-sentinel"),
+        "sentinel.llm.enabled": ("--sentinel-llm", "--no-sentinel-llm"),
+    }
     assert ALLOWED_OPTIONS == run_options.allowed_options()
 
 
@@ -254,6 +262,37 @@ def test_ui_groups_are_known_and_carry_labels():
     assert all(o.ui_label for o in ui)
     tb = {o["name"]: o for o in run_options.options_schema()["options"]}["turn_budget"]
     assert tb["choice_labels"]["high"] == "high (60 turns)"
+
+
+def test_sentinel_options_exposed_to_dashboard_and_forwarded_as_argv():
+    """T-Sn5Ui1: the launch form's Sentinel group is generated from the registry -- only leaves with
+    a CLI flag are forwardable, and they render to exactly those flags."""
+    ui = {o.name: o for o in run_options.OPTIONS if o.ui and o.ui_group == "Sentinel"}
+    assert set(ui) == {
+        "sentinel.enabled",
+        "sentinel.max_parallel_ceiling",
+        "sentinel.llm.enabled",
+        "sentinel.llm.powers",
+        "sentinel.llm.budget_usd",
+    }
+    assert all(o.flag is not None for o in ui.values())
+    argv = _render_options(
+        {
+            "sentinel.enabled": True,
+            "sentinel.llm.enabled": False,
+            "sentinel.llm.powers": "advise",
+            "sentinel.max_parallel_ceiling": 6,
+            "sentinel.tick_seconds": 1,  # not dashboard-forwardable: dropped
+        }
+    )
+    assert argv == [
+        "--sentinel",
+        "--no-sentinel-llm",
+        "--sentinel-powers",
+        "advise",
+        "--max-parallel-ceiling",
+        "6",
+    ]
 
 
 # --- state snapshot ----------------------------------------------------------------------------

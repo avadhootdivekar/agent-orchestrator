@@ -213,7 +213,7 @@ def kill_command(
         workspace,
         run,
         "kill",
-        {"task_id": task, "retry": not no_retry},
+        {"task_id": task, "no_retry": no_retry},
         reason=reason,
         wait=wait,
         wait_timeout=wait_timeout,

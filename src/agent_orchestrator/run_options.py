@@ -269,12 +269,23 @@ SENTINEL_FLAGS: Final[Mapping[str, tuple[str, str | None]]] = {
 }
 
 
-# Sentinel leaves the dashboard may forward: dotted -> group / label. Deliberately EMPTY until
-# T-Sn5Ui1 (sentinel dashboard) decides what operators may set from the browser; the schema-driven
-# launch form (T-pMpo4O) then renders them with no UI change -- fill these in
-# (e.g. {"enabled": SENTINEL_GROUP}) and the argv allow-list follows.
-SENTINEL_UI_GROUPS: Final[Mapping[str, str]] = {}
-SENTINEL_UI_LABELS: Final[Mapping[str, str]] = {}
+# Sentinel leaves the dashboard may forward (T-Sn5Ui1): dotted -> group / label. Only leaves with a
+# dedicated CLI flag can be forwarded (argv allow-list); the schema-driven launch form (T-pMpo4O)
+# renders these with no hand-written fields. Tuning knobs stay on config / env / the workflow block.
+SENTINEL_UI_GROUPS: Final[Mapping[str, str]] = {
+    "enabled": SENTINEL_GROUP,
+    "max_parallel_ceiling": SENTINEL_GROUP,
+    "llm.enabled": SENTINEL_GROUP,
+    "llm.powers": SENTINEL_GROUP,
+    "llm.budget_usd": SENTINEL_GROUP,
+}
+SENTINEL_UI_LABELS: Final[Mapping[str, str]] = {
+    "enabled": "Sentinel (live control)",
+    "max_parallel_ceiling": "Max-parallel ceiling",
+    "llm.enabled": "Sentinel LLM lane",
+    "llm.powers": "LLM powers",
+    "llm.budget_usd": "LLM budget (USD)",
+}
 
 
 def _unwrap(ann: Any) -> Any:

@@ -147,7 +147,7 @@ def test_status_json_snapshot(tmp_path: Path) -> None:
         "updated_at": "<ISO>",
         "sentinel": {
             "enabled": True, "disabled_reason": None, "last_tick_at": None,
-            "llm_paused": False, "hold_requested": False,
+            "llm_paused": False, "hold_requested": False, "systemic_alarm": False,
         },
         "concurrency": {"running": 1, "limit": None, "ceiling": None, "overrides": {}},
         "utilisation": {
@@ -160,7 +160,10 @@ def test_status_json_snapshot(tmp_path: Path) -> None:
         },
         "ladder": {},
         "backlog": {"held": []},
-        "llm": {"generation": None, "spend_usd": None, "paused": False},
+        "llm": {
+            "generation": None, "spend_usd": None, "paused": False, "pause_reason": None,
+            "budget_exhausted": False, "enabled": None, "powers": None,
+        },
         "inbox": {"pending": [], "consumed_count": 0},
         "recent_actions": [
             {"id": "note-1-000000", "kind": "note", "actor": "cli:u", "at": "<ISO>", "text": "n"}

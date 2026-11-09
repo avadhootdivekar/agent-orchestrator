@@ -149,8 +149,17 @@ def test_registry_has_every_scalar_leaf_and_flags():
     o = run_options.get_option("sentinel.enabled")
     assert (o.flag, o.no_flag, o.env) == ("--sentinel", "--no-sentinel", "AO_SENTINEL_ENABLED")
     assert run_options.get_option("sentinel.max_parallel_ceiling").flag == "--max-parallel-ceiling"
-    # not forwardable from the dashboard until the schema-driven form (T-Sn5Ui1) lands
-    assert not any(o.ui for o in run_options.OPTIONS if o.name.startswith("sentinel."))
+    # T-Sn5Ui1: only the flagged leaves are forwardable from the dashboard (schema-driven form);
+    # tuning knobs stay on config / env / the workflow block.
+    ui = {o.name for o in run_options.OPTIONS if o.ui and o.name.startswith("sentinel.")}
+    assert ui == {
+        "sentinel.enabled",
+        "sentinel.max_parallel_ceiling",
+        "sentinel.llm.enabled",
+        "sentinel.llm.powers",
+        "sentinel.llm.budget_usd",
+    }
+    assert all(run_options.get_option(n).flag for n in ui)
 
 
 # --- CLI e2e -----------------------------------------------------------------------------------
