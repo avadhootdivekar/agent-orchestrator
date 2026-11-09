@@ -1,0 +1,12 @@
+ao pid=1447174; stub procs before signal: 4
+ao alive after signal+10s: yes; exit took 10.084903132s
+stub_claude procs still running after ao died: 4 (orphans)
+grandchild alive: yes
+state.status = running | tasks: {'a': 'running', 'b': 'pending', 'c': 'pending'}
+--- run.log tail:
+{"ts": "2026-11-09T10:04:59.214616+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.start", "run_id": "spike-d-20261109T100459Z", "event": "run.start", "workflow_id": "spike-d"}
+{"ts": "2026-11-09T10:04:59.216360+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "spike-d-20261109T100459Z", "task_id": "a", "event": "task.start"}
+--- ao.out tail:
+{"ts": "2026-11-09T10:04:59.214616+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "run.start", "run_id": "spike-d-20261109T100459Z", "event": "run.start", "workflow_id": "spike-d"}
+{"ts": "2026-11-09T10:04:59.216360+00:00", "level": "INFO", "logger": "agent_orchestrator", "msg": "Task started", "run_id": "spike-d-20261109T100459Z", "task_id": "a", "event": "task.start"}
+workspace: /tmp/ao-spike-d-YGKF

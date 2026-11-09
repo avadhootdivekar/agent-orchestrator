@@ -1,0 +1,30 @@
+{
+ "K1_today_timeout_kill": {
+  "result_status": "timed_out",
+  "elapsed_s": 2.3,
+  "grandchild_pid": 1409077,
+  "grandchild_still_alive_after_task_settled": true,
+  "note": "Popen has no start_new_session; proc.kill() hits only the direct child (claude_cli.py:634-655)"
+ },
+ "K2_killpg_sigterm": {
+  "pgid_equals_direct_pid": true,
+  "direct_returncode": -15,
+  "time_to_dead_s": 0.001,
+  "escalated_to_sigkill": false,
+  "grandchild_alive_after": false
+ },
+ "K3_sigterm_ignored_needs_sigkill": {
+  "escalated_to_sigkill": true,
+  "time_to_dead_s": 3.2,
+  "grandchild_alive_after": false
+ },
+ "K4_growth_probe": {
+  "observed_gaps_between_size_changes_s": [
+   0.2,
+   0.8,
+   1.0,
+   7.31
+  ],
+  "cost_per_probe": "one os.stat(); no read, no lock"
+ }
+}
