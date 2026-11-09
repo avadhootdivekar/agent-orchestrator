@@ -37,25 +37,6 @@
       "self_heal": {
         "type": "boolean"
       },
-      "sentinel.enabled": {
-        "type": "boolean"
-      },
-      "sentinel.llm.budget_usd": {
-        "type": "number"
-      },
-      "sentinel.llm.enabled": {
-        "type": "boolean"
-      },
-      "sentinel.llm.powers": {
-        "enum": [
-          "advise",
-          "act"
-        ],
-        "type": "string"
-      },
-      "sentinel.max_parallel_ceiling": {
-        "type": "integer"
-      },
       "thinking_effort": {
         "enum": [
           "low",
@@ -361,10 +342,7 @@
       "providers": [],
       "resumable": true,
       "type": "bool",
-      "ui": {
-        "group": "Sentinel",
-        "label": "Sentinel"
-      }
+      "ui": null
     },
     {
       "choice_labels": {},
@@ -396,10 +374,7 @@
       "providers": [],
       "resumable": true,
       "type": "int",
-      "ui": {
-        "group": "Concurrency & budget",
-        "label": "Max parallel ceiling"
-      }
+      "ui": null
     },
     {
       "choice_labels": {},
@@ -703,10 +678,7 @@
       "providers": [],
       "resumable": true,
       "type": "bool",
-      "ui": {
-        "group": "Sentinel",
-        "label": "Sentinel LLM"
-      }
+      "ui": null
     },
     {
       "choice_labels": {},
@@ -725,10 +697,7 @@
       "providers": [],
       "resumable": true,
       "type": "enum",
-      "ui": {
-        "group": "Sentinel",
-        "label": "Sentinel LLM powers"
-      }
+      "ui": null
     },
     {
       "choice_labels": {},
@@ -840,10 +809,7 @@
       "providers": [],
       "resumable": true,
       "type": "float",
-      "ui": {
-        "group": "Sentinel",
-        "label": "Sentinel LLM budget (USD)"
-      }
+      "ui": null
     },
     {
       "choice_labels": {},

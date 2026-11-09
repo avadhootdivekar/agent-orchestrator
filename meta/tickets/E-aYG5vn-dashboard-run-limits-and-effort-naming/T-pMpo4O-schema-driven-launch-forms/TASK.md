@@ -62,7 +62,7 @@ N/A (React form generator over schema)
   `type`/`choices`, label/group from `ui`, `choice_labels` -> "high (60 turns)", `providers` -> "applies to: ...").
   Used by `NewRun`, `TemplateLaunch` (now sends `options`) and the `RunDetail` Resume panel (optional overrides).
 - Registry groups renamed to the FR-5 groups (Model & reasoning / Turns & retries / Concurrency & budget / Quota /
-  Recovery / Sentinel); sentinel leaves that have a CLI flag are now dashboard-forwardable (allow-list derived).
+  Recovery / Sentinel); the Sentinel group renders automatically once registry sentinel options get `ui` metadata (`SENTINEL_UI_GROUPS` in run_options.py, intentionally empty: `tests/test_sentinel_settings.py` keeps sentinel non-forwardable until T-Sn5Ui1 decides). Not shown today.
 - Degradation: schema 404/failure -> `FALLBACK_SCHEMA` (legacy 5 fields, same renderer); unknown type -> text input;
   unknown group appended; `ui: null` hidden; legacy `effort` still in the schema and accepted.
 - Tests: `ui/src/test/run-options-form.test.tsx` (9), `tests/test_run_options.py` (groups/allow-list/snapshot).

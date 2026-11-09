@@ -206,15 +206,8 @@ def test_allow_list_unchanged_and_registry_derived():
         "budget_total": "--budget-total",
         "quota_max_wait": "--quota-max-wait",
         "quota_poll_interval": "--quota-poll-interval",
-        "sentinel.max_parallel_ceiling": "--max-parallel-ceiling",
-        "sentinel.llm.powers": "--sentinel-powers",
-        "sentinel.llm.budget_usd": "--sentinel-budget-usd",
     }
-    assert ALLOWED_BOOL_OPTIONS == {
-        "self_heal": ("--self-heal", "--no-self-heal"),
-        "sentinel.enabled": ("--sentinel", "--no-sentinel"),
-        "sentinel.llm.enabled": ("--sentinel-llm", "--no-sentinel-llm"),
-    }
+    assert ALLOWED_BOOL_OPTIONS == {"self_heal": ("--self-heal", "--no-self-heal")}
     assert ALLOWED_OPTIONS == run_options.allowed_options()
 
 
