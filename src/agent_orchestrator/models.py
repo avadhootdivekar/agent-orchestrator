@@ -802,6 +802,7 @@ BreakerCondition = Literal[
     "run_active_seconds",
     "verdict",
     "injected_task_count",
+    "sentinel_injected_task_count",
     "stop_file",
 ]
 
@@ -1784,6 +1785,16 @@ class SentinelKill(BaseModel):
     source: str
 
 
+class EarlyCheckpoint(BaseModel):
+    """One early-checkpoint trigger (FR-10): the pending soft checkpoint that was released early."""
+
+    checkpoint_id: str
+    at: str
+    settled: list[str] = []
+    carry_over: list[str] = []
+    """Unsettled predecessors dropped from the checkpoint's ``depends_on`` (still running)."""
+
+
 class SentinelState(BaseModel):
     """Run-long sentinel bookkeeping (E-Sn7tL2 T-Sn3Tck); ``RunState.sentinel`` None == never on."""
 
@@ -1823,6 +1834,19 @@ class SentinelState(BaseModel):
     llm_budget_exhausted: bool = False
     memory_seq: int = 0
     """Number of memory merges done (seq tag of appended items)."""
+    # T-Sn7Bkl (FR-9/10/19). Default-valued: a run that never backlogs keeps today's minimal JSON.
+    injected_count: int = 0
+    """Tasks injected by any sentinel source (backlog/ctl/LLM); the FR-19 breaker's counter."""
+    backlog_released: list[str] = []
+    """Ids of backlog entries already released (a re-published file never re-releases them)."""
+    backlog_expired: list[str] = []
+    """Ids of backlog entries seen expired (never released)."""
+    injected_ids: list[str] = []
+    """Ids of every task a sentinel source injected (the FR-19 breaker excludes them from the
+    template's ``injected_task_count``; provenance ``origin`` is never read for behaviour)."""
+    backlog_rejected: dict[str, str] = {}
+    """Backlog entry id -> checker rule id that refused its release (never retried)."""
+    early_checkpoints: list[EarlyCheckpoint] = []
 
 
 class RunMetrics(BaseModel):
@@ -1831,6 +1855,8 @@ class RunMetrics(BaseModel):
     slot_seconds_busy: float = 0.0
     slot_seconds_idle_with_ready: float = 0.0
     slot_seconds_idle_no_ready: float = 0.0
+    slot_seconds_idle_backlog: float = 0.0
+    """Idle slot-seconds while released-able backlog work existed (NFR-13 numerator)."""
     utilisation_pct: float = 0.0
 
 

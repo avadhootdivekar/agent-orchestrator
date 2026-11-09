@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from . import graph_check, hooks, sentinel_powers, sentinel_tick
+from . import graph_check, hooks, sentinel_backlog, sentinel_powers, sentinel_tick
 from .artifacts import (
     ArtifactStore,
     LocalFsArtifactStore,
@@ -1066,6 +1066,9 @@ class Orchestrator:
                         # Occupancy after FILL, attributed to the interval until the next tick.
                         rt.occ_running = len(in_flight)
                         rt.occ_ready = max(0, len(ready) - dispatched_this_pass)
+                        rt = self._sentinel_bandwidth(rt, state, workflow, set(in_flight.values()))
+                        if rt is not None and rt.reshape_pending:
+                            continue  # released work / early checkpoint: re-derive + FILL now
                     if not in_flight:
                         continue  # everything blocked this pass -> re-evaluate
 
@@ -2987,6 +2990,104 @@ class Orchestrator:
                 state.sentinel.disabled_reason = f"tick error: {exc!r}"[:500]
             return None
 
+    def _sentinel_bandwidth(
+        self,
+        rt: sentinel_tick.SentinelRuntime,
+        state: RunState,
+        workflow: WorkflowSpec,
+        running: set[str],
+    ) -> sentinel_tick.SentinelRuntime | None:
+        """L1 backlog release into idle slots, else L2 early checkpoint (fail-safe, $0).
+
+        Runs right after FILL, so ``occ_ready`` is what FILL could not dispatch. Absent a
+        published backlog and with no pending soft checkpoint this is a cheap no-op.
+        """
+        assert self._sentinel is not None
+        try:
+            bw_spec = self._sentinel.spec.bandwidth
+            if rt.bandwidth is None:
+                rt.bandwidth = sentinel_backlog.Bandwidth()
+            bw = rt.bandwidth
+            if rt.edit_applier is None or state.sentinel is None:
+                return rt
+            now = rt.clock()
+            at = now.isoformat()
+            changed = False
+            backlog = sentinel_backlog.read_backlog(rt.control_dir)
+            live, expired = sentinel_backlog.available(state, backlog)
+            if expired and sentinel_backlog.note_expired(state, expired):
+                changed = True
+            slots = rt.live_limit - len(running)
+            if (
+                bw_spec.backlog_release
+                and backlog is not None
+                and live
+                and slots > 0
+                and rt.occ_ready == 0
+            ):
+                released, rejected = sentinel_backlog.release(
+                    state, backlog, live, slots, rt.edit_applier, at
+                )
+                for rid, rule in rejected:
+                    rt.log.warning(
+                        "sentinel.backlog.rejected: %s (%s)",
+                        rid,
+                        rule,
+                        extra={"event": "sentinel.backlog.rejected"},
+                    )
+                if released:
+                    rt.log.info(
+                        "sentinel.backlog.released: %s",
+                        released,
+                        extra={"event": "sentinel.backlog.released"},
+                    )
+                if released or rejected:
+                    changed = True
+                live, _ = sentinel_backlog.available(state, backlog)
+            rt.occ_backlog = len(live)  # counted even with release off (NFR-13 baseline)
+            # ---- L2: early checkpoint (backlog empty / release off) ----
+            if bw_spec.early_checkpoint and not (bw_spec.backlog_release and live):
+                bw.early_idle_since, grace_ok = sentinel_backlog.idle_gate(
+                    bw_spec, rt.live_limit, len(running), bw.early_idle_since, now
+                )
+                if grace_ok:
+                    plan = sentinel_backlog.find_early_plan(workflow, state, bw_spec, running)
+                    if plan is not None:
+                        try:
+                            sentinel_backlog.apply_early(state, plan, rt.edit_applier, at)
+                        except graph_check.EditRejected as rej:
+                            rt.log.warning(
+                                "sentinel.early_ckpt.rejected: %s (%s)",
+                                plan.checkpoint_id,
+                                rej.rule_id,
+                                extra={"event": "sentinel.early_ckpt.rejected"},
+                            )
+                        else:
+                            rt.log.info(
+                                "sentinel.early_ckpt: %s carry_over=%s",
+                                plan.checkpoint_id,
+                                list(plan.carry_over),
+                                extra={"event": "sentinel.early_ckpt"},
+                            )
+                            bw.early_idle_since = None
+                            changed = True
+            else:
+                bw.early_idle_since = None
+            if changed:
+                self._runstate.save(state)
+            return rt
+        except Exception as exc:  # noqa: BLE001 -- fail-safe boundary: never fail the run
+            rt.log.error(
+                "sentinel.error: bandwidth lane: %r; sentinel lane disabled for this run",
+                exc,
+                extra={"event": "sentinel.error"},
+                exc_info=True,
+            )
+            if state.sentinel is not None:
+                state.sentinel.enabled = False
+                state.sentinel.disabled_reason = f"bandwidth error: {exc!r}"[:500]
+            return None
+
     def _make_edit_applier(
         self,
         rt: sentinel_tick.SentinelRuntime,
@@ -2994,7 +3095,7 @@ class Orchestrator:
         workflow: WorkflowSpec,
         ctx: _RunContext,
         agents: dict,
-    ) -> Callable[[str, dict[str, Any], str, str, str], None]:
+    ) -> Callable[..., None]:
         """Build the ``inject`` / ``edit_pending`` applier the tick calls (main thread only).
 
         ``_apply_pending_edits``: validate on copies (graph_check), then commit workflow + state in
@@ -3005,15 +3106,32 @@ class Orchestrator:
         assert self._sentinel is not None
         llm_edits_allowed = self._sentinel.spec.llm.allow_graph_edits
 
-        def apply(kind: str, payload: dict[str, Any], actor: str, entry_id: str, at: str) -> None:
+        bw_cap = sentinel_backlog.injection_cap(self._sentinel.spec, self._max_parallel, workflow)
+
+        def apply(
+            kind: str,
+            payload: dict[str, Any],
+            actor: str,
+            entry_id: str,
+            at: str,
+            policy: graph_check.CheckPolicy | None = None,
+        ) -> None:
             is_llm = sentinel_tick.is_sentinel_actor(actor)
             if is_llm and not llm_edits_allowed:
                 raise graph_check.EditRejected(
                     graph_check.RULE_DISABLED, "sentinel.llm.allow_graph_edits is false"
                 )
-            if kind == "inject":
-                plan = graph_check.plan_inject(
+            if kind == "early_checkpoint":  # internal (tick) source only, never an inbox kind
+                plan = graph_check.plan_early_checkpoint(
                     workflow, state, payload, actor=actor, at=at, edit_id=entry_id
+                )
+            elif kind == "inject":
+                # FR-19: one shared cap for every sentinel source (backlog / ctl / LLM).
+                policy = sentinel_backlog.with_cap(
+                    policy, sentinel_backlog.cap_remaining(state, bw_cap)
+                )
+                plan = graph_check.plan_inject(
+                    workflow, state, payload, actor=actor, at=at, edit_id=entry_id, policy=policy
                 )
                 try:
                     validate_task_model_policy(plan.new_tasks, agents, workflow.defaults.model)

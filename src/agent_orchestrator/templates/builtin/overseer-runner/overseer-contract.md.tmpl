@@ -100,6 +100,12 @@ emits the next checkpoint with zero wave units and `depends_on` set to only the 
 must include every unit's (and every expander's `--done`) breadcrumb path. See "The
 `overseer_model` rule" below for when this entry must also carry `"model"`.
 
+**Soft barrier (sentinel runs).** When the digest says `"soft_barrier": true` (the run was launched
+with the sentinel), the entry must also carry `"barrier": "soft"`; otherwise it must not carry
+`barrier` at all (OV-R10). A soft checkpoint may start while unrelated tasks are in flight, and the
+sentinel may release it **early** (dropping still-running predecessors from its `depends_on`) — see
+`digest.carry_over[]` and OV-R17.
+
 ### Tail (terminal emission only — emitted instead of a next checkpoint, never alongside one)
 
 ```json
@@ -139,6 +145,27 @@ at most `sub_wave_size` leaves (`<unit-id>--NN-<slug>`, the ordinary unit shape,
 `{{ instance_dir }}/outputs/progress/<unit-id>--done.json`). **This kind is not yet wired up in
 this epic — leave `max_expanders_per_wave` at 0 and never emit `kind: expand` until a later
 task documents enabling it.**
+
+### Backlog (optional, sentinel runs) — `outputs/backlog.json`
+
+Written by a checkpoint next to its verdict (`ao.overseer.backlog/v1`): independent, pre-approved
+units the sentinel may start for free in idle slots while the wave's tail runs.
+
+```json
+{"schema": "ao.overseer.backlog/v1", "checkpoint_id": "ck-01",
+ "entries": [{"id": "<slug>", "priority": 5,
+              "brief_path": "{{ instance_dir }}/outputs/waves/w02/briefs/<slug>.json",
+              "kind": "implement", "ask_ids": ["A1"], "work_item": "A1/<item>",
+              "rationale": "why this is independent and worth the slot",
+              "expires_at_ckpt": 2}]}
+```
+
+Higher `priority` starts first; `expires_at_ckpt` must be in `K+1..K+2` (K = the emitting
+checkpoint) and the entry dies when that checkpoint starts; an absent `backlog.json` clears the
+previous backlog. On success `ckpt-check` publishes it for the engine as `control/backlog.json`
+(each entry becomes unit `s-NN-<slug>`, brief copied to that id; breadcrumb/report paths follow the
+unit shape). Sentinel units are ledgered by the first checkpoint that sees them settled and
+never count against the template's `max_injected_tasks`.
 
 ## Kind → agent/instruction map
 
@@ -329,6 +356,12 @@ subcommands; run them yourself in dry-run mode before you finish, per "Self-chec
   brief `model` > `kind_map[kind].model` > `default_unit_model` (omitted when none).
 - **OV-R10** — exactly one of {next checkpoint, tail}, exact shapes (`model` on `ck-*` iff
   `overseer_model` is set).
+- **OV-R17** — carry-over is never re-scheduled: no emitted unit may target a `work_item` of a
+  `digest.carry_over[]` straggler (units an early checkpoint left running).
+- **OV-BL1..BL7** — `outputs/backlog.json`: BL1 file shape/cap (20), BL2 entry fields/ids, BL3 kind
+  + stage (no new scope in converge, verify/document only in stabilize), BL4 brief + asks, BL5
+  `expires_at_ckpt` window, BL6 independence (not this wave / carry-over / capped item), BL7 no
+  backlog on closeout/hold/must_close.
 - **OV-R11** — stage restrictions (converge: existing work items only; stabilize:
   stabilize/verify/document only).
 - **OV-R12** — the verdict answers every signal id; `accept` on high needs a rationale ≥40

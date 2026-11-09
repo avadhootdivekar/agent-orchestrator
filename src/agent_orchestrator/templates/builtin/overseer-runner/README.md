@@ -225,6 +225,30 @@ and `needs_input: false`; anything else degrades to a plain `partial` (never a r
   directly in the engine, not worked around at the template level; see
   `docs-md/adr/ADR-0016-overseer-runner-cadence-and-budget-governance.md` decision D7.
 
+## Sentinel bandwidth: backlog + early checkpoint (opt-in, `sentinel_enabled=true`)
+
+With the sentinel on, checkpoints are marked `barrier: soft` and two mechanical (no-LLM, $0)
+bandwidth levers keep slots busy during a wave's heavy tail (E-Sn7tL2, `docs-md/sentinel-hld.md`
+§6.3/§6.4/§6.6):
+
+- **L1 backlog.** A checkpoint may write `outputs/backlog.json` (`ao.overseer.backlog/v1`, contract
+  "Backlog", checker `OV-BL1..BL7`). `ckpt-check` publishes it to `<run_dir>/control/backlog.json`;
+  when slots are idle and nothing is ready the engine tick starts entries as `s-NN-<slug>` units
+  (highest priority first) through the shared graph checker. Entries expire when their
+  `expires_at_ckpt` checkpoint starts; expired entries are never released.
+- **L2 early checkpoint.** With the backlog empty, ≥ ⌈P/2⌉ slots idle for `early_ckpt_grace_seconds`
+  and ≥ `early_ckpt_fraction` of the pending checkpoint's predecessors settled, the tick drops the
+  unsettled ones from that checkpoint's `depends_on`. They become `digest.carry_over[]`; the
+  checkpoint plans the next wave from the settled units and may **not** re-schedule them (`OV-R17`).
+  At most one early checkpoint is in flight; it is a normal `ck-NN`, so it counts toward `max_waves`.
+- **Cap.** Sentinel injections have their own counter/breaker (`sentinel_injected_task_count`,
+  default `max(20, 3 x max_parallel x expected_hours)`), separate from `max_injected_tasks`.
+
+Without the sentinel nothing changes: no `barrier`, no `backlog.json`, byte-identical digests.
+Known limit: carry-over units are not predecessors of the next checkpoint, so a straggler may still
+be running when a tail starts. Intake cannot see a digest: its `ck-01` must be `barrier: soft` on a
+sentinel run, which `intake-check` enforces (it reads the run state) — fix and re-run on `OV-R10`.
+
 ## Completion marker
 
 `outputs/final/closeout.md` is what actually marks a run as done — it is written by the tail's

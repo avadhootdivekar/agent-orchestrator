@@ -784,6 +784,8 @@ class State:
     spent: float
     status: str
     tripped_breakers: list[dict[str, Any]] = field(default_factory=list)
+    # `RunState.sentinel` (None/absent = run never had the sentinel); tolerant raw dict.
+    sentinel: dict[str, Any] | None = None
 
 
 def state_path(workspace_root: Path, cfg: Config, run_id: str) -> Path:
@@ -844,6 +846,10 @@ def load_state(path: Path) -> State:
     if isinstance(raw_injected, list):
         for item in raw_injected:
             if isinstance(item, dict) and "id" in item:
+                # Sentinel-origin injections have their own cap/breaker (FR-19): not counted here.
+                row = raw_tasks.get(str(item["id"]))
+                if isinstance(row, dict) and row.get("origin") == "sentinel":
+                    continue
                 injected_ids.append(str(item["id"]))
             else:
                 raise Violation("ST-2", detail="field=injected_tasks[].id")
@@ -868,6 +874,7 @@ def load_state(path: Path) -> State:
         spent=spent,
         status=status,
         tripped_breakers=tripped,
+        sentinel=data["sentinel"] if isinstance(data.get("sentinel"), dict) else None,
     )
 
 
@@ -878,6 +885,35 @@ def wave_units(state: State, k: int) -> list[str]:
     # text never contains a literal "{{"/"}}" pair (NFR-5: it is rendered through `_render`).
     pattern = re.compile("^w" + f"{k:02d}" + r"-\d{2}-")
     return sorted(tid for tid in state.tasks if pattern.match(tid))
+
+
+_SENTINEL_UNIT_RE: Final[re.Pattern[str]] = re.compile(r"^s-(\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$")
+_WAVE_PREFIX_RE: Final[re.Pattern[str]] = re.compile(r"^w(\d{2})-\d{2}-")
+
+
+def late_units(inst: Path, state: State, k: int, have: set[str]) -> dict[str, int]:
+    """Units that belong to a wave before *k* but settle only now (T-Sn7Bkl): early-checkpoint
+    carry-over stragglers (`wJJ-*`, JJ<k) and sentinel backlog units (`s-NN-*`, wave = the
+    `outputs/waves/wJJ/briefs/` dir holding their brief, JJ<=k). Returns `{unit_id: wave}` for
+    the ones not yet in the ledger. Empty for a run with neither feature."""
+    out: dict[str, int] = {}
+    for tid in state.tasks:
+        m = _WAVE_PREFIX_RE.match(tid)
+        if m and int(m.group(1)) < k and tid not in have:
+            out[tid] = int(m.group(1))
+    waves = inst / "outputs" / "waves"
+    if waves.is_dir():
+        for brief in sorted(waves.glob("w*/briefs/s-*.json")):
+            wave_dir = brief.parent.parent.name
+            if (
+                _SENTINEL_UNIT_RE.match(brief.stem)
+                and brief.stem in state.tasks
+                and brief.stem not in have
+                and wave_dir[1:].isdigit()
+                and int(wave_dir[1:]) <= k
+            ):
+                out[brief.stem] = int(wave_dir[1:])
+    return out
 
 
 # =============================================================================================
@@ -1169,6 +1205,7 @@ def ingest_ledger(
     dry_run: bool = False,
     task_cost_limit_usd: float | None = None,
     run_budget_usd: float | None = None,
+    unit_waves: dict[str, int] | None = None,
 ) -> int:
     """HLD S8.4 M1 `ingest_ledger`: idempotent (keyed by `unit_id`), folds each newly-settled
     wave unit's brief + breadcrumb into one `type:"unit"` ledger line.
@@ -1192,7 +1229,10 @@ def ingest_ledger(
         if task_info is None or task_info.status not in SETTLED_TASK_STATUSES:
             continue
 
-        brief = read_brief(inst, k, unit_id)
+        # Carry-over stragglers / sentinel backlog units settle in a later wave than they belong
+        # to: `unit_waves` maps them to their own wave (absent => the checkpoint's wave `k`).
+        unit_wave = (unit_waves or {}).get(unit_id, k)
+        brief = read_brief(inst, unit_wave, unit_id)
         crumb = read_breadcrumb(inst, unit_id)
         if crumb is None:
             if task_info.status != "failed":
@@ -1215,7 +1255,7 @@ def ingest_ledger(
         handoff, handoff_invalid = validate_handoff(crumb)
         line = {
             "type": "unit",
-            "wave": k,
+            "wave": unit_wave,
             "unit_id": unit_id,
             "ask_ids": brief.get("ask_ids", []),
             "work_item": brief.get("work_item"),
@@ -2690,7 +2730,7 @@ _NEXT_CKPT_REQUIRED_FIELDS: Final[frozenset[str]] = frozenset(
         "effort",
     }
 )
-_NEXT_CKPT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"model"})
+_NEXT_CKPT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"model", "barrier"})
 _NEXT_CKPT_ALLOWED_FIELDS: Final[frozenset[str]] = (
     _NEXT_CKPT_REQUIRED_FIELDS | _NEXT_CKPT_OPTIONAL_FIELDS
 )
@@ -2811,6 +2851,8 @@ class ManifestCheckContext:
     verdict: dict[str, Any] | None = None  # ck-K's own verdict.json; None at intake_check
     digest: dict[str, Any] | None = None  # ck-K's own digest.json; None at intake_check
     ledger_lines: list[dict[str, Any]] = field(default_factory=list)
+    # T-Sn7Bkl: the run has the sentinel on => the next checkpoint must be `barrier: soft`.
+    soft_barrier: bool = False
 
 
 @dataclass(frozen=True)
@@ -2996,6 +3038,16 @@ def _check_next_checkpoint_shape(
         )
     if raw.get("emit_tasks") is not True:
         violations.append(RuleViolation("R10", "next checkpoint must set emit_tasks: true", path))
+    # Sentinel runs mark checkpoints `barrier: soft` (FR-8/FR-10); everyone else must not.
+    expected_barrier = "soft" if ctx.soft_barrier else None
+    if raw.get("barrier") != expected_barrier:
+        violations.append(
+            RuleViolation(
+                "R10",
+                f"next checkpoint barrier must be {expected_barrier!r}, got {raw.get('barrier')!r}",
+                path,
+            )
+        )
     expected_manifest_path = f"{ctx.instance_dir}/outputs/manifests/{expected_id}.json"
     if raw.get("task_manifest_path") != expected_manifest_path:
         violations.append(
@@ -4420,6 +4472,46 @@ def _check_entry_r13c_rename_dodge(
     return []
 
 
+def _carry_over_work_items(digest: dict[str, Any] | None) -> dict[str, str]:
+    """`{work_item: unit_id}` of the digest's carry-over stragglers."""
+    items = digest.get("carry_over") if isinstance(digest, dict) else None
+    out: dict[str, str] = {}
+    for e in items if isinstance(items, list) else []:
+        if isinstance(e, dict) and isinstance(e.get("work_item"), str) and e["work_item"]:
+            out[e["work_item"]] = str(e.get("unit_id"))
+    return out
+
+
+def _check_entry_r17_carry_over(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    """OV-R17: a checkpoint released early must not re-schedule carry-over work -- no emitted
+    unit may target a `work_item` that a still-running carry-over straggler already owns."""
+    k = _ck_wave_of_emitter(ctx.emitter_id)
+    if k is None:
+        return []
+    digest = _read_optional_json(digest_path(ctx.inst, k))
+    carry = _carry_over_work_items(digest)
+    if not carry:
+        return []
+    unit_id = entry.entry_id
+    assert unit_id is not None
+    brief_data, brief_violation = _read_brief_for_check(ctx.inst, ctx.next_wave, unit_id)
+    if brief_violation is not None or brief_data is None:
+        return []  # R6 reports the unreadable brief
+    work_item = brief_data.get("work_item")
+    if isinstance(work_item, str) and work_item in carry:
+        return [
+            RuleViolation(
+                "R17",
+                f"unit {unit_id} re-schedules work_item {work_item!r}, which carry-over unit "
+                f"{carry[work_item]!r} (released early by the sentinel) is still running",
+                str(brief_path(ctx.inst, ctx.next_wave, unit_id)),
+            )
+        ]
+    return []
+
+
 _WAVE_ENTRY_STRUCTURAL_CHECKS: Final[list[WaveEntryCheckFn]] = [
     _check_entry_r6_brief,
     _check_entry_r7_outputs_inputs,
@@ -4429,6 +4521,7 @@ _WAVE_ENTRY_STRUCTURAL_CHECKS: Final[list[WaveEntryCheckFn]] = [
     _check_entry_r11_stage_restrictions,
     _check_entry_r13_attempt_cap,
     _check_entry_r13c_rename_dodge,
+    _check_entry_r17_carry_over,
 ]
 
 
@@ -4721,6 +4814,7 @@ def intake_check(args: argparse.Namespace) -> None:
             allowed_wave_size=_intake_allowed_wave_size(cfg),
             charter=charter,
             tasks=tasks,
+            soft_barrier=sentinel_enabled(state),
         )
         violations.extend(check_manifest(check_ctx))
 
@@ -4845,11 +4939,27 @@ def ckpt_check(args: argparse.Namespace) -> None:
             verdict=verdict,
             digest=digest,
             ledger_lines=read_ledger_lines(inst),
+            soft_barrier=sentinel_enabled(state),
         )
         violations.extend(check_manifest(check_ctx))
+        backlog_violations, backlog_data = check_backlog(
+            cfg, inst, args.instance_dir, k, verdict, digest, charter, tasks
+        )
+        violations.extend(backlog_violations)
 
     if not violations and not args.dry_run and verdict is not None:
         _record_checkpoint_events(inst, k, now, manifest_path=manifest_path, verdict=verdict)
+        if tasks is not None:
+            publish_backlog(
+                cfg,
+                inst,
+                args.instance_dir,
+                state_path(ws, cfg, ctx_hook.run_id).parent,
+                k,
+                state,
+                backlog_data,
+                digest,
+            )
         _record_directive_acks(state_path(ws, cfg, ctx_hook.run_id).parent, k, now, verdict)
 
     _finish_check(
@@ -4857,6 +4967,301 @@ def ckpt_check(args: argparse.Namespace) -> None:
         task_id=ctx_hook.task_id,
         violations=violations,
         dry_run=args.dry_run,
+    )
+
+
+# =============================================================================================
+# ===== Sentinel bandwidth (E-Sn7tL2 T-Sn7Bkl): carry-over, soft barrier, backlog =============
+# =============================================================================================
+
+BACKLOG_SCHEMA: Final[str] = "ao.overseer.backlog/v1"
+PUBLISHED_BACKLOG_SCHEMA: Final[str] = "ao.sentinel.backlog/v1"
+BACKLOG_MAX_ENTRIES: Final[int] = 20
+BACKLOG_ENTRY_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9-]{2,60}$")
+BACKLOG_KINDS: Final[frozenset[str]] = frozenset(
+    {"research", "design", "implement", "fix", "document", "test", "review", "verify"}
+)
+_BACKLOG_ENTRY_FIELDS: Final[frozenset[str]] = frozenset(
+    {"id", "priority", "brief_path", "kind", "ask_ids", "work_item", "rationale", "expires_at_ckpt"}
+)
+_BACKLOG_ENTRY_OPTIONAL: Final[frozenset[str]] = frozenset({"effort"})
+_SETTLED_STATUSES: Final[frozenset[str]] = frozenset(
+    {"succeeded", "failed", "skipped", "cancelled"}
+)
+
+
+def sentinel_enabled(state: State) -> bool:
+    return isinstance(state.sentinel, dict) and state.sentinel.get("enabled", True) is not False
+
+
+def carry_over_entries(inst: Path, state: State, k: int) -> list[dict[str, Any]]:
+    """Unsettled units an early checkpoint (ck-1..ck-k) dropped from its `depends_on`: the
+    stragglers the planner must NOT re-schedule (digest `carry_over[]`, OV-R17)."""
+    sent = state.sentinel
+    records = sent.get("early_checkpoints") if isinstance(sent, dict) else None
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rec in records if isinstance(records, list) else []:
+        if not isinstance(rec, dict):
+            continue
+        m = _CK_TASK_ID_RE.match(str(rec.get("checkpoint_id", "")))
+        if not m or int(m.group(1)) > k:
+            continue
+        for uid in rec.get("carry_over") or []:
+            info = state.tasks.get(uid)
+            if not isinstance(uid, str) or uid in seen or info is None:
+                continue
+            if info.status in _SETTLED_STATUSES:
+                continue
+            seen.add(uid)
+            wm = _WAVE_PREFIX_RE.match(uid)
+            wave = int(wm.group(1)) if wm else k
+            brief: dict[str, Any] = {}
+            with contextlib.suppress(Violation):
+                brief = read_brief(inst, wave, uid)
+            out.append(
+                {
+                    "unit_id": uid,
+                    "wave": wave,
+                    "status": info.status,
+                    "work_item": brief.get("work_item"),
+                    "kind": brief.get("kind"),
+                    "early_checkpoint": rec.get("checkpoint_id"),
+                }
+            )
+    return sorted(out, key=lambda e: e["unit_id"])
+
+
+def _backlog_violation(rule: str, message: str, idx: int | None = None) -> RuleViolation:
+    return RuleViolation(rule, message, f"entries[{idx}]" if idx is not None else None)
+
+
+def check_backlog(
+    cfg: Config,
+    inst: Path,
+    instance_dir: str,
+    k: int,
+    verdict: dict[str, Any] | None,
+    digest: dict[str, Any],
+    charter: dict[str, Any] | None,
+    manifest_tasks: list[Any] | None,
+) -> tuple[list[RuleViolation], dict[str, Any] | None]:
+    """Validate `outputs/backlog.json` of checkpoint `ck-k`; returns `(violations, data)` where
+    `data` is the parsed file (None when absent/unreadable). Never raises.
+
+    BL1 shape/schema/checkpoint id/entry cap, BL2 per-entry fields + ids, BL3 kind (kind_map,
+    stage), BL4 brief (exists, kind/work_item/ask_ids agree, canonical path), BL5 expiry window,
+    BL6 independence (no work_item of this wave, the carry-over, or a capped item), BL7 decision
+    (no backlog when closing out / holding / must_close).
+    """
+    path = inst / "outputs" / "backlog.json"
+    if not path.exists():
+        return [], None
+    pstr = str(path)
+    try:
+        data = read_json_bounded(path, JSON_MAX_BYTES)
+    except (OversizeInputError, json.JSONDecodeError, OSError) as exc:
+        return [RuleViolation("BL1", f"backlog.json is unreadable: {exc}", pstr)], None
+    if not isinstance(data, dict):
+        return [RuleViolation("BL1", "backlog.json root must be a JSON object", pstr)], None
+    v: list[RuleViolation] = []
+    if data.get("schema") != BACKLOG_SCHEMA:
+        v.append(RuleViolation("BL1", f"schema must be {BACKLOG_SCHEMA!r}", pstr))
+    if data.get("checkpoint_id") != f"ck-{k:02d}":
+        v.append(RuleViolation("BL1", f"checkpoint_id must be 'ck-{k:02d}'", pstr))
+    extra = set(data) - {"schema", "checkpoint_id", "entries"}
+    if extra:
+        v.append(RuleViolation("BL1", f"unexpected top-level field(s): {sorted(extra)}", pstr))
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return [*v, RuleViolation("BL1", "entries must be a list", pstr)], None
+    if len(entries) > BACKLOG_MAX_ENTRIES:
+        v.append(RuleViolation("BL1", f"at most {BACKLOG_MAX_ENTRIES} entries", pstr))
+
+    decision = verdict.get("decision") if isinstance(verdict, dict) else None
+    stage = _digest_stage(digest)
+    if entries and (
+        decision in ("closeout", "hold") or digest.get("must_close") or stage == "closeout"
+    ):
+        v.append(
+            RuleViolation(
+                "BL7",
+                f"backlog must be empty when decision={decision!r}/stage={stage!r}/must_close",
+                pstr,
+            )
+        )
+    charter_asks = _charter_ask_ids(charter)
+    known_items = frozenset(_work_item_sequences(_unit_lines_through(inst, k)))
+    carry = _carry_over_work_items(digest)
+    wave_items: set[str] = set()
+    for t in manifest_tasks or []:
+        uid = t.get("id") if isinstance(t, dict) else None
+        if isinstance(uid, str) and _UNIT_ID_FULL_RE.match(uid):
+            b, _ = _read_brief_for_check(inst, k + 1, uid)
+            if b is not None and isinstance(b.get("work_item"), str):
+                wave_items.add(b["work_item"])
+    seen_ids: set[str] = set()
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict):
+            v.append(_backlog_violation("BL2", "entry must be an object", i))
+            continue
+        missing = _BACKLOG_ENTRY_FIELDS - set(e)
+        unknown = set(e) - _BACKLOG_ENTRY_FIELDS - _BACKLOG_ENTRY_OPTIONAL
+        if missing or unknown:
+            v.append(
+                _backlog_violation(
+                    "BL2", f"missing {sorted(missing)} / unexpected {sorted(unknown)}", i
+                )
+            )
+            continue
+        eid = e["id"]
+        if not isinstance(eid, str) or not BACKLOG_ENTRY_ID_RE.match(eid):
+            v.append(
+                _backlog_violation("BL2", f"id {eid!r} must match {BACKLOG_ENTRY_ID_RE.pattern}", i)
+            )
+            continue
+        if eid in seen_ids:
+            v.append(_backlog_violation("BL2", f"duplicate id {eid!r}", i))
+        seen_ids.add(eid)
+        prio = e["priority"]
+        if isinstance(prio, bool) or not isinstance(prio, int) or prio < 0:
+            v.append(_backlog_violation("BL2", f"{eid}: priority must be an integer >= 0", i))
+        exp = e["expires_at_ckpt"]
+        if isinstance(exp, bool) or not isinstance(exp, int) or not k < exp <= k + 2:
+            v.append(
+                _backlog_violation(
+                    "BL5", f"{eid}: expires_at_ckpt must be an integer in {k + 1}..{k + 2}", i
+                )
+            )
+        if not isinstance(e["rationale"], str) or not e["rationale"].strip():
+            v.append(_backlog_violation("BL2", f"{eid}: rationale must be a non-empty string", i))
+        kind = e["kind"]
+        if kind not in BACKLOG_KINDS or not isinstance(cfg.kind_map.get(kind), dict):
+            v.append(_backlog_violation("BL3", f"{eid}: kind {kind!r} is not allowed", i))
+        elif stage == "stabilize" and kind not in _STABILIZE_STAGE_ALLOWED_KINDS:
+            v.append(_backlog_violation("BL3", f"{eid}: kind {kind!r} not allowed in stabilize", i))
+        wi = e["work_item"]
+        if not isinstance(wi, str) or not wi:
+            v.append(_backlog_violation("BL2", f"{eid}: work_item must be a non-empty string", i))
+            continue
+        if stage == "converge" and wi not in known_items:
+            v.append(_backlog_violation("BL3", f"{eid}: converge stage may not open new scope", i))
+        if wi in wave_items:
+            v.append(_backlog_violation("BL6", f"{eid}: work_item {wi!r} is in this wave", i))
+        if wi in carry:
+            v.append(
+                _backlog_violation("BL6", f"{eid}: work_item {wi!r} is carry-over ({carry[wi]})", i)
+            )
+        if _failed_attempts(inst, k, wi) >= cfg.max_attempts_per_item:
+            v.append(_backlog_violation("BL6", f"{eid}: work_item {wi!r} hit the attempt cap", i))
+        asks = e["ask_ids"]
+        if not isinstance(asks, list) or not asks or not all(isinstance(a, str) for a in asks):
+            v.append(_backlog_violation("BL4", f"{eid}: ask_ids must be a non-empty list", i))
+        elif charter_asks is not None and [a for a in asks if a not in charter_asks]:
+            v.append(_backlog_violation("BL4", f"{eid}: ask_ids not all in the charter", i))
+        expected_bp = f"{instance_dir}/outputs/waves/w{k + 1:02d}/briefs/{eid}.json"
+        if e["brief_path"] != expected_bp:
+            v.append(_backlog_violation("BL4", f"{eid}: brief_path must be {expected_bp!r}", i))
+            continue
+        b, bv = _read_brief_for_check(inst, k + 1, eid)
+        if bv is not None or b is None:
+            v.append(_backlog_violation("BL4", f"{eid}: brief missing or unreadable", i))
+            continue
+        for key in ("kind", "work_item"):
+            if b.get(key) != e[key]:
+                v.append(_backlog_violation("BL4", f"{eid}: brief {key} != entry {key}", i))
+        if b.get("schema") != BRIEF_SCHEMA:
+            v.append(_backlog_violation("BL4", f"{eid}: brief schema must be {BRIEF_SCHEMA!r}", i))
+    return v, data
+
+
+def _next_sentinel_number(state: State, previous: dict[str, Any] | None) -> int:
+    nums = [int(m.group(1)) for t in state.tasks if (m := _SENTINEL_UNIT_RE.match(t))]
+    for e in (previous or {}).get("entries", []) if isinstance(previous, dict) else []:
+        tid = e.get("task", {}).get("id") if isinstance(e, dict) else None
+        if isinstance(tid, str) and (m := _SENTINEL_UNIT_RE.match(tid)):
+            nums.append(int(m.group(1)))
+    return (max(nums) if nums else 0) + 1
+
+
+def publish_backlog(
+    cfg: Config,
+    inst: Path,
+    instance_dir: str,
+    run_dir: Path,
+    k: int,
+    state: State,
+    data: dict[str, Any] | None,
+    digest: dict[str, Any],
+) -> None:
+    """Write the engine-ready `control/backlog.json` (`ao.sentinel.backlog/v1`) for the sentinel
+    tick, copying each entry's brief to its final unit id. Called only after `ckpt-check` passes.
+    Publishing happens only when the run has/had a backlog or the sentinel is on (so a run
+    without either gains no file). An absent/empty backlog.json REPLACES the previous published
+    file: entries not re-confirmed by this checkpoint die (expiry)."""
+    target = run_dir / "control" / "backlog.json"
+    if data is None and not target.exists():
+        return
+    previous = _read_optional_json(target)
+    prev_ids: dict[str, str] = {}
+    for e in (previous or {}).get("entries", []):
+        if isinstance(e, dict) and isinstance(e.get("task"), dict):
+            prev_ids[str(e.get("id"))] = str(e["task"].get("id"))
+    nxt = _next_sentinel_number(state, previous)
+    contract = f"{instance_dir}/overseer-contract.md"
+    config = f"{instance_dir}/overseer-config.json"
+    charter = f"{instance_dir}/outputs/charter.json"
+    wave = f"{instance_dir}/outputs/waves/w{k + 1:02d}"
+    published: list[dict[str, Any]] = []
+    for e in (data or {}).get("entries", []):
+        slug = e["id"]
+        tid = prev_ids.get(slug) or f"s-{nxt:02d}-{slug}"
+        if tid not in prev_ids.values():
+            nxt += 1
+        brief = read_brief(inst, k + 1, slug)
+        brief["unit_id"] = tid
+        brief["wave"] = k + 1
+        brief_out = brief_path(inst, k + 1, tid)
+        write_json_atomic(brief_out, brief)
+        kind_entry = cfg.kind_map[e["kind"]]
+        effort = brief.get("effort") if brief.get("effort") in _UNIT_EFFORT_ENUM else "medium"
+        task: dict[str, Any] = {
+            "id": tid,
+            "agent": kind_entry.get("agent"),
+            "instruction": kind_entry.get("instruction"),
+            "depends_on": [],
+            "inputs": [contract, config, charter, f"{wave}/briefs/{tid}.json"],
+            "outputs": [f"{wave}/{tid}.md", f"{instance_dir}/outputs/progress/{tid}.json"],
+            "pre_hook": {"use": "ov-unit-gate"},
+            "timeout_seconds": UNIT_TIMEOUT_S,
+            "skip_if_outputs_exist": False,
+            "effort": effort,
+        }
+        model = expected_unit_model(
+            cfg, brief, e["kind"], _failed_attempts(inst, k, e["work_item"])
+        )
+        if model:
+            task["model"] = model
+        published.append(
+            {
+                "id": slug,
+                "priority": e["priority"],
+                "expires_at_ckpt": e["expires_at_ckpt"],
+                "kind": e["kind"],
+                "work_item": e["work_item"],
+                "task": task,
+            }
+        )
+    known = sorted(_work_item_sequences(_unit_lines_through(inst, k)))
+    write_json_atomic(
+        target,
+        {
+            "schema": PUBLISHED_BACKLOG_SCHEMA,
+            "checkpoint_id": f"ck-{k:02d}",
+            "stage": _digest_stage(digest),
+            "known_work_items": known,
+            "entries": published,
+        },
     )
 
 
@@ -4927,6 +5332,11 @@ def ckpt_prep(args: argparse.Namespace) -> None:
         verify_charter_lock(inst)
         state = load_state(state_path(ws, cfg, ctx.run_id))
         units = wave_units(state, k)
+        have_units = {
+            line["unit_id"] for line in read_ledger_lines(inst) if line.get("type") == "unit"
+        }
+        late = late_units(inst, state, k, have_units)
+        units = sorted({*units, *late})
         run_budget_now, _ = effective_budget(cfg, state, inst, now, record=False)
         ingest_ledger(
             inst,
@@ -4937,6 +5347,7 @@ def ckpt_prep(args: argparse.Namespace) -> None:
             dry_run=args.dry_run,
             task_cost_limit_usd=cfg.task_budget_usd,
             run_budget_usd=run_budget_now,
+            unit_waves=late,
         )
         update_path_history(inst, k, ctx.repo_paths, units, now, dry_run=args.dry_run)
         budget = compute_budget(cfg, state, inst, k, now, dry_run=args.dry_run)
@@ -4964,7 +5375,13 @@ def ckpt_prep(args: argparse.Namespace) -> None:
             "signals": signals,
         }
         sentinel_block = sentinel_digest_block(state_path(ws, cfg, ctx.run_id).parent, inst, k)
+        carry = carry_over_entries(inst, state, k)
+        if carry:
+            digest["carry_over"] = carry
+        if sentinel_enabled(state):
+            digest["soft_barrier"] = True  # next checkpoint must be marked `barrier: soft`
         if sentinel_block is not None:
+            sentinel_block["carry_over"] = carry
             digest["sentinel"] = sentinel_block
         if args.dry_run:
             print(json.dumps(digest, indent=2, sort_keys=True))

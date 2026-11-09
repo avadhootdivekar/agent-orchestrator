@@ -279,7 +279,48 @@ If I1 cannot land, degrade to EPIC §4.4.4 (leaf-only injection, hard-barrier ea
 - **Spawn origin.** `SPAWN_ORIGIN_SENTINEL = "sentinel"` (also on `TaskRunState.origin`); `SpawnRecord.parent_task_id` is the
   actor label: `sentinel-gNN` for the LLM, otherwise `ctl:<actor>`; `parent_dispatch_cycle` is 0. The UI graph API passes
   `origin` through unchanged; dedicated styling is not part of this change.
-- Not done here: `sentinel_injected_count` / breaker (T-Sn7Bkl, FR-19), rate limits, early-checkpoint trigger.
+- Not done here: rate limits (`max_injections_per_hour`, T-Sn9Pow). Backlog, early checkpoint and the FR-19 cap landed in §6.9.
+
+### 6.9 As built (T-Sn7Bkl, 2026-11-09)
+Module `sentinel_backlog.py` (pure functions, injectable clock) + one engine step `Orchestrator._sentinel_bandwidth`
+that runs right after FILL (so `occ_ready` is what FILL could not dispatch), fail-safe like the tick.
+- **Published backlog.** The overseer tool validates a checkpoint's `outputs/backlog.json` (`ao.overseer.backlog/v1`,
+  rules `OV-BL1..BL7`) and, only after `ckpt-check` passes (never `--dry-run`), writes the engine-ready
+  `<run_dir>/control/backlog.json` (`ao.sentinel.backlog/v1`): `stage`, `known_work_items`, and per entry
+  `{id, priority, expires_at_ckpt, kind, work_item, task}` where `task` is a complete unit `TaskSpec` with its final id
+  `s-NN-<slug>` (NN assigned by the tool, stable across re-confirmation; brief copied to that id under
+  `outputs/waves/w(K+1)/briefs/`). No `backlog.json` while an old published file exists => published as empty (clears it).
+  The engine never interprets overseer semantics; it re-runs the shared checker on every release with a `CheckPolicy`
+  built from the file (`stage`, `known_work_items`, per-task `kind`/`work_item`) — this wires the policy T-Sn6Brr left open.
+- **L1 release.** `bandwidth.backlog_release`, idle slots > 0 and nothing ready after FILL: releasable entries (not released,
+  not rejected, not expired) sorted by **descending priority** (file order breaks ties); one `inject` (actor `sentinel-tick`,
+  entry id `bk-<id>`) per entry through the applier, up to the number of idle slots. A checker refusal is recorded in
+  `sentinel.backlog_rejected{id: rule}` and never retried; ids must match `^s-\d{2,}-slug$` (`BK-ID`). Expiry:
+  `expires_at_ckpt = N` expires once task `ck-NN` has left `pending`; expired ids are listed in `sentinel.backlog_expired`
+  and never released. Released ids persist in `sentinel.backlog_released` (resume-safe; a re-published file never re-releases).
+- **L2 early checkpoint.** Candidate = pending `emit_tasks` + `barrier: soft` task with >= 1 running and >= 1 settled
+  predecessor and settled fraction >= `early_ckpt_fraction`; fires when no releasable backlog (or release off), idle slots
+  >= `early_ckpt_min_idle` (default ceil(live_limit/2)) continuously for `early_ckpt_grace_seconds`, and no earlier early
+  checkpoint is still pending/running. Action: internal-only applier kind `early_checkpoint` ->
+  `graph_check.plan_early_checkpoint` (rule `GE-EARLY`): one `set_edges` edit drops the carry-over ids from `depends_on` and the
+  `inputs` they produce (persisted in `graph_edits`, replayed on resume). Recorded in `sentinel.early_checkpoints[]`
+  (`checkpoint_id, at, settled, carry_over`). It is a normal `ck-NN` task, so it counts toward `max_waves`.
+- **Digest / checker.** `ckpt-prep` adds `digest.carry_over[]` (unsettled carry-over of every early checkpoint <= this one:
+  `unit_id, wave, status, work_item, kind, early_checkpoint`, also mirrored in `digest.sentinel.carry_over`) and
+  `digest.soft_barrier: true` on a sentinel run; the next `ck-*` entry must then carry `barrier: soft` (and must not otherwise,
+  `OV-R10`). `OV-R17`: no emitted unit may target a carry-over `work_item`; `OV-BL6` forbids the same for backlog entries.
+  Carry-over and `s-NN` units are not predecessors of the next checkpoint; `ingest_ledger` records them (with their own
+  wave) at the first checkpoint that sees them settled (`late_units`).
+- **FR-19.** `sentinel.injected_count` (incremented in `graph_check.commit_plan` for every sentinel-source injection);
+  cap = `sentinel.max_injected_tasks` or `max(20, ceil(3 x max_parallel x expected_hours))` with expected_hours from a
+  `run_wall_clock_seconds` breaker (else 1), enforced for every source via `CheckPolicy.max_new_tasks` (`GE-LIMIT`). New
+  breaker condition `sentinel_injected_task_count`; `injected_task_count` and the tool's `unit-gate` FANOUT count now exclude
+  sentinel-origin tasks (identical for runs without any).
+- **Metrics (NFR-13).** `RunMetrics.slot_seconds_idle_backlog` = idle slot-seconds (nothing ready) while releasable backlog
+  existed (counted even with release disabled, i.e. the baseline). Fixture `tests/test_sentinel_backlog.py::test_heavy_tail_*`
+  (P=6, seeded lognormal durations, 8 backlog entries, real engine): idle-with-work seconds off=3.5 vs on=0.01 (>99% less).
+- Limits: carry-over stragglers may still run when a tail starts; priority semantics are "higher first" (A.3 only says
+  integer >= 0); the template workflow declares no `sentinel_injected_task_count` breaker (the engine-side cap is the guard).
 
 ## 7. Shared mechanical checker (FR-11, FR-12)
 

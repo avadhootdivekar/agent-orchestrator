@@ -81,6 +81,27 @@ for you. Your verdict's `directive_responses[]` must contain **one entry per dir
 `ckpt-check`. Also read `digest.sentinel` (`injected_since_last_ckpt`, `kills`, `edits`, `alarms`):
 the sentinel owns health/recovery/ad-hoc injection, you own charter alignment and may revisit them.
 
+## Carry-over (early checkpoint) — never re-schedule it
+If `digest.carry_over[]` is present, the sentinel released **this** checkpoint early while those
+units were still running (each entry: `unit_id`, `wave`, `status`, `work_item`, `kind`). They are
+**not** your predecessors and **not** failed: they finish on their own and are ledgered by a later
+checkpoint. Plan the next wave from the settled units only, and **never emit a unit (or backlog
+entry) whose `work_item` equals a carry-over `work_item`** — that would run the same work twice
+(`OV-R17`, mechanically checked). Mention each carry-over unit in your `report.md`.
+
+## Backlog (optional): pre-approve work for idle slots
+When `digest.soft_barrier` is true the run has the sentinel, and your emitted next checkpoint must
+carry `"barrier": "soft"` (and must not otherwise — `OV-R10`). You may also write
+`outputs/backlog.json` (schema `ao.overseer.backlog/v1`, contract "Backlog"): up to 20 *independent*
+units the sentinel may start **for free** in otherwise idle slots while this wave's tail runs.
+Per entry: `id` (slug), `priority` (higher runs first), `brief_path`
+(`<instance_dir>/outputs/waves/w(JJ+1)/briefs/<id>.json`, you write the brief like any unit brief),
+`kind`, `ask_ids`, `work_item`, `rationale`, `expires_at_ckpt` (`JJ+1` or `JJ+2`). Rules
+(`OV-BL1..BL7`): independent work only (not a `work_item` of this wave, a carry-over item or a capped
+item), no new scope in `converge`, only `verify`/`document` in `stabilize`, **no backlog at all** on
+`closeout`/`hold`/`must_close`. An entry expires when its `expires_at_ckpt` checkpoint starts —
+re-list it in your own backlog to re-confirm. No `backlog.json` = the previous backlog is cleared.
+
 ## Update progress
 For **every** acceptance criterion across the charter, set its `criteria[]` status
 (`met|unmet|deferred`), using the exact `id` (`A<n>.<m>`) intake assigned in

@@ -56,6 +56,7 @@ RULE_STAGE_STABILIZE: Final = "GE-STAGE-STABILIZE"
 RULE_STAGE_CONVERGE: Final = "GE-STAGE-CONVERGE"
 RULE_LIMIT: Final = "GE-LIMIT"
 RULE_DISABLED: Final = "GE-DISABLED"
+RULE_EARLY: Final = "GE-EARLY"
 PARENT_TICK: Final = "sentinel-tick"
 
 #: Budget stages (mirrors the overseer tool's STAGE_ORDER; stage is supplied by the caller).
@@ -442,6 +443,64 @@ def plan_edit_pending(
     return EditPlan(edits=edits, removed=list(cancel), skipped=list(skip), tasks_after=after)
 
 
+def plan_early_checkpoint(
+    workflow: WorkflowSpec,
+    state: RunState,
+    payload: Mapping[str, Any],
+    *,
+    actor: str,
+    at: str,
+    edit_id: str,
+) -> EditPlan:
+    """Plan the FR-10 early release of a pending soft checkpoint.
+
+    ``payload = {checkpoint_id, carry_over[]}``: drops the (unsettled) carry-over predecessors
+    from the checkpoint's ``depends_on`` and the ``inputs`` they produce. Internal source only
+    (the tick); the checkpoint must be a pending soft ``emit_tasks`` task, each carry-over id a
+    current predecessor that has not settled, and at least one predecessor must remain.
+    """
+    ck_id = payload.get("checkpoint_id")
+    carry = payload.get("carry_over")
+    if not isinstance(ck_id, str) or not isinstance(carry, list) or not carry:
+        raise EditRejected(RULE_PAYLOAD, "early_checkpoint needs checkpoint_id and carry_over[]")
+    by_id = {t.id: t for t in workflow.tasks}
+    ck = by_id.get(ck_id)
+    if ck is None:
+        raise EditRejected(RULE_UNKNOWN_TASK, f"unknown checkpoint {ck_id!r}")
+    if not _is_pending(state, ck_id):
+        raise EditRejected(RULE_NOT_PENDING, f"checkpoint {ck_id!r} is not pending")
+    if not ck.emit_tasks or ck.barrier != "soft":
+        raise EditRejected(RULE_EARLY, f"{ck_id!r} is not a soft emitter checkpoint")
+    settled_states = {"succeeded", "failed", "skipped", "cancelled"}
+    for c in carry:
+        if not isinstance(c, str) or c not in ck.depends_on:
+            raise EditRejected(RULE_EARLY, f"carry-over {c!r} is not a predecessor of {ck_id!r}")
+        if c in state.tasks and state.tasks[c].status in settled_states:
+            raise EditRejected(RULE_EARLY, f"carry-over {c!r} already settled")
+    new_deps = [d for d in ck.depends_on if d not in carry]
+    if not new_deps:
+        raise EditRejected(RULE_EARLY, "no settled predecessor would remain")
+    dropped_out = (
+        {o for c in carry for o in by_id[c].outputs} if all(c in by_id for c in carry) else set()
+    )
+    new_inputs = [i for i in ck.inputs if i not in dropped_out]
+    work = {t.id: t.model_copy(deep=True) for t in workflow.tasks}
+    work[ck_id].depends_on = new_deps
+    work[ck_id].inputs = new_inputs
+    after = list(work.values())
+    _check_acyclic(workflow, after)
+    edit = GraphEdit(
+        op="set_edges",
+        task_id=ck_id,
+        depends_on=new_deps,
+        inputs=new_inputs,
+        source=actor,
+        at=at,
+        edit_id=edit_id,
+    )
+    return EditPlan(edits=[edit], tasks_after=after)
+
+
 # ---------------------------------------------------------------------------------------------
 # commit / replay
 # ---------------------------------------------------------------------------------------------
@@ -468,6 +527,9 @@ def commit_plan(
         )
     _apply_runstate_effects(state, plan.edits)
     state.graph_edits.extend(plan.edits)
+    if plan.new_tasks and state.sentinel is not None:
+        state.sentinel.injected_count += len(plan.new_tasks)  # FR-19 counter (all sources)
+        state.sentinel.injected_ids.extend(t.id for t in plan.new_tasks)
 
 
 def _apply_runstate_effects(state: RunState, edits: list[GraphEdit]) -> None:

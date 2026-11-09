@@ -163,12 +163,16 @@ class SentinelRuntime:
     """Injectable file-size probe (tests substitute a fake stalled file)."""
     lane: GenerationLane | None = None
     """LLM generation lane (T-Sn8Gen); None => mechanical sentinel only."""
-    edit_applier: Callable[[str, dict[str, Any], str, str, str], None] | None = None
+    edit_applier: Callable[..., None] | None = None
     """Engine-owned ``inject``/``edit_pending`` applier (T-Sn6Brr); None => kinds not enabled."""
     reshape_pending: bool = False
     """Set by the applier; ``run()`` re-derives graph/order/preds on the next loop pass."""
     proposal_gate: Callable[[dict[str, Any], RunState, datetime], None] | None = None
     """LLM-power policy (T-Sn9Pow): raises ``graph_check.EditRejected`` for a refused proposal."""
+    occ_backlog: int = 0
+    """Releasable backlog entries after the latest FILL (T-Sn7Bkl; NFR-13 attribution)."""
+    bandwidth: Any = None
+    """``sentinel_backlog.Bandwidth`` bookkeeping, created by the engine when the lane runs."""
     max_consecutive_rejections: int | None = None
     """Auto-pause the LLM lane after this many consecutive rejected sentinel proposals."""
 
@@ -217,6 +221,8 @@ def update_metrics(state: RunState, rt: SentinelRuntime, now: datetime) -> None:
     metrics.slot_seconds_busy += busy * dt
     metrics.slot_seconds_idle_with_ready += idle_ready * dt
     metrics.slot_seconds_idle_no_ready += (idle - idle_ready) * dt
+    if rt.occ_backlog > 0:
+        metrics.slot_seconds_idle_backlog += (idle - idle_ready) * dt
     total = (
         metrics.slot_seconds_busy
         + metrics.slot_seconds_idle_with_ready

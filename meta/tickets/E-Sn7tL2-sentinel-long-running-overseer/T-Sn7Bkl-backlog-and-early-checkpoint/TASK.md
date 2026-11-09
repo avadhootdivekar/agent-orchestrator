@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-Sn7Bkl-backlog-and-early-checkpoint`
 - Epic ID: `E-Sn7tL2-sentinel-long-running-overseer`
-- Owner: `unassigned`
+- Owner: `developer (claude-sonnet-5-5)`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `< 3 days`
 - Phase: P2
 - Agent: developer (engine + overseer template/tool)
