@@ -18,5 +18,10 @@ class Executor(ABC):
     # "autocompact"). A setting an agent sets that its executor lacks is warned about, not an error.
     supported_settings: frozenset[str] = frozenset()
 
+    # Cancellation (E-Sn7tL2 T-Sn4Rec): an executor that honours ``ctx.cancel_event`` kills its
+    # work and returns ``TaskResult(status="killed", kill_reason=..., kill_source=...)``.
+    # ``ClaudeCli`` kills the whole process group. Executors that do NOT honour it (best effort,
+    # documented) run to completion: the sentinel then sees a normal outcome, no kill recorded.
+
     @abstractmethod
     def execute(self, ctx: TaskContext) -> TaskResult: ...

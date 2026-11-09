@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import statistics
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,12 +20,17 @@ from pathlib import Path
 from typing import Any, Final
 
 from .models import (
+    CancelToken,
     EffectiveSetting,
     RunMetrics,
     RunState,
+    SentinelKill,
     SentinelNote,
     SentinelOverride,
+    SentinelRecoverySpec,
     SentinelState,
+    TaskRecovery,
+    TaskRunState,
 )
 
 CTL_SCHEMA: Final = "ao.ctl/v1"
@@ -57,7 +64,7 @@ KINDS_ALL: Final = frozenset(
     }
 )
 KINDS_ENABLED: Final = frozenset(
-    {"set", "pause_llm", "resume_llm", "note", "request_hold", "request_cancel", "cancel"}
+    {"set", "pause_llm", "resume_llm", "note", "kill", "request_hold", "request_cancel", "cancel"}
 )
 CANCEL_KINDS: Final = frozenset({"request_cancel", "cancel"})
 OVERRIDABLE_KEYS: Final = frozenset({"max_parallel"})
@@ -75,6 +82,21 @@ RULE_CEILING: Final = "CTL-CEILING"
 RULE_FILENAME: Final = "CTL-FILENAME"
 
 SOURCE_LIVE_OVERRIDE: Final = "live-override"
+
+# Recovery ladder (T-Sn4Rec, HLD §4.3).
+KILL_SOURCE_MECHANICAL: Final = "mechanical"
+KILL_SOURCE_MANUAL: Final = "manual"
+REASON_IDLE: Final = "idle"
+REASON_STUCK: Final = "stuck_factor"
+REASON_COST: Final = "cost"
+STUCK_MIN_SAMPLES: Final = 3
+"""Same-kind completed tasks needed before the stuck-factor trigger may fire."""
+SYSTEMIC_WINDOW_SECONDS: Final = 3600
+KILL_LOG_MAX: Final = 200
+ALARMS_FILE: Final = "sentinel-alarms.jsonl"
+DECISION_RETRY: Final = "retry"
+DECISION_ESCALATE: Final = "escalate"
+DECISION_FAIL: Final = "fail"
 
 
 class _Reject(Exception):
@@ -112,6 +134,13 @@ class SentinelRuntime:
     occ_running: int = 0
     occ_ready: int = 0
     """Occupancy after the latest FILL: attributed to the interval until the next sample."""
+    recovery: SentinelRecoverySpec | None = None
+    """None => liveness/kill ladder off (no tokens are wired, executors untouched)."""
+    tokens: dict[str, CancelToken] = field(default_factory=dict)
+    """Live cancel token per running task id (main thread owns the dict)."""
+    alarmed: set[str] = field(default_factory=set)
+    stat_size: Callable[[str], int | None] = lambda path: _stat_size(path)
+    """Injectable file-size probe (tests substitute a fake stalled file)."""
 
 
 def ensure_state(state: RunState) -> SentinelState:
@@ -164,6 +193,10 @@ def update_metrics(state: RunState, rt: SentinelRuntime, now: datetime) -> None:
         + metrics.slot_seconds_idle_no_ready
     )
     metrics.utilisation_pct = round(100.0 * metrics.slot_seconds_busy / total, 2) if total else 0.0
+
+
+def _entry_now(at: str) -> datetime:
+    return datetime.fromisoformat(at)
 
 
 def _valid_id(entry_id: object) -> bool:
@@ -271,6 +304,18 @@ def _apply_entry(
             raise _Reject(RULE_PAYLOAD, f"note requires payload.text (1..{NOTE_TEXT_MAX} chars)")
         sent.notes.append(SentinelNote(id=entry["id"], actor=entry["actor"], at=at, text=text))
         del sent.notes[:-NOTES_MAX]
+    elif kind == "kill":
+        tid = payload.get("task_id")
+        if not isinstance(tid, str) or tid not in rt.tokens:
+            raise _Reject(RULE_PAYLOAD, "kill requires payload.task_id of a running task")
+        no_retry = payload.get("no_retry", False)
+        if not isinstance(no_retry, bool):
+            raise _Reject(RULE_PAYLOAD, "kill payload.no_retry must be a boolean")
+        reason = entry.get("rationale") or payload.get("reason") or "manual"
+        if not request_kill(
+            state, rt, tid, str(reason)[:200], KILL_SOURCE_MANUAL, _entry_now(at), no_retry=no_retry
+        ):
+            raise _Reject(RULE_PAYLOAD, f"task {tid!r} already has a kill in flight")
     elif kind == "request_hold":
         sent.hold_requested = True
         sent.hold_reason = entry.get("rationale") or payload.get("reason")
@@ -348,3 +393,246 @@ def finalize_inbox(rt: SentinelRuntime) -> None:
     kept = sorted(done.glob("*.json"))
     for old in kept[:-PROCESSED_KEEP]:
         old.unlink(missing_ok=True)
+
+
+# ----------------------------------------------------------------------------------------------
+# Liveness + recovery ladder (E-Sn7tL2 T-Sn4Rec)
+# ----------------------------------------------------------------------------------------------
+
+
+def _stat_size(path: str) -> int | None:
+    try:
+        return os.stat(path).st_size
+    except OSError:
+        return None
+
+
+def _parse(ts_iso: str | None) -> datetime | None:
+    if not ts_iso:
+        return None
+    try:
+        return datetime.fromisoformat(ts_iso)
+    except ValueError:
+        return None
+
+
+def register_task(state: RunState, rt: SentinelRuntime, tid: str) -> CancelToken | None:
+    """Wire a fresh cancel token for a task about to be dispatched (None when recovery is off)."""
+    if rt.recovery is None:
+        return None
+    token = CancelToken(grace_seconds=rt.recovery.kill_grace_seconds)
+    rt.tokens[tid] = token
+    ts = state.tasks[tid]
+    ts.last_activity_at = None
+    ts.last_activity_size = None
+    ts.running_seconds = None
+    return token
+
+
+def release_task(rt: SentinelRuntime, tid: str) -> CancelToken | None:
+    return rt.tokens.pop(tid, None)
+
+
+def sample_liveness(state: RunState, rt: SentinelRuntime, now: datetime) -> bool:
+    """Record activity (size change of ``activity_path``) and running seconds per running task."""
+    changed = False
+    for tid, token in rt.tokens.items():
+        ts = state.tasks.get(tid)
+        if ts is None or ts.status != "running":
+            continue
+        size = rt.stat_size(token.activity_path) if token.activity_path else None
+        size = size if size is not None else 0
+        if ts.last_activity_at is None or size != ts.last_activity_size:
+            ts.last_activity_at = now.isoformat()
+            ts.last_activity_size = size
+            changed = True
+        started = _parse(ts.started_at)
+        if started is not None:
+            ts.running_seconds = max((now - started).total_seconds(), 0.0)
+    return changed
+
+
+def _peer_durations(state: RunState, tid: str, ts: TaskRunState) -> list[float]:
+    """Wall seconds of completed same-kind (same agent) tasks, excluding *tid* itself."""
+    out: list[float] = []
+    for other_id, other in state.tasks.items():
+        if other_id == tid or other.status != "succeeded" or other.agent != ts.agent:
+            continue
+        a, b = _parse(other.started_at), _parse(other.ended_at)
+        if a is not None and b is not None and b >= a:
+            out.append((b - a).total_seconds())
+    return out
+
+
+def _trigger_for(
+    state: RunState, spec: SentinelRecoverySpec, tid: str, ts: TaskRunState, now: datetime
+) -> str | None:
+    last = _parse(ts.last_activity_at)
+    if last is not None and (now - last).total_seconds() >= spec.idle_kill_minutes * 60:
+        return REASON_IDLE
+    running = ts.running_seconds or 0.0
+    if running >= spec.stuck_min_minutes * 60:
+        peers = _peer_durations(state, tid, ts)
+        if len(peers) >= STUCK_MIN_SAMPLES and running > spec.stuck_factor * statistics.median(
+            peers
+        ):
+            return REASON_STUCK
+    cap = ts.effective_limits.task_cost_cap_usd if ts.effective_limits is not None else None
+    if spec.cost_kill_pct is not None and cap:
+        # Only cost already settled for earlier attempts is visible mid-flight (the live attempt's
+        # spend is reported when it ends): the trigger guards re-dispatches of costly tasks.
+        if ts.cumulative_cost_usd >= cap * spec.cost_kill_pct / 100.0:
+            return REASON_COST
+    return None
+
+
+def _append_alarm(rt: SentinelRuntime, record: dict[str, Any]) -> None:
+    try:
+        rt.control_dir.mkdir(parents=True, exist_ok=True)
+        with (rt.control_dir / ALARMS_FILE).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+    except OSError:
+        rt.log.warning(
+            "sentinel.alarm: could not write alarms file", extra={"event": "sentinel.error"}
+        )
+
+
+def evaluate_recovery(
+    state: RunState, rt: SentinelRuntime, now: datetime, protected: set[str]
+) -> list[str]:
+    """Mechanical triggers: request cancels for stalled/overlong tasks. Returns killed task ids.
+
+    Barrier (*protected*) tasks are alarm-only unless ``include_barriers``. Nothing is killed once
+    the systemic alarm is raised.
+    """
+    spec = rt.recovery
+    sent = state.sentinel
+    if spec is None or not spec.enabled or sent is None or sent.systemic_alarm:
+        return []
+    killed: list[str] = []
+    for tid in sorted(rt.tokens):
+        token = rt.tokens[tid]
+        ts = state.tasks.get(tid)
+        if ts is None or ts.status != "running" or token.is_set():
+            continue
+        reason = _trigger_for(state, spec, tid, ts, now)
+        if reason is None:
+            continue
+        if tid in protected and not spec.include_barriers:
+            if tid not in rt.alarmed:
+                rt.alarmed.add(tid)
+                rt.log.warning(
+                    "sentinel.alarm: barrier task %s tripped %s (alarm only)",
+                    tid,
+                    reason,
+                    extra={"event": "sentinel.alarm", "task": tid, "reason": reason},
+                )
+                _append_alarm(rt, {"at": now.isoformat(), "kind": "barrier", "task": tid})
+            continue
+        if request_kill(state, rt, tid, reason, KILL_SOURCE_MECHANICAL, now):
+            killed.append(tid)
+    return killed
+
+
+def request_kill(
+    state: RunState,
+    rt: SentinelRuntime,
+    tid: str,
+    reason: str,
+    source: str,
+    now: datetime,
+    *,
+    no_retry: bool = False,
+) -> bool:
+    """Signal the task's executor to die. Idempotent per attempt (a second request is a no-op)."""
+    token = rt.tokens.get(tid)
+    if token is None or token.is_set():
+        return False
+    token.reason, token.source, token.no_retry = reason, source, no_retry
+    token.set()
+    rt.log.warning(
+        "sentinel.kill: %s (%s, %s)",
+        tid,
+        reason,
+        source,
+        extra={"event": "sentinel.kill", "task": tid, "reason": reason, "source": source},
+    )
+    return True
+
+
+def settle_kill(
+    state: RunState,
+    rt: SentinelRuntime,
+    tid: str,
+    reason: str,
+    source: str,
+    no_retry: bool,
+    now: datetime,
+) -> str:
+    """Advance the ladder for a killed attempt: ``retry`` -> ``escalate`` -> ``fail``.
+
+    Kills never consume ``max_attempts`` (the engine requeues the task as a fresh dispatch).
+    Mutates ``ts.recovery`` and the sentinel kill log; raises the systemic alarm when enough kills
+    land inside the window.
+    """
+    ts = state.tasks[tid]
+    sent = ensure_state(state)
+    spec = rt.recovery or SentinelRecoverySpec()
+    rec = ts.recovery if ts.recovery is not None else TaskRecovery()
+    ts.recovery = rec
+    rec.kills += 1
+    rec.last_reason, rec.last_source, rec.no_retry = reason, source, no_retry
+    sent.kill_log.append(
+        SentinelKill(task_id=tid, at=now.isoformat(), reason=reason, source=source)
+    )
+    del sent.kill_log[:-KILL_LOG_MAX]
+    _check_systemic(sent, spec, rt, now)
+    if no_retry or not spec.enabled or rec.kills > spec.max_recovery_kills_per_task:
+        decision = DECISION_FAIL
+    elif rec.kills == 1 or not spec.escalate:
+        decision = DECISION_RETRY
+    else:
+        idx = min(rec.kills - 2, len(spec.escalate) - 1)
+        rec.escalation_step = idx + 1
+        rec.overrides = dict(spec.escalate[idx])
+        decision = DECISION_ESCALATE
+    rt.log.warning(
+        "sentinel.recovery.%s: %s kills=%d",
+        decision,
+        tid,
+        rec.kills,
+        extra={"event": f"sentinel.recovery.{decision}", "task": tid, "kills": rec.kills},
+    )
+    return decision
+
+
+def _check_systemic(
+    sent: SentinelState, spec: SentinelRecoverySpec, rt: SentinelRuntime, now: datetime
+) -> None:
+    if sent.systemic_alarm:
+        return
+    recent = [
+        k
+        for k in sent.kill_log
+        if (a := _parse(k.at)) is not None and (now - a).total_seconds() <= SYSTEMIC_WINDOW_SECONDS
+    ]
+    if len(recent) < spec.systemic_kill_alarm:
+        return
+    sent.systemic_alarm = True
+    sent.systemic_alarm_at = now.isoformat()
+    sent.llm_paused = True
+    rt.log.error(
+        "sentinel.alarm: systemic — %d kills in %ds; automatic kills stopped, LLM paused",
+        len(recent),
+        SYSTEMIC_WINDOW_SECONDS,
+        extra={"event": "sentinel.alarm", "kind": "systemic", "kills": len(recent)},
+    )
+    _append_alarm(
+        rt,
+        {
+            "at": now.isoformat(),
+            "kind": "systemic",
+            "kills": len(recent),
+            "window_s": SYSTEMIC_WINDOW_SECONDS,
+        },
+    )

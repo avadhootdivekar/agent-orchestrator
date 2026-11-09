@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import datetime
 from typing import Any, Literal
 
@@ -1258,6 +1259,25 @@ class TaskContext(BaseModel):
     # byte-identical to today (NFR-2). `ClaudeCliExecutor` passes no `env=` to Popen at all
     # today, so this field is the injection point that did not previously exist.
     env: dict[str, str] = {}
+    # Sentinel liveness/kill hooks (E-Sn7tL2 T-Sn4Rec). Both None unless the sentinel recovery lane
+    # is on, so every other run is byte-identical. ``cancel_event`` is a :class:`CancelToken`
+    # (a ``threading.Event``); executors that honour it kill their process group when it is set
+    # and return ``status="killed"``. ``activity_path`` is the file whose growth proves liveness.
+    cancel_event: Any = Field(default=None, exclude=True)
+    activity_path: str | None = Field(default=None, exclude=True)
+
+
+class CancelToken(threading.Event):
+    """Cancel signal for one running task attempt; carries the kill's reason/source."""
+
+    def __init__(self, grace_seconds: int = 10) -> None:
+        super().__init__()
+        self.reason: str = ""
+        self.source: str = ""
+        self.no_retry: bool = False
+        self.grace_seconds = grace_seconds
+        self.activity_path: str | None = None
+        """Set by the worker per attempt so the main-thread tick knows what to stat."""
 
 
 class HookOutcome(BaseModel):
@@ -1300,10 +1320,13 @@ class HookOutcome(BaseModel):
 
 class TaskResult(BaseModel):
     task_id: str
-    status: Literal["succeeded", "failed", "cancelled", "timed_out"]
+    status: Literal["succeeded", "failed", "cancelled", "timed_out", "killed"]
     attempts: int
     exit_code: int | None = None
     error: str | None = None
+    # Set only for status == "killed" (sentinel recovery, E-Sn7tL2 T-Sn4Rec): why/who killed it.
+    kill_reason: str | None = None
+    kill_source: str | None = None
     # Path (directory) where captured stdout/stderr live (FR-5).
     # Engine records this without reading file content (NFR-1).
     output_artifact_path: str | None = None
@@ -1337,6 +1360,9 @@ TaskStatus = Literal[
     "skipped",
     "cancelled",
     "timed_out",
+    # Sentinel recovery kill (E-Sn7tL2 T-Sn4Rec): the attempt was killed mid-flight and the task
+    # awaits re-dispatch by the recovery ladder. Display state; the scheduler treats it as ready.
+    "killed",
     # Distinct terminal status for tasks on an unselected route (ADR-RC-001, LLD §0-R1).
     # Never "skipped"+reason: skipped self-heals from should_skip on every run; not_taken is
     # a routing verdict that must survive resume unchanged (source of truth: route_decisions).
@@ -1507,6 +1533,18 @@ class TaskLimits(BaseModel):
     max_attempts: int | None = None
 
 
+class TaskRecovery(BaseModel):
+    """Per-task recovery-ladder bookkeeping (E-Sn7tL2 T-Sn4Rec); survives resume."""
+
+    kills: int = 0
+    last_reason: str | None = None
+    last_source: str | None = None
+    escalation_step: int = 0
+    overrides: dict[str, str] = {}
+    """Agent-field overrides the next dispatch applies (ladder escalation)."""
+    no_retry: bool = False
+
+
 class TaskRunState(BaseModel):
     status: TaskStatus = "pending"
     attempts: int = 0
@@ -1576,6 +1614,11 @@ class TaskRunState(BaseModel):
     # Same shape, captured at the task's FIRST dispatch -- bounds the task's [start, end] commit
     # window so concurrent (`max_parallel>1`) tasks can be told apart from serial ones.
     start_heads: dict[str, str] = {}
+    # Sentinel liveness (E-Sn7tL2 T-Sn4Rec): None while the sentinel recovery lane is off.
+    last_activity_at: str | None = None
+    last_activity_size: int | None = None
+    running_seconds: float | None = None
+    recovery: TaskRecovery | None = None
 
 
 # Run-prompt capture (E-Us9Kd4 FR-13). Named so the CLI capture helper, the dashboard and the
@@ -1665,6 +1708,13 @@ class SentinelNote(BaseModel):
     text: str = ""
 
 
+class SentinelKill(BaseModel):
+    task_id: str
+    at: str
+    reason: str
+    source: str
+
+
 class SentinelState(BaseModel):
     """Run-long sentinel bookkeeping (E-Sn7tL2 T-Sn3Tck); ``RunState.sentinel`` None == never on."""
 
@@ -1678,6 +1728,10 @@ class SentinelState(BaseModel):
     hold_reason: str | None = None
     notes: list[SentinelNote] = []
     last_tick_at: str | None = None
+    kill_log: list[SentinelKill] = []
+    """Bounded recent kills (systemic-alarm window)."""
+    systemic_alarm: bool = False
+    systemic_alarm_at: str | None = None
 
 
 class RunMetrics(BaseModel):

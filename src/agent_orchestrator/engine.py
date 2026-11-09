@@ -88,6 +88,7 @@ from .models import (
     SPAWN_ORIGIN_INJECTED,
     SPAWN_ORIGIN_LOOP,
     TIER_RERUN,
+    CancelToken,
     CircuitBreakerSpec,
     EffectiveSetting,
     EstimatorConfig,
@@ -382,6 +383,9 @@ DispatchSignal = Literal["skipped", "dispatch", "halt", "blocked"]
 
 # Outcome of `Orchestrator._settle_completed_task`.
 # "await_input": the task parked as awaiting_input (HLD §6.1); the run keeps going.
+# Ladder escalation keys -> AgentSpec fields (``effort`` is the legacy alias of ``turn_budget``).
+_RECOVERY_FIELD_ALIASES = {"effort": "turn_budget"}
+
 SettleSignal = Literal["settled", "requeue", "halt", "reshaped", "await_input"]
 
 
@@ -643,6 +647,9 @@ class Orchestrator:
         # Resolved sentinel settings (E-Sn7tL2 T-Sn2Set): stored only -- the tick/recovery
         # lanes that consume them land in later tasks, so behaviour is unchanged for now.
         self._sentinel = sentinel
+        # Live cancel tokens (task id -> CancelToken), shared with the sentinel runtime of the
+        # current run(); stays empty (=> executors see no cancel hooks) unless the sentinel is on.
+        self._tokens: dict[str, CancelToken] = {}
         self._executor = executor
         # Awaiting-input mode (HLD §7). None = keep the run's persisted mode (default "blocking").
         self._input_mode = input_mode
@@ -920,7 +927,7 @@ class Orchestrator:
 
                     # ---- SENTINEL TICK: inbox, overrides, metrics (fail-safe, main thread) ----
                     if rt is not None:
-                        rt = self._sentinel_tick(rt, state)
+                        rt = self._sentinel_tick(rt, state, workflow)
                         if rt is not None and rt.cancel_requested:
                             self._halt_cancelled(in_flight, workflow, state, ctx)
                             failed = True
@@ -990,6 +997,8 @@ class Orchestrator:
                             # is always empty at gate time).
                             break
                         assert prep.task is not None  # DISPATCH always carries its payload
+                        if rt is not None:
+                            sentinel_tick.register_task(state, rt, tid)
                         fut = pool.submit(
                             self._run_and_integrate,
                             task=prep.task,
@@ -1043,8 +1052,9 @@ class Orchestrator:
                     for done_fut in done_futs:
                         settled_tid = in_flight.pop(done_fut)
                         outcome = done_fut.result()
+                        token = sentinel_tick.release_task(rt, settled_tid) if rt else None
                         settle = self._settle_completed_task(
-                            settled_tid, outcome, workflow, state, ctx
+                            settled_tid, outcome, workflow, state, ctx, token, rt
                         )
                         if settle.signal == "halt":
                             failed = True
@@ -1060,7 +1070,8 @@ class Orchestrator:
                             # the ready-set model needs an explicit non-running status to
                             # re-admit the task on a later wave, so this is applied
                             # unconditionally regardless of which site requeued.
-                            state.tasks[settled_tid].status = "pending"
+                            if state.tasks[settled_tid].status != "killed":
+                                state.tasks[settled_tid].status = "pending"
                         elif settle.signal == "reshaped":
                             assert settle.graph is not None and settle.order is not None
                             graph = settle.graph
@@ -1933,6 +1944,8 @@ class Orchestrator:
         workflow: WorkflowSpec,
         state: RunState,
         ctx: _RunContext,
+        token: CancelToken | None = None,
+        rt: sentinel_tick.SentinelRuntime | None = None,
     ) -> SettleResult:
         """Post-dispatch settlement for task *tid*'s completed *outcome*.
 
@@ -1986,6 +1999,12 @@ class Orchestrator:
         run_log = ctx.run_log
         ts = state.tasks[tid]
         result = outcome.result  # E-Wk9Tz3: the only line the "extracted verbatim" body needs
+
+        # ---- Sentinel recovery kill (E-Sn7tL2 T-Sn4Rec): ladder retry -> escalate -> fail ----
+        if result.status == "killed":
+            requeue = self._settle_killed(tid, result, ts, state, ctx, token, rt)
+            if requeue is not None:
+                return requeue
 
         # ---- Claude quota exhaustion route (distinct from provider 429) ----
         if result.claude_quota_exhausted:
@@ -2804,7 +2823,9 @@ class Orchestrator:
             control_dir=Path(run_dir) / sentinel_tick.CONTROL_DIR,
             clock=self._clock,
             log=run_log,
+            recovery=spec.recovery,
         )
+        self._tokens = rt.tokens
         sent = sentinel_tick.ensure_state(state)
         sent.enabled = True
         sent.disabled_reason = None
@@ -2817,7 +2838,10 @@ class Orchestrator:
         return rt
 
     def _sentinel_tick(
-        self, rt: sentinel_tick.SentinelRuntime, state: RunState
+        self,
+        rt: sentinel_tick.SentinelRuntime,
+        state: RunState,
+        workflow: WorkflowSpec | None = None,
     ) -> sentinel_tick.SentinelRuntime | None:
         """One fail-safe tick on the main thread; returns None if the lane was disabled by an error.
 
@@ -2831,6 +2855,16 @@ class Orchestrator:
             result = sentinel_tick.drain_inbox(state, rt, now)
             assert state.sentinel is not None
             state.sentinel.last_tick_at = now.isoformat()
+            if sentinel_tick.sample_liveness(state, rt, now):
+                result.changed = True
+            if workflow is not None and rt.recovery is not None:
+                protected = {
+                    tid
+                    for tid in rt.tokens
+                    if self._is_barrier(workflow.task(tid), workflow, state)
+                }
+                if sentinel_tick.evaluate_recovery(state, rt, now, protected):
+                    result.changed = True
             if result.changed:
                 # G5: consumed ids are durable together with the mutation they caused, and the
                 # inbox files are only retired after this save.
@@ -2848,6 +2882,45 @@ class Orchestrator:
                 state.sentinel.enabled = False
                 state.sentinel.disabled_reason = f"tick error: {exc!r}"[:500]
             return None
+
+    def _settle_killed(
+        self,
+        tid: str,
+        result: TaskResult,
+        ts: TaskRunState,
+        state: RunState,
+        ctx: _RunContext,
+        token: CancelToken | None,
+        rt: sentinel_tick.SentinelRuntime | None,
+    ) -> SettleResult | None:
+        """Advance the recovery ladder for a killed attempt.
+
+        Returns a ``requeue`` SettleResult for retry/escalate (kills never consume
+        ``max_attempts``: the next dispatch is a fresh ``_run_with_retries`` call), or None after
+        rewriting *result* into an ordinary ``failed`` outcome so the normal failure path runs.
+        """
+        reason = result.kill_reason or (token.reason if token else "") or "unknown"
+        source = result.kill_source or (token.source if token else "") or "unknown"
+        no_retry = bool(token.no_retry) if token else False
+        now = self._clock()
+        if rt is None:  # sentinel off yet an executor reported a kill: nothing to recover with
+            decision = sentinel_tick.DECISION_FAIL
+        else:
+            decision = sentinel_tick.settle_kill(state, rt, tid, reason, source, no_retry, now)
+        # The attempt's spend is real even though the dispatch is discarded.
+        self._accumulate_actuals(ts, result)
+        if self._budget_manager is not None:
+            self._budget_manager.reverse_estimate(
+                tid, state.budget_counters, cycle=ts.dispatch_cycle
+            )
+        if decision == sentinel_tick.DECISION_FAIL:
+            result.status = "failed"
+            result.error = f"killed by sentinel ({source}: {reason}); recovery ladder exhausted"
+            return None
+        ts.status = "killed"
+        ts.ended_at = None
+        self._runstate.save(state)
+        return SettleResult(signal="requeue")
 
     def _drain_remaining(
         self,
@@ -4486,6 +4559,16 @@ class Orchestrator:
         # fill-in not clobber) -- resolved once here so the executor never has to know
         # about task-level overrides; it just reads ctx.agent like before.
         effective_agent = resolve_effective_agent(task, agent_spec, workflow.defaults.model)
+        recovery = state.tasks[task.id].recovery if task.id in state.tasks else None
+        if recovery is not None and recovery.overrides:
+            # Ladder escalation (T-Sn4Rec): only fields the agent actually has are applied.
+            fields = {
+                _RECOVERY_FIELD_ALIASES.get(k, k): v
+                for k, v in recovery.overrides.items()
+                if _RECOVERY_FIELD_ALIASES.get(k, k) in type(effective_agent).model_fields
+            }
+            if fields:
+                effective_agent = effective_agent.model_copy(update=fields)
 
         # Resolve all paths through the artifact store (no content reads). E-Wk9Tz3 R-19:
         # SIX of the seven remappable path categories -- `st`, not `self._store` (repo_paths,
@@ -4676,6 +4759,21 @@ class Orchestrator:
         any_actuals = False
 
         prior_attempts: list[AttemptRecord] = []
+        if recovery is not None and recovery.kills:
+            # Retry-context note for the re-dispatch after a sentinel kill (seeds attempt-1's file).
+            prior_attempts.append(
+                AttemptRecord(
+                    attempt=0,
+                    status="killed",
+                    exit_code=None,
+                    error=(
+                        f"previous dispatch was killed by the sentinel "
+                        f"({recovery.last_source}: {recovery.last_reason}); "
+                        f"kill #{recovery.kills}"
+                    ),
+                    output_dir="",
+                )
+            )
 
         for attempt in range(1, retry.max_attempts + 1):
             if self._cancel_fn():
@@ -4699,6 +4797,14 @@ class Orchestrator:
                 write_prior_attempts(attempt_output_dir, prior_attempts) if prior_attempts else None
             )
 
+            cancel_token = self._tokens.get(task.id)
+            activity_path = (
+                os.path.join(attempt_output_dir, "transcript.jsonl")
+                if cancel_token is not None
+                else None
+            )
+            if cancel_token is not None:
+                cancel_token.activity_path = activity_path
             ctx = TaskContext(
                 run_id=state.run_id,
                 task_id=task.id,
@@ -4706,6 +4812,8 @@ class Orchestrator:
                 instruction_path=instruction_path,
                 general_instruction_paths=general_instruction_paths,
                 prior_attempts_path=prior_attempts_path,
+                cancel_event=cancel_token,
+                activity_path=activity_path,
                 outcome_marker_path=(
                     os.path.join(attempt_output_dir, OUTCOME_FILENAME)
                     if retry.honor_marker
@@ -4762,6 +4870,13 @@ class Orchestrator:
             result.cost_usd = cum_cost_usd if any_actuals else None
 
             last_result = result
+
+            if result.status == "killed":
+                # Not a failure of the attempt budget: hand back to the recovery ladder (settle).
+                if cancel_token is not None:
+                    result.kill_reason = result.kill_reason or cancel_token.reason or None
+                    result.kill_source = result.kill_source or cancel_token.source or None
+                return result
 
             if result.status == "succeeded":
                 return _finalize_with_post_hook(result)

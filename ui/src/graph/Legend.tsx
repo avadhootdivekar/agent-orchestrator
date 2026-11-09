@@ -81,6 +81,7 @@ const STATUS_LEGEND_ORDER = [
   "succeeded",
   "failed",
   "timed_out",
+  "killed",
   "cancelled",
   "skipped",
   "not_taken",

@@ -95,7 +95,8 @@ export function statusTone(status: string): StatusTone {
     case "running":
       return "active";
     case "awaiting_input":
-      // Parked on a human answer: distinct from failed (critical) and from running (active).
+    case "killed":
+      // Parked on a human answer / killed by the sentinel and awaiting re-dispatch: not failed.
       return "waiting";
     default:
       // pending / skipped / cancelled / not_taken — all "nothing happening here".
@@ -115,6 +116,8 @@ export function statusGlyph(status: string): string {
       return "▶";
     case "awaiting_input":
       return "?";
+    case "killed":
+      return "☠";
     case "cancelled":
       return "⊘";
     case "skipped":

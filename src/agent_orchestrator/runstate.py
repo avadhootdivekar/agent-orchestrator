@@ -543,6 +543,7 @@ class RunStateStore:
                     cumulative_cache_read_input_tokens=ts.cumulative_cache_read_input_tokens,
                     cumulative_cost_usd=ts.cumulative_cost_usd,
                     origin=ts.origin,
+                    recovery=ts.recovery,
                 )
 
         # A request whose task no longer exists in the spec is cancelled (HLD §6.4).
