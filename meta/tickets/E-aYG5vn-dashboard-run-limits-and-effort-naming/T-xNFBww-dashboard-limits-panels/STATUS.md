@@ -2,14 +2,15 @@
 
 - ID: `T-xNFBww-dashboard-limits-panels`
 - Updated At: `2026-11-09`
-- State: `Draft`
+- State: `Done`
 - Owner: `unassigned`
 
 ## This update
-- By: claude-opus-5-5 · Role: architect · Date: 2026-11-09 · Comment: Task created from epic breakdown (owner-approved design).
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: Implemented limits panels (backend + UI); Done.
 
 ## Evidence
-- None yet.
+- tests/ui/test_run_limits.py, tests/test_usage_limits_grouping.py, ui/src/test/limits-panel.test.tsx + usage.test.tsx.
+- npm test 870 passed; npm run build ok; ruff check/format clean; mypy src clean for touched files.
 
 ## Risks / Blockers
 - None

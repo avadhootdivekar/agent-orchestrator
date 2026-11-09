@@ -6,7 +6,7 @@
 - Owner: `unassigned`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `< 3 days`
 - Phase: UI
 - Agent: developer (UI + backend)
@@ -58,3 +58,15 @@ N/A
 - New behaviour off / absent settings ⇒ byte-identical behaviour (golden tests stay green).
 - Work only in `./agent-orchestrator` on the epic branch; test against temp workspaces; never `install.sh` / restart `ao.service`.
 - Update this TASK.md + STATUS.md and the epic STATUS.md rollup together.
+
+## Implementation notes (2026-11-09)
+- Backend: `ui/limits.py` (`RunLimit`, `build_run_limits`), `ui/overseer_limits.py` (adapter registry keyed by template
+  name; reads `overseer-config.json` + latest `digest.json`, confined to `workflows/overseer-runner/runs/<id>/`),
+  `ui/runs.py` (`RunDetail.limits[]`/`settings_recorded`, `TaskStat.limits`, `RunningTaskBrief.attempts|cost_usd|limits`),
+  `usage.py` (`GroupUsage.turn_budget`/`thinking_effort`; group key = agent, model, turn budget, thinking effort;
+  legacy `effort` kept == turn budget).
+- UI: `components/LimitsPanel.tsx` (Run page section, `TaskLimitsSection` in the task detail panel, `UsageBar`),
+  NowRunning rows (turns/max, elapsed/timeout, turn budget + thinking), Usage columns.
+- Pre-upgrade runs/tasks: no invented rows; dash + tooltip. Sentinel rows render only if the backend sends them
+  (generic `limits[]` contract) - no sentinel producer exists yet.
+- Not done (follow-up): `ao report-usage` text table still prints one `Effort` column (JSON has both new fields).

@@ -23,6 +23,7 @@ from ..artifacts import LocalFsArtifactStore
 from ..errors import ArtifactPathError
 from ..models import (
     RunState,
+    TaskRunState,
     WorkflowSnapshot,
     compute_run_active_seconds,
     compute_run_usage_totals,
@@ -33,6 +34,8 @@ from ..run_prompt import file_sha256
 from ..runstate import load_workflow_snapshot_at
 from .activity import ResultReader, RunActivity, TranscriptTailer, read_run_activity, utc_now
 from .graph import RunGraph, build_run_graph, compute_graph_version
+from .limits import RunLimit, RunMeasures, build_run_limits
+from .overseer_limits import template_limits
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +119,9 @@ class TaskStat:
     # (the exact D35 fields); None when the task has none. Display-only; every string inside
     # (source_run_id, key, ...) is untrusted text for the frontend.
     result_cache: dict[str, object] | None = None
+    # T-xNFBww (additive): limits in force at the task's most recent dispatch
+    # (`TaskRunState.effective_limits` dumped); None for a never-dispatched / pre-upgrade task.
+    limits: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +132,10 @@ class RunningTaskBrief:
     model: str | None
     effort: str | None
     started_at: str | None
+    # T-xNFBww (additive): effective limits + attempts/cost so far; `limits` None = pre-upgrade.
+    attempts: int = 0
+    cost_usd: float = 0.0
+    limits: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +209,10 @@ class RunDetail:
     prompt_changed_since_start: bool | None = None
     # E-Rc4Hk8 (HLD 8.10, additive): `cache.report.run_block`; None when no current record.
     result_cache: dict[str, object] | None = None
+    # T-xNFBww (additive): "Limits & settings" rows. `settings_recorded` is False for a run that
+    # predates the effective-settings snapshot (the UI then shows a dash + tooltip).
+    limits: list[RunLimit] = field(default_factory=list)
+    settings_recorded: bool = False
 
 
 @dataclass(frozen=True)
@@ -238,6 +252,10 @@ def _wall_seconds(state: RunState) -> float:
     if started is None or updated is None:
         return 0.0
     return max(0.0, (updated - started).total_seconds())
+
+
+def _limits_dict(ts: TaskRunState) -> dict[str, object] | None:
+    return ts.effective_limits.model_dump() if ts.effective_limits is not None else None
 
 
 class RunRepository:
@@ -319,7 +337,15 @@ class RunRepository:
             prompt_preview=prompt_preview(state.prompt.text) if state.prompt else None,
             waiting_for_input=run_waiting_for_input(state),
             running_tasks=[
-                RunningTaskBrief(id=tid, model=ts.model, effort=ts.effort, started_at=ts.started_at)
+                RunningTaskBrief(
+                    id=tid,
+                    model=ts.model,
+                    effort=ts.effort,
+                    started_at=ts.started_at,
+                    attempts=ts.attempts,
+                    cost_usd=ts.cumulative_cost_usd,
+                    limits=_limits_dict(ts),
+                )
                 for tid, ts in state.tasks.items()
                 if ts.status == "running"
             ][:MAX_RUNNING_BRIEFS],
@@ -385,8 +411,24 @@ class RunRepository:
                     model=ts.model,
                     effort=ts.effort,
                     result_cache=rc_tasks.get(tid),
+                    limits=_limits_dict(ts),
                 )
             )
+
+        snapshot = self._load_snapshot(run_id, state)
+        measures = RunMeasures(
+            cost_usd=summary.cost_usd,
+            wall_seconds=summary.wall_seconds,
+            active_seconds=summary.active_seconds,
+            injected_tasks=len(state.injected_tasks),
+            max_task_cost_usd=max(
+                (t.cumulative_cost_usd for t in state.tasks.values()), default=0.0
+            ),
+        )
+        limits = build_run_limits(state, snapshot, measures)
+        limits.extend(
+            template_limits(self._root, state.workflow_id, injected_count=measures.injected_tasks)
+        )
 
         integration = state.integration
         return RunDetail(
@@ -411,6 +453,8 @@ class RunRepository:
             ),
             graph_version=compute_graph_version(state),
             result_cache=rc_run,
+            limits=limits,
+            settings_recorded=bool(state.effective_settings),
         )
 
     def load_graph(self, run_id: str) -> RunGraph:
@@ -429,17 +473,20 @@ class RunRepository:
         or unreadable run bubbles up as ``RunNotFoundError``.
         """
         state = self.load_state(run_id)
-        snapshot: WorkflowSnapshot | None = None
-        if state.spec_sessions:
-            sha = state.spec_sessions[-1].spec_sha256
-            snapshot = load_workflow_snapshot_at(self.run_dir(run_id), sha)
-            if snapshot is None:
-                logger.warning(
-                    "run graph degraded: workflow snapshot missing or invalid for run %s",
-                    run_id,
-                    extra={"event": "ui.graph.degraded"},
-                )
+        snapshot = self._load_snapshot(run_id, state)
+        if snapshot is None and state.spec_sessions:
+            logger.warning(
+                "run graph degraded: workflow snapshot missing or invalid for run %s",
+                run_id,
+                extra={"event": "ui.graph.degraded"},
+            )
         return build_run_graph(state, snapshot)
+
+    def _load_snapshot(self, run_id: str, state: RunState) -> WorkflowSnapshot | None:
+        """Latest session's workflow snapshot (tolerant: ``None`` when absent/invalid)."""
+        if not state.spec_sessions:
+            return None
+        return load_workflow_snapshot_at(self.run_dir(run_id), state.spec_sessions[-1].spec_sha256)
 
     def load_activity(self, run_id: str, now: datetime | None = None) -> RunActivity:
         """Live per-task activity for *run_id* (E-iafh2F, ADR-0018): read-only, bounded.

@@ -16,7 +16,7 @@
 | T-zP28k9-run-options-registry-and-settings-snapshot | Done |
 | T-f0d7gm-turn-budget-rename-and-autocompact | Done |
 | T-pMpo4O-schema-driven-launch-forms | Draft |
-| T-xNFBww-dashboard-limits-panels | Draft |
+| T-xNFBww-dashboard-limits-panels | Done |
 | T-mQs7CQ-dashboard-epic-e2e-and-docs | Draft |
 | T-9ymKja-effort-means-thinking-flip | Blocked (owner gate: all workspaces migrated + one deprecation release) |
 

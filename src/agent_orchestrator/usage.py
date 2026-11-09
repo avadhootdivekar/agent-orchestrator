@@ -292,7 +292,12 @@ class GroupUsage(BaseModel):
 
     agent: str
     model: str
+    # Legacy column: today `effort` IS the turn budget (T-f0d7gm); kept equal to `turn_budget`
+    # so older JSON consumers keep working until the effort/thinking flip (T-9ymKja).
     effort: str
+    # T-xNFBww: the grouping dimensions. `NO_EFFORT_LABEL` = not recorded (pre-upgrade row).
+    turn_budget: str = NO_EFFORT_LABEL
+    thinking_effort: str = NO_EFFORT_LABEL
     tasks: int = 0
     succeeded: int = 0
     failed: int = 0
@@ -456,8 +461,16 @@ def _sum_result_cache(parts: Sequence[dict[str, object]]) -> ResultCacheUsage | 
     return total
 
 
-def _key(ts: TaskRunState) -> tuple[str, str, str]:
-    return (ts.agent or UNKNOWN_LABEL, ts.model or UNKNOWN_LABEL, ts.effort or NO_EFFORT_LABEL)
+def _key(ts: TaskRunState) -> tuple[str, str, str, str]:
+    """Group key: (agent, model, turn budget, thinking effort).
+
+    A task dispatched after T-xNFBww carries `effective_limits` with both tiers. An older row
+    has none: its `effort` was the turn budget, and its thinking effort is simply unknown.
+    """
+    limits = ts.effective_limits
+    turn_budget = (limits.turn_budget if limits else None) or ts.effort or NO_EFFORT_LABEL
+    thinking = (limits.thinking_effort if limits else None) or NO_EFFORT_LABEL
+    return (ts.agent or UNKNOWN_LABEL, ts.model or UNKNOWN_LABEL, turn_budget, thinking)
 
 
 def aggregate_usage(
@@ -467,17 +480,25 @@ def aggregate_usage(
     feedback: FeedbackInput | None = None,
     survival: SurvivalInput | None = None,
 ) -> UsageReport:
-    """Group every settled, dispatched task in *states* by (agent, model, effort).
+    """Group every settled, dispatched task in *states* by (agent, model, turn budget, thinking).
 
     Optional joins (keyword-only, so the two-argument call keeps working): *feedback* maps
     run_id -> feedback entries (or a `FeedbackFile`); *survival* maps (run_id, task_id) ->
     `TaskSurvival` (only isolation/serial, non-low-confidence rows are joined)."""
-    groups: dict[tuple[str, str, str], GroupUsage] = {}
+    groups: dict[tuple[str, str, str, str], GroupUsage] = {}
 
     def group(ts: TaskRunState) -> GroupUsage:
-        agent, model, effort = _key(ts)
+        key = _key(ts)
+        agent, model, turn_budget, thinking = key
         return groups.setdefault(
-            (agent, model, effort), GroupUsage(agent=agent, model=model, effort=effort)
+            key,
+            GroupUsage(
+                agent=agent,
+                model=model,
+                effort=turn_budget,
+                turn_budget=turn_budget,
+                thinking_effort=thinking,
+            ),
         )
 
     outcomes: list[RunOutcome] = []
@@ -604,7 +625,9 @@ def aggregate_usage(
                 "model/effort for this role, or tighter task shapes"
             )
         g.flags.extend(_signal_flags(g))
-    ordered = sorted(groups.values(), key=lambda g: (g.agent, g.model, g.effort))
+    ordered = sorted(
+        groups.values(), key=lambda g: (g.agent, g.model, g.turn_budget, g.thinking_effort)
+    )
     return UsageReport(
         runs_scanned=runs,
         verdicts_found=verdicts,
