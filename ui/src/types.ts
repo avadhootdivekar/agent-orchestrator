@@ -913,3 +913,94 @@ export interface AnswerInputResponse {
   resumed: boolean;
   launch?: LaunchRecord;
 }
+
+// ---- Sentinel panel (E-Sn7tL2 T-Sn5Ui1) -------------------------------------------------------
+
+/** `schema` of GET /api/runs/{id}/sentinel (the `ao ctl status --json` document). */
+export const SENTINEL_STATUS_SCHEMA = "ao.ctl.status/v1";
+
+export interface SentinelOverride {
+  value: unknown;
+  actor: string;
+  at: string;
+}
+
+export interface SentinelLadderEntry {
+  kills: number;
+  last_reason: string | null;
+  last_source: string | null;
+  escalation_step: number;
+  no_retry: boolean;
+}
+
+export interface SentinelAction {
+  id: string;
+  kind: string;
+  actor: string;
+  at: string;
+  text: string;
+}
+
+export interface SentinelStatus {
+  schema: string;
+  run_id: string;
+  run_status: string;
+  updated_at: string;
+  sentinel: {
+    enabled: boolean;
+    disabled_reason: string | null;
+    last_tick_at: string | null;
+    llm_paused: boolean;
+    hold_requested: boolean;
+    systemic_alarm: boolean;
+  };
+  concurrency: {
+    running: number;
+    limit: number | null;
+    ceiling: number | null;
+    overrides: Record<string, SentinelOverride>;
+  };
+  utilisation: {
+    pct: number | null;
+    slot_seconds_busy: number | null;
+    slot_seconds_idle_with_ready: number | null;
+    slot_seconds_idle_no_ready: number | null;
+  };
+  tasks: {
+    counts: Record<string, number>;
+    running: { id: string; liveness_age_s: number | null }[];
+  };
+  ladder: Record<string, SentinelLadderEntry>;
+  backlog: { held: unknown[] };
+  llm: {
+    generation: number | null;
+    spend_usd: number | null;
+    paused: boolean;
+    pause_reason: string | null;
+    budget_exhausted: boolean;
+    enabled: boolean | null;
+    powers: string | null;
+  };
+  inbox: { pending: string[]; consumed_count: number };
+  recent_actions: SentinelAction[];
+}
+
+/** POST /api/runs/{id}/control body — an `ao.ctl/v1` entry minus id / actor / created_at. */
+export interface SentinelControlRequest {
+  kind: "set" | "pause_llm" | "resume_llm" | "kill" | "note";
+  payload?: Record<string, unknown>;
+  rationale?: string;
+}
+
+export interface SentinelControlQueued {
+  id: string;
+  kind: string;
+  run_id: string;
+  actor: string;
+  outcome: "queued";
+}
+
+export type SentinelControlOutcome =
+  | { outcome: "pending" }
+  | { outcome: "consumed" }
+  | { outcome: "rejected"; rule_id: string; detail: string };

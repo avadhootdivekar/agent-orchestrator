@@ -2260,3 +2260,48 @@ pre.launch-log {
   font-weight: 600;
   margin-bottom: 8px;
 }
+
+/* Sentinel panel (T-Sn5Ui1): stacked slot-utilisation bar; the text beside it carries the numbers. */
+.slot-bar {
+  display: inline-flex;
+  width: 160px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--accent-soft);
+}
+
+.slot-busy {
+  background: var(--accent);
+}
+
+.slot-idle-ready {
+  background: #d14343;
+}
+
+.slot-idle-none {
+  background: #9aa3ad;
+}
+
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.kv > div {
+  display: flex;
+  gap: 12px;
+}
+
+.kv dt {
+  min-width: 110px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.kv dd {
+  margin: 0;
+}

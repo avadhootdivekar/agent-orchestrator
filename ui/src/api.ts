@@ -33,6 +33,10 @@ import type {
   RunOptions,
   RunOptionsSchema,
   RunSignalsResponse,
+  SentinelControlOutcome,
+  SentinelControlQueued,
+  SentinelControlRequest,
+  SentinelStatus,
   RunSummary,
   TemplateInfo,
   TotpEnrollment,
@@ -293,6 +297,22 @@ export const api = {
     request<AnswerInputResponse>(
       `/runs/${encodeURIComponent(runId)}/inputs/${encodeURIComponent(requestId)}`,
       { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  /** Sentinel status (`ao ctl status --json`). 404 on an old backend / unknown run. */
+  sentinel: (runId: string) => request<SentinelStatus>(`/runs/${encodeURIComponent(runId)}/sentinel`),
+
+  /** Queue one control entry; the actor is set server-side from the session. */
+  sentinelControl: (runId: string, body: SentinelControlRequest) =>
+    request<SentinelControlQueued>(`/runs/${encodeURIComponent(runId)}/control`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Non-blocking verdict of a queued control entry. */
+  sentinelControlOutcome: (runId: string, entryId: string) =>
+    request<SentinelControlOutcome>(
+      `/runs/${encodeURIComponent(runId)}/control/${encodeURIComponent(entryId)}`,
     ),
 
   runSignals: (runId: string, survival: boolean) =>

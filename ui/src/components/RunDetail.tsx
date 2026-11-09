@@ -26,6 +26,7 @@ import { CollapsibleSection } from "./CollapsibleSection";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
 import { LimitsPanel } from "./LimitsPanel";
+import { SentinelPanel } from "./SentinelPanel";
 import { NowRunning, nowRunningRows } from "./NowRunning";
 import { RunSummaryPanel } from "./RunSummaryPanel";
 import { PromptPanel } from "./PromptPanel";
@@ -388,6 +389,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
       </div>
 
       <LimitsPanel limits={detail.limits} settingsRecorded={detail.settings_recorded} />
+
+      <SentinelPanel runId={runId} live={detail.is_live} />
 
       <RunSummaryPanel summary={liveSummary} />
 
