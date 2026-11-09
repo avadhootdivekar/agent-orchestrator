@@ -963,6 +963,82 @@ class SchedulingSpec(BaseModel):
     hotspots_path: str = DEFAULT_HOTSPOTS_PATH
 
 
+# -- Sentinel settings (E-Sn7tL2 EPIC §4.7, ADR-0024) -------------------------------------------
+# Same shape in a workflow's `sentinel:` block and the `sentinel:` block of `.ao/config.yaml`.
+# Every sub-model forbids unknown keys so a typo fails `ao validate` instead of being dropped.
+# Defaults live HERE once; the run-options registry generates its env/flag/config entries from
+# these fields (run_options.sentinel_options), so there is no parallel table to keep in sync.
+
+SENTINEL_IDLE_KILL_FLOOR_MINUTES = 12
+"""Spike-derived floor: healthy silent gaps reach ~10 min (Bash cap), 15 is the default."""
+
+
+class _SentinelBase(BaseModel):
+    model_config = {"extra": "forbid"}
+
+
+class SentinelRecoverySpec(_SentinelBase):
+    enabled: StrictBool = True
+    idle_kill_minutes: int = Field(default=15, ge=1)
+    stuck_factor: float = Field(default=3.0, gt=0)
+    stuck_min_minutes: int = Field(default=20, ge=1)
+    cost_kill_pct: float | None = Field(default=None, gt=0)
+    max_recovery_kills_per_task: int = Field(default=2, ge=0)
+    kill_grace_seconds: int = Field(default=10, ge=0)
+    systemic_kill_alarm: int = Field(default=3, ge=1)
+    escalate: list[dict[str, str]] = [{"effort": "high"}]
+    include_barriers: StrictBool = False
+    force: StrictBool = False
+    """Explicit escape: allow ``idle_kill_minutes`` below the floor."""
+
+    @model_validator(mode="after")
+    def _idle_floor(self) -> SentinelRecoverySpec:
+        if self.idle_kill_minutes < SENTINEL_IDLE_KILL_FLOOR_MINUTES and not self.force:
+            raise ValueError(
+                f"recovery.idle_kill_minutes={self.idle_kill_minutes} is below the floor of "
+                f"{SENTINEL_IDLE_KILL_FLOOR_MINUTES} minutes (healthy silent gaps reach ~10); "
+                "set recovery.force=true to override"
+            )
+        return self
+
+
+class SentinelBandwidthSpec(_SentinelBase):
+    backlog_release: StrictBool = True
+    early_checkpoint: StrictBool = True
+    early_ckpt_fraction: float = Field(default=0.5, gt=0, le=1)
+    early_ckpt_min_idle: int | None = Field(default=None, ge=1)
+    early_ckpt_grace_seconds: int = Field(default=120, ge=0)
+
+
+class SentinelLlmSpec(_SentinelBase):
+    enabled: StrictBool = False
+    powers: Literal["advise", "act"] = "act"
+    allow_graph_edits: StrictBool = True
+    allow_kill: StrictBool = True
+    max_llm_kills_per_hour: int = Field(default=2, ge=0)
+    max_injections_per_hour: int = Field(default=6, ge=0)
+    heartbeat_minutes: int = Field(default=30, ge=1)
+    generation_ttl_minutes: int = Field(default=60, ge=1)
+    budget_usd: float | None = Field(default=None, gt=0)
+    budget_pct: float | None = Field(default=10, gt=0, le=100)
+    driver: str = "claude-cli"
+    agent: str | None = None
+
+
+class SentinelSpec(_SentinelBase):
+    """Run-long sentinel settings; absent / ``enabled: false`` => engine behaviour unchanged."""
+
+    enabled: StrictBool = False
+    tick_seconds: int = Field(default=15, ge=1)
+    max_parallel_ceiling: int | None = Field(default=None, ge=1)
+    cancel_grace_seconds: int = Field(default=30, ge=0)
+    inbox_batch_max: int = Field(default=50, ge=1)
+    max_injected_tasks: int | None = Field(default=None, ge=1)
+    recovery: SentinelRecoverySpec = SentinelRecoverySpec()
+    bandwidth: SentinelBandwidthSpec = SentinelBandwidthSpec()
+    llm: SentinelLlmSpec = SentinelLlmSpec()
+
+
 class WorkflowSpec(BaseModel):
     version: str
     id: str
@@ -998,6 +1074,9 @@ class WorkflowSpec(BaseModel):
     # a task's `pre_hook`/`post_hook: HookRef`. Empty default is a byte-identical no-op for
     # every pre-epic workflow (NFR-2/NFR-5) -- mirrors the `agents`/`reposets` registry pattern.
     hooks: dict[str, HookSpec] = {}
+    # Sentinel settings (E-Sn7tL2). None (absent) => the workflow contributes nothing and the
+    # invocation layers (CLI > env > config) decide; a present block wins over them (ADR-0003).
+    sentinel: SentinelSpec | None = None
 
     @field_validator("repo_set", mode="before")
     @classmethod

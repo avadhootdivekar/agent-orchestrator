@@ -36,6 +36,11 @@ ALLOWED_VARIABLES = frozenset(
         "params.type",
         "params.repo_set",
         "params.branch_policy",
+        "params.sentinel_enabled",
+        "params.sentinel_llm",
+        "params.sentinel_powers",
+        "params.sentinel_budget_pct",
+        "raw.sentinel_member",
         "params.task_budget_usd",
         "params.run_budget_usd",
         "params.leverage_haiku",
@@ -98,6 +103,11 @@ DUMMY_VALUES = {
     "params.task_budget_usd": "75",
     "params.run_budget_usd": "1500",
     "params.max_injected_tasks": "115",
+    "params.sentinel_enabled": "",
+    "params.sentinel_llm": "",
+    "params.sentinel_powers": "",
+    "params.sentinel_budget_pct": "",
+    "raw.sentinel_member": "",
 }
 
 
@@ -165,6 +175,10 @@ def test_template_yaml_params_shape() -> None:
         "leverage_haiku",
         "haiku_angles",
         "max_injected_tasks",
+        "sentinel_enabled",
+        "sentinel_llm",
+        "sentinel_powers",
+        "sentinel_budget_pct",
     }
 
     allowed_param_keys = {"description", "required", "enum", "default"}

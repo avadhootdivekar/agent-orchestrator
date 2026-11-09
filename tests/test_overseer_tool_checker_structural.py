@@ -1627,6 +1627,7 @@ _CONTRACT_DUMMY_VALUES: dict[str, str] = {
     "params.overseer_effort": "high",
     "params.overseer_model": "",
     "params.python_bin": "python3",
+    "raw.sentinel_member": "",
 }
 
 

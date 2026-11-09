@@ -41,6 +41,7 @@ from .models import (
     DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
     DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
     DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
+    SentinelSpec,
     WorkflowIsolation,
 )
 from .monitoring import DEFAULT_HEAL_WAIT_SECONDS
@@ -265,6 +266,10 @@ class ProjectConfig(BaseModel):
     """Record git HEADs for `ao report-survival` serial attribution (FR-12). `None` = unset
     (built-in default: on). CLI `--record-git-heads/--no-record-git-heads` > env
     `AO_RECORD_GIT_HEADS` > this field (`cli._resolve_record_git_heads`)."""
+
+    sentinel: SentinelSpec | None = None
+    """Sentinel defaults (E-Sn7tL2): same shape as a workflow's ``sentinel:`` block. Lowest
+    non-default layer: workflow > CLI > ``AO_SENTINEL_*`` env > this block > built-in default."""
 
     monitoring: MonitoringConfig = MonitoringConfig()
     """Agent-based monitoring & self-healing settings (E-XyfjuZ). Absent block ->
@@ -522,6 +527,18 @@ _INIT_TEMPLATE = """\
 #   max_monitor_calls_per_run: 10  # shared cap on real monitor consults per run
 #   heal_wait_seconds: 30          # RuleBasedMonitor's recommended wait before a healed retry
 #   transient_patterns: []         # extra regexes ADDED to the built-in transient patterns
+
+# --- Sentinel (run-long overseer lane; opt-in, absent -> disabled, byte-identical) ---
+# Same shape as a workflow's `sentinel:` block. Precedence: workflow block > CLI flags
+# (--sentinel, --sentinel-llm, --sentinel-powers, --sentinel-budget-usd, --max-parallel-ceiling,
+# --sentinel-set key=value) > env AO_SENTINEL_<DOTTED_UPPER> > this block > defaults.
+# sentinel:
+#   enabled: false              # AO_SENTINEL_ENABLED / --sentinel / --no-sentinel
+#   tick_seconds: 15
+#   max_parallel_ceiling: null  # null = max_parallel; raise to allow live increases
+#   recovery: {enabled: true, idle_kill_minutes: 15, stuck_factor: 3.0, stuck_min_minutes: 20}
+#   bandwidth: {backlog_release: true, early_checkpoint: true}
+#   llm: {enabled: false, powers: act, budget_usd: null, budget_pct: 10}
 
 # --- Workflow templates: config-registered scaffolding (`ao new` / `ao templates`) ---
 # Each entry is EITHER a template directory (contains template.yaml) OR a directory of

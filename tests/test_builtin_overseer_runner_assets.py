@@ -86,6 +86,11 @@ ALLOWED_VARIABLES = frozenset(
         "params.haiku_turns",
         "params.python_bin",
         "params.branch_policy",
+        "params.sentinel_enabled",
+        "params.sentinel_llm",
+        "params.sentinel_powers",
+        "params.sentinel_budget_pct",
+        "raw.sentinel_member",
     }
 )
 
@@ -112,6 +117,10 @@ EXPECTED_PARAM_NAMES = frozenset(
         "haiku_turns",
         "python_bin",
         "branch_policy",
+        "sentinel_enabled",
+        "sentinel_llm",
+        "sentinel_powers",
+        "sentinel_budget_pct",
     }
 )
 
@@ -217,6 +226,11 @@ DUMMY_VALUES: dict[str, str] = {
     "params.haiku_turns": "2",
     "params.python_bin": "python3",
     "params.branch_policy": "",
+    "params.sentinel_enabled": "",
+    "params.sentinel_llm": "",
+    "params.sentinel_powers": "",
+    "params.sentinel_budget_pct": "",
+    "raw.sentinel_member": "",
 }
 
 
@@ -297,7 +311,7 @@ def test_template_yaml_params_shape_matches_hld_13_1() -> None:
     params = manifest["params"]
     assert isinstance(params, dict)
     assert set(params) == EXPECTED_PARAM_NAMES
-    assert len(params) == 21
+    assert len(params) == 25
 
     allowed_param_keys = {"description", "required", "enum", "default"}
     for name, spec in params.items():

@@ -22,10 +22,15 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal
+from typing import Annotated, Any, Final, Literal, Union, get_args, get_origin
 
-OptionType = Literal["int", "str", "enum", "bool"]
+from pydantic import BaseModel
 
+from .models import SentinelSpec
+
+OptionType = Literal["int", "float", "str", "enum", "bool"]
+
+SOURCE_WORKFLOW: Final = "workflow"
 SOURCE_CLI: Final = "cli"
 SOURCE_ENV: Final = "env"
 SOURCE_CONFIG: Final = "config"
@@ -79,7 +84,7 @@ class Resolved:
     source: str
 
 
-OPTIONS: Final[tuple[Option, ...]] = (
+_BASE_OPTIONS: Final[tuple[Option, ...]] = (
     Option(
         "model",
         "str",
@@ -227,6 +232,92 @@ OPTIONS: Final[tuple[Option, ...]] = (
     ),
 )
 
+# -- sentinel options (E-Sn7tL2): one Option per SentinelSpec scalar leaf, generated -----------
+
+SENTINEL_PREFIX: Final = "sentinel."
+SENTINEL_ENV_PREFIX: Final = "AO_SENTINEL_"
+SENTINEL_GROUP: Final = "Sentinel"
+
+# dotted leaf -> (flag, no_flag): the only leaves with a dedicated CLI flag (the rest are
+# reachable through env, config, the workflow block and ``--sentinel-set key=value``).
+SENTINEL_FLAGS: Final[Mapping[str, tuple[str, str | None]]] = {
+    "enabled": ("--sentinel", "--no-sentinel"),
+    "llm.enabled": ("--sentinel-llm", "--no-sentinel-llm"),
+    "llm.powers": ("--sentinel-powers", None),
+    "llm.budget_usd": ("--sentinel-budget-usd", None),
+    "max_parallel_ceiling": ("--max-parallel-ceiling", None),
+}
+
+
+def _unwrap(ann: Any) -> Any:
+    """Strip ``Annotated[...]`` and ``X | None`` down to the underlying scalar annotation."""
+    while True:
+        origin = get_origin(ann)
+        if origin is Annotated:
+            ann = get_args(ann)[0]
+            continue
+        if origin is Union or (origin is not None and type(None) in get_args(ann)):
+            args = [a for a in get_args(ann) if a is not type(None)]
+            if len(args) == 1:
+                ann = args[0]
+                continue
+        return ann
+
+
+def sentinel_leaves(
+    model: type[BaseModel] = SentinelSpec, prefix: str = ""
+) -> list[tuple[str, Any, Any]]:
+    """``(dotted, annotation, default)`` for every field of *model*, recursing into sub-models.
+    List/dict leaves are included (callers filter on :func:`_scalar_type`)."""
+    out: list[tuple[str, Any, Any]] = []
+    for name, f in model.model_fields.items():
+        ann = _unwrap(f.annotation)
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            out.extend(sentinel_leaves(ann, f"{prefix}{name}."))
+        else:
+            out.append((f"{prefix}{name}", ann, f.get_default(call_default_factory=True)))
+    return out
+
+
+def scalar_option_type(ann: Any) -> tuple[OptionType, tuple[str, ...]] | None:
+    """Registry type (+ enum choices) for a scalar annotation; ``None`` for list/dict leaves."""
+    if get_origin(ann) is Literal:
+        return "enum", tuple(str(a) for a in get_args(ann))
+    for py, kind in ((bool, "bool"), (int, "int"), (float, "float"), (str, "str")):
+        if ann is py:
+            return kind, ()  # type: ignore[return-value]
+    return None
+
+
+def sentinel_options() -> tuple[Option, ...]:
+    """Generate the registry entries for :class:`SentinelSpec` (names ``sentinel.<dotted>``)."""
+    opts: list[Option] = []
+    for dotted, ann, default in sentinel_leaves():
+        typed = scalar_option_type(ann)
+        if typed is None:
+            continue
+        kind, choices = typed
+        flag, no_flag = SENTINEL_FLAGS.get(dotted, (None, None))
+        opts.append(
+            Option(
+                f"{SENTINEL_PREFIX}{dotted}",
+                kind,
+                flag=flag,
+                no_flag=no_flag,
+                env=SENTINEL_ENV_PREFIX + dotted.replace(".", "_").upper(),
+                config=f"{SENTINEL_PREFIX}{dotted}",
+                default=default,
+                choices=choices,
+                help=f"Sentinel setting `{dotted}` (see docs-md/sentinel-hld.md §11).",
+                ui_group=None,
+                ui_label=dotted,
+            )
+        )
+    return tuple(opts)
+
+
+OPTIONS: Final[tuple[Option, ...]] = _BASE_OPTIONS + sentinel_options()
+
 OPTIONS_BY_NAME: Final[Mapping[str, Option]] = {o.name: o for o in OPTIONS}
 
 
@@ -239,6 +330,15 @@ def int_env(name: str) -> int | None:
     v = os.environ.get(name)
     try:
         return int(v) if v else None
+    except ValueError:
+        return None
+
+
+def float_env(name: str) -> float | None:
+    """Float env var, or ``None`` when unset, empty or malformed."""
+    v = os.environ.get(name)
+    try:
+        return float(v) if v else None
     except ValueError:
         return None
 
@@ -334,6 +434,8 @@ def allowed_bool_options() -> dict[str, tuple[str, str]]:
 def _json_schema_for(opt: Option) -> dict[str, Any]:
     if opt.type == "int":
         return {"type": "integer"}
+    if opt.type == "float":
+        return {"type": "number"}
     if opt.type == "bool":
         return {"type": "boolean"}
     if opt.type == "enum":

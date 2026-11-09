@@ -1,7 +1,7 @@
 # ADR-0024 — Sentinel: a run-long, engine-hosted overseer lane (main-thread mechanical tick + control inbox + soft-barrier checkpoints + bounded LLM generations)
 
-- Status: **Proposed — awaiting owner sign-off.** (Sign-off is *not* recorded here; the owner records it in
-  `meta/tickets/E-Sn7tL2-sentinel-long-running-overseer/STATUS.md`. No P1 engine code may merge before that entry.)
+- Status: **Accepted** — owner sign-off recorded 2026-11-09 (avadhoot); see
+  `meta/tickets/E-Sn7tL2-sentinel-long-running-overseer/STATUS.md`.
 - Date: 2026-11-09
 - Deciders: `architect` (author); owner decisions D1–D4 + EPIC §10 (2026-11-09) are inputs, not re-opened here.
   Review requested: `reviewer`, `dev-critic`.
@@ -98,8 +98,8 @@ Adopt option **F** of EPIC §5 as a single engine feature, opt-in, byte-identica
   from the golden byte-identity set (they do not alter any written artifact when no kill occurs).
 - **Follow-ons:** P4 items (FR-24..28) deferred (HLD §16).
 
-## Open items for the owner at sign-off
+## Owner sign-off items (resolved 2026-11-09)
 
 - Confirm D-10 (signal handling for *all* runs, not opt-in) — it is the only behaviour change outside the opt-in.
 - Confirm the `idle_kill_minutes` floor of 12 with an explicit `force` escape (spike-derived).
-- Owner sign-off is **pending**; this ADR is `Proposed`.
+- Owner sign-off **recorded 2026-11-09** (avadhoot): ADR + HLD accepted; D-10 and the floor-12 `idle_kill_minutes` (with explicit `force` escape) confirmed.

@@ -117,6 +117,27 @@ params:
       auto-detect policy: branch fresh off main when starting from main, otherwise sync
       and continue on the current non-main branch. See README.md's "Branch policy" section.
     default: ""
+  sentinel_enabled:
+    description: >-
+      Opt this run into the sentinel (run-long mechanical overseer lane: liveness, recovery,
+      utilisation metrics). `true` renders a `sentinel:` block into workflow.json; unset/`false`
+      leaves the workflow byte-identical to a sentinel-less one. See docs-md/sentinel-hld.md.
+    required: false
+    enum: ["true", "false"]
+  sentinel_llm:
+    description: >-
+      Sentinel only: also enable the LLM sentinel lane (`true`).
+    required: false
+    enum: ["true", "false"]
+  sentinel_powers:
+    description: >-
+      Sentinel only: LLM sentinel powers -- `advise` (notes/directives) or `act` (also inject/edit/kill).
+    required: false
+    enum: ["advise", "act"]
+  sentinel_budget_pct:
+    description: >-
+      Sentinel only: LLM sentinel spend cap as a percent (0-100] of the run cap.
+    required: false
 dirs:
   - outputs
   - outputs/overseer

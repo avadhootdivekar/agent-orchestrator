@@ -6,7 +6,7 @@
 - Owner: `unassigned`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Done (design written; owner sign-off pending — AC4 open)`
+- Status: `Done (owner sign-off recorded 2026-11-09)`
 - Estimate: `< 3 days`
 - Phase: P0
 - Agent: architect (+ reviewer-opus / dev-critic for review)

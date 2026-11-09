@@ -71,6 +71,10 @@
     },
     "integration": { "$ref": "#/$defs/integration" },
     "scheduling": { "$ref": "#/$defs/scheduling" },
+    "sentinel": {
+      "type": ["object", "null"],
+      "description": "Sentinel settings (E-Sn7tL2, ADR-0024); shape = models.SentinelSpec, validated strictly (unknown keys rejected) by WorkflowSpec."
+    },
     "hooks": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/hook" },

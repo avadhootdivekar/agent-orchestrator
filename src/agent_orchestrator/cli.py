@@ -62,7 +62,14 @@ from .models import (
     assumption_lines,
     run_waiting_for_input,
 )
-from .run_options import OPTIONS, SOURCE_DEFAULT, get_option, resolve_option
+from .run_options import OPTIONS, SENTINEL_PREFIX, SOURCE_DEFAULT, get_option, resolve_option
+from .sentinel_settings import (
+    EXIT_BAD_SENTINEL_SETTING,
+    SentinelSettings,
+    SentinelSettingsError,
+    parse_sentinel_set,
+    resolve_sentinel_settings,
+)
 from .service.cli import app as service_app
 
 if TYPE_CHECKING:
@@ -779,7 +786,94 @@ def _resolve_thinking_effort(flag: str | None) -> str | None:
     return value
 
 
-def _effective_settings_snapshot(**cli_values: object) -> dict[str, EffectiveSetting]:
+# -- Sentinel flags (E-Sn7tL2): ONE declaration shared by `run`, `resume` and `new --run`;
+# help text comes from the registry. Dotted leaf names map 1:1 to registry options.
+def _sentinel_help(leaf: str) -> str:
+    opt = get_option(f"sentinel.{leaf}")
+    return f"{opt.help} Env: {opt.env}. Config: {opt.config}."
+
+
+_SENTINEL_OPT = typer.Option(None, "--sentinel/--no-sentinel", help=_sentinel_help("enabled"))
+_SENTINEL_LLM_OPT = typer.Option(
+    None, "--sentinel-llm/--no-sentinel-llm", help=_sentinel_help("llm.enabled")
+)
+_SENTINEL_POWERS_OPT = typer.Option(
+    None, "--sentinel-powers", help=_sentinel_help("llm.powers") + " advise|act."
+)
+_SENTINEL_BUDGET_OPT = typer.Option(
+    None, "--sentinel-budget-usd", help=_sentinel_help("llm.budget_usd")
+)
+_SENTINEL_CEILING_OPT = typer.Option(
+    None, "--max-parallel-ceiling", help=_sentinel_help("max_parallel_ceiling")
+)
+_SENTINEL_SET_OPT = typer.Option(
+    [],
+    "--sentinel-set",
+    help="Set any sentinel leaf by dotted key, e.g. recovery.idle_kill_minutes=20 (repeatable).",
+)
+
+
+def _resolve_sentinel_or_exit(
+    wf: WorkflowSpec,
+    *,
+    sentinel: bool | None,
+    sentinel_llm: bool | None,
+    sentinel_powers: str | None,
+    sentinel_budget_usd: float | None,
+    max_parallel_ceiling: int | None,
+    sentinel_set: list[str],
+) -> SentinelSettings:
+    """Resolve sentinel settings for `run` AND `resume` (one resolver, no duplicated wiring);
+    a bad flag / --sentinel-set / env value exits 2 with a clear message."""
+    cfg = _load_project_config_or_exit()
+    try:
+        cli: dict[str, object] = {
+            "enabled": sentinel,
+            "llm.enabled": sentinel_llm,
+            "llm.powers": sentinel_powers,
+            "llm.budget_usd": sentinel_budget_usd,
+            "max_parallel_ceiling": max_parallel_ceiling,
+        }
+        cli.update(parse_sentinel_set(sentinel_set))  # --sentinel-set wins over the named flags
+        return resolve_sentinel_settings(
+            workflow=wf.sentinel, config=cfg.sentinel if cfg else None, cli=cli
+        )
+    except SentinelSettingsError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(EXIT_BAD_SENTINEL_SETTING)
+
+
+def _sentinel_argv(
+    sentinel: bool | None,
+    sentinel_llm: bool | None,
+    sentinel_powers: str | None,
+    sentinel_budget_usd: float | None,
+    max_parallel_ceiling: int | None,
+    sentinel_set: list[str],
+) -> list[str]:
+    """Re-serialize the sentinel flags for `ao new --run` -> in-process `run`."""
+    args: list[str] = []
+    for value, on, off in (
+        (sentinel, "--sentinel", "--no-sentinel"),
+        (sentinel_llm, "--sentinel-llm", "--no-sentinel-llm"),
+    ):
+        if value is not None:
+            args.append(on if value else off)
+    for val, flag in (
+        (sentinel_powers, "--sentinel-powers"),
+        (sentinel_budget_usd, "--sentinel-budget-usd"),
+        (max_parallel_ceiling, "--max-parallel-ceiling"),
+    ):
+        if val is not None:
+            args += [flag, str(val)]
+    for item in sentinel_set:
+        args += ["--sentinel-set", item]
+    return args
+
+
+def _effective_settings_snapshot(
+    sentinel_settings: SentinelSettings | None = None, **cli_values: object
+) -> dict[str, EffectiveSetting]:
     """Resolve EVERY registry option (CLI > env > config > default) with its source, for
     `RunState.effective_settings`. Purely observational: the values the run actually uses come
     from the per-option resolvers above, which read the same registry."""
@@ -788,8 +882,13 @@ def _effective_settings_snapshot(**cli_values: object) -> dict[str, EffectiveSet
     cfg = _load_project_config_or_exit()
     out: dict[str, EffectiveSetting] = {}
     for opt in OPTIONS:
+        if opt.name.startswith(SENTINEL_PREFIX):
+            continue  # layered by sentinel_settings (workflow + set-aware config), below
         r = resolve_option(opt, cli_values.get(opt.name), cfg)
         out[opt.name] = EffectiveSetting(value=r.value, source=r.source)
+    if sentinel_settings is not None:
+        for name, r in sentinel_settings.effective_settings().items():
+            out[name] = EffectiveSetting(value=r.value, source=r.source)
     return out
 
 
@@ -1354,6 +1453,12 @@ def run(
             " which activates purely from a workflow's own circuit_breakers[].mode."
         ),
     ),
+    sentinel: bool | None = _SENTINEL_OPT,
+    sentinel_llm: bool | None = _SENTINEL_LLM_OPT,
+    sentinel_powers: str | None = _SENTINEL_POWERS_OPT,
+    sentinel_budget_usd: float | None = _SENTINEL_BUDGET_OPT,
+    max_parallel_ceiling: int | None = _SENTINEL_CEILING_OPT,
+    sentinel_set: list[str] = _SENTINEL_SET_OPT,
     input_mode: str | None = typer.Option(
         None,
         "--input-mode",
@@ -1553,6 +1658,16 @@ def run(
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
     monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
 
+    sentinel_settings = _resolve_sentinel_or_exit(
+        wf,
+        sentinel=sentinel,
+        sentinel_llm=sentinel_llm,
+        sentinel_powers=sentinel_powers,
+        sentinel_budget_usd=sentinel_budget_usd,
+        max_parallel_ceiling=max_parallel_ceiling,
+        sentinel_set=sentinel_set,
+    )
+
     orch = Orchestrator(
         executor,
         store,
@@ -1575,7 +1690,9 @@ def run(
         run_prompt=run_prompt,
         result_cache=result_cache,
         input_mode=eff_input_mode,
+        sentinel=sentinel_settings,
         effective_settings=_effective_settings_snapshot(
+            sentinel_settings,
             max_attempts=max_attempts,
             max_turns=max_turns,
             model=model,
@@ -1736,6 +1853,12 @@ def resume(
             " Default: off."
         ),
     ),
+    sentinel: bool | None = _SENTINEL_OPT,
+    sentinel_llm: bool | None = _SENTINEL_LLM_OPT,
+    sentinel_powers: str | None = _SENTINEL_POWERS_OPT,
+    sentinel_budget_usd: float | None = _SENTINEL_BUDGET_OPT,
+    max_parallel_ceiling: int | None = _SENTINEL_CEILING_OPT,
+    sentinel_set: list[str] = _SENTINEL_SET_OPT,
     input_mode: str | None = typer.Option(
         None,
         "--input-mode",
@@ -1965,6 +2088,16 @@ def resume(
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
     monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
 
+    sentinel_settings = _resolve_sentinel_or_exit(
+        wf,
+        sentinel=sentinel,
+        sentinel_llm=sentinel_llm,
+        sentinel_powers=sentinel_powers,
+        sentinel_budget_usd=sentinel_budget_usd,
+        max_parallel_ceiling=max_parallel_ceiling,
+        sentinel_set=sentinel_set,
+    )
+
     orch = Orchestrator(
         executor,
         store,
@@ -1986,7 +2119,9 @@ def resume(
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         result_cache=result_cache,
         input_mode=eff_input_mode,
+        sentinel=sentinel_settings,
         effective_settings=_effective_settings_snapshot(
+            sentinel_settings,
             max_attempts=max_attempts,
             max_turns=max_turns,
             model=model,
@@ -3727,7 +3862,11 @@ def templates_cmd(
 
 
 def _invoke_run_in_process(
-    workflow_path: str, reposets: str | None, agents: str | None, input_mode: str | None = None
+    workflow_path: str,
+    reposets: str | None,
+    agents: str | None,
+    input_mode: str | None = None,
+    extra_args: list[str] | None = None,
 ) -> int:
     """Invoke the existing `run` command in-process for `ao new --run`.
 
@@ -3748,6 +3887,7 @@ def _invoke_run_in_process(
         args += ["--agents", agents]
     if input_mode:
         args += ["--input-mode", input_mode]
+    args += extra_args or []
     command = typer.main.get_command(app)
     return int(command.main(args=args, standalone_mode=False))
 
@@ -3799,6 +3939,12 @@ def new_cmd(
         help="Scaffold, validate, then run the rendered workflow in-process "
         "(equivalent to `ao run --workflow <rendered>`).",
     ),
+    sentinel: bool | None = _SENTINEL_OPT,
+    sentinel_llm: bool | None = _SENTINEL_LLM_OPT,
+    sentinel_powers: str | None = _SENTINEL_POWERS_OPT,
+    sentinel_budget_usd: float | None = _SENTINEL_BUDGET_OPT,
+    max_parallel_ceiling: int | None = _SENTINEL_CEILING_OPT,
+    sentinel_set: list[str] = _SENTINEL_SET_OPT,
     input_mode: str | None = typer.Option(
         None,
         "--input-mode",
@@ -3907,7 +4053,20 @@ def new_cmd(
         return
 
     typer.echo("Running (in-process, equivalent to `ao run --workflow <rendered>`)...")
-    exit_code = _invoke_run_in_process(result.workflow_path, reposets, agents, input_mode)
+    exit_code = _invoke_run_in_process(
+        result.workflow_path,
+        reposets,
+        agents,
+        input_mode,
+        _sentinel_argv(
+            sentinel,
+            sentinel_llm,
+            sentinel_powers,
+            sentinel_budget_usd,
+            max_parallel_ceiling,
+            sentinel_set,
+        ),
+    )
     raise typer.Exit(exit_code)
 
 

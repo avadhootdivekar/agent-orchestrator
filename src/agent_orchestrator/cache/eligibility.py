@@ -150,6 +150,7 @@ WORKFLOW_FIELD_COVERAGE: dict[str, str] = {
     "prompt_path": "content in the key; also a control path",
     "integration": "integration-active rule",
     "hooks": "no-hooks rule (pre_hook/post_hook must be None)",
+    "sentinel": "run-control settings (liveness/recovery); never reach a task's prompt or output",
 }
 
 DEFAULTS_FIELD_COVERAGE: dict[str, str] = {

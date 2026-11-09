@@ -25,12 +25,16 @@
   (status Proposed). **Owner sign-off pending (checkpoint 2); not recorded here.** Needs owner confirmation on: signal handling
   for all runs (ADR D-10) and idle_kill_minutes floor 12.
 
+- By: avadhoot (recorded by claude-sonnet-5-5) · Role: user · Date: 2026-11-09 · Comment: **OWNER SIGN-OFF: ADR-0024 + `docs-md/sentinel-hld.md` ACCEPTED.** D-10 (SIGTERM/SIGINT + process-group kill for ALL runs) CONFIRMED; `idle_kill_minutes` floor 12 with explicit `force` escape CONFIRMED. P1 engine work unblocked.
+
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn2Set done** — sentinel settings on every CLI/env/config/workflow/template surface; engine only stores them.
+
 ## Task rollup
 | Task | Phase | State |
 |---|---|---|
 | T-Sn0Spk-midflight-reshape-kill-spike | P0 | Done (GO-WITH-CHANGES) |
-| T-Sn1Adr-sentinel-adr-and-hld | P0 | Done — ADR Proposed, awaiting owner sign-off |
-| T-Sn2Set-sentinel-settings-plumbing | P1 | Draft |
+| T-Sn1Adr-sentinel-adr-and-hld | P0 | Done — ADR Accepted (owner sign-off 2026-11-09) |
+| T-Sn2Set-sentinel-settings-plumbing | P1 | Done |
 | T-Sn3Tck-main-loop-tick-inbox-overrides | P1 | Draft |
 | T-Sn3Ctl-ao-ctl-cli | P1 | Draft |
 | T-Sn4Rec-liveness-kill-recovery-ladder | P1 | Draft |
@@ -52,4 +56,4 @@
 
 ## Next actions
 1. ~~T-Sn0Spk~~ done ∥ ~~E-aYG5vn T-zP28k9~~ done, ~~T-f0d7gm~~ done.
-2. ~~T-Sn1Adr~~ written → **owner sign-off (blocking P1)** → P1.
+2. ~~T-Sn1Adr~~ signed off 2026-11-09 → P1 (T-Sn2Set in progress).

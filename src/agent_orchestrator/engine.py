@@ -136,6 +136,7 @@ from .retry_context import (
 )
 from .runstate import RunStateStore, record_effective_settings
 from .scheduling.overlap import overlap_score, rank_wave
+from .sentinel_settings import SentinelSettings
 from .spec import validate_isolation, validate_task_model_policy
 from .summarizer import RunSummarizer
 from .survival import current_heads, record_git_start, record_landed_ranges
@@ -637,7 +638,11 @@ class Orchestrator:
         result_cache: ResultCacheHook | None = None,
         input_mode: InputMode | None = None,
         effective_settings: dict[str, EffectiveSetting] | None = None,
+        sentinel: SentinelSettings | None = None,
     ) -> None:
+        # Resolved sentinel settings (E-Sn7tL2 T-Sn2Set): stored only -- the tick/recovery
+        # lanes that consume them land in later tasks, so behaviour is unchanged for now.
+        self._sentinel = sentinel
         self._executor = executor
         # Awaiting-input mode (HLD §7). None = keep the run's persisted mode (default "blocking").
         self._input_mode = input_mode

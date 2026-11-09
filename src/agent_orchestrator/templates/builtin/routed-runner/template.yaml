@@ -75,6 +75,27 @@ params:
       emits ~9-11 entries per task, so raise it (e.g. 400) when using that mode -- the breakdown agent otherwise fits fewer tasks under the cap.
     required: false
     default: "115"
+  sentinel_enabled:
+    description: >-
+      Opt this run into the sentinel (run-long mechanical overseer lane: liveness, recovery,
+      utilisation metrics). `true` renders a `sentinel:` block into workflow.json; unset/`false`
+      leaves the workflow byte-identical to a sentinel-less one. See docs-md/sentinel-hld.md.
+    required: false
+    enum: ["true", "false"]
+  sentinel_llm:
+    description: >-
+      Sentinel only: also enable the LLM sentinel lane (`true`).
+    required: false
+    enum: ["true", "false"]
+  sentinel_powers:
+    description: >-
+      Sentinel only: LLM sentinel powers -- `advise` (notes/directives) or `act` (also inject/edit/kill).
+    required: false
+    enum: ["advise", "act"]
+  sentinel_budget_pct:
+    description: >-
+      Sentinel only: LLM sentinel spend cap as a percent (0-100] of the run cap.
+    required: false
 dirs:
   - outputs
   - outputs/bug

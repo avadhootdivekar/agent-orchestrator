@@ -298,6 +298,13 @@ workflow `sentinel:` > invocation (CLI flag > env `AO_SENTINEL_*` > `.ao/config.
 T-zP28k9; same pattern as `breaker_overrides`).
 
 ### 11.3 Surfaces
+*Implemented (T-Sn2Set):* `models.SentinelSpec`, `sentinel_settings.resolve_sentinel_settings` (the merge;
+`cli._resolve_sentinel_or_exit` is the one resolver used by `run` and `resume`), registry options generated from the
+model (`run_options.sentinel_options`, names `sentinel.<dotted>`, env `AO_SENTINEL_<DOTTED_UPPER>`; list leaves such as
+`recovery.escalate` are config/workflow/`--sentinel-set` only), sources `workflow|cli|env|config|default` in
+`state.effective_settings`, `recovery.force` (floor escape), template params rendered via the `raw.sentinel_member`
+fragment (absent => byte-identical workflow.json). Bad CLI/env value => exit 2. The engine stores the resolved settings
+only; consumption lands in T-Sn3Tck+. Not yet: `ao config show`, dashboard forms (T-Sn5Ui1).
 `ao run`/`resume`/`new --run` share `_resolve_sentinel_settings`; flags `--sentinel/--no-sentinel`,
 `--sentinel-llm/--no-sentinel-llm`, `--sentinel-powers`, `--sentinel-budget-usd`, `--max-parallel-ceiling`,
 `--sentinel-set key=value`; template params; `ao validate`; `ao config show`; dashboard forms from
