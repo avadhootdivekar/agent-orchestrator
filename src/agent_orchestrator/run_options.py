@@ -26,7 +26,7 @@ from typing import Annotated, Any, Final, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
-from .models import SentinelSpec
+from .models import EFFORT_MAX_TURNS, SentinelSpec
 
 OptionType = Literal["int", "float", "str", "enum", "bool"]
 
@@ -41,6 +41,24 @@ SCHEMA_ID: Final = "ao.run-options/v1"
 
 # Values an env var may use to mean True for a boolean option (anything else non-blank is False).
 TRUTHY_ENV_VALUES: Final = frozenset({"1", "true", "yes", "on"})
+
+
+# Dashboard form groups, in display order (FR-5/FR-7); the form renders whatever groups the schema
+# carries, so an unknown future group still shows up (appended after these).
+GROUP_MODEL: Final = "Model & reasoning"
+GROUP_TURNS: Final = "Turns & retries"
+GROUP_CONCURRENCY: Final = "Concurrency & budget"
+GROUP_QUOTA: Final = "Quota"
+GROUP_RECOVERY: Final = "Recovery"
+SENTINEL_GROUP: Final = "Sentinel"
+UI_GROUP_ORDER: Final = (
+    GROUP_MODEL,
+    GROUP_TURNS,
+    GROUP_CONCURRENCY,
+    GROUP_QUOTA,
+    GROUP_RECOVERY,
+    SENTINEL_GROUP,
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +77,8 @@ class Option:
     """Dotted attribute path on ``ProjectConfig`` (== the ``.ao/config.yaml`` key path)."""
     default: Any = None
     choices: tuple[str, ...] = ()
+    choice_labels: tuple[tuple[str, str], ...] = ()
+    """Optional ``(choice, display label)`` pairs for the dashboard dropdown (e.g. turn counts)."""
     help: str = ""
     ui_group: str | None = None
     """Dashboard form group; ``None`` = not forwardable from the dashboard."""
@@ -92,7 +112,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         env="AO_MODEL",
         config="model",
         help="Claude model for all agents (an alias such as sonnet, or a pinned id).",
-        ui_group="Agent",
+        ui_group=GROUP_MODEL,
         ui_label="Model",
     ),
     Option(
@@ -102,8 +122,9 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         env="AO_TURN_BUDGET",
         config="turn_budget",
         choices=("low", "medium", "high", "xhigh"),
+        choice_labels=tuple((c, f"{c} ({EFFORT_MAX_TURNS[c]} turns)") for c in EFFORT_MAX_TURNS),
         help="Max-turn tier for all agents: low=15, medium=30, high=60, xhigh=120 turns.",
-        ui_group="Agent",
+        ui_group=GROUP_MODEL,
         ui_label="Turn budget",
     ),
     Option(
@@ -114,7 +135,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         config="effort",
         choices=("low", "medium", "high"),
         help="DEPRECATED alias of --turn-budget (will mean thinking effort after migration).",
-        ui_group="Agent",
+        ui_group=GROUP_MODEL,
         ui_label="Effort (deprecated: turn budget)",
     ),
     Option(
@@ -127,7 +148,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
             "Context auto-compaction for agents without their own: 'auto' or a context-token "
             "threshold 100000-1000000."
         ),
-        ui_group="Agent",
+        ui_group=GROUP_MODEL,
         ui_label="Autocompact",
         providers=("claude-cli",),
     ),
@@ -143,7 +164,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
             "(claude: --effort). Unset = agent default."
         ),
         providers=("claude-cli",),
-        ui_group="Agent",
+        ui_group=GROUP_MODEL,
         ui_label="Thinking effort",
     ),
     Option(
@@ -153,7 +174,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         env="AO_MAX_ATTEMPTS",
         config="max_attempts",
         help="Max attempts per task (overrides workflow defaults.retries.max_attempts).",
-        ui_group="Limits",
+        ui_group=GROUP_TURNS,
         ui_label="Max attempts",
     ),
     Option(
@@ -163,7 +184,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         env="AO_MAX_TURNS",
         config="max_turns",
         help="Max turns per claude agent invocation (overrides the turn-budget-derived value).",
-        ui_group="Limits",
+        ui_group=GROUP_TURNS,
         ui_label="Max turns",
     ),
     Option(
@@ -174,7 +195,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         config="max_parallel",
         default=1,
         help="Max independent ready tasks to run at once (1 = serial).",
-        ui_group="Run",
+        ui_group=GROUP_CONCURRENCY,
         ui_label="Max parallel",
     ),
     Option(
@@ -182,7 +203,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         "int",
         flag="--budget-total",
         help="Total token budget for the run (CLI only; the workflow's budget otherwise).",
-        ui_group="Limits",
+        ui_group=GROUP_CONCURRENCY,
         ui_label="Token budget",
     ),
     Option(
@@ -193,7 +214,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         config="quota_max_wait_seconds",
         default=21600,
         help="Max seconds to wait through a Claude quota-exhaustion episode before failing.",
-        ui_group="Quota",
+        ui_group=GROUP_QUOTA,
         ui_label="Quota max wait (s)",
     ),
     Option(
@@ -204,7 +225,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         config="quota_poll_seconds",
         default=900,
         help="Seconds to sleep between quota-exhaustion re-run attempts.",
-        ui_group="Quota",
+        ui_group=GROUP_QUOTA,
         ui_label="Quota poll interval (s)",
     ),
     Option(
@@ -216,7 +237,7 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
         config="monitoring.self_heal",
         default=False,
         help="Enable task-failure self-healing; overrides env/config in either direction.",
-        ui_group="Monitoring",
+        ui_group=GROUP_RECOVERY,
         ui_label="Self-heal",
     ),
     Option(
@@ -236,7 +257,6 @@ _BASE_OPTIONS: Final[tuple[Option, ...]] = (
 
 SENTINEL_PREFIX: Final = "sentinel."
 SENTINEL_ENV_PREFIX: Final = "AO_SENTINEL_"
-SENTINEL_GROUP: Final = "Sentinel"
 
 # dotted leaf -> (flag, no_flag): the only leaves with a dedicated CLI flag (the rest are
 # reachable through env, config, the workflow block and ``--sentinel-set key=value``).
@@ -246,6 +266,23 @@ SENTINEL_FLAGS: Final[Mapping[str, tuple[str, str | None]]] = {
     "llm.powers": ("--sentinel-powers", None),
     "llm.budget_usd": ("--sentinel-budget-usd", None),
     "max_parallel_ceiling": ("--max-parallel-ceiling", None),
+}
+
+
+# Sentinel leaves the dashboard may forward (exactly those with a CLI flag): dotted -> group/label.
+SENTINEL_UI_GROUPS: Final[Mapping[str, str]] = {
+    "enabled": SENTINEL_GROUP,
+    "llm.enabled": SENTINEL_GROUP,
+    "llm.powers": SENTINEL_GROUP,
+    "llm.budget_usd": SENTINEL_GROUP,
+    "max_parallel_ceiling": GROUP_CONCURRENCY,
+}
+SENTINEL_UI_LABELS: Final[Mapping[str, str]] = {
+    "enabled": "Sentinel",
+    "llm.enabled": "Sentinel LLM",
+    "llm.powers": "Sentinel LLM powers",
+    "llm.budget_usd": "Sentinel LLM budget (USD)",
+    "max_parallel_ceiling": "Max parallel ceiling",
 }
 
 
@@ -309,8 +346,8 @@ def sentinel_options() -> tuple[Option, ...]:
                 default=default,
                 choices=choices,
                 help=f"Sentinel setting `{dotted}` (see docs-md/sentinel-hld.md §11).",
-                ui_group=None,
-                ui_label=dotted,
+                ui_group=SENTINEL_UI_GROUPS.get(dotted),
+                ui_label=SENTINEL_UI_LABELS.get(dotted, dotted),
             )
         )
     return tuple(opts)
@@ -466,6 +503,7 @@ def options_schema() -> dict[str, Any]:
                 "config": o.config,
                 "default": o.default,
                 "choices": list(o.choices),
+                "choice_labels": dict(o.choice_labels),
                 "help": o.help,
                 "providers": list(o.providers),
                 "ui": ({"group": o.ui_group, "label": o.ui_label} if o.ui else None),

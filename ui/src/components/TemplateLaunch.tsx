@@ -5,11 +5,13 @@ import type {
   CreateInstanceRequest,
   CreateInstanceResponse,
   TemplateInfo,
+  RunOptions,
   TemplateParam,
 } from "../types";
 import { useLaunchPanel } from "../useLaunchPanel";
 import { Empty, ErrorBanner } from "./common";
 import { LaunchPending, LaunchResultPanel } from "./LaunchResultPanel";
+import { optionErrors, RunOptionsForm, useRunOptionsSchema } from "./RunOptionsForm";
 
 /**
  * Launcher for a new run scaffolded from a workflow template ("From template" mode;
@@ -41,17 +43,20 @@ export function buildCreateInstanceRequest({
   paramValues,
   prompt,
   start,
+  options = {},
 }: {
   slug: string;
   paramValues: Record<string, string>;
   prompt: string;
   start: boolean;
+  options?: RunOptions;
 }): CreateInstanceRequest {
   const params: Record<string, string> = {};
   for (const [name, value] of Object.entries(paramValues)) {
     if (value.trim() !== "") params[name] = value;
   }
-  const body: CreateInstanceRequest = { params, prompt, start, options: {} };
+  // `options` only matter when `start` is true (they become `ao run` flags).
+  const body: CreateInstanceRequest = { params, prompt, start, options };
   if (slug.trim()) body.slug_or_id = slug.trim();
   return body;
 }
@@ -92,6 +97,9 @@ export function TemplateLaunch({
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [prompt, setPrompt] = useState("");
   const [slug, setSlug] = useState("");
+  const [options, setOptions] = useState<RunOptions>({});
+  const schema = useRunOptionsSchema();
+  const invalidOptions = Object.keys(optionErrors(schema, options)).length > 0;
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<"create" | "run" | null>(null);
   const [created, setCreated] = useState<CreateInstanceResponse | null>(null);
@@ -142,7 +150,7 @@ export function TemplateLaunch({
     setCreated(null);
     panel.clear();
     try {
-      const body = buildCreateInstanceRequest({ slug, paramValues, prompt, start });
+      const body = buildCreateInstanceRequest({ slug, paramValues, prompt, start, options });
       const response = await api.createInstance(selected.name, body);
       if (start && response.launch) {
         setInstanceDir(response.instance_dir);
@@ -311,6 +319,9 @@ export function TemplateLaunch({
           />
         </div>
 
+        <h2>Run options</h2>
+        <RunOptionsForm schema={schema} value={options} onChange={setOptions} />
+
         {created ? (
           <div className="banner info">
             Created at <code className="mono">{created.instance_dir}</code> — workflow spec{" "}
@@ -330,7 +341,7 @@ export function TemplateLaunch({
           <button
             type="button"
             className="primary"
-            disabled={!selected || submitting !== null}
+            disabled={!selected || submitting !== null || invalidOptions}
             onClick={() => void submit(true)}
           >
             {submitting === "run" ? "Starting…" : "Create & run"}

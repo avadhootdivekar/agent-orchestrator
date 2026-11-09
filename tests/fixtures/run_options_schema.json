@@ -37,6 +37,25 @@
       "self_heal": {
         "type": "boolean"
       },
+      "sentinel.enabled": {
+        "type": "boolean"
+      },
+      "sentinel.llm.budget_usd": {
+        "type": "number"
+      },
+      "sentinel.llm.enabled": {
+        "type": "boolean"
+      },
+      "sentinel.llm.powers": {
+        "enum": [
+          "advise",
+          "act"
+        ],
+        "type": "string"
+      },
+      "sentinel.max_parallel_ceiling": {
+        "type": "integer"
+      },
       "thinking_effort": {
         "enum": [
           "low",
@@ -61,6 +80,7 @@
   },
   "options": [
     {
+      "choice_labels": {},
       "choices": [],
       "config": "model",
       "default": null,
@@ -74,11 +94,17 @@
       "resumable": true,
       "type": "str",
       "ui": {
-        "group": "Agent",
+        "group": "Model & reasoning",
         "label": "Model"
       }
     },
     {
+      "choice_labels": {
+        "high": "high (60 turns)",
+        "low": "low (15 turns)",
+        "medium": "medium (30 turns)",
+        "xhigh": "xhigh (120 turns)"
+      },
       "choices": [
         "low",
         "medium",
@@ -97,11 +123,12 @@
       "resumable": true,
       "type": "enum",
       "ui": {
-        "group": "Agent",
+        "group": "Model & reasoning",
         "label": "Turn budget"
       }
     },
     {
+      "choice_labels": {},
       "choices": [
         "low",
         "medium",
@@ -119,11 +146,12 @@
       "resumable": true,
       "type": "enum",
       "ui": {
-        "group": "Agent",
+        "group": "Model & reasoning",
         "label": "Effort (deprecated: turn budget)"
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "autocompact",
       "default": null,
@@ -139,11 +167,12 @@
       "resumable": true,
       "type": "str",
       "ui": {
-        "group": "Agent",
+        "group": "Model & reasoning",
         "label": "Autocompact"
       }
     },
     {
+      "choice_labels": {},
       "choices": [
         "low",
         "medium",
@@ -165,11 +194,12 @@
       "resumable": true,
       "type": "enum",
       "ui": {
-        "group": "Agent",
+        "group": "Model & reasoning",
         "label": "Thinking effort"
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "max_attempts",
       "default": null,
@@ -183,11 +213,12 @@
       "resumable": true,
       "type": "int",
       "ui": {
-        "group": "Limits",
+        "group": "Turns & retries",
         "label": "Max attempts"
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "max_turns",
       "default": null,
@@ -201,11 +232,12 @@
       "resumable": true,
       "type": "int",
       "ui": {
-        "group": "Limits",
+        "group": "Turns & retries",
         "label": "Max turns"
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "max_parallel",
       "default": 1,
@@ -219,11 +251,12 @@
       "resumable": true,
       "type": "int",
       "ui": {
-        "group": "Run",
+        "group": "Concurrency & budget",
         "label": "Max parallel"
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": null,
       "default": null,
@@ -237,11 +270,12 @@
       "resumable": true,
       "type": "int",
       "ui": {
-        "group": "Limits",
+        "group": "Concurrency & budget",
         "label": "Token budget"
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "quota_max_wait_seconds",
       "default": 21600,
@@ -260,6 +294,7 @@
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "quota_poll_seconds",
       "default": 900,
@@ -278,6 +313,7 @@
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "monitoring.self_heal",
       "default": false,
@@ -291,11 +327,12 @@
       "resumable": true,
       "type": "bool",
       "ui": {
-        "group": "Monitoring",
+        "group": "Recovery",
         "label": "Self-heal"
       }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "record_git_heads",
       "default": true,
@@ -311,6 +348,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.enabled",
       "default": false,
@@ -323,9 +361,13 @@
       "providers": [],
       "resumable": true,
       "type": "bool",
-      "ui": null
+      "ui": {
+        "group": "Sentinel",
+        "label": "Sentinel"
+      }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.tick_seconds",
       "default": 15,
@@ -341,6 +383,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.max_parallel_ceiling",
       "default": null,
@@ -353,9 +396,13 @@
       "providers": [],
       "resumable": true,
       "type": "int",
-      "ui": null
+      "ui": {
+        "group": "Concurrency & budget",
+        "label": "Max parallel ceiling"
+      }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.cancel_grace_seconds",
       "default": 30,
@@ -371,6 +418,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.inbox_batch_max",
       "default": 50,
@@ -386,6 +434,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.max_injected_tasks",
       "default": null,
@@ -401,6 +450,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.enabled",
       "default": true,
@@ -416,6 +466,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.idle_kill_minutes",
       "default": 15,
@@ -431,6 +482,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.stuck_factor",
       "default": 3.0,
@@ -446,6 +498,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.stuck_min_minutes",
       "default": 20,
@@ -461,6 +514,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.cost_kill_pct",
       "default": null,
@@ -476,6 +530,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.max_recovery_kills_per_task",
       "default": 2,
@@ -491,6 +546,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.kill_grace_seconds",
       "default": 10,
@@ -506,6 +562,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.systemic_kill_alarm",
       "default": 3,
@@ -521,6 +578,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.include_barriers",
       "default": false,
@@ -536,6 +594,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.recovery.force",
       "default": false,
@@ -551,6 +610,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.bandwidth.backlog_release",
       "default": true,
@@ -566,6 +626,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.bandwidth.early_checkpoint",
       "default": true,
@@ -581,6 +642,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.bandwidth.early_ckpt_fraction",
       "default": 0.5,
@@ -596,6 +658,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.bandwidth.early_ckpt_min_idle",
       "default": null,
@@ -611,6 +674,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.bandwidth.early_ckpt_grace_seconds",
       "default": 120,
@@ -626,6 +690,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.enabled",
       "default": false,
@@ -638,9 +703,13 @@
       "providers": [],
       "resumable": true,
       "type": "bool",
-      "ui": null
+      "ui": {
+        "group": "Sentinel",
+        "label": "Sentinel LLM"
+      }
     },
     {
+      "choice_labels": {},
       "choices": [
         "advise",
         "act"
@@ -656,9 +725,13 @@
       "providers": [],
       "resumable": true,
       "type": "enum",
-      "ui": null
+      "ui": {
+        "group": "Sentinel",
+        "label": "Sentinel LLM powers"
+      }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.allow_graph_edits",
       "default": true,
@@ -674,6 +747,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.allow_kill",
       "default": true,
@@ -689,6 +763,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.max_llm_kills_per_hour",
       "default": 2,
@@ -704,6 +779,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.max_injections_per_hour",
       "default": 6,
@@ -719,6 +795,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.heartbeat_minutes",
       "default": 30,
@@ -734,6 +811,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.generation_ttl_minutes",
       "default": 60,
@@ -749,6 +827,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.budget_usd",
       "default": null,
@@ -761,9 +840,13 @@
       "providers": [],
       "resumable": true,
       "type": "float",
-      "ui": null
+      "ui": {
+        "group": "Sentinel",
+        "label": "Sentinel LLM budget (USD)"
+      }
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.budget_pct",
       "default": 10,
@@ -779,6 +862,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.driver",
       "default": "claude-cli",
@@ -794,6 +878,7 @@
       "ui": null
     },
     {
+      "choice_labels": {},
       "choices": [],
       "config": "sentinel.llm.agent",
       "default": null,

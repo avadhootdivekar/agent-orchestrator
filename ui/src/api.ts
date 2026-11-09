@@ -31,6 +31,7 @@ import type {
   RunDetail,
   RunGraph,
   RunOptions,
+  RunOptionsSchema,
   RunSignalsResponse,
   RunSummary,
   TemplateInfo,
@@ -203,6 +204,8 @@ export const api = {
   },
 
   workflows: () => request<WorkflowInfo[]>("/workflows"),
+
+  runOptionsSchema: () => request<RunOptionsSchema>("/schema/run-options"),
 
   templates: () => request<TemplateInfo[]>("/templates"),
   createInstance: (name: string, body: CreateInstanceRequest) =>

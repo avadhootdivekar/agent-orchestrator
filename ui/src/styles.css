@@ -2248,3 +2248,15 @@ pre.launch-log {
 .usage-bar.crit .usage-bar-fill {
   background: #d14343;
 }
+
+/* ---------- schema-driven run options (RunOptionsForm) ---------- */
+
+.options-group {
+  margin: 8px 0;
+}
+
+.options-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 8px;
+}

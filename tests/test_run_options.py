@@ -197,7 +197,7 @@ def test_allow_list_unchanged_and_registry_derived():
     assert ALLOWED_OPTIONS == {
         "model": "--model",
         "turn_budget": "--turn-budget",
-        "effort": "--effort",  # deprecated alias; stays until the dashboard form moves (T-pMpo4O)
+        "effort": "--effort",  # deprecated alias, still forwarded for legacy clients
         "autocompact": "--autocompact",
         "thinking_effort": "--thinking-effort",
         "max_attempts": "--max-attempts",
@@ -206,8 +206,15 @@ def test_allow_list_unchanged_and_registry_derived():
         "budget_total": "--budget-total",
         "quota_max_wait": "--quota-max-wait",
         "quota_poll_interval": "--quota-poll-interval",
+        "sentinel.max_parallel_ceiling": "--max-parallel-ceiling",
+        "sentinel.llm.powers": "--sentinel-powers",
+        "sentinel.llm.budget_usd": "--sentinel-budget-usd",
     }
-    assert ALLOWED_BOOL_OPTIONS == {"self_heal": ("--self-heal", "--no-self-heal")}
+    assert ALLOWED_BOOL_OPTIONS == {
+        "self_heal": ("--self-heal", "--no-self-heal"),
+        "sentinel.enabled": ("--sentinel", "--no-sentinel"),
+        "sentinel.llm.enabled": ("--sentinel-llm", "--no-sentinel-llm"),
+    }
     assert ALLOWED_OPTIONS == run_options.allowed_options()
 
 
@@ -244,6 +251,16 @@ def test_schema_matches_snapshot():
     if not SNAPSHOT.exists():  # first run only: commit the generated file
         SNAPSHOT.write_text(json.dumps(got, indent=2, sort_keys=True) + "\n")
     assert got == json.loads(SNAPSHOT.read_text())
+
+
+def test_ui_groups_are_known_and_carry_labels():
+    """Every dashboard option sits in a declared group (so the form can order it) with a label,
+    and the turn budget advertises its turn counts."""
+    ui = [o for o in run_options.OPTIONS if o.ui]
+    assert {o.ui_group for o in ui} <= set(run_options.UI_GROUP_ORDER)
+    assert all(o.ui_label for o in ui)
+    tb = {o["name"]: o for o in run_options.options_schema()["options"]}["turn_budget"]
+    assert tb["choice_labels"]["high"] == "high (60 turns)"
 
 
 # --- state snapshot ----------------------------------------------------------------------------

@@ -15,10 +15,12 @@
 |---|---|
 | T-zP28k9-run-options-registry-and-settings-snapshot | Done |
 | T-f0d7gm-turn-budget-rename-and-autocompact | Done |
-| T-pMpo4O-schema-driven-launch-forms | Draft |
+| T-pMpo4O-schema-driven-launch-forms | Done |
 | T-xNFBww-dashboard-limits-panels | Done |
 | T-mQs7CQ-dashboard-epic-e2e-and-docs | Draft |
 | T-9ymKja-effort-means-thinking-flip | Blocked (owner gate: all workspaces migrated + one deprecation release) |
+
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: T-pMpo4O Done (schema-driven launch forms).
 
 ## Evidence
 - EPIC §1 code findings.

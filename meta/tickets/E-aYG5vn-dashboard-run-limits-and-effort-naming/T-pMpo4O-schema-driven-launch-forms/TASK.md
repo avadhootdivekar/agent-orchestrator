@@ -6,7 +6,7 @@
 - Owner: `unassigned`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `< 3 days`
 - Phase: UI
 - Agent: developer (UI)
@@ -56,3 +56,13 @@ N/A (React form generator over schema)
 - New behaviour off / absent settings ⇒ byte-identical behaviour (golden tests stay green).
 - Work only in `./agent-orchestrator` on the epic branch; test against temp workspaces; never `install.sh` / restart `ao.service`.
 - Update this TASK.md + STATUS.md and the epic STATUS.md rollup together.
+
+## Implementation notes (2026-11-09)
+- `ui/src/components/RunOptionsForm.tsx` renders every `ui` option of `GET /api/schema/run-options` (control from
+  `type`/`choices`, label/group from `ui`, `choice_labels` -> "high (60 turns)", `providers` -> "applies to: ...").
+  Used by `NewRun`, `TemplateLaunch` (now sends `options`) and the `RunDetail` Resume panel (optional overrides).
+- Registry groups renamed to the FR-5 groups (Model & reasoning / Turns & retries / Concurrency & budget / Quota /
+  Recovery / Sentinel); sentinel leaves that have a CLI flag are now dashboard-forwardable (allow-list derived).
+- Degradation: schema 404/failure -> `FALLBACK_SCHEMA` (legacy 5 fields, same renderer); unknown type -> text input;
+  unknown group appended; `ui: null` hidden; legacy `effort` still in the schema and accepted.
+- Tests: `ui/src/test/run-options-form.test.tsx` (9), `tests/test_run_options.py` (groups/allow-list/snapshot).

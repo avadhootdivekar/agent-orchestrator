@@ -461,14 +461,35 @@ export interface GeneralInstruction {
   exists: boolean;
 }
 
-export interface RunOptions {
-  model?: string;
-  effort?: string;
-  max_attempts?: number;
-  max_turns?: number;
-  max_parallel?: number;
-  budget_total?: number;
-  self_heal?: boolean;
+/**
+ * Launch `options` body (POST /runs, /runs/{id}/resume, template instances). Keys are registry
+ * option names (`GET /api/schema/run-options`); the server allow-lists them and ignores unknown
+ * ones, so the type is open rather than a hand-kept list.
+ */
+export type RunOptions = Record<string, string | number | boolean>;
+
+/** One entry of `GET /api/schema/run-options` -> `options` (mirror run_options.options_schema). */
+export interface RunOptionSchema {
+  name: string;
+  /** "int" | "float" | "str" | "enum" | "bool"; a newer server may send others (rendered as text). */
+  type: string;
+  flag?: string | null;
+  env?: string | null;
+  config?: string | null;
+  default?: string | number | boolean | null;
+  choices?: string[];
+  /** choice -> display label (e.g. turn budget "high" -> "high (60 turns)"); absent on older servers. */
+  choice_labels?: Record<string, string>;
+  help?: string;
+  providers?: string[];
+  /** null = not forwardable from the dashboard. */
+  ui: { group: string; label: string } | null;
+  resumable?: boolean;
+}
+
+export interface RunOptionsSchema {
+  schema: string;
+  options: RunOptionSchema[];
 }
 
 /**
