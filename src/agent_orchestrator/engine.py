@@ -10,13 +10,13 @@ import shutil
 import stat
 import time
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from . import hooks
+from . import hooks, sentinel_tick
 from .artifacts import (
     ArtifactStore,
     LocalFsArtifactStore,
@@ -899,17 +899,17 @@ class Orchestrator:
             # reader) runs on a worker. `pool.shutdown(wait=True)` is guaranteed by
             # the `with` block on every exit path, including an exception raised by
             # a worker (NFR-4 -- no thread leak).
-            with ThreadPoolExecutor(max_workers=self._max_parallel) as pool:
+            # Sentinel lane (E-Sn7tL2 T-Sn3Tck): None when absent/disabled, in which case every
+            # sentinel branch below is skipped and the loop is the pre-epic loop verbatim.
+            rt = self._start_sentinel(state, run_dir, run_log)
+            with ThreadPoolExecutor(
+                max_workers=rt.ceiling if rt is not None else self._max_parallel
+            ) as pool:
                 in_flight: dict[Future[WorkerOutcome], str] = {}
                 while True:
                     if self._cancel_fn():
-                        run_log.info(
-                            "Cancellation requested; halting",
-                            extra={"event": "run.cancelled"},
-                        )
-                        state.status = "cancelled"
+                        self._halt_cancelled(in_flight, workflow, state, ctx)
                         failed = True
-                        self._drain_remaining(in_flight, workflow, state, ctx)
                         break
 
                     # ---- INPUTS: answered/assumed requests release their parked tasks ----
@@ -917,6 +917,15 @@ class Orchestrator:
                         failed = True
                         self._drain_remaining(in_flight, workflow, state, ctx)
                         break
+
+                    # ---- SENTINEL TICK: inbox, overrides, metrics (fail-safe, main thread) ----
+                    if rt is not None:
+                        rt = self._sentinel_tick(rt, state)
+                        if rt is not None and rt.cancel_requested:
+                            self._halt_cancelled(in_flight, workflow, state, ctx)
+                            failed = True
+                            break
+                    limit = rt.live_limit if rt is not None else self._max_parallel
 
                     # ---- FILL: launch ready non-barrier tasks up to N ----
                     ready = self._ready_ids(order, preds, state, done, set(in_flight.values()))
@@ -937,7 +946,7 @@ class Orchestrator:
                             ready,
                             touches,
                             ctx.hotspots,
-                            self._max_parallel - len(in_flight),
+                            limit - len(in_flight),
                         )
                         if pref == OVERLAP_SOFT
                         else ready
@@ -951,8 +960,9 @@ class Orchestrator:
                         # nothing here feeds back into the dispatch decision.
                         self._log_overlap_preference(candidates, touches, ctx)
 
+                    dispatched_this_pass = 0
                     for tid in candidates:
-                        if len(in_flight) >= self._max_parallel:
+                        if len(in_flight) >= limit:
                             break
                         barrier = self._is_barrier(workflow.task(tid), workflow, state)
                         if barrier and in_flight:
@@ -1002,42 +1012,66 @@ class Orchestrator:
                             cycle=prep.cycle,
                         )
                         in_flight[fut] = tid
+                        dispatched_this_pass += 1
                         if barrier:
                             break  # launched solo -- go drain it before filling further
 
                     if failed:
                         break
+                    if rt is not None:
+                        # Occupancy after FILL, attributed to the interval until the next tick.
+                        rt.occ_running = len(in_flight)
+                        rt.occ_ready = max(0, len(ready) - dispatched_this_pass)
                     if not in_flight:
                         continue  # everything blocked this pass -> re-evaluate
 
-                    # ---- DRAIN: one completion at a time, settle on main thread ----
-                    done_fut = next(as_completed(list(in_flight)))
-                    settled_tid = in_flight.pop(done_fut)
-                    outcome = done_fut.result()
-                    settle = self._settle_completed_task(settled_tid, outcome, workflow, state, ctx)
-                    if settle.signal == "halt":
-                        failed = True
-                        self._drain_remaining(in_flight, workflow, state, ctx)
+                    # ---- DRAIN: settle on the main thread ----
+                    # Disabled: one completion at a time (pre-epic behaviour). Sentinel enabled:
+                    # wake at least every tick_seconds even if every worker is still busy, and
+                    # settle EVERY completed future of that wake-up in sorted task-id order so the
+                    # settle order is deterministic when several finish together.
+                    if rt is None:
+                        done_futs = [next(as_completed(list(in_flight)))]
+                    else:
+                        finished, _pending = wait(
+                            list(in_flight), timeout=rt.tick_seconds, return_when=FIRST_COMPLETED
+                        )
+                        done_futs = sorted(finished, key=lambda f: in_flight[f])
+                        if not done_futs:
+                            continue  # timeout: tick again with workers still busy
+                    halted = False
+                    for done_fut in done_futs:
+                        settled_tid = in_flight.pop(done_fut)
+                        outcome = done_fut.result()
+                        settle = self._settle_completed_task(
+                            settled_tid, outcome, workflow, state, ctx
+                        )
+                        if settle.signal == "halt":
+                            failed = True
+                            halted = True
+                            self._drain_remaining(in_flight, workflow, state, ctx)
+                            break
+                        if settle.signal == "requeue":
+                            # Normalizes every requeue path uniformly to "pending":
+                            # the quota/self-heal paths already set this status inside
+                            # _settle_completed_task (verbatim), but the provider-429-wait
+                            # path never did (today's code re-visits the same cursor
+                            # position regardless of ts.status, so it never needed to) --
+                            # the ready-set model needs an explicit non-running status to
+                            # re-admit the task on a later wave, so this is applied
+                            # unconditionally regardless of which site requeued.
+                            state.tasks[settled_tid].status = "pending"
+                        elif settle.signal == "reshaped":
+                            assert settle.graph is not None and settle.order is not None
+                            graph = settle.graph
+                            order = settle.order
+                            preds = self._predecessors(graph)
+                        # settled: nothing extra
+                        self._summarizer.on_task_settled(
+                            state, run_dir, self._pending_ids(state, order)
+                        )
+                    if halted:
                         break
-                    if settle.signal == "requeue":
-                        # Normalizes every requeue path uniformly to "pending":
-                        # the quota/self-heal paths already set this status inside
-                        # _settle_completed_task (verbatim), but the provider-429-wait
-                        # path never did (today's code re-visits the same cursor
-                        # position regardless of ts.status, so it never needed to) --
-                        # the ready-set model needs an explicit non-running status to
-                        # re-admit the task on a later wave, so this is applied
-                        # unconditionally regardless of which site requeued.
-                        state.tasks[settled_tid].status = "pending"
-                    elif settle.signal == "reshaped":
-                        assert settle.graph is not None and settle.order is not None
-                        graph = settle.graph
-                        order = settle.order
-                        preds = self._predecessors(graph)
-                    # settled: nothing extra
-                    self._summarizer.on_task_settled(
-                        state, run_dir, self._pending_ids(state, order)
-                    )
                 # pool.shutdown(wait=True) via `with`, on every exit path
 
             # E-Wk9Tz3: run-end finalize (AC-12) -- best-effort final checkout sync +
@@ -2740,6 +2774,80 @@ class Orchestrator:
             # else: max_iterations reached or gate says stop — loop ends, proceed
 
         return SettleResult(signal="settled")
+
+    def _halt_cancelled(
+        self,
+        in_flight: dict[Future[WorkerOutcome], str],
+        workflow: WorkflowSpec,
+        state: RunState,
+        ctx: _RunContext,
+    ) -> None:
+        """Graceful cancel (``cancel_fn`` or a control-inbox ``cancel``): mark + drain in-flight."""
+        ctx.run_log.info("Cancellation requested; halting", extra={"event": "run.cancelled"})
+        state.status = "cancelled"
+        self._drain_remaining(in_flight, workflow, state, ctx)
+
+    def _start_sentinel(
+        self, state: RunState, run_dir: str, run_log: logging.Logger | logging.LoggerAdapter[Any]
+    ) -> sentinel_tick.SentinelRuntime | None:
+        """Build the per-run sentinel context, or None when the lane is absent/disabled."""
+        if self._sentinel is None or not self._sentinel.enabled:
+            return None
+        spec = self._sentinel.spec
+        # The pool is created at the ceiling; the soft limit starts at max_parallel (never above).
+        ceiling = max(spec.max_parallel_ceiling or self._max_parallel, self._max_parallel)
+        rt = sentinel_tick.SentinelRuntime(
+            ceiling=ceiling,
+            tick_seconds=spec.tick_seconds,
+            inbox_batch_max=spec.inbox_batch_max,
+            live_limit=self._max_parallel,
+            control_dir=Path(run_dir) / sentinel_tick.CONTROL_DIR,
+            clock=self._clock,
+            log=run_log,
+        )
+        sent = sentinel_tick.ensure_state(state)
+        sent.enabled = True
+        sent.disabled_reason = None
+        # Resume: overrides persisted by a previous session survive (FR-7).
+        sentinel_tick.restore_overrides(state, rt)
+        for key, ov in sent.overrides.items():
+            state.effective_settings[f"sentinel.{key}"] = EffectiveSetting(
+                value=ov.value, source=sentinel_tick.SOURCE_LIVE_OVERRIDE
+            )
+        return rt
+
+    def _sentinel_tick(
+        self, rt: sentinel_tick.SentinelRuntime, state: RunState
+    ) -> sentinel_tick.SentinelRuntime | None:
+        """One fail-safe tick on the main thread; returns None if the lane was disabled by an error.
+
+        Any exception (bug, bad inbox file system state, ...) is logged ONCE as
+        ``sentinel.error``, the lane is switched off for the rest of the run and the run carries
+        on exactly as if the sentinel had never been enabled (NFR-2/3).
+        """
+        try:
+            now = rt.clock()
+            sentinel_tick.update_metrics(state, rt, now)
+            result = sentinel_tick.drain_inbox(state, rt, now)
+            assert state.sentinel is not None
+            state.sentinel.last_tick_at = now.isoformat()
+            if result.changed:
+                # G5: consumed ids are durable together with the mutation they caused, and the
+                # inbox files are only retired after this save.
+                self._runstate.save(state)
+            sentinel_tick.finalize_inbox(rt)
+            return rt
+        except Exception as exc:  # noqa: BLE001 -- fail-safe boundary: never fail the run
+            rt.log.error(
+                "sentinel.error: %r; sentinel lane disabled for this run",
+                exc,
+                extra={"event": "sentinel.error"},
+                exc_info=True,
+            )
+            if state.sentinel is not None:
+                state.sentinel.enabled = False
+                state.sentinel.disabled_reason = f"tick error: {exc!r}"[:500]
+            return None
 
     def _drain_remaining(
         self,

@@ -1648,6 +1648,47 @@ class ResultCacheRecord(BaseModel):
         return self
 
 
+class SentinelOverride(BaseModel):
+    """One live override applied through the control inbox (``state.sentinel.overrides``)."""
+
+    value: Any = None
+    actor: str = ""
+    at: str = ""
+
+
+class SentinelNote(BaseModel):
+    """Operator/LLM note recorded via the control inbox ``note`` kind."""
+
+    id: str
+    actor: str = ""
+    at: str = ""
+    text: str = ""
+
+
+class SentinelState(BaseModel):
+    """Run-long sentinel bookkeeping (E-Sn7tL2 T-Sn3Tck); ``RunState.sentinel`` None == never on."""
+
+    enabled: bool = True
+    disabled_reason: str | None = None
+    overrides: dict[str, SentinelOverride] = {}
+    inbox_consumed: list[str] = []
+    """Bounded ring of consumed control-entry ids (idempotent replay)."""
+    llm_paused: bool = False
+    hold_requested: bool = False
+    hold_reason: str | None = None
+    notes: list[SentinelNote] = []
+    last_tick_at: str | None = None
+
+
+class RunMetrics(BaseModel):
+    """Slot-utilisation KPI (E-Sn7tL2 FR-20); only present while the sentinel is enabled."""
+
+    slot_seconds_busy: float = 0.0
+    slot_seconds_idle_with_ready: float = 0.0
+    slot_seconds_idle_no_ready: float = 0.0
+    utilisation_pct: float = 0.0
+
+
 class RunState(BaseModel):
     run_id: str
     workflow_id: str
@@ -1724,6 +1765,10 @@ class RunState(BaseModel):
     # one entry per start/resume (E-aYG5vn FR-1). Defaults keep older state.json loadable.
     effective_settings: dict[str, EffectiveSetting] = {}
     effective_settings_history: list[SettingsHistoryEntry] = []
+    # Sentinel lane state + utilisation metrics (E-Sn7tL2 T-Sn3Tck). None until a sentinel-enabled
+    # run ticks, so a disabled run's state.json stays byte-identical (see runstate exclude rules).
+    sentinel: SentinelState | None = None
+    metrics: RunMetrics | None = None
 
 
 def run_waiting_for_input(state: RunState) -> bool:

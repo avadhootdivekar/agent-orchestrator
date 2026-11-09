@@ -6,7 +6,7 @@
 - Owner: `unassigned`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `< 3 days`
 - Phase: P1
 - Agent: developer (+ reviewer: engine core)
@@ -73,3 +73,9 @@ loop:
 - New behaviour off / absent settings ⇒ byte-identical behaviour (golden tests stay green).
 - Work only in `./agent-orchestrator` on the epic branch; test against temp workspaces; never `install.sh` / restart `ao.service`.
 - Update this TASK.md + STATUS.md and the epic STATUS.md rollup together.
+
+## Implementation notes (2026-11-09, claude-sonnet-5-5, developer)
+- New `src/agent_orchestrator/sentinel_tick.py` (inbox validate/apply/quarantine, overrides, metrics); `engine.py` wires `_start_sentinel` / `_sentinel_tick` / `_halt_cancelled`; `models.py` adds `RunState.sentinel` + `RunState.metrics` (None unless enabled).
+- Inbox kinds implemented: `set` (only `max_parallel`, <= ceiling), `pause_llm`, `resume_llm`, `note`, `request_hold` (records `hold_requested`; consumers land later), `request_cancel`/`cancel` (graceful cancel). Others quarantined as `not_enabled_yet`. Rule ids: CTL-SIZE/JSON/SCHEMA/KIND/PAYLOAD/SET-KEY/CEILING/FILENAME.
+- Entries drained in lexicographic id order; ids kept in `state.sentinel.inbox_consumed` (ring 1000); processed files moved to `inbox-processed/` (keep 200) only after the save that recorded their ids.
+- Tests: `tests/test_sentinel_tick.py` (10, incl. one `slow` tick-cost test).
