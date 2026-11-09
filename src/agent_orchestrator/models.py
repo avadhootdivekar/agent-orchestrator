@@ -520,6 +520,11 @@ class TaskSpec(BaseModel):
     # Dynamic task injection (FR-7, FR-8, Area 2).
     emit_tasks: bool = False
     task_manifest_path: str | None = None
+    # Barrier mode of an `emit_tasks` task (E-Sn7tL2 T-Sn6Brr, FR-8). None / "hard" (default) =
+    # runs solo (ADR-0007 D4). "soft" = may start while non-predecessor tasks are in flight; its
+    # manifest must then be additive w.r.t. them (graph_check.check_additive_manifest). Ignored on
+    # tasks that do not emit.
+    barrier: Literal["hard", "soft"] | None = None
     # Convergence policy when a task depends on tasks from >1 route (FR-B5).
     # "all" (default): every declared dependency must reach a terminal success state.
     # "any": at least one declared dependency must succeed (used at route re-joins).
@@ -1452,6 +1457,9 @@ class RunIntegrationState(BaseModel):
 # ever WRITES one of these two known values, even though a READER must tolerate any string.
 SPAWN_ORIGIN_INJECTED: Literal["injected"] = "injected"
 SPAWN_ORIGIN_LOOP: Literal["loop"] = "loop"
+# Sentinel/backlog/ctl-injected tasks (E-Sn7tL2 FR-13); parent id is `sentinel-tick`,
+# `sentinel-gNN` or `ctl:<actor>` (a label, not a task row) and there is no dispatch cycle.
+SPAWN_ORIGIN_SENTINEL: Literal["sentinel"] = "sentinel"
 
 
 class SpawnRecord(BaseModel):
@@ -1564,7 +1572,7 @@ class TaskRunState(BaseModel):
     output_artifact_path: str | None = None
     # Provenance: "static" for spec-declared tasks; "injected"/"loop" added by Area 2.
     # Default "static"; Area 2 can set the real value without breaking existing code.
-    origin: Literal["static", "injected", "loop"] = "static"
+    origin: Literal["static", "injected", "loop", "sentinel"] = "static"
     # "<router_id>:<route_id>" this task belongs to (observability only; FR-CB4).
     route: str | None = None
     # e.g. "router=classify route=bug not selected" — set only when status == "not_taken".
@@ -1737,6 +1745,32 @@ class SentinelNote(BaseModel):
     text: str = ""
 
 
+class GraphEdit(BaseModel):
+    """One persisted pending-graph mutation (E-Sn7tL2 FR-12, spike invariant I1).
+
+    ``RunState.injected_tasks`` only records *added* specs, so edge edits, removals, skips and
+    priorities would be silently reverted by a resume. Each accepted edit appends its
+    *resulting* effect here in the same step as the mutation; ``prepare_resume`` replays the list
+    in order (idempotent).
+
+    ``op``: ``set_edges`` (task_id's effective ``depends_on``/``inputs`` after the edit),
+    ``remove_task`` (cancelled pending task), ``skip`` (task ends ``skipped``), ``priority``
+    (``value`` = FILL priority, higher first).
+    """
+
+    op: Literal["set_edges", "remove_task", "skip", "priority"]
+    task_id: str
+    depends_on: list[str] | None = None
+    inputs: list[str] | None = None
+    value: int | None = None
+    reason: str | None = None
+    source: str = ""
+    """Actor of the control entry (``ctl:<user>``, ``sentinel-gNN``, ``sentinel-tick``)."""
+    at: str = ""
+    edit_id: str = ""
+    """Inbox entry id that caused it (audit)."""
+
+
 class SentinelKill(BaseModel):
     task_id: str
     at: str
@@ -1805,6 +1839,9 @@ class RunState(BaseModel):
     # Full specs of every task injected at run time (emit + loop clones), in injection order.
     # Persisted so resume can rebuild the expanded workflow (FR-8, FR-12).
     injected_tasks: list[TaskSpec] = []
+    # Accepted pending-graph edits (E-Sn7tL2 T-Sn6Brr), replayed by prepare_resume after the
+    # injected-task merge so a resumed run does not revert them. Empty => pre-epic behaviour.
+    graph_edits: list[GraphEdit] = []
     # loop_id -> highest iteration number already materialized (idempotent on resume, FR-12).
     loop_iterations: dict[str, int] = {}
     # Budget accounting counters (T-oh5gl5 / FR-9, NFR-3).

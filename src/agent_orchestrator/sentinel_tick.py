@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+from . import graph_check
 from .models import (
     SENTINEL_GEN_TASK_PREFIX,
     CancelToken,
@@ -70,8 +71,20 @@ KINDS_ALL: Final = frozenset(
     }
 )
 KINDS_ENABLED: Final = frozenset(
-    {"set", "pause_llm", "resume_llm", "note", "kill", "request_hold", "request_cancel", "cancel"}
+    {
+        "set",
+        "pause_llm",
+        "resume_llm",
+        "note",
+        "kill",
+        "request_hold",
+        "request_cancel",
+        "cancel",
+        "inject",
+        "edit_pending",
+    }
 )
+GRAPH_KINDS: Final = frozenset({"inject", "edit_pending"})
 CANCEL_KINDS: Final = frozenset({"request_cancel", "cancel"})
 OVERRIDABLE_KEYS: Final = frozenset({"max_parallel"})
 """Live-overridable keys implemented so far (later tasks extend this set)."""
@@ -149,6 +162,10 @@ class SentinelRuntime:
     """Injectable file-size probe (tests substitute a fake stalled file)."""
     lane: GenerationLane | None = None
     """LLM generation lane (T-Sn8Gen); None => mechanical sentinel only."""
+    edit_applier: Callable[[str, dict[str, Any], str, str, str], None] | None = None
+    """Engine-owned ``inject``/``edit_pending`` applier (T-Sn6Brr); None => kinds not enabled."""
+    reshape_pending: bool = False
+    """Set by the applier; ``run()`` re-derives graph/order/preds on the next loop pass."""
     max_consecutive_rejections: int | None = None
     """Auto-pause the LLM lane after this many consecutive rejected sentinel proposals."""
 
@@ -328,6 +345,13 @@ def _apply_entry(
             state, rt, tid, str(reason)[:200], KILL_SOURCE_MANUAL, _entry_now(at), no_retry=no_retry
         ):
             raise _Reject(RULE_PAYLOAD, f"task {tid!r} already has a kill in flight")
+    elif kind in GRAPH_KINDS:
+        if rt.edit_applier is None:
+            raise _Reject(RULE_NOT_ENABLED, f"kind {kind!r} needs the engine edit applier")
+        try:
+            rt.edit_applier(kind, payload, entry["actor"], entry["id"], at)
+        except graph_check.EditRejected as rej:
+            raise _Reject(rej.rule_id, rej.detail) from rej
     elif kind == "request_hold":
         sent.hold_requested = True
         sent.hold_reason = entry.get("rationale") or payload.get("reason")
@@ -336,7 +360,7 @@ def _apply_entry(
         result.cancel_requested = True
 
 
-def _is_sentinel_actor(actor: object) -> bool:
+def is_sentinel_actor(actor: object) -> bool:
     return isinstance(actor, str) and actor.startswith(ACTOR_PREFIX)
 
 
@@ -350,7 +374,7 @@ def _note_rejection(sent: SentinelState, rt: SentinelRuntime, path: Path, now: d
         actor = json.loads(path.read_bytes()).get("actor")
     except (OSError, ValueError, AttributeError):
         return
-    if not _is_sentinel_actor(actor):
+    if not is_sentinel_actor(actor):
         return
     sent.consecutive_rejections += 1
     limit = rt.max_consecutive_rejections
@@ -404,7 +428,7 @@ def drain_inbox(state: RunState, rt: SentinelRuntime, now: datetime) -> TickResu
                 extra={"event": "ctl.rejected", "entry": entry_id, "rule_id": rej.rule_id},
             )
             continue
-        if _is_sentinel_actor(entry["actor"]):
+        if is_sentinel_actor(entry["actor"]):
             sent.consecutive_rejections = 0
         sent.inbox_consumed.append(entry["id"])
         del sent.inbox_consumed[:-CONSUMED_RING_MAX]

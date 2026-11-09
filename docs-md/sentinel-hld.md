@@ -247,6 +247,40 @@ Template `injected_task_count` math untouched.
 ### 6.7 Fallback
 If I1 cannot land, degrade to EPIC §4.4.4 (leaf-only injection, hard-barrier early checkpoint). Not expected.
 
+### 6.8 As built (T-Sn6Brr, 2026-11-09)
+- **Soft barrier.** `TaskSpec.barrier: "hard"|"soft"|None` (None = hard). `_is_barrier` returns False for a soft emitter
+  (a task is ready only after all predecessors settled, so nothing in flight is a predecessor; routers, loop gates and
+  integration barriers stay hard). At settle, a soft emitter's manifest first passes
+  `graph_check.check_additive_manifest` (rejection => emitter `failed`, run halts, same path as `InjectionError`);
+  hard emitters keep the pre-epic path byte-for-byte. Injection uses the existing `_inject`, then `build_dag` +
+  `reshaped`; in-flight tasks are untouched.
+- **Shared checker** = `src/agent_orchestrator/graph_check.py` (pure; clock-free). Structural rules: id pattern/`__iter`
+  reserved/duplicate id (`GE-ID-PATTERN`, `GE-ID-DUP`), duplicate producer (`GE-PRODUCER-DUP`), cycle on a copy
+  (`GE-CYCLE`), unknown dependency (`GE-SPEC`), new effective edge — declared or inferred — into a non-pending task
+  (`GE-EDGE-INTO-NONPENDING`). Budget stages via `CheckPolicy(stage, known_work_items, task_meta)`: closeout none
+  (`GE-STAGE-CLOSEOUT`), stabilize only stabilize/verify/document (`GE-STAGE-STABILIZE`), converge no new work item
+  (`GE-STAGE-CONVERGE`); `max_new_tasks` (`GE-LIMIT`). Charter-only rules (brief cites an ask, attempt caps, rename-dodge,
+  `ov-unit-gate`) stay in the overseer tool; the engine passes no policy, so they do not apply. Rule ids are `GE-*`
+  (supersedes the `CK-*` placeholder in §7.2).
+- **`edit_pending`** payload `{add_edges:[{from,to,drop_inputs?}], remove_edges:[...], cancel:[id], skip:[id], priority:{id:int}}`;
+  **`inject`** payload `{tasks:[TaskSpec]}`. Both enabled in `KINDS_ENABLED`; the tick calls the engine-built applier
+  (`Orchestrator._make_edit_applier`): validate on deep copies, commit workflow + `RunState` in one step, set
+  `rt.reshape_pending`; `run()` then re-derives `graph/order/preds` and `done` before FILL. The tick's save (same step as
+  `inbox_consumed`) persists the edit, so a crash before it leaves the file to be re-applied and a crash after it replays
+  as a no-op (G5). Edit rejects: unknown/non-pending target (`GE-UNKNOWN-TASK`, `GE-NOT-PENDING`), removing an edge whose
+  predecessor produces a declared input (`GE-INPUT-EDGE`, unless `drop_inputs`), cancel orphaning an input
+  (`GE-ORPHAN-INPUT`), router task/route entry (`GE-ROUTE-SINK`), any route cone or loop gate/body (`GE-CONE`), payload
+  errors (`GE-PAYLOAD`), LLM actor while `sentinel.llm.allow_graph_edits` is false (`GE-DISABLED`).
+- **Persistence (I1).** `RunState.graph_edits: list[GraphEdit]` (`set_edges` = resulting `depends_on`/`inputs`,
+  `remove_task`, `skip`, `priority`); `prepare_resume` replays it after the reset pass (so `skipped` survives) and `run()`
+  replays for a raw loaded state. `cancel` drops the task row and its `injected_tasks` entry; `skip` => status `skipped`.
+- **FILL priority.** Only when `graph_edits` exists: ready ids are stably sorted by `-priority`, keeping ADR-0007 D6 order
+  as the tie-break; no edits => untouched list.
+- **Spawn origin.** `SPAWN_ORIGIN_SENTINEL = "sentinel"` (also on `TaskRunState.origin`); `SpawnRecord.parent_task_id` is the
+  actor label: `sentinel-gNN` for the LLM, otherwise `ctl:<actor>`; `parent_dispatch_cycle` is 0. The UI graph API passes
+  `origin` through unchanged; dedicated styling is not part of this change.
+- Not done here: `sentinel_injected_count` / breaker (T-Sn7Bkl, FR-19), rate limits, early-checkpoint trigger.
+
 ## 7. Shared mechanical checker (FR-11, FR-12)
 
 ### 7.1 Common rules (any source)
@@ -427,13 +461,49 @@ values owned by later tasks are `null`/empty until they land:
 | key | content |
 |---|---|
 | `schema`, `run_id`, `run_status`, `updated_at` | identity |
-| `sentinel` | `enabled`, `disabled_reason`, `last_tick_at`, `llm_paused`, `hold_requested` |
+| `sentinel` | `enabled`, `disabled_reason`, `last_tick_at`, `llm_paused`, `hold_requested`, `systemic_alarm` |
 | `concurrency` | `running`, `limit` (effective `max_parallel`), `ceiling` (null until recorded), `overrides{key:{value,actor,at}}` |
 | `utilisation` | `pct`, `slot_seconds_busy`, `slot_seconds_idle_with_ready`, `slot_seconds_idle_no_ready` (null when sentinel never on) |
-| `tasks` | `counts{status:n}`, `running[{id, liveness_age_s}]` (`liveness_age_s` null until T-Sn4Rec) |
-| `ladder`, `backlog{held}`, `llm{generation,spend_usd,paused}` | placeholders for T-Sn4Rec / T-Sn7Bkl / T-Sn8Gen |
+| `tasks` | `counts{status:n}`, `running[{id, liveness_age_s}]` (`liveness_age_s` = seconds since the task's output last grew; null while unsampled / recovery lane off) |
+| `ladder` | `{task_id: {kills, last_reason, last_source, escalation_step, no_retry}}` for tasks with ≥1 recovery kill (T-Sn4Rec); `{}` otherwise |
+| `backlog{held}` | placeholder for T-Sn7Bkl |
+| `llm` | `generation`, `spend_usd`, `paused`, `pause_reason`, `budget_exhausted`, `enabled`, `powers` (the last two from the settings snapshot; null when unrecorded) |
 | `inbox` | `pending[ids]`, `consumed_count` |
-| `recent_actions` | last ≤20 operator notes `{id,kind,actor,at,text}` |
+| `recent_actions` | last ≤20 operator notes and recorded kills (`kind` `note`/`kill`), oldest first, `{id,kind,actor,at,text}` |
+
+### 12.2 Dashboard control API and Sentinel panel v1 (implemented by T-Sn5Ui1)
+
+Thin routes over the same `control.py` as `ao ctl` (`DashboardService.sentinel_status` / `submit_control` /
+`control_outcome`); the dashboard never mutates run state, it only writes one inbox file.
+
+| Route | Behaviour |
+|---|---|
+| `GET /api/runs/{id}/sentinel` | the `ao.ctl.status/v1` document above; a run that predates the sentinel answers `sentinel.enabled=false`; unknown run → 404 |
+| `POST /api/runs/{id}/control` | body `{kind, payload?, rationale?}` (= an `ao.ctl/v1` entry minus `id`/`actor`/`created_at`; unknown fields → 422). **202** `{id, kind, run_id, actor, outcome:"queued"}` |
+| `GET /api/runs/{id}/control/{entry_id}` | non-blocking verdict `{outcome: pending\|consumed\|rejected[, rule_id, detail]}` (id shape-checked) |
+
+- Kinds accepted: `set` (only `max_parallel`, typed + `≤ ceiling` via `control.validate_request`, which reuses
+  `parse_set_items`), `pause_llm`, `resume_llm`, `kill` (`task_id` of a *running* task, **reason required**, optional
+  `no_retry`), `note`, `release_backlog`, `request_cancel`. Anything else (incl. LLM-lane kinds) → 400. Validation failure
+  → 400 and nothing is written; a run whose state is not `running` → 409 (a stale entry would otherwise be consumed on a later
+  resume).
+- Auth/CSRF are the existing middleware: no route-policy entry ⇒ AUTHENTICATED (deny-by-default, ADR-0021); mutating
+  methods go through `SecurityMiddleware` (same-origin `Origin`, JSON content type). The entry's **actor is server-set**:
+  `dashboard:<principal username>` (`dashboard:local` when auth is off); it is not a body field.
+- Panel (`ui/src/components/SentinelPanel.tsx`, below *Limits & settings* on the run page, `useSentinel` polls every 3 s):
+  enable state / last tick, concurrency (running · limit · ceiling) with a live `max_parallel` form (validated against the
+  ceiling client-side, engine re-validates), stacked slot-utilisation bar (busy / idle-with-work-waiting / idle-nothing-ready
+  from the cumulative slot-seconds — **not** a time-series timeline; the state only keeps cumulative counters), running tasks
+  with liveness age, ladder state and **Kill** (inline reason required + "don't retry"), systemic-alarm banner, LLM lane
+  (state, powers, generation, spend, **pause reason**, Pause/Resume), notes box, recent actions. After a POST it shows
+  *queued → applied/rejected [rule]* by polling the verdict. Hidden on an old backend (404 / non-status body); collapsed by
+  default while the sentinel is off; every control disabled when the run is not live. Notes/actions are rendered as text.
+- Launch/resume forms: `run_options.SENTINEL_UI_GROUPS` now exposes the five leaves that have a CLI flag
+  (`enabled`, `max_parallel_ceiling`, `llm.enabled`, `llm.powers`, `llm.budget_usd`) in the schema-driven **Sentinel** group;
+  the argv allow-list follows from the registry (no hand-written fields). Tuning knobs stay on config/env/workflow.
+- Fixed on the way: `ao ctl kill --no-retry` sent `payload.retry` while the engine reads `payload.no_retry` (flag was
+  silently ignored); the CLI now sends `no_retry`.
+- Panel v2 (generations list, quarantined proposals, backlog) remains T-Sn9Pow / T-Sn7Bkl.
 
 ## 13. Observability (FR-21, NFR-9, NFR-6)
 Run-log: `sentinel.*`, `ctl.*`. Ledger (overseer workflows): `sentinel_trigger`, `sentinel_applied`,
@@ -515,7 +585,7 @@ SnXAcc/SnXDoc. SnXDoc reconciles this HLD ("Deviations") with the implementation
        "properties": {"values": {"type": "object", "minProperties": 1}, "force": {"type": "boolean"}}}}}},
     {"if": {"properties": {"kind": {"const": "kill"}}},
      "then": {"required": ["rationale"], "properties": {"payload": {"type": "object", "required": ["task_id"],
-       "properties": {"task_id": {"type": "string"}, "retry": {"type": "boolean", "default": true}}}}}},
+       "properties": {"task_id": {"type": "string"}, "no_retry": {"type": "boolean", "default": false}}}}}},
     {"if": {"properties": {"kind": {"const": "note"}}},
      "then": {"properties": {"payload": {"type": "object", "required": ["text"],
        "properties": {"text": {"type": "string", "maxLength": 4000}}}}}},

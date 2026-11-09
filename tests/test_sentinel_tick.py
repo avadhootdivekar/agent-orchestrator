@@ -229,7 +229,7 @@ def test_inbox_rules_tmp_size_json_dup_and_replay(tmp_path: Path) -> None:
     big = inbox / "cli-note-oversize.json"
     big.write_text(" " * (sentinel_tick.INBOX_MAX_BYTES + 1))
     (inbox / "cli-note-badjson1.json").write_text("{nope")
-    _write_entry(run_dir, "cli-kill-notyet01", "inject", {"task_id": "t0"}, rationale="x")
+    _write_entry(run_dir, "cli-kill-notyet01", "release_backlog", {}, rationale="x")
     _write_entry(run_dir, "cli-note-good0001", "note", {"text": "hello"})
 
     def first(ctx: TaskContext) -> None:

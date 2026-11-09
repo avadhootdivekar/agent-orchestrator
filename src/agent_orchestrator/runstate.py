@@ -14,6 +14,7 @@ from typing import Literal
 
 from .artifacts import ArtifactStore
 from .dag import build_dag, compute_cones
+from .graph_check import replay_edits
 from .inputs import cancel_request
 from .models import (
     EffectiveSetting,
@@ -485,7 +486,6 @@ class RunStateStore:
             if injected.id not in existing_ids:
                 workflow.tasks.append(injected)
                 existing_ids.add(injected.id)
-
         # Now evaluate skip/reset for the full (possibly expanded) task list
         for task in workflow.tasks:
             ts = state.tasks.get(task.id, TaskRunState())
@@ -545,6 +545,12 @@ class RunStateStore:
                     origin=ts.origin,
                     recovery=ts.recovery,
                 )
+
+        # Re-apply accepted pending-graph edits (edges/cancels/skips) AFTER the reset pass above,
+        # which would otherwise turn a skipped task back into pending -- injected_tasks alone
+        # would silently revert them (E-Sn7tL2 spike invariant I1).
+        if state.graph_edits:
+            replay_edits(workflow, state)
 
         # A request whose task no longer exists in the spec is cancelled (HLD §6.4).
         task_ids = {t.id for t in workflow.tasks}

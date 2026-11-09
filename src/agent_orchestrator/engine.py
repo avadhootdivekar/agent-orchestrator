@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from . import hooks, sentinel_tick
+from . import graph_check, hooks, sentinel_tick
 from .artifacts import (
     ArtifactStore,
     LocalFsArtifactStore,
@@ -152,7 +152,7 @@ if TYPE_CHECKING:
     from .cache.types import PendingStore, ResultCacheHook
 
 # Valid origin values for injected/loop tasks
-_TaskOrigin = Literal["static", "injected", "loop"]
+_TaskOrigin = Literal["static", "injected", "loop", "sentinel"]
 
 logger = logging.getLogger(__name__)
 
@@ -836,6 +836,8 @@ class Orchestrator:
                     if inj.id not in existing_ids:
                         workflow.tasks.append(inj)
                         existing_ids.add(inj.id)
+            if run_state and run_state.graph_edits:
+                graph_check.replay_edits(workflow, run_state)
 
             graph = build_dag(workflow)
             order = graph.topological_order()
@@ -916,6 +918,8 @@ class Orchestrator:
             # Sentinel lane (E-Sn7tL2 T-Sn3Tck): None when absent/disabled, in which case every
             # sentinel branch below is skipped and the loop is the pre-epic loop verbatim.
             rt = sentinel_rt = self._start_sentinel(state, run_dir, run_log, workflow, agents)
+            if rt is not None:
+                rt.edit_applier = self._make_edit_applier(rt, state, workflow, ctx, agents)
             with ThreadPoolExecutor(
                 max_workers=rt.ceiling if rt is not None else self._max_parallel
             ) as pool:
@@ -939,12 +943,30 @@ class Orchestrator:
                             self._halt_cancelled(in_flight, workflow, state, ctx)
                             failed = True
                             break
+                        if rt is not None and rt.reshape_pending:
+                            # Pending-graph edit/inject committed by the tick (already validated
+                            # on a copy and persisted): re-derive the run() locals in place.
+                            rt.reshape_pending = False
+                            graph = build_dag(workflow)
+                            order = graph.topological_order()
+                            preds = self._predecessors(graph)
+                            done.update(
+                                tid
+                                for tid, ts in state.tasks.items()
+                                if ts.status in ("succeeded", "skipped")
+                            )
                     limit = rt.live_limit if rt is not None else self._max_parallel
 
                     # ---- FILL: launch ready non-barrier tasks up to N ----
                     ready = self._ready_ids(order, preds, state, done, set(in_flight.values()))
                     if not ready and not in_flight:
                         break  # nothing ready, nothing running -> run complete
+                    if state.graph_edits:
+                        # Pending-edit priorities (FR-12): higher first, stable among equals so
+                        # the ADR-0007 D6 order is the tie-break. Absent edits => untouched.
+                        prios = graph_check.priorities(state)
+                        if prios:
+                            ready = sorted(ready, key=lambda t: -prios.get(t, 0))
 
                     # E-Wk9Tz3 R-5: soft overlap preference reorders (never filters) the
                     # candidate list. `resolve_overlap_preference` derives "off" unless the
@@ -2658,6 +2680,12 @@ class Orchestrator:
                 self._runstate.save(state)
                 return SettleResult(signal="halt")
             try:
+                if task.barrier == "soft":
+                    # Additive-manifest check against the live graph (tasks may be in flight).
+                    try:
+                        graph_check.check_additive_manifest(workflow, state, new_specs)
+                    except graph_check.EditRejected as rej:
+                        raise InjectionError(f"[{rej.rule_id}] {rej.detail}") from rej
                 self._inject(
                     new_specs,
                     workflow,
@@ -2953,6 +2981,59 @@ class Orchestrator:
                 state.sentinel.disabled_reason = f"tick error: {exc!r}"[:500]
             return None
 
+    def _make_edit_applier(
+        self,
+        rt: sentinel_tick.SentinelRuntime,
+        state: RunState,
+        workflow: WorkflowSpec,
+        ctx: _RunContext,
+        agents: dict,
+    ) -> Callable[[str, dict[str, Any], str, str, str], None]:
+        """Build the ``inject`` / ``edit_pending`` applier the tick calls (main thread only).
+
+        ``_apply_pending_edits``: validate on copies (graph_check), then commit workflow + state in
+        one step; the next ``save`` (the tick's, same step as the consumed-id record) makes the
+        edit durable together with its inbox id (G5). ``run()`` re-derives graph/order/preds when
+        ``rt.reshape_pending`` is set (spike invariant I6).
+        """
+        assert self._sentinel is not None
+        llm_edits_allowed = self._sentinel.spec.llm.allow_graph_edits
+
+        def apply(kind: str, payload: dict[str, Any], actor: str, entry_id: str, at: str) -> None:
+            is_llm = sentinel_tick.is_sentinel_actor(actor)
+            if is_llm and not llm_edits_allowed:
+                raise graph_check.EditRejected(
+                    graph_check.RULE_DISABLED, "sentinel.llm.allow_graph_edits is false"
+                )
+            if kind == "inject":
+                plan = graph_check.plan_inject(
+                    workflow, state, payload, actor=actor, at=at, edit_id=entry_id
+                )
+                try:
+                    validate_task_model_policy(plan.new_tasks, agents, workflow.defaults.model)
+                    validate_isolation(workflow, [*workflow.tasks, *plan.new_tasks])
+                except SpecValidationError as exc:
+                    raise graph_check.EditRejected(graph_check.RULE_SPEC, str(exc)) from exc
+            else:
+                plan = graph_check.plan_edit_pending(
+                    workflow,
+                    state,
+                    payload,
+                    membership=ctx.membership,
+                    actor=actor,
+                    at=at,
+                    edit_id=entry_id,
+                )
+            parent = (
+                actor
+                if is_llm or actor == graph_check.PARENT_TICK or actor.startswith("ctl:")
+                else f"ctl:{actor}"
+            )
+            graph_check.commit_plan(workflow, state, plan, parent=parent, at=at)
+            rt.reshape_pending = True
+
+        return apply
+
     def _tick_llm_lane(
         self, rt: sentinel_tick.SentinelRuntime, state: RunState, now: datetime
     ) -> bool:
@@ -3127,8 +3208,10 @@ class Orchestrator:
         every pre-epic direct unit-level call (``_is_barrier(task, workflow)``, 2-arg) keeps
         working unchanged; `run()`'s own call site always passes the live *state*.
         """
-        if task.emit_tasks:
+        if task.emit_tasks and task.barrier != "soft":
             return True
+        # A soft-barrier emitter (E-Sn7tL2 FR-8) is ready only once all its predecessors settled,
+        # so by construction nothing in flight is one of them; it may overlap other tasks.
         if self._loop_for_gate(workflow, task.id) is not None:
             return True
         if self._router_for_task(workflow, task.id) is not None:

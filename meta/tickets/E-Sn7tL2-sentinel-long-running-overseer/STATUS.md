@@ -32,6 +32,7 @@
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn3Ctl done** — `ao ctl` CLI + shared `control.py` writer; `status --json` schema `ao.ctl.status/v1` documented in HLD §12.1 and snapshot-tested.
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn8Gen done** — LLM generations (pack, handoff, memory, rotation, cost rows, budget, auto-pause); HLD §8.6 as-built; fake-driver tests only, live smoke in T-SnXAcc.
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn5Ui1 done** — sentinel control API (`GET /sentinel`, `POST /control`, verdict probe) + Sentinel panel v1 + Sentinel launch-form group; HLD §12.2 as-built.
 
 ## Task rollup
 | Task | Phase | State |
@@ -42,8 +43,8 @@
 | T-Sn3Tck-main-loop-tick-inbox-overrides | P1 | Done |
 | T-Sn3Ctl-ao-ctl-cli | P1 | Done |
 | T-Sn4Rec-liveness-kill-recovery-ladder | P1 | Done (gates: see its STATUS) |
-| T-Sn5Ui1-sentinel-panel-and-control-api | P1 | Draft |
-| T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Draft |
+| T-Sn5Ui1-sentinel-panel-and-control-api | P1 | Done |
+| T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Done (AC5 graph-UI styling deferred) |
 | T-Sn7Bkl-backlog-and-early-checkpoint | P2 | Draft |
 | T-Sn8Gen-llm-generations-pack-handoff | P3 | Done |
 | T-Sn9Pow-llm-powers-directives-routed | P3 | Draft |
@@ -61,3 +62,5 @@
 ## Next actions
 1. ~~T-Sn0Spk~~ done ∥ ~~E-aYG5vn T-zP28k9~~ done, ~~T-f0d7gm~~ done.
 2. ~~T-Sn1Adr~~ signed off 2026-11-09 → P1 (T-Sn2Set in progress).
+
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn6Brr done** — soft barrier, shared checker, `inject`/`edit_pending`, persisted graph edits (HLD §6.8). Graph-UI styling (AC5) deferred.

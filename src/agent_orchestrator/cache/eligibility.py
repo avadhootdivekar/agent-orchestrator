@@ -112,6 +112,8 @@ TASK_ANY_VALUE: frozenset[str] = frozenset(
         "join",
         "touches",
         "cache",
+        # Only meaningful on emit_tasks tasks, which are already RULED out via `emit_tasks`.
+        "barrier",
     }
 )
 
