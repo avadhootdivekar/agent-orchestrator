@@ -6,7 +6,7 @@
 - Owner: `unassigned`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `In Progress`
 - Estimate: `< 3 days`
 - Phase: P3 close
 - Agent: full-tester / tester
@@ -24,6 +24,10 @@ ledger, handoffs, utilisation before/after vs EPIC §1 baseline, cost split work
 1. All §11 e2e scenarios present and green.
 2. Evidence pack under `output/E-Sn7tL2-sentinel-long-running-overseer/smoke/` with a README summarising numbers.
 3. HLD 'Deviations' section reconciled with findings.
+
+## Progress (2026-11-09)
+- AC1 met for the non-live part: all §11 e2e scenarios mapped + green (`MATRIX.md`, `tests/test_sentinel_e2e_matrix.py`).
+- AC2 (live smoke evidence pack) and AC3 (HLD Deviations) OPEN — live smoke awaits owner budget confirmation.
 
 ## Risks
 - Live smoke cost — cap run budget; use haiku/sonnet for work units.

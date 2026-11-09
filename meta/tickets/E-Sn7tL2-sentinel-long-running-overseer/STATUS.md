@@ -33,6 +33,7 @@
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn3Ctl done** — `ao ctl` CLI + shared `control.py` writer; `status --json` schema `ao.ctl.status/v1` documented in HLD §12.1 and snapshot-tested.
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn8Gen done** — LLM generations (pack, handoff, memory, rotation, cost rows, budget, auto-pause); HLD §8.6 as-built; fake-driver tests only, live smoke in T-SnXAcc.
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn5Ui1 done** — sentinel control API (`GET /sentinel`, `POST /control`, verdict probe) + Sentinel panel v1 + Sentinel launch-form group; HLD §12.2 as-built.
+- By: claude-sonnet-5-5 · Role: tester · Date: 2026-11-09 · Comment: **T-SnXAcc non-live e2e matrix done** (`tests/test_sentinel_e2e_matrix.py`, 17 pass; `T-SnXAcc*/MATRIX.md`). Live smoke pending owner budget. mypy gate red (see MATRIX findings).
 
 ## Task rollup
 | Task | Phase | State |
@@ -48,7 +49,7 @@
 | T-Sn7Bkl-backlog-and-early-checkpoint | P2 | Done (NFR-13: idle-with-work 3.5s -> 0.01s) |
 | T-Sn8Gen-llm-generations-pack-handoff | P3 | Done |
 | T-Sn9Pow-llm-powers-directives-routed | P3 | Done (edited-edge styling deferred) |
-| T-SnXAcc-e2e-and-live-smoke | P3 close | Draft |
+| T-SnXAcc-e2e-and-live-smoke | P3 close | In Progress (non-live matrix done; live smoke pending owner budget) |
 | T-SnXDoc-docs-readme-learnings | each phase | Partial (docs done; default flip pending evidence) |
 
 ## Evidence
