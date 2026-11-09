@@ -54,6 +54,7 @@ import typer
 from .auth.cli import app as auth_app
 from .auth.model import TotpPolicy
 from .cache.cli import cache_app
+from .ctl_cli import ctl_app
 from .migrate import migrate_app
 from .models import (
     INPUT_MODES,
@@ -97,6 +98,7 @@ app = typer.Typer(
 app.add_typer(service_app, name="service")
 app.add_typer(auth_app, name="auth")
 app.add_typer(cache_app, name="cache")
+app.add_typer(ctl_app, name="ctl")
 app.add_typer(migrate_app, name="migrate")
 
 _PACKAGE_LOGGER = "agent_orchestrator"

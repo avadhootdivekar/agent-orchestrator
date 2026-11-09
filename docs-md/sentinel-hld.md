@@ -328,6 +328,37 @@ Requires ADR-0021 auth + Origin/CSRF check; actor recorded; kill requires reason
 (never mutates state). Panel: enable state, powers, utilisation gauge + idle timeline, running tasks with liveness age
 + Kill, ladder, backlog, generations with spend, quarantined proposals, notes, controls. Panel v1 in P1, v2 in P3.
 
+### 12.1 `ao ctl` behaviour and `status --json` schema (implemented by T-Sn3Ctl)
+
+`ao ctl <sub> <run> [args] [--workspace W] [--reason R] [--wait] [--wait-timeout S] [--json]`. `<run>` is a run id or a
+unique prefix (exact id wins; ambiguous prefix is an error listing candidates). Module `control.py` holds the shared
+writer (`build_entry`, atomic `write_entry` = `<id>.json.tmp` + rename, actor `cli:<os user>`, id
+`<kind>-<utc ts>-<8 hex>`); the dashboard API (T-Sn5Ui1) reuses it. Subcommands: `status`, `set k=v…`, `pause-llm`,
+`resume-llm`, `note "text"`, `cancel`, `kill <task> --reason R [--no-retry]`, `release [ids…]`.
+
+- `set` is validated **before** writing, via the run-options registry types and `sentinel_tick.OVERRIDABLE_KEYS`
+  (unknown/non-overridable key, wrong type, `max_parallel < 1`, duplicate key, and `> ceiling` when the run's snapshot
+  records it) → exit 2, nothing written. The engine re-validates everything (the inbox is untrusted).
+- `--wait` polls `inbox-processed/<id>.json` / `inbox-rejected/<id>.reason.json` (no state load). Exit codes:
+  `0` queued/consumed · `1` bad run/IO · `2` client-side validation · `3` rejected by engine (`rule_id` printed) ·
+  `4` wait timeout · `5` `not_enabled_yet` (e.g. `release` before T-Sn7Bkl). `--json` prints one document
+  `{id, kind, run_id, outcome: queued|consumed|rejected|timeout[, rule_id, detail]}`.
+- Without `--wait` the entry is only queued (a run with no live engine never consumes it).
+
+`ao ctl status <run> --json` → schema `ao.ctl.status/v1` (snapshot-tested in `tests/test_ctl_cli.py`); keys are stable,
+values owned by later tasks are `null`/empty until they land:
+
+| key | content |
+|---|---|
+| `schema`, `run_id`, `run_status`, `updated_at` | identity |
+| `sentinel` | `enabled`, `disabled_reason`, `last_tick_at`, `llm_paused`, `hold_requested` |
+| `concurrency` | `running`, `limit` (effective `max_parallel`), `ceiling` (null until recorded), `overrides{key:{value,actor,at}}` |
+| `utilisation` | `pct`, `slot_seconds_busy`, `slot_seconds_idle_with_ready`, `slot_seconds_idle_no_ready` (null when sentinel never on) |
+| `tasks` | `counts{status:n}`, `running[{id, liveness_age_s}]` (`liveness_age_s` null until T-Sn4Rec) |
+| `ladder`, `backlog{held}`, `llm{generation,spend_usd,paused}` | placeholders for T-Sn4Rec / T-Sn7Bkl / T-Sn8Gen |
+| `inbox` | `pending[ids]`, `consumed_count` |
+| `recent_actions` | last ≤20 operator notes `{id,kind,actor,at,text}` |
+
 ## 13. Observability (FR-21, NFR-9, NFR-6)
 Run-log: `sentinel.*`, `ctl.*`. Ledger (overseer workflows): `sentinel_trigger`, `sentinel_applied`,
 `sentinel_rejected`, `sentinel_kill`, `sentinel_edit`, `sentinel_generation_start/end`, `sentinel_ungraceful`,

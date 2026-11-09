@@ -222,6 +222,7 @@ ao answer     Answer a task's input request (run is waiting for input) and optio
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
 ao migrate    Workspace migrations: `ao migrate effort-keys [--apply]` renames the deprecated `effort` key to `turn_budget`
 ao cache      Manage the opt-in RESULT cache: ls | stats | show | rm | prune | clear | verify
+ao ctl        Live-control a running run via its control inbox: status | set | pause-llm | resume-llm | note | cancel | kill | release (see docs-md/sentinel-hld.md §12)
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
 ao auth       Manage dashboard accounts, TOTP and lockouts (see Authentication)
 ao report-usage     Cross-run cost/retry/rework rollup by (agent, model, effort) + verdicts, feedback, survival

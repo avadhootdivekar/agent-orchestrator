@@ -30,6 +30,8 @@
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn3Tck done** — engine tick/inbox/live overrides/metrics/fail-safe (disabled path unchanged).
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn2Set done** — sentinel settings on every CLI/env/config/workflow/template surface; engine only stores them.
 
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn3Ctl done** — `ao ctl` CLI + shared `control.py` writer; `status --json` schema `ao.ctl.status/v1` documented in HLD §12.1 and snapshot-tested.
+
 ## Task rollup
 | Task | Phase | State |
 |---|---|---|
@@ -37,7 +39,7 @@
 | T-Sn1Adr-sentinel-adr-and-hld | P0 | Done — ADR Accepted (owner sign-off 2026-11-09) |
 | T-Sn2Set-sentinel-settings-plumbing | P1 | Done |
 | T-Sn3Tck-main-loop-tick-inbox-overrides | P1 | Done |
-| T-Sn3Ctl-ao-ctl-cli | P1 | Draft |
+| T-Sn3Ctl-ao-ctl-cli | P1 | Done |
 | T-Sn4Rec-liveness-kill-recovery-ladder | P1 | Draft |
 | T-Sn5Ui1-sentinel-panel-and-control-api | P1 | Draft |
 | T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Draft |
