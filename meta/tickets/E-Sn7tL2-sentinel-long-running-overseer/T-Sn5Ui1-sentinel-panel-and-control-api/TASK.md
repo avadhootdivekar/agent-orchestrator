@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-Sn5Ui1-sentinel-panel-and-control-api`
 - Epic ID: `E-Sn7tL2-sentinel-long-running-overseer`
-- Owner: `unassigned`
+- Owner: `developer (ao run o-bi0rvg-sentinel-dashboard-impl, unit w08-01-sentinel-panel-ui)`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `< 3 days`
 - Phase: P1
 - Agent: developer (UI) + reviewer
@@ -23,9 +23,9 @@ state, notes box, pause/resume LLM, recent actions. Sentinel settings section in
 schema-driven form built in E-aYG5vn T-pMpo4O (no hand-written fields). Run page section layout agreed with T-xNFBww.
 
 ## Acceptance Criteria
-1. API tests: unauthenticated / cross-origin POST rejected; valid POST produces inbox entry with actor.
-2. UI tests: panel renders for enabled, disabled and old-backend (404) runs; Kill flow requires reason.
-3. Manual check against a temp-workspace run via `ao ui`: change max_parallel live and see dispatch count follow.
+1. [x] API tests: unauthenticated / cross-origin POST rejected; valid POST produces inbox entry with actor (`tests/ui/test_sentinel_api.py`, `tests/auth/test_sentinel_control_auth.py`).
+2. [x] UI tests: panel renders for enabled, disabled and old-backend (404) runs; Kill flow requires reason (`ui/src/test/sentinel-panel.test.tsx`, `run-detail-sentinel.test.tsx`).
+3. [x] (automated, not a manual `ao ui` session) dashboard POST `set max_parallel` against a live engine on a temp workspace; dispatch concurrency follows (`tests/ui/test_sentinel_e2e.py`).
 
 ## Risks
 - Run page clutter — sections collapsible, default collapsed when sentinel disabled.
