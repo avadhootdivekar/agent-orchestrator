@@ -288,6 +288,58 @@ Each generation is a `state.tasks` row `sentinel-gNN` (counted in `run_cost_usd`
 `budget_usd`/`budget_pct` (default 10 % of run cap) stops **new generations**; ticks continue at $0. Target ≤ 3
 generations/hour steady state; report combined overseer+sentinel overhead.
 
+### 8.6 As built (T-Sn8Gen, 2026-11-09)
+
+Modules: `sentinel_driver.py` (`SentinelDriver` ABC `start/poll/stop`, `ClaudeCliSentinelDriver` — spawns `claude -p` in its own
+process group, parses cost/tokens with the same `parse_usage_and_429` the task executor uses, `make_driver`), `sentinel_gen.py`
+(pack, handoff, memory, ledger, `GenerationLane`). Engine hooks: `_start_llm_lane`, `_tick_llm_lane` (called from
+`_sentinel_tick` after the inbox drain), run-end `lane.shutdown`. Test seam: `Orchestrator(sentinel_driver_factory=...)`.
+
+- **Lane.** `ThreadPoolExecutor(max_workers=1)` owned by the lane, separate from the task pool (a generation never takes a
+  `max_parallel` slot). Only `driver.start` runs there; `poll`/`stop` are non-blocking, called on the main-thread tick. An
+  exception in the lane pauses **only** the LLM lane (`llm_pause_reason="lane error: ..."`); the mechanical tick keeps running.
+- **Layout** `<run_dir>/sentinel/`: `memory.md`, `ledger.jsonl` (hash chain: `seq/at/event/data/prev/hash`), `gNN/{pack/,
+  handoff.json, report.md, memory-append.md, triggers.jsonl, transcript.jsonl}`. Events: `generation_started`,
+  `generation_ended`, `sentinel_ungraceful`, `budget_exhausted`.
+- **Pack** (`build_pack`, pure; same state + files + injected `now` => identical bytes): `README.md`, `sentinel-contract.md`
+  (rendered from `KINDS_ENABLED`, the handoff JSON schema and the limits), `charter.json` (`outputs/charter.json` if present),
+  `digest.json`, `events.jsonl` (last 40 structured `run.log` events), `backlog.json` (`control/backlog.json` if present),
+  `memory.md`, `previous-handoff.json`, `manifest.json` (sha256 + `truncated` per file). Per-file caps sum to < 120 KiB;
+  truncation is deterministic, UTF-8-safe, marked in the file and the manifest (events keep the tail, the rest the head).
+- **Memory** (tool-owned): items `- [gNN][pin][exp:gM] text`. A generation only appends bullets (`- [pin][exp:+N] text`, <= 50
+  lines of <= 500 chars); the tool expires (`exp < current generation`), dedupes by normalised text (newest wins, pin sticky),
+  then enforces 16 KiB (oldest unpinned first, pinned only as a last resort).
+- **Handoff** `ao.sentinel.handoff/v1` validated with a pydantic model (extra keys rejected, `summary <= 4000`, generation must
+  match, <= 64 KiB). The newest *valid* one is carried into the next pack (`state.sentinel.last_handoff_path`).
+- **Ending a generation**: process exit; or the tick stops it at TTL (`generation_ttl_minutes`), `max_tokens_per_generation`
+  (when the driver can tell), `max_triggers_per_generation`, or `HANDOFF_GRACE_SECONDS` (30 s) after a valid handoff appears
+  while the process lingers (the grace lets it exit by itself so its final cost is reported). *Ungraceful* = no valid handoff,
+  non-zero exit, start failure, driver error, forced stop without handoff, or an engine restart while live (`resume` reconciles
+  it): counted in `ungraceful_count`, ledger + `sentinel_ungraceful` log event, row status `failed`; the next generation starts
+  from the digest + memory + the last good handoff.
+- **Triggers** (`pending_triggers`, deterministic order): `stuck_task` (failed after recovery kills), `unit_failed`,
+  `human_note`, `heartbeat` (`heartbeat_minutes` since the last generation ended / run start). Per-kind cooldown
+  `trigger_cooldown_minutes` (5), global cap `max_generations_per_hour` (3). A trigger is "new" when its event is later than the
+  last time that kind fired. Not implemented yet (need later tasks): `new_signal`, `stage_change`, `idle_slots_no_backlog`.
+  Triggers arriving while a generation is alive are appended to its `triggers.jsonl` and counted toward the rotation cap.
+- **Cost.** Each generation is `state.tasks["sentinel-gNN"]` (`agent` = `llm.agent` or `sentinel`, `dispatch_cycle=1`,
+  cumulative tokens/cost from the driver), so `compute_run_usage_totals` (=> `run_cost_usd` breaker, summaries) and
+  `ao usage` (group agent `sentinel`) count it. Generation rows are excluded from the `task_failures`/`consecutive_failures`
+  breakers (their cost still counts toward cost breakers). `budget_usd`, else `budget_pct` of the lowest `run_cost_usd`
+  breaker threshold, caps *new* generations (spend derived from the rows; resume-safe); exhaustion is logged/ledgered once and the
+  mechanical tick continues. The remaining budget is passed to the driver (`--max-budget-usd`).
+- **Rejections.** Proposals are `ao.ctl/v1` files in `control/inbox/` with `actor: sentinel-gNN`. A rejected one increments
+  `consecutive_rejections` (processed in file-name order); an accepted one resets it; `max_consecutive_rejections` (5) in a row
+  sets `llm_paused` (+ `llm_pause_reason`); `ao ctl resume-llm` clears both. Human/CLI rejections never count.
+- **Resume**: generation counter, memory file, last handoff path, trigger clocks, spend and the consumed-id ring persist; a
+  replayed proposal id is dropped by the ring (no duplicate effect).
+- New settings (`SentinelLlmSpec`, registry options generated): `max_triggers_per_generation`, `max_tokens_per_generation`,
+  `trigger_cooldown_minutes`, `max_generations_per_hour`, `max_consecutive_rejections`.
+- Honest limits: `ClaudeCliSentinelDriver` is tested against a fake `claude` executable (real subprocess: cost/token parse, exit
+  codes, process-group stop), **not** a live LLM call (live smoke is T-SnXAcc). Tokens-so-far is only known at exit for the CLI driver, so the
+  `max_tokens` stop is effective for drivers that report progress; TTL/`--max-budget-usd` bound the CLI one. Powers (what a
+  proposal may do beyond `note/pause/kill/request_*`) land in T-Sn9Pow.
+
 ## 9. Authority and checkpoint contract (FR-16)
 
 ### 9.1 Split

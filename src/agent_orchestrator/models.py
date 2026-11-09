@@ -1024,6 +1024,14 @@ class SentinelLlmSpec(_SentinelBase):
     budget_pct: float | None = Field(default=10, gt=0, le=100)
     driver: str = "claude-cli"
     agent: str | None = None
+    # Generation rotation + trigger pacing (T-Sn8Gen, HLD §8.1). A generation ends at the first of
+    # TTL / max_triggers / max_tokens / its own handoff; new ones are paced by the per-hour cap and
+    # the per-trigger-kind cooldown. Consecutive rejected proposals auto-pause the LLM lane.
+    max_triggers_per_generation: int = Field(default=20, ge=1)
+    max_tokens_per_generation: int = Field(default=400_000, ge=1000)
+    trigger_cooldown_minutes: int = Field(default=5, ge=0)
+    max_generations_per_hour: int = Field(default=3, ge=1)
+    max_consecutive_rejections: int = Field(default=5, ge=1)
 
 
 class SentinelSpec(_SentinelBase):
@@ -1691,6 +1699,27 @@ class ResultCacheRecord(BaseModel):
         return self
 
 
+SENTINEL_GEN_TASK_PREFIX = "sentinel-g"
+"""Prefix of the ``state.tasks`` rows that account for LLM generations (``sentinel-g01`` ...)."""
+
+
+def is_sentinel_generation_task(task_id: str) -> bool:
+    """True for a sentinel generation accounting row (not a workflow task)."""
+    return (
+        task_id.startswith(SENTINEL_GEN_TASK_PREFIX)
+        and task_id[len(SENTINEL_GEN_TASK_PREFIX) :].isdigit()
+    )
+
+
+def sentinel_generation_spend_usd(state: RunState) -> float:
+    """USD spent by sentinel generation rows (derived from ``state.tasks``; resume-safe)."""
+    return sum(
+        ts.cumulative_cost_usd
+        for tid, ts in state.tasks.items()
+        if is_sentinel_generation_task(tid)
+    )
+
+
 class SentinelOverride(BaseModel):
     """One live override applied through the control inbox (``state.sentinel.overrides``)."""
 
@@ -1732,6 +1761,28 @@ class SentinelState(BaseModel):
     """Bounded recent kills (systemic-alarm window)."""
     systemic_alarm: bool = False
     systemic_alarm_at: str | None = None
+    # LLM generations (T-Sn8Gen). All default-valued so a never-generating run stays minimal.
+    generation: int = 0
+    """Highest generation number started (monotonic across resumes)."""
+    active_generation: str | None = None
+    """Task id (``sentinel-gNN``) of the live generation, else None."""
+    gen_started_at: str | None = None
+    gen_triggers: int = 0
+    """Triggers folded into the live generation."""
+    gen_starts: list[str] = []
+    """ISO start times of recent generations (per-hour cap window)."""
+    trigger_last: dict[str, str] = {}
+    """trigger kind -> ISO time it last started a generation (cooldown)."""
+    last_gen_ended_at: str | None = None
+    last_handoff_path: str | None = None
+    """Run-relative path of the newest *valid* handoff (carried into the next pack)."""
+    ungraceful_count: int = 0
+    consecutive_rejections: int = 0
+    """Rejected sentinel-authored proposals since the last accepted one."""
+    llm_pause_reason: str | None = None
+    llm_budget_exhausted: bool = False
+    memory_seq: int = 0
+    """Number of memory merges done (seq tag of appended items)."""
 
 
 class RunMetrics(BaseModel):

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from . import sentinel_tick
-from .models import RunState
+from .models import RunState, sentinel_generation_spend_usd
 from .run_options import OPTIONS_BY_NAME, Option
 
 STATUS_SCHEMA: Final = "ao.ctl.status/v1"
@@ -338,7 +338,13 @@ def build_status(state: RunState, run_dir: Path) -> dict[str, Any]:
         },
         "ladder": {},
         "backlog": {"held": []},
-        "llm": {"generation": None, "spend_usd": None, "paused": bool(sent and sent.llm_paused)},
+        "llm": {
+            "generation": (sent.generation or None) if sent else None,
+            "spend_usd": round(sentinel_generation_spend_usd(state), 6)
+            if sent and sent.generation
+            else None,
+            "paused": bool(sent and sent.llm_paused),
+        },
         "inbox": {
             "pending": _pending_inbox(run_dir),
             "consumed_count": len(sent.inbox_consumed) if sent else 0,

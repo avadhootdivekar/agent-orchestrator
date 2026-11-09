@@ -65,6 +65,7 @@ from .models import (
     WorkflowSpec,
     compute_run_active_seconds,
     compute_run_usage_totals,
+    is_sentinel_generation_task,
 )
 
 # Runtime action a tripped breaker triggers. Mirrors CircuitBreakerSpec.action (run scope
@@ -135,8 +136,8 @@ def _consecutive_failure_streak(state: RunState) -> int:
     settled = sorted(
         (
             (datetime.fromisoformat(ts.ended_at), ts)
-            for ts in state.tasks.values()
-            if ts.ended_at is not None
+            for tid, ts in state.tasks.items()
+            if ts.ended_at is not None and not is_sentinel_generation_task(tid)
         ),
         key=lambda pair: pair[0],
     )
@@ -158,7 +159,13 @@ class TaskFailuresBreaker(Breaker):
         threshold = spec.threshold
         if threshold is None:
             return None
-        failures = sum(1 for ts in ctx.state.tasks.values() if ts.status in ("failed", "timed_out"))
+        # Sentinel generation rows are overseer bookkeeping, not workflow work: their own
+        # failures never count toward the run's failure breakers (their cost does count).
+        failures = sum(
+            1
+            for tid, ts in ctx.state.tasks.items()
+            if ts.status in ("failed", "timed_out") and not is_sentinel_generation_task(tid)
+        )
         if failures >= threshold:
             return TripResult(detail={"failures": failures, "threshold": threshold})
         return None

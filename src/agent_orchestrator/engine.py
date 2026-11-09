@@ -88,6 +88,7 @@ from .models import (
     SPAWN_ORIGIN_INJECTED,
     SPAWN_ORIGIN_LOOP,
     TIER_RERUN,
+    AgentSpec,
     CancelToken,
     CircuitBreakerSpec,
     EffectiveSetting,
@@ -103,6 +104,7 @@ from .models import (
     RouterSpec,
     RunPrompt,
     RunState,
+    SentinelLlmSpec,
     SpawnRecord,
     TaskContext,
     TaskIntegrationState,
@@ -137,6 +139,8 @@ from .retry_context import (
 )
 from .runstate import RunStateStore, record_effective_settings
 from .scheduling.overlap import overlap_score, rank_wave
+from .sentinel_driver import SentinelDriver, make_driver
+from .sentinel_gen import GenerationLane
 from .sentinel_settings import SentinelSettings
 from .spec import validate_isolation, validate_task_model_policy
 from .summarizer import RunSummarizer
@@ -643,10 +647,12 @@ class Orchestrator:
         input_mode: InputMode | None = None,
         effective_settings: dict[str, EffectiveSetting] | None = None,
         sentinel: SentinelSettings | None = None,
+        sentinel_driver_factory: Callable[[SentinelLlmSpec], SentinelDriver] | None = None,
     ) -> None:
-        # Resolved sentinel settings (E-Sn7tL2 T-Sn2Set): stored only -- the tick/recovery
-        # lanes that consume them land in later tasks, so behaviour is unchanged for now.
+        # Resolved sentinel settings (E-Sn7tL2 T-Sn2Set); consumed by the tick/recovery/LLM lanes.
         self._sentinel = sentinel
+        # Test seam for the LLM generation driver (T-Sn8Gen); None => built from settings.
+        self._sentinel_driver_factory = sentinel_driver_factory
         # Live cancel tokens (task id -> CancelToken), shared with the sentinel runtime of the
         # current run(); stays empty (=> executors see no cancel hooks) unless the sentinel is on.
         self._tokens: dict[str, CancelToken] = {}
@@ -808,6 +814,7 @@ class Orchestrator:
         # at which point no lock could have been claimed yet either, so `None` there is
         # always the correct "nothing to release" answer.
         ctx: _RunContext | None = None
+        sentinel_rt: sentinel_tick.SentinelRuntime | None = None
         try:
             # No-repo-set mode (ADR-0022): a workflow without `repo_set` runs workspace-only,
             # so there are no repo paths; isolation/survival/cache all handle `{}`.
@@ -908,7 +915,7 @@ class Orchestrator:
             # a worker (NFR-4 -- no thread leak).
             # Sentinel lane (E-Sn7tL2 T-Sn3Tck): None when absent/disabled, in which case every
             # sentinel branch below is skipped and the loop is the pre-epic loop verbatim.
-            rt = self._start_sentinel(state, run_dir, run_log)
+            rt = sentinel_rt = self._start_sentinel(state, run_dir, run_log, workflow, agents)
             with ThreadPoolExecutor(
                 max_workers=rt.ceiling if rt is not None else self._max_parallel
             ) as pool:
@@ -1084,6 +1091,16 @@ class Orchestrator:
                     if halted:
                         break
                 # pool.shutdown(wait=True) via `with`, on every exit path
+            if rt is not None and rt.lane is not None:
+                # A live LLM generation never outlives the run: stop it, settle its cost row.
+                try:
+                    rt.lane.shutdown(state, rt.clock())
+                except Exception as exc:  # noqa: BLE001 -- fail-safe: never fail the run
+                    run_log.error(
+                        "sentinel.error: LLM lane shutdown: %r",
+                        exc,
+                        extra={"event": "sentinel.error"},
+                    )
 
             # E-Wk9Tz3: run-end finalize (AC-12) -- best-effort final checkout sync +
             # worktree reconcile + a summary log line. Never changes the run's own verdict
@@ -1127,6 +1144,13 @@ class Orchestrator:
             # both `None` on the byte-identical non-isolated path (NFR-2).
             if ctx is not None and ctx.workspace_lock is not None:
                 ctx.workspace_lock.release()
+            if sentinel_rt is not None and sentinel_rt.lane is not None:
+                # Exception path only (the normal path shut the lane down before the final save):
+                # never leave a generation process behind.
+                try:
+                    sentinel_rt.lane.shutdown(state, sentinel_rt.clock())
+                except Exception:  # noqa: BLE001
+                    pass
             detach_run_handler(state.run_id)
 
     # -------------------------------------------------------------------------
@@ -2807,7 +2831,12 @@ class Orchestrator:
         self._drain_remaining(in_flight, workflow, state, ctx)
 
     def _start_sentinel(
-        self, state: RunState, run_dir: str, run_log: logging.Logger | logging.LoggerAdapter[Any]
+        self,
+        state: RunState,
+        run_dir: str,
+        run_log: logging.Logger | logging.LoggerAdapter[Any],
+        workflow: WorkflowSpec | None = None,
+        agents: dict[str, AgentSpec] | None = None,
     ) -> sentinel_tick.SentinelRuntime | None:
         """Build the per-run sentinel context, or None when the lane is absent/disabled."""
         if self._sentinel is None or not self._sentinel.enabled:
@@ -2829,6 +2858,8 @@ class Orchestrator:
         sent = sentinel_tick.ensure_state(state)
         sent.enabled = True
         sent.disabled_reason = None
+        if spec.llm.enabled:
+            self._start_llm_lane(rt, state, run_dir, spec.llm, workflow, agents)
         # Resume: overrides persisted by a previous session survive (FR-7).
         sentinel_tick.restore_overrides(state, rt)
         for key, ov in sent.overrides.items():
@@ -2836,6 +2867,43 @@ class Orchestrator:
                 value=ov.value, source=sentinel_tick.SOURCE_LIVE_OVERRIDE
             )
         return rt
+
+    def _start_llm_lane(
+        self,
+        rt: sentinel_tick.SentinelRuntime,
+        state: RunState,
+        run_dir: str,
+        llm: SentinelLlmSpec,
+        workflow: WorkflowSpec | None,
+        agents: dict[str, AgentSpec] | None,
+    ) -> None:
+        """Wire the LLM generation lane (fail-safe: any error leaves the mechanical sentinel on)."""
+        try:
+            if self._sentinel_driver_factory is not None:
+                driver = self._sentinel_driver_factory(llm)
+            else:
+                agent = (agents or {}).get(llm.agent) if llm.agent else None
+                driver = make_driver(llm.driver, agent, None)
+            cap = None
+            for br in workflow.circuit_breakers if workflow is not None else []:
+                if br.condition == "run_cost_usd" and br.threshold is not None:
+                    cap = br.threshold if cap is None else min(cap, br.threshold)
+            rt.lane = GenerationLane(
+                spec=llm,
+                driver=driver,
+                run_dir=Path(run_dir),
+                enabled_kinds=sentinel_tick.KINDS_ENABLED,
+                run_cost_cap_usd=cap,
+                log=rt.log,
+            )
+            rt.max_consecutive_rejections = llm.max_consecutive_rejections
+            if rt.lane.reconcile_on_start(state, rt.clock()):
+                self._runstate.save(state)
+        except Exception as exc:  # noqa: BLE001 -- fail-safe boundary
+            rt.lane = None
+            rt.log.error(
+                "sentinel.error: LLM lane not started: %r", exc, extra={"event": "sentinel.error"}
+            )
 
     def _sentinel_tick(
         self,
@@ -2865,6 +2933,8 @@ class Orchestrator:
                 }
                 if sentinel_tick.evaluate_recovery(state, rt, now, protected):
                     result.changed = True
+            if rt.lane is not None and self._tick_llm_lane(rt, state, now):
+                result.changed = True
             if result.changed:
                 # G5: consumed ids are durable together with the mutation they caused, and the
                 # inbox files are only retired after this save.
@@ -2882,6 +2952,30 @@ class Orchestrator:
                 state.sentinel.enabled = False
                 state.sentinel.disabled_reason = f"tick error: {exc!r}"[:500]
             return None
+
+    def _tick_llm_lane(
+        self, rt: sentinel_tick.SentinelRuntime, state: RunState, now: datetime
+    ) -> bool:
+        """One generation-lane step; an error disables only the LLM lane (the tick lives on)."""
+        assert rt.lane is not None
+        try:
+            return rt.lane.tick(state, now)
+        except Exception as exc:  # noqa: BLE001 -- fail-safe boundary
+            rt.log.error(
+                "sentinel.error: LLM lane disabled for this run: %r",
+                exc,
+                extra={"event": "sentinel.error"},
+                exc_info=True,
+            )
+            if state.sentinel is not None:
+                state.sentinel.llm_paused = True
+                state.sentinel.llm_pause_reason = f"lane error: {exc!r}"[:300]
+            try:
+                rt.lane.shutdown(state, now)
+            except Exception:  # noqa: BLE001
+                pass
+            rt.lane = None
+            return True
 
     def _settle_killed(
         self,

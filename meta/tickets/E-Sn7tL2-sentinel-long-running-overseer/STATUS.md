@@ -31,6 +31,7 @@
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn2Set done** — sentinel settings on every CLI/env/config/workflow/template surface; engine only stores them.
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn3Ctl done** — `ao ctl` CLI + shared `control.py` writer; `status --json` schema `ao.ctl.status/v1` documented in HLD §12.1 and snapshot-tested.
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn8Gen done** — LLM generations (pack, handoff, memory, rotation, cost rows, budget, auto-pause); HLD §8.6 as-built; fake-driver tests only, live smoke in T-SnXAcc.
 
 ## Task rollup
 | Task | Phase | State |
@@ -44,7 +45,7 @@
 | T-Sn5Ui1-sentinel-panel-and-control-api | P1 | Draft |
 | T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Draft |
 | T-Sn7Bkl-backlog-and-early-checkpoint | P2 | Draft |
-| T-Sn8Gen-llm-generations-pack-handoff | P3 | Draft |
+| T-Sn8Gen-llm-generations-pack-handoff | P3 | Done |
 | T-Sn9Pow-llm-powers-directives-routed | P3 | Draft |
 | T-SnXAcc-e2e-and-live-smoke | P3 close | Draft |
 | T-SnXDoc-docs-readme-learnings | each phase | Draft |

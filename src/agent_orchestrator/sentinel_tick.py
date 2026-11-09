@@ -17,9 +17,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from .models import (
+    SENTINEL_GEN_TASK_PREFIX,
     CancelToken,
     EffectiveSetting,
     RunMetrics,
@@ -33,6 +34,11 @@ from .models import (
     TaskRunState,
 )
 
+if TYPE_CHECKING:
+    from .sentinel_gen import GenerationLane
+
+ACTOR_PREFIX: Final = SENTINEL_GEN_TASK_PREFIX
+"""``actor`` prefix of LLM-generation proposals (``sentinel-gNN``, same as the task-row id)."""
 CTL_SCHEMA: Final = "ao.ctl/v1"
 INBOX_DIR: Final = "inbox"
 PROCESSED_DIR: Final = "inbox-processed"
@@ -141,6 +147,10 @@ class SentinelRuntime:
     alarmed: set[str] = field(default_factory=set)
     stat_size: Callable[[str], int | None] = lambda path: _stat_size(path)
     """Injectable file-size probe (tests substitute a fake stalled file)."""
+    lane: GenerationLane | None = None
+    """LLM generation lane (T-Sn8Gen); None => mechanical sentinel only."""
+    max_consecutive_rejections: int | None = None
+    """Auto-pause the LLM lane after this many consecutive rejected sentinel proposals."""
 
 
 def ensure_state(state: RunState) -> SentinelState:
@@ -298,6 +308,8 @@ def _apply_entry(
         sent.llm_paused = True
     elif kind == "resume_llm":
         sent.llm_paused = False
+        sent.llm_pause_reason = None
+        sent.consecutive_rejections = 0
     elif kind == "note":
         text = payload.get("text")
         if not isinstance(text, str) or not text or len(text) > NOTE_TEXT_MAX:
@@ -322,6 +334,34 @@ def _apply_entry(
     elif kind in CANCEL_KINDS:
         rt.cancel_requested = True
         result.cancel_requested = True
+
+
+def _is_sentinel_actor(actor: object) -> bool:
+    return isinstance(actor, str) and actor.startswith(ACTOR_PREFIX)
+
+
+def _note_rejection(sent: SentinelState, rt: SentinelRuntime, path: Path, now: datetime) -> None:
+    """Count a rejected *sentinel-authored* proposal; auto-pause the LLM lane on a streak.
+
+    The actor is read best-effort from the raw file (a rejected entry never reaches the parsed
+    path); human/CLI entries never count.
+    """
+    try:
+        actor = json.loads(path.read_bytes()).get("actor")
+    except (OSError, ValueError, AttributeError):
+        return
+    if not _is_sentinel_actor(actor):
+        return
+    sent.consecutive_rejections += 1
+    limit = rt.max_consecutive_rejections
+    if limit is not None and sent.consecutive_rejections >= limit and not sent.llm_paused:
+        sent.llm_paused = True
+        sent.llm_pause_reason = f"{sent.consecutive_rejections} consecutive rejected proposals"
+        rt.log.warning(
+            "sentinel.llm.auto_paused: %s",
+            sent.llm_pause_reason,
+            extra={"event": "sentinel.llm.auto_paused", "at": now.isoformat()},
+        )
 
 
 def drain_inbox(state: RunState, rt: SentinelRuntime, now: datetime) -> TickResult:
@@ -355,6 +395,7 @@ def drain_inbox(state: RunState, rt: SentinelRuntime, now: datetime) -> TickResu
                 continue
             _apply_entry(entry, state, rt, sent, result, at)
         except _Reject as rej:
+            _note_rejection(sent, rt, path, now)
             _quarantine(rt.control_dir, path, rej.rule_id, rej.detail)
             result.rejected.append((entry_id, rej.rule_id))
             result.changed = True
@@ -363,6 +404,8 @@ def drain_inbox(state: RunState, rt: SentinelRuntime, now: datetime) -> TickResu
                 extra={"event": "ctl.rejected", "entry": entry_id, "rule_id": rej.rule_id},
             )
             continue
+        if _is_sentinel_actor(entry["actor"]):
+            sent.consecutive_rejections = 0
         sent.inbox_consumed.append(entry["id"])
         del sent.inbox_consumed[:-CONSUMED_RING_MAX]
         rt.pending_retire.append(path)
