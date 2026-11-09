@@ -2511,11 +2511,11 @@ def limit_events(unit_lines: list[dict[str, Any]], wave: int | None = None) -> l
     for ln in unit_lines:
         if wave is not None and ln.get("wave") != wave:
             continue
-        limit = ln.get("limit") if isinstance(ln.get("limit"), dict) else {}
+        limit: dict[str, Any] = ln["limit"] if isinstance(ln.get("limit"), dict) else {}
         reason = limit.get("reason", "none")
         if not (is_handoff(ln) or ln.get("outcome") == "partial" or reason != "none"):
             continue
-        handoff = ln.get("handoff") if isinstance(ln.get("handoff"), dict) else {}
+        handoff: dict[str, Any] = ln["handoff"] if isinstance(ln.get("handoff"), dict) else {}
         rows.append(
             {
                 "unit_id": ln.get("unit_id"),

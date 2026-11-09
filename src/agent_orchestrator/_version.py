@@ -18,6 +18,10 @@ from pathlib import Path
 
 from . import __version__
 
+BUILD_COMMIT: str | None
+BUILD_DIRTY: bool | None
+BUILD_TAGGED: bool | None
+BUILD_TIME: str | None
 try:
     from ._build_info import BUILD_COMMIT, BUILD_DIRTY, BUILD_TAGGED, BUILD_TIME
 except ImportError:

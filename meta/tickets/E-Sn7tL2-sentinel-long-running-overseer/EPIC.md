@@ -433,3 +433,5 @@ T-9ymKja Blocked); **PR to `main`** (human step after the smoke). Never from a r
 - Related: `docs-md/overseer-runner-hld.md`, ADR-0003, ADR-0007, ADR-0016, ADR-0017, ADR-0021,
   `docs-md/guide-dynamic-task-injection.md`.
 - Output: `output/E-Sn7tL2-sentinel-long-running-overseer/` (when evidence exists).
+
+**W11 gates-green (w11-01, 2026-11-09) — supersedes the "gates box" reason above.** Full `pytest -q` = 11012 passed / 32 skipped / 0 failed (the 2 bench failures were a missing `VIRTUAL_ENV`, not code); ruff + format clean; `mypy src` clean (CI gate; `mypy .` over tests/ stays red by construction); UI 901/901 + build ok; stale `ao ctl` help fixed. Remaining open: FR-23 live smoke, default flip, settings surfaces, PR (owner).

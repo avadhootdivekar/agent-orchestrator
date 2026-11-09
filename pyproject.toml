@@ -59,6 +59,8 @@ select = ["E", "F", "I", "UP"]
 python_version = "3.11"
 strict = false
 warn_unused_ignores = true
+# Benchmark suite task fixtures/graders are standalone sandboxes (many share module names like `conftest`/`run`); not product code.
+exclude = ["^benchmarks/suites/"]
 
 [[tool.mypy.overrides]]
 module = ["jsonschema", "jsonschema.*", "croniter", "yaml"]

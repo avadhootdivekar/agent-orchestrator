@@ -208,7 +208,7 @@ def kill_command(
     wait_timeout: float = _WAIT_TIMEOUT,
     as_json: bool = _JSON,
 ) -> None:
-    """Kill one running task (engine answers not_enabled_yet until T-Sn4Rec lands)."""
+    """Kill one running task (sentinel recovery lane; the ladder retries or escalates)."""
     _submit(
         workspace,
         run,
@@ -231,7 +231,7 @@ def release_command(
     wait_timeout: float = _WAIT_TIMEOUT,
     as_json: bool = _JSON,
 ) -> None:
-    """Release held backlog items (engine answers not_enabled_yet until T-Sn7Bkl lands)."""
+    """Release held backlog items now (sentinel backlog; all items, or the given bk-ids)."""
     _submit(
         workspace,
         run,
