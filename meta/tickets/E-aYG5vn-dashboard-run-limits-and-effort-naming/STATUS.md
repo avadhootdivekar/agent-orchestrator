@@ -2,20 +2,29 @@
 
 - ID: `E-aYG5vn-dashboard-run-limits-and-effort-naming`
 - Updated At: `2026-11-09`
-- State: `Draft`
+- State: `Draft` (ready for implementation)
 - Owner: `avadhoot`
 
 ## This update
-- By: claude-opus-5-5 · Role: architect · Date: 2026-11-09 · Comment: Epic created from owner request; findings
-  verified in code; co-delivery with E-Sn7tL2 planned (shared run-options registry + run page).
+- By: claude-opus-5-5 · Role: architect · Date: 2026-11-09 · Comment: Rev 2. Owner approved naming (effort = thinking
+  effort, turn budget = max-turn tier) and first-class provider-neutral autocompact in CLI + dashboard. 6 task folders
+  created; co-delivery with E-Sn7tL2 via `../E-Sn7tL2-sentinel-long-running-overseer/HANDOFF.md`.
+
+## Task rollup
+| Task | State |
+|---|---|
+| T-zP28k9-run-options-registry-and-settings-snapshot | Draft |
+| T-f0d7gm-turn-budget-rename-and-autocompact | Draft |
+| T-pMpo4O-schema-driven-launch-forms | Draft |
+| T-xNFBww-dashboard-limits-panels | Draft |
+| T-mQs7CQ-dashboard-epic-e2e-and-docs | Draft |
+| T-9ymKja-effort-means-thinking-flip | Blocked (owner gate: all workspaces migrated + one deprecation release) |
 
 ## Evidence
-- EPIC §2 code findings (NewRun lacks thinking effort / max turns inputs; no effective-settings snapshot; per-task
-  thinking effort not recorded; `--effort` = turn tier).
+- EPIC §1 code findings.
 
 ## Risks / Blockers
-- None; does not depend on the E-Sn7tL2 spike.
+- T-zP28k9 refactors central CLI wiring; must be behaviour-identical (registry regression test).
 
 ## Next actions
-1. Owner confirms naming (EPIC §6).
-2. Implement `T-zP28k9` first as the shared foundation with E-Sn7tL2 `T-Sn2Set`.
+1. Start T-zP28k9 (in parallel with E-Sn7tL2 T-Sn0Spk).

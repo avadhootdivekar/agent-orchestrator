@@ -5,8 +5,8 @@
 - Title: Sentinel — a run-long overseer that keeps every slot busy, heals stuck work, and edits the pending graph
 - Owner: avadhoot
 - Created: 2026-11-09
-- Last Updated: 2026-11-09 (Rev 2 — owner decisions D1–D4 recorded, §0/§10)
-- Status: Draft → design confirmed by owner; ready for P0 spike + ADR. No tasks created yet.
+- Last Updated: 2026-11-09 (Rev 3 — all decisions resolved §0/§10; tasks created §8; final checklist §11; `HANDOFF.md`)
+- Status: Ready for implementation (start: T-Sn0Spk ∥ E-aYG5vn T-zP28k9). 13 tasks, all Draft.
 - Related: `E-YAAGhk-overseer-runner-template` (per-wave checkpoint overseer), ADR-0003 (settings precedence),
   ADR-0007 (wave/barrier scheduler), ADR-0016 (overseer cadence + budget governance), ADR-0017 (spawn provenance),
   ADR-0021 (dashboard auth), `docs-md/overseer-runner-hld.md` (NFR-X1 deferred preemptive checkpoints),
@@ -329,23 +329,27 @@ Not for P1–P3: in-memory state on the main thread + `state.json`, hash-chained
 dirs cover it. Revisit (SQLite as rebuildable index, never truth) only if: multiple processes must write one queue
 concurrently, tick cost grows with state size beyond NFR-8, or the dashboard needs cross-run sentinel history.
 
-## 8. Task list (proposed — not yet created as folders)
+## 8. Task breakdown (task folders created 2026-11-09; each has TASK.md + STATUS.md)
 
-- [ ] `T-Sn0Spk-midflight-reshape-kill-spike` — P0 (§6). Output: go/no-go note + measured numbers.
-- [ ] `T-Sn1Adr-sentinel-adr-and-hld` — ADR-0024 + `docs-md/sentinel-hld.md`: main-thread tick, inbox schema, soft barrier, kill/ladder, settings precedence incl. live overrides, separate injection cap, authority split, DB revisit trigger. Gate: owner sign-off.
-- [ ] `T-Sn2Set-sentinel-settings-plumbing` — FR-1, §4.7 checklist (models, config, CLI resolver shared by run/resume, `ao new --run` pass-through, validate, schema endpoint).
-- [ ] `T-Sn3Tck-main-loop-tick-inbox-ctl` — FR-2, FR-3, FR-7, FR-20, FR-18 (lane fail-safe), `ao ctl` commands, live `max_parallel`.
-- [ ] `T-Sn4Rec-liveness-kill-recovery-ladder` — FR-4, FR-5, FR-6 (+ executor cancel API, `killed` status).
-- [ ] `T-Sn5Ui1-sentinel-panel-and-control-api` — FR-22 P1 part: Sentinel panel v1, control endpoint (auth/CSRF), schema-driven run-option section, TemplateLaunch options fix.
-- [ ] `T-Sn6Brr-soft-barrier-and-pending-edits` — FR-8, FR-12, FR-13, FR-11 (shared checker extracted from overseer `ckpt-check`).
-- [ ] `T-Sn7Bkl-backlog-and-early-checkpoint` — FR-9, FR-10, FR-19; overseer-runner instruction/contract/tool updates.
-- [ ] `T-Sn8Gen-llm-generations-pack-handoff` — FR-14, FR-17 (+ driver ABC, Claude CLI driver, memory merge).
-- [ ] `T-Sn9Pow-llm-powers-directives-routed` — FR-15, FR-16; routed-runner opt-in; panel v2 (generations, proposals).
-- [ ] `T-SnAcc-e2e-and-live-smoke` — e2e matrix (§11) + FR-23 evidence.
-- [ ] `T-SnDoc-docs-readme-learnings` — HLDs, template READMEs, dynamic-injection guide, CLI reference, learnings.
+| # | Task | Phase | Reqs | Depends on |
+|---|------|-------|------|------------|
+| 1 | `T-Sn0Spk-midflight-reshape-kill-spike` | P0 | de-risk FR-5/8/12, NFR-8 | — |
+| 2 | `T-Sn1Adr-sentinel-adr-and-hld` | P0 | design authority | Sn0Spk |
+| 3 | `T-Sn2Set-sentinel-settings-plumbing` | P1 | FR-1, FR-22 (settings) | **E-aYG5vn T-zP28k9**, Sn1Adr |
+| 4 | `T-Sn3Tck-main-loop-tick-inbox-overrides` | P1 | FR-2, FR-3, FR-7, FR-18, FR-20, FR-21 | Sn2Set |
+| 5 | `T-Sn3Ctl-ao-ctl-cli` | P1 | FR-3 (writers), FR-7, FR-22 (CLI) | Sn3Tck |
+| 6 | `T-Sn4Rec-liveness-kill-recovery-ladder` | P1 | FR-4, FR-5, FR-6 | Sn3Tck, Sn0Spk |
+| 7 | `T-Sn5Ui1-sentinel-panel-and-control-api` | P1 | FR-7, FR-20, FR-22, NFR-12 | Sn3Ctl, Sn4Rec, **E-aYG5vn T-pMpo4O, T-xNFBww** |
+| 8 | `T-Sn6Brr-soft-barrier-and-pending-edits` | P2 | FR-8, FR-11, FR-12, FR-13 | Sn0Spk GO, Sn3Tck |
+| 9 | `T-Sn7Bkl-backlog-and-early-checkpoint` | P2 | FR-9, FR-10, FR-19 | Sn6Brr |
+| 10 | `T-Sn8Gen-llm-generations-pack-handoff` | P3 | FR-14, FR-17, FR-18 | Sn3Tck, Sn2Set |
+| 11 | `T-Sn9Pow-llm-powers-directives-routed` | P3 | FR-15, FR-16, FR-22 (panel v2) | Sn8Gen, Sn6Brr, Sn4Rec, Sn5Ui1 |
+| 12 | `T-SnXAcc-e2e-and-live-smoke` | P3 close | FR-23, NFR-7/8/13, §11 | Sn7Bkl, Sn9Pow, **E-aYG5vn T-mQs7CQ** |
+| 13 | `T-SnXDoc-docs-readme-learnings` | each phase close | docs gates; default flip §10.1 | phase completion |
 
-Order: Sn0Spk → Sn1Adr → Sn2Set → (Sn3Tck → Sn4Rec ∥ Sn5Ui1) = P1 → (Sn6Brr → Sn7Bkl) = P2 → (Sn8Gen → Sn9Pow) = P3 →
-SnAcc; SnDoc closes each phase.
+Critical path: Sn0Spk → Sn1Adr → Sn2Set → Sn3Tck → Sn6Brr → Sn7Bkl → SnXAcc. Parallel lanes once Sn3Tck lands:
+{Sn3Ctl → Sn5Ui1}, {Sn4Rec}, {Sn8Gen → Sn9Pow}. E-aYG5vn's T-zP28k9 runs in parallel with Sn0Spk/Sn1Adr.
+Combined run order and parallelism: see `HANDOFF.md` in this folder.
 
 **Co-delivery with `E-aYG5vn`** (avoid reworking the same components twice):
 - `T-zP28k9-run-options-registry-and-settings-snapshot` comes **before `Sn2Set`** (it can run in parallel with
@@ -369,21 +373,46 @@ SnAcc; SnDoc closes each phase.
 | Settings drift between surfaces | single `SentinelSpec` schema drives CLI validation and dashboard form |
 | Self-hosting hazard | NFR-11 |
 
-## 10. Remaining open points (raise in T-Sn1Adr; recommendation in bold)
-1. Default enablement once FR-23 evidence exists: **mechanical layer on by default in both builtin templates; LLM stays opt-in.**
-2. `killed` as a new task status vs. reuse `timed_out` with a reason: **new status** (clearer UI and ladder logic).
-3. Early checkpoints count toward `max_waves`? **Yes** (a checkpoint is a checkpoint; prevents silent budget growth).
-4. Command namespace: **`ao ctl`** for live control (sentinel is one consumer; manual kill/cancel are general).
+## 10. Decisions resolved (owner, 2026-11-09)
+1. Default enablement: after FR-23 evidence, **mechanical layer on by default in both builtin templates; LLM stays opt-in** (done in T-SnXDoc).
+2. **New task status `killed`** (not `timed_out` + reason).
+3. **Early checkpoints count toward `max_waves`.**
+4. Live-control namespace: **`ao ctl`**.
 
-## 11. Acceptance (definition of done)
-- P0 recorded; ADR/HLD approved by owner.
-- P1–P3 shipped behind settings; full `pytest`, `ruff`, `mypy` green; NFR-1 golden test.
-- E2E via `CliRunner` + FakeExecutor: stalled-task kill + ladder; manual `ao ctl kill/set/pause-llm`; live
-  `max_parallel` change; heavy-tail fixture idle-slot reduction (NFR-13); backlog release; early checkpoint with
-  carry-over; pending-edit accept/reject matrix; generation rotation; LLM kill limits; crash + `ao resume` without
-  duplicates; quarantine; fail-safe; stage gating; dashboard control API auth.
-- FR-23 live smoke evidence under `output/E-Sn7tL2-sentinel-long-running-overseer/`.
-- Docs + tickets + STATUS rollups consistent; learnings where genuinely applicable.
+No open design decisions remain. New ones discovered during implementation are raised to the owner (fail-fast
+rule), not assumed.
+
+## 11. Final checklist (definition of done — every box ticked with evidence before closing)
+
+**Gates**
+- [ ] P0 spike result recorded (go / go-with-changes / no-go) in STATUS.md.
+- [ ] ADR-0024 + `docs-md/sentinel-hld.md` approved by owner (STATUS.md entry).
+- [ ] Full `pytest -q`, `ruff check .`, `ruff format --check .`, `mypy .` green; UI `npm test` + `npm run build` green.
+- [ ] NFR-1 golden test: no `sentinel:` / disabled ⇒ byte-identical workflow.json/state.json/run log for existing workflows.
+
+**E2E scenarios (CliRunner + FakeExecutor)**
+- [ ] Tick runs while all workers busy; metrics correct.
+- [ ] Stalled task → kill → retry → escalate → fail; systemic alarm stops kills.
+- [ ] `ao ctl` set / pause-llm / resume-llm / note / kill / release / cancel round-trip, incl. live `max_parallel`.
+- [ ] Dashboard control API: auth + CSRF enforced; actions audited with actor.
+- [ ] Heavy-tail fixture: idle-slot-seconds-with-work-available reduced ≥50% vs disabled (NFR-13).
+- [ ] Backlog release + expiry; early checkpoint with carry-over, never re-schedules stragglers.
+- [ ] Pending-edit accept/reject matrix (all FR-12 rules) + stage gating (FR-11).
+- [ ] Soft-barrier emitter with tasks in flight (or documented fallback).
+- [ ] LLM generation rotation (≥3), ungraceful exit, budget cap, consecutive-rejection auto-pause.
+- [ ] LLM powers: advise vs act; LLM kill limits; directive acknowledgement enforced by ckpt-check.
+- [ ] routed-runner opt-in: LLM L2 planner injects a sentinel-origin unit.
+- [ ] Crash + `ao resume` at each mutation point: no duplicate or lost injection/kill/edit; overrides restored.
+- [ ] Lane exception ⇒ run continues as if disabled.
+
+**Evidence & docs**
+- [ ] FR-23 live smoke under `output/E-Sn7tL2-sentinel-long-running-overseer/smoke/`: utilisation vs §1 baseline, cost split, combined overhead.
+- [ ] HLD "Deviations" reconciled; template READMEs, dynamic-injection guide, CLI reference, `.ao/config.yaml` sample updated.
+- [ ] Mechanical-sentinel default flipped on in both builtin templates (after evidence).
+- [ ] Settings visible in all surfaces: `ao validate`, `ao run/resume/new --run` flags, `ao ctl status`, New Run / Resume / Template Launch forms, run page (via E-aYG5vn limits panel).
+- [ ] All task TASK.md/STATUS.md + this EPIC/STATUS rollup consistent; learnings added only where new.
+- [ ] Co-delivered epic `E-aYG5vn` checklist complete (shared foundation).
+- [ ] PR from the branch to `main` opened; no `install.sh` / `ao.service` restart from runs (owner promotes).
 
 ## 12. Links
 - Design doc: `docs-md/sentinel-hld.md` + ADR-0024 (created by `T-Sn1Adr`; this file §4 is the seed).
