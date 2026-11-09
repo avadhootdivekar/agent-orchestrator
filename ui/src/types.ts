@@ -170,6 +170,32 @@ export interface TaskStat {
   effort?: string | null;
   /** Current result-cache record of this task (E-Rc4Hk8); null/absent when it has none. */
   result_cache?: ResultCacheTaskView | null;
+  /** Limits in force at the latest dispatch (T-xNFBww); null/absent for pre-upgrade tasks. */
+  limits?: TaskLimits | null;
+}
+
+/** Per-task limits in force at dispatch (`TaskLimits`); `null` = no limit / not set. */
+export interface TaskLimits {
+  thinking_effort: string | null;
+  turn_budget: string | null;
+  max_turns: number | null;
+  autocompact: string | number | null;
+  timeout_seconds: number | null;
+  task_cost_cap_usd: number | null;
+  max_attempts: number | null;
+}
+
+/** One "Limits & settings" row (T-xNFBww). `used`/`cap` set only where measurable. */
+export interface RunLimit {
+  key: string;
+  label: string;
+  value: unknown;
+  source: string;
+  used: number | null;
+  cap: number | null;
+  /** "usd" | "s" | "tokens" | "tasks" | "" -- how to format value/used/cap. */
+  unit: string;
+  note: string | null;
 }
 
 /** One currently-running task on a runs-list row (state-derived; E-iafh2F). */
@@ -178,6 +204,10 @@ export interface RunningTaskBrief {
   model: string | null;
   effort: string | null;
   started_at: string | null;
+  /** Additive (T-xNFBww): absent on an older backend; `limits` null = pre-upgrade task. */
+  attempts?: number;
+  cost_usd?: number;
+  limits?: TaskLimits | null;
 }
 
 /**
@@ -282,6 +312,10 @@ export interface RunDetail {
   prompt_changed_since_start?: boolean | null;
   /** Result-cache run block (E-Rc4Hk8); null/absent when no current record. */
   result_cache?: ResultCacheRunBlock | null;
+  /** "Limits & settings" rows (T-xNFBww); absent on an older backend. */
+  limits?: RunLimit[];
+  /** False for a run that predates the effective-settings snapshot. */
+  settings_recorded?: boolean;
 }
 
 /**
@@ -491,7 +525,11 @@ export type FeedbackReason =
 export interface UsageGroup {
   agent: string;
   model: string;
+  /** Legacy column (== turn_budget today). */
   effort: string;
+  /** Grouping dimensions (T-xNFBww); "-" = not recorded. Absent on an older backend. */
+  turn_budget?: string;
+  thinking_effort?: string;
   tasks: number;
   succeeded: number;
   failed: number;

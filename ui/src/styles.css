@@ -2218,3 +2218,33 @@ pre.launch-log {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* Limits & settings: usage-vs-cap bars (T-xNFBww). Text always carries the numbers. */
+.usage-bar-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-bar {
+  display: inline-block;
+  width: 96px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.usage-bar.warn .usage-bar-fill {
+  background: #d99a1b;
+}
+
+.usage-bar.crit .usage-bar-fill {
+  background: #d14343;
+}

@@ -52,6 +52,7 @@ import type {
   DependencyEdge,
   GraphView,
   RunGraph as RunGraphData,
+  RunActivity,
   SpawnEdge,
   TaskStat,
   ViewEdge,
@@ -88,6 +89,8 @@ import { TaskHoverCard } from "./TaskHoverCard";
 
 export interface RunGraphProps {
   runId: string;
+  /** Live activity (turns used) for the task detail panel; optional. */
+  activity?: RunActivity | null;
   tasks: TaskStat[];
   graphVersion: string;
   /** Hook for `T-pAi0Cv`'s detail panel — this file never opens a panel itself. */
@@ -251,6 +254,7 @@ function toRfEdges(edges: ViewEdge[], showLabels: boolean): RFEdge[] {
 /** The actual canvas — split from `RunGraph` because `useReactFlow`/`useOnViewportChange` need a `ReactFlowProvider` ancestor. */
 function RunGraphCanvas({
   runId,
+  activity,
   tasks,
   graphVersion,
   onNodeClick,
@@ -726,6 +730,7 @@ function RunGraphCanvas({
             onClose={() => handleClosePanel({ returnFocus: true })}
             onNavigate={selectAndCenter}
             runId={runId}
+            activity={activity}
           />
         ) : null}
       </div>

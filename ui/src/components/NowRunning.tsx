@@ -1,5 +1,5 @@
 import { formatCost, formatCount, formatDuration } from "../format";
-import type { RunActivity, RunningTaskBrief, TaskActivity, TaskStat } from "../types";
+import type { RunActivity, RunningTaskBrief, TaskActivity, TaskLimits, TaskStat } from "../types";
 import { StatusChip } from "./common";
 
 /**
@@ -24,6 +24,9 @@ export interface NowRunningRow {
   status: string;
   model: string | null;
   effort: string | null;
+  /** Effective limits at dispatch (T-xNFBww); null = pre-upgrade task. */
+  limits?: TaskLimits | null;
+  attempts?: number | null;
   turns: number | null;
   tokens: number | null;
   /** Tokens are the live estimate (lower bound), shown with a "~" prefix. */
@@ -62,6 +65,8 @@ export function nowRunningRows(
         status: task.status,
         model: task.model ?? null,
         effort: task.effort ?? null,
+        limits: task.limits ?? null,
+        attempts: task.attempts,
         turns: act?.turns ?? null,
         tokens,
         tokensEstimated: act?.tokens_estimated ?? false,
@@ -81,6 +86,8 @@ export function briefRows(briefs: RunningTaskBrief[], nowMs: number): NowRunning
     status: "running",
     model: brief.model,
     effort: brief.effort,
+    limits: brief.limits ?? null,
+    attempts: brief.attempts ?? null,
     turns: null,
     tokens: null,
     tokensEstimated: false,
@@ -94,6 +101,24 @@ export function briefRows(briefs: RunningTaskBrief[], nowMs: number): NowRunning
 
 const STUCK_TITLE =
   "No transcript output for 5+ minutes. The task may be stuck, or running one long command.";
+
+/** "turn budget · think X" cell text; the title spells both out. */
+function effortLabel(row: NowRunningRow): { text: string; title: string } {
+  const budget = row.limits?.turn_budget ?? row.effort;
+  const thinking = row.limits?.thinking_effort ?? null;
+  const text = [budget, thinking ? `think ${thinking}` : null].filter(Boolean).join(" · ");
+  return {
+    text: text || DASH,
+    title: `turn budget: ${budget ?? DASH} · thinking effort: ${thinking ?? DASH}${
+      row.limits ? "" : " (not recorded for this task)"
+    }`,
+  };
+}
+
+/** "n / cap" text with a dash for an unknown side. */
+function ofCap(used: string, cap: string | null): string {
+  return cap === null ? used : `${used}/${cap}`;
+}
 
 function modelLabel(row: NowRunningRow): string {
   if (!row.model && !row.effort) return DASH;
@@ -116,9 +141,14 @@ function FullRow({ row }: { row: NowRunningRow }) {
       <span className="muted" title="model · effort">
         {row.model ?? DASH}
       </span>
-      <span className="muted">{row.effort ?? DASH}</span>
-      <span className="num" title="turns so far">
-        {row.turns ?? DASH}
+      <span className="muted" title={effortLabel(row).title}>
+        {effortLabel(row).text}
+      </span>
+      <span
+        className="num"
+        title={`turns so far${row.limits?.max_turns ? ` / max turns ${row.limits.max_turns}` : ""}`}
+      >
+        {ofCap(String(row.turns ?? DASH), row.limits?.max_turns != null ? String(row.limits.max_turns) : null)}
       </span>
       <span
         className="num"
@@ -129,7 +159,15 @@ function FullRow({ row }: { row: NowRunningRow }) {
       <span className="num" title="Cost of finished attempts so far; the final cost lands at settle">
         {formatCost(row.costUsd)}
       </span>
-      <span className="num">{formatDuration(row.elapsedSeconds)}</span>
+      <span
+        className="num"
+        title={`elapsed / timeout${row.attempts ? ` · attempt ${row.attempts}${row.limits?.max_attempts ? `/${row.limits.max_attempts}` : ""}` : ""}`}
+      >
+        {ofCap(
+          formatDuration(row.elapsedSeconds),
+          row.limits?.timeout_seconds != null ? formatDuration(row.limits.timeout_seconds) : null,
+        )}
+      </span>
       <span className="now-running-action" title={row.lastAction ?? ""}>
         {row.lastAction ?? <span className="muted">{DASH}</span>}
         {row.idleSeconds !== null && !row.stuck ? (

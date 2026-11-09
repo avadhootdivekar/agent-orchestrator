@@ -24,6 +24,7 @@ import { NeedsInputBanner, useRunInputs } from "./InputRequestForm";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
+import { LimitsPanel } from "./LimitsPanel";
 import { NowRunning, nowRunningRows } from "./NowRunning";
 import { RunSummaryPanel } from "./RunSummaryPanel";
 import { PromptPanel } from "./PromptPanel";
@@ -368,6 +369,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
         </CollapsibleSection>
       </div>
 
+      <LimitsPanel limits={detail.limits} settingsRecorded={detail.settings_recorded} />
+
       <RunSummaryPanel summary={liveSummary} />
 
       <PromptPanel prompt={detail.prompt ?? null} changed={detail.prompt_changed_since_start} />
@@ -421,6 +424,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
               runId={runId}
               tasks={detail.tasks}
               graphVersion={detail.graph_version}
+              activity={activity}
             />
           </Suspense>
         ) : (

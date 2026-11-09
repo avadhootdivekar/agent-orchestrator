@@ -19,7 +19,8 @@ import {
   formatPercent,
   formatTimestamp,
 } from "../format";
-import type { RunGraph as RunGraphData, TaskStat } from "../types";
+import type { RunActivity, RunGraph as RunGraphData, TaskStat } from "../types";
+import { TaskLimitsSection } from "../components/LimitsPanel";
 import { PathLink, PathText } from "../components/PathText";
 import { OpenInNewTabButton } from "../tabs/TabLink";
 import { PANEL_PENDING_STATUS, panelModel } from "./model";
@@ -34,6 +35,8 @@ export interface TaskDetailPanelProps {
   onNavigate: (id: string) => void;
   /** Run id, so the panel can offer "open in new tab" / link output files (E-iafh2F). */
   runId?: string;
+  /** Live activity, for turns used (T-xNFBww); optional. */
+  activity?: RunActivity | null;
 }
 
 /** Below this viewport width the panel becomes a bottom sheet instead of a 360px side panel. */
@@ -174,6 +177,7 @@ export function TaskDetailPanel({
   onClose,
   onNavigate,
   runId,
+  activity,
 }: TaskDetailPanelProps) {
   const isNarrow = useIsNarrowViewport(RESPONSIVE_BREAKPOINT_PX);
   const asideRef = useRef<HTMLElement | null>(null);
@@ -345,6 +349,14 @@ export function TaskDetailPanel({
           onNavigate={onNavigate}
         />
       </section>
+
+      {panel.hasStat && statsById.get(nodeId) ? (
+        <TaskLimitsSection
+          stat={statsById.get(nodeId) as TaskStat}
+          activity={activity?.tasks[nodeId] ?? null}
+          nowMs={Date.now()}
+        />
+      ) : null}
 
       <section aria-label="Dependencies">
         <h3>Dependencies</h3>

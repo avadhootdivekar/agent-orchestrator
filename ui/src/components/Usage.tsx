@@ -11,7 +11,7 @@ import type { RunSummary, UsageGroup, UsageReport } from "../types";
 import { Empty, ErrorBanner } from "./common";
 
 function groupKey(g: UsageGroup): string {
-  return `${g.agent}|${g.model}|${g.effort}`;
+  return `${g.agent}|${g.model}|${g.turn_budget ?? g.effort}|${g.thinking_effort ?? ""}`;
 }
 
 /** Flags carry their meaning in text (a warning glyph + the flag name), never color alone. */
@@ -36,7 +36,8 @@ function GroupTable({ groups }: { groups: UsageGroup[] }) {
           <tr>
             <th>Agent</th>
             <th>Model</th>
-            <th>Effort</th>
+            <th title="Max-turn tier">Turn budget</th>
+            <th title="Model reasoning depth; - = not recorded (older run)">Thinking</th>
             <th className="num">Tasks</th>
             <th className="num">OK</th>
             <th className="num">Retry %</th>
@@ -55,7 +56,8 @@ function GroupTable({ groups }: { groups: UsageGroup[] }) {
             <tr key={groupKey(g)}>
               <td className="mono">{g.agent}</td>
               <td className="mono">{g.model}</td>
-              <td>{g.effort}</td>
+              <td>{g.turn_budget ?? g.effort}</td>
+              <td>{g.thinking_effort ?? "-"}</td>
               <td className="num">{g.tasks}</td>
               <td className="num">{g.succeeded}</td>
               <td className="num">{formatPercent(g.retry_rate)}</td>
@@ -136,7 +138,7 @@ function Outcomes({ report }: { report: UsageReport }) {
   );
 }
 
-/** Usage view: what each (agent, model, effort) group cost and how it was judged. */
+/** Usage view: what each (agent, model, turn budget, thinking effort) group cost and how it was judged. */
 export function Usage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState<string[] | null>(null); // null = all runs
