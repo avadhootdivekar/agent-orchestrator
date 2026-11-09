@@ -6,7 +6,7 @@
 - Owner: avadhoot
 - Created: 2026-11-09
 - Last Updated: 2026-11-09 (Rev 2 — owner decisions recorded, autocompact added, tasks created)
-- Status: Ready for implementation (start: T-zP28k9). 6 tasks (5 Draft, 1 Blocked by owner gate).
+- Status: Ready for implementation (T-zP28k9 Done; next: T-f0d7gm). 6 tasks (1 Done, 4 Draft, 1 Blocked by owner gate).
 - **Co-delivery:** `E-Sn7tL2-sentinel-long-running-overseer`. Implement in the **same run**: same components
   (run-settings plumbing in `cli.py`, `state.json` settings snapshot, `ui/processes.py` allow-list, NewRun /
   TemplateLaunch / RunDetail). Combined order: `../E-Sn7tL2-sentinel-long-running-overseer/HANDOFF.md`.

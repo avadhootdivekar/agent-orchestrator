@@ -39,7 +39,7 @@ from .feedback import (
     validate_run_id,
 )
 from .implicit_signals import RunSignals, apply_survival, implicit_signals
-from .models import RunState, TaskRunState, TaskSpec
+from .models import AgentSpec, RunState, TaskLimits, TaskRunState, TaskSpec
 from .survival import (
     FLAG_LIKELY_WORTHLESS,
     TaskSurvival,
@@ -146,6 +146,23 @@ def verdict_path_for(task: TaskSpec) -> str | None:
         if sibling:
             return posixpath.join(posixpath.dirname(out), sibling)
     return None
+
+
+def task_limits(
+    task: TaskSpec, agent: AgentSpec | None, default_timeout: int, default_attempts: int
+) -> TaskLimits:
+    """Effective per-task limits at dispatch (precedence: task > agent > workflow default).
+
+    Mirrors the engine's own resolution (`task.timeout_seconds or defaults.timeout_seconds`,
+    `task.retries or defaults.retries`, `resolve_effective_agent`) so the snapshot reports
+    what will actually be enforced.
+    """
+    return TaskLimits(
+        thinking_effort=agent.thinking_effort if agent else task.thinking_effort,
+        max_turns=agent.max_turns if agent else task.max_turns,
+        timeout_seconds=task.timeout_seconds or default_timeout,
+        max_attempts=task.retries.max_attempts if task.retries is not None else default_attempts,
+    )
 
 
 def dispatch_provenance(

@@ -89,6 +89,7 @@ from .models import (
     SPAWN_ORIGIN_LOOP,
     TIER_RERUN,
     CircuitBreakerSpec,
+    EffectiveSetting,
     EstimatorConfig,
     HookOutcome,
     InputMode,
@@ -133,12 +134,12 @@ from .retry_context import (
     read_no_retry_marker,
     write_prior_attempts,
 )
-from .runstate import RunStateStore
+from .runstate import RunStateStore, record_effective_settings
 from .scheduling.overlap import overlap_score, rank_wave
 from .spec import validate_isolation, validate_task_model_policy
 from .summarizer import RunSummarizer
 from .survival import current_heads, record_git_start, record_landed_ranges
-from .usage import dispatch_provenance
+from .usage import dispatch_provenance, task_limits
 
 if TYPE_CHECKING:
     # E-Rc4Hk8: type-only (ADR-0019 D9); the one runtime import is lazy, in the lookup method.
@@ -635,10 +636,12 @@ class Orchestrator:
         summarizer: RunSummarizer | None = None,
         result_cache: ResultCacheHook | None = None,
         input_mode: InputMode | None = None,
+        effective_settings: dict[str, EffectiveSetting] | None = None,
     ) -> None:
         self._executor = executor
         # Awaiting-input mode (HLD §7). None = keep the run's persisted mode (default "blocking").
         self._input_mode = input_mode
+        self._effective_settings = effective_settings
         # Result cache (E-Rc4Hk8, ADR-0019). None (the default, and what the CLI passes
         # unless the operator enabled it) means NO cache code runs or is imported (NFR-1).
         self._result_cache = result_cache
@@ -767,6 +770,13 @@ class Orchestrator:
             state.prompt = self._run_prompt
         if self._input_mode is not None:
             state.input_mode = self._input_mode
+        if self._effective_settings is not None:
+            record_effective_settings(
+                state,
+                self._effective_settings,
+                "start" if run_state is None else "resume",
+                self._clock().isoformat(),
+            )
         self._runstate.save(state)
 
         # Derive run directory: <workspace>/.orchestrator/runs/<run_id>
@@ -1402,6 +1412,12 @@ class Orchestrator:
             workflow.tasks,
         ).items():
             setattr(ts_pre, _field, _value)
+        ts_pre.effective_limits = task_limits(
+            task,
+            _prov_agent,
+            workflow.defaults.timeout_seconds,
+            (task.retries or workflow.defaults.retries).max_attempts,
+        )
         iso_mode = resolve_task_isolation(task, workflow)
         task_iso: TaskIsolation | None = None
         ctx_store: ArtifactStore = self._store

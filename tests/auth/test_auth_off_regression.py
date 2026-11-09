@@ -49,6 +49,7 @@ PRE_CHANGE_OPENAPI_PATHS = {
     "/api/files",
     "/api/files/content",
     "/api/files/html",
+    "/api/schema/run-options",
     "/api/files/resolve",
     "/api/general-instructions",
     "/api/health",

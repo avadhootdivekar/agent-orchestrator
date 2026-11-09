@@ -1,0 +1,253 @@
+{
+  "json_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "budget_total": {
+        "type": "integer"
+      },
+      "effort": {
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "type": "string"
+      },
+      "max_attempts": {
+        "type": "integer"
+      },
+      "max_parallel": {
+        "type": "integer"
+      },
+      "max_turns": {
+        "type": "integer"
+      },
+      "model": {
+        "type": "string"
+      },
+      "quota_max_wait": {
+        "type": "integer"
+      },
+      "quota_poll_interval": {
+        "type": "integer"
+      },
+      "self_heal": {
+        "type": "boolean"
+      },
+      "thinking_effort": {
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "options": [
+    {
+      "choices": [],
+      "config": "model",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_MODEL",
+      "flag": "--model",
+      "help": "Claude model for all agents (an alias such as sonnet, or a pinned id).",
+      "name": "model",
+      "no_flag": null,
+      "resumable": true,
+      "type": "str",
+      "ui": {
+        "group": "Agent",
+        "label": "Model"
+      }
+    },
+    {
+      "choices": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "config": "effort",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_EFFORT",
+      "flag": "--effort",
+      "help": "Effort level for all agents (derives the turn limit).",
+      "name": "effort",
+      "no_flag": null,
+      "resumable": true,
+      "type": "enum",
+      "ui": {
+        "group": "Agent",
+        "label": "Effort"
+      }
+    },
+    {
+      "choices": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "config": "thinking_effort",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_THINKING_EFFORT",
+      "flag": "--thinking-effort",
+      "help": "Model reasoning depth for all agents (claude: --effort). Unset = agent default.",
+      "name": "thinking_effort",
+      "no_flag": null,
+      "resumable": true,
+      "type": "enum",
+      "ui": {
+        "group": "Agent",
+        "label": "Thinking effort"
+      }
+    },
+    {
+      "choices": [],
+      "config": "max_attempts",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_MAX_ATTEMPTS",
+      "flag": "--max-attempts",
+      "help": "Max attempts per task (overrides workflow defaults.retries.max_attempts).",
+      "name": "max_attempts",
+      "no_flag": null,
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Limits",
+        "label": "Max attempts"
+      }
+    },
+    {
+      "choices": [],
+      "config": "max_turns",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_MAX_TURNS",
+      "flag": "--max-turns",
+      "help": "Max turns per claude agent invocation (overrides the effort-derived value).",
+      "name": "max_turns",
+      "no_flag": null,
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Limits",
+        "label": "Max turns"
+      }
+    },
+    {
+      "choices": [],
+      "config": "max_parallel",
+      "default": 1,
+      "deprecated_flags": [],
+      "env": "AO_MAX_PARALLEL",
+      "flag": "--max-parallel",
+      "help": "Max independent ready tasks to run at once (1 = serial).",
+      "name": "max_parallel",
+      "no_flag": null,
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Run",
+        "label": "Max parallel"
+      }
+    },
+    {
+      "choices": [],
+      "config": null,
+      "default": null,
+      "deprecated_flags": [],
+      "env": null,
+      "flag": "--budget-total",
+      "help": "Total token budget for the run (CLI only; the workflow's budget otherwise).",
+      "name": "budget_total",
+      "no_flag": null,
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Limits",
+        "label": "Token budget"
+      }
+    },
+    {
+      "choices": [],
+      "config": "quota_max_wait_seconds",
+      "default": 21600,
+      "deprecated_flags": [],
+      "env": "AO_QUOTA_MAX_WAIT_SECONDS",
+      "flag": "--quota-max-wait",
+      "help": "Max seconds to wait through a Claude quota-exhaustion episode before failing.",
+      "name": "quota_max_wait",
+      "no_flag": null,
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Quota",
+        "label": "Quota max wait (s)"
+      }
+    },
+    {
+      "choices": [],
+      "config": "quota_poll_seconds",
+      "default": 900,
+      "deprecated_flags": [],
+      "env": "AO_QUOTA_POLL_SECONDS",
+      "flag": "--quota-poll-interval",
+      "help": "Seconds to sleep between quota-exhaustion re-run attempts.",
+      "name": "quota_poll_interval",
+      "no_flag": null,
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Quota",
+        "label": "Quota poll interval (s)"
+      }
+    },
+    {
+      "choices": [],
+      "config": "monitoring.self_heal",
+      "default": false,
+      "deprecated_flags": [],
+      "env": "AO_SELF_HEAL",
+      "flag": "--self-heal",
+      "help": "Enable task-failure self-healing; overrides env/config in either direction.",
+      "name": "self_heal",
+      "no_flag": "--no-self-heal",
+      "resumable": true,
+      "type": "bool",
+      "ui": {
+        "group": "Monitoring",
+        "label": "Self-heal"
+      }
+    },
+    {
+      "choices": [],
+      "config": "record_git_heads",
+      "default": true,
+      "deprecated_flags": [],
+      "env": "AO_RECORD_GIT_HEADS",
+      "flag": "--record-git-heads",
+      "help": "Record git HEADs for `ao report-survival` serial attribution.",
+      "name": "record_git_heads",
+      "no_flag": "--no-record-git-heads",
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    }
+  ],
+  "precedence": [
+    "cli",
+    "env",
+    "config",
+    "default"
+  ],
+  "schema": "ao.run-options/v1"
+}

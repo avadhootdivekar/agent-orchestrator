@@ -233,6 +233,13 @@ def create_app(
 
         return asdict(service.workspace_info())
 
+    @app.get(f"{API_PREFIX}/schema/run-options")
+    def run_options_schema() -> dict:
+        """The run-options registry: JSON schema + UI metadata (precedence, flags, env, help)."""
+        from ..run_options import options_schema
+
+        return options_schema()
+
     @app.get(f"{API_PREFIX}/general-instructions")
     def general_instructions() -> list[dict]:
         return service.general_instructions()

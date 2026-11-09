@@ -6,7 +6,7 @@
 - Owner: `unassigned`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `< 3 days`
 - Phase: Foundation (first; shared with E-Sn7tL2)
 - Agent: developer (+ reviewer)

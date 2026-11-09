@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
@@ -1290,6 +1290,38 @@ class WorkflowSnapshot(BaseModel):
     workflow: WorkflowSpec  # STATIC tasks only -- every injected task id filtered out
 
 
+class EffectiveSetting(BaseModel):
+    """One resolved run option and the layer it came from (``cli|env|config|default|unset``)."""
+
+    value: Any = None
+    source: str = "unset"
+
+
+class SettingsHistoryEntry(BaseModel):
+    """Settings in force for one invocation: ``kind`` is ``start`` or ``resume``."""
+
+    at: str
+    kind: Literal["start", "resume"]
+    settings: dict[str, EffectiveSetting] = {}
+
+
+class TaskLimits(BaseModel):
+    """Per-task limits in force at the most recent dispatch (E-aYG5vn FR-2).
+
+    ``None`` = no limit / not applicable. ``turn_budget``, ``autocompact`` and
+    ``task_cost_cap_usd`` have no engine control yet; they are recorded (as None) so the
+    snapshot shape is stable when those controls land.
+    """
+
+    thinking_effort: str | None = None
+    turn_budget: int | None = None
+    max_turns: int | None = None
+    autocompact: bool | None = None
+    timeout_seconds: int | None = None
+    task_cost_cap_usd: float | None = None
+    max_attempts: int | None = None
+
+
 class TaskRunState(BaseModel):
     status: TaskStatus = "pending"
     attempts: int = 0
@@ -1341,6 +1373,8 @@ class TaskRunState(BaseModel):
     agent: str | None = None
     model: str | None = None
     effort: str | None = None
+    # Limits in force at the most recent dispatch; None for tasks never dispatched / old states.
+    effective_limits: TaskLimits | None = None
     # Ids of tasks whose declared outputs this task consumes as inputs -- lets a review's
     # verdict be attributed to the task(s) whose work it judged.
     upstream_producers: list[str] = []
@@ -1501,6 +1535,10 @@ class RunState(BaseModel):
     # request (key = request_id). Defaults keep every older state.json loadable (ADR-6).
     input_mode: InputMode = "blocking"
     input_requests: dict[str, InputRequest] = {}
+    # Run options in force (latest invocation) with provenance, plus an append-only history with
+    # one entry per start/resume (E-aYG5vn FR-1). Defaults keep older state.json loadable.
+    effective_settings: dict[str, EffectiveSetting] = {}
+    effective_settings_history: list[SettingsHistoryEntry] = []
 
 
 def run_waiting_for_input(state: RunState) -> bool:

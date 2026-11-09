@@ -33,6 +33,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..run_options import allowed_bool_options, allowed_options
 from .runs import ORCHESTRATOR_DIR, RUNS_DIR, RunRepository
 
 UI_DIR = "ui"
@@ -648,22 +649,12 @@ class ProcessSupervisor:
 # An explicit allow-list, NOT free-form passthrough: the UI is unauthenticated by design in
 # this release, so a request body must never be able to inject arbitrary argv into a
 # subprocess. Anything absent here is silently ignored.
-ALLOWED_OPTIONS: dict[str, str] = {
-    "model": "--model",
-    "effort": "--effort",
-    "thinking_effort": "--thinking-effort",
-    "max_attempts": "--max-attempts",
-    "max_turns": "--max-turns",
-    "max_parallel": "--max-parallel",
-    "budget_total": "--budget-total",
-    "quota_max_wait": "--quota-max-wait",
-    "quota_poll_interval": "--quota-poll-interval",
-}
+# Derived from the run-options registry (`run_options.OPTIONS` entries with a ui group), so the
+# allow-list can never drift from the CLI flags the resolvers actually read.
+ALLOWED_OPTIONS: dict[str, str] = allowed_options()
 
 # Boolean options rendered as bare flags rather than `--flag value`.
-ALLOWED_BOOL_OPTIONS: dict[str, tuple[str, str]] = {
-    "self_heal": ("--self-heal", "--no-self-heal"),
-}
+ALLOWED_BOOL_OPTIONS: dict[str, tuple[str, str]] = allowed_bool_options()
 
 
 def _render_options(options: dict[str, object]) -> list[str]:

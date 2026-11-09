@@ -61,6 +61,7 @@ from .models import (
     assumption_lines,
     run_waiting_for_input,
 )
+from .run_options import OPTIONS, SOURCE_DEFAULT, get_option, resolve_option
 from .service.cli import app as service_app
 
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ if TYPE_CHECKING:
     from .executors.base import Executor
     from .isolation.git import GitRepo
     from .isolation.worktrees import IsolatedRepo
-    from .models import BudgetSpec, InputMode, WorkflowSpec
+    from .models import BudgetSpec, EffectiveSetting, InputMode, WorkflowSpec
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
 
@@ -766,7 +767,7 @@ def _resolve_thinking_effort(flag: str | None) -> str | None:
     from .models import THINKING_EFFORTS
 
     cfg = _load_project_config_or_exit()
-    value = flag or os.environ.get("AO_THINKING_EFFORT") or (cfg.thinking_effort if cfg else None)
+    value = resolve_option(get_option("thinking_effort"), flag, cfg).value
     if value is not None and value not in THINKING_EFFORTS:
         typer.echo(
             f"ERROR: --thinking-effort must be one of {THINKING_EFFORTS}, got '{value}'",
@@ -774,6 +775,20 @@ def _resolve_thinking_effort(flag: str | None) -> str | None:
         )
         raise typer.Exit(1)
     return value
+
+
+def _effective_settings_snapshot(**cli_values: object) -> dict[str, EffectiveSetting]:
+    """Resolve EVERY registry option (CLI > env > config > default) with its source, for
+    `RunState.effective_settings`. Purely observational: the values the run actually uses come
+    from the per-option resolvers above, which read the same registry."""
+    from .models import EffectiveSetting
+
+    cfg = _load_project_config_or_exit()
+    out: dict[str, EffectiveSetting] = {}
+    for opt in OPTIONS:
+        r = resolve_option(opt, cli_values.get(opt.name), cfg)
+        out[opt.name] = EffectiveSetting(value=r.value, source=r.source)
+    return out
 
 
 def _resolve_run_settings(
@@ -791,49 +806,27 @@ def _resolve_run_settings(
     Returns (max_attempts, max_turns, model, effort, quota_max_wait_seconds, quota_poll_seconds,
     max_parallel).
     """
-    from .models import (
-        DEFAULT_MAX_PARALLEL,
-        DEFAULT_QUOTA_MAX_WAIT_SECONDS,
-        DEFAULT_QUOTA_POLL_SECONDS,
-    )
-
-    def _int_env(name: str) -> int | None:
-        v = os.environ.get(name)
-        try:
-            return int(v) if v else None
-        except ValueError:
-            return None
-
     cfg = _load_project_config_or_exit()
-
-    resolved_max_attempts = (
-        max_attempts or _int_env("AO_MAX_ATTEMPTS") or (cfg.max_attempts if cfg else None)
-    )
-    resolved_max_turns = max_turns or _int_env("AO_MAX_TURNS") or (cfg.max_turns if cfg else None)
-    resolved_model = model or os.environ.get("AO_MODEL") or (cfg.model if cfg else None)
-    resolved_effort = effort or os.environ.get("AO_EFFORT") or (cfg.effort if cfg else None)
-    resolved_quota_max_wait = int(
-        quota_max_wait
-        or _int_env("AO_QUOTA_MAX_WAIT_SECONDS")
-        or (cfg.quota_max_wait_seconds if cfg else None)
-        or DEFAULT_QUOTA_MAX_WAIT_SECONDS
-    )
-    resolved_quota_poll = int(
-        quota_poll_interval
-        or _int_env("AO_QUOTA_POLL_SECONDS")
-        or (cfg.quota_poll_seconds if cfg else None)
-        or DEFAULT_QUOTA_POLL_SECONDS
-    )
-    # NOTE: like every other `or`-chain above, a falsy 0 here is indistinguishable from
-    # "unset" and falls through to DEFAULT_MAX_PARALLEL (=1) -- consistent with how
-    # --quota-max-wait/--max-attempts 0 already behave in this function. A negative value is
-    # truthy in Python so it survives the chain unchanged and is what the guard below rejects.
-    resolved_max_parallel = int(
-        max_parallel
-        or _int_env("AO_MAX_PARALLEL")
-        or (cfg.max_parallel if cfg else None)
-        or DEFAULT_MAX_PARALLEL
-    )
+    cli_values = {
+        "max_attempts": max_attempts,
+        "max_turns": max_turns,
+        "model": model,
+        "effort": effort,
+        "quota_max_wait": quota_max_wait,
+        "quota_poll_interval": quota_poll_interval,
+        "max_parallel": max_parallel,
+    }
+    r = {n: resolve_option(get_option(n), v, cfg) for n, v in cli_values.items()}
+    resolved_max_attempts = r["max_attempts"].value
+    resolved_max_turns = r["max_turns"].value
+    resolved_model = r["model"].value
+    resolved_effort = r["effort"].value
+    resolved_quota_max_wait = int(r["quota_max_wait"].value)
+    resolved_quota_poll = int(r["quota_poll_interval"].value)
+    resolved_max_parallel = int(r["max_parallel"].value)
+    # NOTE: like every other `or`-chain in the registry, a falsy 0 here is indistinguishable
+    # from "unset" and falls through to the default (=1) -- consistent with --quota-max-wait/
+    # --max-attempts 0. A negative value is truthy so it survives and is what the guard rejects.
     if resolved_max_parallel < 1:
         typer.echo("ERROR: --max-parallel must be >= 1", err=True)
         raise typer.Exit(1)
@@ -974,18 +967,7 @@ def _resolve_monitoring_settings(self_heal: bool | None) -> MonitoringConfig:
     cfg = _load_project_config_or_exit()
     base = cfg.monitoring if cfg else MonitoringConfig()
 
-    def _bool_env(name: str) -> bool | None:
-        v = os.environ.get(name)
-        if not v:
-            return None
-        return v.strip().lower() in ("1", "true", "yes", "on")
-
-    resolved_self_heal = self_heal
-    if resolved_self_heal is None:
-        resolved_self_heal = _bool_env("AO_SELF_HEAL")
-    if resolved_self_heal is None:
-        resolved_self_heal = base.self_heal
-
+    resolved_self_heal = resolve_option(get_option("self_heal"), self_heal, cfg).value
     return base.model_copy(update={"self_heal": resolved_self_heal})
 
 
@@ -997,15 +979,11 @@ def _resolve_record_git_heads(record_git_heads: bool | None) -> bool:
     `AO_RECORD_GIT_HEADS` (1/0/true/false/yes/no/on/off) > `.ao/config.yaml`
     `record_git_heads` > built-in default (True). Tri-state like `--self-heal`: an operator can
     force it either way over the config."""
-    if record_git_heads is not None:
-        return record_git_heads
-    env = os.environ.get(ENV_RECORD_GIT_HEADS)
-    if env and env.strip():
-        return env.strip().lower() in ("1", "true", "yes", "on")
-    cfg = _load_project_config_or_exit()
-    if cfg is not None and cfg.record_git_heads is not None:
-        return cfg.record_git_heads
-    return True
+    opt = get_option("record_git_heads")
+    first = resolve_option(opt, record_git_heads, None)  # CLI/env only: no config read yet
+    if first.source != SOURCE_DEFAULT:
+        return bool(first.value)
+    return bool(resolve_option(opt, None, _load_project_config_or_exit()).value)
 
 
 def _build_monitor(
@@ -1502,6 +1480,19 @@ def run(
         run_prompt=run_prompt,
         result_cache=result_cache,
         input_mode=eff_input_mode,
+        effective_settings=_effective_settings_snapshot(
+            max_attempts=max_attempts,
+            max_turns=max_turns,
+            model=model,
+            effort=effort,
+            thinking_effort=thinking_effort,
+            quota_max_wait=quota_max_wait,
+            quota_poll_interval=quota_poll_interval,
+            max_parallel=max_parallel,
+            budget_total=budget_total,
+            self_heal=self_heal,
+            record_git_heads=record_git_heads,
+        ),
     )
 
     try:
@@ -1892,6 +1883,19 @@ def resume(
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         result_cache=result_cache,
         input_mode=eff_input_mode,
+        effective_settings=_effective_settings_snapshot(
+            max_attempts=max_attempts,
+            max_turns=max_turns,
+            model=model,
+            effort=effort,
+            thinking_effort=thinking_effort,
+            quota_max_wait=quota_max_wait,
+            quota_poll_interval=quota_poll_interval,
+            max_parallel=max_parallel,
+            budget_total=budget_total,
+            self_heal=self_heal,
+            record_git_heads=record_git_heads,
+        ),
     )
 
     try:

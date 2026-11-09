@@ -10,12 +10,15 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from .artifacts import ArtifactStore
 from .dag import build_dag, compute_cones
 from .inputs import cancel_request
 from .models import (
+    EffectiveSetting,
     RunState,
+    SettingsHistoryEntry,
     SpecSession,
     TaskRunState,
     TaskSpec,
@@ -594,3 +597,20 @@ class RunStateStore:
 
         state.status = "running"
         return state
+
+
+def record_effective_settings(
+    state: RunState,
+    settings: dict[str, EffectiveSetting],
+    kind: Literal["start", "resume"],
+    at: str,
+) -> None:
+    """Make *settings* the run's current effective settings and append a history entry.
+
+    Called once per invocation (start, then each resume) so ``effective_settings`` always shows
+    what the latest invocation resolved and the history shows how it changed over time.
+    """
+    state.effective_settings = dict(settings)
+    state.effective_settings_history.append(
+        SettingsHistoryEntry(at=at, kind=kind, settings=dict(settings))
+    )
