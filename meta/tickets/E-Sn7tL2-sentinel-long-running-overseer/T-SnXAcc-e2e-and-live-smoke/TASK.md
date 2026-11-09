@@ -27,7 +27,8 @@ ledger, handoffs, utilisation before/after vs EPIC §1 baseline, cost split work
 
 ## Progress (2026-11-09)
 - AC1 met for the non-live part: all §11 e2e scenarios mapped + green (`MATRIX.md`, `tests/test_sentinel_e2e_matrix.py`).
-- AC2 (live smoke evidence pack) and AC3 (HLD Deviations) OPEN — live smoke awaits owner budget confirmation.
+- AC3 (HLD Deviations) met 2026-11-09 (W11).
+- AC2 (live smoke evidence pack) OPEN — live smoke awaits owner budget confirmation; exact steps in `HANDOFF.md` (same folder).
 
 ## Risks
 - Live smoke cost — cap run budget; use haiku/sonnet for work units.

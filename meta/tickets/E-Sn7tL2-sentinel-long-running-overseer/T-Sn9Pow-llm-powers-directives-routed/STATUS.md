@@ -2,7 +2,7 @@
 
 - ID: `T-Sn9Pow-llm-powers-directives-routed`
 - Updated At: `2026-11-09`
-- State: `Done` (one AC5-of-T-Sn6Brr sub-item deferred, below)
+- State: `Done`
 - Owner: `developer (claude-sonnet-5-5)`
 
 ## This update
@@ -21,7 +21,9 @@
 ## Risks / Blockers
 - Sentinel/checkpoint thrash: shared caps (`PowerGate` per-hour rates, existing `GE-*`/stage rules in the checker) bound it; a dedicated
   thrash e2e with a live overseer + sentinel is left to T-SnXAcc (scripted-driver e2e here covers the individual paths only).
-- Edited-edge styling (T-Sn6Brr AC5, second half) needs the graph API to expose `graph_edits`: not done.
+- ~~Edited-edge styling (T-Sn6Brr AC5, second half)~~ closed in W10 (graph API `graph_edits`; see T-Sn6Brr STATUS).
 
 ## Next actions
 1. T-SnXAcc: live smoke + e2e matrix (directive -> real checkpoint, planner against a live routed run).
+
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: W11 sync: deferred sub-item (edited-edge styling) closed by W10 w10-01 under T-Sn6Brr; no open gaps remain on this task. The thrash e2e with a *live* overseer+sentinel remains part of the FR-23 smoke (T-SnXAcc).

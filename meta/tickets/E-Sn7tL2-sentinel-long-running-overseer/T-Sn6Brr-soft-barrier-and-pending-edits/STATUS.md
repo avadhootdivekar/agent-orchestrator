@@ -25,7 +25,7 @@
 - None
 
 ## Next actions
-1. Pick up after: T-Sn3Tck and a GO from T-Sn0Spk (else implement §4.4.4 fallback)
+1. None — done (T-Sn3Tck and spike GO satisfied; AC1–AC5 met).
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: AC5 folded into T-Sn9Pow: sentinel-origin node badge/border + sentinel spawn-edge style + legend row done (UI tests green). Styling of *edited* dependency edges still open (graph API does not expose `graph_edits`).
 

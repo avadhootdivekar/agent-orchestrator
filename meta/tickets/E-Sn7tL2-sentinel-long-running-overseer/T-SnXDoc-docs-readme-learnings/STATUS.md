@@ -18,4 +18,7 @@
 - None
 
 ## Next actions
-1. After T-SnXAcc live smoke: flip mechanical default in both templates, tick remaining EPIC §11 boxes, fix stale `ao ctl` help text.
+1. After T-SnXAcc live smoke (owner budget pending, `../T-SnXAcc-e2e-and-live-smoke/HANDOFF.md`): flip mechanical default in both templates, tick remaining EPIC §11 boxes.
+2. ~~Fix stale `ao ctl` help text~~ done in W11 (docstrings rewritten).
+
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **W11 sync (w11-02):** HLD §21 refreshed (edited-edge styling no longer 'not done'). Still Partial by design: default flip (AC2) waits for FR-23 live smoke evidence — not available, not flipped. Remaining EPIC §11 boxes each carry a reason in EPIC §11 'Unticked' note.

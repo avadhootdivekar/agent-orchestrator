@@ -5,8 +5,8 @@
 - Title: Sentinel — a run-long overseer that keeps every slot busy, heals stuck work, and edits the pending graph
 - Owner: avadhoot
 - Created: 2026-11-09
-- Last Updated: 2026-11-09 (Rev 3 — all decisions resolved §0/§10; tasks created §8; final checklist §11; `HANDOFF.md`)
-- Status: Ready for implementation (start: T-Sn0Spk; E-aYG5vn T-zP28k9, T-f0d7gm Done). 13 tasks, all Draft.
+- Last Updated: 2026-11-09 (Rev 4 — implemented P0–P3; W11 §11 reasons refreshed; live smoke pending owner budget)
+- Status: Implemented except live smoke + default flip (owner budget). 11 tasks Done, T-SnXAcc In Progress, T-SnXDoc Partial.
 - Related: `E-YAAGhk-overseer-runner-template` (per-wave checkpoint overseer), ADR-0003 (settings precedence),
   ADR-0007 (wave/barrier scheduler), ADR-0016 (overseer cadence + budget governance), ADR-0017 (spawn provenance),
   ADR-0021 (dashboard auth), `docs-md/overseer-runner-hld.md` (NFR-X1 deferred preemptive checkpoints),
@@ -414,10 +414,18 @@ rule), not assumed.
 - [ ] Co-delivered epic `E-aYG5vn` checklist complete (shared foundation).
 - [ ] PR from the branch to `main` opened; no `install.sh` / `ao.service` restart from runs (owner promotes).
 
-**Unticked at T-SnXDoc (2026-11-09), with reasons:** full gates / NFR-1 golden / E2E scenarios — owned by T-SnXAcc, whose
+**Unticked at T-SnXDoc (2026-11-09; superseded by the W11 note below):** full gates / NFR-1 golden / E2E scenarios — owned by T-SnXAcc, whose
 `tests/test_sentinel_e2e_matrix.py` is in progress and its golden test was failing on the shared tree during the doc run; FR-23 live smoke and
 the **default flip** — no evidence exists, so the flip was deliberately not made; settings-surfaces item — `ao config show` was never built
 (HLD §21) and run-page limits panel is unverified; ticket-consistency / co-delivered epic / PR items — open until T-SnXAcc closes.
+
+**Unticked at W11 (2026-11-09, w11-02), with reasons — this note supersedes the one above.** The non-live E2E scenario boxes and the NFR-1
+golden are covered by `tests/test_sentinel_e2e_matrix.py` (17 pass; `T-SnXAcc*/MATRIX.md`) and are left for the owner/final-verify to tick once the full
+gate run on a clean tree is recorded; they are not blocked by anything. Genuinely blocked: **FR-23 live smoke** and the **default flip**
+(owner budget — steps in `T-SnXAcc*/HANDOFF.md`); **settings visible in all surfaces** (`ao config show` / `GET /api/schema/sentinel` never built, HLD §21 — owner
+to accept as-built surfaces or request them); **gates box** (`mypy .` is red by construction: tests/`output/` scratch scripts; `mypy src` clean — owner picks
+the gate); **ticket consistency** (T-SnXAcc/T-SnXDoc stay open until smoke); **co-delivered epic** (E-aYG5vn all Done except gated T-9ymKja); **PR to `main`**
+(human step after the smoke is recorded). Never from a run: `install.sh` / `ao.service` restart.
 
 ## 12. Links
 - Design doc: `docs-md/sentinel-hld.md` + `docs-md/adr/ADR-0024-sentinel-overseer-lane.md` (written by `T-Sn1Adr`, Proposed — awaiting owner sign-off; HLD supersedes §4 where they differ).

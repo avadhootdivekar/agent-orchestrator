@@ -2,7 +2,7 @@
 
 - ID: `E-Sn7tL2-sentinel-long-running-overseer`
 - Updated At: `2026-11-09`
-- State: `Draft` (ready for implementation)
+- State: `Implemented — live smoke + default flip pending owner budget` (11 of 13 tasks Done; T-SnXAcc In Progress, T-SnXDoc Partial)
 - Owner: `avadhoot`
 
 ## This update
@@ -48,9 +48,9 @@
 | T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Done (AC5 closed in W10: graph API `graph_edits`, edited-edge + sentinel-node styling) |
 | T-Sn7Bkl-backlog-and-early-checkpoint | P2 | Done (NFR-13: idle-with-work 3.5s -> 0.01s) |
 | T-Sn8Gen-llm-generations-pack-handoff | P3 | Done |
-| T-Sn9Pow-llm-powers-directives-routed | P3 | Done (edited-edge styling deferred) |
-| T-SnXAcc-e2e-and-live-smoke | P3 close | In Progress (non-live matrix done; live smoke pending owner budget) |
-| T-SnXDoc-docs-readme-learnings | each phase | Partial (docs done; default flip pending evidence) |
+| T-Sn9Pow-llm-powers-directives-routed | P3 | Done (edited-edge styling closed in W10 under T-Sn6Brr) |
+| T-SnXAcc-e2e-and-live-smoke | P3 close | In Progress (AC1 non-live matrix + AC3 HLD reconcile done; AC2 live smoke pending owner budget — `T-SnXAcc*/HANDOFF.md`) |
+| T-SnXDoc-docs-readme-learnings | each phase | Partial (docs done; default flip pending FR-23 evidence) |
 
 ## Evidence
 - Utilisation baseline (EPIC §1): 7–41% slot utilisation at P=6 over the last 10 overseer-runner runs; 50–80% of
@@ -62,10 +62,14 @@
 
 ## Next actions
 1. ~~T-Sn0Spk~~ done ∥ ~~E-aYG5vn T-zP28k9~~ done, ~~T-f0d7gm~~ done.
-2. ~~T-Sn1Adr~~ signed off 2026-11-09 → P1 (T-Sn2Set in progress).
+2. ~~T-Sn1Adr~~ signed off 2026-11-09; P1–P3 implemented.
+3. **Owner:** confirm FR-23 live-smoke budget (proposal $15 run cap, sonnet/haiku) → run per `T-SnXAcc-e2e-and-live-smoke/HANDOFF.md` → then default flip (T-SnXDoc), remaining EPIC §11 boxes, PR to `main`.
+4. Owner decisions pending: `mypy .` vs `mypy src` as the gate; whether the as-built settings surfaces (no `ao config show`) satisfy §11.
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn6Brr done** — soft barrier, shared checker, `inject`/`edit_pending`, persisted graph edits (HLD §6.8). Graph-UI styling (AC5) deferred.
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn9Pow done (see its STATUS for evidence and the honest gaps)** — LLM powers gate, directives + OV-R12b, routed-runner planner, panel v2, sentinel graph styling (HLD §8.7).
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-SnXDoc partial** — docs/READMEs/guide/HLD §21 reconciled; EPIC §11 ticked only for spike, ADR sign-off, NFR-13 fixture, docs; default flip deferred (no FR-23 evidence).
+
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **W11 reconcile (w11-02):** rolled up consistently with the task STATUS files; HLD §21 Deviations re-checked against code (no stale claims); live-smoke handoff written (`T-SnXAcc*/HANDOFF.md`: steps, $15 cap proposal, evidence dir, default-flip + §11 follow-ups). Live smoke NOT run; default NOT flipped. Dashboard epic E-aYG5vn rollup unchanged (5 Done, T-9ymKja Blocked by owner gate).

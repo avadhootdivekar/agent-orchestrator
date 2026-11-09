@@ -281,6 +281,8 @@ If I1 cannot land, degrade to EPIC §4.4.4 (leaf-only injection, hard-barrier ea
   `origin` through unchanged; dedicated styling is not part of this change.
 - Not done here: rate limits (`max_injections_per_hour`, T-Sn9Pow). Backlog, early checkpoint and the FR-19 cap landed in §6.9.
 
+- **Graph UI (W10).** The graph API payload carries `graph_edits` (`ui/graph.py::GraphEditView`; `dependencies` = effective `depends_on` after a `set_edges` edit). The canvas draws dependency edges into an edited task thicker (`graph-edge-edited`, Legend row); sentinel-origin nodes keep their badge and dashed spawn edges.
+
 ### 6.9 As built (T-Sn7Bkl, 2026-11-09)
 Module `sentinel_backlog.py` (pure functions, injectable clock) + one engine step `Orchestrator._sentinel_bandwidth`
 that runs right after FILL (so `occ_ready` is what FILL could not dispatch), fail-safe like the tick.
@@ -291,7 +293,7 @@ that runs right after FILL (so `occ_ready` is what FILL could not dispatch), fai
   `s-NN-<slug>` (NN assigned by the tool, stable across re-confirmation; brief copied to that id under
   `outputs/waves/w(K+1)/briefs/`). No `backlog.json` while an old published file exists => published as empty (clears it).
   The engine never interprets overseer semantics; it re-runs the shared checker on every release with a `CheckPolicy`
-  built from the file (`stage`, `known_work_items`, per-task `kind`/`work_item`) — this wires the policy T-Sn6Brr left open.
+  built from the file (`stage`, `known_work_items`, per-task `kind`/`work_item`) — this wires the policy T-Sn6Brr left open. Soft-barrier emitter manifests and ctl/LLM `inject` carry no stage context, so they get structural rules + the FR-19 cap only.
 - **L1 release.** `bandwidth.backlog_release`, idle slots > 0 and nothing ready after FILL: releasable entries (not released,
   not rejected, not expired) sorted by **descending priority** (file order breaks ties); one `inject` (actor `sentinel-tick`,
   entry id `bk-<id>`) per entry through the applier, up to the number of idle slots. A checker refusal is recorded in
@@ -779,7 +781,7 @@ Sibling top-level `RunState.graph_edits` (not inside `sentinel`, so non-sentinel
 Per-task addition: `state.tasks[tid].recovery{kills:int, last_reason:str, escalation_step:int}`; per-task
 `activity{last_activity_at, running_seconds}` (liveness).
 
-## 21. As-built reconciliation (T-SnXDoc, 2026-11-09)
+## 21. As-built reconciliation (T-SnXDoc 2026-11-09; re-checked against the code by T-SnXAcc/W11, 2026-11-09)
 
 Where this design text and the code differ, the as-built sections (§5.4.1, §6.8, §6.9, §8.6, §8.7, §12.1, §12.2) win. Deviations:
 
@@ -788,11 +790,14 @@ Where this design text and the code differ, the as-built sections (§5.4.1, §6.
 | Checker rule ids `CK-*` (§7.2) | `GE-*` (`graph_check.py`); charter-only rules stay in the overseer tool |
 | `ao config show`, `GET /api/schema/sentinel` (§11.3) | Neither exists. Settings are visible via `ao ctl status`, `state.effective_settings` and the run-options registry schema (`GET /api/schema/run-options`) |
 | Panel "idle timeline" (§12) | Stacked bar from cumulative slot-seconds; the state keeps no time series |
-| `release` / `kill` answered `not_enabled_yet` until later tasks | Both enabled (T-Sn7Bkl / T-Sn4Rec). The `ao ctl --help` text for `kill`/`release` still says "not_enabled_yet until … lands" — stale help string (code, tracked as a follow-up) |
+| `release` / `kill` answered `not_enabled_yet` until later tasks | Both enabled (T-Sn7Bkl / T-Sn4Rec). The stale `ao ctl --help` text for `kill`/`release` was corrected (W11 gates-green) |
 | `backlog{held}` "placeholder" (§12.1) | Populated by T-Sn7Bkl |
 | Triggers `new_signal`, `stage_change` (§8) | Not implemented; `stuck_task`, `unit_failed`, `human_note`, `heartbeat`, `idle_slots_no_backlog` are |
-| Sentinel-origin graph styling incl. edited edges (FR-14) | Node badge/border and spawn-edge style done; styling of *edited* edges is not (graph API does not expose `graph_edits`) |
+| Sentinel-origin graph styling incl. edited edges (FR-14) | All done: node badge/border, dashed spawn edge, and dependency edges into a `set_edges` target drawn thicker (`graph-edge-edited`, Legend row). The graph API exposes `graph_edits` (§6.8, W10); the field is optional in the TS type so an older server still renders |
 | Cost kill (FR-5) | Sees settled earlier-attempt cost only; live attempt spend is known at exit |
 | Generation `max_tokens` stop | Effective only for drivers that report progress; CLI driver is bounded by TTL and `--max-budget-usd` |
 | Default enablement (§10.1) | Not flipped: no FR-23 live smoke has run. Templates keep `sentinel_enabled` opt-in |
 | Live-LLM behaviour | Verified with a fake `claude` executable and scripted drivers only |
+| Stage policy on non-backlog injects | Only backlog releases carry a `CheckPolicy` (stage, known work items). Soft-barrier emitter manifests and ctl/LLM `inject` get structural `GE-*` rules + the FR-19 cap (§6.9) |
+| `GE-EDGE-INTO-NONPENDING` via `edit_pending` | Unreachable there (the `GE-NOT-PENDING` target guard fires first); it applies to additive manifests/inject only |
+| Remaining unticked EPIC §11 boxes | Blocked on the FR-23 live smoke (owner budget): utilisation/cost evidence, the default flip, and the settings-surfaces/consistency/PR items that close with it. Steps: `meta/tickets/E-Sn7tL2-sentinel-long-running-overseer/T-SnXAcc-e2e-and-live-smoke/HANDOFF.md` |
