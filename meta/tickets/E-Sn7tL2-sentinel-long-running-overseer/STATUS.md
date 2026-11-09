@@ -21,11 +21,15 @@
   (save on mutation only); new finding: `ao run` has no signal handling — SIGTERM kills it instantly, leaves `state=running` and
   orphan `claude` children (T-Sn3Tck/T-Sn4Rec).
 
+- By: architect · Role: agent · Date: 2026-11-09 · Comment: **T-Sn1Adr written** — ADR-0024 + `docs-md/sentinel-hld.md`
+  (status Proposed). **Owner sign-off pending (checkpoint 2); not recorded here.** Needs owner confirmation on: signal handling
+  for all runs (ADR D-10) and idle_kill_minutes floor 12.
+
 ## Task rollup
 | Task | Phase | State |
 |---|---|---|
 | T-Sn0Spk-midflight-reshape-kill-spike | P0 | Done (GO-WITH-CHANGES) |
-| T-Sn1Adr-sentinel-adr-and-hld | P0 | Draft |
+| T-Sn1Adr-sentinel-adr-and-hld | P0 | Done — ADR Proposed, awaiting owner sign-off |
 | T-Sn2Set-sentinel-settings-plumbing | P1 | Draft |
 | T-Sn3Tck-main-loop-tick-inbox-overrides | P1 | Draft |
 | T-Sn3Ctl-ao-ctl-cli | P1 | Draft |
@@ -48,4 +52,4 @@
 
 ## Next actions
 1. ~~T-Sn0Spk~~ done ∥ E-aYG5vn T-zP28k9.
-2. T-Sn1Adr (fold spike spec changes into ADR/HLD) → owner sign-off → P1.
+2. ~~T-Sn1Adr~~ written → **owner sign-off (blocking P1)** → P1.

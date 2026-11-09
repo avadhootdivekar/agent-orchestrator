@@ -415,7 +415,7 @@ rule), not assumed.
 - [ ] PR from the branch to `main` opened; no `install.sh` / `ao.service` restart from runs (owner promotes).
 
 ## 12. Links
-- Design doc: `docs-md/sentinel-hld.md` + ADR-0024 (created by `T-Sn1Adr`; this file §4 is the seed).
+- Design doc: `docs-md/sentinel-hld.md` + `docs-md/adr/ADR-0024-sentinel-overseer-lane.md` (written by `T-Sn1Adr`, Proposed — awaiting owner sign-off; HLD supersedes §4 where they differ).
 - Related: `docs-md/overseer-runner-hld.md`, ADR-0003, ADR-0007, ADR-0016, ADR-0017, ADR-0021,
   `docs-md/guide-dynamic-task-injection.md`.
 - Output: `output/E-Sn7tL2-sentinel-long-running-overseer/` (when evidence exists).
