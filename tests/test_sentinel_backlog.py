@@ -389,3 +389,28 @@ def test_find_early_plan_at_most_one_in_flight() -> None:
     assert sentinel_backlog.find_early_plan(wf, st, spec, {"u3"}) is None  # one in flight
     st.tasks["ck-01"] = TaskRunState(status="succeeded")
     assert sentinel_backlog.find_early_plan(_ck_wf(4), st, spec, {"u3"}) is None  # not pending
+
+
+@pytest.mark.parametrize(
+    ("extra", "rule"),
+    [
+        ({"stage": "closeout"}, "GE-STAGE-CLOSEOUT"),
+        ({"stage": "stabilize"}, "GE-STAGE-STABILIZE"),  # entries are kind=implement
+        ({"stage": "converge", "known_work_items": []}, "GE-STAGE-CONVERGE"),  # new work item
+    ],
+)
+def test_backlog_checkpolicy_enforced_through_engine(
+    tmp_path: Path, extra: dict[str, Any], rule: str
+) -> None:
+    """The file's stage/work-item context reaches the shared checker (policy_for -> release)."""
+    store, rs, reposets, agents = _setup(tmp_path)
+    wf = WF([T("long"), T("x")])
+    state0 = rs.new_run(wf)
+    _publish(_run_dir(rs, state0), [_entry("e", 1)], **extra)
+    ex = Exec(_sleep_hooks({"long": 0.4}))
+    orch = Orchestrator(ex, store, rs, max_parallel=3, sentinel=_settings())
+    state = orch.run(wf, reposets, agents, run_state=state0)
+    assert state.sentinel is not None
+    assert state.sentinel.backlog_rejected == {"e": rule}
+    assert "s-01-e" not in ex.order
+    assert state.sentinel.injected_count == 0

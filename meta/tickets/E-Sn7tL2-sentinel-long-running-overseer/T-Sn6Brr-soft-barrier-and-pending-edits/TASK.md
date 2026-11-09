@@ -6,7 +6,7 @@
 - Owner: `developer (claude-sonnet-5-5)`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Done` (AC5 graph-UI styling deferred, see STATUS)
+- Status: `Done` (AC5 closed 2026-11-09, W10 w10-01)
 - Estimate: `< 3 days`
 - Phase: P2
 - Agent: developer (+ reviewer-opus: engine core)

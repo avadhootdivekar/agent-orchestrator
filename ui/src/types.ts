@@ -393,6 +393,18 @@ export interface GraphRouter {
   selected: string[];
 }
 
+/** One persisted run-time graph edit (`RunState.graph_edits`, E-Sn7tL2 FR-12). */
+export interface GraphEdit {
+  op: "set_edges" | "remove_task" | "skip" | "priority";
+  task_id: string;
+  /** Effective dependency ids after a `set_edges` edit; `null` for other ops. */
+  dependencies: string[] | null;
+  inputs: string[] | null;
+  value: number | null;
+  source: string;
+  at: string;
+}
+
 export interface RunGraph {
   schema_version: number;
   run_id: string;
@@ -406,6 +418,8 @@ export interface RunGraph {
   spawn_edges: SpawnEdge[];
   loops: GraphLoop[];
   routers: GraphRouter[];
+  /** Absent on a server that predates `graph_edits` (additive field). */
+  graph_edits?: GraphEdit[];
 }
 
 /** Which edge set the canvas currently renders — dependency (LR) or spawn (TB). */

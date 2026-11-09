@@ -1171,6 +1171,11 @@ pre.code {
   stroke-dasharray: 1 4;
 }
 
+/* Dependency edge into a task whose edges a run-time edit rewrote (RunState.graph_edits set_edges). */
+.react-flow__edge.graph-edge-edited .react-flow__edge-path {
+  stroke-width: 3;
+}
+
 /* Unknown spawn origin (open set, ADR-0017 D1) -- same neutral treatment as a node's unknown-origin badge. */
 .react-flow__edge.graph-edge-spawn-other .react-flow__edge-path {
   stroke: var(--graph-edge-dependency);
@@ -1461,6 +1466,12 @@ pre.code {
 .legend-edge-swatch.graph-edge-spawn-loop {
   border-top-style: dotted;
   border-top-color: var(--graph-edge-loop);
+}
+
+.legend-edge-swatch.graph-edge-edited {
+  border-top-width: 4px;
+  border-top-style: solid;
+  border-top-color: var(--graph-edge-dependency);
 }
 
 /* ---------- Run graph detail reveal (E-k3AMEr, T-pAi0Cv) ---------- */

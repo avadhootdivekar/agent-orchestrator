@@ -56,6 +56,7 @@ import type {
   SpawnEdge,
   TaskStat,
   ViewEdge,
+  GraphEdit,
 } from "../types";
 import { GraphToolbar } from "./GraphToolbar";
 import { useSelectAndCenter } from "./hooks";
@@ -223,6 +224,19 @@ function edgeVisualKind(edge: ViewEdge): string {
   return "spawn-other";
 }
 
+/**
+ * Task ids whose dependency edges were rewritten at run time (`RunState.graph_edits`, op
+ * `set_edges`). Their incoming dependency edges render with the "edited" style.
+ */
+export function editedTargetIds(edits: readonly GraphEdit[] | undefined): Set<string> {
+  return new Set((edits ?? []).filter((e) => e.op === "set_edges").map((e) => e.task_id));
+}
+
+/** True for a dependency edge pointing at a task whose edges a sentinel/ctl edit rewrote. */
+export function isEditedEdge(edge: ViewEdge, editedTargets: ReadonlySet<string>): boolean {
+  return edge.set === "dependency" && editedTargets.has(edge.target);
+}
+
 /** On-path text per the HLD §8.6 table's Label column; `null` rows show nothing. */
 function edgeLabelText(edge: ViewEdge): string | null {
   if (edge.set === "dependency") {
@@ -237,15 +251,20 @@ function edgeLabelText(edge: ViewEdge): string | null {
 }
 
 /** `ViewEdge[]` -> React Flow `Edge[]`. Labels are gated on `showLabels` (zoom >= threshold). */
-function toRfEdges(edges: ViewEdge[], showLabels: boolean): RFEdge[] {
+function toRfEdges(
+  edges: ViewEdge[],
+  showLabels: boolean,
+  editedTargets: ReadonlySet<string> = new Set(),
+): RFEdge[] {
   return edges.map((edge) => {
     const kind = edgeVisualKind(edge);
+    const edited = isEditedEdge(edge, editedTargets);
     const label = showLabels ? edgeLabelText(edge) : null;
     return {
       id: edge.id,
       source: edge.source,
       target: edge.target,
-      className: `graph-edge graph-edge-${kind}`,
+      className: `graph-edge graph-edge-${kind}${edited ? " graph-edge-edited" : ""}`,
       label: label ?? undefined,
       markerEnd: { type: MarkerType.ArrowClosed },
     };
@@ -624,13 +643,16 @@ function RunGraphCanvas({
     const shown = edges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
     return new Set(redundantEdges(visibleIds, shown).map((e) => e.id));
   }, [visibleIds, edges]);
+  // `?.` tolerates an older server that predates `graph_edits` (additive field).
+  const editedTargets = useMemo(() => editedTargetIds(graph?.graph_edits), [graph]);
   const rfEdges = useMemo(
     () =>
       toRfEdges(
         prefs.hideRedundantEdges ? edges.filter((e) => !redundantEdgeIds.has(e.id)) : edges,
         showEdgeLabels,
+        editedTargets,
       ),
-    [edges, showEdgeLabels, prefs.hideRedundantEdges, redundantEdgeIds],
+    [edges, showEdgeLabels, prefs.hideRedundantEdges, redundantEdgeIds, editedTargets],
   );
 
   if (graph && !isSupportedSchema) {

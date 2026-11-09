@@ -102,6 +102,23 @@ class CheckPolicy:
     max_new_tasks: int | None = None
 
 
+def edit_view(edit: GraphEdit) -> dict[str, Any]:
+    """JSON-safe, UI-facing projection of one persisted edit (graph API ``graph_edits``).
+
+    Lives here, next to the rules that produce edits, so the dashboard never reads edge fields
+    itself; ``dependencies`` is the effective ``depends_on`` after a ``set_edges`` edit.
+    """
+    return {
+        "op": edit.op,
+        "task_id": edit.task_id,
+        "dependencies": None if edit.depends_on is None else list(edit.depends_on),
+        "inputs": None if edit.inputs is None else list(edit.inputs),
+        "value": edit.value,
+        "source": edit.source,
+        "at": edit.at,
+    }
+
+
 @dataclass
 class EditPlan:
     """A validated, not-yet-committed mutation."""

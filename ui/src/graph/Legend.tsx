@@ -42,6 +42,11 @@ const DEPENDENCY_EDGE_ROWS: EdgeLegendRow[] = [
     className: "graph-edge-dependency-loop",
     label: 'Loop — solid line, loop color, labeled "loop <id>".',
   },
+  {
+    key: "edited",
+    className: "graph-edge-edited",
+    label: "Edited — thick line, the target's dependencies were rewritten at run time (sentinel/ctl).",
+  },
 ];
 
 /** HLD §8.6 edge table, spawn-view rows only. */

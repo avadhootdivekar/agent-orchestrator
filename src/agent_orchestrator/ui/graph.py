@@ -21,7 +21,9 @@ import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
+from .. import graph_check
 from ..dag import iter_dependency_edges
 from ..models import RunState, TaskSpec, WorkflowSnapshot, WorkflowSpec, strip_iter_suffix
 
@@ -162,6 +164,24 @@ class GraphRouter:
 
 
 @dataclass(frozen=True)
+class GraphEditView:
+    """One persisted pending-graph edit (``RunState.graph_edits``) as exposed to the UI.
+
+    Lets the canvas style dependency edges whose target had its edges rewritten
+    (``set_edges``) and tasks that were removed/skipped/re-prioritized at run time.
+    """
+
+    op: str
+    task_id: str
+    dependencies: list[str] | None
+    """Effective dependency ids after a ``set_edges`` edit (``None`` for other ops)."""
+    inputs: list[str] | None
+    value: int | None
+    source: str
+    at: str
+
+
+@dataclass(frozen=True)
 class RunGraph:
     """The full graph payload for one run (HLD §14.2)."""
 
@@ -177,6 +197,7 @@ class RunGraph:
     spawn_edges: list[GraphSpawnEdge]
     loops: list[GraphLoop]
     routers: list[GraphRouter]
+    graph_edits: list[GraphEditView]
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +250,7 @@ def compute_graph_version(state: RunState) -> str:
     on every poll without changing the graph's topology.
     """
     latest_sha = state.spec_sessions[-1].spec_sha256 if state.spec_sessions else None
-    payload = [
+    payload: list[Any] = [
         GRAPH_SCHEMA_VERSION,
         latest_sha,
         [t.id for t in state.injected_tasks],
@@ -237,6 +258,10 @@ def compute_graph_version(state: RunState) -> str:
         sorted(state.spawned_by),
         sorted(state.loop_iterations.items()),
     ]
+    if state.graph_edits:
+        # Appended only when present so a run with no edits keeps its pre-existing fingerprint
+        # (default-off byte-identical); an edit changes the edge set, so it must bump the version.
+        payload.append([list(graph_check.edit_view(e).values()) for e in state.graph_edits])
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:GRAPH_VERSION_HEX_CHARS]
 
@@ -456,4 +481,5 @@ def build_run_graph(state: RunState, snapshot: WorkflowSnapshot | None) -> RunGr
             )
             for r in wf.branches
         ],
+        graph_edits=[GraphEditView(**graph_check.edit_view(e)) for e in state.graph_edits],
     )

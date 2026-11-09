@@ -171,5 +171,16 @@
   ],
   "routers": [
     { "id": "classify", "router_task_id": "triage", "selected": ["bug"] }
+  ],
+  "graph_edits": [
+    {
+      "op": "set_edges",
+      "task_id": "u1",
+      "dependencies": ["cp1"],
+      "inputs": null,
+      "value": null,
+      "source": "sentinel-g01",
+      "at": "2026-11-09T10:00:00+00:00"
+    }
   ]
 }

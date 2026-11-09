@@ -45,7 +45,7 @@
 | T-Sn3Ctl-ao-ctl-cli | P1 | Done |
 | T-Sn4Rec-liveness-kill-recovery-ladder | P1 | Done (gates: see its STATUS) |
 | T-Sn5Ui1-sentinel-panel-and-control-api | P1 | Done |
-| T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Done (AC5: sentinel node/edge styling done in T-Sn9Pow; edited-edge styling still open) |
+| T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Done (AC5 closed in W10: graph API `graph_edits`, edited-edge + sentinel-node styling) |
 | T-Sn7Bkl-backlog-and-early-checkpoint | P2 | Done (NFR-13: idle-with-work 3.5s -> 0.01s) |
 | T-Sn8Gen-llm-generations-pack-handoff | P3 | Done |
 | T-Sn9Pow-llm-powers-directives-routed | P3 | Done (edited-edge styling deferred) |
