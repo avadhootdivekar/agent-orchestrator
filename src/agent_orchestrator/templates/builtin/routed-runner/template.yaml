@@ -92,6 +92,12 @@ params:
       Sentinel only: LLM sentinel powers -- `advise` (notes/directives) or `act` (also inject/edit/kill).
     required: false
     enum: ["advise", "act"]
+  sentinel_planner:
+    description: >-
+      Sentinel LLM only: make the `act` generation the L2 planner (trigger `idle_slots_no_backlog`):
+      when slots idle with nothing ready, it may inject follow-up units (sentinel origin).
+    required: false
+    enum: ["true", "false"]
   sentinel_budget_pct:
     description: >-
       Sentinel only: LLM sentinel spend cap as a percent (0-100] of the run cap.

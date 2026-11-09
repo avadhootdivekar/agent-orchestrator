@@ -39,6 +39,7 @@ ALLOWED_VARIABLES = frozenset(
         "params.sentinel_enabled",
         "params.sentinel_llm",
         "params.sentinel_powers",
+        "params.sentinel_planner",
         "params.sentinel_budget_pct",
         "raw.sentinel_member",
         "params.task_budget_usd",
@@ -106,6 +107,7 @@ DUMMY_VALUES = {
     "params.sentinel_enabled": "",
     "params.sentinel_llm": "",
     "params.sentinel_powers": "",
+    "params.sentinel_planner": "",
     "params.sentinel_budget_pct": "",
     "raw.sentinel_member": "",
 }
@@ -178,6 +180,7 @@ def test_template_yaml_params_shape() -> None:
         "sentinel_enabled",
         "sentinel_llm",
         "sentinel_powers",
+        "sentinel_planner",
         "sentinel_budget_pct",
     }
 

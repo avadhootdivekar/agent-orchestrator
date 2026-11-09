@@ -1161,6 +1161,11 @@ pre.code {
   stroke: var(--graph-edge-spawn);
 }
 
+.react-flow__edge.graph-edge-spawn-sentinel .react-flow__edge-path {
+  stroke: var(--graph-edge-spawn);
+  stroke-dasharray: 8 3;
+}
+
 .react-flow__edge.graph-edge-spawn-loop .react-flow__edge-path {
   stroke: var(--graph-edge-loop);
   stroke-dasharray: 1 4;
@@ -1195,6 +1200,11 @@ pre.code {
   padding: 0 8px 0 14px;
   font-size: 12px;
   overflow: hidden;
+}
+
+.task-node--sentinel {
+  border-style: dashed;
+  border-color: var(--graph-edge-spawn);
 }
 
 .task-node-stripe {
@@ -1441,6 +1451,11 @@ pre.code {
 .legend-edge-swatch.graph-edge-spawn-injected {
   border-top-style: solid;
   border-top-color: var(--graph-edge-spawn);
+}
+
+.legend-edge-swatch.graph-edge-spawn-sentinel {
+  border-top-color: var(--graph-edge-spawn);
+  border-top-style: dashed;
 }
 
 .legend-edge-swatch.graph-edge-spawn-loop {

@@ -69,6 +69,7 @@ PRE_CHANGE_OPENAPI_PATHS = {
     "/api/runs/{run_id}/log",
     "/api/runs/{run_id}/notes",
     "/api/runs/{run_id}/sentinel",
+    "/api/runs/{run_id}/sentinel/panel",
     "/api/runs/{run_id}/resume",
     "/api/runs/{run_id}/signals",
     "/api/runs/{run_id}/summary",

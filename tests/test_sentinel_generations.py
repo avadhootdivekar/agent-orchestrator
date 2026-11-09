@@ -300,7 +300,7 @@ def test_ledger_is_hash_chained(tmp_path: Path) -> None:
 def test_contract_rendered_from_schemas() -> None:
     text = sg.render_contract(sentinel_tick.KINDS_ENABLED, {"generation_ttl_minutes": 60})
     assert "ao.sentinel.handoff/v1" in text and "`note`" in text and "`kill`" in text
-    assert "`directive`" not in text  # only kinds the engine accepts today
+    assert "`directive`" in text  # enabled by T-Sn9Pow
     assert "generation_ttl_minutes" in text
 
 

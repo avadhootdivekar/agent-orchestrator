@@ -36,6 +36,7 @@ import type {
   SentinelControlOutcome,
   SentinelControlQueued,
   SentinelControlRequest,
+  SentinelPanelV2,
   SentinelStatus,
   RunSummary,
   TemplateInfo,
@@ -299,6 +300,9 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
+  /** Sentinel panel v2 (generations, proposals, directives). 404 on an old backend. */
+  sentinelPanel: (runId: string) =>
+    request<SentinelPanelV2>(`/runs/${encodeURIComponent(runId)}/sentinel/panel`),
   /** Sentinel status (`ao ctl status --json`). 404 on an old backend / unknown run. */
   sentinel: (runId: string) => request<SentinelStatus>(`/runs/${encodeURIComponent(runId)}/sentinel`),
 

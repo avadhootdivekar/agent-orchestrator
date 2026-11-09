@@ -514,6 +514,13 @@ def create_app(
         except DashboardError as exc:
             raise _http_error(exc) from exc
 
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/sentinel/panel")
+    def run_sentinel_panel(run_id: str) -> dict:
+        try:
+            return service.sentinel_panel(run_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
     @app.post(f"{API_PREFIX}/runs/{{run_id}}/control", status_code=202)
     def post_run_control(run_id: str, body: ControlRequest, request: Request) -> dict:
         principal = current_principal(request)

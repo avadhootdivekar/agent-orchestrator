@@ -3607,6 +3607,166 @@ def _check_r12_verdict(
     return violations
 
 
+# ===== Sentinel contract (E-Sn7tL2 T-Sn9Pow, FR-16): digest `sentinel{}` block + OV-R12b ======
+
+DIRECTIVE_RESPONSES: Final[frozenset[str]] = frozenset({"adopt", "redirect", "descope", "reject"})
+_MIN_DIRECTIVE_REJECT_RATIONALE_LEN: Final[int] = 40
+_SENTINEL_LIST_CAP: Final[int] = 50
+
+
+def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def _answered_directive_ids(inst: Path, k: int) -> set[str]:
+    """Directive ids answered by the verdict of any checkpoint BEFORE ck-k."""
+    done: set[str] = set()
+    for j in range(1, k):
+        path = verdict_path(inst, j)
+        if not path.is_file():
+            continue
+        try:
+            data = read_json_bounded(path, JSON_MAX_BYTES)
+        except (OversizeInputError, json.JSONDecodeError):
+            continue
+        responses = data.get("directive_responses") if isinstance(data, dict) else None
+        for resp in responses if isinstance(responses, list) else []:
+            if isinstance(resp, dict) and isinstance(resp.get("directive_id"), str):
+                done.add(resp["directive_id"])
+    return done
+
+
+def sentinel_digest_block(run_dir: Path, inst: Path, k: int) -> dict[str, Any] | None:
+    """The digest's `sentinel{}` block, or None when the run has no sentinel footprint (so a
+    sentinel-less run's digest stays byte-identical).
+
+    `directives[]` = every recorded directive not yet answered by an earlier checkpoint's
+    `directive_responses[]`; the rest are the sentinel's actions since the previous digest.
+    """
+    sdir, cdir = run_dir / "sentinel", run_dir / "control"
+    directives = _read_jsonl_dicts(cdir / "directives.jsonl")
+    powers = _read_jsonl_dicts(sdir / "powers.jsonl")
+    ledger = _read_jsonl_dicts(sdir / "ledger.jsonl")
+    alarms = _read_jsonl_dicts(cdir / "sentinel-alarms.jsonl")
+    if not (directives or powers or ledger or alarms):
+        return None
+    prev = _read_prev_digest(inst, k)
+    since = prev.get("generated_at") if isinstance(prev, dict) else None
+
+    def recent(recs: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+        out = [
+            r
+            for r in recs
+            if r.get("kind") == kind and (since is None or str(r.get("at", "")) > since)
+        ]
+        return out[-_SENTINEL_LIST_CAP:]
+
+    answered = _answered_directive_ids(inst, k)
+    open_directives = [d for d in directives if d.get("id") not in answered]
+    return {
+        "generation": sum(1 for r in ledger if r.get("event") == "generation_started"),
+        "directives": open_directives[-_SENTINEL_LIST_CAP:],
+        "injected_since_last_ckpt": recent(powers, "inject"),
+        "kills": recent(powers, "kill"),
+        "edits": recent(powers, "edit_pending"),
+        "carry_over": [],
+        "alarms": alarms[-_SENTINEL_LIST_CAP:],
+    }
+
+
+def _check_r12b_directive_responses(
+    ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    """OV-R12b: every open `digest.sentinel.directives[]` id is answered exactly once in the
+    verdict's `directive_responses[]` (adopt / redirect / descope / reject-with-rationale).
+    No `sentinel` block in the digest => nothing to check (byte-identical for old runs)."""
+    if ctx.verdict is None or not isinstance(ctx.digest, dict):
+        return []
+    block = ctx.digest.get("sentinel")
+    open_dirs = block.get("directives") if isinstance(block, dict) else None
+    if not isinstance(open_dirs, list) or not open_dirs:
+        return []
+    path = str(verdict_path(ctx.inst, _ck_wave_of_verdict_context(ctx)))
+    responses = ctx.verdict.get("directive_responses")
+    by_id: dict[str, list[dict[str, Any]]] = {}
+    for resp in responses if isinstance(responses, list) else []:
+        if isinstance(resp, dict) and isinstance(resp.get("directive_id"), str):
+            by_id.setdefault(resp["directive_id"], []).append(resp)
+    violations: list[RuleViolation] = []
+    for d in open_dirs:
+        did = d.get("id") if isinstance(d, dict) else None
+        if not isinstance(did, str):
+            continue
+        matches = by_id.get(did, [])
+        if len(matches) != 1:
+            violations.append(
+                RuleViolation(
+                    "R12b",
+                    f"verdict directive_responses has {len(matches)} entries for sentinel "
+                    f"directive {did!r}, expected exactly 1",
+                    path,
+                )
+            )
+            continue
+        resp = matches[0]
+        if resp.get("response") not in DIRECTIVE_RESPONSES:
+            violations.append(
+                RuleViolation(
+                    "R12b",
+                    f"directive {did!r} response must be one of {sorted(DIRECTIVE_RESPONSES)}",
+                    path,
+                )
+            )
+        elif resp.get("response") == "reject":
+            why = resp.get("rationale")
+            if not isinstance(why, str) or len(why) < _MIN_DIRECTIVE_REJECT_RATIONALE_LEN:
+                violations.append(
+                    RuleViolation(
+                        "R12b",
+                        f"directive {did!r} reject needs a rationale of >= "
+                        f"{_MIN_DIRECTIVE_REJECT_RATIONALE_LEN} chars",
+                        path,
+                    )
+                )
+    return violations
+
+
+def _record_directive_acks(run_dir: Path, k: int, now: datetime, verdict: dict[str, Any]) -> None:
+    """After a passing ckpt-check: mirror `directive_responses[]` into the RUN's
+    `control/directive-acks.jsonl` (the dashboard reads it). Idempotent per directive id."""
+    responses = verdict.get("directive_responses")
+    if not isinstance(responses, list) or not responses:
+        return
+    path = run_dir / "control" / "directive-acks.jsonl"
+    known = {r.get("directive_id") for r in _read_jsonl_dicts(path)}
+    fresh = [r for r in responses if isinstance(r, dict) and r.get("directive_id") not in known]
+    if not fresh:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for r in fresh:
+            rec = {
+                "directive_id": r.get("directive_id"),
+                "response": r.get("response"),
+                "rationale": r.get("rationale"),
+                "checkpoint": f"ck-{k:02d}",
+                "at": now_iso(now),
+            }
+            fh.write(json.dumps(rec, sort_keys=True) + "\n")
+
+
 def _check_r14_decision_manifest_consistency(
     ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
 ) -> list[RuleViolation]:
@@ -3693,6 +3853,7 @@ _MANIFEST_STRUCTURAL_CHECKS: Final[list[ManifestCheckFn]] = [
     _check_r4_r5_counts,
     _check_r10_terminal_shape,
     _check_r12_verdict,
+    _check_r12b_directive_responses,
     _check_r14_decision_manifest_consistency,
     _check_r16_must_close,
 ]
@@ -4689,6 +4850,7 @@ def ckpt_check(args: argparse.Namespace) -> None:
 
     if not violations and not args.dry_run and verdict is not None:
         _record_checkpoint_events(inst, k, now, manifest_path=manifest_path, verdict=verdict)
+        _record_directive_acks(state_path(ws, cfg, ctx_hook.run_id).parent, k, now, verdict)
 
     _finish_check(
         result_dir=checkpoint_dir(inst, k),
@@ -4801,6 +4963,9 @@ def ckpt_prep(args: argparse.Namespace) -> None:
             "limit_gaps": list(LIMIT_GAPS),
             "signals": signals,
         }
+        sentinel_block = sentinel_digest_block(state_path(ws, cfg, ctx.run_id).parent, inst, k)
+        if sentinel_block is not None:
+            digest["sentinel"] = sentinel_block
         if args.dry_run:
             print(json.dumps(digest, indent=2, sort_keys=True))
         else:

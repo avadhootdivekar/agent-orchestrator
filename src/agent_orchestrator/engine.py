@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from . import graph_check, hooks, sentinel_tick
+from . import graph_check, hooks, sentinel_powers, sentinel_tick
 from .artifacts import (
     ArtifactStore,
     LocalFsArtifactStore,
@@ -920,6 +920,12 @@ class Orchestrator:
             rt = sentinel_rt = self._start_sentinel(state, run_dir, run_log, workflow, agents)
             if rt is not None:
                 rt.edit_applier = self._make_edit_applier(rt, state, workflow, ctx, agents)
+                if self._sentinel is not None and self._sentinel.spec.llm.enabled:
+                    rt.proposal_gate = sentinel_powers.PowerGate(
+                        self._sentinel.spec.llm,
+                        Path(run_dir),
+                        lambda tid: self._llm_kill_protected(workflow, state, tid),
+                    )
             with ThreadPoolExecutor(
                 max_workers=rt.ceiling if rt is not None else self._max_parallel
             ) as pool:
@@ -3033,6 +3039,14 @@ class Orchestrator:
             rt.reshape_pending = True
 
         return apply
+
+    def _llm_kill_protected(self, workflow: WorkflowSpec, state: RunState, tid: str) -> bool:
+        """Barrier/emitter tasks are never LLM-killed (HLD §8.4)."""
+        try:
+            task = workflow.task(tid)
+        except KeyError:
+            return True
+        return bool(task.emit_tasks) or self._is_barrier(task, workflow, state)
 
     def _tick_llm_lane(
         self, rt: sentinel_tick.SentinelRuntime, state: RunState, now: datetime

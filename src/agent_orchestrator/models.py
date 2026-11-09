@@ -1023,6 +1023,12 @@ class SentinelLlmSpec(_SentinelBase):
     allow_kill: StrictBool = True
     max_llm_kills_per_hour: int = Field(default=2, ge=0)
     max_injections_per_hour: int = Field(default=6, ge=0)
+    llm_kill_min_running_minutes: int = Field(default=10, ge=0)
+    """An LLM ``kill`` is refused for a task that has run for less than this (T-Sn9Pow)."""
+    planner: StrictBool = False
+    """Opt-in (routed-runner): the ``act`` generation plans on idle slots with no backlog."""
+    planner_idle_seconds: int = Field(default=120, ge=1)
+    """Slot-seconds of idle-with-nothing-ready that fire ``idle_slots_no_backlog``."""
     heartbeat_minutes: int = Field(default=30, ge=1)
     generation_ttl_minutes: int = Field(default=60, ge=1)
     budget_usd: float | None = Field(default=None, gt=0)

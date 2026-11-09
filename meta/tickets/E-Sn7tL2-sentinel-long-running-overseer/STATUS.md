@@ -44,10 +44,10 @@
 | T-Sn3Ctl-ao-ctl-cli | P1 | Done |
 | T-Sn4Rec-liveness-kill-recovery-ladder | P1 | Done (gates: see its STATUS) |
 | T-Sn5Ui1-sentinel-panel-and-control-api | P1 | Done |
-| T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Done (AC5 graph-UI styling deferred) |
+| T-Sn6Brr-soft-barrier-and-pending-edits | P2 | Done (AC5: sentinel node/edge styling done in T-Sn9Pow; edited-edge styling still open) |
 | T-Sn7Bkl-backlog-and-early-checkpoint | P2 | Draft |
 | T-Sn8Gen-llm-generations-pack-handoff | P3 | Done |
-| T-Sn9Pow-llm-powers-directives-routed | P3 | Draft |
+| T-Sn9Pow-llm-powers-directives-routed | P3 | Done (edited-edge styling deferred) |
 | T-SnXAcc-e2e-and-live-smoke | P3 close | Draft |
 | T-SnXDoc-docs-readme-learnings | each phase | Draft |
 
@@ -64,3 +64,5 @@
 2. ~~T-Sn1Adr~~ signed off 2026-11-09 → P1 (T-Sn2Set in progress).
 
 - By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn6Brr done** — soft barrier, shared checker, `inject`/`edit_pending`, persisted graph edits (HLD §6.8). Graph-UI styling (AC5) deferred.
+
+- By: claude-sonnet-5-5 · Role: developer · Date: 2026-11-09 · Comment: **T-Sn9Pow done (see its STATUS for evidence and the honest gaps)** — LLM powers gate, directives + OV-R12b, routed-runner planner, panel v2, sentinel graph styling (HLD §8.7).

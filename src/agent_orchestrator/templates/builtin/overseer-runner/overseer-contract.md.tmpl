@@ -333,6 +333,10 @@ subcommands; run them yourself in dry-run mode before you finish, per "Self-chec
   stabilize/verify/document only).
 - **OV-R12** — the verdict answers every signal id; `accept` on high needs a rationale ≥40
   chars; `deferred` needs `deferred_reason` plus evidence ≥40 chars.
+- **OV-R12b** — when `digest.sentinel.directives[]` is non-empty, the verdict's
+  `directive_responses[]` answers every directive id exactly once with `response` in
+  `adopt|redirect|descope|reject`; `reject` needs a `rationale` ≥40 chars. A digest without a
+  `sentinel` block is unaffected.
 - **OV-R13** — attempt cap (`approach_change` required at the cap; forbidden above cap+1). Handoffs are not attempts, so a same-`work_item` continuation needs no `approach_change` — unless the trailing handoff chain is at its cap.
 - **OV-R13c** — rename dodge: a new work-item whose brief goal is too similar to, or whose
   prior attempts/touches intersect, a capped item's — reuse the capped key with

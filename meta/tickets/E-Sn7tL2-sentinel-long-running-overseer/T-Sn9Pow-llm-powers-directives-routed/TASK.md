@@ -3,10 +3,10 @@
 ## Metadata
 - Task ID: `T-Sn9Pow-llm-powers-directives-routed`
 - Epic ID: `E-Sn7tL2-sentinel-long-running-overseer`
-- Owner: `unassigned`
+- Owner: `developer (claude-sonnet-5-5)`
 - Created: `2026-11-09`
 - Last Updated: `2026-11-09`
-- Status: `Draft`
+- Status: `Done`
 - Estimate: `< 3 days`
 - Phase: P3
 - Agent: developer (+ reviewer)

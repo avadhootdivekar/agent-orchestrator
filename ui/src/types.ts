@@ -985,6 +985,49 @@ export interface SentinelStatus {
   recent_actions: SentinelAction[];
 }
 
+/** `GET /runs/{id}/sentinel/panel` (panel v2, T-Sn9Pow). */
+export const SENTINEL_PANEL_SCHEMA = "ao.sentinel.panel/v2";
+
+export interface SentinelGeneration {
+  generation: number;
+  task_id: string;
+  status: string;
+  started_at: string | null;
+  ended_at: string | null;
+  cost_usd: number;
+  triggers: string[];
+  graceful: boolean | null;
+  ended_reason: string | null;
+}
+
+export interface SentinelProposal {
+  id: string;
+  kind: string;
+  actor: string;
+  at: string | null;
+  rule_id?: string | null;
+  detail?: string | null;
+}
+
+export interface SentinelDirective {
+  id: string;
+  at: string | null;
+  actor: string;
+  severity: "info" | "warn" | "alarm" | string;
+  text: string;
+  rationale: string | null;
+  ack: { response: string; rationale: string | null; checkpoint: string; at: string } | null;
+}
+
+export interface SentinelPanelV2 {
+  schema: string;
+  run_id: string;
+  generations: SentinelGeneration[];
+  spend_usd: number;
+  proposals: { applied: SentinelProposal[]; quarantined: SentinelProposal[] };
+  directives: SentinelDirective[];
+}
+
 /** POST /api/runs/{id}/control body — an `ao.ctl/v1` entry minus id / actor / created_at. */
 export interface SentinelControlRequest {
   kind: "set" | "pause_llm" | "resume_llm" | "kill" | "note";

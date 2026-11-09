@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { formatCost, formatDuration, formatTimestamp } from "../format";
-import type { SentinelStatus } from "../types";
+import type { SentinelPanelV2, SentinelStatus } from "../types";
+import { useSentinelPanel } from "../useSentinelPanel";
 import { useSentinel } from "../useSentinel";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { ErrorBanner } from "./common";
@@ -243,8 +244,110 @@ function NoteBox({
   );
 }
 
+/** Panel v2 (T-Sn9Pow): generation timeline + spend, proposals (applied / quarantined), directives. */
+export function SentinelV2({ panel }: { panel: SentinelPanelV2 }) {
+  const { generations, proposals, directives } = panel;
+  return (
+    <div className="stack" style={{ gap: 14 }} data-testid="sentinel-v2">
+      <section aria-label="Generations">
+        <h3>Generations</h3>
+        {generations.length === 0 ? (
+          <p className="muted">No generations yet.</p>
+        ) : (
+          <>
+            <p data-testid="sentinel-gen-spend">
+              {generations.length} generation(s) · total spend {formatCost(panel.spend_usd)}
+            </p>
+            <div className="table-wrap">
+              <table data-testid="sentinel-generations">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Started</th>
+                    <th>Status</th>
+                    <th>Triggers</th>
+                    <th>Cost</th>
+                    <th>End</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {generations.map((g) => (
+                    <tr key={g.task_id}>
+                      <td className="num">g{String(g.generation).padStart(2, "0")}</td>
+                      <td>{g.started_at ? formatTimestamp(g.started_at) : "—"}</td>
+                      <td>
+                        {g.status}
+                        {g.graceful === false ? " (ungraceful)" : ""}
+                      </td>
+                      <td>{g.triggers.length ? g.triggers.join(", ") : "—"}</td>
+                      <td className="num">{formatCost(g.cost_usd)}</td>
+                      <td>{g.ended_reason ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
+
+      <section aria-label="Proposals">
+        <h3>Proposals</h3>
+        <p data-testid="sentinel-proposal-counts">
+          {proposals.applied.length} applied · {proposals.quarantined.length} quarantined
+        </p>
+        {proposals.applied.length + proposals.quarantined.length === 0 ? null : (
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }} data-testid="sentinel-proposals">
+            {proposals.applied.map((p) => (
+              <li key={`a-${p.id}`} data-state="applied">
+                <span className="mono">
+                  {p.actor} · {p.kind} · {p.id}
+                </span>{" "}
+                — applied
+              </li>
+            ))}
+            {proposals.quarantined.map((p) => (
+              <li key={`q-${p.id}`} data-state="quarantined">
+                <span className="mono">
+                  {p.actor} · {p.kind} · {p.id}
+                </span>{" "}
+                — quarantined by <span className="mono">{p.rule_id ?? "unknown rule"}</span>
+                {p.detail ? `: ${p.detail}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-label="Directives">
+        <h3>Directives</h3>
+        {directives.length === 0 ? (
+          <p className="muted">None raised.</p>
+        ) : (
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }} data-testid="sentinel-directives">
+            {directives.map((d) => (
+              <li key={d.id} data-severity={d.severity}>
+                <span className="mono">
+                  [{d.severity}] {d.actor} · {d.id}
+                </span>
+                <div style={{ whiteSpace: "pre-wrap" }}>{d.text}</div>
+                <div className={d.ack ? "muted" : undefined} data-testid={`directive-ack-${d.id}`}>
+                  {d.ack
+                    ? `acknowledged by ${d.ack.checkpoint}: ${d.ack.response}${d.ack.rationale ? ` — ${d.ack.rationale}` : ""}`
+                    : "awaiting checkpoint acknowledgement"}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
 export function SentinelPanel({ runId, live }: { runId: string; live: boolean }) {
   const { status, error, submitting, entry, submit } = useSentinel(runId);
+  const { panel } = useSentinelPanel(runId);
   if (status === null) return null; // old backend (404) or not a status document
   const s = status.sentinel;
   const llm = status.llm;
@@ -383,6 +486,8 @@ export function SentinelPanel({ runId, live }: { runId: string; live: boolean })
               {llm.paused ? "Resume LLM" : "Pause LLM"}
             </button>
           </section>
+
+          {panel ? <SentinelV2 panel={panel} /> : null}
 
           <section aria-label="Notes">
             <h3>Note</h3>

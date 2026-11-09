@@ -219,6 +219,7 @@ function edgeVisualKind(edge: ViewEdge): string {
   const origin = (edge as SpawnEdge).origin;
   if (origin === "loop") return "spawn-loop";
   if (origin === "injected") return "spawn-injected";
+  if (origin === "sentinel") return "spawn-sentinel";
   return "spawn-other";
 }
 

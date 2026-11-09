@@ -73,6 +73,14 @@ Your verdict's `signal_responses[]` must contain **one entry per signal id** in
 `rationale` of at least 40 characters explaining why accepting the repeat/stall/drift
 is actually the right call, not a shrug.
 
+## Acknowledge sentinel directives
+If `digest.sentinel.directives[]` is present and non-empty, the run's sentinel raised directives
+for you. Your verdict's `directive_responses[]` must contain **one entry per directive id**:
+`{"directive_id": "<id>", "response": "adopt|redirect|descope|reject", "rationale": "..."}`
+(`reject` needs a rationale of ≥40 chars). Mechanically checked (`OV-R12b`); a missing ack fails
+`ckpt-check`. Also read `digest.sentinel` (`injected_since_last_ckpt`, `kills`, `edits`, `alarms`):
+the sentinel owns health/recovery/ad-hoc injection, you own charter alignment and may revisit them.
+
 ## Update progress
 For **every** acceptance criterion across the charter, set its `criteria[]` status
 (`met|unmet|deferred`), using the exact `id` (`A<n>.<m>`) intake assigned in
@@ -94,7 +102,8 @@ evidence, not merely asserted in your own rationale.
 
 ## Write your outputs
 - `verdict.json` (schema `ao.overseer.verdict/v1` in the contract): `decision`,
-  `rationale`, `next_wave_goal`, `alignment[]`, `criteria[]`, `signal_responses[]`, and
+  `rationale`, `next_wave_goal`, `alignment[]`, `criteria[]`, `signal_responses[]`, `directive_responses[]` (only when the digest has open sentinel
+  directives), and
   `hold_questions` (required, ≥1, iff `decision == "hold"`).
 - `report.md`: the human-readable state of the run — this is what an operator reads
   via `ao status`. State, per ask: done / in progress / current usable status; and the

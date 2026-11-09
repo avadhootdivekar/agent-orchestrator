@@ -44,6 +44,7 @@ from .sentinel_driver import (
     Handle,
     SentinelDriver,
 )
+from .sentinel_powers import PLANNER_CONTRACT_SECTION, TRIGGER_IDLE_SLOTS, backlog_is_empty
 
 SENTINEL_DIR: Final = "sentinel"
 MEMORY_FILE: Final = "memory.md"
@@ -88,7 +89,13 @@ TRIGGER_HEARTBEAT: Final = "heartbeat"
 TRIGGER_HUMAN_NOTE: Final = "human_note"
 TRIGGER_UNIT_FAILED: Final = "unit_failed"
 TRIGGER_STUCK: Final = "stuck_task"
-TRIGGER_ORDER: Final = (TRIGGER_STUCK, TRIGGER_UNIT_FAILED, TRIGGER_HUMAN_NOTE, TRIGGER_HEARTBEAT)
+TRIGGER_ORDER: Final = (
+    TRIGGER_STUCK,
+    TRIGGER_UNIT_FAILED,
+    TRIGGER_HUMAN_NOTE,
+    TRIGGER_IDLE_SLOTS,
+    TRIGGER_HEARTBEAT,
+)
 
 END_TTL: Final = "ttl"
 END_MAX_TRIGGERS: Final = "max_triggers"
@@ -306,7 +313,9 @@ def merge_memory(
 # ---------------------------------------------------------------------------------------------
 
 
-def render_contract(enabled_kinds: frozenset[str], limits: dict[str, Any]) -> str:
+def render_contract(
+    enabled_kinds: frozenset[str], limits: dict[str, Any], *, planner: bool = False
+) -> str:
     """``sentinel-contract.md``: what a generation may read, write and propose (from schemas)."""
     kinds = ", ".join(f"`{k}`" for k in sorted(enabled_kinds))
     lim = "\n".join(f"- `{k}`: {v}" for k, v in sorted(limits.items()))
@@ -329,6 +338,7 @@ def render_contract(enabled_kinds: frozenset[str], limits: dict[str, Any]) -> st
         f"{lim}\n\n"
         "Rejected proposals are quarantined; repeated rejections pause the LLM lane. Do not repeat "
         "anything listed under `do_not_repeat` in the previous handoff.\n\n"
+        f"{PLANNER_CONTRACT_SECTION if planner else ''}"
         f"## `{HANDOFF_SCHEMA_ID}`\n```json\n{schema}\n```\n"
     )
 
@@ -583,6 +593,11 @@ class GenerationLane:
         self._handle: Handle | None = None
         self._stop_reason: str | None = None
         self._handoff_seen_at: datetime | None = None
+        self._idle_mark: float | None = None
+        """``slot_seconds_idle_no_ready`` at the last planner trigger/baseline (in-memory)."""
+
+    def _planner_on(self) -> bool:
+        return self.spec.planner and self.spec.powers == "act"
 
     # -- lifecycle ---------------------------------------------------------------------------
 
@@ -656,6 +671,8 @@ class GenerationLane:
                 )
             elif kind == TRIGGER_HUMAN_NOTE:
                 hit = any(self._fresh(n.at, kind, sent) for n in sent.notes)
+            elif kind == TRIGGER_IDLE_SLOTS:
+                hit = self._planner_idle_hit(state)
             else:
                 ref = _parse(sent.last_gen_ended_at) or _parse(state.started_at) or now
                 hit = self.heartbeat_enabled and (
@@ -668,6 +685,30 @@ class GenerationLane:
             if hit:
                 out.append(kind)
         return out
+
+    def _planner_idle_hit(self, state: RunState) -> bool:
+        """routed-runner L2: idle-with-nothing-ready slot-seconds grew enough, and no backlog.
+
+        The baseline is taken on first sight (and after each fire), so resume never fires on the
+        whole pre-resume history. Only while at least one work task is still unfinished.
+        """
+        if not self._planner_on() or state.metrics is None:
+            return False
+        cur = state.metrics.slot_seconds_idle_no_ready
+        if self._idle_mark is None:
+            self._idle_mark = cur
+            return False
+        unfinished = any(
+            s.status in ("pending", "running", "killed")
+            for t, s in state.tasks.items()
+            if not is_sentinel_generation_task(t)
+        )
+        if not unfinished or not backlog_is_empty(self.run_dir):
+            return False
+        if cur - self._idle_mark >= self.spec.planner_idle_seconds:
+            self._idle_mark = cur
+            return True
+        return False
 
     # -- the tick ----------------------------------------------------------------------------
 
@@ -743,7 +784,9 @@ class GenerationLane:
                 generation=gen,
                 now=now,
                 triggers=triggers,
-                contract=render_contract(self.enabled_kinds, self._contract_limits()),
+                contract=render_contract(
+                    self.enabled_kinds, self._contract_limits(), planner=self._planner_on()
+                ),
                 run_dir=self.run_dir,
             ),
         )

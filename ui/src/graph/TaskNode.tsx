@@ -33,7 +33,7 @@ export interface TaskNodeData extends Record<string, unknown> {
 export type TaskNodeType = Node<TaskNodeData, "task">;
 
 /** Known `GraphNode.origin`/`SpawnEdge.origin` values (ADR-0017 D1 — origin is an open set). */
-const KNOWN_ORIGINS = new Set(["static", "injected", "loop"]);
+const KNOWN_ORIGINS = new Set(["static", "injected", "loop", "sentinel"]);
 
 /** Statuses rendered dimmed + dashed (HLD §8.6: "not_taken or skipped ... reduced opacity ... dashed"). */
 const DASHED_DIMMED_STATUSES = new Set(["not_taken", "skipped"]);
@@ -45,6 +45,7 @@ const DASHED_DIMMED_STATUSES = new Set(["not_taken", "skipped"]);
 export const BADGE_LABELS = {
   ordinal: (n: number) => `execution order ${n}`,
   injected: "injected task",
+  sentinel: "sentinel task",
   loopIteration: (n: number) => `loop iteration ${n}`,
   emitter: (childrenCount: number) =>
     `spawned ${childrenCount} task${childrenCount === 1 ? "" : "s"}`,
@@ -66,6 +67,9 @@ export function badgesFor(node: ViewNode): Badge[] {
   }
   if (node.origin === "injected") {
     badges.push({ glyph: "◆", text: BADGE_LABELS.injected });
+  }
+  if (node.origin === "sentinel") {
+    badges.push({ glyph: "🛡", text: BADGE_LABELS.sentinel });
   }
   if (node.origin === "loop" && node.iteration !== null) {
     badges.push({
@@ -151,6 +155,7 @@ function TaskNodeComponent({ data, selected }: NodeProps<TaskNodeType>) {
     dashed ? "task-node--dashed" : null,
     isDashedDimmed ? "task-node--dimmed" : null,
     selected ? "task-node--selected" : null,
+    node.origin === "sentinel" ? "task-node--sentinel" : null,
   ]
     .filter(Boolean)
     .join(" ");

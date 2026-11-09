@@ -52,6 +52,11 @@ const SPAWN_EDGE_ROWS: EdgeLegendRow[] = [
     label: "Injected — solid line, spawn color, one parent to each child.",
   },
   {
+    key: "sentinel",
+    className: "graph-edge-spawn-sentinel",
+    label: "Sentinel — dashed spawn-colored line, one parent to each child.",
+  },
+  {
     key: "loop",
     className: "graph-edge-spawn-loop",
     label: 'Loop — dotted line, loop color, labeled "iter N".',
@@ -66,6 +71,7 @@ const SPAWN_EDGE_ROWS: EdgeLegendRow[] = [
 const NODE_BADGE_ROWS: { glyph: string; text: string }[] = [
   { glyph: "#1", text: BADGE_LABELS.ordinal(1) },
   { glyph: "◆", text: BADGE_LABELS.injected },
+  { glyph: "🛡", text: BADGE_LABELS.sentinel },
   { glyph: "↻2", text: BADGE_LABELS.loopIteration(2) },
   { glyph: "⤴3", text: BADGE_LABELS.emitter(3) },
   { glyph: "⑂", text: BADGE_LABELS.router },

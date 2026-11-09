@@ -24,7 +24,7 @@ from typing import Any
 
 import yaml
 
-from .. import control
+from .. import control, sentinel_panel
 from .. import inputs as run_inputs
 from ..auth.paths import default_denied_paths, is_within
 from ..config import load_agents, load_reposets
@@ -980,6 +980,11 @@ class DashboardService:
         """The ``ao ctl status --json`` document; a pre-sentinel run reports ``enabled: false``."""
         state = self._known_run_state(run_id)
         return control.build_status(state, self._repo.run_dir(run_id))
+
+    def sentinel_panel(self, run_id: str) -> dict:
+        """Panel v2 data: generation timeline + spend, proposals applied/quarantined, directives."""
+        state = self._known_run_state(run_id)
+        return sentinel_panel.build_panel(state, self._repo.run_dir(run_id))
 
     def submit_control(
         self,

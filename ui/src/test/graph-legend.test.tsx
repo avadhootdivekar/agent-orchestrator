@@ -39,7 +39,8 @@ describe("Legend", () => {
     const section = within(edgesSection());
     expect(section.getByText(/injected/i)).not.toBeNull();
     expect(section.getByText(/loop/i)).not.toBeNull();
-    expect(section.getAllByRole("listitem").length).toBe(2);
+    expect(section.getByText(/sentinel/i)).not.toBeNull();
+    expect(section.getAllByRole("listitem").length).toBe(3);
   });
 
   it("AC-6: source=\"unavailable\" shows the 'static dependencies unavailable' note", () => {

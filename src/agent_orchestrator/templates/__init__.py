@@ -512,6 +512,8 @@ def _sentinel_member(params: dict[str, str]) -> str:
         llm["enabled"] = True
     if params.get("sentinel_powers"):
         llm["powers"] = params["sentinel_powers"]
+    if params.get("sentinel_planner", "").lower() in _TRUTHY_PARAM_VALUES:
+        llm["planner"] = True
     if params.get("sentinel_budget_pct"):
         llm["budget_pct"] = float(params["sentinel_budget_pct"])
     # Only the params the operator set are rendered: every key in a workflow `sentinel:` block

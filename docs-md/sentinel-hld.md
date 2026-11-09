@@ -374,6 +374,34 @@ process group, parses cost/tokens with the same `parse_usage_and_429` the task e
   `max_tokens` stop is effective for drivers that report progress; TTL/`--max-budget-usd` bound the CLI one. Powers (what a
   proposal may do beyond `note/pause/kill/request_*`) land in T-Sn9Pow.
 
+### 8.7 As built: LLM powers, directives, routed-runner planner (T-Sn9Pow, 2026-11-09)
+- **Gate** `sentinel_powers.PowerGate`: the engine wires it as `SentinelRuntime.proposal_gate` (only when the LLM lane is
+  enabled); the tick calls it for every entry whose actor is `sentinel-gNN`, before applying, and a refusal is quarantined
+  with a `PWR-*` rule id (so it counts toward `max_consecutive_rejections`). Human/CLI/dashboard actors never pass through it.
+  `advise` allows `note`, `directive`, `request_hold`, `request_cancel`; `act` adds `inject`, `edit_pending`, `kill`;
+  `set`/`resume_llm`/`release_backlog`/`cancel`/`pause_llm` are operator-only (`PWR-KIND`; `PWR-ADVISE` for an act kind under advise).
+- **Flags/limits**: `allow_graph_edits` (`GE-DISABLED`), `max_injections_per_hour` (`PWR-INJECT-RATE`, counted in tasks);
+  `allow_kill` (`PWR-KILL-DISABLED`), rationale >= 40 chars (`PWR-KILL-RATIONALE`), target must be running
+  (`PWR-KILL-TARGET`), never a barrier/emitter (`PWR-KILL-PROTECTED`), running >= `llm_kill_min_running_minutes` (new, default 10;
+  `PWR-KILL-MIN-RUNNING`), <= `max_llm_kills_per_hour` (`PWR-KILL-RATE`). Rate windows are read from `sentinel/powers.jsonl`
+  (append-only, survives resume); only accepted-by-gate proposals are recorded. An accepted LLM kill then follows the §5.4 ladder.
+- **Directives**: kind `directive` is now enabled (`payload.text`, `payload.severity` info|warn|alarm, `rationale` required);
+  stored in `<run>/control/directives.jsonl` (id = entry id, replay-safe).
+- **Checkpoint contract (OV-R12b)**: `ckpt-prep` adds `digest.sentinel{generation, directives[], injected_since_last_ckpt[], kills[],
+  edits[], carry_over[], alarms[]}` only when the run has a sentinel footprint (otherwise the digest is byte-identical). `directives[]`
+  = recorded directives not answered by an earlier checkpoint. `ckpt-check` requires the verdict's `directive_responses[]` to answer
+  each exactly once (`adopt|redirect|descope|reject`; reject needs a >= 40 char rationale); a passing check mirrors the answers to
+  `<run>/control/directive-acks.jsonl` for the dashboard. `carry_over[]` is always empty until T-Sn7Bkl lands.
+- **routed-runner planner**: opt-in `sentinel_planner=true` template param -> `sentinel.llm.planner` (requires `powers: act`). New
+  trigger `idle_slots_no_backlog`: `metrics.slot_seconds_idle_no_ready` grew by >= `planner_idle_seconds` (default 120) since the
+  in-memory baseline (taken on first sight, so resume never fires on history), unfinished work remains, and `control/backlog.json`
+  is absent/empty. The pack contract gets a "Planner role" section; injected units carry origin `sentinel`.
+- **Panel v2**: `GET /api/runs/{id}/sentinel/panel` (`ao.sentinel.panel/v2`, built by `sentinel_panel.build_panel`, the v1 status
+  schema is untouched): generation timeline + spend, proposals applied/quarantined (rule id), directives + acks. Graph: sentinel-origin
+  nodes get a shield badge + dashed node border, sentinel spawn edges a dashed style + legend row.
+- Not done: styling of *edited* (edge add/remove) dependency edges needs the graph API to expose `RunState.graph_edits` (not in
+  this change); live-LLM behaviour is covered only by the scripted driver (live smoke = T-SnXAcc).
+
 ## 9. Authority and checkpoint contract (FR-16)
 
 ### 9.1 Split

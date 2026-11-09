@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from . import graph_check
+from . import graph_check, sentinel_powers
 from .models import (
     SENTINEL_GEN_TASK_PREFIX,
     CancelToken,
@@ -82,6 +82,7 @@ KINDS_ENABLED: Final = frozenset(
         "cancel",
         "inject",
         "edit_pending",
+        "directive",
     }
 )
 GRAPH_KINDS: Final = frozenset({"inject", "edit_pending"})
@@ -166,6 +167,8 @@ class SentinelRuntime:
     """Engine-owned ``inject``/``edit_pending`` applier (T-Sn6Brr); None => kinds not enabled."""
     reshape_pending: bool = False
     """Set by the applier; ``run()`` re-derives graph/order/preds on the next loop pass."""
+    proposal_gate: Callable[[dict[str, Any], RunState, datetime], None] | None = None
+    """LLM-power policy (T-Sn9Pow): raises ``graph_check.EditRejected`` for a refused proposal."""
     max_consecutive_rejections: int | None = None
     """Auto-pause the LLM lane after this many consecutive rejected sentinel proposals."""
 
@@ -319,7 +322,17 @@ def _apply_entry(
 ) -> None:
     kind = entry["kind"]
     payload = entry.get("payload", {})
-    if kind == "set":
+    if rt.proposal_gate is not None and is_sentinel_actor(entry["actor"]):
+        try:
+            rt.proposal_gate(entry, state, _entry_now(at))
+        except graph_check.EditRejected as rej:
+            raise _Reject(rej.rule_id, rej.detail) from rej
+    if kind == "directive":
+        try:
+            sentinel_powers.append_directive(rt.control_dir, entry, at)
+        except graph_check.EditRejected as rej:
+            raise _Reject(rej.rule_id, rej.detail) from rej
+    elif kind == "set":
         _apply_set(entry, state, rt, sent, at)
     elif kind == "pause_llm":
         sent.llm_paused = True
