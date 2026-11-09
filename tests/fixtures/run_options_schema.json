@@ -2,6 +2,9 @@
   "json_schema": {
     "additionalProperties": false,
     "properties": {
+      "autocompact": {
+        "type": "string"
+      },
       "budget_total": {
         "type": "integer"
       },
@@ -43,6 +46,15 @@
           "max"
         ],
         "type": "string"
+      },
+      "turn_budget": {
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "type": "string"
       }
     },
     "type": "object"
@@ -58,11 +70,35 @@
       "help": "Claude model for all agents (an alias such as sonnet, or a pinned id).",
       "name": "model",
       "no_flag": null,
+      "providers": [],
       "resumable": true,
       "type": "str",
       "ui": {
         "group": "Agent",
         "label": "Model"
+      }
+    },
+    {
+      "choices": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "config": "turn_budget",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_TURN_BUDGET",
+      "flag": "--turn-budget",
+      "help": "Max-turn tier for all agents: low=15, medium=30, high=60, xhigh=120 turns.",
+      "name": "turn_budget",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "enum",
+      "ui": {
+        "group": "Agent",
+        "label": "Turn budget"
       }
     },
     {
@@ -76,14 +112,35 @@
       "deprecated_flags": [],
       "env": "AO_EFFORT",
       "flag": "--effort",
-      "help": "Effort level for all agents (derives the turn limit).",
+      "help": "DEPRECATED alias of --turn-budget (will mean thinking effort after migration).",
       "name": "effort",
       "no_flag": null,
+      "providers": [],
       "resumable": true,
       "type": "enum",
       "ui": {
         "group": "Agent",
-        "label": "Effort"
+        "label": "Effort (deprecated: turn budget)"
+      }
+    },
+    {
+      "choices": [],
+      "config": "autocompact",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_AUTOCOMPACT",
+      "flag": "--autocompact",
+      "help": "Context auto-compaction for agents without their own: 'auto' or a context-token threshold 100000-1000000.",
+      "name": "autocompact",
+      "no_flag": null,
+      "providers": [
+        "claude-cli"
+      ],
+      "resumable": true,
+      "type": "str",
+      "ui": {
+        "group": "Agent",
+        "label": "Autocompact"
       }
     },
     {
@@ -99,9 +156,12 @@
       "deprecated_flags": [],
       "env": "AO_THINKING_EFFORT",
       "flag": "--thinking-effort",
-      "help": "Model reasoning depth for all agents (claude: --effort). Unset = agent default.",
+      "help": "Model reasoning depth for all agents: low, medium, high, xhigh or max (claude: --effort). Unset = agent default.",
       "name": "thinking_effort",
       "no_flag": null,
+      "providers": [
+        "claude-cli"
+      ],
       "resumable": true,
       "type": "enum",
       "ui": {
@@ -119,6 +179,7 @@
       "help": "Max attempts per task (overrides workflow defaults.retries.max_attempts).",
       "name": "max_attempts",
       "no_flag": null,
+      "providers": [],
       "resumable": true,
       "type": "int",
       "ui": {
@@ -133,9 +194,10 @@
       "deprecated_flags": [],
       "env": "AO_MAX_TURNS",
       "flag": "--max-turns",
-      "help": "Max turns per claude agent invocation (overrides the effort-derived value).",
+      "help": "Max turns per claude agent invocation (overrides the turn-budget-derived value).",
       "name": "max_turns",
       "no_flag": null,
+      "providers": [],
       "resumable": true,
       "type": "int",
       "ui": {
@@ -153,6 +215,7 @@
       "help": "Max independent ready tasks to run at once (1 = serial).",
       "name": "max_parallel",
       "no_flag": null,
+      "providers": [],
       "resumable": true,
       "type": "int",
       "ui": {
@@ -170,6 +233,7 @@
       "help": "Total token budget for the run (CLI only; the workflow's budget otherwise).",
       "name": "budget_total",
       "no_flag": null,
+      "providers": [],
       "resumable": true,
       "type": "int",
       "ui": {
@@ -187,6 +251,7 @@
       "help": "Max seconds to wait through a Claude quota-exhaustion episode before failing.",
       "name": "quota_max_wait",
       "no_flag": null,
+      "providers": [],
       "resumable": true,
       "type": "int",
       "ui": {
@@ -204,6 +269,7 @@
       "help": "Seconds to sleep between quota-exhaustion re-run attempts.",
       "name": "quota_poll_interval",
       "no_flag": null,
+      "providers": [],
       "resumable": true,
       "type": "int",
       "ui": {
@@ -221,6 +287,7 @@
       "help": "Enable task-failure self-healing; overrides env/config in either direction.",
       "name": "self_heal",
       "no_flag": "--no-self-heal",
+      "providers": [],
       "resumable": true,
       "type": "bool",
       "ui": {
@@ -238,6 +305,7 @@
       "help": "Record git HEADs for `ao report-survival` serial attribution.",
       "name": "record_git_heads",
       "no_flag": "--no-record-git-heads",
+      "providers": [],
       "resumable": true,
       "type": "bool",
       "ui": null

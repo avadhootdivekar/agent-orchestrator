@@ -27,6 +27,73 @@ EFFORT_MAX_TURNS: dict[str, int] = {"low": 15, "medium": 30, "high": 60, "xhigh"
 # cache/constants.py, or stale cache hits will survive the change.
 # Shared Literal so AgentSpec and TaskSpec can't drift on the allowed effort values.
 EffortLevel = Literal["low", "medium", "high", "xhigh"]
+# T-f0d7gm: `turn_budget` is the canonical name of the max-turn tier (low|medium|high|xhigh ->
+# 15/30/60/120 via EFFORT_MAX_TURNS); the legacy spec key / flag / env `effort` is a deprecated
+# alias for it in this release (it will mean thinking effort after T-9ymKja).
+TurnBudget = EffortLevel
+TURN_BUDGETS: tuple[str, ...] = ("low", "medium", "high", "xhigh")
+LEGACY_EFFORT_DEPRECATION = (
+    "'effort' is deprecated and currently means the turn budget; use 'turn_budget' "
+    "(low|medium|high|xhigh -> 15/30/60/120 turns). After the migration 'effort' will mean "
+    "thinking effort -- run `ao migrate effort-keys`."
+)
+# Provider-neutral context auto-compaction threshold: "auto" or a context-token count. The bounds
+# are the claude CLI's documented `--autocompact` range.
+AUTOCOMPACT_AUTO = "auto"
+AUTOCOMPACT_MIN_TOKENS = 100_000
+AUTOCOMPACT_MAX_TOKENS = 1_000_000
+
+
+def parse_autocompact(value: object) -> str | int:
+    """Normalise an autocompact setting to ``"auto"`` or an int token threshold (100k-1M).
+
+    Accepts ``"auto"``, an int, or a digit string (CLI/env/YAML); raises ``ValueError`` otherwise.
+    """
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text == AUTOCOMPACT_AUTO:
+            return AUTOCOMPACT_AUTO
+        if text.isdigit():
+            value = int(text)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"autocompact must be 'auto' or an integer {AUTOCOMPACT_MIN_TOKENS}-"
+            f"{AUTOCOMPACT_MAX_TOKENS}, got {value!r}"
+        )
+    if not AUTOCOMPACT_MIN_TOKENS <= value <= AUTOCOMPACT_MAX_TOKENS:
+        raise ValueError(
+            f"autocompact must be 'auto' or an integer {AUTOCOMPACT_MIN_TOKENS}-"
+            f"{AUTOCOMPACT_MAX_TOKENS}, got {value}"
+        )
+    return value
+
+
+_warned_legacy_effort = False
+
+
+def merge_legacy_effort(data: Any) -> Any:
+    """``before`` validator body shared by AgentSpec/TaskSpec: map the deprecated ``effort`` key
+    onto ``turn_budget`` (warning once per process); both set and different is an error."""
+    global _warned_legacy_effort
+    if not isinstance(data, dict) or data.get("effort") is None:
+        if isinstance(data, dict) and "effort" in data:
+            data = {k: v for k, v in data.items() if k != "effort"}
+        return data
+    data = dict(data)
+    legacy = data.pop("effort")
+    current = data.get("turn_budget")
+    if current is not None and current != legacy:
+        raise ValueError(
+            f"conflicting 'effort' ({legacy!r}) and 'turn_budget' ({current!r}): "
+            "'effort' is a deprecated alias of 'turn_budget'; set only 'turn_budget'"
+        )
+    data["turn_budget"] = legacy
+    if not _warned_legacy_effort:
+        _warned_legacy_effort = True
+        logger.warning("DEPRECATED: %s", LEGACY_EFFORT_DEPRECATION)
+    return data
+
+
 # Provider-neutral "how hard should the model think" knob, DISTINCT from `EffortLevel` (which only
 # derives a --max-turns cap). Each executor translates it: claude_cli -> `--effort <level>`.
 # None (the default) injects nothing, so argv/cache keys stay byte-identical and the CLI's own
@@ -253,8 +320,29 @@ class AgentSpec(BaseModel):
     context_window: Literal["isolated", "shared"] = "isolated"
     extra_args: list[str] = []
     model: str | None = None  # e.g. "claude-haiku-5-5"; passed as --model
-    effort: EffortLevel | None = None  # → --max-turns via EFFORT_MAX_TURNS
-    max_turns: int | None = None  # explicit --max-turns; overrides effort-derived value when set
+    # Max-turn tier (→ --max-turns via EFFORT_MAX_TURNS). The legacy key `effort` is a deprecated
+    # alias, mapped here by `_legacy_effort_alias` (read it back via the `effort` property).
+    turn_budget: TurnBudget | None = None
+    max_turns: int | None = None  # explicit --max-turns; overrides turn_budget-derived value
+    # Provider-neutral context auto-compaction ("auto" or 100k-1M tokens); executors that lack
+    # the capability (`Executor.supported_settings`) ignore it. claude_cli -> `--autocompact`.
+    autocompact: str | int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_effort_alias(cls, data: Any) -> Any:
+        return merge_legacy_effort(data)
+
+    @field_validator("autocompact")
+    @classmethod
+    def _check_autocompact(cls, v: str | int | None) -> str | int | None:
+        return None if v is None else parse_autocompact(v)
+
+    @property
+    def effort(self) -> TurnBudget | None:
+        """Deprecated read alias of `turn_budget`."""
+        return self.turn_budget
+
     # Model reasoning depth (provider-neutral); claude_cli maps it to `--effort`. Unset = no flag.
     thinking_effort: ThinkingEffort | None = None
     # Working directory the agent process runs in. Resolved against the workspace root
@@ -440,9 +528,25 @@ class TaskSpec(BaseModel):
     # agent's own value, never the reverse (fill-in, not clobber). See
     # `resolve_effective_agent` for the one place this precedence is applied.
     model: str | None = None
-    effort: EffortLevel | None = None
+    turn_budget: TurnBudget | None = None
     max_turns: int | None = None
     thinking_effort: ThinkingEffort | None = None
+    autocompact: str | int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_effort_alias(cls, data: Any) -> Any:
+        return merge_legacy_effort(data)
+
+    @field_validator("autocompact")
+    @classmethod
+    def _check_autocompact(cls, v: str | int | None) -> str | int | None:
+        return None if v is None else parse_autocompact(v)
+
+    @property
+    def effort(self) -> TurnBudget | None:
+        """Deprecated read alias of `turn_budget`."""
+        return self.turn_budget
 
     @field_validator("model")
     @classmethod
@@ -550,9 +654,10 @@ def resolve_effective_agent(
     model = task.model if task.model is not None else default_model
     if (
         model is None
-        and task.effort is None
+        and task.turn_budget is None
         and task.max_turns is None
         and task.thinking_effort is None
+        and task.autocompact is None
     ):
         return agent
     return agent.model_copy(
@@ -563,7 +668,8 @@ def resolve_effective_agent(
                 else agent.command_template
             ),
             "model": model if model is not None else agent.model,
-            "effort": task.effort if task.effort is not None else agent.effort,
+            "turn_budget": task.turn_budget if task.turn_budget is not None else agent.turn_budget,
+            "autocompact": task.autocompact if task.autocompact is not None else agent.autocompact,
             "max_turns": task.max_turns if task.max_turns is not None else agent.max_turns,
             "thinking_effort": (
                 task.thinking_effort if task.thinking_effort is not None else agent.thinking_effort
@@ -1308,15 +1414,15 @@ class SettingsHistoryEntry(BaseModel):
 class TaskLimits(BaseModel):
     """Per-task limits in force at the most recent dispatch (E-aYG5vn FR-2).
 
-    ``None`` = no limit / not applicable. ``turn_budget``, ``autocompact`` and
-    ``task_cost_cap_usd`` have no engine control yet; they are recorded (as None) so the
-    snapshot shape is stable when those controls land.
+    ``None`` = no limit / not set. ``turn_budget`` is the tier name and ``max_turns`` the cap
+    in force (explicit, else derived from the tier). ``task_cost_cap_usd`` has no engine control
+    yet; it is recorded (as None) so the snapshot shape is stable when it lands.
     """
 
     thinking_effort: str | None = None
-    turn_budget: int | None = None
+    turn_budget: str | None = None
     max_turns: int | None = None
-    autocompact: bool | None = None
+    autocompact: str | int | None = None
     timeout_seconds: int | None = None
     task_cost_cap_usd: float | None = None
     max_attempts: int | None = None

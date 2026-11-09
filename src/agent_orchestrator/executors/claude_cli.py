@@ -24,6 +24,7 @@ Captured artifacts per task (all under ``ctx.output_dir``):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -34,6 +35,8 @@ from pathlib import Path
 from ..models import AgentSpec, TaskContext, TaskResult
 from .base import Executor
 from .prompt import build_prompt
+
+logger = logging.getLogger(__name__)
 
 # --- Output-format flags (stream-json is required to capture every turn) ------
 # stream-json emits one JSON event per line; --verbose is mandatory for
@@ -578,6 +581,17 @@ def build_claude_argv(agent: AgentSpec, prompt: str) -> list[str]:
     if agent.thinking_effort and "--effort" not in argv:
         argv = argv + ["--effort", agent.thinking_effort]
 
+    # Autocompact -> `--autocompact` (provider-neutral field, claude mapping). Opt-in; an explicit
+    # --autocompact in command_template/extra_args wins (logged, never silently dropped).
+    if agent.autocompact is not None:
+        if "--autocompact" in argv:
+            logger.warning(
+                "autocompact=%s ignored: argv already carries --autocompact (extra_args wins)",
+                agent.autocompact,
+            )
+        else:
+            argv = argv + ["--autocompact", str(agent.autocompact)]
+
     # Apply the agent's opt-in tool-disable list (default: none → allow all) and
     # the engine's non-overridable forced set, BEFORE the stream flags, so the
     # variadic --disallowedTools list is terminated by --output-format rather than
@@ -614,6 +628,8 @@ class ClaudeCliExecutor(Executor):
     The result carries ``output_artifact_path`` pointing to that directory
     (FR-5).  Token usage is extracted from the terminal ``result`` event.
     """
+
+    supported_settings = frozenset({"thinking_effort", "autocompact"})
 
     def execute(self, ctx: TaskContext) -> TaskResult:
         prompt = build_prompt(ctx)

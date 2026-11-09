@@ -60,6 +60,9 @@ class Option:
     ui_label: str | None = None
     resumable: bool = True
     """May a ``resume`` change it (every current option may -- resolved fresh each invocation)."""
+    providers: tuple[str, ...] = ()
+    """Providers/executors that apply the setting (``()`` = provider-independent); shown as
+    "applies to: ..." in help and the dashboard."""
     env_strip_blank: bool = False
     """Bool options: treat a whitespace-only env var as unset (legacy quirk of two chains)."""
 
@@ -88,15 +91,40 @@ OPTIONS: Final[tuple[Option, ...]] = (
         ui_label="Model",
     ),
     Option(
+        "turn_budget",
+        "enum",
+        flag="--turn-budget",
+        env="AO_TURN_BUDGET",
+        config="turn_budget",
+        choices=("low", "medium", "high", "xhigh"),
+        help="Max-turn tier for all agents: low=15, medium=30, high=60, xhigh=120 turns.",
+        ui_group="Agent",
+        ui_label="Turn budget",
+    ),
+    Option(
         "effort",
         "enum",
         flag="--effort",
         env="AO_EFFORT",
         config="effort",
         choices=("low", "medium", "high"),
-        help="Effort level for all agents (derives the turn limit).",
+        help="DEPRECATED alias of --turn-budget (will mean thinking effort after migration).",
         ui_group="Agent",
-        ui_label="Effort",
+        ui_label="Effort (deprecated: turn budget)",
+    ),
+    Option(
+        "autocompact",
+        "str",
+        flag="--autocompact",
+        env="AO_AUTOCOMPACT",
+        config="autocompact",
+        help=(
+            "Context auto-compaction for agents without their own: 'auto' or a context-token "
+            "threshold 100000-1000000."
+        ),
+        ui_group="Agent",
+        ui_label="Autocompact",
+        providers=("claude-cli",),
     ),
     Option(
         "thinking_effort",
@@ -105,7 +133,11 @@ OPTIONS: Final[tuple[Option, ...]] = (
         env="AO_THINKING_EFFORT",
         config="thinking_effort",
         choices=("low", "medium", "high", "xhigh", "max"),
-        help="Model reasoning depth for all agents (claude: --effort). Unset = agent default.",
+        help=(
+            "Model reasoning depth for all agents: low, medium, high, xhigh or max "
+            "(claude: --effort). Unset = agent default."
+        ),
+        providers=("claude-cli",),
         ui_group="Agent",
         ui_label="Thinking effort",
     ),
@@ -125,7 +157,7 @@ OPTIONS: Final[tuple[Option, ...]] = (
         flag="--max-turns",
         env="AO_MAX_TURNS",
         config="max_turns",
-        help="Max turns per claude agent invocation (overrides the effort-derived value).",
+        help="Max turns per claude agent invocation (overrides the turn-budget-derived value).",
         ui_group="Limits",
         ui_label="Max turns",
     ),
@@ -333,6 +365,7 @@ def options_schema() -> dict[str, Any]:
                 "default": o.default,
                 "choices": list(o.choices),
                 "help": o.help,
+                "providers": list(o.providers),
                 "ui": ({"group": o.ui_group, "label": o.ui_label} if o.ui else None),
                 "resumable": o.resumable,
             }

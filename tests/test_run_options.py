@@ -120,11 +120,12 @@ def test_run_settings_match_legacy_chain(monkeypatch, cli_v, env_v, cfg_v):
     list(itertools.product([None, "opus"], [None, "", "haiku"], [None, "sonnet"])),
 )
 def test_str_settings_match_legacy_chain(monkeypatch, cli_v, env_v, cfg_v):
-    for name in ("AO_MODEL", "AO_EFFORT"):
-        if env_v is None:
+    # AO_EFFORT is now validated (turn-budget tiers), so feed it a tier, not the model string.
+    for name, val in (("AO_MODEL", env_v), ("AO_EFFORT", env_v and "medium")):
+        if val is None:
             monkeypatch.delenv(name, raising=False)
         else:
-            monkeypatch.setenv(name, env_v)
+            monkeypatch.setenv(name, val)
     cfg = ProjectConfig(model=cfg_v, effort=cfg_v and "low")
     monkeypatch.setattr(cli, "_load_project_config_or_exit", lambda: cfg)
     monkeypatch.delenv("AO_MAX_PARALLEL", raising=False)
@@ -195,7 +196,9 @@ def test_sources_are_reported(monkeypatch):
 def test_allow_list_unchanged_and_registry_derived():
     assert ALLOWED_OPTIONS == {
         "model": "--model",
-        "effort": "--effort",
+        "turn_budget": "--turn-budget",
+        "effort": "--effort",  # deprecated alias; stays until the dashboard form moves (T-pMpo4O)
+        "autocompact": "--autocompact",
         "thinking_effort": "--thinking-effort",
         "max_attempts": "--max-attempts",
         "max_turns": "--max-turns",

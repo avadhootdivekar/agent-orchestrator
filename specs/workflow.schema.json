@@ -210,13 +210,28 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:\\-\\[\\]]{0,127}$",
           "description": "Per-task override of the dispatched agent's --model (ADR-0003 decision 2). Wins over the agent's own `model` when set; omit to use the agent's value."
         },
+        "turn_budget": {
+          "enum": ["low", "medium", "high", "xhigh"],
+          "description": "Per-task override of the dispatched agent's turn_budget, mapped to --max-turns (low=15, medium=30, high=60, xhigh=120). Wins over the agent's own `turn_budget` when set."
+        },
         "effort": {
           "enum": ["low", "medium", "high", "xhigh"],
-          "description": "Per-task override of the dispatched agent's effort, mapped to --max-turns (low=15, medium=30, high=60, xhigh=120). Wins over the agent's own `effort` when set."
+          "description": "DEPRECATED alias of turn_budget (warns; conflicting values are an error)."
+        },
+        "thinking_effort": {
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "Model reasoning depth (claude_cli: --effort). Omit for the CLI default."
+        },
+        "autocompact": {
+          "anyOf": [
+            { "const": "auto" },
+            { "type": "integer", "minimum": 100000, "maximum": 1000000 }
+          ],
+          "description": "Context auto-compaction: 'auto' or a context-token threshold (100000-1000000). Provider-neutral; claude_cli maps it to --autocompact unless extra_args already sets one. Executors without the capability ignore it (`ao validate` warns)."
         },
         "max_turns": {
           "type": "integer",
-          "description": "Per-task override of the dispatched agent's explicit --max-turns; wins over both the agent's `max_turns` and this task's own `effort` when set."
+          "description": "Per-task override of the dispatched agent's explicit --max-turns; wins over both the agent's `max_turns` and this task's own `turn_budget` when set."
         },
         "isolation": {
           "enum": ["none", "worktree", "inherit"],

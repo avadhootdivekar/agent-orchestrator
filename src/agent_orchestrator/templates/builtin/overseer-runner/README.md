@@ -300,6 +300,12 @@ every hook closed (the run halts immediately, resumably) rather than silently de
 
 ## Recommended `--autocompact`
 
+> **Now a first-class field.** Instead of `extra_args: ["--autocompact", N]` you can set the
+> provider-neutral `"autocompact": N` (or `"auto"`) on an agent or task, or `--autocompact` /
+> `AO_AUTOCOMPACT` / `autocompact:` in `.ao/config.yaml` for every agent that has none of its own.
+> Precedence: task > agent > run level; an `--autocompact` already in `extra_args` still wins.
+> Executors without support ignore it (`ao validate` warns).
+
 Like `routed-runner`, this template ships **no** `agents.recommended.json` asset (NFR-X9) — one
 would collide with `routed-runner`'s own workspace-root file (both `keep_existing: true`, first
 writer wins) if a workspace uses both templates. The recommendation is inline instead:

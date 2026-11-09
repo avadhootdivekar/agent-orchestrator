@@ -127,6 +127,12 @@ partial, 9-of-11-role coverage would fail `ao validate`'s agent cross-checks if 
 Copy the `extra_args` fields you want from its `agents` map into your own `agents.json` (the file
 your `.ao/config.yaml`'s `agents:` field, or `AO_AGENTS`, actually points at).
 
+> **Now a first-class field.** Instead of `extra_args: ["--autocompact", N]` you can set the
+> provider-neutral `"autocompact": N` (or `"auto"`) on an agent or task, or `--autocompact` /
+> `AO_AUTOCOMPACT` / `autocompact:` in `.ao/config.yaml` for every agent that has none of its own.
+> Precedence: task > agent > run level; an `--autocompact` already in `extra_args` still wins.
+> Executors without support ignore it (`ao validate` warns).
+
 **What it recommends, and why.** The Claude Code CLI (`ao`'s `claude_cli` executor) has a real
 `--autocompact <auto|tokens>` flag (range `100k`-`1M`) that no `ao-runner-*` workspace currently
 sets — every agent runs on Claude Code's own default `auto` threshold, which scales to the

@@ -39,7 +39,7 @@ from .feedback import (
     validate_run_id,
 )
 from .implicit_signals import RunSignals, apply_survival, implicit_signals
-from .models import AgentSpec, RunState, TaskLimits, TaskRunState, TaskSpec
+from .models import EFFORT_MAX_TURNS, AgentSpec, RunState, TaskLimits, TaskRunState, TaskSpec
 from .survival import (
     FLAG_LIKELY_WORTHLESS,
     TaskSurvival,
@@ -157,9 +157,15 @@ def task_limits(
     `task.retries or defaults.retries`, `resolve_effective_agent`) so the snapshot reports
     what will actually be enforced.
     """
+    turn_budget = agent.turn_budget if agent else task.turn_budget
+    max_turns = agent.max_turns if agent else task.max_turns
+    if max_turns is None and turn_budget is not None:
+        max_turns = EFFORT_MAX_TURNS[turn_budget]  # the cap claude_cli will inject
     return TaskLimits(
         thinking_effort=agent.thinking_effort if agent else task.thinking_effort,
-        max_turns=agent.max_turns if agent else task.max_turns,
+        turn_budget=turn_budget,
+        max_turns=max_turns,
+        autocompact=agent.autocompact if agent else task.autocompact,
         timeout_seconds=task.timeout_seconds or default_timeout,
         max_attempts=task.retries.max_attempts if task.retries is not None else default_attempts,
     )

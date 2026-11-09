@@ -231,13 +231,20 @@ class ProjectConfig(BaseModel):
     """Max task attempts (overrides workflow defaults.retries.max_attempts)."""
 
     max_turns: int | None = None
-    """Max turns per claude invocation (overrides effort-derived value)."""
+    """Max turns per claude invocation (overrides turn_budget-derived value)."""
 
     model: str | None = None
     """Claude model for all agents: an alias ('sonnet' = latest) or a pinned id."""
 
+    turn_budget: str | None = None
+    """Max-turn tier for all agents: low, medium, high or xhigh (15/30/60/120 turns)."""
+
     effort: str | None = None
-    """Effort level for all agents: low, medium, or high."""
+    """DEPRECATED alias of `turn_budget` (warns; both set and different is an error)."""
+
+    autocompact: str | int | None = None
+    """Context auto-compaction for all agents lacking their own: 'auto' or 100000-1000000 tokens.
+    Only executors that support it (claude_cli) apply it."""
 
     thinking_effort: str | None = None
     """Model reasoning depth for all agents: low, medium, high, xhigh, or max (claude: --effort)."""
@@ -452,7 +459,9 @@ _INIT_TEMPLATE = """\
 # max_attempts: 1          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
 # model: sonnet # AO_MODEL        — claude model for all agents
-# effort: medium           # AO_EFFORT       — low / medium / high (derives the --max-turns cap)
+# turn_budget: medium      # AO_TURN_BUDGET  — low/medium/high/xhigh -> 15/30/60/120 max turns
+# effort: medium           # AO_EFFORT       — DEPRECATED alias of turn_budget (see ao migrate)
+# autocompact: auto        # AO_AUTOCOMPACT  — "auto" or 100000-1000000 context tokens
 # thinking_effort: high    # AO_THINKING_EFFORT — low/medium/high/xhigh/max (reasoning depth)
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 # record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival

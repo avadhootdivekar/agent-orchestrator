@@ -19,4 +19,16 @@ class DispatchExecutor(Executor):
         return self._claude.execute(ctx)
 
 
-__all__ = ["Executor", "ClaudeCliExecutor", "FakeExecutor", "DispatchExecutor"]
+# Executor name (AgentSpec.executor) -> provider-neutral settings it translates; no instantiation.
+EXECUTOR_SUPPORTED_SETTINGS: dict[str, frozenset[str]] = {
+    "claude_cli": ClaudeCliExecutor.supported_settings,
+    "fake": FakeExecutor.supported_settings,
+}
+
+__all__ = [
+    "EXECUTOR_SUPPORTED_SETTINGS",
+    "Executor",
+    "ClaudeCliExecutor",
+    "FakeExecutor",
+    "DispatchExecutor",
+]

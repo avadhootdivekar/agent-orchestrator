@@ -14,5 +14,9 @@ class Executor(ABC):
     return a TaskResult. They must not read artifact or instruction file contents.
     """
 
+    # Provider-neutral per-agent settings this executor translates (e.g. "thinking_effort",
+    # "autocompact"). A setting an agent sets that its executor lacks is warned about, not an error.
+    supported_settings: frozenset[str] = frozenset()
+
     @abstractmethod
     def execute(self, ctx: TaskContext) -> TaskResult: ...

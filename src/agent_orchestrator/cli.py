@@ -54,6 +54,7 @@ import typer
 from .auth.cli import app as auth_app
 from .auth.model import TotpPolicy
 from .cache.cli import cache_app
+from .migrate import migrate_app
 from .models import (
     INPUT_MODES,
     ISOLATION_NONE,
@@ -72,7 +73,7 @@ if TYPE_CHECKING:
     from .executors.base import Executor
     from .isolation.git import GitRepo
     from .isolation.worktrees import IsolatedRepo
-    from .models import BudgetSpec, EffectiveSetting, InputMode, WorkflowSpec
+    from .models import AgentSpec, BudgetSpec, EffectiveSetting, InputMode, WorkflowSpec
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
 
@@ -89,6 +90,7 @@ app = typer.Typer(
 app.add_typer(service_app, name="service")
 app.add_typer(auth_app, name="auth")
 app.add_typer(cache_app, name="cache")
+app.add_typer(migrate_app, name="migrate")
 
 _PACKAGE_LOGGER = "agent_orchestrator"
 
@@ -791,6 +793,90 @@ def _effective_settings_snapshot(**cli_values: object) -> dict[str, EffectiveSet
     return out
 
 
+def _resolve_turn_budget(
+    cfg: ProjectConfig | None, turn_budget: str | None, effort: str | None
+) -> str | None:
+    """Merge the canonical ``turn_budget`` chain with the deprecated ``effort`` alias chain.
+
+    Each is CLI > env > config. Legacy use (any layer) warns on stderr; both resolved and
+    different is an error. Returns the tier, or None when neither is set.
+    """
+    from .models import LEGACY_EFFORT_DEPRECATION, TURN_BUDGETS
+
+    tb = resolve_option(get_option("turn_budget"), turn_budget, cfg)
+    legacy = resolve_option(get_option("effort"), effort, cfg)
+    if legacy.value is not None:
+        typer.echo(f"WARNING: DEPRECATED: {LEGACY_EFFORT_DEPRECATION}", err=True)
+        if tb.value is not None and tb.value != legacy.value:
+            typer.echo(
+                f"ERROR: conflicting effort={legacy.value} ({legacy.source}) and "
+                f"turn_budget={tb.value} ({tb.source}); 'effort' is a deprecated alias of "
+                "'turn_budget' -- set only --turn-budget",
+                err=True,
+            )
+            raise typer.Exit(1)
+    value = tb.value if tb.value is not None else legacy.value
+    if value is not None and value not in TURN_BUDGETS:
+        flag = "--turn-budget" if tb.value is not None else "--effort"
+        typer.echo(f"ERROR: {flag} must be one of {TURN_BUDGETS}, got '{value}'", err=True)
+        raise typer.Exit(1)
+    return value
+
+
+def _resolve_autocompact(flag: str | None) -> str | int | None:
+    """CLI flag > AO_AUTOCOMPACT > project config; validated ('auto' or 100k-1M tokens)."""
+    from .models import parse_autocompact
+
+    cfg = _load_project_config_or_exit()
+    value = resolve_option(get_option("autocompact"), flag, cfg).value
+    if value is None:
+        return None
+    try:
+        return parse_autocompact(value)
+    except ValueError as e:
+        typer.echo(f"ERROR: --autocompact: {e}", err=True)
+        raise typer.Exit(1)
+
+
+def _apply_agent_run_settings(
+    agent_map: dict[str, AgentSpec],
+    turn_budget: str | None,
+    thinking_effort: str | None,
+    autocompact: str | int | None,
+) -> None:
+    """Apply invocation-level agent settings. turn_budget/thinking_effort override every agent
+    (historical behaviour); autocompact only FILLS IN agents without their own, keeping the
+    precedence task > agent > run."""
+    for spec in agent_map.values():
+        if turn_budget is not None:
+            spec.turn_budget = cast("Any", turn_budget)
+        if thinking_effort is not None:
+            spec.thinking_effort = cast("Any", thinking_effort)
+        if autocompact is not None and spec.autocompact is None:
+            spec.autocompact = autocompact
+
+
+def unsupported_setting_warnings(
+    wf: WorkflowSpec, agent_map: dict[str, AgentSpec], run_autocompact: str | int | None = None
+) -> list[str]:
+    """One warning per agent whose executor lacks a capability for a setting it (or one of its
+    tasks) sets -- never an error (future Codex/Gemini executors map or ignore)."""
+    from .executors import EXECUTOR_SUPPORTED_SETTINGS
+
+    out: list[str] = []
+    for name, spec in sorted(agent_map.items()):
+        if "autocompact" in EXECUTOR_SUPPORTED_SETTINGS.get(spec.executor, frozenset()):
+            continue
+        by_task = [t.id for t in wf.tasks if t.agent == name and t.autocompact is not None]
+        if spec.autocompact is not None or by_task or run_autocompact is not None:
+            where = f" (tasks: {', '.join(by_task)})" if by_task else ""
+            out.append(
+                f"autocompact is set for agent '{name}'{where} but executor '{spec.executor}' "
+                "does not support it; the setting is ignored"
+            )
+    return out
+
+
 def _resolve_run_settings(
     max_attempts: int | None,
     max_turns: int | None,
@@ -799,19 +885,20 @@ def _resolve_run_settings(
     quota_max_wait: int | None,
     quota_poll_interval: int | None,
     max_parallel: int | None,
+    turn_budget: str | None = None,
 ) -> tuple[int | None, int | None, str | None, str | None, int, int, int]:
     """Merge CLI flags, env vars, and project config for runtime execution settings.
 
     Precedence (highest to lowest): CLI flag > env var > project config > built-in default.
-    Returns (max_attempts, max_turns, model, effort, quota_max_wait_seconds, quota_poll_seconds,
-    max_parallel).
+    Returns (max_attempts, max_turns, model, turn_budget, quota_max_wait_seconds,
+    quota_poll_seconds, max_parallel); the 4th slot is the turn-budget tier, merged from
+    `turn_budget` and the deprecated `effort` alias (`_resolve_turn_budget`).
     """
     cfg = _load_project_config_or_exit()
     cli_values = {
         "max_attempts": max_attempts,
         "max_turns": max_turns,
         "model": model,
-        "effort": effort,
         "quota_max_wait": quota_max_wait,
         "quota_poll_interval": quota_poll_interval,
         "max_parallel": max_parallel,
@@ -820,7 +907,7 @@ def _resolve_run_settings(
     resolved_max_attempts = r["max_attempts"].value
     resolved_max_turns = r["max_turns"].value
     resolved_model = r["model"].value
-    resolved_effort = r["effort"].value
+    resolved_effort = _resolve_turn_budget(cfg, turn_budget, effort)
     resolved_quota_max_wait = int(r["quota_max_wait"].value)
     resolved_quota_poll = int(r["quota_poll_interval"].value)
     resolved_max_parallel = int(r["max_parallel"].value)
@@ -1141,7 +1228,9 @@ def validate(
     from .errors import OrchestratorError
 
     try:
-        _load_all(workflow, reposets, agents)
+        wf, _rs, agent_map = _load_all(workflow, reposets, agents)
+        for warning in unsupported_setting_warnings(wf, agent_map):
+            typer.echo(f"WARNING: {warning}", err=True)
         typer.echo("OK: all specs valid")
     except OrchestratorError as e:
         typer.echo(f"ERROR: {e}", err=True)
@@ -1202,10 +1291,18 @@ def run(
         "--model",
         help="Claude model for all agents (e.g. sonnet, opus or claude-sonnet-5-5). Env: AO_MODEL",
     ),
+    turn_budget: str | None = typer.Option(
+        None,
+        "--turn-budget",
+        help=(
+            "Max-turn tier for all agents: low=15, medium=30, high=60, xhigh=120 turns "
+            "(--max-turns overrides). Env: AO_TURN_BUDGET"
+        ),
+    ),
     effort: str | None = typer.Option(
         None,
         "--effort",
-        help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+        help="DEPRECATED alias of --turn-budget (low, medium, high). Env: AO_EFFORT",
     ),
     thinking_effort: str | None = typer.Option(
         None,
@@ -1213,6 +1310,14 @@ def run(
         help=(
             "Model reasoning depth for all agents: low, medium, high, xhigh or max "
             "(claude: --effort). Env: AO_THINKING_EFFORT"
+        ),
+    ),
+    autocompact: str | None = typer.Option(
+        None,
+        "--autocompact",
+        help=(
+            "Context auto-compaction for agents without their own: 'auto' or a token threshold "
+            "100000-1000000 (applies to: claude-cli). Env: AO_AUTOCOMPACT"
         ),
     ),
     quota_max_wait: int | None = typer.Option(
@@ -1368,6 +1473,7 @@ def run(
         quota_max_wait,
         quota_poll_interval,
         max_parallel,
+        turn_budget=turn_budget,
     )
 
     if eff_max_attempts is not None:
@@ -1378,23 +1484,12 @@ def run(
     if eff_model is not None:
         for spec in agent_map.values():
             spec.model = eff_model
-    if eff_effort is not None:
-        _valid_efforts = ("low", "medium", "high")
-        if eff_effort not in _valid_efforts:
-            typer.echo(
-                f"ERROR: --effort must be one of {_valid_efforts}, got '{eff_effort}'",
-                err=True,
-            )
-            raise typer.Exit(1)
-        from typing import Literal, cast
-
-        for spec in agent_map.values():
-            spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
-
-    eff_thinking = _resolve_thinking_effort(thinking_effort)
-    if eff_thinking is not None:
-        for spec in agent_map.values():
-            spec.thinking_effort = cast("Any", eff_thinking)
+    eff_autocompact = _resolve_autocompact(autocompact)
+    _apply_agent_run_settings(
+        agent_map, eff_effort, _resolve_thinking_effort(thinking_effort), eff_autocompact
+    )
+    for _warning in unsupported_setting_warnings(wf, agent_map):
+        logging.getLogger(_PACKAGE_LOGGER).warning(_warning)
 
     # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9). Unset
     # (None) makes no change; ISOLATION_NONE/ISOLATION_WORKTREE become the new
@@ -1485,6 +1580,8 @@ def run(
             max_turns=max_turns,
             model=model,
             effort=effort,
+            turn_budget=turn_budget,
+            autocompact=autocompact,
             thinking_effort=thinking_effort,
             quota_max_wait=quota_max_wait,
             quota_poll_interval=quota_poll_interval,
@@ -1560,10 +1657,18 @@ def resume(
         "--model",
         help="Claude model for all agents (e.g. sonnet, opus or claude-sonnet-5-5). Env: AO_MODEL",
     ),
+    turn_budget: str | None = typer.Option(
+        None,
+        "--turn-budget",
+        help=(
+            "Max-turn tier for all agents: low=15, medium=30, high=60, xhigh=120 turns "
+            "(--max-turns overrides). Env: AO_TURN_BUDGET"
+        ),
+    ),
     effort: str | None = typer.Option(
         None,
         "--effort",
-        help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+        help="DEPRECATED alias of --turn-budget (low, medium, high). Env: AO_EFFORT",
     ),
     thinking_effort: str | None = typer.Option(
         None,
@@ -1571,6 +1676,14 @@ def resume(
         help=(
             "Model reasoning depth for all agents: low, medium, high, xhigh or max "
             "(claude: --effort). Env: AO_THINKING_EFFORT"
+        ),
+    ),
+    autocompact: str | None = typer.Option(
+        None,
+        "--autocompact",
+        help=(
+            "Context auto-compaction for agents without their own: 'auto' or a token threshold "
+            "100000-1000000 (applies to: claude-cli). Env: AO_AUTOCOMPACT"
         ),
     ),
     quota_max_wait: int | None = typer.Option(
@@ -1740,6 +1853,7 @@ def resume(
         quota_max_wait,
         quota_poll_interval,
         max_parallel,
+        turn_budget=turn_budget,
     )
 
     if eff_max_attempts is not None:
@@ -1750,23 +1864,12 @@ def resume(
     if eff_model is not None:
         for spec in agent_map.values():
             spec.model = eff_model
-    if eff_effort is not None:
-        _valid_efforts = ("low", "medium", "high")
-        if eff_effort not in _valid_efforts:
-            typer.echo(
-                f"ERROR: --effort must be one of {_valid_efforts}, got '{eff_effort}'",
-                err=True,
-            )
-            raise typer.Exit(1)
-        from typing import Literal, cast
-
-        for spec in agent_map.values():
-            spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
-
-    eff_thinking = _resolve_thinking_effort(thinking_effort)
-    if eff_thinking is not None:
-        for spec in agent_map.values():
-            spec.thinking_effort = cast("Any", eff_thinking)
+    eff_autocompact = _resolve_autocompact(autocompact)
+    _apply_agent_run_settings(
+        agent_map, eff_effort, _resolve_thinking_effort(thinking_effort), eff_autocompact
+    )
+    for _warning in unsupported_setting_warnings(wf, agent_map):
+        logging.getLogger(_PACKAGE_LOGGER).warning(_warning)
 
     # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9) -- same
     # chain and fill-in-only semantics as `ao run` (see there for the full rationale).
@@ -1888,6 +1991,8 @@ def resume(
             max_turns=max_turns,
             model=model,
             effort=effort,
+            turn_budget=turn_budget,
+            autocompact=autocompact,
             thinking_effort=thinking_effort,
             quota_max_wait=quota_max_wait,
             quota_poll_interval=quota_poll_interval,

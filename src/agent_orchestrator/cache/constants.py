@@ -135,9 +135,10 @@ AGENT_KEY_FIELDS = frozenset(
         "context_window",
         "extra_args",
         "model",
-        "effort",
+        "turn_budget",
         "max_turns",
         "thinking_effort",
+        "autocompact",
         "working_dir",
         "disallowed_tools",
         "forced_disallowed_tools",
@@ -146,7 +147,10 @@ AGENT_KEY_FIELDS = frozenset(
 )
 # Key fields added after the key schema shipped: left OUT of the key document while None, so
 # pre-existing cache entries stay valid (no KEY_SCHEMA_VERSION bump); once set they enter the key.
-AGENT_KEY_OMIT_WHEN_NONE = frozenset({"thinking_effort"})
+AGENT_KEY_OMIT_WHEN_NONE = frozenset({"thinking_effort", "autocompact"})
+# AgentSpec fields renamed after the key schema shipped: the key document keeps the OLD name so
+# existing cache entries stay valid (`turn_budget` was `effort`) -- no KEY_SCHEMA_VERSION bump.
+AGENT_KEY_DOC_NAMES = {"turn_budget": "effort"}
 AGENT_NON_KEY_FIELDS = frozenset({"forbidden_task_models"})  # validation-only, never in argv
 
 # ---- eligibility and restore (D10, D29)
