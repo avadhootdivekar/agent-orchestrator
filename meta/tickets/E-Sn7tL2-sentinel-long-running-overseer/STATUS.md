@@ -51,5 +51,5 @@
 - In-flight graph rebuild: verified safe with 6 invariants to add (I1–I6, spike RESULT.md); **owner checkpoint 1 (HANDOFF §4): not a no-go, so no fallback confirmation needed** — owner may still veto GO-WITH-CHANGES.
 
 ## Next actions
-1. ~~T-Sn0Spk~~ done ∥ E-aYG5vn T-zP28k9.
+1. ~~T-Sn0Spk~~ done ∥ ~~E-aYG5vn T-zP28k9~~ done, ~~T-f0d7gm~~ done.
 2. ~~T-Sn1Adr~~ written → **owner sign-off (blocking P1)** → P1.

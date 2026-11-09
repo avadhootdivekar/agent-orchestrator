@@ -220,6 +220,7 @@ ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
 ao answer     Answer a task's input request (run is waiting for input) and optionally --resume
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
+ao migrate    Workspace migrations: `ao migrate effort-keys [--apply]` renames the deprecated `effort` key to `turn_budget`
 ao cache      Manage the opt-in RESULT cache: ls | stats | show | rm | prune | clear | verify
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
 ao auth       Manage dashboard accounts, TOTP and lockouts (see Authentication)
@@ -566,10 +567,12 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_AGENTS` | `--agents` | Default path to the agents config |
 | `AO_WORKSPACE_ROOT` | — | Override the `workspace_root` from the reposet (useful in CI) |
 | `AO_MODEL` | `--model` | Claude model for all agents (alias `sonnet`/`opus`/`haiku` = latest; or a pinned id e.g. `claude-sonnet-5-5`) |
-| `AO_EFFORT` | `--effort` | Effort level: `low`, `medium`, or `high` |
-| `AO_THINKING_EFFORT` | `--thinking-effort` | Model reasoning depth: `low`, `medium`, `high`, `xhigh`, or `max`. Passed to the claude CLI as `--effort`; unset = CLI default (e.g. `effortLevel` in `~/.claude/settings.json`). Also settable per agent/task (`thinking_effort`). Distinct from `AO_EFFORT`, which only derives a `--max-turns` cap |
+| `AO_TURN_BUDGET` | `--turn-budget` | Max-turn tier: `low`=15, `medium`=30, `high`=60, `xhigh`=120 turns (`--max-turns` is the explicit integer override). Also a spec key on agents/tasks (`turn_budget`) |
+| `AO_EFFORT` | `--effort` | **Deprecated alias of `AO_TURN_BUDGET`** (still means the turn budget in this release; warns; both set and different is an error). Will mean thinking effort after `ao migrate effort-keys` + the flip (T-9ymKja) |
+| `AO_AUTOCOMPACT` | `--autocompact` | Context auto-compaction: `auto` or a token threshold `100000`-`1000000`. Provider-neutral spec field `autocompact` (task > agent > run level; run level only fills agents without their own). Applies to `claude_cli` (`--autocompact`; an `--autocompact` already in `extra_args` wins, with a warning); other executors ignore it and `ao validate` warns |
+| `AO_THINKING_EFFORT` | `--thinking-effort` | Model reasoning depth: `low`, `medium`, `high`, `xhigh`, or `max`. Passed to the claude CLI as `--effort`; unset = CLI default (e.g. `effortLevel` in `~/.claude/settings.json`). Also settable per agent/task (`thinking_effort`). Distinct from `AO_TURN_BUDGET`, which only derives a `--max-turns` cap |
 | `AO_MAX_ATTEMPTS` | `--max-attempts` | Max task attempts (overrides workflow `defaults.retries.max_attempts`) |
-| `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides effort-derived value) |
+| `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides the turn-budget-derived value) |
 | `AO_MAX_PARALLEL` | `--max-parallel` | Max independent ready tasks to run at once (default: `1` = serial); see [Parallel execution](#parallel-execution) |
 | `AO_RECORD_GIT_HEADS` | `--record-git-heads/--no-record-git-heads` | Record git HEADs at run/task start+settle for `ao report-survival` serial attribution (default: on; off = no head-recording git calls, coarser survival attribution — isolation `landed_ranges` still recorded) |
 | `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
@@ -609,7 +612,9 @@ agents:    path/to/agents.json
 # max_attempts: 3          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
 # model: sonnet # AO_MODEL        — claude model for all agents
-# effort: medium           # AO_EFFORT       — low / medium / high
+# turn_budget: medium      # AO_TURN_BUDGET  — low / medium / high / xhigh (15/30/60/120 max turns)
+# effort: medium           # AO_EFFORT       — DEPRECATED alias of turn_budget (ao migrate effort-keys)
+# autocompact: auto        # AO_AUTOCOMPACT  — "auto" or 100000-1000000 context tokens (claude-cli)
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 # record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival
 

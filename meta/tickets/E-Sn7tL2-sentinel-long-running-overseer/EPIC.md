@@ -6,7 +6,7 @@
 - Owner: avadhoot
 - Created: 2026-11-09
 - Last Updated: 2026-11-09 (Rev 3 — all decisions resolved §0/§10; tasks created §8; final checklist §11; `HANDOFF.md`)
-- Status: Ready for implementation (start: T-Sn0Spk; E-aYG5vn T-zP28k9 Done). 13 tasks, all Draft.
+- Status: Ready for implementation (start: T-Sn0Spk; E-aYG5vn T-zP28k9, T-f0d7gm Done). 13 tasks, all Draft.
 - Related: `E-YAAGhk-overseer-runner-template` (per-wave checkpoint overseer), ADR-0003 (settings precedence),
   ADR-0007 (wave/barrier scheduler), ADR-0016 (overseer cadence + budget governance), ADR-0017 (spawn provenance),
   ADR-0021 (dashboard auth), `docs-md/overseer-runner-hld.md` (NFR-X1 deferred preemptive checkpoints),

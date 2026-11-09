@@ -38,6 +38,18 @@ template, any write to a sibling `ao-runner-*` workspace, and (deferred to Non-M
 argv = [arg.format(...) for arg in ctx.agent.command_template] + ctx.agent.extra_args
 ```
 
+> **Update (T-f0d7gm, 2026-11): `autocompact` is now a first-class, provider-neutral field** — spec
+> key on agents/tasks, `--autocompact` / `AO_AUTOCOMPACT` / config key at run level (precedence
+> task > agent > run; run level only fills agents lacking their own). `claude_cli` maps it to
+> `--autocompact` unless `extra_args` already carries one (extra_args wins, warning logged);
+> `Executor.supported_settings` declares which executors translate it, and `ao validate` warns
+> (never errors) when an agent whose executor lacks the capability sets it. The recorded value
+> appears in `RunState.effective_settings` and per-task `effective_limits`. The
+> `extra_args: ["--autocompact", N]` seeding below still works and still takes precedence; prefer
+> the `autocompact` field in new configs. The "opaque argv, no schema change" statement below is
+> the original Rev-1 finding and is superseded for the field itself. Also note no `ao validate`
+> warning for a *missing* `--autocompact` was ever implemented (the README grep is the check).
+
 `--autocompact <auto|tokens>` (a real, documented `claude --help` flag, range `100k`-`1M`) is
 opaque argv to the engine — no parsing, no validation, no schema change needed. This confirmed
 the entire epic could stay inside the template/skill/docs layer, honoring CLAUDE.md's
