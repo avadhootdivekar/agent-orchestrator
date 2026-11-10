@@ -22,7 +22,7 @@
 - Mutation checks (each killed by a test): drop high-water mark, drop blind-run `max`, drop `window_open` gate on partial,
   window start/end boundary (both), persist-always, drop warn-once, drop summary cost.
 - Perf (AC8): 50 000 records / 100 schedules, one schedule's month usage after index warm, asserted < 500 ms (spec 50 ms x10 CI
-  margin); observed locally well inside 50 ms.
+  margin); the exact 50 ms figure was not separately measured.
 
 ## Deviations / notes
 - Index is built lazily per workspace on first `usage()` (the ledger is constructed without knowing workspaces), then kept fresh
