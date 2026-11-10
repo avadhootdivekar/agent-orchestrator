@@ -1,22 +1,26 @@
 # STATUS
 
 - ID: `T-lJu9oZ-quota-window-math`
-- Updated At: 2026-11-10
-- State: Draft
+- Updated At: 2026-11-11
+- State: Done (implemented, committed on ad/enhancements-10nov; pending review/merge)
 - Owner: TBD (assigned at sprint start)
 
 ## This update
-- Ticket created by the `architect` agent as part of the E-Qp4Zm8 design package. Not started.
-- Scope: Pure day/week/month calendar windows in a timezone (DST, midnight gap, week start) for `schedules/windows.py`.
+- By: developer agent (run unit `w07-01-a2-quota-window-math`) · Role: developer · Date: 2026-11-11
+- Implemented `src/agent_orchestrator/schedules/windows.py` (`Window`, `Period`, `WeekStart`, `window_for`, `windows_for`,
+  `local_midnight`, key formatters `day_key/week_key/month_key` + `*_KEY_FORMAT` constants) and
+  `tests/schedules/test_windows.py`. `schedules/` already existed (E-Sc9Rt4 T-Sd1Kq7); no other schedules module touched.
+- Label is authoritative (AC11) documented in the module docstring, incl. the fall-back-after-midnight caveat.
 
 ## Evidence
-- None yet. No implementation has begun. Design basis:
-  `docs-md/scheduled-run-governance-hld.md` and `docs-md/adr/ADR-0025-scheduled-run-governance-quotas-and-cost-caps.md`.
+- `pytest tests/schedules/test_windows.py`: 70 passed; whole `tests/schedules`: 178 passed. Coverage on windows.py: 100 %.
+- `ruff check` + `ruff format --check` clean; `mypy` clean on both files.
+- Corpus: Berlin/New_York spring (23 h) and fall (25 h) days incl. fold 0/1, Havana 2024-03-10 (05:00Z), Beirut 2024-03-31,
+  Santiago 2024-04-07, Lord_Howe month (Apr 2024 / Oct 2024), week_start monday/sunday on Sun/Mon/Sat, Dec->Jan,
+  2028-02, 31-day month, containment/adjacency sweep over 7 zones x 3 periods x 2 week starts, `datetime.now` patched to raise.
 
 ## Risks / Blockers
-- Not blocked. No upstream dependency; may start immediately (before E-Sc9Rt4).
+- None.
 
 ## Next actions
-1. Read the upstream tasks' **merged code** (including E-Sc9Rt4's), not only the HLD, before starting.
-2. Implement against the acceptance criteria in `TASK.md`, in AC order; report the pytest delta, ruff/format, mypy, coverage.
-3. Hand `Window`/`windows_for` to `T-Uz0Uol` and `T-PpE5lf`.
+1. Review/merge. 2. Hand `Window`/`windows_for` to `T-Uz0Uol` and `T-PpE5lf`.
