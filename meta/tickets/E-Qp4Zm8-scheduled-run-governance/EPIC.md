@@ -91,7 +91,7 @@
 - [ ] `T-Uz0Uol-usage-ledger` — `FireGovernance` record, `charge()`, window usage, high-water mark, cost confidence, index + mtime cache (FR-2, FR-4, NFR-1, NFR-5) — 3 d
 - [ ] `T-PpE5lf-pre-fire-gate-and-reservation` — gate step in `evaluate()`, `check_and_reserve` under flock, prompt snapshot, fail-closed argv check, retire hook (FR-1..FR-4, NFR-1, NFR-2) — 3 d
 - [ ] `T-nI4DBf-capped-run-pause-resume` — cap_state machine, resume drop-request + engine drain, TTL sweep, abort semantics (FR-6) — 2 d
-- [ ] `T-rwj4nV-schedule-cli-limits-usage` — `ao schedule add/set-limits/pin-prompt/usage/resume`, list/history columns (FR-1, FR-5, FR-6) — 2 d
+- [~] `T-rwj4nV-schedule-cli-limits-usage` (implemented; resume awaits T-nI4DBf commit) — `ao schedule add/set-limits/pin-prompt/usage/resume`, list/history columns (FR-1, FR-5, FR-6) — 2 d
 - [ ] `T-8knqVe-dashboard-usage-panel` — 3 routes + `ScheduleUsage.tsx` + governance feed (FR-5, FR-6) — 3 d
 - [ ] `T-88wSLC-governance-e2e-suite` — integration + `CliRunner` e2e across the HLD §18.2/§18.3 scenarios (all) — 2.5 d
 - [ ] `T-lTW88y-security-and-review-gate` — early gate on HLD, then dev-security + reviewer pass + NFR-6 re-verification (NFR-1, NFR-2, NFR-6) — 1.5 d

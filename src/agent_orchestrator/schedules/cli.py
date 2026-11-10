@@ -24,6 +24,7 @@ never reach a real ``$HOME``.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import signal
 import threading
@@ -34,6 +35,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 from typing import IO, Annotated, Any, Final
+from zoneinfo import ZoneInfo
 
 import typer
 
@@ -45,6 +47,7 @@ from ..service.fire_store import (
     ScheduleState,
     ScheduleStateStore,
 )
+from ..service.governance_gate import gate
 from ..service.paths import default_registry_path, default_state_dir
 from ..service.registry import (
     ServiceRegistry,
@@ -67,8 +70,19 @@ from ..service.schedule_engine import (
 )
 from ..service.statefile import atomic_write_bytes
 from .errors import ScheduleFileError
+from .governance import LIMITS_REQUIRED, MAX_PROMPT_BYTES, LimitsSpec
 from .models import SCHEDULE_RUN_ARG_NAMES, ResolvedBinding, ScheduleFile
 from .store import ScheduleStore
+from .usage_view import (
+    build_usage_doc,
+    compact_limits,
+    governance_fields,
+    paused_records,
+    readonly_fire_store,
+    reason_with_period,
+    render_usage,
+)
+from .windows import PERIODS, Period, windows_for
 
 app = typer.Typer(name="schedule", help="Declare, inspect and fire workspace schedules.")
 
@@ -77,6 +91,9 @@ DEFAULT_NEXT_COUNT = 10
 DEFAULT_HISTORY_COUNT = 50
 DAEMON_POLL_SECONDS = 2.0  # upper bound on the foreground loop's wait (shutdown latency)
 EXIT_USAGE = 2
+LIMITS_HINT = (
+    "pass --quota PERIOD=N, --cost-per-run USD and/or --cost-cap PERIOD=USD, or set defaults.limits"
+)
 REQUESTED_BY_CLI = "cli"
 EVENT_ENABLED = "schedule.enabled"
 EVENT_DISABLED = "schedule.disabled"
@@ -84,6 +101,8 @@ REASON_RUN_NOW = "run_now"
 NO_VALUE = "-"
 DEFAULT_ID_PREFIX = "wf"
 WORKSPACE_MARKER_DIR = ".ao"
+PROMPTS_RELDIR = Path(WORKSPACE_MARKER_DIR) / "schedule-prompts"
+EXIT_RESUME_REFUSED = 3
 STATUS_COMPLETED: Final = "completed"
 STATUS_QUARANTINED: Final = "quarantined"
 STATUS_DISABLED: Final = "disabled"
@@ -308,6 +327,25 @@ def _status_of(binding: ResolvedBinding, st: ScheduleState) -> str:
 # -- list --------------------------------------------------------------------------------------
 
 
+def _governance_summary(
+    root: Path, b: ResolvedBinding, fires: Any, ledger: Any, now: datetime
+) -> dict[str, Any]:
+    """``limits`` / ``today`` / ``paused`` of one binding for ``list`` (read-only)."""
+    limits = b.limits
+    today: dict[str, Any] | None = None
+    if limits is not None and limits.quotas:
+        quota = min(limits.quotas, key=lambda q: PERIODS.index(q.period))
+        tz = ZoneInfo(b.timezone or "UTC")
+        wins = windows_for(now, [quota.period], tz, b.week_start or "monday")
+        used = ledger.usage(str(root), b.id, wins)[quota.period].runs
+        today = {"period": quota.period, "used": used, "max": quota.max_runs}
+    return {
+        "limits": compact_limits(limits),
+        "today": today,
+        "paused": len(paused_records(fires, str(root), b.id)),
+    }
+
+
 @app.command(name="list")
 def list_cmd(
     workspace: WorkspaceOpt = None,
@@ -326,6 +364,8 @@ def list_cmd(
     payload: list[dict[str, Any]] = []
     warnings: list[str] = []
     any_schedule = False
+    now = _now()
+    fires, ledger = _readonly_ledger(sdir)
     for root in _selected_roots(workspace, all_workspaces):
         bindings = _load_file(root).bindings
         if not bindings:
@@ -336,6 +376,8 @@ def list_cmd(
             warnings.append(f"WARNING: {inert}")
         for b in bindings:
             st = state.get(root, b.id) or ScheduleState()
+            gov = _governance_summary(root, b, fires, ledger, now)
+            today = gov["today"]
             row = {
                 "workspace": str(root),
                 "id": b.id,
@@ -346,6 +388,7 @@ def list_cmd(
                 "last_fire": _iso(st.last_fire_at),
                 "last_run": st.last_run_id,
                 "runs_count": st.runs_count,
+                "governance": gov,
             }
             payload.append(row)
             rows.append(
@@ -358,6 +401,9 @@ def list_cmd(
                     _fmt(st.last_fire_at),
                     st.last_run_id or NO_VALUE,
                     str(st.runs_count),
+                    str(gov["limits"]),
+                    f"{today['used']}/{today['max']}" if today else NO_VALUE,
+                    str(gov["paused"]),
                 ]
             )
     if any_schedule and not live:
@@ -372,7 +418,20 @@ def list_cmd(
         return
     typer.echo(
         _table(
-            ["ID", "KIND", "ENABLED", "STATUS", "NEXT FIRE", "LAST FIRE", "LAST RUN", "RUNS"], rows
+            [
+                "ID",
+                "KIND",
+                "ENABLED",
+                "STATUS",
+                "NEXT FIRE",
+                "LAST FIRE",
+                "LAST RUN",
+                "RUNS",
+                "LIMITS",
+                "TODAY",
+                "PAUSED",
+            ],
+            rows,  # fmt: skip
         )
     )
 
@@ -401,6 +460,28 @@ def _upcoming(
     return out
 
 
+def _would_skip(
+    b: ResolvedBinding, at: datetime, root: str, ledger: Any
+) -> tuple[str, dict[str, Any]] | None:
+    """``(text, detail)`` when the pre-fire gate would suppress the fire at *at*, else ``None``."""
+    if b.limits is None:
+        return None
+    result = gate(
+        b,
+        b.limits,
+        at,
+        ledger=ledger,
+        workspace_root=root,
+        tz=ZoneInfo(b.timezone or "UTC"),
+        week_start=b.week_start or "monday",
+    )
+    if result.admit:
+        return None
+    resets = result.detail.get("resets_at")
+    text = f"would skip: {result.reason}" + (f" (resets {resets})" if resets else "")
+    return text, {"reason": result.reason, **result.detail}
+
+
 @app.command(name="next")
 def next_cmd(
     count: Annotated[
@@ -421,6 +502,7 @@ def next_cmd(
         "interval": IntervalScheduler(),
     }
     fires: list[tuple[datetime, str, str]] = []
+    resolved: dict[tuple[str, str], ResolvedBinding] = {}
     skipped_event_kinds: list[str] = []
     for root in _selected_roots(workspace, all_workspaces):
         for b in _load_file(root).bindings:
@@ -434,11 +516,21 @@ def next_cmd(
             st = state.get(root, b.id) or ScheduleState()
             if st.status in (STATUS_COMPLETED, STATUS_QUARANTINED):
                 continue
+            resolved[(str(root), b.id)] = b
             fires += [(t, str(root), b.id) for t in _upcoming(scheds[b.kind], b, st, now, count)]
     fires.sort()
     fires = fires[:count]
+    # Pure what-if: the same gate() the engine runs, against the current ledger (no reservations
+    # are made and nothing is written, so a later fire's answer assumes the earlier ones are free).
+    _, ledger = _readonly_ledger(_state_dir(state_dir))
+    notes = [_would_skip(resolved[(w, i)], t, w, ledger) for t, w, i in fires]
     if as_json:
-        _emit_json([{"at": _iso(t), "workspace": w, "id": i} for t, w, i in fires])
+        _emit_json(
+            [
+                {"at": _iso(t), "workspace": w, "id": i, **({"would_skip": n[1]} if n else {})}
+                for (t, w, i), n in zip(fires, notes, strict=True)
+            ]
+        )
         return
     if skipped_event_kinds:
         typer.echo(
@@ -448,10 +540,21 @@ def next_cmd(
     if not fires:
         typer.echo("No upcoming fires.")
         return
+    if any(notes):
+        rows = [
+            [_fmt(t), i, w, n[0] if n else ""] for (t, w, i), n in zip(fires, notes, strict=True)
+        ]
+        typer.echo(_table(["NEXT FIRE", "ID", "WORKSPACE", "NOTE"], rows))
+        return
     typer.echo(_table(["NEXT FIRE", "ID", "WORKSPACE"], [[_fmt(t), i, w] for t, w, i in fires]))
 
 
 # -- history -----------------------------------------------------------------------------------
+
+
+def _with_governance(event: dict[str, Any]) -> dict[str, Any]:
+    gov = governance_fields(event)
+    return event if gov is None else {**event, "governance": gov}
 
 
 @app.command(name="history")
@@ -472,7 +575,7 @@ def history_cmd(
     root = None if all_workspaces else _workspace_root(workspace)
     events = log.read(limit=count, schedule_id=schedule_id, workspace_root=root)
     if as_json:
-        _emit_json(events)
+        _emit_json([_with_governance(e) for e in events])
         return
     if not events:
         typer.echo("No events.")
@@ -482,7 +585,7 @@ def history_cmd(
             str(e.get("ts") or NO_VALUE),
             str(e.get("event") or NO_VALUE),
             str(e.get("schedule_id") or NO_VALUE),
-            str(e.get("reason") or NO_VALUE),
+            reason_with_period(e),
             str(e.get("run_id") or e.get("detail") or NO_VALUE),
         ]
         for e in events
@@ -516,6 +619,45 @@ def unbound_trigger_warnings(
         f"{name} declares {', '.join(sorted(set(declared)))} trigger(s) but no schedule binds "
         f"it; it will never fire on its own. Add one with `ao schedule add --from-workflow`."
     ]
+
+
+def governance_warnings(root: Path, bindings: list[ResolvedBinding]) -> list[str]:
+    """L4/L7: limit combinations that are valid but almost certainly not what the owner meant."""
+    out: list[str] = []
+    for b in bindings:
+        cost = b.limits.cost if b.limits is not None else None
+        per_run = cost.per_run_usd if cost is not None else None
+        if per_run is None:
+            if b.overlap == "allow":
+                out.append(
+                    f"schedule {b.id!r}: overlap: allow without limits.cost.per_run_usd -- with "
+                    "period-only caps one run may take the whole remaining period budget as its "
+                    "cap, and allow serializes in practice; set per_run_usd"
+                )
+            continue
+        budget = _sentinel_llm_budget(root, b)
+        if budget is not None and budget >= per_run:
+            out.append(
+                f"schedule {b.id!r}: sentinel.llm.budget_usd ({budget:g}) >= per_run_usd "
+                f"({per_run:g}) -- generation spend counts toward the run cap, so the LLM lane "
+                "can use up the whole cap"
+            )
+    return out
+
+
+def _sentinel_llm_budget(root: Path, b: ResolvedBinding) -> float | None:
+    """The binding workflow spec's ``sentinel.llm.budget_usd`` (``None`` if absent/unreadable)."""
+    if b.workflow is None:
+        return None
+    from ..errors import OrchestratorError
+    from ..spec import load_workflow
+
+    try:
+        wf = load_workflow(str(root / b.workflow))
+    except (OrchestratorError, OSError):
+        return None
+    llm = wf.sentinel.llm if wf.sentinel is not None else None
+    return llm.budget_usd if llm is not None else None
 
 
 def validate_workspace_schedules(workflow_path: str | None, workflow: Any) -> None:
@@ -562,6 +704,8 @@ def validate_cmd(
                 raise _fail(f"{path}: {exc}") from exc
             for line in unbound_trigger_warnings(root, path, wf.triggers):
                 typer.echo(f"WARNING: {line}", err=True)
+    for line in governance_warnings(root, file.bindings):
+        typer.echo(f"WARNING: {line}", err=True)
     typer.echo(f"OK: {len(file.schedules)} schedule(s) valid in {ScheduleStore(root).path}")
 
 
@@ -606,21 +750,83 @@ def _run_args(raw: list[str]) -> dict[str, object]:
     return {k: _coerce_run_arg(k, v) for k, v in parsed.items()}
 
 
-def _limits(quotas: list[str], per_run_usd: float | None) -> dict[str, Any] | None:
+def _period_value(raw: str, flag: str, *, money: bool) -> tuple[Period, float]:
+    """``PERIOD=N`` (``PERIOD=USD`` when *money*) -> (period, number); exit 2 names the token."""
+    period, sep, num = raw.partition("=")
+    period = period.strip()
+    shape = "PERIOD=USD (e.g. week=20)" if money else "PERIOD=MAX_RUNS (e.g. day=3)"
+    if not sep or period not in PERIODS:
+        raise _fail(
+            f"{flag} must be {shape} with PERIOD in {'/'.join(PERIODS)}, got {raw!r}", EXIT_USAGE
+        )
+    try:
+        value = float(num) if money else int(num)
+    except ValueError:
+        raise _fail(f"{flag} must be {shape}, got {raw!r}", EXIT_USAGE) from None
+    if not value > 0 or value == float("inf"):
+        raise _fail(f"{flag} value must be a positive number, got {raw!r}", EXIT_USAGE)
+    return period, value  # type: ignore[return-value]
+
+
+def _limits(
+    quotas: list[str],
+    per_run_usd: float | None,
+    *,
+    cost_caps: list[str] | None = None,
+    on_cap: str | None = None,
+    pause_ttl: int | None = None,
+) -> dict[str, Any] | None:
+    """The HLD §6.1 ``limits`` block from the limit flags (``None`` when no flag was given)."""
     limits: dict[str, Any] = {}
     if quotas:
-        entries = []
-        for item in quotas:
-            period, sep, runs = item.partition("=")
-            if not sep or not runs.strip().isdigit():
-                raise _fail(
-                    f"--quota must be PERIOD=MAX_RUNS (e.g. day=4), got {item!r}", EXIT_USAGE
-                )
-            entries.append({"period": period.strip(), "max_runs": int(runs)})
-        limits["quotas"] = entries
-    if per_run_usd is not None:
-        limits["cost"] = {"per_run_usd": per_run_usd}
+        limits["quotas"] = [
+            {"period": p, "max_runs": int(n)}
+            for p, n in (_period_value(q, "--quota", money=False) for q in quotas)
+        ]
+    caps = [_period_value(c, "--cost-cap", money=True) for c in cost_caps or []]
+    if per_run_usd is not None or caps:
+        cost: dict[str, Any] = {}
+        if per_run_usd is not None:
+            cost["per_run_usd"] = per_run_usd
+        if on_cap is not None:
+            cost["on_cap"] = on_cap
+        if pause_ttl is not None:
+            cost["pause_ttl_seconds"] = pause_ttl
+        if caps:
+            cost["periods"] = [{"period": p, "max_usd": v} for p, v in caps]
+        limits["cost"] = cost
+    elif on_cap is not None or pause_ttl is not None:
+        raise _fail("--on-cap/--pause-ttl need --cost-per-run or --cost-cap", EXIT_USAGE)
     return limits or None
+
+
+def _check_on_cap(on_cap: str | None) -> None:
+    if on_cap is not None and on_cap not in ("pause", "abort"):
+        raise _fail(f"--on-cap must be pause or abort, got {on_cap!r}", EXIT_USAGE)
+
+
+def _check_week_start(week_start: str | None) -> None:
+    if week_start is not None and week_start not in ("monday", "sunday"):
+        raise _fail(f"--week-start must be monday or sunday, got {week_start!r}", EXIT_USAGE)
+
+
+def _sha256_of(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_prompt(root: Path, schedule_id: str, text: str, force: bool) -> str:
+    """Write ``.ao/schedule-prompts/<id>.md``; refuse to replace a different file without
+    ``--force``. Returns the workspace-relative path."""
+    rel = PROMPTS_RELDIR / f"{schedule_id}.md"
+    path = root / rel
+    data = text.encode("utf-8")
+    if len(data) > MAX_PROMPT_BYTES:
+        raise _fail(f"--prompt is {len(data)} bytes; the limit is {MAX_PROMPT_BYTES}", EXIT_USAGE)
+    if path.exists() and not force and path.read_bytes() != data:
+        raise _fail(f"{rel} already exists with different content (use --force)", EXIT_USAGE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_bytes(path, data)
+    return str(rel)
 
 
 def _until_equals(raw: str) -> bool | int | str:
@@ -740,8 +946,28 @@ def add_cmd(
         typer.Option("--quota", help="Governance quota PERIOD=MAX_RUNS (repeatable)."),
     ] = None,
     per_run_usd: Annotated[
-        float | None, typer.Option("--per-run-usd", help="Per-run cost cap.")
+        float | None,
+        typer.Option("--cost-per-run", "--per-run-usd", help="Per-run cost cap (USD)."),
     ] = None,
+    cost_cap: Annotated[
+        list[str] | None,
+        typer.Option("--cost-cap", help="Period cost cap PERIOD=USD (repeatable)."),
+    ] = None,
+    on_cap: Annotated[
+        str | None,
+        typer.Option("--on-cap", help="pause (default) | abort when a run hits its cap."),
+    ] = None,
+    pause_ttl: Annotated[
+        int | None, typer.Option("--pause-ttl", min=0, help="Seconds a paused run stays resumable.")
+    ] = None,
+    week_start: Annotated[str | None, typer.Option("--week-start", help="monday | sunday")] = None,
+    prompt: Annotated[
+        str | None,
+        typer.Option("--prompt", help="Fixed prompt text -> .ao/schedule-prompts/ID.md."),
+    ] = None,
+    pin_prompt: Annotated[
+        bool, typer.Option("--pin-prompt", help="Store the prompt file's current sha256.")
+    ] = False,
     until_artifact: Annotated[
         str | None, typer.Option("--until-artifact", help="Stop once this path exists.")
     ] = None,
@@ -809,9 +1035,26 @@ def add_cmd(
     run_args = _run_args(run_arg or [])
     if run_args:
         common["run_args"] = run_args
-    limits = _limits(quota or [], per_run_usd)
+    _check_on_cap(on_cap)
+    _check_week_start(week_start)
+    limits = _limits(
+        quota or [], per_run_usd, cost_caps=cost_cap, on_cap=on_cap, pause_ttl=pause_ttl
+    )
     if limits:
         common["limits"] = limits
+    if week_start is not None:
+        common["week_start"] = week_start
+    if prompt is not None and prompt_file is not None:
+        raise _fail("--prompt and --prompt-file are mutually exclusive", EXIT_USAGE)
+    if pin_prompt and prompt is None and prompt_file is None:
+        raise _fail("--pin-prompt needs --prompt or --prompt-file", EXIT_USAGE)
+    if prompt is not None and from_workflow:
+        raise _fail("--prompt needs an explicit ID (not --from-workflow)", EXIT_USAGE)
+    # D-2 up front, so a refusal writes nothing (not even a prompt file).
+    if not limits and _load_file(root).defaults.limits is None:
+        raise _fail(
+            f"{LIMITS_REQUIRED.format(id=schedule_id or from_workflow)}; {LIMITS_HINT}", EXIT_USAGE
+        )
 
     until = _until(until_artifact, until_gate, until_field, until_equals, max_runs)
     if until:
@@ -870,6 +1113,16 @@ def add_cmd(
             common["workflow"] = workflow
         new = [(schedule_id, {**fields, **common})]
 
+    if prompt is not None:
+        assert schedule_id is not None  # guaranteed by the non-from-workflow branch
+        rel = _write_prompt(root, schedule_id, prompt, force)
+        new = [(sid, {**f, "prompt_file": rel}) for sid, f in new]
+    if pin_prompt:
+        pinned = root / str(new[0][1]["prompt_file"])
+        if not pinned.is_file():
+            raise _fail(f"--pin-prompt: {pinned} is not a file", EXIT_USAGE)
+        new = [(sid, {**f, "prompt_sha256": _sha256_of(pinned)}) for sid, f in new]
+
     store = ScheduleStore(root)
 
     def apply(current: ScheduleFile) -> ScheduleFile:
@@ -891,14 +1144,262 @@ def add_cmd(
     try:
         store.mutate(apply)
     except ScheduleFileError as exc:
-        hint = (
-            " (pass --quota PERIOD=N and/or --per-run-usd, or set defaults.limits)"
-            if exc.field == "limits"
-            else ""
-        )
-        raise _fail(f"{exc}{hint}") from exc
+        if exc.field == "limits":
+            raise _fail(f"{exc} ({LIMITS_HINT})", EXIT_USAGE) from exc
+        raise _fail(str(exc)) from exc
     for sid, _fields in new:
         typer.echo(f"Added schedule {sid!r} to {store.path}")
+
+
+# -- set-limits / pin-prompt ------------------------------------------------------------------
+
+
+def _mutate_binding(root: Path, schedule_id: str, edit: Callable[[dict[str, Any]], None]) -> None:
+    """Apply *edit* to one binding's raw row via the locked ``mutate()``; the whole file is
+    re-validated, so an edit that breaks D-2 or a limit rule is refused and nothing is written."""
+    store = ScheduleStore(root)
+
+    def apply(current: ScheduleFile) -> ScheduleFile:
+        data = current.to_data()
+        for row in data.get("schedules", []):
+            if row.get("id") == schedule_id:
+                edit(row)
+        return ScheduleFile.from_data(data, source=str(store.path))
+
+    try:
+        store.mutate(apply)
+    except ScheduleFileError as exc:
+        raise _fail(str(exc), EXIT_USAGE if exc.field in ("limits", None) else 1) from exc
+
+
+def _merge_by_period(base: list[dict[str, Any]], new: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged = {e["period"]: e for e in base}
+    merged.update({e["period"]: e for e in new})
+    return list(merged.values())
+
+
+@app.command(name="set-limits")
+def set_limits_cmd(
+    schedule_id: Annotated[str, typer.Argument(metavar="ID")],
+    quota: Annotated[
+        list[str] | None, typer.Option("--quota", help="Set quota PERIOD=MAX_RUNS (repeatable).")
+    ] = None,
+    per_run_usd: Annotated[
+        float | None, typer.Option("--cost-per-run", help="Set the per-run cost cap (USD).")
+    ] = None,
+    cost_cap: Annotated[
+        list[str] | None, typer.Option("--cost-cap", help="Set period cap PERIOD=USD (repeatable).")
+    ] = None,
+    on_cap: Annotated[str | None, typer.Option("--on-cap", help="pause | abort")] = None,
+    pause_ttl: Annotated[int | None, typer.Option("--pause-ttl", min=0)] = None,
+    week_start: Annotated[str | None, typer.Option("--week-start", help="monday | sunday")] = None,
+    clear_quotas: Annotated[
+        bool, typer.Option("--clear-quotas", help="Drop every quota first.")
+    ] = False,
+    clear_cost: Annotated[
+        bool, typer.Option("--clear-cost", help="Drop the cost block first.")
+    ] = False,
+    workspace: WorkspaceOpt = None,
+) -> None:
+    """Rewrite only a schedule's ``limits`` (flags merge by period; ``--clear-*`` drop first)."""
+    root = _workspace_root(workspace)
+    _check_on_cap(on_cap)
+    _check_week_start(week_start)
+    file = _load_file(root)
+    binding = next((b for b in file.bindings if b.id == schedule_id), None)
+    if binding is None:
+        raise _fail(f"no such schedule {schedule_id!r} in {ScheduleStore(root).path}")
+    given = _limits(
+        quota or [], per_run_usd, cost_caps=cost_cap, on_cap=on_cap, pause_ttl=pause_ttl
+    )
+    if given is None and not (clear_quotas or clear_cost or week_start):
+        raise _fail("nothing to change: give a limit flag, --clear-quotas/--clear-cost", EXIT_USAGE)
+    base = binding.limits.model_dump(mode="json", exclude_none=True) if binding.limits else {}
+    if clear_quotas:
+        base.pop("quotas", None)
+    if clear_cost:
+        base.pop("cost", None)
+    if given is not None:
+        if "quotas" in given:
+            base["quotas"] = _merge_by_period(base.get("quotas", []), given["quotas"])
+        if "cost" in given:
+            cost = {
+                **base.get("cost", {}),
+                **{k: v for k, v in given["cost"].items() if k != "periods"},
+            }
+            periods = _merge_by_period(
+                base.get("cost", {}).get("periods", []), given["cost"].get("periods", [])
+            )
+            if periods:
+                cost["periods"] = periods
+            base["cost"] = cost
+    if not LimitsSpec.model_validate(base).declares_any_limit():
+        raise _fail(f"{LIMITS_REQUIRED.format(id=schedule_id)}; {LIMITS_HINT}", EXIT_USAGE)
+
+    def edit(row: dict[str, Any]) -> None:
+        row["limits"] = base
+        if week_start is not None:
+            row["week_start"] = week_start
+
+    _mutate_binding(root, schedule_id, edit)
+    typer.echo(
+        f"Updated limits of {schedule_id!r}: {compact_limits(LimitsSpec.model_validate(base))}"
+    )
+
+
+@app.command(name="pin-prompt")
+def pin_prompt_cmd(
+    schedule_id: Annotated[str, typer.Argument(metavar="ID")], workspace: WorkspaceOpt = None
+) -> None:
+    """Record the prompt file's current sha256 as the pin (a later edit then skips fires)."""
+    root = _workspace_root(workspace)
+    binding = next((b for b in _load_file(root).bindings if b.id == schedule_id), None)
+    if binding is None:
+        raise _fail(f"no such schedule {schedule_id!r} in {ScheduleStore(root).path}")
+    if binding.prompt_file is None:
+        raise _fail(f"schedule {schedule_id!r} has no prompt_file; nothing to pin", EXIT_USAGE)
+    path = root / binding.prompt_file
+    if not path.is_file():
+        raise _fail(f"prompt file {binding.prompt_file} does not exist", EXIT_USAGE)
+    sha = _sha256_of(path)
+    _mutate_binding(root, schedule_id, lambda row: row.__setitem__("prompt_sha256", sha))
+    typer.echo(f"Pinned {schedule_id!r} prompt {binding.prompt_file} sha256:{sha[:12]}")
+
+
+# -- usage / resume ----------------------------------------------------------------------------
+
+
+def _readonly_ledger(sdir: Path) -> tuple[Any, Any]:
+    """(fires, ledger) that never write back: for views and the ``next`` projection."""
+    from ..service.usage_ledger import UsageLedger
+
+    fires = readonly_fire_store(sdir)
+    return fires, UsageLedger(fires, clock=_now)
+
+
+def _parse_at(raw: str | None) -> datetime:
+    if raw is None:
+        return _now()
+    try:
+        at = datetime.fromisoformat(raw)
+    except ValueError:
+        raise _fail(f"--at must be an ISO 8601 instant, got {raw!r}", EXIT_USAGE) from None
+    return at if at.tzinfo is not None else at.replace(tzinfo=UTC)  # naive == UTC
+
+
+@app.command(name="usage")
+def usage_cmd(
+    schedule_id: Annotated[str | None, typer.Argument(metavar="[ID]")] = None,
+    at: Annotated[
+        str | None, typer.Option("--at", help="Evaluate windows at this ISO 8601 instant.")
+    ] = None,
+    workspace: WorkspaceOpt = None,
+    as_json: JsonOpt = False,
+    state_dir: StateDirOpt = None,
+) -> None:
+    """Window usage, spend, paused runs and recent governance events (read-only)."""
+    root, sdir = _workspace_root(workspace), _state_dir(state_dir)
+    instant = _parse_at(at)
+    bindings = _load_file(root).bindings
+    if schedule_id is not None:
+        bindings = [b for b in bindings if b.id == schedule_id]
+        if not bindings:
+            raise _fail(f"no such schedule {schedule_id!r} in {ScheduleStore(root).path}")
+    fires, ledger = _readonly_ledger(sdir)
+    doc = build_usage_doc(
+        workspace=str(root),
+        at=instant,
+        generated_at=_now(),
+        bindings=bindings,
+        ledger=ledger,
+        fires=fires,
+        events=ScheduleEventLog(sdir, clock=_now),
+    )
+    if as_json:
+        _emit_json(doc)
+    elif doc["schedules"]:
+        typer.echo(render_usage(doc))
+    else:
+        typer.echo("No schedules.")
+
+
+def _refusal_detail(exc: Any, rec_expires: datetime | None) -> str:
+    """The reason + the numbers an operator needs (expiry instant / remaining headroom)."""
+    detail = str(exc)
+    if exc.reason == "expired" and rec_expires is not None:
+        detail += f" (expired at {rec_expires.isoformat()})"
+    if exc.reason == "no_headroom" and exc.remaining_usd is not None:
+        detail += f" (remaining ${exc.remaining_usd:.2f} in {exc.window})"
+    return detail
+
+
+@app.command(name="resume")
+def resume_cmd(
+    schedule_id: Annotated[str, typer.Argument(metavar="ID")],
+    run: Annotated[str, typer.Option("--run", help="The cap-paused run id.")],
+    add_usd: Annotated[
+        float | None, typer.Option("--add-usd", help="Top-up (default: the per-run cap).")
+    ] = None,
+    local: Annotated[bool, typer.Option("--local", help="Drain in this process.")] = False,
+    queue: Annotated[bool, typer.Option("--queue", help="Hand the request to a daemon.")] = False,
+    workspace: WorkspaceOpt = None,
+    state_dir: StateDirOpt = None,
+    requested_by: Annotated[str, typer.Option("--requested-by")] = REQUESTED_BY_CLI,
+) -> None:
+    """Resume a run paused by its cost cap (exit 3 when refused: expired/aborted/no headroom)."""
+    if local and queue:
+        raise _fail("--local and --queue are mutually exclusive", EXIT_USAGE)
+    from ..service.capped_resume import ResumeRefused, request_capped_resume
+    from ..service.fire_store import FireIntentStore
+    from ..service.usage_ledger import UsageLedger
+
+    root, sdir = _workspace_root(workspace), _state_dir(state_dir)
+    binding = next((b for b in _load_file(root).bindings if b.id == schedule_id), None)
+    fires = FireIntentStore(sdir)
+    ledger = UsageLedger(fires, clock=_now)
+
+    def request(drain: Callable[[datetime], list[Any]] | None) -> Any:
+        return request_capped_resume(
+            str(root),
+            schedule_id,
+            run,
+            add_usd,
+            requested_by,
+            state_dir=sdir,
+            binding=binding,
+            fires=fires,
+            ledger=ledger,
+            clock=_now,
+            drain=drain,
+        )
+
+    try:
+        if queue or (not local and probe_engine_lock(sdir)):
+            req = request(None)
+            typer.echo("queued; the daemon resumes it within one evaluation interval")
+        else:
+            engine = None
+            try:
+                engine = _build_engine(sdir, root)
+                engine.start()
+            except EngineLockHeldError:
+                engine = None
+            if engine is None:
+                req = request(None)
+                typer.echo("a daemon is evaluating; queued instead")
+            else:
+                try:
+                    req = request(engine.drain_resume_requests)
+                finally:
+                    engine.shutdown()
+    except ResumeRefused as exc:
+        rec = fires.find_by_run_id(str(root), run)
+        expires = rec.governance.pause_expires_at if rec and rec.governance else None
+        typer.echo(
+            f"ERROR: resume refused ({exc.reason}): {_refusal_detail(exc, expires)}", err=True
+        )
+        raise typer.Exit(EXIT_RESUME_REFUSED) from exc
+    typer.echo(f"Resume of {run} accepted: +${req.add_usd:.2f}, new cap ${req.new_cap_usd:.2f}")
 
 
 # -- remove / enable / disable ----------------------------------------------------------------
