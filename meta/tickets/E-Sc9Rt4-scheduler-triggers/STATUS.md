@@ -148,3 +148,7 @@ the webhook's middleware mounting.
 ## Update 2026-11-11 — T-Lp4Wt6 implemented
 - `service/schedule_launch.py` (`ScheduledLauncher`, `scheduled_run_id`, `render_instance_id`, `LaunchResolutionError`) + 33 tests landed (see `T-Lp4Wt6-scheduled-launcher/STATUS.md`). `T-Sv5Hb3` / `T-Cl6Jn9` unblocked.
   By: developer · Role: developer · Date: 2026-11-11
+
+## Update 2026-11-11 — T-Sv5Hb3 implemented
+- Registry opt-in/policy block, `ao service run` engine wiring (kill switches, outer tick backstop, shutdown order), status merge under `"schedules"`, `ao service add/set/list/status/install` deltas, webhook flags + guard (`T-Wh9Kv1` removes it). See `T-Sv5Hb3-service-integration/STATUS.md`. `T-Cl6Jn9` / `T-Wh9Kv1` unblocked.
+  By: developer · Role: developer · Date: 2026-11-11

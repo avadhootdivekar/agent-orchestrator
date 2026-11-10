@@ -57,7 +57,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={ao_executable} service run --hub-host {hub_host} --hub-port {hub_port}{auth_flag}
+ExecStart={ao_executable} service run --hub-host {hub_host} --hub-port {hub_port}\
+{auth_flag}{webhook_flags}
 Restart=on-failure
 RestartPreventExitStatus={exit_config}
 RestartSec=5
@@ -110,12 +111,28 @@ def resolve_ao_executable() -> str:
     )
 
 
+def _webhook_exec_flags(enabled: bool, host: str | None, port: int | None) -> str:
+    """ExecStart suffix for the webhook listener; empty unless the caller enables it, so the
+    default unit text stays byte-identical to pre-epic (T-Sv5Hb3 AC12/13)."""
+    if not enabled:
+        return ""
+    flags = " --webhook"
+    if host is not None:
+        flags += f" --webhook-host {host}"
+    if port is not None:
+        flags += f" --webhook-port {port}"
+    return flags
+
+
 def render_unit(
     ao_executable: str,
     *,
     hub_port: int = DEFAULT_HUB_PORT,
     hub_host: str = DEFAULT_HUB_HOST,
     auth: bool = False,
+    webhook: bool = False,
+    webhook_host: str | None = None,
+    webhook_port: int | None = None,
 ) -> str:
     """Render the exact HLD §7 unit text for *ao_executable* / *hub_host* / *hub_port*.
 
@@ -130,6 +147,7 @@ def render_unit(
         hub_port=hub_port,
         hub_host=hub_host,
         auth_flag=AUTH_EXEC_FLAG if auth else "",
+        webhook_flags=_webhook_exec_flags(webhook, webhook_host, webhook_port),
         exit_config=EXIT_CONFIG,
     )
 
@@ -149,13 +167,24 @@ def install_unit(
     hub_port: int = DEFAULT_HUB_PORT,
     hub_host: str = DEFAULT_HUB_HOST,
     auth: bool = False,
+    webhook: bool = False,
+    webhook_host: str | None = None,
+    webhook_port: int | None = None,
 ) -> Path | str:
     """Render the unit and either print it (`print_only=True`, zero filesystem writes -- safe
     for CI/tests) or write it to `unit_dir or _default_unit_dir()` (creating parent dirs) and
     return the written path.
     """
     ao_executable = resolve_ao_executable()
-    text = render_unit(ao_executable, hub_port=hub_port, hub_host=hub_host, auth=auth)
+    text = render_unit(
+        ao_executable,
+        hub_port=hub_port,
+        hub_host=hub_host,
+        auth=auth,
+        webhook=webhook,
+        webhook_host=webhook_host,
+        webhook_port=webhook_port,
+    )
     if print_only:
         return text
 

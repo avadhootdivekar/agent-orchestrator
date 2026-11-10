@@ -57,11 +57,39 @@ class WorkspaceEntry(BaseModel):
     autoresume: bool = True
     """Whether boot-resume should consider this workspace's orphaned runs."""
 
+    schedules: bool = False
+    """F5: per-workspace opt-in to clock-triggered runs (``.ao/schedules.yaml``). Default OFF --
+    a repo-supplied schedule file must not become unattended execution on upgrade/``git pull``."""
+
+
+DEFAULT_SCHEDULE_EVAL_INTERVAL_SECONDS = 15.0
+DEFAULT_SCHEDULE_MAX_CONCURRENT_GLOBAL = 3
+DEFAULT_WEBHOOK_HOST = "127.0.0.1"
+DEFAULT_WEBHOOK_PORT = 8771
+
+
+class ServiceWebhookConfig(BaseModel):
+    """Webhook listener policy (HLD §5.2); default OFF, loopback."""
+
+    enabled: bool = False
+    host: str = DEFAULT_WEBHOOK_HOST
+    port: int = DEFAULT_WEBHOOK_PORT
+
+
+class ServiceScheduleConfig(BaseModel):
+    """Machine-level scheduler policy (HLD §5.2). ``enabled: false`` is a kill switch."""
+
+    enabled: bool = True
+    eval_interval_seconds: float = DEFAULT_SCHEDULE_EVAL_INTERVAL_SECONDS
+    max_concurrent_global: int = DEFAULT_SCHEDULE_MAX_CONCURRENT_GLOBAL
+    webhook: ServiceWebhookConfig = ServiceWebhookConfig()
+
 
 class ServiceRegistryFile(BaseModel):
     """The full on-disk shape of the registry file (HLD §5.1)."""
 
     workspaces: list[WorkspaceEntry] = []
+    schedules: ServiceScheduleConfig = ServiceScheduleConfig()
 
 
 class ServiceRegistry:
@@ -94,11 +122,13 @@ class ServiceRegistry:
         asserting round-trip) but NOT safe as the write half of a read-modify-write sequence
         under concurrency. Use ``mutate()`` for that.
         """
-        normalized = ServiceRegistryFile(
-            workspaces=[
-                entry.model_copy(update={"root": str(Path(entry.root).resolve())})
-                for entry in data.workspaces
-            ]
+        normalized = data.model_copy(
+            update={
+                "workspaces": [
+                    entry.model_copy(update={"root": str(Path(entry.root).resolve())})
+                    for entry in data.workspaces
+                ]
+            }
         )
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
@@ -134,6 +164,7 @@ class ServiceRegistry:
         port: int | None = None,
         autoresume: bool = True,
         host: str | None = None,
+        schedules: bool = False,
     ) -> ServiceRegistryFile:
         """Register (or re-register, replacing the prior entry) a workspace, via ``mutate``."""
         resolved_root = str(Path(root).resolve())
@@ -141,9 +172,15 @@ class ServiceRegistry:
         def _add(data: ServiceRegistryFile) -> ServiceRegistryFile:
             remaining = [w for w in data.workspaces if w.root != resolved_root]
             remaining.append(
-                WorkspaceEntry(root=resolved_root, port=port, autoresume=autoresume, host=host)
+                WorkspaceEntry(
+                    root=resolved_root,
+                    port=port,
+                    autoresume=autoresume,
+                    host=host,
+                    schedules=schedules,
+                )
             )
-            return ServiceRegistryFile(workspaces=remaining)
+            return data.model_copy(update={"workspaces": remaining})
 
         return self.mutate(_add)
 
@@ -152,8 +189,30 @@ class ServiceRegistry:
         resolved_root = str(Path(root).resolve())
 
         def _remove(data: ServiceRegistryFile) -> ServiceRegistryFile:
-            return ServiceRegistryFile(
-                workspaces=[w for w in data.workspaces if w.root != resolved_root]
+            return data.model_copy(
+                update={"workspaces": [w for w in data.workspaces if w.root != resolved_root]}
             )
 
         return self.mutate(_remove)
+
+    def set_schedules(self, root: str, enabled: bool) -> ServiceRegistryFile:
+        """Flip a registered workspace's schedules opt-in (F5), via ``mutate``.
+
+        Raises ``KeyError`` when *root* is not registered."""
+        resolved_root = str(Path(root).resolve())
+
+        def _set(data: ServiceRegistryFile) -> ServiceRegistryFile:
+            if not any(w.root == resolved_root for w in data.workspaces):
+                raise KeyError(resolved_root)
+            return data.model_copy(
+                update={
+                    "workspaces": [
+                        w.model_copy(update={"schedules": enabled})
+                        if w.root == resolved_root
+                        else w
+                        for w in data.workspaces
+                    ]
+                }
+            )
+
+        return self.mutate(_set)

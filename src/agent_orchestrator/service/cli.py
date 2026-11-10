@@ -25,9 +25,10 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
@@ -35,14 +36,23 @@ from ..auth.model import TotpPolicy
 from ..errors import EXIT_CONFIG, OrchestratorError
 from ..ui.runs import RunRepository
 from .boot_resume import BOOT_RESUME_FILENAME
-from .paths import default_state_dir
-from .registry import ServiceRegistry
+from .paths import default_registry_path, default_state_dir
+from .registry import (
+    DEFAULT_WEBHOOK_HOST,
+    DEFAULT_WEBHOOK_PORT,
+    ServiceRegistry,
+    ServiceRegistryFile,
+)
 from .supervisor import (
+    LOOPBACK_HOSTS,
     PORT_RESOLUTION_FILENAME,
     SUPERVISOR_SNAPSHOT_FILENAME,
     Supervisor,
     SupervisorLockHeldError,
 )
+
+if TYPE_CHECKING:
+    from .schedule_engine import ScheduleEngine
 from .systemd import (
     DEFAULT_HUB_HOST,
     DEFAULT_HUB_PORT,
@@ -67,6 +77,11 @@ HUB_TICK_INTERVAL_SECONDS = 2.0
 # aggregate()` fully parses every `state.json` in a workspace, so this avoids re-parsing
 # it on every hub poll from every open browser tab plus `ao service status`/`list`.
 HUB_STATUS_CACHE_TTL_SECONDS = 5.0
+
+# Subdirectory of the state dir holding the scheduler's persisted state (HLD §12); `status`
+# falls back to `<state_dir>/schedules/state.json` when the hub is unreachable.
+SCHEDULES_STATE_SUBDIR = "schedules"
+SCHEDULES_STATE_FILENAME = "state.json"
 
 # Short-timeout best-effort probe for "is the hub actually up" (AC8 `list`/`status`) -- long
 # enough for a loopback round trip, short enough that a dead/hung daemon doesn't stall the CLI.
@@ -110,6 +125,7 @@ def build_status_provider(
     clock: Callable[[], float] = time.monotonic,
     run_repository_factory: Callable[[str], RunRepository] = RunRepository,
     ttl_seconds: float = HUB_STATUS_CACHE_TTL_SECONDS,
+    schedule_engine: ScheduleEngine | None = None,
 ) -> Callable[[], dict[str, Any]]:
     """Build the `status_provider` callable handed to `hub.build_hub_app` (AC2/AC15).
 
@@ -118,6 +134,11 @@ def build_status_provider(
     a thin adapter); this is "whatever provides `status_provider`" that call is required to
     live in instead. Cached behind a short TTL (`clock`-injectable for deterministic tests)
     so the same, potentially expensive, `aggregate()` pass is not repeated on every request.
+
+    With a *schedule_engine*, its `status_snapshot()` is merged under a top-level
+    ``"schedules"`` key inside the same cache (HLD §12); `hub.py` renders unknown keys
+    harmlessly, so it needs no edit (ADR-0010 D5). Without one, the payload is unchanged
+    apart from ``"schedules": {"enabled": False}`` so consumers can tell "off" from "absent".
     """
     cached_payload: dict[str, Any] | None = None
     cached_at: float | None = None
@@ -147,6 +168,10 @@ def build_status_provider(
                 "total_runs": stats.total_runs,
                 "runs_by_status": dict(stats.runs_by_status),
             }
+
+        payload["schedules"] = (
+            schedule_engine.status_snapshot() if schedule_engine is not None else {"enabled": False}
+        )
 
         cached_payload = payload
         cached_at = now
@@ -215,7 +240,143 @@ def _read_fallback_status(state_dir: Path) -> dict[str, Any] | None:
             sections[key] = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+    schedules_path = state_dir / SCHEDULES_STATE_SUBDIR / SCHEDULES_STATE_FILENAME
+    if schedules_path.is_file():
+        try:
+            sections["schedules"] = json.loads(schedules_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
     return sections or None
+
+
+def _schedules_summary(schedules: Any) -> str | None:
+    """One-line schedules summary for `ao service status` (live `schedules` payload from the
+    hub). Tolerates the persisted-state shape (no counts) by returning ``None``."""
+    if not isinstance(schedules, dict) or "totals" not in schedules:
+        return None
+    totals = schedules.get("totals") or {}
+    webhook = schedules.get("webhook") or {}
+    wh = "on" if webhook.get("enabled") else "off"
+    return (
+        f"Schedules: {totals.get('active', 0)} active, {totals.get('disabled', 0)} disabled, "
+        f"{totals.get('quarantined', 0)} quarantined; "
+        f"next fire {schedules.get('next_fire_at') or '-'}; "
+        f"live scheduled runs {schedules.get('live_scheduled_runs', 0)}; webhook {wh}"
+    )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class _DeferredLauncher:
+    """Engine-launcher Protocol shim whose real target is wired right after the engine is
+    constructed (the launcher needs the engine's stores; the engine needs a launcher)."""
+
+    def __init__(self) -> None:
+        self.target: Any = None
+
+    def launch(self, decision: Any) -> Any:
+        if self.target is None:
+            raise RuntimeError("scheduled launcher used before the engine finished wiring")
+        return self.target.launch(decision)
+
+
+def build_schedule_engine(
+    registry: ServiceRegistryFile,
+    registry_path: Path,
+    state_dir: Path,
+    supervisor: Supervisor,
+    *,
+    no_schedules: bool = False,
+    clock: Callable[[], datetime] = _utc_now,
+    engine_factory: Callable[..., ScheduleEngine] | None = None,
+) -> ScheduleEngine | None:
+    """Construct (and `start()`) the `ScheduleEngine`, or return ``None`` when a kill switch is
+    set -- the CLI ``--no-schedules`` flag or registry ``schedules.enabled: false`` -- in which
+    case no engine object exists at all (T-Sv5Hb3 AC6).
+
+    Called AFTER ``supervisor.start()`` so orphan-fire reconciliation sees auto-resumed runs
+    (AC3). The launcher is built with the engine's own shared stores and per-workspace
+    `ProcessSupervisor` cache (F2: only the instance that spawned a child can reap it).
+
+    F23 (pinned by test): the engine re-reads *registry_path* each pass rather than sharing the
+    daemon's one-shot ``registry`` object, so a workspace opted in while the daemon runs is
+    scheduled at once, but has no dashboard child until the service restarts (HLD §6.1).
+    """
+    cfg = registry.schedules
+    if no_schedules or not cfg.enabled:
+        return None
+    from .schedule_engine import ScheduleEngine
+    from .schedule_launch import ScheduledLauncher
+
+    factory = engine_factory or ScheduleEngine
+    deferred = _DeferredLauncher()
+    engine = factory(
+        registry_path,
+        state_dir=state_dir,
+        clock=clock,
+        launcher=deferred,
+        eval_interval_seconds=cfg.eval_interval_seconds,
+        max_concurrent_global=cfg.max_concurrent_global,
+    )
+    # The launcher must share the engine's own stores and per-workspace ProcessSupervisor
+    # cache, which only exist once the engine does -- hence the deferred hand-over.
+    deferred.target = ScheduledLauncher(
+        state_dir,
+        process_supervisor_factory=engine.process_supervisor,
+        clock=clock,
+        fire_store=engine.fire_store,
+        state_store=engine.state_store,
+        event_log=engine.event_log,
+    )
+    engine.start()
+    return engine
+
+
+def monitor_tick(supervisor: Supervisor, engine: ScheduleEngine | None) -> None:
+    """One monitor-loop pass: ``supervisor.tick()`` then, if present, ``engine.tick()``.
+
+    AC5: an exception escaping the engine is logged with its traceback under the named event
+    and swallowed so the supervisor keeps ticking; the engine already isolates per-schedule
+    failures, this is the outer backstop."""
+    supervisor.tick()
+    if engine is None:
+        return
+    try:
+        engine.tick()
+    except Exception:
+        logger.exception("schedule.engine_tick_failed")
+
+
+def shutdown_daemon(
+    supervisor: Supervisor,
+    engine: ScheduleEngine | None,
+    servers: list[Any],
+    threads: list[threading.Thread],
+) -> None:
+    """The `run` ``finally`` body: engine first (best effort, never blocks supervisor
+    shutdown), then supervisor, then stop each uvicorn server (``should_exit`` + bounded join)."""
+    try:
+        if engine is not None:
+            try:
+                engine.shutdown()
+            except Exception:
+                logger.exception("schedule.engine_shutdown_failed")
+    finally:
+        supervisor.shutdown()
+        for server in servers:
+            server.should_exit = True
+        for thread in threads:
+            thread.join(timeout=10.0)
+
+
+def build_webhook_app(host: str, port: int) -> Any:
+    """Placeholder for the webhook listener app (`T-Wh9Kv1`). Deliberately not faked."""
+    raise NotImplementedError(
+        "--webhook: the webhook listener (T-Wh9Kv1) has not landed yet; "
+        f"refusing to open {host}:{port} with no handler"
+    )
 
 
 # -- registry commands --------------------------------------------------------------------
@@ -239,12 +400,39 @@ def add(
     no_autoresume: bool = typer.Option(
         False, "--no-autoresume", help="Disable boot-resume for this workspace's runs."
     ),
+    schedules: bool = typer.Option(
+        False,
+        "--schedules/--no-schedules",
+        help=(
+            "Opt this workspace in to clock-triggered runs from its .ao/schedules.yaml "
+            "(default OFF: a repo-supplied schedule file is otherwise inert)."
+        ),
+    ),
 ) -> None:
     """Register a workspace with the service."""
     root = _resolve_registered_dir(directory, must_exist=True)
-    ServiceRegistry().add(root, port=port, autoresume=not no_autoresume, host=host)
+    ServiceRegistry().add(
+        root, port=port, autoresume=not no_autoresume, host=host, schedules=schedules
+    )
     suffix = f" (pinned port {port})" if port is not None else ""
     typer.echo(f"Registered {root}{suffix}")
+
+
+@app.command(name="set")
+def set_cmd(
+    directory: str = typer.Argument(..., metavar="DIR", help="Registered workspace root."),
+    schedules: bool = typer.Option(
+        ..., "--schedules/--no-schedules", help="Opt the workspace in/out of scheduled runs."
+    ),
+) -> None:
+    """Update a registered workspace's settings (currently the schedules opt-in)."""
+    root = _resolve_registered_dir(directory, must_exist=False)
+    try:
+        ServiceRegistry().set_schedules(root, schedules)
+    except KeyError:
+        typer.echo(f"ERROR: not registered: {root}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{root}: schedules {'enabled' if schedules else 'disabled'}")
 
 
 @app.command()
@@ -278,13 +466,16 @@ def list_cmd() -> None:
     if not registry.workspaces:
         typer.echo("No workspaces registered.")
     else:
-        typer.echo(f"{'ROOT':<50} {'PORT':<8} {'AUTORESUME':<12} {'STATE'}")
+        typer.echo(f"{'ROOT':<50} {'PORT':<8} {'AUTORESUME':<12} {'SCHEDULES':<10} {'STATE'}")
         for entry in registry.workspaces:
             live_entry = live_by_root.get(entry.root)
             port = live_entry["port"] if live_entry else entry.port
             state = live_entry["state"] if live_entry else "-"
             port_str = str(port) if port is not None else "-"
-            typer.echo(f"{entry.root:<50} {port_str:<8} {str(entry.autoresume):<12} {state}")
+            typer.echo(
+                f"{entry.root:<50} {port_str:<8} {str(entry.autoresume):<12} "
+                f"{str(entry.schedules):<10} {state}"
+            )
 
     if login_required:
         typer.echo(HUB_AUTH_NOTE)
@@ -308,6 +499,9 @@ def status() -> None:
     else:
         if live is not None:
             typer.echo(json.dumps(live, indent=2))
+            summary = _schedules_summary(live.get("schedules"))
+            if summary:
+                typer.echo(summary)
             return
         guess = "" if confirmed else " (guessed default port, not confirmed)"
         typer.echo(f"Service daemon not running (or unreachable) on port {hub_port}{guess}.")
@@ -344,11 +538,26 @@ def install(
         "--auth",
         help="Bake --auth into the unit's ExecStart (dashboard login on the hub and its children).",
     ),
+    webhook: bool = typer.Option(
+        False, "--webhook", help="Bake --webhook into the unit's ExecStart (default: not baked)."
+    ),
+    webhook_host: str | None = typer.Option(
+        None, "--webhook-host", help="Webhook bind host to bake in (with --webhook)."
+    ),
+    webhook_port: int | None = typer.Option(
+        None, "--webhook-port", help="Webhook port to bake in (with --webhook)."
+    ),
 ) -> None:
     """Generate (and, unless --print, install) the `ao.service` systemd user unit."""
     try:
         result = install_unit(
-            print_only=print_only, hub_port=hub_port, hub_host=hub_host, auth=auth
+            print_only=print_only,
+            hub_port=hub_port,
+            hub_host=hub_host,
+            auth=auth,
+            webhook=webhook,
+            webhook_host=webhook_host,
+            webhook_port=webhook_port,
         )
     except ServiceError as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -446,6 +655,22 @@ def run(
     auth_dir: str | None = typer.Option(
         None, "--auth-dir", help="Directory of the user store. Env: AO_AUTH_DIR."
     ),
+    no_schedules: bool = typer.Option(
+        False,
+        "--no-schedules",
+        help="Kill switch: do not construct the schedule engine at all.",
+    ),
+    webhook: bool | None = typer.Option(
+        None,
+        "--webhook/--no-webhook",
+        help="Serve the webhook listener on its own port (default: registry, else off).",
+    ),
+    webhook_host: str | None = typer.Option(
+        None, "--webhook-host", help="Webhook bind host (default: registry, else loopback)."
+    ),
+    webhook_port: int | None = typer.Option(
+        None, "--webhook-port", help="Webhook port (default: registry, else 8771)."
+    ),
 ) -> None:
     """Foreground supervisor + hub daemon (HLD §6/§8). Blocks; installs SIGTERM/SIGINT
     handlers. Its parts (`Supervisor`, `hub.build_hub_app`, `prepare_auth`) are each
@@ -484,7 +709,26 @@ def run(
         typer.echo(line, err=True)
 
     state_dir = default_state_dir()
-    registry = ServiceRegistry().load()
+    registry_path = default_registry_path()
+    registry = ServiceRegistry(registry_path).load()
+
+    wh_cfg = registry.schedules.webhook
+    wh_enabled = wh_cfg.enabled if webhook is None else webhook
+    wh_host = webhook_host or wh_cfg.host or DEFAULT_WEBHOOK_HOST
+    wh_port = webhook_port or wh_cfg.port or DEFAULT_WEBHOOK_PORT
+    webhook_app: Any = None
+    if wh_enabled:
+        if wh_host not in LOOPBACK_HOSTS:
+            typer.echo(
+                f"WARNING: webhook listener binding non-loopback host {wh_host!r} exposes it to "
+                "the network; HMAC is its only authentication -- trusted networks only.",
+                err=True,
+            )
+        # Built before the Supervisor exists: a not-yet-landed listener (NotImplementedError)
+        # must take no singleton lock and spawn no child. Not wrapped in the hub's
+        # AuthMiddleware (F18) -- HMAC is its auth.
+        webhook_app = build_webhook_app(wh_host, wh_port)
+
     supervisor = Supervisor(
         registry, state_dir=state_dir, hub_port=hub_port, child_env=launch.child_env
     )
@@ -507,7 +751,12 @@ def run(
         supervisor.shutdown()
         raise
 
-    status_provider = build_status_provider(supervisor)
+    # AC3: after supervisor.start() so reconciliation sees auto-resumed runs.
+    engine = build_schedule_engine(
+        registry, registry_path, state_dir, supervisor, no_schedules=no_schedules
+    )
+
+    status_provider = build_status_provider(supervisor, schedule_engine=engine)
     hub_app = build_hub_app(status_provider, auth=launch.runtime)
     server = uvicorn.Server(
         uvicorn.Config(
@@ -525,6 +774,16 @@ def run(
 
     hub_thread = threading.Thread(target=server.run, daemon=True)
     hub_thread.start()
+    servers: list[Any] = [server]
+    threads: list[threading.Thread] = [hub_thread]
+    if webhook_app is not None:
+        wh_server = uvicorn.Server(
+            uvicorn.Config(webhook_app, host=wh_host, port=wh_port, log_level="warning")
+        )
+        wh_thread = threading.Thread(target=wh_server.run, daemon=True)
+        wh_thread.start()
+        servers.append(wh_server)
+        threads.append(wh_thread)
 
     typer.echo(f"Agent Orchestrator service running -- hub on http://{hub_host}:{hub_port}/")
     try:
@@ -535,11 +794,9 @@ def run(
             # one tick interval instead of up to a full tick.
             woken_early = stop_event.wait(HUB_TICK_INTERVAL_SECONDS)
             if not woken_early:
-                supervisor.tick()
+                monitor_tick(supervisor, engine)
     finally:
-        supervisor.shutdown()
-        server.should_exit = True
-        hub_thread.join(timeout=10.0)
+        shutdown_daemon(supervisor, engine, servers, threads)
 
 
 __all__ = ["app", "build_status_provider"]

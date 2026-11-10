@@ -418,6 +418,11 @@ responsibility is child processes; and because a sibling can be omitted entirely
 payload by `service/cli.py::build_status_provider` — the designated enrichment point — so
 `hub.py` stays the thin adapter ADR-0010 requires.
 
+**F23 (implemented, `T-Sv5Hb3`):** `run` loads the registry once for the supervisor, while the
+engine re-reads `registry_path` on every pass. A workspace opted in (`ao service set --schedules`)
+while the daemon runs is therefore scheduled immediately but has no dashboard child until the
+service restarts. Pinned by `test_f23_workspace_opted_in_after_start_is_seen`.
+
 **Single evaluator (F9).** Every engine — the service's or `ao schedule daemon`'s — holds an
 exclusive non-blocking `flock` on `<state_dir>/schedules/engine.lock` for its lifetime and refuses
 to start a second one. The supervisor singleton lock does not cover `ao schedule daemon`, and the

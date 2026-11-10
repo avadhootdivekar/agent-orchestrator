@@ -159,7 +159,7 @@
 - [ ] `T-Ri7Dz2-run-id-flag` — `ao run --run-id` with duplicate-id refusal (FR-8) — 1 d
 - [x] `T-Lp4Wt6-scheduled-launcher` — `service/schedule_launch.py`: two-phase launch, template
   instantiation per fire, `run_args` → existing options allow-list (FR-7, FR-8, NFR-3) — 2 d
-- [ ] `T-Sv5Hb3-service-integration` — registry additions, `ao service run` wiring,
+- [x] `T-Sv5Hb3-service-integration` — registry additions, `ao service run` wiring,
   `--no-schedules`/`--webhook-*`, status merge, systemd unit delta (FR-2, FR-10, NFR-1, NFR-2) — 2 d
 - [ ] `T-Cl6Jn9-schedule-cli` — the `ao schedule` sub-app incl. `daemon --once` (FR-9, NFR-5) — 3 d
 - [ ] `T-Fw8Gp4-file-watch-trigger` — `service/watch.py` + `FileWatchScheduler` (FR-11) — 2 d

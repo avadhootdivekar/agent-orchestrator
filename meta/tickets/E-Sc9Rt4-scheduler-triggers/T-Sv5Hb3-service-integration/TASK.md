@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F5/F18/F20/F23 applied)
-- Status: Draft
+- Status: Done (2026-11-11)
 - Estimate: 2 days
 
 ## Requirements Mapping
