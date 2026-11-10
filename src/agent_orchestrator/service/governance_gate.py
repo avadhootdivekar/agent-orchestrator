@@ -58,6 +58,9 @@ REASON_GOVERNANCE_ERROR: Final = "governance_error"
 
 DETAIL_TOO_LARGE: Final = "too_large"
 DETAIL_NOT_UTF8: Final = "not_utf8"
+# A path the OS cannot represent (a NUL byte: YAML's ``"\0"`` escape survives the load-time shape
+# check) -- a named refusal instead of a ``ValueError`` escaping the gate (T-Se4Bk5 S-3).
+DETAIL_INVALID_PATH: Final = "invalid_path"
 
 CENTS: Final = 100
 _FLOAT_EPS_DECIMALS: Final = 6  # money compares at micro-dollars: 0.1 + 0.2 must equal 0.3
@@ -230,7 +233,12 @@ def read_prompt(binding: ResolvedBinding, workspace_root: str) -> PromptSnapshot
     if not rel:
         return PromptSnapshot()
     root = Path(workspace_root).resolve()
-    path = (root / rel).resolve()
+    try:
+        path = (root / rel).resolve()
+    except ValueError:
+        return GateResult(
+            False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": DETAIL_INVALID_PATH}
+        )
     if not path.is_relative_to(root) or Path(rel).is_absolute():
         return GateResult(
             False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": "escapes_root"}
