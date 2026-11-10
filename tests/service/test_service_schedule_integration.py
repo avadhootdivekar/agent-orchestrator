@@ -168,6 +168,10 @@ class _StubEngine:
     def process_supervisor(self, root: str) -> object:
         return object()
 
+    def register_trigger_source(self, kind: str, factory: Any) -> None:
+        self.sources = getattr(self, "sources", {})
+        self.sources[kind] = factory
+
     def start(self) -> None:
         self.calls.append("start")
 
@@ -481,19 +485,27 @@ def test_run_registry_kill_switch_never_builds_engine(
     assert not any(e.startswith("eng.") for e in run_env.order.log)
 
 
-def test_run_webhook_not_landed_is_a_loud_guard_and_starts_nothing(
-    run_env: SimpleNamespace,
-) -> None:
+def test_run_webhook_builds_real_app_and_opens_second_socket(run_env: SimpleNamespace) -> None:
     result = runner.invoke(app, ["service", "run", "--webhook"])
-    assert isinstance(result.exception, NotImplementedError)
-    assert run_env.order.log == []  # no supervisor, no engine, no socket
-    assert len(run_env.uvicorn.configs) == 0
+    assert result.exit_code == 0, result.output
+    assert len(run_env.uvicorn.configs) == 2  # hub + webhook listener
+    assert type(run_env.uvicorn.configs[1][0]).__name__ == "FastAPI"
 
 
 def test_run_webhook_nonloopback_warns(run_env: SimpleNamespace) -> None:
     result = runner.invoke(app, ["service", "run", "--webhook", "--webhook-host", "0.0.0.0"])
-    assert isinstance(result.exception, NotImplementedError)
-    assert "non-loopback" in result.output
+    assert result.exit_code == 0, result.output
+    assert "non-loopback" in result.output and "HMAC" in result.output
+
+
+def test_engine_registers_webhook_source(stub_engine: type[_StubEngine], tmp_path: Path) -> None:
+    engine = build_schedule_engine(
+        ServiceRegistryFile(),
+        tmp_path / "r.yaml",
+        tmp_path / "st",
+        object(),  # type: ignore[arg-type]
+    )
+    assert "webhook" in engine.sources  # type: ignore[union-attr]
 
 
 def test_run_without_webhook_opens_only_the_hub_socket(run_env: SimpleNamespace) -> None:

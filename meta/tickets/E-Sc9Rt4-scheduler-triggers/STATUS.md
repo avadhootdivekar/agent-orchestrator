@@ -152,3 +152,9 @@ the webhook's middleware mounting.
 ## Update 2026-11-11 — T-Sv5Hb3 implemented
 - Registry opt-in/policy block, `ao service run` engine wiring (kill switches, outer tick backstop, shutdown order), status merge under `"schedules"`, `ao service add/set/list/status/install` deltas, webhook flags + guard (`T-Wh9Kv1` removes it). See `T-Sv5Hb3-service-integration/STATUS.md`. `T-Cl6Jn9` / `T-Wh9Kv1` unblocked.
   By: developer · Role: developer · Date: 2026-11-11
+
+- 2026-11-11: `T-Wh9Kv1` core landed (`service/webhook.py`, cli guard replaced, 95% cov); `ao schedule add` webhook flags + daemon `--once` e2e wait on `T-Cl6Jn9`.
+
+## Update 2026-11-11 — T-Cl6Jn9 implemented (partial)
+- `ao schedule` (list/next/history/validate/add/remove/enable/disable/run-now/daemon) landed in `schedules/cli.py`; `cli.py` diff = import + `add_typer` + `ao validate` hook; 31 CliRunner e2e tests, 90% coverage; `mypy src` 0 errors. Event-kind flags and `next`'s `observe` branch wait on `T-Fw8Gp4`/`T-Wh9Kv1`. See `T-Cl6Jn9-schedule-cli/STATUS.md`.
+  By: developer · Role: developer · Date: 2026-11-11

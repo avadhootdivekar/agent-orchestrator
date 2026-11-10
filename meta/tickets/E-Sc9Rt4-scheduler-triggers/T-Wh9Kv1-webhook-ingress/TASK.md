@@ -6,7 +6,7 @@
 - Owner: developer agent (security-sensitive — `T-Se4Bk5` audits this module specifically)
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F6/F14/F16/F18/F20 applied)
-- Status: Draft
+- Status: Partial — core delivered 2026-11-11 (AC1–14, 16 met; AC15 daemon `--once` leg and the `ao schedule add --webhook/--secret-*` flags deferred: `ao schedule` CLI (T-Cl6Jn9) has not landed)
 - Estimate: 3 days
 
 ## Requirements Mapping

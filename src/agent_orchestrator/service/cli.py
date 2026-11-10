@@ -309,6 +309,7 @@ def build_schedule_engine(
         return None
     from .schedule_engine import ScheduleEngine
     from .schedule_launch import ScheduledLauncher
+    from .webhook import WebhookSource
 
     factory = engine_factory or ScheduleEngine
     deferred = _DeferredLauncher()
@@ -319,6 +320,11 @@ def build_schedule_engine(
         launcher=deferred,
         eval_interval_seconds=cfg.eval_interval_seconds,
         max_concurrent_global=cfg.max_concurrent_global,
+    )
+    # Event kind served by persisted webhook requests (T-Wh9Kv1): the engine drains them via
+    # TriggerSource.observe/commit, so ``ao service run`` and a separate engine see the same queue.
+    engine.register_trigger_source(
+        "webhook", lambda root, binding: WebhookSource(state_dir, root, binding)
     )
     # The launcher must share the engine's own stores and per-workspace ProcessSupervisor
     # cache, which only exist once the engine does -- hence the deferred hand-over.
@@ -371,11 +377,19 @@ def shutdown_daemon(
             thread.join(timeout=10.0)
 
 
-def build_webhook_app(host: str, port: int) -> Any:
-    """Placeholder for the webhook listener app (`T-Wh9Kv1`). Deliberately not faked."""
-    raise NotImplementedError(
-        "--webhook: the webhook listener (T-Wh9Kv1) has not landed yet; "
-        f"refusing to open {host}:{port} with no handler"
+def build_service_webhook_app(host: str, registry_path: Path, state_dir: Path) -> Any:
+    """The webhook listener app for ``ao service run --webhook`` (`T-Wh9Kv1`): HMAC-verified
+    deliveries are persisted as ``requests/*.json`` for the engine to drain. NOT wrapped in the
+    hub's session ``AuthMiddleware`` (F18) -- HMAC is its auth."""
+    from .fire_store import ScheduleEventLog
+    from .webhook import WebhookRequestQueue, build_webhook_app, make_binding_lookup
+
+    events = ScheduleEventLog(state_dir)
+    return build_webhook_app(
+        make_binding_lookup(registry_path),
+        WebhookRequestQueue(state_dir),
+        emit=events.emit,
+        bound_host=host,
     )
 
 
@@ -724,10 +738,9 @@ def run(
                 "the network; HMAC is its only authentication -- trusted networks only.",
                 err=True,
             )
-        # Built before the Supervisor exists: a not-yet-landed listener (NotImplementedError)
-        # must take no singleton lock and spawn no child. Not wrapped in the hub's
-        # AuthMiddleware (F18) -- HMAC is its auth.
-        webhook_app = build_webhook_app(wh_host, wh_port)
+        # Built before the Supervisor exists: a listener that cannot be built (e.g. the [ui]
+        # extra is missing) must take no singleton lock and spawn no child.
+        webhook_app = build_service_webhook_app(wh_host, registry_path, state_dir)
 
     supervisor = Supervisor(
         registry, state_dir=state_dir, hub_port=hub_port, child_env=launch.child_env
