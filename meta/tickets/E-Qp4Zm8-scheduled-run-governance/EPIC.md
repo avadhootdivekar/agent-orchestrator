@@ -6,7 +6,7 @@
 - Owner: architect agent (design) -> dev-epic agent (delivery)
 - Created: 2026-11-10
 - Last Updated: 2026-11-10 (design-review edits applied, w02-02)
-- Status: Draft (design complete; implementation not started; blocked on E-Sc9Rt4 for 9 of 11 tasks)
+- Status: In Progress (2026-11-11) — partially implemented, not closeable: pause/resume, `--cost-cap-usd` CLI wiring, period cost-cap polish and the final gate are unfinished; see STATUS.md and HLD §26
 - Origin ask: user request (2026-11-10), verbatim: "I should be able to invoke the AO runs with some fixed prompts
   periodically, with some required constraints, ... invocations per specified period, like per day, per week or
   something like that. And the cost or something like that per iteration."

@@ -6,6 +6,7 @@
 - Owner: TBD (assigned at sprint start)
 
 ## This update
+- 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: Still PARTIAL, unchanged by this docs unit. Owed: `--cost-cap-usd` CLI wiring + `COST_CAP_OPTION` in `OPTIONS` (uncommitted in the working tree), e2e/`fake_cost_script`, and the `record_trip` docstring + trailer `×N` (AC17, `breakers.py`). Period-cost-cap polish and the cost-cap review (carry-over w18-04) are not recorded as landed.
 - 2026-11-11 — By: developer (unit `w14-02-a2-run-cost-cap-gate`) · Role: developer · Date: 2026-11-11 · Comment: PARTIAL.
   **Done:** `BUILTIN_COST_CAP`, `RunState.cost_cap_usd`, `TaskRunState.actuals_available`/`attempts_without_actuals`
   (AC13, field for T-Uz0Uol; counted in `_accumulate_actuals`, carried by `prepare_resume`); engine `cost_cap_reached` (pure,

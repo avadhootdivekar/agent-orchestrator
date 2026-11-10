@@ -40,6 +40,31 @@ spec key wins in the order task > agent > run level.
   (`effective_limits`): thinking effort, turn budget, max turns, autocompact, timeout, attempts.
   `max_turns` is the cap actually applied (explicit value, else derived from the tier).
 
+## Mid-run cost cap (`--cost-cap-usd`) — engine landed, CLI flag not yet committed
+
+> **Status (2026-11-11):** the engine gate is committed (`RunState.cost_cap_usd`, `builtin.cost_cap`), but the
+> `--cost-cap-usd` typer option on `ao run`/`ao resume` and its entry in the run-options registry (`COST_CAP_OPTION`
+> in `run_options.py`, not yet in `OPTIONS`) are **not committed**. Until they are, the flag below is not available on
+> the committed CLI. Design/as-built: `scheduled-run-governance-hld.md` §9 and §26.
+
+Behaviour as implemented in the engine:
+
+* The cap is a positive finite USD number (zero/negative/NaN/inf are rejected, `validate_cost_cap_usd`).
+* The run halts **resumably** (`failed`, like every breaker action) once its settled cost reaches the cap. It is
+  checked when tasks are dispatched and at task boundaries, and the boundary check trips only while work remains.
+* **Overshoot:** in-flight tasks are drained, not killed, so spend can exceed the cap by roughly the in-flight work.
+  A run that completes all its work is `succeeded` even if it finished over the cap.
+* **Sticky on resume** (`Option.sticky_on_resume`): the cap is persisted in `RunState.cost_cap_usd`; a resume without
+  the flag keeps it, an explicit value replaces it.
+* **Non-latching:** unlike `run_cost_usd` breakers, a resumed run with a higher cap is gated again at the new value.
+* **Blind executors:** a task whose executor reports no cost counts as $0 in-run (`attempts_without_actuals` is
+  incremented); for scheduled runs the ledger charges such runs their reservation.
+* The sentinel LLM lane budget is `min(run_cost_usd breaker cap, cost cap)`, see `guide-sentinel.md`.
+
+Scheduled "recurring jobs with limits" (quotas, per-run and period caps) are documented in
+`scheduled-run-governance-hld.md` §26; a walkthrough with captured output is **not written yet**, because the
+`ao schedule add --quota/--cost-per-run/--cost-cap`, `usage` and `resume` commands are uncommitted.
+
 ## Migration: `effort` → `turn_budget`
 
 Until now `effort` (key, `--effort`, `AO_EFFORT`) meant the max-turn tier. That tier is now called

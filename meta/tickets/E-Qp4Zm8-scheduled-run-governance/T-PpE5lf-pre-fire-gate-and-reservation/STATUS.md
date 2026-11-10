@@ -6,6 +6,7 @@
 - Owner: developer agent
 
 ## This update
+- 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: Docs reconciled (HLD §26). Period-cost-cap polish remains open: a period-only binding reserves all remaining window headroom (rounded down to cents), see HLD §26.3 item 9. L4/L5 remain as recorded above.
 - **2026-11-11 (developer, unit `w15-04-a2-pre-fire-gate-review-fixes`):** review `w14-04` fixes applied (branch
   `ad/enhancements-10nov`; mutation-checked, each regression test fails when its fix is reverted):
   - **H1** `_finalize_governance` charges `max(observed, reserved_usd)` with `cost_confidence: unknown` for blind

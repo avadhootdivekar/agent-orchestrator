@@ -6,6 +6,7 @@
 - Owner: developer agent
 
 ## This update
+- 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: Docs reconciled (HLD §26). Still open: production event-sink wiring (`schedule.governance.cost_unknown`), `ScheduleEngine` default factory still `FireRecordLedger` alias.
 - By: developer (unit `w17-03-a2-usage-ledger`) · Role: developer · Date: 2026-11-11
 - Implemented ACs 1-13. New `service/usage_ledger.py` (`UsageLedger`, `Charge`, `WindowUsage`, `RunProbe`/`probe_run`,
   `run_confidence`, `COST_REPORTING_EXECUTORS`, `STATE_PROBE_GRACE_SECONDS`); `fire_store.py` additive

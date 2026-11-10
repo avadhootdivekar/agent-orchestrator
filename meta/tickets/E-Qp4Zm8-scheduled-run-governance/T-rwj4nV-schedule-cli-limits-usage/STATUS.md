@@ -1,11 +1,12 @@
 # STATUS
 
 - ID: `T-rwj4nV-schedule-cli-limits-usage`
-- Updated At: 2026-11-10
-- State: Draft
+- Updated At: 2026-11-11
+- State: Partial (CLI in working tree, uncommitted; NOT done)
 - Owner: TBD (assigned at sprint start)
 
 ## This update
+- 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: UNFINISHED. `ao schedule set-limits/pin-prompt/usage/resume` and the limit flags exist in the uncommitted working tree (`schedules/cli.py`, untracked `schedules/usage_view.py`); the committed HEAD has none. Not reviewed. HLD §26.2.
 - Ticket created by the `architect` agent as part of the E-Qp4Zm8 design package. Not started.
 - Scope: `ao schedule add` limit/prompt flags, `set-limits`, `pin-prompt`, `usage`, `resume`; list/history/next columns; shared `usage_view` builder.
 

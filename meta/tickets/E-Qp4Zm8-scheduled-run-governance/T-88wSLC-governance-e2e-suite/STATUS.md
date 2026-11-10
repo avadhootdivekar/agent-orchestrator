@@ -6,6 +6,7 @@
 - Owner: TBD (assigned at sprint start)
 
 ## This update
+- 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: Remains Partial; pause/resume and usage-CLI e2e depend on uncommitted work.
 - Ticket created by the `architect` agent as part of the E-Qp4Zm8 design package. Not started.
 - Scope: Integration + CliRunner e2e tier covering every HLD §18.2/§18.3 scenario under fixed clocks with a scripted cost executor.
 

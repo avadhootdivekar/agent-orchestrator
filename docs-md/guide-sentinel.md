@@ -194,6 +194,16 @@ Decision (EPIC §10.1): after FR-23 live-smoke evidence the mechanical lane beco
 lane always stays opt-in. **The flip has not been made**: no live-smoke evidence exists yet (T-SnXAcc). Until then pass
 `--param sentinel_enabled=true`.
 
+## Interaction with the run cost cap (governance, 2026-11-11)
+
+* The LLM lane's generation budget is `min(<lowest run_cost_usd breaker cap>, RunState.cost_cap_usd)` (engine
+  `_start_llm_lane`); generation spend counts toward the run's cost cap. The `--cost-cap-usd` CLI flag itself is not yet
+  committed (see `run-options-and-limits-guide.md`).
+* **Kill under-count:** a task killed by the sentinel reports no cost actuals; the attempt is counted in
+  `attempts_without_actuals`, so the run's in-run total under-counts. For scheduled runs the usage ledger flags the fire
+  `partial` rather than charging $0.
+* `ao schedule validate` (working tree, uncommitted) warns when `sentinel.llm.budget_usd >= per_run_usd`.
+
 ## Known limits
 
 - Liveness needs an `activity_path`; executors without one only get alarms. Live attempt spend is only known when it ends, so

@@ -1,11 +1,12 @@
 # STATUS
 
 - ID: `T-nI4DBf-capped-run-pause-resume`
-- Updated At: 2026-11-10
-- State: Draft
+- Updated At: 2026-11-11
+- State: Partial (code in working tree, uncommitted, unreviewed; NOT done)
 - Owner: TBD (assigned at sprint start)
 
 ## This update
+- 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: UNFINISHED. `service/capped_resume.py` (request/drain/sweep) exists in the working tree but is untracked at doc-sync time; carry-over unit w18-01 owns committing it. Not reviewed, not claimed done. HLD §26.2/§26.4.
 - Ticket created by the `architect` agent as part of the E-Qp4Zm8 design package. Not started.
 - Scope: Pause/abort lifecycle: operator resume request (`resume_capped` drop request), engine drain as single launch authority, TTL expiry sweep.
 

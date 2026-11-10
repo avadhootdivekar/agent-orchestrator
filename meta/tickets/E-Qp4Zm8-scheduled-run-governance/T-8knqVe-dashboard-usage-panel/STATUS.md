@@ -2,10 +2,11 @@
 
 - ID: `T-8knqVe-dashboard-usage-panel`
 - Updated At: 2026-11-11
-- State: Partial (read-only usage panel landed; resume POST + M5 deferred)
+- State: Partial (route/UI in working tree, uncommitted; NOT done)
 - Owner: TBD (assigned at sprint start)
 
 ## This update
+- 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: UNFINISHED. `GET /api/schedules/{id}/usage` (`ui/app.py`, `ui/service.py`, `ui/src/*`) is present only in the uncommitted working tree, built bundle assets deleted/regenerated there. Not reviewed. HLD §26.2.
 - Landed (w20-06): `GET /api/schedules/{id}/usage?at=` (404 unknown id, 400 malformed `at`; per-window runs used/max,
   spend actual/reserved/max, confidence, `skipped` + `quota_exhausted` counts) and
   `GET /api/schedules/governance-events?limit=&id=` (newest-first, limit 1..500, 404 unknown id, prompt keys dropped).

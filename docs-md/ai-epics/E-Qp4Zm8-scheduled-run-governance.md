@@ -5,8 +5,8 @@
 - Title: Recurring `ao` runs with fixed prompts, per-period invocation quotas and cost caps
 - Owner: architect agent (design) → dev-epic agent (delivery)
 - Created: 2026-11-10
-- Last Updated: 2026-11-10
-- Status: Draft — design complete, implementation not started
+- Last Updated: 2026-11-11
+- Status: In progress — partially implemented, NOT closed (see HLD §26 for landed vs unfinished)
 - Origin ask (owner, verbatim): "I should be able to invoke the AO runs with some fixed prompts periodically, with some
   required constraints, ... invocations per specified period, like per day, per week or something like that. And the
   cost or something like that per iteration."
@@ -109,3 +109,11 @@ E-Sc9Rt4's evaluator, a governance block to its fire records, and a mid-run cost
 2. Run the early gate (reviewer + dev-security on the HLD/ADR) before Sprint 1 code lands. It is step 1 of
    T-lTW88y.
 3. Start T-lJu9oZ and T-et7Edf in parallel. The rest waits for E-Sc9Rt4 Sprint 1 to merge.
+
+
+## Evidence log (2026-11-11, `w20-08`)
+
+Landed and committed: window math (`T-lJu9oZ`), binding `limits` model (`T-tPlK1T`), pre-fire gate (`T-PpE5lf`), usage ledger
+(`T-Uz0Uol`), engine cost-cap gate (`T-et7Edf`, partial), governance e2e (`T-88wSLC`, partial). Unfinished or uncommitted:
+pause/resume (`T-nI4DBf`), `ao schedule` limits/usage CLI (`T-rwj4nV`), dashboard usage route (`T-8knqVe`), `--cost-cap-usd`
+CLI wiring, period cost-cap polish, final gate (`T-lTW88y`). Details and deviations: `../scheduled-run-governance-hld.md` §26.

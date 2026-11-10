@@ -1,11 +1,12 @@
 # STATUS
 
 - ID: `E-Qp4Zm8-scheduled-run-governance`
-- Updated At: 2026-11-10 (review edits applied)
-- State: Draft (design complete, implementation not started)
+- Updated At: 2026-11-11
+- State: In Progress — partially implemented, NOT closeable (see below)
 - Owner: architect agent (design) -> dev-epic agent (delivery)
 
 ## This update
+- **2026-11-11 (developer, unit `w20-08-a2-docs-adr-sync`, last work wave):** docs synced to the code (HLD §26 as built, ADR-0025 "Implementation outcome", guides). Task states: DONE/committed = `T-lJu9oZ`, `T-tPlK1T`, `T-Uz0Uol` (pending review/merge); PARTIAL = `T-PpE5lf`, `T-et7Edf`, `T-88wSLC`, `T-Hq3vXd`; code in working tree only, uncommitted/unreviewed = `T-nI4DBf` (pause/resume), `T-rwj4nV` (CLI), `T-8knqVe` (dashboard); NOT started = `T-lTW88y` (final gate). **Unfinished: pause/resume, `--cost-cap-usd` CLI wiring, period cost-cap polish, final gate.** ADR-0025 stays Proposed.
 - **2026-11-11 (developer, unit `w15-04-a2-pre-fire-gate-review-fixes`):** `T-PpE5lf` review fixes H1 (blind/killed runs charged `max(observed, reserved)`), M1 (run_id on `intended`), M2 (idempotent, re-driven finalisation + start sweep), M3 (tz/DST/week-start/month fixed-clock tests) and Lows L1/L2/L3/L6 done, mutation-checked; L4 (main) and L5 left open with reasons in the task STATUS. Pending re-review/merge.
 - **2026-11-11 (developer, unit `w17-03-a2-usage-ledger`):** `T-Uz0Uol` implemented (AC1-13): `service/usage_ledger.py` replaces the interim ledger behind `LedgerPort` (`FireRecordLedger` kept as alias); fire-store `update_governance`/`find_by_run_id`/`iter_schedule`. 52 new tests, 97% coverage, mutation-checked. Open: wire an event sink in engine/launcher. Pending review/merge.
 - **2026-11-11 (developer, unit `w14-02-a2-run-cost-cap-gate`):** `T-et7Edf` partially implemented: engine gate (dispatch + boundary, H1), sticky `RunState.cost_cap_usd`, `builtin.cost_cap`, AC13 `attempts_without_actuals`, registry option, FakeExecutor `cost_usd`. Unfinished: `cli.py` run/resume wiring + CLI e2e tier + `fake_cost_script` (cli.py owned by other units this wave), AC17 docstring (follow-up T-Hq3vXd). `T-Uz0Uol` may now depend on `attempts_without_actuals`.

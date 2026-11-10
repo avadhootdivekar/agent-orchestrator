@@ -1,6 +1,6 @@
 # Scheduled-run governance — fixed prompts, per-period quotas, cost caps — HLD + LLD (E-Qp4Zm8)
 
-- Status: **Proposed / design complete — not implemented.** Builds on E-Sc9Rt4, which is also design-only.
+- Status: **Partially implemented (2026-11-11, branch `ad/enhancements-10nov`) — NOT closed, NOT "Implemented".** The window math, binding `limits` model, pre-fire gate + reservation, derived usage ledger and the engine's `--cost-cap-usd` gate are committed; pause/resume, the dashboard usage route, the `ao schedule usage/resume/set-limits/pin-prompt` commands, the `ao run/resume --cost-cap-usd` CLI wiring and the period-cost-cap polish are **unfinished or uncommitted** (§26 lists each, with the ticket). Where §1–§24 (the design) and §26 disagree, **§26 and the code win**. Builds on E-Sc9Rt4 (mostly shipped, also not closed).
 - Related: [`ADR-0025`](adr/ADR-0025-scheduled-run-governance-quotas-and-cost-caps.md) (this epic's decisions) ·
   [`scheduler-triggers-hld.md`](scheduler-triggers-hld.md) + [`ADR-0014`](adr/ADR-0014-service-owned-scheduler-and-triggers.md)
   (the firing mechanism this epic extends) · [`lld-run-control-routing-breakers.md`](lld-run-control-routing-breakers.md)
@@ -97,22 +97,22 @@
 
 | Need | What exists today | Use |
 |---|---|---|
-| Actual USD per task | `TaskResult.cost_usd` from `total_cost_usd` (`executors/claude_cli.py:482`); mirrored to `TaskRunState.cumulative_cost_usd` (`models.py:1595`) at settle | Cost source of truth |
+| Actual USD per task | `TaskResult.cost_usd` from `total_cost_usd` (`executors/claude_cli.py:484`); mirrored to `TaskRunState.cumulative_cost_usd` (`models.py:1616`) at settle | Cost source of truth |
 | Run total | `compute_run_usage_totals(state).cost_usd` (`models.py`, derived, resume-safe; includes sentinel generation rows) | Ledger + engine gate |
-| Summary cost | **Not** in `state.tasks`; `<run_dir>/summary/summary.json` `summary_cost_usd` (`summarizer.py:54,287`), bounded at `SUMMARY_MAX_COST_FRACTION = 0.02` except the final summary | Ledger adds it (§10.2); the in-run gate does not (documented) |
-| USD breaker | `run_cost_usd` / `task_cost_usd` registered (`breakers.py:419`), evaluated at task boundaries (`engine.py:2741`) | **Not reused directly** — latches (§9.1) |
+| Summary cost | **Not** in `state.tasks`; `<run_dir>/summary/summary.json` `summary_cost_usd` (`summarizer.py:130,271`), bounded at `SUMMARY_MAX_COST_FRACTION = 0.02` except the final summary | Ledger adds it (§10.2); the in-run gate does not (documented) |
+| USD breaker | `run_cost_usd` / `task_cost_usd` registered (`breakers.py:419`), evaluated at task boundaries (`engine.py:2810`) | **Not reused directly** — latches (§9.1) |
 | Breaker actions | `fail/stop/pause` all ⇒ resumable `status="failed"` (`breakers.py::map_action`, ADR-RC-004); `RunState.status ∈ {running, succeeded, failed, cancelled}` | Pause = resumable failed |
-| Halt behavior | Halt ⇒ `_drain_remaining` waits for in-flight workers ("drain, don't kill", ADR-0007 D7, `engine.py:3248`) | Overshoot bound (§9.2) |
+| Halt behavior | Halt ⇒ `_drain_remaining` waits for in-flight workers ("drain, don't kill", ADR-0007 D7, `engine.py:3334`, `_drain_remaining`) | Overshoot bound (§9.2) |
 | Latching | `evaluate_breakers`: `if spec.id in already_tripped: continue` — a tripped id never trips again; ADR-0016 D2 already flags "after any trip a plain `ao resume` has no engine wall" | Why we need a re-armed gate |
-| Extension | `ao resume --extend-breaker <id>` → `apply_breaker_extension` — but only ids in `wf.circuit_breakers` (`cli.py:2027`) | Not usable for a built-in; new `--cost-cap-usd` on resume instead |
-| Built-in trip recording | `record_trip(... BUILTIN_BUDGET_EXHAUSTED ...)` (`engine.py:1756`), ids in `models.py:131-133` | Add `BUILTIN_COST_CAP = "builtin.cost_cap"` |
-| Sentinel budget | `GenerationLane(run_cost_cap_usd=...)` derived only from `run_cost_usd` breakers (`engine.py:2924-2933`) | Must also see the new cap |
-| Monitor extension | `mode: recommend` breakers may be auto-extended; built-ins never reach the consult (`engine.py:2730-2737`) | Cost cap is a built-in ⇒ always hard |
+| Extension | `ao resume --extend-breaker <id>` → `apply_breaker_extension` — but only ids in `wf.circuit_breakers` (`cli.py:2011-2118`, `apply_breaker_extension`) | Not usable for a built-in; new `--cost-cap-usd` on resume instead |
+| Built-in trip recording | `record_trip(... BUILTIN_BUDGET_EXHAUSTED ...)` (`engine.py:1820`), ids in `models.py:131-135` (`BUILTIN_COST_CAP` is `models.py:135`) | Add `BUILTIN_COST_CAP = "builtin.cost_cap"` |
+| Sentinel budget | `GenerationLane(run_cost_cap_usd=...)` derived only from `run_cost_usd` breakers (`engine.py:3006-3035`, `_start_llm_lane`; now `min(breaker cap, RunState.cost_cap_usd)`) | Must also see the new cap |
+| Monitor extension | `mode: recommend` breakers may be auto-extended; built-ins never reach the consult (`engine.py` boundary block ~2790-2830: the cost-cap check at 2806 runs before `evaluate_breakers` at 2810) | Cost cap is a built-in ⇒ always hard |
 | Launch | `ProcessSupervisor.launch_run(prompt=..., options=...)` writes the prompt to a launch file, passes `--prompt-file` (`ui/processes.py:399-452`); `launch_resume` exists | Fire + capped resume |
 | Kill | `ProcessSupervisor.cancel` SIGTERMs the process group then SIGKILL after 10 s | Considered for abort; rejected (§9.3) |
 | Dashboard auth | Optional, deny-by-default `AuthMiddleware` (`ui/app.py:228`); routes without a policy entry are `AUTHENTICATED` | New routes inherit it (§14) |
-| `ao run --run-id` | **Not present** (E-Sc9Rt4 T-Ri7Dz2) | Dependency |
-| `schedules/`, `service/schedule_engine.py`, `fire_store.py`, `schedule_launch.py` | **Not present** (E-Sc9Rt4 unimplemented) | Dependencies |
+| `ao run --run-id` | Re-verify before relying on it (was absent at design time; E-Sc9Rt4 T-Ri7Dz2) | Dependency |
+| `schedules/`, `service/schedule_engine.py`, `fire_store.py`, `schedule_launch.py` | **Present** since E-Sc9Rt4 landed (2026-11-11 audit refresh) | Dependencies |
 
 **Drift found in E-Sc9Rt4's design (fix in its tasks, not here):** its HLD §3.3 and T-Ri7Dz2 AC4 treat `ALLOWED_OPTIONS`
 as a hand-edited dict ("add the one entry"). It is now **derived** from the run-options registry
@@ -600,7 +600,7 @@ is **unsafe on resume**. `evaluate_breakers` latches: once an id is in `state.tr
 (`breakers.py`, "latch: record at most once per id, ever"). ADR-0016 D2 already documents the consequence: *after any
 trip a plain `ao resume` has no engine wall.* A paused-by-cap run that an operator (or a script) resumes with plain
 `ao resume` would then spend without limit. `--extend-breaker` cannot help either: it only accepts ids declared in
-`wf.circuit_breakers` (`cli.py:2027`), and the scheduler cannot edit the workflow (template instances are rendered per
+`wf.circuit_breakers` (`cli.py:2011-2118`, `apply_breaker_extension`), and the scheduler cannot edit the workflow (template instances are rendered per
 fire). Converting USD to `budget.py` tokens is rejected too: price per token differs per model, cache read/write tiers,
 and the Claude CLI already reports the true USD figure.
 
@@ -1283,8 +1283,62 @@ HLD before Sprint 1 code lands (the pattern E-GIytcL and E-Sc9Rt4 both prescribe
   The Opus design review (`w01-07`) was the design half of that gate; its H/M/L edits are applied (this section's
   amendments). The dev-security half and a **re-review** of the applied fixes are still owed (A2.7).
 
-## 25. Post-implementation docs refresh
+## 25. Post-implementation docs refresh (done 2026-11-11 as `w20-08`; see §26)
 
 `T-Hq3vXd-docs-refresh` reconciles this HLD, ADR-0025, `scheduler-triggers-hld.md` (cross-links + the evaluate-order
 amendment), `run-options-and-limits-guide.md` (`--cost-cap-usd`), `guide-sentinel.md` (cap feed) and `meta/ROADMAP.md`
 with what was actually built, including deviations.
+
+## 26. As built (2026-11-11) — deviations, landed vs unfinished
+
+Reconciled against the working tree on `ad/enhancements-10nov` (unit `w20-08-a2-docs-adr-sync`). "Committed" = in `git log`
+of that branch; "working tree only" = present on disk but uncommitted at doc-sync time (owned by in-flight carry-over
+units) — **treat those as unlanded until committed and reviewed.** This section describes behaviour that exists, not the plan.
+
+### 26.1 Landed (committed)
+
+| Piece | Ticket | Code |
+|---|---|---|
+| Calendar window math | `T-lJu9oZ` | `schedules/windows.py` |
+| `limits` binding model, D-2 validation, `limits_digest`, constants (`MAX_QUOTA_RUNS` 10 000, `MAX_USD` 100 000, `MIN_RESERVATION_USD` 0.10, `DEFAULT_PAUSE_TTL_SECONDS` 72 h, `MAX_PAUSE_TTL_SECONDS` 30 d, `MAX_RESUME_FACTOR` 1.0, `MAX_PROMPT_BYTES` 256 KiB) | `T-tPlK1T` | `schedules/governance.py`, `schedules/models.py` |
+| Pre-fire governance gate, reservation under flock, prompt pin, retire hook, fail-closed argv check | `T-PpE5lf` | `service/governance_gate.py`, `service/schedule_engine.py`, `service/schedule_launch.py`, `service/fire_store.py` |
+| Derived usage ledger (`UsageLedger`, `FireRecordLedger` kept as alias) | `T-Uz0Uol` | `service/usage_ledger.py` |
+| Engine cost-cap gate: `RunState.cost_cap_usd` (sticky), `BUILTIN_COST_CAP = "builtin.cost_cap"`, `cost_cap_reached`, `Orchestrator._trip_cost_cap` (dispatch prep + boundary, boundary only while work remains — H1), `TaskRunState.actuals_available`/`attempts_without_actuals`, sentinel lane cap `min(...)`, `FakeExecutor` `cost_usd`, `Option.sticky_on_resume`/`SOURCE_STATE`, `validate_cost_cap_usd`/`resolve_sticky_cost_cap` | `T-et7Edf` (partial) | `engine.py`, `models.py`, `run_options.py` |
+| CliRunner governance e2e (quota skip, DST/Berlin boundaries, restart) | `T-88wSLC` (partial) | `tests/` |
+
+Event names emitted by the gate/ledger (grep-verified in `src/`): `schedule.governance.skipped`, `.reserved`, `.cost_unknown`,
+`.error`, `.finalize_failed`, `.launch_unsafe`, `.run_cost_capped`, `.resumed`, `.resume_refused`, `.pause_expired`.
+
+### 26.2 Present in the working tree but NOT committed (unreviewed)
+
+- `service/capped_resume.py` (`request_capped_resume`, `drain_resume_capped`, `sweep_pause_expiry`; drop-request `kind: "resume_capped"`) — `T-nI4DBf`; carry-over unit w18-01.
+- `ao schedule` commands `set-limits`, `pin-prompt`, `usage`, `resume` and flags `--quota PERIOD=N`, `--cost-per-run`, `--cost-cap PERIOD=USD`, `--on-cap`, `--pause-ttl`, `--week-start`, `--per-run-usd`, `--add-usd`, `--clear-quotas`, `--clear-cost`, `--pin-prompt` (`schedules/cli.py`, `schedules/usage_view.py`) — `T-rwj4nV`. The committed HEAD of `schedules/cli.py` has only `list/next/history/validate/add/remove/enable/disable/run-now/daemon`.
+- `ao run`/`ao resume --cost-cap-usd` typer options in `cli.py` and `COST_CAP_OPTION` appended to `run_options.OPTIONS` (HEAD: not in `OPTIONS`; flag absent from committed `cli.py`) — `T-et7Edf` AC1/2/9/11/14.
+- `GET /api/schedules/{schedule_id}/usage` (`ui/app.py`, `ui/service.py`, `ui/src/*`) — `T-8knqVe`.
+
+### 26.3 Deviations from the design (each with reason and task)
+
+1. **Cost cap is not yet reachable from the CLI at the committed HEAD.** The engine honours `Orchestrator(cost_cap_usd=)` and a persisted `RunState.cost_cap_usd`, but registering the option without the typer flag breaks the registry↔CLI consistency tests, so `COST_CAP_OPTION` was defined but kept out of `OPTIONS` until the CLI wiring commit (`T-et7Edf`). Consequence: the gate's fail-closed argv check refuses real launches that need a `per_run_usd` cap until that wiring lands.
+2. **`RunState.cost_cap_source` rejected** (design-review M5c): it cannot be forwarded through the allow-listed argv; the fire record is the authority, and a generic resume of a governed run is refused via `find_by_run_id` (`T-nI4DBf` AC12, not committed).
+3. **Schema (§6.3)**: pydantic-generated, no `anyOf`, class-named `$defs` (`T-tPlK1T`, review M2).
+4. **Blind/killed runs are charged `max(observed, reserved)`** and finalisation is idempotent and re-driven at start (`T-PpE5lf` review H1/M2); the HLD's plain "observed" charge was too optimistic.
+5. **Ledger index is lazy per workspace** (built on first `usage()`), `charge(rec, *, window_open=True)` is evaluated once per open/closed variant, confidence worst-of order `actual < pending < partial < unknown`; a running run with no settled task is `pending`, a terminal one `unknown` (`T-Uz0Uol`). The 50 ms target was asserted at 500 ms (CI margin), not separately measured.
+6. **`ScheduleEngine` still defaults `usage_ledger_factory` to `FireRecordLedger`** (an alias of the real ledger) and no event sink is injected, so `schedule.governance.cost_unknown` is emitted only when a sink is supplied (`T-Uz0Uol` follow-up).
+7. **Overshoot, documented (L2/H1):** the cap is checked at dispatch and at task boundaries; in-flight work drains (ADR-0007 D7), so a run may finish above its cap. A run that completes everything it had is `succeeded` even if over the cap (boundary trip only with remaining work, H1).
+8. **Sentinel-kill under-count and `partial` charge (M1):** a task killed by the sentinel reports no actuals; its attempt is counted in `attempts_without_actuals` and the fire is charged `partial` (worst-of), never silently as $0. See `guide-sentinel.md`.
+9. **Period-only caps (L7):** a binding with period cost caps and no `per_run_usd` needs at least `MIN_RESERVATION_USD` ($0.10) of headroom in the tightest window and then reserves *all of that remaining headroom* (rounded down to cents) as the run's cap (`governance_gate.py`), so one run can consume the whole period; set `per_run_usd` to bound a single run.
+10. **Sentinel lane cap (L4):** the LLM lane budget is `min(breaker cap, RunState.cost_cap_usd)`; `ao schedule validate` warns when `sentinel.llm.budget_usd >= per_run_usd`.
+
+### 26.4 Unfinished (honest list)
+
+| Item | Ticket | State |
+|---|---|---|
+| Pause/resume/expiry of a capped run (`T-nI4DBf`) | `T-nI4DBf` | code in working tree, uncommitted, unreviewed; carry-over unit w18-01 |
+| Period cost-cap polish / cost-cap review fixes | `T-et7Edf`, `T-PpE5lf` | carry-over unit w18-04 and AC list in the ticket |
+| `ao run/resume --cost-cap-usd` CLI wiring + e2e + `fake_cost_script` | `T-et7Edf` | uncommitted / not done |
+| `record_trip` docstring and `×N` trailer (AC17) | `T-et7Edf` | owed; `breakers.py` was outside that unit's boundary and is outside this docs-only unit |
+| Dashboard usage panel, feed | `T-8knqVe` | route and UI in working tree, uncommitted |
+| Security/review final gate incl. dev-security half | `T-lTW88y` | not run |
+| Governance e2e suite | `T-88wSLC` | partial |
+| `scheduler-triggers-hld.md` governance cross-links (§6.3 note, §5.1 rows) | `T-Hq3vXd` | not done here: the file carries another unit's uncommitted edits |
+| `meta/ROADMAP.md` status rows | `T-Hq3vXd` | outside this unit's brief; not done |

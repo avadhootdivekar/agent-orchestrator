@@ -1,6 +1,6 @@
 # ADR-0025 — Scheduled-run governance: mandatory per-job limits, calendar-window quotas, a derived usage ledger, and a sticky re-armed mid-run cost cap that pauses by default
 
-- Status: **Proposed** (2026-11-10) — design complete, not implemented. Builds on ADR-0014 (also Proposed).
+- Status: **Proposed — partially implemented (2026-11-11)**. D1, D2, D3, D4, D7 and the engine half of D5 are committed on `ad/enhancements-10nov`; D6 (pause/resume) and the CLI half of D5 are unfinished or uncommitted, so this ADR is **not yet Accepted**. See "Implementation outcome". Builds on ADR-0014 (now mostly shipped, also not closed).
 - Date: 2026-11-10
 - Deciders: Avadhoot Divekar (owner — D-1..D-5 locked before design), Claude (architect role)
 - Related: **ADR-0014** (scheduler; at-most-once fires, drop-directory launch authority) · **ADR-RC-004** in
@@ -182,3 +182,21 @@ ran), and it needs no prompt store.
 - **Carried hazards (surfaced, not hidden).** Overshoot ≈ in-flight work. Blind executors are charged their
   reservation. A run's agents can tamper with their own `state.json` mid-run: the in-run gate trusts it, the ledger's
   high-water mark limits the damage. E-Sc9Rt4's `ALLOWED_OPTIONS` assumption is stale: options must be registry entries.
+
+
+## Implementation outcome (2026-11-11)
+
+Source of truth for details: `scheduled-run-governance-hld.md` §26 (as built, deviations, unfinished list).
+
+| Decision | Outcome |
+|---|---|
+| D1 limits on the binding, one mandatory | **Landed** (`schedules/governance.py`, `T-tPlK1T`). |
+| D2 calendar windows by local-date label | **Landed** (`schedules/windows.py`, `T-lJu9oZ`); Santiago/Beirut/DST fixtures. |
+| D3 derived usage ledger | **Landed** (`service/usage_ledger.py`, `T-Uz0Uol`). Deviation: lazy per-workspace index; `schedule.governance.cost_unknown` only emitted when an event sink is injected (not wired in production yet). |
+| D4 one pre-fire gate, governance skips burn the key | **Landed** (`service/governance_gate.py`, `T-PpE5lf`) with review corrections: blind/killed runs charged `max(observed, reserved)`; idempotent re-driven finalisation. |
+| D5 sticky `--cost-cap-usd`, non-latching `builtin.cost_cap` | **Engine landed** (`RunState.cost_cap_usd`, dispatch + boundary gate, boundary trip only with remaining work). **CLI flag wiring is not committed**; `COST_CAP_OPTION` is not yet in `run_options.OPTIONS` (`T-et7Edf`, partial). Overshoot ≈ in-flight work stays as documented; a run that finishes everything while over its cap is `succeeded`. The `cost_cap_source` field from the design review was rejected (cannot cross the allow-listed argv). |
+| D6 `on_cap: pause | abort`, default `pause` | **Model landed** (`LimitsSpec`, `pause_ttl_seconds`). The pause/resume/expiry machinery (`service/capped_resume.py`) exists in the working tree but is **uncommitted and unreviewed** (`T-nI4DBf`). |
+| D7 fixed prompts by path, hashed, optionally pinned | **Landed** in the gate (`prompt_sha256`, `MAX_PROMPT_BYTES`); the `ao schedule pin-prompt` CLI is uncommitted. |
+
+Alternatives table above is unchanged. Move to **Accepted** only when `T-nI4DBf`, `T-et7Edf` CLI wiring and `T-lTW88y`
+(security/review gate, still to run) are done.
