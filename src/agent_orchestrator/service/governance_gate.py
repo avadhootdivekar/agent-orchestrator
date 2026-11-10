@@ -212,8 +212,13 @@ def gate(
 
 def _read_regular_file(path: Path, rel: str) -> bytes | GateResult:
     """Open ONCE (``O_NONBLOCK`` so a FIFO swapped in cannot block while the usage flock is held
-    -- L6), ``fstat`` the descriptor, then read at most ``MAX_PROMPT_BYTES + 1`` bytes."""
-    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    -- L6), ``fstat`` the descriptor, then read at most ``MAX_PROMPT_BYTES + 1`` bytes.
+
+    ``O_NOFOLLOW`` (T-lTW88y G-1): *path* is already ``resolve()``d and root-checked, so its last
+    component is never a symlink at check time. A symlink found here was swapped in between the
+    check and the open (TOCTOU); following it could read a file outside the workspace into the
+    run's prompt, so the open fails (``ELOOP``) and the caller refuses the fire as unreadable."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as fh:
         st = os.fstat(fh.fileno())
         if not stat.S_ISREG(st.st_mode):

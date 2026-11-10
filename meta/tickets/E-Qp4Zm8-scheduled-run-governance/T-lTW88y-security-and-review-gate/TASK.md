@@ -5,8 +5,8 @@
 - Epic ID: `E-Qp4Zm8-scheduled-run-governance`
 - Owner: reviewer + dev-security agents
 - Created: 2026-11-10
-- Last Updated: 2026-11-10
-- Status: Draft
+- Last Updated: 2026-11-11
+- Status: In Progress (final gate run 2026-11-11; not passed — see STATUS)
 - Estimate: 1.5 days (0.5 d early gate + 1 d final gate)
 
 ## Requirements Mapping
