@@ -538,6 +538,13 @@ class TaskSpec(BaseModel):
     max_turns: int | None = None
     thinking_effort: ThinkingEffort | None = None
     autocompact: str | int | None = None
+    # Sentinel stuck_factor hints (T-Rk4Wn7 D2). `stuck_cohort`: tag of comparable work; the
+    # duration baseline only uses settled tasks of the same agent AND tag. `expected_minutes`:
+    # explicit baseline (replaces the peer median). `no_stuck_kill`: never duration-kill this task
+    # (idle/cost triggers still apply).
+    stuck_cohort: str | None = None
+    expected_minutes: float | None = Field(default=None, gt=0)
+    no_stuck_kill: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -713,7 +720,6 @@ class Trigger(BaseModel):
     event: str | None = None
     # required when type=interval; >=1 (0/negative is always due), <= 1 year (overflow guard)
     interval_seconds: int | None = Field(default=None, ge=1, le=MAX_INTERVAL_SECONDS)
-
 
 
 class LoopSpec(BaseModel):
@@ -1000,6 +1006,12 @@ class SentinelRecoverySpec(_SentinelBase):
     max_recovery_kills_per_task: int = Field(default=2, ge=0)
     kill_grace_seconds: int = Field(default=10, ge=0)
     systemic_kill_alarm: int = Field(default=3, ge=1)
+    systemic_task_window_seconds: int = Field(default=600, ge=0)
+    """Kills of the SAME task closer together than this count as one systemic incident (0 = off)."""
+    stuck_activity_veto: StrictBool = True
+    """A stuck_factor kill is vetoed while the task showed output growth recently."""
+    stuck_veto_minutes: int | None = Field(default=None, ge=1)
+    """Activity window for the veto; null = ``idle_kill_minutes``."""
     escalate: list[dict[str, str]] = [{"effort": "high"}]
     include_barriers: StrictBool = False
     force: StrictBool = False
@@ -1651,6 +1663,10 @@ class TaskRunState(BaseModel):
     # Start of the CURRENT dispatch (reset on every recovery re-dispatch); ``started_at`` stays the
     # task's first start. Liveness/stuck clocks use this (T-Rk4Wn7 D1).
     attempt_started_at: str | None = None
+    # stuck_factor hints copied from the TaskSpec at dispatch (T-Rk4Wn7 D2).
+    stuck_cohort: str | None = None
+    expected_minutes: float | None = None
+    no_stuck_kill: bool = False
     recovery: TaskRecovery | None = None
 
 
