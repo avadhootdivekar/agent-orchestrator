@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import threading
@@ -413,3 +414,60 @@ def test_disabled_sentinel_wires_no_cancel_hooks(tmp_path: Path) -> None:
     assert state.status == "succeeded"
     assert ex.contexts["t0"].cancel_event is None and ex.contexts["t0"].activity_path is None
     assert state.tasks["t0"].recovery is None and state.tasks["t0"].last_activity_at is None
+
+
+def test_retried_task_gets_per_attempt_clock_no_second_stuck_kill() -> None:
+    """T-Rk4Wn7 D1: kill -> retry is not re-killed within stuck_min_minutes of its own start."""
+    from agent_orchestrator.models import SentinelRecoverySpec, TaskRecovery, TaskRunState
+
+    spec = SentinelRecoverySpec(
+        idle_kill_minutes=600, force=True, stuck_factor=3, stuck_min_minutes=20
+    )
+    t0 = datetime(2026, 11, 9, 12, tzinfo=UTC)  # fixed clock
+    st = RunState(run_id="r", workflow_id="w", started_at="x", updated_at="x")
+    for i in range(3):  # peer median 2 min -> threshold 6 min, floored at 20 min
+        s = t0 - timedelta(hours=5)
+        st.tasks[f"p{i}"] = TaskRunState(
+            status="succeeded",
+            agent="ag",
+            started_at=s.isoformat(),
+            ended_at=(s + timedelta(minutes=2)).isoformat(),
+        )
+    # First attempt began 25 min ago (legitimately stuck-killed), then was re-dispatched.
+    st.tasks["me"] = TaskRunState(
+        status="running", agent="ag", started_at=(t0 - timedelta(minutes=25)).isoformat()
+    )
+    rt = sentinel_tick.SentinelRuntime(
+        ceiling=1,
+        tick_seconds=1,
+        inbox_batch_max=1,
+        live_limit=1,
+        control_dir=Path("."),
+        clock=lambda: t0,
+        log=logging.getLogger("t"),
+        recovery=spec,
+    )
+    sentinel_tick.register_task(st, rt, "me", t0)  # recovery re-dispatch at t0
+    st.tasks["me"].recovery = TaskRecovery(kills=1)
+    rt.stat_size = lambda _p: 1
+
+    for minutes in (0.25, 5, 19):  # polls inside the new attempt's first stuck_min_minutes
+        now = t0 + timedelta(minutes=minutes)
+        sentinel_tick.sample_liveness(st, rt, now)
+        assert sentinel_tick.evaluate_recovery(st, rt, now, set()) == []
+    now = t0 + timedelta(minutes=21)
+    sentinel_tick.sample_liveness(st, rt, now)
+    assert sentinel_tick._trigger_for(st, spec, "me", st.tasks["me"], now) == "stuck_factor"
+
+
+def test_retry_cooldown_blocks_rapid_rekills() -> None:
+    from agent_orchestrator.models import TaskRecovery, TaskRunState
+
+    t0 = datetime(2026, 11, 9, 12, tzinfo=UTC)
+    ts = TaskRunState(status="running", agent="ag")
+    ts.attempt_started_at = t0.isoformat()
+    ts.recovery = TaskRecovery(kills=1)
+    assert sentinel_tick._in_retry_cooldown(ts, t0 + timedelta(seconds=15))
+    assert not sentinel_tick._in_retry_cooldown(
+        ts, t0 + timedelta(seconds=sentinel_tick.RETRY_COOLDOWN_SECONDS)
+    )

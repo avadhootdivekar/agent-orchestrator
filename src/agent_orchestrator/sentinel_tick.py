@@ -15,7 +15,7 @@ import os
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
@@ -111,6 +111,7 @@ REASON_STUCK: Final = "stuck_factor"
 REASON_COST: Final = "cost"
 STUCK_MIN_SAMPLES: Final = 3
 """Same-kind completed tasks needed before the stuck-factor trigger may fire."""
+RETRY_COOLDOWN_SECONDS: Final = 60  # min age of a retried attempt before the next mechanical kill
 SYSTEMIC_WINDOW_SECONDS: Final = 3600
 KILL_LOG_MAX: Final = 200
 ALARMS_FILE: Final = "sentinel-alarms.jsonl"
@@ -502,8 +503,14 @@ def _parse(ts_iso: str | None) -> datetime | None:
         return None
 
 
-def register_task(state: RunState, rt: SentinelRuntime, tid: str) -> CancelToken | None:
-    """Wire a fresh cancel token for a task about to be dispatched (None when recovery is off)."""
+def register_task(
+    state: RunState, rt: SentinelRuntime, tid: str, now: datetime | None = None
+) -> CancelToken | None:
+    """Wire a fresh cancel token for a task about to be dispatched (None when recovery is off).
+
+    Also starts the per-attempt clock: a recovery re-dispatch must not inherit the first attempt's
+    ``started_at`` or it is killed again on the next tick (T-Rk4Wn7 D1).
+    """
     if rt.recovery is None:
         return None
     token = CancelToken(grace_seconds=rt.recovery.kill_grace_seconds)
@@ -512,6 +519,7 @@ def register_task(state: RunState, rt: SentinelRuntime, tid: str) -> CancelToken
     ts.last_activity_at = None
     ts.last_activity_size = None
     ts.running_seconds = None
+    ts.attempt_started_at = (now or datetime.now(UTC)).isoformat()
     return token
 
 
@@ -532,7 +540,7 @@ def sample_liveness(state: RunState, rt: SentinelRuntime, now: datetime) -> bool
             ts.last_activity_at = now.isoformat()
             ts.last_activity_size = size
             changed = True
-        started = _parse(ts.started_at)
+        started = _parse(ts.attempt_started_at) or _parse(ts.started_at)
         if started is not None:
             ts.running_seconds = max((now - started).total_seconds(), 0.0)
     return changed
@@ -548,6 +556,17 @@ def _peer_durations(state: RunState, tid: str, ts: TaskRunState) -> list[float]:
         if a is not None and b is not None and b >= a:
             out.append((b - a).total_seconds())
     return out
+
+
+def _in_retry_cooldown(ts: TaskRunState, now: datetime) -> bool:
+    """True while a recovery-retried attempt is younger than ``RETRY_COOLDOWN_SECONDS``.
+
+    Stops state-based triggers (e.g. cost) from burning every ladder rung inside one poll interval.
+    """
+    if ts.recovery is None or ts.recovery.kills == 0:
+        return False
+    started = _parse(ts.attempt_started_at)
+    return started is not None and (now - started).total_seconds() < RETRY_COOLDOWN_SECONDS
 
 
 def _trigger_for(
@@ -600,6 +619,8 @@ def evaluate_recovery(
         token = rt.tokens[tid]
         ts = state.tasks.get(tid)
         if ts is None or ts.status != "running" or token.is_set():
+            continue
+        if _in_retry_cooldown(ts, now):
             continue
         reason = _trigger_for(state, spec, tid, ts, now)
         if reason is None:

@@ -1033,7 +1033,7 @@ class Orchestrator:
                             break
                         assert prep.task is not None  # DISPATCH always carries its payload
                         if rt is not None:
-                            sentinel_tick.register_task(state, rt, tid)
+                            sentinel_tick.register_task(state, rt, tid, self._clock())
                         fut = pool.submit(
                             self._run_and_integrate,
                             task=prep.task,

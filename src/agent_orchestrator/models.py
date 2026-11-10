@@ -1642,6 +1642,9 @@ class TaskRunState(BaseModel):
     last_activity_at: str | None = None
     last_activity_size: int | None = None
     running_seconds: float | None = None
+    # Start of the CURRENT dispatch (reset on every recovery re-dispatch); ``started_at`` stays the
+    # task's first start. Liveness/stuck clocks use this (T-Rk4Wn7 D1).
+    attempt_started_at: str | None = None
     recovery: TaskRecovery | None = None
 
 
