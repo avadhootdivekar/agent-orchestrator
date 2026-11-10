@@ -254,6 +254,7 @@ schedules:
     webhook:
       secret_env: AO_HOOK_SECRET_CI   # or secret_file: .ao/hook-ci.secret — never inline
       rate_per_minute: 10
+      scheme: ao                      # ao (X-AO-Signature + X-AO-Timestamp) | github (X-Hub-Signature-256); pinned per binding, the other header is a 401
 
   # (d) fresh template instance per fire (benchmarks, nightly sweeps)
   - id: nightly-bench

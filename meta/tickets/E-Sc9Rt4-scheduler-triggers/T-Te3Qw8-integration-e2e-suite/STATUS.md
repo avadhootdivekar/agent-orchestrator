@@ -1,11 +1,13 @@
 # STATUS
 
 - ID: `T-Te3Qw8-integration-e2e-suite`
-- Updated At: 2026-09-06
-- State: Draft
+- Updated At: 2026-11-11
+- State: In progress (partial: per-trigger e2e landed; see below)
 - Owner: TBD (assigned at sprint start)
 
 ## This update
+- **2026-11-11 (tester, w20-04):** `tests/schedules/test_e2e_schedules.py` (11 tests, new): per-trigger e2e through the root `CliRunner` + `ao schedule daemon --once` with a fixed clock (`schedules.cli._now`), temp workspace/state/registry (env-redirected), pinned file mtimes, `RunDirSupervisor` stub (creates the run dir; nothing spawned). Covers AC11 (interval: run dir + constructed id + fire record + explicit `run_id=` seam, 2nd `--once` = 0), AC13 (file-watch: one fire, none on no-change, `.orchestrator/` self-trigger guard, debounce deferral then fire on advanced clock), AC14 (webhook: signed delivery via `TestClient` -> fsync'd `requests/` file -> separate `--once` fires; replay 409, no second run; bad signature 401), AC15 (`max_runs: 3`: 3 fires, 4th tick none, `completed` in `list`, `enable` allows a 4th), plus cron due/not-due, disabled, and `--once` no-file/unparseable-file no-ops. AC10/AC12 already covered by `tests/schedules/test_cli_e2e.py`; AC4-9, AC16 are covered in `tests/service/test_schedule_engine.py` / `test_service_schedule_integration.py` (NFR-1 payload test, boot/orphan, isolation) -- not re-asserted here (no redundant layers).
+- **Not exercised / open:** real uvicorn child (only the in-process `TestClient`), real agent CLI/`fake`-executor *run* (the supervisor is a stub that creates the run dir, so `state.json` `succeeded` is NOT asserted), systemd, network; AC2/AC3 shared fixtures (`make_schedule_workspace`, hoisted `_allow_testclient_host`) and the `Makefile test-schedules` target were not added (the existing `Env` fixture is reused); AC8a F2 zombie/F7/F9 and AC6 interleaving not re-verified here. Final numbers: see the w20-04 report.
 - Ticket created by the `architect` agent as part of the E-Sc9Rt4 design package. Not started.
 - Scope: the integration tier (real engine, stubbed processes, single-stepped) and the `CliRunner` e2e tier, plus the two cross-cutting proofs no single task can own: NFR-1 backward compatibility and NFR-2 daemon isolation.
 

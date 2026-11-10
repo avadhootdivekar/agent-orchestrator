@@ -757,6 +757,23 @@ def add_cmd(
     max_runs: Annotated[
         int | None, typer.Option("--max-runs", help="Stop after N fires (until-loop bound).")
     ] = None,
+    webhook: Annotated[
+        bool, typer.Option("--webhook", help="Fire on an authenticated webhook delivery.")
+    ] = False,
+    secret_env: Annotated[
+        str | None, typer.Option("--secret-env", help="Webhook HMAC key: env var NAME.")
+    ] = None,
+    secret_file: Annotated[
+        str | None,
+        typer.Option("--secret-file", help="Webhook HMAC key: workspace-relative file (0600)."),
+    ] = None,
+    rate_per_minute: Annotated[
+        int | None, typer.Option("--rate-per-minute", min=1, help="Webhook accept rate.")
+    ] = None,
+    webhook_scheme: Annotated[
+        str | None,
+        typer.Option("--webhook-scheme", help="ao (X-AO-Signature, default) | github"),
+    ] = None,
     disabled: Annotated[bool, typer.Option("--disabled", help="Create it disabled.")] = False,
     from_workflow: Annotated[
         str | None,
@@ -815,13 +832,40 @@ def add_cmd(
     else:
         if schedule_id is None:
             raise _fail("ID is required (unless --from-workflow)", EXIT_USAGE)
-        if (cron is None) == (interval is None):
-            raise _fail("give exactly one of --cron / --interval", EXIT_USAGE)
+        webhook_opts = (secret_env, secret_file, rate_per_minute, webhook_scheme)
+        if webhook:
+            if cron is not None or interval is not None:
+                raise _fail("--webhook is the trigger; drop --cron/--interval", EXIT_USAGE)
+        elif any(o is not None for o in webhook_opts):
+            raise _fail(
+                "--secret-env/--secret-file/--rate-per-minute/--webhook-scheme need --webhook",
+                EXIT_USAGE,
+            )
+        elif (cron is None) == (interval is None):
+            raise _fail("give exactly one of --cron / --interval (or --webhook)", EXIT_USAGE)
         if (workflow is None) == (template is None):
             raise _fail("give exactly one of --workflow / --template", EXIT_USAGE)
-        fields = {"kind": "cron", "schedule": cron} if cron is not None else {
-            "kind": "interval", "interval_seconds": interval,
-        }  # fmt: skip
+        fields: dict[str, Any]
+        if webhook:
+            if (secret_env is None) == (secret_file is None):
+                raise _fail(
+                    "--webhook needs exactly one of --secret-env / --secret-file", EXIT_USAGE
+                )
+            spec = {
+                k: v
+                for k, v in (
+                    ("secret_env", secret_env),
+                    ("secret_file", secret_file),
+                    ("rate_per_minute", rate_per_minute),
+                    ("scheme", webhook_scheme),
+                )
+                if v is not None
+            }
+            fields = {"kind": "webhook", "webhook": spec}
+        elif cron is not None:
+            fields = {"kind": "cron", "schedule": cron}
+        else:
+            fields = {"kind": "interval", "interval_seconds": interval}
         if workflow:
             common["workflow"] = workflow
         new = [(schedule_id, {**fields, **common})]

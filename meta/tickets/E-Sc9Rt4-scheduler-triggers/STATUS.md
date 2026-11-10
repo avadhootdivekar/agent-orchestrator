@@ -169,3 +169,4 @@ the webhook's middleware mounting.
 
 ## Update 2026-11-11 — schedule follow-ups (w18-03)
 - `T-Un0Lm6` AC13 test landed (only AC14 coverage report open). `T-Cl6Jn9` W4 fixed (public `ScheduleEngine.fire`), W3 partly fixed (`save` no longer materializes defaults; comment loss remains, needs ruamel), kill-switch flake not reproducible, S4 awaits owner decision.
+- 2026-11-11: `T-Wh9Kv1` re-review fixes landed (N1 scheme pin, N2 header deadline, N3 per-schedule nonces, N4-N6) + `ao schedule add --webhook` flags and daemon `--once` e2e (AC15/AC15b). Persistent nonces handed to `T-Se4Bk5`. See `T-Wh9Kv1-webhook-ingress/STATUS.md`.

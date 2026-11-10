@@ -17,21 +17,35 @@ Invariants that must survive any refactor
 
 Accepted limitations (hand-off to ``T-Se4Bk5``)
 -----------------------------------------------
-* Replay defence. The ``X-AO-Signature`` scheme signs ``"{timestamp}.{body}"`` (the timestamp is
-  required and authenticated); GitHub's ``X-Hub-Signature-256`` signs the body only. Both are
-  de-duplicated on a per-schedule hash of the *signed material*, so a captured delivery cannot be
-  replayed by changing the (unsigned) delivery-id header; the delivery id is a second nonce.
+* Signature scheme is pinned per binding (``webhook.scheme``: ``ao`` default | ``github``); a
+  delivery carrying the *other* scheme's header is refused 401 (N1). Without the pin, an
+  ``X-AO-Signature`` (over ``"{ts}.{body}"``) is also a valid GitHub-form signature over the body
+  ``"{ts}." + body``, which has no timestamp check.
+* Replay defence. ``ao``: the signature covers the timestamp, which must be within
+  ``REPLAY_WINDOW_SECONDS``, so a captured delivery is dead after that window. ``github``: the
+  signature covers the body only, so there is **no time bound**; the only defence is the nonce
+  cache below. Both are de-duplicated on a per-schedule hash of the *signed material*, so a
+  captured delivery cannot be replayed by changing the (unsigned) delivery-id header; the delivery
+  id is a second nonce.
 * The nonce cache and per-schedule token bucket are **in memory** and reset on restart, so a
-  restart briefly reopens a replay window: for ``X-AO-*`` senders only inside
-  ``REPLAY_WINDOW_SECONDS``, for GitHub-style senders (no timestamp) for any previously captured
-  delivery. Persisting them needs an ADR. The nonce LRU is global (bounded), so a holder of one
-  schedule's secret can evict other schedules' entries within the rate limits.
+  restart reopens a replay window: ``REPLAY_WINDOW_SECONDS`` for ``ao`` senders, *unbounded* for
+  ``github`` senders (any previously captured delivery is accepted once more). Persisting them
+  needs an ADR and is the ``T-Se4Bk5`` follow-up; until then a ``github`` binding should only be
+  used where a duplicate run is cheap or the schedule has ``overlap``/``until`` guards. Nonce
+  caches are per schedule and sized for the full replay window at the schedule's rate limit
+  (``nonce_capacity``), so other schedules' traffic (or a secret holder of another schedule)
+  cannot evict an entry inside the ``ao`` window (N3).
 * An unknown workspace slug answers slightly faster than a known slug with an unknown schedule
   (a timing oracle on guessable slugs), and 503 ``secret_unresolvable`` reveals that the schedule
   exists. Both are accepted; registry/schedule lookups are not cached (every request re-reads
   ``schedules.yaml`` in a worker thread).
-* Slow-client defence: ``limit_concurrency`` and a body read deadline bound the body phase, but
-  uvicorn has no header-phase timeout, so a slowloris on the *headers* needs the reverse proxy.
+* Slow-client defence: a body read deadline, a per-connection *header* deadline
+  (``WEBHOOK_HEADER_TIMEOUT_SECONDS``, :func:`webhook_http_protocol`) and a keep-alive timeout
+  close stalled sockets (N2). uvicorn counts every open connection against ``limit_concurrency``
+  (503 beyond it), so a determined off-box client that keeps ``WEBHOOK_LIMIT_CONCURRENCY`` sockets
+  open can still starve the listener; the deadline only makes that cost a continuous reconnect
+  stream. A non-loopback bind therefore **requires** a reverse proxy with per-client connection
+  limits (the startup warning says so).
 * ``X-AO-Signature`` senders must send ``X-AO-Timestamp`` (breaking change vs. the first cut).
 * ``SecurityMiddleware`` is mounted (Host allow-list, Origin check, JSON ``Content-Type`` on a
   body-carrying POST), so senders must post ``application/json`` (GitHub: set the webhook's
@@ -46,6 +60,7 @@ Accepted limitations (hand-off to ``T-Se4Bk5``)
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import hmac
 import json
@@ -60,6 +75,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..schedules.models import WebhookScheme
 from ..schedules.store import ScheduleStore
 from .registry import ServiceRegistry
 from .schedule_engine import (
@@ -78,7 +94,9 @@ logger = logging.getLogger(__name__)
 
 MAX_WEBHOOK_BODY_BYTES = 64 * 1024
 REPLAY_WINDOW_SECONDS = 300
-NONCE_CACHE_SIZE = 1024
+NONCE_MIN_ENTRIES = 64  # floor of a per-schedule nonce cache
+NONCE_KEYS_PER_DELIVERY = 2  # signed-material hash + delivery id
+MAX_DELIVERY_ID_CHARS = 128  # a longer (unsigned, attacker-sized) id is stored as its sha256
 WEBHOOK_QUEUE_MAXSIZE = 64  # pending ``webhook`` request files per schedule; beyond -> 429
 REQUEST_KIND_WEBHOOK = "webhook"
 SCHEDULES_SUBDIR = "schedules"
@@ -88,16 +106,25 @@ TIMESTAMP_HEADER = "x-ao-timestamp"
 SIGNATURE_PREFIX = "sha256="
 MAX_LOGGED_FIELD = 128
 MIN_WEBHOOK_SECRET_BYTES = 16  # shorter keys (e.g. ``secret_env: HOME``) are refused -> 503
+# Ambient process variables are guessable/world-visible, so never a key (N5), whatever their length.
+AMBIENT_SECRET_ENV_NAMES = frozenset(
+    {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "TERM", "HOSTNAME", "TMPDIR",
+     "LANG", "LANGUAGE", "DISPLAY", "EDITOR", "VISUAL", "PAGER", "MAIL", "JOURNAL_STREAM",
+     "INVOCATION_ID", "MANPATH", "LD_LIBRARY_PATH", "PYTHONPATH", "VIRTUAL_ENV"}
+)  # fmt: skip
+AMBIENT_SECRET_ENV_PREFIXES = ("LC_", "XDG_", "SYSTEMD_", "DBUS_", "SSH_")
 WEBHOOK_REQUEST_TTL_SECONDS = 24 * 3600  # a persisted request older than this is dropped (L5)
 # Listener bounds (M2): uvicorn has no read timeouts of its own.
-WEBHOOK_LIMIT_CONCURRENCY = 64
+WEBHOOK_LIMIT_CONCURRENCY = 256
+WEBHOOK_HEADER_TIMEOUT_SECONDS = 10.0  # connection open -> request headers complete
 WEBHOOK_TIMEOUT_KEEP_ALIVE_SECONDS = 5
 WEBHOOK_BODY_READ_TIMEOUT_SECONDS = 10.0
 WEBHOOK_ALLOWED_HOSTS_ENV = "AO_WEBHOOK_ALLOWED_HOSTS"
 NON_LOOPBACK_WARNING = (
     "WARNING: webhook listener binding non-loopback host {host!r} is newly reachable off-box. It "
     "is authenticated by HMAC only, independently of dashboard auth. Put it behind a "
-    "TLS-terminating reverse proxy, and set " + WEBHOOK_ALLOWED_HOSTS_ENV + " to the Host names "
+    "TLS-terminating reverse proxy that limits connections per client (an idle-socket flood can "
+    "otherwise starve the listener), and set " + WEBHOOK_ALLOWED_HOSTS_ENV + " to the Host names "
     "callers use (otherwise every off-box delivery is refused with 421)."
 )
 
@@ -203,6 +230,10 @@ def resolve_secret(
     env = os.environ if env is None else env
     sid = _clip(target.binding.id)
     if spec.secret_env:
+        name = spec.secret_env
+        if name in AMBIENT_SECRET_ENV_NAMES or name.startswith(AMBIENT_SECRET_ENV_PREFIXES):
+            emit("webhook.rejected", reason="secret_ambient_env", schedule_id=sid)
+            return None
         return _checked_secret(env.get(spec.secret_env, "").encode("utf-8"), sid, emit)
     if spec.secret_file:
         try:
@@ -247,11 +278,62 @@ def resolve_webhook_allowed_hosts(
     return resolve_allowed_hosts(bound_host=bound_host, env={AO_UI_ALLOWED_HOSTS_ENV: extra})
 
 
+@functools.cache
+def webhook_http_protocol() -> type[asyncio.Protocol]:
+    """uvicorn's h11 protocol plus a connection-level *header* deadline (N2).
+
+    uvicorn arms ``timeout_keep_alive`` only after a first response, so a socket that never sends a
+    byte (or trickles a header) is held forever. This closes a connection whose request headers are
+    not complete ``WEBHOOK_HEADER_TIMEOUT_SECONDS`` after it opened (and after each response, for
+    keep-alive reuse). Built lazily: importing this module must not need uvicorn.
+    """
+    from uvicorn.protocols.http.h11_impl import H11Protocol
+
+    class WebhookH11Protocol(H11Protocol):
+        _header_deadline: asyncio.TimerHandle | None = None
+
+        def _arm_header_deadline(self) -> None:
+            self._disarm_header_deadline()
+            self._header_deadline = self.loop.call_later(
+                WEBHOOK_HEADER_TIMEOUT_SECONDS, self._header_deadline_expired
+            )
+
+        def _disarm_header_deadline(self) -> None:
+            if self._header_deadline is not None:
+                self._header_deadline.cancel()
+                self._header_deadline = None
+
+        def _header_deadline_expired(self) -> None:
+            self._header_deadline = None
+            self.transport.close()
+
+        def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore[override]
+            super().connection_made(transport)
+            self._arm_header_deadline()
+
+        def handle_events(self) -> None:
+            before = self.cycle
+            super().handle_events()
+            if self.cycle is not before:  # a request's headers completed
+                self._disarm_header_deadline()
+
+        def on_response_complete(self) -> None:
+            super().on_response_complete()
+            self._arm_header_deadline()  # next keep-alive request must send headers in time
+
+        def connection_lost(self, exc: Exception | None) -> None:
+            self._disarm_header_deadline()
+            super().connection_lost(exc)
+
+    return WebhookH11Protocol
+
+
 def webhook_uvicorn_kwargs() -> dict[str, Any]:
-    """Slow-client / connection bounds for the webhook ``uvicorn.Config`` (M2)."""
+    """Slow-client / connection bounds for the webhook ``uvicorn.Config`` (M2, N2)."""
     return {
         "limit_concurrency": WEBHOOK_LIMIT_CONCURRENCY,
         "timeout_keep_alive": WEBHOOK_TIMEOUT_KEEP_ALIVE_SECONDS,
+        "http": webhook_http_protocol(),
     }
 
 
@@ -261,7 +343,7 @@ def webhook_uvicorn_kwargs() -> dict[str, Any]:
 class NonceCache:
     """Bounded LRU of delivery ids (replay defence). Thread-safe; in-memory (see module doc)."""
 
-    def __init__(self, maxsize: int = NONCE_CACHE_SIZE) -> None:
+    def __init__(self, maxsize: int = NONCE_MIN_ENTRIES) -> None:
         self._maxsize = maxsize
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._lock = threading.Lock()
@@ -280,6 +362,14 @@ class NonceCache:
     def __len__(self) -> int:
         with self._lock:
             return len(self._seen)
+
+
+def nonce_capacity(rate_per_minute: int) -> int:
+    """Entries that hold every nonce the token bucket can admit inside ``REPLAY_WINDOW_SECONDS``
+    (burst of ``rate`` + ``rate`` per minute for the window), so legitimate traffic on a schedule
+    cannot push a still-replayable entry out of its own cache."""
+    admitted = rate_per_minute * (1 + -(-REPLAY_WINDOW_SECONDS // 60))
+    return max(NONCE_MIN_ENTRIES, admitted * NONCE_KEYS_PER_DELIVERY)
 
 
 class TokenBucket:
@@ -325,28 +415,36 @@ class VerifiedDelivery:
     """A delivery whose HMAC (and, for ``X-AO-*``, timestamp) checked out."""
 
     delivery_id: str
-    # False when the sender supplied no delivery id (``delivery_id`` is then a body hash and adds
-    # no nonce beyond ``replay_key``).
+    # False when the sender supplied no delivery id (``delivery_id`` is then ``replay_key`` and
+    # adds no nonce beyond it).
     id_supplied: bool
     # sha256 of the signed material: stable across a replay whatever headers the replayer sets.
     replay_key: str
 
 
 def verify_delivery(
-    headers: Mapping[str, str], body: bytes, secret: bytes, now: datetime
+    headers: Mapping[str, str],
+    body: bytes,
+    secret: bytes,
+    now: datetime,
+    scheme: WebhookScheme = "ao",
 ) -> VerifiedDelivery:
     """HMAC + timestamp checks. Raises :class:`WebhookAuthError` (401).
 
     *headers* must be case-insensitive (Starlette's are) or already lower-cased. Signatures are
-    compared with :func:`hmac.compare_digest`. ``X-AO-Signature`` signs ``"{ts}.{body}"`` and
-    requires ``X-AO-Timestamp`` within ``REPLAY_WINDOW_SECONDS``; ``X-Hub-Signature-256`` signs
-    the body only (GitHub). The delivery-id header is *not* signed, so replay protection keys on
-    :attr:`VerifiedDelivery.replay_key`, never on the id alone (H1).
+    compared with :func:`hmac.compare_digest`. *scheme* is pinned by the binding (N1) and the other
+    scheme's signature header is refused outright: ``ao`` accepts only ``X-AO-Signature`` (signs
+    ``"{ts}.{body}"``, requires ``X-AO-Timestamp`` within ``REPLAY_WINDOW_SECONDS``); ``github``
+    accepts only ``X-Hub-Signature-256`` (signs the body). The delivery-id header is *not* signed,
+    so replay protection keys on :attr:`VerifiedDelivery.replay_key`, never on the id alone (H1).
     """
     x_ao = headers.get(SIGNATURE_HEADERS[0])
-    received = x_ao if x_ao is not None else headers.get(SIGNATURE_HEADERS[1])
+    x_hub = headers.get(SIGNATURE_HEADERS[1])
+    if (x_hub if scheme == "ao" else x_ao) is not None:
+        raise WebhookAuthError("wrong_scheme", 401)
+    received = x_ao if scheme == "ao" else x_hub
     stamp_raw: str | None = None
-    if x_ao is not None:
+    if scheme == "ao":
         stamp_raw = (headers.get(TIMESTAMP_HEADER) or "").strip()
         if not stamp_raw.isascii() or not stamp_raw.isdigit():
             # checked before the HMAC only for shape; a forged stamp still fails the signature
@@ -366,10 +464,13 @@ def verify_delivery(
     signed = body if stamp_raw is None else stamp_raw.encode("ascii") + b"." + body
     replay_key = hashlib.sha256(signed).hexdigest()
     delivery = _header(headers, DELIVERY_HEADERS)
-    delivery_id = delivery.strip() if delivery is not None and delivery.strip() else ""
-    return VerifiedDelivery(
-        delivery_id or hashlib.sha256(body).hexdigest(), bool(delivery_id), replay_key
-    )
+    delivery_id = delivery.strip() if delivery is not None else ""
+    if len(delivery_id) > MAX_DELIVERY_ID_CHARS:  # unsigned + attacker-sized: store a digest
+        delivery_id = hashlib.sha256(delivery_id.encode("utf-8", "replace")).hexdigest()
+    # No id supplied: the signed-material hash is the id/discriminator. It differs between two
+    # same-body deliveries signed with different timestamps, so same-second ones never share a
+    # fire key and one is dropped (N4).
+    return VerifiedDelivery(delivery_id or replay_key, bool(delivery_id), replay_key)
 
 
 # -- persisted queue (F14) -----------------------------------------------------------------------
@@ -509,15 +610,18 @@ def make_binding_lookup(
     *,
     registry_factory: Callable[[Path], Any] = ServiceRegistry,
     store_factory: Callable[[str], ScheduleStore] = ScheduleStore,
+    emit: Emit = _default_emit,
 ) -> Callable[[str, str], WebhookTarget | None]:
     """``(workspace_slug, schedule_id) -> WebhookTarget | None`` over the live registry: only
     schedule-opted-in workspaces, only enabled ``kind: webhook`` bindings. Anything else is
-    ``None`` (-> the same 401 as a bad signature)."""
+    ``None`` (-> the same 401 as a bad signature). A registry/schedules read failure also fails
+    closed but is logged once as ``webhook.lookup_failed`` (exception class only, N6)."""
 
     def lookup(slug: str, schedule_id: str) -> WebhookTarget | None:
         try:
             entries = registry_factory(registry_path).load().workspaces
-        except Exception:  # noqa: BLE001 - corrupt registry: fail closed
+        except Exception as exc:  # noqa: BLE001 - corrupt registry: fail closed
+            emit("webhook.lookup_failed", source="registry", error=type(exc).__name__)
             return None
         for entry in entries:
             if not getattr(entry, "schedules", False):
@@ -526,7 +630,8 @@ def make_binding_lookup(
                 continue
             try:
                 bindings = store_factory(entry.root).load().bindings
-            except Exception:  # noqa: BLE001 - unreadable/invalid schedules.yaml: fail closed
+            except Exception as exc:  # noqa: BLE001 - unreadable/invalid schedules.yaml: fail closed
+                emit("webhook.lookup_failed", source="schedules", error=type(exc).__name__)
                 return None
             for b in bindings:
                 if b.id == schedule_id and b.kind == "webhook" and b.enabled and b.webhook:
@@ -551,7 +656,9 @@ def build_webhook_app(
     emit: Emit = _default_emit,
     bound_host: str | None = None,
     enabled: bool = True,
-    nonce_cache: NonceCache | None = None,
+    nonce_cache_factory: Callable[[int], NonceCache] = lambda rate: NonceCache(
+        nonce_capacity(rate)
+    ),
     rate_limiter: TokenBucket | None = None,
 ) -> FastAPI:
     """The listener app: exactly ``POST /hooks/{workspace_slug}/{schedule_id}`` and
@@ -569,7 +676,7 @@ def build_webhook_app(
     from ..ui.security import SecurityMiddleware
 
     resolver = secret_resolver or (lambda t: resolve_secret(t, emit=emit))
-    nonces = nonce_cache if nonce_cache is not None else NonceCache()
+    nonce_caches: dict[tuple[str, str], NonceCache] = {}  # per schedule (N3)
     bucket = rate_limiter if rate_limiter is not None else TokenBucket(clock)
     lock = threading.Lock()
 
@@ -620,22 +727,27 @@ def build_webhook_app(
 
         now = clock()
         try:
-            verified = verify_delivery(request.headers, body, secret, now)
+            spec = target.binding.webhook
+            assert spec is not None  # the lookup only returns bindings with a webhook spec
+            verified = verify_delivery(request.headers, body, secret, now, spec.scheme)
         except WebhookAuthError as exc:
             return reject(exc.status, exc.reason, ws, sid)
 
         def accept() -> JSONResponse:
             # check -> rate -> persist -> remember, atomically under one lock. Nonces are scoped
             # per schedule and cover the (unsigned) delivery id *and* the signed material.
-            scope = f"{target.workspace_root}\0{sid}\0"
-            keys = [f"{scope}sig\0{verified.replay_key}"]
+            keys = [f"sig\0{verified.replay_key}"]
             if verified.id_supplied:
-                keys.append(f"{scope}id\0{verified.delivery_id}")
+                keys.append(f"id\0{verified.delivery_id}")
             with lock:
+                nonces = nonce_caches.get((target.workspace_root, sid))
+                if nonces is None:
+                    nonces = nonce_caches[(target.workspace_root, sid)] = nonce_cache_factory(
+                        spec.rate_per_minute
+                    )
                 if any(k in nonces for k in keys):
                     return reject(409, "duplicate", ws, sid)
-                rate = target.binding.webhook.rate_per_minute if target.binding.webhook else 10
-                if not bucket.allow((target.workspace_root, sid), rate):
+                if not bucket.allow((target.workspace_root, sid), spec.rate_per_minute):
                     return reject(429, "rate_limited", ws, sid)
                 try:
                     queue.enqueue(
@@ -679,10 +791,11 @@ __all__ = [
     "MAX_WEBHOOK_BODY_BYTES",
     "MIN_WEBHOOK_SECRET_BYTES",
     "NON_LOOPBACK_WARNING",
-    "NONCE_CACHE_SIZE",
+    "NONCE_MIN_ENTRIES",
     "REPLAY_WINDOW_SECONDS",
     "WEBHOOK_ALLOWED_HOSTS_ENV",
     "WEBHOOK_BODY_READ_TIMEOUT_SECONDS",
+    "WEBHOOK_HEADER_TIMEOUT_SECONDS",
     "WEBHOOK_LIMIT_CONCURRENCY",
     "WEBHOOK_QUEUE_MAXSIZE",
     "WEBHOOK_REQUEST_TTL_SECONDS",
@@ -698,8 +811,10 @@ __all__ = [
     "build_webhook_app",
     "compute_signature",
     "make_binding_lookup",
+    "nonce_capacity",
     "resolve_secret",
     "resolve_webhook_allowed_hosts",
     "verify_delivery",
+    "webhook_http_protocol",
     "webhook_uvicorn_kwargs",
 ]

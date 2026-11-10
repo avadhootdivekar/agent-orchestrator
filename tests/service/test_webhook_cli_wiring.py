@@ -20,6 +20,7 @@ def test_webhook_listener_config_carries_connection_bounds(run_env: SimpleNamesp
     _app, kwargs = run_env.uvicorn.configs[1]
     assert kwargs["limit_concurrency"] == wh.WEBHOOK_LIMIT_CONCURRENCY
     assert kwargs["timeout_keep_alive"] == wh.WEBHOOK_TIMEOUT_KEEP_ALIVE_SECONDS
+    assert kwargs["http"] is wh.webhook_http_protocol()  # N2 header deadline
     assert "limit_concurrency" not in run_env.uvicorn.configs[0][1]  # the hub is untouched
 
 

@@ -834,6 +834,15 @@
           "minimum": 1,
           "title": "Rate Per Minute",
           "type": "integer"
+        },
+        "scheme": {
+          "default": "ao",
+          "enum": [
+            "ao",
+            "github"
+          ],
+          "title": "Scheme",
+          "type": "string"
         }
       },
       "title": "WebhookSpec",

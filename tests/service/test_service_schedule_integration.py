@@ -410,6 +410,9 @@ def run_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     _StubEngine.instances = []
     order = _Order()
     uv = _StubUvicorn()
+    # The webhook listener's header-deadline protocol subclasses uvicorn's real h11 protocol
+    # (``webhook_http_protocol``, N2): load it before ``uvicorn`` itself is replaced by the stub.
+    pytest.importorskip("uvicorn.protocols.http.h11_impl")
     monkeypatch.setitem(sys.modules, "uvicorn", uv)
 
     class Supervisor:

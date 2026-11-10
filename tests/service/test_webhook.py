@@ -127,6 +127,12 @@ def h(tmp_path: Path) -> Harness:
     return Harness(tmp_path)
 
 
+@pytest.fixture()
+def gh(tmp_path: Path) -> Harness:
+    """A binding pinned to GitHub's ``X-Hub-Signature-256`` scheme (body-only signature)."""
+    return Harness(tmp_path, wh_binding(scheme="github"))
+
+
 # -- accept paths --------------------------------------------------------------------------------
 
 
@@ -140,18 +146,21 @@ def test_valid_hmac_accepted_and_persisted(h: Harness) -> None:
     assert [e for e, _ in h.events] == ["webhook.received"]
 
 
-def test_github_header_form_accepted(h: Harness) -> None:
-    r = h.post(sig_header="X-Hub-Signature-256", headers={"X-GitHub-Delivery": "gh-1"})
+def test_github_header_form_accepted(gh: Harness) -> None:
+    r = gh.post(sig_header="X-Hub-Signature-256", headers={"X-GitHub-Delivery": "gh-1"})
     assert r.status_code == 202
-    assert json.loads(h.requests()[0].read_text())["delivery_id"] == "gh-1"
+    assert json.loads(gh.requests()[0].read_text())["delivery_id"] == "gh-1"
 
 
-def test_delivery_id_falls_back_to_body_hash(h: Harness) -> None:
+def test_delivery_id_falls_back_to_signed_material_hash(h: Harness) -> None:
+    """N4: the fallback id is the hash of ``ts.body`` (not the body), so it is timestamp-unique."""
     import hashlib
 
     h.post()
+    ts = _ts(h).encode()
     assert (
-        json.loads(h.requests()[0].read_text())["delivery_id"] == hashlib.sha256(BODY).hexdigest()
+        json.loads(h.requests()[0].read_text())["delivery_id"]
+        == hashlib.sha256(ts + b"." + BODY).hexdigest()
     )
 
 
@@ -530,11 +539,11 @@ def test_h1_captured_x_ao_delivery_replayed_with_forged_delivery_id_is_409(h: Ha
     assert len(h.requests()) == 1
 
 
-def test_h1_captured_github_delivery_replayed_with_forged_delivery_id_is_409(h: Harness) -> None:
+def test_h1_captured_github_delivery_replayed_with_forged_delivery_id_is_409(gh: Harness) -> None:
     kw: dict[str, Any] = dict(sig_header="X-Hub-Signature-256")
-    assert h.post(headers={"X-GitHub-Delivery": "gh-a"}, **kw).status_code == 202
-    assert h.post(headers={"X-GitHub-Delivery": "gh-forged"}, **kw).status_code == 409
-    assert len(h.requests()) == 1
+    assert gh.post(headers={"X-GitHub-Delivery": "gh-a"}, **kw).status_code == 202
+    assert gh.post(headers={"X-GitHub-Delivery": "gh-forged"}, **kw).status_code == 409
+    assert len(gh.requests()) == 1
 
 
 def test_h1_stripped_or_forged_timestamp_on_x_ao_scheme_is_401(h: Harness) -> None:
@@ -637,6 +646,7 @@ def test_m2_uvicorn_kwargs_bound_connections() -> None:
     kw = wh.webhook_uvicorn_kwargs()
     assert kw["limit_concurrency"] == wh.WEBHOOK_LIMIT_CONCURRENCY > 0
     assert kw["timeout_keep_alive"] == wh.WEBHOOK_TIMEOUT_KEEP_ALIVE_SECONDS > 0
+    assert kw["http"] is wh.webhook_http_protocol()  # N2: the header-deadline protocol
 
 
 def test_m2_stalled_body_is_408(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -774,3 +784,200 @@ def test_l1_unexpected_store_error_fails_closed(tmp_path: Path) -> None:
 
     look = make_binding_lookup(tmp_path / "r.yaml", registry_factory=Reg, store_factory=Boom)  # type: ignore[arg-type]
     assert look(_slug_for_root(str(tmp_path.resolve())), "x") is None
+
+
+# -- re-review fixes (w18-02: N1-N6) -------------------------------------------------------------
+
+
+def _mk(path: Path) -> Path:
+    path.mkdir()
+    return path
+
+
+def _downgrade_headers(ts: str, body: bytes) -> tuple[bytes, dict[str, str]]:
+    """What a replayer builds from a captured X-AO delivery: the same signature re-sent in GitHub
+    form over the forged body ``"{ts}." + body`` (a valid body-only sig, no timestamp check)."""
+    sig = compute_signature(SECRET.encode(), body, ts)
+    forged = ts.encode() + b"." + body
+    assert compute_signature(SECRET.encode(), forged) == sig  # the algebra the attack relies on
+    return forged, {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": sig,
+        "X-GitHub-Delivery": "attacker-fresh",
+    }
+
+
+def test_n1_scheme_downgrade_replay_is_401_even_on_a_fresh_app(tmp_path: Path) -> None:
+    """D1/D1b: after a restart (fresh nonce state) a captured X-AO delivery must not be accepted
+    in GitHub form, days later."""
+    h = Harness(tmp_path)
+    ts = _ts(h)
+    assert h.post(headers={"X-AO-Timestamp": ts}).status_code == 202
+    forged, hdrs = _downgrade_headers(ts, BODY)
+    h.clock.now += timedelta(days=3)
+    for victim in (h, Harness(_mk(tmp_path / "restarted"))):  # same process, and a restarted one
+        victim.clock.now = h.clock.now
+        r = victim.client.post(f"/hooks/{victim.slug}/hook", content=forged, headers=hdrs)
+        assert r.status_code == 401
+    assert len(h.requests()) == 1  # only the original delivery was ever persisted
+
+
+def test_n1_downgrade_after_nonce_eviction_is_401(tmp_path: Path) -> None:
+    h = Harness(tmp_path, wh_binding(rate_per_minute=100000))
+    h.queue._maxsize = 10**6  # type: ignore[attr-defined]
+    ts = _ts(h)
+    assert h.post(headers={"X-AO-Timestamp": ts}).status_code == 202
+    forged, hdrs = _downgrade_headers(ts, BODY)
+    for i in range(700):  # churn: more than the old global LRU's capacity
+        h.post(body_for(str(i)))
+    r = h.client.post(f"/hooks/{h.slug}/hook", content=forged, headers=hdrs)
+    assert r.status_code == 401
+
+
+def test_n1_pinned_scheme_rejects_the_other_header_in_both_directions(
+    h: Harness, gh: Harness
+) -> None:
+    ts = _ts(h)
+    ao_sig = compute_signature(SECRET.encode(), BODY, ts)
+    gh_sig = compute_signature(SECRET.encode(), BODY)
+    base = {"Content-Type": "application/json"}
+    # ``ao`` binding: a valid GitHub-form signature (alone, or next to a valid X-AO one) is refused
+    r = h.client.post(
+        f"/hooks/{h.slug}/hook", content=BODY, headers={**base, "X-Hub-Signature-256": gh_sig}
+    )
+    assert r.status_code == 401
+    both = {**base, "X-Hub-Signature-256": gh_sig, "X-AO-Signature": ao_sig, "X-AO-Timestamp": ts}
+    assert h.client.post(f"/hooks/{h.slug}/hook", content=BODY, headers=both).status_code == 401
+    # ``github`` binding: a valid X-AO signature is refused
+    r = gh.client.post(
+        f"/hooks/{gh.slug}/hook",
+        content=BODY,
+        headers={**base, "X-AO-Signature": ao_sig, "X-AO-Timestamp": ts},
+    )
+    assert r.status_code == 401
+    assert h.requests() == [] and gh.requests() == []
+    assert {f.get("reason") for _, f in h.events + gh.events} == {"wrong_scheme"}
+
+
+def test_n1_default_scheme_is_ao_and_unknown_scheme_is_a_load_error() -> None:
+    assert WebhookSpec(secret_env=SECRET_ENV).scheme == "ao"
+    assert WebhookSpec(secret_env=SECRET_ENV, scheme="github").scheme == "github"
+    with pytest.raises(ValidationError):
+        WebhookSpec(secret_env=SECRET_ENV, scheme="both")  # type: ignore[arg-type]
+
+
+def test_n3_nonce_caches_are_per_schedule_and_sized_for_the_replay_window(tmp_path: Path) -> None:
+    for rate in (1, 10, 600):
+        admitted = rate * (1 + wh.REPLAY_WINDOW_SECONDS // 60)  # burst + one window of refill
+        assert wh.nonce_capacity(rate) >= admitted * wh.NONCE_KEYS_PER_DELIVERY
+    made: list[int] = []
+
+    def factory(rate: int) -> NonceCache:
+        made.append(rate)
+        return NonceCache(wh.nonce_capacity(rate))
+
+    h = Harness(tmp_path, nonce_cache_factory=factory)
+    assert h.post(body_for("a")).status_code == 202
+    assert h.post(body_for("b")).status_code == 202
+    assert made == [10]  # one cache for the schedule, created lazily at its own rate
+
+
+def test_n3_other_schedule_traffic_cannot_evict_a_replayable_entry(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [wh_binding("a"), wh_binding("b", rate_per_minute=100000)])
+    h = Harness(tmp_path)
+    by_id = {b.id: b for b in (env.binding("a"), env.binding("b"))}
+    h.root, h.slug = env.root, _slug_for_root(env.root)
+    h._lookup = lambda slug, sid: (  # type: ignore[method-assign]
+        WebhookTarget(env.root, by_id[sid]) if slug == h.slug and sid in by_id else None
+    )
+    h.app = build_webhook_app(h._lookup, h.queue, clock=h.clock, emit=lambda e, **f: None)
+    h.client = TestClient(h.app, base_url=HOST)
+    h.queue._maxsize = 10**6  # type: ignore[attr-defined]
+    assert h.post(sid="a").status_code == 202
+    for i in range(600):  # > the old global LRU (1024 entries / 2 keys per delivery)
+        assert h.post(body_for(str(i)), sid="b").status_code == 202
+    assert h.post(sid="a").status_code == 409  # a's own entry is still there
+
+
+def test_n4_same_body_two_timestamps_same_second_both_launch(tmp_path: Path) -> None:
+    """C1: with no delivery id the fallback discriminator must not collide for a re-signed body."""
+    env = env_for(tmp_path, [wh_binding(rate_per_minute=1000, overlap="allow")])
+    env.engine.register_trigger_source(
+        "webhook", lambda root, b: WebhookSource(env.tmp / "state", root, b)
+    )
+    h = Harness(tmp_path)
+    h.root, h.slug, h.binding = env.root, _slug_for_root(env.root), env.binding("hook")
+    now_ts = int(h.clock.now.timestamp())
+    for ts in (now_ts - 1, now_ts):  # same body, same server second, different signed timestamps
+        assert h.post(headers={"X-AO-Timestamp": str(ts)}).status_code == 202
+    env.tick(T0 + timedelta(seconds=1))
+    env.end_run("run-1")  # one active run at a time: let the first finish
+    env.tick(T0 + timedelta(seconds=2))
+    assert len(env.launcher.decisions) == 2
+    assert h.requests() == []
+
+
+def test_long_delivery_id_is_stored_as_a_digest(h: Harness) -> None:
+    import hashlib
+
+    long_id = "d" * 5000
+    assert h.post(headers={"X-AO-Delivery": long_id}).status_code == 202
+    stored = json.loads(h.requests()[0].read_text())["delivery_id"]
+    assert stored == hashlib.sha256(long_id.encode()).hexdigest()
+
+
+@pytest.mark.parametrize("name", ["PATH", "HOME", "LC_ALL", "XDG_RUNTIME_DIR", "LANG"])
+def test_n5_ambient_env_var_is_never_a_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    monkeypatch.setenv(name, "/long/ambient/value/that/is/over/sixteen/bytes")
+    h = Harness(tmp_path, wh_binding(secret_env=name))
+    r = h.post(secret="/long/ambient/value/that/is/over/sixteen/bytes")
+    assert r.status_code == 503 and h.requests() == []
+    assert "secret_ambient_env" in [f.get("reason") for _, f in h.events]
+
+
+def test_n5_dedicated_env_var_still_works(h: Harness) -> None:
+    assert h.post().status_code == 202
+
+
+def test_n6_lookup_failure_is_logged_once_without_content_and_fails_closed(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    class Boom:
+        def __init__(self, root: str) -> None: ...
+
+        def load(self) -> Any:
+            raise PermissionError("/secret/path/schedules.yaml")
+
+    class Reg:
+        def __init__(self, p: Path) -> None: ...
+
+        def load(self) -> Any:
+            return SimpleNamespace(workspaces=[SimpleNamespace(root=str(tmp_path), schedules=True)])
+
+    class BadReg:
+        def __init__(self, p: Path) -> None: ...
+
+        def load(self) -> Any:
+            raise ValueError("corrupt: hunter2")
+
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def emit(e: str, **f: Any) -> None:
+        events.append((e, f))
+
+    slug = _slug_for_root(str(tmp_path.resolve()))
+    for reg, store, source, err in (
+        (Reg, Boom, "schedules", "PermissionError"),
+        (BadReg, Boom, "registry", "ValueError"),
+    ):
+        events.clear()
+        look = make_binding_lookup(
+            tmp_path / "r.yaml",
+            registry_factory=reg,  # type: ignore[arg-type]
+            store_factory=store,  # type: ignore[arg-type]
+            emit=emit,
+        )
+        assert look(slug, "x") is None
+        assert events == [("webhook.lookup_failed", {"source": source, "error": err})]

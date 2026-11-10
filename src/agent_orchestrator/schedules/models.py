@@ -111,6 +111,7 @@ INHERITABLE_FIELDS: Final[tuple[str, ...]] = (
 )
 
 Kind = Literal["cron", "interval", "file_watch", "webhook"]
+WebhookScheme = Literal["ao", "github"]
 Overlap = Literal["skip", "queue", "allow"]
 CatchUp = Literal["once", "skip"]
 
@@ -296,6 +297,10 @@ class WebhookSpec(BaseModel):
     secret_env: str | None = Field(default=None, pattern=ENV_NAME_PATTERN)
     secret_file: str | None = None
     rate_per_minute: int = Field(default=10, ge=1)
+    # The one signature header this binding accepts (N1): ``ao`` = ``X-AO-Signature`` over
+    # ``"{ts}.{body}"`` with a replay window; ``github`` = ``X-Hub-Signature-256`` over the body.
+    # Never both: an ``ao`` signature is also a valid ``github`` signature over ``"{ts}." + body``.
+    scheme: WebhookScheme = "ao"
 
     @model_validator(mode="before")
     @classmethod
