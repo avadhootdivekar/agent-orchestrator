@@ -40,3 +40,8 @@ Fixed in `service/schedule_engine.py` (fire_store.py needed no change), each wit
 - **Not fixed (recorded):** **L2** (`MAX_CATCHUP_STEPS` walk cost/in-walk deadline/closed form for interval) — perf-only, needs its own measured change; **L6** (HLD §14 DST wording is wrong: spring-forward gap shifts forward, not skipped) — doc outside this unit's paths.
 - **Residual / follow-up:** jitter > period is still accepted by the model (`schedules/models.py`, T-Sd1Kq7): instants head-of-line-blocked behind a long jitter can go stale and be burned `missed` (reported, never silent). Recommend clamping `jitter_seconds` below the minimum period at load. Also no cron bindings in the engine tests (review gap) — not added here. HLD §6.5 should note that collapsed instants are not burned (L1 note).
 - Evidence: `pytest tests/service tests/schedules` 845 passed (engine file 60 → 72); `ruff check`/`format`, `mypy src` clean.
+
+## Event-source contract additions (w14-01, T-Fw8Gp4 review) — By: developer · Role: developer · Date: 2026-11-11
+- `Candidate` gains `discriminator: str` (mixed into the fire key via `fire_key(..., discriminator=)`; empty keeps every existing key) and `skip_catch_up: bool` (no `missed`/`catch_up` lateness handling for sources whose `scheduled_for` is data, not a due time).
+- `ScheduleEngine` registers the production `file_watch` factory by default; `test_unregistered_event_kind_never` now pops it explicitly.
+- Known gap: the persisted queued fire (`queued_fire_key` + `queued_scheduled_for`) cannot re-derive a discriminated key after a restart, so it is dropped loudly (`queue_lost`). Fix = persist the discriminator.

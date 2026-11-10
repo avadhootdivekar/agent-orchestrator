@@ -70,18 +70,29 @@ def _resolved_root(workspace_root: str | Path) -> str:
     return str(Path(workspace_root).resolve())
 
 
-def fire_key(workspace_root: str | Path, schedule_id: str, scheduled_for: datetime) -> str:
+def fire_key(
+    workspace_root: str | Path,
+    schedule_id: str,
+    scheduled_for: datetime,
+    discriminator: str = "",
+) -> str:
     """Stable identity of one logical fire (HLD §6.6).
 
     ``scheduled_for`` is normalised to UTC before hashing: cron yields instants in the binding's
     tz while interval anchors and rehydrated state are UTC, so without this the same instant
     could serialise two ways, produce two keys and double-fire after a restart or tz edit.
     A naive datetime raises ``ValueError`` rather than silently producing a different key.
+
+    *discriminator* (event triggers only, T-Fw8Gp4 M2) is a content-derived token so two
+    different states observed in the same second get different keys. Empty (cron/interval/
+    webhook) leaves the material -- and so every pre-existing key -- unchanged.
     """
     if scheduled_for.tzinfo is None or scheduled_for.utcoffset() is None:
         raise ValueError("scheduled_for must be timezone-aware to derive a fire_key")
     instant = scheduled_for.astimezone(UTC).isoformat()
     material = f"{_resolved_root(workspace_root)}|{schedule_id}|{instant}"
+    if discriminator:
+        material += f"|{discriminator}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 

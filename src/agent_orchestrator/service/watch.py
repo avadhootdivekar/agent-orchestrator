@@ -13,14 +13,23 @@ Path handling is security-relevant: every pattern is anchored at the workspace r
 through :class:`LocalFsArtifactStore`; ``..``/absolute patterns are rejected, symlinks that
 resolve outside the root are skipped (with a warning), directory symlinks are never followed, the
 run output tree and VCS/dependency dirs are ignored (no self-triggering loop), and the scan is
-bounded by ``max_files`` and a wall-clock budget (a truncated scan never fires).
+bounded by ``max_files``, a visit cap and a wall-clock budget checked per directory entry (a
+truncated scan never fires). The walk is pruned to directories that can still match a pattern.
+
+Review fixes (w13-03): ``observe`` seeds/refreshes the baseline digest when *nothing wanted*
+changed (the only write it makes -- nothing can be swallowed, so ``on: [modified]`` works);
+the candidate carries a content ``discriminator`` (fire key) and ``skip_catch_up`` (an observed
+change is never "late" because its mtime is old); ``poll_seconds`` gates rescans.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
+import stat
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -49,9 +58,15 @@ DEFAULT_WATCH_IGNORES: frozenset[str] = frozenset(
 # Hard cap on directory entries *visited* (matched or not), so a huge tree of non-matching files
 # stays bounded even with a generous budget.
 VISIT_LIMIT_FACTOR = 20
+# Template instance trees (``workflows/<template>/runs/<id>/``): a template-launched schedule
+# writes ``prompt.md``/outputs there, so watching them is a self-trigger loop (H2). Matched by
+# shape: ``workflows/*/runs`` at the workspace root.
+INSTANCE_TREE_ROOT = "workflows"
+INSTANCE_TREE_RUNS = "runs"
 WATCH_DIGEST_SUBDIR = "schedules/watch"
 EVENT_WATCH_CHANGED = "watch.changed"
 EVENT_WATCH_BUDGET = "schedule.watch_budget_exceeded"
+MAX_EVENT_PATHS = 20
 
 Digest = dict[str, list[int]]  # rel_path -> [mtime_ns, size]
 Monotonic = Callable[[], float]
@@ -90,6 +105,9 @@ class WatchDigestStore:
         )
         return {k: list(v) for k, v in model.root.items()}
 
+    def exists(self, workspace_slug: str, schedule_id: str) -> bool:
+        return self.path_for(workspace_slug, schedule_id).is_file()
+
     def save(self, workspace_slug: str, schedule_id: str, digest: Digest) -> None:
         write_json_model_atomic(
             self.path_for(workspace_slug, schedule_id), _DigestFile(root=digest)
@@ -97,6 +115,39 @@ class WatchDigestStore:
 
 
 # -- scanner -------------------------------------------------------------------------------------
+
+GLOB_CHARS = "*?["
+_Segments = list["re.Pattern[str] | None"]  # one regex per path segment; None = ``**``
+
+
+def _segment_regex(part: str) -> str:
+    seg = ""
+    j = 0
+    while j < len(part):
+        c = part[j]
+        if c == "*":
+            seg += "[^/]*"
+        elif c == "?":
+            seg += "[^/]"
+        elif c == "[":
+            end = part.find("]", j + 2)
+            if end == -1:
+                seg += re.escape(c)
+            else:
+                body = part[j + 1 : end]
+                negate = body.startswith(("!", "^"))
+                if negate:
+                    body = body[1:]
+                body = body.replace("\\", "\\\\")
+                if not negate and body.startswith("^"):
+                    body = "\\" + body  # a literal ``^`` is not negation (L5)
+                # A negated class must never match ``/`` or a segment could cross directories.
+                seg += "[^/" + body + "]" if negate else "[" + body + "]"
+                j = end
+        else:
+            seg += re.escape(c)
+        j += 1
+    return seg
 
 
 def _glob_to_regex(pattern: str) -> re.Pattern[str]:
@@ -109,29 +160,42 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
         if part == "**":
             out.append(".*" if last else "(?:[^/]+/)*")
             continue
-        seg = ""
-        j = 0
-        while j < len(part):
-            c = part[j]
-            if c == "*":
-                seg += "[^/]*"
-            elif c == "?":
-                seg += "[^/]"
-            elif c == "[":
-                end = part.find("]", j + 2)
-                if end == -1:
-                    seg += re.escape(c)
-                else:
-                    body = part[j + 1 : end]
-                    if body.startswith("!"):
-                        body = "^" + body[1:]
-                    seg += "[" + body.replace("\\", "\\\\") + "]"
-                    j = end
-            else:
-                seg += re.escape(c)
-            j += 1
-        out.append(seg + ("" if last else "/"))
+        out.append(_segment_regex(part) + ("" if last else "/"))
     return re.compile("".join(out))
+
+
+def _segments(pattern: str) -> _Segments:
+    return [None if p == "**" else re.compile(_segment_regex(p)) for p in pattern.split("/")]
+
+
+def _static_prefix(pattern: str) -> str:
+    """Leading glob-free directory segments of *pattern* (``epics/*/prompt.md`` -> ``epics``)."""
+    out: list[str] = []
+    for part in pattern.split("/")[:-1]:
+        if any(c in part for c in GLOB_CHARS):
+            break
+        out.append(part)
+    return "/".join(out)
+
+
+def _can_descend(rel_dir: str, patterns: list[_Segments]) -> bool:
+    """True if some pattern could still match a file below *rel_dir* (prunes the walk, M3)."""
+    parts = rel_dir.split("/") if rel_dir else []
+    for segs in patterns:
+        viable = True
+        for i, part in enumerate(parts):
+            if i >= len(segs):
+                viable = False
+                break
+            seg = segs[i]
+            if seg is None:  # ``**``: any depth below can still match
+                return True
+            if i == len(segs) - 1 or not seg.fullmatch(part):  # last segment is the file
+                viable = False
+                break
+        if viable:
+            return True
+    return False
 
 
 def _pattern_is_safe(pattern: str) -> bool:
@@ -145,6 +209,8 @@ def _pattern_is_safe(pattern: str) -> bool:
 def _ignored(rel: str, ignores: frozenset[str]) -> bool:
     parts = rel.split("/")
     if any(p in ignores for p in parts):
+        return True
+    if len(parts) >= 3 and parts[0] == INSTANCE_TREE_ROOT and parts[2] == INSTANCE_TREE_RUNS:
         return True
     return any("/" in ig and (rel == ig or rel.startswith(ig + "/")) for ig in ignores)
 
@@ -161,74 +227,90 @@ def scan(
     """Stat every file under *workspace_root* matching ``watch_spec.paths``.
 
     Returns ``(digest, truncated)``. ``truncated`` is True when ``max_files`` matches, the visit
-    cap or ``budget_seconds`` (measured with *monotonic*) was exceeded; the digest is then
-    partial and **must not drive a fire**. Reads metadata only, never file content or writes.
+    cap or ``budget_seconds`` (measured with *monotonic*, checked per directory entry) was
+    exceeded; the digest is then partial and **must not drive a fire**. Only directories that can
+    still match a pattern are walked. Reads metadata only, never file content or writes.
     """
     store = LocalFsArtifactStore(str(workspace_root))
     root = store.root
     regexes: list[re.Pattern[str]] = []
+    segs: list[_Segments] = []
+    starts: set[str] = set()
     for pattern in watch_spec.paths:
         if _pattern_is_safe(pattern):
-            regexes.append(_glob_to_regex(pattern.replace("\\", "/")))
+            norm = pattern.replace("\\", "/")
+            regexes.append(_glob_to_regex(norm))
+            segs.append(_segments(norm))
+            starts.add(_static_prefix(norm))
         else:
             logger.warning("file watch: pattern %r escapes the workspace root; skipped", pattern)
     digest: Digest = {}
     if not regexes:
         return digest, False
+    # Walk each distinct static prefix once ("" subsumes every other start).
+    start_dirs = (
+        [""]
+        if "" in starts
+        else sorted(p for p in starts if not any(p.startswith(o + "/") for o in starts if o != p))
+    )
 
     started = monotonic()
     visit_limit = max(1, max_files) * VISIT_LIMIT_FACTOR
     visited = 0
-
-    def over_budget() -> bool:
-        return monotonic() - started > budget_seconds
-
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        rel_dir = os.path.relpath(dirpath, root)
-        rel_dir = "" if rel_dir == "." else rel_dir.replace(os.sep, "/")
-        keep: list[str] = []
-        for d in sorted(dirnames):
-            rel = f"{rel_dir}/{d}" if rel_dir else d
-            if _ignored(rel, ignores):
-                continue
-            if os.path.islink(os.path.join(dirpath, d)):
-                # Never descend a directory symlink (cycle/escape risk). One that points outside
-                # the root is also worth a warning.
+    stack = [d for d in reversed(start_dirs)]
+    while stack:
+        rel_dir = stack.pop()
+        if rel_dir and _ignored(rel_dir, ignores):
+            continue
+        dirpath = os.path.join(root, rel_dir) if rel_dir else root
+        try:
+            it = os.scandir(dirpath)
+        except OSError:  # missing prefix dir / vanished / unreadable
+            continue
+        with it:
+            for entry in it:
+                visited += 1
+                if visited > visit_limit or monotonic() - started > budget_seconds:
+                    return digest, True
+                name = entry.name
+                rel = f"{rel_dir}/{name}" if rel_dir else name
+                if _ignored(rel, ignores):
+                    continue
                 try:
-                    store.resolve(rel)
-                except ArtifactPathError:
-                    logger.warning(
-                        "file watch: symlinked dir %r resolves outside root; skipped", rel
-                    )
-                continue
-            keep.append(d)
-        dirnames[:] = keep
-        for name in sorted(filenames):
-            visited += 1
-            if visited > visit_limit or over_budget():
-                return digest, True
-            rel = f"{rel_dir}/{name}" if rel_dir else name
-            if _ignored(rel, ignores) or not any(rx.fullmatch(rel) for rx in regexes):
-                continue
-            full = os.path.join(dirpath, name)
-            try:
-                if os.path.islink(full):
-                    resolved = store.resolve(rel)  # raises if the target is outside the root
-                    if _ignored(os.path.relpath(resolved, root).replace(os.sep, "/"), ignores):
+                    is_link = entry.is_symlink()
+                    if is_link and entry.is_dir():
+                        # Never descend a directory symlink (cycle/escape risk); one that points
+                        # outside the root is also worth a warning.
+                        try:
+                            store.resolve(rel)
+                        except ArtifactPathError:
+                            logger.warning(
+                                "file watch: symlinked dir %r resolves outside root; skipped", rel
+                            )
                         continue
-                    st = os.stat(resolved)
-                else:
-                    st = os.stat(full)
-            except ArtifactPathError:
-                logger.warning("file watch: symlink %r resolves outside root; skipped", rel)
-                continue
-            except OSError:  # vanished or dangling between listing and stat
-                continue
-            if not os.path.isfile(full):
-                continue
-            if len(digest) >= max_files:
-                return digest, True
-            digest[rel] = [st.st_mtime_ns, st.st_size]
+                    if not is_link and entry.is_dir(follow_symlinks=False):
+                        if _can_descend(rel, segs):
+                            stack.append(rel)
+                        continue
+                    if not any(rx.fullmatch(rel) for rx in regexes):
+                        continue
+                    if is_link:
+                        resolved = store.resolve(rel)  # raises if the target is outside the root
+                        if _ignored(os.path.relpath(resolved, root).replace(os.sep, "/"), ignores):
+                            continue
+                        st = os.stat(resolved)
+                    else:
+                        st = os.lstat(entry.path)  # no link following: no swap-in TOCTOU (L4)
+                except ArtifactPathError:
+                    logger.warning("file watch: symlink %r resolves outside root; skipped", rel)
+                    continue
+                except OSError:  # vanished or dangling between listing and stat
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                if len(digest) >= max_files:
+                    return digest, True
+                digest[rel] = [st.st_mtime_ns, st.st_size]
     return digest, False
 
 
@@ -250,6 +332,15 @@ def changed_paths(prev: Digest, cur: Digest, on: list[str]) -> list[str]:
     return sorted(out)
 
 
+def change_discriminator(prev: Digest, cur: Digest, changed: list[str]) -> str:
+    """Short content-derived token for one observed change: ``(path, previous sig, new sig)`` of
+    every changed path. Deterministic for a crash replay (same prev, same cur), but a different
+    state -- or the *same* state reached from a different predecessor, e.g. a ``cp -p`` revert --
+    gets a different fire key (M2)."""
+    material = json.dumps([[p, prev.get(p), cur[p]] for p in changed], sort_keys=True)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
 class FileWatchSource:
     """Per-binding file-watch :class:`TriggerSource` (HLD §6.7)."""
 
@@ -259,7 +350,7 @@ class FileWatchSource:
         spec: WatchSpec,
         store: WatchDigestStore,
         *,
-        max_files: int = DEFAULT_WATCH_MAX_FILES,
+        max_files: int | None = None,
         budget_seconds: float = WATCH_SCAN_BUDGET_SECONDS,
         monotonic: Monotonic = time.monotonic,
         emit: EventSink | None = None,
@@ -268,22 +359,32 @@ class FileWatchSource:
         self._slug = _slug_for_root(self._root)
         self._spec = spec
         self._store = store
-        self._max_files = max_files
+        self._max_files = max_files if max_files is not None else spec.max_files
         self._budget = budget_seconds
         self._monotonic = monotonic
         self._emit = emit
+        self._next_scan_at: float | None = None  # in-memory poll gate (M4)
+        self._budget_warned = False
 
     def _event(self, name: str, payload: dict[str, Any]) -> None:
-        logger.info("%s %s", name, payload)
-        if self._emit is not None:
-            try:
-                self._emit(name, payload)
-            except Exception:  # noqa: BLE001 - a sink must never break evaluation
-                logger.warning("watch event sink failed for %s", name, exc_info=True)
+        if self._emit is None:
+            logger.info("%s %s", name, payload)
+            return
+        try:
+            self._emit(name, payload)
+        except Exception:  # noqa: BLE001 - a sink must never break evaluation
+            logger.warning("watch event sink failed for %s", name, exc_info=True)
+
+    def _gate(self, pending: bool) -> None:
+        """Arm the poll gate unless a change is pending (then rescan on the next tick)."""
+        self._next_scan_at = None if pending else self._monotonic() + self._spec.poll_seconds
 
     def observe(
         self, binding: ResolvedBinding, state: ScheduleState, now: datetime
     ) -> Candidate | None:
+        if self._next_scan_at is not None and self._monotonic() < self._next_scan_at:
+            return None
+        known = self._store.exists(self._slug, binding.id)
         prev = self._store.load(self._slug, binding.id)
         cur, truncated = scan(
             self._root,
@@ -293,25 +394,61 @@ class FileWatchSource:
             monotonic=self._monotonic,
         )
         if truncated:  # never a partial-scan fire
-            self._event(
-                EVENT_WATCH_BUDGET,
-                {"schedule_id": binding.id, "workspace_root": self._root, "files": len(cur)},
-            )
+            if not self._budget_warned:  # once per episode, not every tick (L3)
+                self._budget_warned = True
+                self._event(
+                    EVENT_WATCH_BUDGET,
+                    {"schedule_id": binding.id, "workspace_root": self._root, "files": len(cur)},
+                )
+            self._gate(pending=False)
             return None
+        self._budget_warned = False
         changed = changed_paths(prev, cur, list(self._spec.on))
         if not changed:
+            # Nothing *wanted* changed, so nothing can be swallowed: seed/refresh the baseline so
+            # e.g. ``on: [modified]`` sees a later edit as a modification, not a creation (H1).
+            if cur != prev or not known:
+                self._store.save(self._slug, binding.id, cur)
+            self._gate(pending=False)
             return None
-        newest = datetime.fromtimestamp(max(cur[p][0] for p in changed) / 1e9, tz=UTC)
+        newest_s = max(cur[p][0] for p in changed) // 10**9  # whole seconds, integer (L2)
+        newest = datetime.fromtimestamp(newest_s, tz=UTC)
         if (now - newest).total_seconds() < self._spec.debounce_seconds:
+            self._gate(pending=True)
             return None  # still settling; digest untouched so nothing is swallowed
-        self._event(
-            EVENT_WATCH_CHANGED,
-            {"schedule_id": binding.id, "workspace_root": self._root, "paths": changed[:20]},
+        self._gate(pending=True)
+        return Candidate(
+            scheduled_for=newest,
+            payload=(cur, changed),
+            discriminator=change_discriminator(prev, cur, changed),
+            skip_catch_up=True,
         )
-        return Candidate(scheduled_for=newest.replace(microsecond=0), payload=cur)
 
     def commit(self, binding: ResolvedBinding, candidate: Candidate) -> None:
-        self._store.save(self._slug, binding.id, dict(candidate.payload))
+        cur, changed = candidate.payload
+        self._store.save(self._slug, binding.id, dict(cur))
+        self._next_scan_at = None
+        self._event(
+            EVENT_WATCH_CHANGED,
+            {
+                "schedule_id": binding.id,
+                "workspace_root": self._root,
+                "paths": changed[:MAX_EVENT_PATHS],
+            },
+        )
+
+
+def file_watch_factory(
+    state_dir: Path, emit: EventSink | None = None
+) -> Callable[[str, ResolvedBinding], FileWatchSource]:
+    """Production ``TriggerSourceFactory`` for ``kind: file_watch`` bindings."""
+    store = WatchDigestStore(state_dir)
+
+    def factory(root: str, binding: ResolvedBinding) -> FileWatchSource:
+        assert binding.watch is not None, "file_watch binding without a watch spec"
+        return FileWatchSource(root, binding.watch, store, emit=emit)
+
+    return factory
 
 
 __all__ = [
@@ -319,6 +456,8 @@ __all__ = [
     "WATCH_SCAN_BUDGET_SECONDS",
     "FileWatchSource",
     "WatchDigestStore",
+    "change_discriminator",
     "changed_paths",
+    "file_watch_factory",
     "scan",
 ]

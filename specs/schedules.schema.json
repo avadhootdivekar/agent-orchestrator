@@ -786,6 +786,12 @@
           "minimum": 1,
           "title": "Poll Seconds",
           "type": "integer"
+        },
+        "max_files": {
+          "default": 5000,
+          "minimum": 1,
+          "title": "Max Files",
+          "type": "integer"
         }
       },
       "required": [

@@ -163,6 +163,12 @@ class Candidate:
 
     scheduled_for: datetime
     payload: Any = None
+    # Content-derived token mixed into the fire key so different states with the same
+    # ``scheduled_for`` second do not collide (file_watch, T-Fw8Gp4 M2). Empty = legacy key.
+    discriminator: str = ""
+    # The source observes a *change now*, not a slot that was due earlier: ``scheduled_for`` is
+    # data (an mtime), so lateness-based ``missed``/``catch_up`` handling must not apply (M1).
+    skip_catch_up: bool = False
 
 
 @dataclass(frozen=True)
@@ -307,6 +313,13 @@ class ScheduleEngine:
             "interval": IntervalScheduler(),
         }
         self._source_factories: dict[str, TriggerSourceFactory] = {}
+        # Production file_watch source (T-Fw8Gp4); lazy import: watch.py imports this module.
+        # Callers may override with register_trigger_source("file_watch", ...).
+        from .watch import file_watch_factory
+
+        self._source_factories["file_watch"] = file_watch_factory(
+            self._state_dir, lambda name, payload: self._events.emit(name, **payload)
+        )
         self._sources: dict[tuple[str, str], tuple[ResolvedBinding, TriggerSource]] = {}
 
         self._lock_handle: IO[str] | None = None
@@ -816,7 +829,7 @@ class ScheduleEngine:
             if scheduled_for > now:
                 return no_fire(FireReason.NOT_DUE)
 
-        key = fire_key(root, sid, scheduled_for)
+        key = fire_key(root, sid, scheduled_for, candidate.discriminator if candidate else "")
         effective_due = scheduled_for
         catch_up_lateness: timedelta | None = None
         if run_now is None:
@@ -828,7 +841,8 @@ class ScheduleEngine:
 
             # F7: lateness from effective_due -- jitter must not count as lateness.
             lateness = now - effective_due
-            if lateness > timedelta(seconds=binding.grace_seconds):  # type: ignore[arg-type]
+            grace = timedelta(seconds=binding.grace_seconds)  # type: ignore[arg-type]
+            if (candidate is None or not candidate.skip_catch_up) and lateness > grace:
                 window = timedelta(seconds=binding.catch_up_window_seconds)  # type: ignore[arg-type]
                 if binding.catch_up == "skip" or lateness > window:
                     if not self._burn(key, REASON_MISSED, root, sid, scheduled_for, effective_due):
@@ -1319,7 +1333,7 @@ class ScheduleEngine:
             FireReason.ALREADY_FIRED.value,
             root,
             sid,
-            fire_key(root, sid, scheduled_for),
+            fire_key(root, sid, scheduled_for, candidate.discriminator if candidate else ""),
             scheduled_for,
         )
 

@@ -271,6 +271,7 @@ def test_unregistered_event_kind_never(tmp_path: Path) -> None:
     env = env_for(
         tmp_path, [binding(kind="file_watch", interval_seconds=None, watch=WatchSpec(paths=["a"]))]
     )
+    env.engine._source_factories.pop("file_watch")  # the production file_watch factory is default
     assert env.evaluate().reason == "never"
 
 

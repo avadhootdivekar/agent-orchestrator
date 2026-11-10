@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,7 +18,10 @@ from agent_orchestrator.service.watch import (
     WATCH_SCAN_BUDGET_SECONDS,
     FileWatchSource,
     WatchDigestStore,
+    _glob_to_regex,
+    change_discriminator,
     changed_paths,
+    file_watch_factory,
     scan,
 )
 
@@ -158,7 +161,22 @@ def test_changed_paths_on_filter() -> None:
 # -- FileWatchSource -----------------------------------------------------------------------------
 
 
+class Clock:
+    """Fake monotonic clock; poll_seconds gates rescans, so tests bump ``t`` to re-poll."""
+
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+CLOCK = Clock()
+
+
 def make_source(tmp_path: Path, w: WatchSpec, **kw: object) -> tuple[FileWatchSource, Path, list]:
+    CLOCK.t = 0.0
+    kw.setdefault("monotonic", CLOCK)
     ws = tmp_path / "ws"
     ws.mkdir(exist_ok=True)
     events: list = []
@@ -184,10 +202,12 @@ def test_observe_created_then_modified_and_scheduled_for_is_newest_mtime(tmp_pat
     cand = src.observe(B, ST, NOW)
     assert cand is not None
     assert cand.scheduled_for == T0 + timedelta(seconds=9) and cand.scheduled_for != NOW
-    assert events == ["watch.changed"]
+    assert events == []  # observe is silent (L3); the event is emitted once, on commit
     src.commit(B, cand)
+    assert events == ["watch.changed"]
     assert src.observe(B, ST, NOW) is None  # unchanged after commit
     touch(ws / "a.md", EPOCH + 20, content="xx")
+    CLOCK.t += 100
     cand2 = src.observe(B, ST, NOW)
     assert cand2 is not None and cand2.scheduled_for == T0 + timedelta(seconds=20)
 
@@ -327,3 +347,198 @@ def test_run_output_tree_writes_never_fire(tmp_path: Path) -> None:
     )
     touch(Path(env.root) / ".orchestrator/runs/r/out.md", EPOCH)
     assert env.tick(T0 + timedelta(minutes=5)) == []
+
+
+# -- review fixes (w13-03): each test below fails when its fix is reverted ------------------------
+
+
+def _engine_env(tmp_path: Path, w: WatchSpec, **kw: object):  # type: ignore[no-untyped-def]
+    """Engine with NO test-registered source: exercises the production file_watch factory."""
+    return env_for(
+        tmp_path, [binding("s", kind="file_watch", interval_seconds=None, watch=w, **kw)]
+    )
+
+
+def test_production_factory_is_registered_by_default(tmp_path: Path) -> None:  # prod wiring
+    env = _engine_env(tmp_path, WatchSpec(paths=["w/*.md"], debounce_seconds=30))
+    touch(Path(env.root) / "w/a.md", EPOCH)
+    assert len(env.tick(T0 + timedelta(minutes=5))) == 1
+    assert callable(file_watch_factory(tmp_path))
+
+
+def test_h1_modified_only_seeds_baseline_then_fires_on_edit(tmp_path: Path) -> None:
+    env = _engine_env(tmp_path, WatchSpec(paths=["w/*.md"], on=["modified"], debounce_seconds=30))
+    clock = Clock()
+    store = WatchDigestStore(tmp_path / "state")
+    env.engine.register_trigger_source(
+        "file_watch", lambda r, b: FileWatchSource(r, b.watch, store, monotonic=clock)
+    )
+    f = touch(Path(env.root) / "w/prompt.md", EPOCH)
+    assert env.tick(T0 + timedelta(minutes=5)) == []  # baseline seeded, not an event
+    clock.t += 100
+    touch(f, EPOCH + 600, content="edited")
+    assert len(env.tick(T0 + timedelta(minutes=15))) == 1
+    assert env.tick(T0 + timedelta(minutes=16)) == []
+
+
+def test_h1_modified_only_file_created_later_then_edited(tmp_path: Path) -> None:
+    src, ws, _ = make_source(tmp_path, spec("*.md", on=["modified"]))
+    touch(ws / "a.md", EPOCH)
+    assert src.observe(B, ST, NOW) is None
+    CLOCK.t += 100
+    touch(ws / "late.md", EPOCH + 10)  # creation is unwanted ...
+    assert src.observe(B, ST, NOW) is None
+    CLOCK.t += 100
+    touch(ws / "late.md", EPOCH + 20, content="more")  # ... but a later edit is a modification
+    assert src.observe(B, ST, NOW) is not None
+
+
+def test_h2_template_instance_tree_is_ignored(tmp_path: Path) -> None:
+    touch(tmp_path / "workflows/epic-runner/runs/r-abc/prompt.md")
+    touch(tmp_path / "workflows/epic-runner/runs/r-abc/outputs/report.md")
+    touch(tmp_path / "workflows/epic-runner/instructions/prompt.md")
+    digest, _ = scan(tmp_path, spec("**/prompt.md", "**/*.md"))
+    assert set(digest) == {"workflows/epic-runner/instructions/prompt.md"}
+
+
+def test_h2_instance_scaffold_does_not_self_trigger(tmp_path: Path) -> None:
+    env = _engine_env(tmp_path, WatchSpec(paths=["**/prompt.md"], debounce_seconds=0))
+    touch(Path(env.root) / "workflows/t/runs/r1/prompt.md", EPOCH)
+    assert env.tick(T0 + timedelta(minutes=5)) == []
+
+
+def test_m1_old_mtime_file_still_fires(tmp_path: Path) -> None:
+    env = _engine_env(tmp_path, WatchSpec(paths=["w/*.md"], debounce_seconds=30))
+    touch(Path(env.root) / "w/a.md", EPOCH - 2 * 86400)  # cp -p / tar x: mtime two days old
+    assert len(env.tick(T0 + timedelta(minutes=5))) == 1
+
+
+def test_m1_catch_up_skip_with_long_debounce_still_fires(tmp_path: Path) -> None:
+    env = _engine_env(tmp_path, WatchSpec(paths=["w/*.md"], debounce_seconds=90), catch_up="skip")
+    touch(Path(env.root) / "w/a.md", EPOCH)
+    assert len(env.tick(T0 + timedelta(minutes=5))) == 1
+
+
+def test_m2_same_second_different_state_gets_different_key(tmp_path: Path) -> None:
+    src, ws, _ = make_source(tmp_path, spec("*.md"))
+    f = touch(ws / "a.md", EPOCH, content="1")
+    c1 = src.observe(B, ST, NOW)
+    assert c1 is not None
+    src.commit(B, c1)
+    f.write_text("22")
+    os.utime(f, (EPOCH, EPOCH))  # same whole second, different size
+    c2 = src.observe(B, ST, NOW)
+    assert c2 is not None and c2.scheduled_for == c1.scheduled_for
+    assert c2.discriminator != c1.discriminator
+
+
+def test_m2_revert_with_preserved_mtime_fires_again_in_engine(tmp_path: Path) -> None:
+    env = _engine_env(tmp_path, WatchSpec(paths=["w/*.md"], debounce_seconds=30))
+    f = touch(Path(env.root) / "w/a.md", EPOCH, content="A")
+    assert len(env.tick(T0 + timedelta(minutes=5))) == 1
+    touch(f, EPOCH + 100, content="BB")
+    env.tick(T0 + timedelta(minutes=6))  # B observed (fire or overlap_skip) and committed
+    touch(f, EPOCH, content="A")  # ``cp -p`` revert: same (mtime, size) as the first fire
+    d = env.evaluate(now=T0 + timedelta(minutes=30))
+    assert d.reason != "already_fired"
+
+
+def test_m2_discriminator_is_deterministic_for_replay() -> None:
+    prev: dict = {"a": [1, 2]}
+    cur: dict = {"a": [3, 4]}
+    assert change_discriminator(prev, cur, ["a"]) == change_discriminator(prev, cur, ["a"])
+    assert change_discriminator({}, cur, ["a"]) != change_discriminator(prev, cur, ["a"])
+
+
+def test_m3_directory_only_tree_respects_budget(tmp_path: Path) -> None:
+    for i in range(50):
+        (tmp_path / f"d{i}").mkdir()
+    clock = mono_stub([0.0, 0.0, WATCH_SCAN_BUDGET_SECONDS + 1])
+    _, trunc = scan(tmp_path, spec("**/*.md"), monotonic=clock)  # type: ignore[arg-type]
+    assert trunc
+
+
+def test_m3_walk_is_pruned_to_the_static_prefix(tmp_path: Path) -> None:
+    for i in range(120):
+        touch(tmp_path / f"zz/f{i}.txt")
+    touch(tmp_path / "epics/a/prompt.md")
+    # visit cap is 5 * 20 = 100: the unrelated 120 files would truncate an unpruned walk
+    digest, trunc = scan(tmp_path, spec("epics/*/prompt.md"), max_files=5)
+    assert not trunc and set(digest) == {"epics/a/prompt.md"}
+
+
+def test_m3_non_matching_dirs_are_not_descended(tmp_path: Path) -> None:
+    for i in range(120):
+        touch(tmp_path / f"epics/x/deep/f{i}.txt")  # below ``epics/*/``: cannot match
+    touch(tmp_path / "epics/a/prompt.md")
+    digest, trunc = scan(tmp_path, spec("epics/*/prompt.md"), max_files=5)
+    assert not trunc and set(digest) == {"epics/a/prompt.md"}
+
+
+def test_visit_cap_truncates(tmp_path: Path) -> None:
+    for i in range(30):
+        touch(tmp_path / f"f{i}.txt")
+    _, trunc = scan(tmp_path, spec("*.md"), max_files=1)  # cap = 20 visits < 30 entries
+    assert trunc
+    assert scan(tmp_path, spec("*.md"), max_files=2)[1] is False  # cap 40 >= 30
+
+
+def test_m4_poll_seconds_gates_rescans(tmp_path: Path) -> None:
+    now = [100.0]
+    w = WatchSpec(paths=["*.md"], debounce_seconds=0, poll_seconds=600)
+    src, ws, _ = make_source(tmp_path, w, monotonic=lambda: now[0])
+    assert src.observe(B, ST, NOW) is None  # empty tree, scan #1 arms the gate
+    touch(ws / "a.md", EPOCH)
+    now[0] += 599
+    assert src.observe(B, ST, NOW) is None  # gated: the new file is not seen yet
+    now[0] += 2
+    assert src.observe(B, ST, NOW) is not None  # gate open
+
+
+def test_l1_per_binding_max_files_is_configurable(tmp_path: Path) -> None:
+    assert WatchSpec(paths=["*.md"], max_files=3).max_files == 3
+    src, ws, events = make_source(tmp_path, WatchSpec(paths=["*.md"], max_files=1))
+    touch(ws / "a.md")
+    touch(ws / "b.md")
+    assert src.observe(B, ST, NOW) is None and events == ["schedule.watch_budget_exceeded"]
+
+
+def test_l2_whole_second_truncation_never_rounds_up(tmp_path: Path) -> None:
+    src, ws, _ = make_source(tmp_path, spec("*.md"))
+    f = touch(ws / "a.md")
+    ns = (EPOCH + 5) * 10**9 + 999_999_800  # .9999998 would round up through a float
+    os.utime(f, ns=(ns, ns))
+    c = src.observe(B, ST, NOW)
+    assert c is not None and c.scheduled_for == datetime.fromtimestamp(EPOCH + 5, tz=UTC)
+    assert c.scheduled_for.microsecond == 0
+
+
+def test_debounce_boundary_is_inclusive(tmp_path: Path) -> None:
+    src, ws, _ = make_source(tmp_path, spec("*.md", debounce=30))
+    touch(ws / "a.md", EPOCH)
+    assert src.observe(B, ST, T0 + timedelta(seconds=29)) is None
+    assert src.observe(B, ST, T0 + timedelta(seconds=30)) is not None  # exactly debounce: fires
+
+
+def test_l3_budget_event_emitted_once_per_episode(tmp_path: Path) -> None:
+    now = [0.0]
+    w = WatchSpec(paths=["*.md"], poll_seconds=1, max_files=1)
+    src, ws, events = make_source(tmp_path, w, monotonic=lambda: now[0])
+    touch(ws / "a.md")
+    touch(ws / "b.md")
+    for _ in range(3):
+        now[0] += 10
+        assert src.observe(B, ST, NOW) is None
+    assert events == ["schedule.watch_budget_exceeded"]
+
+
+def test_l5_negated_class_cannot_cross_directories() -> None:
+    rx = _glob_to_regex("a[!x]b.md")
+    assert rx.fullmatch("a/b.md") is None  # a negated class must never match ``/``
+    assert rx.fullmatch("ayb.md") is not None and rx.fullmatch("axb.md") is None
+
+
+def test_l5_caret_after_bracket_is_negation(tmp_path: Path) -> None:
+    touch(tmp_path / "x.md")
+    touch(tmp_path / "y.md")
+    assert set(scan(tmp_path, spec("[^x].md"))[0]) == {"y.md"}

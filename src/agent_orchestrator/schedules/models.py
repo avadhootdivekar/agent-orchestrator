@@ -280,6 +280,7 @@ class WatchSpec(BaseModel):
     )
     debounce_seconds: int = Field(default=30, ge=0)
     poll_seconds: int = Field(default=30, ge=1)
+    max_files: int = Field(default=5000, ge=1)  # scan bound (HLD §6.7); truncated scans never fire
 
     @field_validator("paths")
     @classmethod

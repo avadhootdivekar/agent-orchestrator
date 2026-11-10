@@ -2,7 +2,7 @@
 
 - ID: `T-Fw8Gp4-file-watch-trigger`
 - Updated At: 2026-11-11
-- State: Partial — core landed; CLI flags (`ao schedule add --watch ...`) and the `ao schedule daemon --once` e2e (AC12) are NOT done
+- State: Partial — core landed, w13-03 review H1/H2/M1-M4 fixed (see 'Review fixes'); CLI flags (`ao schedule add --watch ...`) and the `ao schedule daemon --once` e2e (AC12) are NOT done
 - Owner: developer agent (overseer unit w12-03-a1-file-watch)
 
 ## This update
@@ -24,3 +24,17 @@
 1. Register the production factory in the service wiring; add `max_files` to `WatchSpec` if per-binding control is wanted.
 2. Land `--watch*` flags + AC12 e2e once `ao schedule` exists.
 3. `T-Se4Bk5` to review `scan` path handling.
+
+## Review fixes (w13-03 Opus review) — By: developer · Role: developer · Date: 2026-11-11
+Unit w14-01. `service/watch.py`, plus an engine-contract change in `service/schedule_engine.py` / `service/fire_store.py`. Each fix has a regression test in `tests/service/test_watch.py` that was mutation-checked (reverting the fix fails a test).
+- **H1** `observe` seeds/refreshes the baseline digest when nothing *wanted* changed (the only write it makes; nothing can be swallowed), so `on: [modified]` fires on the first edit, including for files created later.
+- **H2** `workflows/*/runs/**` (template instance trees) is ignored by shape, so a template-launched schedule cannot re-trigger on its own scaffolded `prompt.md`.
+- **M1** `Candidate.skip_catch_up` (engine): an observed change is never "late" because its mtime is old. `cp -p`/`tar x` files and `catch_up: skip` + `debounce >= grace` now fire.
+- **M2** `Candidate.discriminator` is mixed into `fire_key(..., discriminator=)` (empty = legacy key, other kinds unchanged). It is a hash of `(path, prev sig, new sig)`, so same-second states and `cp -p` reverts get distinct keys, while crash replay is still deterministic.
+- **M3** The scan is an explicit `scandir` walk: budget and visit cap are checked per entry, and it is pruned to each pattern's static prefix and to directories that can still match.
+- **M4** `poll_seconds` is honoured through an in-memory gate (monotonic clock). It is skipped while a change is pending, so a concurrency skip retries on the next tick.
+- **Lows fixed** L1 (`WatchSpec.max_files`, schema regenerated), L2 (integer whole-second truncation, no round-up), L3 (`watch.changed` emitted once on commit, budget event once per episode, no double logging), L4 (`lstat` + `S_ISREG`), L5 (negated classes never match `/`, a leading `^` is negation).
+- **Production wiring** `ScheduleEngine` registers `file_watch_factory(state_dir)` by default (caller can override via `register_trigger_source`).
+- Pinned: whole-second truncation, visit cap, debounce boundary (exactly `debounce` fires).
+- **Not fixed (reasons):** **L6** orphan digest files: safe by design, cleanup belongs with schedule removal (`ao schedule rm`, T-Cl6Jn9). **L7** overlap `skip` drops edits: engine-wide cron semantics, document/recommend `overlap: queue`. **H2 generalisation:** custom template `instance_dir`s outside `workflows/*/runs` are not auto-ignored (only that shape is). **Queued fire across restart:** a file_watch fire buffered by `overlap: queue` re-derives its key without the discriminator after a restart, so it is dropped loudly (`queue_lost`); persisting the discriminator in `ScheduleState` is a follow-up. AC12 CLI e2e is still pending the `ao schedule` CLI.
+- Evidence: `pytest tests/service tests/schedules tests/test_scheduler.py` 873 passed, 1 failed (`test_governance_gate::test_real_renderer_does_not_yet_register_cost_cap...`, caused by another unit's uncommitted `engine.py`/`run_options.py` cost-cap work, not these paths). `ruff check`/`format`, `mypy src` clean. `test_watch.py` 22 -> 43 tests.
