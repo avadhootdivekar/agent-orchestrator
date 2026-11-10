@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -61,3 +62,78 @@ def test_failed_write_cleans_tmp_and_keeps_old(
         write_json_model_atomic(p, Sample(n=2))
     assert read_json_model(p, Sample, default_factory=Sample).n == 1
     assert [f.name for f in tmp_path.iterdir()] == ["s.json"]
+
+
+def test_default_mode_does_not_fsync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[int] = []
+    monkeypatch.setattr("agent_orchestrator.service.statefile.os.fsync", calls.append)
+    write_json_model_atomic(tmp_path / "s.json", Sample(n=1))
+    assert calls == []
+
+
+def test_durable_fsyncs_file_and_parent_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import stat
+
+    kinds: list[str] = []
+    real_fsync = os.fsync
+
+    def spy(fd: int) -> None:
+        kinds.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_fsync(fd)
+
+    monkeypatch.setattr("agent_orchestrator.service.statefile.os.fsync", spy)
+    p = tmp_path / "s.json"
+    write_json_model_atomic(p, Sample(n=5), durable=True)
+    assert kinds == ["file", "dir"]  # file before rename, directory after
+    assert read_json_model(p, Sample, default_factory=Sample).n == 5
+    assert [f.name for f in tmp_path.iterdir()] == ["s.json"]
+
+
+def test_durable_failure_cleans_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(fd: int) -> None:
+        raise OSError("fsync")
+
+    monkeypatch.setattr("agent_orchestrator.service.statefile.os.fsync", boom)
+    with pytest.raises(OSError):
+        write_json_model_atomic(tmp_path / "s.json", Sample(n=1), durable=True)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_tmp_names_are_unique_per_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    names: list[str] = []
+    real_replace = os.replace
+
+    def spy(src: object, dst: object) -> None:
+        names.append(Path(str(src)).name)
+        real_replace(src, dst)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("agent_orchestrator.service.statefile.os.replace", spy)
+    p = tmp_path / "s.json"
+    for i in range(5):
+        write_json_model_atomic(p, Sample(n=i))
+    assert len(set(names)) == 5  # not pid-based: same process, distinct tmp names
+
+
+def test_concurrent_writers_do_not_collide(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    p = tmp_path / "s.json"
+
+    def work(i: int) -> None:
+        write_json_model_atomic(p, Sample(n=i), durable=bool(i % 2))
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        list(ex.map(work, range(64)))  # any collision would raise (FileNotFoundError etc.)
+    assert 0 <= read_json_model(p, Sample, default_factory=Sample).n < 64
+    assert [f.name for f in tmp_path.iterdir()] == ["s.json"]
+
+
+def test_existing_file_mode_preserved(tmp_path: Path) -> None:
+    p = tmp_path / "s.json"
+    write_json_model_atomic(p, Sample(n=1))
+    p.chmod(0o640)
+    write_json_model_atomic(p, Sample(n=2))
+    assert p.stat().st_mode & 0o777 == 0o640

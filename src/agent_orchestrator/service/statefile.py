@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
@@ -46,14 +47,49 @@ def read_json_model(path: Path, model_cls: type[M], *, default_factory: Callable
         return default_factory()
 
 
-def write_json_model_atomic(path: Path, model: BaseModel) -> None:
-    """Persist *model* to *path* atomically (temp file in the same dir + ``os.replace``)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # pid-suffixed so two processes writing the same path never share a temp file.
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+def _fsync_dir(directory: Path) -> None:
+    """Best-effort fsync of *directory* so a rename into it survives power loss."""
     try:
-        tmp.write_text(model.model_dump_json(indent=2), encoding="utf-8")
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:  # e.g. platforms where directories can't be opened
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def write_json_model_atomic(path: Path, model: BaseModel, *, durable: bool = False) -> None:
+    """Persist *model* to *path* atomically (unique temp file in the same dir + ``os.replace``).
+
+    The temp name comes from ``tempfile.mkstemp`` so concurrent writers (threads or processes)
+    never share one. An existing target keeps its permission bits; a new file is created 0600.
+
+    ``durable=True`` additionally flushes + fsyncs the temp file before the rename and fsyncs
+    the parent directory after it, so the record survives a crash/power loss (for fire records
+    and similar must-not-lose state). Off by default: plain atomicity is enough for derived state.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = model.model_dump_json(indent=2).encode("utf-8")
+    try:
+        mode: int | None = path.stat().st_mode & 0o7777
+    except OSError:
+        mode = None
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            if mode is not None:
+                os.fchmod(fh.fileno(), mode)
+            if durable:
+                fh.flush()
+                os.fsync(fh.fileno())
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+    if durable:
+        _fsync_dir(path.parent)
