@@ -254,3 +254,19 @@ Done: M1 (option b, test added), L2 (documented in code), L6 (labels/claims corr
 - **guide-sentinel.md**: "file writes only there" reworded - `Bash(mv:*)` is not path-scoped.
 - **L4 NOT done**: T4 integration-conflict + independent-sibling isolation test (needs a git-worktree fixture); still open.
 - By: developer · Role: developer · Date: 2026-11-11
+
+## A3 close-out: L4 + final D1-D4/CTL-SCHEMA state (unit w16-05-a3-isolation-test-and-ticket, 2026-11-11)
+- **L4 done**: `tests/test_e2e_isolation_sibling_failure.py` — CLI e2e with real git worktrees: `task_a`/`task_b` conflict on `f.txt`,
+  `ladder: ["auto"]` (T4 → `integration.failed`, worktree retained), `--max-parallel 2` < 4 ready tasks, independent `task_c`/`task_d`
+  queued behind the failure must still run and land; `task_dep` (depends on `task_b`) is the only unrun task. **Mutation-checked**: reverting the
+  D3 settle change (`failed` → `halt`) fails this test and `test_engine_failure_isolation_of_work`; engine restored byte-identical afterwards.
+- Final state: **D1** done (per-attempt `attempt_started_at` clock, H1 mutation-checked). **D2** done (cohort/expected_minutes/no_stuck_kill,
+  activity veto, systemic window; M2 cool-down mutation-checked). **D3** done (`7792351`; continue-on-failure; L4 pinned; docs updated M3).
+  **D4** done (agent permission fix + `_start_llm_lane` unbound-`agent` regression fixed). **CTL-SCHEMA** investigated (cause: empty `created_at`
+  on LLM-authored `note`; sidecar `reason.json` documented); shared `CTL_ENVELOPE_FIELDS`/`RATIONALE_MAX_CHARS` + parity test (L5). Not done: not
+  counting CTL-SCHEMA note rejections toward auto-pause / surfacing sidecar detail in the next pack (owner decision, followup 3/4 above).
+- **OPEN OWNER DECISION — `defaults.fail_fast` opt-out**: D3 made continue-on-failure the unconditional default. Options: (a) keep as is;
+  (b) add `defaults.fail_fast: true` workflow setting restoring halt-on-first-failure (spec/schema change; one-line seam at the
+  `ctx.failed_tasks.add(tid)` / `settled` return in `engine._settle_completed_task` — engine.py currently carries another unit's uncommitted edits,
+  so not done here). Recommendation: (a) now, (b) only if a workflow needs it.
+- By: developer · Role: developer · Date: 2026-11-11

@@ -10,6 +10,8 @@
 
 - By: developer · Role: developer · Date: 2026-11-11 · Comment: D1-D4 + CTL implemented and committed; D2 committed; A3 Opus review fixes H1/H2/M1/M2/M3/L1/L2/L3/L5/L6 done (mutation-checked H1, M2); L4 (T4 sibling isolation test) and the owner's `fail_fast` opt-out decision remain open. See TASK.md.
 
+- By: developer · Role: developer · Date: 2026-11-11 · Comment: A3 closed except one owner decision. L4 (T4 conflict + independent-sibling isolation e2e, `tests/test_e2e_isolation_sibling_failure.py`) done, mutation-checked against D3. State: D1 done, D2 done, D3 done (continue-on-failure default), D4 done, CTL-SCHEMA investigated + L5 shared constants (auto-pause/sidecar-in-pack idea left open). **OPEN OWNER DECISION: add `defaults.fail_fast` opt-out for D3 (needs engine.py/spec change) or keep continue-on-failure unconditional.** Recommendation: keep. See TASK.md "A3 close-out".
+
 ## Evidence
 - See TASK.md "Evidence (where to look)".
 
