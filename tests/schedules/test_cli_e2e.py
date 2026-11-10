@@ -182,14 +182,17 @@ def test_validate_reports_id_and_field(env: Env) -> None:
 
 
 def test_run_now_without_daemon_fires_in_process(env: Env) -> None:
+    opt_in(env)
     env.add()
     out = env.run("run-now", "nightly").output
-    assert "fired: run_id=ao-nightly-20260304T050607Z" in out
     root = str(env.ws)
-    assert (env.ws / "runs" / "ao-nightly-20260304T050607Z").is_dir()
     recs = FireIntentStore(env.state).list(workspace_root=root)
     assert len(recs) == 1 and recs[0].status == "launched"
-    assert recs[0].run_id == "ao-nightly-20260304T050607Z" and recs[0].fire_key
+    # run ids carry a random 6-hex suffix (rand6) since the launcher change
+    assert recs[0].run_id is not None
+    assert recs[0].run_id.startswith("ao-nightly-20260304T050607Z") and recs[0].fire_key
+    assert f"fired: run_id={recs[0].run_id}" in out
+    assert (env.ws / "runs" / recs[0].run_id).is_dir()
     # the engine lock was released again
     assert not sched_cli.probe_engine_lock(env.state)
 
@@ -224,6 +227,7 @@ def test_run_now_queue_flag_and_unknown(env: Env) -> None:
 
 
 def test_run_now_overlap_reports_not_fired(env: Env) -> None:
+    opt_in(env)
     env.add()
     env.run("run-now", "nightly")
     # same fixed instant -> same fire key: at-most-once, nothing launched twice
@@ -402,18 +406,48 @@ def test_from_workflow_conflicting_flags(env: Env) -> None:
     env.run("add", "--from-workflow", "missing.json", *QUOTA, ok=False)
 
 
-def test_ao_validate_hook_warns_unbound_and_fails_bad_file(env: Env) -> None:
+def _agents_file(tmp: Path) -> Path:
+    path = tmp / "agents.json"
+    path.write_text(json.dumps({"version": "1.0", "agents": {"a": {"executor": "fake"}}}))
+    return path
+
+
+def test_ao_validate_hook_warns_unbound_and_fails_bad_file(env: Env, tmp_path: Path) -> None:
     _write_spec(env.ws / "flow.json", [{"type": "cron", "schedule": "0 3 * * *"}])
-    ok = runner.invoke(app, ["validate", "--workflow", "flow.json"])
-    # a spec this small may not satisfy the main validator; only assert hook behaviour if it ran
-    if ok.exit_code == 0:
-        assert "no schedule binds it" in ok.stderr
-        env.run("add", "--from-workflow", "flow.json", *QUOTA)
-        again = runner.invoke(app, ["validate", "--workflow", "flow.json"])
-        assert "no schedule binds it" not in again.stderr
+    base = ["validate", "--workflow", "flow.json", "--agents", str(_agents_file(tmp_path))]
+    ok = runner.invoke(app, base)
+    assert ok.exit_code == 0, ok.output
+    assert "no schedule binds it" in ok.stderr
+    env.run("add", "--from-workflow", "flow.json", *QUOTA)
+    again = runner.invoke(app, base)
+    assert again.exit_code == 0 and "no schedule binds it" not in again.stderr
     env.sched_file.write_text("schedules: nope\n")
-    bad = runner.invoke(app, ["validate", "--workflow", "flow.json"])
-    assert bad.exit_code != 0
+    bad = runner.invoke(app, base)
+    assert bad.exit_code == 1 and "schedules" in bad.stderr
+
+
+def test_ao_validate_hook_uses_the_workflows_workspace_not_cwd(
+    env: Env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W2: a broken schedules file in the *cwd's* workspace must not fail validating a workflow
+    that lives in another (healthy) workspace."""
+    _write_spec(env.ws / "flow.json", [{"type": "cron", "schedule": "0 3 * * *"}])
+    other = tmp_path / "other"
+    (other / ".ao").mkdir(parents=True)
+    (other / ".ao" / "schedules.yaml").write_text("schedules: nope\n")
+    monkeypatch.chdir(other)
+    res = runner.invoke(
+        app,
+        [
+            "validate",
+            "--workflow",
+            str(env.ws / "flow.json"),
+            "--agents",
+            str(_agents_file(tmp_path)),
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    assert "no schedule binds it" in res.stderr  # computed against env.ws, not `other`
 
 
 def test_schedule_validate_workflow_warning(env: Env) -> None:
@@ -442,3 +476,175 @@ def test_help_lists_subcommands() -> None:
 
 def test_no_process_spawn_in_module() -> None:
     assert "Popen" not in Path(sched_cli.__file__).read_text()
+
+
+# -- T-Cl6Jn9 review fixes (w15-03 / w17-01) ----------------------------------------------------
+
+
+def _set_policy(tmp_path: Path, **policy: Any) -> None:
+    """Merge a ``schedules:`` policy block into the env-redirected service registry file."""
+    path = tmp_path / "service.yaml"
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    data = data or {}
+    data["schedules"] = {**data.get("schedules", {}), **policy}
+    path.write_text(yaml.safe_dump(data))
+
+
+def _due(env: Env, *ids: str) -> None:
+    for sid in ids:
+        env.add(sid)
+        ScheduleStateStore(env.state).advance_anchor(env.ws, sid, T0 - timedelta(seconds=120))
+
+
+def test_daemon_honours_registry_kill_switch(env: Env, tmp_path: Path) -> None:
+    """H1: ``schedules.enabled: false`` means no engine at all -- no fire, no lock taken."""
+    _set_policy(tmp_path, enabled=False)
+    _due(env, "a")
+    res = runner.invoke(app, ["schedule", "daemon", "--once", "--workspace", str(env.ws)])
+    assert res.exit_code == 1 and "disabled machine-wide" in res.output
+    assert FireIntentStore(env.state).list() == []
+    assert not sched_cli.probe_engine_lock(env.state)
+
+
+def test_run_now_local_honours_registry_kill_switch(env: Env, tmp_path: Path) -> None:
+    opt_in(env)
+    env.add()
+    _set_policy(tmp_path, enabled=False)
+    res = env.run("run-now", "nightly", "--local", ok=False)
+    assert "disabled machine-wide" in res.output
+    assert FireIntentStore(env.state).list() == []
+    assert not env.sups
+
+
+def test_run_now_queue_warns_on_kill_switch(env: Env, tmp_path: Path) -> None:
+    opt_in(env)
+    env.add()
+    _set_policy(tmp_path, enabled=False)
+    res = env.run("run-now", "nightly", "--queue")
+    assert "disabled machine-wide" in res.stderr
+
+
+def test_daemon_honours_global_concurrency_cap(env: Env, tmp_path: Path) -> None:
+    """H1: with ``max_concurrent_global: 1`` two due bindings fire at most one."""
+    _set_policy(tmp_path, max_concurrent_global=1)
+    _due(env, "a", "b")
+    res = runner.invoke(app, ["schedule", "daemon", "--once", "--workspace", str(env.ws)])
+    assert res.exit_code == 0, res.output
+    assert res.stdout.strip() == "1"
+    assert len(FireIntentStore(env.state).list()) == 1
+
+
+def test_engine_wiring_matches_service_policy(env: Env, tmp_path: Path) -> None:
+    """H1: interval, global cap, webhook source and the shared usage ledger are all wired."""
+    _set_policy(tmp_path, eval_interval_seconds=17, max_concurrent_global=3)
+    engine = sched_cli._build_engine(env.state, None)
+    assert engine._eval_interval == 17 and engine._max_global == 3  # noqa: SLF001
+    assert "webhook" in engine._source_factories  # noqa: SLF001
+    assert sched_cli._build_engine(env.state, None, interval=5)._eval_interval == 5  # noqa: SLF001
+    ledger = engine._launcher.target._ledger  # noqa: SLF001
+    assert ledger is engine.usage_ledger
+
+
+def test_engine_build_fails_closed_on_unreadable_registry(env: Env, tmp_path: Path) -> None:
+    (tmp_path / "service.yaml").write_text("workspaces: [: not yaml")
+    _due(env, "a")
+    res = runner.invoke(app, ["schedule", "daemon", "--once", "--workspace", str(env.ws)])
+    assert res.exit_code == 1 and "cannot read the service registry" in res.output
+    assert FireIntentStore(env.state).list() == []
+
+
+def test_run_now_refuses_inert_workspace_like_the_daemon_would(env: Env) -> None:
+    """H2: no daemon -> same outcome as with one (the request is not honoured) unless --local."""
+    env.add()  # not registered
+    res = env.run("run-now", "nightly", ok=False)
+    assert "not registered" in res.output and "--local" in res.output
+    assert FireIntentStore(env.state).list() == [] and not env.sups
+    runner.invoke(app, ["service", "add", str(env.ws)])  # registered, schedules: false
+    res = env.run("run-now", "nightly", ok=False)
+    assert "ao service set" in res.output
+    assert FireIntentStore(env.state).list() == []
+    # --local is the explicit opt-in
+    assert "fired: run_id=" in env.run("run-now", "nightly", "--local").output
+
+
+def test_run_now_local_force_bypasses_overlap_only(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opt_in(env)
+    env.add("nightly", "--overlap", "skip", "--max-concurrent", "5")
+
+    class Live(RunDirSupervisor):
+        def is_running(self, run_id: str) -> bool:
+            return True
+
+    live: dict[str, Live] = {}
+    monkeypatch.setattr(
+        sched_cli, "_SUPERVISOR_FACTORY", lambda root: live.setdefault(root, Live(Path(root)))
+    )
+    env.run("run-now", "nightly", "--local")
+    monkeypatch.setattr(sched_cli, "_now", lambda: T0 + timedelta(seconds=5))
+    assert "not fired" in env.run("run-now", "nightly", "--local").output  # overlap skip
+    monkeypatch.setattr(sched_cli, "_now", lambda: T0 + timedelta(seconds=10))  # new fire key
+    assert "fired: run_id=" in env.run("run-now", "nightly", "--local", "--force").output
+
+
+def test_run_now_local_launch_failure_exits_1(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    opt_in(env)
+    env.add()
+
+    class Boom(RunDirSupervisor):
+        def launch_run(self, **kwargs: object) -> Any:
+            raise RuntimeError("no slots")
+
+    monkeypatch.setattr(sched_cli, "_SUPERVISOR_FACTORY", lambda root: Boom(Path(root)))
+    res = env.run("run-now", "nightly", "--local", ok=False)
+    assert "ERROR" in res.output
+
+
+def test_enable_refusal_says_stop_the_daemon(env: Env) -> None:
+    env.add()
+    store = ScheduleStateStore(env.state)
+    store.advance_anchor(env.ws, "nightly", T0)
+    store.set_status(env.ws, "nightly", "completed")
+    with env.engine_lock():
+        out = env.run("enable", "nightly", ok=False).output
+    assert "Stop the daemon" in out and "retry" not in out
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["next", "-n", "0"], ["history", "-n", "-1"], ["daemon", "--once", "--interval", "0"]],
+)
+def test_nonpositive_counts_and_intervals_rejected(env: Env, args: list[str]) -> None:
+    res = env.run(*args, ok=False)
+    assert res.exit_code == 2
+
+
+def test_add_empty_cron_reports_cron_not_interval(env: Env) -> None:
+    res = env.run("add", "x", "--cron", "", "--workflow", "w.json", *QUOTA, ok=False)
+    assert "interval_seconds" not in res.output
+
+
+def test_from_workflow_conflict_with_zero_interval(env: Env) -> None:
+    _write_spec(env.ws / "flow.json", [{"type": "cron", "schedule": "0 3 * * *"}])
+    res = env.run("add", "--from-workflow", "flow.json", "--interval", "0", *QUOTA, ok=False)
+    assert "drop --cron/--interval" in res.output
+
+
+def test_daemon_restores_signal_handlers(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    import signal as _signal
+    import threading
+
+    env.add()
+    sigs = (_signal.SIGINT, _signal.SIGTERM)
+    before = {s: _signal.getsignal(s) for s in sigs}
+
+    class OneShotEvent(threading.Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            self.set()  # the first poll ends the loop
+            return True
+
+    monkeypatch.setattr(sched_cli.threading, "Event", OneShotEvent)
+    res = runner.invoke(app, ["schedule", "daemon", "--workspace", str(env.ws)])
+    assert res.exit_code == 0, res.output
+    assert {s: _signal.getsignal(s) for s in sigs} == before

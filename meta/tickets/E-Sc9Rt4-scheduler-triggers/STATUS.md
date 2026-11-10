@@ -163,3 +163,6 @@ the webhook's middleware mounting.
 
 - 2026-11-11: `T-Wh9Kv1` security-review fixes landed (H1 replay bypass, M1 dropped deliveries, M2 slow-client bounds, M3 webhook host allow-list, Lows L1-L7 except L4 caching). Breaking: `X-AO-Signature` senders must sign `"{ts}.{body}"` and send `X-AO-Timestamp`. See `T-Wh9Kv1-webhook-ingress/STATUS.md`.
   By: developer · Role: developer · Date: 2026-11-11
+
+## Update 2026-11-11 — T-Cl6Jn9 review fixes (w17-01)
+- The 2 High findings (daemon / `run-now --local` bypassed the kill switch, global cap, webhook source and usage ledger; `run-now` fired non-opted-in workspaces) are fixed with mutation-checked tests; most Mediums/Lows fixed. Followups: W3 (`store.save` materializes defaults), W4 (public `ScheduleEngine.fire`), S4, and extracting one shared engine factory in `service/cli.py`. See `T-Cl6Jn9-schedule-cli/STATUS.md`.

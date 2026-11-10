@@ -27,3 +27,17 @@ Deviations: AC1 reads `<state_dir>/schedules/state.json` always (the hub snapsho
 
 ## Next actions
 1. `T-Un0Lm6`/`T-Fw8Gp4`/`T-Wh9Kv1`: add their flags to `add`; wire event-source `observe` into `next`.
+
+## Update 2026-11-11 — review fixes (w15-03 findings; w17-01)
+By: developer · Role: developer · Date: 2026-11-11
+- **H1 fixed.** `_build_engine` now mirrors `service.cli.build_schedule_engine`: reads the registry policy (fails CLOSED if unreadable), refuses when `schedules.enabled: false` (`daemon` and `run-now --local` exit 1; queued `run-now` warns), passes `max_concurrent_global` and `eval_interval_seconds` (the `--interval` flag still overrides), registers the `webhook` trigger source, and shares the engine's `usage_ledger` / `governance_lock_path` with the launcher (the latter two were also missing, so governance quotas were unenforced on this path).
+- **H2 fixed.** `run-now` without `--local` and without a live daemon now refuses an unregistered / not-opted-in workspace with the same inert reason the daemon path warns about; explicit `--local` is the opt-in.
+- **Mediums/Lows fixed:** W1 (hook test now real, with `agents.json`), W2 (hook validates the workflow's workspace, not cwd), S1 (enable refusal text), S2 (`min=` on `-n` and `--interval`), S3 (`is not None` tests), S5 (status constants), S6 (signal handlers restored); W5 pins added for M5 (`--force` bypasses overlap only, not caps), M8 (local launch failure exits 1), M1/M1b. The existing run-now test was also repaired: run ids carry a rand6 suffix since the launcher change (pre-existing failure at HEAD).
+- **Not fixed (reason / followup):**
+  - W3 (CLI writes strip comments / materialize defaults): the fix is in `schedules/store.py` (`save` with `exclude_unset`), outside this unit's paths. Followup ticket.
+  - W4 (`_run_local` calls `engine._launcher`, bypassing `_launch`): needs a public `ScheduleEngine.fire()` in `service/schedule_engine.py`. Followup.
+  - S4 (`--workflow` vs `--from-workflow` path bases): behaviour change to settle with the owner. Followup.
+  - W5 residual: M2 (lock probe branch is outcome-equivalent), M3/M4 (`next` backlog collapse / completed skip), M6, M12, M13, M15, M16 tests not added.
+  - DRY: `_build_engine` is still a second copy of `build_schedule_engine`. A shared factory belongs in `service/cli.py`, which was dirty from other units, so it was not touched. Followup: extract and have both call it (the new `test_engine_wiring_matches_service_policy` pins the parity meanwhile).
+- Mutation-checked (each fails when reverted): kill switch, global cap, eval interval, webhook source, usage ledger, H2 refusal, queue kill-switch warning, fail-closed registry, W2 workspace, S1/S2/S3.
+- Evidence: `pytest tests/schedules` 311 passed; `ruff check`/`format` clean on own paths; `mypy src` 0 errors. `ruff check src` still reports 2 errors in `service/governance_gate.py` (another unit's file).

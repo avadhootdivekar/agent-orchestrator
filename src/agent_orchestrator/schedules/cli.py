@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
-from typing import IO, Annotated, Any
+from typing import IO, Annotated, Any, Final
 
 import typer
 
@@ -46,7 +46,12 @@ from ..service.fire_store import (
     ScheduleStateStore,
 )
 from ..service.paths import default_registry_path, default_state_dir
-from ..service.registry import ServiceRegistry, ServiceRegistryFile, WorkspaceEntry
+from ..service.registry import (
+    ServiceRegistry,
+    ServiceRegistryFile,
+    ServiceScheduleConfig,
+    WorkspaceEntry,
+)
 from ..service.schedule_engine import (
     DEFAULT_UNTIL_MAX_RUNS,
     ENGINE_LOCK_FILENAME,
@@ -79,7 +84,10 @@ REASON_RUN_NOW = "run_now"
 NO_VALUE = "-"
 DEFAULT_ID_PREFIX = "wf"
 WORKSPACE_MARKER_DIR = ".ao"
-STATUS_COMPLETED = "completed"
+STATUS_COMPLETED: Final = "completed"
+STATUS_QUARANTINED: Final = "quarantined"
+STATUS_DISABLED: Final = "disabled"
+STATUS_ACTIVE: Final = "active"
 ENGINE_FIX_HINT = "start one with `ao service start` or `ao schedule daemon`"
 NO_ENGINE_WARNING = (
     "WARNING: no live schedule engine found -- nothing will fire. "
@@ -226,12 +234,34 @@ class _SingleWorkspaceRegistry(ServiceRegistry):
         return self._file
 
 
+def _engine_policy() -> ServiceScheduleConfig:
+    """The machine-level scheduler policy (``schedules:`` in the service registry). Unlike the
+    read commands, an engine-building command fails CLOSED when the registry is unreadable."""
+    try:
+        return ServiceRegistry(default_registry_path()).load().schedules
+    except Exception as exc:  # noqa: BLE001 - any load failure must refuse, not default open
+        raise _fail(f"cannot read the service registry to check the kill switch ({exc})") from exc
+
+
+def _require_schedules_enabled(policy: ServiceScheduleConfig) -> None:
+    if not policy.enabled:
+        raise _fail(
+            "schedules are disabled machine-wide (registry `schedules.enabled: false`); "
+            "nothing will be fired"
+        )
+
+
 def _build_engine(
     state_dir: Path, workspace: Path | None, *, interval: float | None = None
 ) -> ScheduleEngine:
-    """Engine + launcher wired exactly like ``service.cli.build_schedule_engine`` (shared stores,
-    shared per-workspace supervisor cache) but not started."""
+    """Engine + launcher + trigger sources wired like ``service.cli.build_schedule_engine``
+    (shared stores, shared per-workspace supervisor cache, the registry's kill switch, global
+    cap and eval interval) but not started. Raises when the kill switch is set."""
     from ..service.schedule_launch import ScheduledLauncher
+    from ..service.webhook import WebhookSource
+
+    policy = _engine_policy()
+    _require_schedules_enabled(policy)
 
     class _Deferred:
         target: Any = None
@@ -242,17 +272,21 @@ def _build_engine(
     def clock() -> datetime:
         return _now()
 
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {
+        "eval_interval_seconds": interval if interval is not None else policy.eval_interval_seconds,
+        "max_concurrent_global": policy.max_concurrent_global,
+    }
     if workspace is not None:
         root = str(workspace)
         kwargs["registry_factory"] = lambda _path: _SingleWorkspaceRegistry(root)
-    if interval is not None:
-        kwargs["eval_interval_seconds"] = interval
     if _SUPERVISOR_FACTORY is not None:
         kwargs["process_supervisor_factory"] = _SUPERVISOR_FACTORY
     deferred = _Deferred()
     engine = ScheduleEngine(
         default_registry_path(), state_dir=state_dir, clock=clock, launcher=deferred, **kwargs
+    )
+    engine.register_trigger_source(
+        "webhook", lambda root, binding: WebhookSource(state_dir, root, binding)
     )
     deferred.target = ScheduledLauncher(
         state_dir,
@@ -261,12 +295,14 @@ def _build_engine(
         fire_store=engine.fire_store,
         state_store=engine.state_store,
         event_log=engine.event_log,
+        usage_ledger=engine.usage_ledger,
+        governance_lock_path=engine.governance_lock_path,
     )
     return engine
 
 
 def _status_of(binding: ResolvedBinding, st: ScheduleState) -> str:
-    return "disabled" if not binding.enabled and st.status == "active" else st.status
+    return STATUS_DISABLED if not binding.enabled and st.status == STATUS_ACTIVE else st.status
 
 
 # -- list --------------------------------------------------------------------------------------
@@ -367,7 +403,9 @@ def _upcoming(
 
 @app.command(name="next")
 def next_cmd(
-    count: Annotated[int, typer.Option("-n", help="How many upcoming fires.")] = DEFAULT_NEXT_COUNT,
+    count: Annotated[
+        int, typer.Option("-n", min=1, help="How many upcoming fires.")
+    ] = DEFAULT_NEXT_COUNT,
     workspace: WorkspaceOpt = None,
     all_workspaces: Annotated[
         bool, typer.Option("--all", help="Every registered workspace.")
@@ -394,7 +432,7 @@ def next_cmd(
                 skipped_event_kinds.append(f"{b.id} ({b.kind})")
                 continue
             st = state.get(root, b.id) or ScheduleState()
-            if st.status in ("completed", "quarantined"):
+            if st.status in (STATUS_COMPLETED, STATUS_QUARANTINED):
                 continue
             fires += [(t, str(root), b.id) for t in _upcoming(scheds[b.kind], b, st, now, count)]
     fires.sort()
@@ -419,7 +457,9 @@ def next_cmd(
 @app.command(name="history")
 def history_cmd(
     schedule_id: Annotated[str | None, typer.Argument(metavar="[ID]")] = None,
-    count: Annotated[int, typer.Option("-n", help="How many events.")] = DEFAULT_HISTORY_COUNT,
+    count: Annotated[
+        int, typer.Option("-n", min=1, help="How many events.")
+    ] = DEFAULT_HISTORY_COUNT,
     workspace: WorkspaceOpt = None,
     all_workspaces: Annotated[
         bool, typer.Option("--all", help="Every workspace in the event log.")
@@ -479,9 +519,14 @@ def unbound_trigger_warnings(
 
 
 def validate_workspace_schedules(workflow_path: str | None, workflow: Any) -> None:
-    """The ``ao validate`` hook: validate the cwd workspace's ``.ao/schedules.yaml`` (errors exit
-    1) and warn about an unbound non-manual trigger of *workflow*."""
-    root = _workspace_root(None)
+    """The ``ao validate`` hook: validate the workflow workspace's ``.ao/schedules.yaml``
+    (errors exit 1) and warn about an unbound non-manual trigger of *workflow*."""
+    # W2: the workflow's own workspace, not the cwd's (cwd only when no path is given)
+    root = (
+        _find_workspace(Path(workflow_path).resolve().parent)
+        if workflow_path
+        else _workspace_root(None)
+    )
     try:
         ScheduleStore(root).load()
     except ScheduleFileError as exc:
@@ -757,7 +802,7 @@ def add_cmd(
 
     new: list[tuple[str, dict[str, Any]]]
     if from_workflow:
-        if cron or interval:
+        if cron is not None or interval is not None:
             raise _fail("--from-workflow derives the trigger; drop --cron/--interval", EXIT_USAGE)
         if workflow or template:
             raise _fail("--from-workflow already names the workflow", EXIT_USAGE)
@@ -774,7 +819,7 @@ def add_cmd(
             raise _fail("give exactly one of --cron / --interval", EXIT_USAGE)
         if (workflow is None) == (template is None):
             raise _fail("give exactly one of --workflow / --template", EXIT_USAGE)
-        fields = {"kind": "cron", "schedule": cron} if cron else {
+        fields = {"kind": "cron", "schedule": cron} if cron is not None else {
             "kind": "interval", "interval_seconds": interval,
         }  # fmt: skip
         if workflow:
@@ -874,13 +919,13 @@ def enable_cmd(
             if not held:
                 raise _fail(
                     "a daemon is evaluating; cannot reset a completed schedule's state safely. "
-                    "Stop it (or retry between ticks) and run `enable` again."
+                    "Stop the daemon and run `enable` again."
                 )
             fresh = ScheduleStateStore(sdir)
             current = fresh.get(root, schedule_id)
             if current is not None:
                 current.runs_count = 0
-            fresh.set_status(root, schedule_id, "active")
+            fresh.set_status(root, schedule_id, STATUS_ACTIVE)
     _set_enabled(root, schedule_id, True)
     ScheduleEventLog(sdir, clock=_now).emit(
         EVENT_ENABLED,
@@ -995,10 +1040,22 @@ def run_now_cmd(
         inert = _inert_reason(_load_registry(), root)
         if inert:
             typer.echo(f"WARNING: the daemon will ignore this request: {inert}", err=True)
+        if not _load_registry().schedules.enabled:
+            typer.echo(
+                "WARNING: schedules are disabled machine-wide (`schedules.enabled: false`); "
+                "no engine will fire this request",
+                err=True,
+            )
 
     if queue or (not local and probe_engine_lock(sdir)):
         queued()
         return
+    if not local:
+        # H2: without --local the in-process path must do what a daemon would (ignore a
+        # workspace that is unregistered / not opted in); an explicit --local is the opt-in.
+        inert = _inert_reason(_load_registry(), root)
+        if inert:
+            raise _fail(f"{inert}; pass --local to fire it in this process anyway")
     try:
         _run_local(sdir, root, binding, force, requested_by)
     except EngineLockHeldError:
@@ -1017,7 +1074,7 @@ def daemon_cmd(
     workspace: WorkspaceOpt = None,
     once: Annotated[bool, typer.Option("--once", help="One tick, then exit.")] = False,
     interval: Annotated[
-        float | None, typer.Option("--interval", help="Evaluation interval seconds.")
+        float | None, typer.Option("--interval", min=0.1, help="Evaluation interval seconds.")
     ] = None,
     state_dir: StateDirOpt = None,
 ) -> None:
@@ -1029,6 +1086,7 @@ def daemon_cmd(
         engine.start()
     except EngineLockHeldError as exc:
         raise _fail(f"{exc}") from exc
+    previous: dict[int, Any] = {}
     try:
         if once:
             decisions = engine.tick(_now())
@@ -1041,8 +1099,7 @@ def daemon_cmd(
         def _stop(signum: int, frame: FrameType | None) -> None:
             stop.set()
 
-        signal.signal(signal.SIGINT, _stop)
-        signal.signal(signal.SIGTERM, _stop)
+        previous = {sig: signal.signal(sig, _stop) for sig in (signal.SIGINT, signal.SIGTERM)}
         typer.echo(f"Schedule engine running (state: {sdir}); Ctrl-C to stop.", err=True)
         poll = min(interval, DAEMON_POLL_SECONDS) if interval else DAEMON_POLL_SECONDS
         while not stop.is_set():
@@ -1052,6 +1109,8 @@ def daemon_cmd(
                 for d in engine.tick():
                     typer.echo(_decision_line(d), err=True)
     finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
         engine.shutdown()
 
 
