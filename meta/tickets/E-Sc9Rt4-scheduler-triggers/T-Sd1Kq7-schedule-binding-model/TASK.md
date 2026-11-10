@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F3/F4/F6/F12/F20/F21 applied)
 - Status: Draft
 - Estimate: 2 days
 
@@ -44,23 +44,37 @@ concurrent epic).
    `defaults: ScheduleDefaults` and `schedules: list[ScheduleBinding]`. Field-level defaults are
    `None`; `ScheduleFile.bindings` resolves each `None` against `defaults` so a consumer never
    has to know which layer a value came from.
-2. `RunArgs` is a closed model whose fields are **exactly** `ui/processes.py`'s
-   `ALLOWED_OPTIONS` ∪ `ALLOWED_BOOL_OPTIONS`, typed (`model: str`, `effort:
-   Literal["low","medium","high","xhigh"]`, `max_attempts/max_turns/max_parallel/budget_total/
-   quota_max_wait/quota_poll_interval: int`, `self_heal: bool`), with `extra="forbid"` so an
-   unknown key is a **named** load error rather than the silent drop `_render_options` performs.
-   `RunArgs.as_options() -> dict[str, object]` returns exactly what `launch_run(options=...)`
-   expects. Import the allow-list names from `ui/processes.py` — do not retype the list, so a
-   future addition there cannot silently diverge.
+2. `RunArgs` is a closed model built from a **named `SCHEDULE_RUN_ARG_NAMES` tuple** in
+   `schedules/models.py` (owner decision F3, 2026-11-10, recorded in `../EPIC.md`), **not** from
+   "exactly `ALLOWED_OPTIONS` ∪ `ALLOWED_BOOL_OPTIONS`": the live allow-list now holds 17 entries
+   (14 value + 3 bool) including `sentinel.llm.powers` (`act` lets the LLM lane kill and inject
+   tasks), `sentinel.llm.budget_usd` and `sentinel.max_parallel_ceiling`, so mirroring it would let
+   an untrusted file grant LLM powers and raise spend. The MVP subset is: `model, turn_budget,
+   effort, thinking_effort, autocompact, max_attempts, max_turns, max_parallel, budget_total,
+   quota_max_wait, quota_poll_interval, self_heal, sentinel.enabled` — and **not** `sentinel.llm.*`
+   or `sentinel.max_parallel_ceiling`. An import-time check asserts every name is in
+   `run_options.allowed_options() ∪ allowed_bool_options()` (source of truth is `run_options`;
+   `schedules/` must **not** import from the `ui/` package). Types and choices come from the
+   registry `Option` via `pydantic.create_model`, with aliases for dotted keys (`sentinel.enabled`
+   is not a valid field name). Note the registry's `effort` choices are `low/medium/high`; `xhigh`
+   belongs to `turn_budget` — do not hard-type `effort` with `xhigh`. `extra="forbid"` makes an
+   unknown key a **named** load error rather than the silent drop `_render_options` performs;
+   `cost_cap_usd` (governance epic, a registry option) and `run_id` must be **rejected** by
+   `RunArgs` (neither is a `RunArgs` key). `RunArgs.as_options() -> dict[str, object]` returns
+   exactly what `launch_run(options=...)` expects.
 3. Cross-field validation, each producing a `ScheduleFileError` naming the schedule id and the
    offending field: `kind=cron` requires `schedule`; `kind=interval` requires
    `interval_seconds >= MIN_INTERVAL_SECONDS (60)`; `kind=file_watch` requires `watch`;
    `kind=webhook` requires `webhook`; exactly one of `workflow` / `template` is set; `params` /
-   `instance_id` only with `template`; `id` matches `^[a-z0-9][a-z0-9-_]*$`; ids are unique
+   `instance_id` only with `template`; `id` matches `^[a-z0-9][a-z0-9-_]*$` **and is at most 64
+   characters** (the minted `ao-<id>-<16 chars>` run id must fit the 128-char run-id limit; F12);
+   `template` is a bare template **name** (pattern with no `/`, no `.`, no `~`) — F4: `templates.
+   load_template` accepts a *directory path* before name lookup (`templates/__init__.py:474-476`),
+   so a path in an untrusted `schedules.yaml` could load any directory on the machine; ids are unique
    within the file; `timezone` parses via `ZoneInfo`; `schedule` parses via `croniter`;
    `jitter_seconds` in `[0, 3600]`; a `webhook.secret` literal key is rejected with a message
    naming `secret_env` / `secret_file` as the alternatives.
-4. Every path-bearing field (`workflow`, `prompt_file`, `until.artifact_exists`,
+4. Every path-bearing field (`workflow`, `template` (name-only, AC3), `prompt_file`, `until.artifact_exists`,
    `until.gate_file`, `watch.paths[]`) is validated as workspace-relative: an absolute path or
    any `..` segment is rejected at load time with a named error. Resolution itself uses
    `LocalFsArtifactStore`'s existing workspace-root guard — do not write a second one.
@@ -97,6 +111,11 @@ concurrent epic).
     timedelta(seconds=trigger.interval_seconds)`, or `None` when `interval_seconds` is unset.
     It holds no state — the *anchor* is the caller's `now`, which is what lets the engine pass
     `last_scheduled_for` and get a stable series.
+10a. **Binding → `Trigger` adapter (F6).** `ScheduleBinding.to_trigger()` is owned here and covers
+    `cron` and `interval` only. `Trigger.type` (`models.py:706`) has no `file_watch`/`webhook`
+    members and this task adds only `interval`; event kinds do **not** go through `Trigger` — the
+    engine's `TriggerSource` protocol (`observe`/`commit`, see `T-Ev3Qm5` AC1a and HLD §7.1)
+    serves them. Document that in `to_trigger()`'s docstring; calling it for an event kind raises.
 11. The `Scheduler` ABC docstring is amended to state the contract the engine relies on: *a
     returned value at or before the caller's current time means "fire now"*. No signature change.
 
@@ -113,21 +132,25 @@ concurrent epic).
     spaced instants.
 15. `uv run pytest -q tests/schedules tests/service tests/test_scheduler.py` green with the
     count delta vs. the epic baseline reported. `ruff check` + `ruff format --check` clean on
-    every owned path. `uv run mypy src` reported as a whole-tree count (baseline: 4 pre-existing
-    `_version.py` errors). Coverage ≥80 % on `schedules/` and `service/statefile.py`.
+    every owned path. `uv run mypy src` reported as a whole-tree count (baseline: **0** errors — commit
+    `991391b` made `mypy src` clean; F20). Coverage ≥80 % on `schedules/` and `service/statefile.py`.
 
 ## Risks
 - `models.py` and `specs/workflow.schema.json` are files other epics have historically fenced
   off. Keep the diff to `Trigger` / `$defs.trigger` and confirm with `git diff --stat` before
   handing off; a wider diff will be rejected at review.
-- Retyping the `ALLOWED_OPTIONS` list instead of importing it is the most likely way this task
-  introduces a silent divergence six months from now. AC2 requires the import.
+- Retyping option names/types/choices instead of deriving them from the registry is the most
+  likely way this task introduces a silent divergence six months from now. AC2 requires the
+  import-time membership check and registry-derived types.
+- `schedules/` sits next to two existing scheduling modules: `scheduling/` (task co-scheduling,
+  `scheduling/overlap.py`) and `scheduler.py` (trigger ABC). Keep the name, but the package
+  `__init__` docstring must say how it differs from `scheduling/` (F21).
 - Defaults inheritance (AC1) is easy to implement as "merge at read time in every consumer",
   which spreads the rule across four modules. Resolve it once, in `ScheduleFile.bindings`.
 
 ## Dependencies
 - None. This is the epic's first task and can start immediately, in parallel with `T-Fr2Nx8`.
-- Reads (read-only): `ui/processes.py` (`ALLOWED_OPTIONS`, `ALLOWED_BOOL_OPTIONS`),
+- Reads (read-only): `run_options.py` (`allowed_options()`, `allowed_bool_options()`, `Option`s),
   `service/registry.py` (the `mutate()` pattern to mirror), `artifacts.py`
   (`LocalFsArtifactStore`'s root guard), `project_config.py` (relative-path anchoring idiom).
 

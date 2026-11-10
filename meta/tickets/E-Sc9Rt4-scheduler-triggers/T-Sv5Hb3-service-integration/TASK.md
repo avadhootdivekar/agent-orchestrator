@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F5/F18/F20/F23 applied)
 - Status: Draft
 - Estimate: 2 days
 
@@ -39,14 +39,22 @@ Do NOT touch: `service/schedule_engine.py`, `service/fire_store.py`, `service/sc
 ## Acceptance Criteria
 
 ### Registry additions
-1. `WorkspaceEntry.schedules: bool = True` — the machine operator's per-workspace opt-out —
-   settable via `ao service add --no-schedules`, shown in `ao service list`. `ServiceRegistryFile`
+1. **F5 (owner decision 2026-11-10, recorded in `../EPIC.md`): schedules are OPT-IN.**
+   `WorkspaceEntry.schedules: bool = False` — the machine operator's per-workspace opt-in —
+   settable via `ao service add --schedules` and `ao service set --schedules/--no-schedules`
+   (add the `set` subcommand if the registry has no update command; keep the edit in
+   `service/cli.py`), shown in `ao service list`. Rationale: workflow specs already declare argv
+   **hooks** (`hooks.py:1-8, 161`, `HookSpec.command`) and agent tasks with tool permissions, so
+   once `.ao/schedules.yaml` exists a `git pull` of someone else's repo becomes clock-triggered
+   execution of their commands with nobody present; a default-on flag would make every
+   registered workspace's repo-supplied schedules go live on upgrade. `ao schedule list`
+   (`T-Cl6Jn9`) explains why a workspace's schedules are inert when the flag is off. `ServiceRegistryFile`
    gains an optional top-level `schedules: ServiceScheduleConfig` block with
    `enabled: bool = True`, `eval_interval_seconds: float = 15.0`, `max_concurrent_global: int = 3`
    and a nested `webhook: {enabled: False, host: "127.0.0.1", port: 8771}`.
 2. Both additions are strictly additive with defaults, so an existing registry file loads
    unchanged and a **newer** file loaded by an older `ao` is ignored key-by-key (pydantic's
-   existing `extra="ignore"`). A test loads a pre-epic registry fixture verbatim and asserts the
+   default `extra="ignore"` — `WorkspaceEntry` sets no `model_config`, `registry.py:41`). A test loads a pre-epic registry fixture verbatim and asserts the
    parsed result.
 
 ### `ao service run` wiring
@@ -62,10 +70,18 @@ Do NOT touch: `service/schedule_engine.py`, `service/fire_store.py`, `service/sc
    engine with a raising stub and asserts the supervisor keeps ticking.
 6. Kill switches: `ao service run --no-schedules` skips constructing the engine entirely (not
    merely skipping `tick()`), and a registry-level `schedules.enabled: false` does the same. A
-   workspace entry with `schedules: false` is skipped by the engine. All three are tested.
+   workspace entry with `schedules: false` (the **default**, F5) is skipped by the engine. All
+   three are tested, plus: a workspace with a valid `.ao/schedules.yaml` but the default flag
+   fires **nothing**.
+6a. **F23:** the service loads the registry once (`service/cli.py:487`) while the engine
+   re-reads `registry_path`, so a workspace added while the daemon runs can be scheduled without a
+   dashboard child until restart. Either hand the engine the same loaded object or document the
+   gap in HLD §6.1; a test pins whichever is chosen.
 7. Webhook flags: `--webhook/--no-webhook`, `--webhook-host`, `--webhook-port` (defaults from the
    registry block, then the constants). When enabled, the listener app from `T-Wh9Kv1` is served
-   on its own uvicorn thread alongside the hub thread; when not, no socket is opened. **Default
+   on its own uvicorn thread alongside the hub thread (F18: the webhook app is **not** wrapped
+   in the session `AuthMiddleware` that `auth=launch.runtime` installs on the hub — HMAC is its
+   auth); when not, no socket is opened. **Default
    off.** Binding a non-loopback `--webhook-host` prints the same loud warning `ao ui --host`
    prints. Until `T-Wh9Kv1` lands, wire the flags and leave a documented `NotImplementedError`
    guard behind `--webhook` — do not fake it.
@@ -116,7 +132,9 @@ Do NOT touch: `service/schedule_engine.py`, `service/fire_store.py`, `service/sc
 ## Pseudocode / Algorithm
 ```text
 # service/cli.py::run  -- the shape to extend, not restructure
-supervisor = Supervisor(registry, state_dir=state_dir, hub_port=hub_port)
+# F18: keep today's child_env / auth wiring (E-Da5Tn9) — do NOT regress it to the old sketch.
+supervisor = Supervisor(registry, state_dir=state_dir, hub_port=hub_port,
+                        child_env=launch.child_env)            # service/cli.py:496-512
 supervisor.start()                                    # existing two-branch exception handling
 
 engine = None
@@ -128,7 +146,7 @@ IF schedules_enabled(registry, cli_flag):
     engine.start()                                    # reconcile orphaned fires; no launches
 
 status_provider = build_status_provider(supervisor, schedule_engine=engine)
-hub_thread      = start_server(build_hub_app(status_provider), hub_host, hub_port)
+hub_thread      = start_server(build_hub_app(status_provider, auth=launch.runtime), hub_host, hub_port)
 webhook_thread  = start_server(build_webhook_app(...), wh_host, wh_port) IF webhook_enabled ELSE None
 
 WHILE NOT stop_event.is_set():

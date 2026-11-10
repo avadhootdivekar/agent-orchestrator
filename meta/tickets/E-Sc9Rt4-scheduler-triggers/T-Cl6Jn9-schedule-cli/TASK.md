@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F5/F6/F9/F16/F20 applied)
 - Status: Draft
 - Estimate: 3 days
 
@@ -28,7 +28,9 @@ the live-daemon-probe-with-file-fallback idiom `ao service list`/`status` alread
 Files you own (create/edit freely):
 - `src/agent_orchestrator/schedules/cli.py` (new — the `ao schedule` sub-app)
 - `src/agent_orchestrator/cli.py` (edit: **exactly one** `app.add_typer(schedule_app,
-  name="schedule")` line plus its import — confirm with `git diff` at handoff)
+  name="schedule")` line plus its import, **plus the one-line `ao validate` hook** of AC5 (F16:
+  the file list explicitly allows it; `T-Se4Bk5` AC8 expects it) — confirm with `git diff` at
+  handoff)
 - `tests/schedules/test_cli_e2e.py` (new)
 
 Do NOT touch: `service/` (read-only imports), `ui/`, `engine.py`, `models.py`, `specs/`.
@@ -41,12 +43,19 @@ Do NOT touch: `service/` (read-only imports), `ui/`, `engine.py`, `models.py`, `
    when reachable and from `<state_dir>/schedules/state.json` when not — the same
    probe-then-fallback shape `ao service status` already uses. `--all` covers every registered
    workspace; the default is the workspace containing the cwd.
-2. **`ao schedule list` prints a clear warning to stderr when no live daemon is found** (no
-   supervisor lock holder, no reachable hub), naming `ao service start` / `ao schedule daemon` as
-   the fixes. NFR-5: "my schedule never fired" must not be silent.
+2. **`ao schedule list` prints a clear warning to stderr when no live engine is found**, naming
+   `ao service start` / `ao schedule daemon` as the fixes. NFR-5: "my schedule never fired" must
+   not be silent. **F9: "live" is decided by probing `<state_dir>/schedules/engine.lock`
+   (`T-Ev3Qm5` AC1b `probe_engine_lock`), not hub reachability** — a hub with auth returns 401
+   (`HubLoginRequired`, `service/cli.py:85-92,175`) and a daemon started with `--no-schedules`
+   has a live hub but no engine. For a workspace whose registry entry has `schedules: false`
+   (the opt-in default, F5) the output says *why* its schedules are inert and how to enable them
+   (`ao service set --schedules`).
 3. `ao schedule next [-n 10] [--json]` lists upcoming fires across the selected workspaces,
    soonest first, computed from the same `Scheduler` implementations the engine uses — never a
-   second cron implementation.
+   second cron implementation. **F6: it calls pure schedulers only (cron/interval) and the event
+   `TriggerSource.observe` — never `commit`** — so running `next` cannot swallow pending file
+   events or webhook deliveries.
 4. `ao schedule history [ID] [-n 50] [--json]` reads `T-Fr2Nx8`'s event log newest-first,
    filtered by schedule when an id is given. It shows **suppressed** fires too, with their
    reason — what did *not* happen is the diagnostic the operator needs.
@@ -56,12 +65,13 @@ Do NOT touch: `service/` (read-only imports), `ui/`, `engine.py`, `models.py`, `
    errors, when a workflow spec declares a non-manual trigger with no binding (ADR-0014 D2).
 
 ### Write commands
-6. `ao schedule add ID (--cron EXPR | --interval SECONDS | --watch GLOB | --webhook)
-   (--workflow PATH | --template NAME [--param k=v]... [--instance-id PAT])` plus `--tz`,
-   `--prompt-file`, `--overlap`, `--catch-up`, `--catch-up-window`, `--jitter`,
-   `--max-concurrent`, `--run-arg k=v` (repeatable), `--until-artifact` /
-   `--until-gate --until-field [--until-equals]`, `--max-runs`, `--secret-env` / `--secret-file`,
-   `--disabled`, `--from-workflow PATH`. Every write goes through `ScheduleStore.mutate` so a
+6. `ao schedule add ID (--cron EXPR | --interval SECONDS) (--workflow PATH | --template NAME
+   [--param k=v]... [--instance-id PAT])` plus `--tz`, `--prompt-file`, `--overlap`,
+   `--catch-up`, `--catch-up-window`, `--jitter`, `--max-concurrent`, `--run-arg k=v`
+   (repeatable), `--disabled`, `--from-workflow PATH`. **F16: this task covers cron/interval and
+   the common flags only.** `--watch` (`T-Fw8Gp4`), `--until-*` / `--max-runs` (`T-Un0Lm6`) and
+   `--webhook` / `--secret-*` (`T-Wh9Kv1`) are owned and landed by those tasks, each with its own
+   engine hook, serially (`T-Ev3Qm5` → `T-Un0Lm6` → `T-Fw8Gp4` → `T-Wh9Kv1`; not concurrent). Every write goes through `ScheduleStore.mutate` so a
    concurrent daemon read never sees a half-written file. Adding an existing id is an error
    unless `--force`.
 7. `--run-arg k=v` is parsed by the **existing** `_parse_param_options` helper in `cli.py`
@@ -75,15 +85,21 @@ Do NOT touch: `service/` (read-only imports), `ui/`, `engine.py`, `models.py`, `
    on a `completed` schedule also resets its `runs_count` and clears the `completed` status (the
    documented way to restart an `until` loop); `disable` records `requested_by` in a
    `schedule.disabled` event.
-10. `ao schedule run-now ID [--force] [--local | --queue]`: with a live daemon, writes a request
-    file into `<state_dir>/schedules/requests/` and prints that the fire will occur within one
-    evaluation interval; with no daemon, performs the fire **in-process using `T-Lp4Wt6`'s
-    `ScheduledLauncher`** so the two paths cannot diverge. `--local` and `--queue` force each
-    branch. `--force` bypasses overlap only, never the concurrency caps, never `until`.
+10. `ao schedule run-now ID [--force] [--local | --queue]`: with a live engine (AC2's lock
+    probe), writes a request file into `<state_dir>/schedules/requests/` and prints that the fire
+    will occur within one evaluation interval; with no engine, performs the fire **in-process
+    using `T-Lp4Wt6`'s `ScheduledLauncher`** so the two paths cannot diverge. **F9: the local
+    branch takes the same `engine.lock` for its single fire**; if it cannot (an engine is
+    evaluating) it refuses with "a daemon is evaluating; queued instead" and queues the request.
+    Without this, a misjudged daemon lets both fire the same schedule (the fire store's
+    `exists()`-then-`write()` has no lock). `--local` and `--queue` force each branch (`--local`
+    still takes the lock). `--force` bypasses overlap only, never the concurrency caps, never `until`.
 
 ### Daemon mode
 11. `ao schedule daemon [--workspace ROOT] [--once] [--interval SECONDS] [--state-dir PATH]`
-    runs the same `ScheduleEngine` in the foreground. `--once` performs exactly one `tick()`,
+    runs the same `ScheduleEngine` in the foreground and **acquires `engine.lock`** (F9) — it
+    refuses to start, with a named error, if `ao service run` (or another daemon) already holds
+    it, so two engines never share one state dir. `--once` performs exactly one `tick()`,
     prints the resulting decisions (one line each, with the `reason`), and exits with the number
     of fires as a machine-readable count on stdout. Without `--once` it loops until SIGINT, using
     the same `stop_event.wait(...)` shape `service/cli.py` uses (not `time.sleep`, for PEP-475
@@ -100,8 +116,11 @@ Do NOT touch: `service/` (read-only imports), `ui/`, `engine.py`, `models.py`, `
 14. `run-now` with no daemon: asserts a run directory appears (fake executor) and the fire record
     links `fire_key → run_id`; `run-now` with a simulated live daemon: asserts a request file
     appears and **no** run was launched by the CLI process.
-15. AC2's warning: a test asserting the stderr line is present with no daemon and absent with a
-    simulated one.
+15. AC2's warning: a test asserting the stderr line is present with no engine and absent with a
+    simulated one (lock held) — including the case of a live **authenticated** hub with no engine
+    lock (still warns), and a `schedules: false` workspace (explains why inert).
+15a. F9: `ao schedule daemon` while the lock is held refuses; `run-now --local` while the lock is
+    held queues instead of firing; `ao schedule next` never mutates a file-watch digest (F6).
 16. `daemon --once` with a fixed clock and a `kind: interval` binding: exactly one fire, exit
     code 0, and a second `--once` immediately after produces zero fires (at-most-once).
 17. `--from-workflow` against a spec declaring a cron trigger produces the expected binding; a
@@ -109,7 +128,7 @@ Do NOT touch: `service/` (read-only imports), `ui/`, `engine.py`, `models.py`, `
 18. `git diff --stat src/agent_orchestrator/cli.py` shows exactly the import + `add_typer` lines
     plus the one-line `ao validate` hook. Reported in `STATUS.md`.
 19. `uv run pytest -q` green with the delta reported; ruff + format clean; mypy whole-tree count
-    reported; coverage ≥80 % on `schedules/cli.py`.
+    reported (baseline 0 errors; F20); coverage ≥80 % on `schedules/cli.py`.
 
 ## Risks
 - Ten subcommands is a lot of surface for one 3-day task. If it slips, the shippable subset in
@@ -119,9 +138,10 @@ Do NOT touch: `service/` (read-only imports), `ui/`, `engine.py`, `models.py`, `
 - `run-now`'s two branches (AC10) are exactly where a second launch path gets accidentally
   written. Reuse `ScheduledLauncher`; a reviewer should be able to grep this module and find no
   `Popen`.
-- Detecting "is a daemon live" needs care: the supervisor lock is `flock`-held, so a
-  non-blocking acquire attempt that succeeds proves nothing is running (and must then release
-  immediately). Prefer probing the hub first and using the lock only as a fallback.
+- Detecting "is an engine live" needs care: `engine.lock` (`T-Ev3Qm5` AC1b) is `flock`-held for
+  the engine's lifetime, so a non-blocking acquire attempt that succeeds proves no engine is
+  running (and must then release immediately). F9: probe **that lock**, not the hub — hub
+  reachability is wrong for authenticated hubs and for `--no-schedules` daemons.
 - Touching top-level `cli.py` beyond the two lines will be rejected at review (AC18).
 
 ## Dependencies
@@ -161,7 +181,7 @@ FUNCTION run_now(schedule_id, force, mode):
 
 ## Handoff Boundary
 - Upstream: `T-Sd1Kq7`, `T-Fr2Nx8`, `T-Ev3Qm5`, `T-Lp4Wt6`, `T-Sv5Hb3`; HLD §9/§6.9.
-- Downstream: `T-Fw8Gp4` / `T-Wh9Kv1` / `T-Un0Lm6` (each adds its own flags to `add`),
+- Downstream: `T-Un0Lm6` → `T-Fw8Gp4` → `T-Wh9Kv1` (each adds its own flags to `add`, serially),
   `T-Ap1Xs3` (the dashboard mirrors these operations over HTTP), `T-Te3Qw8` (drives the e2e tier
   through this CLI).
 

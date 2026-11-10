@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F17/F20 — rewritten against the tab model and auth applied)
 - Status: Draft
 - Estimate: 3 days
 
@@ -29,8 +29,10 @@ Read HLD §10 and §11, `ui/README.md`'s conventions, and the panel-addition fil
 Files you own (create/edit freely):
 - `src/agent_orchestrator/ui/service.py` (edit: five new methods + the typed exceptions)
 - `src/agent_orchestrator/ui/app.py` (edit: five new routes)
-- `ui/src/components/Schedules.tsx` (new), `ui/src/App.tsx` (3-line edit),
-  `ui/src/api.ts`, `ui/src/types.ts`, `ui/src/styles.css` (additive)
+- `ui/src/components/Schedules.tsx` (new), `ui/src/App.tsx` + `ui/src/tabs/model.ts` (+
+  `tabs/TabView.tsx` as needed — F17: register one new `TabKind` in the tab model; there is no
+  `View` union or ternary arm any more), `ui/src/api.ts`, `ui/src/types.ts`,
+  `ui/src/styles.css` (additive)
 - `ui/src/test/schedules.test.tsx` (new)
 - `tests/ui/test_schedules_api.py` (new)
 - `src/agent_orchestrator/ui/static/**` (the committed `make ui-build` output)
@@ -76,8 +78,8 @@ Do NOT touch: `service/` (read-only imports), `schedules/store.py` beyond callin
    `styles.css` (no hex literals), wide content inside `.table-wrap`, reuse of `StatusChip` /
    `Tile` / `ErrorBanner` / `Empty` from `components/common.tsx`, and pure display helpers in
    `format.ts` rather than in the component.
-9. Polling follows the `RunsList.tsx` pattern (`useCallback` refresh + `setInterval` + cleanup)
-   at `POLL_MS = 10000` — schedules change on the order of minutes, so the 3–4 s run cadence
+9. Polling uses the existing **`ui/src/usePolling.ts`** hook (F17; not the older `RunsList`
+   hand-rolled `setInterval` pattern) at `POLL_MS = 10000` — schedules change on the order of minutes, so the 3–4 s run cadence
    would be wasteful. State the reason in a comment.
 10. The table shows id, kind, next fire (relative **and** absolute — a relative-only time is
     useless for a cron schedule), last fire, last run (clicking it opens the existing `RunDetail`
@@ -86,15 +88,24 @@ Do NOT touch: `service/` (read-only imports), `schedules/store.py` beyond callin
     "started".
 11. An expandable row shows the last 20 history events including **suppressed** fires with their
     reason — what did not happen is the diagnostic operators need.
-12. `App.tsx` gains exactly three things: `"schedules"` in the `View` union, one `NAV` entry
-    (`{ id: "schedules", label: "Schedules", glyph: "⏱" }`), one ternary arm.
-13. The panel also surfaces `GET /api/launches`, which exists on the backend today with no UI at
-    all — a small free win while this file is open, rendered as a collapsed "recent launches"
-    section.
+12. F17: the dashboard is now a **tab model** (`App.tsx:22` `NAV: {kind: TabKind…}`,
+    `tabs/model.ts`, `tabs/TabView.tsx`). `App.tsx` / the tab model gain exactly one new
+    `TabKind` (`schedules`) and one `NAV` entry (`{ kind: "schedules", label: "Schedules",
+    glyph: "⏱" }`), rendered through `TabView` — follow how an existing non-run tab is
+    registered; do not reintroduce a `View` union. Opening a run from the panel uses the
+    existing tab-open mechanism.
+13. `GET /api/launches` already has a UI (`components/FailedLaunches.tsx`, `api.ts:242`) — **do
+    not re-surface it** here (F17 corrects the earlier "no UI at all" claim). Link to it from the
+    panel's empty/warning state at most.
 14. `make ui-build` is run and `src/agent_orchestrator/ui/static/` is committed — the manual step
     `ui/README.md` requires. `make ui-typecheck` and `make ui-test` both pass.
 
 ### Tests
+14a. **Auth (F17).** `ui/app.py` routes are deny-by-default AUTHENTICATED under dashboard auth
+    (`ui/app.py:14-33, 228`, `auth/policy.py`), so the five new routes are authenticated by
+    omission — **state it explicitly** in the route table comments and test it: with auth on,
+    all five routes return 401 unauthenticated and work with a session (reuse the auth fixtures
+    in `tests/ui/`).
 15. `tests/ui/test_schedules_api.py` via `TestClient` (reusing `tests/ui/conftest.py`'s `client`
     / `service` fixtures and the autouse `_allow_testclient_host`): every route's success and
     every error code; `run-now` asserting a request file appeared and **no** launch occurred;
@@ -103,13 +114,15 @@ Do NOT touch: `service/` (read-only imports), `schedules/store.py` beyond callin
 16. `ui/src/test/schedules.test.tsx` with mocked `fetch`: renders rows, toggles enable, clicks
     *Run now* and asserts the queued-not-started wording, renders the `daemon_seen: false`
     warning, and renders an empty state.
-17. Security posture note recorded in `STATUS.md`: these routes let an unauthenticated caller
-    toggle a schedule and request a fire. That is **not** a new exposure class — the same caller
-    can already `POST /api/runs` — but it must be stated as a chosen posture, and the routes must
+17. Security posture note recorded in `STATUS.md`: with dashboard auth **off** (still the
+    default), these routes let an unauthenticated caller toggle a schedule and request a fire;
+    with auth **on** they sit behind the session (AC14a). That is **not** a new exposure class —
+    the same caller can already `POST /api/runs` — but it must be stated as a chosen posture, and
+    the routes must
     **not** accept a workflow path or run args from the request body; they act only on schedules
     already declared in the workspace file.
 18. `uv run pytest -q` green with the delta reported; ruff + format clean; mypy whole-tree count
-    reported; coverage ≥80 % on the new `ui/service.py` methods.
+    reported (baseline 0 errors; F20); coverage ≥80 % on the new `ui/service.py` methods.
 
 ## Risks
 - Forgetting `make ui-build` + committing `static/` means the shipped wheel serves a dashboard
@@ -128,7 +141,7 @@ Do NOT touch: `service/` (read-only imports), `schedules/store.py` beyond callin
   mirror — do not invent different ones), `T-Un0Lm6` (the `completed` lifecycle and the
   `runs_count` reset).
 - Reads (read-only): `ui/app.py`'s existing route table and error-translation style,
-  `ui/README.md`, `ui/src/components/RunsList.tsx` (the polling pattern), `service/paths.py`.
+  `ui/README.md`, `ui/src/usePolling.ts` (the polling hook), `ui/src/tabs/` (tab model), `service/paths.py`.
 
 ## Pseudocode / Algorithm
 ```text
@@ -169,7 +182,7 @@ def run_schedule_now(schedule_id: str, force: bool = False) -> dict:
 - Upstream: `T-Sd1Kq7`, `T-Fr2Nx8`, `T-Cl6Jn9`, `T-Un0Lm6`; HLD §10/§11; ADR-0010 D5/D7;
   ADR-0014 D10.
 - Downstream: `T-Te3Qw8` (e2e tier includes the dashboard path), `T-Se4Bk5` (reviews the
-  unauthenticated-mutation posture), `T-Dc6Zr2` (screenshots/docs).
+  mutation-route auth posture), `T-Dc6Zr2` (screenshots/docs).
 
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Sc9Rt4-scheduler-triggers/T-Ap1Xs3-dashboard-schedules/`

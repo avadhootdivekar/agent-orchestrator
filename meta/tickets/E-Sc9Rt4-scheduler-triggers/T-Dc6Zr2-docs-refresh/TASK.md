@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: architect agent (or dev-epic at close)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F15/F21/F22/F23/F18 applied)
 - Status: Draft
 - Estimate: 2 days
 
@@ -60,13 +60,25 @@ asks.
 5. **`lld-agent-orchestrator.md` §7** rewritten: the `Scheduler` ABC now has five
    implementations, event triggers are no longer "non-MVP", and §12's CLI surface list gains
    `ao schedule`. Its `Trigger` model snippet gains `interval_seconds` and `"interval"`.
+5a. **Naming (F21):** the docs say how the new `schedules/` package differs from `scheduling/`
+   (task co-scheduling) and `scheduler.py` (the trigger ABC).
 6. **ROADMAP sync** (the close ritual): §1's status row for "Cron / event triggers" moves off
    "Spec'd, not scheduled"; a "just landed" subsection is added in the §2-series style; §3.2 is
    struck or reduced to what genuinely remains; §3.1 is left **untouched and still highest
    priority** — the webhook HMAC is one endpoint, not the auth epic, and the docs must not imply
    otherwise; §4 gains any limitation this epic carried (the DST fall-back double fire, the
    at-most-once missed run on a crash mid-fire, the in-memory nonce/rate reset on restart, the
-   microsecond `launch_id` resolution).
+   microsecond `launch_id` resolution) **plus the design-review additions**: (F15) per-task
+   isolation has landed (`b0cb467`, `isolation/runlock.py`; `engine.py` takes a
+   `WorkspaceRunLock` per run), so a scheduled run alongside a manual run in a workspace whose
+   workflow uses `integration.workspace_lock: require` degrades at startup, and `max_concurrent`
+   counts scheduled runs only, not manual ones; (F22) minted run ids have no duplicate guard —
+   two un-flagged `ao run`s of the same workflow in the same second mint the same
+   `<wf>-<seconds>` id (`runstate.py:203`); (F23) the engine can schedule a workspace the
+   supervisor is not watching until restart (registry loaded once vs re-read); the
+   boot-resume fresh-`ProcessSupervisor` zombie leak (`supervisor.py:487`, F2 backlog note).
+   Re-read §3.1 against ADR-0021 / E-Da5Tn9 (dashboard auth has since landed) before editing
+   anything near it; the invariant below still holds.
 7. **ai-epics page** completed: the evidence log carries dated entries with hard numbers (suite
    counts and deltas at each task boundary, ruff/mypy status, coverage), a
    `### Final MVP requirement traceability` table `| Requirement | Landed in | Test coverage |`

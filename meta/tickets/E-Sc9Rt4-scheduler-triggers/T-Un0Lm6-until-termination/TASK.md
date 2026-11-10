@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F16/F20 applied)
 - Status: Draft
 - Estimate: 2 days
 
@@ -31,9 +31,13 @@ Files you own (create/edit freely):
 - `src/agent_orchestrator/service/schedule_engine.py` (edit: **only** the `until_satisfied`
   helper and its single call site at the documented point in `evaluate` — coordinate with
   `T-Ev3Qm5`'s owner if concurrent)
+  — **F16: serial, not concurrent.** `schedule_engine.py` is owned by `T-Ev3Qm5`; this task lands
+  after it and before `T-Fw8Gp4` → `T-Wh9Kv1` (`T-Ev3Qm5` → `T-Un0Lm6` → `T-Fw8Gp4` →
+  `T-Wh9Kv1`).
 - `tests/service/test_until.py` (new)
 - additive: `--until-artifact`, `--until-gate`, `--until-field`, `--until-equals`, `--max-runs`
-  on `ao schedule add`; `enable` resetting a `completed` schedule
+  on `ao schedule add` — **owned by this task, not `T-Cl6Jn9`** (its AC6 covers cron/interval
+  only, F16); `enable` resetting a `completed` schedule
 
 Do NOT touch: `engine.py`, `models.py` (`LoopSpec` is not changed by this task), `spec.py`,
 `schedules/models.py` (`UntilSpec` already landed in `T-Sd1Kq7`), `service/fire_store.py`.
@@ -84,7 +88,7 @@ Do NOT touch: `engine.py`, `models.py` (`LoopSpec` is not changed by this task),
     schedule — a characterization test asserting the engine's loop behavior is untouched by this
     task.
 14. `uv run pytest -q` green with the delta reported; ruff + format clean; mypy whole-tree count
-    reported; coverage ≥80 % on the new code.
+    reported (baseline 0 errors; F20); coverage ≥80 % on the new code.
 
 ## Risks
 - AC6's "never terminate on a bad read" is the opposite of `LoopSpec`'s "bad gate fails the run".

@@ -1,7 +1,7 @@
 # STATUS
 
 - ID: `E-Sc9Rt4-scheduler-triggers`
-- Updated At: 2026-09-06
+- Updated At: 2026-11-10
 - State: Draft
 - Owner: architect agent (design) → dev-epic agent (delivery)
 
@@ -13,13 +13,29 @@
   `docs-md/adr/ADR-0014-service-owned-scheduler-and-triggers.md` (ten decisions D1-D10 with an
   alternatives table); `docs-md/ai-epics/E-Sc9Rt4-scheduler-triggers.md`; this ticket folder with
   14 task tickets.
-- **No `src/` file was edited** and no commit was made — this is a design-only deliverable.
+- **No `src/` file was edited** — this is a design-only deliverable (original 2026-09-06 note; see the 2026-11-10 update above).
 - **Decisions still needed from the user** are enumerated in HLD §16 (D-a … D-j). Each already
   carries a recommended default that the tickets are written against, so implementation is not
   blocked; overturning any one of them is a localized change. The three worth a deliberate
   answer before `T-Wh9Kv1` starts are D-b (webhook gets its own default-off listener rather than
   riding the hub), D-e (at-most-once on a crash mid-fire ⇒ a missed run, never a duplicate), and
   D-h (`ao run --run-id` is in scope here).
+
+## Update 2026-11-10 — Opus design review applied (docs/tickets only; still no code)
+- Findings F1-F24 from overseer unit `w01-06` were applied to the HLD (§3.3/§5.1.1/§5.2/§6.1/§6.3/
+  §6.4/§6.6/§6.7/§6.9/§7.1/§7.2/§8/§9.2/§13.3/§16), all 14 `TASK.md`s, `EPIC.md` (disposition table
+  + owner decisions) and ADR-0014 ("Late-gate corrections (2026-11-10)"). None rejected.
+- **Epic task count is 14**, not 16 (the overseer charter's A1.1 wording was wrong).
+- **Owner decisions recorded** (reviewer's recommended defaults): F5 `WorkspaceEntry.schedules`
+  **opt-in** (default `false`); F3 `RunArgs` = curated `SCHEDULE_RUN_ARG_NAMES` (no `sentinel.llm.*`,
+  no `sentinel.max_parallel_ceiling`).
+- **T-Ri7Dz2 AC4 replaced:** explicit `launch_run(run_id=)` kwarg + registry `Option`, allow-list
+  unchanged. HLD §3.3 allow-list drift corrected (live set 14 value + 3 bool, registry-derived).
+- Implementation order now (review §4): `T-Ri7Dz2` → `T-Sd1Kq7`‖`T-Fr2Nx8` → `T-Ev3Qm5` → `T-Lp4Wt6` →
+  `T-Sv5Hb3` → `T-Cl6Jn9` (A1 usable bar) → MVP-2 serial on the engine file `T-Un0Lm6` → `T-Fw8Gp4` →
+  `T-Wh9Kv1` (`T-Ap1Xs3` parallel) → `T-Te3Qw8` → `T-Se4Bk5` → `T-Dc6Zr2`. Task ACs changed but task
+  estimates/state (all Draft) are unchanged.
+- No `src/` or test file was edited by this update.
 
 ## Sprint plan
 

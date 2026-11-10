@@ -1,6 +1,7 @@
 # Scheduler daemon — cron & event triggers owned by `ao service` — HLD (E-Sc9Rt4)
 
-- Status: Proposed / design complete — not implemented. Awaiting the decisions in §16.
+- Status: Proposed / design complete — not implemented. Owner decisions in §16 taken at the recommended defaults.
+  **Amended 2026-11-10** after the Opus design review (`w01-06`): §3.3, §6.1, §6.3, §6.4, §6.6, §6.7, §6.9, §7.1, §7.2, §8, §9.2 corrected against the current code (finding ids F1-F23 in `meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md`; ADR-0014 "Late-gate corrections"). Where this document and a ticket disagree, the ticket's AC (same date) wins.
 - Related: [`ADR-0014`](adr/ADR-0014-service-owned-scheduler-and-triggers.md) (this epic's decisions) · [`ADR-0012`](adr/ADR-0012-multi-workspace-service-supervisor.md) (the supervisor this scheduler lives in) · [`ADR-0010`](adr/ADR-0010-dashboard-architecture-and-general-instructions.md) (launch records, loopback/unauthenticated posture) · [`multi-workspace-service-hld.md`](multi-workspace-service-hld.md) · [`workflow-templates-hld.md`](workflow-templates-hld.md) (`ao new`, params) · [`logging-dynamic-workflows-hld.md`](logging-dynamic-workflows-hld.md) (`LoopSpec`, the *intra*-run loop this document deliberately does not duplicate) · epic ticket [`meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md`](../meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md) · roadmap [`§3.2`](../meta/ROADMAP.md)
 
 ---
@@ -120,12 +121,32 @@ twice; this would be the fourth occurrence).
 
 ### 3.3 Is there a launch-argument allowlist to reuse?
 
-Yes, and it is load-bearing for security. `ui/processes.py` already defines
-`ALLOWED_OPTIONS` (`model`, `effort`, `max_attempts`, `max_turns`, `max_parallel`,
-`budget_total`, `quota_max_wait`, `quota_poll_interval`) and `ALLOWED_BOOL_OPTIONS`
-(`self_heal`), and silently drops anything else. A schedule file's `run_args` block maps
-**exactly onto that existing allowlist** — no new argv surface is introduced, and a workspace
-file can never inject arbitrary flags (§13.3).
+Yes, and it is load-bearing for security — but it has changed shape since this section was first
+written (F1/F3). `ui/processes.py` no longer holds a hand-edited dict: `ALLOWED_OPTIONS =
+allowed_options()` and `ALLOWED_BOOL_OPTIONS` are **derived from the run-options registry**
+(`run_options.py`), keeping only options that have a `ui_group` (value options with a flag, plus
+bools). The live set is **14 value + 3 bool** entries (pinned by
+`tests/test_run_options.py::test_allow_list_unchanged_and_registry_derived`), including
+`turn_budget`, `autocompact`, `thinking_effort`, `sentinel.max_parallel_ceiling`,
+`sentinel.llm.powers`, `sentinel.llm.budget_usd`, `sentinel.enabled` and `sentinel.llm.enabled`.
+`_render_options` silently drops any other key.
+
+Consequences for this epic:
+
+- **A schedule's `run_args` is NOT "exactly the allow-list".** It is a closed model built from a
+  curated `SCHEDULE_RUN_ARG_NAMES` tuple in `schedules/models.py`, asserted at import time to be a
+  subset of `allowed_options() ∪ allowed_bool_options()`, with types/choices taken from the
+  registry `Option`s. MVP subset (owner decision): `model, turn_budget, effort, thinking_effort,
+  autocompact, max_attempts, max_turns, max_parallel, budget_total, quota_max_wait,
+  quota_poll_interval, self_heal, sentinel.enabled`. **Excluded:** `sentinel.llm.*` (`powers: act`
+  lets the LLM lane kill and inject tasks; `budget_usd` raises spend), `sentinel.max_parallel_
+  ceiling`, and any future `cost_cap_usd` / `run_id`. `schedules/` imports from `run_options`, never
+  from `ui/`.
+- **`run_id` does not ride `options`.** It is a registry `Option` without `ui_group`/`env`/`config`
+  (so `ALLOWED_OPTIONS` is unchanged) plus an explicit `launch_run(run_id=...)` keyword; see §6.6
+  and ticket `T-Ri7Dz2` AC4.
+- No new argv surface is introduced and a workspace file can never inject arbitrary flags
+  (§13.3).
 
 ## 4. Module layout
 
@@ -174,7 +195,7 @@ Three levels, with deliberately distinct ownership, so nothing is configured in 
 | Level | File | Owner | Holds |
 |---|---|---|---|
 | Workspace bindings | `<workspace>/.ao/schedules.yaml` | the workspace author (and `ao schedule` writes back) | *what* fires, *when*, and with which run arguments |
-| Service opt-out | `~/.config/ao/service.yaml` → `WorkspaceEntry.schedules: bool = true` | the machine's operator | whether this daemon honors that workspace's schedules at all |
+| Service opt-in | `~/.config/ao/service.yaml` → `WorkspaceEntry.schedules: bool = false` (F5, opt-in) | the machine's operator | whether this daemon honors that workspace's schedules at all |
 | Service-wide caps | `~/.config/ao/service.yaml` → top-level `schedules:` block | the machine's operator | global concurrency cap, evaluation interval, webhook listener |
 
 ### 5.1 Binding file — `<workspace>/.ao/schedules.yaml`
@@ -270,17 +291,21 @@ Field reference (pydantic `ScheduleBinding`; JSON Schema in `specs/schedules.sch
 | `watch` | `WatchSpec \| None` | `None` | Required when `kind=file_watch`. |
 | `webhook` | `WebhookSpec \| None` | `None` | Required when `kind=webhook`. |
 
-#### 5.1.1 `run_args` — the allowlist is the existing one
+#### 5.1.1 `run_args` — a curated subset of the registry-derived allowlist
 
-`RunArgs` is a closed pydantic model whose fields are **exactly** `ui/processes.py`'s
-`ALLOWED_OPTIONS` ∪ `ALLOWED_BOOL_OPTIONS`, typed: `model: str`, `effort: Literal["low",
-"medium","high","xhigh"]`, `max_attempts: int`, `max_turns: int`, `max_parallel: int`,
-`budget_total: int`, `quota_max_wait: int`, `quota_poll_interval: int`, `self_heal: bool`.
+`RunArgs` is a closed pydantic model built from the named `SCHEDULE_RUN_ARG_NAMES` tuple in
+`schedules/models.py` (owner decision, 2026-11-10; see §3.3): `model, turn_budget, effort,
+thinking_effort, autocompact, max_attempts, max_turns, max_parallel, budget_total, quota_max_wait,
+quota_poll_interval, self_heal, sentinel.enabled`. An import-time check asserts each name is in
+`run_options.allowed_options() ∪ allowed_bool_options()`; types and choices come from the registry
+`Option`s (`pydantic.create_model`, aliases for dotted keys). `sentinel.llm.*`,
+`sentinel.max_parallel_ceiling`, `cost_cap_usd` and `run_id` are **not** schedule-settable.
 `model_config = ConfigDict(extra="forbid")` so an unknown key is a **named load error**, not a
-silent drop. There is no free-form `args:`/`command:` field, by design (§13.3).
+silent drop. There is no free-form `args:`/`command:` field, by design (§13.3). `template` is a bare
+template *name* (no `/`, `.`, `~`), never a path (F4); schedule ids are ≤64 chars (F12).
 
-`reposets` / `agents` are **not** schedule fields: they come from the workspace's
-`.ao/config.yaml`, exactly as `Supervisor._decide_and_act` already does for boot-resume.
+`reposets` / `agents` are **not** schedule fields and the launcher passes neither (F10): `ao run`
+falls back to the workspace's `.ao/config.yaml` / `AO_REPOSETS` itself.
 
 ### 5.2 Service registry additions — `~/.config/ao/service.yaml`
 
@@ -290,7 +315,7 @@ workspaces:
     port: 8766
     host: 0.0.0.0
     autoresume: true
-    schedules: true            # NEW — operator's per-workspace opt-out (default true)
+    schedules: true            # NEW — operator's per-workspace OPT-IN (default false; F5)
 schedules:                     # NEW — service-wide, all optional
   enabled: true
   eval_interval_seconds: 15
@@ -393,6 +418,19 @@ responsibility is child processes; and because a sibling can be omitted entirely
 payload by `service/cli.py::build_status_provider` — the designated enrichment point — so
 `hub.py` stays the thin adapter ADR-0010 requires.
 
+**Single evaluator (F9).** Every engine — the service's or `ao schedule daemon`'s — holds an
+exclusive non-blocking `flock` on `<state_dir>/schedules/engine.lock` for its lifetime and refuses
+to start a second one. The supervisor singleton lock does not cover `ao schedule daemon`, and the
+fire store's `exists()`-then-`write()` has no lock of its own. CLI daemon detection probes this
+lock (not the hub, which is 401 under auth and live even for `--no-schedules`). **Per-workspace
+`ProcessSupervisor` (F2):** the engine owns one long-lived instance per workspace (built with
+`run_id_discovery_timeout=0.0`), shares it with the launcher and `reconcile()`s it every tick; a
+fresh instance cannot reap children and reports zombies alive. **Registry (F23):** the service
+loads the registry once while the engine re-reads `registry_path`, so a workspace added while the
+daemon runs may be scheduled before it has a dashboard child; restart to reconcile (or share the
+loaded object). **Opt-in (F5):** only workspaces whose entry has `schedules: true` (default
+`false`) are evaluated.
+
 Startup order in `ao service run`: acquire the supervisor lock → `supervisor.start()` (ports,
 orphan reclaim, boot-resume, spawn children) → `engine.start()` (reconcile orphaned fires,
 §6.6) → hub thread → loop. The scheduler starts **after** boot-resume so a schedule's overlap
@@ -452,7 +490,10 @@ FUNCTION evaluate(entry, b, now) -> FireDecision:
   IF st.queued_fire_key IS NOT NULL AND NOT overlap_active(entry.root, b, st):
       RETURN FIRE(from_queue=st.queued_fire_key)                # drain the buffered fire first
 
-  sched   = SCHEDULERS[b.kind]                                  # §7.1
+  # Cron/interval: pure Scheduler on b.to_trigger(). Event kinds (file_watch/webhook): a
+  # TriggerSource.observe(b, st, now) returning a Candidate — read-only; commit() happens only
+  # once the key is burned or launched (§7.1, F6).
+  sched   = SCHEDULERS[b.kind]                                  # cron|interval only
   anchor  = st.last_scheduled_for OR st.created_at
   nxt     = sched.next_fire(b.to_trigger(), anchor)
   IF nxt IS NULL:  state.set_next_fire(NULL);  RETURN NO_FIRE(reason="never")
@@ -470,12 +511,12 @@ FUNCTION evaluate(entry, b, now) -> FireDecision:
   IF scheduled_for > now:  RETURN NO_FIRE(reason="not_due")
 
   # Deterministic jitter, derived from the fire key so it is stable across restarts.
-  fire_key      = sha256(f"{entry.root}|{b.id}|{scheduled_for.isoformat()}").hexdigest()
+  fire_key      = sha256(f"{entry.root}|{b.id}|{scheduled_for.astimezone(UTC).isoformat()}").hexdigest()  # UTC (F11)
   jitter        = int(fire_key[:8], 16) % (b.jitter_seconds + 1)
   effective_due = scheduled_for + seconds(jitter)
   IF now < effective_due:  RETURN NO_FIRE(reason="jitter_pending")
 
-  lateness = now - scheduled_for
+  lateness = now - effective_due        # F7: from effective_due — jitter (e.g. 300 s) must not count as lateness
   IF lateness > seconds(b.grace_seconds):
       IF b.catch_up == "skip" OR lateness > seconds(b.catch_up_window_seconds):
           fires.write_suppressed(fire_key, reason="missed")     # burns the key: never retried
@@ -484,17 +525,25 @@ FUNCTION evaluate(entry, b, now) -> FireDecision:
           RETURN NO_FIRE(reason="missed")
       emit("schedule.catch_up", schedule_id=b.id, lateness_seconds=lateness.total_seconds())
 
-  IF fires.exists(fire_key):  RETURN NO_FIRE(reason="already_fired")   # at-most-once (§6.6)
+  IF fires.exists(fire_key) AND fire_key != st.queued_fire_key:
+      state.advance_anchor(entry.root, b.id, scheduled_for)               # F13: advance whenever a key is burned
+      RETURN NO_FIRE(reason="already_fired")                              # at-most-once (§6.6); the drain bypasses
+                                                                          # this check for exactly queued_fire_key (F8)
 
   IF overlap_active(entry.root, b, st):
       IF b.overlap == "skip":
           fires.write_suppressed(fire_key, reason="overlap")
+          state.advance_anchor(entry.root, b.id, scheduled_for)           # F13
           emit("schedule.skipped_overlap", schedule_id=b.id, active=st.active_fire_keys)
           RETURN NO_FIRE(reason="overlap_skip")
       IF b.overlap == "queue":
-          IF st.queued_fire_key IS NULL:  state.set_queued(entry.root, b.id, fire_key)
-          ELSE: emit("schedule.skipped_overlap", reason="queue_full")
-          fires.write_suppressed(fire_key, reason="queued") IF st.queued_fire_key != fire_key
+          IF st.queued_fire_key IS NULL:
+              state.set_queued(entry.root, b.id, fire_key)      # F8: the queued key gets NO record until
+                                                                # its drain launches it (intended -> launched)
+          ELSE:
+              emit("schedule.skipped_overlap", reason="queue_full")
+              fires.write_suppressed(fire_key, reason="queue_full")   # only the NON-queued key is suppressed
+          state.advance_anchor(entry.root, b.id, scheduled_for)       # F13
           RETURN NO_FIRE(reason="overlap_queued")
       # b.overlap == "allow": fall through to the concurrency caps
 
@@ -505,6 +554,12 @@ FUNCTION evaluate(entry, b, now) -> FireDecision:
 
   RETURN FIRE(fire_key, scheduled_for, effective_due, binding=b, workspace=entry.root)
 ```
+
+Review corrections folded in above (2026-11-10): **F7** lateness is measured from `effective_due`
+(otherwise `jitter_seconds > grace_seconds` makes every jittered fire a catch-up, and `catch_up:
+skip` never fires); **F8** the queue branch no longer burns the key it just queued; **F11** the key
+hashes the UTC instant; **F13** the anchor advances on every burn so a long overlap streak cannot
+exceed `MAX_CATCHUP_STEPS`.
 
 Two deliberate asymmetries worth stating out loud, because they are easy to get wrong:
 
@@ -531,9 +586,15 @@ semantics ADR-0012 D2 established.
 
 "Active" is computed the way boot-resume already computes liveness: for each `fire_key` in
 `state.active_fire_keys`, the fire record's `run_id` is looked up via
-`RunRepository.load_state(run_id).status == "running"`, with `ProcessSupervisor.is_running` as
-the PID-level check. A run that reached a terminal status, or whose PID is gone, is retired from
+`RunRepository.load_state(run_id).status == "running"` **and** the owning, cached per-workspace
+`ProcessSupervisor`'s liveness probe (F2 — a fresh instance would treat a zombie child as alive). A run that reached a terminal status, or whose PID is gone, is retired from
 `active_fire_keys` in the same pass.
+
+**Interaction with per-task isolation (F15).** Per-task isolation has landed (`b0cb467`,
+`isolation/runlock.py`; `engine.py` takes a `WorkspaceRunLock` per run). A scheduled run that
+overlaps a manual run in a workspace whose workflow uses `integration.workspace_lock: require`
+**degrades at startup**. `max_concurrent` counts *scheduled* runs only, not manual ones. The default
+of 1 is kept.
 
 ### 6.5 Missed schedules and catch-up
 
@@ -561,10 +622,13 @@ would have done by hand.
 clicking a button and unacceptable for a daemon, so this epic does two things:
 
 1. **`ao run --run-id <id>` (new, task `T-Ri7Dz2`)** — the caller supplies the id; the engine
-   uses it verbatim and refuses if a run directory with that id already exists. Scheduled fires
-   pass `--run-id ao-<schedule_id>-<scheduled_for compact UTC>`, which makes fire→run linkage
+   uses it verbatim and refuses if a run directory with that id already exists (atomic
+   `os.mkdir` reservation, F1). It reaches `RunStateStore.new_run` through
+   `Orchestrator.run(..., run_id=None)`, the one sanctioned `engine.py` edit. Scheduled fires
+   pass `launch_run(run_id=...)` — an explicit keyword, **not** an `options` entry (which would be
+   silently dropped) — rendering `--run-id ao-<schedule_id>-<scheduled_for compact UTC>`, which makes fire→run linkage
    *exact* rather than inferred, and closes the roadmap §4 mis-attribution gap for this path.
-   The scheduler additionally constructs its `ProcessSupervisor` with
+   The engine's shared per-workspace `ProcessSupervisor` is constructed with
    `run_id_discovery_timeout=0.0` so a launch never blocks the tick.
 2. **A fire-intent record written before the launch.** Two-phase, atomic:
 
@@ -573,14 +637,15 @@ FUNCTION ScheduledLauncher.launch(d):
   fires.write(d.fire_key, status="intended", scheduled_for=d.scheduled_for,
               workspace_root=..., schedule_id=..., created_at=now())   # write-then-rename + fsync
   TRY:
-      IF d.binding.template:  inst = templates.instantiate(...)        # fresh instance per fire
+      IF d.binding.template:  inst = templates.instantiate(...)        # by template NAME only (F4)
           workflow_path = inst.workflow_path
       ELSE: workflow_path = safe_join(workspace_root, d.binding.workflow)
       prompt = read_text(safe_join(root, d.binding.prompt_file)) IF d.binding.prompt_file ELSE None
-      ps = ProcessSupervisor(workspace_root, run_id_discovery_timeout=0.0)
+      ps = shared_supervisor_for(workspace_root)   # the engine's cached instance (F2); timeout=0.0
       rec = ps.launch_run(workflow_path=workflow_path, prompt=prompt,
-                          reposets=cfg.reposets, agents=cfg.agents,
-                          options={**d.binding.run_args.as_options(), "run_id": d.run_id})
+                          options=d.binding.run_args.as_options(),     # curated subset, no run_id
+                          run_id=d.run_id,                             # explicit kwarg (F1)
+                          workspace=workspace_arg_for(workflow_path))  # no reposets/agents (F10)
       fires.update(d.fire_key, status="launched", launch_id=rec.launch_id,
                    pid=rec.pid, run_id=d.run_id)
       state.record_fire(root, id, scheduled_for=d.scheduled_for, run_id=d.run_id)
@@ -603,6 +668,10 @@ FUNCTION recover_orphaned_fires():
       emit("schedule.fire_orphaned", fire_key=r.fire_key, schedule_id=r.schedule_id)
       # DELIBERATELY no relaunch — see below.
 ```
+
+`reposets`/`agents` are **not** passed (F10): `ao run` already falls back to `cfg.reposets` /
+`AO_REPOSETS`, the child's cwd is the workspace root, and boot-resume recovers them from the prior
+launch's argv rather than from config.
 
 **We choose at-most-once over at-least-once.** A crash inside the ~millisecond window between
 writing the intent and `Popen` returning could mean the run started or did not; relaunching risks
@@ -633,18 +702,23 @@ watch:
 ```
 
 ```
-FUNCTION FileWatchScheduler.next_fire(trigger, now):
+FUNCTION FileWatchSource.observe(binding, state, now) -> Candidate | None:      # PURE, read-only (F6)
   prev   = digest_store.load(ws, schedule_id)        # {rel_path: [mtime_ns, size]}
   cur, truncated = scan(ws, watch.paths, max_files, ignore=DEFAULT_IGNORES, budget=WATCH_SCAN_BUDGET)
   IF truncated: emit("schedule.watch_budget_exceeded"); RETURN None    # never a partial-scan fire
   changed = {p FOR p IN cur IF p NOT IN prev OR cur[p] != prev[p]}     # 'created' + 'modified'
-  IF NOT changed:  digest_store.save(ws, id, cur);  RETURN None
+  IF NOT changed:  RETURN None
   newest = max(mtime_ns FOR p IN changed)
   IF now - to_datetime(newest) < seconds(watch.debounce_seconds):
-      RETURN None                                    # still settling — do NOT save the digest yet
-  digest_store.save(ws, id, cur)
-  RETURN to_datetime(newest).replace(microsecond=0)  # == scheduled_for: content-derived, idempotent
+      RETURN None                                    # still settling; digest untouched, nothing swallowed
+  RETURN Candidate(scheduled_for=to_datetime(newest).replace(microsecond=0), new_digest=cur)
+
+FUNCTION FileWatchSource.commit(binding, candidate):     # called by the ENGINE only once the fire key is
+  digest_store.save(ws, binding.id, candidate.new_digest)   # burned or launched — never on a concurrency skip
 ```
+
+(An earlier draft saved the digest inside `next_fire`: `ao schedule next` then swallowed pending
+events and a concurrency skip lost them — F6.)
 
 `scheduled_for` being the newest changed mtime (not "now") is what makes a file-watch fire
 idempotent across a crash: the same file state derives the same `fire_key`, which the fire store
@@ -713,15 +787,23 @@ or `until`. Requests older than `REQUEST_TTL_SECONDS = 300` are discarded with
 `schedule.request_expired`, so a request queued while the service was down does not fire
 surprisingly hours later.
 
-When the service is **not** running (no live `supervisor.json` / lock), `ao schedule run-now`
-detects that and performs the fire in-process using the same `ScheduledLauncher` — so the
-command is never a silent no-op. `--local` forces in-process; `--queue` forces the drop file.
+When no engine is running — detected by probing `<state_dir>/schedules/engine.lock` (F9), **not**
+the hub and not `supervisor.json` — `ao schedule run-now` performs the fire in-process using the
+same `ScheduledLauncher`, **holding the same lock for its single fire**, so the command is never a
+silent no-op and never races a daemon (if the lock is held it queues instead: "a daemon is
+evaluating; queued instead"). `--local` forces in-process (still locked); `--queue` forces the drop
+file. The same drop directory also carries persisted webhook deliveries (`kind: "webhook"`, §8,
+F14).
 
 ## 7. Interfaces
 
-### 7.1 `Scheduler` — one ABC, four implementations
+### 7.1 `Scheduler` (cron/interval) and `TriggerSource` (event kinds)
 
-The existing ABC is kept **unchanged** and its contract merely stated precisely:
+The existing ABC is kept **unchanged** and its contract merely stated precisely. **Review
+correction (F6):** the ABC stays *pure* and serves `cron`/`interval` only. Event kinds
+(`file_watch`, `webhook`) carry per-binding state and side effects, and `Trigger.type` has no such
+members, so they implement a separate engine-level protocol (below the table) instead of being
+shoehorned into `next_fire`:
 
 ```python
 class Scheduler(ABC):
@@ -740,12 +822,20 @@ class Scheduler(ABC):
 | `ManualScheduler` (existing) | always `None` | — |
 | `CronScheduler` (existing, unchanged) | croniter's next instant in `trigger.timezone` | injectable `clock` |
 | `IntervalScheduler` (**new**) | `now + trigger.interval_seconds` | — |
-| `FileWatchScheduler` (**new**) | newest changed mtime, or `None` | injected `digest_store`, `workspace_root`, `WatchSpec` |
-| `WebhookScheduler` (**new**) | the queued delivery's receipt time, or `None` | injected thread-safe `delivery_queue` |
 | `EventScheduler` (existing) | **deprecated alias** retained for one release: a sentinel path is a degenerate one-file watch. Its current tests keep passing unchanged. | `sentinel_path` |
 
-Event triggers therefore genuinely sit behind the same interface — "has this fired?" is
-`next_fire(...) <= now`, which is exactly what the existing sentinel stub already does.
+```python
+class TriggerSource(Protocol):          # declared in service/schedule_engine.py (T-Ev3Qm5)
+    def observe(self, binding, state, now) -> Candidate | None: ...   # pure, read-only
+    def commit(self, binding, candidate) -> None: ...                 # engine calls once key burned/launched
+```
+
+`FileWatchSource` (digest saved in `commit`) and `WebhookSource` (persisted request file deleted in
+`commit`) implement it, one instance per binding, holding their own `WatchSpec`/root — not
+per-kind singletons in a `SCHEDULERS` map. `ao schedule next` uses `observe` only, so it never
+swallows events; a concurrency skip (which does not burn the key) never commits, so it loses none.
+`ScheduleBinding.to_trigger()` (T-Sd1Kq7) covers cron/interval only. The "has this fired?" intuition
+`next_fire(...) <= now` still holds for the pure schedulers.
 
 `Trigger` gains two additive, optional fields so `IntervalScheduler` fits the same signature;
 both are backward compatible (absent ⇒ today's behavior, old specs unchanged):
@@ -784,7 +874,7 @@ class ScheduleEngine:
                  monotonic: Callable[[], float] = time.monotonic,
                  launcher: ScheduledLauncher | None = None,
                  schedule_store_factory: Callable[[str], ScheduleStore] = ScheduleStore,
-                 process_supervisor_factory: Callable[[str], ProcessSupervisor] = ...,
+                 process_supervisor_factory: Callable[[str], ProcessSupervisor] = ...,  # called ONCE per workspace; result cached + reconcile()d each tick (F2)
                  run_repository_factory: Callable[[str], RunRepository] = RunRepository,
                  eval_interval_seconds: float = DEFAULT_EVAL_INTERVAL_SECONDS,
                  max_concurrent_global: int = DEFAULT_MAX_CONCURRENT_GLOBAL) -> None: ...
@@ -799,7 +889,9 @@ class ScheduledLauncher:
 ```
 
 Every collaborator is constructor-injected, matching `Supervisor`'s existing style, so unit
-tests need no monkeypatching and no subprocesses.
+tests need no monkeypatching and no subprocesses. `start()` also acquires
+`<state_dir>/schedules/engine.lock` (F9; refuses a second engine) and `probe_engine_lock(state_dir)`
+is the shared helper the CLI uses for daemon detection.
 
 ### 7.3 Errors
 
@@ -818,14 +910,18 @@ workspace, logged as `schedule.file_invalid`, and surfaced in `ao schedule list`
 
 ### 8.1 Where it listens — and why not the hub
 
-The hub (`:8770`) is unauthenticated by design and lists every registered workspace. Mounting an
-authenticated webhook route on it would mean that exposing the webhook to the internet also
-exposes the workspace inventory — a bad trade the operator would not consciously make. The
-per-workspace dashboard is worse: it is the unauthenticated, run-starting, file-browsing surface.
+The hub (`:8770`) lists every registered workspace, and the dashboards are run-starting,
+file-browsing surfaces. *(Updated 2026-11-10, F18: the original text said both were unauthenticated
+by design; ADR-0021 / E-Da5Tn9 has since added **optional** session auth to the hub and dashboards,
+and it is off by default.)* Mounting a webhook route on the hub would mean exposing the webhook to
+the internet also exposes the workspace inventory, and a machine caller (a git host) has no login
+session, so session auth cannot protect it. Hence a separate listener whose auth is HMAC.
 
 **Recommendation: a dedicated, default-OFF listener** — its own tiny FastAPI app on
 `--webhook-port` (default `8771`), bound loopback unless `--webhook-host` is given, exposing
-exactly two routes:
+exactly two routes. **The webhook app is not wrapped in the session `AuthMiddleware`** that the
+hub gets via `build_hub_app(..., auth=launch.runtime)`; HMAC is its authentication, and the
+service-run wiring must keep passing `child_env`/`auth` to the supervisor and hub unchanged:
 
 ```
 POST /hooks/{workspace_slug}/{schedule_id}     -> 202 | 401 | 404 | 409 | 413 | 429 | 503
@@ -861,16 +957,21 @@ FUNCTION handle_webhook(ws_slug, schedule_id, headers, raw_body):
   IF NOT rate_limiter.allow(ws_slug, schedule_id):                   # token bucket, default 10/min
       emit("webhook.rejected", reason="rate_limited");  RETURN 429
   nonce_cache.add(delivery)
-  queue.put(WebhookDelivery(ws_slug, schedule_id, received_at=now(), delivery_id=delivery))
+  write_request_file_fsync(state_dir/"schedules"/"requests",       # F14: persisted, not an in-memory queue
+      {"kind": "webhook", "workspace_slug": ws_slug, "schedule_id": schedule_id,
+       "received_at": now(), "delivery_id": delivery})
   emit("webhook.received", ws=ws_slug, id=schedule_id, delivery=delivery)
   RETURN 202 {"accepted": true, "schedule_id": schedule_id}
 ```
 
 Notes that are design decisions, not implementation detail:
 
-- **A verified delivery only enqueues.** The actual fire happens on the next engine tick through
-  the identical overlap / concurrency / `until` path, so a webhook can never bypass a guard or
-  outrun the concurrency cap, and a delivery flood costs one queue entry, not one agent run.
+- **A verified delivery only persists a request.** (F14: an in-process `queue.Queue` was rejected —
+  a crash loses acknowledged deliveries and `ao schedule daemon --once`, another process, cannot see
+  them.) The fire happens on the next engine tick's drain through the identical overlap /
+  concurrency / `until` path, so a webhook can never bypass a guard or outrun the concurrency cap,
+  and a delivery flood costs one request file, not one agent run. The nonce cache and rate bucket
+  remain in-memory and reset on restart (documented limitation).
 - **Unknown schedule and bad signature both return 401.** Otherwise the endpoint is a free
   oracle for enumerating a machine's workspaces and schedule ids.
 - **Secrets are never inline.** `secret_env: NAME` or `secret_file: <path>`; a literal `secret:`
@@ -918,7 +1019,9 @@ binding per cron/interval trigger — the bridge that keeps §5's "declared in t
 ### 9.2 Dev/test mode
 
 `ao schedule daemon --workspace <root>` runs the same `ScheduleEngine` in the foreground against
-exactly one workspace, using a state dir under `AO_SERVICE_STATE_DIR` (or `--state-dir`).
+exactly one workspace, using a state dir under `AO_SERVICE_STATE_DIR` (or `--state-dir`). It
+acquires `schedules/engine.lock` and **refuses to start while `ao service run`'s engine (or another
+daemon) holds it** (F9) — two engines on one state dir could both launch the same schedule.
 `--once` performs a single `tick()` and exits with the number of fires — which is what makes an
 end-to-end test of a real cron fire possible in seconds with an injected clock, and what a
 developer uses to iterate without installing a systemd unit.
@@ -1040,11 +1143,17 @@ runs on my machine." This epic does not widen it.
 
 It arrives via `git clone` like everything else in a workspace. Therefore:
 
-- **No arbitrary argv.** `run_args` is a closed pydantic model over the *existing*
-  `ALLOWED_OPTIONS`; `extra="forbid"` makes an unknown key a load error. There is no
+- **No arbitrary argv.** `run_args` is a closed pydantic model over the curated
+  `SCHEDULE_RUN_ARG_NAMES` subset of the registry-derived allowlist (§3.3); `extra="forbid"` makes an unknown key a load error. There is no
   `command:`, `env:`, `shell:`, or free-form flag list, and none may be added later without an
   ADR.
-- **No path escapes.** `workflow`, `prompt_file`, `until.*`, and `watch.paths` are all resolved
+- **Scheduling removes the human from the loop (F5).** "No new argv surface" does not mean "no new
+  execution": workflow specs already declare argv **hooks** (`hooks.py`, `HookSpec.command`) and
+  agent tasks with tool permissions, so a pulled repo's schedule runs its commands on a timer
+  unattended. Hence schedules are **opt-in per workspace** (`WorkspaceEntry.schedules` default
+  `false`); `ao schedule list` explains why a workspace is inert.
+- **No path escapes.** `workflow`, `template` (a bare name only — `load_template` would otherwise
+  accept a directory path, F4), `prompt_file`, `until.*`, and `watch.paths` are all resolved
   through `LocalFsArtifactStore`'s existing workspace-root guard; an absolute path or a `..`
   escape is a named validation error. Glob expansion is performed *after* the root resolution,
   and symlinks that resolve outside the root are skipped with a warning.
@@ -1273,12 +1382,19 @@ blocked; overturning one is a small, localized change.
 | D-i | Does fire history live in the service state dir or the workspace? | **Service state dir** (§5.3) — operational, not project, data. |
 | D-j | MVP scope split | **MVP = cron/interval + policies + CLI + state/observability; MVP-2 (same epic, later tasks) = file-watch, webhook, `until`, dashboard panel.** Everything in §19 is out. |
 
+Added by the 2026-11-10 design review (owner decisions taken at the reviewer's recommended defaults):
+
+| # | Question | Decision |
+|---|---|---|
+| D-k | Do repo-supplied schedules go live for every registered workspace (F5)? | **No — opt-in.** `WorkspaceEntry.schedules` defaults to `false`; `ao service add --schedules` / `ao service set --schedules`. |
+| D-l | Which options may `run_args` set (F3)? | **A curated `SCHEDULE_RUN_ARG_NAMES` subset of the registry allowlist**, excluding `sentinel.llm.*` and `sentinel.max_parallel_ceiling` (§3.3, §5.1.1). |
+
 ## 17. Rollout, upgrade, and compatibility
 
 - **Additive only.** No existing file changes shape. A registry without `schedules:` keys, a
   workspace without `.ao/schedules.yaml`, and a workflow with the default
   `triggers: [{type: manual}]` all behave exactly as today.
-- **Forward/backward compatible files.** `WorkspaceEntry` already ignores unknown keys, so an
+- **Forward/backward compatible files.** `WorkspaceEntry` already ignores unknown keys (pydantic default `extra="ignore"`, no `model_config`), so an
   older `ao` reads a newer registry; a newer `ao` supplies defaults for the new keys.
 - **Ship order matches the task order** (§ epic ticket): cron/interval + policies + CLI is a
   complete, useful increment on its own; file-watch, webhook, `until`, and the dashboard panel

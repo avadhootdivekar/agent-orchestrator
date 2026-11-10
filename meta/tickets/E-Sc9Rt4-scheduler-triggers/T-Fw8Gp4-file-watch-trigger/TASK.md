@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F6/F16/F20 applied)
 - Status: Draft
 - Estimate: 2 days
 
@@ -26,13 +26,19 @@ Read HLD §6.7 and §7.1, and ADR-0014 D7.
 
 Files you own (create/edit freely):
 - `src/agent_orchestrator/service/watch.py` (new — the digest store and scanner)
-- `src/agent_orchestrator/scheduler.py` (edit: add `FileWatchScheduler`; keep `EventScheduler`
-  as a deprecated alias whose existing behavior and tests are untouched)
+- `src/agent_orchestrator/service/watch.py` also hosts the `FileWatchSource` **`TriggerSource`**
+  (F6; protocol declared by `T-Ev3Qm5` AC1a): per-binding, holds its own `WatchSpec` and root,
+  `observe` is pure/read-only and `commit` persists the digest. It is **not** a per-kind
+  singleton registered in a `SCHEDULERS` map and it does not go through `Trigger`.
+- `src/agent_orchestrator/scheduler.py` (edit: keep `EventScheduler` as a deprecated alias whose
+  existing behavior and tests are untouched; only its docstring changes. `FileWatchScheduler`,
+  if kept at all, is a thin non-stateful alias — the stateful logic lives in `FileWatchSource`)
 - `tests/service/test_watch.py`, `tests/schedules/test_file_watch_scheduler.py` (new)
-- additive: register the `file_watch` kind in the engine's scheduler map (a one-line edit to
-  `service/schedule_engine.py`'s `SCHEDULERS` — coordinate with `T-Ev3Qm5`'s owner if concurrent)
+- additive (F16, **serial** after `T-Un0Lm6`; `T-Ev3Qm5` → `T-Un0Lm6` → `T-Fw8Gp4` → `T-Wh9Kv1`
+  are not concurrent): the engine hook that selects a `TriggerSource` for `kind: file_watch`
+  bindings in `service/schedule_engine.py` (owned by `T-Ev3Qm5`)
 - additive: `--watch GLOB`, `--watch-on`, `--debounce`, `--poll-seconds`, `--max-files` on
-  `ao schedule add`
+  `ao schedule add` — **owned by this task, not by `T-Cl6Jn9`** (its AC6 covers cron/interval only)
 
 Do NOT touch: `service/fire_store.py`, `service/schedule_launch.py`, `schedules/models.py`
 (the `WatchSpec` model already landed in `T-Sd1Kq7`), `ui/`.
@@ -50,13 +56,21 @@ Do NOT touch: `service/fire_store.py`, `service/schedule_launch.py`, `schedules/
 3. **The ignore list must exclude the run output tree (`.orchestrator/`).** Without it a watch on
    a broad glob is triggered by the runs it itself produced — a self-sustaining fire loop that
    spends money. A dedicated test writes into `.orchestrator/` and asserts no fire.
-4. `FileWatchScheduler(Scheduler)` implements `next_fire(trigger, now)` per HLD §6.7:
+4. `FileWatchSource.observe(binding, state, now)` implements HLD §6.7 and is **pure and
+   read-only (F6)** — it never writes the digest:
    - a truncated scan returns `None` and emits `schedule.watch_budget_exceeded` — **a partial
      scan never fires**;
-   - no changed paths ⇒ save the digest, return `None`;
-   - changed paths whose newest mtime is within `debounce_seconds` of `now` ⇒ return `None` and
-     **do not save the digest** (the change is still settling; saving it would swallow the event);
-   - otherwise save the digest and return the newest changed mtime, truncated to whole seconds.
+   - no changed paths ⇒ return `None` (the engine may still `commit` an unchanged digest);
+   - changed paths whose newest mtime is within `debounce_seconds` of `now` ⇒ return `None`
+     (the change is still settling; the digest is untouched so the event is not swallowed);
+   - otherwise return a `Candidate(scheduled_for=newest changed mtime truncated to whole
+     seconds, new_digest=...)`.
+   `FileWatchSource.commit(binding, candidate)` saves the new digest. **The engine calls `commit`
+   only once the fire key is burned or launched** (`T-Ev3Qm5` AC1a): a concurrency skip (which
+   deliberately does not burn the key) must not lose the change, and `ao schedule next` /
+   `daemon --once --dry` never commit. (The earlier design saved the digest *inside*
+   `next_fire`, which meant `ao schedule next` swallowed pending file events and a concurrency
+   skip dropped them.)
 5. `watch.on` supports `created` and `modified` in MVP: `created` = a path absent from the prior
    digest; `modified` = present with a different `(mtime_ns, size)`. `deleted` is rejected at
    load time by `T-Sd1Kq7` and is a documented non-goal.
@@ -71,6 +85,9 @@ Do NOT touch: `service/fire_store.py`, `service/schedule_launch.py`, `schedules/
 8. Digest/scan: created vs modified detection; a file touched twice inside the debounce window
    fires once, after the window; `max_files` truncation returns `truncated=True` and no fire;
    `budget_seconds` truncation likewise (inject a `monotonic` that jumps).
+8a. F6 regression tests: `observe` called twice (and via `ao schedule next`) does not change the
+    persisted digest; a concurrency skip followed by a free slot on the next tick **still fires**
+    the same change; `commit` is called exactly once per burned/launched key.
 9. Idempotency: after a fire, a `--once` tick with no further change produces no fire; simulate
    a crash between the fire and the digest save and assert the re-derived `fire_key` is already
    burned (no double fire) — this is the payoff of the mtime-derived `scheduled_for` and must be
@@ -82,7 +99,7 @@ Do NOT touch: `service/fire_store.py`, `service/schedule_launch.py`, `schedules/
     wait past the debounce with a fixed clock, assert exactly one run directory appears; a second
     `--once` with no change asserts none.
 13. `uv run pytest -q` green with the delta reported; ruff + format clean; mypy whole-tree count
-    reported; coverage ≥80 % on `service/watch.py`.
+    reported (baseline 0 errors; F20); coverage ≥80 % on `service/watch.py`.
 
 ## Risks
 - **Self-triggering loops** are the failure mode that costs real money here. AC3 is not optional
@@ -92,8 +109,8 @@ Do NOT touch: `service/fire_store.py`, `service/schedule_launch.py`, `schedules/
   partial information.
 - `mtime_ns` granularity varies by filesystem. Use `(mtime_ns, size)` together, as specified —
   size alone catches same-second overwrites that mtime misses on coarse-granularity mounts.
-- The one-line edit to `T-Ev3Qm5`'s `SCHEDULERS` map is the only place these two tasks touch the
-  same file. Coordinate if they overlap in time.
+- The engine-hook edit to `schedule_engine.py` (owned by `T-Ev3Qm5`) is the only place these tasks
+  touch the same file; it lands serially after `T-Un0Lm6`, never concurrently (F16).
 
 ## Dependencies
 - `T-Sd1Kq7` (`WatchSpec`), `T-Fr2Nx8` (fire store, for the idempotency assertion), `T-Ev3Qm5`
@@ -101,19 +118,21 @@ Do NOT touch: `service/fire_store.py`, `service/schedule_launch.py`, `schedules/
 
 ## Pseudocode / Algorithm
 ```text
-See HLD §6.7 for the normative algorithm. The three orderings that must not be rearranged:
+See HLD §6.7 (corrected by the design review) for the normative algorithm. The orderings that
+must not be rearranged:
   1. truncated  -> return None  (never fire on a partial scan)
-  2. debounce   -> return None WITHOUT saving the digest (saving swallows the event)
-  3. save digest THEN return newest-changed-mtime (so a crash after the save cannot re-fire,
-     and a crash before it re-derives the SAME fire_key, which the store has burned)
+  2. debounce   -> return None (observe never writes the digest, so nothing is swallowed)
+  3. engine: burn/launch the fire key THEN commit(binding, candidate) saves the digest (so a
+     crash after the commit cannot re-fire, and a crash before it re-derives the SAME fire_key,
+     which the store has burned). A concurrency skip burns nothing and commits nothing.
 ```
 
 ## Schemas / Interface Notes
-- Interface / API: `service.watch.{WatchDigestStore, scan, DEFAULT_WATCH_IGNORES,
-  WATCH_SCAN_BUDGET_SECONDS}`; `scheduler.FileWatchScheduler`.
+- Interface / API: `service.watch.{WatchDigestStore, scan, FileWatchSource, DEFAULT_WATCH_IGNORES,
+  WATCH_SCAN_BUDGET_SECONDS}`.
 - Spec / data schema: consumes `WatchSpec` (`paths`, `on`, `debounce_seconds`, `poll_seconds`,
   `max_files`); persists `<state_dir>/schedules/watch/<slug>/<id>.json`.
-- Triggers / events: implements the `file_watch` kind; emits `watch.changed` and
+- Triggers / events: implements the `file_watch` kind as a `TriggerSource`; emits `watch.changed` and
   `schedule.watch_budget_exceeded`.
 - Artifacts: reads workspace files matching the declared globs (read-only, never writes into the
   workspace).

@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F2/F6/F7/F8/F9/F13/F20 applied)
 - Status: Draft
 - Estimate: 3 days
 
@@ -46,6 +46,29 @@ Do NOT touch: `service/fire_store.py`, `service/statefile.py`, `schedules/`, `sc
    `eval_interval_seconds=DEFAULT_EVAL_INTERVAL_SECONDS (15.0)`,
    `max_concurrent_global=DEFAULT_MAX_CONCURRENT_GLOBAL (3)`). Every collaborator is injectable
    so unit tests need no monkeypatching and no subprocesses — the same style `Supervisor` uses.
+   **F2: the engine owns ONE long-lived `ProcessSupervisor` per workspace** (cached; built with
+   `run_id_discovery_timeout=0.0`) and injects that same instance into the launcher
+   (`T-Lp4Wt6`). `process_supervisor_factory` is called once per workspace and the result cached,
+   never per call: a `ProcessSupervisor` reaps only children in its own `_children` Popen map
+   (`ui/processes.py:225, 228-247`); a fresh instance falls back to `os.kill(pid, 0)`
+   (`processes.py:159-180`), which returns True for a **zombie**, and nothing in `service/` or
+   `ui/` reaps (no `SIGCHLD`/`waitpid`). Every `tick()` calls `reconcile()` on each cached
+   instance, which polls and reaps. Note for the backlog (out of scope): boot-resume has the same
+   latent leak (`supervisor.py:487` builds a fresh instance per resume).
+1a. **Event-kind sources (F6).** The module declares a `TriggerSource` protocol alongside the
+   `ScheduledLauncher` one: `observe(binding, state, now) -> Candidate | None` (pure, read-only —
+   no digest save, no queue pop) and `commit(binding, candidate)`. The `Scheduler` ABC stays for
+   cron/interval (pure). The engine calls `commit` **only once the fire key is burned or
+   launched** — never on a concurrency skip (which deliberately does not burn the key) — so a
+   concurrency skip cannot lose a file change or webhook delivery. `T-Fw8Gp4` / `T-Wh9Kv1`
+   implement `TriggerSource`; `ao schedule next` (`T-Cl6Jn9`) uses `observe` only.
+1b. **Single-evaluator lock (F9).** Every engine — whether started by `ao service run` or
+   `ao schedule daemon` — holds an exclusive non-blocking `flock` on
+   `<state_dir>/schedules/engine.lock` for its lifetime (`start()` acquires, `shutdown()`
+   releases) and **refuses to start a second one** with a named error. The supervisor singleton
+   lock (`supervisor.py:96`) does not cover `ao schedule daemon`, so without this two engines can
+   share one state dir and both launch. The module exposes a `probe_engine_lock(state_dir)` helper
+   (non-blocking try-lock-and-release) for local run-now and daemon detection (`T-Cl6Jn9`).
 2. `start()` / `tick(now=None)` / `shutdown()` / `status_snapshot()` are each independently
    callable, and **no `signal.signal(...)` appears anywhere in this module**. `start()` calls
    `FireIntentStore.reconcile_orphans(...)` and emits `schedule.fire_orphaned` per returned
@@ -70,18 +93,34 @@ Do NOT touch: `service/fire_store.py`, `service/statefile.py`, `schedules/`, `sc
 6. Overlap, per HLD §6.3/§6.4: `skip` writes a `suppressed(reason="overlap")` record (burning
    the key) and emits `schedule.skipped_overlap`; `queue` sets `state.queued_fire_key` when
    empty and emits `schedule.skipped_overlap` with `reason="queue_full"` when not, and the
-   queued fire is drained on the first tick after the active run ends; `allow` falls through to
+   queued fire is drained on the first tick after the active run ends. **F8:** write
+   `suppressed("queue_full")` only for the **non-queued** key. The queued key gets **no** record
+   until its drain launches it (otherwise the first queued fire suppresses itself under its own
+   key and the drain's `intended` write collides with the existing record, since `exists()` is
+   True in any status). State in the code that the drain bypasses the `already_fired` check for
+   exactly `queued_fire_key`; `allow` falls through to
    the concurrency caps. There is **no `replace`** — a value of `replace` is a load-time error
    in `T-Sd1Kq7`, and this module must not implement one.
 7. "Active" is derived, not cached: for each `fire_key` in `state.active_fire_keys`, the record's
-   `run_id` is checked via `run_repository_factory(root).load_state(run_id).status == "running"`
-   with `process_supervisor_factory(root).is_running(run_id)` as the PID-level probe. Keys whose
-   run reached a terminal status or whose pid is gone are retired in the same pass
-   (`retire_finished`).
-8. Catch-up, per HLD §6.5: lateness `<= grace_seconds` fires silently; lateness beyond it with
+   `run_id` is **active iff** `run_repository_factory(root).load_state(run_id).status ==
+   "running"` **and** `_alive(record)` on the **owning cached per-workspace `ProcessSupervisor`**
+   (AC1) — *not* a fresh `process_supervisor_factory(root).is_running` per call, which reports
+   zombies as alive (F2). Keys whose run reached a terminal status or whose pid is gone are
+   retired in the same pass (`retire_finished`). Without this, a crashed run (state stuck at
+   `running`, process exited) stays "active" forever, overlap `skip` suppresses the schedule
+   permanently, and `max_concurrent` slots are never released.
+8. Catch-up, per HLD §6.5 (**F7: lateness is measured from `effective_due`, not
+   `scheduled_for`** — the HLD's own example uses `jitter_seconds: 300` against a default
+   `grace_seconds` of 60, so measuring from `scheduled_for` turns every jittered fire into a
+   spurious `schedule.catch_up`, and under `catch_up: skip` a schedule that **never fires**):
+   lateness `<= grace_seconds` fires silently; lateness beyond it with
    `catch_up == "once"` and within `catch_up_window_seconds` emits `schedule.catch_up` and
    fires; anything else writes `suppressed(reason="missed")`, advances the anchor, and emits
    `schedule.missed` at WARNING.
+8a. **F13: the anchor advances whenever a key is burned** — on `missed`, `overlap_skip`,
+   `queued` and `already_fired`, not only on `missed`. Otherwise a 60 s interval stuck behind a
+   7-day overlap streak walks more than `MAX_CATCHUP_STEPS` (AC5) from a stale anchor and stops
+   at a past instant, misfiring.
 9. Jitter is deterministic: `int(fire_key[:8], 16) % (jitter_seconds + 1)`, added to
    `scheduled_for` to give `effective_due`. The **fire key is derived from `scheduled_for`, not
    from the jittered time**, so a restart mid-jitter re-derives the same key. `now <
@@ -119,6 +158,12 @@ Do NOT touch: `service/fire_store.py`, `service/statefile.py`, `schedules/`, `sc
     `jitter_pending`; a restart between them still fires exactly once.
 17. At-most-once at the engine level: two `evaluate` calls at the same instant produce one fire;
     a clock rewound by one hour produces zero additional fires.
+17a. Regression tests carried from the design review: (F7) `jitter=300, grace=60,
+    catch_up=skip` **fires** and emits no `schedule.catch_up`; (F8) queue → active run ends →
+    drain launches → the fire record goes `intended → launched` (never suppressed); (F13) a long
+    overlap streak does not exceed `MAX_CATCHUP_STEPS` and fires the right instant afterwards;
+    (F2) launch a stub child, let it exit, assert the next tick retires its fire key **and**
+    `os.waitpid` finds no zombie; (F9) a second engine on the same state dir refuses to start.
 18. Concurrency: caps enforced at both levels; the asymmetry in AC10 asserted explicitly (an
     overlap skip leaves `exists(fire_key) == True`, a concurrency skip leaves it `False`).
 19. Isolation: a binding whose evaluation raises does not prevent the next binding in the same
@@ -129,7 +174,7 @@ Do NOT touch: `service/fire_store.py`, `service/statefile.py`, `schedules/`, `sc
     early, emits `schedule.tick_budget_exceeded`, and — critically — leaves the schedules it did
     not reach in an unchanged state so the next tick picks them up.
 21. `uv run pytest -q tests/service` green with the full-suite delta reported; ruff + format
-    clean; mypy whole-tree count reported; coverage ≥80 % on `service/schedule_engine.py`.
+    clean; mypy whole-tree count reported (baseline 0 errors; F20); coverage ≥80 % on `service/schedule_engine.py`.
 
 ## Risks
 - **This module shares a process with every dashboard.** AC11 and AC20 are the blast-radius
@@ -148,7 +193,7 @@ Do NOT touch: `service/fire_store.py`, `service/statefile.py`, `schedules/`, `sc
   have landed. Read their merged code, not the HLD.
 - Declares a `ScheduledLauncher` Protocol (`launch(decision) -> FireIntentRecord`) that
   `T-Lp4Wt6` implements; unit tests here use a recording stub, never a real launcher.
-- Reads (read-only): `ui/runs.py::RunRepository`, `ui/processes.py::ProcessSupervisor.is_running`,
+- Reads (read-only): `ui/runs.py::RunRepository`, `ui/processes.py::ProcessSupervisor` (`reconcile()`, `is_running`),
   `service/registry.py`, `scheduler.py`.
 
 ## Pseudocode / Algorithm
@@ -159,7 +204,9 @@ for this task and must be implemented as written, including the ordering of the 
   status/enabled -> until -> queued-drain -> next_fire -> backlog collapse -> not_due
   -> jitter -> lateness/catch-up -> already_fired -> overlap -> concurrency -> FIRE
 
-Two orderings are load-bearing and must not be "tidied":
+HLD §6.3 was corrected by the design review (F7 lateness from `effective_due`, F8 queue path,
+F13 anchor advance); implement the *corrected* pseudocode. Two orderings are load-bearing and
+must not be "tidied":
   * `already_fired` is checked AFTER catch-up, so a missed instant burns its key exactly once.
   * `concurrency` is checked LAST, so a fire blocked only by a full machine is retried next tick.
 ```
@@ -181,8 +228,9 @@ Two orderings are load-bearing and must not be "tidied":
 - Downstream: `T-Lp4Wt6` (implements the launcher Protocol), `T-Sv5Hb3` (drives `tick()` from
   the service loop and merges `status_snapshot()` into hub status), `T-Cl6Jn9`
   (`ao schedule daemon --once` calls `tick()` directly), `T-Fw8Gp4` / `T-Wh9Kv1` (register
-  additional `Scheduler` implementations in the engine's `SCHEDULERS` map), `T-Un0Lm6` (adds the
-  `until` check at the documented point in `evaluate`).
+  additional **`TriggerSource`** implementations (AC1a); not a per-kind `SCHEDULERS` singleton),
+  `T-Un0Lm6` (adds the `until` check at the documented point in `evaluate`). **Serial edits to
+  this file (F16):** `T-Ev3Qm5` → `T-Un0Lm6` → `T-Fw8Gp4` → `T-Wh9Kv1`; they are not concurrent.
 
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Sc9Rt4-scheduler-triggers/T-Ev3Qm5-schedule-engine-core/`

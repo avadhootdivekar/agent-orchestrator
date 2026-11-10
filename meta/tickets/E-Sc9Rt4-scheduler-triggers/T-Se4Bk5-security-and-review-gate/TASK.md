@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: dev-security agent (audit) + reviewer agent (architecture) — run in parallel
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F1/F3/F4/F5/F18/F20 applied)
 - Status: Draft
 - Estimate: 2 days
 
@@ -36,13 +36,18 @@ module here; hand a structural finding back.
 
 ### Security audit (`dev-security`)
 1. **Untrusted-file audit.** Confirm by reading the code, not the docs, that a hostile
-   `.ao/schedules.yaml` cannot: inject argv beyond `ALLOWED_OPTIONS` ∪ `ALLOWED_BOOL_OPTIONS` ∪
-   `{run_id}`; set `reposets`/`agents`/`env`/`command`; escape the workspace root via `workflow`,
-   `prompt_file`, `until.*`, `watch.paths`, `webhook.secret_file`, or a symlink; or cause
+   `.ao/schedules.yaml` cannot: inject argv beyond `SCHEDULE_RUN_ARG_NAMES` (a subset of
+   `ALLOWED_OPTIONS` ∪ `ALLOWED_BOOL_OPTIONS`; F3 — in particular no `sentinel.llm.*`, no
+   `sentinel.max_parallel_ceiling`, no `cost_cap_usd`, no `run_id`); set
+   `reposets`/`agents`/`env`/`command`; escape the workspace root via `workflow`, **`template`
+   (must be a bare name — F4: `load_template` accepts a directory path)**, `prompt_file`,
+   `until.*`, `watch.paths`, `webhook.secret_file`, or a symlink; or cause
    unbounded work (`MIN_INTERVAL_SECONDS`, `max_files`, scan budget, body cap, rate limiter, tick
    budget). Report the exact grep/read evidence for each, not a checklist tick.
-2. **Argv-surface diff.** Produce `git diff` evidence that no new entry was added to
-   `ALLOWED_OPTIONS` other than `run_id`, and that no module constructs a subprocess argv outside
+2. **Argv-surface diff.** Produce `git diff` evidence that **`ALLOWED_OPTIONS` /
+   `ALLOWED_BOOL_OPTIONS` are unchanged** (F1: `run_id` is a registry `Option` with no `ui_group`
+   and an explicit `launch_run(run_id=)` kwarg, so `test_allow_list_unchanged_and_registry_
+   derived` passes unmodified; `options={"run_id": ...}` still drops), and that no module constructs a subprocess argv outside
    `ui/processes.py`. `grep -rn "Popen\|subprocess" src/agent_orchestrator/schedules
    src/agent_orchestrator/service/schedule_*` must be empty.
 3. **Webhook audit**: `hmac.compare_digest` is used (no `==` on any signature value); the HMAC
@@ -53,14 +58,24 @@ module here; hand a structural finding back.
    webhook rejection path and confirm none contains the secret, the expected signature, or the
    received signature. Report the method used, not just the conclusion.
 5. **Path-traversal fuzz**: a short parametrized sweep (`..`, absolute, `~`, symlink-out,
-   URL-encoded, NUL byte, very long) over every path-bearing schedule field, asserting a named
+   URL-encoded, NUL byte, very long) over every path-bearing schedule field **including
+   `template`** (F4), asserting a named
    rejection and no filesystem access outside the root.
 6. **Run-id guard**: `ao run --run-id` cannot create a directory outside the runs root and cannot
-   reuse an existing run's directory (`T-Ri7Dz2` AC2/AC3 re-verified independently).
+   reuse an existing run's directory (`T-Ri7Dz2` AC2/AC3/AC3a re-verified independently,
+   including the atomic `os.mkdir` reservation under two concurrent callers).
 7. **Threat-model delta**: state in one paragraph what an attacker can do after this epic that
-   they could not before, and what the trust boundary is. Confirm — or refute — the epic's claim
-   that `ao service add` remains the only trust boundary and that no exposure class is new apart
-   from the opt-in webhook.
+   they could not before, and what the trust boundary is. **F5: the delta must name workflow
+   hooks (`hooks.py`, `HookSpec.command`) and agent tool permissions** — a schedule file does not
+   add an argv surface, but a repo-authored workflow can already run arbitrary commands, and a
+   schedule runs it on a timer with no human present — **and the opt-in registry flag**
+   (`WorkspaceEntry.schedules` defaults to `false`; `ao service add --schedules` is the trust
+   boundary). Confirm — or refute — the epic's claim that `ao service add` remains the only trust
+   boundary and that no exposure class is new apart from the opt-in webhook and opted-in
+   schedules.
+7a. **Webhook vs dashboard auth (F18):** confirm the webhook app is *not* behind the session
+   `AuthMiddleware` (HMAC is its auth) and that the new dashboard routes are authenticated by
+   omission under auth (`T-Ap1Xs3` AC14a).
 
 ### Architecture review (`reviewer`)
 8. Boundaries: the engine core (`engine.py`, `executors/`, `dag.py`, `spec.py`) is untouched;
@@ -87,7 +102,7 @@ module here; hand a structural finding back.
 14. Independently re-run and report: `uv run pytest -q` (count + delta vs. the epic baseline),
     per-module coverage against the ≥80 % floor (≥90 % for `service/webhook.py`),
     `uv run ruff check .` and `ruff format --check .`, `uv run mypy src` as a whole-tree count
-    against the 4-error `_version.py` baseline, and `make ui-typecheck` / `make ui-test`.
+    against the **0-error** baseline (F20: commit `991391b` made `mypy src` clean), and `make ui-typecheck` / `make ui-test`.
     Re-run them — do not quote `T-Te3Qw8`'s numbers.
 15. Every finding is written up as `**<bold restatement of the defect>.** <explanation.> <Fixed
     here / handed to T-xxxx / documented bounded limitation.>` and classified blocking |

@@ -1,6 +1,7 @@
 # ADR-0014 — The `ao service` supervisor owns cron and event triggers; fires are at-most-once, non-backfilling, and launched through the existing run path
 
 - Status: **Proposed** (2026-09-06) — design complete, not implemented; the ten decisions below are the ones an implementer must not re-derive
+  — **amended 2026-11-10** by the "Late-gate corrections" section at the end of this file, which supersedes the specific wording it names (D5/D6/D7/D8/D9)
 - Date: 2026-09-06
 - Deciders: Avadhoot Divekar (user — decisions D1, D3, D4, D5, D8 were locked by the user before design started), Claude (architect role)
 - Related: **ADR-0012** (multi-workspace service supervisor — the daemon, registry, state dir, singleton lock, and detached-run guarantee this ADR extends rather than replaces) · **ADR-0010** (dashboard architecture — the subprocess launch path, `LaunchRecord`s, the argv allow-list, and the unauthenticated/loopback posture D7 established) · design [`scheduler-triggers-hld.md`](../scheduler-triggers-hld.md) · epic ticket [`meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md`](../../meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md) · [`meta/ROADMAP.md`](../../meta/ROADMAP.md) §1 (status row "Cron / event triggers — Spec'd, not scheduled") / §3.2 (this epic) / §3.1 (the auth gap this ADR deliberately does not close)
@@ -383,3 +384,75 @@ workflow — but it is stated here so it is a chosen posture rather than an over
 - **Roadmap effect on close.** §1's status row ("Cron / event triggers — Spec'd, not scheduled")
   and §3.2 both become deliverable; §3.1 (authentication, authorization on triggers, audit) is
   explicitly *not* addressed and its priority is unchanged.
+
+---
+
+## Late-gate corrections (2026-11-10)
+
+An Opus `architect` design review (overseer run `o-6w86nm-sched-governance`, unit `w01-06`) checked
+the HLD and all fourteen task tickets against the code **as it now stands** — the run-options
+registry, dashboard auth (E-Da5Tn9, ADR-0021), per-task isolation (ADR-0013) and the tabbed
+dashboard all landed after this ADR was written on 2026-09-06. It found 2 blockers, 8 high, 8
+medium and 6 low issues. The decision headings D1-D10 above are **not** rewritten (corrections are
+recorded, not retconned); the corrections below supersede the specific wording named. The HLD and
+tickets were edited to match (`meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md` lists every
+finding and its disposition). Epic task count is **14**, not 16.
+
+1. **D6 — `run_id` is not an `ALLOWED_OPTIONS` entry; it is an explicit `launch_run(run_id=)`
+   keyword.** D6 and HLD §3.3 treated `ALLOWED_OPTIONS` as a hand-edited dict. It is now derived
+   from the run-options registry (`ui/processes.py` `ALLOWED_OPTIONS = allowed_options()`), which
+   keeps only options with a `ui_group`; `_render_options` silently drops every other key, so
+   `options={"run_id": ...}` would never reach argv. Giving the option a `ui_group` would add a
+   dashboard form field, change the security-pinning allow-list test, and make `launch_resume`
+   (which already renders `--run-id`) emit a duplicate flag. The corrected design: a registry
+   `Option("run_id", ...)` with no `env`/`config`/`ui_group` (so `AO_RUN_ID`, exported into hooks,
+   is never inherited), the allow-list **unchanged**, and an explicit keyword on `launch_run` that
+   renders the flag from the registry. The duplicate-id guard is an atomic `os.mkdir` reservation
+   (not check-then-run), and the id reaches `RunStateStore.new_run` through an
+   `Orchestrator.run(..., run_id=None)` keyword — the one sanctioned `engine.py` edit — because the
+   engine treats `run_state is None` as "fresh run". The live allow-list is also larger than D6/§3.3
+   listed (14 value + 3 bool, not 8+1).
+2. **D5/D1 — liveness must go through one long-lived `ProcessSupervisor` per workspace.** A fresh
+   `ProcessSupervisor` falls back to `os.kill(pid, 0)`, which is true for a zombie, and nothing in
+   the daemon reaps; finished scheduled runs would stay "active" forever, permanently suppressing
+   overlap-`skip` schedules and never releasing `max_concurrent` slots. The engine owns the cached
+   per-workspace instance, injects it into the launcher and `reconcile()`s it every tick. Every
+   engine also holds an exclusive `schedules/engine.lock` so two evaluators (service +
+   `ao schedule daemon`, or a misjudged local `run-now`) can never share a state dir; daemon
+   detection probes that lock rather than the hub.
+3. **D9 — `RunArgs` is a curated `SCHEDULE_RUN_ARG_NAMES` subset, not "exactly the allow-list".**
+   The live allow-list includes `sentinel.llm.powers`, `sentinel.llm.budget_usd` and
+   `sentinel.max_parallel_ceiling`; mirroring it would let an untrusted file grant LLM powers and
+   raise spend. **Owner decision (recorded at the reviewer's recommended default):** the subset is
+   `model, turn_budget, effort, thinking_effort, autocompact, max_attempts, max_turns,
+   max_parallel, budget_total, quota_max_wait, quota_poll_interval, self_heal, sentinel.enabled`.
+   `template` must be a bare name (never a path — `load_template` accepts a directory), and
+   schedule ids are capped at 64 characters.
+4. **D9 / NFR-3 — scheduling removes the human from the loop, so it is opt-in.** "No new argv
+   surface" was true but misleading: workflow specs already declare argv hooks and agent tool
+   permissions, and a schedule runs them on a timer unattended. **Owner decision (recommended
+   default):** `WorkspaceEntry.schedules` defaults to **`false`**; the operator opts a workspace in
+   with `ao service add --schedules` / `ao service set --schedules`. The threat-model delta must
+   name hooks and this default.
+5. **D8 — the hub is no longer unauthenticated by design.** ADR-0021 added optional session auth
+   to the hub and dashboards. The decision stands (a separate HMAC listener on its own port), but
+   the rationale changes: a machine caller has no login session, so the webhook app is **not**
+   wrapped in the session `AuthMiddleware`. New dashboard routes are authenticated by omission.
+   Additionally a verified webhook delivery is **persisted** as an fsync'd drop-directory request
+   (`kind: webhook`) instead of an in-memory queue, so a crash cannot lose an acknowledged delivery
+   and a separate `ao schedule daemon --once` process can see it.
+6. **D7 — event triggers use a `TriggerSource` protocol, not the `Scheduler` ABC alone.** A
+   side-effecting `next_fire` made `ao schedule next` swallow pending file events and made a
+   concurrency skip lose them; `Trigger.type` has no `file_watch`/`webhook` members to adapt to.
+   `Scheduler` stays pure for cron/interval; event kinds implement `observe` (read-only) and
+   `commit` (called by the engine only once the fire key is burned or launched).
+7. **D4/D3 — evaluation algorithm fixes.** Lateness is measured from `effective_due`, not
+   `scheduled_for` (jitter above `grace_seconds` otherwise turns every fire into a catch-up, or a
+   permanent miss under `catch_up: skip`); an `overlap: queue` first-queued fire writes no
+   suppressed record under its own key; the anchor advances whenever a key is burned; `fire_key`
+   and the minted run id normalise `scheduled_for` to UTC.
+8. **Carried limitation updates.** Per-task isolation (ADR-0013) has landed, so the "until it
+   lands" caveat above is obsolete: `integration.workspace_lock: require` workflows now degrade at
+   startup when a scheduled run overlaps a manual one, and `max_concurrent` counts scheduled runs
+   only. `mypy src` baseline is 0 errors (it was 4). Boot-resume has the same fresh-supervisor
+   zombie leak as item 2 (out of scope here; backlog).

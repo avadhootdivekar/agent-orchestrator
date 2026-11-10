@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F11/F20 applied)
 - Status: Draft
 - Estimate: 2 days
 
@@ -34,8 +34,11 @@ Do NOT touch: `service/boot_resume.py`, `service/registry.py`, `service/supervis
 
 ### Fire-intent store
 1. `fire_key(workspace_root, schedule_id, scheduled_for) -> str` is
-   `sha256(f"{root}|{schedule_id}|{scheduled_for.isoformat()}").hexdigest()`, a module-level
-   pure function, with `workspace_root` normalized via the same `str(Path(x).resolve())`
+   `sha256(f"{root}|{schedule_id}|{scheduled_for.astimezone(UTC).isoformat()}").hexdigest()`, a
+   module-level pure function (F11: **normalise `scheduled_for` to UTC before hashing** — cron
+   returns instants in the binding's tz (`scheduler.py:58-61`) while interval anchors and
+   rehydrated state are UTC, so the same instant could otherwise serialise two ways, give two keys
+   and double-fire after a restart or a tz edit), with `workspace_root` normalized via the same `str(Path(x).resolve())`
    expression `service/registry.py` uses. `scheduled_for` must be timezone-aware; a naive
    datetime raises rather than silently producing a different key.
 2. `FireIntentRecord` (pydantic) carries every field in HLD §5.3 with
@@ -92,7 +95,8 @@ Do NOT touch: `service/boot_resume.py`, `service/registry.py`, `service/supervis
 13. Durability: a spy asserting `os.fsync` is called inside `write()`; a truncated `.tmp` file
     left in the directory is never returned by `list()` or `get()`.
 14. Key stability: the same `(root, schedule_id, scheduled_for)` yields the same key across
-    processes; a non-normalized root yields the same key as its resolved form; a naive
+    processes; the same instant expressed in `UTC` and in `America/New_York` yields the **same**
+    key (F11); a non-normalized root yields the same key as its resolved form; a naive
     `scheduled_for` raises.
 15. State: `record_fire` increments `runs_count` and sets `last_run_id`/`last_fire_at`;
     `bump_eval_error` five times then a `clear_eval_errors` resets; a corrupt `state.json` is

@@ -5,7 +5,7 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: tester agent
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
+- Last Updated: 2026-11-10 (Opus design review w01-06: F1/F2/F7/F8/F9/F10/F14/F20 applied)
 - Status: Draft
 - Estimate: 3 days
 
@@ -53,8 +53,9 @@ with the owning task named.)
 ### Integration tier (real engine, stubbed processes, single-stepped)
 4. `ScheduleEngine` + a real temp state dir + a fake registry + `tests/ui/conftest.py`'s
    `StubSupervisor`: assert `launch_run` was called with the **exact** expected kwargs — workflow
-   path, prompt text, reposets, agents, and the full options dict including the constructed
-   `run_id`. No process is spawned anywhere in this module.
+   path, prompt text, `workspace`, the `RunArgs` options dict, and the constructed `run_id` as the
+   **explicit `run_id=` kwarg** (F1; not an `options` key). **F10: no `reposets`/`agents` kwargs
+   are asserted** — the launcher passes neither. No process is spawned anywhere in this module.
 5. Restart-mid-fire: write an `intended` fire record with a dead pid and no run directory, call
    `engine.start()`, assert the record becomes `orphaned`, that **zero** launches occurred, and
    that a subsequent `tick()` at the same `scheduled_for` also produces no launch (the burned
@@ -72,6 +73,13 @@ with the owning task named.)
    `build_hub_app(build_status_provider(supervisor, schedule_engine=engine))` contains the
    `schedules` key with HLD §12's shape, and `hub.py` is confirmed unmodified by this epic
    (`git log --oneline -- src/agent_orchestrator/service/hub.py`).
+8a. **Regression tests carried from the design review** (each its own test): (F2) a stub child
+    launched through the engine's shared supervisor exits, and the next tick retires its fire key
+    and `os.waitpid` finds no zombie — a zombie must not hold "active"; (F7) `jitter=300,
+    grace=60, catch_up=skip` fires; (F8) overlap `queue` → active run ends → drain launches → the
+    fire record goes `intended → launched`; (F9) two-engine refusal: a second engine (service or
+    `ao schedule daemon`) on the same state dir refuses to start, and `run-now --local` queues
+    instead of firing while an engine holds `engine.lock`.
 9. Drop directory: a request file produces exactly one fire; an expired one produces none and
    emits `schedule.request_expired`; a malformed request file is discarded with a warning and
    does not stop the drain.
@@ -79,18 +87,23 @@ with the owning task named.)
 ### End-to-end tier (via `CliRunner` on the root app)
 10. Full CLI lifecycle: `ao schedule add` → `list` → `validate` → `disable` → `enable` →
     `history` → `remove`, asserting `.ao/schedules.yaml` content and exit codes after each.
-11. **The headline e2e**: a temp workspace with a `fake`-executor workflow and a `kind: interval,
+11. **The headline e2e**: a temp workspace (registered with `schedules: true` — the opt-in
+    default is `false`, F5) with a `fake`-executor workflow and a `kind: interval,
     interval_seconds: 60` binding, driven by `ao schedule daemon --once` with an injected clock —
     assert a real run directory appears, its `status.json` is `succeeded`, its id is exactly the
-    `ao-<schedule_id>-<ts>` string `T-Lp4Wt6` constructs, and the fire record links
+    `ao-<schedule_id>-<ts>` string `T-Lp4Wt6` constructs (UTC-normalised; produced through the
+    explicit `run_id` seam of `T-Ri7Dz2`, F1), and the fire record links
     `fire_key → run_id`. A second `--once` immediately after produces zero fires.
 12. `ao schedule run-now` with no daemon running: a run directory appears; with a simulated live
     daemon: a request file appears and the CLI process launched nothing.
 13. File-watch e2e: touch the watched file, advance the fixed clock past the debounce, `--once`
     ⇒ exactly one run; `--once` again with no change ⇒ none; write into `.orchestrator/` ⇒ none
     (the self-trigger guard).
-14. Webhook e2e: `TestClient` posts a correctly-signed delivery to the listener app, then
-    `--once` fires it and a run appears; a replayed delivery is 409 and produces no second run.
+14. Webhook e2e: `TestClient` posts a correctly-signed delivery to the listener app, which
+    persists it as an fsync'd `requests/` file (`kind: webhook`, F14); a **separate** `--once`
+    engine process reads it, fires it and a run appears (this is why the in-memory queue could
+    not satisfy this AC); a replayed delivery is 409 and produces no second run; a simulated
+    crash between the 202 and the next tick loses nothing.
 15. `until` e2e: three fires against `max_runs: 3`, the fourth tick reports `until_satisfied` and
     the schedule shows `completed` in `ao schedule list`; `ao schedule enable` then allows a
     fourth fire.
@@ -103,7 +116,7 @@ with the owning task named.)
 17. Report the full-suite count before and after (`uv run pytest -q`), the per-module coverage
     for every new module against the ≥80 % floor (≥90 % for `service/webhook.py`), `ruff check` /
     `ruff format --check` status, and `uv run mypy src` as a whole-tree count against the
-    4-error `_version.py` baseline. Numbers, not adjectives.
+    **0-error** baseline (commit `991391b` made `mypy src` clean; F20). Numbers, not adjectives.
 18. Explicitly state what is **not** exercised and why — no real `ao ui`/uvicorn child, no real
     agent CLI, no real systemd, no network — mirroring the "what this does not cover" paragraph
     `multi-workspace-service-hld.md` §10 uses. A gap that is named is a decision; a gap that is
@@ -118,12 +131,13 @@ with the owning task named.)
   loses `tests/ui/conftest.py`'s autouse fixtures, and the resulting 421s look like an app bug.
 - AC16 needs a captured pre-epic `ao service status` fixture. Capture it **before** the epic's
   code is on the branch, or reconstruct it from `git show <baseline>:` — say which was done.
-- Scope: 16 ACs in 3 days is tight. If it slips, integration (AC4-9) and AC11/AC16 are the ones
+- Scope: ~20 ACs in 3 days is tight. If it slips, integration (AC4-9) and AC11/AC16 are the ones
   that must land; the per-trigger e2e tests (AC13-15) can follow into Sprint 3's buffer.
 
 ## Dependencies
 - Every implementation task through `T-Ap1Xs3` must have landed. `T-Fw8Gp4` / `T-Wh9Kv1` /
-  `T-Un0Lm6` / `T-Ap1Xs3` gate AC13 / AC14 / AC15 / (part of) AC10 respectively — write the rest
+  `T-Un0Lm6` / `T-Ap1Xs3` gate AC13 / AC14 / AC15 / (part of) AC10 respectively (the engine-file
+  tasks land serially: `T-Ev3Qm5` → `T-Un0Lm6` → `T-Fw8Gp4` → `T-Wh9Kv1`, F16) — write the rest
   first rather than waiting.
 - Reads (read-only): `tests/ui/conftest.py` (`StubSupervisor`, `write_run`, `make_run_state`,
   `write_workflow`, `_allow_testclient_host`), `tests/service/test_supervisor.py`
