@@ -1,11 +1,15 @@
 # STATUS
 
 - ID: `T-Dc6Zr2-docs-refresh`
-- Updated At: 2026-09-06
-- State: Draft
-- Owner: TBD (architect or dev-epic, at epic close)
+- Updated At: 2026-11-11
+- State: Partial — docs reconciled with landed code; epic NOT closed (see Unfinished)
+- Owner: developer agent (overseer unit w20-07-a1-docs-refresh)
 
-## This update
+## This update — 2026-11-11 (developer, unit `w20-07-a1-docs-refresh`)
+- **Done:** HLD status header + §8.2 (scheme pinning, per-schedule nonce cache, extra statuses/reasons) + §9.1 (CLI flags actually shipped; `--watch`/`--from-workflow` marked NOT shipped) + §12 (full event table) + new §21 *Deviations* (11 entries), §22 *Delivery status*, §23 *Constants sweep*; ADR-0014 status + "Late-gate corrections (2026-11-11)"; LLD §7/§12 + `Trigger` snippet; README `ao schedule` section + `interval` trigger row; ROADMAP §1 row, §2d, §3.2, §4 (limitations a-j; §3.1 untouched); ai-epics evidence log, traceability table, close-out; new operator guide `docs-md/guide-scheduled-runs.md` (AC9: nightly / laptop off / overlap / stop / git push / why-not-fired); ticket sync (EPIC checkboxes, T-Ri7Dz2, T-Un0Lm6, T-Te3Qw8, T-Se4Bk5, this ticket).
+- **Spot-checked against code, not reports (AC10):** all 11 constants and the default webhook port/rate/binding defaults by `grep` in `src/` (HLD §23); the five dashboard routes in `ui/app.py:566-594` and the UI files' existence; `ao schedule` subcommands and flag set by grepping `typer.Option` in `schedules/cli.py` (found `--watch`/`--from-workflow` absent); webhook verification path by reading `verify_delivery` and `make_webhook_app` (scheme pin, status codes, reasons); emitted event names by `grep` of `src` vs `EVENT_LEVELS`; `Trigger` model in `models.py:718`; test counts by `def test_` count per file; suite run: 1233 passed / 1 failed (`test_hld_event_table_is_complete`, stale vs uncommitted governance events), ruff clean on service+schedules, `mypy src` 0 errors.
+- **Not checked:** the §5.3 state-dir layout file-by-file (only `engine.lock`, `events.jsonl`, `state.json`, `requests/`); the dashboard panel's runtime behaviour (no browser run); webhook scheme pinning exists only in the uncommitted working tree (`service/webhook.py`, `schedules/models.py`, `schedules/cli.py`) — docs describe it as landed code in the tree, flag **[wt]**.
+- **Unfinished:** epic close (T-Se4Bk5 not started; T-Te3Qw8 partial); ROADMAP/README were not re-verified for unrelated rows; the stale `test_hld_event_table_is_complete` belongs to the governance carry-over unit, not touched here.
 - Ticket created by the `architect` agent as part of the E-Sc9Rt4 design package. Not started.
 - Scope: post-implementation reconciliation of `docs-md/`, ADR-0014, `lld-agent-orchestrator.md`
   §7/§12, the ai-epics page, `meta/ROADMAP.md` §1/§2/§3.2/§4, `README.md`, and the full ticket

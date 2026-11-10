@@ -6,6 +6,7 @@
 - Owner: TBD (assigned at sprint start)
 
 ## This update
+- **2026-11-11 (docs reconciliation w20-07):** still **Not started** — no audit/review report exists. Per-task reviews (webhook H1/M1-M3, file-watch, CLI, launcher) are not a substitute. The epic cannot close until this runs. Carried into HLD §22.
 - Ticket created by the `architect` agent as part of the E-Sc9Rt4 design package. Not started.
 - Scope: the late gate — a `dev-security` audit of the untrusted `.ao/schedules.yaml` surface and the webhook listener, plus a parallel `reviewer` architecture pass, each reporting blocking / should-fix / bounded-limitation findings with evidence.
 

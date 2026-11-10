@@ -93,8 +93,9 @@ class WorkflowDefaults(BaseModel):
     timeout_seconds: int = 1800
 
 class Trigger(BaseModel):
-    type: Literal["manual","cron","event"]
+    type: Literal["manual","cron","event","interval"]
     schedule: str | None = None     # cron expr when type==cron
+    interval_seconds: int | None = None  # required when type==interval (>=1, <= MAX_INTERVAL_SECONDS)
     timezone: str = "UTC"
     event: str | None = None        # event key when type==event
 
@@ -195,7 +196,9 @@ class Scheduler(ABC):
 ```
 - `ManualScheduler`: returns `None` (fired on demand).
 - `CronScheduler(clock: Callable[[], datetime] = utcnow)`: uses `croniter` to compute next fire after `now` in `trigger.timezone`. **Clock is injectable** so tests use a fixed clock (deterministic per CLAUDE.md).
-- `event` triggers: MVP exposes the interface + a file-watch stub (`EventScheduler` returns when a sentinel path appears); full event system is non-MVP.
+- `IntervalScheduler`: fixed-period trigger (`interval_seconds`).
+- Event triggers are **no longer non-MVP** (E-Sc9Rt4): the ABC now has five implementations — `ManualScheduler`, `CronScheduler`, `IntervalScheduler`, and the event sources `FileWatchScheduler` (`service/watch.py`, polling) and `WebhookScheduler` (`service/webhook.py`, HMAC-authenticated). The original `EventScheduler` sentinel stub is superseded.
+- **Who calls it:** `scheduler.py` only defines triggers. The `ScheduleEngine` (`service/schedule_engine.py`, inside `ao service run`) evaluates `.ao/schedules.yaml` bindings and launches runs; it is not part of the run engine. Not to be confused with `scheduling/` (task co-scheduling within one run) or the `schedules/` package (binding model, store, `ao schedule` CLI). See [`scheduler-triggers-hld.md`](scheduler-triggers-hld.md), [`guide-scheduled-runs.md`](guide-scheduled-runs.md).
 
 ## 8. Engine (`engine.py`)
 ```python
@@ -303,6 +306,7 @@ ao run       --workflow ...  [--reposets ...] [--agents ...]
 ao resume    --run-id <id>   [--workflow ...] [--reposets ...] [--agents ...]
 ao status    --run-id <id>   [--workflow ...] [--reposets ...] [--agents ...]
 ao prune     --workspace <path> [--older-than N] [--dry-run]
+ao schedule  list|next|history|validate|add|remove|enable|disable|run-now|daemon   # see scheduler-triggers-hld.md §9
 ```
 
 `run` and `resume` accept the full set of runtime overrides:

@@ -156,7 +156,7 @@
   `ScheduleStateStore`, `ScheduleEventLog` (FR-7, FR-10) — 2 d
 - [x] `T-Ev3Qm5-schedule-engine-core` — `service/schedule_engine.py`: evaluate/tick, overlap,
   catch-up, jitter, concurrency, quarantine (FR-2, FR-4, FR-5, FR-6, NFR-2) — 3 d
-- [ ] `T-Ri7Dz2-run-id-flag` — `ao run --run-id` with duplicate-id refusal (FR-8) — 1 d
+- [x] `T-Ri7Dz2-run-id-flag` — `ao run --run-id` with duplicate-id refusal (FR-8) — 1 d
 - [x] `T-Lp4Wt6-scheduled-launcher` — `service/schedule_launch.py`: two-phase launch, template
   instantiation per fire, `run_args` → existing options allow-list (FR-7, FR-8, NFR-3) — 2 d
 - [x] `T-Sv5Hb3-service-integration` — registry additions, `ao service run` wiring,
@@ -166,12 +166,12 @@
 - [~] `T-Wh9Kv1-webhook-ingress` (core landed; CLI flags + daemon e2e pending T-Cl6Jn9) — `service/webhook.py`, listener app, `WebhookScheduler` (FR-12,
   NFR-3) — 3 d
 - [~] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d — landed 2026-11-11 (AC13 done; coverage report unfinished)
-- [ ] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d
-- [ ] `T-Te3Qw8-integration-e2e-suite` — cross-module integration + `CliRunner` e2e tiers
+- [~] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d — implemented 2026-11-11, awaiting review
+- [~] `T-Te3Qw8-integration-e2e-suite` (per-trigger e2e tier landed, 11 tests; rest open) — cross-module integration + `CliRunner` e2e tiers
   (all FRs, NFR-1, NFR-2, NFR-4) — 3 d
 - [ ] `T-Se4Bk5-security-and-review-gate` — `dev-security` audit of the untrusted-file and
   webhook surfaces + `reviewer` architecture pass + NFR-6 re-verification (NFR-3, NFR-6) — 2 d
-- [ ] `T-Dc6Zr2-docs-refresh` — reconcile `docs-md/` + ADR-0014 + ROADMAP §1/§3.2 with what was
+- [~] `T-Dc6Zr2-docs-refresh` (partial 2026-11-11: HLD §21-23, ADR, LLD, README, ROADMAP, ai-epics, guide done; epic close-out blocked on T-Se4Bk5) — reconcile `docs-md/` + ADR-0014 + ROADMAP §1/§3.2 with what was
   actually built, including deviations (all) — 2 d
 
 **Total: 14 tasks (the overseer charter's "16 tasks" was wrong; F19), 32 person-days across 3 sprints. See `STATUS.md` for the capacity math and sprint

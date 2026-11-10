@@ -14,6 +14,7 @@ multi-agent workflows to completion — with retries, resume, and full artifact 
 - [CLI reference](#cli-reference)
 - [Dashboard (`ao ui`)](#dashboard-ao-ui)
   - [Authentication](#authentication)
+- [Scheduled runs](#scheduled-runs-ao-schedule)
 - [Workflow templates](#workflow-templates)
 - [General instructions](#general-instructions)
 - [Environment variables](#environment-variables)
@@ -432,6 +433,21 @@ errors), so the dashboards would start *unauthenticated* with no error. After up
 on the roadmap, not in this release. The run graph above is read-only.
 
 ---
+
+## Scheduled runs (`ao schedule`)
+
+`ao service run` can fire workflows on a cron/interval, on file changes, on an authenticated webhook (e.g. a git push),
+and stop them with an `until` condition. Bindings live in `<workspace>/.ao/schedules.yaml`; the workspace must opt in
+(`ao service add ... --schedules`).
+
+```bash
+ao schedule add nightly --cron "0 2 * * *" --workflow workflows/epic-runner/runs/x/workflow.json
+ao schedule list | next | history | validate | enable ID | disable ID | run-now ID | remove ID
+```
+
+Guide (nightly runs, missed runs, overlap, stopping, webhooks, "why didn't it fire"):
+[`docs-md/guide-scheduled-runs.md`](docs-md/guide-scheduled-runs.md); design: [`docs-md/scheduler-triggers-hld.md`](docs-md/scheduler-triggers-hld.md).
+Not yet shipped: `ao schedule add --watch`, `--from-workflow` (file-watch is YAML-only).
 
 ## Workflow templates
 
@@ -983,6 +999,9 @@ Full schemas are in `specs/` and are authoritative (validated by `ao validate`):
 | `manual` | — | `{"type": "manual"}` |
 | `cron` | `schedule` (5/6-field cron), `timezone` | `{"type": "cron", "schedule": "0 7 * * *"}` |
 | `event` | `event` (key) | `{"type": "event", "event": "pr-merged"}` |
+| `interval` | `interval_seconds` (≥ 1) | `{"type": "interval", "interval_seconds": 3600}` |
+
+A trigger in a workflow file does not run anything by itself. To actually schedule runs, see [Scheduled runs](#scheduled-runs-ao-schedule).
 
 ### Agent executor types (agents.json → agents → executor)
 

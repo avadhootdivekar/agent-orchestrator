@@ -41,7 +41,7 @@ ships a browser dashboard.
 | **Cross-run result cache (`ao run --cache`, `ao cache`)** | **New, opt-in** | Reuses an identical, previously successful task's declared outputs instead of re-dispatching the agent. Double opt-in (operator flag + `cache: true` per task), default off, `shadow` measure-only mode. NOT prompt caching. E-Rc4Hk8 / ADR-0019 — §2c. **Value unproven: G0 not yet run.** |
 | Authentication / multi-user | **New, opt-in** | Local accounts + optional TOTP 2FA for `ao ui` and the `ao service` hub (E-Da5Tn9, ADR-0021). Per-realm sessions, no roles/SSO yet — §3.1. |
 | **Workspace-only mode (no `repo_set`)** | **New** | A workflow may omit `repo_set`; reposets file optional, `--workspace` on `ao run`/`resume`, all I/O and run state under one workspace dir; git features degrade (isolation → none). ADR-0022, `docs-md/no-repo-set-mode-hld.md`; example `specs/examples/workflow-no-repo-set.json`. |
-| Cron / event triggers | **Designed, not built** | `Trigger` model exists; no daemon runs it yet. Service-owned scheduler designed (E-Sc9Rt4, ADR-0014) — §3.2. |
+| Cron / event triggers | **Mostly shipped, opt-in, epic not closed** | `ao service` fires cron/interval/file-watch/webhook schedules from `.ao/schedules.yaml`, `until` termination, `ao schedule` CLI, dashboard panel (E-Sc9Rt4, ADR-0014) — §2d. Security gate + e2e suite unfinished. Webhook HMAC is **not** the auth epic (§3.1). |
 
 ### Recently delivered
 
@@ -58,9 +58,9 @@ ships a browser dashboard.
 
 - **No-repo-set (workspace-only) mode** (2026-10-07, ADR-0022, overseer run `o-969ifr-requirement` ask A2): optional `repo_set`/reposets, single workspace resolver, `--workspace` on run/resume, dashboard + boot-resume support, optional template param, example workflow, docs.
 
-### Designed, awaiting implementation (2026-09-07)
+### Mostly landed, not closed (2026-11-11)
 
-- **E-Sc9Rt4 — Service-owned scheduler & triggers** (ADR-0014, `docs-md/scheduler-triggers-hld.md`): `ScheduleEngine` inside `ao service`, `.ao/schedules.yaml` bindings, cron/interval + file-watch/webhook/`until` triggers, `skip|queue|allow` overlap, bounded catch-up, at-most-once fire store, `ao run --run-id`, `ao schedule` CLI + dashboard panel. 14 tasks / ~32 d.
+- **E-Sc9Rt4 — Service-owned scheduler & triggers** (ADR-0014, `docs-md/scheduler-triggers-hld.md`, operator guide `docs-md/guide-scheduled-runs.md`): see §2d. 14 tasks; 6 Done, 7 partial/in review (incl. `T-Te3Qw8`), 1 not started (`T-Se4Bk5`).
 
 ---
 
@@ -200,6 +200,13 @@ It is **not** Claude prompt caching (that is ADR-0015's separate scope).
 
 ---
 
+## 2d. Just landed: scheduler & triggers (E-Sc9Rt4, 2026-11-11 — not closed)
+
+- `ScheduleEngine` inside `ao service run` (opt-in per workspace, kill switches `--no-schedules`), bindings in `<workspace>/.ao/schedules.yaml`: `cron`, `interval`, `file_watch`, `webhook`; `skip|queue|allow` overlap, bounded catch-up, at-most-once fire store, `until` termination, `ao run --run-id`.
+- `ao schedule list|next|history|validate|add|remove|enable|disable|run-now|daemon`; dashboard **Schedules** panel + 5 `/api/schedules` routes; hub status `schedules` key; a pre-fire governance gate (budget/quota/pause-resume, `scheduled-run-governance-hld.md`).
+- Webhook listener is separate, default-off (`--webhook`, port 8771), HMAC-authenticated with the signature scheme pinned per binding (`ao` | `github`).
+- **Unfinished:** `ao schedule add --watch` / `--from-workflow`, event-kind `next`, comment-preserving `save`, the rest of the integration/e2e suite (`T-Te3Qw8`) and the security/architecture gate (`T-Se4Bk5`). Details: HLD §22.
+
 ## 3. Next 3–6 months
 
 Ordered by dependency, not by calendar. Each bullet is roughly epic-sized.
@@ -240,11 +247,11 @@ Still open from the original security list:
 
 ### 3.2 Scheduling and triggers
 
-`Trigger` (manual / cron / event) is modelled and validated but nothing executes a schedule.
+*Largely delivered by E-Sc9Rt4 / ADR-0014 (§2d): scheduler daemon, file-watch and webhook triggers, dashboard surface.* What genuinely remains:
 
-- A scheduler daemon that owns cron triggers and materializes runs. *Designed: E-Sc9Rt4 / ADR-0014 — the `ao service` supervisor owns it.*
-- Event triggers (file watch, webhook) behind the same interface.
-- Dashboard surface for upcoming/recent scheduled runs.
+- Finish E-Sc9Rt4: the `dev-security` + architecture gate (`T-Se4Bk5`), the remaining e2e tier (`T-Te3Qw8`), `ao schedule add --watch` / `--from-workflow`.
+- Authentication and authorization *on triggers* is **not** covered by the webhook HMAC — it stays under §3.1.
+- Catch-up/overlap beyond `skip|queue|allow`, calendar-aware schedules, multi-host scheduling: not designed.
 
 ### 3.3 Dashboard depth
 
@@ -380,6 +387,7 @@ These are accepted trade-offs. They are recorded so they are chosen rather than 
   dirty tracked edits made before the lookup; the guard-3 probe can execute a `filter.<x>.clean`
   command from the git config; the cache directory is agent-writable. All opt-in; `--no-cache`
   for untrusted work. See §2c.
+- **Scheduler limitations (E-Sc9Rt4).** (a) DST fall-back can double-fire a local-time cron hour — use `timezone: UTC`. (b) At-most-once: a crash mid-fire loses that run (never duplicates it). (c) Webhook nonce cache and rate buckets are in memory and reset on daemon restart. (d) `launch_id` has microsecond resolution. (e) Per-task isolation has landed (`isolation/runlock.py`, `WorkspaceRunLock`): a scheduled run alongside a manual run in a workspace whose workflow uses `integration.workspace_lock: require` degrades at startup, and `max_concurrent` counts scheduled runs only, not manual ones. (f) Minted run ids have no duplicate guard — two un-flagged `ao run`s of the same workflow in the same second mint the same `<wf>-<seconds>` id (`runstate.py`; scheduled runs use `--run-id`, which does guard). (g) The engine can schedule a workspace the supervisor is not watching until restart (registry loaded once vs re-read). (h) Boot-resume's fresh `ProcessSupervisor` can leak zombies (`supervisor.py`, F2 backlog note). (i) A `github`-scheme webhook has no time bound (GitHub sends no timestamp); only the nonce cache limits replay. (j) `ao schedule` writes to `schedules.yaml` drop comments.
 
 ---
 

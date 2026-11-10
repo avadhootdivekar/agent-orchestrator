@@ -1,6 +1,6 @@
 # Scheduler daemon — cron & event triggers owned by `ao service` — HLD (E-Sc9Rt4)
 
-- Status: Proposed / design complete — not implemented. Owner decisions in §16 taken at the recommended defaults.
+- Status: **Mostly shipped (2026-11-11, branch `ad/enhancements-10nov`) — NOT closed.** Cron/interval, fire store, launcher, service wiring, `ao schedule` CLI, file-watch core, webhook ingress (HMAC, scheme pinning), `until`, dashboard panel and the pre-fire governance gate are in the tree and were spot-checked against `src/` (§21–§23); the security gate `T-Se4Bk5`, the e2e suite `T-Te3Qw8` and several CLI/e2e items are **unfinished** (§22). Where this document and the code disagree, §21 says which is right. Owner decisions in §16 taken at the recommended defaults.
   **Amended 2026-11-10** after the Opus design review (`w01-06`): §3.3, §6.1, §6.3, §6.4, §6.6, §6.7, §6.9, §7.1, §7.2, §8, §9.2 corrected against the current code (finding ids F1-F23 in `meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md`; ADR-0014 "Late-gate corrections"). Where this document and a ticket disagree, the ticket's AC (same date) wins.
 - Related: [`ADR-0014`](adr/ADR-0014-service-owned-scheduler-and-triggers.md) (this epic's decisions) · [`ADR-0012`](adr/ADR-0012-multi-workspace-service-supervisor.md) (the supervisor this scheduler lives in) · [`ADR-0010`](adr/ADR-0010-dashboard-architecture-and-general-instructions.md) (launch records, loopback/unauthenticated posture) · [`multi-workspace-service-hld.md`](multi-workspace-service-hld.md) · [`workflow-templates-hld.md`](workflow-templates-hld.md) (`ao new`, params) · [`logging-dynamic-workflows-hld.md`](logging-dynamic-workflows-hld.md) (`LoopSpec`, the *intra*-run loop this document deliberately does not duplicate) · epic ticket [`meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md`](../meta/tickets/E-Sc9Rt4-scheduler-triggers/EPIC.md) · roadmap [`§3.2`](../meta/ROADMAP.md)
 
@@ -952,8 +952,11 @@ FUNCTION handle_webhook(ws_slug, schedule_id, headers, raw_body):
       RETURN 401 IF binding IS NULL ELSE 503     # unknown == bad-signature, deliberately
   # X-AO scheme signs "{ts}.{body}" and REQUIRES X-AO-Timestamp; GitHub's X-Hub-Signature-256
   # signs the body only. (Review w15-02 H1: the delivery-id header is NOT signed.)
-  ts  = headers.get("X-AO-Timestamp") IF "X-AO-Signature" in headers ELSE NULL
-  sig = headers.get("X-AO-Signature") OR headers.get("X-Hub-Signature-256")
+  # Scheme is PINNED per binding (webhook.scheme: ao | github, default ao). The other scheme's
+  # signature header present => 401 reason=wrong_scheme (an ao signature is also a valid github
+  # signature over "{ts}."+body, so accepting both would let one defeat the other's replay bound).
+  ts  = headers.get("X-AO-Timestamp") IF scheme == "ao" ELSE NULL
+  sig = headers.get("X-AO-Signature") IF scheme == "ao" ELSE headers.get("X-Hub-Signature-256")
   signed = ts + "." + raw_body IF ts IS NOT NULL ELSE raw_body
   expected = "sha256=" + hmac_sha256_hex(secret, signed)
   IF sig IS NULL OR NOT hmac.compare_digest(sig, expected):
@@ -962,7 +965,8 @@ FUNCTION handle_webhook(ws_slug, schedule_id, headers, raw_body):
       emit("webhook.rejected", reason="stale");  RETURN 401
   delivery = headers.get("X-AO-Delivery") OR headers.get("X-GitHub-Delivery") OR sha256(raw_body)
   # nonces are per (workspace, schedule): sha256(signed) ALWAYS, plus the delivery id when sent
-  IF sha256(signed) IN nonce_cache OR delivery IN nonce_cache:       # bounded LRU, 1024 entries
+  IF sha256(signed) IN nonce_cache OR (delivery_id_sent AND delivery IN nonce_cache):
+                                                  # per-schedule LRU, capacity max(NONCE_MIN_ENTRIES=64, 2 x rate x window)
       emit("webhook.rejected", reason="duplicate");  RETURN 409
   IF NOT rate_limiter.allow(ws_slug, schedule_id):                   # token bucket, default 10/min
       emit("webhook.rejected", reason="rate_limited");  RETURN 429
@@ -988,8 +992,18 @@ Notes that are design decisions, not implementation detail:
   key is a named validation error pointing at the two alternatives. A `secret_file` whose mode is
   group/world-readable is refused (`503` + `webhook.secret_permissions`), matching the ssh-key
   convention operators already expect.
-- **Timestamp is optional** so a stock GitHub webhook (which sends no timestamp header) works;
-  when absent, the nonce cache is the only replay defense, which is why it is mandatory.
+- **Timestamp is required for `scheme: ao`, absent for `scheme: github`** (a stock GitHub webhook sends no
+  timestamp); a `github` binding therefore has no time bound and the nonce cache is its only replay
+  defense, which is why it is mandatory. *(Corrected 2026-11-11: the original text made the timestamp
+  optional for any caller; the code pins the scheme, see §21 D2.)*
+- **Status codes shipped** (beyond the 202/401/404/409/413/429/503 above): `408` body read timeout
+  (`WEBHOOK_BODY_READ_TIMEOUT_SECONDS` 10 s), `421` Host not in `AO_WEBHOOK_ALLOWED_HOSTS` off-loopback
+  (`SecurityMiddleware`), `429 queue_full` (`WEBHOOK_QUEUE_MAXSIZE` 64 pending request files per schedule),
+  `503 enqueue_failed`/`secret_unresolvable`. `webhook.rejected` `reason` values: `unknown_schedule`,
+  `secret_unresolvable`, `oversize`, `body_timeout`, `bad_signature`, `wrong_scheme`, `bad_timestamp`, `stale`, `duplicate`,
+  `rate_limited`, `queue_full`, `enqueue_failed`, `secret_ambient_env`, `secret_outside_workspace`,
+  `secret_too_short` (< `MIN_WEBHOOK_SECRET_BYTES` 16); unknown schedule and bad signature return the same
+  401 body. Listener bounds: `WEBHOOK_LIMIT_CONCURRENCY` 256, `WEBHOOK_HEADER_TIMEOUT_SECONDS` 10.
 - `X-Hub-Signature-256` support means "run this workflow on git push" needs no adapter.
 
 ## 9. CLI surface
@@ -999,7 +1013,7 @@ Notes that are design decisions, not implementation detail:
 ```
 ao schedule list      [--workspace ROOT] [--all] [--json]
 ao schedule next      [--workspace ROOT] [-n 10] [--json]      # upcoming fires, soonest first
-ao schedule add ID    (--cron EXPR | --interval SECONDS | --watch GLOB | --webhook)
+ao schedule add ID    (--cron EXPR | --interval SECONDS | --webhook)        # --watch GLOB NOT shipped, §22
                       (--workflow PATH | --template NAME [--param k=v]... [--instance-id PAT])
                       [--tz TZ] [--prompt-file PATH] [--overlap skip|queue|allow]
                       [--catch-up once|skip] [--catch-up-window SECONDS] [--jitter SECONDS]
@@ -1007,8 +1021,10 @@ ao schedule add ID    (--cron EXPR | --interval SECONDS | --watch GLOB | --webho
                       [--until-artifact PATH | --until-gate PATH --until-field F
                        [--until-equals V]] [--max-runs N]
                       [--secret-env NAME | --secret-file PATH]      # kind=webhook
-                      [--from-workflow PATH]                        # adopt WorkflowSpec.triggers
+                      [--webhook-scheme ao|github] [--rate-per-minute N]   # kind=webhook
+                      [--per-run-usd X] [--quota ...]               # governance limits (scheduled-run-governance-hld.md)
                       [--disabled]
+                      # NOT shipped: --watch, --from-workflow (§22)
 ao schedule remove ID [--workspace ROOT]
 ao schedule enable ID | disable ID
 ao schedule run-now ID [--force] [--local | --queue]
@@ -1022,9 +1038,10 @@ ao schedule daemon    [--workspace ROOT] [--once] [--interval SECONDS]   # dev/t
 persisted state. It prints a **warning line when no service daemon is running**, because
 "my schedule never fired" is otherwise a silent, hard-to-diagnose failure.
 
-`--from-workflow PATH` reads that workflow's own `WorkflowSpec.triggers`, and materializes a
-binding per cron/interval trigger — the bridge that keeps §5's "declared in the spec" and
-"bound in the workspace" consistent (§16 D-a).
+*(Not shipped as of 2026-11-11.)* The designed `--from-workflow PATH` (materialize a binding per
+cron/interval `WorkflowSpec.triggers` entry, §16 D-a) does not exist in `ao schedule add`; bindings are
+created with the flags above or by editing `.ao/schedules.yaml`. `run-now` also accepts `--requested-by`;
+every command takes `--state-dir`. `ao schedule next` lists cron/interval only (event kinds have no predicted time).
 
 ### 9.2 Dev/test mode
 
@@ -1113,7 +1130,14 @@ Common fields: `ts` (ISO-8601 UTC), `event`, `workspace`, `schedule_id`, `fire_k
 | `schedule.file_invalid` | ERROR | `.ao/schedules.yaml` failed to load |
 | `schedule.enabled` / `schedule.disabled` | INFO | operator action, with `requested_by` |
 | `schedule.request_expired` | WARNING | a run-now request outlived its TTL |
-| `schedule.watch_budget_exceeded` | WARNING | file-watch scan hit its bound |
+| `schedule.watch_budget_exceeded` | WARNING | file-watch scan hit its bound (`WATCH_SCAN_BUDGET_SECONDS` 0.25) |
+| `schedule.tick_budget_exceeded` | WARNING | the engine tick exceeded `SCHEDULE_TICK_BUDGET_SECONDS` |
+| `schedule.run_now_deferred` / `schedule.request_dropped` | INFO / WARNING | a run-now request deferred by a guard / discarded (invalid, expired persisted webhook request) |
+| `schedule.until_unreadable` | WARNING | an `until` gate/artifact file could not be read |
+| `schedule.watch_future_mtime` | WARNING | file-watch ignored a future-dated mtime (starvation guard) |
+| `schedule.engine_tick_failed` / `schedule.engine_shutdown_failed` | ERROR | engine-level failure caught by the outer backstop |
+| `schedule.governance.*` (`skipped`, `reserved`, `run_cost_capped`, `resumed`, `resume_refused`, `pause_expired`, `cost_unknown`, `launch_unsafe`, `finalize_failed`, `error`) | mixed | pre-fire governance gate — see `scheduled-run-governance-hld.md` §13.1 |
+| `webhook.lookup_failed` / `webhook.secret` / `webhook.secret_permissions` | ERROR/WARNING | registry/schedules read failed; secret refused/unreadable |
 | `webhook.received` / `webhook.rejected` | INFO / WARNING | `rejected` carries `reason`, **never** signature or secret material |
 
 Hub status (`GET /api/service/status`) gains one top-level key, merged in by
@@ -1510,3 +1534,72 @@ from `tests/service/test_cli_e2e.py`.
 5. `OPEN_QUESTION:` `launch_id` is microsecond-resolution (`launch-%Y%m%dT%H%M%S%fZ`). Two fires
    in the same microsecond would collide. The engine launches serially within a tick so this is
    currently unreachable, but a future batched launcher would need a collision-safe id.
+
+## 21. Deviations from the original design (reconciled 2026-11-11)
+
+Each entry: what shipped, why, and whether it is better. Verified against `src/` on `ad/enhancements-10nov`
+(some items live only in the uncommitted working tree of that branch at the time of writing — marked **[wt]**).
+
+| # | Design said | Code does | Better? |
+|---|---|---|---|
+| D1 | `ao schedule add --watch GLOB`, `--from-workflow PATH` (§9.1) | Neither flag exists. File-watch bindings are YAML-only; `WorkflowSpec.triggers` are not adopted. | Worse — gap, tracked in §22 (T-Fw8Gp4 / T-Cl6Jn9). |
+| D2 | Webhook accepts either `X-AO-Signature` or `X-Hub-Signature-256`; timestamp optional (§8.2) | Scheme **pinned per binding** (`webhook.scheme: ao|github`, default `ao`, `ao schedule add --webhook-scheme`); other scheme's header → 401 `wrong_scheme` **[wt]**. `ao` scheme requires `X-AO-Timestamp` and signs `"{ts}.{body}"`. | Better: an `ao` signature is also a valid `github` signature over `"{ts}."+body`, so accepting both would let the unbounded scheme be used to replay. |
+| D3 | One 1024-entry nonce LRU | Per-(workspace, schedule) cache sized `max(NONCE_MIN_ENTRIES=64, 2 × rate_per_minute × window)` (`nonce_capacity`), keys `sig\0…`/`id\0…` | Better: other schedules' traffic cannot evict a schedule's nonces. |
+| D4 | Webhook statuses 202/401/404/409/413/429/503 | Adds 408 (body timeout), 421 (host allow-list), `queue_full` 429, `enqueue_failed` 503; extra `reason`s (§8.2) | Better (slow-client and off-box hardening from review w15-02). |
+| D5 | Webhook listener only `--webhook`, `--webhook-port`, `--webhook-host` | Same, plus `AO_WEBHOOK_ALLOWED_HOSTS` env, non-loopback warning, `ao service install --webhook[...]` bake-in | Neutral. |
+| D6 | `schedule.*` event table of 16 names (§12) | Table now also lists tick-budget, run-now-deferred, request-dropped, until-unreadable, watch-future-mtime, engine-failed and the 10 `schedule.governance.*` events. `tests/service/test_fire_store.py::test_hld_event_table_is_complete` is **stale** against `EVENT_LEVELS` (fails 2026-11-11: `resumed`, `resume_refused`, `pause_expired` **[wt]**) — fix belongs to the governance unit. | Better (more observable); test needs updating. |
+| D7 | Interim fire-record usage ledger | Replaced by a *derived* usage ledger (T-Uz0Uol) | Better. |
+| D8 | `ScheduleEngine` private `_fire` called by CLI | Public `ScheduleEngine.fire` (T-Cl6Jn9 W4) | Better. |
+| D9 | `ao schedule save` rewrites file including defaults | `save` keeps unset defaults out; **comment loss on rewrite remains** (needs ruamel) | Partly fixed — §22. |
+| D10 | `Trigger.type` = manual/cron/event | `Literal["manual","cron","event","interval"]` + `interval_seconds` (1 … `MAX_INTERVAL_SECONDS`) on `WorkflowSpec.triggers`; the binding-file `kind` is `cron|interval|file_watch|webhook` | As designed (LLD §7 updated). |
+| D11 | Governance not part of this epic | A pre-fire governance gate (budget caps, quota, pause/resume, `--per-run-usd`, `--quota`) sits in the fire path — owned by [`scheduled-run-governance-hld.md`](scheduled-run-governance-hld.md); `run-now --force` bypasses overlap only | Additive. |
+
+No other divergence was found in the sections swept (§5.3 state layout, §6 constants, §10 routes, §11 panel files).
+A deviation list that said "none" would have been wrong; D1 and D2 are the ones a reader building against the
+original text would trip on.
+
+## 22. Delivery status and unfinished items (2026-11-11)
+
+| Ticket | State | Unfinished |
+|---|---|---|
+| T-Sd1Kq7, T-Fr2Nx8, T-Ev3Qm5, T-Lp4Wt6, T-Sv5Hb3, T-Ri7Dz2 | Done | — |
+| T-Cl6Jn9 `ao schedule` | Partial | `--watch`, `--from-workflow`; `next` observe branch for event kinds; comment-preserving `save` (ruamel); S4 (owner decision); single shared engine factory in `service/cli.py`; `daemon --once` e2e for event kinds |
+| T-Fw8Gp4 file-watch | Partial | CLI flags + `daemon --once` e2e (AC12) |
+| T-Wh9Kv1 webhook | Partial | `--secret-*` flags now exist; scheme pinning is uncommitted **[wt]**; AC15 daemon `--once` leg unverified; L4 caching accepted |
+| T-Un0Lm6 `until` | In review | AC14 coverage report recorded; closes on review |
+| T-Ap1Xs3 dashboard | Implemented, awaiting review | AC18 full-suite figure |
+| T-Te3Qw8 e2e suite | **Partial** (`tests/schedules/test_e2e_schedules.py`, 11 tests, commit `9f84c1e`) | real uvicorn child, `fake`-executor run asserting `succeeded`, systemd, shared fixtures/`make test-schedules`, F2 zombie / F7 / F9 / AC6 re-verification |
+| T-Se4Bk5 security/architecture gate | **Not started as a ticket** (no STATUS evidence; an untracked `tests/service/test_security_gate_se4bk5.py` exists in the working tree from another unit and is unverified here) | the epic-level `dev-security` audit + `reviewer` architecture pass — the untrusted-file surface and webhook have had per-task reviews only |
+| T-Dc6Zr2 (this reconciliation) | Partial | ADR/ROADMAP/LLD/README/ai-epics synced 2026-11-11; the remaining "close the epic" step needs T-Se4Bk5 |
+
+The epic is therefore **not closed**.
+
+## 23. Constants and paths sweep (T-Dc6Zr2 AC2)
+
+Extracted from this document and ADR-0014 and grepped in `src/` on 2026-11-11:
+
+| Name | Documented | In code | Location |
+|---|---|---|---|
+| `DEFAULT_EVAL_INTERVAL_SECONDS` | 15 | 15.0 ✔ | `service/schedule_engine.py:82` |
+| `SCHEDULE_TICK_BUDGET_SECONDS` | 0.5 | 0.5 ✔ | `schedule_engine.py:83` |
+| `MAX_CONSECUTIVE_EVAL_ERRORS` | 5 | 5 ✔ | `schedule_engine.py:84` |
+| `REQUEST_TTL_SECONDS` | 300 | 300 ✔ | `schedule_engine.py:89` (mirrored in `capped_resume.py:49`) |
+| `DEFAULT_UNTIL_MAX_RUNS` | 100 | 100 ✔ | `schedule_engine.py:1704` |
+| `MIN_INTERVAL_SECONDS` | 60 | 60 ✔ | `schedules/models.py:41` |
+| `REPLAY_WINDOW_SECONDS` | 300 | 300 ✔ | `service/webhook.py:96` |
+| `MAX_WEBHOOK_BODY_BYTES` | 64 KiB | `64 * 1024` ✔ | `webhook.py:95` |
+| `NONCE_CACHE_SIZE` | 1024 | **constant does not exist** — replaced by `NONCE_MIN_ENTRIES=64` + `nonce_capacity()` (D3) | `webhook.py:97,367` |
+| `EVENT_LOG_MAX_BYTES` | 8 MiB | `8*1024*1024` ✔ | `service/fire_store.py:46` |
+| `WATCH_SCAN_BUDGET_SECONDS` | 0.25 (ticket) | 0.25 ✔ | `service/watch.py:54` |
+| default webhook port | 8771 | `DEFAULT_WEBHOOK_PORT = 8771` ✔ | `service/registry.py:68` |
+| webhook `rate_per_minute` default | 10 | 10 ✔ | `schedules/models.py:299` |
+| binding defaults | overlap skip, catch_up once, window 86400, grace 60, max_concurrent 1 | identical ✔ | `schedules/models.py` `ScheduleDefaults` |
+| Dashboard routes (5) | `GET /api/schedules`, `GET …/{id}/history`, `POST …/{id}/enable|disable|run-now` | identical ✔ (`run-now` returns 202) | `ui/app.py:566-594` |
+| Dashboard UI files | `Schedules.tsx`, `schedules.test.tsx` | both exist ✔ | `ui/src/` |
+| Webhook routes | `POST /hooks/{ws}/{id}`, `GET /healthz` | identical ✔ | `webhook.py` |
+| `ao schedule` commands | list/next/history/validate/add/remove/enable/disable/run-now/daemon | identical ✔ (flags: see §9.1) | `schedules/cli.py` |
+
+Event vocabulary: `grep -rho '"\(schedule\|webhook\|watch\)\.[a-z_.]*"' src` was diffed against §12; every emitted name
+is now in the table (`watch.changed` is a watch-source internal payload name, not a log event). State-dir layout
+(§5.3) was not re-derived file-by-file; spot-checked: `schedules/engine.lock`, `schedules/events.jsonl`,
+`schedules/state.json`, `schedules/requests/` exist as named in code.

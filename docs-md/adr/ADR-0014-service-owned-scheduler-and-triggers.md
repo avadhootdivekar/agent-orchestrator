@@ -1,6 +1,6 @@
 # ADR-0014 — The `ao service` supervisor owns cron and event triggers; fires are at-most-once, non-backfilling, and launched through the existing run path
 
-- Status: **Proposed** (2026-09-06) — design complete, not implemented; the ten decisions below are the ones an implementer must not re-derive
+- Status: **Accepted / largely shipped (2026-11-11)** — decisions D1-D10 held through implementation; two late corrections recorded below (2026-11-10 design review, 2026-11-11 reconciliation). Epic not closed: the security gate `T-Se4Bk5` and e2e suite `T-Te3Qw8` are unfinished (HLD §22). The ten decisions below are the ones an implementer must not re-derive
   — **amended 2026-11-10** by the "Late-gate corrections" section at the end of this file, which supersedes the specific wording it names (D5/D6/D7/D8/D9)
 - Date: 2026-09-06
 - Deciders: Avadhoot Divekar (user — decisions D1, D3, D4, D5, D8 were locked by the user before design started), Claude (architect role)
@@ -456,3 +456,27 @@ finding and its disposition). Epic task count is **14**, not 16.
    startup when a scheduled run overlaps a manual one, and `max_concurrent` counts scheduled runs
    only. `mypy src` baseline is 0 errors (it was 4). Boot-resume has the same fresh-supervisor
    zombie leak as item 2 (out of scope here; backlog).
+
+## Late-gate corrections (2026-11-11, T-Dc6Zr2 reconciliation)
+
+Checked against the code on `ad/enhancements-10nov`; D1-D10 headings are not rewritten.
+
+1. **D8 — the signature scheme is pinned per binding, not negotiated per request.** D8 read as "HMAC,
+   `X-AO-Signature` or `X-Hub-Signature-256`". Shipped: `webhook.scheme: ao|github` (default `ao`); a
+   delivery carrying the other scheme's header is refused 401 `wrong_scheme`. Reason: an `ao`
+   signature (over `"{ts}.{body}"`) is also a valid `github` signature over a body that starts with
+   `"{ts}."`, so accepting both would let a captured `ao` delivery bypass the timestamp window. `ao`
+   requires `X-AO-Timestamp` within `REPLAY_WINDOW_SECONDS` = 300; `github` has no time bound and relies on
+   the per-schedule nonce cache. Nonce state is per schedule (`max(64, 2 × rate × window)` entries), not the
+   single 1024-entry LRU in the HLD draft. *(The pin was uncommitted in the working tree when this was written.)*
+2. **D8/D9 — extra fail-closed rules for webhook secrets.** Secrets shorter than 16 bytes, ambient env names
+   (`HOME`, `PATH`, `LC_*`, …) and `secret_file`s outside the workspace are refused (503); a non-loopback bind needs
+   `AO_WEBHOOK_ALLOWED_HOSTS` (421 otherwise); listener has read timeouts and a 256-connection cap.
+3. **D7 — file-watch core shipped, its CLI did not.** `ao schedule add --watch` and `--from-workflow` (HLD §9.1) are
+   not implemented; file-watch bindings are YAML-only. Tracked in HLD §22.
+4. **Scope addition — a pre-fire governance gate** (budget caps, quota, pause/resume) now sits between the engine's
+   decision to fire and the launch; it is specified in `scheduled-run-governance-hld.md` and does not change D1-D10.
+5. **Not corrected, still true:** D1 (service owns scheduling), D3 (at-most-once, a crash mid-fire loses a run),
+   D5 (overlap `skip` default), D10 (drop directory for run-now). The webhook HMAC does **not** close roadmap §3.1
+   (authentication/authorization on triggers, audit trail); that remains the highest-priority open item.
+

@@ -1,8 +1,8 @@
 # STATUS
 
 - ID: `T-Ri7Dz2-run-id-flag`
-- Updated At: 2026-09-06
-- State: Draft
+- Updated At: 2026-11-11
+- State: Done (2026-11-10, branch `ad/enhancements-10nov`; see epic STATUS "T-Ri7Dz2 implemented")
 - Owner: TBD (assigned at sprint start)
 
 ## This update

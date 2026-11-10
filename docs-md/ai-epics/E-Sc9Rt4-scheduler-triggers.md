@@ -5,8 +5,8 @@
 - Title: Scheduler daemon — cron & event triggers owned by `ao service`
 - Owner: architect agent (design) → dev-epic agent (delivery)
 - Created: 2026-09-06
-- Last Updated: 2026-09-06
-- Status: Draft — design complete, implementation not started
+- Last Updated: 2026-11-11
+- Status: In progress — MVP and most of MVP-2 landed on `ad/enhancements-10nov` (2026-11-11); `T-Te3Qw8` partial and `T-Se4Bk5` not started, so the epic is NOT closed (see Close-out)
 - Origin ask: user request. `Trigger(type=manual|cron|event)` is modelled and validated but
   nothing executes a schedule (ROADMAP §1, §3.2). Decisions D1/D3/D4/D5/D8 in ADR-0014 were
   locked by the user before design work started and are not re-litigated.
@@ -157,14 +157,29 @@ the full CLI and hub status. The sprint assignment and the capacity arithmetic a
   with `reposets`/`agents`/budgets/quota all coming from `.ao/config.yaml`. This is the direct
   evidence for ADR-0014 D2 (a workflow file alone cannot express a scheduled invocation) and for
   D9 (`reposets`/`agents` must come from config, not from a schedule binding).
-- `TODO:` per-task evidence entries with hard numbers (suite counts and deltas, ruff/mypy status,
-  coverage) are appended here at each task boundary during delivery.
+- 2026-11-10 — **Opus design review applied** (`w01-06`): 24 findings (2 blockers) folded into HLD, ADR-0014 "Late-gate corrections (2026-11-10)" and all 14 tickets; none rejected.
+- 2026-11-10 — `T-Ri7Dz2` (`ao run --run-id`), `T-Sd1Kq7` (binding model/store) landed. 2026-11-11 — `T-Fr2Nx8`, `T-Ev3Qm5` (59 engine tests), `T-Lp4Wt6` (33), `T-Sv5Hb3`, `T-Cl6Jn9` (31 CliRunner e2e, 90 % cov, `mypy src` 0 errors), `T-Fw8Gp4` core, `T-Wh9Kv1` core (95 % cov), `T-Un0Lm6` (40 -> 45 tests), `T-Ap1Xs3` landed; each followed by review-fix commits (webhook H1/M1-M3, file-watch H1/H2/M1-M4 + N1-N3, CLI H1/H2, launcher H1/H2/M1).
+- 2026-11-11 — **Reconciliation run (`T-Dc6Zr2`, unit `w20-07`)**: `pytest tests/service tests/schedules tests/ui/test_schedules_api.py tests/auth/test_schedules_auth.py tests/test_run_id_flag.py tests/test_e2e_cli_cost_cap.py` = **1233 passed, 1 failed** (`test_fire_store.py::test_hld_event_table_is_complete`, stale list vs three uncommitted governance events); `ruff check src/.../service src/.../schedules` clean; `mypy src` 0 errors in 233 files. HLD §21 (deviations), §22 (status), §23 (constants sweep) added; operator guide `docs-md/guide-scheduled-runs.md` added.
 
 ### Final MVP requirement traceability
 
-`TODO:` completed at epic close by `T-Dc6Zr2` — table of `| Requirement | Landed in | Test
-coverage |` with per-file test counts, in the same shape as
-[`E-GIytcL`](E-GIytcL-multi-workspace-service.md)'s.
+Test counts are `def test_*` per file on 2026-11-11 (parametrization not expanded). FR numbers follow the EPIC.
+
+| Requirement | Landed in | Test coverage |
+|---|---|---|
+| Binding model + locked store (FR-1..3) | `schedules/models.py`, `store.py`, `windows.py` | `tests/schedules/test_models.py` 41, `test_store.py` 15, `test_windows.py` 22, `test_interval_scheduler.py` 6 |
+| Fire store, state, event log (FR-4, FR-7) | `service/fire_store.py` | `tests/service/test_fire_store.py` 36 (1 stale, see D6) |
+| Engine: cron/interval, overlap, catch-up, at-most-once (FR-4..7) | `service/schedule_engine.py` | `test_schedule_engine.py` 60 |
+| Scheduled launcher, `--run-id` (FR-8) | `service/schedule_launch.py`, `runstate.py` | `test_schedule_launch.py` 29, `tests/test_run_id_flag.py` |
+| Service integration (FR-10) | `service/cli.py`, `registry.py` | `test_service_schedule_integration.py` 32 |
+| `ao schedule` CLI (FR-9) — **partial** | `schedules/cli.py` | `tests/schedules/test_cli_e2e.py` 43, `test_webhook_cli_e2e.py` 5 |
+| File-watch trigger (FR-11) — **core only, no CLI flag** | `service/watch.py` | `test_watch.py` 51 |
+| Webhook ingress (FR-12) | `service/webhook.py` | `test_webhook.py` 62, `test_webhook_listener.py` 3, `test_webhook_cli_wiring.py` 2 |
+| `until` termination (FR-13) | `schedule_engine.py` | `test_until.py` 28 (+parametrized; 45 collected) |
+| Dashboard panel + 5 routes (FR-14) | `ui/app.py`, `ui/service.py`, `ui/src/components/Schedules.tsx` | `tests/ui/test_schedules_api.py` 20, `ui/src/test/schedules.test.tsx`, `tests/auth/test_schedules_auth.py` 2 |
+| Governance gate (added scope) | `schedules/models.py`, `service/capped_resume.py`, engine | `test_governance_gate.py` 67, `test_capped_resume.py` 42, `test_governance_model.py` 27 |
+| Integration/e2e suite | `tests/schedules/test_e2e_schedules.py` | 11 per-trigger CliRunner e2e tests (`T-Te3Qw8`, **partial**) |
+| Security + architecture gate | — | **not started** (`T-Se4Bk5`) |
 
 ## Risks & Blockers
 
@@ -191,6 +206,13 @@ coverage |` with per-file test counts, in the same shape as
   future *batched* launcher would need a collision-safe id.
 - **Not blocked.** Every open decision in HLD §16 has a recommended default that the tickets are
   written against.
+
+### Close-out (2026-11-11) — deferred items and why
+
+- `T-Se4Bk5` security/architecture gate: not started; `T-Te3Qw8` integration/e2e suite: only the per-trigger tier landed (11 tests). The work waves ran out; the epic cannot close without them.
+- `ao schedule add --watch`, `--from-workflow`, event-kind `next`, comment-preserving `save` (ruamel), `daemon --once` e2e legs: unfinished (HLD §22).
+- Limitations carried into `meta/ROADMAP.md` §4: DST fall-back double fire; at-most-once missed run on crash mid-fire; in-memory webhook nonce/rate state resets on restart; microsecond `launch_id` resolution; plus the isolation/run-id/supervisor items listed there.
+- Roadmap §3.1 (authentication/authorization on triggers, audit) is untouched and still highest priority — one HMAC webhook is not an auth model.
 
 ## Next actions
 

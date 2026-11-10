@@ -6,7 +6,7 @@
 - Owner: architect agent (or dev-epic at close)
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F15/F21/F22/F23/F18 applied)
-- Status: Draft
+- Status: Partial (2026-11-11) — docs reconciled; epic close-out blocked on T-Se4Bk5/T-Te3Qw8
 - Estimate: 2 days
 
 ## Requirements Mapping
