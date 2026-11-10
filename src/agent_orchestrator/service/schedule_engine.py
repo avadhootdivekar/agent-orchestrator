@@ -859,7 +859,7 @@ class ScheduleEngine:
             if st.queued_fire_key is None:
                 # F8: the queued key gets NO fire record until its drain launches it
                 # (intended -> launched); a record now would make the drain collide with it.
-                self._state.set_queued(root, sid, key)
+                self._state.set_queued(root, sid, key, scheduled_for)
                 self._queued_meta[(root, sid)] = (key, scheduled_for, effective_due)
             else:
                 self._burn(key, REASON_QUEUE_FULL, root, sid, scheduled_for, effective_due)
@@ -899,9 +899,17 @@ class ScheduleEngine:
         key = st.queued_fire_key
         assert key is not None
         meta = self._queued_meta.get((root, sid))
+        if (meta is None or meta[0] != key) and st.queued_scheduled_for is not None:
+            # Restarted since queueing: rehydrate from the persisted original scheduled_for. The
+            # key must re-derive from it; effective_due is deterministic in (key, binding).
+            persisted = st.queued_scheduled_for
+            if fire_key(root, sid, persisted) == key:
+                due = persisted + timedelta(seconds=_jitter_offset(key, binding))
+                meta = (key, persisted, due)
+                self._queued_meta[(root, sid)] = meta
         if meta is None or meta[0] != key:
-            # Restarted since queueing: the state file holds only the key, not the instant needed
-            # to launch it. Drop it loudly rather than guess (at-most-once beats duplicate).
+            # Legacy state (key without instant) or an inconsistent pair: the instant needed to
+            # launch is unknown. Drop it loudly rather than guess (at-most-once beats duplicate).
             self._state.clear_queued(root, sid)
             self._events.emit(
                 "schedule.missed",

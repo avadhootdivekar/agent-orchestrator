@@ -25,6 +25,7 @@ from agent_orchestrator.service.fire_store import (
     ScheduleEventLog,
     ScheduleStateStore,
     fire_key,
+    state_key,
 )
 
 T0 = datetime(2026, 9, 6, 0, 0, tzinfo=UTC)
@@ -458,3 +459,22 @@ def test_emit_unserialisable_field_does_not_raise(tmp_path: Path) -> None:
             raise RuntimeError("no")
 
     ScheduleEventLog(tmp_path, clock=lambda: T0).emit("schedule.fired", detail=Bad())
+
+
+def test_queued_scheduled_for_round_trips_and_clears(tmp_path: Path) -> None:
+    st = ScheduleStateStore(tmp_path)
+    st.set_queued(ROOT, "s", "kq", T0)
+    s = ScheduleStateStore(tmp_path).get(ROOT, "s")
+    assert s is not None and (s.queued_fire_key, s.queued_scheduled_for) == ("kq", T0)
+    st.clear_queued(ROOT, "s")
+    s2 = ScheduleStateStore(tmp_path).get(ROOT, "s")
+    assert s2 is not None and (s2.queued_fire_key, s2.queued_scheduled_for) == (None, None)
+
+
+def test_legacy_state_file_without_queued_scheduled_for_loads(tmp_path: Path) -> None:
+    path = tmp_path / "schedules" / "state.json"
+    path.parent.mkdir(parents=True)
+    key = state_key(ROOT, "s")
+    path.write_text(json.dumps({"schedules": {key: {"status": "active", "queued_fire_key": "kq"}}}))
+    s = ScheduleStateStore(tmp_path).get(ROOT, "s")
+    assert s is not None and (s.queued_fire_key, s.queued_scheduled_for) == ("kq", None)

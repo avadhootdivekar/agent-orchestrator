@@ -317,6 +317,9 @@ class ScheduleState(BaseModel):
     consecutive_failures: int = 0
     consecutive_eval_errors: int = 0
     queued_fire_key: str | None = None
+    # Original instant of the queued fire; persisted so a queue survives a service restart.
+    # Optional with a None default: legacy state files (no such key) load unchanged.
+    queued_scheduled_for: AwareDatetime | None = None
     active_fire_keys: list[str] = Field(default_factory=list)
     disabled_reason: str | None = None
 
@@ -394,12 +397,22 @@ class ScheduleStateStore:
         s.disabled_reason = reason if status != "active" else None
         self._save()
 
-    def set_queued(self, root: str | Path, schedule_id: str, fire_key: str) -> None:
-        self._entry(root, schedule_id).queued_fire_key = fire_key
+    def set_queued(
+        self,
+        root: str | Path,
+        schedule_id: str,
+        fire_key: str,
+        scheduled_for: datetime | None = None,
+    ) -> None:
+        entry = self._entry(root, schedule_id)
+        entry.queued_fire_key = fire_key
+        entry.queued_scheduled_for = scheduled_for
         self._save()
 
     def clear_queued(self, root: str | Path, schedule_id: str) -> None:
-        self._entry(root, schedule_id).queued_fire_key = None
+        entry = self._entry(root, schedule_id)
+        entry.queued_fire_key = None
+        entry.queued_scheduled_for = None
         self._save()
 
     def advance_anchor(self, root: str | Path, schedule_id: str, scheduled_for: datetime) -> None:

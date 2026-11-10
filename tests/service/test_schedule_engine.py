@@ -355,9 +355,29 @@ def test_queue_lost_on_restart_is_dropped_loudly(tmp_path: Path) -> None:
     env.tick(NOW1)
     env.end_run()
     env.engine._queued_meta.clear()  # simulate a restart
+    # legacy state: key persisted without its instant
+    env.engine.state_store.set_queued(env.root, "s", fire_key(env.root, "s", NOW1))
     assert env.tick(NOW1 + timedelta(seconds=10)) == []
     assert env.engine.state_store.get(env.root, "s").queued_fire_key is None  # type: ignore[union-attr]
     assert any(e["reason"] == "queue_lost_on_restart" for e in env.events("schedule.missed"))
+
+
+def test_queued_fire_survives_restart_with_original_scheduled_for(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [binding(overlap="queue")])
+    env.anchor()
+    env.make_active()
+    assert env.tick(NOW1) == []
+    key = fire_key(env.root, "s", NOW1)
+    st = env.engine.state_store.get(env.root, "s")
+    assert st is not None and st.queued_scheduled_for == NOW1
+    env.end_run()
+    env.engine._queued_meta.clear()  # simulate a restart: only state.json survives
+    fired = env.tick(NOW1 + timedelta(seconds=10))
+    assert [d.reason for d in fired] == ["queue_drain"]
+    assert fired[0].scheduled_for == NOW1 and fired[0].fire_key == key
+    after = env.engine.state_store.get(env.root, "s")
+    assert after is not None and (after.queued_fire_key, after.queued_scheduled_for) == (None, None)
+    assert not env.events("schedule.missed")
 
 
 # -- AC15 catch-up -------------------------------------------------------------------------------

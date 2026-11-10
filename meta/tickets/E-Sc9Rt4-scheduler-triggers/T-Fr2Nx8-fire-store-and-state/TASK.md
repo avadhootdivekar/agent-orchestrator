@@ -180,3 +180,6 @@ By: developer · Role: developer · Date: 2026-11-11
   (`EVENT_LEVELS`); `FireIntentStore.get/exists` take an optional `workspace_root` to skip the glob.
 - State-store mutator signatures chosen here (downstream `T-Ev3Qm5`/`T-Lp4Wt6` must match): see module.
 - `state.json` is single-writer/no lock (module docstring) — flagged for `T-Ev3Qm5`.
+
+## Note (w10-02)
+`ScheduleState.queued_scheduled_for` (optional, default None; legacy files load) is now persisted by `set_queued(..., scheduled_for)` and cleared by `clear_queued`. The engine rehydrates the queued fire from it after a restart (effective_due re-derived from key+binding jitter); a legacy key without an instant is still dropped loudly (`queue_lost_on_restart`).
