@@ -10,12 +10,8 @@ Two layers, one authority:
   records, reads the fixed prompt once, and writes the ``intended`` record -- reservation and
   prompt snapshot included -- in one atomic write, then releases the lock before any spawn.
 
-The usage ledger proper (``T-Uz0Uol``) is not merged yet. This module therefore defines the
-:class:`UsageLedger` protocol the gate needs plus :class:`FireRecordLedger`, an interim
-implementation that derives window usage from fire records alone (run counts exact; cost is the
-record's persisted high-water mark ``governance.cost_observed_usd`` and its open reservation, with
-no ``state.json`` probe and no blind-executor rule). ``T-Uz0Uol`` replaces it behind the same
-protocol.
+The usage ledger lives in :mod:`.usage_ledger` (T-Uz0Uol); the gate only needs the
+:class:`LedgerPort` protocol. ``FireRecordLedger`` is kept as an alias of :class:`UsageLedger`.
 """
 
 from __future__ import annotations
@@ -25,8 +21,7 @@ import hashlib
 import math
 import os
 import stat
-import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +41,7 @@ from .fire_store import (
     FireIntentStore,
     PromptMeta,
 )
+from .usage_ledger import UsageLedger, WindowUsage
 
 if TYPE_CHECKING:
     from ..schedules.models import ResolvedBinding
@@ -75,18 +71,8 @@ FS_SETTLE_NS: Final = 2_000_000_000
 # -- ledger contract ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class WindowUsage:
-    """What one calendar window has consumed: runs started, spend (actual) and money still held
-    for runs that can still spend (reserved)."""
-
-    runs: int = 0
-    actual: float = 0.0
-    reserved: float = 0.0
-
-
-class UsageLedger(Protocol):
-    """Window usage for one schedule. ``T-Uz0Uol`` provides the production implementation."""
+class LedgerPort(Protocol):
+    """What the gate needs from a usage ledger (:class:`UsageLedger` implements it)."""
 
     def usage(
         self, workspace_root: str, schedule_id: str, windows: Mapping[Period, Window]
@@ -97,109 +83,9 @@ class UsageLedger(Protocol):
         ...
 
 
-@dataclass
-class _Index:
-    dir_mtime_ns: int = -1
-    scanned_ns: int = 0
-    files: dict[str, tuple[tuple[int, int, int], FireIntentRecord | None]] = field(
-        default_factory=dict
-    )
-    by_schedule: dict[str, list[FireIntentRecord]] = field(default_factory=dict)
-    dirty: bool = True
-
-
-class FireRecordLedger:
-    """Interim :class:`UsageLedger`: usage derived from fire records, cached by mtime.
-
-    One directory ``stat`` decides whether the per-workspace index is trusted; when it is not,
-    the directory is rescanned but only files whose ``(mtime, size, inode)`` changed are parsed
-    again, so a tick over hundreds of schedules costs one cheap pass, not one per schedule.
-    """
-
-    def __init__(
-        self, fires: FireIntentStore, *, fs_now_ns: Callable[[], int] = time.time_ns
-    ) -> None:
-        self._fires = fires
-        self._fs_now_ns = fs_now_ns
-        self._index: dict[str, _Index] = {}
-        self.scans = 0  # observable: how many directory rescans happened (cache tests)
-
-    def invalidate(self, workspace_root: str, schedule_id: str) -> None:
-        self._index.setdefault(str(Path(workspace_root).resolve()), _Index()).dirty = True
-
-    def _refresh(self, workspace_root: str) -> _Index:
-        key = str(Path(workspace_root).resolve())
-        idx = self._index.setdefault(key, _Index())
-        directory = self._fires.directory(key)
-        try:
-            dir_mtime = directory.stat().st_mtime_ns
-        except OSError:
-            idx.files, idx.by_schedule, idx.dirty = {}, {}, False
-            return idx
-        if (
-            not idx.dirty
-            and idx.dir_mtime_ns == dir_mtime
-            and idx.scanned_ns - dir_mtime > FS_SETTLE_NS
-        ):
-            return idx
-        self.scans += 1
-        scanned_ns = self._fs_now_ns()
-        files: dict[str, tuple[tuple[int, int, int], FireIntentRecord | None]] = {}
-        by_schedule: dict[str, list[FireIntentRecord]] = {}
-        with os.scandir(directory) as it:
-            for entry in it:
-                if not entry.name.endswith(".json"):
-                    continue
-                try:
-                    st = entry.stat()
-                except OSError:
-                    continue
-                sig = (st.st_mtime_ns, st.st_size, st.st_ino)
-                cached = idx.files.get(entry.name)
-                rec = (
-                    cached[1]
-                    if cached is not None and cached[0] == sig
-                    else self._fires.read_file(Path(entry.path))
-                )
-                files[entry.name] = (sig, rec)
-                if rec is not None:
-                    by_schedule.setdefault(rec.schedule_id, []).append(rec)
-        idx.files, idx.by_schedule = files, by_schedule
-        idx.dir_mtime_ns, idx.scanned_ns, idx.dirty = dir_mtime, scanned_ns, False
-        return idx
-
-    def usage(
-        self, workspace_root: str, schedule_id: str, windows: Mapping[Period, Window]
-    ) -> dict[Period, WindowUsage]:
-        records = self._refresh(workspace_root).by_schedule.get(schedule_id, [])
-        out: dict[Period, WindowUsage] = {}
-        for period, w in windows.items():
-            runs, actual, reserved = 0, 0.0, 0.0
-            for rec in records:
-                # Bound-based membership (HLD §7 L5 calls the label authoritative; the two only
-                # differ across the pre-2011 tzdata transitions listed in windows.py: accepted).
-                if not (w.start <= rec.scheduled_for < w.end):
-                    continue
-                c = _charge(rec)
-                runs, actual, reserved = runs + c.runs, actual + c.actual, reserved + c.reserved
-            out[period] = WindowUsage(runs, actual, reserved)
-        return out
-
-
-def _charge(rec: FireIntentRecord) -> WindowUsage:
-    """One fire's contribution (HLD §10.2, record-only subset). Suppressed and launch-failed
-    fires cost nothing; any other record is one run (``orphaned`` included: its quota slot stays
-    spent), holding its reservation until the retire hook marks the governance ``final``."""
-    if rec.status in ("suppressed", "launch_failed"):
-        return WindowUsage()
-    g = rec.governance
-    if g is None:
-        return WindowUsage(runs=1)
-    observed = g.cost_observed_usd
-    if rec.status == "orphaned" or g.final or g.cap_state in GOVERNANCE_CAPPED_STATES:
-        return WindowUsage(1, observed, 0.0)  # nothing can spend any more
-    held = max(0.0, (g.reserved_usd or 0.0) - observed)
-    return WindowUsage(1, observed, held)
+# T-Uz0Uol replaced the interim record-only ledger; the old name stays as an alias so the
+# engine/launcher default factories keep working unchanged.
+FireRecordLedger = UsageLedger
 
 
 # -- results -----------------------------------------------------------------------------------
@@ -265,7 +151,7 @@ def gate(
     limits: LimitsSpec,
     scheduled_for: datetime,
     *,
-    ledger: UsageLedger,
+    ledger: LedgerPort,
     workspace_root: str,
     tz: ZoneInfo,
     week_start: WeekStart,
@@ -297,7 +183,7 @@ def gate(
         return GateResult(True)
     remaining, argmin = math.inf, None
     for c in cost.periods:
-        left = _money(c.max_usd - usage[c.period].actual - usage[c.period].reserved)
+        left = _money(c.max_usd - usage[c.period].actual_usd - usage[c.period].reserved_usd)
         if left < remaining:
             remaining, argmin = left, c.period
     if cost.per_run_usd is not None:
@@ -392,7 +278,7 @@ def check_and_reserve(
     fire_key: str,
     scheduled_for: datetime,
     effective_due: datetime | None,
-    ledger: UsageLedger,
+    ledger: LedgerPort,
     fires: FireIntentStore,
     lock_path: Path,
     now: datetime,
@@ -474,6 +360,7 @@ __all__ = [
     "FireRecordLedger",
     "GateResult",
     "PromptSnapshot",
+    "LedgerPort",
     "UsageLedger",
     "WindowUsage",
     "check_and_reserve",

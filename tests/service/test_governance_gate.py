@@ -117,7 +117,7 @@ def test_quotas_in_declared_order_first_failing_reported() -> None:
     [(2.99, True), (3.00, True), (3.01, False)],  # remaining 2.01 / 2.00 / 1.99 vs per_run 2
 )
 def test_per_run_boundary_skip_iff_remaining_below_per_run(spent: float, admit: bool) -> None:
-    g = run_gate(limits(per_run=2, week=5), week=WindowUsage(runs=1, actual=spent))
+    g = run_gate(limits(per_run=2, week=5), week=WindowUsage(runs=1, actual_usd=spent))
     assert g.admit is admit
     if admit:
         assert g.reservation_usd == 2
@@ -134,14 +134,16 @@ def test_per_run_boundary_skip_iff_remaining_below_per_run(spent: float, admit: 
 def test_period_only_reservation_rounds_down_and_min_boundary(
     held: float, admit: bool, reservation: float | None
 ) -> None:
-    g = run_gate(limits(week=5), week=WindowUsage(reserved=held))
+    g = run_gate(limits(week=5), week=WindowUsage(reserved_usd=held))
     assert g.admit is admit and g.reservation_usd == reservation
     if not admit:
         assert g.detail["needed_usd"] == 0.10
 
 
 def test_actual_plus_reserved_both_count_and_no_cost_block_is_free() -> None:
-    assert not run_gate(limits(per_run=2, week=5), week=WindowUsage(actual=1.5, reserved=2)).admit
+    assert not run_gate(
+        limits(per_run=2, week=5), week=WindowUsage(actual_usd=1.5, reserved_usd=2)
+    ).admit
     g = run_gate(limits(quota_day=3))
     assert g.admit and g.reservation_usd is None
     g = run_gate(LimitsSpec(quotas=[QuotaSpec(period="day", max_runs=1)], cost=CostLimits()))
@@ -228,7 +230,7 @@ def test_ledger_counts_only_started_runs_in_window(tmp_path: Path) -> None:
     w = {"day": window_for(T0, "day", UTC_TZ, "monday")}
     u = FireRecordLedger(store).usage(root, "s", w)["day"]
     # a: 1 run, actual .5, held 1.5; d orphaned: 1 run, actual .5, held 0
-    assert (u.runs, u.actual, u.reserved) == (2, 1.0, 1.5)
+    assert (u.runs, u.actual_usd, u.reserved_usd) == (2, 1.0, 1.5)
 
 
 def test_ledger_mtime_cache_avoids_rescans_once_settled(tmp_path: Path) -> None:
@@ -818,7 +820,7 @@ def test_crash_between_reserve_and_spawn_reconciles_to_orphaned(tmp_path: Path) 
     assert [o.status for o in orphans] == ["orphaned"]
     w = {"day": window_for(T0, "day", UTC_TZ, "monday")}
     u = FireRecordLedger(store).usage(rig.root, "nightly", w)["day"]
-    assert (u.runs, u.actual, u.reserved) == (1, 0.0, 0.0)  # slot spent, $0, nothing held
+    assert (u.runs, u.actual_usd, u.reserved_usd) == (1, 0.0, 0.0)  # slot spent, $0, nothing held
     # and nothing relaunches it
     again = rig.launcher.launch(d)
     assert again.status == "orphaned" and rig.sup.launch_calls == []
@@ -885,7 +887,7 @@ def test_h1_blind_run_is_charged_its_reservation_so_week_cap_binds(
     assert g is not None and g.final
     assert g.cost_observed_usd == 5.0 and g.cost_confidence == "unknown"
     u = _week_usage(env)
-    assert (u.runs, u.actual, u.reserved) == (1, 5.0, 0.0)
+    assert (u.runs, u.actual_usd, u.reserved_usd) == (1, 5.0, 0.0)
     nxt = gate(
         binding("s", limits=lim), lim, NOW1,
         ledger=_ledger_for(env), workspace_root=env.root, tz=UTC_TZ, week_start="monday",
@@ -955,7 +957,7 @@ def test_m1_intended_record_carries_deterministic_run_id_so_reconcile_finds_run_
     assert rec is not None and rec.status == "launched"
     w: dict[Period, Window] = {"week": window_for(T0, "week", UTC_TZ, "monday")}
     u = FireRecordLedger(store).usage(rig.root, "nightly", w)["week"]
-    assert (u.runs, u.actual, u.reserved) == (1, 0.0, 2.0)
+    assert (u.runs, u.actual_usd, u.reserved_usd) == (1, 0.0, 2.0)
 
 
 def test_m1_plain_ungoverned_intent_also_carries_run_id(tmp_path: Path) -> None:
@@ -1159,7 +1161,7 @@ def test_m3_check_and_reserve_uses_binding_timezone_and_week_start(tmp_path: Pat
 
 
 def test_l1_reservation_is_rounded_down_never_to_nearest() -> None:
-    g = run_gate(limits(week=5), week=WindowUsage(reserved=4.881))
+    g = run_gate(limits(week=5), week=WindowUsage(reserved_usd=4.881))
     assert g.admit and g.reservation_usd == 0.11  # 0.119 -> 0.11 (nearest would give 0.12)
     assert gg.round_down_cents(1.239) == 1.23
 

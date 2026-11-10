@@ -283,6 +283,54 @@ class FireIntentStore:
         self._persist(updated)
         return updated
 
+    def update_governance(self, fire_key: str, **fields: Any) -> FireIntentRecord:
+        """Merge *fields* into the record's ``governance`` object and persist atomically
+        (same write-then-rename + fsync as every other write). ``cost_observed_usd`` is a
+        high-water mark: a lower value than the stored one is ignored, never written.
+
+        Read-modify-write without a lock: safe because the engine is the single writer of
+        governance state; the ledger only writes the monotonic mark through here.
+        """
+        current = self.get(fire_key)
+        if current is None:
+            raise KeyError(f"no fire record for {fire_key}")
+        gov = current.governance or FireGovernance()
+        if "cost_observed_usd" in fields:
+            fields["cost_observed_usd"] = max(gov.cost_observed_usd, fields["cost_observed_usd"])
+        merged = FireGovernance.model_validate({**gov.model_dump(), **fields})
+        updated = current.model_copy(update={"governance": merged})
+        self._persist(updated)
+        return updated
+
+    def find_by_run_id(self, workspace_root: str | Path, run_id: str) -> FireIntentRecord | None:
+        """The record whose ``run_id`` is *run_id* in *workspace_root* (linear scan), else None."""
+        d = self._dir_for(workspace_root)
+        if not d.is_dir():
+            return None
+        for path in sorted(d.glob("*.json")):
+            rec = self._read(path)
+            if rec is not None and rec.run_id == run_id:
+                return rec
+        return None
+
+    def iter_schedule(
+        self, workspace_root: str | Path, schedule_id: str, since: datetime
+    ) -> builtins.list[FireIntentRecord]:
+        """Records of one schedule with ``scheduled_for >= since``, oldest first."""
+        d = self._dir_for(workspace_root)
+        out: builtins.list[FireIntentRecord] = []
+        if d.is_dir():
+            for path in sorted(d.glob("*.json")):
+                rec = self._read(path)
+                if (
+                    rec is not None
+                    and rec.schedule_id == schedule_id
+                    and rec.scheduled_for >= since
+                ):
+                    out.append(rec)
+        out.sort(key=lambda r: (r.scheduled_for, r.fire_key))
+        return out
+
     def write_suppressed(
         self,
         fire_key: str,
