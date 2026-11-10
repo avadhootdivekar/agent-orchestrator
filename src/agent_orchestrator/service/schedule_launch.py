@@ -45,13 +45,24 @@ from ..artifacts import ArtifactPathError, LocalFsArtifactStore
 from ..project_config import ProjectConfig, find_project_config, load_project_config
 from ..spec import load_workflow
 from ..templates import TemplateInfo, discover_templates, instantiate
-from ..ui.processes import ProcessSupervisor
+from ..ui.processes import ProcessSupervisor, _render_options
 from .fire_store import (
+    SCHEDULES_SUBDIR,
     FireAlreadyRecordedError,
     FireIntentRecord,
     FireIntentStore,
     ScheduleEventLog,
     ScheduleStateStore,
+)
+from .governance_gate import (
+    GOVERNANCE_LOCK_NAME,
+    REASON_GOVERNANCE_ERROR,
+    FireRecordLedger,
+    GateResult,
+    PromptSnapshot,
+    UsageLedger,
+    check_and_reserve,
+    skeleton,
 )
 from .schedule_engine import FireDecision
 
@@ -65,12 +76,25 @@ RAND6_ALPHABET: Final = string.ascii_lowercase + string.digits  # matches templa
 
 EVENT_FIRED: Final = "schedule.fired"
 EVENT_FIRE_FAILED: Final = "schedule.fire_failed"
+EVENT_GOV_SKIPPED: Final = "schedule.governance.skipped"
+EVENT_GOV_RESERVED: Final = "schedule.governance.reserved"
+EVENT_GOV_UNSAFE: Final = "schedule.governance.launch_unsafe"
+EVENT_GOV_ERROR: Final = "schedule.governance.error"
+COST_CAP_OPTION: Final = "cost_cap_usd"
+COST_CAP_FLAG: Final = "--cost-cap-usd"
+REASON_COST_CAP_NOT_FORWARDED: Final = "cost_cap_not_forwarded"
+SHA_PREFIX_LEN: Final = 12
 
 ProcessSupervisorFactory = Callable[[str], ProcessSupervisor]
 ProjectConfigLoader = Callable[[str], ProjectConfig | None]
 TemplateLoader = Callable[[str, ProjectConfig | None], list[TemplateInfo]]
 Clock = Callable[[], datetime]
 Rand6 = Callable[[], str]
+OptionsRenderer = Callable[[dict[str, object]], list[str]]
+
+
+class CostCapNotForwardedError(Exception):
+    """The reserved ``--cost-cap-usd`` would not reach the child's argv (fail closed, HLD §8.4)."""
 
 
 class LaunchResolutionError(Exception):
@@ -131,6 +155,9 @@ class ScheduledLauncher:
         state_store: ScheduleStateStore | None = None,
         event_log: ScheduleEventLog | None = None,
         rand6: Rand6 = _default_rand6,
+        usage_ledger: UsageLedger | None = None,
+        governance_lock_path: Path | None = None,
+        options_renderer: OptionsRenderer = _render_options,
     ) -> None:
         self._supervisor_factory = process_supervisor_factory
         self._config_loader = project_config_loader
@@ -142,6 +169,11 @@ class ScheduledLauncher:
         self._fires = fire_store or FireIntentStore(state_dir, clock=clock)
         self._state = state_store or ScheduleStateStore(state_dir)
         self._events = event_log or ScheduleEventLog(state_dir, clock=clock)
+        self._ledger: UsageLedger = usage_ledger or FireRecordLedger(self._fires)
+        self._lock_path = governance_lock_path or (
+            Path(state_dir) / SCHEDULES_SUBDIR / GOVERNANCE_LOCK_NAME
+        )
+        self._render = options_renderer
 
     # -- public ---------------------------------------------------------------------------------
 
@@ -149,19 +181,20 @@ class ScheduledLauncher:
         d = decision
         if d.fire_key is None or d.binding is None or d.scheduled_for is None:
             raise ValueError("a launchable FireDecision needs fire_key, binding and scheduled_for")
-        # Phase 1: durable intent BEFORE anything else -- the at-most-once guarantee.
+        # Phase 1: durable intent BEFORE anything else -- the at-most-once guarantee. A governed
+        # decision gets it from check_and_reserve (the ONE intended write, reservation inside).
+        snapshot: PromptSnapshot | None = None
+        reservation: float | None = None
         try:
-            self._fires.write(
-                FireIntentRecord(
-                    fire_key=d.fire_key,
-                    workspace_root=d.workspace_root,
-                    schedule_id=d.schedule_id,
-                    scheduled_for=d.scheduled_for,
-                    effective_due=d.effective_due,
-                    created_at=self._clock(),
-                    status="intended",
-                )
-            )
+            if d.effective_limits is None:
+                self._write_plain_intent(d)
+            else:
+                verdict = self._reserve(d)
+                if not verdict.admit:
+                    return self._fires.get(d.fire_key, d.workspace_root) or self._fail(
+                        d, RuntimeError(verdict.reason or "governance skip")
+                    )
+                snapshot, reservation = verdict.prompt, verdict.reservation_usd
         except FireAlreadyRecordedError:
             existing = self._fires.get(d.fire_key, d.workspace_root)
             if existing is None:  # pragma: no cover - raced with a prune
@@ -172,10 +205,13 @@ class ScheduledLauncher:
             return existing
 
         try:
-            workflow_path, prompt = self._resolve(d)
+            workflow_path, prompt = self._resolve(d, snapshot)
             run_id = scheduled_run_id(d.schedule_id, d.scheduled_for)
             # Curated subset of the allow-listed options; run_id is the explicit keyword (F1).
-            options = d.binding.run_args.as_options()
+            options: dict[str, object] = dict(d.binding.run_args.as_options())
+            if reservation is not None:
+                options[COST_CAP_OPTION] = reservation
+                self._verify_cost_cap_rendered(options, reservation)  # pre-spawn
             supervisor = self._supervisor_factory(d.workspace_root)
             kwargs: dict[str, object] = {}
             workspace = self._workspace_arg(workflow_path, d.workspace_root)
@@ -188,6 +224,11 @@ class ScheduledLauncher:
                 run_id=run_id,
                 **kwargs,  # type: ignore[arg-type]
             )
+            if reservation is not None and COST_CAP_FLAG not in rec.argv:  # post-spawn belt
+                self._cancel_unsafe(supervisor, rec.run_id or run_id)
+                raise CostCapNotForwardedError(REASON_COST_CAP_NOT_FORWARDED)
+        except CostCapNotForwardedError:
+            return self._fail_unsafe(d)
         except Exception as exc:  # noqa: BLE001 - a failed fire must not kill the engine tick
             return self._fail(d, exc)
 
@@ -223,14 +264,137 @@ class ScheduledLauncher:
             logger.exception("post-launch bookkeeping failed for %s", d.fire_key)
         return launched
 
+    # -- governance -----------------------------------------------------------------------------
+
+    def _write_plain_intent(self, d: FireDecision) -> None:
+        assert d.fire_key is not None and d.scheduled_for is not None
+        self._fires.write(
+            FireIntentRecord(
+                fire_key=d.fire_key,
+                workspace_root=d.workspace_root,
+                schedule_id=d.schedule_id,
+                scheduled_for=d.scheduled_for,
+                effective_due=d.effective_due,
+                created_at=self._clock(),
+                status="intended",
+            )
+        )
+
+    def _reserve(self, d: FireDecision) -> GateResult:
+        """Authoritative gate + the single ``intended`` write (HLD §8.2). Fails closed: if the
+        gate itself raises, the fire is suppressed ``governance_error`` and never launched."""
+        assert d.binding is not None and d.fire_key and d.scheduled_for and d.effective_limits
+        try:
+            g = check_and_reserve(
+                binding=d.binding,
+                limits=d.effective_limits,
+                workspace_root=d.workspace_root,
+                schedule_id=d.schedule_id,
+                fire_key=d.fire_key,
+                scheduled_for=d.scheduled_for,
+                effective_due=d.effective_due,
+                ledger=self._ledger,
+                fires=self._fires,
+                lock_path=self._lock_path,
+                now=self._clock(),
+            )
+        except FireAlreadyRecordedError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - fail closed
+            logger.exception("governance check failed for %s", d.fire_key)
+            self._events.emit(
+                EVENT_GOV_ERROR,
+                workspace=d.workspace_root,
+                schedule_id=d.schedule_id,
+                fire_key=d.fire_key,
+                reason=REASON_GOVERNANCE_ERROR,
+                detail=str(exc),
+            )
+            try:
+                self._fires.write_suppressed(
+                    d.fire_key,
+                    REASON_GOVERNANCE_ERROR,
+                    workspace_root=d.workspace_root,
+                    schedule_id=d.schedule_id,
+                    scheduled_for=d.scheduled_for,
+                    effective_due=d.effective_due,
+                    governance=skeleton(
+                        d.effective_limits,
+                        d.binding.timezone or "UTC",
+                        d.binding.week_start or "monday",
+                        {"error": str(exc)},
+                    ),
+                )
+            except FireAlreadyRecordedError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("could not record governance_error for %s", d.fire_key)
+            return GateResult(False, REASON_GOVERNANCE_ERROR, None, {"error": str(exc)})
+        if g.admit:
+            self._events.emit(
+                EVENT_GOV_RESERVED,
+                workspace=d.workspace_root,
+                schedule_id=d.schedule_id,
+                fire_key=d.fire_key,
+                reserved_usd=g.reservation_usd,
+                run_cost_cap_usd=g.reservation_usd,
+                prompt_sha256=(g.prompt.sha256 or "")[:SHA_PREFIX_LEN] if g.prompt else None,
+            )
+        else:
+            self._events.emit(
+                EVENT_GOV_SKIPPED,
+                workspace=d.workspace_root,
+                schedule_id=d.schedule_id,
+                fire_key=d.fire_key,
+                scheduled_for=d.scheduled_for,
+                reason=g.reason,
+                **{k: v for k, v in g.detail.items() if k != "reason"},
+            )
+        return g
+
+    def _verify_cost_cap_rendered(self, options: dict[str, object], reservation: float) -> None:
+        """Pre-spawn: render with the same table the supervisor uses; refuse if the flag would be
+        silently dropped (``_render_options`` drops unregistered keys)."""
+        argv = self._render(options)
+        try:
+            ok = argv[argv.index(COST_CAP_FLAG) + 1] == str(reservation)
+        except (ValueError, IndexError):
+            ok = False
+        if not ok:
+            raise CostCapNotForwardedError(REASON_COST_CAP_NOT_FORWARDED)
+
+    @staticmethod
+    def _cancel_unsafe(supervisor: ProcessSupervisor, run_id: str) -> None:
+        try:
+            supervisor.cancel(run_id)
+        except Exception:  # noqa: BLE001 - best effort; the record still goes launch_failed
+            logger.exception("could not cancel unsafe launch %s", run_id)
+
+    def _fail_unsafe(self, d: FireDecision) -> FireIntentRecord:
+        assert d.fire_key is not None
+        self._events.emit(
+            EVENT_GOV_UNSAFE,
+            workspace=d.workspace_root,
+            schedule_id=d.schedule_id,
+            fire_key=d.fire_key,
+            reason=REASON_COST_CAP_NOT_FORWARDED,
+        )
+        return self._record_failure(d, REASON_COST_CAP_NOT_FORWARDED)
+
     # -- resolution -----------------------------------------------------------------------------
 
-    def _resolve(self, d: FireDecision) -> tuple[str, str | None]:
-        """``(workflow_path, prompt_text)``; raises :class:`LaunchResolutionError`."""
+    def _resolve(
+        self, d: FireDecision, snapshot: PromptSnapshot | None = None
+    ) -> tuple[str, str | None]:
+        """``(workflow_path, prompt_text)``; raises :class:`LaunchResolutionError`. A governed fire
+        passes its *snapshot*: the bytes read (and pinned) under the lock are exactly what runs."""
         binding = d.binding
         assert binding is not None and d.scheduled_for is not None
         store = LocalFsArtifactStore(d.workspace_root)
-        prompt = self._read_prompt(store, binding.prompt_file, binding.prompt_sha256)
+        if snapshot is not None:
+            prompt = snapshot.text
+        else:
+            prompt = self._read_prompt(store, binding.prompt_file, binding.prompt_sha256)
 
         if binding.template is not None:
             tmpl = self._find_template(binding.template, d.workspace_root)
@@ -295,8 +459,11 @@ class ScheduledLauncher:
     # -- failure --------------------------------------------------------------------------------
 
     def _fail(self, d: FireDecision, exc: Exception) -> FireIntentRecord:
-        assert d.fire_key is not None
         reason = f"{type(exc).__name__}: {exc}"
+        return self._record_failure(d, reason)
+
+    def _record_failure(self, d: FireDecision, reason: str) -> FireIntentRecord:
+        assert d.fire_key is not None
         logger.warning("scheduled launch %s/%s failed: %s", d.workspace_root, d.schedule_id, reason)
         record: FireIntentRecord | None = None
         for step in (

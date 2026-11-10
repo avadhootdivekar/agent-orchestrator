@@ -30,7 +30,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from .statefile import read_json_model, write_json_model_atomic
 from .supervisor import _slug_for_root
@@ -49,6 +49,9 @@ FIRE_RECORD_MAX_RECORDS = 10_000
 STATE_KEY_SEP = "|"
 
 FireStatus = Literal["intended", "launched", "suppressed", "orphaned", "launch_failed"]
+CapState = Literal["none", "paused", "aborted", "expired", "resumed"]
+CostConfidence = Literal["pending", "actual", "partial", "unknown"]
+GOVERNANCE_RECORD_SCHEMA = "ao.schedule.governance/v1"
 ScheduleStatus = Literal["active", "disabled", "completed", "quarantined"]
 
 # Fields of a fire record that identify it and so can never be changed by ``update``.
@@ -85,6 +88,39 @@ def fire_key(workspace_root: str | Path, schedule_id: str, scheduled_for: dateti
 # -- fire-intent store -------------------------------------------------------------------------
 
 
+class PromptMeta(BaseModel):
+    """The prompt a governed fire ran with (HLD §6.4/§11): path, content hash and size."""
+
+    path: str
+    sha256: str
+    bytes: int
+
+
+class FireGovernance(BaseModel):
+    """Governance sub-object of a fire record (governance HLD §6.4). Written in the SAME atomic
+    ``intended`` write as the record itself; optional so pre-governance records stay valid."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_: str = Field(default=GOVERNANCE_RECORD_SCHEMA, alias="schema")
+    limits_digest: str | None = None
+    tz: str | None = None
+    week_start: str | None = None
+    prompt: PromptMeta | None = None
+    reserved_usd: float | None = None
+    run_cost_cap_usd: float | None = None
+    on_cap: str | None = None
+    pause_ttl_seconds: int | None = None
+    cost_observed_usd: float = 0.0  # high-water mark; only ever rises
+    cost_confidence: CostConfidence = "pending"
+    cap_state: CapState = "none"
+    paused_at: AwareDatetime | None = None
+    pause_expires_at: AwareDatetime | None = None
+    resumes: list[dict[str, Any]] = Field(default_factory=list)
+    final: bool = False
+    detail: dict[str, Any] = Field(default_factory=dict)  # gate detail of a governance skip
+
+
 class FireIntentRecord(BaseModel):
     """One file per logical fire (HLD §5.3)."""
 
@@ -100,6 +136,7 @@ class FireIntentRecord(BaseModel):
     pid: int | None = None
     run_id: str | None = None
     argv_digest: str | None = None
+    governance: FireGovernance | None = None
 
 
 class FireAlreadyRecordedError(Exception):
@@ -150,6 +187,15 @@ class FireIntentStore:
         path = self._locate(fire_key, workspace_root)
         return self._read(path) if path is not None else None
 
+    def directory(self, workspace_root: str | Path) -> Path:
+        """The directory holding *workspace_root*'s fire records (may not exist yet)."""
+        return self._dir_for(workspace_root)
+
+    @classmethod
+    def read_file(cls, path: Path) -> FireIntentRecord | None:
+        """Parse one record file; ``None`` (logged) when unreadable. For index builders."""
+        return cls._read(path)
+
     @staticmethod
     def _read(path: Path) -> FireIntentRecord | None:
         try:
@@ -197,7 +243,7 @@ class FireIntentStore:
         tmp = path.with_suffix(".json.tmp")
         try:
             with open(tmp, "w", encoding="utf-8") as fh:
-                fh.write(record.model_dump_json(indent=2))
+                fh.write(record.model_dump_json(indent=2, by_alias=True))
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, path)
@@ -235,6 +281,7 @@ class FireIntentStore:
         schedule_id: str,
         scheduled_for: datetime,
         effective_due: datetime | None = None,
+        governance: FireGovernance | None = None,
     ) -> FireIntentRecord:
         """Record a deliberately-skipped fire; it burns the key like any other record."""
         record = FireIntentRecord(
@@ -246,6 +293,7 @@ class FireIntentStore:
             created_at=self._clock(),
             status="suppressed",
             reason=reason,
+            governance=governance,
         )
         self.write(record)
         return record
@@ -462,6 +510,11 @@ EVENT_LEVELS: dict[str, int] = {
     "schedule.enabled": logging.INFO,
     "schedule.disabled": logging.INFO,
     "schedule.request_expired": logging.WARNING,
+    "schedule.governance.skipped": logging.INFO,
+    "schedule.governance.reserved": logging.DEBUG,
+    "schedule.governance.run_cost_capped": logging.WARNING,
+    "schedule.governance.launch_unsafe": logging.ERROR,
+    "schedule.governance.error": logging.ERROR,
     "schedule.watch_budget_exceeded": logging.WARNING,
     "webhook.received": logging.INFO,
     "webhook.rejected": logging.WARNING,

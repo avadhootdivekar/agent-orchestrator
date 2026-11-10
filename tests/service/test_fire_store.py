@@ -383,6 +383,10 @@ def test_hld_event_table_is_complete() -> None:
         "schedule.eval_failed", "schedule.quarantined", "schedule.file_invalid",
         "schedule.enabled", "schedule.disabled", "schedule.request_expired",
         "schedule.watch_budget_exceeded", "webhook.received", "webhook.rejected",
+        # governance HLD §13.1 (T-PpE5lf)
+        "schedule.governance.skipped", "schedule.governance.reserved",
+        "schedule.governance.run_cost_capped", "schedule.governance.launch_unsafe",
+        "schedule.governance.error",
     }  # fmt: skip
     assert set(EVENT_LEVELS) == expected
 

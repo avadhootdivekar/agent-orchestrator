@@ -30,11 +30,15 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Any, Protocol, runtime_checkable
+from zoneinfo import ZoneInfo
 
+from ..models import TrippedBreaker, compute_run_usage_totals
 from ..scheduler import CronScheduler, IntervalScheduler, Scheduler
 from ..schedules.errors import ScheduleFileError
+from ..schedules.governance import LimitsSpec
 from ..schedules.models import ResolvedBinding
 from ..schedules.store import ScheduleStore
+from ..schedules.windows import WeekStart
 from ..ui.processes import ProcessSupervisor, _pid_alive
 from ..ui.runs import RunNotFoundError, RunRepository
 from .fire_store import (
@@ -46,6 +50,17 @@ from .fire_store import (
     ScheduleState,
     ScheduleStateStore,
     fire_key,
+)
+from .governance_gate import (
+    GOVERNANCE_LOCK_NAME,
+    REASON_COST_CAP_REACHED,
+    REASON_GOVERNANCE_ERROR,
+    REASON_QUOTA_EXHAUSTED,
+    FireRecordLedger,
+    GateResult,
+    UsageLedger,
+    gate,
+    skeleton,
 )
 from .registry import ServiceRegistry
 
@@ -61,6 +76,9 @@ DEFAULT_MAX_CONCURRENT_GLOBAL = 3
 ENGINE_LOCK_FILENAME = "engine.lock"
 REQUESTS_SUBDIR = "requests"
 REQUEST_KIND_RUN_NOW = "run_now"
+COST_CAP_BREAKER_ID = "builtin.cost_cap"
+RUN_STATUS_FAILED = "failed"
+RUN_STATUS_SUCCEEDED = "succeeded"
 RUN_STATUS_RUNNING = "running"
 FIRE_KEY_JITTER_HEX_DIGITS = 8  # leading hex digits of the fire key that seed the jitter
 PURE_KINDS = ("cron", "interval")  # served by Scheduler.next_fire; event kinds use TriggerSource
@@ -92,6 +110,10 @@ class FireReason(StrEnum):
     OVERLAP_QUEUED = "overlap_queued"
     CONCURRENCY = "concurrency"
     FILE_INVALID = "file_invalid"
+    # Governance (T-PpE5lf, HLD §8.1): burn the key like overlap, unlike concurrency.
+    QUOTA_EXHAUSTED = REASON_QUOTA_EXHAUSTED
+    COST_CAP_REACHED = REASON_COST_CAP_REACHED
+    GOVERNANCE_ERROR = REASON_GOVERNANCE_ERROR
 
 
 Clock = Callable[[], datetime]
@@ -125,6 +147,9 @@ class FireDecision:
     effective_due: datetime | None = None
     run_id: str | None = None
     binding: ResolvedBinding | None = None
+    # Governance (T-PpE5lf): the limits the gate evaluated and its verdict (None when ungoverned).
+    effective_limits: LimitsSpec | None = None
+    gate: GateResult | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +264,8 @@ class ScheduleEngine:
         registry_factory: Callable[[Path], ServiceRegistry] = ServiceRegistry,
         eval_interval_seconds: float = DEFAULT_EVAL_INTERVAL_SECONDS,
         max_concurrent_global: int = DEFAULT_MAX_CONCURRENT_GLOBAL,
+        usage_ledger_factory: Callable[[FireIntentStore], UsageLedger] = FireRecordLedger,
+        governance_lock_path: Path | None = None,
     ) -> None:
         if state_dir is None:
             from .paths import default_state_dir
@@ -259,6 +286,12 @@ class ScheduleEngine:
         self._fires = FireIntentStore(self._state_dir, clock=clock)
         self._state = ScheduleStateStore(self._state_dir)
         self._events = ScheduleEventLog(self._state_dir, clock=clock)
+        self._ledger: UsageLedger = usage_ledger_factory(self._fires)
+        self._governance_lock = (
+            Path(governance_lock_path)
+            if governance_lock_path is not None
+            else self._state_dir / SCHEDULES_SUBDIR / GOVERNANCE_LOCK_NAME
+        )
 
         # F2: ONE long-lived ProcessSupervisor (and repo) per workspace, built lazily, never
         # per call -- only the instance that spawned a child can reap it.
@@ -301,6 +334,14 @@ class ScheduleEngine:
     @property
     def event_log(self) -> ScheduleEventLog:
         return self._events
+
+    @property
+    def usage_ledger(self) -> UsageLedger:
+        return self._ledger
+
+    @property
+    def governance_lock_path(self) -> Path:
+        return self._governance_lock
 
     def process_supervisor(self, root: str) -> ProcessSupervisor:
         """The cached per-workspace supervisor (factory called once per workspace)."""
@@ -645,6 +686,8 @@ class ScheduleEngine:
                     dead.append(key)
         if dead:
             self._state.retire_finished(dead)
+            for key in dead:
+                self._finalize_governance(key)
         if self._in_tick:
             self._live_memo = live
         return live
@@ -773,6 +816,15 @@ class ScheduleEngine:
         # asymmetry is deliberate: a full machine is a transient shortage, so the same instant
         # must still fire once a slot frees inside the grace window; an overlap skip or a missed
         # instant is a final decision about that instant.
+        # Governance (HLD §8.1): AFTER overlap so an overlap skip keeps its true cause, BEFORE
+        # concurrency because a governance skip burns the key (deterministic "skipped, here is
+        # why") while a concurrency skip does not.
+        blocked, verdict = self._govern(
+            root, binding, key, scheduled_for, effective_due, source, candidate, advance
+        )
+        if blocked is not None:
+            return blocked
+
         if self._concurrency_blocked(root, binding):
             self._events.emit(
                 "schedule.skipped_concurrency", workspace=root, schedule_id=sid, fire_key=key
@@ -781,9 +833,7 @@ class ScheduleEngine:
 
         if source is not None and candidate is not None:
             self._pending_commits[key] = (source, binding, candidate)
-        return FireDecision(
-            True, FireReason.DUE.value, root, sid, key, scheduled_for, effective_due, None, binding
-        )
+        return self._fire(root, binding, key, scheduled_for, effective_due, verdict)
 
     def _next_scheduled_for(
         self, root: str, binding: ResolvedBinding, st: ScheduleState, now: datetime
@@ -876,7 +926,12 @@ class ScheduleEngine:
                 False, FireReason.OVERLAP_QUEUED.value, root, sid, key, scheduled_for, effective_due
             )
         # ``allow`` (``replace`` is a load-time error in the model and is not implemented here):
-        # fall through to the concurrency caps.
+        # governance, then the concurrency caps (same order as the non-overlap path).
+        blocked, verdict = self._govern(
+            root, binding, key, scheduled_for, effective_due, source, candidate, advance
+        )
+        if blocked is not None:
+            return blocked
         if self._concurrency_blocked(root, binding):
             self._events.emit(
                 "schedule.skipped_concurrency", workspace=root, schedule_id=sid, fire_key=key
@@ -886,9 +941,7 @@ class ScheduleEngine:
             )
         if source is not None and candidate is not None:
             self._pending_commits[key] = (source, binding, candidate)
-        return FireDecision(
-            True, FireReason.DUE.value, root, sid, key, scheduled_for, effective_due, None, binding
-        )
+        return self._fire(root, binding, key, scheduled_for, effective_due, verdict)
 
     def _drain_queued(
         self, root: str, binding: ResolvedBinding, st: ScheduleState
@@ -920,6 +973,13 @@ class ScheduleEngine:
             )
             return None
         _, scheduled_for, effective_due = meta
+        # Second governance call site (HLD §8.1, M2): the drain returns before the main gate step.
+        # Gated against the ORIGINAL scheduled_for; a rejection clears and burns the queued key.
+        blocked, verdict = self._govern(
+            root, binding, key, scheduled_for, effective_due, None, None, False, from_queue=True
+        )
+        if blocked is not None:
+            return blocked
         if self._concurrency_blocked(root, binding):
             self._events.emit(
                 "schedule.skipped_concurrency", workspace=root, schedule_id=sid, fire_key=key
@@ -927,17 +987,200 @@ class ScheduleEngine:
             return FireDecision(
                 False, FireReason.CONCURRENCY.value, root, sid, key, scheduled_for, effective_due
             )
+        return self._fire(
+            root, binding, key, scheduled_for, effective_due, verdict, reason=FireReason.QUEUE_DRAIN
+        )
+
+    # -- governance (T-PpE5lf) -----------------------------------------------------------------
+
+    @staticmethod
+    def _fire(
+        root: str,
+        binding: ResolvedBinding,
+        key: str,
+        scheduled_for: datetime,
+        effective_due: datetime | None,
+        verdict: GateResult | None,
+        reason: FireReason = FireReason.DUE,
+    ) -> FireDecision:
         return FireDecision(
             True,
-            FireReason.QUEUE_DRAIN.value,
+            reason.value,
             root,
-            sid,
+            binding.id,
             key,
             scheduled_for,
             effective_due,
             None,
             binding,
+            effective_limits=binding.limits,
+            gate=verdict,
         )
+
+    @staticmethod
+    def _gate_zone(binding: ResolvedBinding) -> tuple[ZoneInfo, WeekStart]:
+        return ZoneInfo(binding.timezone or "UTC"), binding.week_start or "monday"
+
+    def _govern(
+        self,
+        root: str,
+        binding: ResolvedBinding,
+        key: str,
+        scheduled_for: datetime,
+        effective_due: datetime | None,
+        source: TriggerSource | None,
+        candidate: Candidate | None,
+        advance: bool,
+        *,
+        from_queue: bool = False,
+    ) -> tuple[FireDecision | None, GateResult | None]:
+        """Run the gate. ``(None, verdict)`` admits; ``(decision, verdict)`` is a no-fire that has
+        already burned the key. A gate that raises fails CLOSED: burn ``governance_error``, emit
+        at ERROR, then re-raise so ``_collect``'s eval-error/quarantine path still applies."""
+        limits = binding.limits
+        if limits is None:
+            return None, None
+        sid = binding.id
+        tz, week_start = self._gate_zone(binding)
+        try:
+            g = gate(
+                binding,
+                limits,
+                scheduled_for,
+                ledger=self._ledger,
+                workspace_root=root,
+                tz=tz,
+                week_start=week_start,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed on any gate failure
+            self._burn_governance(
+                root, binding, limits, key, scheduled_for, effective_due,
+                REASON_GOVERNANCE_ERROR, {"error": str(exc)}, from_queue,
+            )  # fmt: skip
+            self._events.emit(
+                "schedule.governance.error",
+                workspace=root,
+                schedule_id=sid,
+                fire_key=key,
+                reason=REASON_GOVERNANCE_ERROR,
+                detail=str(exc),
+            )
+            raise
+        if g.admit:
+            return None, g
+        reason = g.reason or REASON_GOVERNANCE_ERROR
+        self._burn_governance(
+            root, binding, limits, key, scheduled_for, effective_due, reason, g.detail, from_queue
+        )
+        if not from_queue:
+            self._after_burn(root, sid, scheduled_for, advance, source, binding, candidate)
+        self._events.emit(
+            "schedule.governance.skipped",
+            workspace=root,
+            schedule_id=sid,
+            fire_key=key,
+            scheduled_for=scheduled_for,
+            reason=reason,
+            **{k: v for k, v in g.detail.items() if k != "reason"},
+        )
+        return (
+            FireDecision(
+                False,
+                reason,
+                root,
+                sid,
+                key,
+                scheduled_for,
+                effective_due,
+                effective_limits=limits,
+                gate=g,
+            ),
+            g,
+        )
+
+    def _burn_governance(
+        self,
+        root: str,
+        binding: ResolvedBinding,
+        limits: LimitsSpec,
+        key: str,
+        scheduled_for: datetime,
+        effective_due: datetime | None,
+        reason: str,
+        detail: dict[str, Any],
+        from_queue: bool,
+    ) -> None:
+        tz, week_start = self._gate_zone(binding)
+        try:
+            self._fires.write_suppressed(
+                key,
+                reason,
+                workspace_root=root,
+                schedule_id=binding.id,
+                scheduled_for=scheduled_for,
+                effective_due=effective_due,
+                governance=skeleton(limits, str(tz), week_start, detail),
+            )
+        except FireAlreadyRecordedError:
+            pass
+        if from_queue:  # the queued fire is final: drop it so it cannot be drained again
+            self._state.clear_queued(root, binding.id)
+            self._queued_meta.pop((root, binding.id), None)
+
+    def _finalize_governance(self, key: str) -> None:
+        """Retire hook (HLD §6.4, M3): a finished governed run gets its cap state. Never raises."""
+        try:
+            rec = self._fires.get(key)
+            g = rec.governance if rec is not None else None
+            if rec is None or g is None or rec.run_id is None or g.final:
+                return
+            if g.cap_state in ("paused", "aborted", "expired"):
+                return
+            try:
+                state = self._repo(rec.workspace_root).load_state(rec.run_id)
+            except RunNotFoundError:
+                return  # never started: orphan reconciliation owns it
+            status = getattr(state, "status", None)
+            observed = max(g.cost_observed_usd, _observed_cost(state))
+            resumed_at = max(
+                (t for t in (_parse_dt(r.get("at")) for r in g.resumes) if t is not None),
+                default=None,
+            )
+            trips = [
+                t
+                for t in getattr(state, "tripped_breakers", [])
+                if isinstance(t, TrippedBreaker)
+                and t.id == COST_CAP_BREAKER_ID
+                and (resumed_at is None or ((_parse_dt(t.at) or resumed_at) > resumed_at))
+            ]
+            upd: dict[str, Any] = {"cost_observed_usd": observed}
+            if status == RUN_STATUS_FAILED and trips:
+                now = self._clock()
+                cap = g.run_cost_cap_usd
+                if g.on_cap == "abort":
+                    upd.update(cap_state="aborted", final=True)
+                    expires = None
+                else:
+                    ttl = g.pause_ttl_seconds or 0
+                    expires = now + timedelta(seconds=ttl)
+                    upd.update(cap_state="paused", paused_at=now, pause_expires_at=expires)
+                self._events.emit(
+                    "schedule.governance.run_cost_capped",
+                    workspace=rec.workspace_root,
+                    schedule_id=rec.schedule_id,
+                    fire_key=key,
+                    run_id=rec.run_id,
+                    cost_usd=observed,
+                    cap_usd=cap,
+                    overshoot_usd=max(0.0, observed - cap) if cap is not None else 0.0,
+                    on_cap=g.on_cap,
+                    pause_expires_at=expires,
+                )
+            else:
+                upd["final"] = True  # succeeded / non-cap failure: no more governed spend
+            self._fires.update(key, governance=g.model_copy(update=upd))
+        except Exception:  # noqa: BLE001 - bookkeeping must never break the tick
+            logger.exception("governance finalisation of %s failed", key)
 
     # -- small helpers -----------------------------------------------------------------------------
 
@@ -1087,6 +1330,13 @@ class ScheduleEngine:
             "webhook": {"enabled": False, "host": None, "port": None},
             "by_workspace": by_workspace,
         }
+
+
+def _observed_cost(state: Any) -> float:
+    tasks = getattr(state, "tasks", None)
+    if not isinstance(tasks, dict):
+        return 0.0
+    return float(compute_run_usage_totals(state).cost_usd)
 
 
 def _opted_in(entry: Any) -> bool:

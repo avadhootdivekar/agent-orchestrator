@@ -6,6 +6,7 @@
 - Owner: architect agent (design) -> dev-epic agent (delivery)
 
 ## This update
+- **2026-11-11 (developer, unit `w11-02-a2-pre-fire-gate`):** `T-PpE5lf` partially implemented (gate, reservation under flock, prompt pin, retire hook, fail-closed argv; 746 service+schedules tests green). Unfinished: real-renderer cap forwarding (needs `T-et7Edf`), production ledger (`T-Uz0Uol`; interim `FireRecordLedger` in place). Pending review/merge.
 - **2026-11-11 (developer, unit `w08-01-a2-gov-binding-model`):** `T-tPlK1T` implemented (governance limits model, D-2, schema regen, `minimal_limits()` fixtures). Pending review/merge.
 - **2026-11-11 (developer, unit `w07-01-a2-quota-window-math`):** `T-lJu9oZ` implemented — `schedules/windows.py` + 70 tests, 100 % cov, ruff/mypy clean. Pending review/merge.
 - **Design-review edits applied (2026-11-10, run unit `w02-02-a2-apply-design-edits`).** The Opus review
