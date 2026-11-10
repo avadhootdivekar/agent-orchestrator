@@ -24,12 +24,13 @@ import json
 import logging
 import os
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import IO, Any, Protocol, runtime_checkable
+from typing import IO, Any, Final, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
 from ..models import TrippedBreaker, compute_run_usage_totals
@@ -63,6 +64,7 @@ from .governance_gate import (
     skeleton,
 )
 from .registry import ServiceRegistry
+from .statefile import atomic_write_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_EVAL_INTERVAL_SECONDS = 15.0
 SCHEDULE_TICK_BUDGET_SECONDS = 0.5
 MAX_CONSECUTIVE_EVAL_ERRORS = 5
+STATUS_COMPLETED: Final = "completed"
+STATUS_QUARANTINED: Final = "quarantined"
+STATUS_DISABLED: Final = "disabled"
 MAX_CATCHUP_STEPS = 10_000
 REQUEST_TTL_SECONDS = 300
 DEFAULT_MAX_CONCURRENT_GLOBAL = 3
@@ -319,6 +324,12 @@ class ScheduleEngine:
         self._in_tick = False
         self._live_memo: dict[str, FireIntentRecord] | None = None
         self._pending_by_root: dict[str, int] = {}
+        # (root, schedule_id) of fires accepted earlier in this tick: they count against overlap
+        # (M1) as well as the caps, so run-now + the natural instant cannot both launch.
+        self._pending_schedules: set[tuple[str, str]] = set()
+        # Last backlog-collapse already reported per binding, so a pending instant is not
+        # re-reported every tick (L1).
+        self._collapse_reported: dict[tuple[str, str], tuple[datetime, int]] = {}
         self._pending_commits: dict[str, tuple[TriggerSource, ResolvedBinding, Candidate]] = {}
 
     # -- collaborators exposed for the launcher / wiring --------------------------------------
@@ -427,6 +438,7 @@ class ScheduleEngine:
         now = now if now is not None else self._clock()
         deadline = mono + SCHEDULE_TICK_BUDGET_SECONDS
         self._in_tick, self._live_memo, self._pending_by_root = True, None, {}
+        self._pending_schedules = set()
         decisions: list[FireDecision] = []
         try:
             decisions = self._evaluate_all(now, deadline)
@@ -498,7 +510,7 @@ class ScheduleEngine:
                 )
                 break
             st = self._state.get(entry.root, binding.id)
-            if st is not None and st.status in ("completed", "quarantined"):
+            if st is not None and st.status in (STATUS_COMPLETED, STATUS_QUARANTINED):
                 continue  # terminal: evaluate() would only re-report it
             if not binding.enabled:
                 continue
@@ -532,13 +544,50 @@ class ScheduleEngine:
         except Exception as exc:  # noqa: BLE001 - isolate: one bad binding never kills the loop
             self._quarantine_on_repeat(root, binding.id, exc)
             return
-        st = self._state.get(root, binding.id)
-        if st is not None and st.consecutive_eval_errors:
-            self._state.clear_eval_errors(root, binding.id)
+        try:  # L4: bookkeeping failure (e.g. disk full) must not discard the other decisions
+            st = self._state.get(root, binding.id)
+            if st is not None and st.consecutive_eval_errors:
+                self._state.clear_eval_errors(root, binding.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("clearing eval errors of %s/%s failed: %s", root, binding.id, exc)
+        if run_now is not None and d.reason == FireReason.CONCURRENCY.value:
+            self._defer_run_now(run_now)  # M3: a full machine is transient, keep the request
         if d.fire:
             out.append(d)
             key = str(Path(root).resolve())
             self._pending_by_root[key] = self._pending_by_root.get(key, 0) + 1
+            self._pending_schedules.add((key, binding.id))
+
+    def _defer_run_now(self, req: RunNowRequest) -> None:
+        """Write a concurrency-blocked run-now request back so a later tick retries it (same
+        ``requested_at`` => same fire key, still bounded by ``REQUEST_TTL_SECONDS``)."""
+        directory = self._state_dir / SCHEDULES_SUBDIR / REQUESTS_SUBDIR
+        body = {
+            "kind": REQUEST_KIND_RUN_NOW,
+            "workspace_root": req.workspace_root,
+            "schedule_id": req.schedule_id,
+            "requested_at": req.requested_at.isoformat(),
+            "force": req.force,
+            "requested_by": req.requested_by,
+        }
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes(directory / f"{uuid.uuid4().hex}.json", json.dumps(body).encode())
+        except OSError as exc:
+            self._events.emit(
+                "schedule.request_dropped",
+                workspace=req.workspace_root,
+                schedule_id=req.schedule_id,
+                reason="concurrency",
+                detail=str(exc),
+            )
+            return
+        self._events.emit(
+            "schedule.run_now_deferred",
+            workspace=req.workspace_root,
+            schedule_id=req.schedule_id,
+            reason=FireReason.CONCURRENCY.value,
+        )
 
     def _quarantine_on_repeat(self, root: str, schedule_id: str, exc: Exception) -> None:
         logger.warning("evaluation of %s/%s failed: %s", root, schedule_id, exc)
@@ -548,7 +597,7 @@ class ScheduleEngine:
         )
         if count >= MAX_CONSECUTIVE_EVAL_ERRORS:
             self._state.set_status(
-                root, schedule_id, "quarantined", f"{count} consecutive evaluation errors"
+                root, schedule_id, STATUS_QUARANTINED, f"{count} consecutive evaluation errors"
             )
             self._events.emit(
                 "schedule.quarantined", workspace=root, schedule_id=schedule_id, detail=str(exc)
@@ -692,9 +741,9 @@ class ScheduleEngine:
             self._live_memo = live
         return live
 
-    def _overlap_active(self, st: ScheduleState) -> bool:
+    def _overlap_active(self, st: ScheduleState, root: str, sid: str) -> bool:
         live = self._live_runs()
-        return any(k in live for k in st.active_fire_keys)
+        return (root, sid) in self._pending_schedules or any(k in live for k in st.active_fire_keys)
 
     def _concurrency_blocked(self, root: str, binding: ResolvedBinding) -> bool:
         live = self._live_runs()
@@ -727,18 +776,22 @@ class ScheduleEngine:
             return FireDecision(False, reason.value, root, sid, **kw)
 
         st = self._state.get(root, sid) or ScheduleState()
-        if st.status == "completed":
+        if st.status == STATUS_COMPLETED:
             return no_fire(FireReason.COMPLETED)
-        if st.status == "quarantined":
+        if st.status == STATUS_QUARANTINED:
             return no_fire(FireReason.QUARANTINED)
-        if st.status == "disabled" or not binding.enabled:
+        if st.status == STATUS_DISABLED or not binding.enabled:
             return no_fire(FireReason.DISABLED)
 
         # T-Un0Lm6 inserts the ``until`` check HERE (status -> until -> queued drain): on
         # satisfied it sets status "completed", emits schedule.until_satisfied and returns
         # FireReason.UNTIL_SATISFIED.
 
-        if run_now is None and st.queued_fire_key is not None and not self._overlap_active(st):
+        if (
+            run_now is None
+            and st.queued_fire_key is not None
+            and not self._overlap_active(st, root, sid)
+        ):
             drained = self._drain_queued(root, binding, st)
             if drained is not None:
                 return drained
@@ -765,6 +818,7 @@ class ScheduleEngine:
 
         key = fire_key(root, sid, scheduled_for)
         effective_due = scheduled_for
+        catch_up_lateness: timedelta | None = None
         if run_now is None:
             # Deterministic jitter from the fire key (itself derived from scheduled_for, not the
             # jittered time) so a restart mid-jitter re-derives the same offset.
@@ -792,22 +846,24 @@ class ScheduleEngine:
                     )
                     self._commit_now(source, binding, candidate)
                     return no_fire(FireReason.MISSED, fire_key=key, scheduled_for=scheduled_for)
-                self._events.emit(
-                    "schedule.catch_up",
-                    workspace=root,
-                    schedule_id=sid,
-                    fire_key=key,
-                    lateness_seconds=lateness.total_seconds(),
-                )
+                catch_up_lateness = lateness
 
         # at-most-once (§6.6). The queue drain bypasses this for exactly ``queued_fire_key``.
         if self._fires.exists(key, root) and key != st.queued_fire_key:
             return self._already_fired(
                 root, sid, scheduled_for, source, binding, candidate, advance=run_now is None
             )
+        if catch_up_lateness is not None:  # L3: only for an instant that can actually fire
+            self._events.emit(
+                "schedule.catch_up",
+                workspace=root,
+                schedule_id=sid,
+                fire_key=key,
+                lateness_seconds=catch_up_lateness.total_seconds(),
+            )
 
         advance = run_now is None  # a run-now never disturbs the natural schedule's anchor
-        if self._overlap_active(st) and not (run_now is not None and run_now.force):
+        if self._overlap_active(st, root, sid) and not (run_now is not None and run_now.force):
             return self._apply_overlap(
                 root, binding, st, key, scheduled_for, effective_due, source, candidate, advance
             )
@@ -826,10 +882,7 @@ class ScheduleEngine:
             return blocked
 
         if self._concurrency_blocked(root, binding):
-            self._events.emit(
-                "schedule.skipped_concurrency", workspace=root, schedule_id=sid, fire_key=key
-            )
-            return no_fire(FireReason.CONCURRENCY, fire_key=key, scheduled_for=scheduled_for)
+            return self._concurrency_skip(root, sid, key, scheduled_for, effective_due)
 
         if source is not None and candidate is not None:
             self._pending_commits[key] = (source, binding, candidate)
@@ -858,13 +911,30 @@ class ScheduleEngine:
             following = sched.next_fire(trigger, scheduled_for)
             if following is None or following > now:
                 break
+            # M2: with jitter, only collapse past an instant that is already STALE (its jitter
+            # window opened and ``grace`` elapsed) and onto one whose own window is open. Never
+            # skip an instant that is still waiting out jitter or can still fire in grace -- with
+            # jitter >= period that silently lost most fires.
+            if binding.jitter_seconds and (
+                self._effective_due(root, binding, scheduled_for)
+                + timedelta(seconds=binding.grace_seconds or 0)
+                >= now
+                or self._effective_due(root, binding, following) > now
+            ):
+                break
             scheduled_for, skipped = following, skipped + 1
         upcoming = scheduled_for if scheduled_for > now else sched.next_fire(trigger, now)
         if upcoming != st.next_fire_at:
             self._state.set_next_fire(root, binding.id, upcoming)
         logger.debug("schedule.evaluated %s/%s next_fire_at=%s", root, binding.id, upcoming)
-        if skipped:
+        memo_key = (root, binding.id)
+        if not skipped:
+            self._collapse_reported.pop(memo_key, None)
+        elif self._collapse_reported.get(memo_key) != (scheduled_for, skipped):
             # Reported once: burning one record per skipped instant would cost one fsync each.
+            # L1: and once per distinct collapse, not again every tick while the instant waits
+            # out jitter or a concurrency slot.
+            self._collapse_reported[memo_key] = (scheduled_for, skipped)
             self._events.emit(
                 "schedule.missed",
                 workspace=root,
@@ -876,6 +946,11 @@ class ScheduleEngine:
         if scheduled_for > now:
             return FireReason.NOT_DUE
         return scheduled_for
+
+    @staticmethod
+    def _effective_due(root: str, binding: ResolvedBinding, scheduled_for: datetime) -> datetime:
+        key = fire_key(root, binding.id, scheduled_for)
+        return scheduled_for + timedelta(seconds=_jitter_offset(key, binding))
 
     def _apply_overlap(
         self,
@@ -933,15 +1008,27 @@ class ScheduleEngine:
         if blocked is not None:
             return blocked
         if self._concurrency_blocked(root, binding):
-            self._events.emit(
-                "schedule.skipped_concurrency", workspace=root, schedule_id=sid, fire_key=key
-            )
-            return FireDecision(
-                False, FireReason.CONCURRENCY.value, root, sid, key, scheduled_for, effective_due
-            )
+            return self._concurrency_skip(root, sid, key, scheduled_for, effective_due)
         if source is not None and candidate is not None:
             self._pending_commits[key] = (source, binding, candidate)
         return self._fire(root, binding, key, scheduled_for, effective_due, verdict)
+
+    def _concurrency_skip(
+        self,
+        root: str,
+        sid: str,
+        key: str,
+        scheduled_for: datetime,
+        effective_due: datetime | None,
+    ) -> FireDecision:
+        """The one place a concurrency skip is built (main, ``allow`` and queue-drain paths).
+        It deliberately writes NO fire record: a full machine is transient (AC10/AC18)."""
+        self._events.emit(
+            "schedule.skipped_concurrency", workspace=root, schedule_id=sid, fire_key=key
+        )
+        return FireDecision(
+            False, FireReason.CONCURRENCY.value, root, sid, key, scheduled_for, effective_due
+        )
 
     def _drain_queued(
         self, root: str, binding: ResolvedBinding, st: ScheduleState
@@ -981,12 +1068,7 @@ class ScheduleEngine:
         if blocked is not None:
             return blocked
         if self._concurrency_blocked(root, binding):
-            self._events.emit(
-                "schedule.skipped_concurrency", workspace=root, schedule_id=sid, fire_key=key
-            )
-            return FireDecision(
-                False, FireReason.CONCURRENCY.value, root, sid, key, scheduled_for, effective_due
-            )
+            return self._concurrency_skip(root, sid, key, scheduled_for, effective_due)
         return self._fire(
             root, binding, key, scheduled_for, effective_due, verdict, reason=FireReason.QUEUE_DRAIN
         )
@@ -1274,7 +1356,23 @@ class ScheduleEngine:
             return self._snapshot()
         except Exception as exc:  # noqa: BLE001
             logger.warning("status_snapshot failed: %s", exc)
-            return {"enabled": True, "error": str(exc)}
+            return {**self._empty_snapshot(), "error": str(exc)}
+
+    def _empty_snapshot(self) -> dict[str, Any]:
+        """The HLD §12 shape with zero values (L7): error payloads keep every key."""
+        return {
+            "enabled": True,
+            "eval_interval_seconds": self._eval_interval,
+            "totals": {"active": 0, "disabled": 0, "completed": 0, "quarantined": 0},
+            "next_fire_at": None,
+            "live_scheduled_runs": 0,
+            "max_concurrent_global": self._max_global,
+            "recent_failures": 0,
+            "last_tick_at": _iso(self._last_tick_at),
+            "last_tick_duration_ms": self._last_tick_duration_ms,
+            "webhook": {"enabled": False, "host": None, "port": None},
+            "by_workspace": [],
+        }
 
     def _snapshot(self) -> dict[str, Any]:
         totals = {"active": 0, "disabled": 0, "completed": 0, "quarantined": 0}

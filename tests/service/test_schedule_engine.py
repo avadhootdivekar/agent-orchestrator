@@ -936,3 +936,179 @@ def test_status_snapshot_shape(tmp_path: Path) -> None:
     rows = snap["by_workspace"][0]["schedules"]
     assert {r["id"] for r in rows} == {"a", "b"} and rows[0]["kind"] == "interval"
     json.dumps(snap)  # JSON-serialisable
+
+
+# -- w10-03 review fixes (T-Ev3Qm5 M1-M4, L1/L3/L4/L7) ----------------------------
+
+
+def test_m1_run_now_and_natural_instant_in_one_tick_fire_once_under_overlap_skip(
+    tmp_path: Path,
+) -> None:
+    env = env_for(tmp_path, [binding(overlap="skip", max_concurrent=3)])
+    env.anchor()
+    _request(env, requested_at=NOW1.isoformat())
+    fired = env.tick(NOW1)
+    assert len(fired) == 1  # the second fire of the same schedule is an overlap, not a launch
+    assert len(env.launcher.decisions) == 1
+    assert env.events("schedule.skipped_overlap")
+
+
+def test_m1_two_run_now_requests_in_one_tick_fire_once(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [binding(overlap="skip", max_concurrent=3)])
+    env.anchor()
+    _request(env, requested_at=NOW1.isoformat())
+    _request(env, requested_at=(NOW1 + timedelta(seconds=1)).isoformat())
+    assert len(env.tick(NOW1 + timedelta(seconds=2))) == 1
+
+
+def test_m2_jitter_larger_than_period_still_fires_every_period(tmp_path: Path) -> None:
+    env = env_for(
+        tmp_path,
+        [
+            binding(
+                interval_seconds=60,
+                jitter_seconds=300,
+                overlap="allow",
+                max_concurrent=100,
+                catch_up="once",
+                grace_seconds=600,  # head-of-line delay behind a long jitter is not "missed"
+                catch_up_window_seconds=3600,
+            )
+        ],
+        max_concurrent_global=1000,
+    )
+    env.anchor()
+    for step in range(1, 241):  # one hour of 15 s ticks
+        env.tick(T0 + timedelta(seconds=15 * step))
+    fired_keys = {d.fire_key for d in env.launcher.decisions}
+    assert len(fired_keys) == len(env.launcher.decisions)  # never twice
+    assert (
+        len(env.launcher.decisions) >= 50
+    )  # ~60 minus the jitter tail; was 7 before the fix (review P1)
+
+
+def test_m3_run_now_blocked_by_concurrency_is_retried_not_dropped(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [binding(overlap="allow", max_concurrent=1)])
+    env.anchor()
+    env.make_active()
+    _request(env, force=True, requested_at=T0.isoformat())
+    assert env.tick(T0 + timedelta(seconds=5)) == []
+    requests = env.tmp / "state" / "schedules" / "requests"
+    assert len(list(requests.glob("*.json"))) == 1  # written back, not lost
+    assert env.events("schedule.run_now_deferred")
+    env.end_run()
+    fired = env.tick(T0 + timedelta(seconds=25))
+    assert len(fired) == 1 and fired[0].scheduled_for == T0
+    assert not list(requests.glob("*.json"))
+
+
+def test_m3_deferred_run_now_still_expires_after_ttl(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [binding(overlap="allow", max_concurrent=1)])
+    env.anchor()
+    env.make_active()
+    _request(env, requested_at=T0.isoformat())
+    env.tick(T0 + timedelta(seconds=5))
+    env.tick(T0 + timedelta(seconds=se.REQUEST_TTL_SECONDS + 30))
+    assert env.events("schedule.request_expired")
+    assert not list((env.tmp / "state" / "schedules" / "requests").glob("*.json"))
+
+
+def test_m4_global_cap_skip_does_not_burn_key(tmp_path: Path) -> None:
+    env = env_for(
+        tmp_path,
+        [binding("a", overlap="allow", max_concurrent=5), binding("b", overlap="skip")],
+        max_concurrent_global=1,
+    )
+    env.anchor("a")
+    env.anchor("b")
+    env.make_active("a")
+    d = env.evaluate("b", now=NOW1)  # main (non-overlap) branch
+    assert d.reason == "concurrency"
+    assert not env.engine.fire_store.exists(fire_key(env.root, "b", NOW1), env.root)
+
+
+def test_m4_other_schedules_run_filling_workspace_slot_does_not_burn_key(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [binding("a"), binding("b", max_concurrent=1)])
+    env.anchor("a")
+    env.anchor("b")
+    env.make_active("a")
+    d = env.evaluate("b", now=NOW1)
+    assert d.reason == "concurrency"
+    assert not env.engine.fire_store.exists(fire_key(env.root, "b", NOW1), env.root)
+    env.end_run()  # the slot frees inside grace: the same instant now fires
+    assert env.evaluate("b", now=NOW1 + timedelta(seconds=5)).fire
+
+
+def test_m4_queue_drain_concurrency_skip_keeps_queue_and_burns_nothing(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [binding("a"), binding("b", overlap="queue", max_concurrent=1)])
+    env.anchor("b")
+    env.make_active("a")
+    env.engine.state_store.set_queued(env.root, "b", "qkey", T0)
+    env.engine._queued_meta[(env.root, "b")] = ("qkey", T0, None)
+    d = env.evaluate("b", now=NOW1)
+    assert d.reason == "concurrency" and d.fire_key == "qkey"
+    assert not env.engine.fire_store.exists("qkey", env.root)
+    assert env.engine.state_store.get(env.root, "b").queued_fire_key == "qkey"  # type: ignore[union-attr]
+
+
+def test_l1_backlog_collapse_reported_once_while_instant_waits(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [binding(overlap="allow", max_concurrent=1)])
+    env.anchor()
+    env.make_active()  # slot full: the collapsed instant is retried every tick
+    for i in range(4):
+        env.tick(T0 + timedelta(seconds=60 * 10 + i))
+    collapsed = [e for e in env.events("schedule.missed") if e.get("reason") == "backlog_collapsed"]
+    assert len(collapsed) == 1
+
+
+def test_l3_no_catch_up_event_for_already_recorded_instant(tmp_path: Path) -> None:
+    env = env_for(
+        tmp_path,
+        [binding(interval_seconds=DAY, catch_up="once", grace_seconds=60,
+                 catch_up_window_seconds=3600)],
+    )  # fmt: skip
+    env.anchor()
+    due = T0 + timedelta(seconds=DAY)
+    env.engine.fire_store.write_suppressed(
+        fire_key(env.root, "s", due), "launch_failed", workspace_root=env.root,
+        schedule_id="s", scheduled_for=due,
+    )  # fmt: skip
+    d = env.evaluate(now=due + timedelta(seconds=600))
+    assert d.reason == "already_fired"
+    assert not env.events("schedule.catch_up")
+
+
+def test_l4_bookkeeping_failure_does_not_discard_other_decisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = env_for(
+        tmp_path,
+        [binding("a", max_concurrent=5), binding("b", max_concurrent=5)],
+        max_concurrent_global=5,
+    )
+    env.anchor("a")
+    env.anchor("b")
+    env.engine.state_store.bump_eval_error(env.root, "a")
+
+    def boom(*_a: Any, **_k: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(env.engine.state_store, "clear_eval_errors", boom)
+    fired = env.tick(NOW1)
+    assert {d.schedule_id for d in fired} == {"a", "b"}
+    assert not env.events("schedule.eval_failed")
+
+
+def test_l7_status_snapshot_error_keeps_full_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = env_for(tmp_path)
+    ok = set(env.engine.status_snapshot())
+
+    def boom() -> dict[str, Any]:
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(env.engine, "_snapshot", boom)
+    snap = env.engine.status_snapshot()
+    assert ok <= set(snap) and snap["error"] == "x"
+    assert snap["totals"]["active"] == 0 and snap["by_workspace"] == []
