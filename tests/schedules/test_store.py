@@ -111,3 +111,19 @@ def test_concurrent_mutate_loses_nothing(tmp_path: Path) -> None:
         p.join(60)
         assert p.exitcode == 0
     assert sorted(b.id for b in ScheduleStore(tmp_path).load().schedules) == sorted(ids)
+
+
+def test_save_rejects_invalid_model_and_keeps_file(tmp_path: Path) -> None:
+    store = ScheduleStore(tmp_path)
+    row = {"id": "a", "kind": "cron", "schedule": "0 2 * * *", "workflow": "w"}
+    store.save(ScheduleFile.from_data({"schedules": [row]}))
+    before = store.path.read_text()
+
+    def add_dup(cur: ScheduleFile) -> ScheduleFile:
+        cur.schedules.append(cur.schedules[0].model_copy())
+        return cur
+
+    with pytest.raises(ScheduleFileError, match="duplicate schedule id 'a'"):
+        store.mutate(add_dup)
+    assert store.path.read_text() == before
+    assert len(store.load().schedules) == 1  # still loadable -> remove/disable can repair

@@ -85,6 +85,8 @@
         "max_attempts": {
           "anyOf": [
             {
+              "maximum": 20,
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -97,6 +99,8 @@
         "max_turns": {
           "anyOf": [
             {
+              "maximum": 10000,
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -109,6 +113,8 @@
         "max_parallel": {
           "anyOf": [
             {
+              "maximum": 64,
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -121,6 +127,8 @@
         "budget_total": {
           "anyOf": [
             {
+              "maximum": 1000000000000,
+              "minimum": 0,
               "type": "integer"
             },
             {
@@ -133,6 +141,8 @@
         "quota_max_wait": {
           "anyOf": [
             {
+              "maximum": 604800,
+              "minimum": 0,
               "type": "integer"
             },
             {
@@ -145,6 +155,8 @@
         "quota_poll_interval": {
           "anyOf": [
             {
+              "maximum": 86400,
+              "minimum": 10,
               "type": "integer"
             },
             {
@@ -222,6 +234,7 @@
         "interval_seconds": {
           "anyOf": [
             {
+              "maximum": 31536000,
               "type": "integer"
             },
             {
@@ -258,6 +271,7 @@
         "template": {
           "anyOf": [
             {
+              "maxLength": 64,
               "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
               "type": "string"
             },
@@ -278,6 +292,7 @@
         "instance_id": {
           "anyOf": [
             {
+              "maxLength": 64,
               "type": "string"
             },
             {

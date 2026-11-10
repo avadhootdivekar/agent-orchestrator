@@ -52,11 +52,18 @@ class ScheduleStore:
         return ScheduleFile.from_data(data, source=str(self._path))
 
     def save(self, data: ScheduleFile) -> None:
-        """Atomically persist *data* (tmp + ``os.replace``). Unlocked -- see module docstring."""
+        """Atomically persist *data* (tmp + ``os.replace``). Unlocked -- see module docstring.
+
+        Pydantic does not re-validate on attribute mutation, so *data* is round-tripped through
+        ``from_data(to_data())`` first: an invalid model (e.g. a duplicate id appended by a
+        ``mutate`` fn) raises :class:`ScheduleFileError` and the existing file is left intact.
+        """
+        payload = data.to_data()
+        ScheduleFile.from_data(payload, source=str(self._path))
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_name(f"{self._path.name}.{os.getpid()}.tmp")
         try:
-            tmp.write_text(yaml.safe_dump(data.to_data(), sort_keys=False), encoding="utf-8")
+            tmp.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
             os.replace(tmp, self._path)
         except BaseException:
             tmp.unlink(missing_ok=True)

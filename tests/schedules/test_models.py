@@ -342,3 +342,73 @@ def test_checked_in_schema_matches_model() -> None:
         "print(json.dumps(ScheduleFile.model_json_schema(by_alias=True),indent=2))' "
         "> specs/schedules.schema.json"
     )
+
+
+class TestReviewFixes:
+    """w04 review findings W2-W4, S1-S3 (all deterministic: no wall clock)."""
+
+    def test_unresolved_timezone_to_trigger_raises(self) -> None:
+        f = load(cron(), defaults={"timezone": "Asia/Kolkata"})
+        with pytest.raises(ValueError, match="unresolved"):
+            f.schedules[0].to_trigger()
+        assert f.bindings[0].to_trigger().timezone == "Asia/Kolkata"
+
+    @pytest.mark.parametrize(
+        ("arg", "value"),
+        [
+            ("max_parallel", 0),
+            ("max_parallel", -5),
+            ("max_parallel", 10_000),
+            ("max_parallel", True),
+            ("max_parallel", "4"),
+            ("quota_poll_interval", 0),
+            ("budget_total", -1),
+            ("budget_total", 10**13),
+            ("sentinel.enabled", "yes"),
+            ("self_heal", "true"),
+        ],
+    )
+    def test_run_arg_bounds_and_strictness(self, arg: str, value: object) -> None:
+        reject(cron(run_args={arg: value}), "'nightly'", "run_args")
+
+    def test_run_arg_in_bounds_accepted(self) -> None:
+        f = load(cron(run_args={"max_parallel": 4, "quota_poll_interval": 10, "self_heal": True}))
+        assert f.schedules[0].run_args.as_options()["max_parallel"] == 4
+
+    @pytest.mark.parametrize("expr", ["* * * * * *", "* * * * * * *", "*/2 * * * * *"])
+    def test_cron_seconds_and_year_fields_rejected(self, expr: str) -> None:
+        reject(cron(schedule=expr), "'nightly'", "schedule", "fields")
+
+    def test_cron_gap_check_is_deterministic(self) -> None:
+        from agent_orchestrator.schedules import models as m
+
+        load(cron(schedule="* * * * *"))  # exactly 60s gap: allowed
+        load(cron(schedule="0 2 * * *"))
+        assert m._check_cron("* * * * *") is None
+        assert m._check_cron("* * * * * *") is not None  # per-second via 6th field
+
+    def test_length_limits(self) -> None:
+        reject(
+            {"id": "t", "kind": "cron", "schedule": "0 2 * * *", "template": "a" * 65},
+            "template",
+        )
+        reject(
+            {
+                "id": "t",
+                "kind": "cron",
+                "schedule": "0 2 * * *",
+                "template": "tpl",
+                "instance_id": "a" * 65,
+            },
+            "instance_id",
+        )
+
+    @pytest.mark.parametrize("tz", ["localtime", "posixrules", "Not/AZone"])
+    def test_non_iana_timezone_rejected(self, tz: str) -> None:
+        reject(cron(timezone=tz), "timezone")
+
+    def test_interval_upper_bound(self) -> None:
+        reject(
+            {"id": "i", "kind": "interval", "interval_seconds": 10**30, "workflow": "w"},
+            "interval_seconds",
+        )

@@ -14,14 +14,17 @@ from __future__ import annotations
 
 import re
 import string
+from datetime import UTC, datetime
+from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, TypeVar
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import available_timezones
 
 from croniter import croniter
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StringConstraints,
     ValidationError,
     create_model,
@@ -44,6 +47,28 @@ SCHEDULE_ID_PATTERN: Final = r"^[a-z0-9][a-z0-9-_]*$"
 TEMPLATE_NAME_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
 ENV_NAME_PATTERN: Final = r"^[A-Za-z_][A-Za-z0-9_]*$"
 INSTANCE_ID_TOKENS: Final = frozenset({"date", "rand6"})
+# Same 128-char run-id budget as MAX_SCHEDULE_ID_LEN (S1); a template name / instance id longer
+# than this could never mint a valid run id, so fail at load time rather than at fire time.
+MAX_TEMPLATE_LEN: Final = 64
+MAX_INSTANCE_ID_LEN: Final = 64
+# One year: bounds IntervalScheduler's timedelta arithmetic (S3, 10**30 overflowed in the tick).
+MAX_INTERVAL_SECONDS: Final = 365 * 86400
+# croniter also accepts a 6th (seconds) and 7th (year) field; only the classic 5 are allowed (W4).
+CRON_FIELD_COUNT: Final = 5
+# Consecutive fires sampled from a fixed anchor to find the smallest cron gap (W4).
+CRON_GAP_SAMPLES: Final = 8
+_CRON_GAP_ANCHOR: Final = datetime(2024, 1, 1, tzinfo=UTC)  # fixed -> deterministic
+
+# Bounds for numeric run_args taken from an untrusted file (HLD §13.3: bounded work and spend).
+# name -> (ge, le); ``None`` = unbounded on that side. Options not listed stay unbounded.
+SCHEDULE_RUN_ARG_BOUNDS: Final[dict[str, tuple[int | None, int | None]]] = {
+    "max_parallel": (1, 64),
+    "max_attempts": (1, 20),
+    "max_turns": (1, 10_000),
+    "budget_total": (0, 10**12),
+    "quota_max_wait": (0, 7 * 86400),
+    "quota_poll_interval": (10, 86400),
+}
 
 # The MVP subset of ``run_options`` a schedule may set (owner decision F3, 2026-11-10). Excludes
 # ``sentinel.llm.*`` (``powers=act`` lets the LLM lane kill/inject tasks; ``budget_usd`` raises
@@ -99,12 +124,43 @@ def _require_workspace_relative(value: str) -> str:
     return value
 
 
+# tzdata/system-zoneinfo entries that are not canonical IANA zones but may appear in
+# ``available_timezones()`` depending on the host.
+_HOST_DEPENDENT_ZONES: Final = frozenset({"localtime", "posixrules", "Factory"})
+
+
+@lru_cache(maxsize=1)
+def _iana_names() -> frozenset[str]:
+    return frozenset(available_timezones()) - _HOST_DEPENDENT_ZONES
+
+
 def _check_timezone(name: str) -> str:
-    try:
-        ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
-        raise ScheduleFileError(f"unknown IANA timezone {name!r}") from exc
+    # Membership in the IANA set (not just ``ZoneInfo(name)``) so host-dependent names such as
+    # "localtime" / "posixrules" are rejected and schedules behave the same on every host (S2).
+    if name not in _iana_names():
+        raise ScheduleFileError(f"unknown IANA timezone {name!r}")
     return name
+
+
+def _check_cron(expr: str) -> str | None:
+    """Return an error message for *expr*, or ``None`` when it is an acceptable cron."""
+    if not croniter.is_valid(expr):
+        return f"invalid cron expression {expr!r}"
+    if len(expr.split()) > CRON_FIELD_COUNT:
+        return (
+            f"cron {expr!r} has more than {CRON_FIELD_COUNT} fields (seconds/year fields are "
+            "not allowed)"
+        )
+    it = croniter(expr, _CRON_GAP_ANCHOR)
+    prev = it.get_next(float)
+    gaps = []
+    for _ in range(CRON_GAP_SAMPLES):
+        nxt = it.get_next(float)
+        gaps.append(nxt - prev)
+        prev = nxt
+    if min(gaps) < MIN_INTERVAL_SECONDS:
+        return f"cron {expr!r} fires more often than every {MIN_INTERVAL_SECONDS}s"
+    return None
 
 
 # -- run_args -----------------------------------------------------------------------------------
@@ -122,11 +178,14 @@ class _RunArgsBase(BaseModel):
 
 def _run_arg_annotation(opt: Option) -> Any:
     if opt.type == "int":
-        return int
+        # strict: ``true`` / ``"4"`` are rejected rather than coerced (W3).
+        ge, le = SCHEDULE_RUN_ARG_BOUNDS.get(opt.name, (None, None))
+        return Annotated[int, Field(strict=True, ge=ge, le=le)]
     if opt.type == "float":
-        return float
+        ge, le = SCHEDULE_RUN_ARG_BOUNDS.get(opt.name, (None, None))
+        return Annotated[float, Field(strict=True, ge=ge, le=le, allow_inf_nan=False)]
     if opt.type == "bool":
-        return bool
+        return StrictBool
     if opt.type == "enum":
         literal: Any = Literal
         return literal[opt.choices]
@@ -272,12 +331,17 @@ class ScheduleBinding(BaseModel):
     enabled: bool = True
     kind: Kind
     schedule: str | None = None
-    interval_seconds: int | None = None
+    interval_seconds: int | None = Field(default=None, le=MAX_INTERVAL_SECONDS)
     timezone: str | None = None
     workflow: str | None = None
-    template: Annotated[str, StringConstraints(pattern=TEMPLATE_NAME_PATTERN)] | None = None
+    template: (
+        Annotated[
+            str, StringConstraints(pattern=TEMPLATE_NAME_PATTERN, max_length=MAX_TEMPLATE_LEN)
+        ]
+        | None
+    ) = None
     params: dict[str, str] = Field(default_factory=dict)
-    instance_id: str | None = None
+    instance_id: Annotated[str, StringConstraints(max_length=MAX_INSTANCE_ID_LEN)] | None = None
     prompt_file: str | None = None
     run_args: RunArgs = Field(default_factory=lambda: RunArgs())
     overlap: Overlap | None = None
@@ -326,11 +390,8 @@ class ScheduleBinding(BaseModel):
                 f"must be >= {MIN_INTERVAL_SECONDS} (got {self.interval_seconds})",
             )
         if self.schedule is not None:
-            need(
-                bool(croniter.is_valid(self.schedule)),
-                "schedule",
-                f"invalid cron expression {self.schedule!r}",
-            )
+            cron_err = _check_cron(self.schedule)
+            need(cron_err is None, "schedule", cron_err or "")
         need(
             (self.workflow is None) != (self.template is None),
             "workflow",
@@ -367,11 +428,16 @@ class ScheduleBinding(BaseModel):
         ``Trigger.type`` has no ``file_watch``/``webhook`` member by design: event kinds are
         served by the engine's ``TriggerSource`` protocol (``observe``/``commit``, HLD §7.1),
         not by ``Scheduler.next_fire``. Calling this for an event kind raises ``ValueError``.
-        The timezone is the binding's own (unresolved) value, else ``UTC``; resolve defaults
-        first (``ScheduleFile.bindings``) when inheritance matters.
+        A ``cron`` binding whose timezone is still unresolved (``None``) raises ``ValueError``
+        rather than guessing UTC: take bindings from ``ScheduleFile.bindings``, not ``.schedules``.
         """
         if self.kind == "cron":
-            return Trigger(type="cron", schedule=self.schedule, timezone=self.timezone or "UTC")
+            if self.timezone is None:
+                raise ValueError(
+                    f"schedule {self.id!r}: timezone is unresolved; resolve defaults via "
+                    "ScheduleFile.bindings before to_trigger()"
+                )
+            return Trigger(type="cron", schedule=self.schedule, timezone=self.timezone)
         if self.kind == "interval":
             return Trigger(type="interval", interval_seconds=self.interval_seconds)
         raise ValueError(

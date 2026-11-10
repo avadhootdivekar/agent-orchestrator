@@ -213,3 +213,11 @@ All 15 ACs implemented. Deviations / decisions:
 - Coverage: schedules/ 99-100 % (store.py 90 %: OSError branches), statefile.py 100 %.
 Unfinished: none. Follow-up: migrate `registry.py`, `boot_resume.py` and the supervisor snapshot to
 `service/statefile.py` (out of scope here, AC8).
+
+## Review fixes (2026-11-11, developer; Opus review of 47babc1, w04-01)
+- W1 `ScheduleStore.save` round-trips `from_data(to_data())` before writing (invalid model -> `ScheduleFileError`, file untouched).
+- W2 `to_trigger()` raises `ValueError` on a cron binding with unresolved timezone (use `ScheduleFile.bindings`).
+- W3 numeric `run_args` bounded via `SCHEDULE_RUN_ARG_BOUNDS`, strict ints/floats/bools (no `true`/`"4"` coercion).
+- W4 cron: only 5 fields; min gap over 8 fixed-anchor fires must be >= `MIN_INTERVAL_SECONDS`.
+- S1 max_length 64 on `template`/`instance_id`; S2 tz must be in `available_timezones()` minus host-dependent names; S3 `interval_seconds` <= 1 year.
+- Not done here: S3 root `Trigger.interval_seconds ge=1` (touches `models.py`, owned by in-flight units), W5 (statefile, belongs to T-Fr2Nx8), S4-S8.
