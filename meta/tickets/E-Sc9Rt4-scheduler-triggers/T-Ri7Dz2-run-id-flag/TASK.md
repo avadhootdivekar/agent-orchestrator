@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F1/F22/F24 applied; see `../EPIC.md` "Late-gate corrections")
-- Status: Draft
+- Status: Done (2026-11-10, branch `ad/enhancements-10nov`)
 - Estimate: 1 day
 
 ## Requirements Mapping
@@ -166,3 +166,12 @@ FUNCTION resolve_run_id(supplied, workflow_id, clock, store):
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Sc9Rt4-scheduler-triggers/T-Ri7Dz2-run-id-flag/`
 - Large outputs: N/A
+
+## Implementation notes (2026-11-10)
+- Duplicate refusal exits **4** (`EXIT_RUN_EXISTS`), invalid id exits **2** (`EXIT_USAGE`); a reserved
+  directory is removed again if the run fails before writing anything.
+- `run_id` is skipped in `_effective_settings_snapshot`. `feedback.RUN_ID_RE` now uses the shared,
+  stricter pattern (no leading `.`/`-`/`_`), replacing `_DOT_RUN_IDS`.
+- `LaunchRecord` gained `run_id_supplied` (default False; old records load unchanged).
+- Known limit: a supplied id whose directory already exists reads as `started` (the child refuses
+  with exit 4; the launcher should not reuse ids). Minted-id duplicate gap (F22) untouched.

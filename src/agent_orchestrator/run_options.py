@@ -105,6 +105,19 @@ class Resolved:
 
 
 _BASE_OPTIONS: Final[tuple[Option, ...]] = (
+    # Invocation identity, not a setting: no env (AO_RUN_ID is exported INTO hook/agent
+    # subprocesses, so an env layer would make a nested `ao run` inherit its parent's id), no
+    # config, no ui_group (not a dashboard field; launchers pass ``launch_run(run_id=)``).
+    Option(
+        "run_id",
+        "str",
+        flag="--run-id",
+        help=(
+            "Use this id for the new run instead of <workflow_id>-<UTC timestamp>. Refused if"
+            " the run already exists (use `ao resume --run-id`)."
+        ),
+        resumable=False,
+    ),
     Option(
         "model",
         "str",

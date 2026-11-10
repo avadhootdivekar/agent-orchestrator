@@ -34,6 +34,7 @@ Options:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from dataclasses import dataclass
@@ -337,6 +338,7 @@ def _echo_integration_summary(
 
 
 EXIT_USAGE = 2  # `ao answer` / --input-mode: usage or validation error
+EXIT_RUN_EXISTS = 4  # `ao run --run-id X`: run X already exists (use `ao resume`)
 EXIT_NOT_OPEN = 3  # `ao answer`: request is not open (already answered / cancelled)
 
 
@@ -886,6 +888,8 @@ def _effective_settings_snapshot(
     for opt in OPTIONS:
         if opt.name.startswith(SENTINEL_PREFIX):
             continue  # layered by sentinel_settings (workflow + set-aware config), below
+        if opt.name == "run_id":
+            continue  # invocation identity (T-Ri7Dz2), not a setting with a source
         r = resolve_option(opt, cli_values.get(opt.name), cfg)
         out[opt.name] = EffectiveSetting(value=r.value, source=r.source)
     if sentinel_settings is not None:
@@ -1536,6 +1540,7 @@ def run(
             " into the workflow's declared `prompt_path`. Mutually exclusive with --prompt."
         ),
     ),
+    run_id: str | None = typer.Option(None, "--run-id", help=get_option("run_id").help),
     cache: bool | None = typer.Option(
         None,
         "--cache/--no-cache",
@@ -1558,7 +1563,14 @@ def run(
     from .errors import CycleError, OrchestratorError
     from .estimator import HeuristicTokenEstimator
     from .executors import DispatchExecutor
-    from .runstate import RunStateStore
+    from .runstate import RunAlreadyExistsError, RunStateStore, validate_run_id
+
+    if run_id is not None:
+        try:
+            validate_run_id(run_id)  # cheap pre-check, before any side effect
+        except OrchestratorError as e:
+            typer.echo(f"ERROR: {e}", err=True)
+            raise typer.Exit(EXIT_USAGE)
 
     try:
         wf, reposet_map, agent_map = _load_all(workflow, reposets, agents)
@@ -1719,9 +1731,20 @@ def run(
         ),
     )
 
+    reserved: Path | None = None
     try:
-        state = orch.run(wf, reposet_map, agent_map)
+        if run_id is not None:
+            # Atomic reservation (os.mkdir, no exist_ok): a second `ao run --run-id X` -- even a
+            # concurrent one -- is refused instead of sharing the first run's state file.
+            reserved = rs_store.reserve_run_dir(run_id)
+        state = orch.run(wf, reposet_map, agent_map, run_id=run_id)
+    except RunAlreadyExistsError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(EXIT_RUN_EXISTS)
     except (OrchestratorError, CycleError) as e:
+        if reserved is not None:
+            with contextlib.suppress(OSError):
+                reserved.rmdir()  # only succeeds while still empty: nothing was started
         typer.echo(f"ERROR: {e}", err=True)
         raise typer.Exit(1)
 

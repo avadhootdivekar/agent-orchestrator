@@ -231,6 +231,12 @@ def test_every_registry_flag_is_a_real_cli_flag():
                 assert f in help_text, f
 
 
+def test_run_id_flag_is_on_run_help_specifically():
+    # `ao resume --run-id` alone would satisfy the generic check above (T-Ri7Dz2 AC9a).
+    out = runner.invoke(app, ["run", "--help"], env={"COLUMNS": "400", "TERM": "dumb"}).output
+    assert "--run-id" in out
+
+
 @pytest.mark.parametrize(
     "key",
     ["--workspace", "workflow", "__class__", "model --dangerous", "--model", "cwd", "env", ""],

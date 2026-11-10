@@ -15,7 +15,6 @@ import contextlib
 import fcntl
 import json
 import os
-import re
 import secrets
 import stat
 import threading
@@ -31,15 +30,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .errors import OrchestratorError
 from .models import RunState
+from .runstate import RUN_ID_RE
 
 FEEDBACK_FILE = "feedback.json"
 FEEDBACK_LOCK_FILE = "feedback.lock"
 SCHEMA_VERSION = 1
 MAX_NOTE_CHARS = 2000
 MAX_ENTRIES = 500
-MAX_RUN_ID_CHARS = 128
 FEEDBACK_FILE_MODE = 0o644  # as the previous default-umask file; owner-writable only
-RUN_ID_RE = re.compile(rf"[A-Za-z0-9._-]{{1,{MAX_RUN_ID_CHARS}}}")  # used with fullmatch
 
 Rating = Literal["good", "ok", "bad"]
 Reason = Literal["wrong", "incomplete", "unnecessary", "too-costly", "needed-hand-fixing"]
@@ -62,7 +60,6 @@ OPERATOR_NOTE_ID_PREFIX = "n"
 _ORCHESTRATOR_DIR = ".orchestrator"
 _RUNS_DIR = "runs"
 _STATE_FILE = "state.json"
-_DOT_RUN_IDS = {".", ".."}
 
 
 class FeedbackError(OrchestratorError):
@@ -124,7 +121,7 @@ class FeedbackFile(BaseModel):
 
 
 def validate_run_id(run_id: str) -> str:
-    if not isinstance(run_id, str) or run_id in _DOT_RUN_IDS or RUN_ID_RE.fullmatch(run_id) is None:
+    if not isinstance(run_id, str) or RUN_ID_RE.fullmatch(run_id) is None:
         raise FeedbackError(f"invalid run id {run_id!r}: must match {RUN_ID_RE.pattern}")
     return run_id
 

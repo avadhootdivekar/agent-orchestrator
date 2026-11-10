@@ -33,7 +33,9 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..run_options import allowed_bool_options, allowed_options
+from ..errors import OrchestratorError
+from ..run_options import allowed_bool_options, allowed_options, get_option
+from ..runstate import validate_run_id
 from .runs import ORCHESTRATOR_DIR, RUNS_DIR, RunRepository
 
 UI_DIR = "ui"
@@ -89,6 +91,9 @@ class LaunchRecord:
     started_at: str
     log_path: str
     run_id: str | None = None
+    run_id_supplied: bool = False
+    """``run_id`` was chosen by the launcher (``ao run --run-id``), not discovered: it is known
+    before the run directory exists, so it alone does not prove the child got that far."""
     workflow_path: str | None = None
     prompt_chars: int = 0
     finished_at: str | None = None
@@ -111,7 +116,11 @@ def _utc_now_iso() -> str:
 
 
 def derive_launch_status(
-    record: LaunchRecord, alive: bool, now: datetime, discovery_window: float
+    record: LaunchRecord,
+    alive: bool,
+    now: datetime,
+    discovery_window: float,
+    run_dir_exists: bool = True,
 ) -> str:
     """Pure classification of one launch (see the ``STATUS_*`` constants).
 
@@ -120,8 +129,12 @@ def derive_launch_status(
     run id the process decides: gone means the engine died before creating a run
     directory (``failed_to_start``); alive splits on age so a slow-but-healthy start
     reads as "starting" first and "unconfirmed" only once the discovery window has passed.
+
+    A launcher-supplied id (``run_id_supplied``) is known up front, so it counts as ``started``
+    only once its run directory exists (*run_dir_exists*); before that it classifies like an
+    id-less record, so a child that dies on a validation error is ``failed_to_start``.
     """
-    if record.run_id:
+    if record.run_id and (run_dir_exists or not record.run_id_supplied):
         return STATUS_STARTED
     if not alive:
         return STATUS_FAILED_TO_START
@@ -326,7 +339,12 @@ class ProcessSupervisor:
         """
         alive = record.finished_at is None and self._alive(record)
         data = record.to_dict()
-        data["status"] = derive_launch_status(record, alive, self._clock(), self._discovery_timeout)
+        run_dir_exists = not (
+            record.run_id_supplied and record.run_id and not self._repo.exists(record.run_id)
+        )
+        data["status"] = derive_launch_status(
+            record, alive, self._clock(), self._discovery_timeout, run_dir_exists
+        )
         if include_log:
             text, truncated = self._safe_log_tail(record.launch_id)
             data["log_tail"] = text
@@ -405,8 +423,14 @@ class ProcessSupervisor:
         options: dict[str, object] | None = None,
         general_instructions: list[str] | None = None,
         workspace: str | None = None,
+        run_id: str | None = None,
     ) -> LaunchRecord:
         """Start ``ao run`` for *workflow_path*, optionally writing *prompt* first.
+
+        *run_id* (an explicit keyword, deliberately NOT an ``options`` key -- the allow-list
+        stays dashboard-only) names the new run: it is rendered as ``--run-id`` and the record
+        is stamped at once, so no discovery polling happens. Raises :class:`LaunchError` for
+        an invalid id; a run that already exists makes the child exit non-zero.
 
         The prompt is passed via ``--prompt-file`` rather than ``--prompt`` so no run
         content ever transits an argv (visible in ``ps`` to every user on the box, and
@@ -416,6 +440,11 @@ class ProcessSupervisor:
             The persisted :class:`LaunchRecord`, with ``run_id`` filled in when the engine
             created its run directory quickly enough to observe.
         """
+        if run_id is not None:
+            try:
+                validate_run_id(run_id)
+            except OrchestratorError as exc:
+                raise LaunchError(str(exc)) from exc
         launch_id = self._new_launch_id()
         argv = [*self._ao_command, "run"]
 
@@ -438,11 +467,17 @@ class ProcessSupervisor:
             argv += ["--general-instruction", path]
 
         argv += _render_options(options or {})
+        if run_id is not None:
+            argv += [get_option("run_id").flag or "--run-id", run_id]
 
         record = self._spawn(argv, kind="run", launch_id=launch_id)
         record.workflow_path = workflow_path
         record.prompt_chars = prompt_chars
-        record.run_id = self._discover_run_id(record)
+        if run_id is not None:
+            record.run_id = run_id
+            record.run_id_supplied = True
+        else:
+            record.run_id = self._discover_run_id(record)
         if record.run_id is None and record.exit_code is not None:
             # The child already exited without ever creating a run directory: record that
             # now, so the very first response can say "failed to start" instead of leaving

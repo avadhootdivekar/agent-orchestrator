@@ -14,6 +14,7 @@ from typing import Literal
 
 from .artifacts import ArtifactStore
 from .dag import build_dag, compute_cones
+from .errors import OrchestratorError
 from .graph_check import replay_edits
 from .inputs import cancel_request
 from .models import (
@@ -33,6 +34,26 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 _FMT = "%Y%m%dT%H%M%SZ"
+
+# A run id becomes a directory name, so this is also a path-traversal guard: no separator, no
+# leading dot (hence no ``.``/``..`` segment). Shared with feedback.py (one definition).
+MAX_RUN_ID_CHARS = 128
+RUN_ID_RE = re.compile(rf"[A-Za-z0-9][A-Za-z0-9._-]{{0,{MAX_RUN_ID_CHARS - 1}}}")  # fullmatch
+
+
+class RunAlreadyExistsError(OrchestratorError):
+    """A supplied run id's directory already exists (``ao resume`` it instead)."""
+
+
+def validate_run_id(run_id: str) -> str:
+    """Return *run_id* unchanged if it is a legal run id, else raise ``OrchestratorError``."""
+    if not isinstance(run_id, str) or RUN_ID_RE.fullmatch(run_id) is None:
+        raise OrchestratorError(
+            f"invalid run id {run_id!r}: must match {RUN_ID_RE.pattern} "
+            f"(1-{MAX_RUN_ID_CHARS} chars)"
+        )
+    return run_id
+
 
 # TaskIntegrationState.status values grouped under status.json's top-level "conflict"
 # count (AC-18) -- named so the grouping is visible in one place, not re-derived at
@@ -197,10 +218,31 @@ class RunStateStore:
     def _status_path(self, run_id: str) -> Path:
         return self._root / run_id / "status.json"
 
-    def new_run(self, workflow: WorkflowSpec) -> RunState:
-        """Create a fresh RunState for a workflow."""
+    def reserve_run_dir(self, run_id: str) -> Path:
+        """Atomically claim *run_id*'s directory (``os.mkdir`` without ``exist_ok``).
+
+        Raises ``OrchestratorError`` for an invalid id, ``RunAlreadyExistsError`` when the
+        directory exists (the caller should ``ao resume`` it instead). Atomic, so two
+        concurrent starts with the same id cannot both succeed.
+        """
+        validate_run_id(run_id)
+        run_dir = self._root / run_id
+        self._root.mkdir(parents=True, exist_ok=True)
+        try:
+            os.mkdir(run_dir)
+        except FileExistsError:
+            raise RunAlreadyExistsError(
+                f"run {run_id!r} already exists; use `ao resume --run-id {run_id}`"
+            ) from None
+        return run_dir
+
+    def new_run(self, workflow: WorkflowSpec, run_id: str | None = None) -> RunState:
+        """Create a fresh RunState for a workflow (*run_id* verbatim if given, else minted)."""
         now = self._clock()
-        run_id = f"{workflow.id}-{now.strftime(_FMT)}"
+        if run_id is None:
+            run_id = f"{workflow.id}-{now.strftime(_FMT)}"
+        else:
+            validate_run_id(run_id)
         return RunState(
             run_id=run_id,
             workflow_id=workflow.id,
