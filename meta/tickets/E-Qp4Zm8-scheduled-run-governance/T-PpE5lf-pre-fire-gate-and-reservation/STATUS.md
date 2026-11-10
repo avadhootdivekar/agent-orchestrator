@@ -2,10 +2,39 @@
 
 - ID: `T-PpE5lf-pre-fire-gate-and-reservation`
 - Updated At: 2026-11-11
-- State: In Progress (partial)
+- State: In Progress (partial; w14-04 review fixes applied, pending re-review/merge)
 - Owner: developer agent
 
 ## This update
+- **2026-11-11 (developer, unit `w15-04-a2-pre-fire-gate-review-fixes`):** review `w14-04` fixes applied (branch
+  `ad/enhancements-10nov`; mutation-checked, each regression test fails when its fix is reverted):
+  - **H1** `_finalize_governance` charges `max(observed, reserved_usd)` with `cost_confidence: unknown` for blind
+    (no cost reported) and killed/cancelled runs; reported cost is kept and marked `actual`. Test: blind run retires,
+    the next fire is `cost_cap_reached`.
+  - **M1** the `intended` record (governed `check_and_reserve(run_id=)` and `_write_plain_intent`) carries the
+    deterministic `scheduled_run_id`; `reconcile_orphans` reconciles a surviving child to `launched` with the
+    reservation held.
+  - **M2** finalisation is idempotent and re-driven: persist BEFORE emitting `run_cost_capped` (no duplicate event on
+    retry), failed keys are retried every `tick()` (unthrottled), and `start()` sweeps `launched` governed records whose
+    run is no longer running (state terminal, or pid dead) and that never got their retire hook.
+  - **M3** fixed-clock tests through `gate()`, `check_and_reserve`, and the engine: Asia/Kolkata midnight, America/
+    New_York DST fall-back double fire with `day=1`, `week_start: sunday` Sat->Sun, month roll in a non-UTC zone.
+  - **L1** round-down pinned (`4.881 -> 0.11`); **L2** `invalidate`-before-`usage` under the lock pinned; **L3**
+    unparseable trip time after a resume now fails closed (counts as fresh), trip `==` resume instant pinned as stale;
+    **L6** prompt read is a single `O_NONBLOCK` open + `fstat` `S_ISREG` + bounded read (FIFO swap cannot hang the
+    flock); **L4 (part)** post-spawn belt now checks the flag VALUE like the pre-spawn check (shared
+    `_argv_forwards_cap`); capped-state tuple is one named frozenset `GOVERNANCE_CAPPED_STATES`.
+  - **Unfixed Lows (reasons):** *L4 main* (post-spawn `launch_failed` charges 0 runs / $0): the record cannot tell a
+    pre-spawn failure from a post-spawn one, and charging every `launch_failed` would burn quota for fires that never
+    ran; needs the launcher to mark "child spawned" (follow-up, ideally with `T-Uz0Uol`'s run-dir probe). *L5*
+    (bound- vs label-based window membership): differs only across the pre-2011 tzdata transitions in `windows.py`;
+    accepted divergence now recorded in a code comment. Informational DRY items (`SHA_PREFIX_LEN` duplicate, `1e-9`
+    literal, shared skip-event helper) left as suggestions.
+  - **Evidence:** `pytest tests/service tests/schedules` 891 passed, 1 failed:
+    `test_real_renderer_does_not_yet_register_cost_cap_...` fails ONLY because another unit's uncommitted
+    `run_options.py` (T-et7Edf) now registers the option (the flip this STATUS predicts; whoever lands T-et7Edf
+    replaces it with the "real renderer forwards `--cost-cap-usd`" test). `ruff check`/`ruff format --check` clean,
+    `mypy src` clean (tests/service mypy has pre-existing import-untyped/unused-ignore noise; nothing new).
 - **2026-11-11 (developer, unit `w11-02-a2-pre-fire-gate`):** implemented on branch `ad/enhancements-10nov`:
   `service/governance_gate.py` (new: `gate`, `check_and_reserve`, `read_prompt`, `GateResult`, `PromptSnapshot`,
   `UsageLedger` protocol, interim `FireRecordLedger`); `schedule_engine.py` (reason constants, gate step after overlap

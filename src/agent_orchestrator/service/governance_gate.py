@@ -24,6 +24,7 @@ import fcntl
 import hashlib
 import math
 import os
+import stat
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -50,6 +51,8 @@ if TYPE_CHECKING:
     from ..schedules.models import ResolvedBinding
 
 GOVERNANCE_LOCK_NAME: Final = "usage.lock"
+# cap states in which a run can spend no more (shared by the ledger and the retire hook)
+GOVERNANCE_CAPPED_STATES: Final = frozenset({"paused", "aborted", "expired"})
 
 REASON_QUOTA_EXHAUSTED: Final = "quota_exhausted"
 REASON_COST_CAP_REACHED: Final = "cost_cap_reached"
@@ -173,6 +176,8 @@ class FireRecordLedger:
         for period, w in windows.items():
             runs, actual, reserved = 0, 0.0, 0.0
             for rec in records:
+                # Bound-based membership (HLD §7 L5 calls the label authoritative; the two only
+                # differ across the pre-2011 tzdata transitions listed in windows.py: accepted).
                 if not (w.start <= rec.scheduled_for < w.end):
                     continue
                 c = _charge(rec)
@@ -191,7 +196,7 @@ def _charge(rec: FireIntentRecord) -> WindowUsage:
     if g is None:
         return WindowUsage(runs=1)
     observed = g.cost_observed_usd
-    if rec.status == "orphaned" or g.final or g.cap_state in ("paused", "aborted", "expired"):
+    if rec.status == "orphaned" or g.final or g.cap_state in GOVERNANCE_CAPPED_STATES:
         return WindowUsage(1, observed, 0.0)  # nothing can spend any more
     held = max(0.0, (g.reserved_usd or 0.0) - observed)
     return WindowUsage(1, observed, held)
@@ -316,6 +321,22 @@ def gate(
 # -- fixed prompt (HLD §11) --------------------------------------------------------------------
 
 
+def _read_regular_file(path: Path, rel: str) -> bytes | GateResult:
+    """Open ONCE (``O_NONBLOCK`` so a FIFO swapped in cannot block while the usage flock is held
+    -- L6), ``fstat`` the descriptor, then read at most ``MAX_PROMPT_BYTES + 1`` bytes."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as fh:
+        st = os.fstat(fh.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            return GateResult(False, REASON_PROMPT_MISSING, None, {"path": rel})
+        data = fh.read(MAX_PROMPT_BYTES + 1)
+    if len(data) > MAX_PROMPT_BYTES:
+        return GateResult(
+            False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": DETAIL_TOO_LARGE}
+        )
+    return data
+
+
 def read_prompt(binding: ResolvedBinding, workspace_root: str) -> PromptSnapshot | GateResult:
     """Read the binding's prompt file ONCE; those bytes are what runs. A skip is returned as a
     non-admitting :class:`GateResult` (``prompt_missing`` / ``prompt_changed``)."""
@@ -329,21 +350,15 @@ def read_prompt(binding: ResolvedBinding, workspace_root: str) -> PromptSnapshot
             False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": "escapes_root"}
         )
     try:
-        if not path.is_file():
-            return GateResult(False, REASON_PROMPT_MISSING, None, {"path": rel})
-        if path.stat().st_size > MAX_PROMPT_BYTES:
-            return GateResult(
-                False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": DETAIL_TOO_LARGE}
-            )
-        data = path.read_bytes()
+        data = _read_regular_file(path, rel)
+    except (FileNotFoundError, NotADirectoryError):
+        return GateResult(False, REASON_PROMPT_MISSING, None, {"path": rel})
     except OSError as exc:
         return GateResult(
             False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": f"unreadable: {exc}"}
         )
-    if len(data) > MAX_PROMPT_BYTES:  # grew between stat and read
-        return GateResult(
-            False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": DETAIL_TOO_LARGE}
-        )
+    if isinstance(data, GateResult):
+        return data
     sha = hashlib.sha256(data).hexdigest()
     if binding.prompt_sha256 and sha != binding.prompt_sha256:
         return GateResult(
@@ -381,6 +396,7 @@ def check_and_reserve(
     fires: FireIntentStore,
     lock_path: Path,
     now: datetime,
+    run_id: str | None = None,
 ) -> GateResult:
     """Re-gate under the exclusive flock and, on admit, write the ``intended`` record carrying the
     reservation and prompt snapshot in ONE atomic write. The lock is released on return, i.e.
@@ -429,6 +445,7 @@ def check_and_reserve(
                     effective_due=effective_due,
                     created_at=now,
                     status="intended",
+                    run_id=run_id,  # M1: deterministic, so reconcile can find the run dir
                     governance=FireGovernance(
                         limits_digest=digest_of(limits),
                         tz=str(tz),
@@ -447,6 +464,7 @@ def check_and_reserve(
 
 
 __all__ = [
+    "GOVERNANCE_CAPPED_STATES",
     "GOVERNANCE_LOCK_NAME",
     "REASON_COST_CAP_REACHED",
     "REASON_GOVERNANCE_ERROR",

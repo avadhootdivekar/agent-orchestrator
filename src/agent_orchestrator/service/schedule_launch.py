@@ -140,6 +140,14 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _argv_forwards_cap(argv: list[str], reservation: float) -> bool:
+    """The cost-cap flag is present AND carries the reserved value (pre- and post-spawn, L4)."""
+    try:
+        return argv[argv.index(COST_CAP_FLAG) + 1] == str(reservation)
+    except (ValueError, IndexError):
+        return False
+
+
 class ScheduledLauncher:
     """Implements the engine Protocol: ``launch(decision) -> FireIntentRecord``."""
 
@@ -224,7 +232,7 @@ class ScheduledLauncher:
                 run_id=run_id,
                 **kwargs,  # type: ignore[arg-type]
             )
-            if reservation is not None and COST_CAP_FLAG not in rec.argv:  # post-spawn belt
+            if reservation is not None and not _argv_forwards_cap(rec.argv, reservation):  # belt
                 self._cancel_unsafe(supervisor, rec.run_id or run_id)
                 raise CostCapNotForwardedError(REASON_COST_CAP_NOT_FORWARDED)
         except CostCapNotForwardedError:
@@ -277,6 +285,7 @@ class ScheduledLauncher:
                 effective_due=d.effective_due,
                 created_at=self._clock(),
                 status="intended",
+                run_id=scheduled_run_id(d.schedule_id, d.scheduled_for),  # M1
             )
         )
 
@@ -297,6 +306,7 @@ class ScheduledLauncher:
                 fires=self._fires,
                 lock_path=self._lock_path,
                 now=self._clock(),
+                run_id=scheduled_run_id(d.schedule_id, d.scheduled_for),
             )
         except FireAlreadyRecordedError:
             raise
@@ -355,12 +365,7 @@ class ScheduledLauncher:
     def _verify_cost_cap_rendered(self, options: dict[str, object], reservation: float) -> None:
         """Pre-spawn: render with the same table the supervisor uses; refuse if the flag would be
         silently dropped (``_render_options`` drops unregistered keys)."""
-        argv = self._render(options)
-        try:
-            ok = argv[argv.index(COST_CAP_FLAG) + 1] == str(reservation)
-        except (ValueError, IndexError):
-            ok = False
-        if not ok:
+        if not _argv_forwards_cap(self._render(options), reservation):
             raise CostCapNotForwardedError(REASON_COST_CAP_NOT_FORWARDED)
 
     @staticmethod

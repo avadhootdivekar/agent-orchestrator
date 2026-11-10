@@ -857,3 +857,366 @@ def test_fire_record_json_uses_schema_alias(tmp_path: Path) -> None:
     raw = json.loads(next(store.directory(root).glob("a.json")).read_text())
     assert raw["governance"]["schema"] == "ao.schedule.governance/v1"
     assert store.get("a", root).governance.reserved_usd == 1.0  # type: ignore[union-attr]
+
+
+# -- w15-04 review fixes (w14-04 findings H1/M1/M2/M3/L1/L2/L3/L6) -----------------------------
+
+KOLKATA = ZoneInfo("Asia/Kolkata")
+
+
+def _ledger_for(env: Env) -> FireRecordLedger:
+    return FireRecordLedger(env.engine.fire_store)
+
+
+def _week_usage(env: Env, at: datetime = NOW1) -> WindowUsage:
+    w = {"week": window_for(at, "week", UTC_TZ, "monday")}
+    return _ledger_for(env).usage(env.root, "s", w)["week"]
+
+
+@pytest.mark.parametrize("final_state", ["succeeded", "failed", "cancelled"])
+def test_h1_blind_run_is_charged_its_reservation_so_week_cap_binds(
+    tmp_path: Path, final_state: str
+) -> None:
+    lim = limits(week=5)
+    env = gov_env(tmp_path, lim)
+    put_run(env, "k1", T0, "r1", reserved=5.0)
+    _retire(env, "r1", _state(final_state, cost=0.0))  # executor reported no cost
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.final
+    assert g.cost_observed_usd == 5.0 and g.cost_confidence == "unknown"
+    u = _week_usage(env)
+    assert (u.runs, u.actual, u.reserved) == (1, 5.0, 0.0)
+    nxt = gate(
+        binding("s", limits=lim), lim, NOW1,
+        ledger=_ledger_for(env), workspace_root=env.root, tz=UTC_TZ, week_start="monday",
+    )  # fmt: skip
+    assert (nxt.admit, nxt.reason) == (False, "cost_cap_reached")
+
+
+def test_h1_killed_run_with_partial_cost_is_charged_max_of_observed_and_reserved(
+    tmp_path: Path,
+) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", reserved=2.0)
+    _retire(env, "r1", _state("cancelled", cost=0.4))  # killed before its result event
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.cost_observed_usd == 2.0 and g.cost_confidence == "unknown"
+
+
+def test_h1_reported_cost_is_kept_and_marked_actual(tmp_path: Path) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", reserved=2.0)
+    _retire(env, "r1", _state("succeeded", cost=0.7))
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.cost_observed_usd == 0.7 and g.cost_confidence == "actual"
+
+
+def test_h1_quota_only_record_without_reservation_is_not_charged(tmp_path: Path) -> None:
+    env = gov_env(tmp_path, limits(quota_day=5))
+    put_run(env, "k1", T0, "r1")
+    rec = env.engine.fire_store.get("k1")
+    assert rec is not None and rec.governance is not None
+    env.engine.fire_store.update(
+        "k1", governance=rec.governance.model_copy(update={"reserved_usd": None})
+    )
+    _retire(env, "r1", _state("succeeded", cost=0.0))
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.final and g.cost_observed_usd == 0.0
+
+
+def test_m1_intended_record_carries_deterministic_run_id_so_reconcile_finds_run_dir(
+    tmp_path: Path,
+) -> None:
+    def factory(root: str) -> Any:
+        raise _Crash
+
+    rig = Rig(tmp_path, process_supervisor_factory=factory, options_renderer=cap_renderer)
+    write_workflow(Path(rig.root) / "w.json")
+    b = make_binding(limits=limits(quota_day=5, per_run=2, week=10))
+    d = gov_decision(rig, b)
+    with pytest.raises(_Crash):
+        rig.launcher.launch(d)
+    store = FireIntentStore(rig.state_dir)
+    rec = store.get(d.fire_key or "", rig.root)
+    from agent_orchestrator.service.schedule_launch import scheduled_run_id
+
+    expected = scheduled_run_id(d.schedule_id, T0)
+    assert rec is not None and rec.run_id == expected
+    # the child survived the crash: its run dir exists -> launched, reservation still held
+    seen: list[str] = []
+
+    def run_exists(root: str, rid: str) -> bool:
+        seen.append(rid)
+        return True
+
+    store.reconcile_orphans(lambda pid: False, run_exists)
+    assert seen == [expected]
+    rec = store.get(d.fire_key or "", rig.root)
+    assert rec is not None and rec.status == "launched"
+    w: dict[Period, Window] = {"week": window_for(T0, "week", UTC_TZ, "monday")}
+    u = FireRecordLedger(store).usage(rig.root, "nightly", w)["week"]
+    assert (u.runs, u.actual, u.reserved) == (1, 0.0, 2.0)
+
+
+def test_m1_plain_ungoverned_intent_also_carries_run_id(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    d = rig.decision(make_binding(), T0)
+    rig.launcher._write_plain_intent(d)
+    rec = FireIntentStore(rig.state_dir).get(d.fire_key or "", rig.root)
+    assert rec is not None and rec.run_id is not None and rec.run_id.startswith("ao-")
+
+
+def test_m2_failed_finalisation_is_retried_on_next_tick_without_duplicate_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50, ttl=3600))
+    put_run(env, "k1", T0, "r1")
+    store = env.engine.fire_store
+    real_update = store.update
+    boom = {"left": 1}
+
+    def flaky(key: str, **fields: Any) -> Any:
+        if boom["left"] and "governance" in fields:
+            boom["left"] -= 1
+            raise OSError("ENOSPC")
+        return real_update(key, **fields)
+
+    monkeypatch.setattr(store, "update", flaky)
+    env.clock.now = NOW1
+    _retire(env, "r1", _state("failed", cost=2.3, trips=[trip(NOW1)]))
+    g = store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.cap_state == "none" and not g.final  # the failure left no trace
+    assert not env.events("schedule.governance.run_cost_capped")
+    env.mono.t += 100
+    env.engine.tick(NOW1 + timedelta(seconds=100))
+    g = store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.cap_state == "paused" and g.pause_expires_at is not None
+    assert len(env.events("schedule.governance.run_cost_capped")) == 1
+    env.mono.t += 100
+    env.engine.tick(NOW1 + timedelta(seconds=200))  # idempotent: nothing more to do
+    assert len(env.events("schedule.governance.run_cost_capped")) == 1
+
+
+def test_m2_start_sweeps_records_a_crash_left_unfinalised(tmp_path: Path) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", live=False)
+    env.run_states["r1"] = _state("succeeded", cost=0.7)
+    env.statuses["r1"] = "succeeded"
+    env.engine.state_store.retire_finished(["k1"])  # ... and the process died before finalising
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and not g.final
+    env.engine.start()
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.final and g.cost_observed_usd == 0.7
+
+
+def test_m2_start_sweep_leaves_a_still_running_run_alone(tmp_path: Path) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", live=False)  # state.json says running, pid unknown (None)
+    env.engine.state_store.retire_finished(["k1"])
+    rec = env.engine.fire_store.get("k1")
+    assert rec is not None
+    env.engine.fire_store.update("k1", pid=os.getpid())  # alive process
+    env.engine.start()
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and not g.final
+
+
+# -- M3: the gate's timezone / week-start wiring, through gate(), the engine and the launcher --
+
+
+def _seed(tmp_path: Path, at: datetime, sid: str = "s") -> tuple[FireIntentStore, str]:
+    root = str((tmp_path / "ws").resolve())
+    store = FireIntentStore(tmp_path / "st")
+    _put(store, root, f"k-{at.isoformat()}", at, sid=sid)
+    return store, root
+
+
+def _gate_tz(
+    tmp_path: Path, prior: datetime, nxt: datetime, tz: ZoneInfo, lim: LimitsSpec,
+    week_start: Any = "monday",
+) -> gg.GateResult:  # fmt: skip
+    store, root = _seed(tmp_path, prior)
+    return gate(
+        binding("s", limits=lim), lim, nxt,
+        ledger=FireRecordLedger(store), workspace_root=root, tz=tz, week_start=week_start,
+    )  # fmt: skip
+
+
+KOLKATA_PRIOR = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)  # 15:30 IST, Jan 1
+
+
+@pytest.mark.parametrize(
+    ("nxt", "admit"),
+    [
+        (datetime(2026, 1, 1, 18, 29, tzinfo=UTC), False),  # 23:59 IST Jan 1: same local day
+        (datetime(2026, 1, 1, 18, 30, tzinfo=UTC), True),  # 00:00 IST Jan 2: new local day
+        (datetime(2026, 1, 1, 19, 0, tzinfo=UTC), True),
+    ],
+)
+def test_m3_gate_day_window_rolls_at_local_midnight_not_utc(
+    tmp_path: Path, nxt: datetime, admit: bool
+) -> None:
+    g = _gate_tz(tmp_path, KOLKATA_PRIOR, nxt, KOLKATA, limits(quota_day=1))
+    assert g.admit is admit
+    # under UTC all three instants share Jan 1: only the real zone can admit the later two
+    assert not _gate_tz(tmp_path / "u", KOLKATA_PRIOR, nxt, UTC_TZ, limits(quota_day=1)).admit
+
+
+def test_m3_gate_dst_fall_back_double_fire_is_contained_by_day_quota(tmp_path: Path) -> None:
+    ny = ZoneInfo("America/New_York")
+    first = datetime(2026, 11, 1, 5, 30, tzinfo=UTC)  # 01:30 EDT
+    second = datetime(2026, 11, 1, 6, 30, tzinfo=UTC)  # 01:30 EST (the repeated hour)
+    assert first.astimezone(ny).strftime("%H:%M") == second.astimezone(ny).strftime("%H:%M")
+    assert not _gate_tz(tmp_path, first, second, ny, limits(quota_day=1)).admit
+    # next local day (Nov 2 01:30 EST = 06:30Z) is a fresh window
+    assert _gate_tz(
+        tmp_path / "n", first, second + timedelta(days=1), ny, limits(quota_day=1)
+    ).admit
+
+
+@pytest.mark.parametrize(
+    ("week_start", "nxt", "admit"),
+    [
+        # prior Sat 2026-01-03 12:00Z; Sunday 2026-01-04 starts a new week only for sunday-start
+        ("sunday", datetime(2026, 1, 4, 0, 0, tzinfo=UTC), True),
+        ("monday", datetime(2026, 1, 4, 0, 0, tzinfo=UTC), False),
+        ("sunday", datetime(2026, 1, 3, 23, 59, tzinfo=UTC), False),
+        ("monday", datetime(2026, 1, 5, 0, 0, tzinfo=UTC), True),
+    ],
+)
+def test_m3_gate_week_start_sets_the_week_boundary(
+    tmp_path: Path, week_start: str, nxt: datetime, admit: bool
+) -> None:
+    lim = LimitsSpec(quotas=[QuotaSpec(period="week", max_runs=1)])
+    prior = datetime(2026, 1, 3, 12, 0, tzinfo=UTC)
+    assert _gate_tz(tmp_path, prior, nxt, UTC_TZ, lim, week_start).admit is admit
+
+
+def test_m3_gate_month_rolls_at_local_midnight(tmp_path: Path) -> None:
+    lim = LimitsSpec(quotas=[QuotaSpec(period="month", max_runs=1)])
+    prior = datetime(2026, 1, 31, 12, 0, tzinfo=UTC)  # Jan 31 17:30 IST
+    # Jan 31 18:29Z = Jan 31 23:59 IST (still January) / Jan 31 18:30Z = Feb 1 00:00 IST
+    assert not _gate_tz(
+        tmp_path, prior, datetime(2026, 1, 31, 18, 29, tzinfo=UTC), KOLKATA, lim
+    ).admit
+    assert _gate_tz(
+        tmp_path / "b", prior, datetime(2026, 1, 31, 18, 30, tzinfo=UTC), KOLKATA, lim
+    ).admit
+    # under UTC both are January: the zone is what makes Feb 1 start at 18:30Z
+    assert not _gate_tz(
+        tmp_path / "c", prior, datetime(2026, 1, 31, 18, 30, tzinfo=UTC), UTC_TZ, lim
+    ).admit
+
+
+def test_m3_engine_uses_binding_timezone_and_week_start(tmp_path: Path) -> None:
+    # day quota: prior fire 15:30 IST Jan 1; 19:00Z is 00:30 IST Jan 2 -> admitted only by the
+    # real zone (UTC: same day -> skipped)
+    env = gov_env(tmp_path / "tz", limits(quota_day=1), timezone="Asia/Kolkata")
+    put_run(env, "k0", KOLKATA_PRIOR, "r0", reserved=0, live=False)
+    at = datetime(2026, 1, 1, 19, 0, tzinfo=UTC)
+    env.clock.now = at
+    assert env.evaluate(now=at).fire
+    # week quota with sunday start: Sat prior, Sunday 00:00Z next
+    lim = LimitsSpec(quotas=[QuotaSpec(period="week", max_runs=1)])
+    sat, sun = datetime(2026, 1, 3, 12, 0, tzinfo=UTC), datetime(2026, 1, 4, 0, 0, tzinfo=UTC)
+    env = gov_env(tmp_path / "ws_sun", lim, week_start="sunday")
+    put_run(env, "k0", sat, "r0", reserved=0, live=False)
+    env.clock.now = sun
+    assert env.evaluate(now=sun).fire
+    env = gov_env(tmp_path / "ws_mon", lim, week_start="monday")
+    put_run(env, "k0", sat, "r0", reserved=0, live=False)
+    env.clock.now = sun
+    d = env.evaluate(now=sun)
+    assert (d.fire, d.reason) == (False, "quota_exhausted")
+
+
+def test_m3_check_and_reserve_uses_binding_timezone_and_week_start(tmp_path: Path) -> None:
+    store, root = _seed(tmp_path, KOLKATA_PRIOR)
+    lock = tmp_path / "usage.lock"
+
+    def reserve(b: Any, lim: LimitsSpec, at: datetime, key: str) -> gg.GateResult:
+        return gg.check_and_reserve(
+            binding=b, limits=lim, workspace_root=root, schedule_id="s", fire_key=key,
+            scheduled_for=at, effective_due=None, ledger=FireRecordLedger(store), fires=store,
+            lock_path=lock, now=at,
+        )  # fmt: skip
+
+    lim = limits(quota_day=1)
+    b = binding("s", limits=lim, timezone="Asia/Kolkata")
+    assert reserve(b, lim, datetime(2026, 1, 1, 19, 0, tzinfo=UTC), "kA").admit
+    wl = LimitsSpec(quotas=[QuotaSpec(period="week", max_runs=1)])
+    sat, sun = datetime(2026, 1, 3, 12, 0, tzinfo=UTC), datetime(2026, 1, 4, 0, 0, tzinfo=UTC)
+    store2, root = _seed(tmp_path / "w", sat)
+    store = store2
+    bs = binding("s", limits=wl, week_start="sunday")
+    assert reserve(bs, wl, sun, "kB").admit
+    bm = binding("s", limits=wl, week_start="monday")
+    assert not reserve(bm, wl, sun + timedelta(minutes=1), "kC").admit
+
+
+# -- L1 / L2 / L3 / L6 ------------------------------------------------------------------------
+
+
+def test_l1_reservation_is_rounded_down_never_to_nearest() -> None:
+    g = run_gate(limits(week=5), week=WindowUsage(reserved=4.881))
+    assert g.admit and g.reservation_usd == 0.11  # 0.119 -> 0.11 (nearest would give 0.12)
+    assert gg.round_down_cents(1.239) == 1.23
+
+
+def test_l2_check_and_reserve_invalidates_ledger_under_lock_before_reading(
+    tmp_path: Path,
+) -> None:
+    order: list[str] = []
+
+    class Spy(FakeLedger):
+        def usage(self, *a: Any, **k: Any) -> dict[Period, WindowUsage]:
+            order.append("usage")
+            return super().usage(*a, **k)
+
+        def invalidate(self, *a: Any, **k: Any) -> None:
+            order.append("invalidate")
+            super().invalidate(*a, **k)
+
+    lim = limits(quota_day=5)
+    store = FireIntentStore(tmp_path / "st")
+    root = str((tmp_path / "ws").resolve())
+    gg.check_and_reserve(
+        binding=binding("s", limits=lim), limits=lim, workspace_root=root, schedule_id="s",
+        fire_key="k", scheduled_for=T0, effective_due=None, ledger=Spy(), fires=store,
+        lock_path=tmp_path / "usage.lock", now=T0,
+    )  # fmt: skip
+    assert order == ["invalidate", "usage"]
+
+
+def test_l3_unparseable_trip_time_after_resume_fails_closed_and_equal_time_is_stale(
+    tmp_path: Path,
+) -> None:
+    resumed = T0 + timedelta(minutes=10)
+    resumes = [{"at": resumed.isoformat(), "by": "op", "add_usd": 1, "new_cap_usd": 3}]
+    bad = TrippedBreaker(
+        id="builtin.cost_cap", condition="cost", action="halt", at="not-a-time", detail={}
+    )
+    env = gov_env(tmp_path / "a", limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", cap_state="resumed", resumes=resumes)
+    _retire(env, "r1", _state("failed", cost=3.0, trips=[bad]))
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.cap_state == "paused"  # not silently classified as stale
+    env = gov_env(tmp_path / "b", limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", cap_state="resumed", resumes=resumes)
+    _retire(env, "r1", _state("failed", cost=3.0, trips=[trip(resumed)]))  # at == resume instant
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.cap_state != "paused" and g.final
+
+
+def test_l6_fifo_prompt_does_not_block_and_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "ws"
+    root.mkdir()
+    os.mkfifo(root / "p.md")
+    b = _prompt_binding(root, None)
+    out: list[Any] = []
+    t = threading.Thread(target=lambda: out.append(read_prompt(b, str(root))), daemon=True)
+    t.start()
+    t.join(5)
+    assert not t.is_alive(), "read_prompt blocked on a FIFO"
+    assert isinstance(out[0], gg.GateResult) and out[0].reason == "prompt_missing"

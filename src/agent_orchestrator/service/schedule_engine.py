@@ -53,6 +53,7 @@ from .fire_store import (
     fire_key,
 )
 from .governance_gate import (
+    GOVERNANCE_CAPPED_STATES,
     GOVERNANCE_LOCK_NAME,
     REASON_COST_CAP_REACHED,
     REASON_GOVERNANCE_ERROR,
@@ -336,6 +337,7 @@ class ScheduleEngine:
         # are not launched until evaluation ends but must count against the caps).
         self._in_tick = False
         self._live_memo: dict[str, FireIntentRecord] | None = None
+        self._finalize_retry: set[str] = set()  # M2: keys whose retire hook failed
         self._pending_by_root: dict[str, int] = {}
         # (root, schedule_id) of fires accepted earlier in this tick: they count against overlap
         # (M1) as well as the caps, so run-now + the natural instant cannot both launch.
@@ -406,6 +408,7 @@ class ScheduleEngine:
                 scheduled_for=rec.scheduled_for,
                 run_id=rec.run_id,
             )
+        self._sweep_unfinalized()
 
     def shutdown(self) -> None:
         """Release the engine lock. Idempotent. Never touches a child process."""
@@ -444,6 +447,7 @@ class ScheduleEngine:
         """One service-loop step. Self-rate-limited to ``eval_interval_seconds`` (monotonic);
         returns the decisions that fired. Never raises."""
         self._reconcile_supervisors()  # every call: prompt reaping, independent of the rate limit
+        self._retry_finalizations()  # M2: re-drive failed retire hooks, also unthrottled
         mono = self._monotonic()
         if self._last_eval_mono is not None and mono - self._last_eval_mono < self._eval_interval:
             return []
@@ -1224,59 +1228,107 @@ class ScheduleEngine:
             self._queued_meta.pop((root, binding.id), None)
 
     def _finalize_governance(self, key: str) -> None:
-        """Retire hook (HLD §6.4, M3): a finished governed run gets its cap state. Never raises."""
+        """Retire hook (HLD §6.4, M3): a finished governed run gets its cap state. Never raises.
+
+        Idempotent (a ``final``/capped record is a no-op) and re-driven (M2): a failure parks the
+        key in ``_finalize_retry`` for the next tick, and :meth:`start` sweeps records a crash left
+        unfinalised."""
         try:
-            rec = self._fires.get(key)
-            g = rec.governance if rec is not None else None
-            if rec is None or g is None or rec.run_id is None or g.final:
-                return
-            if g.cap_state in ("paused", "aborted", "expired"):
-                return
-            try:
-                state = self._repo(rec.workspace_root).load_state(rec.run_id)
-            except RunNotFoundError:
-                return  # never started: orphan reconciliation owns it
-            status = getattr(state, "status", None)
-            observed = max(g.cost_observed_usd, _observed_cost(state))
-            resumed_at = max(
-                (t for t in (_parse_dt(r.get("at")) for r in g.resumes) if t is not None),
-                default=None,
-            )
-            trips = [
-                t
-                for t in getattr(state, "tripped_breakers", [])
-                if isinstance(t, TrippedBreaker)
-                and t.id == COST_CAP_BREAKER_ID
-                and (resumed_at is None or ((_parse_dt(t.at) or resumed_at) > resumed_at))
-            ]
-            upd: dict[str, Any] = {"cost_observed_usd": observed}
-            if status == RUN_STATUS_FAILED and trips:
-                now = self._clock()
-                cap = g.run_cost_cap_usd
-                if g.on_cap == "abort":
-                    upd.update(cap_state="aborted", final=True)
-                    expires = None
-                else:
-                    ttl = g.pause_ttl_seconds or 0
-                    expires = now + timedelta(seconds=ttl)
-                    upd.update(cap_state="paused", paused_at=now, pause_expires_at=expires)
-                self._events.emit(
-                    "schedule.governance.run_cost_capped",
-                    workspace=rec.workspace_root,
-                    schedule_id=rec.schedule_id,
-                    fire_key=key,
-                    run_id=rec.run_id,
-                    cost_usd=observed,
-                    cap_usd=cap,
-                    overshoot_usd=max(0.0, observed - cap) if cap is not None else 0.0,
-                    on_cap=g.on_cap,
-                    pause_expires_at=expires,
-                )
-            else:
-                upd["final"] = True  # succeeded / non-cap failure: no more governed spend
-            self._fires.update(key, governance=g.model_copy(update=upd))
+            self._finalize_governance_once(key)
+            self._finalize_retry.discard(key)
         except Exception:  # noqa: BLE001 - bookkeeping must never break the tick
-            logger.exception("governance finalisation of %s failed", key)
+            logger.exception("governance finalisation of %s failed; will retry", key)
+            self._finalize_retry.add(key)
+
+    def _retry_finalizations(self) -> None:
+        for key in sorted(self._finalize_retry):
+            self._finalize_governance(key)
+
+    def _sweep_unfinalized(self) -> None:
+        """M2 crash recovery at start: governed ``launched`` records that never got their retire
+        hook (the process died between ``retire_finished`` and finalisation) and whose run is no
+        longer running."""
+        active = {k for s in self._state.all().values() for k in s.active_fire_keys}
+        for rec in self._fires.list(status="launched"):
+            g = rec.governance
+            if g is None or g.final or g.cap_state != "none" or rec.run_id is None:
+                continue
+            if rec.fire_key in active:
+                continue  # still tracked: _live_runs retires it when it ends
+            try:
+                status = getattr(
+                    self._repo(rec.workspace_root).load_state(rec.run_id), "status", None
+                )
+            except RunNotFoundError:
+                continue
+            except Exception:  # noqa: BLE001
+                logger.exception("sweep could not read run %s", rec.run_id)
+                continue
+            if status != RUN_STATUS_RUNNING or rec.pid is None or not _pid_alive(rec.pid):
+                self._finalize_governance(rec.fire_key)
+
+    def _finalize_governance_once(self, key: str) -> None:
+        rec = self._fires.get(key)
+        g = rec.governance if rec is not None else None
+        if rec is None or g is None or rec.run_id is None or g.final:
+            return
+        if g.cap_state in GOVERNANCE_CAPPED_STATES:
+            return
+        try:
+            state = self._repo(rec.workspace_root).load_state(rec.run_id)
+        except RunNotFoundError:
+            return  # never started: orphan reconciliation owns it
+        status = getattr(state, "status", None)
+        observed = max(g.cost_observed_usd, _observed_cost(state))
+        confidence = "actual" if observed > 0 else g.cost_confidence
+        killed = status not in (RUN_STATUS_SUCCEEDED, RUN_STATUS_FAILED)
+        if g.reserved_usd is not None and (observed <= 0 or killed):
+            # H1 / HLD §10.4, §16: a blind executor (no cost reported) or an externally killed run
+            # is charged what it could have spent, never $0 -- otherwise period caps never bind.
+            observed, confidence = max(observed, g.reserved_usd), "unknown"
+        resumed_at = max(
+            (t for t in (_parse_dt(r.get("at")) for r in g.resumes) if t is not None),
+            default=None,
+        )
+        trips = [
+            t
+            for t in getattr(state, "tripped_breakers", [])
+            if isinstance(t, TrippedBreaker)
+            and t.id == COST_CAP_BREAKER_ID
+            # L3: an unparseable trip time fails closed (counts as fresh); a trip AT the resume
+            # instant is stale (the resume re-armed the breaker after it).
+            and (
+                resumed_at is None
+                or ((_parse_dt(t.at) or datetime.max.replace(tzinfo=UTC)) > resumed_at)
+            )
+        ]
+        upd: dict[str, Any] = {"cost_observed_usd": observed, "cost_confidence": confidence}
+        capped = status == RUN_STATUS_FAILED and bool(trips)
+        expires: datetime | None = None
+        now = self._clock()
+        if capped and g.on_cap == "abort":
+            upd.update(cap_state="aborted", final=True)
+        elif capped:
+            expires = now + timedelta(seconds=g.pause_ttl_seconds or 0)
+            upd.update(cap_state="paused", paused_at=now, pause_expires_at=expires)
+        else:
+            upd["final"] = True  # succeeded / non-cap failure: no more governed spend
+        # Persist BEFORE emitting: a failed write is retried without a duplicate event.
+        self._fires.update(key, governance=g.model_copy(update=upd))
+        if capped:
+            cap = g.run_cost_cap_usd
+            self._events.emit(
+                "schedule.governance.run_cost_capped",
+                workspace=rec.workspace_root,
+                schedule_id=rec.schedule_id,
+                fire_key=key,
+                run_id=rec.run_id,
+                cost_usd=observed,
+                cap_usd=cap,
+                overshoot_usd=max(0.0, observed - cap) if cap is not None else 0.0,
+                on_cap=g.on_cap,
+                pause_expires_at=expires,
+            )
 
     # -- small helpers -----------------------------------------------------------------------------
 
