@@ -144,6 +144,18 @@ Process signals: **all** runs now handle SIGTERM/SIGINT (ADR-0024 D-10), not jus
   `directive_responses[]` to answer each exactly once (`adopt|redirect|descope|reject`; reject needs ≥ 40 chars). Answers are mirrored to
   `control/directive-acks.jsonl` for the dashboard.
 
+### LLM lane permissions (T-Rk4Wn7 D4)
+
+With no `sentinel.llm.agent`, a generation is spawned with the **least-privilege** set, not
+`--dangerously-skip-permissions`: `--permission-mode acceptEdits`, `--add-dir <gNN/>` and
+`--add-dir <inbox>` (file writes only there), and `--allowedTools "Read,Glob,Grep,Write,Edit,Bash(mv:*)"`
+(`mv` is for the atomic `*.tmp` -> rename). No other shell command is pre-approved. An explicit `llm.agent`
+is never altered: if it is a `claude` agent with `powers: act` and no permission flag, `ao validate`
+(workflow `sentinel:` block) and engine startup print a warning. If a generation still has tool calls refused
+(`permission_denials` in its transcript) it raises a distinct `llm_permission_denied` alarm
+(`control/sentinel-alarms.jsonl`, ledger `sentinel_permission_denied`) and pauses the LLM lane, in addition to
+`sentinel_ungraceful`.
+
 ## Overseer-runner and routed-runner
 
 - **overseer-runner**: `--param sentinel_enabled=true` renders the `sentinel:` block and the soft-barrier checkpoint contract

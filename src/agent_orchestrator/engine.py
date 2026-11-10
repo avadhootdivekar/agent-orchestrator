@@ -139,7 +139,7 @@ from .retry_context import (
 )
 from .runstate import RunStateStore, record_effective_settings
 from .scheduling.overlap import overlap_score, rank_wave
-from .sentinel_driver import SentinelDriver, make_driver
+from .sentinel_driver import SentinelDriver, lane_permission_warnings, make_driver
 from .sentinel_gen import GenerationLane
 from .sentinel_settings import SentinelSettings
 from .spec import validate_isolation, validate_task_model_policy
@@ -2921,6 +2921,8 @@ class Orchestrator:
             else:
                 agent = (agents or {}).get(llm.agent) if llm.agent else None
                 driver = make_driver(llm.driver, agent, None)
+            for warning in lane_permission_warnings(llm.powers, agent, llm.agent):
+                rt.log.warning("sentinel.warn: %s", warning, extra={"event": "sentinel.warn"})
             cap = None
             for br in workflow.circuit_breakers if workflow is not None else []:
                 if br.condition == "run_cost_usd" and br.threshold is not None:

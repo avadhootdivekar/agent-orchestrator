@@ -1332,6 +1332,14 @@ def validate(
         wf, _rs, agent_map = _load_all(workflow, reposets, agents)
         for warning in unsupported_setting_warnings(wf, agent_map):
             typer.echo(f"WARNING: {warning}", err=True)
+        from .sentinel_driver import lane_permission_warnings
+
+        llm = wf.sentinel.llm if wf.sentinel is not None else None
+        if llm is not None and llm.enabled and llm.agent:
+            for warning in lane_permission_warnings(
+                llm.powers, agent_map.get(llm.agent), llm.agent
+            ):
+                typer.echo(f"WARNING: {warning}", err=True)
         typer.echo("OK: all specs valid")
     except OrchestratorError as e:
         typer.echo(f"ERROR: {e}", err=True)

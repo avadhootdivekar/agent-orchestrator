@@ -891,6 +891,42 @@ class GenerationLane:
         sent.gen_triggers += len(new)
         return True
 
+    def _permission_alarm(self, sent: SentinelState, gen: int, detail: str, now: datetime) -> None:
+        """Distinct alarm (AC5): the generation was refused tool permissions, not merely crashed.
+
+        Deterministic, so the LLM lane is paused rather than burning budget on identical retries.
+        """
+        from .sentinel_tick import ALARMS_FILE, CONTROL_DIR
+
+        sent.llm_paused = True
+        append_ledger(
+            self.sdir,
+            now.isoformat(),
+            "sentinel_permission_denied",
+            {"generation": gen, "detail": detail},
+        )
+        self.log.error(
+            "sentinel.alarm: llm_permission_denied — g%02d: %s; LLM lane paused",
+            gen,
+            detail,
+            extra={"event": "sentinel.alarm", "kind": "llm_permission_denied", "generation": gen},
+        )
+        record = {
+            "at": now.isoformat(),
+            "kind": "llm_permission_denied",
+            "generation": gen,
+            "detail": detail,
+        }
+        try:
+            cdir = self.run_dir / CONTROL_DIR
+            cdir.mkdir(parents=True, exist_ok=True)
+            with (cdir / ALARMS_FILE).open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
+        except OSError:
+            self.log.warning(
+                "sentinel.alarm: could not write alarms file", extra={"event": "sentinel.error"}
+            )
+
     def _stop_cause(self, sent: SentinelState, status: DriverStatus, now: datetime) -> str | None:
         gen = sent.generation
         gdir = self.sdir / f"g{gen:02d}"
@@ -959,6 +995,8 @@ class GenerationLane:
                     "error": status.error,
                 },
             )
+            if status.permission_denied:
+                self._permission_alarm(sent, gen, status.permission_denied, now)
             self.log.warning(
                 "sentinel_ungraceful: g%02d (%s)",
                 gen,
