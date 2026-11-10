@@ -54,6 +54,10 @@ policy), `service/` (read-only), `schedules/` (read-only), `engine.py`, other UI
    surfaces the reason inline; the feed filters.
 8. `make ui-build` output is committed. The API tests use `TestClient` with `StubSupervisor`/temp state dir.
 9. ruff/format/mypy clean; existing UI + API tests green.
+10. **(M5) Generic resume refuses governed cap raises.** The generic dashboard resume/New-run routes return **409**
+    ("governed by schedule `<id>`; use Resume on the Usage panel / `ao schedule resume`") when the request carries
+    `options.cost_cap_usd` for a run where `is_governed_run(...)` is true (T-nI4DBf AC12), so `resume-capped`'s headroom
+    check cannot be bypassed from the UI. Non-governed runs are unaffected. Test both.
 
 ## Risks
 - The Resume button spends money from a possibly unauthenticated dashboard. AC3's closed body + server-side bounds

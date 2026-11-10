@@ -48,6 +48,10 @@ Do NOT touch: `src/`, `tests/`, `ui/` (file findings instead).
    order change is the single block named in `T-PpE5lf`. Any extra hunk is justified or reverted.
 4. NFR-6: full `pytest -q` delta vs epic baseline, `ruff check` + `ruff format --check` clean, `mypy src` no regression,
    coverage ≥ 80 % on each new module. All of these are reported with actual numbers.
+5. **(design-review follow-up)** The Opus design review (`w01-07`) covered only the design half of step 1. The
+   dev-security pass is still owed: flock, path guard on `prompt_file`, drop-request schema, Origin gate on the POST.
+   Also re-review that every High/Medium finding of `w01-07` is implemented (A2.7: "every finding implemented and
+   re-reviewed").
 
 ## Risks
 - Skipping the early gate. E-GIytcL's and E-Sc9Rt4's histories show it catches blocking defects that author review

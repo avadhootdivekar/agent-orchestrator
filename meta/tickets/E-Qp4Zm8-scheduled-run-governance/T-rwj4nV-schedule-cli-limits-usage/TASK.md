@@ -57,6 +57,10 @@ Do NOT touch: `cli.py` (root; the sub-app is already mounted by E-Sc9Rt4), `serv
 9. Every subcommand works without a live daemon (reads state dir via `AO_SERVICE_STATE_DIR` in tests). No test
    touches `$HOME`.
 10. ruff/format/mypy clean; all E-Sc9Rt4 CLI tests green.
+11. **(L4, L7) `ao schedule validate` warnings:** (a) `sentinel.llm.budget_usd >= per_run_usd` (generation spend counts
+    toward the run cap, so the lane can use up the whole cap); (b) `overlap: allow` without `per_run_usd`
+    (period-only caps give one run the whole remaining period budget as its cap, and `allow` serializes in practice).
+    One test each, warning text asserted.
 
 ## Risks
 - Text output drift breaks the golden test. Keep formatting in `usage_view.py` only, so the dashboard shares the

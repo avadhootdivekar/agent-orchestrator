@@ -5,7 +5,7 @@
 - Title: Recurring `ao` runs with fixed prompts, per-period invocation caps and cost limits
 - Owner: architect agent (design) -> dev-epic agent (delivery)
 - Created: 2026-11-10
-- Last Updated: 2026-11-10
+- Last Updated: 2026-11-10 (design-review edits applied, w02-02)
 - Status: Draft (design complete; implementation not started; blocked on E-Sc9Rt4 for 9 of 11 tasks)
 - Origin ask: user request (2026-11-10), verbatim: "I should be able to invoke the AO runs with some fixed prompts
   periodically, with some required constraints, ... invocations per specified period, like per day, per week or
@@ -46,7 +46,8 @@
 - FR-3 (per-run cost cap, mid-run, D-5): `limits.cost.per_run_usd` becomes `ao run --cost-cap-usd`. The engine checks
   actual run cost (`compute_run_usage_totals`) at every dispatch and every task boundary. On cap it records
   `TrippedBreaker(id="builtin.cost_cap")`, sets resumable `failed`, and drains. The cap is persisted in `RunState`
-  and **sticky on resume**, and the gate re-arms (it does not latch). *Correction:* `budget.py` is token-only and is
+  and **sticky on resume**, and the gate re-arms (it does not latch). The boundary check trips only while non-terminal work
+  remains (a run that finishes over its cap ends `succeeded`, overshoot recorded). *Correction:* `budget.py` is token-only and is
   **not** the mechanism. Verification: engine unit + `ao run --cost-cap-usd` e2e + latch-regression test.
   Task: T-et7Edf.
 - FR-4 (period cost cap): `limits.cost.periods: [{period, max_usd}]`. Before each fire, `remaining = max_usd −
@@ -85,7 +86,7 @@
 
 ## Task List
 - [ ] `T-lJu9oZ-quota-window-math` — pure day/week/month windows in tz; DST, midnight gap, week start (FR-2, NFR-3) — 1.5 d
-- [ ] `T-et7Edf-run-cost-cap-gate` — `ao run/resume --cost-cap-usd`, sticky `RunState.cost_cap_usd`, re-armed `builtin.cost_cap` gate, sentinel cap feed (FR-3, NFR-4) — 3 d
+- [ ] `T-et7Edf-run-cost-cap-gate` — `ao run/resume --cost-cap-usd`, sticky `RunState.cost_cap_usd` (`Option.sticky_on_resume`), re-armed `builtin.cost_cap` gate (boundary trips only with remaining work), persisted `TaskRunState.actuals_available`, fake `cost_usd` seam, sentinel cap feed (FR-3, NFR-4) — 3 d; **after A3-D3 (T-Rk4Wn7)**
 - [ ] `T-tPlK1T-governance-binding-model` — `LimitsSpec` & co., binding/defaults deltas, D-2 validator, JSON Schema, E-Sc9Rt4 fixture helper (FR-1, FR-2, FR-4, NFR-2) — 2 d
 - [ ] `T-Uz0Uol-usage-ledger` — `FireGovernance` record, `charge()`, window usage, high-water mark, cost confidence, index + mtime cache (FR-2, FR-4, NFR-1, NFR-5) — 3 d
 - [ ] `T-PpE5lf-pre-fire-gate-and-reservation` — gate step in `evaluate()`, `check_and_reserve` under flock, prompt snapshot, fail-closed argv check, retire hook (FR-1..FR-4, NFR-1, NFR-2) — 3 d
@@ -115,6 +116,10 @@
     within `pause_ttl_seconds` (default 72 h), then `expired`. `abort` is final for governance. The cap is sticky,
     so a plain `ao resume` halts at $0.
 
+## Review edits not applied here (owned by other epics; requested in STATUS)
+- E-Sc9Rt4 T-Ev3Qm5 stores `queued_scheduled_for`; T-Sd1Kq7 `RunArgs` excludes `cost_cap_usd` (+ `minimal_limits()`); T-Ri7Dz2 AC4
+  registry fix; E-Sn7tL2 T-Rk4Wn7 exempts breaker/budget/cost-cap halts from the "no failed with pending" invariant.
+
 ## Decisions needed (open; defaults already assumed by the tickets — HLD §21)
 - Q-1 Co-release E-Sc9Rt4 with this epic (D-2 would invalidate limit-less bindings installed earlier) — default: yes.
 - Q-2 `until.max_runs` does not satisfy D-2 — default: correct, it does not.
@@ -126,7 +131,13 @@
 
 ## Risks and Dependencies
 - **Hard dependency on E-Sc9Rt4** (unimplemented): T-Sd1Kq7, T-Fr2Nx8, T-Ev3Qm5, T-Lp4Wt6, T-Ri7Dz2, T-Cl6Jn9 (Sprint 1
-  of that epic) and T-Ap1Xs3 (its Sprint 2). T-lJu9oZ and T-et7Edf have no E-Sc9Rt4 dependency.
+  of that epic) and T-Ap1Xs3 (its Sprint 2). T-lJu9oZ has no E-Sc9Rt4 dependency. **T-et7Edf has no E-Sc9Rt4 *code* dependency but
+  is sequenced after A3-D3 (T-Rk4Wn7) and after the T-Ri7Dz2 registry fix** (design review, amendment 1).
+- **Sprint-order amendments (Opus design review `w01-07`, applied by `w02-02`):** (1) `T-et7Edf` after A3-D3 and after E-Sc9Rt4 core,
+  owning H2 (`actuals_available`) and M6 (fake `cost_usd`), so `T-Uz0Uol` depends on it; (2) `T-tPlK1T` right after `T-Sd1Kq7`, or
+  `T-Sd1Kq7` ships `minimal_limits()`; (3) chain `T-Sd1Kq7→T-tPlK1T`; `T-Fr2Nx8+T-lJu9oZ+T-tPlK1T+T-et7Edf→T-Uz0Uol`;
+  `T-Ev3Qm5(+queued_scheduled_for)+T-Lp4Wt6+T-Ri7Dz2+T-Uz0Uol→T-PpE5lf`; `T-Cl6Jn9+T-PpE5lf→T-nI4DBf ‖ T-rwj4nV→T-88wSLC→T-lTW88y`;
+  `T-8knqVe` after `T-Ap1Xs3`; `T-Hq3vXd` last. Full text: HLD §20.
 - **Mid-run cap accuracy lag (D-5 hazard):** USD cost is visible only when a task settles. Overshoot ≈ cost of in-flight
   tasks (≈ `max_parallel` × per-task cost) + summaries (≤ 2 % + final). It is measured per fire and displayed. Killing
   in-flight tasks would *under*-count cost, so it is rejected.

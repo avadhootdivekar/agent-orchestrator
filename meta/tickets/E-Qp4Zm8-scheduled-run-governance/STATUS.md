@@ -1,11 +1,17 @@
 # STATUS
 
 - ID: `E-Qp4Zm8-scheduled-run-governance`
-- Updated At: 2026-11-10
+- Updated At: 2026-11-10 (review edits applied)
 - State: Draft (design complete, implementation not started)
 - Owner: architect agent (design) -> dev-epic agent (delivery)
 
 ## This update
+- **Design-review edits applied (2026-11-10, run unit `w02-02-a2-apply-design-edits`).** The Opus review
+  (`w01-07`: 2 High, 6 Medium, 7 Low) is folded into the HLD (§4, §6.4, §7, §8.1, §9.2/9.3/9.5, §10.2, §16.1, §17, §18.3, §20,
+  §24), ADR-0025 (D4/D5/D6 corrections) and the tickets: H1 (boundary trips only with remaining work) and H2 (persisted
+  `TaskRunState.actuals_available` + `attempts_without_actuals`) are ACs of `T-et7Edf` (AC5, AC13) and `T-Uz0Uol` (AC10, AC12).
+  M1-M6, L1-L7 are in the tickets named in the table below; two are **rejected with reason** (see below). D-1..D-5 untouched.
+  Docs/tickets only; no code.
 - **Design complete, nothing implemented.** The architecture package is delivered:
   `docs-md/scheduled-run-governance-hld.md` (HLD + LLD, with mermaid block, sequence and state diagrams, schema deltas,
   window math, the ledger, both enforcement points, the E-Sc9Rt4 seam list in §17, the test plan and open decisions in
@@ -33,6 +39,13 @@ Capacity across 2 sprints = 30 person-days -> 83 % utilization (inside the 0.70-
 Two sprints rather than three. The epic inherits E-Sc9Rt4's hard mechanisms (atomic records, single launch authority,
 singleton lock) and adds mostly pure logic, so the extra buffer sprint E-Sc9Rt4 needed is not justified. The Sprint 2
 cut-line, if needed, is `T-8knqVe`'s visual polish only. Its usage route and event feed are D-3 and cannot be cut.
+
+**Sprint-order amendments (design review):** `T-et7Edf` is scheduled **after A3-D3 (T-Rk4Wn7) merges** and after the E-Sc9Rt4
+core (it edits `engine.py` `_settle_completed_task` and the run loop together with D3). `T-lJu9oZ` starts immediately. `T-et7Edf`
+now owns H2 and M6, so `T-Uz0Uol` depends on it. `T-tPlK1T` lands right after `T-Sd1Kq7` (or `T-Sd1Kq7` ships
+`minimal_limits()`). Chain: `T-Sd1Kq7→T-tPlK1T`; `T-Fr2Nx8+T-lJu9oZ+T-tPlK1T+T-et7Edf→T-Uz0Uol`;
+`T-Ev3Qm5+T-Lp4Wt6+T-Ri7Dz2+T-Uz0Uol→T-PpE5lf`; `T-Cl6Jn9+T-PpE5lf→T-nI4DBf ‖ T-rwj4nV→T-88wSLC→T-lTW88y`; `T-8knqVe` after
+`T-Ap1Xs3`; `T-Hq3vXd` last. The diagrams below show the *original* graph; the added edges are `T-Rk4Wn7→T-et7Edf`, `T-et7Edf→T-Uz0Uol`.
 
 **Start gate:** Sprint 1 starts when E-Sc9Rt4 Sprint 1 (MVP: T-Sd1Kq7, T-Fr2Nx8, T-Ev3Qm5, T-Ri7Dz2, T-Lp4Wt6, T-Sv5Hb3,
 T-Cl6Jn9) has merged. `T-lJu9oZ` and `T-et7Edf` have no E-Sc9Rt4 dependency and may start earlier. `T-8knqVe` also
@@ -72,6 +85,35 @@ named per task.
   the sentinel lane cap derives only from `run_cost_usd` breakers (`engine.py:2924`); summary cost is outside
   `RunState.tasks`; `FakeExecutor` reports no cost; `ao run` has no `--run-id` yet; dashboard auth (ADR-0021) is wired
   in `ui/app.py`.
+
+## Review disposition (w01-07 → w02-02)
+
+| Finding | Disposition | Where |
+|---|---|---|
+| H1 boundary trip only with remaining work | applied | T-et7Edf AC5; HLD §9.2; ADR D5; T-88wSLC AC9a |
+| H2 persist `actuals_available` | applied (flag + counter) | T-et7Edf AC13; T-Uz0Uol AC10; HLD §9.2/§10.2 |
+| M1 sentinel kills under-count | applied | T-Uz0Uol AC12; HLD §9.3; T-Hq3vXd AC5 |
+| M2 queue-drain second gate site + `queued_scheduled_for` | applied here; E-Sc9Rt4 part requested | T-PpE5lf AC15; HLD §8.1/§17 |
+| M3 paused classification after resume | applied | T-PpE5lf AC9/AC16; HLD §6.4 |
+| M4 seam with T-Rk4Wn7 D3 | applied here; T-Rk4Wn7 note requested | T-et7Edf AC16 + sequencing; HLD §9.2 |
+| M5a sticky registry attr + `SOURCE_STATE`; M5b drop `cost_cap_history` | applied | T-et7Edf AC14 |
+| M5c `RunState.cost_cap_source` + generic-resume 409 | **source field rejected** (cannot be forwarded through the allow-listed argv; the fire record is the authority); 409 applied via `find_by_run_id` | T-et7Edf AC14c; T-nI4DBf AC12; T-8knqVe AC10 |
+| M6 fake `cost_usd` seam | applied | T-et7Edf AC15; T-88wSLC |
+| L1 raw-value validation | applied | T-et7Edf AC1/AC2 |
+| L2 `record_trip` docstring, trailer ×N | applied (deferrable to T-Hq3vXd if outside `breakers.py` boundary) | T-et7Edf AC17; HLD §16.1 |
+| L3 `new_cap` from engine metric | applied | T-Uz0Uol AC13; T-nI4DBf AC1; HLD §9.5 |
+| L4 sentinel lane / validate warning | applied | T-rwj4nV AC11; HLD §16.1 |
+| L5 label authoritative; Santiago + Beirut | applied | T-lJu9oZ AC11; HLD §7 |
+| L6 resume uses `LaunchRecord` inputs | applied | T-nI4DBf AC11; HLD §9.5 |
+| L7 period-only caps documented; line refs refreshed | applied (HLD §4 `3232→3248` fixed now; rest in T-Hq3vXd AC5) | HLD §4/§16.1; T-Hq3vXd AC5 |
+| §17 seams: single `intended` write; `RunArgs` excludes `cost_cap_usd` | applied | T-PpE5lf AC17; T-tPlK1T AC11; HLD §17 |
+| dev-security half of the early gate | **still owed** | T-lTW88y AC5 |
+
+**Cross-epic requests (not editable from this unit; for the owners of the E-Sc9Rt4 and E-Sn7tL2 tickets):**
+1. E-Sc9Rt4 `T-Ev3Qm5`: store `queued_scheduled_for` next to `queued_fire_key`.
+2. E-Sc9Rt4 `T-Sd1Kq7`: `RunArgs` explicitly excludes `cost_cap_usd`; ship `tests/schedules/_fixtures.py::minimal_limits()` (or land `T-tPlK1T` right after).
+3. E-Sc9Rt4 `T-Ri7Dz2` AC4: `run_id` must be a registry `Option` (already flagged); apply before `T-et7Edf`.
+4. E-Sn7tL2 `T-Rk4Wn7` (A3-D3): state that breaker/budget/cost-cap halts are exempt from the "no failed with pending tasks" invariant.
 
 ## Risks / Blockers
 - **Blocked** (9 of 11 tasks) on E-Sc9Rt4 implementation. Not blocked on design: each HLD §21 question has a default.

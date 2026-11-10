@@ -42,7 +42,8 @@ Do NOT touch: `engine.py`, `cli.py`, `governance_gate.py` (import its lock helpe
    (`aborted` ⇒ `aborted`, `expired` ⇒ `expired`), `now < pause_expires_at`, `0 < add <= max_add` (`bad_amount`), and
    `add <= remaining` in the **original fire's windows** (`no_headroom`, message carries remaining). The default `add`
    is `per_run_usd`, or `MIN_RESERVATION_USD` when absent.
-2. A valid request writes one drop-request file (`kind: "resume_capped"`, `new_cap = cost_observed_usd + add`, `add`,
+2. A valid request writes one drop-request file (`kind: "resume_capped"`, `new_cap = engine_cost_usd + add` (L3: the engine's metric from `compute_run_usage_totals`, **not** `cost_observed_usd`, which
+   also includes `summary_cost_usd` and would hand the engine `add + summary_cost` of real headroom), `add`,
    `by`, `requested_at`, `request_id`) atomically. When no daemon is live, the in-process path (same function E-Sc9Rt4
    uses for run-now) performs the drain immediately.
 3. The engine drain re-checks every condition under the governance flock. If the schedule has another active run
@@ -63,6 +64,12 @@ Do NOT touch: `engine.py`, `cli.py`, `governance_gate.py` (import its lock helpe
 9. Manual out-of-band `ao resume --cost-cap-usd 99` after expiry is still charged by the ledger. An integration test
    with a stub state.json raising the cost confirms the window usage rises.
 10. ≥ 85 % coverage on `capped_resume.py`; ruff/format/mypy clean.
+11. **(L6) Original launch inputs.** `launch_capped_resume` reuses the original launch's `workflow_path`, reposets and agents,
+    looked up from `LaunchRecord.workflow_path` (`ui/processes.py:443`) via the fire's `launch_id` (`FireIntentRecord`
+    holds only `launch_id`). A template **instance** directory is never re-rendered on resume. Test: resume of a
+    template-instance fire runs against the same instance dir and the render function is not called.
+12. **(M5) Governed runs resist generic resume.** Provide `is_governed_run(ws, run_id)` (a thin wrapper over
+    `find_by_run_id`) for T-8knqVe's route guard (AC10 there) and for the CLI WARNING in T-et7Edf AC14c.
 
 ## Risks
 - Two launch authorities would reappear if the CLI or dashboard called `launch_resume` directly. Both **must** go

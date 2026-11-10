@@ -49,10 +49,14 @@ fixture reuse.
 7. The suite runs in < 60 s locally and has no sleeps. All time is injected. Run the full `pytest -q` and report the
    delta vs the epic baseline.
 8. Coverage report for the new modules (≥ 80 % each) attached to STATUS.
+9. **(H1/M1/M2) Added scenarios:** (a) a 1-task run that crosses its cap finishes `succeeded`, ledger `overshoot_usd > 0`,
+   no pause; (b) a run with a killed (sentinel-recovered) attempt is `partial` and charged conservatively; (c) the
+   `overlap: queue` drain over quota is burned in its original window.
 
 ## Risks
 - Real-time sleeps creeping in via the daemon loop. Use `--once` + injected clocks only.
-- The scripted cost executor must set `actuals_available=True`. Otherwise the conservative `unknown` rule (HLD §10.4)
+- The scripted cost executor is **T-et7Edf AC15's `fake_cost_script` seam** (`cost_usd` in `token_outputs`); do not build a
+  second one. It must set `actuals_available=True`. Otherwise the conservative `unknown` rule (HLD §10.4)
   changes the numbers. Add one test that deliberately exercises `unknown`.
 
 ## Dependencies

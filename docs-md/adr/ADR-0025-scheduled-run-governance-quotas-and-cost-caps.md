@@ -79,7 +79,8 @@ resumed later. This is accepted for explainability (one fire ⇒ one window ⇒ 
 **Decision.** E-Sc9Rt4's normative `evaluate()` order gains one step:
 `... already_fired → overlap → GOVERNANCE → concurrency → FIRE`. Quota and cost skips write a `suppressed` record
 (burned key) and a `schedule.governance.skipped` event. The launcher repeats the gate authoritatively under a flock
-and writes the reservation in the intent record. `run-now --force` bypasses overlap only, never governance.
+and writes the reservation in the intent record (replacing, not adding to, E-Sc9Rt4's own `intended` write). There is a second
+gate call site: the `overlap: queue` drain return, which needs `queued_scheduled_for` stored by E-Sc9Rt4 (design review M2). `run-now --force` bypasses overlap only, never governance.
 
 **Why.** After `already_fired` and overlap so the true cause is recorded; before concurrency so a quota-exhausted fire
 is reported deterministically rather than flapping. Burning the key matches D-3's "skip", since quotas cannot reset
@@ -101,6 +102,15 @@ it through `--extend-breaker`. **Why not `budget.py`.** It meters tokens, and pr
 tier, while the CLI already reports true USD. **Why in the engine at all.** D-5 requires mid-run enforcement, and the
 engine is the only component that sees each settle.
 
+**Early-gate corrections (Opus design review, 2026-11-10; the decision itself is unchanged).**
+(1) The boundary check trips only while non-terminal work remains: a run that finishes over its cap ends `succeeded` with the
+overshoot recorded, instead of being marked `failed`. (2) `TaskRunState` persists `actuals_available` and
+`attempts_without_actuals`, so the ledger can tell a blind run from a $0 run (and a killed attempt from a clean one).
+(3) "Sticky" is a registry attribute (`Option.sticky_on_resume`, provenance `SOURCE_STATE`); cap changes use the existing
+`effective_settings_history`. (4) The FakeExecutor gets a `cost_usd` seam so CLI-level tests can script cost. (5) The value is
+validated before `resolve_option`, which treats falsy values as unset. (6) The gate coexists with A3-D3's run-end invariant,
+which exempts breaker/budget/cost-cap halts.
+
 **Consequence.** The cap is general: it is useful without schedules. The launcher must verify that the flag reached the
 argv, because `_render_options` silently drops unknown keys. It fails closed otherwise.
 
@@ -110,7 +120,9 @@ argv, because `_render_options` silently drops unknown keys. It fails closed oth
 `pause` lets an operator resume within `pause_ttl_seconds` (default 72 h) through `ao schedule resume` or the dashboard,
 adding a bounded amount (default `per_run_usd`) checked against the fire's window. The engine performs the resume as
 the single launch authority. After the TTL the run is `expired`. `abort` marks the fire final and refuses governance
-resume. Neither releases the sticky cap, so a manual `ao resume` without a higher `--cost-cap-usd` halts at $0. The
+resume. Neither releases the sticky cap, so a manual `ao resume` without a higher `--cost-cap-usd` halts at $0. A governed run's cap cannot
+be raised through the generic dashboard resume (409; use `resume-capped`); the CLI stays the explicit escape hatch with a
+WARNING. Cap-state classification looks only at a `builtin.cost_cap` trip later than the latest governed resume. The
 scheduler never auto-resumes a capped run.
 
 **Why pause is the default.** It is what breaker `action: pause` already means (ADR-RC-004), with no new status
@@ -121,7 +133,8 @@ process and no reservation, so pause never costs more than abort unless a human 
 ADR-0007 D7's drain keeps the working tree and `state.json` consistent. The cap is only *detected* at a settle anyway,
 so killing buys little.
 
-**Consequence (stated hazard).** Overshoot ≤ the cost of tasks in flight when the cap is crossed (≈ `max_parallel` ×
+**Consequence (stated hazard).** Existing sentinel recovery kills already lose spend, so such runs are `partial` and charged
+conservatively. Overshoot ≤ the cost of tasks in flight when the cap is crossed (≈ `max_parallel` ×
 per-task cost), plus summaries (≤ 2 % plus the final summary). It is measured per fire (`overshoot_usd`) and displayed.
 A tight bound is `max_parallel: 1`. Per-dispatch `--max-budget-usd` would bound it further, but it is deferred because
 it varies the argv that ADR-0019 D7 hashes into the result-cache key.

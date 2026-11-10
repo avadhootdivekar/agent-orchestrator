@@ -37,6 +37,11 @@ Do NOT touch: `src/`, `tests/`, `ui/`, other epics' tickets.
 3. A user guide section ("Recurring jobs with limits") in `run-options-and-limits-guide.md` walks through the owner's
    original example end to end with real command output captured from a temp workspace.
 4. The epic and all 11 task STATUS files agree on state.
+5. **(L2, L4, L7, M1, M5) Guide text and refresh:** document overshoot (including that a run which finishes over its cap is
+   `succeeded`, H1), the sentinel-kill under-count and the `partial` charge (M1, also in `guide-sentinel.md`),
+   period-only reservation (L7), the sentinel-lane cap interaction (L4), `Option.sticky_on_resume` (M5), and the
+   `record_trip` docstring/trailer if T-et7Edf deferred it. **Refresh the HLD §4 line references** (`_drain_remaining` is at
+   `engine.py:3248`, not 3232; the boundary block is about 2728-2790).
 
 ## Risks
 - Docs describing the HLD instead of the code. AC1 is the guard.

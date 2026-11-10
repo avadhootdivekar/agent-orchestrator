@@ -102,7 +102,7 @@
 | Summary cost | **Not** in `state.tasks`; `<run_dir>/summary/summary.json` `summary_cost_usd` (`summarizer.py:54,287`), bounded at `SUMMARY_MAX_COST_FRACTION = 0.02` except the final summary | Ledger adds it (§10.2); the in-run gate does not (documented) |
 | USD breaker | `run_cost_usd` / `task_cost_usd` registered (`breakers.py:419`), evaluated at task boundaries (`engine.py:2741`) | **Not reused directly** — latches (§9.1) |
 | Breaker actions | `fail/stop/pause` all ⇒ resumable `status="failed"` (`breakers.py::map_action`, ADR-RC-004); `RunState.status ∈ {running, succeeded, failed, cancelled}` | Pause = resumable failed |
-| Halt behavior | Halt ⇒ `_drain_remaining` waits for in-flight workers ("drain, don't kill", ADR-0007 D7, `engine.py:3232`) | Overshoot bound (§9.2) |
+| Halt behavior | Halt ⇒ `_drain_remaining` waits for in-flight workers ("drain, don't kill", ADR-0007 D7, `engine.py:3248`) | Overshoot bound (§9.2) |
 | Latching | `evaluate_breakers`: `if spec.id in already_tripped: continue` — a tripped id never trips again; ADR-0016 D2 already flags "after any trip a plain `ao resume` has no engine wall" | Why we need a re-armed gate |
 | Extension | `ao resume --extend-breaker <id>` → `apply_breaker_extension` — but only ids in `wf.circuit_breakers` (`cli.py:2027`) | Not usable for a built-in; new `--cost-cap-usd` on resume instead |
 | Built-in trip recording | `record_trip(... BUILTIN_BUDGET_EXHAUSTED ...)` (`engine.py:1756`), ids in `models.py:131-133` | Add `BUILTIN_COST_CAP = "builtin.cost_cap"` |
@@ -360,10 +360,19 @@ split E-Sc9Rt4 uses for its cross-field rules. Uniqueness-per-period is pydantic
 }
 ```
 
+Cap-state classification (M3): a retired run is `paused`/`aborted` only if `status=failed` **and** it carries a
+`builtin.cost_cap` trip whose `at` is later than the latest `resumes[].at` (any trip when there are no resumes). The trip list
+is append-only and never cleared, so an earlier trip must not make a later non-cap failure look like a cap pause.
+
 `governance: null` for a binding that predates this epic is impossible after D-2 (every binding has limits), but the
 field is optional so E-Sc9Rt4's own tests and records stay valid.
 
 ## 7. Window math (`schedules/windows.py`) — D-4
+
+> **Review amendment (L5): the local-date label is authoritative.** Window membership is decided by the key
+> (`day:YYYY-MM-DD` …); `start <= t < end` is derived to agree with it. The two agree in every zone checked (Havana,
+> Santiago 24:00, Beirut midnight gap) and could diverge only for a fall-back after local midnight. The test corpus adds
+> America/Santiago 2024-04-07 and Asia/Beirut 2024-03-31.
 
 Pure, stdlib-only (`zoneinfo`), no clock reads.
 
@@ -438,8 +447,12 @@ Why exactly there:
   concurrency came first, a concurrency-blocked fire would be retried next tick and then gated — which is also fine —
   but placing governance first means a fire that is over quota is recorded as `quota_exhausted` deterministically
   instead of flapping between `concurrency` and `quota_exhausted` events across ticks.
-- **`queue`-overlap drain path.** A queued fire (E-Sc9Rt4 `queued_fire_key`) is gated when it is drained, using its
-  original `scheduled_for`. If the gate rejects it then, the queued key is cleared and burned with the governance reason.
+- **`queue`-overlap drain path (M2).** A queued fire (E-Sc9Rt4 `queued_fire_key`) is gated when it is drained, using its
+  original `scheduled_for`. E-Sc9Rt4 §6.3 step 3 returns `FIRE(from_queue=...)` *before* `next_fire`/`already_fired`/
+  overlap/concurrency, so the inserted step above does not run there: this is a **second governance call site**.
+  `ScheduleState` stores only `queued_fire_key` (a hash), so the window instant cannot be recovered. **E-Sc9Rt4 T-Ev3Qm5
+  must store `queued_scheduled_for` next to it.** If the gate rejects the drained fire, the queued key is cleared and
+  burned with the governance reason in its **original** window.
 
 Why governance skips burn the key (and concurrency's do not): quota never frees inside the fire's grace window (it
 resets at a window boundary, which is later than any grace), and cost headroom freeing up mid-grace (a sibling settles
@@ -587,12 +600,16 @@ and the Claude CLI already reports the true USD figure.
 ### 9.2 Design: a sticky cap and a re-armed built-in gate
 
 1. **`ao run --cost-cap-usd FLOAT`** — new run-options registry entry: `Option("cost_cap_usd", "float",
-   flag="--cost-cap-usd", ui_group=GROUP_CONCURRENCY, ui_label="Cost cap (USD)")`, **CLI-only** (no env, no config key),
+   flag="--cost-cap-usd", ui_group=GROUP_CONCURRENCY, ui_label="Cost cap (USD)", sticky_on_resume=True)`, **CLI-only** (no env, no config key),
    exactly like `budget_total`. Being in the registry makes it allow-listed for `launch_run`/`launch_resume` and visible
    in the dashboard's New-run form — a general feature, not scheduler-only.
-2. **Persisted and sticky.** `RunState` gains `cost_cap_usd: float | None = None` and
-   `cost_cap_history: list[CostCapChange] = []` (`{at, value, source: "start"|"resume"}`). On `ao run`, the CLI value
-   is stored. On `ao resume`, **absent flag ⇒ keep the persisted value** (deliberately unlike other options, which
+2. **Persisted and sticky.** `RunState` gains `cost_cap_usd: float | None = None`. Changes are recorded in the existing
+   `effective_settings_history` rather than a second `cost_cap_history` list (M5: derive, don't duplicate;
+   `RunState.cost_cap_usd` stays because `effective_settings` is purely observational). *Sticky is a registry concept:*
+   `Option.sticky_on_resume` plus a `SOURCE_STATE` provenance, so `_effective_settings_snapshot` reports "kept from state"
+   (today `Option.resumable` means "resolved fresh each invocation", `run_options.py:85-87`). The value is validated
+   **before** `resolve_option` (L1): that function treats falsy CLI values as unset, so `--cost-cap-usd 0` would otherwise
+   silently mean "no cap". On `ao run`, the CLI value is stored. On `ao resume`, **absent flag ⇒ keep the persisted value** (deliberately unlike other options, which
    "resolve fresh each invocation"); `--cost-cap-usd X` sets a new absolute cap (must be `> 0`; a value `<=` current
    spend is accepted but prints a WARNING that the run will halt at its first dispatch). There is no way to *remove* a
    cap on resume short of editing `state.json` — intentional.
@@ -602,7 +619,11 @@ and the Claude CLI already reports the true USD figure.
    - **at dispatch prep**, before `budget.gate()`/`charge_estimate()` for every task (static, injected, loop clone,
      redispatch) — so no new work starts once the cap is reached, **including after any resume**;
    - **at the task boundary**, immediately before `evaluate_breakers` (`engine.py:2741`) — so the halt happens at the
-     settle that revealed the breach, not only when something new is ready.
+     settle that revealed the breach, not only when something new is ready. **H1: the boundary trips only if some task is
+     still non-terminal (pending, ready or blocked).** If the settle that crosses the cap leaves no work, the run finishes
+     normally (`succeeded`) with the overshoot recorded in the ledger (§10.2); tripping would mark a finished run `failed`
+     and offer a pointless resume. The dispatch-prep check alone already prevents new work; the boundary check is only an
+     early halt.
    On a hit: `record_trip(state, BUILTIN_COST_CAP, condition="run_cost_usd", action=<"pause">, detail={...})` (the
    existing primitive, so the `TrippedBreaker` and `breaker.trip` event are byte-compatible), `state.status="failed"`,
    save, `DispatchPrep(signal="halt")` / `SettleResult(signal="halt")` → existing `_drain_remaining`. The helper does
@@ -614,6 +635,25 @@ and the Claude CLI already reports the true USD figure.
    `state.cost_cap_usd` (min of both), so the sentinel's `budget_pct` and `--max-budget-usd` apply to scheduled runs.
 6. **Byte-identical when unset.** `cost_cap_usd is None` ⇒ the helper returns immediately without calling `clock()`
    (the `evaluate_breakers` no-op guarantee, which several stepping-clock tests depend on).
+
+**Seam with A3-D3 / T-Rk4Wn7 (M4).** D3 makes a failed task fail only its dependents and ends the run `failed` at the
+end, with the invariant "a run with runnable work does not end failed with pending tasks". A cost-cap halt deliberately
+leaves pending tasks, so that invariant **exempts breaker, budget and cost-cap halts**. Both tasks edit
+`_settle_completed_task` and the run loop, so T-et7Edf is sequenced **after** T-Rk4Wn7 merges.
+
+**Why resume-safe whole-run cost works (key enabler, not obvious).** `prepare_resume` (`runstate.py:540-546`) copies
+`cumulative_cost_usd` into the reset `TaskRunState` and `_accumulate_actuals` (`engine.py:4052-4073`) uses `+=`, so run cost
+survives resume and the sticky cap measures whole-run spend.
+
+**Persisted cost visibility (H2).** `cost_confidence` (§10.2, §10.4) needs to know whether a task's cost was *observed*, but
+`actuals_available` exists only on `TaskResult`. `TaskRunState` therefore gains defaulted `actuals_available: bool = False`
+(sticky OR) and `attempts_without_actuals: int = 0` (every settled attempt reporting none, including killed ones), both set
+in `_accumulate_actuals` and carried by `prepare_resume`. They are owned by T-et7Edf; T-Uz0Uol depends on them. The
+`cumulative_cost_usd > 0` heuristic is rejected: a resumed task that reports later would mask an earlier blind attempt.
+
+**Scriptable cost for tests (M6).** `FakeExecutor.token_outputs` carries tokens only and the CLI path builds
+`FakeExecutor()` without a script (`executors/__init__.py:14`), so T-et7Edf adds `cost_usd` to `token_outputs` and a named
+fixture seam (`fake_cost_script`). T-88wSLC and the CLI-e2e tier reference it.
 
 The engine records `action="pause"` for every cost-cap trip. Pause vs abort is a **governance** property of the fire
 (§9.4), not an engine state: the engine's behavior is identical (stop dispatching, drain, resumable `failed`), which is
@@ -627,6 +667,11 @@ task settles** (the CLI's final `result` event carries `total_cost_usd`; assista
 - **Overshoot bound.** Final run cost ≤ `cap` + Σ(cost of tasks in flight at the moment the cap was crossed). With
   `max_parallel = P` and a per-task worst case `C`, the bound is ≈ `P × C` (ADR-0016 D2 states the same bound for the
   overseer). Summaries add ≤ 2 % plus the final summary (§4).
+- **Existing kills already under-count (M1).** Sentinel recovery already kills tasks (`sentinel_tick.py:570-590`: idle,
+  stuck, cost) with `TaskResult.status="killed"`, and their spend is lost (`engine.py:4066`). A scheduled run with sentinel
+  recovery on therefore under-reports to both the engine cap and the ledger. With `attempts_without_actuals` (§9.2) the
+  ledger marks such runs `partial` and charges `max(observed, reserved)` while the fire's window is open. The in-run limit
+  is documented in `guide-sentinel.md` and the governance guide.
 - **Why not kill in-flight tasks to tighten it ("hard abort")** — rejected, three reasons:
   1. A killed `claude -p` never emits its `result` event, so **its cost is never recorded** — `cumulative_cost_usd`
      stays 0 for spend that really happened. Killing to save money makes the ledger *under*-count, the one outcome
@@ -685,7 +730,8 @@ FUNCTION request_capped_resume(workspace, schedule_id, run_id, add_usd=None, by=
   # Charged to the ORIGINAL fire's windows (attribution rule §6.1):
   remaining = min over period caps of (max_usd - usage(window_of(rec.scheduled_for)).actual - reserved)
   REQUIRE add <= remaining                                ELSE ResumeRefused("cost_cap_reached", remaining)
-  new_cap = rec.governance.cost_observed_usd + add
+  new_cap = engine_cost_usd(rec) + add   # L3: the engine's metric (compute_run_usage_totals), NOT cost_observed_usd,
+                                         # which also includes summary_cost_usd that the engine gate never counts
   WRITE drop request {kind: "resume_capped", workspace, schedule_id, run_id, new_cap, add, by, requested_at}
   # the ENGINE (single launch authority, ADR-0014 D10) drains it next tick:
 
@@ -700,6 +746,14 @@ FUNCTION engine.drain_resume_capped(req):            # same TTL rule as run-now 
   emit("schedule.governance.resumed", run_id, add_usd, new_cap_usd, by)
 ```
 
+- **Launch inputs (L6).** `launch_capped_resume` reuses the original launch's `workflow_path`, reposets and agents, looked
+  up from `LaunchRecord.workflow_path` (`ui/processes.py:443`) via the fire's `launch_id`; a template instance dir is never
+  re-rendered on resume.
+- **Generic resume is not a bypass (M5).** `cost_cap_usd` is a `ui_group` option, so the generic dashboard resume/New-run
+  routes could forward it. They return 409 for a run that has a governing fire record (`find_by_run_id`) and point to
+  `resume-capped`. CLI `ao resume --cost-cap-usd` stays the explicit escape hatch (§16), with a WARNING when the run is
+  governed. A `RunState.cost_cap_source` field was considered and rejected: a source cannot be forwarded through the
+  allow-listed argv, and the fire record is already the authority.
 - Resume does **not** consume a quota slot: it is the same fire (same `fire_key`), not a new invocation.
 - A resumed run that hits its new cap becomes `paused` again with a **fresh** TTL; each resume is bounded and
   logged, and each one is charged to the same original windows — so the period cap still bounds the total.
@@ -752,11 +806,15 @@ FUNCTION charge(rec, now) -> Charge(runs: 0|1, actual: float, reserved: float, c
       RETURN Charge(1, 0, g.reserved_usd, "pending")                         # starting: hold reservation
   observed = run_usage(st).cost_usd + summary_cost(rec.run_dir)
   g.cost_observed_usd = max(g.cost_observed_usd, observed)       # high-water mark, persisted lazily (§10.3)
-  conf = "actual" IF every settled task has actuals_available ELSE ("unknown" IF none do ELSE "partial")
+  # H2: from PERSISTED TaskRunState.actuals_available / attempts_without_actuals (not TaskResult)
+  conf = "actual" IF every settled task has actuals_available AND sum(attempts_without_actuals) == 0
+         ELSE ("unknown" IF no task has actuals_available ELSE "partial")   # killed attempts => partial (M1)
   IF st.status == "running":                                     # fresh or resumed: may still spend
       reserved_left = max(0, g.reserved_usd - g.cost_observed_usd)
       RETURN Charge(1, g.cost_observed_usd, reserved_left, conf)
   # terminal or paused/aborted/expired: no reservation held
+  IF conf IN ("unknown", "partial") AND window_open:              # §10.4 + M1: blind/killed spend is not seen
+      RETURN Charge(1, max(g.cost_observed_usd, g.reserved_usd or 0), 0, conf)
   IF conf == "unknown":                                          # §10.4 conservative rule
       RETURN Charge(1, max(g.cost_observed_usd, g.reserved_usd or 0), 0, "unknown")
   RETURN Charge(1, g.cost_observed_usd, 0, conf, overshoot=max(0, observed - g.run_cost_cap_usd))
@@ -986,21 +1044,33 @@ We will:
 | Clock jumps backwards | No re-count (stored `scheduled_for`); `pause_expires_at` comparisons may delay expiry by the jump — acceptable. |
 | Gate raises | Fail closed: `suppressed(governance_error)` + ERROR event; quarantine after 5 (E-Sc9Rt4). |
 
+### 16.1 Review amendments recorded here (w01-07 → w02-02)
+
+- **L2.** `record_trip`'s docstring ("at most once, ever", `breakers.py:436`) is already false for built-ins
+  (`engine.py:1763,2218`) and for the re-armed gate; fix it, and have the `ao status` trailer (`cli.py:393`) collapse repeats ("×N").
+- **L4.** `_start_llm_lane` ignores `breaker_overrides` (`engine.py:2940-2943`) and sentinel generation spend counts toward
+  the run cap, so `sentinel.llm.budget_usd >= per_run_usd` lets the lane use up the whole cap. `ao schedule validate` warns,
+  and the lane's min() uses the effective threshold.
+- **L7.** With period-only caps, `reservation = round_down_cents(remaining)` (§8.2), so one run's mid-run cap is the whole
+  remaining period budget and `overlap: allow` serializes in practice. Intended; documented; `validate` warns on
+  `overlap: allow` without `per_run_usd`.
+
 ## 17. Exactly which E-Sc9Rt4 interfaces this epic extends or changes
 
 | E-Sc9Rt4 interface (task) | Change | Kind |
 |---|---|---|
 | `ScheduleBinding`, `ScheduleDefaults`, `ScheduleFile` validator (T-Sd1Kq7) | + `limits`, `prompt_sha256`, `week_start`; D-2 makes `limits` effectively **required** | **Breaking for E-Sc9Rt4 fixtures** — every test binding needs a limit. This epic's T-tPlK1T ships a shared `tests/schedules/_fixtures.py::minimal_limits()` and updates E-Sc9Rt4's fixtures in the same PR. |
-| `RunArgs` (T-Sd1Kq7) | rejects `cost_cap_usd` | Change |
+| `RunArgs` (T-Sd1Kq7) | rejects `cost_cap_usd` **explicitly**, even if `RunArgs` is derived from `allowed_options()` (the new Option would otherwise be auto-admitted) | Change |
 | `specs/schedules.schema.json` (T-Sd1Kq7) | + `$defs.limits/quota/cost/periodCost/period` | Additive |
 | `FireIntentRecord` (T-Fr2Nx8) | + optional `governance` sub-model; `write_suppressed(..., governance=)` kwarg | Additive |
 | `FireIntentStore` (T-Fr2Nx8) | + `find_by_run_id(ws, run_id)`, `iter_schedule(ws, schedule_id, since)` | Additive |
 | `FireDecision` (T-Ev3Qm5) | + `effective_limits`, `gate: GateResult \| None` | Additive (frozen dataclass, defaulted) |
 | `FireReason` constants (T-Ev3Qm5) | + `quota_exhausted`, `cost_cap_reached`, `prompt_missing`, `prompt_changed`, `governance_error` | Additive |
-| `ScheduleEngine.evaluate` order (T-Ev3Qm5) | + one step between overlap and concurrency | **Change to a normative order** (documented in §8.1; T-Ev3Qm5's own AC order otherwise unchanged) |
+| `ScheduleEngine.evaluate` order (T-Ev3Qm5) | + one step between overlap and concurrency, **and a second call site on the `overlap: queue` drain return** (§8.1, M2) | **Change to a normative order** (documented in §8.1; T-Ev3Qm5's own AC order otherwise unchanged) |
+| `ScheduleState` (T-Ev3Qm5, §5.3) | + `queued_scheduled_for` next to `queued_fire_key` (M2) | Additive, **requested of E-Sc9Rt4's owner** |
 | `ScheduleEngine.tick` / `retire_finished` (T-Ev3Qm5) | + cap-state finalization on retire; + pause-expiry sweep; + `resume_capped` request kind in drain | Additive |
 | `ScheduleEngine.__init__` (T-Ev3Qm5) | + `usage_ledger_factory`, `governance_lock_path` kwargs (defaulted) | Additive |
-| `ScheduledLauncher.launch` (T-Lp4Wt6) | reserve inside the `intended` write under flock; prompt snapshot; `cost_cap_usd` option; argv verification; + `launch_capped_resume()` | Change (launch is now two-step guarded) |
+| `ScheduledLauncher.launch` (T-Lp4Wt6) | reserve inside the `intended` write under flock (**replacing** T-Lp4Wt6's own `intended` write, not a second write); prompt snapshot; `cost_cap_usd` option; argv verification; + `launch_capped_resume()` | Change (launch is now two-step guarded) |
 | Run-now drop-request schema (T-Ev3Qm5/T-Cl6Jn9) | + `kind: "run_now" \| "resume_capped"` (default `run_now`) + resume fields | Additive |
 | `ao schedule` sub-app (T-Cl6Jn9) | + flags, `set-limits`, `pin-prompt`, `usage`, `resume`; list/history columns | Additive |
 | `status_snapshot()` payload (T-Ev3Qm5/T-Sv5Hb3) | + per-schedule `usage` | Additive |
@@ -1056,6 +1126,8 @@ We will:
   executor returning `TaskResult(cost_usd=0.40)` per task on a 2-task workflow ⇒ 2 real run directories, third tick
   skipped; `ao schedule usage --json` shows `runs 2/2`, spend `$1.60`, the skip event; `ao schedule history` shows the
   reason.
+- **H1 boundary**: a 1-task run whose task crosses the cap ends `succeeded` with the overshoot recorded and no pause; a 2-task
+  serial run crossing at task 1 halts `failed` with task 2 pending.
 - **Mid-run cap**: 4-task serial workflow at $0.40/task with `--cost-per-run 1.00` ⇒ run halts after task 3
   (`$1.20` ≥ `$1.00`), `state.json` `status=failed`, `builtin.cost_cap` tripped, `ao schedule usage` shows
   `paused` with overshoot `$0.20`; `ao schedule resume nightly --run <id> --add-usd 1.00 --local` ⇒ run completes
@@ -1064,7 +1136,8 @@ We will:
 - Dashboard API via `TestClient`: usage route shape, governance feed, resume-capped 202/409/422; vitest for
   `ScheduleUsage.tsx` (meters render numbers, disabled resume shows reason).
 - Backward compatibility: workspace without `schedules.yaml` ⇒ zero governance events; `ao run` without the flag ⇒
-  `state.json` identical except defaulted new fields (`cost_cap_usd: null`, `cost_cap_history: []`).
+  `state.json` identical except defaulted new fields (`cost_cap_usd: null`; per task `actuals_available: false`,
+  `attempts_without_actuals: 0`).
 
 Coverage ≥ 80 % on `schedules/windows.py`, `schedules/governance.py`, `service/usage_ledger.py`,
 `service/governance_gate.py`; engine gate lines covered by `tests/test_engine_cost_cap.py`.
@@ -1101,7 +1174,20 @@ crash-semantics novelty here — the hard parts (atomic records, single launch a
 buffer sprint is not justified. The cut-line if Sprint 2 slips is `T-8knqVe` *visual polish only*: the usage route and
 event feed (D-3's "record on dashboard") are not cuttable.
 
-**Start gate:** Sprint 1 starts when E-Sc9Rt4 Sprint 1 (MVP) has merged. `T-lJu9oZ` and `T-et7Edf` may start earlier.
+**Start gate:** Sprint 1 starts when E-Sc9Rt4 Sprint 1 (MVP) has merged. `T-lJu9oZ` may start earlier (wave 2).
+**`T-et7Edf` is scheduled after A3-D3 (T-Rk4Wn7, the stranding fix) merges** and after the E-Sc9Rt4 core
+(E-Sc9Rt4 T-Ri7Dz2's registry fix first, so `run_id` and `cost_cap_usd` follow one pattern). It also owns H2 (the persisted
+`actuals_available`) and M6 (fake `cost_usd`), so T-Uz0Uol depends on it. *(Design-review amendment 1, 2026-11-10.)*
+
+Amended dependency chain (design-review amendment 3):
+
+```
+T-Sd1Kq7 -> T-tPlK1T            (T-tPlK1T right after T-Sd1Kq7, or T-Sd1Kq7 ships tests/schedules/_fixtures.py::minimal_limits())
+T-Fr2Nx8 + T-lJu9oZ + T-tPlK1T + T-et7Edf -> T-Uz0Uol
+T-Ev3Qm5 (+ queued_scheduled_for) + T-Lp4Wt6 + T-Ri7Dz2 + T-Uz0Uol -> T-PpE5lf
+T-Cl6Jn9 + T-PpE5lf -> T-nI4DBf ‖ T-rwj4nV -> T-88wSLC -> T-lTW88y (dev-security + reviewer + NFR-6)
+T-8knqVe after T-Ap1Xs3 (cut-line: visual polish only);   T-Hq3vXd last
+```
 
 | Sprint | pd | Tasks |
 |---|---|---|
@@ -1122,6 +1208,8 @@ flowchart LR
   M --> L
   L --> G
   C --> G
+  C --> L
+  RK["T-Rk4Wn7 (A3-D3)"] --> C
   Ev3 --> G
   Lp4 --> G
   Ri7 --> G
@@ -1185,6 +1273,8 @@ HLD before Sprint 1 code lands (the pattern E-GIytcL and E-Sc9Rt4 both prescribe
 - All interfaces/schemas defined? Yes (§6, §8.2, §9.2, §10.2, §14).
 - All failure scenarios handled? §16, plus fail-closed gate and launch.
 - **Not "ready for implementation" until** E-Sc9Rt4 Sprint 1 has merged and the early gate (T-lTW88y step 1) has run.
+  The Opus design review (`w01-07`) was the design half of that gate; its H/M/L edits are applied (this section's
+  amendments). The dev-security half and a **re-review** of the applied fixes are still owed (A2.7).
 
 ## 25. Post-implementation docs refresh
 

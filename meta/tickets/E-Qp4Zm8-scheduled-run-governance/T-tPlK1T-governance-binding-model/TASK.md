@@ -59,6 +59,11 @@ Do NOT touch: `schedules/store.py` (unless the validator needs a hook. If so, ke
    byte-for-byte in YAML.
 8. All E-Sc9Rt4 tests still pass after the fixture update. Report the count of fixture files touched.
 9. Coverage ≥ 90 % on `schedules/governance.py`; ruff/format/mypy clean.
+10. **(review amendment 2)** Ship `tests/schedules/_fixtures.py::minimal_limits()` **from day one** (or land immediately
+    after T-Sd1Kq7), so E-Sc9Rt4 fixtures are never written limit-less and then rewritten.
+11. **(RunArgs)** `RunArgs` explicitly excludes `cost_cap_usd`, even if `RunArgs` is derived from `allowed_options()`
+    (the new Option would otherwise be auto-admitted). Test: a binding with `run_args: {cost_cap_usd: 5}` fails
+    validation. T-PpE5lf asserts the same at the launch boundary.
 
 ## Risks
 - D-2 is a breaking change for E-Sc9Rt4's fixtures (HLD §17). Do it in **one** PR with the fixture helper, so the

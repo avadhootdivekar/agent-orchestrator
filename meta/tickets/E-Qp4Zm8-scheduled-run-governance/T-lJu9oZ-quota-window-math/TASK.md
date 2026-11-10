@@ -47,6 +47,10 @@ Do NOT touch: `scheduler.py`, `models.py`, any other `schedules/` module, `servi
 9. Pure: the module performs no I/O and no clock reads (a test asserts `datetime.now` is never called by patching it to
    raise). Stdlib only (`zoneinfo`, `datetime`).
 10. ≥ 95 % line coverage on `schedules/windows.py`; ruff + format clean; mypy clean for the module.
+11. **(L5) The label is authoritative.** The window **key (local-date label)** decides membership; `start <= t < end` is
+    derived to agree with it. Document this in the module docstring. The corpus adds America/Santiago 2024-04-07 (the
+    24:00 transition) and Asia/Beirut 2024-03-31 (midnight gap) in addition to Havana. A comment records that label and
+    bounds could diverge only for a fall-back after local midnight, which no tested zone hits.
 
 ## Risks
 - `zoneinfo` gap/fold semantics are subtle. Do not "fix" `local_midnight` with manual offset arithmetic. Rely on the

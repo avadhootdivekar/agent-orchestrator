@@ -29,12 +29,13 @@ Files you own:
   `read_prompt()` / `PromptSnapshot`, `GOVERNANCE_LOCK_NAME = "usage.lock"`, the reason constants.
 - `src/agent_orchestrator/service/schedule_engine.py` (edit): (a) add the reason constants to `FireReason`; (b) the
   single gate step at the documented position; (c) `FireDecision` gains `effective_limits` and `gate` (defaulted);
-  (d) the queued-fire drain re-gates against its original `scheduled_for`; (e) the `retire_finished` hook sets
+  (d) the queued-fire drain re-gates against its original `scheduled_for`, read from `queued_scheduled_for` (M2: stored
+  by E-Sc9Rt4 T-Ev3Qm5 next to `queued_fire_key`, see STATUS cross-epic requests); (e) the `retire_finished` hook sets
   `cap_state` (`paused`/`aborted`) from `state.json` (`builtin.cost_cap` in `tripped_breakers` + `status == failed`),
   sets `pause_expires_at`, and emits `schedule.governance.run_cost_capped`; (f) `__init__` gains
   `usage_ledger_factory` and `governance_lock_path` kwargs with defaults.
-- `src/agent_orchestrator/service/schedule_launch.py` (edit): call `check_and_reserve()` in place of the bare
-  `intended` write; put `cost_cap_usd` in the options when reserved; perform the pre-spawn and post-spawn argv checks
+- `src/agent_orchestrator/service/schedule_launch.py` (edit): call `check_and_reserve()` **in place of** (not in
+  addition to) T-Lp4Wt6's own `intended` write, so there is exactly one `intended` write per launch; put `cost_cap_usd` in the options when reserved; perform the pre-spawn and post-spawn argv checks
   (HLD §8.4); pass `prompt=snapshot.text`.
 - `tests/service/test_governance_gate.py` (new); additive cases in `tests/service/test_schedule_engine.py` and
   `tests/service/test_schedule_launch.py`.
@@ -69,7 +70,8 @@ Do NOT touch: `engine.py`, `models.py`, `cli.py`, `run_options.py` (T-et7Edf), `
 8. **Prompt:** missing ⇒ `prompt_missing` (burned); > `MAX_PROMPT_BYTES` ⇒ `prompt_missing(detail=too_large)`;
    invalid UTF-8 ⇒ `prompt_missing(detail=not_utf8)`; pin mismatch ⇒ `prompt_changed`; pin match ⇒ fires. The bytes
    handed to `launch_run(prompt=...)` equal the file bytes, and the sha in the record equals `sha256(file)`.
-9. **Retire hook:** a stub run whose `state.json` has `status=failed` + a `builtin.cost_cap` trip ⇒ `cap_state`
+9. **Retire hook (M3):** a stub run whose `state.json` has `status=failed` + a `builtin.cost_cap` trip **whose `at` is
+   after the latest `governance.resumes[].at`** (for a never-resumed run: any such trip) ⇒ `cap_state`
    `paused` (on_cap pause) with `pause_expires_at = paused_at + ttl`, or `aborted` + `final=true` (on_cap abort), and
    one `schedule.governance.run_cost_capped` event carrying `overshoot_usd`. A run ending `succeeded` ⇒ `final=true`,
    `cap_state=none`.
@@ -81,6 +83,15 @@ Do NOT touch: `engine.py`, `models.py`, `cli.py`, `run_options.py` (T-et7Edf), `
 13. Tick budget: with 200 governed schedules × 30 fire records each, one tick stays within
     `SCHEDULE_TICK_BUDGET_SECONDS` on CI, using the mtime cache (report the measured time).
 14. ≥ 85 % coverage on `governance_gate.py`; E-Sc9Rt4 engine/launcher tests green; ruff/format/mypy clean.
+15. **(M2) Two governance call sites.** The gate runs at the main `evaluate()` position **and** on the `overlap: queue`
+    drain return (E-Sc9Rt4 §6.3 step 3 returns `FIRE(from_queue=...)` before `next_fire`/`already_fired`/overlap/
+    concurrency). Test: a queued fire that is over quota at drain time is cleared and burned `quota_exhausted` in its
+    **original** window (via `queued_scheduled_for`), not the drain-time window; one within quota fires.
+16. **(M3) Paused classification after a resume.** Test: trip → governed resume → a later non-cap failure (e.g. a task
+    failure under T-Rk4Wn7 D3) ⇒ `cap_state` is **not** `paused` and no new `pause_expires_at` is set. A resume followed
+    by a second cap trip ⇒ `paused` with a fresh TTL.
+17. **(single `intended` write)** Test: exactly one `intended` write per launch (count store writes), and it already
+    carries `governance.reserved_usd`, `run_cost_cap_usd` and `prompt{...}`.
 
 ## Risks
 - Modifying E-Sc9Rt4's normative order is the single most review-sensitive change in this epic. Keep it to one
@@ -89,7 +100,7 @@ Do NOT touch: `engine.py`, `models.py`, `cli.py`, `run_options.py` (T-et7Edf), `
 - `_render_options` silently drops keys. That is why AC7 exists. Never "fix" it by editing `ui/processes.py` here.
 
 ## Dependencies
-- Upstream: E-Sc9Rt4 `T-Ev3Qm5`, `T-Lp4Wt6`, `T-Ri7Dz2` (merged); `T-Uz0Uol`; `T-et7Edf`; `T-tPlK1T`.
+- Upstream: E-Sc9Rt4 `T-Ev3Qm5` (with `queued_scheduled_for`), `T-Lp4Wt6`, `T-Ri7Dz2` (merged); `T-Uz0Uol`; `T-et7Edf`; `T-tPlK1T`.
 - Downstream: `T-nI4DBf`, `T-rwj4nV`, `T-88wSLC`.
 
 ## Pseudocode / Algorithm

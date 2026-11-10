@@ -61,8 +61,19 @@ named constants `SUMMARY_DIR_NAME`/`SUMMARY_META_FILE`).
 9. `probe_run` caches by `(path, st_mtime_ns, st_size)`. A corrupt/missing `state.json` returns `None` without
    raising. After `STATE_PROBE_GRACE_SECONDS` since `launched` with no `state.json`, a single
    `schedule.governance.cost_unknown`-class warning is emitted via an injected event sink (no direct logging config).
-10. `cost_confidence`: `actual` if every settled task has `actuals_available`, `unknown` if none do, else `partial`.
+10. `cost_confidence` **(H2)** is computed from the persisted `TaskRunState.actuals_available` and
+    `attempts_without_actuals` (added by **T-et7Edf AC13**; this task depends on it; `TaskResult.actuals_available` is not
+    in `state.json`): `actual` if every settled task has `actuals_available` and the summed `attempts_without_actuals` is 0;
+    `unknown` if no settled task has `actuals_available`; else `partial`. A blind run is distinguishable from a $0 run.
 11. Coverage ≥ 90 % on `usage_ledger.py`; ruff/format/mypy clean; E-Sc9Rt4 fire-store tests unchanged and green.
+12. **(M1) Killed attempts are under-counted spend.** A run with any `attempts_without_actuals > 0` (e.g. a sentinel
+    recovery kill) whose other tasks reported is `partial`, and while the fire's windows are open it is charged
+    `max(observed, reserved_usd)` (conservative), not `observed`. Test: killed attempt + one reporting task ⇒ `partial`
+    and charge `== max(observed, reserved)`. Document the in-run under-count in the ledger docstring.
+13. **(L3) Metric asymmetry.** `cost_observed_usd` includes `summary_cost_usd` while the engine gate does not. Expose
+    `engine_cost_usd(rec)` (= `compute_run_usage_totals(state).cost_usd` only) next to `cost_observed_usd`, so T-nI4DBf
+    can compute `new_cap` from the engine's metric. Test: a run with summary cost reports both values and they differ by
+    exactly `summary_cost_usd`.
 
 ## Risks
 - The temptation to store per-window counters "for speed". Do not. AC6/AC7 fail by construction if you do.
@@ -71,7 +82,8 @@ named constants `SUMMARY_DIR_NAME`/`SUMMARY_META_FILE`).
 - An import cycle between `fire_store.py` and `usage_ledger.py`. Decide the direction once.
 
 ## Dependencies
-- Upstream: E-Sc9Rt4 `T-Fr2Nx8` (merged); `T-tPlK1T`; `T-lJu9oZ`.
+- Upstream: E-Sc9Rt4 `T-Fr2Nx8` (merged); `T-tPlK1T`; `T-lJu9oZ`; **`T-et7Edf`** (the `actuals_available` /
+  `attempts_without_actuals` fields, AC10/AC12).
 - Downstream: `T-PpE5lf` (gate), `T-nI4DBf` (cap state updates), `T-rwj4nV` / `T-8knqVe` (display).
 
 ## Pseudocode / Algorithm
