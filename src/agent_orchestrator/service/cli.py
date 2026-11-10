@@ -743,12 +743,10 @@ def run(
     wh_port = webhook_port or wh_cfg.port or DEFAULT_WEBHOOK_PORT
     webhook_app: Any = None
     if wh_enabled:
+        from .webhook import NON_LOOPBACK_WARNING, webhook_uvicorn_kwargs
+
         if wh_host not in LOOPBACK_HOSTS:
-            typer.echo(
-                f"WARNING: webhook listener binding non-loopback host {wh_host!r} exposes it to "
-                "the network; HMAC is its only authentication -- trusted networks only.",
-                err=True,
-            )
+            typer.echo(NON_LOOPBACK_WARNING.format(host=wh_host), err=True)
         # Built before the Supervisor exists: a listener that cannot be built (e.g. the [ui]
         # extra is missing) must take no singleton lock and spawn no child.
         webhook_app = build_service_webhook_app(wh_host, registry_path, state_dir)
@@ -813,7 +811,13 @@ def run(
     threads: list[threading.Thread] = [hub_thread]
     if webhook_app is not None:
         wh_server = uvicorn.Server(
-            uvicorn.Config(webhook_app, host=wh_host, port=wh_port, log_level="warning")
+            uvicorn.Config(
+                webhook_app,
+                host=wh_host,
+                port=wh_port,
+                log_level="warning",
+                **webhook_uvicorn_kwargs(),  # M2: concurrency + keep-alive bounds
+            )
         )
         wh_thread = threading.Thread(target=wh_server.run, daemon=True)
         wh_thread.start()

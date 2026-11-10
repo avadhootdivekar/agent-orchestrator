@@ -39,6 +39,11 @@ BODY = b'{"ref": "refs/heads/main"}'
 HOST = "http://localhost"
 
 
+def body_for(tag: str) -> bytes:
+    """A distinct body per delivery (an identical signed body is a replay by design)."""
+    return json.dumps({"ref": "refs/heads/main", "tag": tag}).encode()
+
+
 class Clock:
     def __init__(self) -> None:
         self.now = T0
@@ -49,8 +54,16 @@ class Clock:
 
 def wh_binding(sid: str = "hook", *, enabled: bool = True, **spec: Any) -> ScheduleBinding:
     spec.setdefault("secret_env", SECRET_ENV)
+    extra = {
+        k: spec.pop(k) for k in ("overlap", "catch_up", "catch_up_window_seconds") if k in spec
+    }
     return binding(
-        sid, kind="webhook", interval_seconds=None, enabled=enabled, webhook=WebhookSpec(**spec)
+        sid,
+        kind="webhook",
+        interval_seconds=None,
+        enabled=enabled,
+        webhook=WebhookSpec(**spec),
+        **extra,
     )
 
 
@@ -89,7 +102,11 @@ class Harness:
         headers: dict[str, str] | None = None,
     ) -> Any:
         h = {"Content-Type": "application/json", **(headers or {})}
-        if sig_header:
+        if sig_header == "X-AO-Signature":
+            # the X-AO scheme signs "{ts}.{body}" and requires the timestamp header
+            ts = h.setdefault("X-AO-Timestamp", str(int(self.clock.now.timestamp())))
+            h[sig_header] = compute_signature(secret.encode(), body, ts)
+        elif sig_header:
             h[sig_header] = compute_signature(secret.encode(), body)
         return self.client.post(
             f"/hooks/{slug or self.slug}/{sid or self.binding.id}", content=body, headers=h
@@ -169,7 +186,7 @@ def test_signature_over_raw_bytes_not_reserialised(h: Harness) -> None:
     r = h.client.post(
         f"/hooks/{h.slug}/hook",
         content=b'{"a": 1}',  # same JSON, different bytes
-        headers={"Content-Type": "application/json", "X-AO-Signature": sig},
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
     )
     assert r.status_code == 401
 
@@ -215,13 +232,15 @@ def test_nonce_cache_is_a_bounded_lru() -> None:
 
 def test_rate_limited_429_then_refills(tmp_path: Path) -> None:
     h = Harness(tmp_path, wh_binding(rate_per_minute=2))
-    codes = [h.post(headers={"X-AO-Delivery": f"d{i}"}).status_code for i in range(3)]
+    codes = [
+        h.post(body_for(f"d{i}"), headers={"X-AO-Delivery": f"d{i}"}).status_code for i in range(3)
+    ]
     assert codes == [202, 202, 429]
     h.clock.now += timedelta(seconds=30)  # 1 token back
-    assert h.post(headers={"X-AO-Delivery": "d3"}).status_code == 202
+    assert h.post(body_for("d3"), headers={"X-AO-Delivery": "d3"}).status_code == 202
     # the rate-limited delivery did not burn its nonce
     h.clock.now += timedelta(seconds=60)
-    assert h.post(headers={"X-AO-Delivery": "d2"}).status_code == 202
+    assert h.post(body_for("d2"), headers={"X-AO-Delivery": "d2"}).status_code == 202
 
 
 def test_token_bucket_per_key() -> None:
@@ -250,7 +269,9 @@ def test_queue_full_429(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     h.queue = h.queue.__class__(h.state, maxsize=2)
     app = build_webhook_app(h._lookup, h.queue, clock=h.clock, emit=lambda *a, **k: None)
     h.client = TestClient(app, base_url=HOST)
-    codes = [h.post(headers={"X-AO-Delivery": f"q{i}"}).status_code for i in range(3)]
+    codes = [
+        h.post(body_for(f"q{i}"), headers={"X-AO-Delivery": f"q{i}"}).status_code for i in range(3)
+    ]
     assert codes == [202, 202, 429]
 
 
@@ -321,7 +342,7 @@ def test_non_json_content_type_rejected_by_mounted_middleware(h: Harness) -> Non
         content=BODY,
         headers={
             "Content-Type": "application/x-www-form-urlencoded",
-            "X-AO-Signature": compute_signature(SECRET.encode(), BODY),
+            "X-Hub-Signature-256": compute_signature(SECRET.encode(), BODY),
         },
     )
     assert r.status_code == 415
@@ -342,16 +363,19 @@ def test_no_secret_or_signature_in_any_log_or_response(
     # default emitter -> stdlib logging, so exercise it too
     app = build_webhook_app(h._lookup, h.queue, clock=h.clock)
     c = TestClient(app, base_url=HOST)
-    good = compute_signature(SECRET.encode(), BODY)
-    wrong = compute_signature(b"attacker-key", BODY)
+    ts = str(int(T0.timestamp()))
+    good = compute_signature(SECRET.encode(), BODY, ts)
+    wrong = compute_signature(b"attacker-key", BODY, ts)
+    T = {"X-AO-Timestamp": ts}
     responses = []
-    for kw in (
-        dict(headers={"X-AO-Signature": wrong}),
+    cases: list[dict[str, Any]] = [
+        dict(headers={"X-AO-Signature": wrong, **T}),
         dict(headers={"X-AO-Signature": good, "X-AO-Timestamp": "1"}),
-        dict(headers={"X-AO-Signature": good, "X-AO-Delivery": "dup"}),
-        dict(headers={"X-AO-Signature": good, "X-AO-Delivery": "dup"}),
+        dict(headers={"X-AO-Signature": good, "X-AO-Delivery": "dup", **T}),
+        dict(headers={"X-AO-Signature": good, "X-AO-Delivery": "dup", **T}),
         dict(headers={}),
-    ):
+    ]
+    for kw in cases:
         responses.append(
             c.post(
                 f"/hooks/{h.slug}/hook",
@@ -364,7 +388,7 @@ def test_no_secret_or_signature_in_any_log_or_response(
         c.post(
             f"/hooks/{h.slug}/hook",
             content=BODY,
-            headers={"Content-Type": "application/json", "X-AO-Signature": good},
+            headers={"Content-Type": "application/json", "X-AO-Signature": good, **T},
         )
     )
     assert [r.status_code for r in responses] == [401, 401, 202, 409, 401, 503]
@@ -380,9 +404,9 @@ def test_source_observe_is_pure_and_commit_deletes(h: Harness) -> None:
     src = WebhookSource(h.state, h.root, h.binding)
     assert src.observe(h.binding, None, T0) is None  # type: ignore[arg-type]
     h.clock.now = T0 + timedelta(seconds=5, microseconds=700)
-    h.post(headers={"X-AO-Delivery": "a"})
+    h.post(body_for("a"), headers={"X-AO-Delivery": "a"})
     h.clock.now += timedelta(seconds=10)
-    h.post(headers={"X-AO-Delivery": "b"})
+    h.post(body_for("b"), headers={"X-AO-Delivery": "b"})
     c1 = src.observe(h.binding, None, T0)  # type: ignore[arg-type]
     assert c1 is not None and c1.scheduled_for == T0 + timedelta(seconds=5)
     assert len(h.requests()) == 2 and src.observe(h.binding, None, T0) == c1  # type: ignore[arg-type]
@@ -416,7 +440,7 @@ def _engine_env(tmp_path: Path) -> tuple[Any, Harness]:
 def test_flood_against_overlapping_schedule_launches_at_most_once(tmp_path: Path) -> None:
     env, h = _engine_env(tmp_path)
     for i in range(50):
-        assert h.post(headers={"X-AO-Delivery": f"f{i}"}).status_code == 202
+        assert h.post(body_for(f"f{i}"), headers={"X-AO-Delivery": f"f{i}"}).status_code == 202
     assert len(h.requests()) == 50
     env.tick(T0 + timedelta(seconds=1))
     assert len(env.launcher.decisions) == 1  # run stays active: every later tick overlap-skips
@@ -488,3 +512,265 @@ def test_binding_lookup_filters(tmp_path: Path) -> None:
 def test_module_importable_without_fastapi_at_module_scope() -> None:
     src = Path(wh.__file__).read_text().split("def build_webhook_app")[0]
     assert "\nimport fastapi" not in src and "\nfrom fastapi" not in src
+
+
+# -- review fixes (T-Wh9Kv1 security review w15-02) ----------------------------------------------
+
+
+def _ts(h: Harness) -> str:
+    return str(int(h.clock.now.timestamp()))
+
+
+def test_h1_captured_x_ao_delivery_replayed_with_forged_delivery_id_is_409(h: Harness) -> None:
+    ts = _ts(h)
+    assert h.post(headers={"X-AO-Timestamp": ts, "X-AO-Delivery": "real"}).status_code == 202
+    for forged in ("forged-1", "forged-2"):  # same signed body+ts, attacker-chosen unsigned id
+        r = h.post(headers={"X-AO-Timestamp": ts, "X-AO-Delivery": forged})
+        assert r.status_code == 409
+    assert len(h.requests()) == 1
+
+
+def test_h1_captured_github_delivery_replayed_with_forged_delivery_id_is_409(h: Harness) -> None:
+    kw: dict[str, Any] = dict(sig_header="X-Hub-Signature-256")
+    assert h.post(headers={"X-GitHub-Delivery": "gh-a"}, **kw).status_code == 202
+    assert h.post(headers={"X-GitHub-Delivery": "gh-forged"}, **kw).status_code == 409
+    assert len(h.requests()) == 1
+
+
+def test_h1_stripped_or_forged_timestamp_on_x_ao_scheme_is_401(h: Harness) -> None:
+    body_only = compute_signature(
+        SECRET.encode(), BODY
+    )  # what a captured GitHub-form sig looks like
+    base = {"Content-Type": "application/json", "X-AO-Signature": body_only}
+    url = f"/hooks/{h.slug}/hook"
+    # timestamp stripped
+    assert h.client.post(url, content=BODY, headers=base).status_code == 401
+    # a fresh timestamp bolted on to an old (body-only / other-ts) signature
+    fresh = {**base, "X-AO-Timestamp": _ts(h)}
+    assert h.client.post(url, content=BODY, headers=fresh).status_code == 401
+    # a validly signed old delivery cannot be refreshed by changing only the timestamp header
+    old = str(int(T0.timestamp()) - 10)
+    signed = compute_signature(SECRET.encode(), BODY, old)
+    r = h.client.post(
+        url,
+        content=BODY,
+        headers={**base, "X-AO-Signature": signed, "X-AO-Timestamp": _ts(h)},
+    )
+    assert r.status_code == 401
+    assert h.requests() == []
+
+
+def test_h1_same_body_new_timestamp_is_a_new_delivery_for_x_ao(h: Harness) -> None:
+    assert h.post().status_code == 202
+    h.clock.now += timedelta(seconds=5)  # legitimately re-signed identical body
+    assert h.post().status_code == 202
+
+
+def test_l2_oversized_timestamp_is_401_not_500(h: Harness) -> None:
+    assert h.post(headers={"X-AO-Timestamp": "9" * 400}).status_code == 401
+    assert h.post(headers={"X-AO-Timestamp": "-5"}).status_code == 401
+    assert h.requests() == []
+
+
+def test_l7_nonces_are_scoped_per_schedule(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    other = wh_binding("other")
+    base_lookup = h._lookup
+
+    def lookup(slug: str, sid: str) -> WebhookTarget | None:
+        if slug == h.slug and sid == "other":
+            return WebhookTarget(h.root, other)
+        return base_lookup(slug, sid)
+
+    h.app = build_webhook_app(lookup, h.queue, clock=h.clock, emit=lambda *a, **k: None)
+    h.client = TestClient(h.app, base_url=HOST)
+    assert h.post(headers={"X-AO-Delivery": "same"}).status_code == 202
+    assert h.post(sid="other", headers={"X-AO-Delivery": "same"}).status_code == 202
+    assert h.post(headers={"X-AO-Delivery": "same"}).status_code == 409
+
+
+# M1 -------------------------------------------------------------------------------------------
+
+
+def test_m1_source_candidate_has_discriminator_and_skip_catch_up(h: Harness) -> None:
+    h.post(body_for("a"), headers={"X-AO-Delivery": "id-a"})
+    c = WebhookSource(h.state, h.root, h.binding).observe(h.binding, None, T0)  # type: ignore[arg-type]
+    assert c is not None and c.discriminator == "id-a" and c.skip_catch_up is True
+
+
+def test_m1_two_deliveries_in_the_same_second_both_fire(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [wh_binding(rate_per_minute=1000)])
+    env.engine.register_trigger_source(
+        "webhook", lambda root, b: WebhookSource(env.tmp / "state", root, b)
+    )
+    h = Harness(tmp_path)
+    h.root, h.slug, h.binding = env.root, _slug_for_root(env.root), env.binding("hook")
+    for tag in ("x", "y"):  # same wall-clock second, distinct deliveries
+        assert h.post(body_for(tag), headers={"X-AO-Delivery": tag}).status_code == 202
+    env.tick(T0 + timedelta(seconds=1))
+    env.end_run("run-1")  # one active run at a time: let the first finish
+    env.tick(T0 + timedelta(seconds=2))
+    assert len(env.launcher.decisions) == 2
+    assert h.requests() == []
+
+
+@pytest.mark.parametrize("late", [timedelta(seconds=120), timedelta(hours=6)])
+def test_m1_late_drain_still_fires_with_catch_up_skip(tmp_path: Path, late: timedelta) -> None:
+    env = env_for(
+        tmp_path, [wh_binding(rate_per_minute=1000, catch_up="skip", catch_up_window_seconds=3600)]
+    )
+    env.engine.register_trigger_source(
+        "webhook", lambda root, b: WebhookSource(env.tmp / "state", root, b)
+    )
+    h = Harness(tmp_path)
+    h.root, h.slug, h.binding = env.root, _slug_for_root(env.root), env.binding("hook")
+    assert h.post().status_code == 202
+    env.tick(T0 + late)  # daemon was down: drained long after receipt
+    assert len(env.launcher.decisions) == 1
+    assert h.requests() == []
+
+
+# M2 -------------------------------------------------------------------------------------------
+
+
+def test_m2_uvicorn_kwargs_bound_connections() -> None:
+    kw = wh.webhook_uvicorn_kwargs()
+    assert kw["limit_concurrency"] == wh.WEBHOOK_LIMIT_CONCURRENCY > 0
+    assert kw["timeout_keep_alive"] == wh.WEBHOOK_TIMEOUT_KEEP_ALIVE_SECONDS > 0
+
+
+def test_m2_stalled_body_is_408(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    from collections.abc import MutableMapping
+
+    monkeypatch.setattr(wh, "WEBHOOK_BODY_READ_TIMEOUT_SECONDS", 0.05)
+    sent: list[MutableMapping[str, Any]] = []
+
+    async def run() -> None:
+        first = True
+
+        async def receive() -> MutableMapping[str, Any]:
+            nonlocal first
+            if first:
+                first = False
+                return {"type": "http.request", "body": b"{", "more_body": True}
+            await asyncio.sleep(30)  # the slowloris: one byte, then silence
+            return {"type": "http.disconnect"}
+
+        async def send(msg: MutableMapping[str, Any]) -> None:
+            sent.append(msg)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": f"/hooks/{h.slug}/hook",
+            "raw_path": f"/hooks/{h.slug}/hook".encode(),
+            "query_string": b"",
+            "headers": [(b"host", b"localhost"), (b"content-type", b"application/json")],
+            "scheme": "http",
+            "server": ("localhost", 80),
+            "client": ("127.0.0.1", 1),
+            "http_version": "1.1",
+        }
+        await asyncio.wait_for(h.app(scope, receive, send), timeout=5)
+
+    asyncio.run(run())
+    assert sent[0]["status"] == 408
+    assert h.requests() == [] and h.events[-1][1]["reason"] == "body_timeout"
+
+
+# M3 / L6 --------------------------------------------------------------------------------------
+
+
+def test_m3_non_loopback_bind_refuses_foreign_host_until_webhook_hosts_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(wh.WEBHOOK_ALLOWED_HOSTS_ENV, raising=False)
+    monkeypatch.setenv("AO_UI_ALLOWED_HOSTS", "hooks.example.com")  # must NOT widen the webhook
+    h = Harness(tmp_path, bound_host="0.0.0.0")
+    foreign = TestClient(h.app, base_url="http://hooks.example.com")
+    url = f"/hooks/{h.slug}/hook"
+    hdrs = {"Content-Type": "application/json"}
+    assert foreign.post(url, content=BODY, headers=hdrs).status_code == 421
+
+    monkeypatch.setenv(wh.WEBHOOK_ALLOWED_HOSTS_ENV, "hooks.example.com")
+    h2 = Harness(tmp_path, bound_host="0.0.0.0")
+    ok = TestClient(h2.app, base_url="http://hooks.example.com:8771")
+    ts = _ts(h2)
+    sig = compute_signature(SECRET.encode(), BODY, ts)
+    r = ok.post(url, content=BODY, headers={**hdrs, "X-AO-Signature": sig, "X-AO-Timestamp": ts})
+    assert r.status_code == 202
+    # an unlisted host is still refused
+    other = TestClient(h2.app, base_url="http://evil.example.com")
+    assert other.post(url, content=BODY, headers=hdrs).status_code == 421
+
+
+def test_m3_webhook_hosts_has_no_wildcard_escape(monkeypatch: pytest.MonkeyPatch) -> None:
+    hosts = wh.resolve_webhook_allowed_hosts(
+        "127.0.0.1", {wh.WEBHOOK_ALLOWED_HOSTS_ENV: "*,a.example"}
+    )
+    assert hosts is not None and "a.example" in hosts and "*" not in hosts
+    only_star = wh.resolve_webhook_allowed_hosts(None, {wh.WEBHOOK_ALLOWED_HOSTS_ENV: "*"})
+    assert only_star is not None and only_star == wh.resolve_webhook_allowed_hosts(None, {})
+
+
+def test_l6_warning_text_names_hmac_independence_proxy_and_hosts_setting() -> None:
+    text = wh.NON_LOOPBACK_WARNING.format(host="0.0.0.0")
+    for needle in (
+        "HMAC",
+        "independently of dashboard auth",
+        "reverse proxy",
+        wh.WEBHOOK_ALLOWED_HOSTS_ENV,
+        "0.0.0.0",
+    ):
+        assert needle in text
+
+
+# L3 / L5 / L1 ---------------------------------------------------------------------------------
+
+
+def test_l3_short_secret_is_refused_503(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(SECRET_ENV, "short")
+    assert len("short") < wh.MIN_WEBHOOK_SECRET_BYTES
+    assert h.post(secret="short").status_code == 503 and h.requests() == []
+    assert h.events[-1][1]["reason"] == "secret_unresolvable"
+    assert "secret_too_short" in [f.get("reason") for _, f in h.events]
+    monkeypatch.setenv(SECRET_ENV, "x" * wh.MIN_WEBHOOK_SECRET_BYTES)
+    assert h.post(secret="x" * wh.MIN_WEBHOOK_SECRET_BYTES).status_code == 202
+
+
+def test_l3_short_secret_file_refused(tmp_path: Path) -> None:
+    t = _file_target(tmp_path, 0o600)
+    (Path(t.workspace_root) / "sec.txt").write_text("tiny\n")
+    assert resolve_secret(t) is None
+
+
+def test_l5_expired_requests_are_ignored_and_purged(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    assert h.post().status_code == 202
+    src = WebhookSource(h.state, h.root, h.binding)
+    ttl = timedelta(seconds=wh.WEBHOOK_REQUEST_TTL_SECONDS)
+    assert src.observe(h.binding, None, T0 + ttl - timedelta(seconds=1)) is not None  # type: ignore[arg-type]
+    assert src.observe(h.binding, None, T0 + ttl + timedelta(seconds=1)) is None  # type: ignore[arg-type]
+    h.clock.now = T0 + ttl + timedelta(seconds=5)  # schedule re-enabled long after
+    assert h.post(body_for("new")).status_code == 202
+    assert len(h.requests()) == 1  # the stale one was purged on enqueue
+
+
+def test_l1_unexpected_store_error_fails_closed(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    class Reg:
+        def __init__(self, p: Path) -> None: ...
+
+        def load(self) -> Any:
+            return SimpleNamespace(workspaces=[SimpleNamespace(root=str(tmp_path), schedules=True)])
+
+    class Boom:
+        def __init__(self, root: str) -> None: ...
+
+        def load(self) -> Any:
+            raise PermissionError("schedules.yaml")
+
+    look = make_binding_lookup(tmp_path / "r.yaml", registry_factory=Reg, store_factory=Boom)  # type: ignore[arg-type]
+    assert look(_slug_for_root(str(tmp_path.resolve())), "x") is None

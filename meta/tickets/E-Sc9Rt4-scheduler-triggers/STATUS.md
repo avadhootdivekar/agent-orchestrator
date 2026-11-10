@@ -159,3 +159,6 @@ the webhook's middleware mounting.
 ## Update 2026-11-11 — T-Cl6Jn9 implemented (partial)
 - `ao schedule` (list/next/history/validate/add/remove/enable/disable/run-now/daemon) landed in `schedules/cli.py`; `cli.py` diff = import + `add_typer` + `ao validate` hook; 31 CliRunner e2e tests, 90% coverage; `mypy src` 0 errors. Event-kind flags and `next`'s `observe` branch wait on `T-Fw8Gp4`/`T-Wh9Kv1`. See `T-Cl6Jn9-schedule-cli/STATUS.md`.
   By: developer · Role: developer · Date: 2026-11-11
+
+- 2026-11-11: `T-Wh9Kv1` security-review fixes landed (H1 replay bypass, M1 dropped deliveries, M2 slow-client bounds, M3 webhook host allow-list, Lows L1-L7 except L4 caching). Breaking: `X-AO-Signature` senders must sign `"{ts}.{body}"` and send `X-AO-Timestamp`. See `T-Wh9Kv1-webhook-ingress/STATUS.md`.
+  By: developer · Role: developer · Date: 2026-11-11

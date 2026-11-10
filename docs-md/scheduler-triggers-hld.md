@@ -949,19 +949,23 @@ FUNCTION handle_webhook(ws_slug, schedule_id, headers, raw_body):
   IF binding IS None OR secret IS None:
       emit("webhook.rejected", reason="unknown_or_unconfigured", ws=ws_slug, id=schedule_id)
       RETURN 401 IF binding IS NULL ELSE 503     # unknown == bad-signature, deliberately
-  sig = headers.get("X-AO-Signature") OR headers.get("X-Hub-Signature-256")   # GitHub-compatible
-  expected = "sha256=" + hmac_sha256_hex(secret, raw_body)
+  # X-AO scheme signs "{ts}.{body}" and REQUIRES X-AO-Timestamp; GitHub's X-Hub-Signature-256
+  # signs the body only. (Review w15-02 H1: the delivery-id header is NOT signed.)
+  ts  = headers.get("X-AO-Timestamp") IF "X-AO-Signature" in headers ELSE NULL
+  sig = headers.get("X-AO-Signature") OR headers.get("X-Hub-Signature-256")
+  signed = ts + "." + raw_body IF ts IS NOT NULL ELSE raw_body
+  expected = "sha256=" + hmac_sha256_hex(secret, signed)
   IF sig IS NULL OR NOT hmac.compare_digest(sig, expected):
       emit("webhook.rejected", reason="bad_signature");  RETURN 401
-  ts = headers.get("X-AO-Timestamp")
   IF ts IS NOT NULL AND abs(now_epoch() - int(ts)) > REPLAY_WINDOW_SECONDS:    # 300
       emit("webhook.rejected", reason="stale");  RETURN 401
   delivery = headers.get("X-AO-Delivery") OR headers.get("X-GitHub-Delivery") OR sha256(raw_body)
-  IF delivery IN nonce_cache:                                        # bounded LRU, 1024 entries
+  # nonces are per (workspace, schedule): sha256(signed) ALWAYS, plus the delivery id when sent
+  IF sha256(signed) IN nonce_cache OR delivery IN nonce_cache:       # bounded LRU, 1024 entries
       emit("webhook.rejected", reason="duplicate");  RETURN 409
   IF NOT rate_limiter.allow(ws_slug, schedule_id):                   # token bucket, default 10/min
       emit("webhook.rejected", reason="rate_limited");  RETURN 429
-  nonce_cache.add(delivery)
+  nonce_cache.add(sha256(signed)); nonce_cache.add(delivery)
   write_request_file_fsync(state_dir/"schedules"/"requests",       # F14: persisted, not an in-memory queue
       {"kind": "webhook", "workspace_slug": ws_slug, "schedule_id": schedule_id,
        "received_at": now(), "delivery_id": delivery})
