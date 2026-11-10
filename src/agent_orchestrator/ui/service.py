@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -51,9 +52,11 @@ from ..project_config import ProjectConfig, find_project_config, load_project_co
 from ..schedules.errors import ScheduleFileError
 from ..schedules.models import ScheduleFile
 from ..schedules.store import ScheduleStore
+from ..schedules.windows import windows_for
 from ..service.fire_store import (
     SCHEDULES_SUBDIR,
     STATE_FILENAME,
+    FireIntentStore,
     ScheduleEventLog,
     ScheduleStateStore,
 )
@@ -64,6 +67,7 @@ from ..service.schedule_engine import (
     REQUESTS_SUBDIR,
 )
 from ..service.statefile import atomic_write_bytes
+from ..service.usage_ledger import UsageLedger
 from ..spec import cross_validate, load_workflow
 from ..survival import compute_survival, validate_ref
 from ..templates import TemplateError, discover_templates, instantiate
@@ -1278,6 +1282,83 @@ class DashboardService:
         )
         return {"schedule_id": schedule_id, "events": events}
 
+    def schedule_usage(self, schedule_id: str, at: datetime | None = None) -> dict:
+        """Per-window quota/cost usage for one schedule (``ao.schedule.usage/v1``): the same
+        windows and ledger the governance gate uses, plus the count of governance skips that
+        landed in each window (``quota_exhausted`` shown separately). Read-only."""
+        binding = next(
+            (b for b in self._load_schedule_file().bindings if b.id == schedule_id), None
+        )
+        if binding is None:
+            raise ScheduleNotFound(f"no such schedule {schedule_id!r}")
+        instant = at or self._clock_now()
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=UTC)
+        limits = binding.limits
+        quotas = {q.period: q.max_runs for q in limits.quotas} if limits else {}
+        cost = limits.cost if limits else None
+        caps = {c.period: c.max_usd for c in cost.periods} if cost else {}
+        periods = list(dict.fromkeys([*quotas, *caps]))
+        windows = windows_for(
+            instant, periods, ZoneInfo(binding.timezone or "UTC"), binding.week_start or "monday"
+        )
+        sdir = self._schedule_state_dir_path()
+        usage = UsageLedger(FireIntentStore(sdir)).usage(self.workspace_root, schedule_id, windows)
+        skips = self._governance_skips(schedule_id)
+        rows = []
+        for period, w in windows.items():
+            u = usage[period]
+            in_window = [e for e in skips if w.start <= _parse_ts(e["ts"]) < w.end]
+            rows.append(
+                {
+                    "period": period,
+                    "window_key": w.key,
+                    "window_start": _iso_or_none(w.start),
+                    "resets_at": _iso_or_none(w.end),
+                    "runs_used": u.runs,
+                    "runs_max": quotas.get(period),
+                    "actual_usd": u.actual_usd,
+                    "reserved_usd": u.reserved_usd,
+                    "max_usd": caps.get(period),
+                    "confidence": u.confidence,
+                    "skipped": len(in_window),
+                    "quota_exhausted": sum(
+                        1 for e in in_window if e.get("reason") == GOVERNANCE_REASON_QUOTA
+                    ),
+                }
+            )
+        return {
+            "schema": SCHEDULE_USAGE_SCHEMA,
+            "schedule_id": schedule_id,
+            "at": _iso_or_none(instant),
+            "windows": rows,
+        }
+
+    def _governance_skips(self, schedule_id: str) -> list[dict]:
+        events = ScheduleEventLog(self._schedule_state_dir_path()).read(
+            limit=GOVERNANCE_EVENTS_MAX,
+            schedule_id=schedule_id,
+            workspace_root=self.workspace_root,
+        )
+        return [e for e in events if e.get("event") == GOVERNANCE_SKIPPED_EVENT]
+
+    def governance_events(self, limit: int = 50, schedule_id: str | None = None) -> dict:
+        """Newest-first ``schedule.governance.*`` events (``limit`` clamped to 1..500). Prompt
+        text never appears in these events (sha prefix only); keys that could carry it are
+        dropped defensively."""
+        limit = max(1, min(limit, GOVERNANCE_EVENTS_MAX))
+        if schedule_id is not None:
+            self._require_schedule(schedule_id)
+        raw = ScheduleEventLog(self._schedule_state_dir_path()).read(
+            schedule_id=schedule_id, workspace_root=self.workspace_root
+        )
+        events = [
+            {k: v for k, v in e.items() if k not in GOVERNANCE_REDACTED_KEYS}
+            for e in raw
+            if str(e.get("event", "")).startswith(GOVERNANCE_EVENT_PREFIX)
+        ][:limit]
+        return {"events": events}
+
     def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> dict:
         """Flip ``enabled`` via ``ScheduleStore.mutate``. Enabling a ``completed`` schedule
         restarts it (``runs_count`` reset, status ``active``), same as ``ao schedule enable``."""
@@ -1350,6 +1431,19 @@ class DashboardService:
         path = sdir / SCHEDULES_SUBDIR / REQUESTS_SUBDIR / f"{uuid.uuid4().hex}.json"
         atomic_write_bytes(path, json.dumps(body).encode("utf-8"))
         return {"queued": True, "schedule_id": schedule_id}
+
+
+SCHEDULE_USAGE_SCHEMA = "ao.schedule.usage/v1"
+GOVERNANCE_EVENT_PREFIX = "schedule.governance."
+GOVERNANCE_SKIPPED_EVENT = "schedule.governance.skipped"
+GOVERNANCE_REASON_QUOTA = "quota_exhausted"
+GOVERNANCE_EVENTS_MAX = 500
+GOVERNANCE_REDACTED_KEYS = frozenset({"prompt", "prompt_text"})
+
+
+def _parse_ts(value: str) -> datetime:
+    ts = datetime.fromisoformat(value)
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
 
 
 def _iso_or_none(value: datetime | None) -> str | None:

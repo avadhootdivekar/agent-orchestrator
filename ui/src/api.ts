@@ -39,8 +39,10 @@ import type {
   SentinelPanelV2,
   SentinelStatus,
   RunSummary,
+  ScheduleEvent,
   ScheduleHistory,
   ScheduleRunNowResult,
+  ScheduleUsageDoc,
   SchedulesResponse,
   ScheduleToggleResult,
   TemplateInfo,
@@ -255,6 +257,12 @@ export const api = {
   schedules: () => request<SchedulesResponse>("/schedules"),
   scheduleHistory: (id: string, limit: number) =>
     request<ScheduleHistory>(`/schedules/${encodeURIComponent(id)}/history?limit=${limit}`),
+  scheduleUsage: (id: string) =>
+    request<ScheduleUsageDoc>(`/schedules/${encodeURIComponent(id)}/usage`),
+  governanceEvents: (id: string | null, limit: number) =>
+    request<{ events: ScheduleEvent[] }>(
+      `/schedules/governance-events?limit=${limit}${id ? `&id=${encodeURIComponent(id)}` : ""}`,
+    ),
   setScheduleEnabled: (id: string, enabled: boolean) =>
     postJson<ScheduleToggleResult>(
       `/schedules/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`,

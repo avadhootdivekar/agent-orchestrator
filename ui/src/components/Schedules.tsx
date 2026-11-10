@@ -14,6 +14,7 @@ import { useTabActions } from "../tabs/context";
 import type { Schedule, ScheduleEvent, SchedulesResponse } from "../types";
 import { usePolling } from "../usePolling";
 import { Empty, ErrorBanner, StatusChip, Tile } from "./common";
+import { ScheduleUsage } from "./ScheduleUsage";
 
 /**
  * Schedules change on the order of minutes (cron granularity, daemon tick of seconds), so the
@@ -27,6 +28,7 @@ export function Schedules({ clock = Date.now }: { clock?: () => number }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string | null>(null);
+  const [usageOpen, setUsageOpen] = useState<string | null>(null);
   const [history, setHistory] = useState<
     Record<string, ScheduleEvent[] | string>
   >({});
@@ -217,6 +219,15 @@ export function Schedules({ clock = Date.now }: { clock?: () => number }) {
                         >
                           {open === s.id ? "Hide history" : "History"}
                         </button>
+                        <button
+                          type="button"
+                          aria-expanded={usageOpen === s.id}
+                          onClick={() =>
+                            setUsageOpen(usageOpen === s.id ? null : s.id)
+                          }
+                        >
+                          {usageOpen === s.id ? "Hide usage" : "Usage"}
+                        </button>
                       </div>
                       {notice[s.id] ? (
                         <div
@@ -229,6 +240,17 @@ export function Schedules({ clock = Date.now }: { clock?: () => number }) {
                       ) : null}
                     </td>
                   </tr>
+                  {usageOpen === s.id ? (
+                    <tr>
+                      <td colSpan={8}>
+                        <ScheduleUsage
+                          id={s.id}
+                          pollMs={SCHEDULES_POLL_MS}
+                          clock={clock}
+                        />
+                      </td>
+                    </tr>
+                  ) : null}
                   {open === s.id ? (
                     <tr>
                       <td colSpan={8}>

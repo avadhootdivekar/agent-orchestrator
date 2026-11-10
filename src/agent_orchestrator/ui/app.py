@@ -19,6 +19,7 @@ apart from the new ``GET /api/auth/status``.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -567,6 +568,27 @@ def create_app(
     def list_schedules() -> dict:
         try:
             return service.list_schedules()
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    # Registered before `/schedules/{id}/...` so the literal `governance-events` is not an id.
+    @app.get(f"{API_PREFIX}/schedules/governance-events")
+    def governance_events(
+        limit: int = Query(50, ge=1, le=500), id: str | None = Query(None, max_length=128)
+    ) -> dict:
+        try:
+            return service.governance_events(limit, id)
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    @app.get(f"{API_PREFIX}/schedules/{{schedule_id}}/usage")
+    def schedule_usage(schedule_id: str, at: str | None = Query(None, max_length=64)) -> dict:
+        try:
+            when = datetime.fromisoformat(at) if at else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"malformed 'at': {at!r}") from None
+        try:
+            return service.schedule_usage(schedule_id, when)
         except ScheduleApiError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 

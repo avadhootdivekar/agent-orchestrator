@@ -1107,6 +1107,29 @@ export interface ScheduleEvent {
   [extra: string]: unknown;
 }
 
+/** `ao.schedule.usage/v1` window row (`DashboardService.schedule_usage`). */
+export interface ScheduleUsageWindow {
+  period: string;
+  window_key: string;
+  window_start: string | null;
+  resets_at: string | null;
+  runs_used: number;
+  runs_max: number | null;
+  actual_usd: number;
+  reserved_usd: number;
+  max_usd: number | null;
+  confidence: "actual" | "partial" | "unknown" | "pending";
+  skipped: number;
+  quota_exhausted: number;
+}
+
+export interface ScheduleUsageDoc {
+  schema: string;
+  schedule_id: string;
+  at: string | null;
+  windows: ScheduleUsageWindow[];
+}
+
 export interface ScheduleHistory {
   schedule_id: string;
   events: ScheduleEvent[];
