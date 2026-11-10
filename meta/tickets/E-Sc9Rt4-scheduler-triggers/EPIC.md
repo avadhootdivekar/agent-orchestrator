@@ -157,7 +157,7 @@
 - [x] `T-Ev3Qm5-schedule-engine-core` — `service/schedule_engine.py`: evaluate/tick, overlap,
   catch-up, jitter, concurrency, quarantine (FR-2, FR-4, FR-5, FR-6, NFR-2) — 3 d
 - [ ] `T-Ri7Dz2-run-id-flag` — `ao run --run-id` with duplicate-id refusal (FR-8) — 1 d
-- [ ] `T-Lp4Wt6-scheduled-launcher` — `service/schedule_launch.py`: two-phase launch, template
+- [x] `T-Lp4Wt6-scheduled-launcher` — `service/schedule_launch.py`: two-phase launch, template
   instantiation per fire, `run_args` → existing options allow-list (FR-7, FR-8, NFR-3) — 2 d
 - [ ] `T-Sv5Hb3-service-integration` — registry additions, `ao service run` wiring,
   `--no-schedules`/`--webhook-*`, status merge, systemd unit delta (FR-2, FR-10, NFR-1, NFR-2) — 2 d

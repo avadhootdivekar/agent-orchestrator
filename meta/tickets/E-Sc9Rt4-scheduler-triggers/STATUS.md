@@ -144,3 +144,7 @@ the webhook's middleware mounting.
 ## Update 2026-11-11 — T-Ev3Qm5 implemented
 - `service/schedule_engine.py` + 59 tests landed (see `T-Ev3Qm5-schedule-engine-core/STATUS.md`); `T-Lp4Wt6` / `T-Sv5Hb3` unblocked.
   Launcher must share the engine's state/fire/event stores and per-workspace ProcessSupervisor.
+
+## Update 2026-11-11 — T-Lp4Wt6 implemented
+- `service/schedule_launch.py` (`ScheduledLauncher`, `scheduled_run_id`, `render_instance_id`, `LaunchResolutionError`) + 33 tests landed (see `T-Lp4Wt6-scheduled-launcher/STATUS.md`). `T-Sv5Hb3` / `T-Cl6Jn9` unblocked.
+  By: developer · Role: developer · Date: 2026-11-11

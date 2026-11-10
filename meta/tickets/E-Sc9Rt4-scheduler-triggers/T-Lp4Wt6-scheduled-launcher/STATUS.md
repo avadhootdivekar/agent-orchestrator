@@ -1,23 +1,23 @@
 # STATUS
 
 - ID: `T-Lp4Wt6-scheduled-launcher`
-- Updated At: 2026-09-06
-- State: Draft
-- Owner: TBD (assigned at sprint start)
+- Updated At: 2026-11-11
+- State: Done
+- Owner: developer agent
 
 ## This update
-- Ticket created by the `architect` agent as part of the E-Sc9Rt4 design package. Not started.
-- Scope: `service/schedule_launch.py` — the two-phase (intent-then-launch) `ScheduledLauncher` that turns a `FireDecision` into a detached `ao run` through the existing `ProcessSupervisor` path, with per-fire template instantiation and zero new argv surface.
+By: developer · Role: developer · Date: 2026-11-11
+- Implemented `service/schedule_launch.py`: two-phase (intended -> launched/launch_failed) `ScheduledLauncher`, UTC-normalised `scheduled_run_id`, `render_instance_id` ({date}/{rand6}), root-guarded workflow/prompt resolution, template resolution by name only (F4), zero new argv surface, no reposets/agents (F10), `workspace` only for no-repo-set workflows.
+- Constructor: `ScheduledLauncher(state_dir, *, process_supervisor_factory, project_config_loader, template_loader, clock, fire_store=None, state_store=None, event_log=None, rand6=...)`. `T-Sv5Hb3` must pass the engine's `state_store`/`fire_store`/`event_log` and `process_supervisor` (single-writer state cache; F2). `run-now --local` (`T-Cl6Jn9`) reuses this class.
+- Additions beyond the AC text (small): an already-recorded fire key returns the existing record without relaunch; `prompt_sha256`, when set, is verified against `prompt_file` (mismatch = `launch_failed`); bookkeeping failure after a successful launch is logged but does not flip the record.
 
 ## Evidence
-- None yet — no implementation has begun. Design basis:
-  `docs-md/scheduler-triggers-hld.md` and `docs-md/adr/ADR-0014-service-owned-scheduler-and-triggers.md`.
+- `tests/service/test_schedule_launch.py`: 33 passed (coverage 99% of schedule_launch.py); `tests/schedules` + `tests/service`: 660 passed; `ruff check` / `ruff format` clean; `mypy src`: 0 errors (225 files).
+- Launcher-to-engine integration test with fixed clock (`test_launcher_to_engine_tick`).
 
 ## Risks / Blockers
-- Blocked until: `T-Ev3Qm5` (Protocol + `FireDecision`), `T-Fr2Nx8` (stores), `T-Sd1Kq7` (`RunArgs`) and `T-Ri7Dz2` (`run_id` option) have landed.
+- AC4 zero discovery timeout is asserted on the engine's default factory (`_default_process_supervisor`), not enforced here.
+- Instance ids without a token re-use the same instance per fire (documented in the module docstring).
 
 ## Next actions
-1. Read the upstream task's **merged code**, not only the HLD, before starting (the interface-drift
-   rule this epic inherits from E-GIytcL).
-2. Implement against the acceptance criteria in `TASK.md`, in AC order.
-3. Hand the constructor signature to `T-Sv5Hb3` and confirm to `T-Cl6Jn9` that `run-now --local` reuses this class rather than reimplementing a launch.
+1. `T-Sv5Hb3`: construct the launcher with the engine's shared stores/supervisor.
