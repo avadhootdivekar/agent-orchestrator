@@ -39,7 +39,9 @@ DEFAULT_SENTINEL_MAX_TURNS: Final = 40
 # ``acceptEdits`` (file edits auto-approved) scoped by ``--add-dir`` to the generation directory
 # and the inbox only, plus an explicit tool allow-list: read-only tools, Write/Edit and
 # ``mv`` (the atomic write-*.tmp-then-rename the prompt asks for). No other Bash command is
-# pre-approved, so a prompt-injected generation cannot run arbitrary shell.
+# pre-approved, so a prompt-injected generation cannot run arbitrary shell. Caveat (T-Rk4Wn7 L2):
+# ``--add-dir`` scopes Write/Edit only; ``Bash(mv:*)`` is NOT path-scoped, so a prompt-injected
+# generation could ``mv`` files outside those directories. Accepted residual risk for now.
 LANE_PERMISSION_MODE: Final = "acceptEdits"
 LANE_ALLOWED_TOOLS: Final = "Read,Glob,Grep,Write,Edit,Bash(mv:*)"
 _PERMISSION_FLAGS: Final = frozenset(
@@ -182,12 +184,15 @@ class ClaudeCliSentinelDriver(SentinelDriver):
     def __init__(self, agent: AgentSpec | None = None, *, cwd: str | None = None) -> None:
         base = agent or AgentSpec(executor="claude_cli", max_turns=DEFAULT_SENTINEL_MAX_TURNS)
         self._agent = base
+        # Only the default spawn gets the lane flags; an explicit ``llm.agent`` is never altered
+        # (``lane_permission_warnings`` tells the operator when it lacks permission flags).
+        self._default_agent = agent is None
         self._cwd = cwd
 
     def start(self, pack_dir: str, limits: GenerationLimits) -> Handle:
         gen_dir = Path(pack_dir).parent
         argv = build_claude_argv(self._agent, render_prompt(pack_dir, limits))
-        if not has_permission_flags(argv):
+        if self._default_agent and not has_permission_flags(argv):
             argv += lane_permission_args(str(gen_dir), limits.inbox_dir)
         if limits.max_budget_usd is not None and "--max-budget-usd" not in argv:
             argv += ["--max-budget-usd", f"{limits.max_budget_usd:.4f}"]

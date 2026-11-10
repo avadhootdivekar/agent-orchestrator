@@ -59,6 +59,17 @@ def test_explicit_agent_permission_flags_are_not_overridden(
     assert "--permission-mode" not in argv and "--allowedTools" not in argv
 
 
+def test_bare_explicit_agent_is_not_given_lane_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # An explicit llm.agent is never altered, so the startup warning stays truthful.
+    bare = AgentSpec(executor="claude_cli")
+    argv = _spawn_argv(monkeypatch, tmp_path, bare)
+    assert "--permission-mode" not in argv and "--allowedTools" not in argv
+    assert "--add-dir" not in argv
+    assert sd.lane_permission_warnings("act", bare, "a")
+
+
 def test_warning_for_act_agent_without_permission_flags() -> None:
     bare = AgentSpec(executor="claude_cli")
     assert sd.lane_permission_warnings("act", bare, "a")

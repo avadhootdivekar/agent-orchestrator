@@ -148,7 +148,7 @@ Rejection is counted by `_note_rejection` (~L386) toward `consecutive_rejections
 
 ## D4 implementation (unit w01-02-d4-llm-lane-perms, 2026-11-10)
 - `sentinel_driver.py`: default spawn adds `--permission-mode acceptEdits --allowedTools Read,Glob,Grep,Write,Edit,Bash(mv:*)
-  --add-dir <gNN> --add-dir <inbox>` (least privilege; no skip-permissions). Explicit `llm.agent` argv is left untouched.
+  --add-dir <gNN> --add-dir <inbox>` (least privilege; no skip-permissions). Explicit `llm.agent` argv is left untouched (enforced since w12-05: the driver appends lane flags only when no `llm.agent` is set; test `test_bare_explicit_agent_is_not_given_lane_flags`). `Bash(mv:*)` is not path-scoped (`--add-dir` limits Write/Edit only) — accepted residual risk, noted in code.
 - `lane_permission_warnings` -> `ao validate` (workflow `sentinel:` block) + engine startup warning (`sentinel.warn`).
 - `DriverStatus.permission_denied` (from `permission_denials` in the stream) -> `GenerationLane._permission_alarm`: alarm
   `llm_permission_denied` in `control/sentinel-alarms.jsonl`, ledger `sentinel_permission_denied`, LLM lane paused.
@@ -163,10 +163,10 @@ Rejection is counted by `_note_rejection` (~L386) toward `consecutive_rejections
   a recovery re-dispatch, so state-based triggers (e.g. `cost_kill_pct`) cannot burn all rungs in one poll interval.
   Not done here: AC3's "N kills of the same task count as one systemic incident".
 - Tests: `tests/test_sentinel_recovery.py::test_retried_task_gets_per_attempt_clock_no_second_stuck_kill`,
-  `::test_retry_cooldown_blocks_rapid_rekills` (fixed clock; fail without the fix).
+  `::test_retry_cooldown_blocks_rapid_rekills` (fixed clock). **Correction (A3 review H1/M2):** these do NOT fail without the fix — `state.sentinel` is None in the first, and the second only calls `_in_retry_cooldown` directly. Fix pending, see below.
 - By: developer · Role: developer · Date: 2026-11-10
 
-### AC5 outcome: contract fix landed (unit w02-03, 2026-11-10)
+### AC6 / charter A3.5 outcome: contract fix landed (unit w02-03, 2026-11-10)
 - `sentinel_gen.py`: new `CTL_ENVELOPE_SECTION` rendered into `pack/sentinel-contract.md` — lists the `ao.ctl/v1` envelope fields
   (`created_at` not `ts`, `rationale` not `reason`, ids like `task_id` inside `payload`), states "unknown top-level fields are rejected",
   and gives concrete `note` and `kill` examples.
@@ -216,3 +216,12 @@ e2e + 2 bench fake-subject suites fail identically without my diff (other in-fli
   `bench/test_sandbox::test_stop_kills_grandchildren...` and `cache/test_eligibility::test_u_e1_task_fields_are_all_classified` — both pass on re-run
   (flaky / transient WIP state), not D3.
 - D3 itself: `test_engine_failure_isolation_of_work.py` + `test_e2e_isolation.py` pass (164 passed incl. sandbox/eligibility files); ruff check/format + mypy src clean.
+
+## A3 code-review fixes (unit w12-05-a3-code-review-fixes, 2026-11-11)
+Done: M1 (option b, test added), L2 (documented in code), L6 (labels/claims corrected above).
+**Remaining, blocked because the files carry another unit's uncommitted D2 edits** (`sentinel_tick.py`, `engine.py`, `models.py`, `tests/test_sentinel_recovery.py`, `docs-md/guide-sentinel.md`):
+- H1: add `sentinel_tick.ensure_state(st)` to `test_retried_task_gets_per_attempt_clock_no_second_stuck_kill` (+ assert old behaviour kills at +0.25 min); mutation-check by reverting the `attempt_started_at` clock.
+- H2: HEAD still has `SyntaxError` at `engine.py:771` (run_id docstring splice) and `MAX_INTERVAL_SECONDS` used before definition in `models.py:711`; repairs exist only in the dirty tree — land as a standalone hunk commit; add a `compileall` gate.
+- M2: `evaluate_recovery`-level cool-down test. M3: update 4 stale fail-fast doc sites + owner decision on `fail_fast`. L1 (rename `attempt_started_at`), L3, L4 tests.
+- L5: `GenerationLane._permission_alarm` should reuse `sentinel_tick._append_alarm`; CTL envelope fields/4000 limit should be shared constants (both need `sentinel_tick.py`).
+- guide-sentinel.md "(file writes only there)" wording (L2) needs softening (dirty file).
