@@ -278,3 +278,24 @@ def test_status_json_key_set_unchanged_for_runs_without_requests(tmp_path) -> No
     for key in ("waiting_for_input", "input_requests", "assumptions"):
         assert key not in status
     assert "awaiting_input" not in status["counts"]
+
+
+class _AskAndFailExecutor(_AskingExecutor):
+    """Like _AskingExecutor, but the independent task ``boom`` fails."""
+
+    def execute(self, ctx: TaskContext) -> TaskResult:
+        if ctx.task_id == "boom":
+            return TaskResult(task_id="boom", status="failed", attempts=1, error="boom")
+        return super().execute(ctx)
+
+
+def test_failure_is_surfaced_while_run_waits_for_input(tmp_path, caplog) -> None:
+    """A3 review L3: a failed sibling must not vanish behind the run-level 'waiting' state."""
+    import logging
+
+    tasks = [_asker(), _task("boom", outputs=["output/boom.txt"])]
+    with caplog.at_level(logging.INFO):
+        _, _, _, state = _run(tmp_path, tasks, _AskAndFailExecutor())
+    assert state.tasks["boom"].status == "failed" and state.status == "running"
+    (rec,) = [r for r in caplog.records if getattr(r, "event", "") == "run.waiting_for_input"]
+    assert rec.failed_tasks == ["boom"] and "failed tasks: boom" in rec.getMessage()

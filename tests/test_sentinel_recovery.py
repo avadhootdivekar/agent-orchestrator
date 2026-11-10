@@ -458,6 +458,9 @@ def test_retried_task_gets_per_attempt_clock_no_second_stuck_kill() -> None:
     sentinel_tick.register_task(st, rt, "me", t0)  # recovery re-dispatch at t0
     st.tasks["me"].recovery = TaskRecovery(kills=1)
     rt.stat_size = lambda _p: 1
+    # Without state.sentinel evaluate_recovery returns [] unconditionally (vacuous assertions).
+    sentinel_tick.ensure_state(st)
+    rt.tokens["me"] = CancelToken()  # live token of the re-dispatched attempt
 
     for minutes in (0.25, 5, 19):  # polls inside the new attempt's first stuck_min_minutes
         now = t0 + timedelta(minutes=minutes)
@@ -466,6 +469,13 @@ def test_retried_task_gets_per_attempt_clock_no_second_stuck_kill() -> None:
     now = t0 + timedelta(minutes=21)
     sentinel_tick.sample_liveness(st, rt, now)
     assert sentinel_tick._trigger_for(st, spec, "me", st.tasks["me"], now) == "stuck_factor"
+
+    # Documents the failure mode D1 fixed: on the task's first-start clock (no per-attempt
+    # stamp) the same attempt is stuck-killed 15 s after its re-dispatch.
+    st.tasks["me"].attempt_started_at = None
+    now = t0 + timedelta(minutes=0.25)
+    sentinel_tick.sample_liveness(st, rt, now)
+    assert sentinel_tick.evaluate_recovery(st, rt, now, set()) == ["me"]
 
 
 def test_retry_cooldown_blocks_rapid_rekills() -> None:
@@ -479,6 +489,40 @@ def test_retry_cooldown_blocks_rapid_rekills() -> None:
     assert not sentinel_tick._in_retry_cooldown(
         ts, t0 + timedelta(seconds=sentinel_tick.RETRY_COOLDOWN_SECONDS)
     )
+
+
+def test_evaluate_recovery_applies_retry_cooldown_to_state_based_triggers() -> None:
+    """A3 review M2: evaluate_recovery itself (not only the helper) applies the cool-down."""
+    from agent_orchestrator.models import TaskLimits, TaskRecovery, TaskRunState
+
+    t0 = datetime(2026, 11, 9, 12, tzinfo=UTC)
+    spec = SentinelRecoverySpec(force=True, cost_kill_pct=50)
+    st = RunState(run_id="r", workflow_id="w", started_at="x", updated_at="x")
+    st.tasks["me"] = TaskRunState(
+        status="running",
+        agent="ag",
+        started_at=t0.isoformat(),
+        attempt_started_at=t0.isoformat(),
+        cumulative_cost_usd=9.0,  # >= 50% of the 10 USD cap: the cost trigger is true at once
+        effective_limits=TaskLimits(task_cost_cap_usd=10.0),
+        recovery=TaskRecovery(kills=1),
+    )
+    sentinel_tick.ensure_state(st)
+    rt = sentinel_tick.SentinelRuntime(
+        ceiling=1,
+        tick_seconds=1,
+        inbox_batch_max=1,
+        live_limit=1,
+        control_dir=Path("."),
+        clock=lambda: t0,
+        log=logging.getLogger("t"),
+        recovery=spec,
+    )
+    rt.tokens["me"] = CancelToken()
+    soon = t0 + timedelta(seconds=15)
+    assert sentinel_tick.evaluate_recovery(st, rt, soon, set()) == []
+    later = t0 + timedelta(seconds=sentinel_tick.RETRY_COOLDOWN_SECONDS)
+    assert sentinel_tick.evaluate_recovery(st, rt, later, set()) == ["me"]
 
 
 # -- T-Rk4Wn7 D2: comparable cohort, activity veto, systemic dedupe ---------------------------

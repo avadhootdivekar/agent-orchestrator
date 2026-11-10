@@ -1161,11 +1161,19 @@ class Orchestrator:
                 open_ids = sorted(
                     r.request_id for r in state.input_requests.values() if r.state == "open"
                 )
+                failed_ids = sorted(
+                    ctx.failed_tasks
+                )  # A3 review L3: don't hide a failure while parked
                 run_log.info(
-                    "Run waiting for input: %s (ao answer --run-id %s)",
+                    "Run waiting for input: %s (ao answer --run-id %s)%s",
                     ", ".join(open_ids),
                     state.run_id,
-                    extra={"event": "run.waiting_for_input", "requests": open_ids},
+                    f"; failed tasks: {', '.join(failed_ids)}" if failed_ids else "",
+                    extra={
+                        "event": "run.waiting_for_input",
+                        "requests": open_ids,
+                        "failed_tasks": failed_ids,
+                    },
                 )
             elif ctx.failed_tasks and state.status == "running":
                 state.status = "failed"  # T-Rk4Wn7 D3: ran everything runnable, some failed

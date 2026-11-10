@@ -173,7 +173,7 @@ Process signals: **all** runs now handle SIGTERM/SIGINT (ADR-0024 D-10), not jus
 
 With no `sentinel.llm.agent`, a generation is spawned with the **least-privilege** set, not
 `--dangerously-skip-permissions`: `--permission-mode acceptEdits`, `--add-dir <gNN/>` and
-`--add-dir <inbox>` (file writes only there), and `--allowedTools "Read,Glob,Grep,Write,Edit,Bash(mv:*)"`
+`--add-dir <inbox>` (Write/Edit only there; `Bash(mv:*)` below is not path-scoped), and `--allowedTools "Read,Glob,Grep,Write,Edit,Bash(mv:*)"`
 (`mv` is for the atomic `*.tmp` -> rename). No other shell command is pre-approved. An explicit `llm.agent`
 is never altered: if it is a `claude` agent with `powers: act` and no permission flag, `ao validate`
 (workflow `sentinel:` block) and engine startup print a warning. If a generation still has tool calls refused

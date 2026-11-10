@@ -317,6 +317,10 @@ def test_contract_renders_ctl_envelope_with_valid_examples(tmp_path: Path) -> No
         f.write_text(raw)
         kinds.add(sentinel_tick._parse_entry(f)["kind"])  # the examples pass the real validator
     assert kinds == {"note", "kill"}
+    # The listed envelope fields and the rationale cap track the validator's constants (A3 L5).
+    for name in sentinel_tick.CTL_ENVELOPE_FIELDS:
+        assert f"- `{name}`" in text, name
+    assert str(sentinel_tick.RATIONALE_MAX_CHARS) in text
 
 
 # ---------------------------------------------------------------------------------------------

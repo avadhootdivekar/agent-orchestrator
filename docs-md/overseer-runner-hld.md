@@ -138,7 +138,7 @@ checker makes this template independent of it).
 | A-4 `usage_totals.cost_usd` counts only *settled* tasks | In-flight spend is invisible, so the backstop can overshoot by up to the in-flight units' spend | Stage logic uses projection plus a reserve (§8.2). With `max_parallel=P`, overshoot is bounded by ≈P×unit cost. Documented |
 | A-5 LLM agents follow the contract most of the time | Malformed manifests | Mechanical `*-check` post-hooks (`fail_task`), plus agents run the same checker themselves before exiting (self-correct loop) |
 | A-6 Checkpoints are barriers (`emit_tasks` ⇒ barrier, ADR-0007) | Concurrent state writes during prep | Verified at `engine.py` `_is_barrier` (`if task.emit_tasks`) |
-| A-7 A wave unit "failing" at the protocol level is rare, because units report hard work as `outcome: blocked` and still exit 0 | Any task failure halts the run (engine semantics) | Instruction rule plus `max_attempts: 3`. Operator resume is the standard path |
+| A-7 A wave unit "failing" at the protocol level is rare, because units report hard work as `outcome: blocked` and still exit 0 | A task failure does not halt independent work: the engine runs everything still runnable, then ends the run `failed` (T-Rk4Wn7 D3; budget/quota/breaker/cancel halts still stop at once) | Instruction rule plus `max_attempts: 3`. Operator resume is the standard path |
 | A-8 Team profile for the sprint math: **4** developers (Rev 2; was 3), <4 years' experience | Plan slips | §22 capacity math (14% MVP slack); FR-15 sits below the cut line |
 
 ---
@@ -456,7 +456,7 @@ FUNCTION ingest_ledger(inst, units, state):
      append_chained({type:"unit", seq, wave:K, unit_id, ask_ids, work_item, kind, attempt_no, outcome, verdict,
                      engine_status, cost_usd, duration_s (ended_at-started_at; null if either missing),
                      changed_paths[:50], needs_input, recorded_at})
-  # NOTE: failed units are only possible after an operator resume (the engine halts the run on failure)
+  # NOTE: failed units are only possible after an operator resume (the engine finishes independent work first, then ends the run `failed`)
 
 FUNCTION append_chained(line):  line.prev_sha256 = sha256(canonical_json(last_line)) or "GENESIS"; append
 FUNCTION verify_ledger_chain(inst): walk lines, recompute, RAISE Violation("INT-3", line_no) on mismatch

@@ -926,7 +926,7 @@ class GenerationLane:
 
         Deterministic, so the LLM lane is paused rather than burning budget on identical retries.
         """
-        from .sentinel_tick import ALARMS_FILE, CONTROL_DIR
+        from .sentinel_tick import CONTROL_DIR, append_alarm
 
         sent.llm_paused = True
         append_ledger(
@@ -947,15 +947,7 @@ class GenerationLane:
             "generation": gen,
             "detail": detail,
         }
-        try:
-            cdir = self.run_dir / CONTROL_DIR
-            cdir.mkdir(parents=True, exist_ok=True)
-            with (cdir / ALARMS_FILE).open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, sort_keys=True) + "\n")
-        except OSError:
-            self.log.warning(
-                "sentinel.alarm: could not write alarms file", extra={"event": "sentinel.error"}
-            )
+        append_alarm(self.run_dir / CONTROL_DIR, self.log, record)
 
     def _stop_cause(self, sent: SentinelState, status: DriverStatus, now: datetime) -> str | None:
         gen = sent.generation

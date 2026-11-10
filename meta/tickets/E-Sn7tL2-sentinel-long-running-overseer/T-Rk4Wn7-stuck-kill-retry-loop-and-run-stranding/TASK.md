@@ -163,7 +163,7 @@ Rejection is counted by `_note_rejection` (~L386) toward `consecutive_rejections
   a recovery re-dispatch, so state-based triggers (e.g. `cost_kill_pct`) cannot burn all rungs in one poll interval.
   Not done here: AC3's "N kills of the same task count as one systemic incident".
 - Tests: `tests/test_sentinel_recovery.py::test_retried_task_gets_per_attempt_clock_no_second_stuck_kill`,
-  `::test_retry_cooldown_blocks_rapid_rekills` (fixed clock). **Correction (A3 review H1/M2):** these do NOT fail without the fix — `state.sentinel` is None in the first, and the second only calls `_in_retry_cooldown` directly. Fix pending, see below.
+  `::test_retry_cooldown_blocks_rapid_rekills` (fixed clock). **Correction (A3 review H1/M2):** these do NOT fail without the fix — `state.sentinel` is None in the first, and the second only calls `_in_retry_cooldown` directly. Fixed in unit w13-01 (see below).
 - By: developer · Role: developer · Date: 2026-11-10
 
 ### AC6 / charter A3.5 outcome: contract fix landed (unit w02-03, 2026-11-10)
@@ -225,3 +225,32 @@ Done: M1 (option b, test added), L2 (documented in code), L6 (labels/claims corr
 - M2: `evaluate_recovery`-level cool-down test. M3: update 4 stale fail-fast doc sites + owner decision on `fail_fast`. L1 (rename `attempt_started_at`), L3, L4 tests.
 - L5: `GenerationLane._permission_alarm` should reuse `sentinel_tick._append_alarm`; CTL envelope fields/4000 limit should be shared constants (both need `sentinel_tick.py`).
 - guide-sentinel.md "(file writes only there)" wording (L2) needs softening (dirty file).
+
+## D2 implementation (unit w01-04-d2-peer-baseline, 2026-11-10)
+- `TaskSpec.stuck_cohort` / `expected_minutes` / `no_stuck_kill` (copied to `TaskRunState` by `register_task(task=...)`).
+  `_peer_durations` now matches agent AND `stuck_cohort` (untagged ⇒ untagged: legacy behaviour); `expected_minutes` replaces
+  the median; `no_stuck_kill` skips the duration trigger. Fields classified ANY in `cache/eligibility.py`.
+- Activity veto: `recovery.stuck_activity_veto` (default true) / `stuck_veto_minutes` (null ⇒ `idle_kill_minutes`).
+  Caveat: with the default window the idle trigger already fires first, so stuck_factor is mostly inert for tasks with an activity
+  signal; documented in `guide-sentinel.md`.
+- Systemic (AC3 rest): `recovery.systemic_task_window_seconds` (default 600; 0 = off) collapses repeat kills of one task into one
+  incident in `_check_systemic`.
+- Tests: `tests/test_sentinel_recovery.py` (6 new, fixed clock). Also fixed D4 regression: `engine._start_llm_lane` `agent` unbound when a driver factory is injected (9 e2e tests).
+- By: developer · Role: developer · Date: 2026-11-10
+
+## A3 code-review fixes, part 2 (unit w13-01-a3-d2-commit-and-review-fixes, 2026-11-11)
+- **H2 done**: HEAD repaired in a standalone commit (run_id docstring splice, `MAX_INTERVAL_SECONDS` order); a clean `git archive HEAD` passes `python -m compileall src`.
+  D2 then landed as two commits (models/eligibility, then sentinel_tick/engine/tests/guide).
+- **H1 done**: `test_retried_task_gets_per_attempt_clock_no_second_stuck_kill` now calls `ensure_state` and registers a token; it also asserts the
+  old behaviour (no `attempt_started_at`) kills at +0.25 min. **Mutation-checked**: reverting the `attempt_started_at` clock in `sample_liveness` fails it.
+- **M2 done**: `test_evaluate_recovery_applies_retry_cooldown_to_state_based_triggers` (cost trigger true at once; `[]` at +15 s, kill at +`RETRY_COOLDOWN_SECONDS`).
+  **Mutation-checked**: removing the `_in_retry_cooldown` call in `evaluate_recovery` fails it.
+- **M3 done (docs)**: 4 stale fail-fast sites updated (`overseer-runner-hld.md` x2, `multi-endpoint-circuit-breaker-hld.md` x2) plus `human-approval-gates-hld.md`.
+  **Decision (developer, pending owner confirmation)**: continue-on-failure is the intended default; budget/quota/breaker/cancel halts are unchanged. A `defaults.fail_fast`
+  opt-out is NOT implemented (spec change; one-line seam at the `settled` return in `engine.py`) - owner to say if wanted.
+- **L1**: documented, not renamed - `attempt_started_at` is per dispatch, not per in-worker `retry.max_attempts` attempt (comment in `models.py`).
+- **L3 done**: the "waiting for input" run-end log now lists `failed_tasks` (`test_failure_is_surfaced_while_run_waits_for_input`). Status stays `running` by design (ADR-4).
+- **L5 done**: `sentinel_tick.append_alarm` is shared by `GenerationLane._permission_alarm`; `CTL_ENVELOPE_FIELDS` / `RATIONALE_MAX_CHARS` constants drive the validator and a parity test.
+- **guide-sentinel.md**: "file writes only there" reworded - `Bash(mv:*)` is not path-scoped.
+- **L4 NOT done**: T4 integration-conflict + independent-sibling isolation test (needs a git-worktree fixture); still open.
+- By: developer · Role: developer · Date: 2026-11-11

@@ -43,7 +43,7 @@ or the dashboard. Either signer re-checks authorization and the current artifact
 stored outside the workspace (`<passwd home>/.config/ao/approvals/approval.key`, 0600). The engine polls
 cheaply, verifies every binding (signature, run, task, request, expiry, approver, `require_*` flags, and
 a **re-hash of the review artifacts at consume time**), then settles the gate: approve → `succeeded`;
-reject or timeout → `failed`, which halts the run through the existing failure semantics. `ao resume`
+reject or timeout → `failed`, which fails the task through the existing failure semantics (dependents never run; independent tasks finish, then the run is `failed`). `ao resume`
 and boot-resume re-enter a pending wait with the original `request_id` and expiry. **Resume integrity
 never trusts `state.json` to skip a check:** on every resumed session (known to the engine, not read
 from the file) every gate's status is re-verified, and a signed, **gate-scoped approval policy** (each

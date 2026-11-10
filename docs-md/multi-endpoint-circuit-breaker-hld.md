@@ -13,7 +13,7 @@ Two related gaps in the engine's run-completion semantics:
 
 **A. Single implicit endpoint.** Today every task in `workflow.json` executes; "endpoints" are just DAG sinks, and a run succeeds only when *all* tasks succeed. The desired philosophy: one workflow file holds several routes (epic / task / bug / documentation, …) that share a common head (e.g. a single `prompt.md`), diverge based on the prompt's *content*, and terminate on **different endpoint tasks**. Untaken routes must not run and must not count as failures.
 
-**B. No run-level circuit breaker.** The engine is fail-fast on *task* failure (first failed task → run failed), and has two special-cased run-level stops (budget `on_exhaustion`, quota max-wait). There is no general, spec-declared way to say "if condition X arises anywhere in the run, stop/fail the whole workflow".
+**B. No run-level circuit breaker.** The engine is continue-on-failure on *task* failure (a failed task's dependents never run, independent tasks finish, then the run is `failed`; T-Rk4Wn7 D3), and has two special-cased run-level stops (budget `on_exhaustion`, quota max-wait). There is no general, spec-declared way to say "if condition X arises anywhere in the run, stop/fail the whole workflow".
 
 ## 2. Current state (facts the design builds on)
 
@@ -116,7 +116,7 @@ Mechanics:
 | Failure-based | `task_failures` | threshold, window (`run`/branch/last-N-tasks) | total failed tasks incl. injected |
 | | `consecutive_failures` | threshold | catches systemic breakage (bad branch, broken env) |
 | | `failure_ratio` | ratio, min-sample | for large fan-outs |
-| | `same_task_exhausted` | — | task failed all `max_attempts` (today = fail-fast; breaker makes it policy) |
+| | `same_task_exhausted` | — | task failed all `max_attempts` (today = the failed task is settled and the run ends `failed` after independent work; breaker makes a run-wide stop policy) |
 | Cost/budget | `total_tokens` | threshold | exists as `BudgetSpec.total_tokens` → becomes built-in breaker |
 | | `token_rate` | rate window | exists as `BudgetSpec.rate` |
 | | `run_wall_clock_seconds` | threshold | whole-run deadline (task timeout exists; run deadline doesn't) |

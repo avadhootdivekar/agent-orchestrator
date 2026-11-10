@@ -116,6 +116,11 @@ RETRY_COOLDOWN_SECONDS: Final = 60  # min age of a retried attempt before the ne
 SYSTEMIC_WINDOW_SECONDS: Final = 3600
 KILL_LOG_MAX: Final = 200
 ALARMS_FILE: Final = "sentinel-alarms.jsonl"
+CTL_ENVELOPE_FIELDS: Final = frozenset(
+    {"schema", "id", "kind", "actor", "created_at", "rationale", "payload"}
+)
+"""Top-level fields of an ``ao.ctl/v1`` proposal; anything else is rejected."""
+RATIONALE_MAX_CHARS: Final = 4000
 DECISION_RETRY: Final = "retry"
 DECISION_ESCALATE: Final = "escalate"
 DECISION_FAIL: Final = "fail"
@@ -282,9 +287,13 @@ def _parse_entry(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise _Reject(RULE_SCHEMA, "payload must be an object")
     rationale = data.get("rationale")
-    if rationale is not None and (not isinstance(rationale, str) or len(rationale) > 4000):
-        raise _Reject(RULE_SCHEMA, "rationale must be a string of at most 4000 chars")
-    extra = set(data) - {"schema", "id", "kind", "actor", "created_at", "rationale", "payload"}
+    if rationale is not None and (
+        not isinstance(rationale, str) or len(rationale) > RATIONALE_MAX_CHARS
+    ):
+        raise _Reject(
+            RULE_SCHEMA, f"rationale must be a string of at most {RATIONALE_MAX_CHARS} chars"
+        )
+    extra = set(data) - CTL_ENVELOPE_FIELDS
     if extra:
         raise _Reject(RULE_SCHEMA, f"unknown fields: {sorted(extra)}")
     if data["kind"] not in KINDS_ALL:
@@ -632,15 +641,22 @@ def _trigger_for(
     return None
 
 
-def _append_alarm(rt: SentinelRuntime, record: dict[str, Any]) -> None:
+def append_alarm(
+    control_dir: Path, log: logging.Logger | logging.LoggerAdapter[Any], record: dict[str, Any]
+) -> None:
+    """Append one JSON line to the alarms file; an unwritable file is logged, never raised."""
     try:
-        rt.control_dir.mkdir(parents=True, exist_ok=True)
-        with (rt.control_dir / ALARMS_FILE).open("a", encoding="utf-8") as fh:
+        control_dir.mkdir(parents=True, exist_ok=True)
+        with (control_dir / ALARMS_FILE).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, sort_keys=True) + "\n")
     except OSError:
-        rt.log.warning(
+        log.warning(
             "sentinel.alarm: could not write alarms file", extra={"event": "sentinel.error"}
         )
+
+
+def _append_alarm(rt: SentinelRuntime, record: dict[str, Any]) -> None:
+    append_alarm(rt.control_dir, rt.log, record)
 
 
 def evaluate_recovery(
