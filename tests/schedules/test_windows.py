@@ -62,6 +62,9 @@ def test_key_formatters() -> None:
     assert windows.day_key(date(2026, 11, 10)) == "day:2026-11-10"
     assert windows.week_key(date(2026, 11, 9)) == "week:2026-11-09"
     assert windows.month_key(date(2026, 11, 1)) == "month:2026-11"
+    # isoformat keeps the zero-padded year (HLD form), independent of the platform's %Y.
+    assert windows.day_key(date(999, 1, 2)) == "day:0999-01-02"
+    assert windows.month_key(date(999, 1, 1)) == "month:0999-01"
 
 
 def test_windows_for_returns_each_period() -> None:
@@ -196,6 +199,18 @@ def test_week_across_dst_is_seven_local_dates() -> None:
     assert hours(w) == 7 * 24 - 1
 
 
+def test_week_across_dst_sunday_start() -> None:
+    # Berlin week starting Sunday 2024-03-24 contains the spring-forward on the 31st: 167 h.
+    w = window_for(u(2024, 3, 28, 12), "week", BERLIN, "sunday")
+    assert w.key == "week:2024-03-24"
+    assert (w.start, w.end) == (u(2024, 3, 23, 23), u(2024, 3, 30, 23))
+    assert hours(w) == 7 * 24
+    w2 = window_for(u(2024, 3, 31, 12), "week", BERLIN, "sunday")
+    assert w2.key == "week:2024-03-31"
+    assert (w2.start, w2.end) == (u(2024, 3, 30, 23), u(2024, 4, 6, 22))
+    assert hours(w2) == 7 * 24 - 1
+
+
 def test_week_rolls_over_year_boundary() -> None:
     w = window_for(u(2026, 1, 1, 12), "week", UTC_ZONE, "monday")  # Thursday
     assert w.key == "week:2025-12-29"
@@ -267,11 +282,24 @@ def test_containment_and_adjacency(tz: ZoneInfo, period: str, week_start: str) -
             assert window_for(w.start, period, tz, week_start).key == w.key  # type: ignore[arg-type]
 
 
+# ---- label wins over bounds (historical tzdata) --------------------------------------------
+
+
+def test_label_wins_when_fall_back_crosses_midnight() -> None:
+    # Moncton 1993-10-31: the fall-back starts at local midnight, so the repeated 23:05 of the
+    # 30th lies at/after that window's end; the key still names the 30th (label wins).
+    moncton = ZoneInfo("America/Moncton")
+    t = u(1993, 10, 31, 3, 5)
+    w = window_for(t, "day", moncton, "monday")
+    assert w.key == "day:1993-10-30"
+    assert not (w.start <= t < w.end)
+
+
 # ---- purity (AC9) ---------------------------------------------------------------------------
 
 
 def test_no_clock_reads() -> None:
-    class _Boom(datetime):
+    class _BoomDatetime(datetime):
         @classmethod
         def now(cls, tz=None):
             raise AssertionError("clock read")
@@ -280,6 +308,16 @@ def test_no_clock_reads() -> None:
         def utcnow(cls):
             raise AssertionError("clock read")
 
-    with mock.patch.object(windows, "datetime", _Boom):
+    class _BoomDate(date):
+        @classmethod
+        def today(cls):
+            raise AssertionError("clock read")
+
+    with (
+        mock.patch.object(windows, "datetime", _BoomDatetime),
+        mock.patch.object(windows, "date", _BoomDate),
+    ):
         w = window_for(u(2026, 11, 10, 12), "week", BERLIN, "monday")
+        m = window_for(u(2026, 11, 10, 12), "month", BERLIN, "monday")
     assert w.key == "week:2026-11-09"
+    assert m.key == "month:2026-11"

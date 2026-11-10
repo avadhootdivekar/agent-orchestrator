@@ -371,7 +371,8 @@ field is optional so E-Sc9Rt4's own tests and records stay valid.
 
 > **Review amendment (L5): the local-date label is authoritative.** Window membership is decided by the key
 > (`day:YYYY-MM-DD` …); `start <= t < end` is derived to agree with it. The two agree in every zone checked (Havana,
-> Santiago 24:00, Beirut midnight gap) and could diverge only for a fall-back after local midnight. The test corpus adds
+> Santiago 24:00, Beirut midnight gap) and could diverge only for a fall-back after local midnight (tzdata has such cases before 2011: America/Moncton
+> 1993, America/St_Johns 1987, Antarctica/Casey 2010; the label wins). The test corpus adds
 > America/Santiago 2024-04-07 and Asia/Beirut 2024-03-31.
 
 Pure, stdlib-only (`zoneinfo`), no clock reads.
@@ -423,7 +424,8 @@ Properties (each is a unit test):
 - **E-Sc9Rt4's DST fall-back double fire is now contained.** A daily 01:30 cron in a DST zone fires twice on fall-back
   day (ADR-0014 known limitation). Both instants land in the same `day:` window, so a `{period: day, max_runs: 1}`
   quota skips the second. Pinned by a test.
-- Week windows are always 7 local days; month windows use the local calendar month (28–31 days).
+- A week window is 7 consecutive local dates (167 h / 169 h across a DST change), or fewer if the zone skips a date
+  (Pacific/Apia 2011-12-30); month windows use the local calendar month (28–31 days).
 
 ## 8. Enforcement point 1 — the pre-fire gate
 

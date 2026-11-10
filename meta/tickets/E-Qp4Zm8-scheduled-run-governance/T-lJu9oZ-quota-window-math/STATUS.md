@@ -24,3 +24,11 @@
 
 ## Next actions
 1. Review/merge. 2. Hand `Window`/`windows_for` to `T-Uz0Uol` and `T-PpE5lf`.
+
+## Review follow-up (w08-02 Lows, applied in w09-02)
+- L1 done: docstring names Moncton 1993 / St_Johns 1987 / Casey 2010; `test_label_wins_when_fall_back_crosses_midnight` pins it.
+- L2 done (docs only): HLD s7 reworded to "7 consecutive local dates, fewer if a date is skipped (Apia 2011)". The AC7 sentence in TASK.md is left unchanged (out of this unit's touch list).
+- L3 done: keys built from `date.isoformat()`; test pins `day:0999-01-02`. `*_KEY_FORMAT` constants removed (no other users).
+- L4 done: `test_no_clock_reads` also patches `date.today`; added Sunday-week DST test (167 h). Sweep bases for Santiago spring/Lord Howe Oct not added (optional, rejected: scan showed both correct).
+- L5/L6 not in scope (L5 belongs to gate/ledger tickets; L6 nit left).
+- Evidence: 72 passed, windows.py 100 % coverage, ruff/format/mypy clean.

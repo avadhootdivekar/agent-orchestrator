@@ -8,8 +8,15 @@ the key (``day:YYYY-MM-DD`` ...), which depends only on the *local date* of the 
 <= t < end`` is derived to agree with it. A DST fall-back day (25 h) and a spring-forward day
 (23 h) are therefore each exactly one window, and an instant in the repeated hour belongs to
 that day regardless of ``fold``. Label and bounds could diverge only for a fall-back that
-happens *after* local midnight and moves the clock back across midnight; no tested zone does
-that (Havana, Santiago 24:00 and Beirut midnight gap all agree).
+happens *after* local midnight and moves the clock back across midnight. tzdata has such
+historical transitions (America/Moncton 1993-10-31, America/St_Johns 1987-10-25,
+Antarctica/Casey 2010-03-04); none occurs from 2011 on, so live scheduling is unaffected. For
+those instants the key names the earlier date while the instant lies outside that window's
+``[start, end)``: the label wins (pinned by a test). Havana, Santiago 24:00 and the Beirut
+midnight gap all agree.
+
+A week is 7 consecutive *local dates*, not 7x24 h (167 h / 169 h across DST), and fewer than 7
+dates if the zone skips a date (Pacific/Apia 2011-12-30).
 
 Stdlib only; no I/O and no clock reads. Callers pass an already-constructed ``ZoneInfo`` (load-
 time validation of timezone names lives with the schedule models). No caching: the ledger stores
@@ -17,7 +24,7 @@ instants and calls this at query time."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, get_args
@@ -32,15 +39,7 @@ MONDAY_WEEKDAY = 0  # date.weekday(): Monday == 0
 SUNDAY_WEEKDAY = 6
 DECEMBER = 12
 
-DAY_KEY_FORMAT = "day:{:%Y-%m-%d}"
-WEEK_KEY_FORMAT = "week:{:%Y-%m-%d}"  # the local date the week starts
-MONTH_KEY_FORMAT = "month:{:%Y-%m}"
-
-_KEY_FORMATS: dict[str, str] = {
-    "day": DAY_KEY_FORMAT,
-    "week": WEEK_KEY_FORMAT,
-    "month": MONTH_KEY_FORMAT,
-}
+_ISO_YEAR_MONTH_LEN = len("YYYY-MM")
 _UTC = UTC
 
 
@@ -55,15 +54,22 @@ class Window:
 
 
 def day_key(d: date) -> str:
-    return DAY_KEY_FORMAT.format(d)
+    return f"day:{d.isoformat()}"
 
 
 def week_key(start: date) -> str:
-    return WEEK_KEY_FORMAT.format(start)
+    return f"week:{start.isoformat()}"  # the local date the week starts
 
 
 def month_key(first: date) -> str:
-    return MONTH_KEY_FORMAT.format(first)
+    return f"month:{first.isoformat()[:_ISO_YEAR_MONTH_LEN]}"
+
+
+_KEY_BUILDERS: dict[str, Callable[[date], str]] = {
+    "day": day_key,
+    "week": week_key,
+    "month": month_key,
+}
 
 
 def local_midnight(d: date, tz: ZoneInfo) -> datetime:
@@ -96,14 +102,14 @@ def window_for(instant: datetime, period: Period, tz: ZoneInfo, week_start: Week
     """The ``period`` window in ``tz`` that contains ``instant``."""
     if instant.tzinfo is None or instant.utcoffset() is None:
         raise ValueError("instant must be timezone-aware")
-    if period not in _KEY_FORMATS:
+    if period not in _KEY_BUILDERS:
         raise ValueError(f"unknown period: {period!r} (expected one of {', '.join(PERIODS)})")
     if week_start not in ("monday", "sunday"):
         raise ValueError(f"unknown week_start: {week_start!r} (expected 'monday' or 'sunday')")
     start_d, next_d = _bounds(instant.astimezone(tz).date(), period, week_start)
     return Window(
         period=period,
-        key=_KEY_FORMATS[period].format(start_d),
+        key=_KEY_BUILDERS[period](start_d),
         start=local_midnight(start_d, tz),
         end=local_midnight(next_d, tz),
     )
