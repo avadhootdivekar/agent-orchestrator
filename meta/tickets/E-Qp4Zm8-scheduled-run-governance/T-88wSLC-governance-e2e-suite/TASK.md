@@ -5,8 +5,8 @@
 - Epic ID: `E-Qp4Zm8-scheduled-run-governance`
 - Owner: tester agent
 - Created: 2026-11-10
-- Last Updated: 2026-11-10
-- Status: Draft
+- Last Updated: 2026-11-11
+- Status: Partial (CliRunner quota/boundary tier landed; cost-cap/resume e2e unfinished)
 - Estimate: 2.5 days
 
 ## Requirements Mapping
