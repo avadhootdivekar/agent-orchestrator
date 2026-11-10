@@ -59,6 +59,8 @@ select = ["E", "F", "I", "UP"]
 python_version = "3.11"
 strict = false
 warn_unused_ignores = true
+# Benchmark suite task fixtures/graders are standalone sandboxes (many share module names like `conftest`/`run`); not product code.
+exclude = ["^benchmarks/suites/"]
 
 [[tool.mypy.overrides]]
 module = ["jsonschema", "jsonschema.*", "croniter", "yaml"]
@@ -85,6 +87,8 @@ markers = [
     "perf: performance envelope checks",
     "slow: opt-in informational measurement (E-Da5Tn9 NFR-5); skipped unless selected with -m slow, never a gate",
     "swebench: opt-in real network/HF/git SWE-bench tier; set AO_E2E_SWEBENCH=1 to run",
+    "docker: opt-in blackbox-sandbox tests that need a docker daemon + python:3.12-slim; set AO_E2E_DOCKER=1 to run",
+    "network: opt-in tier-2 real-network tier (clones public GitHub repos); set AO_E2E_NETWORK=1 to run",
 ]
 
 [tool.coverage.run]

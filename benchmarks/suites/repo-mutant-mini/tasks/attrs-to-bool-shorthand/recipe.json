@@ -1,0 +1,73 @@
+{
+  "mode": "inject",
+  "description": "single-letter y/n answers dropped from attr.converters.to_bool",
+  "edits": [
+    {
+      "file": "src/attr/converters.py",
+      "find": "if val in (True, \"true\", \"t\", \"yes\", \"y\", \"on\", \"1\", 1):",
+      "replace": "if val in (True, \"true\", \"t\", \"yes\", \"on\", \"1\", 1):"
+    },
+    {
+      "file": "src/attr/converters.py",
+      "find": "if val in (False, \"false\", \"f\", \"no\", \"n\", \"off\", \"0\", 0):",
+      "replace": "if val in (False, \"false\", \"f\", \"no\", \"off\", \"0\", 0):"
+    }
+  ],
+  "hidden": {
+    "tests/test_to_bool_shorthand.py": "tasks/attrs-to-bool-shorthand/hidden/test_to_bool_shorthand.py"
+  },
+  "install": "uv venv .venv && uv pip install -e . pytest pytest-timeout hypothesis",
+  "fail_to_pass": [
+    "tests/test_to_bool_shorthand.py::test_n_is_false[N]",
+    "tests/test_to_bool_shorthand.py::test_n_is_false[n]",
+    "tests/test_to_bool_shorthand.py::test_y_is_true[Y]",
+    "tests/test_to_bool_shorthand.py::test_y_is_true[y]"
+  ],
+  "pass_to_pass": [
+    "tests/test_converters.py::TestConverter::test_fmt_converter_call[scenario0]",
+    "tests/test_converters.py::TestConverter::test_fmt_converter_call[scenario1]",
+    "tests/test_converters.py::TestConverter::test_fmt_converter_call[scenario2]",
+    "tests/test_converters.py::TestConverter::test_fmt_converter_call[scenario3]",
+    "tests/test_converters.py::TestConverter::test_pickle[False-False]",
+    "tests/test_converters.py::TestConverter::test_pickle[False-True]",
+    "tests/test_converters.py::TestConverter::test_pickle[True-False]",
+    "tests/test_converters.py::TestConverter::test_pickle[True-True]",
+    "tests/test_converters.py::TestConverter::test_works_as_adapter",
+    "tests/test_converters.py::TestDefaultIfNone::test_factory_takes_self",
+    "tests/test_converters.py::TestDefaultIfNone::test_missing_default",
+    "tests/test_converters.py::TestDefaultIfNone::test_none_factory",
+    "tests/test_converters.py::TestDefaultIfNone::test_none_value",
+    "tests/test_converters.py::TestDefaultIfNone::test_not_none[1]",
+    "tests/test_converters.py::TestDefaultIfNone::test_not_none[False]",
+    "tests/test_converters.py::TestDefaultIfNone::test_not_none[True]",
+    "tests/test_converters.py::TestDefaultIfNone::test_not_none[val6]",
+    "tests/test_converters.py::TestDefaultIfNone::test_too_many_defaults",
+    "tests/test_converters.py::TestOptional::test_converter_instance",
+    "tests/test_converters.py::TestOptional::test_fail",
+    "tests/test_converters.py::TestOptional::test_success_with_none",
+    "tests/test_converters.py::TestOptionalPipe::test_instance",
+    "tests/test_converters.py::TestPipe::test_empty",
+    "tests/test_converters.py::TestPipe::test_fail",
+    "tests/test_converters.py::TestPipe::test_wrapped_annotation",
+    "tests/test_funcs.py::TestAsDict::test_lists_tuples_retain_type",
+    "tests/test_funcs.py::TestAsDict::test_recurse_property",
+    "tests/test_funcs.py::TestAsTuple::test_roundtrip",
+    "tests/test_funcs.py::TestAsTuple::test_sets_no_retain",
+    "tests/test_funcs.py::TestAsTuple::test_shallow",
+    "tests/test_funcs.py::TestEvolve::test_unknown",
+    "tests/test_funcs.py::TestHas::test_generics_negative",
+    "tests/test_funcs.py::TestHas::test_positive",
+    "tests/test_filters.py::TestExclude::test_allow[excl3-hello]",
+    "tests/test_filters.py::TestInclude::test_allow[incl3-hello]",
+    "tests/test_filters.py::TestInclude::test_allow[incl6-42]",
+    "tests/test_filters.py::TestInclude::test_drop_class[incl1-hello]",
+    "tests/test_hooks.py::TestTransformHook::test_hook_add_field",
+    "tests/test_hooks.py::TestTransformHook::test_hook_conflicting_defaults_after_reorder",
+    "tests/test_hooks.py::TestTransformHook::test_hook_with_inheritance"
+  ],
+  "verified": {
+    "date": "2026-10-23",
+    "network": true,
+    "note": "Real clone + install + runner e2e (python 3.12, uv 0.5.9): with the mutation unfixed (noop) solved=false; with the pristine files restored (FakeSubject copy-reference) solved=true, score 1.0. Targeted pytest run ~4s."
+  }
+}

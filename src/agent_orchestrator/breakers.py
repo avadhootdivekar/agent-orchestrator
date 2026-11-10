@@ -65,6 +65,7 @@ from .models import (
     WorkflowSpec,
     compute_run_active_seconds,
     compute_run_usage_totals,
+    is_sentinel_generation_task,
 )
 
 # Runtime action a tripped breaker triggers. Mirrors CircuitBreakerSpec.action (run scope
@@ -135,8 +136,8 @@ def _consecutive_failure_streak(state: RunState) -> int:
     settled = sorted(
         (
             (datetime.fromisoformat(ts.ended_at), ts)
-            for ts in state.tasks.values()
-            if ts.ended_at is not None
+            for tid, ts in state.tasks.items()
+            if ts.ended_at is not None and not is_sentinel_generation_task(tid)
         ),
         key=lambda pair: pair[0],
     )
@@ -158,7 +159,13 @@ class TaskFailuresBreaker(Breaker):
         threshold = spec.threshold
         if threshold is None:
             return None
-        failures = sum(1 for ts in ctx.state.tasks.values() if ts.status in ("failed", "timed_out"))
+        # Sentinel generation rows are overseer bookkeeping, not workflow work: their own
+        # failures never count toward the run's failure breakers (their cost does count).
+        failures = sum(
+            1
+            for tid, ts in ctx.state.tasks.items()
+            if ts.status in ("failed", "timed_out") and not is_sentinel_generation_task(tid)
+        )
         if failures >= threshold:
             return TripResult(detail={"failures": failures, "threshold": threshold})
         return None
@@ -347,9 +354,28 @@ class InjectedTaskCountBreaker(Breaker):
         threshold = spec.threshold
         if threshold is None:
             return None
-        count = len(ctx.state.injected_tasks)
+        # Sentinel-origin injections have their own counter/breaker (E-Sn7tL2 FR-19); they never
+        # count here, so the template's CFG-3 math is unchanged. No sentinel => identical count.
+        sent = ctx.state.sentinel
+        skip = set(sent.injected_ids) if sent is not None else set()
+        count = sum(1 for t in ctx.state.injected_tasks if t.id not in skip)
         if count >= threshold:
             return TripResult(detail={"count": count, "threshold": threshold})
+        return None
+
+
+class SentinelInjectedTaskCountBreaker(Breaker):
+    """`sentinel_injected_task_count`: tasks injected by the sentinel (backlog/ctl/LLM) so far."""
+
+    condition = "sentinel_injected_task_count"
+
+    def evaluate(self, spec: CircuitBreakerSpec, ctx: BreakerContext) -> TripResult | None:
+        threshold = spec.threshold
+        sent = ctx.state.sentinel
+        if threshold is None or sent is None:
+            return None
+        if sent.injected_count >= threshold:
+            return TripResult(detail={"count": sent.injected_count, "threshold": threshold})
         return None
 
 
@@ -387,6 +413,7 @@ BREAKER_REGISTRY["run_wall_clock_seconds"] = RunWallClockSecondsBreaker()
 BREAKER_REGISTRY["run_active_seconds"] = RunActiveSecondsBreaker()
 BREAKER_REGISTRY["verdict"] = VerdictBreaker()
 BREAKER_REGISTRY["injected_task_count"] = InjectedTaskCountBreaker()
+BREAKER_REGISTRY["sentinel_injected_task_count"] = SentinelInjectedTaskCountBreaker()
 BREAKER_REGISTRY["stop_file"] = StopFileBreaker()
 BREAKER_REGISTRY["task_cost_usd"] = TaskCostUsdBreaker()
 BREAKER_REGISTRY["run_cost_usd"] = RunCostUsdBreaker()

@@ -57,7 +57,7 @@ class AgentSpec(BaseModel):
     context_window: Literal["isolated","shared"] = "isolated"
     extra_args: list[str] = []
     model: str | None = None                          # e.g. "claude-haiku-4-5-…"; injected as --model
-    effort: Literal["low","medium","high"] | None = None  # → --max-turns via EFFORT_MAX_TURNS {15,30,60}
+    turn_budget: Literal["low","medium","high","xhigh"] | None = None  # → --max-turns via EFFORT_MAX_TURNS {15,30,60,120}; legacy key `effort` is a deprecated alias
     max_turns: int | None = None                      # explicit --max-turns; overrides effort when set
     working_dir: str | None = None                    # agent process cwd; resolved+path-guarded under
                                                        # reposet.workspace_root. None -> workspace root.
@@ -287,7 +287,7 @@ agents:    path/to/agents.json
 max_attempts: 3          # AO_MAX_ATTEMPTS
 max_turns: 30            # AO_MAX_TURNS
 model: claude-sonnet-4-6 # AO_MODEL
-effort: medium           # AO_EFFORT  (low | medium | high)
+turn_budget: medium      # AO_TURN_BUDGET  (low | medium | high | xhigh); `effort` = deprecated alias
 
 quota_max_wait_seconds: 21600   # AO_QUOTA_MAX_WAIT_SECONDS
 quota_poll_seconds: 900         # AO_QUOTA_POLL_SECONDS
@@ -310,7 +310,9 @@ ao prune     --workspace <path> [--older-than N] [--dry-run]
 | Flag | Env var | Description |
 |------|---------|-------------|
 | `--model` | `AO_MODEL` | Claude model for all agents |
-| `--effort` | `AO_EFFORT` | `low` / `medium` / `high` |
+| `--turn-budget` | `AO_TURN_BUDGET` | `low` / `medium` / `high` / `xhigh` (15/30/60/120 turns) |
+| `--effort` | `AO_EFFORT` | deprecated alias of `--turn-budget` |
+| `--autocompact` | `AO_AUTOCOMPACT` | `auto` or 100000-1000000 tokens (claude-cli) |
 | `--max-attempts` | `AO_MAX_ATTEMPTS` | Max task attempts (overrides workflow defaults) |
 | `--max-turns` | `AO_MAX_TURNS` | Max turns per claude invocation |
 | `--quota-max-wait` | `AO_QUOTA_MAX_WAIT_SECONDS` | Max wait for quota exhaustion episode |

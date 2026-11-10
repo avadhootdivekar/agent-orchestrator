@@ -22,7 +22,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -31,7 +31,10 @@ from .._version import get_version_string
 from ..auth.http.middleware import AuthMiddleware
 from ..auth.http.routes import install_auth_routes
 from ..auth.policy import DASHBOARD_COOKIE_ONLY_NAVIGATION, DASHBOARD_ROUTE_POLICIES
+from ..auth.principal import current_principal
+from ..control import KILL_REASON_MAX, dashboard_actor
 from ..feedback import MAX_NOTE_CHARS, MAX_OPERATOR_NOTE_CHARS, REASONS, Rating, Reason, Scope
+from ..models import INPUT_MAX_FIELDS
 from .files import PathNotAllowedError, PathNotFoundError
 from .htmlpreview import NotMarkupError
 from .security import SecurityMiddleware, resolve_allowed_hosts
@@ -136,6 +139,30 @@ class OperatorNoteRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=MAX_OPERATOR_NOTE_CHARS * 2)
 
 
+class ControlRequest(BaseModel):
+    """Body for ``POST /api/runs/{run_id}/control``: an ``ao.ctl/v1`` entry minus ``id`` /
+    ``actor`` / ``created_at`` (all server-set -- the client can never choose its actor)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(..., min_length=1, max_length=32)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    rationale: str | None = Field(None, max_length=KILL_REASON_MAX * 2)
+
+
+class AnswerInputRequest(BaseModel):
+    """Body for ``POST /api/runs/{run_id}/inputs/{request_id}``. The source is NOT client-settable.
+
+    Per-field validation (types, choices, lengths) is the shared ``inputs.validate_values``; this
+    only bounds the body before it gets there.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    values: dict[str, str | bool] = Field(default_factory=dict, max_length=INPUT_MAX_FIELDS)
+    resume: bool = False
+
+
 logger = logging.getLogger(__name__)
 
 # Store failures carry server-side paths/exception text: log it, tell the client nothing more.
@@ -218,6 +245,13 @@ def create_app(
         from dataclasses import asdict
 
         return asdict(service.workspace_info())
+
+    @app.get(f"{API_PREFIX}/schema/run-options")
+    def run_options_schema() -> dict:
+        """The run-options registry: JSON schema + UI metadata (precedence, flags, env, help)."""
+        from ..run_options import options_schema
+
+        return options_schema()
 
     @app.get(f"{API_PREFIX}/general-instructions")
     def general_instructions() -> list[dict]:
@@ -445,12 +479,66 @@ def create_app(
         except DashboardError as exc:
             raise _http_error(exc) from exc
 
+    # Awaiting-input (S4): same deny-by-default AuthMiddleware as /notes and /feedback.
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/inputs")
+    def get_run_inputs(run_id: str) -> dict:
+        try:
+            return service.get_run_inputs(run_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.post(f"{API_PREFIX}/runs/{{run_id}}/inputs/{{request_id}}")
+    def post_run_input(run_id: str, request_id: str, body: AnswerInputRequest) -> dict:
+        try:
+            return service.answer_run_input(
+                run_id, request_id, dict(body.values), resume=body.resume
+            )
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
     @app.get(f"{API_PREFIX}/runs/{{run_id}}/signals")
     def run_signals(
         run_id: str, survival: bool = Query(False), ref: str | None = Query(None)
     ) -> dict:
         try:
             return service.run_signals(run_id, survival=survival, ref=ref)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    # Sentinel panel (T-Sn5Ui1): same deny-by-default AuthMiddleware + Origin/Content-Type gate as
+    # /notes. The actor on the entry is the authenticated principal, never client-supplied.
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/sentinel")
+    def run_sentinel(run_id: str) -> dict:
+        try:
+            return service.sentinel_status(run_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/sentinel/panel")
+    def run_sentinel_panel(run_id: str) -> dict:
+        try:
+            return service.sentinel_panel(run_id)
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.post(f"{API_PREFIX}/runs/{{run_id}}/control", status_code=202)
+    def post_run_control(run_id: str, body: ControlRequest, request: Request) -> dict:
+        principal = current_principal(request)
+        try:
+            return service.submit_control(
+                run_id,
+                body.kind,
+                body.payload,
+                body.rationale,
+                actor=dashboard_actor(principal.username if principal else None),
+            )
+        except DashboardError as exc:
+            raise _http_error(exc) from exc
+
+    @app.get(f"{API_PREFIX}/runs/{{run_id}}/control/{{entry_id}}")
+    def run_control_outcome(run_id: str, entry_id: str) -> dict:
+        try:
+            return service.control_outcome(run_id, entry_id)
         except DashboardError as exc:
             raise _http_error(exc) from exc
 

@@ -1,0 +1,647 @@
+{
+  "schema_version": "1.0",
+  "bench_run_id": "2026-10-23-gen-services-mini-ao-epic-haiku",
+  "suite_id": "gen-services-mini",
+  "domain": "software",
+  "subject": {
+    "id": "ao-epic-haiku",
+    "type": "ao_workflow",
+    "model": "claude-haiku-5-5",
+    "resolved_config": {
+      "version": "1.0",
+      "id": "ao-epic-haiku",
+      "type": "ao_workflow",
+      "model": "claude-haiku-5-5",
+      "permission_mode": null,
+      "max_turns": 30,
+      "prompt_template": null,
+      "extra_args": [],
+      "workflow": "ao-epic/workflow.json",
+      "reposets": "ao-epic/reposet.json",
+      "agents": "ao-epic/agents.json",
+      "max_parallel": null,
+      "budget_total": null,
+      "scripted_effect": null,
+      "fake_cost": null,
+      "fake_tokens": null
+    }
+  },
+  "config_fingerprint": "e0f1e4968b30d536dfb336b3103ba7eabfe6e48883f9cba8aeff10da1a03e4b1",
+  "started_at": "2026-10-23T15:34:16.715837+00:00",
+  "ended_at": "2026-10-23T15:41:28.713970+00:00",
+  "env": {
+    "ao_version": "ao 0.1.0 (a6b569a.dirty) built 2026-10-23T15:12:39Z",
+    "claude_version": "2.1.305 (Claude Code)",
+    "os": "Linux-6.1.0-42-amd64-x86_64-with-glibc2.36",
+    "git_sha": "083d6f3"
+  },
+  "tasks": [
+    {
+      "subject_id": "ao-epic-haiku",
+      "task_id": "crud-relational-py-s4242",
+      "domain": "software",
+      "category": "feature",
+      "solved": true,
+      "score": 1.0,
+      "wall_clock_seconds": 392.7588398329972,
+      "cost_usd": 0.18397924,
+      "input_tokens": 50,
+      "output_tokens": 90032,
+      "cache_creation_input_tokens": 157752,
+      "cache_read_input_tokens": 1834900,
+      "attempts": 2,
+      "turns": null,
+      "subject_status": "succeeded",
+      "grader_type": "blackbox",
+      "workspace": "/usr/avadhoot/mounted/ao-runner-ao/agent-orchestrator/playground/.tmp/bench/2026-10-23-gen-services-mini-ao-epic-haiku/ao-epic-haiku/crud-relational-py-s4242/capture",
+      "config_fingerprint": "e3f03927c838b709ae4c24d85e5f290c3635d4b77fbc242e4dc97791dd8748fa",
+      "started_at": "2026-10-23T15:34:16.723566+00:00",
+      "ended_at": "2026-10-23T15:41:28.713970+00:00",
+      "raw_error": null,
+      "grader_detail": {
+        "contract": "http",
+        "language": "python",
+        "sandbox": "docker",
+        "image": "ao-bench-python-046c67ebf8c9",
+        "reference_ok": true,
+        "reference_language": "python",
+        "reference_trap_failed": [],
+        "core_all_passed": true,
+        "pass_threshold": 0.8,
+        "score_breakdown": {
+          "core": {
+            "weight": 0.5,
+            "effective_weight": 0.5,
+            "passed": 21,
+            "total": 21,
+            "fraction": 1.0
+          },
+          "trap": {
+            "weight": 0.35,
+            "effective_weight": 0.35,
+            "passed": 4,
+            "total": 4,
+            "fraction": 1.0
+          },
+          "perf": {
+            "weight": 0.15,
+            "effective_weight": 0.15,
+            "passed": 5,
+            "total": 5,
+            "fraction": 1.0
+          }
+        },
+        "probe_results": [
+          {
+            "id": "core-healthz",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 619.4
+          },
+          {
+            "id": "core-error-shape",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 1.4
+          },
+          {
+            "id": "core-venue-create-get",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 3.4
+          },
+          {
+            "id": "core-venue-patch",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 4.2
+          },
+          {
+            "id": "core-venue-delete",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 4.1
+          },
+          {
+            "id": "core-venue-list-filter",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 924.6
+          },
+          {
+            "id": "core-member-create-get",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 1.6
+          },
+          {
+            "id": "core-member-patch",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 1.8
+          },
+          {
+            "id": "core-member-delete",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 2.0
+          },
+          {
+            "id": "core-member-list-filter",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 712.8
+          },
+          {
+            "id": "core-coupon-create-get",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 4.2
+          },
+          {
+            "id": "core-coupon-patch",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 5.7
+          },
+          {
+            "id": "core-coupon-delete",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 7.4
+          },
+          {
+            "id": "core-coupon-list-filter",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 787.0
+          },
+          {
+            "id": "core-ticket-create-get",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 3.6
+          },
+          {
+            "id": "core-ticket-patch",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 4.7
+          },
+          {
+            "id": "core-ticket-delete",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 5.3
+          },
+          {
+            "id": "core-ticket-list-filter",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 675.5
+          },
+          {
+            "id": "core-client-supplied-id",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 733.6
+          },
+          {
+            "id": "core-pagination-basic",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 788.9
+          },
+          {
+            "id": "core-ticket-venue-links",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 10.9
+          },
+          {
+            "id": "trap-unique-constraint",
+            "group": "trap",
+            "trap": "unique_constraint",
+            "passed": true,
+            "mismatches": [],
+            "ms": 657.5
+          },
+          {
+            "id": "trap-lost-update",
+            "group": "trap",
+            "trap": "lost_update",
+            "passed": true,
+            "mismatches": [],
+            "ms": 728.0
+          },
+          {
+            "id": "trap-sort-tiebreak",
+            "group": "trap",
+            "trap": "sort_tiebreak",
+            "passed": true,
+            "mismatches": [],
+            "ms": 783.5
+          },
+          {
+            "id": "trap-unicode-casefold",
+            "group": "trap",
+            "trap": "unicode_casefold",
+            "passed": true,
+            "mismatches": [],
+            "ms": 707.1
+          }
+        ],
+        "perf": {
+          "sizes": {
+            "100": {
+              "create": {
+                "p50_ms": 0.522,
+                "p95_ms": 1.204
+              },
+              "get": {
+                "p50_ms": 0.697,
+                "p95_ms": 1.104
+              },
+              "list": {
+                "p50_ms": 0.569,
+                "p95_ms": 1.217
+              }
+            },
+            "1000": {
+              "create": {
+                "p50_ms": 0.388,
+                "p95_ms": 1.099
+              },
+              "get": {
+                "p50_ms": 0.328,
+                "p95_ms": 0.954
+              },
+              "list": {
+                "p50_ms": 0.374,
+                "p95_ms": 1.058
+              }
+            }
+          },
+          "classes": {
+            "indexed_get": {
+              "alpha": -0.0634,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "paginated_list": {
+              "alpha": -0.061,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "write": {
+              "alpha": -0.0394,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            }
+          },
+          "ref_ratio_p95": 1.081,
+          "ref_ratio_max": 5.0,
+          "ref_ratio_enforced": true,
+          "ref_ratio_pass": true,
+          "p95_ms_largest": 1.036,
+          "ref_p95_ms_largest": 0.958,
+          "timed_out": false,
+          "failed_ops": {},
+          "error": null,
+          "sandbox": "docker",
+          "image": "ao-bench-python-046c67ebf8c9"
+        }
+      },
+      "grader_raw_tail": "",
+      "family": "crud-relational",
+      "language": "python",
+      "repeat": 1
+    },
+    {
+      "subject_id": "ao-epic-haiku",
+      "task_id": "job-queue-py-s4242",
+      "domain": "software",
+      "category": "feature",
+      "solved": true,
+      "score": 1.0,
+      "wall_clock_seconds": 239.35195176198613,
+      "cost_usd": 0.06143061,
+      "input_tokens": 54,
+      "output_tokens": 51322,
+      "cache_creation_input_tokens": 105916,
+      "cache_read_input_tokens": 1458101,
+      "attempts": 2,
+      "turns": null,
+      "subject_status": "succeeded",
+      "grader_type": "blackbox",
+      "workspace": "/usr/avadhoot/mounted/ao-runner-ao/agent-orchestrator/playground/.tmp/bench/2026-10-23-gen-services-mini-ao-epic-haiku/ao-epic-haiku/job-queue-py-s4242/capture",
+      "config_fingerprint": "0f82c988140838d95d1802c5f3555978888de1acfa68de3c640dab1e3690c168",
+      "started_at": "2026-10-23T15:34:16.727187+00:00",
+      "ended_at": "2026-10-23T15:38:27.923006+00:00",
+      "raw_error": null,
+      "grader_detail": {
+        "contract": "jsonl",
+        "language": "python",
+        "sandbox": "docker",
+        "image": "ao-bench-python-046c67ebf8c9",
+        "reference_ok": true,
+        "reference_language": "python",
+        "reference_trap_failed": [],
+        "core_all_passed": true,
+        "pass_threshold": 0.8,
+        "score_breakdown": {
+          "core": {
+            "weight": 0.5,
+            "effective_weight": 0.5,
+            "passed": 11,
+            "total": 11,
+            "fraction": 1.0
+          },
+          "trap": {
+            "weight": 0.35,
+            "effective_weight": 0.35,
+            "passed": 4,
+            "total": 4,
+            "fraction": 1.0
+          },
+          "perf": {
+            "weight": 0.15,
+            "effective_weight": 0.15,
+            "passed": 6,
+            "total": 6,
+            "fraction": 1.0
+          }
+        },
+        "probe_results": [
+          {
+            "id": "core-ping",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 174.5
+          },
+          {
+            "id": "core-enqueue-shape",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 208.1
+          },
+          {
+            "id": "core-claim-priority-order",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 176.8
+          },
+          {
+            "id": "core-fifo-within-priority",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 204.4
+          },
+          {
+            "id": "core-ack",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 217.0
+          },
+          {
+            "id": "core-nack-retry",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 220.1
+          },
+          {
+            "id": "core-retry-exhaustion",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 227.7
+          },
+          {
+            "id": "core-stats",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 219.2
+          },
+          {
+            "id": "core-advance-clock",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 197.9
+          },
+          {
+            "id": "core-ack-unknown-job",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 233.3
+          },
+          {
+            "id": "core-receipt-checked",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 199.5
+          },
+          {
+            "id": "trap-visibility-timeout",
+            "group": "trap",
+            "trap": "visibility_timeout",
+            "passed": true,
+            "mismatches": [],
+            "ms": 209.3
+          },
+          {
+            "id": "trap-at-least-once",
+            "group": "trap",
+            "trap": "at_least_once",
+            "passed": true,
+            "mismatches": [],
+            "ms": 200.0
+          },
+          {
+            "id": "trap-starvation",
+            "group": "trap",
+            "trap": "starvation",
+            "passed": true,
+            "mismatches": [],
+            "ms": 233.4
+          },
+          {
+            "id": "trap-dedupe-key",
+            "group": "trap",
+            "trap": "dedupe_key",
+            "passed": true,
+            "mismatches": [],
+            "ms": 224.2
+          }
+        ],
+        "perf": {
+          "sizes": {
+            "100": {
+              "ack": {
+                "p50_ms": 0.069,
+                "p95_ms": 0.102
+              },
+              "claim": {
+                "p50_ms": 0.074,
+                "p95_ms": 0.099
+              },
+              "enqueue_low": {
+                "p50_ms": 0.07,
+                "p95_ms": 0.095
+              },
+              "enqueue_urgent": {
+                "p50_ms": 0.072,
+                "p95_ms": 0.089
+              },
+              "stats": {
+                "p50_ms": 0.066,
+                "p95_ms": 0.087
+              }
+            },
+            "1000": {
+              "ack": {
+                "p50_ms": 0.054,
+                "p95_ms": 0.1
+              },
+              "claim": {
+                "p50_ms": 0.056,
+                "p95_ms": 0.104
+              },
+              "enqueue_low": {
+                "p50_ms": 0.069,
+                "p95_ms": 0.101
+              },
+              "enqueue_urgent": {
+                "p50_ms": 0.071,
+                "p95_ms": 0.103
+              },
+              "stats": {
+                "p50_ms": 0.052,
+                "p95_ms": 0.095
+              }
+            }
+          },
+          "classes": {
+            "ack": {
+              "alpha": -0.0083,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "claim": {
+              "alpha": 0.0208,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "read": {
+              "alpha": 0.0402,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "write": {
+              "alpha": 0.0304,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            }
+          },
+          "ref_ratio_p95": 0.566,
+          "ref_ratio_max": 5.0,
+          "ref_ratio_enforced": true,
+          "ref_ratio_pass": true,
+          "p95_ms_largest": 0.101,
+          "ref_p95_ms_largest": 0.178,
+          "timed_out": false,
+          "failed_ops": {},
+          "error": null,
+          "sandbox": "docker",
+          "image": "ao-bench-python-046c67ebf8c9"
+        }
+      },
+      "grader_raw_tail": "",
+      "family": "job-queue",
+      "language": "python",
+      "repeat": 1
+    }
+  ],
+  "aggregate": {
+    "solved": 2,
+    "total": 2,
+    "solve_rate": 1.0,
+    "mean_score": 1.0,
+    "total_cost_usd": 0.24540984999999998,
+    "cost_available": true,
+    "cost_per_solved": 0.12270492499999999,
+    "total_wall_clock_seconds": 632.1107915949833,
+    "total_input_tokens": 104,
+    "total_output_tokens": 141354,
+    "total_cache_creation_input_tokens": 263668,
+    "total_cache_read_input_tokens": 3293001,
+    "infra_errors": 0,
+    "attempted": 2,
+    "solve_rate_attempted": 1.0,
+    "mean_score_attempted": 1.0
+  },
+  "parity_fingerprint": "06aaf5ad1df7f6fc7534259a337e4fec4a9bc9785aea42e8079b2742e8dcec16",
+  "repeat": 1
+}

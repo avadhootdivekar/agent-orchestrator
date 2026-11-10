@@ -86,6 +86,8 @@ export interface RunSummary {
   is_terminal: boolean;
   is_live: boolean;
   launch_id: string | null;
+  /** Additive: run is parked on open input requests (status stays "running"). Absent on old backends. */
+  waiting_for_input?: boolean;
   /** One-line preview of the run prompt (list rows carry only this, never the full text). */
   prompt_preview?: string | null;
   /** First few running tasks (state-derived) for the compact list view; `task_counts.running` is the total. */
@@ -168,6 +170,32 @@ export interface TaskStat {
   effort?: string | null;
   /** Current result-cache record of this task (E-Rc4Hk8); null/absent when it has none. */
   result_cache?: ResultCacheTaskView | null;
+  /** Limits in force at the latest dispatch (T-xNFBww); null/absent for pre-upgrade tasks. */
+  limits?: TaskLimits | null;
+}
+
+/** Per-task limits in force at dispatch (`TaskLimits`); `null` = no limit / not set. */
+export interface TaskLimits {
+  thinking_effort: string | null;
+  turn_budget: string | null;
+  max_turns: number | null;
+  autocompact: string | number | null;
+  timeout_seconds: number | null;
+  task_cost_cap_usd: number | null;
+  max_attempts: number | null;
+}
+
+/** One "Limits & settings" row (T-xNFBww). `used`/`cap` set only where measurable. */
+export interface RunLimit {
+  key: string;
+  label: string;
+  value: unknown;
+  source: string;
+  used: number | null;
+  cap: number | null;
+  /** "usd" | "s" | "tokens" | "tasks" | "" -- how to format value/used/cap. */
+  unit: string;
+  note: string | null;
 }
 
 /** One currently-running task on a runs-list row (state-derived; E-iafh2F). */
@@ -176,6 +204,10 @@ export interface RunningTaskBrief {
   model: string | null;
   effort: string | null;
   started_at: string | null;
+  /** Additive (T-xNFBww): absent on an older backend; `limits` null = pre-upgrade task. */
+  attempts?: number;
+  cost_usd?: number;
+  limits?: TaskLimits | null;
 }
 
 /**
@@ -280,6 +312,10 @@ export interface RunDetail {
   prompt_changed_since_start?: boolean | null;
   /** Result-cache run block (E-Rc4Hk8); null/absent when no current record. */
   result_cache?: ResultCacheRunBlock | null;
+  /** "Limits & settings" rows (T-xNFBww); absent on an older backend. */
+  limits?: RunLimit[];
+  /** False for a run that predates the effective-settings snapshot. */
+  settings_recorded?: boolean;
 }
 
 /**
@@ -357,6 +393,18 @@ export interface GraphRouter {
   selected: string[];
 }
 
+/** One persisted run-time graph edit (`RunState.graph_edits`, E-Sn7tL2 FR-12). */
+export interface GraphEdit {
+  op: "set_edges" | "remove_task" | "skip" | "priority";
+  task_id: string;
+  /** Effective dependency ids after a `set_edges` edit; `null` for other ops. */
+  dependencies: string[] | null;
+  inputs: string[] | null;
+  value: number | null;
+  source: string;
+  at: string;
+}
+
 export interface RunGraph {
   schema_version: number;
   run_id: string;
@@ -370,6 +418,8 @@ export interface RunGraph {
   spawn_edges: SpawnEdge[];
   loops: GraphLoop[];
   routers: GraphRouter[];
+  /** Absent on a server that predates `graph_edits` (additive field). */
+  graph_edits?: GraphEdit[];
 }
 
 /** Which edge set the canvas currently renders — dependency (LR) or spawn (TB). */
@@ -425,14 +475,35 @@ export interface GeneralInstruction {
   exists: boolean;
 }
 
-export interface RunOptions {
-  model?: string;
-  effort?: string;
-  max_attempts?: number;
-  max_turns?: number;
-  max_parallel?: number;
-  budget_total?: number;
-  self_heal?: boolean;
+/**
+ * Launch `options` body (POST /runs, /runs/{id}/resume, template instances). Keys are registry
+ * option names (`GET /api/schema/run-options`); the server allow-lists them and ignores unknown
+ * ones, so the type is open rather than a hand-kept list.
+ */
+export type RunOptions = Record<string, string | number | boolean>;
+
+/** One entry of `GET /api/schema/run-options` -> `options` (mirror run_options.options_schema). */
+export interface RunOptionSchema {
+  name: string;
+  /** "int" | "float" | "str" | "enum" | "bool"; a newer server may send others (rendered as text). */
+  type: string;
+  flag?: string | null;
+  env?: string | null;
+  config?: string | null;
+  default?: string | number | boolean | null;
+  choices?: string[];
+  /** choice -> display label (e.g. turn budget "high" -> "high (60 turns)"); absent on older servers. */
+  choice_labels?: Record<string, string>;
+  help?: string;
+  providers?: string[];
+  /** null = not forwardable from the dashboard. */
+  ui: { group: string; label: string } | null;
+  resumable?: boolean;
+}
+
+export interface RunOptionsSchema {
+  schema: string;
+  options: RunOptionSchema[];
 }
 
 /**
@@ -489,7 +560,11 @@ export type FeedbackReason =
 export interface UsageGroup {
   agent: string;
   model: string;
+  /** Legacy column (== turn_budget today). */
   effort: string;
+  /** Grouping dimensions (T-xNFBww); "-" = not recorded. Absent on an older backend. */
+  turn_budget?: string;
+  thinking_effort?: string;
   tasks: number;
   succeeded: number;
   failed: number;
@@ -801,3 +876,188 @@ export type PathProbeStatus = "file" | "dir" | "missing" | "denied";
 export interface PathProbeResponse {
   results: { path: string; status: PathProbeStatus }[];
 }
+
+/** Mirrors models.py::InputField (awaiting-input HLD §4.2). All text is plain data. */
+export interface InputField {
+  name: string;
+  type: "text" | "choice" | "bool";
+  label: string;
+  choices: string[];
+  default: string | boolean | null;
+  max_chars: number;
+  required: boolean;
+}
+
+export type InputValue = string | boolean;
+
+export interface InputAnswer {
+  values: Record<string, InputValue>;
+  assumed: boolean;
+  source: string;
+  by: string;
+}
+
+/** Mirrors models.py::InputRequest. `prompt` and labels are NEVER rendered as HTML. */
+export interface InputRequest {
+  request_id: string;
+  task_id: string;
+  state: "open" | "answered" | "assumed" | "cancelled";
+  prompt: string;
+  fields: InputField[];
+  created_at: string;
+  answered_at: string | null;
+  answer: InputAnswer | null;
+}
+
+/** GET /api/runs/{id}/inputs. */
+export interface RunInputsState {
+  run_id: string;
+  waiting_for_input: boolean;
+  requests: InputRequest[];
+}
+
+/** POST /api/runs/{id}/inputs/{request_id} body — `source` is set by the server. */
+export interface AnswerInputBody {
+  values: Record<string, InputValue>;
+  resume?: boolean;
+}
+
+export interface AnswerInputResponse {
+  request: InputRequest;
+  resumed: boolean;
+  launch?: LaunchRecord;
+}
+
+// ---- Sentinel panel (E-Sn7tL2 T-Sn5Ui1) -------------------------------------------------------
+
+/** `schema` of GET /api/runs/{id}/sentinel (the `ao ctl status --json` document). */
+export const SENTINEL_STATUS_SCHEMA = "ao.ctl.status/v1";
+
+export interface SentinelOverride {
+  value: unknown;
+  actor: string;
+  at: string;
+}
+
+export interface SentinelLadderEntry {
+  kills: number;
+  last_reason: string | null;
+  last_source: string | null;
+  escalation_step: number;
+  no_retry: boolean;
+}
+
+export interface SentinelAction {
+  id: string;
+  kind: string;
+  actor: string;
+  at: string;
+  text: string;
+}
+
+export interface SentinelStatus {
+  schema: string;
+  run_id: string;
+  run_status: string;
+  updated_at: string;
+  sentinel: {
+    enabled: boolean;
+    disabled_reason: string | null;
+    last_tick_at: string | null;
+    llm_paused: boolean;
+    hold_requested: boolean;
+    systemic_alarm: boolean;
+  };
+  concurrency: {
+    running: number;
+    limit: number | null;
+    ceiling: number | null;
+    overrides: Record<string, SentinelOverride>;
+  };
+  utilisation: {
+    pct: number | null;
+    slot_seconds_busy: number | null;
+    slot_seconds_idle_with_ready: number | null;
+    slot_seconds_idle_no_ready: number | null;
+  };
+  tasks: {
+    counts: Record<string, number>;
+    running: { id: string; liveness_age_s: number | null }[];
+  };
+  ladder: Record<string, SentinelLadderEntry>;
+  backlog: { held: unknown[] };
+  llm: {
+    generation: number | null;
+    spend_usd: number | null;
+    paused: boolean;
+    pause_reason: string | null;
+    budget_exhausted: boolean;
+    enabled: boolean | null;
+    powers: string | null;
+  };
+  inbox: { pending: string[]; consumed_count: number };
+  recent_actions: SentinelAction[];
+}
+
+/** `GET /runs/{id}/sentinel/panel` (panel v2, T-Sn9Pow). */
+export const SENTINEL_PANEL_SCHEMA = "ao.sentinel.panel/v2";
+
+export interface SentinelGeneration {
+  generation: number;
+  task_id: string;
+  status: string;
+  started_at: string | null;
+  ended_at: string | null;
+  cost_usd: number;
+  triggers: string[];
+  graceful: boolean | null;
+  ended_reason: string | null;
+}
+
+export interface SentinelProposal {
+  id: string;
+  kind: string;
+  actor: string;
+  at: string | null;
+  rule_id?: string | null;
+  detail?: string | null;
+}
+
+export interface SentinelDirective {
+  id: string;
+  at: string | null;
+  actor: string;
+  severity: "info" | "warn" | "alarm" | string;
+  text: string;
+  rationale: string | null;
+  ack: { response: string; rationale: string | null; checkpoint: string; at: string } | null;
+}
+
+export interface SentinelPanelV2 {
+  schema: string;
+  run_id: string;
+  generations: SentinelGeneration[];
+  spend_usd: number;
+  proposals: { applied: SentinelProposal[]; quarantined: SentinelProposal[] };
+  directives: SentinelDirective[];
+}
+
+/** POST /api/runs/{id}/control body — an `ao.ctl/v1` entry minus id / actor / created_at. */
+export interface SentinelControlRequest {
+  kind: "set" | "pause_llm" | "resume_llm" | "kill" | "note";
+  payload?: Record<string, unknown>;
+  rationale?: string;
+}
+
+export interface SentinelControlQueued {
+  id: string;
+  kind: string;
+  run_id: string;
+  actor: string;
+  outcome: "queued";
+}
+
+export type SentinelControlOutcome =
+  | { outcome: "pending" }
+  | { outcome: "consumed" }
+  | { outcome: "rejected"; rule_id: string; detail: string };

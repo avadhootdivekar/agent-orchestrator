@@ -1,0 +1,1138 @@
+{
+  "schema_version": "1.0",
+  "bench_run_id": "2026-10-24-gen-calib-re-claude-opus",
+  "suite_id": "gen-calib-re",
+  "domain": "software",
+  "subject": {
+    "id": "claude-opus",
+    "type": "claude_cli",
+    "model": "claude-opus-5-5",
+    "resolved_config": {
+      "version": "1.0",
+      "id": "claude-opus",
+      "type": "claude_cli",
+      "model": "claude-opus-5-5",
+      "permission_mode": "bypassPermissions",
+      "max_turns": 30,
+      "prompt_template": "Solve the task described in {instruction}. Repo: {repo}. Make the necessary code changes directly in the repo, then run the test suite described in the instruction (e.g. `uv run pytest -q` or `python3 -m pytest -q`) to confirm your fix before finishing.",
+      "extra_args": [],
+      "workflow": null,
+      "reposets": null,
+      "agents": null,
+      "max_parallel": null,
+      "budget_total": null,
+      "template": null,
+      "template_params": {},
+      "prompt_file": null,
+      "init_git": false,
+      "scripted_effect": null,
+      "fake_cost": null,
+      "fake_tokens": null
+    }
+  },
+  "config_fingerprint": "534147ab56864d266535367b7b99f92ce0f2d2b6fa8f416445d550f2986743c3",
+  "started_at": "2026-10-24T13:18:00.177649+00:00",
+  "ended_at": "2026-10-24T13:20:10.583076+00:00",
+  "env": {
+    "ao_version": "ao 0.1.0 (427c2d5.dirty) built 2026-10-24T02:40:24Z",
+    "claude_version": "2.1.310 (Claude Code)",
+    "os": "Linux-6.1.0-42-amd64-x86_64-with-glibc2.36",
+    "git_sha": "1027de1"
+  },
+  "tasks": [
+    {
+      "subject_id": "claude-opus",
+      "task_id": "rules-engine-py-s7501",
+      "domain": "software",
+      "category": "feature",
+      "solved": true,
+      "score": 1.0,
+      "wall_clock_seconds": 93.86568828700001,
+      "cost_usd": 0.4475996,
+      "input_tokens": 12,
+      "output_tokens": 10874,
+      "cache_creation_input_tokens": 24889,
+      "cache_read_input_tokens": 154798,
+      "attempts": 1,
+      "turns": 11,
+      "subject_status": "succeeded",
+      "grader_type": "blackbox",
+      "workspace": "/var/tmp/ao-bench/1000/ws/2026-10-24-gen-calib-re-claude-opus/claude-opus/rules-engine-py-s7501/capture",
+      "config_fingerprint": "097a4b428cd48f467827d20e68664501ff301f7c5c42bb9de86d743bcfce31f4",
+      "started_at": "2026-10-24T13:18:00.857386+00:00",
+      "ended_at": "2026-10-24T13:19:53.149610+00:00",
+      "raw_error": null,
+      "grader_detail": {
+        "contract": "jsonl",
+        "language": "python",
+        "sandbox": "docker",
+        "image": "ao-bench-python-046c67ebf8c9",
+        "reference_ok": true,
+        "reference_language": "python",
+        "reference_trap_failed": [],
+        "core_all_passed": true,
+        "pass_threshold": 0.8,
+        "score_breakdown": {
+          "core": {
+            "weight": 0.5,
+            "effective_weight": 0.5,
+            "passed": 22,
+            "total": 22,
+            "fraction": 1.0
+          },
+          "trap": {
+            "weight": 0.35,
+            "effective_weight": 0.35,
+            "passed": 6,
+            "total": 6,
+            "fraction": 1.0
+          },
+          "perf": {
+            "weight": 0.15,
+            "effective_weight": 0.15,
+            "passed": 3,
+            "total": 3,
+            "fraction": 1.0
+          }
+        },
+        "probe_results": [
+          {
+            "id": "core-ping",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 137.8
+          },
+          {
+            "id": "core-validation",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 208.4
+          },
+          {
+            "id": "core-quotes-1",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 209.6
+          },
+          {
+            "id": "core-quotes-2",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 287.6
+          },
+          {
+            "id": "core-quotes-3",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 288.0
+          },
+          {
+            "id": "core-quotes-4",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 271.2
+          },
+          {
+            "id": "core-quotes-5",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 252.9
+          },
+          {
+            "id": "core-quotes-6",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 192.4
+          },
+          {
+            "id": "core-quotes-7",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 216.1
+          },
+          {
+            "id": "core-quotes-8",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 160.0
+          },
+          {
+            "id": "core-quotes-9",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 184.8
+          },
+          {
+            "id": "core-quotes-10",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 251.1
+          },
+          {
+            "id": "core-quotes-11",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 201.8
+          },
+          {
+            "id": "core-quotes-12",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 260.1
+          },
+          {
+            "id": "core-quotes-13",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 296.8
+          },
+          {
+            "id": "core-quotes-14",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 302.5
+          },
+          {
+            "id": "core-quotes-15",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 266.3
+          },
+          {
+            "id": "core-quotes-16",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 248.5
+          },
+          {
+            "id": "core-quotes-17",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 201.2
+          },
+          {
+            "id": "core-quotes-18",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 201.3
+          },
+          {
+            "id": "core-quotes-19",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 320.4
+          },
+          {
+            "id": "core-quotes-20",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 197.0
+          },
+          {
+            "id": "trap-best-line-discount",
+            "group": "trap",
+            "trap": "best_line_discount",
+            "passed": true,
+            "mismatches": [],
+            "ms": 254.8
+          },
+          {
+            "id": "trap-coupon-not-best",
+            "group": "trap",
+            "trap": "coupon_not_best",
+            "passed": true,
+            "mismatches": [],
+            "ms": 193.1
+          },
+          {
+            "id": "trap-discount-cap",
+            "group": "trap",
+            "trap": "discount_cap",
+            "passed": true,
+            "mismatches": [],
+            "ms": 281.8
+          },
+          {
+            "id": "trap-tax-exempt",
+            "group": "trap",
+            "trap": "tax_exempt",
+            "passed": true,
+            "mismatches": [],
+            "ms": 212.7
+          },
+          {
+            "id": "trap-free-shipping-after-coupon",
+            "group": "trap",
+            "trap": "free_shipping_after_coupon",
+            "passed": true,
+            "mismatches": [],
+            "ms": 265.9
+          },
+          {
+            "id": "trap-rounding-mode",
+            "group": "trap",
+            "trap": "rounding_mode",
+            "passed": true,
+            "mismatches": [],
+            "ms": 267.8
+          }
+        ],
+        "perf": {
+          "sizes": {
+            "100": {
+              "quote": {
+                "p50_ms": 0.082,
+                "p95_ms": 0.124
+              }
+            },
+            "1000": {
+              "quote": {
+                "p50_ms": 0.087,
+                "p95_ms": 0.251
+              }
+            }
+          },
+          "classes": {
+            "quote": {
+              "alpha": 0.3044,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            }
+          },
+          "ref_ratio_p95": 1.396,
+          "ref_ratio_max": 5.0,
+          "ref_ratio_enforced": true,
+          "ref_ratio_pass": true,
+          "p95_ms_largest": 0.251,
+          "ref_p95_ms_largest": 0.18,
+          "timed_out": false,
+          "failed_ops": {},
+          "error": null,
+          "sandbox": "docker",
+          "image": "ao-bench-python-046c67ebf8c9"
+        }
+      },
+      "grader_raw_tail": "",
+      "family": "rules-engine",
+      "language": "python",
+      "repeat": 1,
+      "env_fingerprint": {
+        "skills": [
+          "anthropic-skills:built-in-browser",
+          "anthropic-skills:chrome-browser",
+          "anthropic-skills:computer-use",
+          "anthropic-skills:deep-research",
+          "anthropic-skills:docs",
+          "anthropic-skills:docx",
+          "anthropic-skills:google-workspace",
+          "anthropic-skills:import-memory",
+          "anthropic-skills:morning",
+          "anthropic-skills:pdf",
+          "anthropic-skills:pptx",
+          "anthropic-skills:skill-creator",
+          "anthropic-skills:xlsx",
+          "batch",
+          "claude-api",
+          "code-review",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-sync",
+          "doctor",
+          "fewer-permission-prompts",
+          "games-server",
+          "loop",
+          "plugin-authoring",
+          "run",
+          "run-skill-generator",
+          "schedule",
+          "simplify",
+          "update-config",
+          "verify",
+          "workflow-authoring"
+        ],
+        "agents": [
+          "Explore",
+          "Plan",
+          "claude",
+          "general-purpose",
+          "statusline-setup"
+        ],
+        "slash_commands": [
+          "__remote-workflow",
+          "advisor",
+          "agents",
+          "anthropic-skills:built-in-browser",
+          "anthropic-skills:chrome-browser",
+          "anthropic-skills:computer-use",
+          "anthropic-skills:deep-research",
+          "anthropic-skills:docs",
+          "anthropic-skills:docx",
+          "anthropic-skills:google-workspace",
+          "anthropic-skills:import-memory",
+          "anthropic-skills:morning",
+          "anthropic-skills:pdf",
+          "anthropic-skills:pptx",
+          "anthropic-skills:skill-creator",
+          "anthropic-skills:xlsx",
+          "auto-mode-setup",
+          "autocompact",
+          "batch",
+          "claude-api",
+          "clear",
+          "code-review",
+          "color",
+          "compact",
+          "config",
+          "context",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-consent",
+          "design-revoke",
+          "design-sync",
+          "doctor",
+          "effort",
+          "extra-usage",
+          "fast",
+          "fewer-permission-prompts",
+          "focus",
+          "games-server",
+          "goal",
+          "heapdump",
+          "import",
+          "init",
+          "insights",
+          "list-agents",
+          "loop",
+          "mcp",
+          "model",
+          "output-style",
+          "plugin-authoring",
+          "recap",
+          "reload-plugins",
+          "reload-skills",
+          "rename",
+          "run",
+          "run-skill-generator",
+          "schedule",
+          "security-review",
+          "simplify",
+          "skill-doctor",
+          "team-onboarding",
+          "ultrareview",
+          "update-config",
+          "usage",
+          "usage-credits",
+          "verify",
+          "workflow-authoring",
+          "workflow-launch-exec"
+        ],
+        "mcp_servers": [],
+        "plugins": [
+          "cc-plugin-agents-md@builtin",
+          "cc-plugin-plugin-authoring@builtin",
+          "cc-plugin-telemetry@builtin",
+          "pyright-lsp@claude-plugins-official",
+          "rust-analyzer-lsp@claude-plugins-official",
+          "typescript-lsp@claude-plugins-official"
+        ],
+        "init_events": 1,
+        "divergent": false,
+        "claude_code_versions": [
+          "2.1.310"
+        ],
+        "auto_memory": false,
+        "digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be"
+      },
+      "env_foreign": {},
+      "grading_audit": {
+        "transcripts_scanned": 1,
+        "tool_use_hits": [],
+        "tool_result_mentions": 0
+      },
+      "suspect": false,
+      "suspect_reason": null
+    },
+    {
+      "subject_id": "claude-opus",
+      "task_id": "rules-engine-py-s7502",
+      "domain": "software",
+      "category": "feature",
+      "solved": true,
+      "score": 1.0,
+      "wall_clock_seconds": 109.20009897,
+      "cost_usd": 0.4935752,
+      "input_tokens": 16,
+      "output_tokens": 11660,
+      "cache_creation_input_tokens": 26817,
+      "cache_read_input_tokens": 228876,
+      "attempts": 1,
+      "turns": 16,
+      "subject_status": "succeeded",
+      "grader_type": "blackbox",
+      "workspace": "/var/tmp/ao-bench/1000/ws/2026-10-24-gen-calib-re-claude-opus/claude-opus/rules-engine-py-s7502/capture",
+      "config_fingerprint": "4bfb31f2228b5bc3b3785a147919dda8e85dddb63728f616c89806726107f18b",
+      "started_at": "2026-10-24T13:18:00.857838+00:00",
+      "ended_at": "2026-10-24T13:20:10.583076+00:00",
+      "raw_error": null,
+      "grader_detail": {
+        "contract": "jsonl",
+        "language": "python",
+        "sandbox": "docker",
+        "image": "ao-bench-python-046c67ebf8c9",
+        "reference_ok": true,
+        "reference_language": "python",
+        "reference_trap_failed": [],
+        "core_all_passed": true,
+        "pass_threshold": 0.8,
+        "score_breakdown": {
+          "core": {
+            "weight": 0.5,
+            "effective_weight": 0.5,
+            "passed": 22,
+            "total": 22,
+            "fraction": 1.0
+          },
+          "trap": {
+            "weight": 0.35,
+            "effective_weight": 0.35,
+            "passed": 6,
+            "total": 6,
+            "fraction": 1.0
+          },
+          "perf": {
+            "weight": 0.15,
+            "effective_weight": 0.15,
+            "passed": 3,
+            "total": 3,
+            "fraction": 1.0
+          }
+        },
+        "probe_results": [
+          {
+            "id": "core-ping",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 144.0
+          },
+          {
+            "id": "core-validation",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 197.6
+          },
+          {
+            "id": "core-quotes-1",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 245.1
+          },
+          {
+            "id": "core-quotes-2",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 228.2
+          },
+          {
+            "id": "core-quotes-3",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 260.3
+          },
+          {
+            "id": "core-quotes-4",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 261.3
+          },
+          {
+            "id": "core-quotes-5",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 257.7
+          },
+          {
+            "id": "core-quotes-6",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 216.8
+          },
+          {
+            "id": "core-quotes-7",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 198.6
+          },
+          {
+            "id": "core-quotes-8",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 208.2
+          },
+          {
+            "id": "core-quotes-9",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 283.0
+          },
+          {
+            "id": "core-quotes-10",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 206.0
+          },
+          {
+            "id": "core-quotes-11",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 209.3
+          },
+          {
+            "id": "core-quotes-12",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 245.9
+          },
+          {
+            "id": "core-quotes-13",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 242.4
+          },
+          {
+            "id": "core-quotes-14",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 178.3
+          },
+          {
+            "id": "core-quotes-15",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 341.7
+          },
+          {
+            "id": "core-quotes-16",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 199.0
+          },
+          {
+            "id": "core-quotes-17",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 265.9
+          },
+          {
+            "id": "core-quotes-18",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 275.8
+          },
+          {
+            "id": "core-quotes-19",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 210.4
+          },
+          {
+            "id": "core-quotes-20",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 263.0
+          },
+          {
+            "id": "trap-merge-duplicate-lines",
+            "group": "trap",
+            "trap": "merge_duplicate_lines",
+            "passed": true,
+            "mismatches": [],
+            "ms": 294.4
+          },
+          {
+            "id": "trap-best-line-discount",
+            "group": "trap",
+            "trap": "best_line_discount",
+            "passed": true,
+            "mismatches": [],
+            "ms": 345.8
+          },
+          {
+            "id": "trap-coupon-not-best",
+            "group": "trap",
+            "trap": "coupon_not_best",
+            "passed": true,
+            "mismatches": [],
+            "ms": 272.9
+          },
+          {
+            "id": "trap-free-shipping-after-coupon",
+            "group": "trap",
+            "trap": "free_shipping_after_coupon",
+            "passed": true,
+            "mismatches": [],
+            "ms": 183.0
+          },
+          {
+            "id": "trap-age-restriction",
+            "group": "trap",
+            "trap": "age_restriction",
+            "passed": true,
+            "mismatches": [],
+            "ms": 317.8
+          },
+          {
+            "id": "trap-rounding-mode",
+            "group": "trap",
+            "trap": "rounding_mode",
+            "passed": true,
+            "mismatches": [],
+            "ms": 182.1
+          }
+        ],
+        "perf": {
+          "sizes": {
+            "100": {
+              "quote": {
+                "p50_ms": 0.098,
+                "p95_ms": 0.201
+              }
+            },
+            "1000": {
+              "quote": {
+                "p50_ms": 0.1,
+                "p95_ms": 0.211
+              }
+            }
+          },
+          "classes": {
+            "quote": {
+              "alpha": 0.0199,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            }
+          },
+          "ref_ratio_p95": 0.815,
+          "ref_ratio_max": 5.0,
+          "ref_ratio_enforced": true,
+          "ref_ratio_pass": true,
+          "p95_ms_largest": 0.211,
+          "ref_p95_ms_largest": 0.259,
+          "timed_out": false,
+          "failed_ops": {},
+          "error": null,
+          "sandbox": "docker",
+          "image": "ao-bench-python-046c67ebf8c9"
+        }
+      },
+      "grader_raw_tail": "",
+      "family": "rules-engine",
+      "language": "python",
+      "repeat": 1,
+      "env_fingerprint": {
+        "skills": [
+          "anthropic-skills:built-in-browser",
+          "anthropic-skills:chrome-browser",
+          "anthropic-skills:computer-use",
+          "anthropic-skills:deep-research",
+          "anthropic-skills:docs",
+          "anthropic-skills:docx",
+          "anthropic-skills:google-workspace",
+          "anthropic-skills:import-memory",
+          "anthropic-skills:morning",
+          "anthropic-skills:pdf",
+          "anthropic-skills:pptx",
+          "anthropic-skills:skill-creator",
+          "anthropic-skills:xlsx",
+          "batch",
+          "claude-api",
+          "code-review",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-sync",
+          "doctor",
+          "fewer-permission-prompts",
+          "games-server",
+          "loop",
+          "plugin-authoring",
+          "run",
+          "run-skill-generator",
+          "schedule",
+          "simplify",
+          "update-config",
+          "verify",
+          "workflow-authoring"
+        ],
+        "agents": [
+          "Explore",
+          "Plan",
+          "claude",
+          "general-purpose",
+          "statusline-setup"
+        ],
+        "slash_commands": [
+          "__remote-workflow",
+          "advisor",
+          "agents",
+          "anthropic-skills:built-in-browser",
+          "anthropic-skills:chrome-browser",
+          "anthropic-skills:computer-use",
+          "anthropic-skills:deep-research",
+          "anthropic-skills:docs",
+          "anthropic-skills:docx",
+          "anthropic-skills:google-workspace",
+          "anthropic-skills:import-memory",
+          "anthropic-skills:morning",
+          "anthropic-skills:pdf",
+          "anthropic-skills:pptx",
+          "anthropic-skills:skill-creator",
+          "anthropic-skills:xlsx",
+          "auto-mode-setup",
+          "autocompact",
+          "batch",
+          "claude-api",
+          "clear",
+          "code-review",
+          "color",
+          "compact",
+          "config",
+          "context",
+          "dataviz",
+          "debug",
+          "deep-research",
+          "design",
+          "design-consent",
+          "design-revoke",
+          "design-sync",
+          "doctor",
+          "effort",
+          "extra-usage",
+          "fast",
+          "fewer-permission-prompts",
+          "focus",
+          "games-server",
+          "goal",
+          "heapdump",
+          "import",
+          "init",
+          "insights",
+          "list-agents",
+          "loop",
+          "mcp",
+          "model",
+          "output-style",
+          "plugin-authoring",
+          "recap",
+          "reload-plugins",
+          "reload-skills",
+          "rename",
+          "run",
+          "run-skill-generator",
+          "schedule",
+          "security-review",
+          "simplify",
+          "skill-doctor",
+          "team-onboarding",
+          "ultrareview",
+          "update-config",
+          "usage",
+          "usage-credits",
+          "verify",
+          "workflow-authoring",
+          "workflow-launch-exec"
+        ],
+        "mcp_servers": [],
+        "plugins": [
+          "cc-plugin-agents-md@builtin",
+          "cc-plugin-plugin-authoring@builtin",
+          "cc-plugin-telemetry@builtin",
+          "pyright-lsp@claude-plugins-official",
+          "rust-analyzer-lsp@claude-plugins-official",
+          "typescript-lsp@claude-plugins-official"
+        ],
+        "init_events": 1,
+        "divergent": false,
+        "claude_code_versions": [
+          "2.1.310"
+        ],
+        "auto_memory": false,
+        "digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be"
+      },
+      "env_foreign": {},
+      "grading_audit": {
+        "transcripts_scanned": 1,
+        "tool_use_hits": [],
+        "tool_result_mentions": 0
+      },
+      "suspect": false,
+      "suspect_reason": null
+    }
+  ],
+  "aggregate": {
+    "solved": 2,
+    "total": 2,
+    "solve_rate": 1.0,
+    "mean_score": 1.0,
+    "total_cost_usd": 0.9411748,
+    "cost_available": true,
+    "cost_per_solved": 0.4705874,
+    "total_wall_clock_seconds": 203.065787257,
+    "total_input_tokens": 28,
+    "total_output_tokens": 22534,
+    "total_cache_creation_input_tokens": 51706,
+    "total_cache_read_input_tokens": 383674,
+    "infra_errors": 0,
+    "attempted": 2,
+    "solve_rate_attempted": 1.0,
+    "mean_score_attempted": 1.0
+  },
+  "parity_fingerprint": "7f60b7d7cd0b86cbe7384d2ba9d18037f6e0cd9830e1c279d8fee3adb17376ed",
+  "repeat": 1,
+  "env_contaminated": false,
+  "env_isolation": {
+    "workspace_root": "/var/tmp/ao-bench/1000/ws",
+    "grading_root": "/var/tmp/ao-bench/1000/_ao_bench_grading",
+    "instruction_ancestors": [],
+    "allowed_by_flag": false
+  },
+  "env_baseline": {
+    "skills": [
+      "anthropic-skills:built-in-browser",
+      "anthropic-skills:chrome-browser",
+      "anthropic-skills:computer-use",
+      "anthropic-skills:deep-research",
+      "anthropic-skills:docs",
+      "anthropic-skills:docx",
+      "anthropic-skills:google-workspace",
+      "anthropic-skills:import-memory",
+      "anthropic-skills:morning",
+      "anthropic-skills:pdf",
+      "anthropic-skills:pptx",
+      "anthropic-skills:skill-creator",
+      "anthropic-skills:xlsx",
+      "batch",
+      "claude-api",
+      "code-review",
+      "dataviz",
+      "debug",
+      "deep-research",
+      "design",
+      "design-sync",
+      "doctor",
+      "fewer-permission-prompts",
+      "games-server",
+      "loop",
+      "plugin-authoring",
+      "run",
+      "run-skill-generator",
+      "schedule",
+      "simplify",
+      "update-config",
+      "verify",
+      "workflow-authoring"
+    ],
+    "agents": [
+      "Explore",
+      "Plan",
+      "claude",
+      "general-purpose",
+      "statusline-setup"
+    ],
+    "slash_commands": [
+      "__remote-workflow",
+      "advisor",
+      "agents",
+      "anthropic-skills:built-in-browser",
+      "anthropic-skills:chrome-browser",
+      "anthropic-skills:computer-use",
+      "anthropic-skills:deep-research",
+      "anthropic-skills:docs",
+      "anthropic-skills:docx",
+      "anthropic-skills:google-workspace",
+      "anthropic-skills:import-memory",
+      "anthropic-skills:morning",
+      "anthropic-skills:pdf",
+      "anthropic-skills:pptx",
+      "anthropic-skills:skill-creator",
+      "anthropic-skills:xlsx",
+      "auto-mode-setup",
+      "autocompact",
+      "batch",
+      "claude-api",
+      "clear",
+      "code-review",
+      "color",
+      "compact",
+      "config",
+      "context",
+      "dataviz",
+      "debug",
+      "deep-research",
+      "design",
+      "design-consent",
+      "design-revoke",
+      "design-sync",
+      "doctor",
+      "effort",
+      "extra-usage",
+      "fast",
+      "fewer-permission-prompts",
+      "focus",
+      "games-server",
+      "goal",
+      "heapdump",
+      "import",
+      "init",
+      "insights",
+      "list-agents",
+      "loop",
+      "mcp",
+      "model",
+      "output-style",
+      "plugin-authoring",
+      "recap",
+      "reload-plugins",
+      "reload-skills",
+      "rename",
+      "run",
+      "run-skill-generator",
+      "schedule",
+      "security-review",
+      "simplify",
+      "skill-doctor",
+      "team-onboarding",
+      "ultrareview",
+      "update-config",
+      "usage",
+      "usage-credits",
+      "verify",
+      "workflow-authoring",
+      "workflow-launch-exec"
+    ],
+    "mcp_servers": [],
+    "plugins": [
+      "cc-plugin-agents-md@builtin",
+      "cc-plugin-plugin-authoring@builtin",
+      "cc-plugin-telemetry@builtin",
+      "pyright-lsp@claude-plugins-official",
+      "rust-analyzer-lsp@claude-plugins-official",
+      "typescript-lsp@claude-plugins-official"
+    ],
+    "init_events": 1,
+    "divergent": false,
+    "claude_code_versions": [
+      "2.1.310"
+    ],
+    "auto_memory": false,
+    "digest": "62181309c7b12ee75f5c077c819a20dc50cf39833b514a18c1d87680657471be"
+  },
+  "user_config": {
+    "config_dir": "/home/avadhoot/.claude",
+    "settings": {
+      "model": "opus[1m]",
+      "effortLevel": "xhigh",
+      "enabledPlugins_sha256": "753640c924dd2b90a1679deb6ba4aa03c0b02b7caabcfdfaf32c1c152612e7b6"
+    },
+    "user_claude_md_sha256": null,
+    "env": {
+      "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+      "CLAUDE_CODE_EFFORT_LEVEL": "high",
+      "CLAUDE_ENV_FILE": "/var/tmp/ao-bench/1000/toolchains/claude-env-4e3c8c5f259c.sh",
+      "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+    },
+    "digest": "fa4bfaf5ac45d169fbef37951cdfbca976e458eebc296e88843a6af006619f5d"
+  }
+}

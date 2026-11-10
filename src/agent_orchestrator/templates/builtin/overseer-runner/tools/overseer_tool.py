@@ -66,6 +66,41 @@ HASH_SKIP_BYTES: Final[int] = 50 * 1024 * 1024  # NFR-6: skip content-hashing fi
 GIT_TIMEOUT_S: Final[int] = 30  # Reserved for T-C6uQJW's bounded `git diff`/`git status` calls.
 MAX_CHANGED_PATHS_PER_UNIT: Final[int] = 50  # Mirrors the breadcrumb schema's own cap (S13.4).
 
+# A3 self-split handoff (design w01-02 sections 2-4): a unit that stops early ON PURPOSE with
+# its work staged reports `outcome: partial` + a valid `handoff` object; it is neither a failure
+# nor finished work.
+HANDOFF_REASONS: Final[frozenset[str]] = frozenset({"time", "cost", "turns", "scope", "other"})
+HANDOFF_MAX_STAGED: Final[int] = 10
+HANDOFF_STAGED_ITEM_CAP: Final[int] = 200
+HANDOFF_STOPPED_AT_CAP: Final[int] = 200
+HANDOFF_REMAINING_CAP: Final[int] = 300
+HANDOFF_NEXT_HINT_CAP: Final[int] = 300
+MAX_HANDOFFS_PER_ITEM: Final[int] = 3  # trailing handoff chain length that trips `handoff_chain`.
+
+# A2 limit insight (design w01-01 section 3). Mirrors `models.EFFORT_MAX_TURNS` (this tool is
+# stdlib-only and cannot import the engine); the contract's unit shape fixes `timeout_seconds`.
+EFFORT_MAX_TURNS: Final[dict[str, int]] = {"low": 15, "medium": 30, "high": 60, "xhigh": 120}
+UNIT_TIMEOUT_S: Final[int] = 7200
+TIME_LIMIT_NEAR_RATIO: Final[float] = 0.95  # failed unit at >= this share of timeout => time hit.
+LIMIT_EVENTS_CAP: Final[int] = 20  # digest.limit_events cap (current wave only).
+LIMIT_GAPS: Final[tuple[str, ...]] = (
+    "engine does not persist which limit ended a failed/timed-out unit (TaskResult.status/error "
+    "are not mirrored into state.json): basis=inferred rows are approximations from duration and "
+    "cost against the caps",
+    "turns used per unit is not recorded in state.json: turn_cap is derived from effort "
+    "(an explicit agent max_turns override is not visible) and a turn-cap hit cannot be observed",
+    "a self-split exits 0, so no limit is actually tripped: basis=self_reported rows show the "
+    "unit's own stated trigger, with cost/duration proximity as context",
+    "task_budget_usd is a recommend-mode breaker evaluated at task boundaries, not mid-task: "
+    "'cost limit hit' means cost >= cap when the unit settled",
+    "state.json keeps only the LAST dispatch's model: a unit retried on another model reports "
+    "that last model (model=null means the CLI default)",
+    "run_spent_usd/run_budget_usd are the settled-cost values at ledger-ingest time "
+    "(in-flight spend is not visible)",
+    "recommended engine follow-up: persist last task status/error in TaskRunState so the "
+    "tripped limit is observed instead of inferred",
+)
+
 TAIL_TASKS_WITH_FINAL_PUSH: Final[int] = 3  # final-verify + closeout + final-push (S8.2).
 TAIL_TASKS_WITHOUT_FINAL_PUSH: Final[int] = 2  # final-verify + closeout only.
 
@@ -735,6 +770,10 @@ class TaskInfo:
     started_at: str | None
     ended_at: str | None
     cumulative_cost_usd: float
+    # A2: dispatch provenance, tolerant (absent in old state.json / None = CLI default).
+    model: str | None = None
+    effort: str | None = None
+    agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -744,10 +783,17 @@ class State:
     breaker_overrides: dict[str, float]
     spent: float
     status: str
+    tripped_breakers: list[dict[str, Any]] = field(default_factory=list)
+    # `RunState.sentinel` (None/absent = run never had the sentinel); tolerant raw dict.
+    sentinel: dict[str, Any] | None = None
 
 
 def state_path(workspace_root: Path, cfg: Config, run_id: str) -> Path:
     return workspace_root / cfg.runs_root / run_id / "state.json"
+
+
+def _opt_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def load_state(path: Path) -> State:
@@ -789,6 +835,9 @@ def load_state(path: Path) -> State:
             started_at=raw.get("started_at"),
             ended_at=raw.get("ended_at"),
             cumulative_cost_usd=cost,
+            model=_opt_str(raw.get("model")),
+            effort=_opt_str(raw.get("effort")),
+            agent=_opt_str(raw.get("agent")),
         )
         spent += cost
 
@@ -797,6 +846,10 @@ def load_state(path: Path) -> State:
     if isinstance(raw_injected, list):
         for item in raw_injected:
             if isinstance(item, dict) and "id" in item:
+                # Sentinel-origin injections have their own cap/breaker (FR-19): not counted here.
+                row = raw_tasks.get(str(item["id"]))
+                if isinstance(row, dict) and row.get("origin") == "sentinel":
+                    continue
                 injected_ids.append(str(item["id"]))
             else:
                 raise Violation("ST-2", detail="field=injected_tasks[].id")
@@ -808,6 +861,11 @@ def load_state(path: Path) -> State:
         raise Violation("ST-2", detail="field=breaker_overrides")
     breaker_overrides = {str(k): float(v) for k, v in raw_overrides.items()}
 
+    raw_trips = data.get("tripped_breakers")
+    tripped = (
+        [dict(t) for t in raw_trips if isinstance(t, dict)] if isinstance(raw_trips, list) else []
+    )
+
     status = str(data.get("status", "running"))
     return State(
         tasks=tasks,
@@ -815,6 +873,8 @@ def load_state(path: Path) -> State:
         breaker_overrides=breaker_overrides,
         spent=spent,
         status=status,
+        tripped_breakers=tripped,
+        sentinel=data["sentinel"] if isinstance(data.get("sentinel"), dict) else None,
     )
 
 
@@ -825,6 +885,35 @@ def wave_units(state: State, k: int) -> list[str]:
     # text never contains a literal "{{"/"}}" pair (NFR-5: it is rendered through `_render`).
     pattern = re.compile("^w" + f"{k:02d}" + r"-\d{2}-")
     return sorted(tid for tid in state.tasks if pattern.match(tid))
+
+
+_SENTINEL_UNIT_RE: Final[re.Pattern[str]] = re.compile(r"^s-(\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$")
+_WAVE_PREFIX_RE: Final[re.Pattern[str]] = re.compile(r"^w(\d{2})-\d{2}-")
+
+
+def late_units(inst: Path, state: State, k: int, have: set[str]) -> dict[str, int]:
+    """Units that belong to a wave before *k* but settle only now (T-Sn7Bkl): early-checkpoint
+    carry-over stragglers (`wJJ-*`, JJ<k) and sentinel backlog units (`s-NN-*`, wave = the
+    `outputs/waves/wJJ/briefs/` dir holding their brief, JJ<=k). Returns `{unit_id: wave}` for
+    the ones not yet in the ledger. Empty for a run with neither feature."""
+    out: dict[str, int] = {}
+    for tid in state.tasks:
+        m = _WAVE_PREFIX_RE.match(tid)
+        if m and int(m.group(1)) < k and tid not in have:
+            out[tid] = int(m.group(1))
+    waves = inst / "outputs" / "waves"
+    if waves.is_dir():
+        for brief in sorted(waves.glob("w*/briefs/s-*.json")):
+            wave_dir = brief.parent.parent.name
+            if (
+                _SENTINEL_UNIT_RE.match(brief.stem)
+                and brief.stem in state.tasks
+                and brief.stem not in have
+                and wave_dir[1:].isdigit()
+                and int(wave_dir[1:]) <= k
+            ):
+                out[brief.stem] = int(wave_dir[1:])
+    return out
 
 
 # =============================================================================================
@@ -950,8 +1039,173 @@ def _duration_seconds(started_at: str | None, ended_at: str | None) -> float | N
     return (end - start).total_seconds()
 
 
+def validate_handoff(crumb: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Pure/deterministic check of a breadcrumb's optional `handoff` object (A3 design S2).
+
+    Returns `(handoff, None)` for a valid one (over-long strings are truncated, not rejected),
+    `(None, reason)` for a malformed one, and `(None, None)` when the unit is not a handoff
+    candidate at all (no `handoff` key, or the breadcrumb is not `outcome: partial` with
+    `verdict` in pass/na and `needs_input` false). Never raises: a bad handoff degrades to a
+    plain partial so the run is never failed over it.
+    """
+    raw = crumb.get("handoff")
+    if raw is None:
+        return None, None
+    if crumb.get("outcome") != "partial":
+        return None, "handoff requires outcome=partial"
+    if crumb.get("verdict") not in _DONE_VERDICTS:
+        return None, "handoff requires verdict pass or na"
+    if bool(crumb.get("needs_input", False)):
+        return None, "handoff requires needs_input=false"
+    if not isinstance(raw, dict):
+        return None, "handoff must be an object"
+    reason = raw.get("reason")
+    if reason not in HANDOFF_REASONS:
+        return None, f"handoff.reason must be one of {sorted(HANDOFF_REASONS)}"
+    stopped_at = raw.get("stopped_at")
+    remaining = raw.get("remaining")
+    if not isinstance(stopped_at, str) or not stopped_at.strip():
+        return None, "handoff.stopped_at must be a non-empty string"
+    if not isinstance(remaining, str) or not remaining.strip():
+        return None, "handoff.remaining must be a non-empty string"
+    staged_raw = raw.get("staged", [])
+    if not isinstance(staged_raw, list) or not all(isinstance(x, str) for x in staged_raw):
+        return None, "handoff.staged must be a list of strings"
+    staged = [x[:HANDOFF_STAGED_ITEM_CAP] for x in staged_raw[:HANDOFF_MAX_STAGED]]
+    changed = crumb.get("changed_paths")
+    if not staged and not (isinstance(changed, list) and changed):
+        return None, "handoff has nothing staged (empty staged and empty changed_paths)"
+    next_hint = raw.get("next_hint")
+    if next_hint is not None and not isinstance(next_hint, str):
+        return None, "handoff.next_hint must be a string"
+    return {
+        "reason": reason,
+        "stopped_at": stopped_at[:HANDOFF_STOPPED_AT_CAP],
+        "staged": staged,
+        "remaining": remaining[:HANDOFF_REMAINING_CAP],
+        "next_hint": (next_hint or "")[:HANDOFF_NEXT_HINT_CAP],
+    }, None
+
+
+def is_handoff(line: dict[str, Any]) -> bool:
+    """True iff a ledger unit line is a validated self-split handoff (A3 design S3)."""
+    return (
+        isinstance(line.get("handoff"), dict)
+        and line.get("outcome") == "partial"
+        and line.get("verdict") != "fail"
+        and not bool(line.get("needs_input"))
+    )
+
+
+def unit_state(line: dict[str, Any]) -> str:
+    """One shared definition of a ledger unit's state: done|handoff|partial|failed|blocked|no_op."""
+    if is_handoff(line):
+        return "handoff"
+    outcome = line.get("outcome")
+    if line.get("verdict") == "fail" or outcome == "failed":
+        return "failed"
+    if outcome == "blocked" or bool(line.get("needs_input")):
+        return "blocked"
+    if outcome == "done":
+        return "done"
+    if outcome == "no_op":
+        return "no_op"
+    if outcome == "partial":
+        return "partial"
+    return str(outcome) if outcome else "unknown"
+
+
+def _num(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _ratio(num: float | None, den: float | None) -> float | None:
+    return round(num / den, 4) if num is not None and den else None
+
+
+def compute_limit_block(
+    *,
+    unit_id: str,
+    status: str,
+    handoff: dict[str, Any] | None,
+    cost_usd: float,
+    duration_s: float | None,
+    task_cost_limit_usd: float | None,
+    timeout_s: int,
+    tripped_breakers: list[dict[str, Any]],
+    run_spent_usd: float,
+    run_budget_usd: float | None,
+) -> dict[str, Any]:
+    """Pure A2 `limit` block for one ledger unit line (design w01-01 section 3.3).
+
+    `basis` says how far to trust `reason`: `observed` (a recorded breaker trip names this
+    unit), `self_reported` (the unit's own handoff reason), `inferred` (approximated from
+    duration/cost against the caps -- see `LIMIT_GAPS`) or `none`.
+    """
+    breaker: dict[str, Any] | None = None
+    breaker_cond = ""
+    for trip in tripped_breakers:
+        detail = trip.get("detail")
+        if isinstance(detail, dict) and detail.get("task_id") == unit_id:
+            breaker = {"id": trip.get("id"), "at": trip.get("at"), "detail": detail}
+            breaker_cond = str(trip.get("condition") or "")
+            break
+    cost_hit = bool(task_cost_limit_usd) and cost_usd >= (task_cost_limit_usd or 0.0)
+    time_hit = (
+        status == "failed"
+        and duration_s is not None
+        and duration_s >= TIME_LIMIT_NEAR_RATIO * timeout_s
+    )
+    basis, reason = "none", "none"
+    if breaker is not None:
+        basis, reason = (
+            "observed",
+            "cost" if breaker_cond and "task_cost" in breaker_cond else "breaker",
+        )
+    elif handoff is not None:
+        basis, reason = "self_reported", str(handoff.get("reason"))
+    elif time_hit:
+        basis, reason = "inferred", "time"
+    elif cost_hit:
+        basis, reason = "inferred", "cost"
+    return {
+        "basis": basis,
+        "reason": reason,
+        "cost_vs_task_cap": _ratio(cost_usd, task_cost_limit_usd),
+        "duration_vs_timeout": _ratio(duration_s, float(timeout_s)),
+        "run_spent_usd": round(run_spent_usd, 6),
+        "run_budget_usd": run_budget_usd,
+        "breaker": breaker,
+    }
+
+
+def _effective_attempt_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ledger lines that count as attempts: handoffs are continuations, not attempts."""
+    return [ln for ln in lines if not is_handoff(ln)]
+
+
+def _handoff_chain(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The trailing run of handoff lines on one work item (`lines` already ordered)."""
+    chain: list[dict[str, Any]] = []
+    for ln in reversed(lines):
+        if not is_handoff(ln):
+            break
+        chain.append(ln)
+    chain.reverse()
+    return chain
+
+
 def ingest_ledger(
-    inst: Path, units: list[str], state: State, k: int, now: datetime, *, dry_run: bool = False
+    inst: Path,
+    units: list[str],
+    state: State,
+    k: int,
+    now: datetime,
+    *,
+    dry_run: bool = False,
+    task_cost_limit_usd: float | None = None,
+    run_budget_usd: float | None = None,
+    unit_waves: dict[str, int] | None = None,
 ) -> int:
     """HLD S8.4 M1 `ingest_ledger`: idempotent (keyed by `unit_id`), folds each newly-settled
     wave unit's brief + breadcrumb into one `type:"unit"` ledger line.
@@ -975,7 +1229,10 @@ def ingest_ledger(
         if task_info is None or task_info.status not in SETTLED_TASK_STATUSES:
             continue
 
-        brief = read_brief(inst, k, unit_id)
+        # Carry-over stragglers / sentinel backlog units settle in a later wave than they belong
+        # to: `unit_waves` maps them to their own wave (absent => the checkpoint's wave `k`).
+        unit_wave = (unit_waves or {}).get(unit_id, k)
+        brief = read_brief(inst, unit_wave, unit_id)
         crumb = read_breadcrumb(inst, unit_id)
         if crumb is None:
             if task_info.status != "failed":
@@ -995,9 +1252,10 @@ def ingest_ledger(
                 "BC-1", detail=f"unit_id={unit_id} breadcrumb.unit_id={crumb.get('unit_id')!r}"
             )
 
+        handoff, handoff_invalid = validate_handoff(crumb)
         line = {
             "type": "unit",
-            "wave": k,
+            "wave": unit_wave,
             "unit_id": unit_id,
             "ask_ids": brief.get("ask_ids", []),
             "work_item": brief.get("work_item"),
@@ -1010,7 +1268,35 @@ def ingest_ledger(
             "duration_s": _duration_seconds(task_info.started_at, task_info.ended_at),
             "changed_paths": list(crumb.get("changed_paths", []))[:MAX_CHANGED_PATHS_PER_UNIT],
             "needs_input": bool(crumb.get("needs_input", False)),
+            "handoff": handoff,
         }
+        if handoff_invalid is not None:
+            line["handoff_invalid"] = handoff_invalid
+        line["state"] = unit_state(line)
+        duration_s = line["duration_s"]
+        line.update(
+            {
+                "model": task_info.model,
+                "effort": task_info.effort,
+                "started_at": task_info.started_at,
+                "ended_at": task_info.ended_at,
+                "task_cost_limit_usd": task_cost_limit_usd,
+                "turn_cap": EFFORT_MAX_TURNS.get(task_info.effort or ""),
+                "timeout_s": UNIT_TIMEOUT_S,
+                "limit": compute_limit_block(
+                    unit_id=unit_id,
+                    status=task_info.status,
+                    handoff=handoff,
+                    cost_usd=task_info.cumulative_cost_usd,
+                    duration_s=duration_s,
+                    task_cost_limit_usd=task_cost_limit_usd,
+                    timeout_s=UNIT_TIMEOUT_S,
+                    tripped_breakers=state.tripped_breakers,
+                    run_spent_usd=state.spent,
+                    run_budget_usd=run_budget_usd,
+                ),
+            }
+        )
         append_chained(inst, line, now, dry_run=dry_run)
         have.add(unit_id)
         appended += 1
@@ -1570,13 +1856,19 @@ def returns_to_earlier(hist: list[str]) -> list[int]:
     return hits
 
 
-def _work_item_sequences(unit_lines: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def _work_item_sequences(
+    unit_lines: list[dict[str, Any]], *, exclude_handoffs: bool = False
+) -> dict[str, list[dict[str, Any]]]:
     """Group ledger `unit` lines by `work_item`, each group ordered by `(wave, unit_id)`
     (HLD S8.3's per-work-item sequence `S[w]`). Lines with a missing/blank `work_item` are
-    excluded -- a malformed brief is BR-1's problem (M1), not a detector's.
+    excluded -- a malformed brief is BR-1's problem (M1), not a detector's. With
+    `exclude_handoffs`, self-split handoff lines are dropped (they are transparent to
+    period/mirror/failure/attempt detectors; `handoff_chain` bounds them instead).
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for line in unit_lines:
+        if exclude_handoffs and is_handoff(line):
+            continue
         work_item = line.get("work_item")
         if isinstance(work_item, str) and work_item:
             groups.setdefault(work_item, []).append(line)
@@ -1629,7 +1921,7 @@ def _assign_signal_ids(candidates: list[dict[str, Any]], k: int) -> list[dict[st
 
 def _period_mirror_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    for work_item, lines in _work_item_sequences(unit_lines).items():
+    for work_item, lines in _work_item_sequences(unit_lines, exclude_handoffs=True).items():
         seq = [f"{ln.get('kind')}:{ln.get('verdict')}" for ln in lines]
         period = detect_period(seq)
         if period is not None:
@@ -1666,7 +1958,7 @@ def _period_mirror_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, A
 
 def _repeated_failure_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    for work_item, lines in _work_item_sequences(unit_lines).items():
+    for work_item, lines in _work_item_sequences(unit_lines, exclude_handoffs=True).items():
         if len(lines) < 2:
             continue
         if lines[-1].get("verdict") == "fail" and lines[-2].get("verdict") == "fail":
@@ -1688,7 +1980,7 @@ def _repeated_failure_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str
 
 def _attempt_cap_signals(cfg: Config, unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    for work_item, lines in _work_item_sequences(unit_lines).items():
+    for work_item, lines in _work_item_sequences(unit_lines, exclude_handoffs=True).items():
         if len(lines) >= cfg.max_attempts_per_item:
             signals.append(
                 {
@@ -1707,6 +1999,36 @@ def _attempt_cap_signals(cfg: Config, unit_lines: list[dict[str, Any]]) -> list[
                     ),
                 }
             )
+    return signals
+
+
+def _handoff_chain_signals(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A3 `handoff_chain`: a work item's trailing run of self-split handoffs reached
+    `MAX_HANDOFFS_PER_ITEM` (`medium` one short of it) -- bounds unbounded self-splitting."""
+    signals: list[dict[str, Any]] = []
+    for work_item, lines in _work_item_sequences(unit_lines).items():
+        chain = _handoff_chain(lines)
+        if len(chain) < MAX_HANDOFFS_PER_ITEM - 1:
+            continue
+        signals.append(
+            {
+                "type": "handoff_chain",
+                "severity": "high" if len(chain) >= MAX_HANDOFFS_PER_ITEM else "medium",
+                "work_item": work_item,
+                "ask_id": None,
+                "path": None,
+                "evidence": {
+                    "chain": len(chain),
+                    "max_handoffs_per_item": MAX_HANDOFFS_PER_ITEM,
+                    "unit_ids": [ln.get("unit_id") for ln in chain],
+                    "reasons": [(ln.get("handoff") or {}).get("reason") for ln in chain],
+                },
+                "message": (
+                    f"work item {work_item} has {len(chain)} consecutive self-split handoffs "
+                    f"(max_handoffs_per_item={MAX_HANDOFFS_PER_ITEM})"
+                ),
+            }
+        )
     return signals
 
 
@@ -2006,7 +2328,9 @@ def _consecutive_stall_waves(
     for wave in waves_with_units:
         wave_units = [line for line in unit_lines if line.get("wave") == wave]
         done = any(
-            u.get("outcome") == "done" and u.get("verdict") in _DONE_VERDICTS for u in wave_units
+            (u.get("outcome") == "done" and u.get("verdict") in _DONE_VERDICTS)
+            or (is_handoff(u) and bool(u.get("changed_paths")))  # staged handoff = progress
+            for u in wave_units
         )
         cmet = _criteria_met_count(inst, wave)
         rose = False
@@ -2121,6 +2445,7 @@ def detect_signals(cfg: Config, inst: Path, k: int) -> list[dict[str, Any]]:
     candidates.extend(_period_mirror_signals(unit_lines))
     candidates.extend(_repeated_failure_signals(unit_lines))
     candidates.extend(_attempt_cap_signals(cfg, unit_lines))
+    candidates.extend(_handoff_chain_signals(unit_lines))
     candidates.extend(_content_oscillation_signals(inst, k))
     candidates.extend(_breadcrumb_integrity_signals(inst, k))
 
@@ -2146,6 +2471,140 @@ def detect_signals(cfg: Config, inst: Path, k: int) -> list[dict[str, Any]]:
     candidates.extend(_prompt_changed_signal(inst))
 
     return _assign_signal_ids(candidates, k)
+
+
+def open_handoffs(unit_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Open handoffs: a handoff that is the LAST unit on its work item, sorted by
+    `(work_item, unit_id)` (A3 design S4 `digest.handoffs`)."""
+    out: list[dict[str, Any]] = []
+    for work_item, lines in _work_item_sequences(unit_lines).items():
+        if not lines or not is_handoff(lines[-1]):
+            continue
+        last = lines[-1]
+        handoff = last.get("handoff") or {}
+        out.append(
+            {
+                "work_item": work_item,
+                "unit_id": last.get("unit_id"),
+                "wave": last.get("wave"),
+                "kind": last.get("kind"),
+                "ask_ids": list(last.get("ask_ids") or []),
+                "reason": handoff.get("reason"),
+                "stopped_at": handoff.get("stopped_at"),
+                "remaining": handoff.get("remaining"),
+                "next_hint": handoff.get("next_hint"),
+                "staged": list(handoff.get("staged") or []),
+                "chain": len(_handoff_chain(lines)),
+            }
+        )
+    out.sort(key=lambda h: (str(h["work_item"]), str(h["unit_id"])))
+    return out
+
+
+def limit_events(unit_lines: list[dict[str, Any]], wave: int | None = None) -> list[dict[str, Any]]:
+    """A2: one row per self-split / partial / limit-hit unit, from ledger data only (no LLM).
+
+    Sorted by `(wave, unit_id)`; `wave` restricts to one wave. Lines written before A2 lack the
+    limit keys and yield rows with null fields (a labelled gap, never an error).
+    """
+    rows: list[dict[str, Any]] = []
+    for ln in unit_lines:
+        if wave is not None and ln.get("wave") != wave:
+            continue
+        limit: dict[str, Any] = ln["limit"] if isinstance(ln.get("limit"), dict) else {}
+        reason = limit.get("reason", "none")
+        if not (is_handoff(ln) or ln.get("outcome") == "partial" or reason != "none"):
+            continue
+        handoff: dict[str, Any] = ln["handoff"] if isinstance(ln.get("handoff"), dict) else {}
+        rows.append(
+            {
+                "unit_id": ln.get("unit_id"),
+                "wave": ln.get("wave"),
+                "work_item": ln.get("work_item"),
+                "kind": ln.get("kind"),
+                "state": ln.get("state") or unit_state(ln),
+                "model": ln.get("model"),
+                "effort": ln.get("effort"),
+                "reason": reason,
+                "basis": limit.get("basis", "none"),
+                "handoff_reason": handoff.get("reason"),
+                "cost_usd": ln.get("cost_usd"),
+                "task_cost_limit_usd": ln.get("task_cost_limit_usd"),
+                "duration_s": ln.get("duration_s"),
+                "timeout_s": ln.get("timeout_s"),
+                "turn_cap": ln.get("turn_cap"),
+                "run_spent_usd": limit.get("run_spent_usd"),
+                "run_budget_usd": limit.get("run_budget_usd"),
+                "ended_at": ln.get("ended_at"),
+                "breaker": limit.get("breaker"),
+            }
+        )
+    rows.sort(key=lambda r: (int(r["wave"] or 0), str(r["unit_id"])))
+    return rows
+
+
+def _fmt(value: Any, spec: str = "") -> str:
+    if value is None:
+        return "n/a"
+    return format(value, spec) if spec else str(value)
+
+
+def render_limit_report_md(events: list[dict[str, Any]], cfg: Config) -> str:
+    """Deterministic markdown for `limit-report --format md` (embedded by close-out)."""
+    out = [
+        "# Limit report",
+        "",
+        f"- Configured task cost limit: {_fmt(cfg.task_budget_usd, '.2f')} USD "
+        f"(unit timeout {UNIT_TIMEOUT_S}s)",
+        f"- Configured run budget: {_fmt(cfg.run_budget_usd, '.2f')} USD",
+        f"- Limited/split units: {len(events)}",
+        "",
+    ]
+    if not events:
+        out.append("No self-split or limit-hit units recorded.")
+    for ev in events:
+        out += [
+            f"## {ev['unit_id']} (wave {ev['wave']}, {ev['state']})",
+            f"- work_item: {_fmt(ev['work_item'])}, kind: {_fmt(ev['kind'])}",
+            f"- model: {_fmt(ev['model']) if ev['model'] else 'n/a (CLI default or unrecorded)'}"
+            f", effort: {_fmt(ev['effort'])}",
+            f"- limit hit: {ev['reason']} [{ev['basis']}]"
+            + (f" (self-reported: {ev['handoff_reason']})" if ev["handoff_reason"] else ""),
+            f"- task limit: cost {_fmt(ev['cost_usd'], '.4f')} / "
+            f"{_fmt(ev['task_cost_limit_usd'], '.2f')} USD; "
+            f"duration {_fmt(ev['duration_s'])}s / {_fmt(ev['timeout_s'])}s; "
+            f"turn cap {_fmt(ev['turn_cap'])} (derived, turns used unknown)",
+            f"- run limit: spent {_fmt(ev['run_spent_usd'], '.4f')} / "
+            f"{_fmt(ev['run_budget_usd'], '.2f')} USD (at ingest)",
+            f"- when: {_fmt(ev['ended_at'])}",
+            "",
+        ]
+    out += ["## Known gaps", ""] + [f"- {gap}" for gap in LIMIT_GAPS] + [""]
+    return "\n".join(out)
+
+
+def limit_report(args: argparse.Namespace) -> None:
+    """A2 `limit-report`: read-only (never appends), derived from the ledger + config only."""
+    _, inst = confine_workspace(args.workspace_root, args.instance_dir)
+    cfg = load_config(inst)
+    verify_ledger_chain(inst)
+    lines = [ln for ln in read_ledger_lines(inst) if ln.get("type") == "unit"]
+    events = limit_events(lines, args.wave)
+    if args.format == "md":
+        print(render_limit_report_md(events, cfg))
+        return
+    print(
+        json.dumps(
+            {
+                "task_budget_usd": cfg.task_budget_usd,
+                "run_budget_usd": cfg.run_budget_usd,
+                "limit_events": events,
+                "limit_gaps": list(LIMIT_GAPS),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def compute_progress(cfg: Config, inst: Path, k: int) -> dict[str, Any]:
@@ -2199,6 +2658,7 @@ def compute_progress(cfg: Config, inst: Path, k: int) -> dict[str, Any]:
     return {
         "work_items_total": len(work_items_all),
         "work_items_done": len(done_through_k),
+        "work_items_handed_off": len(open_handoffs(unit_lines)),
         "newly_done": len(done_through_k - done_before_k),
         "stall_waves": _consecutive_stall_waves(cfg, inst, k, unit_lines),
         "criteria_met_prev": _criteria_met_count(inst, k - 1) or 0,
@@ -2270,7 +2730,7 @@ _NEXT_CKPT_REQUIRED_FIELDS: Final[frozenset[str]] = frozenset(
         "effort",
     }
 )
-_NEXT_CKPT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"model"})
+_NEXT_CKPT_OPTIONAL_FIELDS: Final[frozenset[str]] = frozenset({"model", "barrier"})
 _NEXT_CKPT_ALLOWED_FIELDS: Final[frozenset[str]] = (
     _NEXT_CKPT_REQUIRED_FIELDS | _NEXT_CKPT_OPTIONAL_FIELDS
 )
@@ -2391,6 +2851,8 @@ class ManifestCheckContext:
     verdict: dict[str, Any] | None = None  # ck-K's own verdict.json; None at intake_check
     digest: dict[str, Any] | None = None  # ck-K's own digest.json; None at intake_check
     ledger_lines: list[dict[str, Any]] = field(default_factory=list)
+    # T-Sn7Bkl: the run has the sentinel on => the next checkpoint must be `barrier: soft`.
+    soft_barrier: bool = False
 
 
 @dataclass(frozen=True)
@@ -2576,6 +3038,16 @@ def _check_next_checkpoint_shape(
         )
     if raw.get("emit_tasks") is not True:
         violations.append(RuleViolation("R10", "next checkpoint must set emit_tasks: true", path))
+    # Sentinel runs mark checkpoints `barrier: soft` (FR-8/FR-10); everyone else must not.
+    expected_barrier = "soft" if ctx.soft_barrier else None
+    if raw.get("barrier") != expected_barrier:
+        violations.append(
+            RuleViolation(
+                "R10",
+                f"next checkpoint barrier must be {expected_barrier!r}, got {raw.get('barrier')!r}",
+                path,
+            )
+        )
     expected_manifest_path = f"{ctx.instance_dir}/outputs/manifests/{expected_id}.json"
     if raw.get("task_manifest_path") != expected_manifest_path:
         violations.append(
@@ -2994,10 +3466,22 @@ def _check_early_closeout_evidence(
         verified_after = any(
             line.get("kind") == "verify"
             and line.get("verdict") == "pass"
+            and line.get("outcome") != "partial"
             and isinstance(line.get("seq"), int)
             and int(line["seq"]) > last_change_seq
             for line in ask_lines
         )
+        open_handoff = [h for h in open_handoffs(unit_lines) if ask_id in h["ask_ids"]]
+        if open_handoff:
+            violations.append(
+                RuleViolation(
+                    "R14",
+                    f"early closeout (stage={_digest_stage(ctx.digest)!r}) is not allowed while "
+                    f"ask {ask_id!r} has an open self-split handoff on work item(s) "
+                    f"{sorted(h['work_item'] for h in open_handoff)}",
+                    path,
+                )
+            )
         if not verified_after:
             violations.append(
                 RuleViolation(
@@ -3175,6 +3659,166 @@ def _check_r12_verdict(
     return violations
 
 
+# ===== Sentinel contract (E-Sn7tL2 T-Sn9Pow, FR-16): digest `sentinel{}` block + OV-R12b ======
+
+DIRECTIVE_RESPONSES: Final[frozenset[str]] = frozenset({"adopt", "redirect", "descope", "reject"})
+_MIN_DIRECTIVE_REJECT_RATIONALE_LEN: Final[int] = 40
+_SENTINEL_LIST_CAP: Final[int] = 50
+
+
+def _read_jsonl_dicts(path: Path) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def _answered_directive_ids(inst: Path, k: int) -> set[str]:
+    """Directive ids answered by the verdict of any checkpoint BEFORE ck-k."""
+    done: set[str] = set()
+    for j in range(1, k):
+        path = verdict_path(inst, j)
+        if not path.is_file():
+            continue
+        try:
+            data = read_json_bounded(path, JSON_MAX_BYTES)
+        except (OversizeInputError, json.JSONDecodeError):
+            continue
+        responses = data.get("directive_responses") if isinstance(data, dict) else None
+        for resp in responses if isinstance(responses, list) else []:
+            if isinstance(resp, dict) and isinstance(resp.get("directive_id"), str):
+                done.add(resp["directive_id"])
+    return done
+
+
+def sentinel_digest_block(run_dir: Path, inst: Path, k: int) -> dict[str, Any] | None:
+    """The digest's `sentinel{}` block, or None when the run has no sentinel footprint (so a
+    sentinel-less run's digest stays byte-identical).
+
+    `directives[]` = every recorded directive not yet answered by an earlier checkpoint's
+    `directive_responses[]`; the rest are the sentinel's actions since the previous digest.
+    """
+    sdir, cdir = run_dir / "sentinel", run_dir / "control"
+    directives = _read_jsonl_dicts(cdir / "directives.jsonl")
+    powers = _read_jsonl_dicts(sdir / "powers.jsonl")
+    ledger = _read_jsonl_dicts(sdir / "ledger.jsonl")
+    alarms = _read_jsonl_dicts(cdir / "sentinel-alarms.jsonl")
+    if not (directives or powers or ledger or alarms):
+        return None
+    prev = _read_prev_digest(inst, k)
+    since = prev.get("generated_at") if isinstance(prev, dict) else None
+
+    def recent(recs: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+        out = [
+            r
+            for r in recs
+            if r.get("kind") == kind and (since is None or str(r.get("at", "")) > since)
+        ]
+        return out[-_SENTINEL_LIST_CAP:]
+
+    answered = _answered_directive_ids(inst, k)
+    open_directives = [d for d in directives if d.get("id") not in answered]
+    return {
+        "generation": sum(1 for r in ledger if r.get("event") == "generation_started"),
+        "directives": open_directives[-_SENTINEL_LIST_CAP:],
+        "injected_since_last_ckpt": recent(powers, "inject"),
+        "kills": recent(powers, "kill"),
+        "edits": recent(powers, "edit_pending"),
+        "carry_over": [],
+        "alarms": alarms[-_SENTINEL_LIST_CAP:],
+    }
+
+
+def _check_r12b_directive_responses(
+    ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
+) -> list[RuleViolation]:
+    """OV-R12b: every open `digest.sentinel.directives[]` id is answered exactly once in the
+    verdict's `directive_responses[]` (adopt / redirect / descope / reject-with-rationale).
+    No `sentinel` block in the digest => nothing to check (byte-identical for old runs)."""
+    if ctx.verdict is None or not isinstance(ctx.digest, dict):
+        return []
+    block = ctx.digest.get("sentinel")
+    open_dirs = block.get("directives") if isinstance(block, dict) else None
+    if not isinstance(open_dirs, list) or not open_dirs:
+        return []
+    path = str(verdict_path(ctx.inst, _ck_wave_of_verdict_context(ctx)))
+    responses = ctx.verdict.get("directive_responses")
+    by_id: dict[str, list[dict[str, Any]]] = {}
+    for resp in responses if isinstance(responses, list) else []:
+        if isinstance(resp, dict) and isinstance(resp.get("directive_id"), str):
+            by_id.setdefault(resp["directive_id"], []).append(resp)
+    violations: list[RuleViolation] = []
+    for d in open_dirs:
+        did = d.get("id") if isinstance(d, dict) else None
+        if not isinstance(did, str):
+            continue
+        matches = by_id.get(did, [])
+        if len(matches) != 1:
+            violations.append(
+                RuleViolation(
+                    "R12b",
+                    f"verdict directive_responses has {len(matches)} entries for sentinel "
+                    f"directive {did!r}, expected exactly 1",
+                    path,
+                )
+            )
+            continue
+        resp = matches[0]
+        if resp.get("response") not in DIRECTIVE_RESPONSES:
+            violations.append(
+                RuleViolation(
+                    "R12b",
+                    f"directive {did!r} response must be one of {sorted(DIRECTIVE_RESPONSES)}",
+                    path,
+                )
+            )
+        elif resp.get("response") == "reject":
+            why = resp.get("rationale")
+            if not isinstance(why, str) or len(why) < _MIN_DIRECTIVE_REJECT_RATIONALE_LEN:
+                violations.append(
+                    RuleViolation(
+                        "R12b",
+                        f"directive {did!r} reject needs a rationale of >= "
+                        f"{_MIN_DIRECTIVE_REJECT_RATIONALE_LEN} chars",
+                        path,
+                    )
+                )
+    return violations
+
+
+def _record_directive_acks(run_dir: Path, k: int, now: datetime, verdict: dict[str, Any]) -> None:
+    """After a passing ckpt-check: mirror `directive_responses[]` into the RUN's
+    `control/directive-acks.jsonl` (the dashboard reads it). Idempotent per directive id."""
+    responses = verdict.get("directive_responses")
+    if not isinstance(responses, list) or not responses:
+        return
+    path = run_dir / "control" / "directive-acks.jsonl"
+    known = {r.get("directive_id") for r in _read_jsonl_dicts(path)}
+    fresh = [r for r in responses if isinstance(r, dict) and r.get("directive_id") not in known]
+    if not fresh:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for r in fresh:
+            rec = {
+                "directive_id": r.get("directive_id"),
+                "response": r.get("response"),
+                "rationale": r.get("rationale"),
+                "checkpoint": f"ck-{k:02d}",
+                "at": now_iso(now),
+            }
+            fh.write(json.dumps(rec, sort_keys=True) + "\n")
+
+
 def _check_r14_decision_manifest_consistency(
     ctx: ManifestCheckContext, entries: list[ClassifiedEntry]
 ) -> list[RuleViolation]:
@@ -3261,6 +3905,7 @@ _MANIFEST_STRUCTURAL_CHECKS: Final[list[ManifestCheckFn]] = [
     _check_r4_r5_counts,
     _check_r10_terminal_shape,
     _check_r12_verdict,
+    _check_r12b_directive_responses,
     _check_r14_decision_manifest_consistency,
     _check_r16_must_close,
 ]
@@ -3619,7 +4264,7 @@ def _capped_work_item_lines(
     return {
         work_item: lines
         for work_item, lines in _work_item_sequences(unit_lines).items()
-        if len(lines) >= cfg.max_attempts_per_item
+        if len(_effective_attempt_lines(lines)) >= cfg.max_attempts_per_item
     }
 
 
@@ -3696,7 +4341,9 @@ def _check_entry_r13_attempt_cap(
         return []  # a malformed work_item isn't R13's problem to report
 
     groups = _work_item_sequences(_unit_lines_through(ctx.inst, k))
-    count = len(groups.get(work_item, []))
+    item_lines = groups.get(work_item, [])
+    count = len(_effective_attempt_lines(item_lines))  # handoffs are not attempts
+    chain = len(_handoff_chain(item_lines))
     path = str(brief_path(ctx.inst, ctx.next_wave, unit_id))
 
     if count > ctx.cfg.max_attempts_per_item + _ATTEMPT_CAP_HARD_STOP_OFFSET:
@@ -3710,14 +4357,22 @@ def _check_entry_r13_attempt_cap(
                 path,
             )
         ]
-    if count >= ctx.cfg.max_attempts_per_item:
+    at_attempt_cap = count >= ctx.cfg.max_attempts_per_item
+    at_chain_cap = chain >= MAX_HANDOFFS_PER_ITEM
+    if at_attempt_cap or at_chain_cap:
         approach_change = brief_data.get("approach_change")
         if not isinstance(approach_change, str) or not approach_change.strip():
+            what = (
+                f"its attempt cap ({count} >= max_attempts_per_item="
+                f"{ctx.cfg.max_attempts_per_item})"
+                if at_attempt_cap
+                else f"its handoff-chain cap ({chain} >= max_handoffs_per_item="
+                f"{MAX_HANDOFFS_PER_ITEM})"
+            )
             return [
                 RuleViolation(
                     "R13",
-                    f"unit {unit_id} targets work_item {work_item!r} at/above its attempt cap "
-                    f"({count} >= max_attempts_per_item={ctx.cfg.max_attempts_per_item}) but its "
+                    f"unit {unit_id} targets work_item {work_item!r} at/above {what} but its "
                     "brief has no non-empty approach_change",
                     path,
                 )
@@ -3817,6 +4472,46 @@ def _check_entry_r13c_rename_dodge(
     return []
 
 
+def _carry_over_work_items(digest: dict[str, Any] | None) -> dict[str, str]:
+    """`{work_item: unit_id}` of the digest's carry-over stragglers."""
+    items = digest.get("carry_over") if isinstance(digest, dict) else None
+    out: dict[str, str] = {}
+    for e in items if isinstance(items, list) else []:
+        if isinstance(e, dict) and isinstance(e.get("work_item"), str) and e["work_item"]:
+            out[e["work_item"]] = str(e.get("unit_id"))
+    return out
+
+
+def _check_entry_r17_carry_over(
+    ctx: WaveEntryCheckContext, entry: ClassifiedEntry
+) -> list[RuleViolation]:
+    """OV-R17: a checkpoint released early must not re-schedule carry-over work -- no emitted
+    unit may target a `work_item` that a still-running carry-over straggler already owns."""
+    k = _ck_wave_of_emitter(ctx.emitter_id)
+    if k is None:
+        return []
+    digest = _read_optional_json(digest_path(ctx.inst, k))
+    carry = _carry_over_work_items(digest)
+    if not carry:
+        return []
+    unit_id = entry.entry_id
+    assert unit_id is not None
+    brief_data, brief_violation = _read_brief_for_check(ctx.inst, ctx.next_wave, unit_id)
+    if brief_violation is not None or brief_data is None:
+        return []  # R6 reports the unreadable brief
+    work_item = brief_data.get("work_item")
+    if isinstance(work_item, str) and work_item in carry:
+        return [
+            RuleViolation(
+                "R17",
+                f"unit {unit_id} re-schedules work_item {work_item!r}, which carry-over unit "
+                f"{carry[work_item]!r} (released early by the sentinel) is still running",
+                str(brief_path(ctx.inst, ctx.next_wave, unit_id)),
+            )
+        ]
+    return []
+
+
 _WAVE_ENTRY_STRUCTURAL_CHECKS: Final[list[WaveEntryCheckFn]] = [
     _check_entry_r6_brief,
     _check_entry_r7_outputs_inputs,
@@ -3826,6 +4521,7 @@ _WAVE_ENTRY_STRUCTURAL_CHECKS: Final[list[WaveEntryCheckFn]] = [
     _check_entry_r11_stage_restrictions,
     _check_entry_r13_attempt_cap,
     _check_entry_r13c_rename_dodge,
+    _check_entry_r17_carry_over,
 ]
 
 
@@ -4118,6 +4814,7 @@ def intake_check(args: argparse.Namespace) -> None:
             allowed_wave_size=_intake_allowed_wave_size(cfg),
             charter=charter,
             tasks=tasks,
+            soft_barrier=sentinel_enabled(state),
         )
         violations.extend(check_manifest(check_ctx))
 
@@ -4242,17 +4939,329 @@ def ckpt_check(args: argparse.Namespace) -> None:
             verdict=verdict,
             digest=digest,
             ledger_lines=read_ledger_lines(inst),
+            soft_barrier=sentinel_enabled(state),
         )
         violations.extend(check_manifest(check_ctx))
+        backlog_violations, backlog_data = check_backlog(
+            cfg, inst, args.instance_dir, k, verdict, digest, charter, tasks
+        )
+        violations.extend(backlog_violations)
 
     if not violations and not args.dry_run and verdict is not None:
         _record_checkpoint_events(inst, k, now, manifest_path=manifest_path, verdict=verdict)
+        if tasks is not None:
+            publish_backlog(
+                cfg,
+                inst,
+                args.instance_dir,
+                state_path(ws, cfg, ctx_hook.run_id).parent,
+                k,
+                state,
+                backlog_data,
+                digest,
+            )
+        _record_directive_acks(state_path(ws, cfg, ctx_hook.run_id).parent, k, now, verdict)
 
     _finish_check(
         result_dir=checkpoint_dir(inst, k),
         task_id=ctx_hook.task_id,
         violations=violations,
         dry_run=args.dry_run,
+    )
+
+
+# =============================================================================================
+# ===== Sentinel bandwidth (E-Sn7tL2 T-Sn7Bkl): carry-over, soft barrier, backlog =============
+# =============================================================================================
+
+BACKLOG_SCHEMA: Final[str] = "ao.overseer.backlog/v1"
+PUBLISHED_BACKLOG_SCHEMA: Final[str] = "ao.sentinel.backlog/v1"
+BACKLOG_MAX_ENTRIES: Final[int] = 20
+BACKLOG_ENTRY_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9-]{2,60}$")
+BACKLOG_KINDS: Final[frozenset[str]] = frozenset(
+    {"research", "design", "implement", "fix", "document", "test", "review", "verify"}
+)
+_BACKLOG_ENTRY_FIELDS: Final[frozenset[str]] = frozenset(
+    {"id", "priority", "brief_path", "kind", "ask_ids", "work_item", "rationale", "expires_at_ckpt"}
+)
+_BACKLOG_ENTRY_OPTIONAL: Final[frozenset[str]] = frozenset({"effort"})
+_SETTLED_STATUSES: Final[frozenset[str]] = frozenset(
+    {"succeeded", "failed", "skipped", "cancelled"}
+)
+
+
+def sentinel_enabled(state: State) -> bool:
+    return isinstance(state.sentinel, dict) and state.sentinel.get("enabled", True) is not False
+
+
+def carry_over_entries(inst: Path, state: State, k: int) -> list[dict[str, Any]]:
+    """Unsettled units an early checkpoint (ck-1..ck-k) dropped from its `depends_on`: the
+    stragglers the planner must NOT re-schedule (digest `carry_over[]`, OV-R17)."""
+    sent = state.sentinel
+    records = sent.get("early_checkpoints") if isinstance(sent, dict) else None
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for rec in records if isinstance(records, list) else []:
+        if not isinstance(rec, dict):
+            continue
+        m = _CK_TASK_ID_RE.match(str(rec.get("checkpoint_id", "")))
+        if not m or int(m.group(1)) > k:
+            continue
+        for uid in rec.get("carry_over") or []:
+            info = state.tasks.get(uid)
+            if not isinstance(uid, str) or uid in seen or info is None:
+                continue
+            if info.status in _SETTLED_STATUSES:
+                continue
+            seen.add(uid)
+            wm = _WAVE_PREFIX_RE.match(uid)
+            wave = int(wm.group(1)) if wm else k
+            brief: dict[str, Any] = {}
+            with contextlib.suppress(Violation):
+                brief = read_brief(inst, wave, uid)
+            out.append(
+                {
+                    "unit_id": uid,
+                    "wave": wave,
+                    "status": info.status,
+                    "work_item": brief.get("work_item"),
+                    "kind": brief.get("kind"),
+                    "early_checkpoint": rec.get("checkpoint_id"),
+                }
+            )
+    return sorted(out, key=lambda e: e["unit_id"])
+
+
+def _backlog_violation(rule: str, message: str, idx: int | None = None) -> RuleViolation:
+    return RuleViolation(rule, message, f"entries[{idx}]" if idx is not None else None)
+
+
+def check_backlog(
+    cfg: Config,
+    inst: Path,
+    instance_dir: str,
+    k: int,
+    verdict: dict[str, Any] | None,
+    digest: dict[str, Any],
+    charter: dict[str, Any] | None,
+    manifest_tasks: list[Any] | None,
+) -> tuple[list[RuleViolation], dict[str, Any] | None]:
+    """Validate `outputs/backlog.json` of checkpoint `ck-k`; returns `(violations, data)` where
+    `data` is the parsed file (None when absent/unreadable). Never raises.
+
+    BL1 shape/schema/checkpoint id/entry cap, BL2 per-entry fields + ids, BL3 kind (kind_map,
+    stage), BL4 brief (exists, kind/work_item/ask_ids agree, canonical path), BL5 expiry window,
+    BL6 independence (no work_item of this wave, the carry-over, or a capped item), BL7 decision
+    (no backlog when closing out / holding / must_close).
+    """
+    path = inst / "outputs" / "backlog.json"
+    if not path.exists():
+        return [], None
+    pstr = str(path)
+    try:
+        data = read_json_bounded(path, JSON_MAX_BYTES)
+    except (OversizeInputError, json.JSONDecodeError, OSError) as exc:
+        return [RuleViolation("BL1", f"backlog.json is unreadable: {exc}", pstr)], None
+    if not isinstance(data, dict):
+        return [RuleViolation("BL1", "backlog.json root must be a JSON object", pstr)], None
+    v: list[RuleViolation] = []
+    if data.get("schema") != BACKLOG_SCHEMA:
+        v.append(RuleViolation("BL1", f"schema must be {BACKLOG_SCHEMA!r}", pstr))
+    if data.get("checkpoint_id") != f"ck-{k:02d}":
+        v.append(RuleViolation("BL1", f"checkpoint_id must be 'ck-{k:02d}'", pstr))
+    extra = set(data) - {"schema", "checkpoint_id", "entries"}
+    if extra:
+        v.append(RuleViolation("BL1", f"unexpected top-level field(s): {sorted(extra)}", pstr))
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return [*v, RuleViolation("BL1", "entries must be a list", pstr)], None
+    if len(entries) > BACKLOG_MAX_ENTRIES:
+        v.append(RuleViolation("BL1", f"at most {BACKLOG_MAX_ENTRIES} entries", pstr))
+
+    decision = verdict.get("decision") if isinstance(verdict, dict) else None
+    stage = _digest_stage(digest)
+    if entries and (
+        decision in ("closeout", "hold") or digest.get("must_close") or stage == "closeout"
+    ):
+        v.append(
+            RuleViolation(
+                "BL7",
+                f"backlog must be empty when decision={decision!r}/stage={stage!r}/must_close",
+                pstr,
+            )
+        )
+    charter_asks = _charter_ask_ids(charter)
+    known_items = frozenset(_work_item_sequences(_unit_lines_through(inst, k)))
+    carry = _carry_over_work_items(digest)
+    wave_items: set[str] = set()
+    for t in manifest_tasks or []:
+        uid = t.get("id") if isinstance(t, dict) else None
+        if isinstance(uid, str) and _UNIT_ID_FULL_RE.match(uid):
+            b, _ = _read_brief_for_check(inst, k + 1, uid)
+            if b is not None and isinstance(b.get("work_item"), str):
+                wave_items.add(b["work_item"])
+    seen_ids: set[str] = set()
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict):
+            v.append(_backlog_violation("BL2", "entry must be an object", i))
+            continue
+        missing = _BACKLOG_ENTRY_FIELDS - set(e)
+        unknown = set(e) - _BACKLOG_ENTRY_FIELDS - _BACKLOG_ENTRY_OPTIONAL
+        if missing or unknown:
+            v.append(
+                _backlog_violation(
+                    "BL2", f"missing {sorted(missing)} / unexpected {sorted(unknown)}", i
+                )
+            )
+            continue
+        eid = e["id"]
+        if not isinstance(eid, str) or not BACKLOG_ENTRY_ID_RE.match(eid):
+            v.append(
+                _backlog_violation("BL2", f"id {eid!r} must match {BACKLOG_ENTRY_ID_RE.pattern}", i)
+            )
+            continue
+        if eid in seen_ids:
+            v.append(_backlog_violation("BL2", f"duplicate id {eid!r}", i))
+        seen_ids.add(eid)
+        prio = e["priority"]
+        if isinstance(prio, bool) or not isinstance(prio, int) or prio < 0:
+            v.append(_backlog_violation("BL2", f"{eid}: priority must be an integer >= 0", i))
+        exp = e["expires_at_ckpt"]
+        if isinstance(exp, bool) or not isinstance(exp, int) or not k < exp <= k + 2:
+            v.append(
+                _backlog_violation(
+                    "BL5", f"{eid}: expires_at_ckpt must be an integer in {k + 1}..{k + 2}", i
+                )
+            )
+        if not isinstance(e["rationale"], str) or not e["rationale"].strip():
+            v.append(_backlog_violation("BL2", f"{eid}: rationale must be a non-empty string", i))
+        kind = e["kind"]
+        if kind not in BACKLOG_KINDS or not isinstance(cfg.kind_map.get(kind), dict):
+            v.append(_backlog_violation("BL3", f"{eid}: kind {kind!r} is not allowed", i))
+        elif stage == "stabilize" and kind not in _STABILIZE_STAGE_ALLOWED_KINDS:
+            v.append(_backlog_violation("BL3", f"{eid}: kind {kind!r} not allowed in stabilize", i))
+        wi = e["work_item"]
+        if not isinstance(wi, str) or not wi:
+            v.append(_backlog_violation("BL2", f"{eid}: work_item must be a non-empty string", i))
+            continue
+        if stage == "converge" and wi not in known_items:
+            v.append(_backlog_violation("BL3", f"{eid}: converge stage may not open new scope", i))
+        if wi in wave_items:
+            v.append(_backlog_violation("BL6", f"{eid}: work_item {wi!r} is in this wave", i))
+        if wi in carry:
+            v.append(
+                _backlog_violation("BL6", f"{eid}: work_item {wi!r} is carry-over ({carry[wi]})", i)
+            )
+        if _failed_attempts(inst, k, wi) >= cfg.max_attempts_per_item:
+            v.append(_backlog_violation("BL6", f"{eid}: work_item {wi!r} hit the attempt cap", i))
+        asks = e["ask_ids"]
+        if not isinstance(asks, list) or not asks or not all(isinstance(a, str) for a in asks):
+            v.append(_backlog_violation("BL4", f"{eid}: ask_ids must be a non-empty list", i))
+        elif charter_asks is not None and [a for a in asks if a not in charter_asks]:
+            v.append(_backlog_violation("BL4", f"{eid}: ask_ids not all in the charter", i))
+        expected_bp = f"{instance_dir}/outputs/waves/w{k + 1:02d}/briefs/{eid}.json"
+        if e["brief_path"] != expected_bp:
+            v.append(_backlog_violation("BL4", f"{eid}: brief_path must be {expected_bp!r}", i))
+            continue
+        b, bv = _read_brief_for_check(inst, k + 1, eid)
+        if bv is not None or b is None:
+            v.append(_backlog_violation("BL4", f"{eid}: brief missing or unreadable", i))
+            continue
+        for key in ("kind", "work_item"):
+            if b.get(key) != e[key]:
+                v.append(_backlog_violation("BL4", f"{eid}: brief {key} != entry {key}", i))
+        if b.get("schema") != BRIEF_SCHEMA:
+            v.append(_backlog_violation("BL4", f"{eid}: brief schema must be {BRIEF_SCHEMA!r}", i))
+    return v, data
+
+
+def _next_sentinel_number(state: State, previous: dict[str, Any] | None) -> int:
+    nums = [int(m.group(1)) for t in state.tasks if (m := _SENTINEL_UNIT_RE.match(t))]
+    for e in (previous or {}).get("entries", []) if isinstance(previous, dict) else []:
+        tid = e.get("task", {}).get("id") if isinstance(e, dict) else None
+        if isinstance(tid, str) and (m := _SENTINEL_UNIT_RE.match(tid)):
+            nums.append(int(m.group(1)))
+    return (max(nums) if nums else 0) + 1
+
+
+def publish_backlog(
+    cfg: Config,
+    inst: Path,
+    instance_dir: str,
+    run_dir: Path,
+    k: int,
+    state: State,
+    data: dict[str, Any] | None,
+    digest: dict[str, Any],
+) -> None:
+    """Write the engine-ready `control/backlog.json` (`ao.sentinel.backlog/v1`) for the sentinel
+    tick, copying each entry's brief to its final unit id. Called only after `ckpt-check` passes.
+    Publishing happens only when the run has/had a backlog or the sentinel is on (so a run
+    without either gains no file). An absent/empty backlog.json REPLACES the previous published
+    file: entries not re-confirmed by this checkpoint die (expiry)."""
+    target = run_dir / "control" / "backlog.json"
+    if data is None and not target.exists():
+        return
+    previous = _read_optional_json(target)
+    prev_ids: dict[str, str] = {}
+    for e in (previous or {}).get("entries", []):
+        if isinstance(e, dict) and isinstance(e.get("task"), dict):
+            prev_ids[str(e.get("id"))] = str(e["task"].get("id"))
+    nxt = _next_sentinel_number(state, previous)
+    contract = f"{instance_dir}/overseer-contract.md"
+    config = f"{instance_dir}/overseer-config.json"
+    charter = f"{instance_dir}/outputs/charter.json"
+    wave = f"{instance_dir}/outputs/waves/w{k + 1:02d}"
+    published: list[dict[str, Any]] = []
+    for e in (data or {}).get("entries", []):
+        slug = e["id"]
+        tid = prev_ids.get(slug) or f"s-{nxt:02d}-{slug}"
+        if tid not in prev_ids.values():
+            nxt += 1
+        brief = read_brief(inst, k + 1, slug)
+        brief["unit_id"] = tid
+        brief["wave"] = k + 1
+        brief_out = brief_path(inst, k + 1, tid)
+        write_json_atomic(brief_out, brief)
+        kind_entry = cfg.kind_map[e["kind"]]
+        effort = brief.get("effort") if brief.get("effort") in _UNIT_EFFORT_ENUM else "medium"
+        task: dict[str, Any] = {
+            "id": tid,
+            "agent": kind_entry.get("agent"),
+            "instruction": kind_entry.get("instruction"),
+            "depends_on": [],
+            "inputs": [contract, config, charter, f"{wave}/briefs/{tid}.json"],
+            "outputs": [f"{wave}/{tid}.md", f"{instance_dir}/outputs/progress/{tid}.json"],
+            "pre_hook": {"use": "ov-unit-gate"},
+            "timeout_seconds": UNIT_TIMEOUT_S,
+            "skip_if_outputs_exist": False,
+            "effort": effort,
+        }
+        model = expected_unit_model(
+            cfg, brief, e["kind"], _failed_attempts(inst, k, e["work_item"])
+        )
+        if model:
+            task["model"] = model
+        published.append(
+            {
+                "id": slug,
+                "priority": e["priority"],
+                "expires_at_ckpt": e["expires_at_ckpt"],
+                "kind": e["kind"],
+                "work_item": e["work_item"],
+                "task": task,
+            }
+        )
+    known = sorted(_work_item_sequences(_unit_lines_through(inst, k)))
+    write_json_atomic(
+        target,
+        {
+            "schema": PUBLISHED_BACKLOG_SCHEMA,
+            "checkpoint_id": f"ck-{k:02d}",
+            "stage": _digest_stage(digest),
+            "known_work_items": known,
+            "entries": published,
+        },
     )
 
 
@@ -4323,7 +5332,23 @@ def ckpt_prep(args: argparse.Namespace) -> None:
         verify_charter_lock(inst)
         state = load_state(state_path(ws, cfg, ctx.run_id))
         units = wave_units(state, k)
-        ingest_ledger(inst, units, state, k, now, dry_run=args.dry_run)
+        have_units = {
+            line["unit_id"] for line in read_ledger_lines(inst) if line.get("type") == "unit"
+        }
+        late = late_units(inst, state, k, have_units)
+        units = sorted({*units, *late})
+        run_budget_now, _ = effective_budget(cfg, state, inst, now, record=False)
+        ingest_ledger(
+            inst,
+            units,
+            state,
+            k,
+            now,
+            dry_run=args.dry_run,
+            task_cost_limit_usd=cfg.task_budget_usd,
+            run_budget_usd=run_budget_now,
+            unit_waves=late,
+        )
         update_path_history(inst, k, ctx.repo_paths, units, now, dry_run=args.dry_run)
         budget = compute_budget(cfg, state, inst, k, now, dry_run=args.dry_run)
         signals = detect_signals(cfg, inst, k)
@@ -4344,8 +5369,20 @@ def ckpt_prep(args: argparse.Namespace) -> None:
             "stabilize_passes": budget["stabilize_passes"],
             "progress": progress,
             "capped_work_items": [],
+            "handoffs": open_handoffs(_unit_lines_through(inst, k)),
+            "limit_events": limit_events(_unit_lines_through(inst, k), k)[:LIMIT_EVENTS_CAP],
+            "limit_gaps": list(LIMIT_GAPS),
             "signals": signals,
         }
+        sentinel_block = sentinel_digest_block(state_path(ws, cfg, ctx.run_id).parent, inst, k)
+        carry = carry_over_entries(inst, state, k)
+        if carry:
+            digest["carry_over"] = carry
+        if sentinel_enabled(state):
+            digest["soft_barrier"] = True  # next checkpoint must be marked `barrier: soft`
+        if sentinel_block is not None:
+            sentinel_block["carry_over"] = carry
+            digest["sentinel"] = sentinel_block
         if args.dry_run:
             print(json.dumps(digest, indent=2, sort_keys=True))
         else:
@@ -4496,6 +5533,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "ckpt-check",
         "unit-gate",
         "request-closeout",
+        "limit-report",
     ):
         sub = subparsers.add_parser(name)
         sub.add_argument("--workspace-root", required=True)
@@ -4503,6 +5541,9 @@ def _build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--now", default=None)
         sub.add_argument("--dry-run", action="store_true")
         sub.add_argument("--task-id", default=None)
+        if name == "limit-report":
+            sub.add_argument("--wave", type=int, default=None)
+            sub.add_argument("--format", choices=("json", "md"), default="json")
         if name == "request-closeout":
             sub.add_argument("--reason", required=True)
         else:
@@ -4517,6 +5558,7 @@ _DISPATCH: Final[dict[str, Any]] = {
     "ckpt-check": ckpt_check,
     "unit-gate": unit_gate,
     "request-closeout": request_closeout,
+    "limit-report": limit_report,
 }
 
 

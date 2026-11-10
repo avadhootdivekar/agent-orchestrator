@@ -24,6 +24,4 @@ it, though you're free to add more example handlers if useful for your own testi
 
 Fix both `handlers_for` and `dispatch` so that `tests/test_registry.py` passes.
 
-Do not modify `tests/test_registry.py`, and do not modify anything under the
-`.grading/` directory — it is a held-out grading harness the run is scored against
-and is not part of what you are asked to implement or test against directly.
+Do not modify `tests/test_registry.py`.

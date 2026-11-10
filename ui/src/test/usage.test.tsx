@@ -55,6 +55,28 @@ describe("Usage view", () => {
     expect(screen.queryByText("Outcome vs charter")).toBeNull();
   });
 
+  it("groups by turn budget and thinking effort; old rows show a dash", async () => {
+    mockFetch({
+      ...REPORT,
+      groups: [
+        { ...GROUP, turn_budget: "medium", thinking_effort: "high" },
+        { ...GROUP, turn_budget: "medium", thinking_effort: "low" },
+        { ...GROUP, effort: "medium" }, // old backend/row: no new fields
+        { ...GROUP, effort: "medium", turn_budget: "medium", thinking_effort: "-" },
+      ],
+    });
+    render(<Usage />);
+    await screen.findAllByText("sonnet");
+    expect(screen.getByText("Turn budget")).toBeInTheDocument();
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    const rows = screen.getAllByText("sonnet").map((c) => c.closest("tr")!);
+    expect(rows).toHaveLength(4);
+    expect(rows[0]).toHaveTextContent(/medium\s*high/);
+    expect(rows[1]).toHaveTextContent(/medium\s*low/);
+    expect(rows[2]).toHaveTextContent(/medium\s*-/);
+    expect(rows[3]).toHaveTextContent(/medium\s*-/);
+  });
+
   it("shows n/a rather than 0 when nothing is rated", async () => {
     mockFetch({
       ...REPORT,

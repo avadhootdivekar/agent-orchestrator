@@ -71,6 +71,10 @@
     },
     "integration": { "$ref": "#/$defs/integration" },
     "scheduling": { "$ref": "#/$defs/scheduling" },
+    "sentinel": {
+      "type": ["object", "null"],
+      "description": "Sentinel settings (E-Sn7tL2, ADR-0024); shape = models.SentinelSpec, validated strictly (unknown keys rejected) by WorkflowSpec."
+    },
     "hooks": {
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/hook" },
@@ -84,7 +88,36 @@
       "additionalProperties": false,
       "properties": {
         "max_attempts": { "type": "integer", "minimum": 1, "default": 1 },
-        "backoff_seconds": { "type": "number", "minimum": 0, "default": 0 }
+        "backoff_seconds": { "type": "number", "minimum": 0, "default": 0 },
+        "honor_marker": { "type": "boolean", "default": false }
+      }
+    },
+    "inputRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt"],
+      "description": "Awaiting-input request (docs-md/awaiting-input-hld.md): plain-text prompt plus typed fields, rendered by the CLI (`ao answer`) and the dashboard. No HTML.",
+      "properties": {
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "fields": {
+          "type": "array",
+          "maxItems": 20,
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+              "type": { "enum": ["text", "choice", "bool"], "default": "text" },
+              "label": { "type": "string", "maxLength": 200 },
+              "choices": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 }, "maxItems": 20 },
+              "default": { "type": ["string", "boolean"] },
+              "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 },
+              "required": { "type": "boolean", "default": true }
+            }
+          }
+        }
       }
     },
     "hook": {
@@ -153,6 +186,15 @@
         "retries": { "$ref": "#/$defs/retryPolicy" },
         "timeout_seconds": { "type": "integer", "minimum": 1 },
         "skip_if_outputs_exist": { "type": "boolean", "default": true },
+        "input": {
+          "$ref": "#/$defs/inputRequest",
+          "description": "Spec-level human input gate: the engine opens this request before dispatch (no executor runs); the answer becomes <task dir>/answer.json and every declared output. Blocking mode parks the task as awaiting_input; nonblocking mode assumes the declared defaults."
+        },
+        "can_request_input": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true the task may write input-request.json (path advertised in its prompt) and exit 0 to park as awaiting_input; it is re-run with the answer. Not supported on isolated tasks."
+        },
         "emit_tasks": {
           "type": "boolean",
           "default": false,
@@ -172,13 +214,28 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:\\-\\[\\]]{0,127}$",
           "description": "Per-task override of the dispatched agent's --model (ADR-0003 decision 2). Wins over the agent's own `model` when set; omit to use the agent's value."
         },
+        "turn_budget": {
+          "enum": ["low", "medium", "high", "xhigh"],
+          "description": "Per-task override of the dispatched agent's turn_budget, mapped to --max-turns (low=15, medium=30, high=60, xhigh=120). Wins over the agent's own `turn_budget` when set."
+        },
         "effort": {
           "enum": ["low", "medium", "high", "xhigh"],
-          "description": "Per-task override of the dispatched agent's effort, mapped to --max-turns (low=15, medium=30, high=60, xhigh=120). Wins over the agent's own `effort` when set."
+          "description": "DEPRECATED alias of turn_budget (warns; conflicting values are an error)."
+        },
+        "thinking_effort": {
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "Model reasoning depth (claude_cli: --effort). Omit for the CLI default."
+        },
+        "autocompact": {
+          "anyOf": [
+            { "const": "auto" },
+            { "type": "integer", "minimum": 100000, "maximum": 1000000 }
+          ],
+          "description": "Context auto-compaction: 'auto' or a context-token threshold (100000-1000000). Provider-neutral; claude_cli maps it to --autocompact unless extra_args already sets one. Executors without the capability ignore it (`ao validate` warns)."
         },
         "max_turns": {
           "type": "integer",
-          "description": "Per-task override of the dispatched agent's explicit --max-turns; wins over both the agent's `max_turns` and this task's own `effort` when set."
+          "description": "Per-task override of the dispatched agent's explicit --max-turns; wins over both the agent's `max_turns` and this task's own `turn_budget` when set."
         },
         "isolation": {
           "enum": ["none", "worktree", "inherit"],

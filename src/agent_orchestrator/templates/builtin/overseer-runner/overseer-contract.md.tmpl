@@ -100,6 +100,12 @@ emits the next checkpoint with zero wave units and `depends_on` set to only the 
 must include every unit's (and every expander's `--done`) breadcrumb path. See "The
 `overseer_model` rule" below for when this entry must also carry `"model"`.
 
+**Soft barrier (sentinel runs).** When the digest says `"soft_barrier": true` (the run was launched
+with the sentinel), the entry must also carry `"barrier": "soft"`; otherwise it must not carry
+`barrier` at all (OV-R10). A soft checkpoint may start while unrelated tasks are in flight, and the
+sentinel may release it **early** (dropping still-running predecessors from its `depends_on`) — see
+`digest.carry_over[]` and OV-R17.
+
 ### Tail (terminal emission only — emitted instead of a next checkpoint, never alongside one)
 
 ```json
@@ -139,6 +145,27 @@ at most `sub_wave_size` leaves (`<unit-id>--NN-<slug>`, the ordinary unit shape,
 `{{ instance_dir }}/outputs/progress/<unit-id>--done.json`). **This kind is not yet wired up in
 this epic — leave `max_expanders_per_wave` at 0 and never emit `kind: expand` until a later
 task documents enabling it.**
+
+### Backlog (optional, sentinel runs) — `outputs/backlog.json`
+
+Written by a checkpoint next to its verdict (`ao.overseer.backlog/v1`): independent, pre-approved
+units the sentinel may start for free in idle slots while the wave's tail runs.
+
+```json
+{"schema": "ao.overseer.backlog/v1", "checkpoint_id": "ck-01",
+ "entries": [{"id": "<slug>", "priority": 5,
+              "brief_path": "{{ instance_dir }}/outputs/waves/w02/briefs/<slug>.json",
+              "kind": "implement", "ask_ids": ["A1"], "work_item": "A1/<item>",
+              "rationale": "why this is independent and worth the slot",
+              "expires_at_ckpt": 2}]}
+```
+
+Higher `priority` starts first; `expires_at_ckpt` must be in `K+1..K+2` (K = the emitting
+checkpoint) and the entry dies when that checkpoint starts; an absent `backlog.json` clears the
+previous backlog. On success `ckpt-check` publishes it for the engine as `control/backlog.json`
+(each entry becomes unit `s-NN-<slug>`, brief copied to that id; breadcrumb/report paths follow the
+unit shape). Sentinel units are ledgered by the first checkpoint that sees them settled and
+never count against the template's `max_injected_tasks`.
 
 ## Kind → agent/instruction map
 
@@ -181,6 +208,14 @@ written by the unit itself, a declared output the engine enforces exists:
   `verdict` (`pass|fail|na`), `summary` (≤300 chars)
 - `changed_paths` (≤50, each `"<repo_id>:<rel path>"`), `acceptance_met` (list of ints indexing
   the brief's `acceptance`), `followups` (≤5, each ≤200 chars), `needs_input` (bool)
+- optional `handoff` (schema stays `v1`) for a deliberate self-split: `outcome: partial`,
+  `verdict ∈ {pass, na}`, `needs_input: false`, and
+  `{reason: time|cost|turns|scope|other, stopped_at (≤200), staged (≤10 × ≤200,
+  "<repo_id>:<sha or path>"), remaining (≤300), next_hint? (≤300)}`. Work must be evidenced by
+  `staged` or `changed_paths`, else it is a plain partial. Put the remainder in `followups[0]`.
+  A handoff is not a failed attempt. The ledger unit line gains `handoff`, `handoff_invalid`
+  (only if invalid) and `state` (`done|handoff|partial|failed|blocked|no_op`); old ledgers
+  without them read as non-handoff.
 
 **verdict** — `outputs/checkpoints/ck-JJ/verdict.json`, `schema: "ao.overseer.verdict/v1"` —
 written by the checkpoint (you), once per checkpoint:
@@ -243,7 +278,8 @@ signal requires a `rationale` of at least 40 characters.
 | `breadcrumb_integrity` | a breadcrumb `changed_paths` entry is malformed, out of its repo root, or names an unknown repo | high |
 | `stall` | no work item finished (`outcome: done`, `verdict ∈ {pass, na}`) and criteria-met did not rise, for `stall_waves` consecutive waves | high |
 | `repeated_failure` | the same work item's last 2 units both have `verdict: fail` | medium |
-| `attempt_cap` | a work item reached `max_attempts_per_item` | high |
+| `attempt_cap` | a work item reached `max_attempts_per_item` (handoffs are not counted) | high |
+| `handoff_chain` | a work item has ≥ 3 consecutive handoffs (medium at 2); answer with `redirect` + `approach_change` or `descope` | high (medium at 2) |
 | `ask_starvation` | a non-met, non-deferred ask got zero units in the last `stall_waves` waves | medium |
 | `blocked_units` | a unit in the last wave reported `outcome: blocked` or `needs_input: true` | medium |
 | `prompt_changed` | `prompt.md`'s hash no longer matches the locked charter | high |
@@ -320,15 +356,25 @@ subcommands; run them yourself in dry-run mode before you finish, per "Self-chec
   brief `model` > `kind_map[kind].model` > `default_unit_model` (omitted when none).
 - **OV-R10** — exactly one of {next checkpoint, tail}, exact shapes (`model` on `ck-*` iff
   `overseer_model` is set).
+- **OV-R17** — carry-over is never re-scheduled: no emitted unit may target a `work_item` of a
+  `digest.carry_over[]` straggler (units an early checkpoint left running).
+- **OV-BL1..BL7** — `outputs/backlog.json`: BL1 file shape/cap (20), BL2 entry fields/ids, BL3 kind
+  + stage (no new scope in converge, verify/document only in stabilize), BL4 brief + asks, BL5
+  `expires_at_ckpt` window, BL6 independence (not this wave / carry-over / capped item), BL7 no
+  backlog on closeout/hold/must_close.
 - **OV-R11** — stage restrictions (converge: existing work items only; stabilize:
   stabilize/verify/document only).
 - **OV-R12** — the verdict answers every signal id; `accept` on high needs a rationale ≥40
   chars; `deferred` needs `deferred_reason` plus evidence ≥40 chars.
-- **OV-R13** — attempt cap (`approach_change` required at the cap; forbidden above cap+1).
+- **OV-R12b** — when `digest.sentinel.directives[]` is non-empty, the verdict's
+  `directive_responses[]` answers every directive id exactly once with `response` in
+  `adopt|redirect|descope|reject`; `reject` needs a `rationale` ≥40 chars. A digest without a
+  `sentinel` block is unaffected.
+- **OV-R13** — attempt cap (`approach_change` required at the cap; forbidden above cap+1). Handoffs are not attempts, so a same-`work_item` continuation needs no `approach_change` — unless the trailing handoff chain is at its cap.
 - **OV-R13c** — rename dodge: a new work-item whose brief goal is too similar to, or whose
   prior attempts/touches intersect, a capped item's — reuse the capped key with
   `approach_change`, descope it, or hold instead.
-- **OV-R14** — decision ↔ manifest consistency, including verified early closeout.
+- **OV-R14** — decision ↔ manifest consistency, including verified early closeout (a `partial` verify, or an open handoff on a non-deferred ask, does not count as verification).
 - **OV-R15** — all JSON within 1 MiB, schema version `v1`.
 - **OV-R16** — `must_close` ⇒ `closeout`.
 

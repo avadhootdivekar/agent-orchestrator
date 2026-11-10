@@ -62,7 +62,7 @@ trip at a checkpoint silently truncates the run on resume.
 | FR-3 | **Wave/checkpoint recursion**: checkpoint `ck-K` reviews wave K and emits exactly one of {wave K+1 + `ck-(K+1)`, hold (`ck-(K+1)` with an empty wave), close-out tail}. Mechanically enforced by the `ckpt-check` post-hook | checker unit tests + e2e multi-wave run |
 | FR-4 | **Cadence**: a wave has ≤ `allowed_wave_size` units. The digest computes it as min(`wave_size`, time cap from `wave_max_minutes` × observed median unit duration, budget cap) | tool unit tests (fixed inputs) |
 | FR-5 | **Progress breadcrumbs**: every wave unit declares `outputs/progress/<unit-id>.json` (schema §13.4), so the engine's missing-output check enforces it. The checkpoint pre-hook folds them into an append-only, idempotent `outputs/ledger.jsonl` | tool unit tests; e2e |
-| FR-6 | **Loop/rework detection (deterministic)**: the digest reports `period_repeat`, `mirror_flipflop`, `content_oscillation`, `breadcrumb_integrity`, `stall`, `attempt_cap`, `repeated_failure`, `ask_starvation`, `prompt_changed`, and `blocked_units` signals (§8.3; `wave_signature_repeat` deferred, NFR-X10). The overseer must acknowledge every signal in its verdict | tool unit tests with scripted sequences |
+| FR-6 | **Loop/rework detection (deterministic)**: the digest reports `period_repeat`, `mirror_flipflop`, `content_oscillation`, `breadcrumb_integrity`, `stall`, `attempt_cap`, `handoff_chain`, `repeated_failure`, `ask_starvation`, `prompt_changed`, and `blocked_units` signals (§8.3; `wave_signature_repeat` deferred, NFR-X10). The overseer must acknowledge every signal in its verdict | tool unit tests with scripted sequences |
 | FR-7 | **Alignment**: every unit's brief cites ≥1 charter `ask_id`. The charter is hash-locked at intake, and any later change fails the checkpoint pre-hook. The overseer writes a per-ask alignment status | checker + tool tests |
 | FR-8 | **Budget stages**: the digest computes `stage ∈ {explore, converge, stabilize, closeout}` from actual *and projected* spend against `converge_pct/stabilize_pct/closeout_pct` of `run_budget_usd`. The stage is **latched** (monotonic), and `allowed_decisions` is derived from it. The checker rejects a decision the stage forbids | tool + checker unit tests; e2e with scripted costs |
 | FR-9 | **Graceful degradation**: in `stabilize`, the overseer may only emit stabilization/verify/document units against each ask's *usable bar*. In `closeout`, or when `must_close` is set (stage, `max_waves`, `max_stabilize_passes`), it must emit the close-out tail (`final-verify` → `closeout` → `final-push`) | checker tests; e2e |
@@ -346,6 +346,7 @@ Token for unit u: `tok(u) = f"{u.kind}:{u.verdict}"`; per-work-item sequence `S[
 | `stall` | No work item reached `outcome: done` with `verdict ∈ {pass, na}`, **and** the verdict-reported `criteria_met` count did not rise, for `stall_waves` consecutive waves | high |
 | `repeated_failure` | The last 2 units on the same work item have `verdict: fail` | medium |
 | `attempt_cap` | Units on work item `w` ≥ `max_attempts_per_item` | high (the checker then forbids a new unit on `w` without `approach_change`; > cap+1 is forbidden outright) |
+| `handoff_chain` | Work item `w` has ≥ `MAX_HANDOFFS_PER_ITEM` (3) consecutive self-split handoffs (§27). Handoffs are excluded from `attempt_cap`, period/mirror and `repeated_failure` | high (medium at 2) |
 | `ask_starvation` | A non-met, non-deferred ask got zero units in the last `stall_waves` waves | medium |
 | `blocked_units` | Any unit in wave K reported `outcome: blocked` or `needs_input: true` | medium |
 | `prompt_changed` | `sha256(prompt.md) != charter.prompt_sha256` | high (the overseer must `hold` or acknowledge) |
@@ -1003,12 +1004,19 @@ brief (outputs/waves/wJJ/briefs/<unit>.json, ao.overseer.brief/v1) — written b
 breadcrumb (outputs/progress/<unit>.json, ao.overseer.breadcrumb/v1) — written by the unit
   schema, unit_id, outcome: done|partial|blocked|no_op, verdict: pass|fail|na,
   summary: str≤300, changed_paths: ["<repo_id>:<rel path>"] (≤50), acceptance_met: [int],
-  followups: [str≤200] (≤5), needs_input: bool
+  followups: [str≤200] (≤5), needs_input: bool,
+  handoff?: {reason: time|cost|turns|scope|other, stopped_at: str≤200, staged: [str≤200] (≤10),
+             remaining: str≤300, next_hint?: str≤300}   # §27; valid only with outcome=partial,
+                                                         # verdict pass|na, needs_input=false
 
 ledger line (outputs/ledger.jsonl, ao.overseer.ledger/v1) — tool-owned, append-only, hash-chained
   common: schema, type: unit|event, seq, prev_sha256 ("GENESIS" for line 1), recorded_at
   type=unit:  wave, unit_id, ask_ids, work_item, kind, attempt_no, outcome, verdict, engine_status,
-              cost_usd, duration_s|null, changed_paths, needs_input
+              cost_usd, duration_s|null, changed_paths, needs_input,
+              handoff?, handoff_invalid?, state: done|handoff|partial|failed|blocked|no_op,
+              model?, effort?, started_at?, ended_at?, task_cost_limit_usd?, turn_cap?, timeout_s?,
+              limit?: {basis: observed|self_reported|inferred|none, reason, cost_vs_task_cap,
+                       duration_vs_timeout, run_spent_usd, run_budget_usd, breaker}   # §27
   type=event: event: checkpoint|hold_requested|hold_answered|budget_override|charter_locked|forced_closeout,
               checkpoint?, decision?, verdict_sha256?, manifest_sha256?, answer_sha256?, run_budget_usd?, reason?
 
@@ -1020,6 +1028,11 @@ digest (ck-KK/digest.json, ao.overseer.digest/v1) — tool-owned
   must_close: bool, must_close_reasons: [str], allowed_decisions: [decision], stabilize_passes: int,
   progress: {work_items_total, work_items_done, newly_done, stall_waves, criteria_met_prev,
              per_ask: [{ask_id, units, cost_usd, done_items, last_wave_touched}]},
+  handoffs: [ {work_item, unit_id, wave, kind, ask_ids, reason, stopped_at, remaining, next_hint,
+               staged, chain} ]   # open handoffs only (§27); progress.work_items_handed_off = count
+  limit_events: [ {unit_id, wave, work_item, kind, state, model, effort, reason, basis, handoff_reason,
+                   cost_usd, task_cost_limit_usd, duration_s, timeout_s, turn_cap, run_spent_usd,
+                   run_budget_usd, ended_at, breaker} ] (≤20, current wave), limit_gaps: [str]
   capped_work_items: [work_item], signals: [ {id, type, severity, work_item?, ask_id?, path?, evidence{}, message} ]
 
 verdict (ck-KK/verdict.json, ao.overseer.verdict/v1) — written by the overseer
@@ -1532,3 +1545,52 @@ max(stage_raw, prev_stage)` on ACTUAL spend; `allowed_wave_size = min(wave_size,
 (explore/converge), `stabilize_wave_size` (stabilize), 0 (closeout). `stage_projected` and
 `budget_cap*` remain in the digest as informational fields. The hard stops are unchanged:
 `run_cost_usd` / `task_cost_usd` breakers and the `ov-unit-gate` BUDGET check.
+
+## 27. Partial / handoff state and limit report (post-MVP addendum)
+
+**Problem.** A unit that runs out of time, cost or turns, or finds its slice too large, had only
+`done`, `blocked`, or `failed`, so a deliberate early stop looked like a failed attempt and burned
+`max_attempts_per_item`.
+
+**Decision record (scope choice).** The state is **template-level**, not an engine status. The unit
+exits 0, so the engine task stays `succeeded`; the distinction lives in the breadcrumb, the
+hash-chained ledger and the digest. Alternative rejected: a new engine `TaskResult` status, which
+would touch the scheduler, resume, metrics and every template for a problem the overseer can
+handle itself. Cost: the engine cannot tell a handoff from a clean finish.
+
+**Breadcrumb.** Optional `handoff` object (schema stays `v1`, see §13.4). A malformed handoff never
+fails the run: `validate_handoff` returns a reason, the ledger line records `handoff_invalid`, and
+the unit counts as a plain `partial`. Over-long strings are truncated.
+
+**Ledger.** Unit lines gain `handoff`, `handoff_invalid` and `state`
+(`done|handoff|partial|failed|blocked|no_op`, from one shared `unit_state`). Old ledgers read as
+non-handoff.
+
+**Signals and rules.**
+- Handoffs are not attempts: excluded from `attempt_cap`, period/mirror and `repeated_failure`.
+  `handoff_chain` bounds them (3 consecutive on one item = high).
+- A staged handoff (one with `changed_paths`) counts as progress for `stall`.
+- **R13 / OV-R13:** a same-`work_item` continuation needs no `approach_change`, unless the trailing
+  handoff chain is at its cap (then `approach_change` is required, as at the attempt cap).
+- **R14 / OV-R14:** early closeout is not verified by a `partial` verify unit, and is refused
+  while a non-deferred ask has an open handoff.
+- Digest: `handoffs[]` (open ones only) and `progress.work_items_handed_off`. The checkpoint
+  continues, descopes or verifies; if the remainder cannot fit the budget it defers the ask with
+  `deferred_reason: out_of_budget`, quoting `remaining`.
+
+**Limit report (A2).** `overseer_tool.py limit-report [--wave N] [--format json|md]` is read-only,
+derived from the ledger and config. Each ledger unit line carries a `limit` block whose `basis`
+says how far to trust `reason`: `observed` (a recorded breaker trip names the unit),
+`self_reported` (the unit's handoff reason), `inferred` (duration ≥ 95% of the 7200 s timeout, or
+cost ≥ the task cap) or `none`. The digest adds `limit_events` (current wave, ≤20) and
+`limit_gaps`; closeout embeds the md report under "Limit insights".
+
+**Gaps in engine limit data (documented, not hidden).**
+- `TaskResult.status`/`error` are not mirrored into `state.json`, so which limit ended a failed or
+  timed-out unit is inferred.
+- Turns used are not recorded; `turn_cap` is derived from effort and a turn-cap hit is unobservable.
+- `task_budget_usd` is a recommend-mode breaker checked at task boundaries, not mid-task.
+- `state.json` keeps only the last dispatch's model; run spend is the settled value at ingest.
+
+**Open engine follow-up.** Persist the last task status/error in `TaskRunState` so a tripped limit
+is observed rather than inferred. Until then `basis: inferred` rows are approximations.

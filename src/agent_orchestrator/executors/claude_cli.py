@@ -24,8 +24,10 @@ Captured artifacts per task (all under ``ctx.output_dir``):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import signal
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -34,6 +36,8 @@ from pathlib import Path
 from ..models import AgentSpec, TaskContext, TaskResult
 from .base import Executor
 from .prompt import build_prompt
+
+logger = logging.getLogger(__name__)
 
 # --- Output-format flags (stream-json is required to capture every turn) ------
 # stream-json emits one JSON event per line; --verbose is mandatory for
@@ -573,6 +577,22 @@ def build_claude_argv(agent: AgentSpec, prompt: str) -> list[str]:
         if max_turns is not None:
             argv = argv + ["--max-turns", str(max_turns)]
 
+    # Thinking effort -> `--effort` (the claude CLI's own reasoning-depth flag). Opt-in; an explicit
+    # --effort in command_template/extra_args wins.
+    if agent.thinking_effort and "--effort" not in argv:
+        argv = argv + ["--effort", agent.thinking_effort]
+
+    # Autocompact -> `--autocompact` (provider-neutral field, claude mapping). Opt-in; an explicit
+    # --autocompact in command_template/extra_args wins (logged, never silently dropped).
+    if agent.autocompact is not None:
+        if "--autocompact" in argv:
+            logger.warning(
+                "autocompact=%s ignored: argv already carries --autocompact (extra_args wins)",
+                agent.autocompact,
+            )
+        else:
+            argv = argv + ["--autocompact", str(agent.autocompact)]
+
     # Apply the agent's opt-in tool-disable list (default: none → allow all) and
     # the engine's non-overridable forced set, BEFORE the stream flags, so the
     # variadic --disallowedTools list is terminated by --output-format rather than
@@ -594,6 +614,33 @@ def build_claude_argv(agent: AgentSpec, prompt: str) -> list[str]:
     return _ensure_stream_capture_flags(argv)
 
 
+CANCEL_SLICE_SECONDS = 0.2
+"""How often a cancellable wait re-checks the cancel event (kill latency bound)."""
+
+
+def _killpg(proc: subprocess.Popen, sig: int) -> None:
+    """Signal the child's whole process group (it is its own session leader); best effort."""
+    try:
+        os.killpg(proc.pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def terminate_process_group(proc: subprocess.Popen, grace_seconds: float) -> None:
+    """SIGTERM the group, wait up to *grace_seconds*, then SIGKILL it; reap the leader.
+
+    The group is SIGKILLed even if the leader exited on SIGTERM, so grandchildren that ignore
+    SIGTERM (a ``bash -c 'sleep ...'`` tree) never survive as orphans.
+    """
+    _killpg(proc, signal.SIGTERM)
+    try:
+        proc.wait(timeout=max(grace_seconds, 0))
+    except subprocess.TimeoutExpired:
+        pass
+    _killpg(proc, signal.SIGKILL)
+    proc.wait()
+
+
 class ClaudeCliExecutor(Executor):
     """Executes tasks by spawning a `claude` CLI subprocess.
 
@@ -610,6 +657,8 @@ class ClaudeCliExecutor(Executor):
     (FR-5).  Token usage is extracted from the terminal ``result`` event.
     """
 
+    supported_settings = frozenset({"thinking_effort", "autocompact"})
+
     def execute(self, ctx: TaskContext) -> TaskResult:
         prompt = build_prompt(ctx)
         argv = build_claude_argv(ctx.agent, prompt)
@@ -619,6 +668,8 @@ class ClaudeCliExecutor(Executor):
         stderr_path = os.path.join(ctx.output_dir, STDERR_FILE)
 
         timed_out = False
+        killed = False
+        cancel = ctx.cancel_event
         # Redirect the child's stdout/stderr straight to files (OS-level): the
         # full per-turn stream lands on disk live, so a long run that later times
         # out or crashes still leaves a partial transcript instead of nothing.
@@ -637,13 +688,30 @@ class ClaudeCliExecutor(Executor):
                 stdin=subprocess.DEVNULL,
                 stdout=tf,
                 stderr=ef,
+                # Own session => own process group, so a kill reaches the whole tool tree.
+                # Only when a cancel token is wired (sentinel recovery): else byte-identical.
+                start_new_session=cancel is not None,
             )
-            try:
-                proc.wait(timeout=ctx.timeout_seconds)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                timed_out = True
+            if cancel is None:
+                try:
+                    proc.wait(timeout=ctx.timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                    timed_out = True
+            else:
+                deadline = time.monotonic() + ctx.timeout_seconds
+                while True:
+                    if cancel.wait(CANCEL_SLICE_SECONDS):
+                        terminate_process_group(proc, getattr(cancel, "grace_seconds", 10))
+                        killed = True
+                        break
+                    if proc.poll() is not None:
+                        break
+                    if time.monotonic() >= deadline:
+                        terminate_process_group(proc, 0)
+                        timed_out = True
+                        break
 
         returncode = proc.returncode
         transcript_text = Path(transcript_path).read_text(encoding="utf-8", errors="replace")
@@ -669,6 +737,19 @@ class ClaudeCliExecutor(Executor):
             "provider_retry_after_epoch": usage_info["provider_retry_after_epoch"],
             "claude_quota_exhausted": usage_info["claude_quota_exhausted"],
         }
+
+        if killed:
+            return TaskResult(
+                task_id=ctx.task_id,
+                status="killed",
+                attempts=1,
+                exit_code=returncode,
+                error=f"killed: {getattr(cancel, 'reason', '')}",
+                kill_reason=getattr(cancel, "reason", "") or None,
+                kill_source=getattr(cancel, "source", "") or None,
+                output_artifact_path=ctx.output_dir,
+                **token_fields,
+            )
 
         if timed_out:
             return TaskResult(

@@ -13,6 +13,7 @@ inside the function body, mirroring `validate`'s own existing pattern and core
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -23,10 +24,23 @@ import typer
 
 from ..errors import SpecValidationError
 from . import (
+    arena,  # noqa: F401 -- registers "arena" grader (T-Ga4Rna)
+    blackbox,  # noqa: F401 -- registers "blackbox" grader (E-Bn7Dsc)
+    exercism,  # noqa: F401 -- registers "exercism" provider + grader (T-Pf4Mix)
+    generated_provider,  # noqa: F401 -- registers "generated" workspace provider (E-Bn7Dsc)
+    mutation_provider,  # noqa: F401 -- registers "repo_mutation" workspace provider (E-Bn7Dsc)
+    objective,  # noqa: F401 -- registers "objective" grader (T-Os5Lad)
+    pr_mined_provider,  # noqa: F401 -- registers "pr_mined" workspace provider (E-Bn7Dsc)
+    pytest_targeted,  # noqa: F401 -- registers "pytest_targeted" grader (E-Bn7Dsc)
+    scenarios_grader,  # noqa: F401 -- registers "scenarios" grader (T-Ga4Rna)
     swebench_grader,  # noqa: F401 -- registers "swebench" grader (T-Sg6Jf2)
     swebench_provider,  # noqa: F401 -- registers "swebench" workspace provider (T-Sw5Hd9)
 )
+from .calibrate import calibrate_command
 from .errors import BenchError
+from .gen.cli import gen_command
+from .pr_mined_import import import_prs_command
+from .sandbox import images_command
 from .spec import load_subject, load_suite
 from .swebench_import import import_swebench_command
 
@@ -37,6 +51,12 @@ if TYPE_CHECKING:
 
 app = typer.Typer(name="ao-bench", help="Benchmark harness CLI for agent-orchestrator subjects.")
 app.command(name="import-swebench")(import_swebench_command)  # T-Sw5Hd9
+# E-Bn7Dsc verbs live in their own modules (one owner each) and only register here.
+app.command(name="gen")(gen_command)
+app.command(name="calibrate")(calibrate_command)
+app.command(name="images")(images_command)
+app.command(name="import-prs")(import_prs_command)
+app.command(name="import-exercism")(exercism.import_exercism_command)  # T-Pf4Mix
 
 # Exit codes (design doc §7 / this task's own AC): 0 ok, 1 usage/spec error, 2 a run
 # completed but at least one task's SUBJECT (not grader-verdict) status indicates a
@@ -143,6 +163,19 @@ def _print_run_summary(record: BenchRunRecord, result_dir: Path, summary_path: P
         f"total_cost=${agg.total_cost_usd:.4f} cost_per_solved={cost_per_solved} "
         f"total_wall={agg.total_wall_clock_seconds:.2f}s"
     )
+    iso = record.env_isolation
+    if iso is not None:
+        baseline = record.env_baseline.digest[:12] if record.env_baseline else "—"
+        typer.echo(
+            f"Environment: workspace_root={iso.workspace_root}"
+            f" contaminated={'yes' if record.env_contaminated else 'no'} baseline={baseline}"
+        )
+    foreign = [t.task_id for t in record.tasks if t.env_foreign]
+    suspects = [t.task_id for t in record.tasks if t.suspect]
+    if foreign:
+        typer.echo(f"WARNING: agents loaded entries absent from the baseline in: {foreign}")
+    if suspects:
+        typer.echo(f"WARNING: grading-root access in {suspects} -- excluded from comparison stats")
 
 
 @app.command()
@@ -200,6 +233,28 @@ def run(
         " benchmarks/tiers.json (enabled=false, e.g. xlarge). Gates ANY disabled tier,"
         " not only xlarge -- the flag name is historical/literal per the epic.",
     ),
+    parity: str | None = typer.Option(
+        None,
+        "--parity",
+        help="Path to a parity bundle (dir or parity.json) applied to this subject -- same"
+        " CLAUDE.md/.claude/env/limits every subject must share (HLD §2b). Default: the"
+        " suite's own `parity` field, if any.",
+    ),
+    repeat: int = typer.Option(
+        1,
+        "--repeat",
+        min=1,
+        help="Which repeat of this (suite x subject) this run is (HLD §6). 1 = the usual"
+        " result dir; n>1 lands in <bench_run_id>-r<n>.",
+    ),
+    allow_contaminated_env: bool = typer.Option(
+        False,
+        "--allow-contaminated-env",
+        help="Run agent subjects even if the bench workspace root (AO_BENCH_WORKSPACE_ROOT,"
+        " default /var/tmp/ao-bench/<uid>) or an ancestor holds CLAUDE.md/AGENTS.md/.claude"
+        " (T-Ws7Iso). The run is stamped env_contaminated and `report` refuses it without"
+        " --allow-mixed.",
+    ),
 ) -> None:
     """Run a benchmark suite against a subject; writes run.json + summary.md.
 
@@ -254,6 +309,9 @@ def run(
             default_timeout=timeout,
             cost_budget_usd=effective_cost_budget_usd,
             max_parallel=effective_max_parallel,
+            parity=parity,
+            repeat=repeat,
+            allow_contaminated_env=allow_contaminated_env,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -286,16 +344,36 @@ def _print_campaign_summary(result: CampaignResult) -> None:
         if sr.launched:
             solve_rate = "—" if sr.solve_rate is None else f"{sr.solve_rate * 100:.1f}%"
             cost = "—" if sr.total_cost_usd is None else f"${sr.total_cost_usd:.4f}"
+            repeat_note = (
+                f" +{len(sr.repeat_run_dirs)} repeat(s) ${sr.repeat_cost_usd:.4f}"
+                if sr.repeat_run_dirs
+                else ""
+            )
             typer.echo(
                 f"  {sr.subject_id}: {sr.status} solved={sr.solved}/{sr.total} "
-                f"({solve_rate}) cost={cost} run_dir={sr.run_dir}"
+                f"({solve_rate}) cost={cost}{repeat_note} run_dir={sr.run_dir}"
             )
         else:
             typer.echo(f"  {sr.subject_id}: {sr.status} (not launched)")
+    if record.repeats_requested > 1:
+        mode = "staged" if record.staged else "non-staged"
+        typer.echo(
+            f"Repeats ({mode}): {record.repeats_done}/{record.repeats_requested} done;"
+            f" stopped: {record.stage_stop_reason or '—'}"
+        )
+        for entry in record.stage_log:
+            typer.echo(
+                f"  repeat {entry.repeat}: {len(entry.task_ids)} task(s) "
+                f"[{', '.join(entry.task_ids)}] -- {entry.reason}"
+            )
     typer.echo(f"Total spent: ${record.total_spent_usd:.4f} / ${record.whole_run_cap_usd:.4f}")
     if record.comparison_json is not None:
         typer.echo(f"Comparison: {record.comparison_json}")
         typer.echo(f"            {record.comparison_md}")
+    if record.env_problems:
+        typer.echo("WARNING: comparison stamped NON-ISOLATED (T-Ws7Iso):")
+        for problem in record.env_problems:
+            typer.echo(f"  - {problem}")
 
 
 @app.command()
@@ -344,6 +422,36 @@ def campaign(
         " benchmarks/tiers.json (enabled=false, e.g. xlarge). Gates ANY disabled tier,"
         " not only xlarge -- the flag name is historical/literal per the epic.",
     ),
+    parity: str | None = typer.Option(
+        None,
+        "--parity",
+        help="Parity bundle applied to EVERY subject in the campaign (HLD §2b). Default:"
+        " the suite's own `parity` field.",
+    ),
+    repeats: int = typer.Option(
+        1,
+        "--repeats",
+        min=1,
+        help="Maximum repeats per (subject x task) (HLD §6). 1 = the single-pass campaign."
+        " With N>1, repeats 2..N run only while some subject pair's paired-bootstrap 95% CI"
+        " on the score difference still includes 0, and (unless --no-staged) only on the"
+        " tasks where subjects disagree or are noisy. Each repeat lands in its own"
+        " <bench_run_id>-r<n> dir; the whole-run cap covers all repeats.",
+    ),
+    no_staged: bool = typer.Option(
+        False,
+        "--no-staged",
+        help="With --repeats N>1: run EVERY task for EVERY subject at every repeat up to N"
+        " (the non-adaptive protocol) instead of the staged one.",
+    ),
+    allow_contaminated_env: bool = typer.Option(
+        False,
+        "--allow-contaminated-env",
+        help="Run agent subjects even if the bench workspace root (AO_BENCH_WORKSPACE_ROOT,"
+        " default /var/tmp/ao-bench/<uid>) or an ancestor holds CLAUDE.md/AGENTS.md/.claude"
+        " (T-Ws7Iso). The run is stamped env_contaminated and `report` refuses it without"
+        " --allow-mixed.",
+    ),
 ) -> None:
     """Run a suite against a LIST of subjects, enforcing a whole-run USD cap across all
     of them (ADR-0009 D3); writes each subject's own run.json/summary.md plus a
@@ -366,6 +474,10 @@ def campaign(
             out_dir=out_dir,
             force=force,
             enable_xlarge=enable_xlarge,
+            parity=parity,
+            repeats=repeats,
+            staged=not no_staged,
+            allow_contaminated_env=allow_contaminated_env,
         )
     except (SpecValidationError, BenchError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -375,35 +487,57 @@ def campaign(
     raise typer.Exit(EXIT_OK)
 
 
-# `<date>-<suite_id>-<subject_id>` (runner.compute_bench_run_id) -- suite_id is a known,
-# literal string here (the caller's own `--suite`), so this only needs to recover the
-# subject id, exactly mirroring `results._derive_subject_id`'s own approach.
+# `<date>-<suite_id>-<subject_id>[-r<n>]` (runner.compute_bench_run_id) -- suite_id is a
+# known, literal string here (the caller's own `--suite`), so this only needs to recover the
+# subject id (+ repeat), exactly mirroring `results._derive_subject_id`'s own approach.
+_REPEAT_DIR_SUFFIX_RE = re.compile(r"^(?P<subject>.+)-r(?P<repeat>\d+)$")
+# Dirs a campaign/report writes NEXT TO the run dirs: outputs, never subjects to compare.
+_NON_SUBJECT_DIR_SUFFIXES = frozenset({"compare", "campaign"})
+
+
+def _classify_result_dir(entry: Path, rest: str) -> tuple[str, int]:
+    """`(subject_id, repeat)` of a result dir. A readable `run.json` is authoritative (a
+    subject id may itself end in `-r2`); otherwise fall back to the name's `-r<n>` suffix."""
+    run_json = entry / "run.json"
+    if run_json.is_file():
+        try:
+            data = json.loads(run_json.read_text())
+            return str(data["subject"]["id"]), int(data.get("repeat", 1))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    match = _REPEAT_DIR_SUFFIX_RE.match(rest)
+    if match:
+        return match.group("subject"), int(match.group("repeat"))
+    return rest, 1
+
+
 def _discover_latest_run_dirs(results_root: Path, suite_id: str) -> list[Path]:
-    """Auto-discover the LATEST result dir per subject for *suite_id* under
+    """Auto-discover the LATEST result dirs per subject for *suite_id* under
     *results_root* (T-Cli8Nf design note: "auto-discover latest per subject for a
     suite -- keep simple"). Directory names sort lexicographically the same as their
-    embedded ISO date, so a single forward sorted pass -- keeping the last match per
-    subject id -- is exactly "latest wins", no date parsing required. The compare
-    directory itself (`<date>-<suite_id>-compare`) is excluded -- it is a report
-    OUTPUT, never a subject to compare.
+    embedded ISO date, so "latest" needs no date parsing. A subject's repeats
+    (`<bench_run_id>-r<n>`) are returned together: every dir of the subject's latest date,
+    so a staged campaign's repeat dirs travel with their repeat-1 dir (a campaign that ran
+    across UTC midnight should be reported with explicit `--run-dir`s). The compare/campaign
+    output dirs are excluded -- they are report OUTPUTS, never subjects to compare.
     """
-    from .results import COMPARE_DIR_SUFFIX
-
     if not results_root.is_dir():
         return []
-    pattern = re.compile(rf"^\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(suite_id)}-(.+)$")
-    latest_by_subject: dict[str, Path] = {}
+    pattern = re.compile(rf"^(\d{{4}}-\d{{2}}-\d{{2}})-{re.escape(suite_id)}-(.+)$")
+    # subject -> date -> dirs of that date (repeats)
+    by_subject: dict[str, dict[str, list[Path]]] = {}
     for entry in sorted(results_root.iterdir(), key=lambda p: p.name):
         if not entry.is_dir():
             continue
         match = pattern.match(entry.name)
-        if not match:
+        if not match or match.group(2) in _NON_SUBJECT_DIR_SUFFIXES:
             continue
-        subject_id = match.group(1)
-        if subject_id == COMPARE_DIR_SUFFIX:
-            continue
-        latest_by_subject[subject_id] = entry  # later (sorted) match overwrites -> latest date
-    return sorted(latest_by_subject.values(), key=lambda p: p.name)
+        subject_id, _repeat = _classify_result_dir(entry, match.group(2))
+        by_subject.setdefault(subject_id, {}).setdefault(match.group(1), []).append(entry)
+    latest: list[Path] = []
+    for dates in by_subject.values():
+        latest.extend(dates[max(dates)])  # ISO dates: max() == latest
+    return sorted(latest, key=lambda p: p.name)
 
 
 @app.command()
@@ -432,13 +566,22 @@ def report(
     allow_mixed: bool = typer.Option(
         False,
         "--allow-mixed",
-        help="Allow comparing two runs for the same subject id with different"
-        " config_fingerprint (default: refused).",
+        help="Allow comparing runs that are not apples-to-apples: two runs for the same"
+        " subject id with different config_fingerprint, runs produced under different"
+        " parity bundles (HLD §2b; stamped NON-PARITY), or runs whose agents did not share"
+        " one clean environment (T-Ws7Iso; stamped NON-ISOLATED). Default: refused.",
     ),
 ) -> None:
-    """Compare result dirs for the same suite; writes comparison.json + comparison.md."""
+    """Compare result dirs for the same suite; writes comparison.json + comparison.md.
+
+    Several dirs for one subject are its repeats (`<bench_run_id>-r<n>`, from `ao-bench
+    run --repeat n` or `ao-bench campaign --repeats N`): they are aggregated per task, and
+    every subject pair gets a paired bootstrap CI + Wilcoxon p over the per-task score
+    differences. Infra errors are excluded from the rates and listed separately.
+    """
     from .results import build_comparison, compute_compare_id, render_winners, write_comparison
     from .runner import resolve_result_dir
+    from .stats import format_ci
 
     if run_dir:
         dirs = [Path(d) for d in run_dir]
@@ -476,6 +619,180 @@ def report(
     typer.echo(f"            {md_path}")
     for line in render_winners(comparison):
         typer.echo(line)
+    for entry in comparison.pairwise:
+        if entry.mean_diff is None or entry.ci_lo is None or entry.ci_hi is None:
+            typer.echo(f"- {entry.a} vs {entry.b}: no common attempted task")
+            continue
+        p_text = "—" if entry.p_wilcoxon is None else f"{entry.p_wilcoxon:.3f}"
+        typer.echo(
+            f"- {entry.a} vs {entry.b}: {format_ci(entry.mean_diff, entry.ci_lo, entry.ci_hi)}"
+            f" p={p_text} (n={entry.n_tasks})"
+        )
+    if comparison.parity_mixed:
+        typer.echo("WARNING: runs used different parity bundles -- NON-PARITY comparison")
+    if comparison.unreliable_subjects:
+        typer.echo(
+            "WARNING: UNRELIABLE (>10% infra errors): " + ", ".join(comparison.unreliable_subjects)
+        )
+
+
+# Exit code of `ao-bench env` when the workspace root would leak instructions (T-Ws7Iso).
+EXIT_ENV_CONTAMINATED = 2
+
+
+@app.command(name="env")
+def env_cmd(
+    parity: str | None = typer.Option(
+        None,
+        "--parity",
+        help="Parity bundle whose env knobs/files apply (default: benchmarks/parity/default"
+        " in this checkout, when present).",
+    ),
+    probe: bool = typer.Option(
+        False,
+        "--probe",
+        help="Also start a throwaway `claude -p` in an empty parity-applied workspace under"
+        " the bench root, read its init event and kill it: prints the baseline every agent"
+        " subject is compared against (skills/agents/slash commands/MCP servers/plugins).",
+    ),
+    model: str | None = typer.Option(None, "--model", help="Model for the --probe session."),
+) -> None:
+    """Preflight the bench environment (T-Ws7Iso); prints JSON.
+
+    Shows where workspaces and grading assets go (`AO_BENCH_WORKSPACE_ROOT`, default
+    /var/tmp/ao-bench/<uid>), any CLAUDE.md/AGENTS.md/.claude in that root or an ancestor
+    (which Claude Code would load into every agent under test), the user-level config
+    fingerprint, and with --probe the baseline. Exit 0 when clean, 2 when contaminated.
+    """
+    from .envcheck import check_isolation, subject_env, user_config_fingerprint
+    from .parity import load_parity
+    from .runner import probe_baseline
+    from .workspace import REPO_ROOT, bench_grading_root, bench_workspace_root, parity_env
+
+    parity_path = Path(parity) if parity else REPO_ROOT / "benchmarks" / "parity" / "default"
+    try:
+        bundle = load_parity(parity_path) if (parity or parity_path.exists()) else None
+    except SpecValidationError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(EXIT_USAGE_ERROR) from exc
+    ws_root, grading_root = bench_workspace_root(), bench_grading_root()
+    isolation = check_isolation(ws_root, grading_root)
+    child_env = subject_env(parity_env(bundle) if bundle is not None else {})
+    payload: dict[str, object] = {
+        "workspace_root": str(ws_root),
+        "grading_root": str(grading_root),
+        "contaminated": isolation.contaminated,
+        "instruction_ancestors": isolation.instruction_ancestors,
+        "parity_bundle": str(parity_path) if bundle is not None else None,
+        "user_config": user_config_fingerprint(child_env).model_dump(mode="json"),
+    }
+    if probe:
+        ws_root.mkdir(parents=True, exist_ok=True)
+        baseline = probe_baseline(ws_root, bundle, env=child_env, model=model)
+        payload["baseline"] = baseline.model_dump(mode="json") if baseline else None
+    typer.echo(json.dumps(payload, indent=2))
+    raise typer.Exit(EXIT_ENV_CONTAMINATED if isolation.contaminated else EXIT_OK)
+
+
+@app.command(name="toolchains")
+def toolchains_cmd(
+    install: bool = typer.Option(False, "--install", help="Download + verify every toolchain."),
+    name: list[str] | None = typer.Option(None, "--name", help="Limit to these toolchains."),
+) -> None:
+    """List (or --install) the bench-owned language toolchains agents get on their host."""
+    from .toolchains import TOOLCHAINS, install_dir, is_installed
+    from .toolchains import install as install_one
+
+    names = name or sorted(TOOLCHAINS)
+    for n in names:
+        if n not in TOOLCHAINS:
+            typer.echo(f"ERROR: unknown toolchain {n!r}; known: {sorted(TOOLCHAINS)}", err=True)
+            raise typer.Exit(EXIT_USAGE_ERROR)
+        tc = TOOLCHAINS[n]
+        if install and not is_installed(tc):
+            try:
+                install_one(tc)
+            except BenchError as exc:
+                typer.echo(f"ERROR: {exc}", err=True)
+                raise typer.Exit(EXIT_USAGE_ERROR) from exc
+        state = "installed" if is_installed(tc) else "missing"
+        typer.echo(f"{tc.name:6s} {tc.version:10s} {state:9s} {install_dir(tc)}")
+
+
+@app.command(name="portfolio")
+def portfolio_cmd(
+    run: list[str] = typer.Option(..., "--run", help="Run dir (run.json); repeatable."),
+    subject: list[str] | None = typer.Option(None, "--subject", help="Subject ids, in order."),
+    out: str | None = typer.Option(None, "--out", help="Write the markdown report here."),
+) -> None:
+    """Cross-suite portfolio report: per suite / area / language and item-difficulty bands."""
+    from .portfolio import portfolio_command_impl
+
+    typer.echo(portfolio_command_impl(run, subject or [], out))
+
+
+@app.command(name="regrade")
+def regrade_cmd(
+    run: str = typer.Option(
+        ..., "--run", help="Run dir (run.json) whose saved workspaces to grade."
+    ),
+    suite: str = typer.Option(..., "--suite", help="The suite.json the run used."),
+    out: str | None = typer.Option(None, "--out", help="New run dir (default <run>-regrade)."),
+    max_parallel: int = typer.Option(3, "--max-parallel", min=1, help="Tasks graded at once."),
+) -> None:
+    """Grade a finished run's artefacts again with the current grader (no subject is run)."""
+    from .regrade import regrade_run
+    from .results import load_run
+
+    out_dir, skipped = regrade_run(run, suite, out, max_parallel)
+    rec = load_run(out_dir)
+    typer.echo(f"Regraded run: {out_dir}")
+    agg = rec.aggregate
+    kept = f" (kept unchanged: {', '.join(skipped)})" if skipped else ""
+    typer.echo(f"solved {agg.solved}/{agg.total} mean_score={agg.mean_score:.3f}{kept}")
+
+
+@app.command(name="arena-rate")
+def arena_rate_cmd(
+    game: list[str] = typer.Option(
+        [], "--game", help='Game as JSON, e.g. \'{"id":"othello","size":8}\' (repeatable).'
+    ),
+    pool: str | None = typer.Option(None, "--pool", help="Rate every game of a pool: dev|heldout."),
+    games_per_pair: int = typer.Option(40, "--games-per-pair", min=2, help="Even number."),
+    seed: int = typer.Option(1, "--seed", help="Round-robin seed (openings and bot ties)."),
+    workers: int = typer.Option(8, "--workers", min=1, help="Parallel processes."),
+    write: bool = typer.Option(
+        False, "--write", help="Store the ratings under bench/games/ratings."
+    ),
+) -> None:
+    """Rate the reference bots of `game-arena` games by an offline round robin (no LLM spend)."""
+    from .games import game_from_wire
+    from .games.bots import spec_label
+    from .games.ladder import ladder_version, write_ladder
+    from .games.pools import POOLS, pool_games
+    from .games.roundrobin import run_round_robin
+
+    games = [game_from_wire(json.loads(g)) for g in game]
+    if pool:
+        if pool not in POOLS:
+            typer.echo(f"ERROR: unknown pool {pool!r}; known: {sorted(POOLS)}", err=True)
+            raise typer.Exit(EXIT_USAGE_ERROR)
+        games += pool_games(POOLS[pool])
+    if not games:
+        typer.echo("ERROR: give --game or --pool", err=True)
+        raise typer.Exit(EXIT_USAGE_ERROR)
+    for g in games:
+        typer.echo(f"{g.key}: round robin, {games_per_pair} games per pair, seed {seed}")
+        rr = run_round_robin(g, games_per_pair, seed, workers, progress=typer.echo)
+        for spec, r in zip(g.ladder(), rr.ratings, strict=True):
+            typer.echo(f"  {spec_label(spec):<10} {r:8.1f}")
+        typer.echo(
+            f"  first-player score in mirror matches: {rr.first_player_score:.2f} "
+            f"(accepted {g.balance_bounds()}), ladder version {ladder_version(g)}, "
+            f"{rr.seconds:.0f}s"
+        )
+        if write:
+            typer.echo(f"  wrote {write_ladder(g, rr)}")
 
 
 @app.command(name="list")

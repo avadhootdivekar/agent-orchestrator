@@ -83,7 +83,7 @@ export function formatTimestamp(iso: string | null | undefined): string {
  * status color alone never carries meaning (dataviz status-palette rule), so every chip
  * ships an icon plus the status word.
  */
-export type StatusTone = "good" | "critical" | "active" | "neutral";
+export type StatusTone = "good" | "critical" | "active" | "waiting" | "neutral";
 
 export function statusTone(status: string): StatusTone {
   switch (status) {
@@ -94,6 +94,10 @@ export function statusTone(status: string): StatusTone {
       return "critical";
     case "running":
       return "active";
+    case "awaiting_input":
+    case "killed":
+      // Parked on a human answer / killed by the sentinel and awaiting re-dispatch: not failed.
+      return "waiting";
     default:
       // pending / skipped / cancelled / not_taken — all "nothing happening here".
       return "neutral";
@@ -110,6 +114,10 @@ export function statusGlyph(status: string): string {
       return "⧗";
     case "running":
       return "▶";
+    case "awaiting_input":
+      return "?";
+    case "killed":
+      return "☠";
     case "cancelled":
       return "⊘";
     case "skipped":

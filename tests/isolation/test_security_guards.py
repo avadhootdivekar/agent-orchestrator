@@ -84,9 +84,24 @@ _GIT_CALL_ALLOWED: dict[Path, str] = {
     _SRC_ROOT / "_version.py": "pre-epic version stamping",
     # Pre-epic bench harness: records the subject repo's `git rev-parse --short HEAD`.
     _SRC_ROOT / "bench" / "runner.py": "pre-epic bench harness commit stamping",
+    # E-Bn7Dsc Tier-2 bench providers (outside the engine import graph, SI-1): clone/checkout
+    # PUBLIC repos into the bench sandbox and snapshot them as a single parentless commit; the
+    # grader diffs the agent's workspace against that snapshot for collateral stats. Never the
+    # user's own repos, never from the engine.
+    _SRC_ROOT / "bench" / "tier2_common.py": "E-Bn7Dsc tier-2 provider clone/snapshot helpers",
+    _SRC_ROOT
+    / "bench"
+    / "pytest_targeted.py": "E-Bn7Dsc collateral `git diff --numstat` vs snapshot",
     # Pre-epic SWE-bench import/grade harness: clones and diffs third-party subject repos.
     _SRC_ROOT / "bench" / "swebench_provider.py": "pre-epic SWE-bench subject checkout",
     _SRC_ROOT / "bench" / "swebench_grader.py": "pre-epic SWE-bench patch extraction",
+    # E-Bn7Dsc T-Ov3Sbj: an `ao_workflow` bench subject with `init_git` turns the bench task's
+    # throwaway repo copy into a one-commit git repo with a LOCAL bare origin (workflows like
+    # overseer-runner branch off main). Bench sandbox only, never the user's repos or the engine.
+    _SRC_ROOT / "bench" / "subjects.py": "E-Bn7Dsc bench subject init_git (local bare origin)",
+    # T-Pf4Mix: the exercism provider reads ONE exercise dir of the pinned public polyglot repo
+    # from the shared bench clone cache (`git ls-tree` / `git archive` / `git show`), read-only.
+    _SRC_ROOT / "bench" / "exercism.py": "T-Pf4Mix exercism: read-only cache archive",
     # E-YAAGhk (overseer-runner template), T-C6uQJW: the template's own governance tool
     # computes `repo_heads`/git-derived "tracked paths" for its content_oscillation
     # detector (HLD S8.3) via bounded `git rev-parse HEAD` / `git diff --name-only` /

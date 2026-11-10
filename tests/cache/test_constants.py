@@ -26,6 +26,7 @@ HLD_REASONS = frozenset(
         "unknown_agent_field",
         "unknown_workflow_field",
         "emit_tasks",
+        "input_request",
         "task_manifest_path",
         "output_manifest",
         "pre_hook",

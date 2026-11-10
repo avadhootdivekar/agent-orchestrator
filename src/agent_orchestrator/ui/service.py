@@ -24,6 +24,8 @@ from typing import Any
 
 import yaml
 
+from .. import control, sentinel_panel
+from .. import inputs as run_inputs
 from ..auth.paths import default_denied_paths, is_within
 from ..config import load_agents, load_reposets
 from ..errors import OrchestratorError
@@ -42,7 +44,7 @@ from ..feedback import (
     validate_run_id,
 )
 from ..implicit_signals import apply_survival, implicit_signals
-from ..models import RunState
+from ..models import RunState, run_waiting_for_input
 from ..project_config import ProjectConfig, find_project_config, load_project_config
 from ..spec import cross_validate, load_workflow
 from ..survival import compute_survival, validate_ref
@@ -103,6 +105,9 @@ FAILED_LAUNCH_WINDOW_HOURS = 24.0
 
 # Non-alnum run -> single hyphen, for deriving a slug from a free-text prompt (HLD §2.6).
 _SLUG_DERIVE_RE = re.compile(r"[^a-z0-9]+")
+# Cap on a prompt-derived slug. The slug becomes part of the instance directory / run id, and a
+# long first prompt line otherwise overflows the 255-byte filename limit (ENAMETOOLONG -> HTTP 500).
+_SLUG_MAX_CHARS = 60
 
 
 # Survival shells out to git per run/task. Sync routes already run in Starlette's threadpool
@@ -206,14 +211,20 @@ def _derive_slug_from_prompt(prompt: str | None) -> str | None:
     single hyphen, leading/trailing hyphens stripped. A line with no alnum characters at
     all (e.g. "!!!") yields ``None`` rather than an empty string, so the caller's
     "missing slug" error fires instead of `instantiate()` rejecting an empty slug less
-    clearly.
+    clearly. The result is capped at ``_SLUG_MAX_CHARS``, cut at a hyphen boundary where one
+    exists so the slug does not end mid-word.
     """
     if not prompt:
         return None
     for line in prompt.splitlines():
         stripped = line.strip()
         if stripped:
-            return _SLUG_DERIVE_RE.sub("-", stripped.lower()).strip("-") or None
+            slug = _SLUG_DERIVE_RE.sub("-", stripped.lower()).strip("-")
+            if len(slug) > _SLUG_MAX_CHARS:
+                head = slug[:_SLUG_MAX_CHARS]
+                # Prefer the last whole word; fall back to the hard cut for one giant token.
+                slug = (head.rsplit("-", 1)[0] if "-" in head else head).strip("-")
+            return slug or None
     return None
 
 
@@ -960,6 +971,119 @@ class DashboardService:
             "max_notes": MAX_OPERATOR_NOTES,
             "notes": [n.model_dump() for n in notes],
         }
+
+    # -- sentinel panel + control (E-Sn7tL2 T-Sn5Ui1, docs-md/sentinel-hld.md §12) ---------------
+    # Thin over the shared ``control`` module that ``ao ctl`` also uses: the dashboard only ever
+    # builds + writes one ``ao.ctl/v1`` inbox entry; the engine's tick is the sole state mutator.
+
+    def sentinel_status(self, run_id: str) -> dict:
+        """The ``ao ctl status --json`` document; a pre-sentinel run reports ``enabled: false``."""
+        state = self._known_run_state(run_id)
+        return control.build_status(state, self._repo.run_dir(run_id))
+
+    def sentinel_panel(self, run_id: str) -> dict:
+        """Panel v2 data: generation timeline + spend, proposals applied/quarantined, directives."""
+        state = self._known_run_state(run_id)
+        return sentinel_panel.build_panel(state, self._repo.run_dir(run_id))
+
+    def submit_control(
+        self,
+        run_id: str,
+        kind: str,
+        payload: dict[str, Any] | None,
+        rationale: str | None,
+        *,
+        actor: str,
+    ) -> dict:
+        """Validate and queue one control entry for a LIVE run (``actor`` is server-set).
+
+        A finished run would never consume it (and a later resume would surprise the operator with
+        a stale kill), so that is refused with a conflict instead of queued.
+        """
+        state = self._known_run_state(run_id)
+        if state.status != "running":
+            raise DashboardConflictError(
+                f"run {run_id!r} is {state.status}; control actions only apply to a running run"
+            )
+        try:
+            clean, why = control.validate_request(kind, payload, rationale, state)
+            entry = control.build_entry(kind, clean, actor=actor, rationale=why)
+            control.write_entry(self._repo.run_dir(run_id), entry)
+        except control.ControlError as exc:
+            raise DashboardValidationError(str(exc)) from exc
+        return {
+            "id": entry["id"],
+            "kind": kind,
+            "run_id": run_id,
+            "actor": actor,
+            "outcome": "queued",
+        }
+
+    def control_outcome(self, run_id: str, entry_id: str) -> dict:
+        """Non-blocking verdict of a queued entry: pending / consumed / rejected (+ rule)."""
+        self._known_run_state(run_id)
+        try:
+            return control.entry_outcome(self._repo.run_dir(run_id), entry_id)
+        except control.ControlError as exc:
+            raise DashboardValidationError(str(exc)) from exc
+
+    # -- awaiting-input requests (docs-md/awaiting-input-hld.md §5.3) ----------------------
+    # Both routes delegate to the shared `inputs` module (the one validator/writer `ao answer`
+    # uses); the dashboard adds only run lookup, error mapping and the optional resume.
+
+    def get_run_inputs(self, run_id: str) -> dict:
+        """All input requests of a run (any state, sorted by id) plus the derived waiting flag."""
+        state = self._known_run_state(run_id)
+        try:
+            requests = run_inputs.list_requests(self._repo.run_dir(run_id))
+        except run_inputs.InputError as exc:
+            raise self._map_input_error(exc) from exc
+        return {
+            "run_id": run_id,
+            "waiting_for_input": run_waiting_for_input(state),
+            "requests": [r.model_dump(mode="json") for r in requests],
+        }
+
+    def answer_run_input(
+        self, run_id: str, request_id: str, values: dict[str, Any], *, resume: bool = False
+    ) -> dict:
+        """Record a dashboard answer; with ``resume`` also continue the run ("Answer & continue").
+
+        The answer is durable before the resume is attempted, so a resume refusal (409, e.g. the
+        run is already live) leaves the answer recorded and the next ``resume`` picks it up.
+        """
+        self._known_run_state(run_id)
+        try:
+            req = run_inputs.answer_request(
+                self._repo.run_dir(run_id),
+                request_id,
+                values,
+                source="web",
+                by=DASHBOARD_FEEDBACK_SOURCE,
+            )
+        except run_inputs.InputError as exc:
+            raise self._map_input_error(exc) from exc
+        out: dict[str, Any] = {"request": req.model_dump(mode="json"), "resumed": False}
+        if resume:
+            try:
+                out["launch"] = self.resume_run(run_id)
+            except DashboardError as exc:
+                if isinstance(exc, DashboardNotFoundError):
+                    raise
+                raise DashboardConflictError(f"answer recorded, but resume failed: {exc}") from exc
+            out["resumed"] = True
+        return out
+
+    @staticmethod
+    def _map_input_error(exc: run_inputs.InputError) -> DashboardError:
+        message = str(exc)
+        if isinstance(exc, run_inputs.InputUnknownError):
+            return DashboardNotFoundError(message)
+        if isinstance(exc, run_inputs.InputNotOpenError):
+            return DashboardConflictError(message)
+        if message.startswith("corrupt ") or "symlink" in message:
+            return DashboardStoreError(message)
+        return DashboardValidationError(message)
 
     def run_signals(self, run_id: str, *, survival: bool = False, ref: str | None = None) -> dict:
         """Implicit signals plus (on demand) diff survival for one run."""

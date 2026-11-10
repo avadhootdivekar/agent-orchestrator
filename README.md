@@ -218,14 +218,24 @@ ao validate   Validate workflow, reposets, and agents specs (no execution)
 ao run        Run a workflow from scratch
 ao resume     Resume a previously interrupted or failed run
 ao status     Show current status of a run
+ao answer     Answer a task's input request (run is waiting for input) and optionally --resume
 ao prune      Remove stale run artifacts from a workspace (reclaim disk space)
+ao migrate    Workspace migrations: `ao migrate effort-keys [--apply]` renames the deprecated `effort` key to `turn_budget`
 ao cache      Manage the opt-in RESULT cache: ls | stats | show | rm | prune | clear | verify
+ao ctl        Live-control a running run via its control inbox: status | set | pause-llm | resume-llm | note | cancel | kill | release (see docs-md/guide-sentinel.md; opt-in, `--sentinel` on run/resume)
 ao ui         Serve the browser dashboard (needs the optional `ui` extra)
 ao auth       Manage dashboard accounts, TOTP and lockouts (see Authentication)
 ao report-usage     Cross-run cost/retry/rework rollup by (agent, model, effort) + verdicts, feedback, survival
 ao report-survival  How much of a run's code changes survived into a ref (git only)
 ao rate       Record your own good/ok/bad rating of a run or task (local, no telemetry)
 ```
+
+**Human input.** A task can park itself as `awaiting_input` (spec `input:` block, or a task that writes
+`input-request.json`) instead of failing the run. The run stays `running`, exits 0 and `ao status` lists the
+open requests; `ao answer --run-id R --list` shows them, `ao answer --run-id R --set name=value --resume`
+answers and continues. `ao run|resume --input-mode nonblocking` instead applies each field's declared default,
+records the assumption (`ASSUMED: task.field=value (default)`) and proceeds. Design and as-built notes:
+[`docs-md/awaiting-input-hld.md`](docs-md/awaiting-input-hld.md).
 
 Usefulness signals (verdicts, diff survival, your ratings) are documented in
 [`docs-md/usage-signals-hld.md`](docs-md/usage-signals-hld.md); the dashboard's **Usage** tab shows the same rollup.
@@ -302,9 +312,19 @@ ao ui --port 9000 --workspace /path/to/repo --open
   or symlinks) are refused.
 - **Runs** — workspace-wide totals (runs, tasks, cost, tokens, wall time, actual execution
   time) and the same breakdown per run, with a per-task table and the captured CLI log.
-- **New run** — pick a workflow, type a prompt, optionally override model / effort /
-  parallelism / budget, and start it.  The prompt is written to the workflow's declared
-  `prompt_path`, exactly as `ao run --prompt` does.
+- **New run** — pick a workflow, type a prompt, optionally override model / **thinking effort** /
+  **turn budget** / **max turns** / **autocompact** / parallelism / attempts / quota / self-heal /
+  token budget, and start it.  The prompt is written to the workflow's declared `prompt_path`,
+  exactly as `ao run --prompt` does.  The form is generated from the run-options registry
+  (`GET /api/schema/run-options`), so every setting is also a CLI flag; **From template** launches
+  and the **Resume** panel use the same form (resume shows only options that can change on
+  resume). Details: [`docs-md/run-options-and-limits-guide.md`](docs-md/run-options-and-limits-guide.md).
+- **Limits & settings** — every run page has a panel listing each effective setting with the layer
+  it came from (`cli`/`env`/`config`/`workflow`/`default`) and each limit with consumption vs cap
+  (run cost, tokens, wall/active time, injected tasks, parallelism, timeouts, quota), for running
+  and completed runs; a resumed run also lists the settings of every earlier start/resume. Runs
+  from before this feature show "—". The task panel shows thinking effort, turn budget / max turns,
+  autocompact, timeout, cost vs cap and attempts per task.
 - **Run graph** — in a run's detail view, switch the Tasks section from **Table** to **Graph**
   for a pannable, zoomable canvas of every task, including dynamically injected ones. Toggle
   between **Execution order** (the dependency DAG, with each task's actual start order `#n`) and
@@ -315,7 +335,7 @@ ao ui --port 9000 --workspace /path/to/repo --open
   still render, with a banner explaining which data is missing. See
   [`docs-md/run-graph-canvas-hld.md`](docs-md/run-graph-canvas-hld.md).
 - **Live task activity** — a fixed three-row **Now running** box tops every run page (and a
-  compact one sits under each live run in the list): per running task the model, effort, turns,
+  compact one sits under each live run in the list): per running task the model, thinking effort, turn budget / max turns,
   live tokens (`~` = estimate, a lower bound until the task settles), cost of finished attempts,
   elapsed time, the last tool call, and an *idle* chip after 5 minutes without transcript output.
   More than three running tasks scroll inside the same box; it never grows or collapses. Polling
@@ -558,9 +578,12 @@ always: **CLI flag > env var > `.ao/config.yaml` > built-in default**.
 | `AO_AGENTS` | `--agents` | Default path to the agents config |
 | `AO_WORKSPACE_ROOT` | — | Override the `workspace_root` from the reposet (useful in CI) |
 | `AO_MODEL` | `--model` | Claude model for all agents (alias `sonnet`/`opus`/`haiku` = latest; or a pinned id e.g. `claude-sonnet-5-5`) |
-| `AO_EFFORT` | `--effort` | Effort level: `low`, `medium`, or `high` |
+| `AO_TURN_BUDGET` | `--turn-budget` | Max-turn tier: `low`=15, `medium`=30, `high`=60, `xhigh`=120 turns (`--max-turns` is the explicit integer override). Also a spec key on agents/tasks (`turn_budget`) |
+| `AO_EFFORT` | `--effort` | **Deprecated alias of `AO_TURN_BUDGET`** (still means the turn budget in this release; warns; both set and different is an error). Will mean thinking effort after `ao migrate effort-keys` + the flip (T-9ymKja) |
+| `AO_AUTOCOMPACT` | `--autocompact` | Context auto-compaction: `auto` or a token threshold `100000`-`1000000`. Provider-neutral spec field `autocompact` (task > agent > run level; run level only fills agents without their own). Applies to `claude_cli` (`--autocompact`; an `--autocompact` already in `extra_args` wins, with a warning); other executors ignore it and `ao validate` warns |
+| `AO_THINKING_EFFORT` | `--thinking-effort` | Model reasoning depth: `low`, `medium`, `high`, `xhigh`, or `max`. Passed to the claude CLI as `--effort`; unset = CLI default (e.g. `effortLevel` in `~/.claude/settings.json`). Also settable per agent/task (`thinking_effort`). Distinct from `AO_TURN_BUDGET`, which only derives a `--max-turns` cap |
 | `AO_MAX_ATTEMPTS` | `--max-attempts` | Max task attempts (overrides workflow `defaults.retries.max_attempts`) |
-| `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides effort-derived value) |
+| `AO_MAX_TURNS` | `--max-turns` | Max turns per Claude invocation (overrides the turn-budget-derived value) |
 | `AO_MAX_PARALLEL` | `--max-parallel` | Max independent ready tasks to run at once (default: `1` = serial); see [Parallel execution](#parallel-execution) |
 | `AO_RECORD_GIT_HEADS` | `--record-git-heads/--no-record-git-heads` | Record git HEADs at run/task start+settle for `ao report-survival` serial attribution (default: on; off = no head-recording git calls, coarser survival attribution — isolation `landed_ranges` still recorded) |
 | `AO_QUOTA_MAX_WAIT_SECONDS` | `--quota-max-wait` | Max seconds to wait during a quota-exhaustion episode before failing (default: 21600 = 6 h) |
@@ -600,7 +623,9 @@ agents:    path/to/agents.json
 # max_attempts: 3          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
 # model: sonnet # AO_MODEL        — claude model for all agents
-# effort: medium           # AO_EFFORT       — low / medium / high
+# turn_budget: medium      # AO_TURN_BUDGET  — low / medium / high / xhigh (15/30/60/120 max turns)
+# effort: medium           # AO_EFFORT       — DEPRECATED alias of turn_budget (ao migrate effort-keys)
+# autocompact: auto        # AO_AUTOCOMPACT  — "auto" or 100000-1000000 context tokens (claude-cli)
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 # record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival
 

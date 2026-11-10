@@ -38,7 +38,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
@@ -54,7 +54,23 @@ import typer
 from .auth.cli import app as auth_app
 from .auth.model import TotpPolicy
 from .cache.cli import cache_app
-from .models import ISOLATION_NONE, ISOLATION_WORKTREE
+from .ctl_cli import ctl_app
+from .migrate import migrate_app
+from .models import (
+    INPUT_MODES,
+    ISOLATION_NONE,
+    ISOLATION_WORKTREE,
+    assumption_lines,
+    run_waiting_for_input,
+)
+from .run_options import OPTIONS, SENTINEL_PREFIX, SOURCE_DEFAULT, get_option, resolve_option
+from .sentinel_settings import (
+    EXIT_BAD_SENTINEL_SETTING,
+    SentinelSettings,
+    SentinelSettingsError,
+    parse_sentinel_set,
+    resolve_sentinel_settings,
+)
 from .service.cli import app as service_app
 
 if TYPE_CHECKING:
@@ -65,7 +81,7 @@ if TYPE_CHECKING:
     from .executors.base import Executor
     from .isolation.git import GitRepo
     from .isolation.worktrees import IsolatedRepo
-    from .models import BudgetSpec, WorkflowSpec
+    from .models import AgentSpec, BudgetSpec, EffectiveSetting, InputMode, WorkflowSpec
     from .monitoring import Monitor
     from .project_config import MonitoringConfig, ProjectConfig
 
@@ -82,6 +98,8 @@ app = typer.Typer(
 app.add_typer(service_app, name="service")
 app.add_typer(auth_app, name="auth")
 app.add_typer(cache_app, name="cache")
+app.add_typer(ctl_app, name="ctl")
+app.add_typer(migrate_app, name="migrate")
 
 _PACKAGE_LOGGER = "agent_orchestrator"
 
@@ -318,6 +336,42 @@ def _echo_integration_summary(
     )
 
 
+EXIT_USAGE = 2  # `ao answer` / --input-mode: usage or validation error
+EXIT_NOT_OPEN = 3  # `ao answer`: request is not open (already answered / cancelled)
+
+
+def _resolve_input_mode(value: str | None) -> InputMode | None:
+    """Validate ``--input-mode``; None = keep the run's persisted mode (default blocking)."""
+    if value is None:
+        return None
+    if value not in INPUT_MODES:
+        typer.echo(f"ERROR: --input-mode must be one of {INPUT_MODES}, got {value!r}", err=True)
+        raise typer.Exit(EXIT_USAGE)
+    return cast("InputMode", value)
+
+
+def _exit_code_for(state) -> int:
+    """0 on success, and also when the run is merely waiting for input (not a failure)."""
+    if state.status == "succeeded" or run_waiting_for_input(state):
+        return 0
+    return 1
+
+
+def _echo_input_block(
+    run_id: str, requests: list[tuple[str, str, str]], assumptions: list[str]
+) -> None:
+    """Awaiting-input trailer shared by the state and status.json renderers."""
+    if requests:
+        typer.echo(f"\nWaiting for input: {len(requests)} request(s)")
+        for rid, task_id, prompt in requests:
+            typer.echo(f"  [{rid}] {task_id}: {prompt}")
+        typer.echo(f"  answer with: ao answer --run-id {run_id} --list   (then --set name=value)")
+    if assumptions:
+        typer.echo("\nAssumptions (non-blocking mode, defaults applied):")
+        for line in assumptions:
+            typer.echo(f"  ASSUMED: {line}")
+
+
 def _print_state(state) -> None:
     from .models import compute_run_usage_totals
 
@@ -346,6 +400,15 @@ def _print_state(state) -> None:
         f"cache_read={totals.cache_read_input_tokens}"
     )
     typer.echo(f"Total cost:   ${totals.cost_usd:.4f}")
+    _echo_input_block(
+        state.run_id,
+        [
+            (r.request_id, r.task_id, r.prompt)
+            for r in state.input_requests.values()
+            if r.state == "open"
+        ],
+        assumption_lines(state),
+    )
     if state.result_cache:  # lazy: a run the cache never touched never imports cache.report
         from .cache.report import run_block
 
@@ -406,6 +469,11 @@ def _print_status_snapshot(snap: dict) -> None:
         f"cache_read={totals.get('cache_read_input_tokens', 0)}"
     )
     typer.echo(f"Total cost:   ${totals.get('cost_usd', 0.0):.4f}")
+    _echo_input_block(
+        snap.get("run_id", ""),
+        [(r["request_id"], r["task_id"], r["prompt"]) for r in snap.get("input_requests", [])],
+        snap.get("assumptions", []),
+    )
     _echo_result_cache_line(snap.get("result_cache"))  # present only for a current record
 
     # Run-wide + per-task git isolation/integration observability (E-Wk9Tz3 AC-8).
@@ -705,6 +773,211 @@ def _capture_run_prompt(
     )
 
 
+def _resolve_thinking_effort(flag: str | None) -> str | None:
+    """CLI flag > AO_THINKING_EFFORT > project config; validated. None = leave agents untouched."""
+    from .models import THINKING_EFFORTS
+
+    cfg = _load_project_config_or_exit()
+    value = resolve_option(get_option("thinking_effort"), flag, cfg).value
+    if value is not None and value not in THINKING_EFFORTS:
+        typer.echo(
+            f"ERROR: --thinking-effort must be one of {THINKING_EFFORTS}, got '{value}'",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return value
+
+
+# -- Sentinel flags (E-Sn7tL2): ONE declaration shared by `run`, `resume` and `new --run`;
+# help text comes from the registry. Dotted leaf names map 1:1 to registry options.
+def _sentinel_help(leaf: str) -> str:
+    opt = get_option(f"sentinel.{leaf}")
+    return f"{opt.help} Env: {opt.env}. Config: {opt.config}."
+
+
+_SENTINEL_OPT = typer.Option(None, "--sentinel/--no-sentinel", help=_sentinel_help("enabled"))
+_SENTINEL_LLM_OPT = typer.Option(
+    None, "--sentinel-llm/--no-sentinel-llm", help=_sentinel_help("llm.enabled")
+)
+_SENTINEL_POWERS_OPT = typer.Option(
+    None, "--sentinel-powers", help=_sentinel_help("llm.powers") + " advise|act."
+)
+_SENTINEL_BUDGET_OPT = typer.Option(
+    None, "--sentinel-budget-usd", help=_sentinel_help("llm.budget_usd")
+)
+_SENTINEL_CEILING_OPT = typer.Option(
+    None, "--max-parallel-ceiling", help=_sentinel_help("max_parallel_ceiling")
+)
+_SENTINEL_SET_OPT = typer.Option(
+    [],
+    "--sentinel-set",
+    help="Set any sentinel leaf by dotted key, e.g. recovery.idle_kill_minutes=20 (repeatable).",
+)
+
+
+def _resolve_sentinel_or_exit(
+    wf: WorkflowSpec,
+    *,
+    sentinel: bool | None,
+    sentinel_llm: bool | None,
+    sentinel_powers: str | None,
+    sentinel_budget_usd: float | None,
+    max_parallel_ceiling: int | None,
+    sentinel_set: list[str],
+) -> SentinelSettings:
+    """Resolve sentinel settings for `run` AND `resume` (one resolver, no duplicated wiring);
+    a bad flag / --sentinel-set / env value exits 2 with a clear message."""
+    cfg = _load_project_config_or_exit()
+    try:
+        cli: dict[str, object] = {
+            "enabled": sentinel,
+            "llm.enabled": sentinel_llm,
+            "llm.powers": sentinel_powers,
+            "llm.budget_usd": sentinel_budget_usd,
+            "max_parallel_ceiling": max_parallel_ceiling,
+        }
+        cli.update(parse_sentinel_set(sentinel_set))  # --sentinel-set wins over the named flags
+        return resolve_sentinel_settings(
+            workflow=wf.sentinel, config=cfg.sentinel if cfg else None, cli=cli
+        )
+    except SentinelSettingsError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(EXIT_BAD_SENTINEL_SETTING)
+
+
+def _sentinel_argv(
+    sentinel: bool | None,
+    sentinel_llm: bool | None,
+    sentinel_powers: str | None,
+    sentinel_budget_usd: float | None,
+    max_parallel_ceiling: int | None,
+    sentinel_set: list[str],
+) -> list[str]:
+    """Re-serialize the sentinel flags for `ao new --run` -> in-process `run`."""
+    args: list[str] = []
+    for value, on, off in (
+        (sentinel, "--sentinel", "--no-sentinel"),
+        (sentinel_llm, "--sentinel-llm", "--no-sentinel-llm"),
+    ):
+        if value is not None:
+            args.append(on if value else off)
+    for val, flag in (
+        (sentinel_powers, "--sentinel-powers"),
+        (sentinel_budget_usd, "--sentinel-budget-usd"),
+        (max_parallel_ceiling, "--max-parallel-ceiling"),
+    ):
+        if val is not None:
+            args += [flag, str(val)]
+    for item in sentinel_set:
+        args += ["--sentinel-set", item]
+    return args
+
+
+def _effective_settings_snapshot(
+    sentinel_settings: SentinelSettings | None = None, **cli_values: object
+) -> dict[str, EffectiveSetting]:
+    """Resolve EVERY registry option (CLI > env > config > default) with its source, for
+    `RunState.effective_settings`. Purely observational: the values the run actually uses come
+    from the per-option resolvers above, which read the same registry."""
+    from .models import EffectiveSetting
+
+    cfg = _load_project_config_or_exit()
+    out: dict[str, EffectiveSetting] = {}
+    for opt in OPTIONS:
+        if opt.name.startswith(SENTINEL_PREFIX):
+            continue  # layered by sentinel_settings (workflow + set-aware config), below
+        r = resolve_option(opt, cli_values.get(opt.name), cfg)
+        out[opt.name] = EffectiveSetting(value=r.value, source=r.source)
+    if sentinel_settings is not None:
+        for name, r in sentinel_settings.effective_settings().items():
+            out[name] = EffectiveSetting(value=r.value, source=r.source)
+    return out
+
+
+def _resolve_turn_budget(
+    cfg: ProjectConfig | None, turn_budget: str | None, effort: str | None
+) -> str | None:
+    """Merge the canonical ``turn_budget`` chain with the deprecated ``effort`` alias chain.
+
+    Each is CLI > env > config. Legacy use (any layer) warns on stderr; both resolved and
+    different is an error. Returns the tier, or None when neither is set.
+    """
+    from .models import LEGACY_EFFORT_DEPRECATION, TURN_BUDGETS
+
+    tb = resolve_option(get_option("turn_budget"), turn_budget, cfg)
+    legacy = resolve_option(get_option("effort"), effort, cfg)
+    if legacy.value is not None:
+        typer.echo(f"WARNING: DEPRECATED: {LEGACY_EFFORT_DEPRECATION}", err=True)
+        if tb.value is not None and tb.value != legacy.value:
+            typer.echo(
+                f"ERROR: conflicting effort={legacy.value} ({legacy.source}) and "
+                f"turn_budget={tb.value} ({tb.source}); 'effort' is a deprecated alias of "
+                "'turn_budget' -- set only --turn-budget",
+                err=True,
+            )
+            raise typer.Exit(1)
+    value = tb.value if tb.value is not None else legacy.value
+    if value is not None and value not in TURN_BUDGETS:
+        flag = "--turn-budget" if tb.value is not None else "--effort"
+        typer.echo(f"ERROR: {flag} must be one of {TURN_BUDGETS}, got '{value}'", err=True)
+        raise typer.Exit(1)
+    return value
+
+
+def _resolve_autocompact(flag: str | None) -> str | int | None:
+    """CLI flag > AO_AUTOCOMPACT > project config; validated ('auto' or 100k-1M tokens)."""
+    from .models import parse_autocompact
+
+    cfg = _load_project_config_or_exit()
+    value = resolve_option(get_option("autocompact"), flag, cfg).value
+    if value is None:
+        return None
+    try:
+        return parse_autocompact(value)
+    except ValueError as e:
+        typer.echo(f"ERROR: --autocompact: {e}", err=True)
+        raise typer.Exit(1)
+
+
+def _apply_agent_run_settings(
+    agent_map: dict[str, AgentSpec],
+    turn_budget: str | None,
+    thinking_effort: str | None,
+    autocompact: str | int | None,
+) -> None:
+    """Apply invocation-level agent settings. turn_budget/thinking_effort override every agent
+    (historical behaviour); autocompact only FILLS IN agents without their own, keeping the
+    precedence task > agent > run."""
+    for spec in agent_map.values():
+        if turn_budget is not None:
+            spec.turn_budget = cast("Any", turn_budget)
+        if thinking_effort is not None:
+            spec.thinking_effort = cast("Any", thinking_effort)
+        if autocompact is not None and spec.autocompact is None:
+            spec.autocompact = autocompact
+
+
+def unsupported_setting_warnings(
+    wf: WorkflowSpec, agent_map: dict[str, AgentSpec], run_autocompact: str | int | None = None
+) -> list[str]:
+    """One warning per agent whose executor lacks a capability for a setting it (or one of its
+    tasks) sets -- never an error (future Codex/Gemini executors map or ignore)."""
+    from .executors import EXECUTOR_SUPPORTED_SETTINGS
+
+    out: list[str] = []
+    for name, spec in sorted(agent_map.items()):
+        if "autocompact" in EXECUTOR_SUPPORTED_SETTINGS.get(spec.executor, frozenset()):
+            continue
+        by_task = [t.id for t in wf.tasks if t.agent == name and t.autocompact is not None]
+        if spec.autocompact is not None or by_task or run_autocompact is not None:
+            where = f" (tasks: {', '.join(by_task)})" if by_task else ""
+            out.append(
+                f"autocompact is set for agent '{name}'{where} but executor '{spec.executor}' "
+                "does not support it; the setting is ignored"
+            )
+    return out
+
+
 def _resolve_run_settings(
     max_attempts: int | None,
     max_turns: int | None,
@@ -713,56 +986,35 @@ def _resolve_run_settings(
     quota_max_wait: int | None,
     quota_poll_interval: int | None,
     max_parallel: int | None,
+    turn_budget: str | None = None,
 ) -> tuple[int | None, int | None, str | None, str | None, int, int, int]:
     """Merge CLI flags, env vars, and project config for runtime execution settings.
 
     Precedence (highest to lowest): CLI flag > env var > project config > built-in default.
-    Returns (max_attempts, max_turns, model, effort, quota_max_wait_seconds, quota_poll_seconds,
-    max_parallel).
+    Returns (max_attempts, max_turns, model, turn_budget, quota_max_wait_seconds,
+    quota_poll_seconds, max_parallel); the 4th slot is the turn-budget tier, merged from
+    `turn_budget` and the deprecated `effort` alias (`_resolve_turn_budget`).
     """
-    from .models import (
-        DEFAULT_MAX_PARALLEL,
-        DEFAULT_QUOTA_MAX_WAIT_SECONDS,
-        DEFAULT_QUOTA_POLL_SECONDS,
-    )
-
-    def _int_env(name: str) -> int | None:
-        v = os.environ.get(name)
-        try:
-            return int(v) if v else None
-        except ValueError:
-            return None
-
     cfg = _load_project_config_or_exit()
-
-    resolved_max_attempts = (
-        max_attempts or _int_env("AO_MAX_ATTEMPTS") or (cfg.max_attempts if cfg else None)
-    )
-    resolved_max_turns = max_turns or _int_env("AO_MAX_TURNS") or (cfg.max_turns if cfg else None)
-    resolved_model = model or os.environ.get("AO_MODEL") or (cfg.model if cfg else None)
-    resolved_effort = effort or os.environ.get("AO_EFFORT") or (cfg.effort if cfg else None)
-    resolved_quota_max_wait = int(
-        quota_max_wait
-        or _int_env("AO_QUOTA_MAX_WAIT_SECONDS")
-        or (cfg.quota_max_wait_seconds if cfg else None)
-        or DEFAULT_QUOTA_MAX_WAIT_SECONDS
-    )
-    resolved_quota_poll = int(
-        quota_poll_interval
-        or _int_env("AO_QUOTA_POLL_SECONDS")
-        or (cfg.quota_poll_seconds if cfg else None)
-        or DEFAULT_QUOTA_POLL_SECONDS
-    )
-    # NOTE: like every other `or`-chain above, a falsy 0 here is indistinguishable from
-    # "unset" and falls through to DEFAULT_MAX_PARALLEL (=1) -- consistent with how
-    # --quota-max-wait/--max-attempts 0 already behave in this function. A negative value is
-    # truthy in Python so it survives the chain unchanged and is what the guard below rejects.
-    resolved_max_parallel = int(
-        max_parallel
-        or _int_env("AO_MAX_PARALLEL")
-        or (cfg.max_parallel if cfg else None)
-        or DEFAULT_MAX_PARALLEL
-    )
+    cli_values = {
+        "max_attempts": max_attempts,
+        "max_turns": max_turns,
+        "model": model,
+        "quota_max_wait": quota_max_wait,
+        "quota_poll_interval": quota_poll_interval,
+        "max_parallel": max_parallel,
+    }
+    r = {n: resolve_option(get_option(n), v, cfg) for n, v in cli_values.items()}
+    resolved_max_attempts = r["max_attempts"].value
+    resolved_max_turns = r["max_turns"].value
+    resolved_model = r["model"].value
+    resolved_effort = _resolve_turn_budget(cfg, turn_budget, effort)
+    resolved_quota_max_wait = int(r["quota_max_wait"].value)
+    resolved_quota_poll = int(r["quota_poll_interval"].value)
+    resolved_max_parallel = int(r["max_parallel"].value)
+    # NOTE: like every other `or`-chain in the registry, a falsy 0 here is indistinguishable
+    # from "unset" and falls through to the default (=1) -- consistent with --quota-max-wait/
+    # --max-attempts 0. A negative value is truthy so it survives and is what the guard rejects.
     if resolved_max_parallel < 1:
         typer.echo("ERROR: --max-parallel must be >= 1", err=True)
         raise typer.Exit(1)
@@ -903,18 +1155,7 @@ def _resolve_monitoring_settings(self_heal: bool | None) -> MonitoringConfig:
     cfg = _load_project_config_or_exit()
     base = cfg.monitoring if cfg else MonitoringConfig()
 
-    def _bool_env(name: str) -> bool | None:
-        v = os.environ.get(name)
-        if not v:
-            return None
-        return v.strip().lower() in ("1", "true", "yes", "on")
-
-    resolved_self_heal = self_heal
-    if resolved_self_heal is None:
-        resolved_self_heal = _bool_env("AO_SELF_HEAL")
-    if resolved_self_heal is None:
-        resolved_self_heal = base.self_heal
-
+    resolved_self_heal = resolve_option(get_option("self_heal"), self_heal, cfg).value
     return base.model_copy(update={"self_heal": resolved_self_heal})
 
 
@@ -926,15 +1167,11 @@ def _resolve_record_git_heads(record_git_heads: bool | None) -> bool:
     `AO_RECORD_GIT_HEADS` (1/0/true/false/yes/no/on/off) > `.ao/config.yaml`
     `record_git_heads` > built-in default (True). Tri-state like `--self-heal`: an operator can
     force it either way over the config."""
-    if record_git_heads is not None:
-        return record_git_heads
-    env = os.environ.get(ENV_RECORD_GIT_HEADS)
-    if env and env.strip():
-        return env.strip().lower() in ("1", "true", "yes", "on")
-    cfg = _load_project_config_or_exit()
-    if cfg is not None and cfg.record_git_heads is not None:
-        return cfg.record_git_heads
-    return True
+    opt = get_option("record_git_heads")
+    first = resolve_option(opt, record_git_heads, None)  # CLI/env only: no config read yet
+    if first.source != SOURCE_DEFAULT:
+        return bool(first.value)
+    return bool(resolve_option(opt, None, _load_project_config_or_exit()).value)
 
 
 def _build_monitor(
@@ -1092,7 +1329,9 @@ def validate(
     from .errors import OrchestratorError
 
     try:
-        _load_all(workflow, reposets, agents)
+        wf, _rs, agent_map = _load_all(workflow, reposets, agents)
+        for warning in unsupported_setting_warnings(wf, agent_map):
+            typer.echo(f"WARNING: {warning}", err=True)
         typer.echo("OK: all specs valid")
     except OrchestratorError as e:
         typer.echo(f"ERROR: {e}", err=True)
@@ -1153,10 +1392,34 @@ def run(
         "--model",
         help="Claude model for all agents (e.g. sonnet, opus or claude-sonnet-5-5). Env: AO_MODEL",
     ),
+    turn_budget: str | None = typer.Option(
+        None,
+        "--turn-budget",
+        help=(
+            "Max-turn tier for all agents: low=15, medium=30, high=60, xhigh=120 turns "
+            "(--max-turns overrides). Env: AO_TURN_BUDGET"
+        ),
+    ),
     effort: str | None = typer.Option(
         None,
         "--effort",
-        help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+        help="DEPRECATED alias of --turn-budget (low, medium, high). Env: AO_EFFORT",
+    ),
+    thinking_effort: str | None = typer.Option(
+        None,
+        "--thinking-effort",
+        help=(
+            "Model reasoning depth for all agents: low, medium, high, xhigh or max "
+            "(claude: --effort). Env: AO_THINKING_EFFORT"
+        ),
+    ),
+    autocompact: str | None = typer.Option(
+        None,
+        "--autocompact",
+        help=(
+            "Context auto-compaction for agents without their own: 'auto' or a token threshold "
+            "100000-1000000 (applies to: claude-cli). Env: AO_AUTOCOMPACT"
+        ),
     ),
     quota_max_wait: int | None = typer.Option(
         None,
@@ -1190,6 +1453,21 @@ def run(
             " overrides env/config in either direction. Env: AO_SELF_HEAL (1/0)."
             " Default: off. Unrelated to recommend-mode breaker consult (Consult Point A),"
             " which activates purely from a workflow's own circuit_breakers[].mode."
+        ),
+    ),
+    sentinel: bool | None = _SENTINEL_OPT,
+    sentinel_llm: bool | None = _SENTINEL_LLM_OPT,
+    sentinel_powers: str | None = _SENTINEL_POWERS_OPT,
+    sentinel_budget_usd: float | None = _SENTINEL_BUDGET_OPT,
+    max_parallel_ceiling: int | None = _SENTINEL_CEILING_OPT,
+    sentinel_set: list[str] = _SENTINEL_SET_OPT,
+    input_mode: str | None = typer.Option(
+        None,
+        "--input-mode",
+        help=(
+            "How tasks that need human input behave: 'blocking' (default) parks them as"
+            " awaiting_input until `ao answer`; 'nonblocking' answers every field with its"
+            " declared default, records the assumption and proceeds."
         ),
     ),
     record_git_heads: bool | None = typer.Option(
@@ -1302,6 +1580,7 @@ def run(
         quota_max_wait,
         quota_poll_interval,
         max_parallel,
+        turn_budget=turn_budget,
     )
 
     if eff_max_attempts is not None:
@@ -1312,23 +1591,18 @@ def run(
     if eff_model is not None:
         for spec in agent_map.values():
             spec.model = eff_model
-    if eff_effort is not None:
-        _valid_efforts = ("low", "medium", "high")
-        if eff_effort not in _valid_efforts:
-            typer.echo(
-                f"ERROR: --effort must be one of {_valid_efforts}, got '{eff_effort}'",
-                err=True,
-            )
-            raise typer.Exit(1)
-        from typing import Literal, cast
-
-        for spec in agent_map.values():
-            spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
+    eff_autocompact = _resolve_autocompact(autocompact)
+    _apply_agent_run_settings(
+        agent_map, eff_effort, _resolve_thinking_effort(thinking_effort), eff_autocompact
+    )
+    for _warning in unsupported_setting_warnings(wf, agent_map):
+        logging.getLogger(_PACKAGE_LOGGER).warning(_warning)
 
     # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9). Unset
     # (None) makes no change; ISOLATION_NONE/ISOLATION_WORKTREE become the new
     # WorkflowSpec.defaults.isolation, a fill-in only for tasks left at isolation="inherit"
     # (never a task's own explicit isolation -- ADR-0006, resolve_task_isolation).
+    eff_input_mode = _resolve_input_mode(input_mode)
     eff_no_isolation = _resolve_no_isolation(no_isolation)
     if eff_no_isolation and isolation == ISOLATION_WORKTREE:
         typer.echo(
@@ -1386,6 +1660,16 @@ def run(
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
     monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
 
+    sentinel_settings = _resolve_sentinel_or_exit(
+        wf,
+        sentinel=sentinel,
+        sentinel_llm=sentinel_llm,
+        sentinel_powers=sentinel_powers,
+        sentinel_budget_usd=sentinel_budget_usd,
+        max_parallel_ceiling=max_parallel_ceiling,
+        sentinel_set=sentinel_set,
+    )
+
     orch = Orchestrator(
         executor,
         store,
@@ -1407,6 +1691,24 @@ def run(
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         run_prompt=run_prompt,
         result_cache=result_cache,
+        input_mode=eff_input_mode,
+        sentinel=sentinel_settings,
+        effective_settings=_effective_settings_snapshot(
+            sentinel_settings,
+            max_attempts=max_attempts,
+            max_turns=max_turns,
+            model=model,
+            effort=effort,
+            turn_budget=turn_budget,
+            autocompact=autocompact,
+            thinking_effort=thinking_effort,
+            quota_max_wait=quota_max_wait,
+            quota_poll_interval=quota_poll_interval,
+            max_parallel=max_parallel,
+            budget_total=budget_total,
+            self_heal=self_heal,
+            record_git_heads=record_git_heads,
+        ),
     )
 
     try:
@@ -1416,7 +1718,7 @@ def run(
         raise typer.Exit(1)
 
     _print_state(state)
-    raise typer.Exit(0 if state.status == "succeeded" else 1)
+    raise typer.Exit(_exit_code_for(state))
 
 
 @app.command()
@@ -1474,10 +1776,34 @@ def resume(
         "--model",
         help="Claude model for all agents (e.g. sonnet, opus or claude-sonnet-5-5). Env: AO_MODEL",
     ),
+    turn_budget: str | None = typer.Option(
+        None,
+        "--turn-budget",
+        help=(
+            "Max-turn tier for all agents: low=15, medium=30, high=60, xhigh=120 turns "
+            "(--max-turns overrides). Env: AO_TURN_BUDGET"
+        ),
+    ),
     effort: str | None = typer.Option(
         None,
         "--effort",
-        help="Effort level for all agents: low, medium, or high. Env: AO_EFFORT",
+        help="DEPRECATED alias of --turn-budget (low, medium, high). Env: AO_EFFORT",
+    ),
+    thinking_effort: str | None = typer.Option(
+        None,
+        "--thinking-effort",
+        help=(
+            "Model reasoning depth for all agents: low, medium, high, xhigh or max "
+            "(claude: --effort). Env: AO_THINKING_EFFORT"
+        ),
+    ),
+    autocompact: str | None = typer.Option(
+        None,
+        "--autocompact",
+        help=(
+            "Context auto-compaction for agents without their own: 'auto' or a token threshold "
+            "100000-1000000 (applies to: claude-cli). Env: AO_AUTOCOMPACT"
+        ),
     ),
     quota_max_wait: int | None = typer.Option(
         None,
@@ -1527,6 +1853,21 @@ def resume(
             "Enable/disable task-failure self-healing (Consult Point B, E-XyfjuZ);"
             " overrides env/config in either direction. Env: AO_SELF_HEAL (1/0)."
             " Default: off."
+        ),
+    ),
+    sentinel: bool | None = _SENTINEL_OPT,
+    sentinel_llm: bool | None = _SENTINEL_LLM_OPT,
+    sentinel_powers: str | None = _SENTINEL_POWERS_OPT,
+    sentinel_budget_usd: float | None = _SENTINEL_BUDGET_OPT,
+    max_parallel_ceiling: int | None = _SENTINEL_CEILING_OPT,
+    sentinel_set: list[str] = _SENTINEL_SET_OPT,
+    input_mode: str | None = typer.Option(
+        None,
+        "--input-mode",
+        help=(
+            "How tasks that need human input behave: 'blocking' (default) parks them as"
+            " awaiting_input until `ao answer`; 'nonblocking' answers every field with its"
+            " declared default, records the assumption and proceeds."
         ),
     ),
     record_git_heads: bool | None = typer.Option(
@@ -1637,6 +1978,7 @@ def resume(
         quota_max_wait,
         quota_poll_interval,
         max_parallel,
+        turn_budget=turn_budget,
     )
 
     if eff_max_attempts is not None:
@@ -1647,21 +1989,16 @@ def resume(
     if eff_model is not None:
         for spec in agent_map.values():
             spec.model = eff_model
-    if eff_effort is not None:
-        _valid_efforts = ("low", "medium", "high")
-        if eff_effort not in _valid_efforts:
-            typer.echo(
-                f"ERROR: --effort must be one of {_valid_efforts}, got '{eff_effort}'",
-                err=True,
-            )
-            raise typer.Exit(1)
-        from typing import Literal, cast
-
-        for spec in agent_map.values():
-            spec.effort = cast("Literal['low', 'medium', 'high']", eff_effort)
+    eff_autocompact = _resolve_autocompact(autocompact)
+    _apply_agent_run_settings(
+        agent_map, eff_effort, _resolve_thinking_effort(thinking_effort), eff_autocompact
+    )
+    for _warning in unsupported_setting_warnings(wf, agent_map):
+        logging.getLogger(_PACKAGE_LOGGER).warning(_warning)
 
     # Isolation-mode fill-in + config-file-only strict/env (E-Wk9Tz3 HLD §11 M9) -- same
     # chain and fill-in-only semantics as `ao run` (see there for the full rationale).
+    eff_input_mode = _resolve_input_mode(input_mode)
     eff_no_isolation = _resolve_no_isolation(no_isolation)
     if eff_no_isolation and isolation == ISOLATION_WORKTREE:
         typer.echo(
@@ -1753,6 +2090,16 @@ def resume(
     monitoring_cfg = _resolve_monitoring_settings(self_heal)
     monitor = _build_monitor(monitoring_cfg, agent_map, store, executor)
 
+    sentinel_settings = _resolve_sentinel_or_exit(
+        wf,
+        sentinel=sentinel,
+        sentinel_llm=sentinel_llm,
+        sentinel_powers=sentinel_powers,
+        sentinel_budget_usd=sentinel_budget_usd,
+        max_parallel_ceiling=max_parallel_ceiling,
+        sentinel_set=sentinel_set,
+    )
+
     orch = Orchestrator(
         executor,
         store,
@@ -1773,6 +2120,24 @@ def resume(
         isolation_env=eff_isolation_env,
         record_git_heads=_resolve_record_git_heads(record_git_heads),
         result_cache=result_cache,
+        input_mode=eff_input_mode,
+        sentinel=sentinel_settings,
+        effective_settings=_effective_settings_snapshot(
+            sentinel_settings,
+            max_attempts=max_attempts,
+            max_turns=max_turns,
+            model=model,
+            effort=effort,
+            turn_budget=turn_budget,
+            autocompact=autocompact,
+            thinking_effort=thinking_effort,
+            quota_max_wait=quota_max_wait,
+            quota_poll_interval=quota_poll_interval,
+            max_parallel=max_parallel,
+            budget_total=budget_total,
+            self_heal=self_heal,
+            record_git_heads=record_git_heads,
+        ),
     )
 
     try:
@@ -1782,7 +2147,7 @@ def resume(
         raise typer.Exit(1)
 
     _print_state(state)
-    raise typer.Exit(0 if state.status == "succeeded" else 1)
+    raise typer.Exit(_exit_code_for(state))
 
 
 @app.command()
@@ -3498,7 +3863,13 @@ def templates_cmd(
         typer.echo("")
 
 
-def _invoke_run_in_process(workflow_path: str, reposets: str | None, agents: str | None) -> int:
+def _invoke_run_in_process(
+    workflow_path: str,
+    reposets: str | None,
+    agents: str | None,
+    input_mode: str | None = None,
+    extra_args: list[str] | None = None,
+) -> int:
     """Invoke the existing `run` command in-process for `ao new --run`.
 
     Deliberately does NOT subprocess to an `ao` binary (the global snapshot can be stale and
@@ -3516,6 +3887,9 @@ def _invoke_run_in_process(workflow_path: str, reposets: str | None, agents: str
         args += ["--reposets", reposets]
     if agents:
         args += ["--agents", agents]
+    if input_mode:
+        args += ["--input-mode", input_mode]
+    args += extra_args or []
     command = typer.main.get_command(app)
     return int(command.main(args=args, standalone_mode=False))
 
@@ -3567,6 +3941,17 @@ def new_cmd(
         help="Scaffold, validate, then run the rendered workflow in-process "
         "(equivalent to `ao run --workflow <rendered>`).",
     ),
+    sentinel: bool | None = _SENTINEL_OPT,
+    sentinel_llm: bool | None = _SENTINEL_LLM_OPT,
+    sentinel_powers: str | None = _SENTINEL_POWERS_OPT,
+    sentinel_budget_usd: float | None = _SENTINEL_BUDGET_OPT,
+    max_parallel_ceiling: int | None = _SENTINEL_CEILING_OPT,
+    sentinel_set: list[str] = _SENTINEL_SET_OPT,
+    input_mode: str | None = typer.Option(
+        None,
+        "--input-mode",
+        help="blocking (default) or nonblocking; passed to the run started by --run.",
+    ),
     reposets: str | None = typer.Option(
         None, help="Path to reposets config JSON/YAML (used only by --validate-only/--run)"
     ),
@@ -3581,6 +3966,7 @@ def new_cmd(
     if validate_only and run:
         typer.echo("ERROR: --validate-only and --run are mutually exclusive", err=True)
         raise typer.Exit(1)
+    _resolve_input_mode(input_mode)  # fail fast on a bad value, before scaffolding anything
 
     ws_root = _resolve_templates_workspace_root(workspace)
     cfg = _load_project_config_or_exit()
@@ -3669,8 +4055,150 @@ def new_cmd(
         return
 
     typer.echo("Running (in-process, equivalent to `ao run --workflow <rendered>`)...")
-    exit_code = _invoke_run_in_process(result.workflow_path, reposets, agents)
+    exit_code = _invoke_run_in_process(
+        result.workflow_path,
+        reposets,
+        agents,
+        input_mode,
+        _sentinel_argv(
+            sentinel,
+            sentinel_llm,
+            sentinel_powers,
+            sentinel_budget_usd,
+            max_parallel_ceiling,
+            sentinel_set,
+        ),
+    )
     raise typer.Exit(exit_code)
+
+
+def _parse_set_options(items: list[str]) -> dict[str, object]:
+    out: dict[str, object] = {}
+    for item in items:
+        name, sep, value = item.partition("=")
+        if not sep or not name.strip():
+            raise ValueError(f"--set expects name=value, got {item!r}")
+        out[name.strip()] = value
+    return out
+
+
+def _prompt_for_fields(req) -> dict[str, object]:
+    """Interactive TTY renderer: ask each field of *req* in turn (task text is shown as data)."""
+    typer.echo(req.prompt)
+    values: dict[str, object] = {}
+    for f in req.fields:
+        label = f.label or f.name
+        if f.type == "bool":
+            values[f.name] = typer.confirm(label, default=bool(f.default))
+        elif f.type == "choice":
+            import click
+
+            values[f.name] = typer.prompt(
+                label, default=f.default, type=click.Choice(f.choices), show_choices=True
+            )
+        else:
+            values[f.name] = typer.prompt(
+                label,
+                default=f.default if f.default is not None else "",
+                show_default=bool(f.default),
+            )
+    return values
+
+
+@app.command(name="answer")
+def answer_cmd(
+    run_id: str = typer.Option(..., "--run-id", help="Run that is waiting for input"),
+    request_id: str | None = typer.Option(
+        None, "--request-id", help="Request to answer (optional when exactly one is open)"
+    ),
+    set_values: list[str] = typer.Option(
+        [], "--set", "--choice", help="Field value as name=value (repeatable)"
+    ),
+    json_file: str | None = typer.Option(
+        None, "--json", help="JSON object of field values from FILE, or '-' for stdin"
+    ),
+    list_open: bool = typer.Option(False, "--list", help="List open requests and exit"),
+    resume_after: bool = typer.Option(
+        False, "--resume", help="Resume the run after a successful answer"
+    ),
+    workspace: str | None = typer.Option(
+        None, "--workspace", "-w", help="Workspace root (or set AO_WORKSPACE_ROOT)"
+    ),
+    workflow: str | None = typer.Option(None, help="Workflow JSON/YAML (for --resume)"),
+    reposets: str | None = typer.Option(None, help="Reposets config (for --resume)"),
+    agents: str | None = typer.Option(None, help="Agents config (for --resume)"),
+) -> None:
+    """Answer a task's input request (awaiting_input) and optionally resume the run.
+
+    Exit codes: 0 ok; 2 usage/validation error; 3 request not open / already answered.
+    """
+    import json
+    import sys
+
+    from . import inputs
+
+    ws_root = workspace or os.environ.get("AO_WORKSPACE_ROOT")
+    if ws_root is None:
+        ws_root = _resolve_workspace_root(None, workflow, reposets, agents, no_repo_default=True)
+    run_dir = _runs_dir(ws_root) / run_id
+    if not run_dir.is_dir():
+        typer.echo(f"ERROR: run not found: {run_id}", err=True)
+        raise typer.Exit(EXIT_USAGE)
+
+    try:
+        open_reqs = inputs.list_requests(run_dir, state="open")
+        if list_open:
+            lines = inputs.render_summary(open_reqs)
+            typer.echo("\n".join(lines) if lines else "No open input requests.")
+            return
+        if request_id is None:
+            if len(open_reqs) != 1:
+                have = ", ".join(r.request_id for r in open_reqs) or "none open"
+                typer.echo(f"ERROR: --request-id required ({have})", err=True)
+                raise typer.Exit(EXIT_USAGE)
+            request_id = open_reqs[0].request_id
+        req = inputs.load_request(run_dir, request_id)
+
+        try:
+            values = _parse_set_options(set_values)
+            if json_file is not None:
+                raw = sys.stdin.read() if json_file == "-" else Path(json_file).read_text("utf-8")
+                doc = json.loads(raw)
+                if not isinstance(doc, dict):
+                    raise ValueError("--json must contain an object")
+                values = {**doc, **values}
+        except (ValueError, OSError) as e:
+            typer.echo(f"ERROR: {e}", err=True)
+            raise typer.Exit(EXIT_USAGE)
+        if not values and not set_values and json_file is None:
+            if not sys.stdin.isatty():
+                typer.echo("ERROR: no values given (use --set name=value or --json)", err=True)
+                raise typer.Exit(EXIT_USAGE)
+            values = _prompt_for_fields(req)
+        done = inputs.answer_request(run_dir, request_id, values, source="cli", by="cli")
+    except inputs.InputNotOpenError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(EXIT_NOT_OPEN)
+    except inputs.InputError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(EXIT_USAGE)
+
+    typer.echo(f"Answered {done.request_id} (task {done.task_id}).")
+    if not resume_after:
+        typer.echo(f"Continue the run with: ao resume --run-id {run_id}")
+        return
+    from typer.main import get_command
+
+    args = ["resume", "--run-id", run_id]
+    for flag, val in (
+        ("--workspace", workspace),
+        ("--workflow", workflow),
+        ("--reposets", reposets),
+        ("--agents", agents),
+    ):
+        if val:
+            args += [flag, val]
+    raise typer.Exit(int(get_command(app).main(args=args, standalone_mode=False)))
 
 
 if __name__ == "__main__":

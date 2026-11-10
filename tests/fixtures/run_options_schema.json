@@ -1,0 +1,1032 @@
+{
+  "json_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "autocompact": {
+        "type": "string"
+      },
+      "budget_total": {
+        "type": "integer"
+      },
+      "effort": {
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "type": "string"
+      },
+      "max_attempts": {
+        "type": "integer"
+      },
+      "max_parallel": {
+        "type": "integer"
+      },
+      "max_turns": {
+        "type": "integer"
+      },
+      "model": {
+        "type": "string"
+      },
+      "quota_max_wait": {
+        "type": "integer"
+      },
+      "quota_poll_interval": {
+        "type": "integer"
+      },
+      "self_heal": {
+        "type": "boolean"
+      },
+      "sentinel.enabled": {
+        "type": "boolean"
+      },
+      "sentinel.llm.budget_usd": {
+        "type": "number"
+      },
+      "sentinel.llm.enabled": {
+        "type": "boolean"
+      },
+      "sentinel.llm.powers": {
+        "enum": [
+          "advise",
+          "act"
+        ],
+        "type": "string"
+      },
+      "sentinel.max_parallel_ceiling": {
+        "type": "integer"
+      },
+      "thinking_effort": {
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "type": "string"
+      },
+      "turn_budget": {
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "options": [
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "model",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_MODEL",
+      "flag": "--model",
+      "help": "Claude model for all agents (an alias such as sonnet, or a pinned id).",
+      "name": "model",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "str",
+      "ui": {
+        "group": "Model & reasoning",
+        "label": "Model"
+      }
+    },
+    {
+      "choice_labels": {
+        "high": "high (60 turns)",
+        "low": "low (15 turns)",
+        "medium": "medium (30 turns)",
+        "xhigh": "xhigh (120 turns)"
+      },
+      "choices": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "config": "turn_budget",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_TURN_BUDGET",
+      "flag": "--turn-budget",
+      "help": "Max-turn tier for all agents: low=15, medium=30, high=60, xhigh=120 turns.",
+      "name": "turn_budget",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "enum",
+      "ui": {
+        "group": "Model & reasoning",
+        "label": "Turn budget"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "config": "effort",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_EFFORT",
+      "flag": "--effort",
+      "help": "DEPRECATED alias of --turn-budget (will mean thinking effort after migration).",
+      "name": "effort",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "enum",
+      "ui": {
+        "group": "Model & reasoning",
+        "label": "Effort (deprecated: turn budget)"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "autocompact",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_AUTOCOMPACT",
+      "flag": "--autocompact",
+      "help": "Context auto-compaction for agents without their own: 'auto' or a context-token threshold 100000-1000000.",
+      "name": "autocompact",
+      "no_flag": null,
+      "providers": [
+        "claude-cli"
+      ],
+      "resumable": true,
+      "type": "str",
+      "ui": {
+        "group": "Model & reasoning",
+        "label": "Autocompact"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "config": "thinking_effort",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_THINKING_EFFORT",
+      "flag": "--thinking-effort",
+      "help": "Model reasoning depth for all agents: low, medium, high, xhigh or max (claude: --effort). Unset = agent default.",
+      "name": "thinking_effort",
+      "no_flag": null,
+      "providers": [
+        "claude-cli"
+      ],
+      "resumable": true,
+      "type": "enum",
+      "ui": {
+        "group": "Model & reasoning",
+        "label": "Thinking effort"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "max_attempts",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_MAX_ATTEMPTS",
+      "flag": "--max-attempts",
+      "help": "Max attempts per task (overrides workflow defaults.retries.max_attempts).",
+      "name": "max_attempts",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Turns & retries",
+        "label": "Max attempts"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "max_turns",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_MAX_TURNS",
+      "flag": "--max-turns",
+      "help": "Max turns per claude agent invocation (overrides the turn-budget-derived value).",
+      "name": "max_turns",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Turns & retries",
+        "label": "Max turns"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "max_parallel",
+      "default": 1,
+      "deprecated_flags": [],
+      "env": "AO_MAX_PARALLEL",
+      "flag": "--max-parallel",
+      "help": "Max independent ready tasks to run at once (1 = serial).",
+      "name": "max_parallel",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Concurrency & budget",
+        "label": "Max parallel"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": null,
+      "default": null,
+      "deprecated_flags": [],
+      "env": null,
+      "flag": "--budget-total",
+      "help": "Total token budget for the run (CLI only; the workflow's budget otherwise).",
+      "name": "budget_total",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Concurrency & budget",
+        "label": "Token budget"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "quota_max_wait_seconds",
+      "default": 21600,
+      "deprecated_flags": [],
+      "env": "AO_QUOTA_MAX_WAIT_SECONDS",
+      "flag": "--quota-max-wait",
+      "help": "Max seconds to wait through a Claude quota-exhaustion episode before failing.",
+      "name": "quota_max_wait",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Quota",
+        "label": "Quota max wait (s)"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "quota_poll_seconds",
+      "default": 900,
+      "deprecated_flags": [],
+      "env": "AO_QUOTA_POLL_SECONDS",
+      "flag": "--quota-poll-interval",
+      "help": "Seconds to sleep between quota-exhaustion re-run attempts.",
+      "name": "quota_poll_interval",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Quota",
+        "label": "Quota poll interval (s)"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "monitoring.self_heal",
+      "default": false,
+      "deprecated_flags": [],
+      "env": "AO_SELF_HEAL",
+      "flag": "--self-heal",
+      "help": "Enable task-failure self-healing; overrides env/config in either direction.",
+      "name": "self_heal",
+      "no_flag": "--no-self-heal",
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": {
+        "group": "Recovery",
+        "label": "Self-heal"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "record_git_heads",
+      "default": true,
+      "deprecated_flags": [],
+      "env": "AO_RECORD_GIT_HEADS",
+      "flag": "--record-git-heads",
+      "help": "Record git HEADs for `ao report-survival` serial attribution.",
+      "name": "record_git_heads",
+      "no_flag": "--no-record-git-heads",
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.enabled",
+      "default": false,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_ENABLED",
+      "flag": "--sentinel",
+      "help": "Sentinel setting `enabled` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.enabled",
+      "no_flag": "--no-sentinel",
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": {
+        "group": "Sentinel",
+        "label": "Sentinel (live control)"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.tick_seconds",
+      "default": 15,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_TICK_SECONDS",
+      "flag": null,
+      "help": "Sentinel setting `tick_seconds` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.tick_seconds",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.max_parallel_ceiling",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_MAX_PARALLEL_CEILING",
+      "flag": "--max-parallel-ceiling",
+      "help": "Sentinel setting `max_parallel_ceiling` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.max_parallel_ceiling",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": {
+        "group": "Sentinel",
+        "label": "Max-parallel ceiling"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.cancel_grace_seconds",
+      "default": 30,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_CANCEL_GRACE_SECONDS",
+      "flag": null,
+      "help": "Sentinel setting `cancel_grace_seconds` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.cancel_grace_seconds",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.inbox_batch_max",
+      "default": 50,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_INBOX_BATCH_MAX",
+      "flag": null,
+      "help": "Sentinel setting `inbox_batch_max` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.inbox_batch_max",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.max_injected_tasks",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_MAX_INJECTED_TASKS",
+      "flag": null,
+      "help": "Sentinel setting `max_injected_tasks` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.max_injected_tasks",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.enabled",
+      "default": true,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_ENABLED",
+      "flag": null,
+      "help": "Sentinel setting `recovery.enabled` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.enabled",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.idle_kill_minutes",
+      "default": 15,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_IDLE_KILL_MINUTES",
+      "flag": null,
+      "help": "Sentinel setting `recovery.idle_kill_minutes` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.idle_kill_minutes",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.stuck_factor",
+      "default": 3.0,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_STUCK_FACTOR",
+      "flag": null,
+      "help": "Sentinel setting `recovery.stuck_factor` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.stuck_factor",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "float",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.stuck_min_minutes",
+      "default": 20,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_STUCK_MIN_MINUTES",
+      "flag": null,
+      "help": "Sentinel setting `recovery.stuck_min_minutes` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.stuck_min_minutes",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.cost_kill_pct",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_COST_KILL_PCT",
+      "flag": null,
+      "help": "Sentinel setting `recovery.cost_kill_pct` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.cost_kill_pct",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "float",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.max_recovery_kills_per_task",
+      "default": 2,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_MAX_RECOVERY_KILLS_PER_TASK",
+      "flag": null,
+      "help": "Sentinel setting `recovery.max_recovery_kills_per_task` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.max_recovery_kills_per_task",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.kill_grace_seconds",
+      "default": 10,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_KILL_GRACE_SECONDS",
+      "flag": null,
+      "help": "Sentinel setting `recovery.kill_grace_seconds` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.kill_grace_seconds",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.systemic_kill_alarm",
+      "default": 3,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_SYSTEMIC_KILL_ALARM",
+      "flag": null,
+      "help": "Sentinel setting `recovery.systemic_kill_alarm` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.systemic_kill_alarm",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.include_barriers",
+      "default": false,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_INCLUDE_BARRIERS",
+      "flag": null,
+      "help": "Sentinel setting `recovery.include_barriers` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.include_barriers",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.recovery.force",
+      "default": false,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_RECOVERY_FORCE",
+      "flag": null,
+      "help": "Sentinel setting `recovery.force` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.recovery.force",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.bandwidth.backlog_release",
+      "default": true,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_BANDWIDTH_BACKLOG_RELEASE",
+      "flag": null,
+      "help": "Sentinel setting `bandwidth.backlog_release` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.bandwidth.backlog_release",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.bandwidth.early_checkpoint",
+      "default": true,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_BANDWIDTH_EARLY_CHECKPOINT",
+      "flag": null,
+      "help": "Sentinel setting `bandwidth.early_checkpoint` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.bandwidth.early_checkpoint",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.bandwidth.early_ckpt_fraction",
+      "default": 0.5,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_BANDWIDTH_EARLY_CKPT_FRACTION",
+      "flag": null,
+      "help": "Sentinel setting `bandwidth.early_ckpt_fraction` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.bandwidth.early_ckpt_fraction",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "float",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.bandwidth.early_ckpt_min_idle",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_BANDWIDTH_EARLY_CKPT_MIN_IDLE",
+      "flag": null,
+      "help": "Sentinel setting `bandwidth.early_ckpt_min_idle` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.bandwidth.early_ckpt_min_idle",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.bandwidth.early_ckpt_grace_seconds",
+      "default": 120,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_BANDWIDTH_EARLY_CKPT_GRACE_SECONDS",
+      "flag": null,
+      "help": "Sentinel setting `bandwidth.early_ckpt_grace_seconds` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.bandwidth.early_ckpt_grace_seconds",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.enabled",
+      "default": false,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_ENABLED",
+      "flag": "--sentinel-llm",
+      "help": "Sentinel setting `llm.enabled` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.enabled",
+      "no_flag": "--no-sentinel-llm",
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": {
+        "group": "Sentinel",
+        "label": "Sentinel LLM lane"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [
+        "advise",
+        "act"
+      ],
+      "config": "sentinel.llm.powers",
+      "default": "act",
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_POWERS",
+      "flag": "--sentinel-powers",
+      "help": "Sentinel setting `llm.powers` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.powers",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "enum",
+      "ui": {
+        "group": "Sentinel",
+        "label": "LLM powers"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.allow_graph_edits",
+      "default": true,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_ALLOW_GRAPH_EDITS",
+      "flag": null,
+      "help": "Sentinel setting `llm.allow_graph_edits` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.allow_graph_edits",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.allow_kill",
+      "default": true,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_ALLOW_KILL",
+      "flag": null,
+      "help": "Sentinel setting `llm.allow_kill` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.allow_kill",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.max_llm_kills_per_hour",
+      "default": 2,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_MAX_LLM_KILLS_PER_HOUR",
+      "flag": null,
+      "help": "Sentinel setting `llm.max_llm_kills_per_hour` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.max_llm_kills_per_hour",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.max_injections_per_hour",
+      "default": 6,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_MAX_INJECTIONS_PER_HOUR",
+      "flag": null,
+      "help": "Sentinel setting `llm.max_injections_per_hour` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.max_injections_per_hour",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.llm_kill_min_running_minutes",
+      "default": 10,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_LLM_KILL_MIN_RUNNING_MINUTES",
+      "flag": null,
+      "help": "Sentinel setting `llm.llm_kill_min_running_minutes` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.llm_kill_min_running_minutes",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.planner",
+      "default": false,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_PLANNER",
+      "flag": null,
+      "help": "Sentinel setting `llm.planner` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.planner",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "bool",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.planner_idle_seconds",
+      "default": 120,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_PLANNER_IDLE_SECONDS",
+      "flag": null,
+      "help": "Sentinel setting `llm.planner_idle_seconds` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.planner_idle_seconds",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.heartbeat_minutes",
+      "default": 30,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_HEARTBEAT_MINUTES",
+      "flag": null,
+      "help": "Sentinel setting `llm.heartbeat_minutes` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.heartbeat_minutes",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.generation_ttl_minutes",
+      "default": 60,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_GENERATION_TTL_MINUTES",
+      "flag": null,
+      "help": "Sentinel setting `llm.generation_ttl_minutes` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.generation_ttl_minutes",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.budget_usd",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_BUDGET_USD",
+      "flag": "--sentinel-budget-usd",
+      "help": "Sentinel setting `llm.budget_usd` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.budget_usd",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "float",
+      "ui": {
+        "group": "Sentinel",
+        "label": "LLM budget (USD)"
+      }
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.budget_pct",
+      "default": 10,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_BUDGET_PCT",
+      "flag": null,
+      "help": "Sentinel setting `llm.budget_pct` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.budget_pct",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "float",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.driver",
+      "default": "claude-cli",
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_DRIVER",
+      "flag": null,
+      "help": "Sentinel setting `llm.driver` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.driver",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "str",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.agent",
+      "default": null,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_AGENT",
+      "flag": null,
+      "help": "Sentinel setting `llm.agent` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.agent",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "str",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.max_triggers_per_generation",
+      "default": 20,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_MAX_TRIGGERS_PER_GENERATION",
+      "flag": null,
+      "help": "Sentinel setting `llm.max_triggers_per_generation` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.max_triggers_per_generation",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.max_tokens_per_generation",
+      "default": 400000,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_MAX_TOKENS_PER_GENERATION",
+      "flag": null,
+      "help": "Sentinel setting `llm.max_tokens_per_generation` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.max_tokens_per_generation",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.trigger_cooldown_minutes",
+      "default": 5,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_TRIGGER_COOLDOWN_MINUTES",
+      "flag": null,
+      "help": "Sentinel setting `llm.trigger_cooldown_minutes` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.trigger_cooldown_minutes",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.max_generations_per_hour",
+      "default": 3,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_MAX_GENERATIONS_PER_HOUR",
+      "flag": null,
+      "help": "Sentinel setting `llm.max_generations_per_hour` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.max_generations_per_hour",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": "sentinel.llm.max_consecutive_rejections",
+      "default": 5,
+      "deprecated_flags": [],
+      "env": "AO_SENTINEL_LLM_MAX_CONSECUTIVE_REJECTIONS",
+      "flag": null,
+      "help": "Sentinel setting `llm.max_consecutive_rejections` (see docs-md/sentinel-hld.md \u00a711).",
+      "name": "sentinel.llm.max_consecutive_rejections",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "int",
+      "ui": null
+    }
+  ],
+  "precedence": [
+    "cli",
+    "env",
+    "config",
+    "default"
+  ],
+  "schema": "ao.run-options/v1"
+}

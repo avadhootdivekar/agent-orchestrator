@@ -2,31 +2,36 @@
 suite and its fixtures (T-Md7Vc3 acceptance criteria 1/2/3/5/6, epic FR-7).
 
 Mirrors `tests/bench/test_dev_core_suite.py`'s approach and conventions, scaled to
-`dev-medium`'s held-out `fixture/.grading/` grading harness: every task here uses the
-`command` grader pointed at `.grading/run.py` (which itself re-runs the visible
-`tests/` suite plus the held-out `.grading/tests/`, or, for the test-writing task, a
-multi-mutant mutation check), not the plain `pytest` grader `dev-core` uses. Every
+`dev-medium`'s held-out grading harness: every task here uses the `command` grader pointed
+at `grading/run.py` (copied from the task's grader-owned `tasks/<id>/grading/` dir into the
+run's agent-hidden `grading_dir` -- migrated out of the agent-readable `fixture/.grading/`
+on 2026-10-23, HLD §8 "Hidden-asset rule"). `run.py --repo <repo>` re-runs the visible
+`tests/` suite plus the held-out `grading/tests/`, or, for the test-writing task, a
+multi-mutant mutation check -- not the plain `pytest` grader `dev-core` uses. Every
 test here either loads committed spec files or runs a small, bounded local subprocess
-(`sys.executable`, never `claude`, never a real `uv run` subprocess), so this file runs
-unconditionally in the default (`not real_llm`) test tier, same as the rest of
-`tests/bench/`.
+(`sys.executable`, never `claude`; the single full-suite FakeSubject run goes through the
+real `uv run python ...` grader command), so this file runs unconditionally in the
+default (`not real_llm`) test tier, same as the rest of `tests/bench/`.
 
 Covers:
   - the committed suite loads/validates cleanly, `tier == "medium"`, exactly 6 tasks
     spanning the ticket's required categories, unique lowercase ids, every task
     path-references an existing instruction/fixture (AC1, AC5);
-  - for every task: the FULL grading harness (`.grading/run.py`) FAILS on the
+  - for every task: the FULL grading harness (`grading/run.py`) FAILS on the
     unmodified fixture and PASSES once the task's own `.bench-solution/` reference
     overlay is applied (AC2, exercised here via a plain file copy -- exactly what
     `FakeSubject(scripted_effect="copy-solution")` does at bench-run time, so this is
     "no LLM needed" per the design doc);
-  - the held-out `.grading/` layer is what actually gates `solved`, not the visible
+  - the held-out `grading/` layer is what actually gates `solved`, not the visible
     `tests/` suite alone (AC3): for the refactor task, whose visible suite already
     passes unmodified, the full grader still fails on the unmodified fixture, proving
     the held-out tests are doing real, additional work;
   - a full `FakeSubject` run over the whole suite (`copy-solution` scripted) completes
     and writes a valid `run.json` + `summary.md` to a scratch (never committed) out-dir,
     and never mutates the committed fixtures;
+  - nothing grader-owned is visible to the agent any more: no `.grading` dir under any
+    fixture, no instruction or fixture file mentions it, the grading harness is copied into
+    `grading_dir` (never `repo_dir`) at materialization;
   - no fixture/instruction/grading file under `benchmarks/suites/dev-medium/` embeds
     this checkout's own absolute path.
 """
@@ -41,9 +46,11 @@ from pathlib import Path
 
 import pytest
 
+from agent_orchestrator.bench.graders import expand_command
 from agent_orchestrator.bench.results import load_run, write_summary_md
 from agent_orchestrator.bench.runner import run_suite
 from agent_orchestrator.bench.spec import BenchSuite, load_suite
+from agent_orchestrator.bench.workspace import RunContext, materialize_workspace
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SUITE_PATH = _REPO_ROOT / "benchmarks" / "suites" / "dev-medium" / "suite.json"
@@ -54,7 +61,7 @@ _FIXED_NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=UTC)
 # Tasks whose VISIBLE tests/ suite already passes unmodified (the bug/gap this task
 # targets is invisible to the visible suite alone) -- used by
 # test_held_out_layer_is_required_beyond_the_visible_suite below to prove the held-out
-# `.grading/` layer is doing real work, not just re-checking tests/ (AC3). The other 5
+# `grading/` layer is doing real work, not just re-checking tests/ (AC3). The other 5
 # tasks each have at least one VISIBLE test that already fails unmodified (the
 # feature/bugfix/test-writing tasks' whole point is a visibly-failing test/missing
 # test file) -- refactor-money-cents is the one task designed so behavior "looks"
@@ -104,12 +111,16 @@ def _run_pytest(repo_dir: Path, *targets: str) -> int:
     ).returncode
 
 
-def _run_grading_harness(repo_dir: Path) -> int:
-    """Invoke the task's own `.grading/run.py` exactly as the suite's `command`
-    grader does (`uv run python .grading/run.py`, cwd = the mutated repo root),
+def _grading_script(task_id: str) -> Path:
+    return _SUITE_PATH.parent / "tasks" / task_id / "grading" / "run.py"
+
+
+def _run_grading_harness(task_id: str, repo_dir: Path) -> int:
+    """Invoke the task's own `grading/run.py` exactly as the suite's `command` grader does
+    (`uv run python {grading_dir}/run.py --repo {repo_dir}`, cwd = the mutated repo root),
     swapping `uv run` for the current interpreter (same rationale as `_run_pytest`)."""
     return subprocess.run(
-        [sys.executable, str(repo_dir / ".grading" / "run.py")],
+        [sys.executable, str(_grading_script(task_id)), "--repo", str(repo_dir)],
         cwd=repo_dir,
         check=False,
     ).returncode
@@ -158,10 +169,16 @@ def test_every_task_uses_the_held_out_command_grader_pointed_at_grading_run_py()
     suite = load_suite(_SUITE_PATH)
     for task in suite.tasks:
         assert task.grader.type == "command"
-        assert task.grader.command == "uv run python .grading/run.py"
-        assert (Path(task.fixture) / ".grading" / "run.py").as_posix().endswith(".grading/run.py")
-        grading_script = _SUITE_PATH.parent / task.fixture / ".grading" / "run.py"
-        assert grading_script.is_file(), f"{task.id}: missing .grading/run.py"
+        assert task.grader.assets == f"tasks/{task.id}/grading"
+        assert task.grader.command == "uv run python {grading_dir}/run.py --repo {repo_dir}"
+        assert task.grader.cwd == "."
+        assert _grading_script(task.id).is_file(), f"{task.id}: missing grading/run.py"
+        assert (_SUITE_PATH.parent / task.grader.assets / "run.py").is_file()
+
+
+def test_description_records_the_fingerprint_change() -> None:
+    assert "2026-10-23" in load_suite(_SUITE_PATH).description
+    assert "config_fingerprint" in load_suite(_SUITE_PATH).description
 
 
 def test_every_task_declares_an_agent_work_size_tag() -> None:
@@ -199,14 +216,14 @@ def test_task_grading_harness_fails_before_and_passes_after_solution(
 ) -> None:
     repo_dir = _copy_fixture(task_id, tmp_path)
 
-    assert _run_grading_harness(repo_dir) != 0, (
-        f"{task_id}: the FULL grading harness (.grading/run.py) must FAIL on the "
+    assert _run_grading_harness(task_id, repo_dir) != 0, (
+        f"{task_id}: the FULL grading harness (grading/run.py) must FAIL on the "
         "unmodified fixture (AC2/R4 -- proves the grader discriminates before any "
         "spend)"
     )
 
     _apply_solution(repo_dir)
-    assert _run_grading_harness(repo_dir) == 0, (
+    assert _run_grading_harness(task_id, repo_dir) == 0, (
         f"{task_id}: the FULL grading harness must PASS once the reference solution "
         "overlay is applied"
     )
@@ -217,7 +234,7 @@ def test_held_out_layer_is_required_beyond_the_visible_suite(task_id: str, tmp_p
     """AC3: for a task whose VISIBLE tests/ suite already passes on the unmodified
     fixture (the refactor and performance/correctness tasks -- their bug is invisible
     to the visible suite alone), the FULL grading harness must still fail, proving the
-    held-out `.grading/tests/` layer -- not the visible suite -- is what gates
+    held-out `grading/tests/` layer -- not the visible suite -- is what gates
     `solved`.
     """
     repo_dir = _copy_fixture(task_id, tmp_path)
@@ -226,7 +243,7 @@ def test_held_out_layer_is_required_beyond_the_visible_suite(task_id: str, tmp_p
         f"{task_id}: expected the VISIBLE tests/ suite to already pass unmodified "
         "(that is what makes this task's bug a held-out-only regression)"
     )
-    assert _run_grading_harness(repo_dir) != 0, (
+    assert _run_grading_harness(task_id, repo_dir) != 0, (
         f"{task_id}: the full grading harness (visible + held-out) must still fail "
         "even though the visible suite alone passes"
     )
@@ -238,7 +255,7 @@ def test_test_writing_task_grading_harness_rejects_a_missing_test_file(tmp_path:
     the parametrized fail-before check above -- this asserts the SPECIFIC reason)."""
     repo_dir = _copy_fixture("test-write-validation-spec", tmp_path)
     assert not (repo_dir / "tests" / "test_validation.py").exists()
-    assert _run_grading_harness(repo_dir) != 0
+    assert _run_grading_harness("test-write-validation-spec", repo_dir) != 0
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +323,82 @@ def test_committed_suite_task_fixture_never_mutated_by_a_fake_run(tmp_path: Path
         / "registry"
         / "core.py"
     ).is_file()
+
+
+# ---------------------------------------------------------------------------
+# Hidden-asset rule (HLD §8): nothing grader-owned is visible to the agent.
+# ---------------------------------------------------------------------------
+
+
+def test_no_grading_dir_remains_under_any_fixture() -> None:
+    tasks_dir = _SUITE_PATH.parent / "tasks"
+    leftovers = [p for p in tasks_dir.rglob(".grading")]
+    assert not leftovers, f"agent-readable .grading dirs remain: {leftovers}"
+    for task_id in _ALL_TASK_IDS:
+        grading = tasks_dir / task_id / "grading"
+        assert (grading / "run.py").is_file(), task_id
+        assert any(grading.glob("tests/*.py")) or task_id == "test-write-validation-spec", task_id
+
+
+def test_no_instruction_or_fixture_file_mentions_the_held_out_harness() -> None:
+    tasks_dir = _SUITE_PATH.parent / "tasks"
+    offenders = []
+    for task_id in _ALL_TASK_IDS:
+        paths = [
+            tasks_dir / task_id / "instruction.md",
+            *(tasks_dir / task_id / "fixture").rglob("*"),
+        ]
+        for path in paths:
+            if path.is_file() and ".grading" in path.read_text(errors="replace"):
+                offenders.append(str(path.relative_to(tasks_dir)))
+    assert not offenders, f"agent-visible files still mention .grading: {offenders}"
+
+
+@pytest.mark.parametrize("task_id", _ALL_TASK_IDS)
+def test_grading_harness_lands_in_grading_dir_never_in_the_agent_workspace(
+    task_id: str, bench_ws: Path
+) -> None:
+    task = load_suite(_SUITE_PATH).task(task_id)
+    ctx = materialize_workspace(
+        task,
+        bench_ws / "ws",
+        suite_base_dir=_SUITE_PATH.parent,
+        timeout_seconds=60,
+        grading_dir=bench_ws / "grading",
+    )
+    repo, grading = Path(ctx.repo_dir), Path(ctx.grading_dir or "")
+    assert (grading / "run.py").is_file()
+    assert not (repo / ".grading").exists() and not (repo / "grading").exists()
+    held_out = {p.name for p in grading.rglob("test_*.py")}
+    visible = {p.name for p in repo.rglob("test_*.py")}
+    assert not held_out & visible, "a held-out test file leaked into the agent workspace"
+
+
+def test_grader_command_expands_to_the_hidden_run_py_and_the_repo() -> None:
+    task = load_suite(_SUITE_PATH).task("bugfix-cache-key-collision")
+    ctx = RunContext(
+        workspace="/w",
+        repo_dir="/w/repo",
+        instruction_path="/w/repo/INSTRUCTION.md",
+        capture_dir="/w/capture",
+        timeout_seconds=1,
+        grading_dir="/g/bugfix-cache-key-collision",
+    )
+    assert expand_command(task.grader.command or "", ctx) == (
+        "uv run python /g/bugfix-cache-key-collision/run.py --repo /w/repo"
+    )
+
+
+@pytest.mark.parametrize("task_id", _ALL_TASK_IDS)
+def test_run_py_defaults_to_cwd_when_repo_flag_is_omitted(task_id: str, tmp_path: Path) -> None:
+    """`--repo` is optional (default: cwd), and the script never derives the repo from its
+    own location any more (it now lives outside the repo)."""
+    repo_dir = _copy_fixture(task_id, tmp_path)
+    _apply_solution(repo_dir)
+    rc = subprocess.run(
+        [sys.executable, str(_grading_script(task_id))], cwd=repo_dir, check=False
+    ).returncode
+    assert rc == 0
 
 
 # ---------------------------------------------------------------------------

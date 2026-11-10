@@ -1,0 +1,73 @@
+{
+ "n_tasks": 1000,
+ "width": 40,
+ "layers": 25,
+ "iters": 1000,
+ "build_dag": {
+  "p50_ms": 1.079,
+  "p95_ms": 1.113,
+  "max_ms": 6.766,
+  "iters": 200
+ },
+ "topological_order": {
+  "p50_ms": 0.623,
+  "p95_ms": 0.631,
+  "max_ms": 0.646,
+  "iters": 200
+ },
+ "_predecessors": {
+  "p50_ms": 0.163,
+  "p95_ms": 0.169,
+  "max_ms": 6.878,
+  "iters": 200
+ },
+ "_recompute_order": {
+  "p50_ms": 0.627,
+  "p95_ms": 0.636,
+  "max_ms": 0.675,
+  "iters": 200
+ },
+ "_ready_ids": {
+  "p50_ms": 0.311,
+  "p95_ms": 0.317,
+  "max_ms": 0.405,
+  "iters": 1000
+ },
+ "_pending_ids": {
+  "p50_ms": 0.04,
+  "p95_ms": 0.041,
+  "max_ms": 0.081,
+  "iters": 1000
+ },
+ "tick_core(_ready_ids+_pending_ids)": {
+  "p50_ms": 0.353,
+  "p95_ms": 0.359,
+  "max_ms": 0.372,
+  "iters": 1000
+ },
+ "full_reshape(build_dag+topo+preds)": {
+  "p50_ms": 1.898,
+  "p95_ms": 1.987,
+  "max_ms": 8.718,
+  "iters": 200
+ },
+ "RunState.save": {
+  "p50_ms": 10.26,
+  "p95_ms": 10.433,
+  "max_ms": 11.202,
+  "iters": 200
+ },
+ "RunState.load": {
+  "p50_ms": 3.819,
+  "p95_ms": 4.023,
+  "max_ms": 10.727,
+  "iters": 200
+ },
+ "state_json_bytes": 831084,
+ "model_dump_json_only": {
+  "p50_ms": 2.096,
+  "p95_ms": 2.135,
+  "max_ms": 2.246,
+  "iters": 200
+ }
+}

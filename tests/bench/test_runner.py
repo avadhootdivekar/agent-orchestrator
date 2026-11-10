@@ -48,7 +48,7 @@ from agent_orchestrator.bench.spec import (
     load_suite,
 )
 from agent_orchestrator.bench.subjects import RunContext, SubjectResult
-from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT
+from agent_orchestrator.bench.workspace import bench_workspace_root
 
 _FIXED_NOW = datetime(2026, 7, 22, 12, 0, 0, tzinfo=UTC)
 
@@ -571,7 +571,7 @@ def test_run_suite_timeout_last_resort_builtin_default(
 
 
 # ---------------------------------------------------------------------------
-# Path guard: every recorded workspace stays under BENCH_WORKSPACE_ROOT.
+# Path guard: every recorded workspace stays under bench_workspace_root().
 # ---------------------------------------------------------------------------
 
 
@@ -588,7 +588,7 @@ def test_run_suite_workspaces_stay_under_bench_workspace_root(
         suite_path, subject_path, out_dir=tmp_path / "results", clock=_fixed_clock
     )
 
-    root = BENCH_WORKSPACE_ROOT.resolve()
+    root = bench_workspace_root().resolve()
     assert record.tasks  # sanity: the suite actually ran
     for t in record.tasks:
         capture_path = Path(t.workspace).resolve()

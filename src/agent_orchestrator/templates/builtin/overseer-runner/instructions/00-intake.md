@@ -89,6 +89,8 @@ Write the manifest (strict JSON `{"tasks": [...]}` — unit entries plus the nex
 checkpoint entry `ck-01`) at the exact `task_manifest_path` your task declares,
 following the contract's "Unit" and "Next checkpoint" shapes literally: field names,
 `pre_hook`/`post_hook` wiring, and `depends_on` exactly as shown there.
+On a sentinel run (contract "Soft barrier") `ck-01` must also carry `"barrier": "soft"`; if
+`intake-check --dry-run` reports an `OV-R10` barrier mismatch, add or remove it accordingly.
 
 ## If the prompt is genuinely ambiguous or unworkable
 Do not guess at scope you can't ground in the prompt. Instead, emit an **empty wave**

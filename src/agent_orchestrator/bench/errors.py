@@ -18,7 +18,14 @@ from __future__ import annotations
 
 from agent_orchestrator.errors import SpecValidationError
 
-__all__ = ["BenchError", "SpecValidationError", "SubjectError", "GraderError", "ResultsError"]
+__all__ = [
+    "BenchError",
+    "EnvMismatchError",
+    "GraderError",
+    "ResultsError",
+    "SpecValidationError",
+    "SubjectError",
+]
 
 
 class BenchError(Exception):
@@ -39,3 +46,10 @@ class ResultsError(BenchError):
     the given run dirs span different suites/schema versions, or mix two runs for the
     SAME subject id with different `config_fingerprint`s without `allow_mixed=True`.
     """
+
+
+class EnvMismatchError(ResultsError):
+    """`build_comparison` refused because the subjects did not run in one clean, shared
+    environment (T-Ws7Iso: contaminated root, foreign skills/agents, differing init-event
+    or user-config fingerprints). A subclass so a campaign can stop its repeat rounds and
+    still write a stamped report instead of crashing after the money is spent."""

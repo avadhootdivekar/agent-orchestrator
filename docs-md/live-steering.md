@@ -15,7 +15,9 @@ instructions.
 - **No mid-task input.** A task that is already running never sees a note. The only executor
   spawns `claude --print` with `stdin=DEVNULL` and builds the prompt once, before launch, so
   there is no channel to a live task. To stop a task, Cancel the run (and Resume it later).
-- **No pause.** There is no paused run state; notes do not pause anything.
+- **No pause.** There is no paused run state; notes do not pause anything. (A task can park
+  *itself* as `awaiting_input` to ask a human a question - see [awaiting-input-hld.md](awaiting-input-hld.md); that is
+  separate from notes.)
 - **No approval gates.** Those are a separate, not-yet-built design
   ([human-approval-gates-hld.md](human-approval-gates-hld.md)); notes do not depend on them.
 - Notes are accepted only while the run is **live** (state `running` and its process alive under

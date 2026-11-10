@@ -17,17 +17,22 @@ import type {
   RunIntegration,
   TaskStat,
   RunLiveSummary,
+  RunOptions,
 } from "../types";
 import { OpenInNewTabButton, TabLink } from "../tabs/TabLink";
 import { POLL_MS, usePolling } from "../usePolling";
+import { NeedsInputBanner, useRunInputs } from "./InputRequestForm";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { Empty, ErrorBanner, LiveBadge, StatusChip, Tile } from "./common";
 import { FeedbackForm } from "./FeedbackControls";
+import { LimitsPanel } from "./LimitsPanel";
+import { SentinelPanel } from "./SentinelPanel";
 import { NowRunning, nowRunningRows } from "./NowRunning";
 import { RunSummaryPanel } from "./RunSummaryPanel";
 import { PromptPanel } from "./PromptPanel";
 import { QuickLinks, type QuickLink } from "./QuickLinks";
 import { RunLog } from "./RunLog";
+import { optionErrors, RunOptionsForm, useRunOptionsSchema } from "./RunOptionsForm";
 import {
   OperatorNotesBox,
   RunFeedbackPanel,
@@ -178,6 +183,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
   const [activity, setActivity] = useState<RunActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [resumeOptions, setResumeOptions] = useState<RunOptions>({});
+  const optionsSchema = useRunOptionsSchema();
   const feedback = useFeedback(runId);
   const notes = useOperatorNotes(runId, detail?.is_live ?? false);
   // Table is the default (TASK.md item 5); persisted globally, not per-run.
@@ -200,6 +207,9 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
       setError(errorMessage(err));
     }
   }, [runId]);
+
+  const waiting = detail?.summary.waiting_for_input ?? false;
+  const inputs = useRunInputs(runId, waiting, () => void refresh());
 
   const refreshActivity = useCallback(async () => {
     try {
@@ -286,8 +296,12 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
               </button>
             ) : (
               <button
-                disabled={busy || summary.status === "succeeded"}
-                onClick={() => void act(() => api.resumeRun(runId))}
+                disabled={
+                  busy ||
+                  summary.status === "succeeded" ||
+                  Object.keys(optionErrors(optionsSchema, resumeOptions)).length > 0
+                }
+                onClick={() => void act(() => api.resumeRun(runId, resumeOptions))}
               >
                 Resume
               </button>
@@ -297,6 +311,16 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
               stopped run.
             </span>
           </div>
+          {!detail.is_live && summary.status !== "succeeded" ? (
+            <details className="options-group" data-testid="resume-options">
+              <summary>Resume options (optional overrides)</summary>
+              <RunOptionsForm
+                schema={optionsSchema}
+                value={resumeOptions}
+                onChange={setResumeOptions}
+              />
+            </details>
+          ) : null}
           <OperatorNotesBox
             state={notes.state}
             posting={notes.posting}
@@ -307,6 +331,13 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
         </CollapsibleSection>
 
         <ErrorBanner message={error} />
+
+        <NeedsInputBanner
+          state={inputs.state}
+          error={inputs.error}
+          submitting={inputs.submitting}
+          onAnswer={inputs.answer}
+        />
 
         {/* Top of the page, fixed 3-row height, never collapsible (E-iafh2F FR-4). */}
         <div style={{ marginBottom: 12 }}>
@@ -356,6 +387,10 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
         ) : null}
         </CollapsibleSection>
       </div>
+
+      <LimitsPanel limits={detail.limits} settingsRecorded={detail.settings_recorded} />
+
+      <SentinelPanel runId={runId} live={detail.is_live} />
 
       <RunSummaryPanel summary={liveSummary} />
 
@@ -410,6 +445,7 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
               runId={runId}
               tasks={detail.tasks}
               graphVersion={detail.graph_version}
+              activity={activity}
             />
           </Suspense>
         ) : (

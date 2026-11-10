@@ -31,7 +31,7 @@ from agent_orchestrator.bench.swebench_provider import (
     SWEBENCH_PROVIDER_TYPE,
     SweBenchWorkspaceProvider,
 )
-from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT, materialize_workspace
+from agent_orchestrator.bench.workspace import bench_workspace_root, materialize_workspace
 
 
 def _git(args: list[str], cwd: Path) -> None:
@@ -287,10 +287,10 @@ def test_materialize_workspace_end_to_end_with_swebench_source(
     )
 
     # materialize_workspace's sandbox guard requires `ws` under the REAL
-    # BENCH_WORKSPACE_ROOT (mirrors test_workspace.py's own `bench_ws_target`
+    # bench_workspace_root() (mirrors test_workspace.py's own `bench_ws_target`
     # fixture convention) -- tmp_path is outside it and would be rejected.
-    (BENCH_WORKSPACE_ROOT / "tests").mkdir(parents=True, exist_ok=True)
-    ws_target = BENCH_WORKSPACE_ROOT / "tests" / f"ws-{uuid.uuid4().hex[:12]}"
+    (bench_workspace_root() / "tests").mkdir(parents=True, exist_ok=True)
+    ws_target = bench_workspace_root() / "tests" / f"ws-{uuid.uuid4().hex[:12]}"
     ctx = materialize_workspace(
         task,
         ws_target,
@@ -328,7 +328,7 @@ def test_real_prepare_checks_out_one_pinned_instance() -> None:
     end (this task's TASK.md AC3 / this task's deliverable #5 real test).
     """
     from agent_orchestrator.bench.spec import load_suite
-    from agent_orchestrator.bench.workspace import BENCH_WORKSPACE_ROOT
+    from agent_orchestrator.bench.workspace import bench_workspace_root
 
     suite = load_suite(_COMMITTED_SUITE_DIR / "suite.json")
     task = suite.task("psf__requests-2931")
@@ -337,7 +337,7 @@ def test_real_prepare_checks_out_one_pinned_instance() -> None:
         i["base_commit"] for i in instances["instances"] if i["instance_id"] == "psf__requests-2931"
     )
 
-    ws = BENCH_WORKSPACE_ROOT / "tests" / "swebench-real-opt-in" / task.id
+    ws = bench_workspace_root() / "tests" / "swebench-real-opt-in" / task.id
     ctx = materialize_workspace(
         task,
         ws,

@@ -30,6 +30,4 @@ does not fully exercise the spec above). A test file that doesn't really check t
 functions' behavior (e.g. an empty test, or one that would pass no matter what the
 functions do) does not satisfy this task.
 
-Do not modify `validation/rules.py` or anything under `.grading/` — `.grading/` is a
-held-out grading harness the run is scored against and is not part of what you are
-asked to implement or test against directly.
+Do not modify `validation/rules.py`.

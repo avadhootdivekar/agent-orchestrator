@@ -163,6 +163,7 @@ When editing instructions, **edit the `.claude/` originals** — the pointers sh
 |------|-----------|
 | Repo intelligence / search / overlay tickets | [`.claude/skills/repo-intel/SKILL.md`](.claude/skills/repo-intel/SKILL.md) |
 | Decomposing a task into an `ao` workflow spec (DAG) — sizing, routing/`emit_tasks`, isolation/`max_parallel`, hooks/grading | [`.claude/skills/workflow-authoring/SKILL.md`](.claude/skills/workflow-authoring/SKILL.md) |
+| Benchmarking `ao` vs bare models (`ao-bench`): rules, tuning difficulty without fitting, campaigns + reports | [`.claude/skills/benchmarking/SKILL.md`](.claude/skills/benchmarking/SKILL.md), [`bench-tune`](.claude/skills/bench-tune/SKILL.md), [`bench-campaign-report`](.claude/skills/bench-campaign-report/SKILL.md) |
 
 ## Available agents
 

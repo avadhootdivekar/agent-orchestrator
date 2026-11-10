@@ -3,7 +3,7 @@
   "id": "dev-medium",
   "domain": "software",
   "tier": "medium",
-  "description": "Self-authored medium-tier dev-task suite (E-Bt4Xk9 / T-Md7Vc3): 6 genuinely longer (30-90 min of agent work), multi-file, stdlib-only Python fixtures, each with a held-out fixture/.grading/ grading harness beyond the visible tests/ suite, designed so a single trivial `claude -p` turn is not expected to ace every task.",
+  "description": "Self-authored medium-tier dev-task suite (E-Bt4Xk9 / T-Md7Vc3): 6 genuinely longer (30-90 min of agent work), multi-file, stdlib-only Python fixtures, each graded by a held-out harness (tasks/<id>/grading/, copied into the run's agent-hidden grading_dir) beyond the visible tests/ suite, designed so a single trivial `claude -p` turn is not expected to ace every task. NOTE 2026-10-23: the held-out harness moved out of fixture/.grading/ (agent-readable) into grader-owned tasks/<id>/grading/ and the grader command changed, so every task's config_fingerprint changed on that date -- results recorded before it are not comparable run-for-run with results after it.",
   "defaults": { "timeout_seconds": 3600 },
   "tasks": [
     {
@@ -11,7 +11,12 @@
       "category": "feature",
       "instruction": "tasks/feature-plugin-priority-registry/instruction.md",
       "fixture": "tasks/feature-plugin-priority-registry/fixture",
-      "grader": { "type": "command", "command": "uv run python .grading/run.py", "cwd": "." },
+      "grader": {
+        "type": "command",
+        "assets": "tasks/feature-plugin-priority-registry/grading",
+        "command": "uv run python {grading_dir}/run.py --repo {repo_dir}",
+        "cwd": "."
+      },
       "tags": ["python", "medium", "multi-file", "~30-45min"]
     },
     {
@@ -19,7 +24,12 @@
       "category": "refactor",
       "instruction": "tasks/refactor-money-cents/instruction.md",
       "fixture": "tasks/refactor-money-cents/fixture",
-      "grader": { "type": "command", "command": "uv run python .grading/run.py", "cwd": "." },
+      "grader": {
+        "type": "command",
+        "assets": "tasks/refactor-money-cents/grading",
+        "command": "uv run python {grading_dir}/run.py --repo {repo_dir}",
+        "cwd": "."
+      },
       "tags": ["python", "medium", "multi-file", "~45-60min"]
     },
     {
@@ -27,7 +37,12 @@
       "category": "bugfix",
       "instruction": "tasks/bugfix-cache-key-collision/instruction.md",
       "fixture": "tasks/bugfix-cache-key-collision/fixture",
-      "grader": { "type": "command", "command": "uv run python .grading/run.py", "cwd": "." },
+      "grader": {
+        "type": "command",
+        "assets": "tasks/bugfix-cache-key-collision/grading",
+        "command": "uv run python {grading_dir}/run.py --repo {repo_dir}",
+        "cwd": "."
+      },
       "tags": ["python", "medium", "multi-file", "misleading-symptom", "~45-90min"]
     },
     {
@@ -35,7 +50,12 @@
       "category": "feature",
       "instruction": "tasks/feature-tracker-priority-filter/instruction.md",
       "fixture": "tasks/feature-tracker-priority-filter/fixture",
-      "grader": { "type": "command", "command": "uv run python .grading/run.py", "cwd": "." },
+      "grader": {
+        "type": "command",
+        "assets": "tasks/feature-tracker-priority-filter/grading",
+        "command": "uv run python {grading_dir}/run.py --repo {repo_dir}",
+        "cwd": "."
+      },
       "tags": ["python", "medium", "multi-file", "integration-point", "~45-60min"]
     },
     {
@@ -43,7 +63,12 @@
       "category": "bugfix",
       "instruction": "tasks/bugfix-search-index-scan-budget/instruction.md",
       "fixture": "tasks/bugfix-search-index-scan-budget/fixture",
-      "grader": { "type": "command", "command": "uv run python .grading/run.py", "cwd": "." },
+      "grader": {
+        "type": "command",
+        "assets": "tasks/bugfix-search-index-scan-budget/grading",
+        "command": "uv run python {grading_dir}/run.py --repo {repo_dir}",
+        "cwd": "."
+      },
       "tags": ["python", "medium", "multi-file", "performance-correctness", "~45-60min"]
     },
     {
@@ -51,7 +76,12 @@
       "category": "test",
       "instruction": "tasks/test-write-validation-spec/instruction.md",
       "fixture": "tasks/test-write-validation-spec/fixture",
-      "grader": { "type": "command", "command": "uv run python .grading/run.py", "cwd": "." },
+      "grader": {
+        "type": "command",
+        "assets": "tasks/test-write-validation-spec/grading",
+        "command": "uv run python {grading_dir}/run.py --repo {repo_dir}",
+        "cwd": "."
+      },
       "tags": ["python", "medium", "test-writing", "mutation-check", "~30-45min"]
     }
   ]

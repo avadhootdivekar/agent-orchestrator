@@ -42,6 +42,11 @@ const DEPENDENCY_EDGE_ROWS: EdgeLegendRow[] = [
     className: "graph-edge-dependency-loop",
     label: 'Loop — solid line, loop color, labeled "loop <id>".',
   },
+  {
+    key: "edited",
+    className: "graph-edge-edited",
+    label: "Edited — thick line, the target's dependencies were rewritten at run time (sentinel/ctl).",
+  },
 ];
 
 /** HLD §8.6 edge table, spawn-view rows only. */
@@ -50,6 +55,11 @@ const SPAWN_EDGE_ROWS: EdgeLegendRow[] = [
     key: "injected",
     className: "graph-edge-spawn-injected",
     label: "Injected — solid line, spawn color, one parent to each child.",
+  },
+  {
+    key: "sentinel",
+    className: "graph-edge-spawn-sentinel",
+    label: "Sentinel — dashed spawn-colored line, one parent to each child.",
   },
   {
     key: "loop",
@@ -66,6 +76,7 @@ const SPAWN_EDGE_ROWS: EdgeLegendRow[] = [
 const NODE_BADGE_ROWS: { glyph: string; text: string }[] = [
   { glyph: "#1", text: BADGE_LABELS.ordinal(1) },
   { glyph: "◆", text: BADGE_LABELS.injected },
+  { glyph: "🛡", text: BADGE_LABELS.sentinel },
   { glyph: "↻2", text: BADGE_LABELS.loopIteration(2) },
   { glyph: "⤴3", text: BADGE_LABELS.emitter(3) },
   { glyph: "⑂", text: BADGE_LABELS.router },
@@ -77,9 +88,11 @@ const NODE_BADGE_ROWS: { glyph: string; text: string }[] = [
 const STATUS_LEGEND_ORDER = [
   "pending",
   "running",
+  "awaiting_input",
   "succeeded",
   "failed",
   "timed_out",
+  "killed",
   "cancelled",
   "skipped",
   "not_taken",

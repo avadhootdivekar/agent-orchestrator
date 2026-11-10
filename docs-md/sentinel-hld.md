@@ -1,0 +1,803 @@
+# Sentinel — High-Level Design
+
+- Status: **Accepted** (owner sign-off 2026-11-09; with ADR-0024); P1–P3 implemented, as-built sections and §21 reconcile it. Author: architect, 2026-11-09. Operator guide: `docs-md/guide-sentinel.md`.
+- Epic: `meta/tickets/E-Sn7tL2-sentinel-long-running-overseer/` · ADR: `docs-md/adr/ADR-0024-sentinel-overseer-lane.md`
+- Evidence: `output/E-Sn7tL2-sentinel-long-running-overseer/spike/RESULT.md` (T-Sn0Spk, GO-WITH-CHANGES)
+- Seed: EPIC §4 (this HLD supersedes it where they differ; differences are the spike changes in §3.1).
+
+## 0. Purpose and scope
+
+A run-long overseer inside the engine: mechanical tick (liveness, recovery, bandwidth, live overrides) at $0, plus
+optional bounded LLM generations for judgement. Opt-in via `sentinel:`; absent/disabled ⇒ byte-identical behaviour.
+
+In scope: P1 (foundations), P2 (bandwidth), P3 (LLM). Out of scope: P4 (see §16 Deferred), the per-wave checkpoint's
+own logic (unchanged apart from digest/instruction additions), the live-install flow.
+
+## 1. Requirements traceability (every FR/NFR of EPIC §3 → HLD section)
+
+| Req | Ph | Summary | HLD § |
+|---|---|---|---|
+| FR-1 | P1 | Opt-in layered settings; absent ⇒ byte-identical | 11, 12 (golden) |
+| FR-2 | P1 | Main-thread tick, DRAIN timeout | 3, 3.1 |
+| FR-3 | P1 | Control inbox `ao.ctl/v1`, quarantine | 4, App. A.1 |
+| FR-4 | P1 | Liveness probe | 5.1 |
+| FR-5 | P1 | Per-task kill, `killed` status, process groups | 5.2, 5.3 |
+| FR-6 | P1 | Recovery ladder | 5.4 |
+| FR-7 | P1 | Live overrides (`max_parallel` soft limit, powers…) | 4.4, 11.3 |
+| FR-8 | P2 | Soft-barrier emitters | 6.1, 6.2 |
+| FR-9 | P2 | L1 backlog release | 6.3, App. A.3 |
+| FR-10 | P2 | L2 early checkpoint (trims `depends_on` **and** `inputs`) | 6.4 |
+| FR-11 | P2 | Shared mechanical checker | 7 |
+| FR-12 | P2 | Pending-graph edits + extra rules | 6.2, 7.2 |
+| FR-13 | P2 | Spawn origin `sentinel` | 6.5 |
+| FR-14 | P3 | LLM generations, pack, handoff, memory | 8, App. A.2 |
+| FR-15 | P3 | LLM powers advise/act, LLM kill limits | 8.4, 9 |
+| FR-16 | P3 | Checkpoint ↔ sentinel contract, directive ack | 9 |
+| FR-17 | P3 | Cost accounting (`sentinel-gNN` rows, budget) | 8.5 |
+| FR-18 | P1–3 | Fail-safe + resume | 10 |
+| FR-19 | P2 | Separate injection cap | 6.6 |
+| FR-20 | P1 | Utilisation metrics | 5.5 |
+| FR-21 | P1–3 | Observability events | 13 |
+| FR-22 | P1–3 | CLI + dashboard surface | 11, 12 |
+| FR-23 | P3 | Live smoke | 15 |
+| FR-24–28 | P4 | Deferred | 16 |
+| NFR-1 | | Byte-identical when off | 3.2, 15 |
+| NFR-2 | | Determinism (pure fns + injectable clock) | 3, 15 |
+| NFR-3 | | Idempotency (ids, consume records) | 4.2, 10 |
+| NFR-4 | | Single writer | 2, 3 |
+| NFR-5 | | Path safety | 4.3 |
+| NFR-6 | | Bounded IO | 4.3, 8.2, 13 |
+| NFR-7 | | Cost | 8.5 |
+| NFR-8 | | Long-run stability; tick <50 ms @1k; save-on-mutation | 3.3 |
+| NFR-9 | | Legibility | 13 |
+| NFR-10 | | Tamper-evident only; engine-side containment | 9.2 |
+| NFR-11 | | Self-hosting safety | 15 |
+| NFR-12 | | Dashboard auth/CSRF/actor | 12 |
+| NFR-13 | | KPI ≥50 % idle-slot reduction (reported) | 15 |
+
+## 2. Architecture
+
+```
+ ao run (engine process, main thread owns RunState)
+   loop: cancel? → reconcile_inputs → SENTINEL TICK
+            ├ liveness + metrics                      (5.1, 5.5)
+            ├ drain control/inbox → checker → apply   (4, 7)
+            ├ mechanical: recovery ladder, backlog release, early-ckpt, needs_llm triggers
+            └ apply via _inject / _kill_task / _apply_pending_edits / override
+         → FILL (soft limit = live max_parallel) → wait(in_flight, timeout=tick_seconds)
+   worker pool (size = max_parallel_ceiling)     lane executor (1 worker, outside max_parallel)
+     task attempts                                 sentinel-gNN: bounded claude -p → inbox files
+ writers of control/inbox:  ao ctl │ dashboard POST /api/runs/{id}/control │ sentinel-gNN
+```
+
+Components: `SentinelSpec` (models), `SentinelState` (runstate), `sentinel.py` (tick, triggers, ladder, metrics —
+pure functions), `checker.py` (shared mutation checker), `control.py` (inbox read/validate/quarantine/archive),
+`graph_edits.py` (`_apply_pending_edits` + replay), executor `cancel_event`/`activity_path`, `SentinelDriver` ABC +
+`ClaudeCliSentinelDriver`, CLI `ao ctl`, dashboard API + panel. Module/file names are indicative; tasks own the final
+layout.
+
+## 3. Main-thread tick
+
+- DRAIN: `wait(in_flight, timeout=tick_seconds, return_when=FIRST_COMPLETED)`; settle each completed future as today.
+  Disabled ⇒ the original un-timed `as_completed` path (NFR-1).
+- `_sentinel_tick(state, workflow, ctx, now)`: pure function of in-memory state + files + injected clock. Steps in
+  fixed order: (1) liveness refresh, (2) metrics accrue, (3) drain inbox (id order), (4) mechanical triggers
+  (ladder → backlog → early ckpt → needs_llm), (5) apply accepted mutations, (6) **one** `RunState.save` iff anything
+  mutated (inbox consume records are in that save — G5 pattern, NFR-3).
+- Any exception ⇒ `sentinel.error`, lane disabled for the run, run continues as today (FR-18).
+- Pool is created at `max_parallel_ceiling` (default = `max_parallel`); FILL honours the live soft limit.
+
+### 3.1 Spike changes folded in (normative)
+
+| Spike item | Design consequence |
+|---|---|
+| I1 edits not persisted | `RunState.graph_edits: list[GraphEdit]` appended in the same step as the mutation; replayed in `prepare_resume` after injected-task merge (ordered, idempotent). Snapshot (`record_spec_session`) stays static-only. |
+| I2 inferred edges | Edit ops are defined over the **effective** edge set (declared + inferred from `inputs`↔`outputs`). Removing an edge requires trimming the matching `inputs` entry; checker rejects any edit whose post-edit effective edges add an edge **into** a non-pending task (before/after `build_dag` comparison). |
+| I3 duplicate producer | Reject a new/edited output path already declared by another task. |
+| I4 running/finished tasks | Only `state.tasks[tid].status == "pending"` may be edited/removed (checker + engine assertion). |
+| I5 cycle detection after mutation | Validate on a **deep copy** (`build_dag` + topological order), then commit; never mutate `workflow.tasks` first. |
+| I6 `run()` owns graph/order/preds; cones computed once | `_apply_pending_edits(...)` returns the same `reshaped` triple handled at the `SettleResult("reshaped")` site; reject edits touching any route cone/`membership` or loop-clone ids; removed pending tasks are dropped from `state.tasks`. |
+| FR-10 | Early checkpoint trims `inputs` **and** `depends_on`, persisted via `graph_edits`. |
+| FR-5/6 | `start_new_session=True`; `killpg` TERM → grace → KILL (also fixes timeout orphans); `idle_kill_minutes` default **15**, floor **12** (healthy max gap 600.4 s = Bash 10-min cap; 0 / 34 196 gaps > 15 min). |
+| NFR-8 | Tick 0.35 ms, full reshape 1.9 ms @1k tasks; `RunState.save` 10 ms @831 KB ⇒ **save on mutation only**. |
+| SIGTERM (d) | `ao run` has no handler: SIGTERM leaves `running` + orphans. New: §3.4. |
+| `_inject` parent | Requires `parent_task_id` with `dispatch_cycle`; add `origin="sentinel"` variant (§6.5). |
+
+### 3.2 Disabled-path guarantee
+Every new code path is guarded by `workflow.sentinel.enabled`; new `RunState` fields serialise only when non-default
+(`exclude_defaults`-style) so state.json is byte-identical. Golden test covers workflow.json/state.json/run log.
+Process-group spawn and signal handling (§3.4) are the sole always-on changes; they write no new artifacts.
+
+### 3.3 Performance contract
+Tick < 50 ms @1k tasks (measured 0.35 ms). No per-iteration save. Inbox scan is `os.scandir` of one dir, capped at
+`inbox_batch_max` (default 50) entries per tick, oldest first.
+
+### 3.4 Signals
+`ao run` installs SIGTERM/SIGINT handlers setting a cancel flag read by `cancel_fn` (today never wired). First signal:
+stop dispatching, `killpg` TERM on in-flight groups, settle remaining as `cancelled`, set `state.status=cancelled`,
+save, exit. Second signal or `cancel_grace_seconds` (default 30) elapsed: SIGKILL groups. Replaces the "drain waits for
+25-min tasks" behaviour. `ao ctl cancel` uses the same path via inbox. SIGINT under a pty must be tested (spike gap).
+
+## 4. Control inbox (`ao.ctl/v1`)
+
+### 4.1 Layout
+`<run_dir>/control/{inbox,inbox-processed,inbox-rejected}/`. Writers create `<id>.json.tmp` then atomically rename.
+Engine moves consumed files to `inbox-processed/` (rotated: keep last 200) after the state save that records the id in
+`state.sentinel.consumed_ids` (bounded ring of last 1000 ids).
+
+### 4.2 Entry kinds and idempotency
+`set`, `pause_llm`, `resume_llm`, `note`, `kill`, `release_backlog`, `inject`, `edit_pending`, `directive`,
+`request_hold`, `request_cancel`. Schema App. A.1. `id` is writer-generated (`<actor>-<ts>-<rand>`); an id already in
+`consumed_ids` is dropped silently (idempotent replay, crash between save and file move). Entries are processed in
+lexicographic `id` order within a tick for determinism.
+
+### 4.3 Validation and quarantine
+Order: size ≤ 1 MiB → JSON parse → schema/`kind` → path safety (resolve + `is_relative_to(workspace_root)`, reject
+escaping symlinks) → shared checker (§7). Failure ⇒ move to `inbox-rejected/` with sidecar `<id>.reason.json`
+`{rule_id, detail}`, emit `sentinel_rejected`/`ctl.rejected`. Per-source consecutive LLM rejections ≥ 5 ⇒ pause LLM +
+directive for next checkpoint (FR-18).
+
+### 4.4 Live overrides
+`set` writes `state.sentinel.overrides{dotted_key: {value, actor, at}}`, validated against `SentinelSpec` and the
+run-options registry (E-aYG5vn). Applied values appear in `state.effective_settings` with source `live-override`.
+Overridable: `max_parallel` (≤ ceiling), `llm.powers`, `llm.allow_*`, recovery thresholds (respecting floors),
+sentinel budget, `tick_seconds`. Not overridable: `enabled`, ceiling, driver. Overrides persist and are restored on
+resume.
+
+## 5. Health and recovery
+
+### 5.1 Liveness (FR-4)
+Executor exposes `activity_path`; tick `os.stat`s it (size+mtime; no read/lock). `last_activity_at` = last observed
+growth. Growth is a positive signal; **absence is meaningful only above the longest legitimate tool call**
+(spike: 27 s silence during a real Bash wait; no heartbeat during tool runs). Optional P1 second signal: descendant
+CPU/liveness of the pgid via `/proc` to separate "long tool" from "wedged" (kept optional; see Deferred if cut).
+Exposed in state, digest, `ao ctl status`, dashboard.
+
+### 5.2 Kill primitive (FR-5)
+`TaskContext.cancel_event`; Claude CLI executor polls `proc.wait(timeout=1)`, on cancel `killpg(SIGTERM)` → grace
+(`kill_grace_seconds`, default 10) → `killpg(SIGKILL)`. Engine `_kill_task(tid, reason, source)` settles as `killed`
+touching no other task.
+
+### 5.3 `killed` status (EPIC §10.2)
+New terminal-for-attempt status `killed{reason, source ∈ ladder|ctl|dashboard|llm}`. Not counted as a failure for
+`task_failures`/`consecutive_failures` breakers until the ladder is exhausted (then normal `failed`). Does not
+consume `max_attempts`; counts against `max_recovery_kills_per_task` (default 2). All status consumers (summary, UI
+maps, graph colours, `ao status`) must handle it.
+
+### 5.4 Recovery ladder (state machine)
+Per task, `state.tasks[tid].recovery{kills, last_reason, escalation_step}`.
+
+```
+running ──trigger──▶ KILL ──▶ killed
+ triggers: idle ≥ idle_kill_minutes │ running ≥ stuck_factor×median(same-kind settled; ≥3 samples; floor stuck_min_minutes)
+           │ cost ≥ cost_kill_pct×task cap │ manual/LLM kill
+killed ─▶ kills < max_recovery_kills_per_task ?
+            yes ─▶ step 0: retry same (+ retry-context note "killed: <reason>")
+                   step n≥1: retry with escalate[n-1] ({effort|model})
+            no  ─▶ failed (normal failure path ⇒ checkpoint/sentinel replans)
+ --no-retry (ctl) ─▶ failed immediately
+```
+Barrier/emitter tasks: alarm-only unless `recovery.include_barriers`. Systemic alarm: ≥ N consecutive kills across
+tasks (default 3) ⇒ stop mechanical kills, pause LLM, raise directive (env/quota problem). `idle_kill_minutes`
+validated ≥ 12 unless `force`. LLM never selects the retry shape; it may `inject` a replacement through the checker.
+
+### 5.4.1 As built (T-Sn4Rec, 2026-11-09)
+- **Executor**: `TaskContext.cancel_event` is a `models.CancelToken` (a `threading.Event` + `reason/source/no_retry/
+  grace_seconds`) and `activity_path` is the attempt's `transcript.jsonl`; both are `None` unless the sentinel is on.
+  `ClaudeCliExecutor` starts the child with `start_new_session=True` only when a token is wired, waits in 0.2 s slices,
+  and on cancel/timeout does `killpg(SIGTERM)` → grace → `killpg(SIGKILL)` (the group is always SIGKILLed so grandchildren
+  never orphan) and returns `status="killed"` + `kill_reason/kill_source`. Other executors (fake, custom) ignore the
+  token: best-effort, they simply run to completion and no kill is recorded.
+- **Worker/settle**: `_run_with_retries` returns a killed result immediately (no `max_attempts` consumed, no post-hook);
+  `_settle_killed` advances the ladder, accumulates the dispatch's actuals, reverses the budget estimate, then requeues
+  with `ts.status="killed"` (the scheduler treats `killed` as ready) or rewrites the result to `failed`.
+- **Ladder**: kill 1 → retry (retry-context note `prior-attempts.md` "previous dispatch was killed…"); kill k≥2 →
+  `escalate[min(k-2, len-1)]` applied as agent-field overrides (`effort` = legacy alias of `turn_budget`); kill >
+  `max_recovery_kills_per_task` or `--no-retry` → normal failure. `recovery{kills,last_reason,last_source,
+  escalation_step,overrides,no_retry}` is carried across `prepare_resume`; the consumed-id ring prevents a replayed
+  `kill` entry re-firing.
+- **Triggers** (`sentinel_tick`): idle = no growth of `activity_path` for `idle_kill_minutes` (clock = engine clock;
+  first sample of a dispatch starts the idle clock); stuck-factor = running > factor × median of ≥3 settled same-agent
+  tasks and ≥ `stuck_min_minutes`; cost = already-settled cost of earlier attempts ≥ `cost_kill_pct` × task cap (the live
+  attempt's spend is only known when it ends — a known limit). Barrier tasks: alarm once (`sentinel.alarm`), no kill.
+- **Systemic alarm**: `systemic_kill_alarm` kills (any source) within 3600 s → `sentinel.systemic_alarm=True`, LLM paused,
+  `sentinel.alarm` log line + `control/sentinel-alarms.jsonl`; mechanical kills stop, manual kills still work.
+- **Inbox**: `kill` enabled (`payload.task_id` must be a running task with an un-fired token, else `CTL-PAYLOAD`;
+  `payload.no_retry`, reason from rationale/`payload.reason`).
+
+### 5.5 Metrics (FR-20)
+`state.metrics{slot_seconds_busy, slot_seconds_idle_with_ready, slot_seconds_idle_no_ready, utilisation_pct}`
+accrued per tick by Δt × counts (using the injectable clock). Surfaced in `ao status`, summary, dashboard. KPI.
+
+## 6. Bandwidth
+
+### 6.1 Soft barrier (FR-8)
+`TaskSpec.barrier: "hard"|"soft"` (default hard; `overseer-runner` checkpoints set soft when sentinel is enabled).
+A soft emitter may start with non-predecessor tasks in flight if its manifest is additive w.r.t. in-flight tasks.
+Routers, loop gates and integration barriers stay hard. FILL's break-on-barrier honours the flag.
+
+### 6.2 `_apply_pending_edits`
+Single entry for all post-start graph reshape (edges, removals, cancel/skip, injected tasks from non-emitters):
+`validate on copy (checker §7.2 + build_dag + topo) → commit workflow → append graph_edits → drop removed from
+state.tasks → recompute order/preds → return reshaped triple`. Atomic: any rule failure rejects the whole entry.
+Priority affects FILL order only among ready tasks; stable ADR-0007 D6 tie-break afterwards. Each edit is ledgered
+with before/after effective edge lists.
+
+### 6.3 L1 backlog (FR-9)
+Checkpoint writes `outputs/backlog.json` (App. A.3). Tick: if `running < limit` and nothing ready, release entries
+FIFO by priority as `s-NN-<slug>` units through the checker (`origin=sentinel`, `parent=sentinel-tick`). Entries expire at
+the next checkpoint unless re-confirmed (`expires_at_ckpt`). `ao ctl release` forces release. $0.
+
+### 6.4 L2 early checkpoint (FR-10)
+Trigger (all): backlog empty; `idle_slots ≥ early_ckpt_min_idle` (default ⌈P/2⌉) for ≥ `early_ckpt_grace_seconds`
+(120); ≥ `early_ckpt_fraction` (0.5) of the pending soft checkpoint's predecessors settled; no early checkpoint already
+in flight. Action (one `edit_pending`): drop unsettled predecessors from the checkpoint's `depends_on` **and** matching
+`inputs` entries; persist in `graph_edits`; pass them as `carry_over[]` in the digest. The checkpoint must not
+re-schedule carry-over work (checker rejects). Counts toward `max_waves` (EPIC §10.3). Sentinel/carry-over units
+never block the next checkpoint; its digest lists them.
+
+### 6.5 Spawn origin (FR-13)
+`SPAWN_ORIGIN_SENTINEL` (ADR-0017); `parent_task_id ∈ {sentinel-tick, sentinel-gNN, ctl:<user>}`; `_inject` variant
+without `dispatch_cycle`. UI graph shows sentinel-origin tasks, edited edges, killed attempts distinctly.
+
+### 6.6 Injection cap (FR-19)
+`state.sentinel.injected_count`; breaker `sentinel_injected_task_count` default `max(20, 3×max_parallel×expected_hours)`.
+Template `injected_task_count` math untouched.
+
+### 6.7 Fallback
+If I1 cannot land, degrade to EPIC §4.4.4 (leaf-only injection, hard-barrier early checkpoint). Not expected.
+
+### 6.8 As built (T-Sn6Brr, 2026-11-09)
+- **Soft barrier.** `TaskSpec.barrier: "hard"|"soft"|None` (None = hard). `_is_barrier` returns False for a soft emitter
+  (a task is ready only after all predecessors settled, so nothing in flight is a predecessor; routers, loop gates and
+  integration barriers stay hard). At settle, a soft emitter's manifest first passes
+  `graph_check.check_additive_manifest` (rejection => emitter `failed`, run halts, same path as `InjectionError`);
+  hard emitters keep the pre-epic path byte-for-byte. Injection uses the existing `_inject`, then `build_dag` +
+  `reshaped`; in-flight tasks are untouched.
+- **Shared checker** = `src/agent_orchestrator/graph_check.py` (pure; clock-free). Structural rules: id pattern/`__iter`
+  reserved/duplicate id (`GE-ID-PATTERN`, `GE-ID-DUP`), duplicate producer (`GE-PRODUCER-DUP`), cycle on a copy
+  (`GE-CYCLE`), unknown dependency (`GE-SPEC`), new effective edge — declared or inferred — into a non-pending task
+  (`GE-EDGE-INTO-NONPENDING`). Budget stages via `CheckPolicy(stage, known_work_items, task_meta)`: closeout none
+  (`GE-STAGE-CLOSEOUT`), stabilize only stabilize/verify/document (`GE-STAGE-STABILIZE`), converge no new work item
+  (`GE-STAGE-CONVERGE`); `max_new_tasks` (`GE-LIMIT`). Charter-only rules (brief cites an ask, attempt caps, rename-dodge,
+  `ov-unit-gate`) stay in the overseer tool; the engine passes no policy, so they do not apply. Rule ids are `GE-*`
+  (supersedes the `CK-*` placeholder in §7.2).
+- **`edit_pending`** payload `{add_edges:[{from,to,drop_inputs?}], remove_edges:[...], cancel:[id], skip:[id], priority:{id:int}}`;
+  **`inject`** payload `{tasks:[TaskSpec]}`. Both enabled in `KINDS_ENABLED`; the tick calls the engine-built applier
+  (`Orchestrator._make_edit_applier`): validate on deep copies, commit workflow + `RunState` in one step, set
+  `rt.reshape_pending`; `run()` then re-derives `graph/order/preds` and `done` before FILL. The tick's save (same step as
+  `inbox_consumed`) persists the edit, so a crash before it leaves the file to be re-applied and a crash after it replays
+  as a no-op (G5). Edit rejects: unknown/non-pending target (`GE-UNKNOWN-TASK`, `GE-NOT-PENDING`), removing an edge whose
+  predecessor produces a declared input (`GE-INPUT-EDGE`, unless `drop_inputs`), cancel orphaning an input
+  (`GE-ORPHAN-INPUT`), router task/route entry (`GE-ROUTE-SINK`), any route cone or loop gate/body (`GE-CONE`), payload
+  errors (`GE-PAYLOAD`), LLM actor while `sentinel.llm.allow_graph_edits` is false (`GE-DISABLED`).
+- **Persistence (I1).** `RunState.graph_edits: list[GraphEdit]` (`set_edges` = resulting `depends_on`/`inputs`,
+  `remove_task`, `skip`, `priority`); `prepare_resume` replays it after the reset pass (so `skipped` survives) and `run()`
+  replays for a raw loaded state. `cancel` drops the task row and its `injected_tasks` entry; `skip` => status `skipped`.
+- **FILL priority.** Only when `graph_edits` exists: ready ids are stably sorted by `-priority`, keeping ADR-0007 D6 order
+  as the tie-break; no edits => untouched list.
+- **Spawn origin.** `SPAWN_ORIGIN_SENTINEL = "sentinel"` (also on `TaskRunState.origin`); `SpawnRecord.parent_task_id` is the
+  actor label: `sentinel-gNN` for the LLM, otherwise `ctl:<actor>`; `parent_dispatch_cycle` is 0. The UI graph API passes
+  `origin` through unchanged; dedicated styling is not part of this change.
+- Not done here: rate limits (`max_injections_per_hour`, T-Sn9Pow). Backlog, early checkpoint and the FR-19 cap landed in §6.9.
+
+- **Graph UI (W10).** The graph API payload carries `graph_edits` (`ui/graph.py::GraphEditView`; `dependencies` = effective `depends_on` after a `set_edges` edit). The canvas draws dependency edges into an edited task thicker (`graph-edge-edited`, Legend row); sentinel-origin nodes keep their badge and dashed spawn edges.
+
+### 6.9 As built (T-Sn7Bkl, 2026-11-09)
+Module `sentinel_backlog.py` (pure functions, injectable clock) + one engine step `Orchestrator._sentinel_bandwidth`
+that runs right after FILL (so `occ_ready` is what FILL could not dispatch), fail-safe like the tick.
+- **Published backlog.** The overseer tool validates a checkpoint's `outputs/backlog.json` (`ao.overseer.backlog/v1`,
+  rules `OV-BL1..BL7`) and, only after `ckpt-check` passes (never `--dry-run`), writes the engine-ready
+  `<run_dir>/control/backlog.json` (`ao.sentinel.backlog/v1`): `stage`, `known_work_items`, and per entry
+  `{id, priority, expires_at_ckpt, kind, work_item, task}` where `task` is a complete unit `TaskSpec` with its final id
+  `s-NN-<slug>` (NN assigned by the tool, stable across re-confirmation; brief copied to that id under
+  `outputs/waves/w(K+1)/briefs/`). No `backlog.json` while an old published file exists => published as empty (clears it).
+  The engine never interprets overseer semantics; it re-runs the shared checker on every release with a `CheckPolicy`
+  built from the file (`stage`, `known_work_items`, per-task `kind`/`work_item`) — this wires the policy T-Sn6Brr left open. Soft-barrier emitter manifests and ctl/LLM `inject` carry no stage context, so they get structural rules + the FR-19 cap only.
+- **L1 release.** `bandwidth.backlog_release`, idle slots > 0 and nothing ready after FILL: releasable entries (not released,
+  not rejected, not expired) sorted by **descending priority** (file order breaks ties); one `inject` (actor `sentinel-tick`,
+  entry id `bk-<id>`) per entry through the applier, up to the number of idle slots. A checker refusal is recorded in
+  `sentinel.backlog_rejected{id: rule}` and never retried; ids must match `^s-\d{2,}-slug$` (`BK-ID`). Expiry:
+  `expires_at_ckpt = N` expires once task `ck-NN` has left `pending`; expired ids are listed in `sentinel.backlog_expired`
+  and never released. Released ids persist in `sentinel.backlog_released` (resume-safe; a re-published file never re-releases).
+- **L2 early checkpoint.** Candidate = pending `emit_tasks` + `barrier: soft` task with >= 1 running and >= 1 settled
+  predecessor and settled fraction >= `early_ckpt_fraction`; fires when no releasable backlog (or release off), idle slots
+  >= `early_ckpt_min_idle` (default ceil(live_limit/2)) continuously for `early_ckpt_grace_seconds`, and no earlier early
+  checkpoint is still pending/running. Action: internal-only applier kind `early_checkpoint` ->
+  `graph_check.plan_early_checkpoint` (rule `GE-EARLY`): one `set_edges` edit drops the carry-over ids from `depends_on` and the
+  `inputs` they produce (persisted in `graph_edits`, replayed on resume). Recorded in `sentinel.early_checkpoints[]`
+  (`checkpoint_id, at, settled, carry_over`). It is a normal `ck-NN` task, so it counts toward `max_waves`.
+- **Digest / checker.** `ckpt-prep` adds `digest.carry_over[]` (unsettled carry-over of every early checkpoint <= this one:
+  `unit_id, wave, status, work_item, kind, early_checkpoint`, also mirrored in `digest.sentinel.carry_over`) and
+  `digest.soft_barrier: true` on a sentinel run; the next `ck-*` entry must then carry `barrier: soft` (and must not otherwise,
+  `OV-R10`). `OV-R17`: no emitted unit may target a carry-over `work_item`; `OV-BL6` forbids the same for backlog entries.
+  Carry-over and `s-NN` units are not predecessors of the next checkpoint; `ingest_ledger` records them (with their own
+  wave) at the first checkpoint that sees them settled (`late_units`).
+- **FR-19.** `sentinel.injected_count` (incremented in `graph_check.commit_plan` for every sentinel-source injection);
+  cap = `sentinel.max_injected_tasks` or `max(20, ceil(3 x max_parallel x expected_hours))` with expected_hours from a
+  `run_wall_clock_seconds` breaker (else 1), enforced for every source via `CheckPolicy.max_new_tasks` (`GE-LIMIT`). New
+  breaker condition `sentinel_injected_task_count`; `injected_task_count` and the tool's `unit-gate` FANOUT count now exclude
+  sentinel-origin tasks (identical for runs without any).
+- **Metrics (NFR-13).** `RunMetrics.slot_seconds_idle_backlog` = idle slot-seconds (nothing ready) while releasable backlog
+  existed (counted even with release disabled, i.e. the baseline). Fixture `tests/test_sentinel_backlog.py::test_heavy_tail_*`
+  (P=6, seeded lognormal durations, 8 backlog entries, real engine): idle-with-work seconds off=3.5 vs on=0.01 (>99% less).
+- Limits: carry-over stragglers may still run when a tail starts; priority semantics are "higher first" (A.3 only says
+  integer >= 0); the template workflow declares no `sentinel_injected_task_count` breaker (the engine-side cap is the guard).
+
+## 7. Shared mechanical checker (FR-11, FR-12)
+
+### 7.1 Common rules (any source)
+Kind map; brief exists and cites ≥1 charter ask (overseer workflows; skipped where no charter, e.g. routed-runner);
+attempt caps/rename-dodge (OV-R13/R13c); `ov-unit-gate` pre-hook; id patterns; allowed `effort`; budget-stage rules
+(none new scope in converge+, only stabilize/verify/document in stabilize, nothing in closeout); rate limits
+(`max_injections_per_hour`, `max_llm_kills_per_hour`); sentinel injection cap; `allow_graph_edits`/`allow_kill`.
+
+### 7.2 Graph-edit rules (FR-12 + spike)
+Reject: cycle (on copy); touching non-pending task; edge into a non-pending task via inferred edges (I2/I4);
+duplicate output producer (I3); removing an edge whose predecessor produces a declared input of the successor unless
+that input is also removed; orphaning a route sink; edits inside any route cone/`membership` or loop clone (I6);
+re-scheduling carry-over work. Each rule has a stable id (`CK-*`) used in quarantine sidecars.
+
+## 8. LLM generations (P3)
+
+### 8.1 Lifecycle
+Trigger (`needs_llm`) or heartbeat ⇒ start `sentinel-gNN` via `SentinelDriver` (`start/poll/stop`;
+`ClaudeCliSentinelDriver` first) in the lane executor. Triggers with cooldown + per-hour caps: `stuck_task` (after
+ladder exhausted), `new_signal(high|medium)`, `stage_change`, `unit_failed|blocked`, `human_note`,
+`idle_slots_no_backlog` (routed-runner L2), `heartbeat`. Ends at first of TTL / max triggers / max tokens / explicit
+handoff. Ungraceful exit ⇒ `sentinel_ungraceful`; next generation starts from digest + memory.
+
+### 8.2 Input pack (deterministic, ≤120 KiB)
+Charter (if any), digest (slots, liveness, carry-over, utilisation), last K=40 ledger/run events, backlog,
+`memory.md` (tool-compacted ≤16 KiB), previous `handoff.json`, `sentinel-contract.md`. Same state ⇒ byte-identical pack.
+
+### 8.3 Outputs (files only)
+Inbox proposals, `report.md`, `handoff.json` (App. A.2), `memory-append.md`. Memory compaction is tool-owned.
+
+### 8.4 Powers (FR-15)
+`advise`: directives, alarms, notes, `request_hold/cancel`. `act` adds `inject`, `edit_pending`
+(`allow_graph_edits`, default true), `kill` (`allow_kill`, default true; rationale ≥ 40 chars, task running ≥
+`llm_kill_min_running_minutes` 10, ≤ 2/hour, never barrier/emitter). Killed task then follows §5.4. For
+routed-runner (no checkpoints) the `act` generation is the L2 planner.
+
+### 8.5 Cost (FR-17, NFR-7)
+Each generation is a `state.tasks` row `sentinel-gNN` (counted in `run_cost_usd`, `usage_totals`).
+`budget_usd`/`budget_pct` (default 10 % of run cap) stops **new generations**; ticks continue at $0. Target ≤ 3
+generations/hour steady state; report combined overseer+sentinel overhead.
+
+### 8.6 As built (T-Sn8Gen, 2026-11-09)
+
+Modules: `sentinel_driver.py` (`SentinelDriver` ABC `start/poll/stop`, `ClaudeCliSentinelDriver` — spawns `claude -p` in its own
+process group, parses cost/tokens with the same `parse_usage_and_429` the task executor uses, `make_driver`), `sentinel_gen.py`
+(pack, handoff, memory, ledger, `GenerationLane`). Engine hooks: `_start_llm_lane`, `_tick_llm_lane` (called from
+`_sentinel_tick` after the inbox drain), run-end `lane.shutdown`. Test seam: `Orchestrator(sentinel_driver_factory=...)`.
+
+- **Lane.** `ThreadPoolExecutor(max_workers=1)` owned by the lane, separate from the task pool (a generation never takes a
+  `max_parallel` slot). Only `driver.start` runs there; `poll`/`stop` are non-blocking, called on the main-thread tick. An
+  exception in the lane pauses **only** the LLM lane (`llm_pause_reason="lane error: ..."`); the mechanical tick keeps running.
+- **Layout** `<run_dir>/sentinel/`: `memory.md`, `ledger.jsonl` (hash chain: `seq/at/event/data/prev/hash`), `gNN/{pack/,
+  handoff.json, report.md, memory-append.md, triggers.jsonl, transcript.jsonl}`. Events: `generation_started`,
+  `generation_ended`, `sentinel_ungraceful`, `budget_exhausted`.
+- **Pack** (`build_pack`, pure; same state + files + injected `now` => identical bytes): `README.md`, `sentinel-contract.md`
+  (rendered from `KINDS_ENABLED`, the handoff JSON schema and the limits), `charter.json` (`outputs/charter.json` if present),
+  `digest.json`, `events.jsonl` (last 40 structured `run.log` events), `backlog.json` (`control/backlog.json` if present),
+  `memory.md`, `previous-handoff.json`, `manifest.json` (sha256 + `truncated` per file). Per-file caps sum to < 120 KiB;
+  truncation is deterministic, UTF-8-safe, marked in the file and the manifest (events keep the tail, the rest the head).
+- **Memory** (tool-owned): items `- [gNN][pin][exp:gM] text`. A generation only appends bullets (`- [pin][exp:+N] text`, <= 50
+  lines of <= 500 chars); the tool expires (`exp < current generation`), dedupes by normalised text (newest wins, pin sticky),
+  then enforces 16 KiB (oldest unpinned first, pinned only as a last resort).
+- **Handoff** `ao.sentinel.handoff/v1` validated with a pydantic model (extra keys rejected, `summary <= 4000`, generation must
+  match, <= 64 KiB). The newest *valid* one is carried into the next pack (`state.sentinel.last_handoff_path`).
+- **Ending a generation**: process exit; or the tick stops it at TTL (`generation_ttl_minutes`), `max_tokens_per_generation`
+  (when the driver can tell), `max_triggers_per_generation`, or `HANDOFF_GRACE_SECONDS` (30 s) after a valid handoff appears
+  while the process lingers (the grace lets it exit by itself so its final cost is reported). *Ungraceful* = no valid handoff,
+  non-zero exit, start failure, driver error, forced stop without handoff, or an engine restart while live (`resume` reconciles
+  it): counted in `ungraceful_count`, ledger + `sentinel_ungraceful` log event, row status `failed`; the next generation starts
+  from the digest + memory + the last good handoff.
+- **Triggers** (`pending_triggers`, deterministic order): `stuck_task` (failed after recovery kills), `unit_failed`,
+  `human_note`, `heartbeat` (`heartbeat_minutes` since the last generation ended / run start). Per-kind cooldown
+  `trigger_cooldown_minutes` (5), global cap `max_generations_per_hour` (3). A trigger is "new" when its event is later than the
+  last time that kind fired. Not implemented yet (need later tasks): `new_signal`, `stage_change`, `idle_slots_no_backlog`.
+  Triggers arriving while a generation is alive are appended to its `triggers.jsonl` and counted toward the rotation cap.
+- **Cost.** Each generation is `state.tasks["sentinel-gNN"]` (`agent` = `llm.agent` or `sentinel`, `dispatch_cycle=1`,
+  cumulative tokens/cost from the driver), so `compute_run_usage_totals` (=> `run_cost_usd` breaker, summaries) and
+  `ao usage` (group agent `sentinel`) count it. Generation rows are excluded from the `task_failures`/`consecutive_failures`
+  breakers (their cost still counts toward cost breakers). `budget_usd`, else `budget_pct` of the lowest `run_cost_usd`
+  breaker threshold, caps *new* generations (spend derived from the rows; resume-safe); exhaustion is logged/ledgered once and the
+  mechanical tick continues. The remaining budget is passed to the driver (`--max-budget-usd`).
+- **Rejections.** Proposals are `ao.ctl/v1` files in `control/inbox/` with `actor: sentinel-gNN`. A rejected one increments
+  `consecutive_rejections` (processed in file-name order); an accepted one resets it; `max_consecutive_rejections` (5) in a row
+  sets `llm_paused` (+ `llm_pause_reason`); `ao ctl resume-llm` clears both. Human/CLI rejections never count.
+- **Resume**: generation counter, memory file, last handoff path, trigger clocks, spend and the consumed-id ring persist; a
+  replayed proposal id is dropped by the ring (no duplicate effect).
+- New settings (`SentinelLlmSpec`, registry options generated): `max_triggers_per_generation`, `max_tokens_per_generation`,
+  `trigger_cooldown_minutes`, `max_generations_per_hour`, `max_consecutive_rejections`.
+- Honest limits: `ClaudeCliSentinelDriver` is tested against a fake `claude` executable (real subprocess: cost/token parse, exit
+  codes, process-group stop), **not** a live LLM call (live smoke is T-SnXAcc). Tokens-so-far is only known at exit for the CLI driver, so the
+  `max_tokens` stop is effective for drivers that report progress; TTL/`--max-budget-usd` bound the CLI one. Powers (what a
+  proposal may do beyond `note/pause/kill/request_*`) land in T-Sn9Pow.
+
+### 8.7 As built: LLM powers, directives, routed-runner planner (T-Sn9Pow, 2026-11-09)
+- **Gate** `sentinel_powers.PowerGate`: the engine wires it as `SentinelRuntime.proposal_gate` (only when the LLM lane is
+  enabled); the tick calls it for every entry whose actor is `sentinel-gNN`, before applying, and a refusal is quarantined
+  with a `PWR-*` rule id (so it counts toward `max_consecutive_rejections`). Human/CLI/dashboard actors never pass through it.
+  `advise` allows `note`, `directive`, `request_hold`, `request_cancel`; `act` adds `inject`, `edit_pending`, `kill`;
+  `set`/`resume_llm`/`release_backlog`/`cancel`/`pause_llm` are operator-only (`PWR-KIND`; `PWR-ADVISE` for an act kind under advise).
+- **Flags/limits**: `allow_graph_edits` (`GE-DISABLED`), `max_injections_per_hour` (`PWR-INJECT-RATE`, counted in tasks);
+  `allow_kill` (`PWR-KILL-DISABLED`), rationale >= 40 chars (`PWR-KILL-RATIONALE`), target must be running
+  (`PWR-KILL-TARGET`), never a barrier/emitter (`PWR-KILL-PROTECTED`), running >= `llm_kill_min_running_minutes` (new, default 10;
+  `PWR-KILL-MIN-RUNNING`), <= `max_llm_kills_per_hour` (`PWR-KILL-RATE`). Rate windows are read from `sentinel/powers.jsonl`
+  (append-only, survives resume); only accepted-by-gate proposals are recorded. An accepted LLM kill then follows the §5.4 ladder.
+- **Directives**: kind `directive` is now enabled (`payload.text`, `payload.severity` info|warn|alarm, `rationale` required);
+  stored in `<run>/control/directives.jsonl` (id = entry id, replay-safe).
+- **Checkpoint contract (OV-R12b)**: `ckpt-prep` adds `digest.sentinel{generation, directives[], injected_since_last_ckpt[], kills[],
+  edits[], carry_over[], alarms[]}` only when the run has a sentinel footprint (otherwise the digest is byte-identical). `directives[]`
+  = recorded directives not answered by an earlier checkpoint. `ckpt-check` requires the verdict's `directive_responses[]` to answer
+  each exactly once (`adopt|redirect|descope|reject`; reject needs a >= 40 char rationale); a passing check mirrors the answers to
+  `<run>/control/directive-acks.jsonl` for the dashboard. `carry_over[]` is always empty until T-Sn7Bkl lands.
+- **routed-runner planner**: opt-in `sentinel_planner=true` template param -> `sentinel.llm.planner` (requires `powers: act`). New
+  trigger `idle_slots_no_backlog`: `metrics.slot_seconds_idle_no_ready` grew by >= `planner_idle_seconds` (default 120) since the
+  in-memory baseline (taken on first sight, so resume never fires on history), unfinished work remains, and `control/backlog.json`
+  is absent/empty. The pack contract gets a "Planner role" section; injected units carry origin `sentinel`.
+- **Panel v2**: `GET /api/runs/{id}/sentinel/panel` (`ao.sentinel.panel/v2`, built by `sentinel_panel.build_panel`, the v1 status
+  schema is untouched): generation timeline + spend, proposals applied/quarantined (rule id), directives + acks. Graph: sentinel-origin
+  nodes get a shield badge + dashed node border, sentinel spawn edges a dashed style + legend row.
+- Not done: styling of *edited* (edge add/remove) dependency edges needs the graph API to expose `RunState.graph_edits` (not in
+  this change); live-LLM behaviour is covered only by the scripted driver (live smoke = T-SnXAcc).
+
+## 9. Authority and checkpoint contract (FR-16)
+
+### 9.1 Split
+Checkpoint: charter, wave contents, alignment, close-out. Sentinel: health, recovery, overrides, bandwidth,
+ad-hoc injection/edits that a later checkpoint may revisit. Engine: hard containment.
+
+### 9.2 Contract
+Checkpoint digest gains `sentinel{generation, directives[], injected_since_last_ckpt[], kills[], edits[],
+carry_over[], alarms[]}`. Checkpoint must acknowledge each open directive (`OV-R12b`: adopt / redirect / descope /
+reject-with-rationale); enforced by ckpt-check. Sentinel units count toward wave signals + attempt caps.
+Tamper-evident ledger (tool-owned hash chain), not tamper-proof (NFR-10).
+
+## 10. Fail-safe, crash and resume (FR-18)
+- Sentinel exception ⇒ lane disabled, run continues.
+- Every mutation + its inbox consume record share one `RunState` save; replay of an already-consumed id is a no-op.
+- `ao resume` restores overrides, generation counter, memory pointer, backlog, inbox cursor/consumed ring and replays
+  `graph_edits`; no duplicate injection/kill/edit. Crash points tested: before save, after save before file move.
+- SIGTERM/SIGINT: §3.4. Stale `running` from an unclean death is reconciled by `ao resume`/status (follow-up task
+  decides whether the service also reconciles).
+
+## 11. Settings
+
+### 11.1 Schema
+`SentinelSpec` as in EPIC §4.7 with spike adjustments: `recovery.idle_kill_minutes` default 15 (min 12 unless
+`force`), added `recovery.kill_grace_seconds` (10), `recovery.systemic_kill_alarm` (3), `inbox_batch_max` (50),
+`cancel_grace_seconds` (30). Same shape in workflow `sentinel:` and `.ao/config.yaml` `sentinel:`; registered in the
+E-aYG5vn run-options registry (single source for CLI flags, env `AO_SENTINEL_*`, UI schema, allow-list).
+
+### 11.2 Precedence (ADR-0003 policy)
+workflow `sentinel:` > invocation (CLI flag > env `AO_SENTINEL_*` > `.ao/config.yaml`) > built-in default;
+**live overrides** on top for the rest of the run (source `live-override` in `state.effective_settings`, shared with
+T-zP28k9; same pattern as `breaker_overrides`).
+
+### 11.3 Surfaces
+*Implemented (T-Sn2Set):* `models.SentinelSpec`, `sentinel_settings.resolve_sentinel_settings` (the merge;
+`cli._resolve_sentinel_or_exit` is the one resolver used by `run` and `resume`), registry options generated from the
+model (`run_options.sentinel_options`, names `sentinel.<dotted>`, env `AO_SENTINEL_<DOTTED_UPPER>`; list leaves such as
+`recovery.escalate` are config/workflow/`--sentinel-set` only), sources `workflow|cli|env|config|default` in
+`state.effective_settings`, `recovery.force` (floor escape), template params rendered via the `raw.sentinel_member`
+fragment (absent => byte-identical workflow.json). Bad CLI/env value => exit 2. The engine stores the resolved settings
+only; consumption landed in T-Sn3Tck+. Dashboard forms landed in T-Sn5Ui1 (§12.2). There is no `ao config show` command (see §21).
+`ao run`/`resume`/`new --run` share `_resolve_sentinel_settings`; flags `--sentinel/--no-sentinel`,
+`--sentinel-llm/--no-sentinel-llm`, `--sentinel-powers`, `--sentinel-budget-usd`, `--max-parallel-ceiling`,
+`--sentinel-set key=value`; template params; `ao validate`; dashboard forms from the registry endpoint
+`GET /api/schema/run-options` (no separate `/api/schema/sentinel`). Default enablement: **off** — the flip to mechanical-on in
+both builtin templates (LLM stays opt-in) is deferred until FR-23 live-smoke evidence exists (T-SnXAcc); see §21.
+
+## 12. CLI `ao ctl` and dashboard control API
+
+| Command | Entry kind |
+|---|---|
+| `ao ctl status <run>` | read-only |
+| `ao ctl set <run> k=v…` | `set` |
+| `ao ctl pause-llm / resume-llm` | `pause_llm` / `resume_llm` |
+| `ao ctl kill <run> <task> --reason [--no-retry]` | `kill` |
+| `ao ctl note <run> "…"` | `note` |
+| `ao ctl release <run> [id…]` | `release_backlog` |
+| `ao ctl cancel <run>` | `request_cancel` |
+
+Dashboard: `GET /api/runs/{id}/sentinel`, `POST /api/runs/{id}/control` (body = one `ao.ctl/v1` entry minus id).
+Requires ADR-0021 auth + Origin/CSRF check; actor recorded; kill requires reason; endpoint writes the inbox file only
+(never mutates state). Panel: enable state, powers, utilisation gauge + idle timeline, running tasks with liveness age
++ Kill, ladder, backlog, generations with spend, quarantined proposals, notes, controls. Panel v1 in P1, v2 in P3.
+
+### 12.1 `ao ctl` behaviour and `status --json` schema (implemented by T-Sn3Ctl)
+
+`ao ctl <sub> <run> [args] [--workspace W] [--reason R] [--wait] [--wait-timeout S] [--json]`. `<run>` is a run id or a
+unique prefix (exact id wins; ambiguous prefix is an error listing candidates). Module `control.py` holds the shared
+writer (`build_entry`, atomic `write_entry` = `<id>.json.tmp` + rename, actor `cli:<os user>`, id
+`<kind>-<utc ts>-<8 hex>`); the dashboard API (T-Sn5Ui1) reuses it. Subcommands: `status`, `set k=v…`, `pause-llm`,
+`resume-llm`, `note "text"`, `cancel`, `kill <task> --reason R [--no-retry]`, `release [ids…]`.
+
+- `set` is validated **before** writing, via the run-options registry types and `sentinel_tick.OVERRIDABLE_KEYS`
+  (unknown/non-overridable key, wrong type, `max_parallel < 1`, duplicate key, and `> ceiling` when the run's snapshot
+  records it) → exit 2, nothing written. The engine re-validates everything (the inbox is untrusted).
+- `--wait` polls `inbox-processed/<id>.json` / `inbox-rejected/<id>.reason.json` (no state load). Exit codes:
+  `0` queued/consumed · `1` bad run/IO · `2` client-side validation · `3` rejected by engine (`rule_id` printed) ·
+  `4` wait timeout · `5` `not_enabled_yet` (e.g. `release` before T-Sn7Bkl). `--json` prints one document
+  `{id, kind, run_id, outcome: queued|consumed|rejected|timeout[, rule_id, detail]}`.
+- Without `--wait` the entry is only queued (a run with no live engine never consumes it).
+
+`ao ctl status <run> --json` → schema `ao.ctl.status/v1` (snapshot-tested in `tests/test_ctl_cli.py`); keys are stable,
+values owned by later tasks are `null`/empty until they land:
+
+| key | content |
+|---|---|
+| `schema`, `run_id`, `run_status`, `updated_at` | identity |
+| `sentinel` | `enabled`, `disabled_reason`, `last_tick_at`, `llm_paused`, `hold_requested`, `systemic_alarm` |
+| `concurrency` | `running`, `limit` (effective `max_parallel`), `ceiling` (null until recorded), `overrides{key:{value,actor,at}}` |
+| `utilisation` | `pct`, `slot_seconds_busy`, `slot_seconds_idle_with_ready`, `slot_seconds_idle_no_ready` (null when sentinel never on) |
+| `tasks` | `counts{status:n}`, `running[{id, liveness_age_s}]` (`liveness_age_s` = seconds since the task's output last grew; null while unsampled / recovery lane off) |
+| `ladder` | `{task_id: {kills, last_reason, last_source, escalation_step, no_retry}}` for tasks with ≥1 recovery kill (T-Sn4Rec); `{}` otherwise |
+| `backlog{held}` | placeholder for T-Sn7Bkl |
+| `llm` | `generation`, `spend_usd`, `paused`, `pause_reason`, `budget_exhausted`, `enabled`, `powers` (the last two from the settings snapshot; null when unrecorded) |
+| `inbox` | `pending[ids]`, `consumed_count` |
+| `recent_actions` | last ≤20 operator notes and recorded kills (`kind` `note`/`kill`), oldest first, `{id,kind,actor,at,text}` |
+
+### 12.2 Dashboard control API and Sentinel panel v1 (implemented by T-Sn5Ui1)
+
+Thin routes over the same `control.py` as `ao ctl` (`DashboardService.sentinel_status` / `submit_control` /
+`control_outcome`); the dashboard never mutates run state, it only writes one inbox file.
+
+| Route | Behaviour |
+|---|---|
+| `GET /api/runs/{id}/sentinel` | the `ao.ctl.status/v1` document above; a run that predates the sentinel answers `sentinel.enabled=false`; unknown run → 404 |
+| `POST /api/runs/{id}/control` | body `{kind, payload?, rationale?}` (= an `ao.ctl/v1` entry minus `id`/`actor`/`created_at`; unknown fields → 422). **202** `{id, kind, run_id, actor, outcome:"queued"}` |
+| `GET /api/runs/{id}/control/{entry_id}` | non-blocking verdict `{outcome: pending\|consumed\|rejected[, rule_id, detail]}` (id shape-checked) |
+
+- Kinds accepted: `set` (only `max_parallel`, typed + `≤ ceiling` via `control.validate_request`, which reuses
+  `parse_set_items`), `pause_llm`, `resume_llm`, `kill` (`task_id` of a *running* task, **reason required**, optional
+  `no_retry`), `note`, `release_backlog`, `request_cancel`. Anything else (incl. LLM-lane kinds) → 400. Validation failure
+  → 400 and nothing is written; a run whose state is not `running` → 409 (a stale entry would otherwise be consumed on a later
+  resume).
+- Auth/CSRF are the existing middleware: no route-policy entry ⇒ AUTHENTICATED (deny-by-default, ADR-0021); mutating
+  methods go through `SecurityMiddleware` (same-origin `Origin`, JSON content type). The entry's **actor is server-set**:
+  `dashboard:<principal username>` (`dashboard:local` when auth is off); it is not a body field.
+- Panel (`ui/src/components/SentinelPanel.tsx`, below *Limits & settings* on the run page, `useSentinel` polls every 3 s):
+  enable state / last tick, concurrency (running · limit · ceiling) with a live `max_parallel` form (validated against the
+  ceiling client-side, engine re-validates), stacked slot-utilisation bar (busy / idle-with-work-waiting / idle-nothing-ready
+  from the cumulative slot-seconds — **not** a time-series timeline; the state only keeps cumulative counters), running tasks
+  with liveness age, ladder state and **Kill** (inline reason required + "don't retry"), systemic-alarm banner, LLM lane
+  (state, powers, generation, spend, **pause reason**, Pause/Resume), notes box, recent actions. After a POST it shows
+  *queued → applied/rejected [rule]* by polling the verdict. Hidden on an old backend (404 / non-status body); collapsed by
+  default while the sentinel is off; every control disabled when the run is not live. Notes/actions are rendered as text.
+- Launch/resume forms: `run_options.SENTINEL_UI_GROUPS` now exposes the five leaves that have a CLI flag
+  (`enabled`, `max_parallel_ceiling`, `llm.enabled`, `llm.powers`, `llm.budget_usd`) in the schema-driven **Sentinel** group;
+  the argv allow-list follows from the registry (no hand-written fields). Tuning knobs stay on config/env/workflow.
+- Fixed on the way: `ao ctl kill --no-retry` sent `payload.retry` while the engine reads `payload.no_retry` (flag was
+  silently ignored); the CLI now sends `no_retry`.
+- Panel v2 (generations, proposals, directives) landed in T-Sn9Pow (§8.7); the backlog is exposed in `ao ctl status` (`backlog.held`) and `released/expired/rejected` in `state.sentinel`.
+
+## 13. Observability (FR-21, NFR-9, NFR-6)
+Run-log: `sentinel.*`, `ctl.*`. Ledger (overseer workflows): `sentinel_trigger`, `sentinel_applied`,
+`sentinel_rejected`, `sentinel_kill`, `sentinel_edit`, `sentinel_generation_start/end`, `sentinel_ungraceful`,
+`ctl_override`. Bounded growth: archives rotated, memory ≤16 KiB, consumed ring 1000, 1 MiB per JSON.
+
+## 14. Do we need a DB? — No for P1–P3
+Revisit (SQLite as rebuildable **index**, never truth) only if: multiple processes must write one queue
+concurrently; tick cost scales with state size beyond NFR-8; or the dashboard needs cross-run sentinel history.
+
+## 15. Test strategy and acceptance
+- Unit (fixed clock): tick, triggers, ladder, checker matrix (every `CK-*` rule + stage matrix), pack determinism,
+  metrics, inbox idempotency/quarantine, `graph_edits` replay.
+- Engine/integration (FakeExecutor): tick-while-all-busy; soft barrier with tasks in flight; in-flight rebuild;
+  I1 resume-keeps-edits; kill → retry → escalate → fail; SIGTERM/SIGINT (pty); lane exception ⇒ as-disabled;
+  crash at each mutation point + resume.
+- Real subprocess: killpg TERM→KILL with grandchild; no survivors.
+- E2E (CliRunner): `ao ctl` round-trips; golden byte-identity (NFR-1); heavy-tail fixture (NFR-13: ≥50 % idle-slot
+  reduction, reported); LLM rotation ≥3 with scripted drivers.
+- Dashboard: API auth/CSRF/actor tests; UI `npm test` + build.
+- Live smoke (FR-23) only after owner confirms budget (proposal run cap $15); evidence under
+  `output/E-Sn7tL2-sentinel-long-running-overseer/smoke/`. All engine tests use temp workspaces (NFR-11).
+- Gates: `pytest -q`, `ruff check .`, `ruff format --check .`, `mypy .`.
+
+## 16. Deferred (not in P1–P3)
+FR-24 non-Claude drivers on the same contract · FR-25 SQLite index · FR-26 adaptive thresholds · FR-27 output-pattern
+health checks · FR-28 `max_parallel` autoscaling · `/proc` descendant-CPU liveness signal if cut from P1 · service-side
+reconciliation of stale `running` runs · sidecar LLM host.
+
+## 17. Decisions (EPIC §10 — resolved by owner 2026-11-09)
+1. Default enablement: after FR-23 evidence, mechanical on by default in both builtin templates; LLM opt-in.
+2. New task status `killed`.
+3. Early checkpoints count toward `max_waves`.
+4. Live-control namespace `ao ctl`.
+Plus D1–D4 (EPIC §0) as in ADR-0024.
+
+## 18. Assumption log
+| Assumption | Risk if wrong | Mitigation |
+|---|---|---|
+| Healthy silent gaps ≤ 10 min (Bash cap) in other workspaces | false kills | 15 min default, floor 12, kill cap, systemic alarm, recheck after smoke |
+| In-flight rebuild safe given I1–I6 (spike used in-place swap hook, not real `run()`) | reshape bug | T-Sn6Brr engine tests; fallback §6.7 |
+| Isolation/worktree tasks, routers, loops behave | unexercised in spike | checker rejects edits there |
+| Stream-json activity file exists for all Claude executions | liveness blind | executor without `activity_path` ⇒ liveness disabled for it, alarm only |
+| SIGINT default path works | unmeasured | pty test in T-Sn3Tck |
+
+## 19. Risks
+See EPIC §9; additions: `killed` status ripple through UI/summaries; hot-file contention in `engine.py` (sequence
+tasks, HANDOFF §3).
+
+## 20. Ownership / handoffs
+Tasks per EPIC §8: Sn2Set settings → Sn3Tck tick/inbox → {Sn3Ctl, Sn4Rec, Sn8Gen} → Sn5Ui1/Sn6Brr → Sn7Bkl/Sn9Pow →
+SnXAcc/SnXDoc. SnXDoc reconciled this HLD with the implementation (§21).
+
+---
+
+## Appendix A — Draft JSON schemas (draft 2020-12; indicative, tasks finalise)
+
+### A.1 `ao.ctl/v1` (control inbox entry)
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ao.ctl/v1",
+  "type": "object",
+  "required": ["schema", "id", "kind", "actor", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "ao.ctl/v1"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9:_.-]{5,95}$"},
+    "kind": {"enum": ["set", "pause_llm", "resume_llm", "note", "kill", "release_backlog", "inject",
+                      "edit_pending", "directive", "request_hold", "request_cancel"]},
+    "actor": {"type": "string", "description": "cli:<user> | dashboard:<user> | sentinel-gNN"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "rationale": {"type": "string", "maxLength": 4000},
+    "payload": {"type": "object"}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "set"}}},
+     "then": {"properties": {"payload": {"type": "object", "required": ["values"],
+       "properties": {"values": {"type": "object", "minProperties": 1}, "force": {"type": "boolean"}}}}}},
+    {"if": {"properties": {"kind": {"const": "kill"}}},
+     "then": {"required": ["rationale"], "properties": {"payload": {"type": "object", "required": ["task_id"],
+       "properties": {"task_id": {"type": "string"}, "no_retry": {"type": "boolean", "default": false}}}}}},
+    {"if": {"properties": {"kind": {"const": "note"}}},
+     "then": {"properties": {"payload": {"type": "object", "required": ["text"],
+       "properties": {"text": {"type": "string", "maxLength": 4000}}}}}},
+    {"if": {"properties": {"kind": {"const": "release_backlog"}}},
+     "then": {"properties": {"payload": {"type": "object",
+       "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}}}},
+    {"if": {"properties": {"kind": {"const": "inject"}}},
+     "then": {"properties": {"payload": {"type": "object", "required": ["tasks"],
+       "properties": {"tasks": {"type": "array", "minItems": 1, "items": {"type": "object"}}}}}}},
+    {"if": {"properties": {"kind": {"const": "edit_pending"}}},
+     "then": {"properties": {"payload": {"type": "object", "additionalProperties": false, "properties": {
+       "add_edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
+       "remove_edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
+       "trim_inputs": {"type": "array", "items": {"type": "object", "required": ["task_id", "inputs"],
+         "properties": {"task_id": {"type": "string"}, "inputs": {"type": "array", "items": {"type": "string"}}}}},
+       "cancel": {"type": "array", "items": {"type": "string"}},
+       "skip": {"type": "array", "items": {"type": "string"}},
+       "priority": {"type": "object", "additionalProperties": {"type": "integer"}}}}}}},
+    {"if": {"properties": {"kind": {"const": "directive"}}},
+     "then": {"required": ["rationale"], "properties": {"payload": {"type": "object", "required": ["text"],
+       "properties": {"text": {"type": "string"}, "severity": {"enum": ["info", "warn", "alarm"]}}}}}}
+  ],
+  "$defs": {"edge": {"type": "object", "required": ["from", "to"],
+    "properties": {"from": {"type": "string"}, "to": {"type": "string"}}}}
+}
+```
+Quarantine sidecar `<id>.reason.json`: `{"rule_id": "CK-…", "detail": "…", "at": "<ts>"}`.
+
+### A.2 `ao.sentinel.handoff/v1`
+```json
+{
+  "$id": "ao.sentinel.handoff/v1",
+  "type": "object",
+  "required": ["schema", "generation", "ended_reason", "summary", "watch_list", "do_not_repeat", "open_directives"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "ao.sentinel.handoff/v1"},
+    "generation": {"type": "integer", "minimum": 1},
+    "ended_reason": {"enum": ["ttl", "max_triggers", "max_tokens", "explicit_handoff", "budget"]},
+    "summary": {"type": "string", "maxLength": 4000},
+    "watch_list": {"type": "array", "items": {"type": "object", "required": ["task_id", "concern"],
+      "properties": {"task_id": {"type": "string"}, "concern": {"type": "string"}, "check_after": {"type": "string", "format": "date-time"}}}},
+    "do_not_repeat": {"type": "array", "items": {"type": "string"}},
+    "open_directives": {"type": "array", "items": {"type": "string"}},
+    "proposals_submitted": {"type": "array", "items": {"type": "string", "description": "ao.ctl ids"}},
+    "next_suggested_triggers": {"type": "array", "items": {"type": "string"}}
+  }
+}
+```
+
+### A.3 `ao.overseer.backlog/v1`
+```json
+{
+  "$id": "ao.overseer.backlog/v1",
+  "type": "object",
+  "required": ["schema", "checkpoint_id", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "ao.overseer.backlog/v1"},
+    "checkpoint_id": {"type": "string"},
+    "entries": {"type": "array", "items": {
+      "type": "object",
+      "required": ["id", "priority", "brief_path", "kind", "ask_ids", "work_item", "rationale", "expires_at_ckpt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,60}$"},
+        "priority": {"type": "integer", "minimum": 0},
+        "brief_path": {"type": "string"},
+        "kind": {"enum": ["research", "design", "implement", "fix", "document", "test", "review", "verify"]},
+        "ask_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "work_item": {"type": "string"},
+        "rationale": {"type": "string"},
+        "expires_at_ckpt": {"type": "integer", "minimum": 1}
+      }}}
+  }
+}
+```
+
+### A.4 `state.sentinel` (RunState block; serialised only when sentinel enabled)
+```json
+{
+  "$id": "ao.runstate.sentinel/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {"type": "boolean"},
+    "disabled_reason": {"type": ["string", "null"]},
+    "overrides": {"type": "object", "additionalProperties": {
+      "type": "object", "required": ["value", "actor", "at"],
+      "properties": {"value": {}, "actor": {"type": "string"}, "at": {"type": "string", "format": "date-time"}}}},
+    "consumed_ids": {"type": "array", "maxItems": 1000, "items": {"type": "string"}},
+    "llm": {"type": "object", "properties": {
+      "paused": {"type": "boolean"},
+      "generation": {"type": "integer"},
+      "active_generation_task": {"type": ["string", "null"]},
+      "consecutive_rejections": {"type": "integer"},
+      "spend_usd": {"type": "number"},
+      "kills_last_hour": {"type": "array", "items": {"type": "string", "format": "date-time"}},
+      "injections_last_hour": {"type": "array", "items": {"type": "string", "format": "date-time"}}}},
+    "injected_count": {"type": "integer"},
+    "backlog": {"type": "array", "items": {"type": "object"}},
+    "early_checkpoint": {"type": ["object", "null"], "properties": {
+      "checkpoint_id": {"type": "string"}, "carry_over": {"type": "array", "items": {"type": "string"}},
+      "at": {"type": "string", "format": "date-time"}}},
+    "systemic_kill_streak": {"type": "integer"},
+    "metrics": {"type": "object", "properties": {
+      "slot_seconds_busy": {"type": "number"}, "slot_seconds_idle_with_ready": {"type": "number"},
+      "slot_seconds_idle_no_ready": {"type": "number"}, "utilisation_pct": {"type": "number"}}}
+  }
+}
+```
+Sibling top-level `RunState.graph_edits` (not inside `sentinel`, so non-sentinel `ao ctl`-less flows stay clean):
+```json
+{"type": "array", "items": {"type": "object", "required": ["op", "source", "at"],
+  "properties": {
+    "op": {"enum": ["add_edge", "remove_edge", "trim_inputs", "remove_task", "skip_task", "set_priority"]},
+    "task_id": {"type": "string"}, "depends_on": {"type": "array", "items": {"type": "string"}},
+    "inputs": {"type": "array", "items": {"type": "string"}},
+    "source": {"type": "string", "description": "ctl:<user> | sentinel-tick | sentinel-gNN | early-ckpt"},
+    "at": {"type": "string", "format": "date-time"}}}}
+```
+Per-task addition: `state.tasks[tid].recovery{kills:int, last_reason:str, escalation_step:int}`; per-task
+`activity{last_activity_at, running_seconds}` (liveness).
+
+## 21. As-built reconciliation (T-SnXDoc 2026-11-09; re-checked against the code by T-SnXAcc/W11, 2026-11-09)
+
+Where this design text and the code differ, the as-built sections (§5.4.1, §6.8, §6.9, §8.6, §8.7, §12.1, §12.2) win. Deviations:
+
+| Design text | As built |
+|---|---|
+| Checker rule ids `CK-*` (§7.2) | `GE-*` (`graph_check.py`); charter-only rules stay in the overseer tool |
+| `ao config show`, `GET /api/schema/sentinel` (§11.3) | Neither exists. Settings are visible via `ao ctl status`, `state.effective_settings` and the run-options registry schema (`GET /api/schema/run-options`) |
+| Panel "idle timeline" (§12) | Stacked bar from cumulative slot-seconds; the state keeps no time series |
+| `release` / `kill` answered `not_enabled_yet` until later tasks | Both enabled (T-Sn7Bkl / T-Sn4Rec). The stale `ao ctl --help` text for `kill`/`release` was corrected (W11 gates-green) |
+| `backlog{held}` "placeholder" (§12.1) | Populated by T-Sn7Bkl |
+| Triggers `new_signal`, `stage_change` (§8) | Not implemented; `stuck_task`, `unit_failed`, `human_note`, `heartbeat`, `idle_slots_no_backlog` are |
+| Sentinel-origin graph styling incl. edited edges (FR-14) | All done: node badge/border, dashed spawn edge, and dependency edges into a `set_edges` target drawn thicker (`graph-edge-edited`, Legend row). The graph API exposes `graph_edits` (§6.8, W10); the field is optional in the TS type so an older server still renders |
+| Cost kill (FR-5) | Sees settled earlier-attempt cost only; live attempt spend is known at exit |
+| Generation `max_tokens` stop | Effective only for drivers that report progress; CLI driver is bounded by TTL and `--max-budget-usd` |
+| Default enablement (§10.1) | Not flipped: no FR-23 live smoke has run. Templates keep `sentinel_enabled` opt-in |
+| Live-LLM behaviour | Verified with a fake `claude` executable and scripted drivers only |
+| Stage policy on non-backlog injects | Only backlog releases carry a `CheckPolicy` (stage, known work items). Soft-barrier emitter manifests and ctl/LLM `inject` get structural `GE-*` rules + the FR-19 cap (§6.9) |
+| `GE-EDGE-INTO-NONPENDING` via `edit_pending` | Unreachable there (the `GE-NOT-PENDING` target guard fires first); it applies to additive manifests/inject only |
+| Remaining unticked EPIC §11 boxes | Blocked on the FR-23 live smoke (owner budget): utilisation/cost evidence, the default flip, and the settings-surfaces/consistency/PR items that close with it. Steps: `meta/tickets/E-Sn7tL2-sentinel-long-running-overseer/T-SnXAcc-e2e-and-live-smoke/HANDOFF.md` |

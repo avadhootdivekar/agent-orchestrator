@@ -1359,3 +1359,72 @@ By: developer
 Role: developer
 Date: 2026-10-05
 ---
+
+---
+Learning-ID: LRN-20261024-agent-cwd-inside-repo-inherits-ancestor-instructions
+Learning: Any `claude -p` (or `ao`) agent whose cwd sits under a repo inherits EVERY ancestor `CLAUDE.md`,
+  `.claude/skills` and `.claude/agents` — a benchmark workspace under `<repo>/playground/.tmp/bench` therefore ran
+  with the repo's and the control plane's instructions, skills (`benchmarking`, `repo-intel`, …) and agent roster
+  loaded, silently. Put agent workspaces outside any tree containing `CLAUDE.md`/`AGENTS.md`/`.claude/`, and verify
+  with the transcript's `system/init` event (`skills`, `agents`, `slash_commands`) rather than by reasoning about
+  paths; agents also probe parents (`cat ../../.gitignore` observed), so hidden assets must not be a few `..` away.
+Context: E-Bn7Dsc first real `gen-services-mini` run (2026-10-23) — found 2026-10-24 when the owner asked whether
+  benchmarking `ao` from its own branch contaminates scores; parity held (same leak for both subjects) but the
+  "same instructions" guarantee did not. Follow-on `T-Ws7Iso-bench-env-isolation`.
+By: Claude
+Role: manager
+Date: 2026-10-24
+---
+
+---
+Learning-ID: LRN-20261024-pipe-to-tail-hides-pytest-exit-code
+Learning: `pytest … | tail` returns tail's exit status, so a red suite looks green and a commit lands on a failing
+  gate. Use `set -o pipefail`, or write to a log and `echo "exit=$?"` on its own line, and read the summary line,
+  not the exit of the last pipe stage.
+Context: E-Bn7Dsc merge verification — the NFR-2 gate failure was masked once this way and needed a follow-up commit.
+By: Claude
+Role: manager
+Date: 2026-10-24
+---
+
+---
+Learning-ID: LRN-20261024-agent-env-beyond-cwd-account-connectors-session-vars
+Learning: Moving an agent's cwd out of every instruction tree is not enough for a clean benchmark environment.
+  Claude Code also adds (a) account-level claude.ai connectors (Google Drive, Docs) that load ASYNCHRONOUSLY, so the
+  same subject's agents see `mcp_servers` `[]`, `pending` or `connected` depending on a race; (b) user
+  `~/.claude/settings.json` knobs such as `effortLevel`, which apply to every subject unseen; (c) auto-memory keyed to
+  the git root above the cwd; and (d) when the harness itself runs inside a Claude Code session, that session's env
+  (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, messaging sockets) leaks into every child.
+  Neutralise (a)/(c) with `ENABLE_CLAUDEAI_MCP_SERVERS=false` + `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, scrub (d), and
+  record (b). To learn what a session loads without paying for a turn, start `claude -p --output-format stream-json
+  --verbose` and kill its process group as soon as the `system/init` line arrives (~0.7 s).
+Context: E-Bn7Dsc `T-Ws7Iso` (bench env isolation), 2026-10-24; observed in the 2026-10-23 transcripts and in the
+  probe while implementing `bench/envcheck.py`.
+By: Claude
+Role: developer
+Date: 2026-10-24
+---
+
+---
+Learning-ID: LRN-20261024-reference-selfcheck-before-calibration-spend
+Learning: Before spending on agents for a generated benchmark suite, grade the hidden reference against its own probes and
+  require score 1.0 on every instance (not merely `solved`). At untested difficulty levels the instrument itself was broken
+  in ways that look like task difficulty: a probe the grader could not express, ephemeral-port exhaustion through
+  `docker-proxy` after ~28k short connections (resets the ~28k-th request), and a seeded random label colliding with a
+  unique-field trap (0.85 still counted as `solved`). Separately: when every subject is at the ceiling, more repeats do not
+  help — only a harder instrument does — and fixes to the grader are legitimate only when justified by the reference or
+  the harness failing, never by a subject's score.
+Context: E-Bn7Dsc T-Cb8Rk2 calibration + ranking campaign, 2026-10-24.
+By: Claude
+Role: manager
+Date: 2026-10-24
+---
+
+---
+Learning-ID: LRN-20261109-sentinel-doc-reconcile
+Learning: When a design doc names surfaces (`ao config show`, `/api/schema/sentinel`) before the tasks land, grep the CLI `--help` and routes at doc-close — two named surfaces never shipped, and a stale `--help` string ("not_enabled_yet until T-… lands") outlived its task.
+Context: E-Sn7tL2 T-SnXDoc reconciliation; deviations table in docs-md/sentinel-hld.md §21. Also: do not flip a default "after evidence" until the evidence file exists — record the deferral instead.
+By: claude-sonnet-5-5
+Role: developer
+Date: 2026-11-09
+---

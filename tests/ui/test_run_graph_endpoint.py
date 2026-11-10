@@ -429,6 +429,8 @@ class TestAdditiveOnly:
             "prompt",
             "prompt_changed_since_start",
             "result_cache",
+            "limits",  # T-xNFBww
+            "settings_recorded",  # T-xNFBww
         }
         assert self._PRE_EXISTING_RUN_DETAIL_KEYS <= set(payload.keys())
 
@@ -442,6 +444,7 @@ class TestAdditiveOnly:
             "model",
             "effort",
             "result_cache",
+            "limits",  # T-xNFBww
         }
         assert self._PRE_EXISTING_TASK_STAT_KEYS <= set(build_task.keys())
 

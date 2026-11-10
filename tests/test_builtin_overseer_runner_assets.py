@@ -86,6 +86,11 @@ ALLOWED_VARIABLES = frozenset(
         "params.haiku_turns",
         "params.python_bin",
         "params.branch_policy",
+        "params.sentinel_enabled",
+        "params.sentinel_llm",
+        "params.sentinel_powers",
+        "params.sentinel_budget_pct",
+        "raw.sentinel_member",
     }
 )
 
@@ -112,6 +117,10 @@ EXPECTED_PARAM_NAMES = frozenset(
         "haiku_turns",
         "python_bin",
         "branch_policy",
+        "sentinel_enabled",
+        "sentinel_llm",
+        "sentinel_powers",
+        "sentinel_budget_pct",
     }
 )
 
@@ -217,6 +226,11 @@ DUMMY_VALUES: dict[str, str] = {
     "params.haiku_turns": "2",
     "params.python_bin": "python3",
     "params.branch_policy": "",
+    "params.sentinel_enabled": "",
+    "params.sentinel_llm": "",
+    "params.sentinel_powers": "",
+    "params.sentinel_budget_pct": "",
+    "raw.sentinel_member": "",
 }
 
 
@@ -297,7 +311,7 @@ def test_template_yaml_params_shape_matches_hld_13_1() -> None:
     params = manifest["params"]
     assert isinstance(params, dict)
     assert set(params) == EXPECTED_PARAM_NAMES
-    assert len(params) == 21
+    assert len(params) == 25
 
     allowed_param_keys = {"description", "required", "enum", "default"}
     for name, spec in params.items():
@@ -1143,3 +1157,39 @@ def test_readme_breaker_table_thresholds_match_rendered_defaults() -> None:
 
     assert breakers_by_id["runaway-fanout"]["threshold"] == config["max_injected_tasks"] == 160
     assert "160" in text
+
+
+def test_overseer_contract_tmpl_documents_handoff_object_and_signal() -> None:
+    text = " ".join(_render_contract().split())
+    assert "optional `handoff`" in text
+    assert "`handoff_chain`" in text
+    assert "Handoffs are not attempts" in text
+    assert "`state`" in text
+
+
+_OVERSEER_README = (
+    Path(__file__).resolve().parent.parent
+    / "src/agent_orchestrator/templates/builtin/overseer-runner/README.md"
+)
+_OVERSEER_HLD = Path(__file__).resolve().parent.parent / "docs-md/overseer-runner-hld.md"
+
+
+@pytest.mark.parametrize("path", [_OVERSEER_README, _OVERSEER_HLD])
+def test_docs_describe_handoff_state_scope_and_limit_report(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    for needle in (
+        "handoff",
+        "template-level",
+        "succeeded",
+        "limit-report",
+        "basis",
+        "TaskRunState",
+        "handoff_chain",
+    ):
+        assert needle in text, f"{path.name} must mention {needle!r}"
+
+
+def test_hld_documents_handoff_schemas_and_rules() -> None:
+    text = _OVERSEER_HLD.read_text(encoding="utf-8")
+    for needle in ("limit_events", "work_items_handed_off", "R13", "R14", "handoff_invalid"):
+        assert needle in text, f"HLD must mention {needle!r}"

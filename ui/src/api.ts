@@ -12,6 +12,9 @@ import type {
   EnrollBeginBody,
   FeedbackRequest,
   FeedbackState,
+  AnswerInputBody,
+  AnswerInputResponse,
+  RunInputsState,
   OperatorNoteRequest,
   OperatorNoteResponse,
   OperatorNotesState,
@@ -28,7 +31,13 @@ import type {
   RunDetail,
   RunGraph,
   RunOptions,
+  RunOptionsSchema,
   RunSignalsResponse,
+  SentinelControlOutcome,
+  SentinelControlQueued,
+  SentinelControlRequest,
+  SentinelPanelV2,
+  SentinelStatus,
   RunSummary,
   TemplateInfo,
   TotpEnrollment,
@@ -201,6 +210,8 @@ export const api = {
 
   workflows: () => request<WorkflowInfo[]>("/workflows"),
 
+  runOptionsSchema: () => request<RunOptionsSchema>("/schema/run-options"),
+
   templates: () => request<TemplateInfo[]>("/templates"),
   createInstance: (name: string, body: CreateInstanceRequest) =>
     request<CreateInstanceResponse>(`/templates/${encodeURIComponent(name)}/instances`, {
@@ -279,6 +290,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  runInputs: (runId: string) =>
+    request<RunInputsState>(`/runs/${encodeURIComponent(runId)}/inputs`),
+
+  answerInput: (runId: string, requestId: string, body: AnswerInputBody) =>
+    request<AnswerInputResponse>(
+      `/runs/${encodeURIComponent(runId)}/inputs/${encodeURIComponent(requestId)}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  /** Sentinel panel v2 (generations, proposals, directives). 404 on an old backend. */
+  sentinelPanel: (runId: string) =>
+    request<SentinelPanelV2>(`/runs/${encodeURIComponent(runId)}/sentinel/panel`),
+  /** Sentinel status (`ao ctl status --json`). 404 on an old backend / unknown run. */
+  sentinel: (runId: string) => request<SentinelStatus>(`/runs/${encodeURIComponent(runId)}/sentinel`),
+
+  /** Queue one control entry; the actor is set server-side from the session. */
+  sentinelControl: (runId: string, body: SentinelControlRequest) =>
+    request<SentinelControlQueued>(`/runs/${encodeURIComponent(runId)}/control`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Non-blocking verdict of a queued control entry. */
+  sentinelControlOutcome: (runId: string, entryId: string) =>
+    request<SentinelControlOutcome>(
+      `/runs/${encodeURIComponent(runId)}/control/${encodeURIComponent(entryId)}`,
+    ),
 
   runSignals: (runId: string, survival: boolean) =>
     request<RunSignalsResponse>(

@@ -1,0 +1,83 @@
+{
+  "version": "1.0",
+  "agents": {
+    "architect": {
+      "executor": "claude_cli",
+      "command_template": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--permission-mode",
+        "bypassPermissions"
+      ],
+      "prompt_template": "Act as the architect agent. Execute the task described in {instruction}. Input artifacts: {inputs}. Write every output to the exact paths in: {outputs}. Repos: {repos}. This is one non-interactive session: do not end your turn until your declared outputs exist.",
+      "context_window": "isolated",
+      "working_dir": "repo"
+    },
+    "developer": {
+      "executor": "claude_cli",
+      "command_template": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--permission-mode",
+        "bypassPermissions"
+      ],
+      "prompt_template": "Act as the developer agent. Execute the task described in {instruction}. Input artifacts: {inputs}. Write every output to the exact paths in: {outputs}. Repos: {repos}. This is one non-interactive session: do not end your turn until your declared outputs exist.",
+      "context_window": "isolated",
+      "working_dir": "repo"
+    },
+    "git-operator": {
+      "executor": "claude_cli",
+      "command_template": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--permission-mode",
+        "bypassPermissions"
+      ],
+      "prompt_template": "Act as the git-operator agent. Execute the task described in {instruction}. Input artifacts: {inputs}. Write every output to the exact paths in: {outputs}. Repos: {repos}. This is one non-interactive session: do not end your turn until your declared outputs exist.",
+      "context_window": "isolated",
+      "working_dir": "repo"
+    },
+    "manager": {
+      "executor": "claude_cli",
+      "command_template": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--permission-mode",
+        "bypassPermissions"
+      ],
+      "prompt_template": "Act as the manager agent. Execute the task described in {instruction}. Input artifacts: {inputs}. Write every output to the exact paths in: {outputs}. Repos: {repos}. This is one non-interactive session: do not end your turn until your declared outputs exist.",
+      "context_window": "isolated",
+      "working_dir": "repo"
+    },
+    "reviewer": {
+      "executor": "claude_cli",
+      "command_template": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--permission-mode",
+        "bypassPermissions"
+      ],
+      "prompt_template": "Act as the reviewer agent. Execute the task described in {instruction}. Input artifacts: {inputs}. Write every output to the exact paths in: {outputs}. Repos: {repos}. This is one non-interactive session: do not end your turn until your declared outputs exist.",
+      "context_window": "isolated",
+      "working_dir": "repo"
+    },
+    "tester": {
+      "executor": "claude_cli",
+      "command_template": [
+        "claude",
+        "-p",
+        "{prompt}",
+        "--permission-mode",
+        "bypassPermissions"
+      ],
+      "prompt_template": "Act as the tester agent. Execute the task described in {instruction}. Input artifacts: {inputs}. Write every output to the exact paths in: {outputs}. Repos: {repos}. This is one non-interactive session: do not end your turn until your declared outputs exist.",
+      "context_window": "isolated",
+      "working_dir": "repo"
+    }
+  }
+}

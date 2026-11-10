@@ -61,7 +61,7 @@ they're spend-gated and should be run via `make bench-medium`/`make bench-large`
 | **Tier** | A suite's `tier` field (`small`\|`medium`\|`large`\|`xlarge`, default `small`) selects its default USD caps + parallelism from the committed `benchmarks/tiers.json`. See [Tiers](#tiers). |
 | **Campaign** | `ao-bench campaign` runs a suite against a *list* of subjects under one whole-run USD cap → `benchmarks/results/<date>-<suite>-campaign/{campaign.json,comparison.json,comparison.md}`, committed. |
 | **Workspace provider** | How a task's mutable `repo/` is materialized: `fixture` (default — copy a committed dir) or `swebench` (git checkout a repo at a pinned `base_commit`). See [SWE-bench import](#swe-bench-import-the-large-tier). |
-| **Workspace** | A disposable, path-guarded copy under `playground/.tmp/bench/` (gitignored) — the subject mutates it, the grader reads it. The committed fixture itself is never touched. |
+| **Workspace** | A disposable, path-guarded copy under `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws/` — outside the checkout so no repo `CLAUDE.md`/skills leak into the agent (`T-Ws7Iso`); the subject mutates it, the grader reads it. The committed fixture itself is never touched. |
 
 ---
 
@@ -160,17 +160,26 @@ DAG is itself internally serial or parallel) — they compose, they don't share 
 
 ### Held-out grading for discriminating (`medium`+) suites
 
-There is no dedicated `grading_overlay` framework feature (non-MVP — see the "Non-MVP / roadmap" section near the
-end of this doc). `dev-medium` instead uses a **per-fixture `.grading/` honor-system convention** (same shape as `dev-core`'s
-`check.py`/`check_tests.py` precedent, generalized): each task's `fixture/.grading/{run.py,tests/}` is a held-out
-harness the agent's own instruction never points at and is never told to run — `run.py` re-runs the *visible*
-`tests/` plus the held-out `.grading/tests/` (or, for a test-writing task, mutation-tests the agent's own test file
-against several independently seeded single-bug variants). `solved` is gated by the full grading harness passing,
-not by the visible suite alone — verified per-task at authoring time (`.grading/run.py` must FAIL on the unmodified
-fixture and PASS once the task's own `.bench-solution/` reference fix is applied; `dev-medium`'s own
-`tests/bench/test_dev_medium_suite.py` asserts this for all 6 committed tasks). This is an honor-system convention,
-not a schema-enforced one — nothing stops a task's grader `command` from pointing only at the visible `tests/`, so
-new held-out-graded tasks must wire their `grader.command` to the `.grading/run.py` entry point explicitly.
+Anything the agent must not see lives in the task's **`grading_dir`**: a per-(subject x task) directory the runner
+creates next to — never inside — the agent-visible workspace (HLD §8 "Hidden-asset rule"). A grader reaches it via
+`{grading_dir}` / `{repo_dir}` placeholders in its `command`, and a task seeds it from `grader.assets` (a
+suite-relative dir that `materialize_workspace` copies into `grading_dir`).
+
+`dev-medium` uses exactly that (migrated from the old agent-readable `fixture/.grading/` on 2026-10-23; every task's
+`config_fingerprint` changed with it, so pre-migration results are not run-for-run comparable): each task has
+`tasks/<id>/grading/{run.py,tests/}` and
+
+```json
+"grader": {"type": "command", "assets": "tasks/<id>/grading",
+           "command": "uv run python {grading_dir}/run.py --repo {repo_dir}", "cwd": "."}
+```
+
+`run.py --repo <repo>` (default: cwd) re-runs the *visible* `tests/` plus the held-out `tests/` next to it (or, for a
+test-writing task, mutation-tests the agent's own test file against several independently seeded single-bug
+variants). `solved` is gated by the full harness, not the visible suite alone — verified per task at authoring time
+(`run.py` must FAIL on the unmodified fixture and PASS once the task's `.bench-solution/` reference fix is applied;
+`tests/bench/test_dev_medium_suite.py` asserts this for all 6 tasks, plus that nothing grader-owned is reachable from
+the agent's workspace).
 
 ## Authoring a subject
 
@@ -381,6 +390,149 @@ parallelizes normally).
 
 ---
 
+## Tier-2 brownfield suites (`repo_mutation`, `pr_mined`, `pytest_targeted`)
+
+HLD `docs-md/benchmark-discriminating-suites-hld.md` §4.2. The agent gets a real repo at a pinned commit plus an
+instruction; hidden tests and mutation metadata stay in the task's `grading_dir`. Hermetic tests build a local git
+repo (`tests/bench/test_mutation_provider.py`, `test_pr_mined.py`); the real-clone tier is opt-in:
+`AO_E2E_NETWORK=1 uv run pytest -m network tests/bench`.
+
+**Workspace shape (both providers).** The repo is checked out through the shared cache
+(`playground/.tmp/swebench-repo-cache/`), mutated, then **re-snapshotted as one parentless commit**: `git diff` shows
+exactly the agent's own work, and `git stash` / `git checkout .` / `git log --all` / `git fetch origin` can neither
+undo an injected bug nor reach a merge commit. Hidden tests are never in `repo_dir`; the `pytest_targeted` grader
+restores `grading_dir/hidden/**` at grade time. The provider also parks the pristine/gold files in
+`grading_dir/reference/`, so `FakeSubject(scripted_effect="copy-reference")` proves a task is solvable at zero cost.
+
+**`repo_mutation`** — `source: {"type": "repo_mutation", "repo": "<clone URL or owner/name>", "base_commit": "<40-hex>",
+"recipe": "tasks/<id>/recipe.json"}`. Recipe keys (unknown keys are rejected):
+
+| key | meaning |
+|---|---|
+| `mode` | `inject` (bug), `excise` (feature + tests removed), `enhance` (new behaviour, hidden tests) |
+| `edits` | `[{"file","find","replace","count"=1}]` — literal find/replace; the `find` text must occur exactly `count` times |
+| `remove` | repo paths deleted from the checkout (not restored) |
+| `hidden` | `{repo path: suite-relative source}` — copied to `grading_dir/hidden/<path>` |
+| `hidden_from_repo` | repo paths taken from the checkout into `grading_dir/hidden/` and deleted from `repo_dir` (e.g. the existing tests that catch the injected bug) |
+| `fail_to_pass` / `pass_to_pass` / `test_targets` | node ids, and whole files/dirs that must pass |
+| `install`, `test_command` | optional; grader defaults |
+| `verified` | `{"date","note"}` — how the recipe was proven (`null` if not) |
+
+**`pytest_targeted` grader** (suite.json `grader` block; omitted keys come from the provider's `recipe.resolved.json`):
+`fail_to_pass`, `pass_to_pass`, `test_targets`, `pass_to_pass_sample` (30), `install`, `test_command`
+(`{python} -m pytest -q -p no:cacheprovider {targets}`), `per_test_timeout_seconds` (60, needs `pytest-timeout`),
+`total_timeout_seconds` (900), `install_timeout_seconds` (900), `baseline_commit`. It restores hidden tests, runs
+`install` once, runs ONE bounded pytest invocation, and scores `0.7 * f2p_rate + 0.3 * p2p_rate` (an empty group's weight
+renormalises away); `solved` = every f2p id / every test in `test_targets` / every sampled p2p id passed. A failing
+`install` is a `GraderError` (infrastructure), failing tests are an ordinary unsolved grade. Reported, never scored:
+`collateral` (`files_touched`/`lines_added`/`lines_deleted` of the agent's diff vs the snapshot), `agent_tests_added`.
+
+**`pr_mined`** — `source: {"type": "pr_mined", "instance_id": "owner__name-<pr>"}`; metadata in the suite's
+`instances.json`, written by
+
+```bash
+uv run ao-bench import-prs --repo owner/name --since 2026-06-01 --out benchmarks/suites/<suite> --limit 20 \
+    [--min-test-files 1] [--install "uv venv .venv && uv pip install -e . pytest pytest-timeout"]
+```
+
+(needs the `gh` CLI, authenticated). It selects merged PRs that change >= `--min-test-files` pytest modules AND a
+non-test `.py` file, pins `base_commit` to the merge commit's first parent, strips links/@mentions/`#123` from the
+text and generates `tasks/<id>/instruction.md` — **review those for solution hints before committing**. Without
+verified node ids an instance is graded by whole test files (`test_targets`), whose score is dominated by tests that
+already passed; a calibration step that fills `fail_to_pass`/`pass_to_pass` on the instance upgrades it to precise
+scoring (the provider honours them when present).
+
+**`repo-mutant-mini`** (`benchmarks/suites/repo-mutant-mini/`) — 3 inject + 1 excise recipes on pinned
+`pallets/click`, `python-attrs/attrs`, `Textualize/rich`, each under 5 s of targeted pytest and network-verified
+(unsolved with the mutation, solved with the pristine files; see each recipe's `verified`).
+
+## Discriminating suites (E-Bn7Dsc): parity, generated tasks, repeats
+
+Design: [`../docs-md/benchmark-discriminating-suites-hld.md`](../docs-md/benchmark-discriminating-suites-hld.md);
+probe contract: [`../docs-md/bench-probe-dsl.md`](../docs-md/bench-probe-dsl.md); generator internals:
+[`../docs-md/bench-generators.md`](../docs-md/bench-generators.md). Motivation in one line: the committed
+2026-07-22 results saturate (every subject 6/6 on `dev-core` and `dev-medium`, 9/10 on `swe-verified-mini` at
+n=10/r=1), so they rank subjects by price, not capability.
+
+### Parity bundle (hard rule)
+Every subject in a comparison runs under ONE bundle — `benchmarks/parity/default/` (`parity.json`, a shared
+`CLAUDE.md`, a `claude/` tree of skills/settings, env knobs, `max_turns`, `permission_mode`). A suite names it
+with `"parity": "../../parity/default"`; `--parity <dir>` overrides it for *all* subjects of a run/campaign. The
+bundle's content fingerprint is recorded in `run.json` (`parity_fingerprint`) and in the run config fingerprint;
+`build_comparison` / `ao-bench report` refuse to compare runs whose fingerprints differ (`--allow-mixed` stamps
+the report `parity_mixed`). Mechanics: `CLAUDE.md` lands at `<ws>/CLAUDE.md` (parent of `repo/`, read by both
+`claude -p` and every `ao` agent, never in the repo diff), `claude/` lands at `<repo>/.claude/` and is added to
+`.git/info/exclude` for git checkouts. Keep subject `prompt_template`s thin — instructions belong in the bundle.
+
+### Environment isolation (`T-Ws7Iso`, hard rule for ranking)
+Parity fixes what the harness ships; isolation makes sure nothing else reaches the agent (HLD §2c). Preflight:
+```bash
+uv run ao-bench env --probe --model claude-haiku-5-5   # JSON; exit 2 if the bench root would leak instructions
+```
+- **Root.** Workspaces: `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws`; grading assets: the sibling
+  `<base>/_ao_bench_grading`. `run`/`campaign`/`calibrate` refuse an agent subject when that root or any ancestor
+  holds `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` or `.claude/`; `--allow-contaminated-env` runs anyway and stamps
+  `env_contaminated`.
+- **Fingerprint.** Each task records the union of its transcripts' `system/init` events (skills, agents, slash
+  commands, MCP servers, plugins); each run records a baseline from a throwaway `claude -p` in an empty
+  parity-applied workspace (killed at its init event) and the user-level config (`~/.claude/settings.json` keys
+  such as `model`/`effortLevel`/`enabledPlugins`, user `CLAUDE.md` hash, `CLAUDE_*`/`ANTHROPIC_*` env).
+  `report` refuses foreign entries, contaminated runs and differing digests between agent subjects
+  (`--allow-mixed` stamps the report **NON-ISOLATED**); a campaign stops its repeats instead.
+- **Audit.** A tool call whose input names `_ao_bench_grading` marks the task `suspect` (`grading_access`); it is
+  excluded from every rate, roll-up, pairwise test and calibration pool.
+- **Default bundle env.** `ENABLE_CLAUDEAI_MCP_SERVERS=false` (no claude.ai connectors such as Google Drive) and
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`. `CLAUDE_CONFIG_DIR` is deliberately *not* relocated (it would fork the
+  operator's OAuth credentials); user-level settings are recorded instead, so e.g. `effortLevel` applies to every
+  subject and is visible in `summary.md`.
+- **Held-out seeds.** Ranking campaigns use a `--seed` absent from every committed suite and record it in the
+  results entry below; keep at least one generated family unseen while tuning `ao` templates/instructions.
+
+### Hidden assets: `grading_dir`
+Probes, reference implementations and held-out tests live in a grader-owned dir
+(`<base>/_ao_bench_grading/<run>/<subject>/<task>/`), under a sibling root of the agent-visible workspace root
+`<base>/ws` — never inside it.
+A task's `grader.assets` (suite-relative dir) is copied there; `command`/`pytest` graders may reference it as
+`{grading_dir}` (and the repo as `{repo_dir}`). `dev-medium` was migrated to this layout on 2026-10-23.
+
+### Tier 1 — generated behavioural-spec tasks (`generated` provider + `blackbox` grader)
+```bash
+uv run ao-bench gen --out benchmarks/suites/gen-services --family crud-relational --family job-queue \
+    --count 2 --languages python,typescript,go --seed 20261023 --parity ../../parity/default
+uv run ao-bench images --build --suite benchmarks/suites/gen-services/suite.json   # per-language sandbox images
+uv run ao-bench run --suite benchmarks/suites/gen-services-mini/suite.json --subject benchmarks/subjects/claude-haiku.json
+```
+- A task is `(family, seed, difficulty{entities,traps,concurrency,scale}, language)`; the suite stores only
+  those parameters — SPEC.md + skeleton are regenerated into `repo/`, and `instance.json` + `probes.json` +
+  the stdlib Python `reference/` into `grading_dir`, at materialize time. Nothing hidden is ever committed.
+- The agent must make `./run.sh` serve the spec (`http`: bind `$HOST:$PORT`, `/healthz`; `jsonl`: stdin→stdout;
+  `cli`: argv) using only the suite `stack` allow-list (default: stdlib + `sqlite3`, `montydb` for Python;
+  `node:sqlite`; `modernc.org/sqlite`). No external services.
+- Grading is behaviour-only, inside Docker (`python:3.12-slim` / `node:22-alpine` / `golang:1.26-alpine`, deps
+  pre-installed into a derived image, cpu/mem/pid limits, no network except the published port; `process`
+  fallback is tagged in `grader_detail.sandbox`). Score = 0.5·core + 0.35·trap + 0.15·perf; `solved` = all core
+  probes pass and score ≥ 0.8. Perf fits a scaling exponent α per op class over N ∈ sizes and compares p95 to
+  the hidden reference (`ref_ratio`, enforced only for same-language artefacts).
+- Families today: `crud-relational` (http) and `job-queue` (jsonl); six more are specified in the HLD §4.1.
+
+### Repeats, paired statistics, calibration
+```bash
+uv run ao-bench campaign --suite S --subject A --subject B --repeats 3            # staged: repeat only undecided tasks
+uv run ao-bench run --suite S --subject A --repeat 2                              # one explicit repeat (dir <id>-r2)
+uv run ao-bench report --results-root benchmarks/results --suite <suite-id>       # groups -r<n> dirs per subject
+uv run ao-bench calibrate --suite S --subject haiku --subject opus --repeats 2 --band 0.2,0.8 --write
+```
+`comparison.json` schema 2.0 adds `parity_*`, `repeats_per_subject`, `subject_stats` (attempted-based rates —
+`subject_status="error"` runs are infra, excluded), `infra` (counts + "suspect" unsolved runs under $0.15 / 180 s),
+`per_family`, `per_language`, `pairwise` (paired bootstrap 95 % CI + Wilcoxon p on per-task score diffs) and
+`unreliable_subjects` (> 10 % infra). Staged campaigns re-run only tasks where subjects disagree, a subject's own
+repeats vary, or a subject has no attempted sample; `campaign.json` records the `stage_log`.
+
+### Opt-in test tiers
+`AO_E2E_DOCKER=1 uv run pytest -m docker tests/bench` (sandbox + blackbox in a real container),
+`AO_E2E_NETWORK=1 uv run pytest -m network tests/bench` (Tier-2 recipes against real clones). Default
+`pytest tests/bench` is hermetic.
+
 ## Results layout + committed-results policy
 
 ```
@@ -400,8 +552,9 @@ benchmarks/results/
 ```
 **Everything under `benchmarks/results/` is committed** (git-preserved) — a result is evidence, not scratch output.
 Transcripts/captures are **not** committed (large, may contain noise); `run.json` records the workspace path as a
-pointer only. Workspaces themselves live under `playground/.tmp/bench/` (gitignored) and are **not auto-deleted**
-— preserved for audit; clean up manually.
+pointer only. Workspaces themselves live under `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws/` (runs
+before 2026-10-24: `playground/.tmp/bench/`, gitignored) and are **not auto-deleted** — preserved for audit; clean
+up manually.
 
 ### Known limitation: comparison-dir naming is not subject-set-aware
 `comparison`'s directory name is `<date>-<suite>-compare` — derived from only the UTC date + suite id, with no
@@ -509,6 +662,224 @@ we call out `max_attempts` for `ao_workflow` benchmark subjects as a follow-up (
   discrimination** (see above) — not raw capability, which is what the `large` tier's external, harder suite is
   for.
 
+### `medium` — `gen-services-mini` haiku campaign (2026-10-23, E-Bn7Dsc first real run)
+
+`benchmarks/results/2026-10-23-gen-services-mini-{claude-haiku,ao-epic-haiku,campaign}/` — the first real-LLM run
+of the Tier-1 path under the default parity bundle (fingerprint `06aaf5ad…`, shared by both runs), graded in Docker.
+
+| Subject | Solved | Mean score | Cost | Wall (2 tasks) | Notes |
+|---|---|---|---|---|---|
+| claude-haiku | 2/2 | 1.000 | $0.229 | 453 s | crud 69 turns / 316 s; job-queue 46 turns / 136 s |
+| ao-epic-haiku | 2/2 | 1.000 | $0.245 | 632 s | implement→verify DAG; +7 % cost, +40 % wall |
+
+Every probe group was 100 % for both (crud 21 core / 4 trap / 5 perf, job-queue 11 / 4 / 6), so the pairwise CI is
+[0, 0]: **at difficulty `{entities:2, traps:2, concurrency:1, scale:1}` these two instances are saturated even for
+haiku.** That is the expected first-pass outcome and exactly what `ao-bench calibrate` is for — the next step is to
+regenerate at a higher difficulty vector (more entities/traps, concurrency ≥ 2, scale ≥ 2, and the TS/Go variants)
+and calibrate against haiku + opus until pooled pass rate sits in the 20–80 % band (HLD §7). What this run DOES
+establish: the full Tier-1 pipeline (parity → generated spec → agent → Docker blackbox grade → repeat-aware
+comparison with infra/pairwise/family tables) works end to end for about $0.25 per subject. One more calibration note from the
+perf data: at `scale:1` (sizes 100 / 1000) the fitted α was ≈ −0.4 for every op class — latency *fell* with N,
+i.e. JIT/warm-up noise dominates at these sizes — so the perf group only carries signal from `scale ≥ 2`
+(sizes up to 10⁴–10⁵); treat `scale:1` perf as a smoke check.
+
+**Environment caveat (found 2026-10-24, `T-Ws7Iso`):** these workspaces lived under `<repo>/playground/.tmp/bench`, so
+both agents also had the two ancestor `CLAUDE.md` files and every repo/control-plane skill and agent loaded (see the
+`init` event in each transcript). Parity held (identical leak for both subjects) and nothing read `_grading/`, so the
+pipeline proof stands, but treat these numbers as *non-clean*; do not cite them as a ranking. Fixed on 2026-10-24
+(`T-Ws7Iso`): a re-run of one `dev-core` task per subject from `/var/tmp/ao-bench/<uid>/ws` showed both subjects'
+init fingerprints equal to the run's baseline, with no repo or control-plane skill/agent, no MCP server and
+auto-memory off ($0.013 total, scratch results not committed).
+
+### `medium`/`large` — calibration + 4-subject ranking (2026-10-24, `T-Cb8Rk2`)
+
+**Question.** Can the generated suites be tuned to tell `claude-haiku`, `claude-sonnet`, `claude-opus` and an `ao`
+overseer on Sonnet only (`ao-overseer-sonnet`) apart, within $20 per subject?
+**Answer: not on quality.** Every subject solved all 10 ranking tasks. The suites are at their ceiling for current
+models even at the maximum valid difficulty. The subjects separate clearly on **cost and time**.
+
+**Setup.** The protocol was pre-registered in the ticket before any spend. The default parity bundle applies to
+everyone: `max_turns` 30, `bypassPermissions`, `CLAUDE_CODE_EFFORT_LEVEL=high`, claude.ai connectors off,
+auto-memory off. All four subjects share the init fingerprint `62181309c7b1`, which equals each run's baseline. There
+were no foreign entries and no grading-access suspects. Tasks ran three at a time; subjects ran one after another
+from a clean tree. The ranking used two suites, ten tasks in all:
+- `gen-rank-v1`: 6 generated Python tasks (3 crud-relational http, 3 job-queue jsonl). Fresh seeds 9511-9513 at
+  the maximum valid vector `entities=3, traps=3, concurrency=3, scale=2`.
+- `repo-mutant-mini`: 4 Tier-2 tasks (bugs injected into or a feature excised from click, attrs, rich).
+`ao-overseer-sonnet` is the builtin `overseer-runner` with `run_budget_usd=2`, `wave_size=3`, `max_waves=2` and
+`final_push=false`.
+
+**Calibration (anchors haiku + opus only, seeds 7301-7322).**
+
+| Round | Vector | Reference self-check | haiku | opus | Spend |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 3,3,2,2 | failed 4/4 (two harness bugs, fixed) | 4/4 at 1.0 | 4/4 at 1.0 | $2.64 |
+| 2 | 3,3,3,2 | 4/4 at 1.0 | 4/4 at 1.0 | 4/4 at 1.0 | $3.29 |
+| scale 3 | 3,3,3,3 | crud perf not gradeable (reference over budget at 100k; label collisions) | — | — | $0 |
+| Tier 2 | `repo-mutant-mini` | 4/4, do-nothing 0/4 | 4/4 | 4/4 | $0.84 |
+
+**Ranking results** (`2026-10-24-gen-rank-v1-compare/`, `2026-10-24-repo-mutant-mini-compare/`):
+
+| Subject | Solved | Mean score | Spend ($) | $/task | $/solved | Wall/task (s) | Output tokens/task (gen) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| claude-haiku | 10/10 | 0.985 | 0.71 | 0.071 | 0.071 | 205 | 58.7k |
+| claude-sonnet | 10/10 | 0.985 | 1.66 | 0.166 | 0.166 | 56 | 10.3k |
+| claude-opus | 10/10 | 0.970 | 4.55 | 0.455 | 0.455 | 147 | 15.9k |
+| ao-overseer-sonnet | 10/10 | 0.985 | 17.93 | 1.793 | 1.793 | 560 | 74.6k |
+
+Core and trap probes passed 100% for every subject. Every pairwise CI is centred on zero.
+
+**Insights**
+- **The score gaps are not capability.** All 4 subjects lost perf points on `crud-relational-py-s9512`. A generator
+  bug made the reference itself fail there, because the perf load's random label collided with the unique-label
+  trap; this is fixed after the campaign. Opus also lost perf points on `s9513`, and that was a grading flake: the
+  artefact refused connections under parallel grading, then scored 1.0 twice when re-graded alone. With both
+  removed, every subject scores 1.0 on every task.
+- **Cost frontier.** Haiku dominates on cost: 2.3x cheaper than sonnet, 6.4x cheaper than opus and 25x cheaper than
+  the overseer, at equal quality. Sonnet dominates on time, at 56 s per task against 147 s for opus and 205 s for
+  haiku. Haiku needs 4 to 6 times more turns and output tokens than sonnet, and hit `max_turns` on one task while
+  still solving it.
+- **Orchestration overhead.** The overseer costs 10.8x and takes 10x the wall time of bare Sonnet, for the same
+  outcome. On the generated suite, implementation units take only about 22% of its spend. Verify units take 27%,
+  checkpoints 18%, intake 17%, final-verify 8%, branch-off 5% and closeout 4%. At this difficulty the extra
+  stages buy nothing measurable.
+- **ao finding.** The `run-budget-backstop` breaker stopped 5 of 6 overseer runs on the generated suite at $2,
+  before the close-out tail. The graceful budget staging (explore through closeout) never engaged. The template's
+  cost heuristics, `default_unit_cost_usd` 8 and `default_ckpt_cost_usd` 5, are sized for large runs. The work was
+  already done, so it was graded solved.
+
+**Validity and the tuning-versus-fitting check**
+- Every tuned knob was global, chosen on anchor data only, and never moved after Sonnet or the overseer ran.
+  Calibration seeds are disjoint from ranking seeds. Grader weights and threshold were frozen.
+- Six harness or grader validity fixes were made. Each was triggered by the reference failing its own probes or
+  by an infrastructure error, never by a subject's score:
+  - jsonl requests may now be any JSON value;
+  - HTTP grading connects to the container IP with `SO_LINGER 0`, after about 30k connections exhausted the
+    ephemeral ports through `docker-proxy`;
+  - a grader exception keeps the subject's real cost;
+  - `init_git` now works on repos that are already git;
+  - the crud perf load label embeds the load index;
+  - the reference self-check now requires a score of 1.0.
+- Some levers were deliberately not used, because each would have manufactured a ranking. A lower `max_turns`
+  would favour `ao`, since its limit applies per agent. Up-weighting perf would amplify timing noise. Dropping
+  instances, or tightening timeouts after seeing results, would also have fitted the instrument.
+- Declared asymmetries and reuse:
+  - only the overseer's repo is a git repo, which its branch-off stage requires;
+  - its per-task budget was lowered from 3 to 2 before ranking, to fit the cap;
+  - haiku's and opus's `repo-mutant-mini` ranking runs are their calibration runs, with nothing selected by them.
+- Limitations: n=10, Python only, r=1, and two families at their ceiling.
+
+**What it would take to get quality signal:**
+- the six unbuilt Tier-1 families, or multi-service tasks;
+- TS/Go, once the agent host has Node 22 or later and Go, or agents run inside the sandbox image;
+- recent `pr_mined` instances from after the model cutoff, imported with `ao-bench import-prs`;
+- a larger brownfield suite.
+
+**Spend:** $32.75 in total, including $0.80 estimated for two unrecorded invalid runs, against the $250 ceiling.
+Ranking spend per subject was haiku $0.71, sonnet $1.66, opus $4.55 and overseer $17.93, each within its $20 cap.
+
+### Task portfolio: new families, Exercism, and what actually discriminates (2026-10-24, `T-Pf4Mix`)
+
+**Question.** The `T-Cb8Rk2` suites saturated. Would broader task types and languages discriminate between
+`claude-haiku`, `claude-sonnet`, `claude-opus` and `ao-overseer-sonnet`? The new material:
+- generated in-memory engines, long specs, debugging and algorithm families;
+- Exercism exercises in Python, Go, Rust, C++ and JavaScript;
+- a mix of difficulty and area.
+
+**Answer.** Not when a task fully specifies the target and the agent can test locally. Every such task saturated,
+for every model, at every difficulty tried. Capability spread appeared only when the agent had to *infer* conventions
+it could not see. That spread is real and monotone, but it measures recall of public conventions, not clean
+capability.
+
+**Setup.** Same parity bundle as `T-Cb8Rk2` (fingerprint `62181309c7b1` on every run, no foreign entries, no
+grading-access suspects), plus Go 1.26 and Node 22 on the agent host (`bench/toolchains.py`). The pre-registration
+is in the ticket; it was written before any spend on each family. Every suite passed `make bench-refcheck` before
+any agent ran: the reference solution scored 1.0 and the untouched workspace solved nothing. Disabled before any run:
+JS `ledger` and Go `markdown` (the stub already passes) and Go `counter` (the reference fails as run). Ranking
+subjects ran one after another; tasks ran 3–4 at a time.
+
+**1. Generated families: calibration on anchors (haiku and opus, 2 fresh seeds each, Python).**
+
+| Family (new) | What it demands | Vector | haiku | opus |
+|---|---|---|---|---|
+| `order-book` | matching engine: price-time priority, IOC/FOK/post-only, self-trade, stop cascades, replace, funds; seeded fuzz | 3,3,2,2 | 1.0, 1.0 ($0.18/task) | 1.0, 1.0 ($0.78/task) |
+| `bug-hunt` | find and fix planted faults in about 600 lines of unfamiliar engine code | 5 faults, then 8 | 1.0 ×4 ($0.23/task) | 1.0 ×4 ($0.71/task) |
+| `rules-engine` | 10k-character pricing spec: 16 interacting rules, coupon stacking, cap order, shipping, tax, rounding | 3,3,2,1 | 1.0, 1.0 ($0.05/task) | 1.0, 1.0 ($0.47/task) |
+| `algo-puzzle` | 6 algorithmic problems in seeded variants; 200k-element LCG-generated inputs (quadratic times out) | 3,3,2,3 | 1.0, 1.0 ($0.03/task) | 1.0, 1.0 ($0.44/task) |
+| `algo-hard` | story-form, technique never named: slope trick, suffix automaton, combinatorics on a 1e5 grid, window medians, LIS counting | 3,3,2,3 | 1.0, 1.0 ($0.03/task) | 1.0, 1.0 ($0.47/task) |
+
+Every family was at, or within one step of, its hardest valid vector, and both anchors scored 1.0 on all 24 tasks.
+Following the protocol, saturation is reported; vectors were not pushed further and no seeds were re-drawn. With
+the anchors this far above the band, a sonnet/overseer ranking on these families would only measure cost.
+
+**2. Exercism (Aider polyglot set, 5 languages).** Three suites, sampled by recorded seeds before any run:
+- `polyglot-mini`: 29 tasks, hidden tests.
+- `polyglot-b`: 48 different tasks, hidden tests.
+- `polyglot-bv`: the same 48 tasks as `polyglot-b`, with the official tests visible. This is Exercism's own setting,
+  and the grader still runs its own unmodified copy with every test enabled.
+
+| Subject | polyglot-mini (hidden) | polyglot-b (hidden) | polyglot-bv (visible) | $/solved (bv) | wall/task (bv) |
+|---|---|---|---|---|---|
+| claude-haiku | 22/29, mean 0.827, $0.40 | 28/48, 0.776, $0.76 | **48/48**, $0.45 | $0.009 | 43 s |
+| claude-sonnet | 25/29, 0.926, $2.40 | 37/48, 0.881, $4.14 | **48/48**, $3.81 | $0.079 | 21 s |
+| claude-opus | 29/29, 1.000, $5.90 | 46/48, 0.977, $10.77 | **48/48**, $8.13 | $0.169 | 28 s |
+| ao-overseer-sonnet | 25/29, 0.947, $40.55 | — | **48/48**, $61.58 | $1.283 | 252 s |
+
+Wall per task is the mean task wall time (tasks ran in parallel). Pairwise results (`*-compare/comparison.md`):
+- **polyglot-b (hidden):** opus beats sonnet by +0.095 [0.029, 0.176], p=0.007; sonnet beats haiku by +0.105
+  [0.014, 0.205], p=0.021. Both are decided.
+- **polyglot-mini (n=29):** same direction, but the Wilcoxon p-values are about 0.13–0.16.
+- **polyglot-bv:** every difference is exactly 0.
+
+**Insights**
+- **The hidden-test spread is convention recall, not coding.** On the same 48 tasks, hiding the tests takes haiku from
+  48 to 28 and sonnet from 48 to 37. The failing grader output shows why: error-message capitalisation
+  (`"Exchange code…"` vs `"exchange code…"`), a getter versus a method (`label`), constant names the tests import
+  (`WHITE`), panic-versus-return choices, and C++ APIs that exist only in the tests (`diamond::rows`; the stubs are
+  empty namespaces). A Go stub (`trinary`) even contradicts its tests. Opus recalls Exercism's conventions best,
+  hence the monotone ranking. It is a real skill, but it is entangled with memorisation of a public corpus.
+- **With full information, the models tie at 100% across five languages.** Language alone does not discriminate:
+  C++ was the hardest language only under hidden tests.
+- **Cost and time still separate cleanly.** On polyglot-bv, haiku is 9× cheaper than sonnet and 19× cheaper than
+  opus at equal quality. Sonnet is fastest. The overseer costs 16× bare sonnet and takes about 12× its wall time,
+  for the same 48/48.
+- **Orchestration bought nothing measurable on short tasks.** Under hidden tests the overseer, which uses Sonnet,
+  matched bare sonnet on polyglot-mini (25/29 each, mean 0.947 vs 0.926) at 17× the cost. At least 3 of its 4
+  misses were the same convention problem.
+
+**Validity and the tuning-versus-fitting check**
+- No knob was moved after a non-anchor subject ran. Generated-family vectors were pre-registered, and calibration
+  seeds (7401+, 7451+, 7461+, 7501+, 7551+, 7601+) are disjoint from the reserved ranking seeds.
+- One instrument fix was triggered by results: Exercism hidden → visible. It is a validity fix, not a fit. The
+  failing material was unguessable from what the agent was given (empty stubs, contradicting signatures), so a
+  competent human would have failed too. It was applied to a fresh suite (`polyglot-bv`), and the hidden-test
+  results are kept and reported side by side rather than replaced.
+- Harness fixes caught by reference self-checks before any agent ran:
+  - order-book: spec-versus-engine order of replace checks; FOK under `cancel_incoming`;
+  - bug-hunt: an infinite-loop mutant guard, now a subprocess check;
+  - the `{{int:i}}` DSL template for numeric perf loads;
+  - the refcheck now runs the no-op check and cleans stale rows.
+- `ao-bench portfolio` excludes only true non-attempts. The "cheap and quick" suspect heuristic would have hidden
+  every real haiku failure.
+- Limitations: r=1 everywhere; generated families were calibrated on 2 seeds and Python only; Exercism is public
+  (contaminated tier); the overseer ran only on the Exercism suites.
+
+**Item difficulty** (`output/bench/2026-10-24-portfolio.md`, tasks all 4 subjects attempted). 68 of 77 tasks were
+solved by everyone. All 9 tasks that separate subjects are hidden-test `polyglot-mini` tasks.
+
+**What is left that could discriminate (not yet built):**
+- convention inference that is *fair*: the conventions are discoverable in the given material, such as a brownfield
+  codebase's own style, error formats and tests;
+- post-cutoff hard problems (LiveCodeBench-style);
+- long-horizon, multi-component work, where orchestration is supposed to matter;
+- tasks without a local oracle, where the agent cannot run the target check.
+
+**Spend:** $147.58 of agent spend against the $300 budget:
+- generated calibration: $8.66 (12 runs);
+- Exercism hidden: $64.94 (7 runs);
+- Exercism visible: $73.98 (4 runs);
+- the toolchain probe: $0.002.
+
 ### Total epic spend
 
 Across the whole `E-Bt4Xk9` epic (framework authoring smoke/gold-patch verification + both PLAN campaigns above):
@@ -540,8 +911,8 @@ Non-dev domains (biology/physics/legal/...) need **no code change at all**: add 
 `LlmJudgeGrader` · an inspect-ai bridge · Aider/EvalPlus subset importers · non-dev domain suites (framework
 supports via `domain`+`CommandGrader`, ships none) · HTTP/API subjects · multi-seed/bootstrap-CI/pass@k statistical
 rigor · a results dashboard/`ao-bench serve` · a nightly cron trigger · a `grading_overlay` held-out-test
-*framework* feature (medium's per-fixture `.grading/` honor-system convention is used instead, matching
-`dev-core`'s `check.py` precedent) · the full ~500-instance SWE-bench Verified run (`xlarge`, defined but disabled
+*framework* feature beyond `grader.assets` + `grading_dir` (dev-medium's held-out harness uses those; see
+[Held-out grading](#held-out-grading-for-discriminating-medium-suites)) · the full ~500-instance SWE-bench Verified run (`xlarge`, defined but disabled
 — disk-infeasible here) · a cross-process lockfile for concurrent `ao-bench run`/`campaign` invocations against the
 same result dir (see [Running](#running)) · `keep_images`/`GraderConfig` becoming suite-driven (today it's an env
 var + test-only constructor arg — see ADR-0009's Outcome section) · widening `RunContext`/`runner.py` to carry

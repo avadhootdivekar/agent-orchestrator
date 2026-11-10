@@ -36,13 +36,28 @@
           "type": "string",
           "description": "Claude model id passed as --model (e.g. claude-haiku-4-5-20251001). Omit to use the CLI default."
         },
+        "turn_budget": {
+          "enum": ["low", "medium", "high", "xhigh"],
+          "description": "Max-turn tier mapped to --max-turns (low=15, medium=30, high=60, xhigh=120)."
+        },
         "effort": {
           "enum": ["low", "medium", "high", "xhigh"],
-          "description": "Effort level mapped to --max-turns (low=15, medium=30, high=60, xhigh=120)."
+          "description": "DEPRECATED alias of turn_budget (warns; conflicting values are an error). Run `ao migrate effort-keys`."
+        },
+        "thinking_effort": {
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "Model reasoning depth (claude_cli: --effort). Omit for the CLI default."
+        },
+        "autocompact": {
+          "anyOf": [
+            { "const": "auto" },
+            { "type": "integer", "minimum": 100000, "maximum": 1000000 }
+          ],
+          "description": "Context auto-compaction: 'auto' or a context-token threshold (100000-1000000). Provider-neutral; claude_cli maps it to --autocompact unless extra_args already sets one. Executors without the capability ignore it (`ao validate` warns)."
         },
         "max_turns": {
           "type": "integer",
-          "description": "Explicit --max-turns for this agent; overrides the effort-derived value when set."
+          "description": "Explicit --max-turns for this agent; overrides the turn_budget-derived value when set."
         },
         "working_dir": {
           "type": "string",

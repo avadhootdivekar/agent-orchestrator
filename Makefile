@@ -1,5 +1,6 @@
 .PHONY: test test-fast test-playground test-real-llm lint format typecheck validate-sum-of-array \
         bench-validate bench-smoke bench-run bench-report bench-medium bench-large bench-xlarge \
+        bench-refcheck bench-arena-rate \
         ui ui-install ui-build ui-dev ui-test ui-typecheck test-ui
 
 # Configurable knobs for the real-LLM tier (override on the command line):
@@ -48,6 +49,12 @@ BENCH_LARGE_SUBJECTS ?= benchmarks/subjects/claude-sonnet.json benchmarks/subjec
 # No xlarge suite is committed (EPIC: xlarge is defined-only, disk-infeasible) -- this
 # path exists solely to exercise the --enable-xlarge override plumbing end to end.
 BENCH_XLARGE_SUITE ?= benchmarks/suites/xlarge/suite.json
+# E-Bn7Dsc discriminating suites: generated Tier-1 tasks graded by the blackbox grader in docker.
+BENCH_GEN_SUITE ?= benchmarks/suites/gen-services-mini/suite.json
+BENCH_GEN_SUITE_ID ?= gen-services-mini
+BENCH_FAKE_REFERENCE_SUBJECT_PATH ?= benchmarks/subjects/fake-copy-reference.json
+BENCH_GEN_SUBJECTS ?= benchmarks/subjects/claude-haiku.json benchmarks/subjects/ao-epic-haiku.json
+BENCH_GEN_REPEATS ?= 1
 AO_BENCH_CONFIRM ?=
 FORCE_XLARGE ?=
 
@@ -177,6 +184,54 @@ bench-large:
 # infeasible on ~37GB of disk here) -- refuses unconditionally unless FORCE_XLARGE=1,
 # which only demonstrates the --enable-xlarge override plumbing (no xlarge suite is
 # committed, so the underlying `ao-bench campaign` call will still fail to load one).
+# --- E-Bn7Dsc discriminating suites ------------------------------------------------------
+# Sandbox images for a generated suite (base pulls + derived images with the suite's `stack` deps).
+bench-images:
+	uv run ao-bench images --build --suite $(BENCH_GEN_SUITE)
+
+# No-LLM end-to-end proof of the Tier-1 path: the hidden reference implementation is copied in as
+# the "agent's" artefact (FakeSubject copy-reference) and graded by the blackbox grader in docker;
+# every task must come out solved. Needs a docker daemon; results go to a scratch dir, never committed.
+bench-gen-smoke:
+	uv run ao-bench run --suite $(BENCH_GEN_SUITE) --subject $(BENCH_FAKE_REFERENCE_SUBJECT_PATH) --out-dir playground/.tmp/bench-results --force
+
+# Re-rate the `game-arena` reference ladders (CPU only, no LLM spend; T-Ga4Rna). Run after changing a game,
+# a reference bot or BOTS_VERSION; generation refuses stale ratings.
+#   make bench-arena-rate POOL=dev GAMES=40 WORKERS=16
+bench-arena-rate:
+	uv run ao-bench arena-rate --pool $(or $(POOL),dev) --games-per-pair $(or $(GAMES),40) --workers $(or $(WORKERS),16) --write
+
+# Reference self-check for ANY generated suite (T-Cb8Rk2): the hidden reference implementation is
+# copied in as the artefact and graded in docker; must be N/N before spending on agents. A miss
+# is a generator/grader validity bug, never a calibration signal.
+#   make bench-refcheck SUITE=benchmarks/suites/gen-calib-v1/suite.json
+bench-refcheck:
+	@if [ -z "$(SUITE)" ]; then echo "usage: make bench-refcheck SUITE=<suite.json>"; exit 1; fi
+	rm -rf playground/.tmp/bench-refcheck playground/.tmp/bench-noopcheck
+	uv run ao-bench run --suite $(SUITE) --subject $(BENCH_FAKE_REFERENCE_SUBJECT_PATH) --out-dir playground/.tmp/bench-refcheck --force
+	uv run ao-bench run --suite $(SUITE) --subject benchmarks/subjects/fake-noop.json --out-dir playground/.tmp/bench-noopcheck --force
+	@uv run python -c "import json,glob,sys; \
+	  ref=json.load(open(glob.glob('playground/.tmp/bench-refcheck/*/run.json')[0]))['tasks']; \
+	  noop=json.load(open(glob.glob('playground/.tmp/bench-noopcheck/*/run.json')[0]))['tasks']; \
+	  skip=[t['task_id'] for t in ref if t.get('language') in ('typescript','go') and t.get('family')!='exercism']; \
+	  ref=[t for t in ref if t['task_id'] not in skip]; \
+	  skip and print(f'refcheck: {len(skip)} TS/Go generated task(s) skipped -- the Python reference cannot run in their image; the grader validates it against the probes before every grade'); \
+	  bad=[(t['task_id'],t['score']) for t in ref if t['score']<1.0]; \
+	  free=[t['task_id'] for t in noop if t['solved']]; \
+	  print(f'refcheck: reference 1.0 on all {len(ref)}' if not bad else f'refcheck FAILED (reference below 1.0 = validity bug): {bad}'); \
+	  print(f'noopcheck: untouched workspace solves none of {len(noop)}' if not free else f'noopcheck FAILED (solved without work = invalid task): {free}'); \
+	  sys.exit(1 if bad or free else 0)"
+
+# Real-LLM Tier-1 campaign at haiku (cheap): bare claude vs ao-epic under the suite's parity bundle,
+# staged repeats. Spends real money -> confirm gate like bench-medium.
+bench-gen-haiku:
+	@echo "=== bench-gen-haiku: $(BENCH_GEN_SUITE_ID) campaign x $(words $(BENCH_GEN_SUBJECTS)) subjects, repeats=$(BENCH_GEN_REPEATS) ==="
+	@if [ "$(AO_BENCH_CONFIRM)" != "1" ]; then \
+		echo "Refusing to launch: this spends real money. Set AO_BENCH_CONFIRM=1 to actually run."; \
+		exit 1; \
+	fi
+	uv run ao-bench campaign --suite $(BENCH_GEN_SUITE) $(foreach s,$(BENCH_GEN_SUBJECTS),--subject $(s)) --repeats $(BENCH_GEN_REPEATS) --out-dir $(RESULTS)
+
 bench-xlarge:
 	@echo "xlarge is disabled by design (disk); see benchmarks/tiers.json + ADR-0009"
 	@if [ "$(FORCE_XLARGE)" != "1" ]; then exit 1; fi

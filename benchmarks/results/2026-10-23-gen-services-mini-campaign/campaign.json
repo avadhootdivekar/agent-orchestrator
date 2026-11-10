@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.1",
+  "campaign_id": "2026-10-23-gen-services-mini-campaign",
+  "suite_id": "gen-services-mini",
+  "tier": "medium",
+  "generated_at": "2026-10-23T15:41:28.716647+00:00",
+  "whole_run_cap_usd": 8.0,
+  "per_subject_cap_usd": 4.0,
+  "max_parallel": 4,
+  "total_spent_usd": 0.47456359000000004,
+  "subjects": [
+    {
+      "subject_id": "claude-haiku",
+      "subject_path": "benchmarks/subjects/claude-haiku.json",
+      "status": "completed",
+      "launched": true,
+      "run_dir": "/usr/avadhoot/mounted/ao-runner-ao/agent-orchestrator/benchmarks/results/2026-10-23-gen-services-mini-claude-haiku",
+      "total_cost_usd": 0.22915374000000002,
+      "solved": 2,
+      "total": 2,
+      "solve_rate": 1.0,
+      "repeat_run_dirs": [],
+      "repeat_cost_usd": 0.0
+    },
+    {
+      "subject_id": "ao-epic-haiku",
+      "subject_path": "benchmarks/subjects/ao-epic-haiku.json",
+      "status": "completed",
+      "launched": true,
+      "run_dir": "/usr/avadhoot/mounted/ao-runner-ao/agent-orchestrator/benchmarks/results/2026-10-23-gen-services-mini-ao-epic-haiku",
+      "total_cost_usd": 0.24540984999999998,
+      "solved": 2,
+      "total": 2,
+      "solve_rate": 1.0,
+      "repeat_run_dirs": [],
+      "repeat_cost_usd": 0.0
+    }
+  ],
+  "comparison_json": "/usr/avadhoot/mounted/ao-runner-ao/agent-orchestrator/benchmarks/results/2026-10-23-gen-services-mini-campaign/comparison.json",
+  "comparison_md": "/usr/avadhoot/mounted/ao-runner-ao/agent-orchestrator/benchmarks/results/2026-10-23-gen-services-mini-campaign/comparison.md",
+  "repeats_requested": 1,
+  "repeats_done": 1,
+  "staged": true,
+  "stage_log": [
+    {
+      "repeat": 1,
+      "task_ids": [
+        "crud-relational-py-s4242",
+        "job-queue-py-s4242"
+      ],
+      "reason": "stage 1: every subject, every task",
+      "subjects": [
+        "claude-haiku",
+        "ao-epic-haiku"
+      ]
+    }
+  ],
+  "stage_stop_reason": "single_repeat"
+}

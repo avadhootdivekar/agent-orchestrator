@@ -1,0 +1,34 @@
+{
+  "game": {
+    "id": "othello",
+    "size": 8
+  },
+  "version": "a1fd48e7e263",
+  "labels": [
+    "random",
+    "greedy",
+    "ab1",
+    "ab2",
+    "ab3",
+    "ab4",
+    "ab5",
+    "ab6",
+    "ab7",
+    "ab8"
+  ],
+  "ratings": [
+    0.0,
+    61.3,
+    352.3,
+    560.1,
+    690.9,
+    879.7,
+    1030.3,
+    1126.7,
+    1230.6,
+    1288.2
+  ],
+  "games_per_pair": 40,
+  "opening_plies": 4,
+  "first_player_score": 0.568
+}

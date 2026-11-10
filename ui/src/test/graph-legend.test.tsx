@@ -30,8 +30,8 @@ describe("Legend", () => {
     expect(section.getByText(/explicit/i)).not.toBeNull();
     expect(section.getByText(/inferred/i)).not.toBeNull();
     expect(section.getByText(/loop/i)).not.toBeNull();
-    // Exactly the 3 dependency-table rows -- no spawn-only rows leaking into this view.
-    expect(section.getAllByRole("listitem").length).toBe(3);
+    // Exactly the 4 dependency-table rows -- no spawn-only rows leaking into this view.
+    expect(section.getAllByRole("listitem").length).toBe(4);
   });
 
   it("AC-6: the spawn view lists injected and loop spawn styles", () => {
@@ -39,7 +39,8 @@ describe("Legend", () => {
     const section = within(edgesSection());
     expect(section.getByText(/injected/i)).not.toBeNull();
     expect(section.getByText(/loop/i)).not.toBeNull();
-    expect(section.getAllByRole("listitem").length).toBe(2);
+    expect(section.getByText(/sentinel/i)).not.toBeNull();
+    expect(section.getAllByRole("listitem").length).toBe(3);
   });
 
   it("AC-6: source=\"unavailable\" shows the 'static dependencies unavailable' note", () => {

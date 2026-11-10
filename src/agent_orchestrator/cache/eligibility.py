@@ -43,6 +43,7 @@ from .constants import (
     REASON_COMMAND_NOT_CACHEABLE,
     REASON_EMIT_TASKS,
     REASON_EXECUTOR_NOT_CACHEABLE,
+    REASON_INPUT_REQUEST,
     REASON_ISOLATION_WORKTREE,
     REASON_LOOP_MEMBER,
     REASON_MODEL_UNRESOLVED,
@@ -97,8 +98,10 @@ TASK_ANY_VALUE: frozenset[str] = frozenset(
         "id",
         "agent",
         "model",
-        "effort",
+        "turn_budget",
         "max_turns",
+        "thinking_effort",
+        "autocompact",
         "instruction",
         "inputs",
         "outputs",
@@ -109,6 +112,8 @@ TASK_ANY_VALUE: frozenset[str] = frozenset(
         "join",
         "touches",
         "cache",
+        # Only meaningful on emit_tasks tasks, which are already RULED out via `emit_tasks`.
+        "barrier",
     }
 )
 
@@ -116,6 +121,8 @@ TASK_ANY_VALUE: frozenset[str] = frozenset(
 # default (inert) value is cacheable.
 TASK_VALUE_RULED: dict[str, Rule] = {
     "emit_tasks": Rule(lambda v: not v, REASON_EMIT_TASKS),
+    "input": Rule(lambda v: v is None, REASON_INPUT_REQUEST),
+    "can_request_input": Rule(lambda v: not v, REASON_INPUT_REQUEST),
     "task_manifest_path": Rule(lambda v: v is None, REASON_TASK_MANIFEST_PATH),
     "output_manifest": Rule(lambda v: v is None, REASON_OUTPUT_MANIFEST),
     "pre_hook": Rule(lambda v: v is None, REASON_PRE_HOOK),
@@ -145,6 +152,7 @@ WORKFLOW_FIELD_COVERAGE: dict[str, str] = {
     "prompt_path": "content in the key; also a control path",
     "integration": "integration-active rule",
     "hooks": "no-hooks rule (pre_hook/post_hook must be None)",
+    "sentinel": "run-control settings (liveness/recovery); never reach a task's prompt or output",
 }
 
 DEFAULTS_FIELD_COVERAGE: dict[str, str] = {

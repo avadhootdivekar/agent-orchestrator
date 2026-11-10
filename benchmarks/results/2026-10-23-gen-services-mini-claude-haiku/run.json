@@ -1,0 +1,647 @@
+{
+  "schema_version": "1.0",
+  "bench_run_id": "2026-10-23-gen-services-mini-claude-haiku",
+  "suite_id": "gen-services-mini",
+  "domain": "software",
+  "subject": {
+    "id": "claude-haiku",
+    "type": "claude_cli",
+    "model": "claude-haiku-5-5",
+    "resolved_config": {
+      "version": "1.0",
+      "id": "claude-haiku",
+      "type": "claude_cli",
+      "model": "claude-haiku-5-5",
+      "permission_mode": "bypassPermissions",
+      "max_turns": 30,
+      "prompt_template": "Solve the task described in {instruction}. Repo: {repo}. Make the necessary code changes directly in the repo, then run the test suite described in the instruction (e.g. `uv run pytest -q` or `python3 -m pytest -q`) to confirm your fix before finishing.",
+      "extra_args": [],
+      "workflow": null,
+      "reposets": null,
+      "agents": null,
+      "max_parallel": null,
+      "budget_total": null,
+      "scripted_effect": null,
+      "fake_cost": null,
+      "fake_tokens": null
+    }
+  },
+  "config_fingerprint": "102bba3a7e5dff86438a18dc61fecc9a5529e236b30d01ceb161b9ee172f3b7d",
+  "started_at": "2026-10-23T15:28:22.578253+00:00",
+  "ended_at": "2026-10-23T15:34:16.696569+00:00",
+  "env": {
+    "ao_version": "ao 0.1.0 (a6b569a.dirty) built 2026-10-23T15:12:39Z",
+    "claude_version": "2.1.305 (Claude Code)",
+    "os": "Linux-6.1.0-42-amd64-x86_64-with-glibc2.36",
+    "git_sha": "89da70e"
+  },
+  "tasks": [
+    {
+      "subject_id": "claude-haiku",
+      "task_id": "crud-relational-py-s4242",
+      "domain": "software",
+      "category": "feature",
+      "solved": true,
+      "score": 1.0,
+      "wall_clock_seconds": 316.32199183799094,
+      "cost_usd": 0.19430625,
+      "input_tokens": 48,
+      "output_tokens": 70284,
+      "cache_creation_input_tokens": 118873,
+      "cache_read_input_tokens": 2137541,
+      "attempts": 1,
+      "turns": 69,
+      "subject_status": "succeeded",
+      "grader_type": "blackbox",
+      "workspace": "/usr/avadhoot/mounted/ao-runner-ao/agent-orchestrator/playground/.tmp/bench/2026-10-23-gen-services-mini-claude-haiku/claude-haiku/crud-relational-py-s4242/capture",
+      "config_fingerprint": "0dfa5b7492f46b41298965addf19e67b5937098ce98ab1a80d816b9dbeabecd4",
+      "started_at": "2026-10-23T15:28:22.586689+00:00",
+      "ended_at": "2026-10-23T15:34:16.696569+00:00",
+      "raw_error": null,
+      "grader_detail": {
+        "contract": "http",
+        "language": "python",
+        "sandbox": "docker",
+        "image": "ao-bench-python-046c67ebf8c9",
+        "reference_ok": true,
+        "reference_language": "python",
+        "reference_trap_failed": [],
+        "core_all_passed": true,
+        "pass_threshold": 0.8,
+        "score_breakdown": {
+          "core": {
+            "weight": 0.5,
+            "effective_weight": 0.5,
+            "passed": 21,
+            "total": 21,
+            "fraction": 1.0
+          },
+          "trap": {
+            "weight": 0.35,
+            "effective_weight": 0.35,
+            "passed": 4,
+            "total": 4,
+            "fraction": 1.0
+          },
+          "perf": {
+            "weight": 0.15,
+            "effective_weight": 0.15,
+            "passed": 5,
+            "total": 5,
+            "fraction": 1.0
+          }
+        },
+        "probe_results": [
+          {
+            "id": "core-healthz",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 368.6
+          },
+          {
+            "id": "core-error-shape",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 1.9
+          },
+          {
+            "id": "core-venue-create-get",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 11.7
+          },
+          {
+            "id": "core-venue-patch",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 2.0
+          },
+          {
+            "id": "core-venue-delete",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 3.6
+          },
+          {
+            "id": "core-venue-list-filter",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 748.0
+          },
+          {
+            "id": "core-member-create-get",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 3.1
+          },
+          {
+            "id": "core-member-patch",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 4.2
+          },
+          {
+            "id": "core-member-delete",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 4.7
+          },
+          {
+            "id": "core-member-list-filter",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 786.3
+          },
+          {
+            "id": "core-coupon-create-get",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 5.3
+          },
+          {
+            "id": "core-coupon-patch",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 6.7
+          },
+          {
+            "id": "core-coupon-delete",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 5.8
+          },
+          {
+            "id": "core-coupon-list-filter",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 854.3
+          },
+          {
+            "id": "core-ticket-create-get",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 2.2
+          },
+          {
+            "id": "core-ticket-patch",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 2.7
+          },
+          {
+            "id": "core-ticket-delete",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 2.5
+          },
+          {
+            "id": "core-ticket-list-filter",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 688.3
+          },
+          {
+            "id": "core-client-supplied-id",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 733.2
+          },
+          {
+            "id": "core-pagination-basic",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 775.4
+          },
+          {
+            "id": "core-ticket-venue-links",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 6.8
+          },
+          {
+            "id": "trap-unique-constraint",
+            "group": "trap",
+            "trap": "unique_constraint",
+            "passed": true,
+            "mismatches": [],
+            "ms": 730.5
+          },
+          {
+            "id": "trap-lost-update",
+            "group": "trap",
+            "trap": "lost_update",
+            "passed": true,
+            "mismatches": [],
+            "ms": 738.2
+          },
+          {
+            "id": "trap-sort-tiebreak",
+            "group": "trap",
+            "trap": "sort_tiebreak",
+            "passed": true,
+            "mismatches": [],
+            "ms": 755.0
+          },
+          {
+            "id": "trap-unicode-casefold",
+            "group": "trap",
+            "trap": "unicode_casefold",
+            "passed": true,
+            "mismatches": [],
+            "ms": 793.0
+          }
+        ],
+        "perf": {
+          "sizes": {
+            "100": {
+              "create": {
+                "p50_ms": 0.432,
+                "p95_ms": 1.231
+              },
+              "get": {
+                "p50_ms": 0.328,
+                "p95_ms": 0.964
+              },
+              "list": {
+                "p50_ms": 0.4,
+                "p95_ms": 1.175
+              }
+            },
+            "1000": {
+              "create": {
+                "p50_ms": 0.337,
+                "p95_ms": 0.45
+              },
+              "get": {
+                "p50_ms": 0.261,
+                "p95_ms": 0.374
+              },
+              "list": {
+                "p50_ms": 0.317,
+                "p95_ms": 0.424
+              }
+            }
+          },
+          "classes": {
+            "indexed_get": {
+              "alpha": -0.4109,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "paginated_list": {
+              "alpha": -0.4423,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "write": {
+              "alpha": -0.437,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            }
+          },
+          "ref_ratio_p95": 0.364,
+          "ref_ratio_max": 5.0,
+          "ref_ratio_enforced": true,
+          "ref_ratio_pass": true,
+          "p95_ms_largest": 0.411,
+          "ref_p95_ms_largest": 1.13,
+          "timed_out": false,
+          "failed_ops": {},
+          "error": null,
+          "sandbox": "docker",
+          "image": "ao-bench-python-046c67ebf8c9"
+        }
+      },
+      "grader_raw_tail": "",
+      "family": "crud-relational",
+      "language": "python",
+      "repeat": 1
+    },
+    {
+      "subject_id": "claude-haiku",
+      "task_id": "job-queue-py-s4242",
+      "domain": "software",
+      "category": "feature",
+      "solved": true,
+      "score": 1.0,
+      "wall_clock_seconds": 136.30969597498188,
+      "cost_usd": 0.03484749,
+      "input_tokens": 34,
+      "output_tokens": 28386,
+      "cache_creation_input_tokens": 58482,
+      "cache_read_input_tokens": 895469,
+      "attempts": 1,
+      "turns": 46,
+      "subject_status": "succeeded",
+      "grader_type": "blackbox",
+      "workspace": "/usr/avadhoot/mounted/ao-runner-ao/agent-orchestrator/playground/.tmp/bench/2026-10-23-gen-services-mini-claude-haiku/claude-haiku/job-queue-py-s4242/capture",
+      "config_fingerprint": "ec82257675b15d1379201140f797304f0ac6f96a93119b66f5a444ea9053e329",
+      "started_at": "2026-10-23T15:28:22.586922+00:00",
+      "ended_at": "2026-10-23T15:30:51.515013+00:00",
+      "raw_error": null,
+      "grader_detail": {
+        "contract": "jsonl",
+        "language": "python",
+        "sandbox": "docker",
+        "image": "ao-bench-python-046c67ebf8c9",
+        "reference_ok": true,
+        "reference_language": "python",
+        "reference_trap_failed": [],
+        "core_all_passed": true,
+        "pass_threshold": 0.8,
+        "score_breakdown": {
+          "core": {
+            "weight": 0.5,
+            "effective_weight": 0.5,
+            "passed": 11,
+            "total": 11,
+            "fraction": 1.0
+          },
+          "trap": {
+            "weight": 0.35,
+            "effective_weight": 0.35,
+            "passed": 4,
+            "total": 4,
+            "fraction": 1.0
+          },
+          "perf": {
+            "weight": 0.15,
+            "effective_weight": 0.15,
+            "passed": 6,
+            "total": 6,
+            "fraction": 1.0
+          }
+        },
+        "probe_results": [
+          {
+            "id": "core-ping",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 178.8
+          },
+          {
+            "id": "core-enqueue-shape",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 274.4
+          },
+          {
+            "id": "core-claim-priority-order",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 258.2
+          },
+          {
+            "id": "core-fifo-within-priority",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 275.6
+          },
+          {
+            "id": "core-ack",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 200.7
+          },
+          {
+            "id": "core-nack-retry",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 206.0
+          },
+          {
+            "id": "core-retry-exhaustion",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 227.7
+          },
+          {
+            "id": "core-stats",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 299.0
+          },
+          {
+            "id": "core-advance-clock",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 271.4
+          },
+          {
+            "id": "core-ack-unknown-job",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 195.6
+          },
+          {
+            "id": "core-receipt-checked",
+            "group": "core",
+            "trap": null,
+            "passed": true,
+            "mismatches": [],
+            "ms": 164.4
+          },
+          {
+            "id": "trap-visibility-timeout",
+            "group": "trap",
+            "trap": "visibility_timeout",
+            "passed": true,
+            "mismatches": [],
+            "ms": 229.8
+          },
+          {
+            "id": "trap-at-least-once",
+            "group": "trap",
+            "trap": "at_least_once",
+            "passed": true,
+            "mismatches": [],
+            "ms": 312.1
+          },
+          {
+            "id": "trap-starvation",
+            "group": "trap",
+            "trap": "starvation",
+            "passed": true,
+            "mismatches": [],
+            "ms": 292.9
+          },
+          {
+            "id": "trap-dedupe-key",
+            "group": "trap",
+            "trap": "dedupe_key",
+            "passed": true,
+            "mismatches": [],
+            "ms": 211.7
+          }
+        ],
+        "perf": {
+          "sizes": {
+            "100": {
+              "ack": {
+                "p50_ms": 0.052,
+                "p95_ms": 0.084
+              },
+              "claim": {
+                "p50_ms": 0.053,
+                "p95_ms": 0.085
+              },
+              "enqueue_low": {
+                "p50_ms": 0.053,
+                "p95_ms": 0.087
+              },
+              "enqueue_urgent": {
+                "p50_ms": 0.053,
+                "p95_ms": 0.086
+              },
+              "stats": {
+                "p50_ms": 0.048,
+                "p95_ms": 0.075
+              }
+            },
+            "1000": {
+              "ack": {
+                "p50_ms": 0.142,
+                "p95_ms": 0.255
+              },
+              "claim": {
+                "p50_ms": 0.145,
+                "p95_ms": 0.198
+              },
+              "enqueue_low": {
+                "p50_ms": 0.143,
+                "p95_ms": 0.203
+              },
+              "enqueue_urgent": {
+                "p50_ms": 0.145,
+                "p95_ms": 0.206
+              },
+              "stats": {
+                "p50_ms": 0.131,
+                "p95_ms": 0.184
+              }
+            }
+          },
+          "classes": {
+            "ack": {
+              "alpha": 0.4843,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "claim": {
+              "alpha": 0.366,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "read": {
+              "alpha": 0.389,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            },
+            "write": {
+              "alpha": 0.3679,
+              "expected_alpha": 0.3,
+              "alpha_pass": true
+            }
+          },
+          "ref_ratio_p95": 1.141,
+          "ref_ratio_max": 5.0,
+          "ref_ratio_enforced": true,
+          "ref_ratio_pass": true,
+          "p95_ms_largest": 0.203,
+          "ref_p95_ms_largest": 0.178,
+          "timed_out": false,
+          "failed_ops": {},
+          "error": null,
+          "sandbox": "docker",
+          "image": "ao-bench-python-046c67ebf8c9"
+        }
+      },
+      "grader_raw_tail": "",
+      "family": "job-queue",
+      "language": "python",
+      "repeat": 1
+    }
+  ],
+  "aggregate": {
+    "solved": 2,
+    "total": 2,
+    "solve_rate": 1.0,
+    "mean_score": 1.0,
+    "total_cost_usd": 0.22915374000000002,
+    "cost_available": true,
+    "cost_per_solved": 0.11457687000000001,
+    "total_wall_clock_seconds": 452.6316878129728,
+    "total_input_tokens": 82,
+    "total_output_tokens": 98670,
+    "total_cache_creation_input_tokens": 177355,
+    "total_cache_read_input_tokens": 3033010,
+    "infra_errors": 0,
+    "attempted": 2,
+    "solve_rate_attempted": 1.0,
+    "mean_score_attempted": 1.0
+  },
+  "parity_fingerprint": "06aaf5ad1df7f6fc7534259a337e4fec4a9bc9785aea42e8079b2742e8dcec16",
+  "repeat": 1
+}

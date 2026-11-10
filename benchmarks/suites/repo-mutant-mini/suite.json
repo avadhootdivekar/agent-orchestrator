@@ -1,0 +1,96 @@
+{
+  "version": "1.0",
+  "id": "repo-mutant-mini",
+  "domain": "software",
+  "tier": "large",
+  "description": "Tier-2 repo-mutation mini suite (E-Bn7Dsc T-T2-5Ij6, HLD 4.2 / 2b-2c): 3 injected bugs and 1 excised feature on small pinned public Python repos (click, attrs, rich), each graded by hidden tests restored at grade time (pytest_targeted). The repos are checked out at pinned shas and re-snapshotted as a single commit; the bug/feature removal and hidden tests come from tasks/<id>/recipe.json. Variants: click = existing tests hidden (symptom report only); attrs-to-bool = hand-written hidden tests, no visible failing test; rich = visible failing tests + hidden boundary tests; attrs-excise = whole validators test module held out. See each recipe's `verified` record.",
+  "defaults": {
+    "timeout_seconds": 2400
+  },
+  "tasks": [
+    {
+      "id": "click-range-open-bounds",
+      "category": "bugfix",
+      "instruction": "tasks/click-range-open-bounds/instruction.md",
+      "source": {
+        "type": "repo_mutation",
+        "repo": "https://github.com/pallets/click",
+        "base_commit": "2247b35ea1c47c727d7a06e51fa280e12a863ff6",
+        "recipe": "tasks/click-range-open-bounds/recipe.json"
+      },
+      "grader": {
+        "type": "pytest_targeted"
+      },
+      "family": "repo-mutation",
+      "language": "python",
+      "tags": [
+        "python",
+        "inject",
+        "click"
+      ]
+    },
+    {
+      "id": "attrs-to-bool-shorthand",
+      "category": "bugfix",
+      "instruction": "tasks/attrs-to-bool-shorthand/instruction.md",
+      "source": {
+        "type": "repo_mutation",
+        "repo": "https://github.com/python-attrs/attrs",
+        "base_commit": "ee66e7274852438cc23d4240a1a9cd632fda8b52",
+        "recipe": "tasks/attrs-to-bool-shorthand/recipe.json"
+      },
+      "grader": {
+        "type": "pytest_targeted"
+      },
+      "family": "repo-mutation",
+      "language": "python",
+      "tags": [
+        "python",
+        "inject",
+        "attrs"
+      ]
+    },
+    {
+      "id": "rich-rate-unit-boundary",
+      "category": "bugfix",
+      "instruction": "tasks/rich-rate-unit-boundary/instruction.md",
+      "source": {
+        "type": "repo_mutation",
+        "repo": "https://github.com/Textualize/rich",
+        "base_commit": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+        "recipe": "tasks/rich-rate-unit-boundary/recipe.json"
+      },
+      "grader": {
+        "type": "pytest_targeted"
+      },
+      "family": "repo-mutation",
+      "language": "python",
+      "tags": [
+        "python",
+        "inject",
+        "rich"
+      ]
+    },
+    {
+      "id": "attrs-excise-ne-validator",
+      "category": "feature",
+      "instruction": "tasks/attrs-excise-ne-validator/instruction.md",
+      "source": {
+        "type": "repo_mutation",
+        "repo": "https://github.com/python-attrs/attrs",
+        "base_commit": "ee66e7274852438cc23d4240a1a9cd632fda8b52",
+        "recipe": "tasks/attrs-excise-ne-validator/recipe.json"
+      },
+      "grader": {
+        "type": "pytest_targeted"
+      },
+      "family": "repo-mutation",
+      "language": "python",
+      "tags": [
+        "python",
+        "excise",
+        "attrs"
+      ]
+    }
+  ]
+}

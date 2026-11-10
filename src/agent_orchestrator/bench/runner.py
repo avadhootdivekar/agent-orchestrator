@@ -76,13 +76,50 @@ from pydantic import BaseModel
 
 from .._version import get_version_string
 from ..logging_setup import attach_run_handler, detach_run_handler, get_run_logger
+from .envcheck import (
+    PROBE_DIRNAME,
+    SUSPECT_REASON_GRADING_ACCESS,
+    EnvFingerprint,
+    EnvIsolation,
+    GradingAudit,
+    UserConfigFingerprint,
+    audit_grading_access,
+    check_isolation,
+    find_transcripts,
+    fingerprint_transcripts,
+    foreign_entries,
+    probe_env_baseline,
+    subject_env,
+    user_config_fingerprint,
+)
 from .errors import BenchError
 from .graders import GradeResult
 from .metrics import Aggregate, SubjectResultLike, TaskMetric, aggregate, build_task_metric
+from .parity import ParityBundle, apply_parity, load_parity, parity_fingerprint
 from .registries import GRADER_REGISTRY, SUBJECT_REGISTRY
 from .spec import BenchSuite, BenchTask, SubjectSpec, load_subject, load_suite
-from .subjects import SubjectResult, _budget_skipped_result
-from .workspace import BENCH_WORKSPACE_ROOT, CAPTURE_DIRNAME, REPO_ROOT, materialize_workspace
+from .subjects import (
+    AGENT_SUBJECT_TYPES,
+    DEFAULT_CLAUDE_PERMISSION_MODE,
+    SubjectResult,
+    _budget_skipped_result,
+)
+from .toolchains import ensure_installed
+from .workspace import (
+    CAPTURE_DIRNAME,
+    ENV_BENCH_WORKSPACE_ROOT,
+    GRADING_ROOT_DIRNAME,
+    REPO_DIRNAME,
+    REPO_ROOT,
+    bench_grading_root,
+    bench_workspace_root,
+    materialize_workspace,
+    parity_env,
+)
+
+# `probe_env_baseline`'s signature (keyword-only cwd/env/model/permission_mode); injectable
+# so tests never spawn a real `claude`.
+EnvProbe = Callable[..., EnvFingerprint | None]
 
 # ---------------------------------------------------------------------------
 # Named constants (CLAUDE.md: no magic literals)
@@ -92,8 +129,8 @@ RUN_RECORD_SCHEMA_VERSION = "1.0"
 RUN_JSON_FILENAME = "run.json"
 BENCH_RUN_LOG_FILENAME = "bench.log"
 
-# `benchmarks/results/` is COMMITTED (design §9); workspaces stay under the
-# gitignored `BENCH_WORKSPACE_ROOT` (bench/workspace.py, C2).
+# `benchmarks/results/` is COMMITTED (design §9); workspaces live under
+# `bench_workspace_root()`, outside the checkout (bench/workspace.py, T-Ws7Iso).
 BENCH_RESULTS_ROOT: Path = REPO_ROOT / "benchmarks" / "results"
 
 # Last-resort per-task bound when neither the task, a run-level override, nor the
@@ -129,6 +166,20 @@ class BenchTaskRecord(TaskMetric):
     raw_error: str | None = None
     grader_detail: dict[str, Any] = {}
     grader_raw_tail: str = ""
+    # Discriminating-suite metadata (HLD §5.1/§6): family/language roll-ups and repeats.
+    family: str | None = None
+    language: str | None = None
+    repeat: int = 1
+    # Environment isolation (T-Ws7Iso). `env_fingerprint` = union of the init events of
+    # every transcript the subject left (None: no transcript, e.g. the fake subject);
+    # `env_foreign` = entries absent from the run's `env_baseline`.
+    env_fingerprint: EnvFingerprint | None = None
+    env_foreign: dict[str, list[str]] = {}
+    grading_audit: GradingAudit | None = None
+    # A task whose transcripts show the agent reaching for grader-owned assets is not
+    # capability evidence: excluded from attempted rates / pairwise (results.py).
+    suspect: bool = False
+    suspect_reason: str | None = None
 
 
 class BenchRunSubjectInfo(BaseModel):
@@ -172,6 +223,20 @@ class BenchRunRecord(BaseModel):
     env: BenchRunEnv
     tasks: list[BenchTaskRecord] = []
     aggregate: Aggregate
+    # Parity bundle fingerprint (HLD §2b) -- `build_comparison` refuses to compare runs
+    # whose fingerprints differ. None = no bundle was applied.
+    parity_fingerprint: str | None = None
+    # Which repeat of this (suite x subject) this run is (HLD §6 staged repeats); 1 = the
+    # first/only one (byte-identical id to the pre-repeats harness).
+    repeat: int = 1
+    # Environment isolation (T-Ws7Iso). None on records written before it landed.
+    # `env_contaminated` = the workspace root had an instruction-file ancestor (only
+    # possible with --allow-contaminated-env); `build_comparison` refuses such runs.
+    env_contaminated: bool = False
+    env_isolation: EnvIsolation | None = None
+    # What a parity-applied empty workspace loads (built-ins + user config + bundle).
+    env_baseline: EnvFingerprint | None = None
+    user_config: UserConfigFingerprint | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +425,10 @@ def _persist_record(path: Path, record: BenchRunRecord) -> None:
 
 
 def compute_bench_run_id(
-    suite: BenchSuite, subject_spec: SubjectSpec, clock: Callable[[], datetime]
+    suite: BenchSuite,
+    subject_spec: SubjectSpec,
+    clock: Callable[[], datetime],
+    repeat: int = 1,
 ) -> str:
     """`<utc-date>-<suite.id>-<subject.id>` (design §4.5) -- stable within a day so a
     same-day re-run resumes into the same result dir/record; a new day mints a fresh
@@ -368,7 +436,9 @@ def compute_bench_run_id(
     Exposed (not `_`-prefixed) so `T-Cli8Nf`'s CLI can predict/report the result dir
     without duplicating this derivation.
     """
-    return f"{clock().strftime(_BENCH_RUN_ID_DATE_FORMAT)}-{suite.id}-{subject_spec.id}"
+    base = f"{clock().strftime(_BENCH_RUN_ID_DATE_FORMAT)}-{suite.id}-{subject_spec.id}"
+    # Repeat 1 keeps the historical id byte-identical; later repeats get their own dir.
+    return base if repeat <= 1 else f"{base}-r{repeat}"
 
 
 def resolve_result_dir(bench_run_id: str, *, out_dir: str | Path | None = None) -> Path:
@@ -396,7 +466,10 @@ def _effective_timeout(task: BenchTask, suite: BenchSuite, default_timeout: int 
 
 
 def _errored_result(
-    ws_path: Path, wall_clock_seconds: float, raw_error: str
+    ws_path: Path,
+    wall_clock_seconds: float,
+    raw_error: str,
+    subject_result: SubjectResult | None = None,
 ) -> tuple[SubjectResult, GradeResult]:
     """Design §4.5: `EXCEPT BenchError as e: sr=SubjectResult("error",...);
     gr=GradeResult(False,0.0,...,str(e))`. One shared error path for a `Subject.run`
@@ -405,14 +478,75 @@ def _errored_result(
     as errored rather than keeping a possibly-misleading partial subject result.
     """
     capture_dir = str(ws_path / CAPTURE_DIRNAME)
+    # When the SUBJECT finished and the GRADER raised, the subject's spend is real: keep its
+    # cost/tokens/turns so budgets and $/task stay truthful (T-Cb8Rk2: a probe-definition
+    # error used to record a paid haiku run as $0).
+    spent: dict[str, Any] = {}
+    if subject_result is not None:
+        spent = subject_result.model_dump(
+            include={
+                "cost_usd",
+                "input_tokens",
+                "output_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+                "attempts",
+                "turns",
+            }
+        )
     sr = SubjectResult(
         status="error",
         wall_clock_seconds=wall_clock_seconds,
         capture_dir=capture_dir,
         raw_error=raw_error,
+        **spent,
     )
     gr = GradeResult(solved=False, score=0.0, detail={}, raw_tail=raw_error)
     return sr, gr
+
+
+def probe_baseline(
+    parent: Path,
+    bundle: ParityBundle | None,
+    *,
+    env: dict[str, str],
+    model: str | None = None,
+    permission_mode: str | None = None,
+    probe: EnvProbe | None = None,
+) -> EnvFingerprint | None:
+    """Fingerprint what an EMPTY, parity-applied workspace at `<parent>/_env-probe` loads
+    (T-Ws7Iso): Claude Code built-ins + user-level config + the bundle's own skills/agents.
+    A subject that saw more than this saw something the harness did not ship. Laid out like
+    a real task workspace (`<probe>/CLAUDE.md`, `<probe>/repo/.claude/`, cwd = repo).
+    Shared by `run_suite` (parent = the run's workspace root) and `ao-bench env --probe`."""
+    probe_ws = parent / PROBE_DIRNAME
+    if probe_ws.exists():
+        shutil.rmtree(probe_ws)
+    repo_dir = probe_ws / REPO_DIRNAME
+    repo_dir.mkdir(parents=True)
+    if bundle is not None:
+        apply_parity(bundle, repo_dir=repo_dir, workspace=probe_ws)
+    effective_mode = (
+        (bundle.permission_mode if bundle is not None else None)
+        or permission_mode
+        or DEFAULT_CLAUDE_PERMISSION_MODE
+    )
+    return (probe or probe_env_baseline)(
+        cwd=repo_dir, env=env, model=model, permission_mode=effective_mode
+    )
+
+
+def _inspect_task_env(
+    ws_path: Path, baseline: EnvFingerprint | None
+) -> tuple[EnvFingerprint | None, dict[str, list[str]], GradingAudit | None]:
+    """Fingerprint + hidden-asset audit over every transcript the subject left in *ws_path*
+    (T-Ws7Iso). Parsing is tolerant, so this never fails a task."""
+    transcripts = find_transcripts(ws_path)
+    if not transcripts:
+        return None, {}, None
+    fingerprint = fingerprint_transcripts(transcripts)
+    audit = audit_grading_access(transcripts, [GRADING_ROOT_DIRNAME])
+    return fingerprint, foreign_entries(fingerprint, baseline), audit
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +567,10 @@ def run_suite(
     cost_budget_usd: float | None = None,
     max_parallel: int = 1,
     clock: Callable[[], datetime] | None = None,
+    parity: str | Path | None = None,
+    repeat: int = 1,
+    allow_contaminated_env: bool = False,
+    env_probe: EnvProbe | None = None,
 ) -> BenchRunRecord:
     """Run *suite* against *subject* end to end (design §4.5).
 
@@ -509,6 +647,23 @@ def run_suite(
     clock:
         Injectable UTC clock (CLAUDE.md determinism rule) -- defaults to
         `datetime.now(UTC)`.
+    parity:
+        Path to a parity bundle (`bench/parity.py`, HLD §2b). Explicit value wins over
+        the suite's own `parity` field; `None` + no suite field = no bundle. The bundle's
+        fingerprint is part of the run fingerprint and recorded on the run record.
+    repeat:
+        Which repeat of this (suite x subject) this is (HLD §6). `1` is byte-identical to
+        the pre-repeats harness; `>1` lands in its own `<bench_run_id>-r<n>` result dir.
+    allow_contaminated_env:
+        T-Ws7Iso. For an agent subject (`claude_cli`/`ao_workflow`) the run is REFUSED when
+        the bench workspace root or any ancestor holds `CLAUDE.md`/`CLAUDE.local.md`/
+        `AGENTS.md`/`.claude/` (Claude Code would load them into the agent under test).
+        `True` runs anyway and stamps the record `env_contaminated=True`, which
+        `build_comparison` refuses without `--allow-mixed`.
+    env_probe:
+        Baseline probe for agent subjects (default `envcheck.probe_env_baseline`, which
+        starts `claude -p` in an empty parity-applied workspace and kills it at its init
+        event). Injectable for tests.
 
     Raises
     ------
@@ -534,13 +689,45 @@ def run_suite(
     suite_base_dir = Path(suite_path).resolve().parent
     subject_base_dir = Path(subject_path).resolve().parent
 
-    bench_run_id = compute_bench_run_id(suite, subject_spec, resolved_clock)
+    # Parity bundle (HLD §2b): explicit arg > suite field > none.
+    parity_path: Path | None = None
+    if parity is not None:
+        parity_path = Path(parity)
+    elif suite.parity is not None:
+        parity_path = suite_base_dir / suite.parity
+    bundle: ParityBundle | None = load_parity(parity_path) if parity_path is not None else None
+    bundle_fingerprint = parity_fingerprint(bundle) if bundle is not None else None
+    if bundle is not None and bundle.toolchains:
+        ensure_installed(bundle.toolchains)  # downloads once into <bench base>/toolchains
+
+    bench_run_id = compute_bench_run_id(suite, subject_spec, resolved_clock, repeat)
     result_path = resolve_result_dir(bench_run_id, out_dir=out_dir) / RUN_JSON_FILENAME
     # Mirrors design §4.5's own `ws_root/subject_spec.id/task.id` layout (the subject
     # id also already appears inside `bench_run_id` -- kept as specified so downstream
     # tooling/consumers expecting this exact shape are not surprised).
-    run_workspace_root = BENCH_WORKSPACE_ROOT / bench_run_id
+    ws_root = bench_workspace_root()
+    grading_base = bench_grading_root()
+    run_workspace_root = ws_root / bench_run_id
     subject_ws_root = run_workspace_root / subject_spec.id
+    # Grader-owned, agent-hidden tree (HLD §8): under a SIBLING root of the workspace root
+    # (T-Ws7Iso), so nothing under any subject workspace -- or under the workspace root at
+    # all -- contains probes, reference implementations or held-out tests.
+    grading_root = grading_base / bench_run_id / subject_spec.id
+
+    # T-Ws7Iso: Claude Code loads instruction files from every ancestor of the agent's cwd.
+    is_agent_subject = subject_spec.type in AGENT_SUBJECT_TYPES
+    isolation = check_isolation(ws_root, grading_base)
+    if isolation.contaminated and is_agent_subject:
+        if not allow_contaminated_env:
+            raise BenchError(
+                f"Bench workspace root {ws_root} has instruction files in it or an "
+                f"ancestor: {isolation.instruction_ancestors}. Claude Code would load them "
+                "into every agent under test (T-Ws7Iso). Point "
+                f"{ENV_BENCH_WORKSPACE_ROOT} at a directory outside any checkout (default "
+                "/var/tmp/ao-bench/<uid>), or pass --allow-contaminated-env to run anyway "
+                "(the run is stamped env_contaminated and `ao-bench report` refuses it)."
+            )
+        isolation = isolation.model_copy(update={"allowed_by_flag": True})
 
     attach_run_handler(bench_run_id, str(run_workspace_root / BENCH_RUN_LOG_FILENAME))
     run_log = get_run_logger(bench_run_id)
@@ -574,7 +761,7 @@ def run_suite(
             (t.cost_usd or 0.0) for t in tasks_dict.values() if t.subject_status != "skipped_budget"
         )
 
-        tasks_to_consider = sorted(suite.tasks, key=lambda t: t.id)
+        tasks_to_consider = sorted((t for t in suite.tasks if t.enabled), key=lambda t: t.id)
         if task_filter is not None:
             filter_set = set(task_filter)
             tasks_to_consider = [t for t in tasks_to_consider if t.id in filter_set]
@@ -591,6 +778,14 @@ def run_suite(
             "max_turns": max_turns,
             "default_timeout": default_timeout,
         }
+        if bundle_fingerprint is not None:
+            # Config-affecting (it changes what every subject sees), so a changed bundle
+            # between two same-day runs must trip the W4 guard like any other config.
+            overrides["parity_fingerprint"] = bundle_fingerprint
+        # Parity max_turns applies to every subject unless the CLI overrides it for all.
+        effective_max_turns = (
+            max_turns if max_turns is not None else (bundle.max_turns if bundle else None)
+        )
         run_fingerprint = _run_config_fingerprint(
             suite, subject_spec, overrides, ao_version, claude_version
         )
@@ -628,6 +823,21 @@ def run_suite(
             os=platform.platform(),
             git_sha=_git_sha(),
         )
+        # T-Ws7Iso: what every agent subject runs under beyond the parity bundle -- the
+        # user-level config (fingerprinted, AC4) and the baseline an empty workspace loads.
+        user_config: UserConfigFingerprint | None = None
+        env_baseline: EnvFingerprint | None = None
+        if is_agent_subject:
+            child_env = subject_env(parity_env(bundle) if bundle is not None else {})
+            user_config = user_config_fingerprint(child_env)
+            env_baseline = probe_baseline(
+                run_workspace_root,
+                bundle,
+                env=child_env,
+                model=subject_spec.model,
+                permission_mode=subject_spec.permission_mode,
+                probe=env_probe,
+            )
 
         def _build_record(ended_at: str | None) -> BenchRunRecord:
             ordered_tasks = [tasks_dict[tid] for tid in sorted(tasks_dict)]
@@ -641,6 +851,13 @@ def run_suite(
                 ended_at=ended_at,
                 env=env,
                 tasks=ordered_tasks,
+                parity_fingerprint=bundle_fingerprint,
+                repeat=repeat,
+                # Only an agent can load leaked instructions; a fake run is never stamped.
+                env_contaminated=isolation.contaminated and is_agent_subject,
+                env_isolation=isolation,
+                env_baseline=env_baseline,
+                user_config=user_config,
                 # `TaskMetric`-typed by `aggregate`'s signature; `BenchTaskRecord` IS
                 # one (adds fields, drops none) -- safe covariant read-only usage,
                 # `list` invariance is the only reason mypy needs the cast.
@@ -731,6 +948,9 @@ def run_suite(
                         raw_error=None,
                         grader_detail=skip_gr.detail,
                         grader_raw_tail=skip_gr.raw_tail,
+                        family=task.family,
+                        language=task.language,
+                        repeat=repeat,
                     )
                     # `running_cost` is unchanged: a skipped_budget task always costs $0.
                     record = _build_record(budget_skip_at)
@@ -776,6 +996,7 @@ def run_suite(
 
             sr: SubjectResult
             gr: GradeResult
+            finished: SubjectResult | None = None
             try:
                 ctx = materialize_workspace(
                     task,
@@ -783,15 +1004,18 @@ def run_suite(
                     suite_base_dir=suite_base_dir,
                     timeout_seconds=_effective_timeout(task, suite, default_timeout),
                     budget_total=budget_total,
-                    max_turns=max_turns,
+                    max_turns=effective_max_turns,
                     subject_base_dir=subject_base_dir,
+                    grading_dir=grading_root / task.id,
+                    parity=bundle,
                 )
                 subject_cls = SUBJECT_REGISTRY[subject_spec.type]
                 sr = subject_cls(subject_spec).run(task, ctx)
+                finished = sr
                 grader_cls = GRADER_REGISTRY[task.grader.type]
                 gr = grader_cls().grade(task.grader, ctx)
             except BenchError as exc:
-                sr, gr = _errored_result(ws_path, time.monotonic() - t0, str(exc))
+                sr, gr = _errored_result(ws_path, time.monotonic() - t0, str(exc), finished)
             except Exception as exc:  # noqa: BLE001 -- per-task isolation boundary (§4.5)
                 task_log.error(
                     "bench.task.unexpected_error",
@@ -799,7 +1023,19 @@ def run_suite(
                     exc_info=True,
                 )
                 sr, gr = _errored_result(
-                    ws_path, time.monotonic() - t0, f"unexpected error: {exc!r}"
+                    ws_path, time.monotonic() - t0, f"unexpected error: {exc!r}", finished
+                )
+
+            env_fp, env_foreign, audit = _inspect_task_env(ws_path, env_baseline)
+            suspect = audit is not None and audit.accessed
+            if suspect:
+                task_log.warning(
+                    "bench.task.grading_access",
+                    extra={
+                        "event": "bench.task.grading_access",
+                        "task_id": task.id,
+                        "hits": audit.tool_use_hits if audit is not None else [],
+                    },
                 )
 
             task_ended_at = resolved_clock().isoformat()
@@ -823,6 +1059,14 @@ def run_suite(
                 raw_error=sr.raw_error,
                 grader_detail=gr.detail,
                 grader_raw_tail=gr.raw_tail,
+                family=task.family,
+                language=task.language,
+                repeat=repeat,
+                env_fingerprint=env_fp,
+                env_foreign=env_foreign,
+                grading_audit=audit,
+                suspect=suspect,
+                suspect_reason=SUSPECT_REASON_GRADING_ACCESS if suspect else None,
             )
 
             with _run_lock:

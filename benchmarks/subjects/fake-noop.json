@@ -1,0 +1,7 @@
+{
+  "version": "1.0",
+  "id": "fake-noop",
+  "type": "fake",
+  "scripted_effect": "noop",
+  "fake_cost": 0.0
+}

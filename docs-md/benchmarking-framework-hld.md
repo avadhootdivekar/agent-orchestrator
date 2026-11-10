@@ -35,7 +35,7 @@
 LLM-judge grader; SWE-bench/terminal-bench Docker imports; inspect-ai bridge; non-dev domain suites (biology/physics/legal); HTTP/API subjects (raw Anthropic/OpenAI, aider CLI); statistical rigor (multi-seed, bootstrap CIs, pass@k); dashboards; **and running the actual Phase-2 comparison** (that consumes this framework later).
 
 ### Constraints (from repo learnings — see survey §0)
-Subjects are subprocesses (C1); workspaces repo-local gitignored, never `/tmp` (C2); real-LLM is expensive → small suite, haiku smoke (C3); reuse core cost/usage helpers (C4); `uv run` only, Docker deferred (C5); deterministic & reproducible (C6). Workflow spec `id`s must be lowercase.
+Subjects are subprocesses (C1); workspaces repo-local gitignored, never `/tmp` (C2 — **superseded 2026-10-24 by `T-Ws7Iso`**: a repo-local root leaks the checkout's `CLAUDE.md`/skills/agents into every agent under test, so workspaces now live under `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws`, see `benchmark-discriminating-suites-hld.md` §2c); real-LLM is expensive → small suite, haiku smoke (C3); reuse core cost/usage helpers (C4); `uv run` only, Docker deferred (C5); deterministic & reproducible (C6). Workflow spec `id`s must be lowercase.
 
 ## 2. Assumption Log
 
@@ -115,7 +115,7 @@ Import direction is **one-way**: `bench/` imports pure helpers *from* core; **no
 | **Runner** | Orchestrates `for subject × task`: materialize workspace → run subject → grade → collect metrics → persist per-task result. Deterministic launch order, resumable, bounded. |
 | **Metrics** | `solved`, `score∈[0,1]`, `wall_clock_seconds`, `cost_usd`, tokens, `attempts`/`turns`, `subject_status`. |
 | **Result set** | Per (suite × subject): `run.json` + `summary.md`. Cross-subject: `comparison.{json,md}`. Committed under `benchmarks/results/`. |
-| **Workspace** | Per (bench-run × subject × task) disposable dir under `playground/.tmp/bench/` (gitignored). The subject mutates it; the grader reads it. |
+| **Workspace** | Per (bench-run × subject × task) disposable dir under the bench workspace root (originally `playground/.tmp/bench/`; since `T-Ws7Iso` `${AO_BENCH_WORKSPACE_ROOT:-/var/tmp/ao-bench/<uid>}/ws`, outside the checkout). The subject mutates it; the grader reads it. |
 
 ### 3.2 Integration points & plugin strategy
 - **Reuses (import-only) from core:** `executors.claude_cli.parse_usage_and_429`, `.extract_result_event` (bare-claude cost/tokens); `models.compute_run_usage_totals` + `runstate` load (ao-workflow cost/tokens). No engine mutation.
@@ -880,7 +880,9 @@ resolves from each suite's own tier default (§20.1/§20.3).
 `benchmarks/suites/dev-medium/` — 6 multi-file, 30–90-min-of-agent-work tasks (feature/refactor/misleading-symptom
 bugfix/performance-correctness bugfix/integration-point feature/test-writing), tier `medium`, pytest/command-graded
 via a **per-fixture `.grading/` honor-system convention** (no dedicated `grading_overlay` framework feature — that
-remains non-MVP, §12) — see `benchmarks/README.md`'s "Held-out grading" subsection for the full shape. `ao-epic-plus`
+remains non-MVP, §12) — see `benchmarks/README.md`'s "Held-out grading" subsection for the full shape.
+*(Superseded 2026-10-23: the held-out harness moved out of the fixture to the grader-owned `tasks/<id>/grading/`, copied
+into the agent-hidden `grading_dir` via `grader.assets` -- see `benchmark-discriminating-suites-hld.md` §8.)* `ao-epic-plus`
 (`benchmarks/subjects/ao-epic-plus/`) is a 4-agent `plan→implement→review→fix` `ao_workflow` subject, uniform-model
 (no per-agent `model`, sidestepping the live model-override-clobber defect exactly as `ao-epic` already does — §4.2
 deviation, `meta/learnings.md`).

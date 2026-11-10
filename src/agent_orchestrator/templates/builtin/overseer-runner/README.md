@@ -58,7 +58,7 @@ All 17 are declared in `template.yaml`, which is the source of truth for current
 | `max_expanders_per_wave` | FR-15 opt-in sub-DAG expansion per wave; `0` (default) disables it |
 | `max_injected_tasks` | structural fan-out cap (the `runaway-fanout` breaker's threshold) |
 | `final_push` | whether the close-out tail includes a final git push |
-| `overseer_effort` | effort level the checkpoint task itself dispatches at |
+| `overseer_effort` | turn-budget tier (`--max-turns` cap: medium=30, high=60, xhigh=120) the checkpoint task dispatches at — *not* thinking effort; the parameter name is kept for compatibility and is emitted as the task's legacy `effort` key (a deprecated alias of `turn_budget`) |
 | `overseer_model` | optional per-checkpoint model override (see "The `overseer_model` rule" in the contract) |
 | `default_unit_model` | optional default model for wave work units; per-kind (`kind_map[kind].model`) and per-brief `model` win (OV-R9m, see `docs-md/model-selection.md`) |
 | `allowed_models` | optional comma-separated allowlist for unit models (empty = any well-formed id) |
@@ -181,6 +181,34 @@ options:
    already at least the override's new total. Both must be present; the override alone is a
    no-op refusal, and the flag alone doesn't change what the tool treats as the budget.
 
+## Partial / handoff state and the limit report
+
+A work unit that must stop early **on purpose** (it hit a time, cost or turn limit, or the work
+is larger than one unit) reports `outcome: partial` plus a `handoff` object in its breadcrumb
+(`reason: time|cost|turns|scope|other`, `stopped_at`, `staged`, `remaining`, optional
+`next_hint`). It must evidence real work in `staged` or `changed_paths`, with `verdict` `pass`/`na`
+and `needs_input: false`; anything else degrades to a plain `partial` (never a run failure).
+
+- **Scope choice: template-level.** The engine task still settles `succeeded` (the unit exits 0);
+  the "partial / handoff" state exists only in the overseer ledger (`state: handoff`), the digest
+  (`handoffs[]`, `progress.work_items_handed_off`) and the checkpoint's decisions. The engine's
+  `TaskResult` status is not changed, and a handoff is not a failed attempt.
+- **Continuation.** The next checkpoint continues the item under the **same `work_item` key**; a
+  handoff does not count toward `max_attempts_per_item` (OV-R13), but a chain of 3 consecutive
+  handoffs on one item raises the high-severity `handoff_chain` signal. Closeout cannot be
+  declared early (OV-R14) while an ask has an open handoff, and the remainder is reported under
+  "how to continue".
+- **Limit report.** `overseer_tool.py limit-report [--wave N] [--format json|md]` is read-only and
+  lists every self-split / partial / limit-hit unit with its limit `reason`, `basis`
+  (`observed|self_reported|inferred|none`), cost vs task cap, duration vs timeout, derived turn cap
+  and run spend vs budget. The digest carries the current wave's rows as `limit_events`, and
+  closeout embeds the report.
+- **Gaps in engine limit data.** The engine does not persist which limit ended a failed or
+  timed-out unit (`TaskResult.status`/`error` are not mirrored into `state.json`), nor the turns
+  used, so `basis: inferred` rows are approximations and a turn-cap hit cannot be observed. The
+  report lists these under "Known gaps" (`limit_gaps`). **Open engine follow-up:** persist the
+  last task status/error in `TaskRunState` so the tripped limit is observed rather than inferred.
+
 ## Engine gaps designed around
 
 - **G1** (no cadence primitive) — cadence is structural: each wave holds ≤ N units plus one
@@ -196,6 +224,47 @@ options:
 - **G5** (emission could be lost on a breaker trip or crash at an emitter's settle) — fixed
   directly in the engine, not worked around at the template level; see
   `docs-md/adr/ADR-0016-overseer-runner-cadence-and-budget-governance.md` decision D7.
+
+## Sentinel bandwidth: backlog + early checkpoint (opt-in, `sentinel_enabled=true`)
+
+With the sentinel on, checkpoints are marked `barrier: soft` and two mechanical (no-LLM, $0)
+bandwidth levers keep slots busy during a wave's heavy tail (E-Sn7tL2, `docs-md/sentinel-hld.md`
+§6.3/§6.4/§6.6):
+
+- **L1 backlog.** A checkpoint may write `outputs/backlog.json` (`ao.overseer.backlog/v1`, contract
+  "Backlog", checker `OV-BL1..BL7`). `ckpt-check` publishes it to `<run_dir>/control/backlog.json`;
+  when slots are idle and nothing is ready the engine tick starts entries as `s-NN-<slug>` units
+  (highest priority first) through the shared graph checker. Entries expire when their
+  `expires_at_ckpt` checkpoint starts; expired entries are never released.
+- **L2 early checkpoint.** With the backlog empty, ≥ ⌈P/2⌉ slots idle for `early_ckpt_grace_seconds`
+  and ≥ `early_ckpt_fraction` of the pending checkpoint's predecessors settled, the tick drops the
+  unsettled ones from that checkpoint's `depends_on`. They become `digest.carry_over[]`; the
+  checkpoint plans the next wave from the settled units and may **not** re-schedule them (`OV-R17`).
+  At most one early checkpoint is in flight; it is a normal `ck-NN`, so it counts toward `max_waves`.
+- **Cap.** Sentinel injections have their own counter/breaker (`sentinel_injected_task_count`,
+  default `max(20, 3 x max_parallel x expected_hours)`), separate from `max_injected_tasks`.
+
+Without the sentinel nothing changes: no `barrier`, no `backlog.json`, byte-identical digests.
+Known limit: carry-over units are not predecessors of the next checkpoint, so a straggler may still
+be running when a tail starts. Intake cannot see a digest: its `ck-01` must be `barrier: soft` on a
+sentinel run, which `intake-check` enforces (it reads the run state) — fix and re-run on `OV-R10`.
+
+## Sentinel params (opt-in; default OFF)
+
+Operator guide: `docs-md/guide-sentinel.md`. All params are optional; unset/`false` leaves `workflow.json` byte-identical to a
+sentinel-less run.
+
+| Param | Effect | Recommended |
+|---|---|---|
+| `sentinel_enabled` (`true`/`false`) | renders a `sentinel:` block: mechanical lane (tick, liveness kill/retry/escalate ladder, utilisation metrics, `ao ctl`, dashboard panel, backlog release and early checkpoints with carry-over, directive acknowledgement at checkpoints) | `true` for runs longer than ~1 h |
+| `sentinel_llm` (`true`) | also enable the LLM lane (rotating generations, bounded spend) | keep off unless you want judgement support |
+| `sentinel_powers` (`advise`\|`act`) | `advise` = notes/directives/hold/cancel; `act` adds inject/edit_pending/kill | `advise` first |
+| `sentinel_budget_pct` (0-100] | LLM spend cap as % of the lowest `run_cost_usd` breaker | 10 (engine default) |
+
+Other knobs (`idle_kill_minutes` 15, `tick_seconds` 15, ceilings, escalation) come from `--sentinel-set`, env `AO_SENTINEL_*` or
+`.ao/config.yaml`. **Default enablement:** the owner decision is to make the mechanical lane default-on in this template after the
+FR-23 live smoke; that smoke has not been run, so the flip has *not* been made — pass `--param sentinel_enabled=true` explicitly.
+Live control: `ao ctl status|set|kill|release|note|pause-llm|resume-llm|cancel <run>`.
 
 ## Completion marker
 
@@ -271,6 +340,12 @@ actually run the workflow, before your first `ao run`. A wrong or missing interp
 every hook closed (the run halts immediately, resumably) rather than silently degrading.
 
 ## Recommended `--autocompact`
+
+> **Now a first-class field.** Instead of `extra_args: ["--autocompact", N]` you can set the
+> provider-neutral `"autocompact": N` (or `"auto"`) on an agent or task, or `--autocompact` /
+> `AO_AUTOCOMPACT` / `autocompact:` in `.ao/config.yaml` for every agent that has none of its own.
+> Precedence: task > agent > run level; an `--autocompact` already in `extra_args` still wins.
+> Executors without support ignore it (`ao validate` warns).
 
 Like `routed-runner`, this template ships **no** `agents.recommended.json` asset (NFR-X9) — one
 would collide with `routed-runner`'s own workspace-root file (both `keep_existing: true`, first

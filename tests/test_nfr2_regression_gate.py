@@ -134,6 +134,47 @@ _MIN_PRE_EPIC_TEST_FILES = 50
 # gate"; every entry here is a declared, reviewable exception to that -- not a silent
 # exclusion. Adding an entry is a deliberate act that shows up in review.
 _EPIC_MODIFIED_PRE_EPIC_TESTS: dict[str, str] = {
+    # Contract change, deliberate (E-Bn7Dsc core seams, 2026-10-23): `GraderConfig` now passes
+    # grader-specific keys through (`extra="allow"`, mirroring `Source`) so the `blackbox` /
+    # `pytest_targeted` graders can carry their own fields. The one test asserting an unknown
+    # grader key is REJECTED now asserts it lands in `model_extra`; every other assertion in
+    # the file is unchanged.
+    "tests/bench/test_spec.py": "E-Bn7Dsc: grader-specific keys pass through (extra=allow)",
+    # Additive only (2026-10-22, dashboard fix a0101a8): one regression test appended for the
+    # prompt-derived run slug being capped at 60 chars (previously a 255-byte filename overflow
+    # -> HTTP 500 on `POST /api/templates/<name>/instances`). No existing test changed.
+    "tests/ui/test_templates_api.py": (
+        "slug-length regression test appended; existing tests unchanged"
+    ),
+    # Contract change, deliberate (E-Bn7Dsc T-St4Gh5): comparison "Winners" now rank on
+    # attempted-based rates and add a "Highest mean score" line; two winner-line assertions
+    # updated to the new rendering. Per-task numbers and every other assertion are unchanged.
+    "tests/bench/test_results.py": (
+        "E-Bn7Dsc: winners section adds mean-score line / attempted rates"
+    ),
+    # Additive only (E-Bn7Dsc T-Bx2Cd3 / T-T2-5Ij6): the bench conftest gained two opt-in gates
+    # (`docker` -> AO_E2E_DOCKER, `network` -> AO_E2E_NETWORK) beside the existing `swebench`
+    # one, plus shared fixtures for the new tracks. No existing fixture or gate changed.
+    "tests/bench/conftest.py": "E-Bn7Dsc: docker/network opt-in gates + shared fixtures added",
+    # Contract change, deliberate (E-Bn7Dsc T-Ws7Iso, 2026-10-24): the bench workspace root
+    # moved OUT of the checkout (Claude Code loaded the repo's CLAUDE.md/skills/agents into
+    # every agent under test) and is now resolved per call from AO_BENCH_WORKSPACE_ROOT, so
+    # the module constant `BENCH_WORKSPACE_ROOT` became the function `bench_workspace_root()`.
+    # These files only swap that name (the conftest also gained an autouse fixture pointing
+    # every bench test at a pytest temp root); every assertion is unchanged.
+    "tests/bench/test_runner.py": "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()",
+    "tests/bench/test_subjects.py": "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()",
+    "tests/bench/test_swebench_grader.py": (
+        "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()"
+    ),
+    "tests/bench/test_swebench_provider.py": (
+        "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()"
+    ),
+    "tests/bench/test_workspace.py": "T-Ws7Iso: BENCH_WORKSPACE_ROOT -> bench_workspace_root()",
+    # Contract change, deliberate (E-Bn7Dsc T-T2-5Ij6): dev-medium's held-out `.grading/` moved
+    # out of the agent-visible fixture into the grader-owned grading_dir (HLD §8 hidden-asset
+    # rule); the suite tests now assert the new layout. Task ids/instructions unchanged.
+    "tests/bench/test_dev_medium_suite.py": "E-Bn7Dsc: held-out grading moved to grading_dir",
     # Deliberate model-pin refresh (2026-10-15): benchmark subject configs moved to the latest
     # ids (haiku-5-5 / sonnet-5-5 / opus-5-5); these tests assert the committed pin literals.
     "tests/bench/test_ao_epic_plus_subject.py": "model-pin refresh: committed subject ids only",

@@ -1,0 +1,76 @@
+{
+  "mode": "inject",
+  "description": "swapped min_open/max_open flags in _NumberRangeBase.convert (IntRange/FloatRange)",
+  "edits": [
+    {
+      "file": "src/click/types.py",
+      "find": "operator.le if self.min_open else operator.lt",
+      "replace": "operator.le if self.max_open else operator.lt"
+    },
+    {
+      "file": "src/click/types.py",
+      "find": "operator.ge if self.max_open else operator.gt",
+      "replace": "operator.ge if self.min_open else operator.gt"
+    }
+  ],
+  "hidden_from_repo": [
+    "tests/test_types/test_IntRange.py",
+    "tests/test_types/test_FloatRange.py"
+  ],
+  "install": "uv venv .venv && uv pip install -e . pytest pytest-timeout",
+  "fail_to_pass": [
+    "tests/test_types/test_FloatRange.py::test_range_fail[type0-0.5-x>0.5]",
+    "tests/test_types/test_FloatRange.py::test_range_fail[type1-1.5-x<1.5]",
+    "tests/test_types/test_IntRange.py::test_range[type7-0-1]",
+    "tests/test_types/test_IntRange.py::test_range[type8-5-4]",
+    "tests/test_types/test_IntRange.py::test_range_fail[type3-0-0<x<=5]",
+    "tests/test_types/test_IntRange.py::test_range_fail[type4-5-0<=x<5]"
+  ],
+  "pass_to_pass": [
+    "tests/test_types/test_IntRange.py::test_range[type0-3-3]",
+    "tests/test_types/test_IntRange.py::test_range[type1-5-5]",
+    "tests/test_types/test_IntRange.py::test_range[type2-100-100]",
+    "tests/test_types/test_IntRange.py::test_range[type3-5-5]",
+    "tests/test_types/test_IntRange.py::test_range[type4--100--100]",
+    "tests/test_types/test_IntRange.py::test_range[type6-6-5]",
+    "tests/test_types/test_FloatRange.py::test_float_range_no_clamp_open",
+    "tests/test_types/test_FloatRange.py::test_range[type0-1.2-1.2]",
+    "tests/test_types/test_FloatRange.py::test_range[type1-0.51-0.51]",
+    "tests/test_types/test_FloatRange.py::test_range[type2-1.49-1.49]",
+    "tests/test_types/test_FloatRange.py::test_range[type3--0.0-0.5]",
+    "tests/test_types/test_FloatRange.py::test_range[type4-inf-1.5]",
+    "tests/test_options.py::test_bool_flag_group_competition_with_default_map[default_map3-args3-False]",
+    "tests/test_options.py::test_boolean_flag_envvar[NO_SHOUT-False-False]",
+    "tests/test_options.py::test_choice_default_rendering[Number-TWO-TWO]",
+    "tests/test_options.py::test_choice_usage_rendering[ColorInt-[COLORINT]]",
+    "tests/test_options.py::test_default_dual_option_callback[True-args0-js]",
+    "tests/test_options.py::test_default_dual_option_callback[jS-args12-jS]",
+    "tests/test_options.py::test_flag_auto_detection[-a-opt_params3-False-False]",
+    "tests/test_options.py::test_flag_group_competition_four_flags[four-flags-only-second-explicit-wins]",
+    "tests/test_options.py::test_flag_value_and_default[opt_params27-args27-True]",
+    "tests/test_options.py::test_flag_value_and_default[opt_params38-args38-False]",
+    "tests/test_options.py::test_flag_value_and_default[opt_params40-args40-None]",
+    "tests/test_options.py::test_option_name_may_be_a_python_keyword",
+    "tests/test_options.py::test_required_option[value8-False-[]]",
+    "tests/test_options.py::test_show_default_precedence[True-False-extra_value7-False]",
+    "tests/test_arguments.py::test_deprecated_usage",
+    "tests/test_arguments.py::test_good_defaults_for_nargs[argument_params7-args7-expected7]",
+    "tests/test_arguments.py::test_nargs_star_ordering",
+    "tests/test_arguments.py::test_parameter_name_not_an_identifier_is_deprecated[leading-arabic-indic-digit-option]",
+    "tests/test_arguments.py::test_parameter_name_not_an_identifier_is_deprecated[space-argument]",
+    "tests/test_arguments.py::test_parameter_name_transform[capital-sharp-s-option]",
+    "tests/test_arguments.py::test_required_argument[value7-False-()]",
+    "tests/test_basic.py::test_boolean_conversion[0-False]",
+    "tests/test_basic.py::test_boolean_flag[False-args3-False]",
+    "tests/test_basic.py::test_cast_multi_default[2-True-default5-expect5]",
+    "tests/test_basic.py::test_flag_value_dual_options[None-args15-None]",
+    "tests/test_basic.py::test_int_option[args1-I:[46]]",
+    "tests/test_basic.py::test_repr",
+    "tests/test_basic.py::test_version_option_resolves_import_name_to_distribution"
+  ],
+  "verified": {
+    "date": "2026-10-23",
+    "network": true,
+    "note": "Real clone + install + runner e2e (python 3.12, uv 0.5.9): with the mutation unfixed (noop) solved=false; with the pristine files restored (FakeSubject copy-reference) solved=true, score 1.0. Targeted pytest run ~1.4s."
+  }
+}

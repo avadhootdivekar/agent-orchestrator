@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -9,13 +10,13 @@ import shutil
 import stat
 import time
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from . import hooks
+from . import graph_check, hooks, sentinel_backlog, sentinel_powers, sentinel_tick
 from .artifacts import (
     ArtifactStore,
     LocalFsArtifactStore,
@@ -38,6 +39,21 @@ from .errors import (
 from .estimator import TokenEstimator
 from .executors.base import Executor
 from .feedback import OPERATOR_NOTES_FILE
+from .fsutil import atomic_write_bytes
+from .inputs import (
+    INPUT_ANSWER_FILENAME,
+    INPUT_MAX_REQUESTS_PER_TASK,
+    INPUT_REQUEST_FILENAME,
+    InputError,
+    InputUnknownError,
+    assume_defaults,
+    cancel_request,
+    load_request,
+    open_request,
+    read_task_request_file,
+    request_path,
+    restore_request,
+)
 from .isolation import escalation as resolver_escalation
 from .isolation import paths as isolation_paths
 from .isolation.git import GIT_MIN_VERSION, GitRepo
@@ -72,9 +88,15 @@ from .models import (
     SPAWN_ORIGIN_INJECTED,
     SPAWN_ORIGIN_LOOP,
     TIER_RERUN,
+    AgentSpec,
+    CancelToken,
     CircuitBreakerSpec,
+    EffectiveSetting,
     EstimatorConfig,
     HookOutcome,
+    InputMode,
+    InputRequest,
+    InputRequestSpec,
     IntegrationSpec,
     LoopSpec,
     MonitorDecisionRecord,
@@ -82,6 +104,7 @@ from .models import (
     RouterSpec,
     RunPrompt,
     RunState,
+    SentinelLlmSpec,
     SpawnRecord,
     TaskContext,
     TaskIntegrationState,
@@ -108,19 +131,28 @@ from .monitoring import (
     RuleBasedMonitor,
     build_task_failure_summary,
 )
-from .runstate import RunStateStore
+from .retry_context import (
+    OUTCOME_FILENAME,
+    AttemptRecord,
+    read_no_retry_marker,
+    write_prior_attempts,
+)
+from .runstate import RunStateStore, record_effective_settings
 from .scheduling.overlap import overlap_score, rank_wave
+from .sentinel_driver import SentinelDriver, make_driver
+from .sentinel_gen import GenerationLane
+from .sentinel_settings import SentinelSettings
 from .spec import validate_isolation, validate_task_model_policy
 from .summarizer import RunSummarizer
 from .survival import current_heads, record_git_start, record_landed_ranges
-from .usage import dispatch_provenance
+from .usage import dispatch_provenance, task_limits
 
 if TYPE_CHECKING:
     # E-Rc4Hk8: type-only (ADR-0019 D9); the one runtime import is lazy, in the lookup method.
     from .cache.types import PendingStore, ResultCacheHook
 
 # Valid origin values for injected/loop tasks
-_TaskOrigin = Literal["static", "injected", "loop"]
+_TaskOrigin = Literal["static", "injected", "loop", "sentinel"]
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +386,11 @@ _NO_CANCEL: Callable[[], bool] = _no_cancel
 DispatchSignal = Literal["skipped", "dispatch", "halt", "blocked"]
 
 # Outcome of `Orchestrator._settle_completed_task`.
-SettleSignal = Literal["settled", "requeue", "halt", "reshaped"]
+# "await_input": the task parked as awaiting_input (HLD §6.1); the run keeps going.
+# Ladder escalation keys -> AgentSpec fields (``effort`` is the legacy alias of ``turn_budget``).
+_RECOVERY_FIELD_ALIASES = {"effort": "turn_budget"}
+
+SettleSignal = Literal["settled", "requeue", "halt", "reshaped", "await_input"]
 
 
 @dataclass
@@ -391,6 +427,8 @@ class DispatchPrep:
     dynamic_input_paths: list[str] | None = None
     task_manifest_path: str | None = None
     gate_output_path: str | None = None
+    # Answered awaiting-input request file handed to the re-dispatched task (path only).
+    input_answer_path: str | None = None
     store: ArtifactStore | None = None
     task_iso: TaskIsolation | None = None
     repo_paths: dict[str, str] | None = None
@@ -606,8 +644,22 @@ class Orchestrator:
         run_prompt: RunPrompt | None = None,
         summarizer: RunSummarizer | None = None,
         result_cache: ResultCacheHook | None = None,
+        input_mode: InputMode | None = None,
+        effective_settings: dict[str, EffectiveSetting] | None = None,
+        sentinel: SentinelSettings | None = None,
+        sentinel_driver_factory: Callable[[SentinelLlmSpec], SentinelDriver] | None = None,
     ) -> None:
+        # Resolved sentinel settings (E-Sn7tL2 T-Sn2Set); consumed by the tick/recovery/LLM lanes.
+        self._sentinel = sentinel
+        # Test seam for the LLM generation driver (T-Sn8Gen); None => built from settings.
+        self._sentinel_driver_factory = sentinel_driver_factory
+        # Live cancel tokens (task id -> CancelToken), shared with the sentinel runtime of the
+        # current run(); stays empty (=> executors see no cancel hooks) unless the sentinel is on.
+        self._tokens: dict[str, CancelToken] = {}
         self._executor = executor
+        # Awaiting-input mode (HLD §7). None = keep the run's persisted mode (default "blocking").
+        self._input_mode = input_mode
+        self._effective_settings = effective_settings
         # Result cache (E-Rc4Hk8, ADR-0019). None (the default, and what the CLI passes
         # unless the operator enabled it) means NO cache code runs or is imported (NFR-1).
         self._result_cache = result_cache
@@ -734,6 +786,15 @@ class Orchestrator:
 
         if run_state is None and self._run_prompt is not None:
             state.prompt = self._run_prompt
+        if self._input_mode is not None:
+            state.input_mode = self._input_mode
+        if self._effective_settings is not None:
+            record_effective_settings(
+                state,
+                self._effective_settings,
+                "start" if run_state is None else "resume",
+                self._clock().isoformat(),
+            )
         self._runstate.save(state)
 
         # Derive run directory: <workspace>/.orchestrator/runs/<run_id>
@@ -753,6 +814,7 @@ class Orchestrator:
         # at which point no lock could have been claimed yet either, so `None` there is
         # always the correct "nothing to release" answer.
         ctx: _RunContext | None = None
+        sentinel_rt: sentinel_tick.SentinelRuntime | None = None
         try:
             # No-repo-set mode (ADR-0022): a workflow without `repo_set` runs workspace-only,
             # so there are no repo paths; isolation/survival/cache all handle `{}`.
@@ -774,6 +836,8 @@ class Orchestrator:
                     if inj.id not in existing_ids:
                         workflow.tasks.append(inj)
                         existing_ids.add(inj.id)
+            if run_state and run_state.graph_edits:
+                graph_check.replay_edits(workflow, run_state)
 
             graph = build_dag(workflow)
             order = graph.topological_order()
@@ -851,23 +915,64 @@ class Orchestrator:
             # reader) runs on a worker. `pool.shutdown(wait=True)` is guaranteed by
             # the `with` block on every exit path, including an exception raised by
             # a worker (NFR-4 -- no thread leak).
-            with ThreadPoolExecutor(max_workers=self._max_parallel) as pool:
+            # Sentinel lane (E-Sn7tL2 T-Sn3Tck): None when absent/disabled, in which case every
+            # sentinel branch below is skipped and the loop is the pre-epic loop verbatim.
+            rt = sentinel_rt = self._start_sentinel(state, run_dir, run_log, workflow, agents)
+            if rt is not None:
+                rt.edit_applier = self._make_edit_applier(rt, state, workflow, ctx, agents)
+                if self._sentinel is not None and self._sentinel.spec.llm.enabled:
+                    rt.proposal_gate = sentinel_powers.PowerGate(
+                        self._sentinel.spec.llm,
+                        Path(run_dir),
+                        lambda tid: self._llm_kill_protected(workflow, state, tid),
+                    )
+            with ThreadPoolExecutor(
+                max_workers=rt.ceiling if rt is not None else self._max_parallel
+            ) as pool:
                 in_flight: dict[Future[WorkerOutcome], str] = {}
                 while True:
                     if self._cancel_fn():
-                        run_log.info(
-                            "Cancellation requested; halting",
-                            extra={"event": "run.cancelled"},
-                        )
-                        state.status = "cancelled"
+                        self._halt_cancelled(in_flight, workflow, state, ctx)
+                        failed = True
+                        break
+
+                    # ---- INPUTS: answered/assumed requests release their parked tasks ----
+                    if self._reconcile_inputs(state, ctx) == "halt":
                         failed = True
                         self._drain_remaining(in_flight, workflow, state, ctx)
                         break
+
+                    # ---- SENTINEL TICK: inbox, overrides, metrics (fail-safe, main thread) ----
+                    if rt is not None:
+                        rt = self._sentinel_tick(rt, state, workflow)
+                        if rt is not None and rt.cancel_requested:
+                            self._halt_cancelled(in_flight, workflow, state, ctx)
+                            failed = True
+                            break
+                        if rt is not None and rt.reshape_pending:
+                            # Pending-graph edit/inject committed by the tick (already validated
+                            # on a copy and persisted): re-derive the run() locals in place.
+                            rt.reshape_pending = False
+                            graph = build_dag(workflow)
+                            order = graph.topological_order()
+                            preds = self._predecessors(graph)
+                            done.update(
+                                tid
+                                for tid, ts in state.tasks.items()
+                                if ts.status in ("succeeded", "skipped")
+                            )
+                    limit = rt.live_limit if rt is not None else self._max_parallel
 
                     # ---- FILL: launch ready non-barrier tasks up to N ----
                     ready = self._ready_ids(order, preds, state, done, set(in_flight.values()))
                     if not ready and not in_flight:
                         break  # nothing ready, nothing running -> run complete
+                    if state.graph_edits:
+                        # Pending-edit priorities (FR-12): higher first, stable among equals so
+                        # the ADR-0007 D6 order is the tie-break. Absent edits => untouched.
+                        prios = graph_check.priorities(state)
+                        if prios:
+                            ready = sorted(ready, key=lambda t: -prios.get(t, 0))
 
                     # E-Wk9Tz3 R-5: soft overlap preference reorders (never filters) the
                     # candidate list. `resolve_overlap_preference` derives "off" unless the
@@ -883,7 +988,7 @@ class Orchestrator:
                             ready,
                             touches,
                             ctx.hotspots,
-                            self._max_parallel - len(in_flight),
+                            limit - len(in_flight),
                         )
                         if pref == OVERLAP_SOFT
                         else ready
@@ -897,8 +1002,9 @@ class Orchestrator:
                         # nothing here feeds back into the dispatch decision.
                         self._log_overlap_preference(candidates, touches, ctx)
 
+                    dispatched_this_pass = 0
                     for tid in candidates:
-                        if len(in_flight) >= self._max_parallel:
+                        if len(in_flight) >= limit:
                             break
                         barrier = self._is_barrier(workflow.task(tid), workflow, state)
                         if barrier and in_flight:
@@ -926,6 +1032,8 @@ class Orchestrator:
                             # is always empty at gate time).
                             break
                         assert prep.task is not None  # DISPATCH always carries its payload
+                        if rt is not None:
+                            sentinel_tick.register_task(state, rt, tid)
                         fut = pool.submit(
                             self._run_and_integrate,
                             task=prep.task,
@@ -938,6 +1046,7 @@ class Orchestrator:
                             dynamic_input_paths=prep.dynamic_input_paths,
                             task_manifest_path=prep.task_manifest_path,
                             gate_output_path=prep.gate_output_path,
+                            input_answer_path=prep.input_answer_path,
                             store=prep.store,
                             task_iso=prep.task_iso,
                             integrator=ctx.integrator,
@@ -947,43 +1056,82 @@ class Orchestrator:
                             cycle=prep.cycle,
                         )
                         in_flight[fut] = tid
+                        dispatched_this_pass += 1
                         if barrier:
                             break  # launched solo -- go drain it before filling further
 
                     if failed:
                         break
+                    if rt is not None:
+                        # Occupancy after FILL, attributed to the interval until the next tick.
+                        rt.occ_running = len(in_flight)
+                        rt.occ_ready = max(0, len(ready) - dispatched_this_pass)
+                        rt = self._sentinel_bandwidth(rt, state, workflow, set(in_flight.values()))
+                        if rt is not None and rt.reshape_pending:
+                            continue  # released work / early checkpoint: re-derive + FILL now
                     if not in_flight:
                         continue  # everything blocked this pass -> re-evaluate
 
-                    # ---- DRAIN: one completion at a time, settle on main thread ----
-                    done_fut = next(as_completed(list(in_flight)))
-                    settled_tid = in_flight.pop(done_fut)
-                    outcome = done_fut.result()
-                    settle = self._settle_completed_task(settled_tid, outcome, workflow, state, ctx)
-                    if settle.signal == "halt":
-                        failed = True
-                        self._drain_remaining(in_flight, workflow, state, ctx)
+                    # ---- DRAIN: settle on the main thread ----
+                    # Disabled: one completion at a time (pre-epic behaviour). Sentinel enabled:
+                    # wake at least every tick_seconds even if every worker is still busy, and
+                    # settle EVERY completed future of that wake-up in sorted task-id order so the
+                    # settle order is deterministic when several finish together.
+                    if rt is None:
+                        done_futs = [next(as_completed(list(in_flight)))]
+                    else:
+                        finished, _pending = wait(
+                            list(in_flight), timeout=rt.tick_seconds, return_when=FIRST_COMPLETED
+                        )
+                        done_futs = sorted(finished, key=lambda f: in_flight[f])
+                        if not done_futs:
+                            continue  # timeout: tick again with workers still busy
+                    halted = False
+                    for done_fut in done_futs:
+                        settled_tid = in_flight.pop(done_fut)
+                        outcome = done_fut.result()
+                        token = sentinel_tick.release_task(rt, settled_tid) if rt else None
+                        settle = self._settle_completed_task(
+                            settled_tid, outcome, workflow, state, ctx, token, rt
+                        )
+                        if settle.signal == "halt":
+                            failed = True
+                            halted = True
+                            self._drain_remaining(in_flight, workflow, state, ctx)
+                            break
+                        if settle.signal == "requeue":
+                            # Normalizes every requeue path uniformly to "pending":
+                            # the quota/self-heal paths already set this status inside
+                            # _settle_completed_task (verbatim), but the provider-429-wait
+                            # path never did (today's code re-visits the same cursor
+                            # position regardless of ts.status, so it never needed to) --
+                            # the ready-set model needs an explicit non-running status to
+                            # re-admit the task on a later wave, so this is applied
+                            # unconditionally regardless of which site requeued.
+                            if state.tasks[settled_tid].status != "killed":
+                                state.tasks[settled_tid].status = "pending"
+                        elif settle.signal == "reshaped":
+                            assert settle.graph is not None and settle.order is not None
+                            graph = settle.graph
+                            order = settle.order
+                            preds = self._predecessors(graph)
+                        # settled: nothing extra
+                        self._summarizer.on_task_settled(
+                            state, run_dir, self._pending_ids(state, order)
+                        )
+                    if halted:
                         break
-                    if settle.signal == "requeue":
-                        # Normalizes every requeue path uniformly to "pending":
-                        # the quota/self-heal paths already set this status inside
-                        # _settle_completed_task (verbatim), but the provider-429-wait
-                        # path never did (today's code re-visits the same cursor
-                        # position regardless of ts.status, so it never needed to) --
-                        # the ready-set model needs an explicit non-running status to
-                        # re-admit the task on a later wave, so this is applied
-                        # unconditionally regardless of which site requeued.
-                        state.tasks[settled_tid].status = "pending"
-                    elif settle.signal == "reshaped":
-                        assert settle.graph is not None and settle.order is not None
-                        graph = settle.graph
-                        order = settle.order
-                        preds = self._predecessors(graph)
-                    # settled: nothing extra
-                    self._summarizer.on_task_settled(
-                        state, run_dir, self._pending_ids(state, order)
-                    )
                 # pool.shutdown(wait=True) via `with`, on every exit path
+            if rt is not None and rt.lane is not None:
+                # A live LLM generation never outlives the run: stop it, settle its cost row.
+                try:
+                    rt.lane.shutdown(state, rt.clock())
+                except Exception as exc:  # noqa: BLE001 -- fail-safe: never fail the run
+                    run_log.error(
+                        "sentinel.error: LLM lane shutdown: %r",
+                        exc,
+                        extra={"event": "sentinel.error"},
+                    )
 
             # E-Wk9Tz3: run-end finalize (AC-12) -- best-effort final checkout sync +
             # worktree reconcile + a summary log line. Never changes the run's own verdict
@@ -994,7 +1142,20 @@ class Orchestrator:
                     ctx.worktree_manager.reconcile({t.id for t in workflow.tasks})
                 self._log_integration_summary(state, run_log)
 
-            if not failed and state.status == "running":
+            waiting = not failed and state.status == "running" and self._has_awaiting_input(state)
+            if waiting:
+                # Exit-resumable (ADR-4): all remaining work is parked on a human answer. The
+                # run stays "running" (not failed); `ao answer` then `ao resume` continues it.
+                open_ids = sorted(
+                    r.request_id for r in state.input_requests.values() if r.state == "open"
+                )
+                run_log.info(
+                    "Run waiting for input: %s (ao answer --run-id %s)",
+                    ", ".join(open_ids),
+                    state.run_id,
+                    extra={"event": "run.waiting_for_input", "requests": open_ids},
+                )
+            elif not failed and state.status == "running":
                 state.status = "succeeded"
 
             self._summarizer.finalize(state, run_dir, self._pending_ids(state, order))
@@ -1014,7 +1175,243 @@ class Orchestrator:
             # both `None` on the byte-identical non-isolated path (NFR-2).
             if ctx is not None and ctx.workspace_lock is not None:
                 ctx.workspace_lock.release()
+            if sentinel_rt is not None and sentinel_rt.lane is not None:
+                # Exception path only (the normal path shut the lane down before the final save):
+                # never leave a generation process behind.
+                try:
+                    sentinel_rt.lane.shutdown(state, sentinel_rt.clock())
+                except Exception:  # noqa: BLE001
+                    pass
             detach_run_handler(state.run_id)
+
+    # -------------------------------------------------------------------------
+    # Awaiting-input (docs-md/awaiting-input-hld.md §6)
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _has_awaiting_input(state: RunState) -> bool:
+        return any(t.status == "awaiting_input" for t in state.tasks.values())
+
+    @staticmethod
+    def _latest_request(
+        state: RunState, tid: str, states: tuple[str, ...] | None = None
+    ) -> InputRequest | None:
+        """Most recently opened request of task *tid* (dict order = open order), optionally
+        restricted to *states*."""
+        for req in reversed(list(state.input_requests.values())):
+            if req.task_id == tid and (states is None or req.state in states):
+                return req
+        return None
+
+    def _task_run_dir(self, run_id: str, tid: str, cycle: int = 1) -> str:
+        """Capture dir of a task's dispatch cycle (shared with `_run_with_retries`)."""
+        base = os.path.join(".orchestrator", "runs", run_id, tid)
+        rel = base if cycle <= 1 else os.path.join(base, f"{_CYCLE_DIR_PREFIX}{cycle}")
+        return self._store.resolve(rel)
+
+    def _open_and_route_request(
+        self, tid: str, spec: InputRequestSpec, ts: TaskRunState, state: RunState, ctx: _RunContext
+    ) -> Literal["awaiting", "assumed", "failed"]:
+        """Open a request for *tid* and route it by the run's input mode (HLD §6.1).
+
+        blocking: the task parks as ``awaiting_input``. nonblocking: every field takes its
+        default, the assumption is recorded (state mirror, answer file, run log) and the task
+        goes back to ``pending``. A required field without a default fails the task."""
+        task_log = get_run_logger(state.run_id, tid)
+        if (
+            sum(1 for r in state.input_requests.values() if r.task_id == tid)
+            >= INPUT_MAX_REQUESTS_PER_TASK
+        ):
+            return self._fail_input_task(
+                tid, ts, state, f"more than {INPUT_MAX_REQUESTS_PER_TASK} input requests", task_log
+            )
+        req = open_request(ctx.run_dir, tid, spec, now=self._clock)
+        if state.input_mode == "nonblocking":
+            try:
+                req = assume_defaults(ctx.run_dir, req.request_id, now=self._clock)
+            except InputError as exc:
+                cancel_request(ctx.run_dir, req.request_id)
+                return self._fail_input_task(tid, ts, state, str(exc), task_log)
+            state.input_requests[req.request_id] = req
+            assumed = req.answer.values if req.answer else {}
+            task_log.info(
+                "ASSUMED: %s %s (default)",
+                tid,
+                json.dumps(assumed, sort_keys=True),
+                extra={"event": "input.assumed", "request_id": req.request_id},
+            )
+            ts.status = "pending"
+            self._runstate.save(state)
+            return "assumed"
+        state.input_requests[req.request_id] = req
+        ts.status = "awaiting_input"
+        task_log.info(
+            "Task awaiting input: %s (ao answer --run-id %s --request-id %s)",
+            req.prompt[:200],
+            state.run_id,
+            req.request_id,
+            extra={"event": "input.requested", "request_id": req.request_id},
+        )
+        self._runstate.save(state)
+        return "awaiting"
+
+    def _fail_input_task(
+        self, tid: str, ts: TaskRunState, state: RunState, why: str, task_log: logging.LoggerAdapter
+    ) -> Literal["failed"]:
+        task_log.error(
+            "invalid input-request: %s",
+            why,
+            extra={"event": "task.fail", "reason": "input_request_invalid"},
+        )
+        ts.status = "failed"
+        ts.outputs_present = False
+        state.status = "failed"
+        self._runstate.save(state)
+        return "failed"
+
+    def _settle_input_request(
+        self,
+        tid: str,
+        task: TaskSpec,
+        ts: TaskRunState,
+        outcome: WorkerOutcome,
+        state: RunState,
+        ctx: _RunContext,
+    ) -> Literal["none", "await_input", "requeue", "halt"]:
+        """Producer (b): a successful task that wrote ``input-request.json`` parks (HLD §6.1).
+
+        "none" = no request file, settle normally. An invalid file fails the task (a producer
+        bug is a real failure, not a wait)."""
+        task_log = get_run_logger(state.run_id, tid)
+        attempt_dir = os.path.join(
+            self._task_run_dir(state.run_id, tid, ts.dispatch_cycle),
+            f"attempt-{outcome.result.attempts}",
+        )
+        req_file = os.path.join(attempt_dir, INPUT_REQUEST_FILENAME)
+        try:
+            spec = read_task_request_file(req_file)
+        except InputError as exc:
+            self._fail_input_task(tid, ts, state, str(exc), task_log)
+            return "halt"
+        if spec is None:
+            return "none"
+        if outcome.task_iso is not None:
+            self._fail_input_task(
+                tid, ts, state, "can_request_input is not supported on isolated tasks", task_log
+            )
+            return "halt"
+        routed = self._open_and_route_request(tid, spec, ts, state, ctx)
+        if routed == "failed":
+            return "halt"
+        return "requeue" if routed == "assumed" else "await_input"
+
+    def _prepare_input_task(
+        self, tid: str, task: TaskSpec, state: RunState, ctx: _RunContext
+    ) -> DispatchPrep:
+        """Producer (a): a spec-level ``input:`` block. No executor ever runs: the engine opens
+        the request, and once it is answered/assumed writes the answer as the task's output."""
+        assert task.input is not None
+        task_log = get_run_logger(state.run_id, tid)
+        ts = state.tasks.setdefault(tid, TaskRunState())
+        req = self._latest_request(state, tid)
+        if req is None:
+            routed = self._open_and_route_request(tid, task.input, ts, state, ctx)
+            if routed == "failed":
+                return DispatchPrep(signal="halt")
+            if routed == "awaiting":
+                return DispatchPrep(signal="skipped")
+            req = self._latest_request(state, tid)
+        assert req is not None
+        if req.state == "open":
+            ts.status = "awaiting_input"
+            self._runstate.save(state)
+            return DispatchPrep(signal="skipped")
+        if req.state == "cancelled" or req.answer is None:
+            self._fail_input_task(
+                tid, ts, state, f"request {req.request_id} was cancelled", task_log
+            )
+            return DispatchPrep(signal="halt")
+        payload = json.dumps(
+            {
+                "request_id": req.request_id,
+                "assumed": req.answer.assumed,
+                "values": req.answer.values,
+            },
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
+        targets = [os.path.join(self._task_run_dir(state.run_id, tid), INPUT_ANSWER_FILENAME)]
+        targets += [self._store.resolve(o) for o in task.outputs]
+        for target in targets:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            atomic_write_bytes(Path(target), payload, mode=0o644)
+        now = self._clock().isoformat()
+        ts.status = "succeeded"
+        ts.outputs_present = True
+        ts.started_at = ts.started_at or now
+        ts.ended_at = now
+        task_log.info(
+            "Task succeeded (input answered)",
+            extra={"event": "task.end", "status": "succeeded", "request_id": req.request_id},
+        )
+        ctx.done.add(tid)
+        self._runstate.save(state)
+        return DispatchPrep(signal="skipped")
+
+    def _reconcile_inputs(self, state: RunState, ctx: _RunContext) -> Literal["ok", "halt"]:
+        """Pick up answers (HLD §6.2): the answer file is the truth. For every open mirrored
+        request: nonblocking -> assume defaults; an answered/assumed file -> mirror it and move
+        its task from ``awaiting_input`` to ``pending`` (attempts unchanged). Runs once per
+        scheduling pass; a cancelled request fails its task."""
+        changed = False
+        for rid, mirrored in list(state.input_requests.items()):
+            if mirrored.state != "open":
+                continue
+            ts = state.tasks.get(mirrored.task_id)
+            if ts is None or ts.status != "awaiting_input":
+                continue
+            try:
+                fresh = load_request(ctx.run_dir, rid)
+                if fresh.state == "open" and state.input_mode == "nonblocking":
+                    fresh = assume_defaults(ctx.run_dir, rid, now=self._clock)
+            except InputUnknownError:
+                restore_request(ctx.run_dir, mirrored)  # file lost: rebuild it, keep waiting
+                continue
+            except InputError as exc:
+                get_run_logger(state.run_id, mirrored.task_id).error(
+                    "input request %s: %s", rid, exc, extra={"event": "input.error"}
+                )
+                self._fail_input_task(
+                    mirrored.task_id,
+                    ts,
+                    state,
+                    str(exc),
+                    get_run_logger(state.run_id, mirrored.task_id),
+                )
+                return "halt"
+            if fresh.state == "open":
+                continue
+            state.input_requests[rid] = fresh
+            changed = True
+            if fresh.state == "cancelled":
+                self._fail_input_task(
+                    mirrored.task_id,
+                    ts,
+                    state,
+                    f"request {rid} was cancelled",
+                    get_run_logger(state.run_id, mirrored.task_id),
+                )
+                return "halt"
+            ts.status = "pending"
+            get_run_logger(state.run_id, mirrored.task_id).info(
+                "Input %s for task %s; resuming",
+                fresh.state,
+                mirrored.task_id,
+                extra={"event": "input.answered", "request_id": rid},
+            )
+        if changed:
+            self._runstate.save(state)
+        return "ok"
 
     @staticmethod
     def _pending_ids(state: RunState, order: list[str]) -> list[str]:
@@ -1094,6 +1491,11 @@ class Orchestrator:
             self._runstate.save(state)
             return DispatchPrep(signal="skipped")
 
+        # Awaiting-input producer (a) (HLD ADR-3): a spec-level `input:` block never dispatches an
+        # executor -- the engine opens the request itself and completes the task from the answer.
+        if task.input is not None:
+            return self._prepare_input_task(tid, task, state, ctx)
+
         # ---- E-Wk9Tz3 task isolation (T-En8Hd4): resolve mode, lazily activate, ensure
         # the worktree. Placed AFTER should_skip (a task about to be skipped must never pay
         # for a worktree it will never use) and BEFORE the missing-inputs / budget-estimate
@@ -1115,6 +1517,12 @@ class Orchestrator:
             workflow.tasks,
         ).items():
             setattr(ts_pre, _field, _value)
+        ts_pre.effective_limits = task_limits(
+            task,
+            _prov_agent,
+            workflow.defaults.timeout_seconds,
+            (task.retries or workflow.defaults.retries).max_attempts,
+        )
         iso_mode = resolve_task_isolation(task, workflow)
         task_iso: TaskIsolation | None = None
         ctx_store: ArtifactStore = self._store
@@ -1222,10 +1630,21 @@ class Orchestrator:
             dep_ts = state.tasks.get(dep_id)
             if dep_ts and dep_ts.dynamic_outputs:
                 dynamic_input_paths.extend(dep_ts.dynamic_outputs)
+        # Producer (b) re-dispatch: hand the answered request file's PATH to the task (paths only).
+        input_answer_path: str | None = None
+        if task.can_request_input:
+            answered = self._latest_request(state, tid, ("answered", "assumed"))
+            if answered is not None:
+                input_answer_path = str(request_path(ctx.run_dir, answered.request_id))
 
         # E-Rc4Hk8 result cache (ADR-0019 D11). Approval/human gates (E-Ag7Pw3) run BEFORE this.
-        if self._result_cache is not None and self._result_cache_lookup(
-            tid, task, workflow, state, ctx, ts_pre, dynamic_input_paths, task_log
+        # A task that can request input is never cached: its result depends on a human answer.
+        if (
+            self._result_cache is not None
+            and not task.can_request_input
+            and self._result_cache_lookup(
+                tid, task, workflow, state, ctx, ts_pre, dynamic_input_paths, task_log
+            )
         ):
             return DispatchPrep(signal="skipped")
         # _estimate is declared at task-block scope so the reconcile block can
@@ -1452,6 +1871,7 @@ class Orchestrator:
             dynamic_input_paths=dynamic_input_paths,
             task_manifest_path=resolved_task_manifest_path,
             gate_output_path=resolved_gate_output_path,
+            input_answer_path=input_answer_path,
             store=(ctx_store if task_iso is not None else None),
             task_iso=task_iso,
             repo_paths=iso_repo_paths,
@@ -1579,6 +1999,8 @@ class Orchestrator:
         workflow: WorkflowSpec,
         state: RunState,
         ctx: _RunContext,
+        token: CancelToken | None = None,
+        rt: sentinel_tick.SentinelRuntime | None = None,
     ) -> SettleResult:
         """Post-dispatch settlement for task *tid*'s completed *outcome*.
 
@@ -1632,6 +2054,12 @@ class Orchestrator:
         run_log = ctx.run_log
         ts = state.tasks[tid]
         result = outcome.result  # E-Wk9Tz3: the only line the "extracted verbatim" body needs
+
+        # ---- Sentinel recovery kill (E-Sn7tL2 T-Sn4Rec): ladder retry -> escalate -> fail ----
+        if result.status == "killed":
+            requeue = self._settle_killed(tid, result, ts, state, ctx, token, rt)
+            if requeue is not None:
+                return requeue
 
         # ---- Claude quota exhaustion route (distinct from provider 429) ----
         if result.claude_quota_exhausted:
@@ -1911,6 +2339,15 @@ class Orchestrator:
         self._accumulate_actuals(ts, result)
         if self._record_git_heads:
             ts.end_heads = current_heads(state.git_repos)
+
+        if result.status == "succeeded" and task.can_request_input:
+            parked = self._settle_input_request(tid, task, ts, outcome, state, ctx)
+            if parked == "await_input":
+                return SettleResult(signal="await_input")
+            if parked == "requeue":  # non-blocking: defaults assumed, re-dispatch with the answer
+                return SettleResult(signal="requeue")
+            if parked == "halt":
+                return SettleResult(signal="halt")
 
         if result.status == "succeeded":
             # Verify declared outputs were actually produced. E-Wk9Tz3 C-1 (review fix):
@@ -2252,6 +2689,12 @@ class Orchestrator:
                 self._runstate.save(state)
                 return SettleResult(signal="halt")
             try:
+                if task.barrier == "soft":
+                    # Additive-manifest check against the live graph (tasks may be in flight).
+                    try:
+                        graph_check.check_additive_manifest(workflow, state, new_specs)
+                    except graph_check.EditRejected as rej:
+                        raise InjectionError(f"[{rej.rule_id}] {rej.detail}") from rej
                 self._inject(
                     new_specs,
                     workflow,
@@ -2412,6 +2855,380 @@ class Orchestrator:
 
         return SettleResult(signal="settled")
 
+    def _halt_cancelled(
+        self,
+        in_flight: dict[Future[WorkerOutcome], str],
+        workflow: WorkflowSpec,
+        state: RunState,
+        ctx: _RunContext,
+    ) -> None:
+        """Graceful cancel (``cancel_fn`` or a control-inbox ``cancel``): mark + drain in-flight."""
+        ctx.run_log.info("Cancellation requested; halting", extra={"event": "run.cancelled"})
+        state.status = "cancelled"
+        self._drain_remaining(in_flight, workflow, state, ctx)
+
+    def _start_sentinel(
+        self,
+        state: RunState,
+        run_dir: str,
+        run_log: logging.Logger | logging.LoggerAdapter[Any],
+        workflow: WorkflowSpec | None = None,
+        agents: dict[str, AgentSpec] | None = None,
+    ) -> sentinel_tick.SentinelRuntime | None:
+        """Build the per-run sentinel context, or None when the lane is absent/disabled."""
+        if self._sentinel is None or not self._sentinel.enabled:
+            return None
+        spec = self._sentinel.spec
+        # The pool is created at the ceiling; the soft limit starts at max_parallel (never above).
+        ceiling = max(spec.max_parallel_ceiling or self._max_parallel, self._max_parallel)
+        rt = sentinel_tick.SentinelRuntime(
+            ceiling=ceiling,
+            tick_seconds=spec.tick_seconds,
+            inbox_batch_max=spec.inbox_batch_max,
+            live_limit=self._max_parallel,
+            control_dir=Path(run_dir) / sentinel_tick.CONTROL_DIR,
+            clock=self._clock,
+            log=run_log,
+            recovery=spec.recovery,
+        )
+        self._tokens = rt.tokens
+        sent = sentinel_tick.ensure_state(state)
+        sent.enabled = True
+        sent.disabled_reason = None
+        if spec.llm.enabled:
+            self._start_llm_lane(rt, state, run_dir, spec.llm, workflow, agents)
+        # Resume: overrides persisted by a previous session survive (FR-7).
+        sentinel_tick.restore_overrides(state, rt)
+        for key, ov in sent.overrides.items():
+            state.effective_settings[f"sentinel.{key}"] = EffectiveSetting(
+                value=ov.value, source=sentinel_tick.SOURCE_LIVE_OVERRIDE
+            )
+        return rt
+
+    def _start_llm_lane(
+        self,
+        rt: sentinel_tick.SentinelRuntime,
+        state: RunState,
+        run_dir: str,
+        llm: SentinelLlmSpec,
+        workflow: WorkflowSpec | None,
+        agents: dict[str, AgentSpec] | None,
+    ) -> None:
+        """Wire the LLM generation lane (fail-safe: any error leaves the mechanical sentinel on)."""
+        try:
+            if self._sentinel_driver_factory is not None:
+                driver = self._sentinel_driver_factory(llm)
+            else:
+                agent = (agents or {}).get(llm.agent) if llm.agent else None
+                driver = make_driver(llm.driver, agent, None)
+            cap = None
+            for br in workflow.circuit_breakers if workflow is not None else []:
+                if br.condition == "run_cost_usd" and br.threshold is not None:
+                    cap = br.threshold if cap is None else min(cap, br.threshold)
+            rt.lane = GenerationLane(
+                spec=llm,
+                driver=driver,
+                run_dir=Path(run_dir),
+                enabled_kinds=sentinel_tick.KINDS_ENABLED,
+                run_cost_cap_usd=cap,
+                log=rt.log,
+            )
+            rt.max_consecutive_rejections = llm.max_consecutive_rejections
+            if rt.lane.reconcile_on_start(state, rt.clock()):
+                self._runstate.save(state)
+        except Exception as exc:  # noqa: BLE001 -- fail-safe boundary
+            rt.lane = None
+            rt.log.error(
+                "sentinel.error: LLM lane not started: %r", exc, extra={"event": "sentinel.error"}
+            )
+
+    def _sentinel_tick(
+        self,
+        rt: sentinel_tick.SentinelRuntime,
+        state: RunState,
+        workflow: WorkflowSpec | None = None,
+    ) -> sentinel_tick.SentinelRuntime | None:
+        """One fail-safe tick on the main thread; returns None if the lane was disabled by an error.
+
+        Any exception (bug, bad inbox file system state, ...) is logged ONCE as
+        ``sentinel.error``, the lane is switched off for the rest of the run and the run carries
+        on exactly as if the sentinel had never been enabled (NFR-2/3).
+        """
+        try:
+            now = rt.clock()
+            sentinel_tick.update_metrics(state, rt, now)
+            result = sentinel_tick.drain_inbox(state, rt, now)
+            assert state.sentinel is not None
+            state.sentinel.last_tick_at = now.isoformat()
+            if sentinel_tick.sample_liveness(state, rt, now):
+                result.changed = True
+            if workflow is not None and rt.recovery is not None:
+                protected = {
+                    tid
+                    for tid in rt.tokens
+                    if self._is_barrier(workflow.task(tid), workflow, state)
+                }
+                if sentinel_tick.evaluate_recovery(state, rt, now, protected):
+                    result.changed = True
+            if rt.lane is not None and self._tick_llm_lane(rt, state, now):
+                result.changed = True
+            if result.changed:
+                # G5: consumed ids are durable together with the mutation they caused, and the
+                # inbox files are only retired after this save.
+                self._runstate.save(state)
+            sentinel_tick.finalize_inbox(rt)
+            return rt
+        except Exception as exc:  # noqa: BLE001 -- fail-safe boundary: never fail the run
+            rt.log.error(
+                "sentinel.error: %r; sentinel lane disabled for this run",
+                exc,
+                extra={"event": "sentinel.error"},
+                exc_info=True,
+            )
+            if state.sentinel is not None:
+                state.sentinel.enabled = False
+                state.sentinel.disabled_reason = f"tick error: {exc!r}"[:500]
+            return None
+
+    def _sentinel_bandwidth(
+        self,
+        rt: sentinel_tick.SentinelRuntime,
+        state: RunState,
+        workflow: WorkflowSpec,
+        running: set[str],
+    ) -> sentinel_tick.SentinelRuntime | None:
+        """L1 backlog release into idle slots, else L2 early checkpoint (fail-safe, $0).
+
+        Runs right after FILL, so ``occ_ready`` is what FILL could not dispatch. Absent a
+        published backlog and with no pending soft checkpoint this is a cheap no-op.
+        """
+        assert self._sentinel is not None
+        try:
+            bw_spec = self._sentinel.spec.bandwidth
+            if rt.bandwidth is None:
+                rt.bandwidth = sentinel_backlog.Bandwidth()
+            bw = rt.bandwidth
+            if rt.edit_applier is None or state.sentinel is None:
+                return rt
+            now = rt.clock()
+            at = now.isoformat()
+            changed = False
+            backlog = sentinel_backlog.read_backlog(rt.control_dir)
+            live, expired = sentinel_backlog.available(state, backlog)
+            if expired and sentinel_backlog.note_expired(state, expired):
+                changed = True
+            slots = rt.live_limit - len(running)
+            if (
+                bw_spec.backlog_release
+                and backlog is not None
+                and live
+                and slots > 0
+                and rt.occ_ready == 0
+            ):
+                released, rejected = sentinel_backlog.release(
+                    state, backlog, live, slots, rt.edit_applier, at
+                )
+                for rid, rule in rejected:
+                    rt.log.warning(
+                        "sentinel.backlog.rejected: %s (%s)",
+                        rid,
+                        rule,
+                        extra={"event": "sentinel.backlog.rejected"},
+                    )
+                if released:
+                    rt.log.info(
+                        "sentinel.backlog.released: %s",
+                        released,
+                        extra={"event": "sentinel.backlog.released"},
+                    )
+                if released or rejected:
+                    changed = True
+                live, _ = sentinel_backlog.available(state, backlog)
+            rt.occ_backlog = len(live)  # counted even with release off (NFR-13 baseline)
+            # ---- L2: early checkpoint (backlog empty / release off) ----
+            if bw_spec.early_checkpoint and not (bw_spec.backlog_release and live):
+                bw.early_idle_since, grace_ok = sentinel_backlog.idle_gate(
+                    bw_spec, rt.live_limit, len(running), bw.early_idle_since, now
+                )
+                if grace_ok:
+                    plan = sentinel_backlog.find_early_plan(workflow, state, bw_spec, running)
+                    if plan is not None:
+                        try:
+                            sentinel_backlog.apply_early(state, plan, rt.edit_applier, at)
+                        except graph_check.EditRejected as rej:
+                            rt.log.warning(
+                                "sentinel.early_ckpt.rejected: %s (%s)",
+                                plan.checkpoint_id,
+                                rej.rule_id,
+                                extra={"event": "sentinel.early_ckpt.rejected"},
+                            )
+                        else:
+                            rt.log.info(
+                                "sentinel.early_ckpt: %s carry_over=%s",
+                                plan.checkpoint_id,
+                                list(plan.carry_over),
+                                extra={"event": "sentinel.early_ckpt"},
+                            )
+                            bw.early_idle_since = None
+                            changed = True
+            else:
+                bw.early_idle_since = None
+            if changed:
+                self._runstate.save(state)
+            return rt
+        except Exception as exc:  # noqa: BLE001 -- fail-safe boundary: never fail the run
+            rt.log.error(
+                "sentinel.error: bandwidth lane: %r; sentinel lane disabled for this run",
+                exc,
+                extra={"event": "sentinel.error"},
+                exc_info=True,
+            )
+            if state.sentinel is not None:
+                state.sentinel.enabled = False
+                state.sentinel.disabled_reason = f"bandwidth error: {exc!r}"[:500]
+            return None
+
+    def _make_edit_applier(
+        self,
+        rt: sentinel_tick.SentinelRuntime,
+        state: RunState,
+        workflow: WorkflowSpec,
+        ctx: _RunContext,
+        agents: dict,
+    ) -> Callable[..., None]:
+        """Build the ``inject`` / ``edit_pending`` applier the tick calls (main thread only).
+
+        ``_apply_pending_edits``: validate on copies (graph_check), then commit workflow + state in
+        one step; the next ``save`` (the tick's, same step as the consumed-id record) makes the
+        edit durable together with its inbox id (G5). ``run()`` re-derives graph/order/preds when
+        ``rt.reshape_pending`` is set (spike invariant I6).
+        """
+        assert self._sentinel is not None
+        llm_edits_allowed = self._sentinel.spec.llm.allow_graph_edits
+
+        bw_cap = sentinel_backlog.injection_cap(self._sentinel.spec, self._max_parallel, workflow)
+
+        def apply(
+            kind: str,
+            payload: dict[str, Any],
+            actor: str,
+            entry_id: str,
+            at: str,
+            policy: graph_check.CheckPolicy | None = None,
+        ) -> None:
+            is_llm = sentinel_tick.is_sentinel_actor(actor)
+            if is_llm and not llm_edits_allowed:
+                raise graph_check.EditRejected(
+                    graph_check.RULE_DISABLED, "sentinel.llm.allow_graph_edits is false"
+                )
+            if kind == "early_checkpoint":  # internal (tick) source only, never an inbox kind
+                plan = graph_check.plan_early_checkpoint(
+                    workflow, state, payload, actor=actor, at=at, edit_id=entry_id
+                )
+            elif kind == "inject":
+                # FR-19: one shared cap for every sentinel source (backlog / ctl / LLM).
+                policy = sentinel_backlog.with_cap(
+                    policy, sentinel_backlog.cap_remaining(state, bw_cap)
+                )
+                plan = graph_check.plan_inject(
+                    workflow, state, payload, actor=actor, at=at, edit_id=entry_id, policy=policy
+                )
+                try:
+                    validate_task_model_policy(plan.new_tasks, agents, workflow.defaults.model)
+                    validate_isolation(workflow, [*workflow.tasks, *plan.new_tasks])
+                except SpecValidationError as exc:
+                    raise graph_check.EditRejected(graph_check.RULE_SPEC, str(exc)) from exc
+            else:
+                plan = graph_check.plan_edit_pending(
+                    workflow,
+                    state,
+                    payload,
+                    membership=ctx.membership,
+                    actor=actor,
+                    at=at,
+                    edit_id=entry_id,
+                )
+            parent = (
+                actor
+                if is_llm or actor == graph_check.PARENT_TICK or actor.startswith("ctl:")
+                else f"ctl:{actor}"
+            )
+            graph_check.commit_plan(workflow, state, plan, parent=parent, at=at)
+            rt.reshape_pending = True
+
+        return apply
+
+    def _llm_kill_protected(self, workflow: WorkflowSpec, state: RunState, tid: str) -> bool:
+        """Barrier/emitter tasks are never LLM-killed (HLD §8.4)."""
+        try:
+            task = workflow.task(tid)
+        except KeyError:
+            return True
+        return bool(task.emit_tasks) or self._is_barrier(task, workflow, state)
+
+    def _tick_llm_lane(
+        self, rt: sentinel_tick.SentinelRuntime, state: RunState, now: datetime
+    ) -> bool:
+        """One generation-lane step; an error disables only the LLM lane (the tick lives on)."""
+        assert rt.lane is not None
+        try:
+            return rt.lane.tick(state, now)
+        except Exception as exc:  # noqa: BLE001 -- fail-safe boundary
+            rt.log.error(
+                "sentinel.error: LLM lane disabled for this run: %r",
+                exc,
+                extra={"event": "sentinel.error"},
+                exc_info=True,
+            )
+            if state.sentinel is not None:
+                state.sentinel.llm_paused = True
+                state.sentinel.llm_pause_reason = f"lane error: {exc!r}"[:300]
+            try:
+                rt.lane.shutdown(state, now)
+            except Exception:  # noqa: BLE001
+                pass
+            rt.lane = None
+            return True
+
+    def _settle_killed(
+        self,
+        tid: str,
+        result: TaskResult,
+        ts: TaskRunState,
+        state: RunState,
+        ctx: _RunContext,
+        token: CancelToken | None,
+        rt: sentinel_tick.SentinelRuntime | None,
+    ) -> SettleResult | None:
+        """Advance the recovery ladder for a killed attempt.
+
+        Returns a ``requeue`` SettleResult for retry/escalate (kills never consume
+        ``max_attempts``: the next dispatch is a fresh ``_run_with_retries`` call), or None after
+        rewriting *result* into an ordinary ``failed`` outcome so the normal failure path runs.
+        """
+        reason = result.kill_reason or (token.reason if token else "") or "unknown"
+        source = result.kill_source or (token.source if token else "") or "unknown"
+        no_retry = bool(token.no_retry) if token else False
+        now = self._clock()
+        if rt is None:  # sentinel off yet an executor reported a kill: nothing to recover with
+            decision = sentinel_tick.DECISION_FAIL
+        else:
+            decision = sentinel_tick.settle_kill(state, rt, tid, reason, source, no_retry, now)
+        # The attempt's spend is real even though the dispatch is discarded.
+        self._accumulate_actuals(ts, result)
+        if self._budget_manager is not None:
+            self._budget_manager.reverse_estimate(
+                tid, state.budget_counters, cycle=ts.dispatch_cycle
+            )
+        if decision == sentinel_tick.DECISION_FAIL:
+            result.status = "failed"
+            result.error = f"killed by sentinel ({source}: {reason}); recovery ladder exhausted"
+            return None
+        ts.status = "killed"
+        ts.ended_at = None
+        self._runstate.save(state)
+        return SettleResult(signal="requeue")
+
     def _drain_remaining(
         self,
         in_flight: dict[Future[WorkerOutcome], str],
@@ -2523,8 +3340,10 @@ class Orchestrator:
         every pre-epic direct unit-level call (``_is_barrier(task, workflow)``, 2-arg) keeps
         working unchanged; `run()`'s own call site always passes the live *state*.
         """
-        if task.emit_tasks:
+        if task.emit_tasks and task.barrier != "soft":
             return True
+        # A soft-barrier emitter (E-Sn7tL2 FR-8) is ready only once all its predecessors settled,
+        # so by construction nothing in flight is one of them; it may overlap other tasks.
         if self._loop_for_gate(workflow, task.id) is not None:
             return True
         if self._router_for_task(workflow, task.id) is not None:
@@ -2573,7 +3392,7 @@ class Orchestrator:
         even once its own ``TaskRunState.status == "succeeded"``, so a dependent's worktree
         is never based on a head still missing that predecessor's work.
         """
-        excluded = ("succeeded", "skipped", "not_taken", "running")
+        excluded = ("succeeded", "skipped", "not_taken", "running", "awaiting_input")
         ready: list[str] = []
         for tid in order:
             if tid in done or tid in in_flight_ids:
@@ -3681,6 +4500,7 @@ class Orchestrator:
         dynamic_input_paths: list[str] | None,
         task_manifest_path: str | None,
         gate_output_path: str | None,
+        input_answer_path: str | None,
         store: ArtifactStore | None,
         task_iso: TaskIsolation | None,
         integrator: Integrator | None,
@@ -3787,6 +4607,7 @@ class Orchestrator:
             dynamic_input_paths,
             task_manifest_path=task_manifest_path,
             gate_output_path=gate_output_path,
+            input_answer_path=input_answer_path,
             store=store,
             env_overlay=dispatch_env,
             cycle=cycle,
@@ -4004,6 +4825,7 @@ class Orchestrator:
         dynamic_input_paths: list[str] | None = None,
         task_manifest_path: str | None = None,
         gate_output_path: str | None = None,
+        input_answer_path: str | None = None,
         store: ArtifactStore | None = None,
         env_overlay: dict[str, str] | None = None,
         cycle: int = 1,
@@ -4046,6 +4868,16 @@ class Orchestrator:
         # fill-in not clobber) -- resolved once here so the executor never has to know
         # about task-level overrides; it just reads ctx.agent like before.
         effective_agent = resolve_effective_agent(task, agent_spec, workflow.defaults.model)
+        recovery = state.tasks[task.id].recovery if task.id in state.tasks else None
+        if recovery is not None and recovery.overrides:
+            # Ladder escalation (T-Sn4Rec): only fields the agent actually has are applied.
+            fields = {
+                _RECOVERY_FIELD_ALIASES.get(k, k): v
+                for k, v in recovery.overrides.items()
+                if _RECOVERY_FIELD_ALIASES.get(k, k) in type(effective_agent).model_fields
+            }
+            if fields:
+                effective_agent = effective_agent.model_copy(update=fields)
 
         # Resolve all paths through the artifact store (no content reads). E-Wk9Tz3 R-19:
         # SIX of the seven remappable path categories -- `st`, not `self._store` (repo_paths,
@@ -4087,13 +4919,7 @@ class Orchestrator:
         # work" as display strings with no reader-side change needed -- flagged in
         # STATUS.md for T-Dr5Yq6 in case a future capture-path-browsing feature ever
         # parses this shape directly.
-        _task_run_dir = os.path.join(".orchestrator", "runs", state.run_id, task.id)
-        _cycle_relpath = (
-            _task_run_dir
-            if cycle <= 1
-            else os.path.join(_task_run_dir, f"{_CYCLE_DIR_PREFIX}{cycle}")
-        )
-        output_dir = self._store.resolve(_cycle_relpath)
+        output_dir = self._task_run_dir(state.run_id, task.id, cycle)
 
         # Task lifecycle hooks (E-AMSSHX, HLD §5-6). Two small closures (not extra methods)
         # since both need the exact same already-resolved locals below -- capturing them
@@ -4241,6 +5067,23 @@ class Orchestrator:
         cum_cost_usd = 0.0
         any_actuals = False
 
+        prior_attempts: list[AttemptRecord] = []
+        if recovery is not None and recovery.kills:
+            # Retry-context note for the re-dispatch after a sentinel kill (seeds attempt-1's file).
+            prior_attempts.append(
+                AttemptRecord(
+                    attempt=0,
+                    status="killed",
+                    exit_code=None,
+                    error=(
+                        f"previous dispatch was killed by the sentinel "
+                        f"({recovery.last_source}: {recovery.last_reason}); "
+                        f"kill #{recovery.kills}"
+                    ),
+                    output_dir="",
+                )
+            )
+
         for attempt in range(1, retry.max_attempts + 1):
             if self._cancel_fn():
                 # Post-hook deliberately does NOT fire here (HLD §6): nothing meaningful
@@ -4259,12 +5102,37 @@ class Orchestrator:
             # noise to discard.
             attempt_output_dir = os.path.join(output_dir, f"attempt-{attempt}")
 
+            prior_attempts_path = (
+                write_prior_attempts(attempt_output_dir, prior_attempts) if prior_attempts else None
+            )
+
+            cancel_token = self._tokens.get(task.id)
+            activity_path = (
+                os.path.join(attempt_output_dir, "transcript.jsonl")
+                if cancel_token is not None
+                else None
+            )
+            if cancel_token is not None:
+                cancel_token.activity_path = activity_path
             ctx = TaskContext(
                 run_id=state.run_id,
                 task_id=task.id,
                 agent=effective_agent,
                 instruction_path=instruction_path,
                 general_instruction_paths=general_instruction_paths,
+                prior_attempts_path=prior_attempts_path,
+                cancel_event=cancel_token,
+                activity_path=activity_path,
+                outcome_marker_path=(
+                    os.path.join(attempt_output_dir, OUTCOME_FILENAME)
+                    if retry.honor_marker
+                    else None
+                ),
+                input_request_path=(
+                    os.path.join(attempt_output_dir, INPUT_REQUEST_FILENAME)
+                    if task.can_request_input
+                    else None
+                ),
                 # Run-dir file (outside any worktree): no isolated-view remap, the absolute path is
                 # valid from inside a worktree. Re-read per attempt so a retry sees new notes.
                 operator_notes_path=self._operator_notes_path(state.run_id),
@@ -4279,6 +5147,7 @@ class Orchestrator:
                 output_dir=attempt_output_dir,
                 task_manifest_path=resolved_task_manifest_path,
                 gate_output_path=gate_output_path,
+                input_answer_path=input_answer_path,
                 env=dict(env_overlay or {}),
             )
 
@@ -4311,6 +5180,13 @@ class Orchestrator:
 
             last_result = result
 
+            if result.status == "killed":
+                # Not a failure of the attempt budget: hand back to the recovery ladder (settle).
+                if cancel_token is not None:
+                    result.kill_reason = result.kill_reason or cancel_token.reason or None
+                    result.kill_source = result.kill_source or cancel_token.source or None
+                return result
+
             if result.status == "succeeded":
                 return _finalize_with_post_hook(result)
 
@@ -4326,6 +5202,26 @@ class Orchestrator:
                 attempt,
                 retry.max_attempts,
                 result.error,
+            )
+
+            no_retry_reason = read_no_retry_marker(attempt_output_dir)
+            if no_retry_reason is not None:
+                logger.warning(
+                    "Task %s attempt %d: task.retry_suppressed (marker): %s",
+                    task.id,
+                    attempt,
+                    no_retry_reason,
+                )
+                break
+
+            prior_attempts.append(
+                AttemptRecord(
+                    attempt=attempt,
+                    status=result.status,
+                    exit_code=result.exit_code,
+                    error=result.error,
+                    output_dir=attempt_output_dir,
+                )
             )
 
             if attempt < retry.max_attempts and retry.backoff_seconds > 0:

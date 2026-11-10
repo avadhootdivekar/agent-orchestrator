@@ -1,0 +1,5 @@
+# Throwaway spike scripts (T-Sn0Spk): relaxed lint, not product code.
+line-length = 100
+[lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501", "E741", "E402", "E731"]

@@ -32,6 +32,7 @@ from typing import IO, Any
 from pydantic import BaseModel
 
 from ..errors import EXIT_CONFIG
+from ..models import run_waiting_for_input
 from ..ui.processes import ProcessSupervisor
 from ..ui.runs import RunNotFoundError, RunRepository
 from .boot_resume import BootResumeGuard, Decision, ResumeCandidate, scan_resumable_runs
@@ -496,6 +497,9 @@ class Supervisor:
             return
         if state.status != "running":
             self._record_decision(candidate, "skip_recheck_terminal")
+            return
+        if run_waiting_for_input(state):
+            self._record_decision(candidate, "skip_recheck_waiting_for_input")
             return
 
         # --workspace only for a no-repo-set run (ADR-0022); repo-set resumes keep their

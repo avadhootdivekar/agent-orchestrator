@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "claude_dir": "claude",
+  "claude_md": "CLAUDE.md",
+  "env": {
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    "CLAUDE_CODE_EFFORT_LEVEL": "high"
+  },
+  "max_turns": 30,
+  "permission_mode": "bypassPermissions",
+  "wrapper_prompt_max_chars": 600,
+  "toolchains": [
+    "go",
+    "node",
+    "cmake"
+  ]
+}

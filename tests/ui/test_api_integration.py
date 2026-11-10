@@ -36,6 +36,20 @@ def client(workspace: Path, stub_supervisor: StubSupervisor) -> Iterator[TestCli
         yield test_client
 
 
+class TestRunOptionsSchema:
+    def test_schema_endpoint_serves_the_registry(self, client: TestClient) -> None:
+        import json
+
+        from agent_orchestrator.run_options import options_schema
+
+        resp = client.get(f"{API_PREFIX}/schema/run-options")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == json.loads(json.dumps(options_schema()))
+        assert body["schema"] == "ao.run-options/v1"
+        assert "max_parallel" in body["json_schema"]["properties"]
+
+
 class TestHealthAndWorkspace:
     def test_health_reports_ok_with_a_version(self, client: TestClient) -> None:
         response = client.get(f"{API_PREFIX}/health")

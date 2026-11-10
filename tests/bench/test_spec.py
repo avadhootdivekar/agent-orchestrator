@@ -335,17 +335,20 @@ def test_load_suite_unknown_task_level_key_rejected(suite_factory: SuiteFactory)
         load_suite(suite_path)
 
 
-def test_load_suite_unknown_grader_level_key_rejected(suite_factory: SuiteFactory) -> None:
+def test_load_suite_grader_specific_keys_pass_through(suite_factory: SuiteFactory) -> None:
+    # E-Bn7Dsc: grader-specific fields (the `blackbox` grader's contract/perf/sandbox, the
+    # `pytest_targeted` grader's fail_to_pass/...) are open at this layer, mirroring
+    # `source` -- each grader validates its own. They land in `model_extra`.
     task = {
         "id": "bugfix-a",
         "category": "bugfix",
         "instruction": "tasks/bugfix-a/instruction.md",
         "fixture": "tasks/bugfix-a/fixture",
-        "grader": {"type": "pytest", "bogus": "x"},
+        "grader": {"type": "pytest", "contract": "http"},
     }
     suite_path = suite_factory(tasks=[task])
-    with pytest.raises(SpecValidationError):
-        load_suite(suite_path)
+    suite = load_suite(suite_path)
+    assert (suite.tasks[0].grader.model_extra or {}).get("contract") == "http"
 
 
 def test_load_subject_missing_version_rejected(subject_factory: SubjectFactory) -> None:

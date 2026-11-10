@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
@@ -27,6 +28,79 @@ EFFORT_MAX_TURNS: dict[str, int] = {"low": 15, "medium": 30, "high": 60, "xhigh"
 # cache/constants.py, or stale cache hits will survive the change.
 # Shared Literal so AgentSpec and TaskSpec can't drift on the allowed effort values.
 EffortLevel = Literal["low", "medium", "high", "xhigh"]
+# T-f0d7gm: `turn_budget` is the canonical name of the max-turn tier (low|medium|high|xhigh ->
+# 15/30/60/120 via EFFORT_MAX_TURNS); the legacy spec key / flag / env `effort` is a deprecated
+# alias for it in this release (it will mean thinking effort after T-9ymKja).
+TurnBudget = EffortLevel
+TURN_BUDGETS: tuple[str, ...] = ("low", "medium", "high", "xhigh")
+LEGACY_EFFORT_DEPRECATION = (
+    "'effort' is deprecated and currently means the turn budget; use 'turn_budget' "
+    "(low|medium|high|xhigh -> 15/30/60/120 turns). After the migration 'effort' will mean "
+    "thinking effort -- run `ao migrate effort-keys`."
+)
+# Provider-neutral context auto-compaction threshold: "auto" or a context-token count. The bounds
+# are the claude CLI's documented `--autocompact` range.
+AUTOCOMPACT_AUTO = "auto"
+AUTOCOMPACT_MIN_TOKENS = 100_000
+AUTOCOMPACT_MAX_TOKENS = 1_000_000
+
+
+def parse_autocompact(value: object) -> str | int:
+    """Normalise an autocompact setting to ``"auto"`` or an int token threshold (100k-1M).
+
+    Accepts ``"auto"``, an int, or a digit string (CLI/env/YAML); raises ``ValueError`` otherwise.
+    """
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text == AUTOCOMPACT_AUTO:
+            return AUTOCOMPACT_AUTO
+        if text.isdigit():
+            value = int(text)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"autocompact must be 'auto' or an integer {AUTOCOMPACT_MIN_TOKENS}-"
+            f"{AUTOCOMPACT_MAX_TOKENS}, got {value!r}"
+        )
+    if not AUTOCOMPACT_MIN_TOKENS <= value <= AUTOCOMPACT_MAX_TOKENS:
+        raise ValueError(
+            f"autocompact must be 'auto' or an integer {AUTOCOMPACT_MIN_TOKENS}-"
+            f"{AUTOCOMPACT_MAX_TOKENS}, got {value}"
+        )
+    return value
+
+
+_warned_legacy_effort = False
+
+
+def merge_legacy_effort(data: Any) -> Any:
+    """``before`` validator body shared by AgentSpec/TaskSpec: map the deprecated ``effort`` key
+    onto ``turn_budget`` (warning once per process); both set and different is an error."""
+    global _warned_legacy_effort
+    if not isinstance(data, dict) or data.get("effort") is None:
+        if isinstance(data, dict) and "effort" in data:
+            data = {k: v for k, v in data.items() if k != "effort"}
+        return data
+    data = dict(data)
+    legacy = data.pop("effort")
+    current = data.get("turn_budget")
+    if current is not None and current != legacy:
+        raise ValueError(
+            f"conflicting 'effort' ({legacy!r}) and 'turn_budget' ({current!r}): "
+            "'effort' is a deprecated alias of 'turn_budget'; set only 'turn_budget'"
+        )
+    data["turn_budget"] = legacy
+    if not _warned_legacy_effort:
+        _warned_legacy_effort = True
+        logger.warning("DEPRECATED: %s", LEGACY_EFFORT_DEPRECATION)
+    return data
+
+
+# Provider-neutral "how hard should the model think" knob, DISTINCT from `EffortLevel` (which only
+# derives a --max-turns cap). Each executor translates it: claude_cli -> `--effort <level>`.
+# None (the default) injects nothing, so argv/cache keys stay byte-identical and the CLI's own
+# default (e.g. ~/.claude/settings.json `effortLevel`) applies.
+ThinkingEffort = Literal["low", "medium", "high", "xhigh", "max"]
+THINKING_EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 # --- E-Rc4Hk8 result cache (ADR-0019). Outcome values the engine writes (open set on read).
 RESULT_CACHE_HIT: Literal["hit"] = "hit"
 RESULT_CACHE_WOULD_HIT: Literal["would_hit"] = "would_hit"
@@ -179,6 +253,9 @@ class RepoSet(BaseModel):
 class RetryPolicy(BaseModel):
     max_attempts: int = 1
     backoff_seconds: float = 0.0
+    # Advertise the `outcome.json` retry=false marker in the prompt. The engine honours a valid
+    # marker regardless; False keeps first-attempt prompts byte-identical.
+    honor_marker: bool = False
 
 
 class HookSpec(BaseModel):
@@ -244,8 +321,31 @@ class AgentSpec(BaseModel):
     context_window: Literal["isolated", "shared"] = "isolated"
     extra_args: list[str] = []
     model: str | None = None  # e.g. "claude-haiku-5-5"; passed as --model
-    effort: EffortLevel | None = None  # → --max-turns via EFFORT_MAX_TURNS
-    max_turns: int | None = None  # explicit --max-turns; overrides effort-derived value when set
+    # Max-turn tier (→ --max-turns via EFFORT_MAX_TURNS). The legacy key `effort` is a deprecated
+    # alias, mapped here by `_legacy_effort_alias` (read it back via the `effort` property).
+    turn_budget: TurnBudget | None = None
+    max_turns: int | None = None  # explicit --max-turns; overrides turn_budget-derived value
+    # Provider-neutral context auto-compaction ("auto" or 100k-1M tokens); executors that lack
+    # the capability (`Executor.supported_settings`) ignore it. claude_cli -> `--autocompact`.
+    autocompact: str | int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_effort_alias(cls, data: Any) -> Any:
+        return merge_legacy_effort(data)
+
+    @field_validator("autocompact")
+    @classmethod
+    def _check_autocompact(cls, v: str | int | None) -> str | int | None:
+        return None if v is None else parse_autocompact(v)
+
+    @property
+    def effort(self) -> TurnBudget | None:
+        """Deprecated read alias of `turn_budget`."""
+        return self.turn_budget
+
+    # Model reasoning depth (provider-neutral); claude_cli maps it to `--effort`. Unset = no flag.
+    thinking_effort: ThinkingEffort | None = None
     # Working directory the agent process runs in. Resolved against the workspace root
     # (reposet.workspace_root) and path-guarded to stay inside it. None -> workspace root.
     # Lets agents' relative output paths (from specs/instructions) resolve deterministically.
@@ -293,6 +393,114 @@ class AgentSpec(BaseModel):
     forbidden_task_models: list[str] = []
 
 
+# --- Awaiting-input (docs-md/awaiting-input-hld.md §4). Limits are named, enforced by the models.
+INPUT_SCHEMA = "ao.input.request/v1"
+INPUT_NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")  # used with fullmatch
+INPUT_REQUEST_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")  # used with fullmatch
+INPUT_MAX_PROMPT_CHARS = 2000
+INPUT_MAX_FIELDS = 20
+INPUT_MAX_CHOICES = 20
+INPUT_MAX_CHOICE_CHARS = 200
+INPUT_MAX_LABEL_CHARS = 200
+INPUT_MAX_TEXT_CHARS = 4000
+INPUT_MAX_FILE_BYTES = 64 * 1024
+InputFieldType = Literal["text", "choice", "bool"]
+InputMode = Literal["blocking", "nonblocking"]
+InputRequestState = Literal["open", "answered", "assumed", "cancelled"]
+InputSource = Literal["cli", "web", "default"]
+INPUT_MODES: tuple[str, ...] = ("blocking", "nonblocking")
+
+
+class InputField(BaseModel):
+    """One answerable field of an `InputRequestSpec` (plain data; front ends render it)."""
+
+    name: str
+    type: InputFieldType = "text"
+    label: str = ""
+    choices: list[str] = []
+    default: str | bool | None = None
+    max_chars: int = INPUT_MAX_TEXT_CHARS
+    required: bool = True
+
+    @model_validator(mode="after")
+    def _check_field(self) -> InputField:
+        if INPUT_NAME_RE.fullmatch(self.name) is None:
+            raise ValueError(f"field name {self.name!r} must match {INPUT_NAME_RE.pattern}")
+        if len(self.label) > INPUT_MAX_LABEL_CHARS:
+            raise ValueError(f"field {self.name!r}: label exceeds {INPUT_MAX_LABEL_CHARS} chars")
+        if not 1 <= self.max_chars <= INPUT_MAX_TEXT_CHARS:
+            raise ValueError(f"field {self.name!r}: max_chars must be 1..{INPUT_MAX_TEXT_CHARS}")
+        if self.type == "choice":
+            if not 1 <= len(self.choices) <= INPUT_MAX_CHOICES:
+                raise ValueError(f"field {self.name!r}: need 1..{INPUT_MAX_CHOICES} choices")
+            if any(not c or len(c) > INPUT_MAX_CHOICE_CHARS for c in self.choices):
+                raise ValueError(
+                    f"field {self.name!r}: choices must be 1..{INPUT_MAX_CHOICE_CHARS} chars"
+                )
+            if len(set(self.choices)) != len(self.choices):
+                raise ValueError(f"field {self.name!r}: duplicate choices")
+        elif self.choices:
+            raise ValueError(f"field {self.name!r}: choices are only valid for type 'choice'")
+        if self.default is not None:
+            self._check_default()
+        return self
+
+    def _check_default(self) -> None:
+        d = self.default
+        if self.type == "bool":
+            ok = isinstance(d, bool)
+        elif self.type == "choice":
+            ok = isinstance(d, str) and d in self.choices
+        else:
+            ok = isinstance(d, str) and len(d) <= self.max_chars
+        if not ok:
+            raise ValueError(f"field {self.name!r}: default is not valid for type {self.type!r}")
+
+
+class InputRequestSpec(BaseModel):
+    """What a task asks for: a plain-text prompt and typed fields (no HTML, ADR-2)."""
+
+    prompt: str
+    fields: list[InputField] = []
+
+    @model_validator(mode="after")
+    def _check_spec(self) -> InputRequestSpec:
+        if not self.prompt.strip() or len(self.prompt) > INPUT_MAX_PROMPT_CHARS:
+            raise ValueError(f"prompt must be 1..{INPUT_MAX_PROMPT_CHARS} chars")
+        if len(self.fields) > INPUT_MAX_FIELDS:
+            raise ValueError(f"at most {INPUT_MAX_FIELDS} fields")
+        names = [f.name for f in self.fields]
+        if len(set(names)) != len(names):
+            raise ValueError("duplicate field names")
+        return self
+
+
+class InputAnswer(BaseModel):
+    values: dict[str, str | bool] = {}
+    assumed: bool = False
+    source: InputSource = "cli"
+    by: str = ""
+
+
+class InputRequest(InputRequestSpec):
+    """An open/answered request. The on-disk file under ``<run>/inputs/`` is the source of
+    truth for the answer; ``RunState.input_requests`` mirrors it."""
+
+    schema_version: str = INPUT_SCHEMA
+    request_id: str
+    task_id: str
+    state: InputRequestState = "open"
+    created_at: str = ""
+    answered_at: str | None = None
+    answer: InputAnswer | None = None
+
+    @model_validator(mode="after")
+    def _check_id(self) -> InputRequest:
+        if INPUT_REQUEST_ID_RE.fullmatch(self.request_id) is None:
+            raise ValueError(f"invalid request_id {self.request_id!r}")
+        return self
+
+
 class TaskSpec(BaseModel):
     id: str
     agent: str
@@ -304,9 +512,19 @@ class TaskSpec(BaseModel):
     retries: RetryPolicy | None = None
     timeout_seconds: int | None = None
     skip_if_outputs_exist: bool = True
+    # Awaiting-input (HLD §4.3). `input`: the engine opens this request before dispatch (no
+    # executor runs; the answer becomes <task dir>/answer.json). `can_request_input`: the task
+    # may write `input-request.json` into its output dir and exit 0 to park as awaiting_input.
+    input: InputRequestSpec | None = None
+    can_request_input: bool = False
     # Dynamic task injection (FR-7, FR-8, Area 2).
     emit_tasks: bool = False
     task_manifest_path: str | None = None
+    # Barrier mode of an `emit_tasks` task (E-Sn7tL2 T-Sn6Brr, FR-8). None / "hard" (default) =
+    # runs solo (ADR-0007 D4). "soft" = may start while non-predecessor tasks are in flight; its
+    # manifest must then be additive w.r.t. them (graph_check.check_additive_manifest). Ignored on
+    # tasks that do not emit.
+    barrier: Literal["hard", "soft"] | None = None
     # Convergence policy when a task depends on tasks from >1 route (FR-B5).
     # "all" (default): every declared dependency must reach a terminal success state.
     # "any": at least one declared dependency must succeed (used at route re-joins).
@@ -316,8 +534,25 @@ class TaskSpec(BaseModel):
     # agent's own value, never the reverse (fill-in, not clobber). See
     # `resolve_effective_agent` for the one place this precedence is applied.
     model: str | None = None
-    effort: EffortLevel | None = None
+    turn_budget: TurnBudget | None = None
     max_turns: int | None = None
+    thinking_effort: ThinkingEffort | None = None
+    autocompact: str | int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_effort_alias(cls, data: Any) -> Any:
+        return merge_legacy_effort(data)
+
+    @field_validator("autocompact")
+    @classmethod
+    def _check_autocompact(cls, v: str | int | None) -> str | int | None:
+        return None if v is None else parse_autocompact(v)
+
+    @property
+    def effort(self) -> TurnBudget | None:
+        """Deprecated read alias of `turn_budget`."""
+        return self.turn_budget
 
     @field_validator("model")
     @classmethod
@@ -423,7 +658,13 @@ def resolve_effective_agent(
     (no per-task tuning) allocates nothing new.
     """
     model = task.model if task.model is not None else default_model
-    if model is None and task.effort is None and task.max_turns is None:
+    if (
+        model is None
+        and task.turn_budget is None
+        and task.max_turns is None
+        and task.thinking_effort is None
+        and task.autocompact is None
+    ):
         return agent
     return agent.model_copy(
         update={
@@ -433,8 +674,12 @@ def resolve_effective_agent(
                 else agent.command_template
             ),
             "model": model if model is not None else agent.model,
-            "effort": task.effort if task.effort is not None else agent.effort,
+            "turn_budget": task.turn_budget if task.turn_budget is not None else agent.turn_budget,
+            "autocompact": task.autocompact if task.autocompact is not None else agent.autocompact,
             "max_turns": task.max_turns if task.max_turns is not None else agent.max_turns,
+            "thinking_effort": (
+                task.thinking_effort if task.thinking_effort is not None else agent.thinking_effort
+            ),
         }
     )
 
@@ -557,6 +802,7 @@ BreakerCondition = Literal[
     "run_active_seconds",
     "verdict",
     "injected_task_count",
+    "sentinel_injected_task_count",
     "stop_file",
 ]
 
@@ -724,6 +970,96 @@ class SchedulingSpec(BaseModel):
     hotspots_path: str = DEFAULT_HOTSPOTS_PATH
 
 
+# -- Sentinel settings (E-Sn7tL2 EPIC §4.7, ADR-0024) -------------------------------------------
+# Same shape in a workflow's `sentinel:` block and the `sentinel:` block of `.ao/config.yaml`.
+# Every sub-model forbids unknown keys so a typo fails `ao validate` instead of being dropped.
+# Defaults live HERE once; the run-options registry generates its env/flag/config entries from
+# these fields (run_options.sentinel_options), so there is no parallel table to keep in sync.
+
+SENTINEL_IDLE_KILL_FLOOR_MINUTES = 12
+"""Spike-derived floor: healthy silent gaps reach ~10 min (Bash cap), 15 is the default."""
+
+
+class _SentinelBase(BaseModel):
+    model_config = {"extra": "forbid"}
+
+
+class SentinelRecoverySpec(_SentinelBase):
+    enabled: StrictBool = True
+    idle_kill_minutes: int = Field(default=15, ge=1)
+    stuck_factor: float = Field(default=3.0, gt=0)
+    stuck_min_minutes: int = Field(default=20, ge=1)
+    cost_kill_pct: float | None = Field(default=None, gt=0)
+    max_recovery_kills_per_task: int = Field(default=2, ge=0)
+    kill_grace_seconds: int = Field(default=10, ge=0)
+    systemic_kill_alarm: int = Field(default=3, ge=1)
+    escalate: list[dict[str, str]] = [{"effort": "high"}]
+    include_barriers: StrictBool = False
+    force: StrictBool = False
+    """Explicit escape: allow ``idle_kill_minutes`` below the floor."""
+
+    @model_validator(mode="after")
+    def _idle_floor(self) -> SentinelRecoverySpec:
+        if self.idle_kill_minutes < SENTINEL_IDLE_KILL_FLOOR_MINUTES and not self.force:
+            raise ValueError(
+                f"recovery.idle_kill_minutes={self.idle_kill_minutes} is below the floor of "
+                f"{SENTINEL_IDLE_KILL_FLOOR_MINUTES} minutes (healthy silent gaps reach ~10); "
+                "set recovery.force=true to override"
+            )
+        return self
+
+
+class SentinelBandwidthSpec(_SentinelBase):
+    backlog_release: StrictBool = True
+    early_checkpoint: StrictBool = True
+    early_ckpt_fraction: float = Field(default=0.5, gt=0, le=1)
+    early_ckpt_min_idle: int | None = Field(default=None, ge=1)
+    early_ckpt_grace_seconds: int = Field(default=120, ge=0)
+
+
+class SentinelLlmSpec(_SentinelBase):
+    enabled: StrictBool = False
+    powers: Literal["advise", "act"] = "act"
+    allow_graph_edits: StrictBool = True
+    allow_kill: StrictBool = True
+    max_llm_kills_per_hour: int = Field(default=2, ge=0)
+    max_injections_per_hour: int = Field(default=6, ge=0)
+    llm_kill_min_running_minutes: int = Field(default=10, ge=0)
+    """An LLM ``kill`` is refused for a task that has run for less than this (T-Sn9Pow)."""
+    planner: StrictBool = False
+    """Opt-in (routed-runner): the ``act`` generation plans on idle slots with no backlog."""
+    planner_idle_seconds: int = Field(default=120, ge=1)
+    """Slot-seconds of idle-with-nothing-ready that fire ``idle_slots_no_backlog``."""
+    heartbeat_minutes: int = Field(default=30, ge=1)
+    generation_ttl_minutes: int = Field(default=60, ge=1)
+    budget_usd: float | None = Field(default=None, gt=0)
+    budget_pct: float | None = Field(default=10, gt=0, le=100)
+    driver: str = "claude-cli"
+    agent: str | None = None
+    # Generation rotation + trigger pacing (T-Sn8Gen, HLD §8.1). A generation ends at the first of
+    # TTL / max_triggers / max_tokens / its own handoff; new ones are paced by the per-hour cap and
+    # the per-trigger-kind cooldown. Consecutive rejected proposals auto-pause the LLM lane.
+    max_triggers_per_generation: int = Field(default=20, ge=1)
+    max_tokens_per_generation: int = Field(default=400_000, ge=1000)
+    trigger_cooldown_minutes: int = Field(default=5, ge=0)
+    max_generations_per_hour: int = Field(default=3, ge=1)
+    max_consecutive_rejections: int = Field(default=5, ge=1)
+
+
+class SentinelSpec(_SentinelBase):
+    """Run-long sentinel settings; absent / ``enabled: false`` => engine behaviour unchanged."""
+
+    enabled: StrictBool = False
+    tick_seconds: int = Field(default=15, ge=1)
+    max_parallel_ceiling: int | None = Field(default=None, ge=1)
+    cancel_grace_seconds: int = Field(default=30, ge=0)
+    inbox_batch_max: int = Field(default=50, ge=1)
+    max_injected_tasks: int | None = Field(default=None, ge=1)
+    recovery: SentinelRecoverySpec = SentinelRecoverySpec()
+    bandwidth: SentinelBandwidthSpec = SentinelBandwidthSpec()
+    llm: SentinelLlmSpec = SentinelLlmSpec()
+
+
 class WorkflowSpec(BaseModel):
     version: str
     id: str
@@ -759,6 +1095,9 @@ class WorkflowSpec(BaseModel):
     # a task's `pre_hook`/`post_hook: HookRef`. Empty default is a byte-identical no-op for
     # every pre-epic workflow (NFR-2/NFR-5) -- mirrors the `agents`/`reposets` registry pattern.
     hooks: dict[str, HookSpec] = {}
+    # Sentinel settings (E-Sn7tL2). None (absent) => the workflow contributes nothing and the
+    # invocation layers (CLI > env > config) decide; a present block wins over them (ADR-0003).
+    sentinel: SentinelSpec | None = None
 
     @field_validator("repo_set", mode="before")
     @classmethod
@@ -901,6 +1240,15 @@ class TaskContext(BaseModel):
     # Absolute path of the run's queued operator notes file (A6), set only when it exists at
     # dispatch. Path only (NFR-1); None keeps every prompt byte-identical to before notes existed.
     operator_notes_path: str | None = None
+    # Retry context (paths only, NFR-1): prior-attempts file, set only on attempt >= 2; marker path
+    # advertised only when RetryPolicy.honor_marker. None keeps prompts byte-identical.
+    prior_attempts_path: str | None = None
+    outcome_marker_path: str | None = None
+    # Awaiting-input (path only): where the task may write `input-request.json`, advertised only
+    # when TaskSpec.can_request_input. None keeps prompts byte-identical.
+    input_request_path: str | None = None
+    # Answered request file of this task's previous dispatch (data, not instructions).
+    input_answer_path: str | None = None
     input_paths: list[str]
     output_paths: list[str]
     output_manifest_path: str | None = None
@@ -931,6 +1279,25 @@ class TaskContext(BaseModel):
     # byte-identical to today (NFR-2). `ClaudeCliExecutor` passes no `env=` to Popen at all
     # today, so this field is the injection point that did not previously exist.
     env: dict[str, str] = {}
+    # Sentinel liveness/kill hooks (E-Sn7tL2 T-Sn4Rec). Both None unless the sentinel recovery lane
+    # is on, so every other run is byte-identical. ``cancel_event`` is a :class:`CancelToken`
+    # (a ``threading.Event``); executors that honour it kill their process group when it is set
+    # and return ``status="killed"``. ``activity_path`` is the file whose growth proves liveness.
+    cancel_event: Any = Field(default=None, exclude=True)
+    activity_path: str | None = Field(default=None, exclude=True)
+
+
+class CancelToken(threading.Event):
+    """Cancel signal for one running task attempt; carries the kill's reason/source."""
+
+    def __init__(self, grace_seconds: int = 10) -> None:
+        super().__init__()
+        self.reason: str = ""
+        self.source: str = ""
+        self.no_retry: bool = False
+        self.grace_seconds = grace_seconds
+        self.activity_path: str | None = None
+        """Set by the worker per attempt so the main-thread tick knows what to stat."""
 
 
 class HookOutcome(BaseModel):
@@ -973,10 +1340,13 @@ class HookOutcome(BaseModel):
 
 class TaskResult(BaseModel):
     task_id: str
-    status: Literal["succeeded", "failed", "cancelled", "timed_out"]
+    status: Literal["succeeded", "failed", "cancelled", "timed_out", "killed"]
     attempts: int
     exit_code: int | None = None
     error: str | None = None
+    # Set only for status == "killed" (sentinel recovery, E-Sn7tL2 T-Sn4Rec): why/who killed it.
+    kill_reason: str | None = None
+    kill_source: str | None = None
     # Path (directory) where captured stdout/stderr live (FR-5).
     # Engine records this without reading file content (NFR-1).
     output_artifact_path: str | None = None
@@ -1010,10 +1380,15 @@ TaskStatus = Literal[
     "skipped",
     "cancelled",
     "timed_out",
+    # Sentinel recovery kill (E-Sn7tL2 T-Sn4Rec): the attempt was killed mid-flight and the task
+    # awaits re-dispatch by the recovery ladder. Display state; the scheduler treats it as ready.
+    "killed",
     # Distinct terminal status for tasks on an unselected route (ADR-RC-001, LLD §0-R1).
     # Never "skipped"+reason: skipped self-heals from should_skip on every run; not_taken is
     # a routing verdict that must survive resume unchanged (source of truth: route_decisions).
     "not_taken",
+    # Parked on a human answer (HLD ADR-1): not failed, not terminal, no executor slot held.
+    "awaiting_input",
 ]
 
 
@@ -1089,6 +1464,9 @@ class RunIntegrationState(BaseModel):
 # ever WRITES one of these two known values, even though a READER must tolerate any string.
 SPAWN_ORIGIN_INJECTED: Literal["injected"] = "injected"
 SPAWN_ORIGIN_LOOP: Literal["loop"] = "loop"
+# Sentinel/backlog/ctl-injected tasks (E-Sn7tL2 FR-13); parent id is `sentinel-tick`,
+# `sentinel-gNN` or `ctl:<actor>` (a label, not a task row) and there is no dispatch cycle.
+SPAWN_ORIGIN_SENTINEL: Literal["sentinel"] = "sentinel"
 
 
 class SpawnRecord(BaseModel):
@@ -1146,6 +1524,50 @@ class WorkflowSnapshot(BaseModel):
     workflow: WorkflowSpec  # STATIC tasks only -- every injected task id filtered out
 
 
+class EffectiveSetting(BaseModel):
+    """One resolved run option and the layer it came from (``cli|env|config|default|unset``)."""
+
+    value: Any = None
+    source: str = "unset"
+
+
+class SettingsHistoryEntry(BaseModel):
+    """Settings in force for one invocation: ``kind`` is ``start`` or ``resume``."""
+
+    at: str
+    kind: Literal["start", "resume"]
+    settings: dict[str, EffectiveSetting] = {}
+
+
+class TaskLimits(BaseModel):
+    """Per-task limits in force at the most recent dispatch (E-aYG5vn FR-2).
+
+    ``None`` = no limit / not set. ``turn_budget`` is the tier name and ``max_turns`` the cap
+    in force (explicit, else derived from the tier). ``task_cost_cap_usd`` has no engine control
+    yet; it is recorded (as None) so the snapshot shape is stable when it lands.
+    """
+
+    thinking_effort: str | None = None
+    turn_budget: str | None = None
+    max_turns: int | None = None
+    autocompact: str | int | None = None
+    timeout_seconds: int | None = None
+    task_cost_cap_usd: float | None = None
+    max_attempts: int | None = None
+
+
+class TaskRecovery(BaseModel):
+    """Per-task recovery-ladder bookkeeping (E-Sn7tL2 T-Sn4Rec); survives resume."""
+
+    kills: int = 0
+    last_reason: str | None = None
+    last_source: str | None = None
+    escalation_step: int = 0
+    overrides: dict[str, str] = {}
+    """Agent-field overrides the next dispatch applies (ladder escalation)."""
+    no_retry: bool = False
+
+
 class TaskRunState(BaseModel):
     status: TaskStatus = "pending"
     attempts: int = 0
@@ -1157,7 +1579,7 @@ class TaskRunState(BaseModel):
     output_artifact_path: str | None = None
     # Provenance: "static" for spec-declared tasks; "injected"/"loop" added by Area 2.
     # Default "static"; Area 2 can set the real value without breaking existing code.
-    origin: Literal["static", "injected", "loop"] = "static"
+    origin: Literal["static", "injected", "loop", "sentinel"] = "static"
     # "<router_id>:<route_id>" this task belongs to (observability only; FR-CB4).
     route: str | None = None
     # e.g. "router=classify route=bug not selected" — set only when status == "not_taken".
@@ -1197,6 +1619,8 @@ class TaskRunState(BaseModel):
     agent: str | None = None
     model: str | None = None
     effort: str | None = None
+    # Limits in force at the most recent dispatch; None for tasks never dispatched / old states.
+    effective_limits: TaskLimits | None = None
     # Ids of tasks whose declared outputs this task consumes as inputs -- lets a review's
     # verdict be attributed to the task(s) whose work it judged.
     upstream_producers: list[str] = []
@@ -1213,6 +1637,11 @@ class TaskRunState(BaseModel):
     # Same shape, captured at the task's FIRST dispatch -- bounds the task's [start, end] commit
     # window so concurrent (`max_parallel>1`) tasks can be told apart from serial ones.
     start_heads: dict[str, str] = {}
+    # Sentinel liveness (E-Sn7tL2 T-Sn4Rec): None while the sentinel recovery lane is off.
+    last_activity_at: str | None = None
+    last_activity_size: int | None = None
+    running_seconds: float | None = None
+    recovery: TaskRecovery | None = None
 
 
 # Run-prompt capture (E-Us9Kd4 FR-13). Named so the CLI capture helper, the dashboard and the
@@ -1285,6 +1714,152 @@ class ResultCacheRecord(BaseModel):
         return self
 
 
+SENTINEL_GEN_TASK_PREFIX = "sentinel-g"
+"""Prefix of the ``state.tasks`` rows that account for LLM generations (``sentinel-g01`` ...)."""
+
+
+def is_sentinel_generation_task(task_id: str) -> bool:
+    """True for a sentinel generation accounting row (not a workflow task)."""
+    return (
+        task_id.startswith(SENTINEL_GEN_TASK_PREFIX)
+        and task_id[len(SENTINEL_GEN_TASK_PREFIX) :].isdigit()
+    )
+
+
+def sentinel_generation_spend_usd(state: RunState) -> float:
+    """USD spent by sentinel generation rows (derived from ``state.tasks``; resume-safe)."""
+    return sum(
+        ts.cumulative_cost_usd
+        for tid, ts in state.tasks.items()
+        if is_sentinel_generation_task(tid)
+    )
+
+
+class SentinelOverride(BaseModel):
+    """One live override applied through the control inbox (``state.sentinel.overrides``)."""
+
+    value: Any = None
+    actor: str = ""
+    at: str = ""
+
+
+class SentinelNote(BaseModel):
+    """Operator/LLM note recorded via the control inbox ``note`` kind."""
+
+    id: str
+    actor: str = ""
+    at: str = ""
+    text: str = ""
+
+
+class GraphEdit(BaseModel):
+    """One persisted pending-graph mutation (E-Sn7tL2 FR-12, spike invariant I1).
+
+    ``RunState.injected_tasks`` only records *added* specs, so edge edits, removals, skips and
+    priorities would be silently reverted by a resume. Each accepted edit appends its
+    *resulting* effect here in the same step as the mutation; ``prepare_resume`` replays the list
+    in order (idempotent).
+
+    ``op``: ``set_edges`` (task_id's effective ``depends_on``/``inputs`` after the edit),
+    ``remove_task`` (cancelled pending task), ``skip`` (task ends ``skipped``), ``priority``
+    (``value`` = FILL priority, higher first).
+    """
+
+    op: Literal["set_edges", "remove_task", "skip", "priority"]
+    task_id: str
+    depends_on: list[str] | None = None
+    inputs: list[str] | None = None
+    value: int | None = None
+    reason: str | None = None
+    source: str = ""
+    """Actor of the control entry (``ctl:<user>``, ``sentinel-gNN``, ``sentinel-tick``)."""
+    at: str = ""
+    edit_id: str = ""
+    """Inbox entry id that caused it (audit)."""
+
+
+class SentinelKill(BaseModel):
+    task_id: str
+    at: str
+    reason: str
+    source: str
+
+
+class EarlyCheckpoint(BaseModel):
+    """One early-checkpoint trigger (FR-10): the pending soft checkpoint that was released early."""
+
+    checkpoint_id: str
+    at: str
+    settled: list[str] = []
+    carry_over: list[str] = []
+    """Unsettled predecessors dropped from the checkpoint's ``depends_on`` (still running)."""
+
+
+class SentinelState(BaseModel):
+    """Run-long sentinel bookkeeping (E-Sn7tL2 T-Sn3Tck); ``RunState.sentinel`` None == never on."""
+
+    enabled: bool = True
+    disabled_reason: str | None = None
+    overrides: dict[str, SentinelOverride] = {}
+    inbox_consumed: list[str] = []
+    """Bounded ring of consumed control-entry ids (idempotent replay)."""
+    llm_paused: bool = False
+    hold_requested: bool = False
+    hold_reason: str | None = None
+    notes: list[SentinelNote] = []
+    last_tick_at: str | None = None
+    kill_log: list[SentinelKill] = []
+    """Bounded recent kills (systemic-alarm window)."""
+    systemic_alarm: bool = False
+    systemic_alarm_at: str | None = None
+    # LLM generations (T-Sn8Gen). All default-valued so a never-generating run stays minimal.
+    generation: int = 0
+    """Highest generation number started (monotonic across resumes)."""
+    active_generation: str | None = None
+    """Task id (``sentinel-gNN``) of the live generation, else None."""
+    gen_started_at: str | None = None
+    gen_triggers: int = 0
+    """Triggers folded into the live generation."""
+    gen_starts: list[str] = []
+    """ISO start times of recent generations (per-hour cap window)."""
+    trigger_last: dict[str, str] = {}
+    """trigger kind -> ISO time it last started a generation (cooldown)."""
+    last_gen_ended_at: str | None = None
+    last_handoff_path: str | None = None
+    """Run-relative path of the newest *valid* handoff (carried into the next pack)."""
+    ungraceful_count: int = 0
+    consecutive_rejections: int = 0
+    """Rejected sentinel-authored proposals since the last accepted one."""
+    llm_pause_reason: str | None = None
+    llm_budget_exhausted: bool = False
+    memory_seq: int = 0
+    """Number of memory merges done (seq tag of appended items)."""
+    # T-Sn7Bkl (FR-9/10/19). Default-valued: a run that never backlogs keeps today's minimal JSON.
+    injected_count: int = 0
+    """Tasks injected by any sentinel source (backlog/ctl/LLM); the FR-19 breaker's counter."""
+    backlog_released: list[str] = []
+    """Ids of backlog entries already released (a re-published file never re-releases them)."""
+    backlog_expired: list[str] = []
+    """Ids of backlog entries seen expired (never released)."""
+    injected_ids: list[str] = []
+    """Ids of every task a sentinel source injected (the FR-19 breaker excludes them from the
+    template's ``injected_task_count``; provenance ``origin`` is never read for behaviour)."""
+    backlog_rejected: dict[str, str] = {}
+    """Backlog entry id -> checker rule id that refused its release (never retried)."""
+    early_checkpoints: list[EarlyCheckpoint] = []
+
+
+class RunMetrics(BaseModel):
+    """Slot-utilisation KPI (E-Sn7tL2 FR-20); only present while the sentinel is enabled."""
+
+    slot_seconds_busy: float = 0.0
+    slot_seconds_idle_with_ready: float = 0.0
+    slot_seconds_idle_no_ready: float = 0.0
+    slot_seconds_idle_backlog: float = 0.0
+    """Idle slot-seconds while released-able backlog work existed (NFR-13 numerator)."""
+    utilisation_pct: float = 0.0
+
+
 class RunState(BaseModel):
     run_id: str
     workflow_id: str
@@ -1296,6 +1871,9 @@ class RunState(BaseModel):
     # Full specs of every task injected at run time (emit + loop clones), in injection order.
     # Persisted so resume can rebuild the expanded workflow (FR-8, FR-12).
     injected_tasks: list[TaskSpec] = []
+    # Accepted pending-graph edits (E-Sn7tL2 T-Sn6Brr), replayed by prepare_resume after the
+    # injected-task merge so a resumed run does not revert them. Empty => pre-epic behaviour.
+    graph_edits: list[GraphEdit] = []
     # loop_id -> highest iteration number already materialized (idempotent on resume, FR-12).
     loop_iterations: dict[str, int] = {}
     # Budget accounting counters (T-oh5gl5 / FR-9, NFR-3).
@@ -1353,6 +1931,37 @@ class RunState(BaseModel):
     # Result cache records (E-Rc4Hk8): task id -> most recent lookup/store outcome. The default
     # {} keeps every pre-epic state.json loadable (NFR-6).
     result_cache: dict[str, ResultCacheRecord] = {}
+    # Awaiting-input (HLD §4.1): run-level blocking/non-blocking mode and the mirror of every
+    # request (key = request_id). Defaults keep every older state.json loadable (ADR-6).
+    input_mode: InputMode = "blocking"
+    input_requests: dict[str, InputRequest] = {}
+    # Run options in force (latest invocation) with provenance, plus an append-only history with
+    # one entry per start/resume (E-aYG5vn FR-1). Defaults keep older state.json loadable.
+    effective_settings: dict[str, EffectiveSetting] = {}
+    effective_settings_history: list[SettingsHistoryEntry] = []
+    # Sentinel lane state + utilisation metrics (E-Sn7tL2 T-Sn3Tck). None until a sentinel-enabled
+    # run ticks, so a disabled run's state.json stays byte-identical (see runstate exclude rules).
+    sentinel: SentinelState | None = None
+    metrics: RunMetrics | None = None
+
+
+def run_waiting_for_input(state: RunState) -> bool:
+    """Derived flag (ADR-1): a running run whose only unfinished work is awaiting_input tasks."""
+    if state.status != "running":
+        return False
+    # getattr: service-layer callers/tests may hand a minimal state stand-in with no tasks.
+    statuses = [t.status for t in getattr(state, "tasks", {}).values()]
+    return "awaiting_input" in statuses and "running" not in statuses
+
+
+def assumption_lines(state: RunState) -> list[str]:
+    """One ``task.field=value (default)`` line per assumed answer (non-blocking mode, HLD §7)."""
+    return [
+        f"{r.task_id}.{name}={value!r} (default)"
+        for r in state.input_requests.values()
+        if r.state == "assumed" and r.answer is not None
+        for name, value in r.answer.values.items()
+    ]
 
 
 def is_current_result_cache_record(rec: ResultCacheRecord, ts: TaskRunState | None) -> bool:

@@ -41,6 +41,7 @@ from .models import (
     DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
     DEFAULT_MAX_HEAL_RETRIES_PER_TASK,
     DEFAULT_MAX_MONITOR_CALLS_PER_RUN,
+    SentinelSpec,
     WorkflowIsolation,
 )
 from .monitoring import DEFAULT_HEAL_WAIT_SECONDS
@@ -231,13 +232,23 @@ class ProjectConfig(BaseModel):
     """Max task attempts (overrides workflow defaults.retries.max_attempts)."""
 
     max_turns: int | None = None
-    """Max turns per claude invocation (overrides effort-derived value)."""
+    """Max turns per claude invocation (overrides turn_budget-derived value)."""
 
     model: str | None = None
     """Claude model for all agents: an alias ('sonnet' = latest) or a pinned id."""
 
+    turn_budget: str | None = None
+    """Max-turn tier for all agents: low, medium, high or xhigh (15/30/60/120 turns)."""
+
     effort: str | None = None
-    """Effort level for all agents: low, medium, or high."""
+    """DEPRECATED alias of `turn_budget` (warns; both set and different is an error)."""
+
+    autocompact: str | int | None = None
+    """Context auto-compaction for all agents lacking their own: 'auto' or 100000-1000000 tokens.
+    Only executors that support it (claude_cli) apply it."""
+
+    thinking_effort: str | None = None
+    """Model reasoning depth for all agents: low, medium, high, xhigh, or max (claude: --effort)."""
 
     quota_max_wait_seconds: int | None = None
     """Max seconds to wait across a quota-exhaustion episode before failing."""
@@ -255,6 +266,10 @@ class ProjectConfig(BaseModel):
     """Record git HEADs for `ao report-survival` serial attribution (FR-12). `None` = unset
     (built-in default: on). CLI `--record-git-heads/--no-record-git-heads` > env
     `AO_RECORD_GIT_HEADS` > this field (`cli._resolve_record_git_heads`)."""
+
+    sentinel: SentinelSpec | None = None
+    """Sentinel defaults (E-Sn7tL2): same shape as a workflow's ``sentinel:`` block. Lowest
+    non-default layer: workflow > CLI > ``AO_SENTINEL_*`` env > this block > built-in default."""
 
     monitoring: MonitoringConfig = MonitoringConfig()
     """Agent-based monitoring & self-healing settings (E-XyfjuZ). Absent block ->
@@ -449,7 +464,10 @@ _INIT_TEMPLATE = """\
 # max_attempts: 1          # AO_MAX_ATTEMPTS — max task attempts (1 = no retry)
 # max_turns: 30            # AO_MAX_TURNS    — max turns per claude invocation
 # model: sonnet # AO_MODEL        — claude model for all agents
-# effort: medium           # AO_EFFORT       — low / medium / high
+# turn_budget: medium      # AO_TURN_BUDGET  — low/medium/high/xhigh -> 15/30/60/120 max turns
+# effort: medium           # AO_EFFORT       — DEPRECATED alias of turn_budget (see ao migrate)
+# autocompact: auto        # AO_AUTOCOMPACT  — "auto" or 100000-1000000 context tokens
+# thinking_effort: high    # AO_THINKING_EFFORT — low/medium/high/xhigh/max (reasoning depth)
 # max_parallel: 1          # AO_MAX_PARALLEL — max independent ready tasks run at once (1 = serial)
 # record_git_heads: true  # AO_RECORD_GIT_HEADS — record git HEADs for report-survival
 
@@ -509,6 +527,18 @@ _INIT_TEMPLATE = """\
 #   max_monitor_calls_per_run: 10  # shared cap on real monitor consults per run
 #   heal_wait_seconds: 30          # RuleBasedMonitor's recommended wait before a healed retry
 #   transient_patterns: []         # extra regexes ADDED to the built-in transient patterns
+
+# --- Sentinel (run-long overseer lane; opt-in, absent -> disabled, byte-identical) ---
+# Same shape as a workflow's `sentinel:` block. Precedence: workflow block > CLI flags
+# (--sentinel, --sentinel-llm, --sentinel-powers, --sentinel-budget-usd, --max-parallel-ceiling,
+# --sentinel-set key=value) > env AO_SENTINEL_<DOTTED_UPPER> > this block > defaults.
+# sentinel:
+#   enabled: false              # AO_SENTINEL_ENABLED / --sentinel / --no-sentinel
+#   tick_seconds: 15
+#   max_parallel_ceiling: null  # null = max_parallel; raise to allow live increases
+#   recovery: {enabled: true, idle_kill_minutes: 15, stuck_factor: 3.0, stuck_min_minutes: 20}
+#   bandwidth: {backlog_release: true, early_checkpoint: true}
+#   llm: {enabled: false, powers: act, budget_usd: null, budget_pct: 10}
 
 # --- Workflow templates: config-registered scaffolding (`ao new` / `ao templates`) ---
 # Each entry is EITHER a template directory (contains template.yaml) OR a directory of

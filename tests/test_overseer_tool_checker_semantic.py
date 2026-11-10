@@ -400,6 +400,7 @@ def append_ledger_unit(
     unit_verdict: str = "pass",
     outcome: str = "done",
     ask_ids: tuple[str, ...] = ("A1",),
+    handoff: dict | None = None,
 ) -> None:
     ov.append_chained(
         inst,
@@ -418,6 +419,7 @@ def append_ledger_unit(
             "duration_s": 10.0,
             "changed_paths": [],
             "needs_input": False,
+            "handoff": handoff,
         },
         _NOW_DT,
         dry_run=False,
@@ -591,6 +593,87 @@ def setup_r13_baseline(
     write_state(ws, "run-1", {})
     set_hook_context(monkeypatch, tmp_path, "run-1", emitter)
     return inst, cfg_dict, emitter, next_wave
+
+
+_HANDOFF = {
+    "reason": "time",
+    "stopped_at": "parser done",
+    "staged": ["core:abc123"],
+    "remaining": "wire CLI",
+    "next_hint": "",
+}
+
+
+def setup_r13_handoff_history(
+    ws: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    handoffs: int,
+    approach_change: str | None,
+) -> Path:
+    """`handoffs` self-split handoff units on A1/parser, then a new unit; cap is 2 attempts."""
+    inst = ws / _INSTANCE_DIR
+    cfg_dict = write_config(inst, max_attempts_per_item=2)
+    write_charter(inst, make_charter_dict(write_prompt(inst)))
+    emitter = f"ck-{handoffs:02d}"
+    next_wave = handoffs + 1
+    for wave in range(1, handoffs + 1):
+        unit_id = f"w{wave:02d}-01-hist"
+        write_brief(inst, wave, unit_id, work_item="A1/parser", kind="implement")
+        append_ledger_unit(
+            inst,
+            wave=wave,
+            unit_id=unit_id,
+            work_item="A1/parser",
+            kind="implement",
+            outcome="partial",
+            handoff=_HANDOFF,
+        )
+    write_digest(inst, handoffs, allowed_wave_size=cfg_dict["wave_size"], stage="explore")
+    write_state(ws, "run-1", {})
+    set_hook_context(monkeypatch, tmp_path, "run-1", emitter)
+    unit_id = f"w{next_wave:02d}-01-new"
+    write_brief(
+        inst,
+        next_wave,
+        unit_id,
+        work_item="A1/parser",
+        kind="implement",
+        approach_change=approach_change,
+    )
+    unit_entry = make_unit_entry(next_wave, 1, "new", emitter=emitter, kind="implement")
+    ckpt_entry = make_next_ckpt_entry(next_wave, [unit_id], emitter=emitter, cfg_dict=cfg_dict)
+    write_manifest_entries(inst, f"{emitter}.json", [unit_entry, ckpt_entry])
+    return inst
+
+
+def test_r13_handoffs_are_not_attempts_continuation_needs_no_approach_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = tmp_path
+    setup_r13_handoff_history(ws, tmp_path, monkeypatch, handoffs=2, approach_change=None)
+    ov.ckpt_check(make_args(ws))  # 2 units >= cap(2) by raw count, but both are handoffs
+
+
+def test_r13_handoff_chain_at_cap_requires_approach_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = tmp_path
+    setup_r13_handoff_history(ws, tmp_path, monkeypatch, handoffs=3, approach_change=None)
+    with pytest.raises(ov.CheckViolations) as excinfo:
+        ov.ckpt_check(make_args(ws))
+    assert "R13" in rule_ids_of(excinfo.value.violations)
+
+
+def test_r13_handoff_chain_at_cap_with_approach_change_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = tmp_path
+    setup_r13_handoff_history(
+        ws, tmp_path, monkeypatch, handoffs=3, approach_change="re-slice into two smaller items"
+    )
+    ov.ckpt_check(make_args(ws))
 
 
 def run_r13_case(

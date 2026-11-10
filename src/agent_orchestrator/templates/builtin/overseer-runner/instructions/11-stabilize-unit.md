@@ -49,6 +49,40 @@ Same rules as `10-work-unit.md`:
 run. If you could not fully stabilize the ask, report `outcome: blocked` or
 `outcome: partial`, be explicit about what remains, and still **exit 0**.
 
+## Self-split — when the task is too big for one task
+A single task has its own time, cost, and turn budget; the run as a whole has a larger
+one. Treat the task as **too big for one task** (but plausibly fine across the run) when
+any of these trigger:
+- **Time** — you are well into your wall-clock allowance and the remaining work is still
+  a large fraction of the brief.
+- **Cost** — spend on this unit is approaching what one unit should cost, and the
+  remainder is not small.
+- **Turns** — you are running low on turns/context and still have substantial work left.
+
+When that happens, do not push on until you are cut off mid-edit, and do not stop with
+nothing to show for it. Instead:
+1. **Stop at a logical boundary** — a point where what exists is coherent (a finished
+   file, a passing test group, a complete sub-step), not halfway through a change.
+2. **Stage/commit what is done on the current branch** — never switch branches, and
+   never leave half-applied edits in the working tree; revert or finish anything that
+   would leave the tree broken. Follow the repo's own commit rules and push only if they
+   (or the task) say to.
+3. **Report a handoff** in your breadcrumb: `outcome: partial`, `verdict: pass` (or `na`),
+   `needs_input: false`, and a `handoff` object (optional field; schema stays `v1`):
+   `{"reason": "time|cost|turns|scope|other", "stopped_at": "<≤200 chars>",
+   "staged": ["<repo_id>:<commit sha or path>"], "remaining": "<≤300 chars>",
+   "next_hint": "<≤300 chars, optional>"}`. `reason` is the trigger that fired (your own
+   judgment, not engine fact); `staged` and `changed_paths` must evidence the work you left
+   (a handoff with nothing staged is treated as a plain partial). Mirror the remainder as
+   `followups[0]`, and say what is done, what is left, and where to pick up in the report.
+   Use only the existing breadcrumb fields plus this optional `handoff` object. The tree must stay green (revert partial edits) and the continuation stays `stabilize` kind.
+4. **Still exit 0.** Self-splitting is the normal way to hand off a big unit; the
+   checkpoint can schedule the remainder as a further unit that builds on your work.
+   It never justifies a non-zero exit.
+
+Do not use this to dodge work that fits in the task, and do not claim `done` for a
+unit you split.
+
 ## If you need human input
 Set `needs_input: true` in your breadcrumb and write
 `needs-input/<your-unit-id>.md`. Do **not** touch any `control/pause*.flag` or

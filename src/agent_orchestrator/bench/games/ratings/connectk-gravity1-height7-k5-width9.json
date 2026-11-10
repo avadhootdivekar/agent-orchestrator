@@ -1,0 +1,35 @@
+{
+  "game": {
+    "id": "connectk",
+    "width": 9,
+    "height": 7,
+    "k": 5,
+    "gravity": 1
+  },
+  "version": "b9a06e4d57f5",
+  "labels": [
+    "random",
+    "greedy",
+    "ab1",
+    "ab2",
+    "ab4",
+    "ab6",
+    "ab8",
+    "mcts5000",
+    "mcts20000"
+  ],
+  "ratings": [
+    0.0,
+    121.1,
+    555.4,
+    998.0,
+    959.3,
+    1060.6,
+    1069.2,
+    925.5,
+    1063.5
+  ],
+  "games_per_pair": 40,
+  "opening_plies": 4,
+  "first_player_score": 0.545
+}

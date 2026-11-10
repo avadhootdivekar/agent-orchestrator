@@ -111,7 +111,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: 216px 1fr;
+  grid-template-columns: auto 1fr;
   /* Fixed viewport: the sidebar and tab bar never scroll away; each tab panel scrolls itself. */
   height: 100vh;
   height: 100dvh;
@@ -119,6 +119,8 @@ body {
 }
 
 .sidebar {
+  width: 216px;
+  box-sizing: border-box;
   background: var(--surface-1);
   border-right: 1px solid var(--hairline);
   padding: 20px 12px;
@@ -167,6 +169,32 @@ body {
   background: var(--accent-soft);
   color: var(--text-primary);
   font-weight: 500;
+}
+
+.sidebar-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar-toggle {
+  margin-bottom: 8px;
+}
+
+/* Collapsed: a narrow icon rail on desktop (labels, brand and workspace path hidden). */
+.sidebar-collapsed {
+  width: 56px;
+  padding: 20px 6px;
+}
+.sidebar-collapsed .brand,
+.sidebar-collapsed .brand-sub,
+.sidebar-collapsed .sidebar-label {
+  display: none;
+}
+.sidebar-collapsed .nav-item {
+  justify-content: center;
 }
 
 .sidebar-footer {
@@ -292,6 +320,29 @@ h2 {
   color: var(--accent);
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.chip.waiting {
+  color: var(--text-primary);
+  border-color: var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 18%, transparent);
+}
+
+.banner.needs-input {
+  border: 1px solid var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.input-request {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.input-request-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .chip.neutral {
@@ -603,9 +654,29 @@ label {
     height: auto;
     min-height: 100vh;
     overflow: visible;
+    /* Default stretch spreads the spare 100vh across both auto rows, inflating the collapsed bar. */
+    align-content: start;
   }
   .main {
     min-height: auto;
+  }
+  /* Collapsed on mobile: only the toggle bar remains, so the main view gets the screen. */
+  .sidebar,
+  .sidebar-collapsed {
+    width: auto;
+  }
+  .sidebar-collapsed {
+    padding: 6px 12px;
+  }
+  .sidebar-collapsed .sidebar-body {
+    display: none;
+  }
+  .sidebar-collapsed .sidebar-toggle {
+    margin-bottom: 0;
+    justify-content: flex-start;
+  }
+  .sidebar-collapsed .sidebar-label {
+    display: inline;
   }
   .tab-panel {
     overflow-y: visible;
@@ -1090,9 +1161,19 @@ pre.code {
   stroke: var(--graph-edge-spawn);
 }
 
+.react-flow__edge.graph-edge-spawn-sentinel .react-flow__edge-path {
+  stroke: var(--graph-edge-spawn);
+  stroke-dasharray: 8 3;
+}
+
 .react-flow__edge.graph-edge-spawn-loop .react-flow__edge-path {
   stroke: var(--graph-edge-loop);
   stroke-dasharray: 1 4;
+}
+
+/* Dependency edge into a task whose edges a run-time edit rewrote (RunState.graph_edits set_edges). */
+.react-flow__edge.graph-edge-edited .react-flow__edge-path {
+  stroke-width: 3;
 }
 
 /* Unknown spawn origin (open set, ADR-0017 D1) -- same neutral treatment as a node's unknown-origin badge. */
@@ -1124,6 +1205,11 @@ pre.code {
   padding: 0 8px 0 14px;
   font-size: 12px;
   overflow: hidden;
+}
+
+.task-node--sentinel {
+  border-style: dashed;
+  border-color: var(--graph-edge-spawn);
 }
 
 .task-node-stripe {
@@ -1372,9 +1458,20 @@ pre.code {
   border-top-color: var(--graph-edge-spawn);
 }
 
+.legend-edge-swatch.graph-edge-spawn-sentinel {
+  border-top-color: var(--graph-edge-spawn);
+  border-top-style: dashed;
+}
+
 .legend-edge-swatch.graph-edge-spawn-loop {
   border-top-style: dotted;
   border-top-color: var(--graph-edge-loop);
+}
+
+.legend-edge-swatch.graph-edge-edited {
+  border-top-width: 4px;
+  border-top-style: solid;
+  border-top-color: var(--graph-edge-dependency);
 }
 
 /* ---------- Run graph detail reveal (E-k3AMEr, T-pAi0Cv) ---------- */
@@ -1716,13 +1813,68 @@ pre.code {
 
 /* ---------- workspace tabs (E-iafh2F Phase 2) ---------- */
 
+.tabbar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  flex: none; /* stays above the scrolling panels */
+}
+
 .tabbar {
   display: flex;
   gap: 2px;
-  margin: 0 0 16px;
-  border-bottom: 1px solid var(--hairline);
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-x: auto;
-  flex: none; /* pinned above the scrolling panels */
+}
+
+.tabbar-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+  padding-bottom: 4px;
+}
+
+.tabbar-action {
+  border: 1px solid var(--hairline);
+  background: none;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tabbar-action:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+
+.tabbar-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tabbar-pin {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tabbar-pin[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.tabbar-item.is-pinned .tabbar-tab {
+  padding-right: 2px;
 }
 
 .tabbar-item {
@@ -2084,4 +2236,98 @@ pre.launch-log {
 
 .section-body[hidden] {
   display: none;
+}
+
+/* Confirmed in-workspace paths inside the code viewer (A4.5). */
+.code-lines a.path-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Limits & settings: usage-vs-cap bars (T-xNFBww). Text always carries the numbers. */
+.usage-bar-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-bar {
+  display: inline-block;
+  width: 96px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.usage-bar.warn .usage-bar-fill {
+  background: #d99a1b;
+}
+
+.usage-bar.crit .usage-bar-fill {
+  background: #d14343;
+}
+
+/* ---------- schema-driven run options (RunOptionsForm) ---------- */
+
+.options-group {
+  margin: 8px 0;
+}
+
+.options-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+/* Sentinel panel (T-Sn5Ui1): stacked slot-utilisation bar; the text beside it carries the numbers. */
+.slot-bar {
+  display: inline-flex;
+  width: 160px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--accent-soft);
+}
+
+.slot-busy {
+  background: var(--accent);
+}
+
+.slot-idle-ready {
+  background: #d14343;
+}
+
+.slot-idle-none {
+  background: #9aa3ad;
+}
+
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.kv > div {
+  display: flex;
+  gap: 12px;
+}
+
+.kv dt {
+  min-width: 110px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.kv dd {
+  margin: 0;
 }

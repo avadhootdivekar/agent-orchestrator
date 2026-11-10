@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from agent_orchestrator.models import (
+    GraphEdit,
     LoopSpec,
     RouterSpec,
     RouteSpec,
@@ -196,6 +197,7 @@ class TestDataclassesAndConstants:
             "spawn_edges",
             "loops",
             "routers",
+            "graph_edits",
         ]
 
     def test_graph_node_field_names_match_hld_14_2(self) -> None:
@@ -792,3 +794,47 @@ class TestPureModuleBoundary:
         assert "import os" not in source
         assert "from pathlib" not in source
         assert "import pathlib" not in source
+
+
+class TestGraphEditsExposed:
+    """T-Sn6Brr AC5 part 2: ``RunState.graph_edits`` reaches the graph payload."""
+
+    EDIT = GraphEdit(
+        op="set_edges", task_id="b", depends_on=["a"], source="sentinel-g01", at="2026-11-09T10:00Z"
+    )
+
+    def test_version_unchanged_without_edits_and_bumped_with(self) -> None:
+        base = run_state()
+        edited = run_state()
+        edited.graph_edits = [self.EDIT]
+        assert compute_graph_version(base) == compute_graph_version(run_state())
+        assert compute_graph_version(base) != compute_graph_version(edited)
+
+    def test_payload_carries_graph_edits(self) -> None:
+        wf = WorkflowSpec(
+            version="1",
+            id="wf",
+            repo_set="r",
+            tasks=[
+                TaskSpec(id="a", agent="x", instruction="i"),
+                TaskSpec(id="b", agent="x", instruction="i", depends_on=["a"]),
+            ],
+        )
+        state = run_state()
+        state.graph_edits = [self.EDIT]
+        d = asdict(build_run_graph(state, snapshot_of(wf)))
+        assert d["graph_edits"] == [
+            {
+                "op": "set_edges",
+                "task_id": "b",
+                "dependencies": ["a"],
+                "inputs": None,
+                "value": None,
+                "source": "sentinel-g01",
+                "at": "2026-11-09T10:00Z",
+            }
+        ]
+
+    def test_no_edits_yields_empty_list(self) -> None:
+        g = build_run_graph(run_state(), None)
+        assert g.graph_edits == []

@@ -5,6 +5,7 @@ import type { RunOptions, WorkflowInfo } from "../types";
 import { useLaunchPanel } from "../useLaunchPanel";
 import { ErrorBanner } from "./common";
 import { LaunchPending, LaunchResultPanel } from "./LaunchResultPanel";
+import { optionErrors, RunOptionsForm, useRunOptionsSchema } from "./RunOptionsForm";
 import { TemplateLaunch } from "./TemplateLaunch";
 
 type Mode = "workflow" | "template";
@@ -34,6 +35,8 @@ export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => v
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const panel = useLaunchPanel("workflow");
+  const schema = useRunOptionsSchema();
+  const invalidOptions = Object.keys(optionErrors(schema, options)).length > 0;
 
   useEffect(() => {
     api
@@ -47,21 +50,6 @@ export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => v
 
   const selected = workflows.find((w) => w.path === workflowPath);
   const promptable = Boolean(selected?.prompt_path);
-
-  const setOption = (key: keyof RunOptions, raw: string) => {
-    setOptions((prev) => {
-      const next = { ...prev };
-      if (raw === "") {
-        delete next[key];
-        return next;
-      }
-      // Numeric knobs must go over the wire as numbers; the server allow-lists keys but
-      // does not coerce types.
-      const numeric = ["max_attempts", "max_turns", "max_parallel", "budget_total"];
-      (next as Record<string, unknown>)[key] = numeric.includes(key) ? Number(raw) : raw;
-      return next;
-    });
-  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -174,61 +162,10 @@ export function NewRun({ onLaunched }: { onLaunched: (runId: string | null) => v
             </div>
 
             <h2>Overrides</h2>
-            <div className="options-grid">
-              <div>
-                <label htmlFor="model">Model</label>
-                <input
-                  id="model"
-                  placeholder="default"
-                  onChange={(event) => setOption("model", event.target.value)}
-                />
-              </div>
-              <div>
-                <label htmlFor="effort">Effort</label>
-                <select
-                  id="effort"
-                  onChange={(event) => setOption("effort", event.target.value)}
-                >
-                  <option value="">default</option>
-                  <option value="low">low</option>
-                  <option value="medium">medium</option>
-                  <option value="high">high</option>
-                </select>
-              </div>
-              <div>
-                <label htmlFor="max_parallel">Max parallel</label>
-                <input
-                  id="max_parallel"
-                  type="number"
-                  min={1}
-                  placeholder="1"
-                  onChange={(event) => setOption("max_parallel", event.target.value)}
-                />
-              </div>
-              <div>
-                <label htmlFor="max_attempts">Max attempts</label>
-                <input
-                  id="max_attempts"
-                  type="number"
-                  min={1}
-                  placeholder="spec default"
-                  onChange={(event) => setOption("max_attempts", event.target.value)}
-                />
-              </div>
-              <div>
-                <label htmlFor="budget_total">Token budget</label>
-                <input
-                  id="budget_total"
-                  type="number"
-                  min={1}
-                  placeholder="unlimited"
-                  onChange={(event) => setOption("budget_total", event.target.value)}
-                />
-              </div>
-            </div>
+            <RunOptionsForm schema={schema} value={options} onChange={setOptions} />
 
             <div className="row" style={{ marginTop: 20 }}>
-              <button className="primary" type="submit" disabled={submitting || !workflowPath}>
+              <button className="primary" type="submit" disabled={submitting || !workflowPath || invalidOptions}>
                 {submitting ? "Starting…" : "Start run"}
               </button>
               <span className="muted" style={{ fontSize: 12 }}>

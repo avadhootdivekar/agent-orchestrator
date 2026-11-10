@@ -494,6 +494,40 @@ def load_template(
 # unescaped -- this is what lets a `.json` template splice a param straight into a NUMERIC
 # position with no surrounding quotes (e.g. the built-in routed-runner's circuit-breaker
 # budget thresholds, `"threshold": {{ params.task_budget_usd }}`) keep working.
+RAW_VARIABLE_PREFIX = "raw."
+_TRUTHY_PARAM_VALUES = frozenset({"true", "on", "yes", "1"})
+
+
+def _sentinel_member(params: dict[str, str]) -> str:
+    """The ``raw.sentinel_member`` fragment: `` "sentinel": {...},`` when the ``sentinel_enabled``
+    param is truthy, else ``""`` -- placed right after a line's trailing comma so a disabled
+    sentinel renders workflow.json byte-identical to a template that never had the param.
+    Built from the validated model so the rendered block can never be malformed JSON."""
+    if params.get("sentinel_enabled", "").lower() not in _TRUTHY_PARAM_VALUES:
+        return ""
+    from ..models import SentinelSpec
+
+    llm: dict[str, object] = {}
+    if params.get("sentinel_llm", "").lower() in _TRUTHY_PARAM_VALUES:
+        llm["enabled"] = True
+    if params.get("sentinel_powers"):
+        llm["powers"] = params["sentinel_powers"]
+    if params.get("sentinel_planner", "").lower() in _TRUTHY_PARAM_VALUES:
+        llm["planner"] = True
+    if params.get("sentinel_budget_pct"):
+        llm["budget_pct"] = float(params["sentinel_budget_pct"])
+    # Only the params the operator set are rendered: every key in a workflow `sentinel:` block
+    # outranks CLI/env/config, so spelling out defaults here would silently pin them.
+    block: dict[str, object] = {"enabled": True}
+    if llm:
+        block["llm"] = llm
+    try:
+        SentinelSpec.model_validate(block)
+    except PydanticValidationError as e:
+        raise TemplateError(f"invalid sentinel_* params: {_flatten_pydantic_error(e)}") from e
+    return ' "sentinel": ' + json.dumps(block) + ","
+
+
 _JSON_BARE_NUMBER_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
 
@@ -528,6 +562,9 @@ def _render(
         if name not in variables:
             raise TemplateError(f"unknown template variable '{{{{ {name} }}}}' in {source_desc}")
         value = variables[name]
+        # `raw.*` variables are engine-built JSON fragments (never user text): not escaped.
+        if name.startswith(RAW_VARIABLE_PREFIX):
+            return value
         return _json_escape_value(value) if escape_json else value
 
     return _VAR_RE.sub(_sub, text)
@@ -825,6 +862,7 @@ def instantiate(
         "instance_dir": instance_dir_rel,
         "workspace_root": str(workspace_root_path),
         **{f"params.{k}": v for k, v in resolved_params.items()},
+        f"{RAW_VARIABLE_PREFIX}sentinel_member": _sentinel_member(resolved_params),
     }
 
     created: list[str] = []

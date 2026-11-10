@@ -44,13 +44,63 @@ own charter `statement`** back — not a paraphrase — so the judgment is trace
 anchored to the exact text intake locked in. If you mark an ask `deferred`, give a
 `deferred_reason` (`out_of_budget|blocked_needs_input|human_descoped|infeasible`).
 
+## Reading self-split handoffs
+A unit that stopped on purpose writes `outcome: partial` with a valid `handoff` object; the
+ledger records it as state `handoff`, and `digest.handoffs[]` lists every **open** one (the
+last unit on its work item) with `work_item`, `unit_id`, `reason`, `stopped_at`, `staged`,
+`remaining`, `next_hint` and `chain`. A handoff is **not** a failed attempt. For each open
+handoff, decide:
+- **Continue** (default): emit a unit with the **same `work_item` key** (never rename it —
+  OV-R13c) and the same kind (stabilize continues as stabilize), `prior_attempts` = the
+  chain's unit ids, `approach_change: null` (handoffs do not count toward the attempt cap),
+  `goal` = `remaining` + `next_hint`, `context_paths` from `staged`, and the original
+  acceptance items still unmet.
+- **Descope**, or **verify** if the remainder looks effectively complete.
+- If the remainder cannot fit the budget or a `closeout`/`must_close` is due, emit no
+  continuation: mark the ask `deferred` with `deferred_reason: out_of_budget` and quote
+  `remaining` in the evidence (≥40 chars).
+
+A handed-off ask is `on_track`, and a handoff never makes a criterion `met`. The
+`handoff_chain` signal (3 consecutive handoffs on one item) must be answered like any other:
+`redirect` (re-slice, with a non-empty `approach_change` — required by OV-R13 at the cap) or
+`descope`; `accept` needs a ≥40-char rationale. A continuation occupies a wave slot.
+
 ## Answer every signal — no exceptions
 Your verdict's `signal_responses[]` must contain **one entry per signal id** in
 `digest.signals[]` — every signal, with no exceptions; this is mechanically checked
-(`OV-R12`, once the checker lands). For each: pick a `response`
+(`OV-R12`). For each: pick a `response`
 (`redirect|descope|accept|hold`); `accept` on a `high`-severity signal requires a
 `rationale` of at least 40 characters explaining why accepting the repeat/stall/drift
 is actually the right call, not a shrug.
+
+## Acknowledge sentinel directives
+If `digest.sentinel.directives[]` is present and non-empty, the run's sentinel raised directives
+for you. Your verdict's `directive_responses[]` must contain **one entry per directive id**:
+`{"directive_id": "<id>", "response": "adopt|redirect|descope|reject", "rationale": "..."}`
+(`reject` needs a rationale of ≥40 chars). Mechanically checked (`OV-R12b`); a missing ack fails
+`ckpt-check`. Also read `digest.sentinel` (`injected_since_last_ckpt`, `kills`, `edits`, `alarms`):
+the sentinel owns health/recovery/ad-hoc injection, you own charter alignment and may revisit them.
+
+## Carry-over (early checkpoint) — never re-schedule it
+If `digest.carry_over[]` is present, the sentinel released **this** checkpoint early while those
+units were still running (each entry: `unit_id`, `wave`, `status`, `work_item`, `kind`). They are
+**not** your predecessors and **not** failed: they finish on their own and are ledgered by a later
+checkpoint. Plan the next wave from the settled units only, and **never emit a unit (or backlog
+entry) whose `work_item` equals a carry-over `work_item`** — that would run the same work twice
+(`OV-R17`, mechanically checked). Mention each carry-over unit in your `report.md`.
+
+## Backlog (optional): pre-approve work for idle slots
+When `digest.soft_barrier` is true the run has the sentinel, and your emitted next checkpoint must
+carry `"barrier": "soft"` (and must not otherwise — `OV-R10`). You may also write
+`outputs/backlog.json` (schema `ao.overseer.backlog/v1`, contract "Backlog"): up to 20 *independent*
+units the sentinel may start **for free** in otherwise idle slots while this wave's tail runs.
+Per entry: `id` (slug), `priority` (higher runs first), `brief_path`
+(`<instance_dir>/outputs/waves/w(JJ+1)/briefs/<id>.json`, you write the brief like any unit brief),
+`kind`, `ask_ids`, `work_item`, `rationale`, `expires_at_ckpt` (`JJ+1` or `JJ+2`). Rules
+(`OV-BL1..BL7`): independent work only (not a `work_item` of this wave, a carry-over item or a capped
+item), no new scope in `converge`, only `verify`/`document` in `stabilize`, **no backlog at all** on
+`closeout`/`hold`/`must_close`. An entry expires when its `expires_at_ckpt` checkpoint starts —
+re-list it in your own backlog to re-confirm. No `backlog.json` = the previous backlog is cleared.
 
 ## Update progress
 For **every** acceptance criterion across the charter, set its `criteria[]` status
@@ -73,7 +123,8 @@ evidence, not merely asserted in your own rationale.
 
 ## Write your outputs
 - `verdict.json` (schema `ao.overseer.verdict/v1` in the contract): `decision`,
-  `rationale`, `next_wave_goal`, `alignment[]`, `criteria[]`, `signal_responses[]`, and
+  `rationale`, `next_wave_goal`, `alignment[]`, `criteria[]`, `signal_responses[]`, `directive_responses[]` (only when the digest has open sentinel
+  directives), and
   `hold_questions` (required, ≥1, iff `decision == "hold"`).
 - `report.md`: the human-readable state of the run — this is what an operator reads
   via `ao status`. State, per ask: done / in progress / current usable status; and the
@@ -105,8 +156,7 @@ writes `control/hold-answer.md` and resumes the run — see this template's `REA
 "Human-in-the-loop (hold)".
 
 ## Self-check before you exit
-Once the checker lands, run this template's own checker in dry-run mode and fix every
-violation it reports:
+Run this template's own checker in dry-run mode and fix every violation it reports:
 
 ```bash
 <python_bin> <workspace_root>/<instance_dir>/tools/overseer_tool.py \
@@ -114,9 +164,6 @@ violation it reports:
   --workspace-root <workspace_root> --instance-dir <instance_dir>
 ```
 
-**Note:** `ckpt-check` does not exist as a subcommand yet in this epic (a later, M3
-task adds it) — until then, re-read `overseer-contract.md`'s "Hard rules" section by
-hand (the `OV-R*` rules) and check your own manifest and verdict against them before
-you exit, rather than trying to run a command that isn't wired up yet. If a previous
+If a previous
 `check-result.json` exists in your own checkpoint directory, you already read it in
 step 6 above — fix exactly what it named before you emit anything new.

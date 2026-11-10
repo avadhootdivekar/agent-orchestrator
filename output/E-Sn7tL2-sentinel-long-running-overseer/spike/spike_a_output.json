@@ -1,0 +1,343 @@
+[
+ {
+  "scenario": "additive-and-edge-add",
+  "status": "succeeded",
+  "wall_s": 2.04,
+  "hook_report": {
+   "rejected": [],
+   "applied": [
+    [
+     "add_tasks",
+     "set_deps"
+    ]
+   ]
+  },
+  "dispatch_counts": {
+   "slow1": 1,
+   "p1": 1,
+   "p2": 1,
+   "slow2": 1,
+   "q": 1,
+   "p3": 1,
+   "slow3": 1,
+   "n1": 1,
+   "n2": 1
+  },
+  "double_dispatch": [],
+  "task_status": {
+   "slow1": "succeeded",
+   "slow2": "succeeded",
+   "slow3": "succeeded",
+   "p1": "succeeded",
+   "p2": "succeeded",
+   "p3": "succeeded",
+   "q": "succeeded",
+   "n1": "succeeded",
+   "n2": "succeeded"
+  },
+  "start_order": [
+   "slow1",
+   "slow2",
+   "slow3",
+   "p1",
+   "p2",
+   "q",
+   "p3",
+   "n1",
+   "n2"
+  ],
+  "order_violations": [],
+  "producer_of_out_p1": "p1",
+  "resume_graph_equal": false,
+  "resume_diff": {
+   "only_live": [
+    [
+     "q",
+     "p3"
+    ]
+   ],
+   "only_resumed": []
+  },
+  "order_deterministic": true
+ },
+ {
+  "scenario": "edge-remove-and-task-remove",
+  "status": "succeeded",
+  "wall_s": 1.93,
+  "hook_report": {
+   "rejected": [],
+   "applied": [
+    [
+     "remove",
+     "set_deps"
+    ]
+   ]
+  },
+  "dispatch_counts": {
+   "slow1": 1,
+   "p2": 1,
+   "p1": 1,
+   "p3": 1,
+   "slow2": 1,
+   "slow3": 1
+  },
+  "double_dispatch": [],
+  "task_status": {
+   "slow1": "succeeded",
+   "slow2": "succeeded",
+   "slow3": "succeeded",
+   "p1": "succeeded",
+   "p2": "succeeded",
+   "p3": "succeeded"
+  },
+  "start_order": [
+   "slow1",
+   "slow2",
+   "slow3",
+   "p2",
+   "p1",
+   "p3"
+  ],
+  "order_violations": [],
+  "producer_of_out_p1": "p1",
+  "resume_graph_equal": false,
+  "resume_diff": {
+   "only_live": [],
+   "only_resumed": [
+    [
+     "p1",
+     "p2"
+    ],
+    [
+     "slow2",
+     "q"
+    ]
+   ]
+  },
+  "order_deterministic": true
+ },
+ {
+  "scenario": "cycle-rejected",
+  "status": "succeeded",
+  "wall_s": 1.94,
+  "hook_report": {
+   "rejected": [
+    [
+     "*",
+     "CycleError: Cycle detected: ['p1', 'p2', 'p3']"
+    ]
+   ],
+   "applied": []
+  },
+  "dispatch_counts": {
+   "slow1": 1,
+   "p1": 1,
+   "p2": 1,
+   "p3": 1,
+   "slow2": 1,
+   "q": 1,
+   "slow3": 1
+  },
+  "double_dispatch": [],
+  "task_status": {
+   "slow1": "succeeded",
+   "slow2": "succeeded",
+   "slow3": "succeeded",
+   "p1": "succeeded",
+   "p2": "succeeded",
+   "p3": "succeeded",
+   "q": "succeeded"
+  },
+  "start_order": [
+   "slow1",
+   "slow2",
+   "slow3",
+   "p1",
+   "p2",
+   "p3",
+   "q"
+  ],
+  "order_violations": [],
+  "producer_of_out_p1": "p1",
+  "resume_graph_equal": true,
+  "order_deterministic": true
+ },
+ {
+  "scenario": "edit-running-rejected",
+  "status": "succeeded",
+  "wall_s": 1.93,
+  "hook_report": {
+   "rejected": [
+    [
+     "slow2",
+     "status=running"
+    ],
+    [
+     "slow3",
+     "status=running"
+    ]
+   ],
+   "applied": [
+    [
+     "remove",
+     "set_deps"
+    ]
+   ]
+  },
+  "dispatch_counts": {
+   "slow1": 1,
+   "p1": 1,
+   "p2": 1,
+   "p3": 1,
+   "slow2": 1,
+   "q": 1,
+   "slow3": 1
+  },
+  "double_dispatch": [],
+  "task_status": {
+   "slow1": "succeeded",
+   "slow2": "succeeded",
+   "slow3": "succeeded",
+   "p1": "succeeded",
+   "p2": "succeeded",
+   "p3": "succeeded",
+   "q": "succeeded"
+  },
+  "start_order": [
+   "slow2",
+   "slow1",
+   "slow3",
+   "p1",
+   "p2",
+   "p3",
+   "q"
+  ],
+  "order_violations": [],
+  "producer_of_out_p1": "p1",
+  "resume_graph_equal": true,
+  "order_deterministic": true
+ },
+ {
+  "scenario": "inferred-edge-from-injected-output",
+  "status": "succeeded",
+  "wall_s": 1.93,
+  "hook_report": {
+   "rejected": [],
+   "applied": [
+    [
+     "add_tasks"
+    ]
+   ]
+  },
+  "dispatch_counts": {
+   "slow1": 1,
+   "slow2": 1,
+   "late": 1,
+   "slow3": 1
+  },
+  "double_dispatch": [],
+  "task_status": {
+   "slow1": "succeeded",
+   "slow2": "succeeded",
+   "slow3": "succeeded",
+   "late": "succeeded"
+  },
+  "start_order": [
+   "slow1",
+   "slow2",
+   "slow3",
+   "late"
+  ],
+  "order_violations": [
+   "GRAPH EDGE late->slow3: slow3 started before late finished"
+  ],
+  "producer_of_out_p1": null,
+  "resume_graph_equal": true,
+  "order_deterministic": true
+ },
+ {
+  "scenario": "duplicate-output-producer",
+  "status": "succeeded",
+  "wall_s": 1.93,
+  "hook_report": {
+   "rejected": [],
+   "applied": [
+    [
+     "add_tasks"
+    ]
+   ]
+  },
+  "dispatch_counts": {
+   "slow1": 1,
+   "dup": 1,
+   "p1": 1,
+   "p2": 1,
+   "p3": 1,
+   "slow2": 1,
+   "q": 1,
+   "slow3": 1
+  },
+  "double_dispatch": [],
+  "task_status": {
+   "slow1": "succeeded",
+   "slow2": "succeeded",
+   "slow3": "succeeded",
+   "p1": "succeeded",
+   "p2": "succeeded",
+   "p3": "succeeded",
+   "q": "succeeded",
+   "dup": "succeeded"
+  },
+  "start_order": [
+   "slow1",
+   "slow2",
+   "slow3",
+   "dup",
+   "p1",
+   "p2",
+   "p3",
+   "q"
+  ],
+  "order_violations": [],
+  "producer_of_out_p1": "dup",
+  "resume_graph_equal": true,
+  "order_deterministic": true
+ },
+ {
+  "scenario": "bulk-inject-300-while-6-running",
+  "status": "succeeded",
+  "wall_s": 4.38,
+  "hook_report": {
+   "rejected": [],
+   "applied": [
+    [
+     "add_tasks"
+    ]
+   ]
+  },
+  "dispatch_counts": {
+   "n_tasks": 306,
+   "max_per_task": 1
+  },
+  "double_dispatch": [],
+  "task_status": {
+   "n": 306,
+   "all_succeeded": true
+  },
+  "start_order": [
+   "slow1",
+   "slow2",
+   "slow4",
+   "slow3",
+   "slow5",
+   "slow6",
+   "bulk000",
+   "bulk001",
+   "..."
+  ],
+  "order_violations": [],
+  "producer_of_out_p1": null,
+  "resume_graph_equal": true,
+  "order_deterministic": true
+ }
+]

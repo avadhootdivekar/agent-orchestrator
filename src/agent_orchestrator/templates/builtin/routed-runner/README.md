@@ -56,6 +56,24 @@ both are part of this template's contract per `breakdown-contract.md`/`template.
 - `task_budget_usd` (optional, default `75`) — per-task real-spend USD cap.
 - `run_budget_usd` (optional, default `1500`) — per-run real-spend USD cap.
 
+## Sentinel params (opt-in; default OFF)
+
+Operator guide: `docs-md/guide-sentinel.md`. All params are optional; unset/`false` leaves `workflow.json` byte-identical to a
+sentinel-less run.
+
+| Param | Effect | Recommended |
+|---|---|---|
+| `sentinel_enabled` (`true`/`false`) | renders a `sentinel:` block: mechanical lane (tick, liveness kill/retry/escalate ladder, utilisation metrics, `ao ctl`, dashboard panel) | `true` for runs longer than ~1 h |
+| `sentinel_llm` (`true`) | also enable the LLM lane (rotating generations, bounded spend) | keep off unless you want judgement support |
+| `sentinel_powers` (`advise`\|`act`) | `advise` = notes/directives/hold/cancel; `act` adds inject/edit_pending/kill | `advise` first |
+| `sentinel_budget_pct` (0-100] | LLM spend cap as % of the lowest `run_cost_usd` breaker | 10 (engine default) |
+| `sentinel_planner` (`true`) | LLM planner: when slots idle with nothing ready, a generation may inject follow-up units (origin `sentinel`); needs `sentinel_llm=true` and `sentinel_powers=act` | off |
+
+Other knobs (`idle_kill_minutes` 15, `tick_seconds` 15, ceilings, escalation) come from `--sentinel-set`, env `AO_SENTINEL_*` or
+`.ao/config.yaml`. **Default enablement:** the owner decision is to make the mechanical lane default-on in this template after the
+FR-23 live smoke; that smoke has not been run, so the flip has *not* been made — pass `--param sentinel_enabled=true` explicitly.
+Live control: `ao ctl status|set|kill|release|note|pause-llm|resume-llm|cancel <run>`.
+
 ## Limits & breaker rationale
 
 Generous by policy — the run should stop on real problems, not on tight defaults.
@@ -127,6 +145,12 @@ partial, 9-of-11-role coverage would fail `ao validate`'s agent cross-checks if 
 Copy the `extra_args` fields you want from its `agents` map into your own `agents.json` (the file
 your `.ao/config.yaml`'s `agents:` field, or `AO_AGENTS`, actually points at).
 
+> **Now a first-class field.** Instead of `extra_args: ["--autocompact", N]` you can set the
+> provider-neutral `"autocompact": N` (or `"auto"`) on an agent or task, or `--autocompact` /
+> `AO_AUTOCOMPACT` / `autocompact:` in `.ao/config.yaml` for every agent that has none of its own.
+> Precedence: task > agent > run level; an `--autocompact` already in `extra_args` still wins.
+> Executors without support ignore it (`ao validate` warns).
+
 **What it recommends, and why.** The Claude Code CLI (`ao`'s `claude_cli` executor) has a real
 `--autocompact <auto|tokens>` flag (range `100k`-`1M`) that no `ao-runner-*` workspace currently
 sets — every agent runs on Claude Code's own default `auto` threshold, which scales to the
@@ -190,7 +214,7 @@ ids/paths/JSON shapes to emit — a malformed manifest (dangling `depends_on`, r
 aggregator) crashes or hangs the run, so the contract is authoritative over the general
 instruction where they'd ever disagree.
 
-Each emitted entry may also set `effort` (`low`/`medium`/`high`/`xhigh`) and `model`,
+Each emitted entry may also set `turn_budget` (`low`/`medium`/`high`/`xhigh`; the legacy key `effort` is still accepted as a deprecated alias of the turn budget and logs a warning — it is **not** thinking effort until the gated T-9ymKja flip) and `model`,
 which win over the dispatched agent's own values for that one task (ADR-0003 decision 2).
 The contract defaults `impl`/`test` passes to `"effort": "medium"` — a task sized to
 finish in roughly 10 minutes — and leaves the breakdown agent free to mark a genuinely
