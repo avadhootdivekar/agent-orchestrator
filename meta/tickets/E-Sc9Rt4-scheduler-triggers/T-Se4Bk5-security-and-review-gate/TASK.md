@@ -6,7 +6,7 @@
 - Owner: dev-security agent (audit) + reviewer agent (architecture) — run in parallel
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F1/F3/F4/F5/F18/F20 applied)
-- Status: Draft
+- Status: In Progress (security pass partial 2026-11-11, see STATUS.md)
 - Estimate: 2 days
 
 ## Requirements Mapping
