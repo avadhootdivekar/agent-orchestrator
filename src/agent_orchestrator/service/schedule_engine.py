@@ -84,6 +84,12 @@ ENGINE_LOCK_FILENAME = "engine.lock"
 REQUESTS_SUBDIR = "requests"
 REQUEST_KIND_RUN_NOW = "run_now"
 COST_CAP_BREAKER_ID = "builtin.cost_cap"
+# L-n1: a failing retire-hook finalisation is retried with capped exponential backoff, then given
+# up on (one ERROR event); the start sweep picks the record up again on the next restart.
+FINALIZE_RETRY_BASE_SECONDS = 2.0
+FINALIZE_RETRY_MAX_BACKOFF_SECONDS = 300.0
+FINALIZE_RETRY_MAX_ATTEMPTS = 6
+EVENT_FINALIZE_FAILED: Final = "schedule.governance.finalize_failed"
 RUN_STATUS_FAILED = "failed"
 RUN_STATUS_SUCCEEDED = "succeeded"
 RUN_STATUS_RUNNING = "running"
@@ -342,6 +348,8 @@ class ScheduleEngine:
         self._in_tick = False
         self._live_memo: dict[str, FireIntentRecord] | None = None
         self._finalize_retry: set[str] = set()  # M2: keys whose retire hook failed
+        self._finalize_attempts: dict[str, int] = {}  # L-n1: failures so far, per key
+        self._finalize_next_at: dict[str, float] = {}  # L-n1: monotonic instant of the next retry
         self._pending_by_root: dict[str, int] = {}
         # (root, schedule_id) of fires accepted earlier in this tick: they count against overlap
         # (M1) as well as the caps, so run-now + the natural instant cannot both launch.
@@ -400,6 +408,7 @@ class ScheduleEngine:
     def start(self) -> None:
         """Take the single-evaluator lock and reconcile orphaned fires. Launches nothing."""
         self._acquire_lock()
+        in_flight = {r.fire_key for r in self._fires.list(status="intended")}
         orphans = self._fires.reconcile_orphans(
             _pid_alive, lambda root, run_id: self._repo(root).exists(run_id)
         )
@@ -412,6 +421,7 @@ class ScheduleEngine:
                 scheduled_for=rec.scheduled_for,
                 run_id=rec.run_id,
             )
+        self._adopt_reconciled(in_flight)
         self._sweep_unfinalized()
 
     def shutdown(self) -> None:
@@ -1261,23 +1271,83 @@ class ScheduleEngine:
         """Retire hook (HLD §6.4, M3): a finished governed run gets its cap state. Never raises.
 
         Idempotent (a ``final``/capped record is a no-op) and re-driven (M2): a failure parks the
-        key in ``_finalize_retry`` for the next tick, and :meth:`start` sweeps records a crash left
-        unfinalised."""
+        key in ``_finalize_retry`` for later ticks (capped exponential backoff, L-n1), and
+        :meth:`start` sweeps records a crash left unfinalised. After
+        ``FINALIZE_RETRY_MAX_ATTEMPTS`` failures it gives up with ONE ERROR event; the record
+        keeps holding its reservation (fail-safe) until the next restart's sweep."""
         try:
             self._finalize_governance_once(key)
-            self._finalize_retry.discard(key)
         except Exception:  # noqa: BLE001 - bookkeeping must never break the tick
-            logger.exception("governance finalisation of %s failed; will retry", key)
+            attempts = self._finalize_attempts.get(key, 0) + 1
+            self._finalize_attempts[key] = attempts
+            if attempts >= FINALIZE_RETRY_MAX_ATTEMPTS:
+                logger.exception("governance finalisation of %s failed; giving up", key)
+                self._give_up_finalizing(key, attempts)
+                return
+            delay = min(
+                FINALIZE_RETRY_BASE_SECONDS * 2 ** (attempts - 1),
+                FINALIZE_RETRY_MAX_BACKOFF_SECONDS,
+            )
+            self._finalize_next_at[key] = self._monotonic() + delay
+            logger.exception(
+                "governance finalisation of %s failed (attempt %d); retry in %.0fs",
+                key, attempts, delay,
+            )  # fmt: skip
             self._finalize_retry.add(key)
+        else:
+            self._clear_finalize_retry(key)
+
+    def _clear_finalize_retry(self, key: str) -> None:
+        self._finalize_retry.discard(key)
+        self._finalize_attempts.pop(key, None)
+        self._finalize_next_at.pop(key, None)
+
+    def _give_up_finalizing(self, key: str, attempts: int) -> None:
+        self._clear_finalize_retry(key)
+        rec = self._fires.get(key)
+        self._events.emit(
+            EVENT_FINALIZE_FAILED,
+            workspace=rec.workspace_root if rec is not None else None,
+            schedule_id=rec.schedule_id if rec is not None else None,
+            fire_key=key,
+            run_id=rec.run_id if rec is not None else None,
+            attempts=attempts,
+        )
 
     def _retry_finalizations(self) -> None:
+        if not self._finalize_retry:
+            return  # no clock read on the common path (the tick budget counts monotonic calls)
+        now = self._monotonic()
         for key in sorted(self._finalize_retry):
-            self._finalize_governance(key)
+            if now >= self._finalize_next_at.get(key, 0.0):
+                self._finalize_governance(key)
+
+    def _adopt_reconciled(self, in_flight: set[str]) -> None:
+        """N-M1: an ``intended`` record that reconcile moved to ``launched`` (crash after Popen)
+        is a live child nobody tracks. Register it in the schedule's ``active_fire_keys`` (with
+        the counters the lost post-launch bookkeeping would have bumped) so overlap/concurrency
+        see it and the normal retire hook finalises it / pauses it on a cap trip."""
+        for key in sorted(in_flight):
+            rec = self._fires.get(key)
+            if rec is None or rec.status != "launched" or rec.run_id is None:
+                continue
+            try:
+                self._state.record_fire(
+                    rec.workspace_root,
+                    rec.schedule_id,
+                    scheduled_for=rec.scheduled_for,
+                    run_id=rec.run_id,
+                    fire_at=rec.created_at,
+                    fire_key=rec.fire_key,
+                )
+            except Exception:  # noqa: BLE001 - recovery must never stop the engine starting
+                logger.exception("could not re-register recovered fire %s", rec.fire_key)
 
     def _sweep_unfinalized(self) -> None:
         """M2 crash recovery at start: governed ``launched`` records that never got their retire
         hook (the process died between ``retire_finished`` and finalisation) and whose run is no
-        longer running."""
+        longer live. A record that is still live (L-n4: pid reuse / lost tracking) is
+        re-registered as active instead of finalised, so the normal retire path owns it."""
         active = {k for s in self._state.all().values() for k in s.active_fire_keys}
         for rec in self._fires.list(status="launched"):
             g = rec.governance
@@ -1286,15 +1356,13 @@ class ScheduleEngine:
             if rec.fire_key in active:
                 continue  # still tracked: _live_runs retires it when it ends
             try:
-                status = getattr(
-                    self._repo(rec.workspace_root).load_state(rec.run_id), "status", None
-                )
-            except RunNotFoundError:
-                continue
+                live = self._is_live(rec)
             except Exception:  # noqa: BLE001
                 logger.exception("sweep could not read run %s", rec.run_id)
                 continue
-            if status != RUN_STATUS_RUNNING or rec.pid is None or not _pid_alive(rec.pid):
+            if live:
+                self._state.adopt_active(rec.workspace_root, rec.schedule_id, rec.fire_key)
+            else:
                 self._finalize_governance(rec.fire_key)
 
     def _finalize_governance_once(self, key: str) -> None:

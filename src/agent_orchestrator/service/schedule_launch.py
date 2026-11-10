@@ -237,6 +237,10 @@ class ScheduledLauncher:
                 run_id=run_id,
                 **kwargs,  # type: ignore[arg-type]
             )
+            # Belt (L4). ACCEPTED (w19-02): a spawned-then-cancelled child ends ``launch_failed``,
+            # which the ledger charges 0 runs / $0. It is cancelled within the same call, before
+            # the engine tick returns, so its exposure is milliseconds of an uncapped run; the
+            # ERROR ``launch_unsafe`` event is the signal, not a period-cap charge.
             if reservation is not None and not _argv_forwards_cap(rec.argv, reservation):  # belt
                 self._cancel_unsafe(supervisor, rec.run_id or run_id)
                 raise CostCapNotForwardedError(REASON_COST_CAP_NOT_FORWARDED)

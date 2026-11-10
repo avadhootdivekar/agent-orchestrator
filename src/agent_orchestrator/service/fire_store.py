@@ -493,6 +493,13 @@ class ScheduleStateStore:
             s.active_fire_keys.append(fire_key)
         self._save()
 
+    def adopt_active(self, root: str | Path, schedule_id: str, fire_key: str) -> None:
+        """Track a still-live *fire_key* whose tracking was lost (start sweep); no counters move."""
+        s = self._entry(root, schedule_id)
+        if fire_key not in s.active_fire_keys:
+            s.active_fire_keys.append(fire_key)
+            self._save()
+
     def record_failure(self, root: str | Path, schedule_id: str, error: str) -> None:
         s = self._entry(root, schedule_id)
         s.consecutive_failures += 1
@@ -579,6 +586,7 @@ EVENT_LEVELS: dict[str, int] = {
     "schedule.governance.reserved": logging.DEBUG,
     "schedule.governance.run_cost_capped": logging.WARNING,
     "schedule.governance.launch_unsafe": logging.ERROR,
+    "schedule.governance.finalize_failed": logging.ERROR,
     "schedule.governance.error": logging.ERROR,
     "schedule.watch_budget_exceeded": logging.WARNING,
     "webhook.received": logging.INFO,

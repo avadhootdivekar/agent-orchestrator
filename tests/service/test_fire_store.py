@@ -386,7 +386,7 @@ def test_hld_event_table_is_complete() -> None:
         # governance HLD §13.1 (T-PpE5lf)
         "schedule.governance.skipped", "schedule.governance.reserved",
         "schedule.governance.run_cost_capped", "schedule.governance.launch_unsafe",
-        "schedule.governance.error",
+        "schedule.governance.error", "schedule.governance.finalize_failed",
     }  # fmt: skip
     assert set(EVENT_LEVELS) == expected
 

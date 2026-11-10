@@ -74,3 +74,19 @@
 1. Read the upstream tasks' **merged code** (including E-Sc9Rt4's), not only the HLD, before starting.
 2. Implement against the acceptance criteria in `TASK.md`, in AC order; report the pytest delta, ruff/format, mypy, coverage.
 3. Hand the retire hook + lock helper to `T-nI4DBf`.
+
+## w19-02 re-review fixes (w16-06 findings)
+- By: developer · Role: developer · Date: 2026-11-11
+- **N-M1 fixed:** `start()` re-registers records reconcile moved `intended -> launched` into the schedule's
+  `active_fire_keys` (`record_fire`); the start sweep now decides liveness with `_is_live` (supervisor + run status), not
+  `rec.pid is None`, and re-adopts a still-live untracked record (`ScheduleStateStore.adopt_active`) instead of
+  finalising it (also closes L-n4). Tests `test_nm1_*` (crash-after-Popen still running: not final, blocks overlap,
+  pauses on a cap trip).
+- **L-n1 fixed:** retire-hook finalisation retries with capped exponential backoff (2 s base, 300 s cap, monotonic
+  clock) and gives up after 6 attempts with ONE ERROR `schedule.governance.finalize_failed` event; the record keeps
+  holding its reservation and the next restart's sweep retries it.
+- **L-n2 / L-n3 pinned:** tests for H1e, M2d, M2f, the sweep read-error branch, the `RunNotFoundError` / already-capped
+  no-ops and the post-spawn wrong-value argv. 10 targeted mutations all killed.
+- **L4 remainder: explicitly ACCEPTED.** A spawned-then-cancelled `launch_failed` child is charged 0 runs / $0; the
+  belt cancels it in the same call, so exposure is milliseconds, and `launch_unsafe` (ERROR) is the signal.
+- Real-renderer cost-cap test left to T-et7Edf's owner.

@@ -1014,14 +1014,13 @@ def test_m2_start_sweeps_records_a_crash_left_unfinalised(tmp_path: Path) -> Non
 
 def test_m2_start_sweep_leaves_a_still_running_run_alone(tmp_path: Path) -> None:
     env = gov_env(tmp_path, limits(per_run=2, week=50))
-    put_run(env, "k1", T0, "r1", live=False)  # state.json says running, pid unknown (None)
-    env.engine.state_store.retire_finished(["k1"])
-    rec = env.engine.fire_store.get("k1")
-    assert rec is not None
-    env.engine.fire_store.update("k1", pid=os.getpid())  # alive process
+    put_run(env, "k1", T0, "r1")  # state.json says running AND the supervisor reports it alive
+    env.engine.state_store.retire_finished(["k1"])  # tracking lost (L-n4)
     env.engine.start()
     g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
     assert g is not None and not g.final
+    st = env.engine.state_store.get(env.root, "s")
+    assert st is not None and "k1" in st.active_fire_keys  # re-adopted: the retire hook owns it
 
 
 # -- M3: the gate's timezone / week-start wiring, through gate(), the engine and the launcher --
@@ -1222,3 +1221,232 @@ def test_l6_fifo_prompt_does_not_block_and_is_refused(tmp_path: Path) -> None:
     t.join(5)
     assert not t.is_alive(), "read_prompt blocked on a FIFO"
     assert isinstance(out[0], gg.GateResult) and out[0].reason == "prompt_missing"
+
+
+# -- w19-02 re-review fixes (w16-06 N-M1 / L-n1 / L-n2 / L-n3 / L4) ------------------------------
+
+
+def _intended_with_live_child(env: Env, key: str = "k1", run_id: str = "r1") -> None:
+    """A crash right after Popen: an ``intended`` record (run_id, no pid, no tracking) whose child
+    survived and is still running."""
+    gov = FireGovernance(
+        reserved_usd=2.0, run_cost_cap_usd=2.0, on_cap="pause", pause_ttl_seconds=3600
+    )
+    _put(env.engine.fire_store, env.root, key, T0, "intended", gov=gov, run_id=run_id)
+    env.statuses[run_id] = "running"
+    env.alive.add(run_id)
+
+
+def test_nm1_crash_after_popen_child_is_tracked_not_finalised_by_start(tmp_path: Path) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50), overlap="skip")
+    _intended_with_live_child(env)
+    env.engine.start()
+    rec = env.engine.fire_store.get("k1")
+    assert rec is not None and rec.status == "launched"
+    g = rec.governance
+    assert g is not None and not g.final and g.cap_state == "none" and g.cost_observed_usd == 0.0
+    st = env.engine.state_store.get(env.root, "s")
+    assert st is not None and st.active_fire_keys == ["k1"] and st.runs_count == 1
+    assert st.last_run_id == "r1"
+    assert env.evaluate(now=NOW1).reason == "overlap_skip"  # the surviving child blocks overlap
+    # it then trips the cost cap: the normal retire hook pauses it (resume/expiry can find it)
+    env.clock.now = NOW1
+    _retire(env, "r1", _state("failed", cost=2.3, trips=[trip(NOW1)]))
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.cap_state == "paused" and g.pause_expires_at is not None
+    assert len(env.events("schedule.governance.run_cost_capped")) == 1
+
+
+def test_nm1_crash_after_popen_child_that_already_finished_is_finalised(tmp_path: Path) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    _intended_with_live_child(env)
+    env.run_states["r1"] = _state("succeeded", cost=0.7)
+    env.statuses["r1"] = "succeeded"
+    env.alive.discard("r1")
+    env.engine.start()  # adopted as active: the normal retire path finalises it on the next pass
+    env.engine._live_runs()
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.final and g.cost_observed_usd == 0.7
+    st = env.engine.state_store.get(env.root, "s")
+    assert st is not None and st.active_fire_keys == []
+
+
+def test_nm1_intended_record_with_no_run_dir_is_orphaned_not_adopted(tmp_path: Path) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    _intended_with_live_child(env)
+    del env.statuses["r1"]
+    env.alive.discard("r1")
+    env.engine.start()
+    rec = env.engine.fire_store.get("k1")
+    assert rec is not None and rec.status == "orphaned"
+    st = env.engine.state_store.get(env.root, "s")
+    assert st is None or st.active_fire_keys == []
+
+
+def test_ln1_failed_finalisation_backs_off_then_gives_up_with_one_error_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1")
+    store = env.engine.fire_store
+    real_update = store.update
+    calls = {"n": 0}
+
+    def always_fail(key: str, **fields: Any) -> Any:
+        if "governance" in fields:
+            calls["n"] += 1
+            raise OSError("EROFS")
+        return real_update(key, **fields)
+
+    monkeypatch.setattr(store, "update", always_fail)
+    with caplog.at_level(logging.DEBUG):
+        _retire(env, "r1", _state("succeeded", cost=0.5))  # attempt 1 (the retire itself)
+        assert calls["n"] == 1
+        for _ in range(5):  # same instant: backing off, nothing retried
+            env.engine._retry_finalizations()
+        assert calls["n"] == 1
+        env.mono.t += se.FINALIZE_RETRY_BASE_SECONDS - 0.5  # still inside the first backoff
+        env.engine._retry_finalizations()
+        assert calls["n"] == 1
+        delays = []
+        for attempt in range(1, se.FINALIZE_RETRY_MAX_ATTEMPTS):
+            delay = min(
+                se.FINALIZE_RETRY_BASE_SECONDS * 2 ** (attempt - 1),
+                se.FINALIZE_RETRY_MAX_BACKOFF_SECONDS,
+            )
+            delays.append(delay)
+            env.mono.t += delay  # exactly due
+            env.engine._retry_finalizations()
+            assert calls["n"] == attempt + 1
+    assert delays[1] == 2 * delays[0]  # exponential
+    assert calls["n"] == se.FINALIZE_RETRY_MAX_ATTEMPTS
+    ev = env.events(se.EVENT_FINALIZE_FAILED)
+    assert len(ev) == 1 and ev[0]["fire_key"] == "k1" and ev[0]["run_id"] == "r1"
+    assert ev[0]["attempts"] == se.FINALIZE_RETRY_MAX_ATTEMPTS
+    assert not env.engine._finalize_retry  # given up: no more retries, no unbounded growth
+    env.mono.t += 10_000
+    env.engine._retry_finalizations()
+    assert (
+        calls["n"] == se.FINALIZE_RETRY_MAX_ATTEMPTS
+        and len(env.events(se.EVENT_FINALIZE_FAILED)) == 1
+    )
+    assert [r.levelno for r in caplog.records if se.EVENT_FINALIZE_FAILED in r.getMessage()] == [
+        logging.ERROR
+    ]
+    g = store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and not g.final and g.reserved_usd == 2.0  # still holds its reservation
+
+
+def test_ln1_backoff_is_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(se, "FINALIZE_RETRY_MAX_ATTEMPTS", 50)
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1")
+    monkeypatch.setattr(env.engine, "_finalize_governance_once", lambda key: 1 / 0)
+    env.engine._finalize_governance("k1")
+    for _ in range(12):
+        env.mono.t = env.engine._finalize_next_at["k1"]
+        env.engine._retry_finalizations()
+    wait = env.engine._finalize_next_at["k1"] - env.mono.t
+    assert wait == se.FINALIZE_RETRY_MAX_BACKOFF_SECONDS
+
+
+def test_ln2_non_cap_failed_run_with_partial_cost_is_charged_actual_not_reserved(
+    tmp_path: Path,
+) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", reserved=2.0)
+    _retire(env, "r1", _state("failed", cost=0.4))  # failed on its own, no cap trip
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.final and g.cap_state == "none"
+    assert g.cost_observed_usd == 0.4 and g.cost_confidence == "actual"
+
+
+def test_ln2_sweep_skips_keys_the_engine_still_tracks(tmp_path: Path) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", live=False)  # tracked (active), run already over
+    env.run_states["r1"] = _state("succeeded", cost=0.7)
+    env.statuses["r1"] = "succeeded"
+    env.engine.start()
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and not g.final  # _live_runs, not the sweep, retires tracked keys
+
+
+def test_ln2_sweep_survives_an_unreadable_run_state(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", live=False)
+    env.engine.state_store.retire_finished(["k1"])
+
+    class Broken:
+        def load_state(self, run_id: str) -> Any:
+            raise ValueError("corrupt state.json")
+
+        def exists(self, run_id: str) -> bool:
+            return True
+
+    env.engine._repo_factory = lambda root: Broken()  # type: ignore[assignment,return-value]
+    env.engine._repos.clear()
+    with caplog.at_level(logging.ERROR):
+        env.engine.start()  # must not raise
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and not g.final
+    assert any("sweep could not read run r1" in r.getMessage() for r in caplog.records)
+
+
+def test_ln2_successful_finalisation_clears_retry_bookkeeping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1")
+    store = env.engine.fire_store
+    real_update = store.update
+    boom = {"left": 1}
+
+    def flaky(key: str, **fields: Any) -> Any:
+        if boom["left"] and "governance" in fields:
+            boom["left"] -= 1
+            raise OSError("ENOSPC")
+        return real_update(key, **fields)
+
+    monkeypatch.setattr(store, "update", flaky)
+    _retire(env, "r1", _state("succeeded", cost=0.5))
+    assert env.engine._finalize_retry == {"k1"}
+    env.mono.t += se.FINALIZE_RETRY_BASE_SECONDS
+    env.engine._retry_finalizations()
+    assert env.engine._finalize_retry == set()
+    assert not env.engine._finalize_attempts and not env.engine._finalize_next_at
+
+
+def test_ln2_finalisation_is_a_noop_for_missing_run_and_already_capped_records(
+    tmp_path: Path,
+) -> None:
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", live=False)
+    del env.statuses["r1"]  # never started: orphan reconciliation owns it
+    env.engine._finalize_governance_once("k1")
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and not g.final and g.cost_observed_usd == 0.0
+    put_run(env, "k2", T0, "r2", cap_state="paused")  # already paused: no second event
+    env.run_states["r2"] = _state("failed", cost=2.3, trips=[trip(NOW1)])
+    env.statuses["r2"] = "failed"
+    env.engine._finalize_governance_once("k2")
+    assert not env.events("schedule.governance.run_cost_capped")
+    g = env.engine.fire_store.get("k2").governance  # type: ignore[union-attr]
+    assert g is not None and g.cap_state == "paused" and g.cost_observed_usd == 0.0
+
+
+def test_ln3_post_spawn_argv_with_wrong_cap_value_cancels_child(tmp_path: Path) -> None:
+    rig = Rig(tmp_path, options_renderer=cap_renderer)
+    inner = rig.sup.launch_run
+
+    def wrong_value(**kw: Any) -> Any:
+        rec = inner(**kw)
+        rec.argv = ["ao", "run", "--cost-cap-usd", "999"]  # flag present, value NOT the reservation
+        return rec
+
+    rig.sup.launch_run = wrong_value  # type: ignore[method-assign]
+    write_workflow(Path(rig.root) / "w.json")
+    rec = rig.launcher.launch(gov_decision(rig, make_binding(limits=limits(per_run=2, week=10))))
+    assert rec.status == "launch_failed" and rec.reason == "cost_cap_not_forwarded"
+    assert rig.sup.cancelled == ["launched-run"]
