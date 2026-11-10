@@ -247,6 +247,29 @@ def test_bad_gate_does_not_stop_the_schedule(tmp_path: Path) -> None:
     assert len(env.events("schedule.until_unreadable")) == 1
 
 
+# -- AC14 coverage close-out: branches the coverage report showed unexercised -------------------
+
+
+@pytest.mark.parametrize("content", ["{nope", b"\xff\xfe\x00bad"])
+def test_unreadable_gate_without_event_sink_is_silent_and_never_satisfied(
+    tmp_path: Path, content: str | bytes
+) -> None:
+    """``events=None`` (the default) skips the ``until_unreadable`` emit: no raise, no stop."""
+    gate(tmp_path, content)
+    assert until_condition(tmp_path, ub(gate_file="gate.json"), ScheduleState()) is None
+    assert until_satisfied(tmp_path, ub(gate_file="gate.json"), ScheduleState()) is False
+
+
+def test_plain_schedule_without_until_fires_through_the_engine(tmp_path: Path) -> None:
+    """The engine's ``binding.until is None`` branch skips the until check entirely."""
+    plain = _engine_binding(max_runs=1).model_copy(update={"until": None})
+    env = env_for(tmp_path, [plain])
+    env.anchor()
+    d = env.evaluate(now=T0 + timedelta(seconds=60))
+    assert d.fire and d.reason == "due"
+    assert env.events("schedule.until_satisfied") == []
+
+
 def _engine_binding(**kw: Any) -> ScheduleBinding:
     enabled = kw.pop("enabled", True)
     b = ub(**kw)

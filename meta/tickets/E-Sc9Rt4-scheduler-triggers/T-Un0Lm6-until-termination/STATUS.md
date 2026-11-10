@@ -2,7 +2,7 @@
 
 - ID: `T-Un0Lm6-until-termination`
 - Updated At: 2026-11-11
-- State: In Review (AC14 coverage report unfinished)
+- State: In Review (AC14 coverage report recorded 2026-11-11)
 - Owner: developer agent
 
 ## This update
@@ -44,3 +44,11 @@
 
 ## Next actions
 1. (AC13 done) hand `completed`/`runs_count` display contract to `T-Ap1Xs3`; docs to `T-Dc6Zr2`.
+
+## Update 2026-11-11 (unit `w19-03-a1-until-coverage-report`) -- AC14 coverage report
+- Measured at clean HEAD 76ca870 (detached worktree; other units' uncommitted edits excluded):
+  `pytest tests/service/test_until.py tests/service/test_fire_store.py --cov=agent_orchestrator.service.schedule_engine --cov-branch`.
+- until code = `evaluate` until block (~L819-835) + `until_condition`/`_gate_matches`/`until_satisfied` (~L1545-1620). Module-wide from these files: 57% (809 stmts). Within the until code: **100% statements**; 2 partial branches before, **0 after**: `822->835` (binding without `until`) and `1598->1606` (unreadable gate with `events=None`).
+- Added fixed-clock tests: `test_unreadable_gate_without_event_sink_is_silent_and_never_satisfied` (invalid JSON + undecodable bytes) and `test_plain_schedule_without_until_fires_through_the_engine`. `test_until.py`: 45 passed (was 40+2 param); ruff check/format clean.
+- `tests/service/test_fire_store.py::test_hld_event_table_is_complete` **passes at clean HEAD** (104 passed across both files). The earlier failure came from another unit's uncommitted `schedule_engine.py`/`fire_store.py` edits (event table out of sync with new emits) -- re-check when those land.
+- No src changes; no real bug found.
