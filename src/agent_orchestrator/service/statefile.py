@@ -55,14 +55,16 @@ def _fsync_dir(directory: Path) -> None:
         return
     try:
         os.fsync(fd)
-    except OSError:
-        pass
+    except OSError as exc:  # rename may not be durable: warn, never hide (N3)
+        logger.warning(
+            "fsync of directory %s failed (%s); rename may not be durable", directory, exc
+        )
     finally:
         os.close(fd)
 
 
-def write_json_model_atomic(path: Path, model: BaseModel, *, durable: bool = False) -> None:
-    """Persist *model* to *path* atomically (unique temp file in the same dir + ``os.replace``).
+def atomic_write_bytes(path: Path, data: bytes, *, durable: bool = False) -> None:
+    """Write *data* to *path* atomically (unique temp file in the same dir + ``os.replace``).
 
     The temp name comes from ``tempfile.mkstemp`` so concurrent writers (threads or processes)
     never share one. An existing target keeps its permission bits; a new file is created 0600.
@@ -72,7 +74,6 @@ def write_json_model_atomic(path: Path, model: BaseModel, *, durable: bool = Fal
     and similar must-not-lose state). Off by default: plain atomicity is enough for derived state.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = model.model_dump_json(indent=2).encode("utf-8")
     try:
         mode: int | None = path.stat().st_mode & 0o7777
     except OSError:
@@ -93,3 +94,8 @@ def write_json_model_atomic(path: Path, model: BaseModel, *, durable: bool = Fal
         raise
     if durable:
         _fsync_dir(path.parent)
+
+
+def write_json_model_atomic(path: Path, model: BaseModel, *, durable: bool = False) -> None:
+    """Persist *model* to *path* as indented JSON via :func:`atomic_write_bytes`."""
+    atomic_write_bytes(path, model.model_dump_json(indent=2).encode("utf-8"), durable=durable)

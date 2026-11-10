@@ -11,12 +11,12 @@ enable/disable``, the dashboard) MUST go through ``mutate``.
 from __future__ import annotations
 
 import fcntl
-import os
 from collections.abc import Callable
 from pathlib import Path
 
 import yaml
 
+from ..service.statefile import atomic_write_bytes
 from .errors import ScheduleFileError
 from .models import ScheduleFile
 
@@ -52,7 +52,7 @@ class ScheduleStore:
         return ScheduleFile.from_data(data, source=str(self._path))
 
     def save(self, data: ScheduleFile) -> None:
-        """Atomically persist *data* (tmp + ``os.replace``). Unlocked -- see module docstring.
+        """Atomically persist *data* (unique tmp + ``os.replace``). Unlocked; see module docstring.
 
         Pydantic does not re-validate on attribute mutation, so *data* is round-tripped through
         ``from_data(to_data())`` first: an invalid model (e.g. a duplicate id appended by a
@@ -60,14 +60,7 @@ class ScheduleStore:
         """
         payload = data.to_data()
         ScheduleFile.from_data(payload, source=str(self._path))
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_name(f"{self._path.name}.{os.getpid()}.tmp")
-        try:
-            tmp.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
-            os.replace(tmp, self._path)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
+        atomic_write_bytes(self._path, yaml.safe_dump(payload, sort_keys=False).encode("utf-8"))
 
     def mutate(self, fn: Callable[[ScheduleFile], ScheduleFile]) -> ScheduleFile:
         """Apply *fn* to the CURRENT on-disk file under an exclusive lock, save, return it.

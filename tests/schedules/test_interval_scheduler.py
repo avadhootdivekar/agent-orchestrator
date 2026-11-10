@@ -47,3 +47,15 @@ def test_schema_accepts_interval_and_requires_seconds(trigger_schema: dict[str, 
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({"type": "interval"}, trigger_schema)
     jsonschema.validate({"type": "manual"}, trigger_schema)
+
+
+@pytest.mark.parametrize("bad", [0, -1, 10**30, 365 * 86400 + 1])
+def test_root_trigger_interval_bounds_rejected(bad: int) -> None:
+    """N1: a Python-API Trigger obeys the same 1..1y bounds as the binding."""
+    with pytest.raises(ValueError, match="interval_seconds"):
+        Trigger(type="interval", interval_seconds=bad)
+
+
+def test_root_trigger_interval_bounds_accepted() -> None:
+    assert Trigger(type="interval", interval_seconds=1).interval_seconds == 1
+    assert Trigger(type="interval", interval_seconds=365 * 86400).interval_seconds == 365 * 86400

@@ -102,6 +102,28 @@ def test_durable_failure_cleans_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert list(tmp_path.iterdir()) == []
 
 
+def test_durable_dir_fsync_failure_is_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """N3: an EIO from the directory fsync must not be swallowed silently."""
+    import stat
+
+    real_fsync = os.fsync
+
+    def flaky(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(5, "EIO")
+        real_fsync(fd)
+
+    monkeypatch.setattr("agent_orchestrator.service.statefile.os.fsync", flaky)
+    p = tmp_path / "s.json"
+    with caplog.at_level(logging.WARNING, logger="agent_orchestrator.service.statefile"):
+        write_json_model_atomic(p, Sample(n=7), durable=True)
+    warnings = [r for r in caplog.records if "not be durable" in r.getMessage()]
+    assert len(warnings) == 1 and str(tmp_path) in warnings[0].getMessage()
+    assert read_json_model(p, Sample, default_factory=Sample).n == 7  # file itself is in place
+
+
 def test_tmp_names_are_unique_per_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     names: list[str] = []
     real_replace = os.replace

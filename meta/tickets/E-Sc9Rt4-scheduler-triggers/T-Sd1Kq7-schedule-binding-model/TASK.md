@@ -221,3 +221,10 @@ Unfinished: none. Follow-up: migrate `registry.py`, `boot_resume.py` and the sup
 - W4 cron: only 5 fields; min gap over 8 fixed-anchor fires must be >= `MIN_INTERVAL_SECONDS`.
 - S1 max_length 64 on `template`/`instance_id`; S2 tz must be in `available_timezones()` minus host-dependent names; S3 `interval_seconds` <= 1 year.
 - Not done here: S3 root `Trigger.interval_seconds ge=1` (touches `models.py`, owned by in-flight units), W5 (statefile, belongs to T-Fr2Nx8), S4-S8.
+
+## Binding Low fixes (2026-11-11, developer; w07-02, re-review w06-01 N1-N3)
+- N1 root `Trigger.interval_seconds` is `Field(ge=1, le=MAX_INTERVAL_SECONDS)`; the constant moved to `models.py` (re-imported by `schedules/models.py`); `specs/workflow.schema.json` (the hand-written schema that carries `Trigger`) gained `maximum: 31536000`. `specs/schedules.schema.json` is generated from `ScheduleFile` (no root Trigger) and is unchanged.
+- N2 `ScheduleStore.save` uses the new shared `statefile.atomic_write_bytes` (mkstemp temp name, existing-mode preserved). Side effect: a newly created `schedules.yaml` is now 0600 (was umask default), as with N4.
+- N3 `statefile._fsync_dir` logs a WARNING when the directory fsync raises `OSError` (file is already in place, so no raise).
+- Tests: `test_root_trigger_interval_bounds_*`, `test_save_uses_unique_tmp_names`, `test_concurrent_unlocked_saves_do_not_collide`, `test_durable_dir_fsync_failure_is_logged`.
+- Not done (out of brief): N4-N7 (N7 belongs to `fire_store.py`'s own review).

@@ -32,7 +32,7 @@ from pydantic import (
     model_validator,
 )
 
-from ..models import Trigger
+from ..models import MAX_INTERVAL_SECONDS, Trigger
 from ..run_options import Option, allowed_bool_options, allowed_options, get_option
 from .errors import DuplicateScheduleIdError, ScheduleFileError
 
@@ -51,8 +51,7 @@ INSTANCE_ID_TOKENS: Final = frozenset({"date", "rand6"})
 # than this could never mint a valid run id, so fail at load time rather than at fire time.
 MAX_TEMPLATE_LEN: Final = 64
 MAX_INSTANCE_ID_LEN: Final = 64
-# One year: bounds IntervalScheduler's timedelta arithmetic (S3, 10**30 overflowed in the tick).
-MAX_INTERVAL_SECONDS: Final = 365 * 86400
+# MAX_INTERVAL_SECONDS (one year, S3) lives in ``..models`` next to the root ``Trigger`` (N1).
 # croniter also accepts a 6th (seconds) and 7th (year) field; only the classic 5 are allowed (W4).
 CRON_FIELD_COUNT: Final = 5
 # Consecutive fires sampled from a fixed anchor to find the smallest cron gap (W4).

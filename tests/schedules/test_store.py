@@ -127,3 +127,33 @@ def test_save_rejects_invalid_model_and_keeps_file(tmp_path: Path) -> None:
         store.mutate(add_dup)
     assert store.path.read_text() == before
     assert len(store.load().schedules) == 1  # still loadable -> remove/disable can repair
+
+
+def test_save_uses_unique_tmp_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """N2: unlocked save() must not share a pid-based temp name between writers."""
+    import os
+
+    names: list[str] = []
+    real_replace = os.replace
+
+    def spy(src: object, dst: object) -> None:
+        names.append(Path(str(src)).name)
+        real_replace(src, dst)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("agent_orchestrator.service.statefile.os.replace", spy)
+    store = ScheduleStore(tmp_path)
+    for _ in range(3):
+        store.save(ScheduleFile())
+    assert len(set(names)) == 3
+    assert f".{os.getpid()}.tmp" not in "".join(names)
+    assert [p.name for p in store.path.parent.iterdir()] == ["schedules.yaml"]
+
+
+def test_concurrent_unlocked_saves_do_not_collide(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = ScheduleStore(tmp_path)
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        list(ex.map(lambda _: store.save(ScheduleFile()), range(64)))
+    assert store.load().schedules == []
+    assert [p.name for p in store.path.parent.iterdir()] == ["schedules.yaml"]
