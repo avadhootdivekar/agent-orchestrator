@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from agent_orchestrator.schedules.models import WatchSpec
-from agent_orchestrator.service.fire_store import ScheduleState
+from agent_orchestrator.service.fire_store import ScheduleState, fire_key
 from agent_orchestrator.service.schedule_engine import Candidate
 from agent_orchestrator.service.watch import (
     DEFAULT_WATCH_IGNORES,
@@ -22,6 +22,7 @@ from agent_orchestrator.service.watch import (
     change_discriminator,
     changed_paths,
     file_watch_factory,
+    pattern_under_ignored_tree,
     scan,
 )
 
@@ -315,6 +316,10 @@ def test_crash_between_fire_and_digest_save_does_not_double_fire(tmp_path: Path)
     store.path_for(_slug_for_root(env.root), "s").unlink()
     d = env.evaluate(now=T0 + timedelta(minutes=6))
     assert not d.fire and d.reason == "already_fired"  # same mtime -> same fire_key, burned
+    # L-f: the reported decision key carries the discriminator too (pins _already_fired)
+    digest, changed = scan(env.root, env.binding().watch)[0], ["w/a.md"]  # type: ignore[arg-type]
+    disc = change_discriminator({}, digest, changed)
+    assert d.fire_key == fire_key(env.root, "s", T0, disc) != fire_key(env.root, "s", T0)
 
 
 def test_observe_never_commits_via_dry_evaluation(tmp_path: Path) -> None:
@@ -542,3 +547,79 @@ def test_l5_caret_after_bracket_is_negation(tmp_path: Path) -> None:
     touch(tmp_path / "x.md")
     touch(tmp_path / "y.md")
     assert set(scan(tmp_path, spec("[^x].md"))[0]) == {"y.md"}
+
+
+# -- w15 re-review fixes (N1-N3, L-c, L-d) -------------------------------------------------------
+
+
+def test_n1_symlinked_prefix_to_outside_root_is_not_followed(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    touch(tmp_path / "outside/secret.md")
+    ws.mkdir()
+    (ws / "docs").symlink_to(tmp_path / "outside")
+    assert scan(ws, spec("docs/*.md")) == ({}, False)
+
+
+def test_n1_symlinked_prefix_into_ignored_tree_is_not_followed(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    touch(ws / ".orchestrator/runs/r/out.md")
+    (ws / "logs").symlink_to(ws / ".orchestrator/runs")
+    assert scan(ws, spec("logs/*/*.md")) == ({}, False)
+
+
+def test_n1_symlink_in_middle_of_prefix_is_not_followed(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    touch(tmp_path / "outside/b/f.md")
+    ws.mkdir()
+    (ws / "a").symlink_to(tmp_path / "outside")
+    touch(ws / "real/b/f.md")
+    assert scan(ws, spec("a/b/*.md", "real/b/*.md"))[0].keys() == {"real/b/f.md"}
+
+
+def test_n2_queued_file_watch_fire_survives_restart(tmp_path: Path) -> None:
+    env = _engine_env(tmp_path, WatchSpec(paths=["w/*.md"], debounce_seconds=30), overlap="queue")
+    touch(Path(env.root) / "w/a.md", EPOCH)
+    env.make_active()
+    assert env.tick(T0 + timedelta(minutes=5)) == []  # queued behind the active run
+    st = env.engine.state_store.get(env.root, "s")
+    assert st is not None and st.queued_discriminator
+    env.end_run()
+    env.engine = env.make_engine()  # restart: only the state files survive
+    fired = env.tick(T0 + timedelta(minutes=6))
+    assert [d.reason for d in fired] == ["queue_drain"]
+    assert not env.events("schedule.missed")
+
+
+def test_n3_future_mtime_file_does_not_starve_real_change(tmp_path: Path) -> None:
+    src, ws, events = make_source(tmp_path, spec("w/*.md"))
+    touch(ws / "w/future.md", EPOCH + 10 * 86400)
+    touch(ws / "w/real.md", EPOCH)
+    cand = src.observe(B, ST, T0 + timedelta(minutes=5))
+    assert cand is not None and cand.scheduled_for == T0  # keyed on the real change, not "now"
+    again = src.observe(B, ST, T0 + timedelta(minutes=9))
+    assert again is not None and again.scheduled_for == cand.scheduled_for  # replay-deterministic
+    assert events.count("schedule.watch_future_mtime") == 1  # once per episode
+
+
+def test_n3_only_future_changes_wait_until_their_mtime(tmp_path: Path) -> None:
+    src, ws, _ = make_source(tmp_path, spec("w/*.md"))
+    touch(ws / "w/future.md", EPOCH + 3600)
+    assert src.observe(B, ST, T0 + timedelta(minutes=5)) is None
+    assert src.observe(B, ST, T0 + timedelta(minutes=95)) is not None
+
+
+def test_lc_production_factory_uses_engine_monotonic(tmp_path: Path) -> None:
+    env = _engine_env(tmp_path, WatchSpec(paths=["w/*.md"], debounce_seconds=30))
+    src = env.engine._source_for(env.root, env.binding())
+    assert src is not None and src._monotonic is env.mono  # type: ignore[attr-defined]
+
+
+def test_ld_pattern_under_ignored_tree_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert pattern_under_ignored_tree("workflows/*/runs/*/outputs/f.md")
+    assert pattern_under_ignored_tree(".orchestrator/runs/*/x.md")
+    assert not pattern_under_ignored_tree("workflows/*/instructions/*.md")
+    with caplog.at_level(logging.WARNING):
+        make_source(tmp_path, spec("node_modules/**/*.md"))
+    assert "under an ignored tree" in caplog.text

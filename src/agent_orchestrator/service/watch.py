@@ -1,8 +1,9 @@
 """File-watch event trigger (T-Fw8Gp4, HLD §6.7): digest store, scanner, FileWatchSource.
 
-Polling, not inotify. ``FileWatchSource`` is a per-binding :class:`TriggerSource`: ``observe`` is
-pure and read-only (it never writes the digest) and ``commit`` persists the digest -- the engine
-calls it only once the fire key is burned or launched, so a concurrency skip, ``ao schedule next``
+Polling, not inotify. ``FileWatchSource`` is a per-binding :class:`TriggerSource`: ``observe``
+never consumes a fireable change -- its only write is a baseline seed when nothing *wanted*
+changed (see H1 below) -- and ``commit`` persists the digest of a fired change; the engine calls
+it only once the fire key is burned or launched, so a concurrency skip, ``ao schedule next``
 or a dry tick can never swallow a pending change.
 
 ``Candidate.scheduled_for`` is the **newest changed mtime** (whole seconds), not the observation
@@ -11,14 +12,16 @@ crash between the fire and the digest save replay-safe. Do not "simplify" it to 
 
 Path handling is security-relevant: every pattern is anchored at the workspace root resolved
 through :class:`LocalFsArtifactStore`; ``..``/absolute patterns are rejected, symlinks that
-resolve outside the root are skipped (with a warning), directory symlinks are never followed, the
+resolve outside the root are skipped (with a warning), directory symlinks are never followed --
+including a symlink anywhere in a pattern's static prefix (N1) -- the
 run output tree and VCS/dependency dirs are ignored (no self-triggering loop), and the scan is
 bounded by ``max_files``, a visit cap and a wall-clock budget checked per directory entry (a
 truncated scan never fires). The walk is pruned to directories that can still match a pattern.
 
 Review fixes (w13-03): ``observe`` seeds/refreshes the baseline digest when *nothing wanted*
 changed (the only write it makes -- nothing can be swallowed, so ``on: [modified]`` works);
-the candidate carries a content ``discriminator`` (fire key) and ``skip_catch_up`` (an observed
+a future-mtime file never delays the fire of other changes (N3); the candidate carries a content
+``discriminator`` (fire key) and ``skip_catch_up`` (an observed
 change is never "late" because its mtime is old); ``poll_seconds`` gates rescans.
 """
 
@@ -66,6 +69,7 @@ INSTANCE_TREE_RUNS = "runs"
 WATCH_DIGEST_SUBDIR = "schedules/watch"
 EVENT_WATCH_CHANGED = "watch.changed"
 EVENT_WATCH_BUDGET = "schedule.watch_budget_exceeded"
+EVENT_WATCH_FUTURE_MTIME = "schedule.watch_future_mtime"
 MAX_EVENT_PATHS = 20
 
 Digest = dict[str, list[int]]  # rel_path -> [mtime_ns, size]
@@ -135,12 +139,10 @@ def _segment_regex(part: str) -> str:
                 seg += re.escape(c)
             else:
                 body = part[j + 1 : end]
-                negate = body.startswith(("!", "^"))
+                negate = body.startswith(("!", "^"))  # a leading ``^`` is negation too (L5)
                 if negate:
                     body = body[1:]
                 body = body.replace("\\", "\\\\")
-                if not negate and body.startswith("^"):
-                    body = "\\" + body  # a literal ``^`` is not negation (L5)
                 # A negated class must never match ``/`` or a segment could cross directories.
                 seg += "[^/" + body + "]" if negate else "[" + body + "]"
                 j = end
@@ -195,6 +197,37 @@ def _can_descend(rel_dir: str, patterns: list[_Segments]) -> bool:
                 break
         if viable:
             return True
+    return False
+
+
+def pattern_under_ignored_tree(
+    pattern: str, ignores: frozenset[str] = DEFAULT_WATCH_IGNORES
+) -> bool:
+    """True if *pattern* can only match inside an ignored tree (it would validate and never
+    fire, L-d). Only literal directory segments are judged; the instance-tree shape is
+    ``workflows/<anything>/runs``."""
+    dirs = pattern.replace("\\", "/").split("/")[:-1]
+    for i, part in enumerate(dirs):
+        if not any(c in part for c in GLOB_CHARS) and part in ignores:
+            return True
+    if len(dirs) >= 3 and dirs[0] == INSTANCE_TREE_ROOT and dirs[2] == INSTANCE_TREE_RUNS:
+        return True
+    prefix = _static_prefix(pattern.replace("\\", "/"))
+    return bool(prefix) and any(
+        "/" in ig and (prefix == ig or prefix.startswith(ig + "/")) for ig in ignores
+    )
+
+
+def _has_symlink_component(root: str, rel_dir: str) -> bool:
+    """True if any component of *rel_dir* below *root* is a symlink (N1, via ``lstat``)."""
+    cur = root
+    for part in rel_dir.split("/"):
+        cur = os.path.join(cur, part)
+        try:
+            if stat.S_ISLNK(os.lstat(cur).st_mode):
+                return True
+        except OSError:  # missing/unreadable: the scandir below skips it as before
+            return False
     return False
 
 
@@ -261,6 +294,10 @@ def scan(
     while stack:
         rel_dir = stack.pop()
         if rel_dir and _ignored(rel_dir, ignores):
+            continue
+        if rel_dir and _has_symlink_component(root, rel_dir):
+            # A symlinked prefix would walk out of the root / into an ignored tree (N1).
+            logger.warning("file watch: pattern prefix %r contains a symlink; skipped", rel_dir)
             continue
         dirpath = os.path.join(root, rel_dir) if rel_dir else root
         try:
@@ -365,6 +402,12 @@ class FileWatchSource:
         self._emit = emit
         self._next_scan_at: float | None = None  # in-memory poll gate (M4)
         self._budget_warned = False
+        self._future_warned = False
+        for pattern in spec.paths:
+            if pattern_under_ignored_tree(pattern):
+                logger.warning(
+                    "file watch: pattern %r is under an ignored tree and will never fire", pattern
+                )
 
     def _event(self, name: str, payload: dict[str, Any]) -> None:
         if self._emit is None:
@@ -411,8 +454,31 @@ class FileWatchSource:
                 self._store.save(self._slug, binding.id, cur)
             self._gate(pending=False)
             return None
-        newest_s = max(cur[p][0] for p in changed) // 10**9  # whole seconds, integer (L2)
-        newest = datetime.fromtimestamp(newest_s, tz=UTC)
+        now_s = int(now.timestamp())
+        # Whole seconds, integer (L2). A path whose mtime is in the future (clock skew) must not
+        # hold back the other changes, so it is excluded from the settle time (N3). Not
+        # clamped to ``now``: that would make ``scheduled_for`` (the fire key) non-deterministic.
+        stamps = [cur[p][0] // 10**9 for p in changed]
+        settled = [t for t in stamps if t <= now_s]
+        if len(settled) < len(stamps):
+            if not self._future_warned:  # once per episode
+                self._future_warned = True
+                self._event(
+                    EVENT_WATCH_FUTURE_MTIME,
+                    {
+                        "schedule_id": binding.id,
+                        "workspace_root": self._root,
+                        "paths": [p for p, t in zip(changed, stamps, strict=True) if t > now_s][
+                            :MAX_EVENT_PATHS
+                        ],
+                    },
+                )
+        else:
+            self._future_warned = False
+        if not settled:
+            self._gate(pending=True)
+            return None  # only future-dated changes: wait until their mtime has passed
+        newest = datetime.fromtimestamp(max(settled), tz=UTC)
         if (now - newest).total_seconds() < self._spec.debounce_seconds:
             self._gate(pending=True)
             return None  # still settling; digest untouched so nothing is swallowed
@@ -439,14 +505,14 @@ class FileWatchSource:
 
 
 def file_watch_factory(
-    state_dir: Path, emit: EventSink | None = None
+    state_dir: Path, emit: EventSink | None = None, monotonic: Monotonic = time.monotonic
 ) -> Callable[[str, ResolvedBinding], FileWatchSource]:
     """Production ``TriggerSourceFactory`` for ``kind: file_watch`` bindings."""
     store = WatchDigestStore(state_dir)
 
     def factory(root: str, binding: ResolvedBinding) -> FileWatchSource:
         assert binding.watch is not None, "file_watch binding without a watch spec"
-        return FileWatchSource(root, binding.watch, store, emit=emit)
+        return FileWatchSource(root, binding.watch, store, monotonic=monotonic, emit=emit)
 
     return factory
 
@@ -459,5 +525,6 @@ __all__ = [
     "change_discriminator",
     "changed_paths",
     "file_watch_factory",
+    "pattern_under_ignored_tree",
     "scan",
 ]

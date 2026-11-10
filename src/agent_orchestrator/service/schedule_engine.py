@@ -194,7 +194,8 @@ class ScheduledLauncher(Protocol):
 class TriggerSource(Protocol):
     """Event-kind (``file_watch`` / ``webhook``) trigger (HLD §7.1, F6).
 
-    ``observe`` is pure and read-only (no digest save, no queue pop). ``commit`` is called by
+    ``observe`` never consumes a fireable change (no queue pop); it may persist a baseline when
+    nothing *wanted* changed (file_watch seeds its digest, T-Fw8Gp4 H1). ``commit`` is called by
     the engine **only once the fire key is burned or launched** -- never on a concurrency skip,
     which deliberately does not burn the key, so a concurrency skip cannot lose an event.
     """
@@ -319,7 +320,9 @@ class ScheduleEngine:
         from .watch import file_watch_factory
 
         self._source_factories["file_watch"] = file_watch_factory(
-            self._state_dir, lambda name, payload: self._events.emit(name, **payload)
+            self._state_dir,
+            lambda name, payload: self._events.emit(name, **payload),
+            monotonic=self._monotonic,
         )
         self._sources: dict[tuple[str, str], tuple[ResolvedBinding, TriggerSource]] = {}
 
@@ -1002,7 +1005,9 @@ class ScheduleEngine:
             if st.queued_fire_key is None:
                 # F8: the queued key gets NO fire record until its drain launches it
                 # (intended -> launched); a record now would make the drain collide with it.
-                self._state.set_queued(root, sid, key, scheduled_for)
+                self._state.set_queued(
+                    root, sid, key, scheduled_for, candidate.discriminator if candidate else ""
+                )
                 self._queued_meta[(root, sid)] = (key, scheduled_for, effective_due)
             else:
                 self._burn(key, REASON_QUEUE_FULL, root, sid, scheduled_for, effective_due)
@@ -1061,7 +1066,7 @@ class ScheduleEngine:
             # Restarted since queueing: rehydrate from the persisted original scheduled_for. The
             # key must re-derive from it; effective_due is deterministic in (key, binding).
             persisted = st.queued_scheduled_for
-            if fire_key(root, sid, persisted) == key:
+            if fire_key(root, sid, persisted, st.queued_discriminator) == key:
                 due = persisted + timedelta(seconds=_jitter_offset(key, binding))
                 meta = (key, persisted, due)
                 self._queued_meta[(root, sid)] = meta

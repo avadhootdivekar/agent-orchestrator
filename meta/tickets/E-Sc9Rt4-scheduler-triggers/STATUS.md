@@ -6,6 +6,7 @@
 - Owner: architect agent (design) → dev-epic agent (delivery)
 
 ## This update
+- **2026-11-11 (developer, unit `w16-01-a1-file-watch-rereview-fixes`):** `T-Fw8Gp4` re-review (w15-01) N1 (symlinked pattern prefix), N2 (queued file-watch fire lost on restart), N3 (future-mtime starvation) and the small Lows fixed, mutation-checked. Pending merge.
 - **Design complete, nothing implemented.** Architecture package delivered:
   `docs-md/scheduler-triggers-hld.md` (HLD + LLD, mermaid diagrams for the service loop, the
   fire path, overlap/catch-up, crash recovery and the webhook path, plus schema/config deltas,

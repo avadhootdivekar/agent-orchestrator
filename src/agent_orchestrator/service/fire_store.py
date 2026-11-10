@@ -379,6 +379,9 @@ class ScheduleState(BaseModel):
     # Original instant of the queued fire; persisted so a queue survives a service restart.
     # Optional with a None default: legacy state files (no such key) load unchanged.
     queued_scheduled_for: AwareDatetime | None = None
+    # Event-trigger change discriminator of the queued fire (T-Fw8Gp4 N2): needed to re-derive the
+    # fire key after a restart. Expand-only: legacy state reads as "".
+    queued_discriminator: str = ""
     active_fire_keys: list[str] = Field(default_factory=list)
     disabled_reason: str | None = None
 
@@ -462,16 +465,19 @@ class ScheduleStateStore:
         schedule_id: str,
         fire_key: str,
         scheduled_for: datetime | None = None,
+        discriminator: str = "",
     ) -> None:
         entry = self._entry(root, schedule_id)
         entry.queued_fire_key = fire_key
         entry.queued_scheduled_for = scheduled_for
+        entry.queued_discriminator = discriminator
         self._save()
 
     def clear_queued(self, root: str | Path, schedule_id: str) -> None:
         entry = self._entry(root, schedule_id)
         entry.queued_fire_key = None
         entry.queued_scheduled_for = None
+        entry.queued_discriminator = ""
         self._save()
 
     def advance_anchor(self, root: str | Path, schedule_id: str, scheduled_for: datetime) -> None:
