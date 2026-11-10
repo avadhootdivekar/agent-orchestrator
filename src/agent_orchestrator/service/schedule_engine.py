@@ -655,6 +655,18 @@ class ScheduleEngine:
             self._queued_meta.pop((str(Path(d.workspace_root).resolve()), d.schedule_id), None)
         self._commit(d.fire_key)
 
+    def fire(self, decision: FireDecision) -> FireIntentRecord | None:
+        """Launch one already-evaluated firing decision and return its fire record.
+
+        Public seam for in-process callers (``ao schedule run-now --local``) that evaluate a
+        single binding themselves and must not reach into ``_launcher``. Returns ``None`` when no
+        launcher is configured. Unlike :meth:`_launch` a launcher exception is NOT swallowed: the
+        caller reports it (the daemon path keeps the never-raise contract via :meth:`_launch`).
+        """
+        if self._launcher is None:
+            return None
+        return self._launcher.launch(decision)
+
     # -- run-now (HLD §6.9) ---------------------------------------------------------------------
 
     def drain_run_now_requests(self, now: datetime | None = None) -> list[RunNowRequest]:

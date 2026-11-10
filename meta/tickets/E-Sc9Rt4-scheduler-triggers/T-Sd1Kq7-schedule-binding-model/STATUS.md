@@ -26,3 +26,6 @@
 2. Downstream `T-Ev3Qm5`, `T-Lp4Wt6`, `T-Cl6Jn9`, `T-Fr2Nx8` can start; landed names:
    `ScheduleFile.from_data/bindings/to_data`, `ScheduleBinding.to_trigger`, `RunArgs.as_options`,
    `ScheduleStore.{path,load,save,mutate}`, `IntervalScheduler`, `read_json_model`, `write_json_model_atomic`.
+
+## Update 2026-11-11 — W3 (unit `w18-03-a1-schedule-followups`)
+- `ScheduleStore.save` now serializes with `exclude_unset=True` (new `ScheduleFile.to_data(exclude_unset=...)`); AC7's `load(save(x)) == x` still holds (guard + tests). Comments/key order of hand-edited files remain unpreserved (needs ruamel; not a dependency).

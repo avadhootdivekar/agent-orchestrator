@@ -2,7 +2,7 @@
 
 - ID: `T-Un0Lm6-until-termination`
 - Updated At: 2026-11-11
-- State: In Review (AC13 + coverage report unfinished)
+- State: In Review (AC14 coverage report unfinished)
 - Owner: developer agent
 
 ## This update
@@ -34,11 +34,13 @@
   `until` code is fully exercised.
 
 ## Unfinished
-- AC13: LoopSpec-under-`until` characterization test (needs a running engine with a loop workflow).
 - AC14: whole-tree pytest/mypy-tests delta and a coverage figure scoped to the new lines.
 - Brief asked to record skip/termination "in fire store": termination is recorded in
   `ScheduleState` (status/reason) and the event log; no suppressed fire record is written since no
   instant is being burned.
 
+## Update 2026-11-11 (unit `w18-03-a1-schedule-followups`)
+- AC13 done: `tests/service/test_until.py::test_loopspec_workflow_runs_unchanged_under_until_schedule` (real `Orchestrator` + `FakeExecutor`, 2-iteration loop = ONE `runs_count` tick; `until` ends the schedule, not the loop; fixed clock) and `..._bad_gate_still_fails_the_run_while_until_gate_never_does` (the LoopSpec/`until` contrast). Mutation-checked: disabling the `evaluate` until call site fails it.
+
 ## Next actions
-1. Add AC13 test; hand `completed`/`runs_count` display contract to `T-Ap1Xs3`; docs to `T-Dc6Zr2`.
+1. (AC13 done) hand `completed`/`runs_count` display contract to `T-Ap1Xs3`; docs to `T-Dc6Zr2`.

@@ -999,7 +999,7 @@ def _run_local(
         if not decision.fire:
             typer.echo(f"not fired: {decision.reason}")
             return
-        record = engine._launcher.launch(decision) if engine._launcher else None  # noqa: SLF001
+        record = engine.fire(decision)
         if record is None:  # pragma: no cover - _build_engine always wires a launcher
             raise _fail("no launcher configured")
         if record.status != "launched":

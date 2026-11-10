@@ -58,8 +58,12 @@ class ScheduleStore:
         ``from_data(to_data())`` first: an invalid model (e.g. a duplicate id appended by a
         ``mutate`` fn) raises :class:`ScheduleFileError` and the existing file is left intact.
         """
-        payload = data.to_data()
-        ScheduleFile.from_data(payload, source=str(self._path))
+        # ``exclude_unset``: write only what the user (or a mutate fn) actually set, so a no-op
+        # load/save does not rewrite every default into the file (W3). Comments and key order of
+        # hand-edited files are still not preserved: PyYAML cannot, and ruamel is not a dependency.
+        payload = data.to_data(exclude_unset=True)
+        if ScheduleFile.from_data(payload, source=str(self._path)) != data:
+            raise ScheduleFileError(f"{self._path}: unset-field serialization changed the model")
         atomic_write_bytes(self._path, yaml.safe_dump(payload, sort_keys=False).encode("utf-8"))
 
     def mutate(self, fn: Callable[[ScheduleFile], ScheduleFile]) -> ScheduleFile:

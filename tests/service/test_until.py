@@ -380,3 +380,84 @@ def test_float_gate_value_never_equals_an_int_gate(tmp_path: Path) -> None:
     gate(tmp_path, '{"n": 1.0}')
     b = ub(gate_file="gate.json", gate_field="n", gate_equals=1)
     assert until_satisfied(tmp_path, b, ScheduleState()) is False
+
+
+# -- AC13: LoopSpec composition (characterization) --------------------------------------------
+
+
+def _loop_workflow(make_workflow: Any) -> Any:
+    return make_workflow(
+        [
+            {"id": "develop", "outputs": ["output/impl.md"]},
+            {"id": "review", "inputs": ["output/impl.md"], "depends_on": ["develop"]},
+            {"id": "finalize", "depends_on": ["dev-review-loop"], "outputs": ["output/final.md"]},
+        ],
+        wf_id="loop-wf",
+        loops=[
+            {
+                "id": "dev-review-loop",
+                "body": ["develop", "review"],
+                "gate_task_id": "review",
+                "gate_output_path": "output/review-verdict.json",
+                "max_iterations": 5,
+            }
+        ],
+    )
+
+
+def test_loopspec_workflow_runs_unchanged_under_until_schedule(
+    tmp_path: Path, make_workflow: Any, make_orchestrator: Any
+) -> None:
+    """AC13: ``until`` (inter-run) and ``LoopSpec`` (intra-run) compose without knowing about
+    each other. One scheduled fire of a 2-iteration loop workflow is ONE ``runs_count`` tick
+    (not one per iteration), the loop expands exactly as without a schedule, and ``until`` ends
+    the schedule -- not the loop -- once ``max_runs`` is reached."""
+    from agent_orchestrator.executors.fake import FakeExecutor
+
+    # Engine side: a schedule with until.max_runs=2 fires once.
+    env = env_for(tmp_path, [_engine_binding(max_runs=2)])
+    env.anchor()
+    decision = env.evaluate(now=T0 + timedelta(seconds=60))
+    assert decision.fire and decision.reason == "due"
+    record = env.engine.fire(decision)
+    assert record is not None and record.status == "launched"
+    state_row = env.engine.state_store.get(env.root, "s")
+    assert state_row is not None and state_row.runs_count == 1
+
+    # Run side: the fired workflow's loop is untouched by the schedule (gate True, then False).
+    wf = _loop_workflow(make_workflow)
+    orch, reposets, agents = make_orchestrator(
+        FakeExecutor(gate_payloads={"review": [True, False]})
+    )
+    run = orch.run(wf, reposets, agents)
+    assert run.status == "succeeded"
+    assert {"review", "review__iter2"} <= set(run.tasks) and "review__iter3" not in run.tasks
+    assert run.tasks["develop__iter2"].origin == "loop"
+    assert run.tasks["finalize"].status == "succeeded"
+    # `until` is not a workflow concern: the spec model carries no such field.
+    assert "until" not in type(wf).model_fields
+
+    # Inner iterations did not advance the schedule's counter; it is not yet satisfied.
+    state_row = env.engine.state_store.get(env.root, "s")
+    assert state_row is not None and state_row.runs_count == 1
+    env.end_run("run-1")
+    d2 = env.evaluate(now=T0 + timedelta(seconds=120))
+    assert d2.fire and d2.reason == "due"
+    env.engine.fire(d2)
+    env.end_run("run-2")
+    d3 = env.evaluate(now=T0 + timedelta(seconds=180))
+    assert (d3.fire, d3.reason) == (False, "until_satisfied")
+
+
+def test_loopspec_bad_gate_still_fails_the_run_while_until_gate_never_does(
+    tmp_path: Path, make_workflow: Any, make_orchestrator: Any
+) -> None:
+    """The deliberate contrast (TASK 'Risks'): a malformed LoopSpec gate FAILS the run, whereas a
+    malformed ``until`` gate never ends the schedule."""
+    from agent_orchestrator.executors.fake import FakeExecutor
+
+    wf = _loop_workflow(make_workflow)
+    orch, reposets, agents = make_orchestrator(FakeExecutor(gate_payloads={"review": ["yes"]}))
+    assert orch.run(wf, reposets, agents).status != "succeeded"
+    # ... while the until side keeps going on the same kind of bad read:
+    assert until_satisfied(tmp_path, ub(gate_file="g.json"), ScheduleState()) is False

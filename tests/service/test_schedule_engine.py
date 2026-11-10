@@ -1113,3 +1113,35 @@ def test_l7_status_snapshot_error_keeps_full_shape(
     snap = env.engine.status_snapshot()
     assert ok <= set(snap) and snap["error"] == "x"
     assert snap["totals"]["active"] == 0 and snap["by_workspace"] == []
+
+
+# -- public fire() seam (W4: run-now --local no longer reaches into _launcher) --------------------
+
+
+def test_fire_launches_decision_and_returns_record(tmp_path: Path) -> None:
+    env = env_for(tmp_path)
+    env.anchor()
+    d = env.evaluate(now=T0 + timedelta(seconds=60))
+    rec = env.engine.fire(d)
+    assert rec is not None and rec.status == "launched" and rec.fire_key == d.fire_key
+    assert env.launcher.decisions == [d]
+
+
+def test_fire_without_launcher_returns_none(tmp_path: Path) -> None:
+    env = env_for(tmp_path, launcher=None)
+    env.anchor()
+    d = env.evaluate(now=T0 + timedelta(seconds=60))
+    assert env.engine.fire(d) is None
+
+
+def test_fire_propagates_launcher_errors(tmp_path: Path) -> None:
+    env = env_for(tmp_path)
+    env.anchor()
+    d = env.evaluate(now=T0 + timedelta(seconds=60))
+
+    def boom(_: FireDecision) -> FireIntentRecord:
+        raise RuntimeError("launch exploded")
+
+    env.launcher.launch = boom  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="launch exploded"):
+        env.engine.fire(d)

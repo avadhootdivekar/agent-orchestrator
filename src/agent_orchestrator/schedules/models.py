@@ -556,9 +556,14 @@ class ScheduleFile(BaseModel):
             for b in self.schedules
         ]
 
-    def to_data(self) -> dict[str, Any]:
-        """Plain-data form for YAML (aliases kept, ``None`` omitted -- ``None`` means inherit)."""
-        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
+    def to_data(self, *, exclude_unset: bool = False) -> dict[str, Any]:
+        """Plain-data form for YAML (aliases kept, ``None`` omitted -- ``None`` means inherit).
+
+        ``exclude_unset=True`` additionally omits fields never explicitly set (not given in the
+        loaded YAML, nor assigned since), so a load/save cycle does not materialize defaults."""
+        return self.model_dump(
+            mode="json", by_alias=True, exclude_none=True, exclude_unset=exclude_unset
+        )
 
     @classmethod
     def from_data(cls: type[_T], data: Any, *, source: str = "<schedules>") -> _T:

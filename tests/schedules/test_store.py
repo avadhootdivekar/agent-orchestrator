@@ -165,3 +165,57 @@ def test_concurrent_unlocked_saves_do_not_collide(tmp_path: Path) -> None:
         list(ex.map(lambda _: store.save(ScheduleFile()), range(64)))
     assert store.load().schedules == []
     assert [p.name for p in store.path.parent.iterdir()] == ["schedules.yaml"]
+
+
+# -- W3: save must not materialize defaults ------------------------------------------------------
+
+_MINIMAL_YAML = (
+    "version: '1'\n"
+    "schedules:\n"
+    "- id: a\n"
+    "  kind: interval\n"
+    "  interval_seconds: 3600\n"
+    "  workflow: w.json\n"
+    "  limits: {cost: {per_run_usd: 1}}\n"
+)
+
+
+def test_noop_load_save_does_not_materialize_defaults(tmp_path: Path) -> None:
+    import yaml
+
+    store = ScheduleStore(tmp_path)
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text(_MINIMAL_YAML)
+    store.save(store.load())
+    data = yaml.safe_load(store.path.read_text())
+    assert "defaults" not in data
+    assert set(data["schedules"][0]) == {"id", "kind", "interval_seconds", "workflow", "limits"}
+    assert data["schedules"][0]["limits"] == {"cost": {"per_run_usd": 1.0}}
+    assert store.load() == ScheduleFile.from_data(yaml.safe_load(_MINIMAL_YAML))
+
+
+def test_explicitly_set_defaults_are_kept_and_mutated_fields_persist(tmp_path: Path) -> None:
+    import yaml
+
+    store = ScheduleStore(tmp_path)
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text(_MINIMAL_YAML + "  overlap: queue\n")
+    store.mutate(
+        lambda f: f.model_copy(
+            update={"defaults": f.defaults.model_copy(update={"timezone": "Asia/Kolkata"})}
+        )
+    )
+    data = yaml.safe_load(store.path.read_text())
+    assert data["defaults"] == {"timezone": "Asia/Kolkata"}
+    assert data["schedules"][0]["overlap"] == "queue"
+    assert store.load().defaults.timezone == "Asia/Kolkata"
+
+
+def test_attribute_assignment_is_persisted(tmp_path: Path) -> None:
+    store = ScheduleStore(tmp_path)
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text(_MINIMAL_YAML)
+    f = store.load()
+    f.schedules[0].enabled = False
+    store.save(f)
+    assert store.load().schedules[0].enabled is False

@@ -166,3 +166,6 @@ the webhook's middleware mounting.
 
 ## Update 2026-11-11 — T-Cl6Jn9 review fixes (w17-01)
 - The 2 High findings (daemon / `run-now --local` bypassed the kill switch, global cap, webhook source and usage ledger; `run-now` fired non-opted-in workspaces) are fixed with mutation-checked tests; most Mediums/Lows fixed. Followups: W3 (`store.save` materializes defaults), W4 (public `ScheduleEngine.fire`), S4, and extracting one shared engine factory in `service/cli.py`. See `T-Cl6Jn9-schedule-cli/STATUS.md`.
+
+## Update 2026-11-11 — schedule follow-ups (w18-03)
+- `T-Un0Lm6` AC13 test landed (only AC14 coverage report open). `T-Cl6Jn9` W4 fixed (public `ScheduleEngine.fire`), W3 partly fixed (`save` no longer materializes defaults; comment loss remains, needs ruamel), kill-switch flake not reproducible, S4 awaits owner decision.
