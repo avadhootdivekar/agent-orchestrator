@@ -16,7 +16,8 @@ export function formatBytes(bytes: number): string {
 
 /** Compact duration: 45s, 3m 20s, 2h 15m. Sub-second durations read as "<1s", not "0s". */
 export function formatDuration(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "—";
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds))
+    return "—";
   if (seconds < 0) return "—";
   if (seconds < 1) return "<1s";
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -57,7 +58,8 @@ export function formatCount(n: number | null | undefined): string {
  * a genuine 0% rate, never conflated with it by defaulting to "0%".
  */
 export function formatPercent(ratio: number | null | undefined): string {
-  if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) return "n/a";
+  if (ratio === null || ratio === undefined || !Number.isFinite(ratio))
+    return "n/a";
   return `${(ratio * 100).toFixed(1)}%`;
 }
 
@@ -93,7 +95,12 @@ export function statusTone(status: string): StatusTone {
     case "timed_out":
       return "critical";
     case "running":
+    case "active": // schedule status
       return "active";
+    case "completed": // schedule status
+      return "good";
+    case "quarantined": // schedule status
+      return "critical";
     case "awaiting_input":
     case "killed":
       // Parked on a human answer / killed by the sentinel and awaiting re-dispatch: not failed.
@@ -114,6 +121,14 @@ export function statusGlyph(status: string): string {
       return "⧗";
     case "running":
       return "▶";
+    case "active":
+      return "●";
+    case "completed":
+      return "✓";
+    case "quarantined":
+      return "⚠";
+    case "disabled":
+      return "⊘";
     case "awaiting_input":
       return "?";
     case "killed":
@@ -222,7 +237,10 @@ export function formatFeedbackSplit(g: {
 }
 
 /** "n/a" for a missing denominator, so 0 and "unknown" are never conflated. */
-export function formatCountOrNA(n: number | null | undefined, denominator: number): string {
+export function formatCountOrNA(
+  n: number | null | undefined,
+  denominator: number,
+): string {
   return denominator > 0 && n !== null && n !== undefined ? String(n) : "n/a";
 }
 
@@ -256,7 +274,9 @@ export interface ModelUsage {
  * model (not yet dispatched, or an old backend) are not counted -- the agent's own model is
  * unknown to the dashboard, so guessing one would mislead.
  */
-export function summarizeModels(tasks: ReadonlyArray<{ model?: string | null }>): ModelUsage[] {
+export function summarizeModels(
+  tasks: ReadonlyArray<{ model?: string | null }>,
+): ModelUsage[] {
   const counts = new Map<string, number>();
   for (const t of tasks) {
     if (t.model) counts.set(t.model, (counts.get(t.model) ?? 0) + 1);
@@ -265,3 +285,49 @@ export function summarizeModels(tasks: ReadonlyArray<{ model?: string | null }>)
     .map(([model, n]) => ({ model, tasks: n }))
     .sort((a, b) => b.tasks - a.tasks || a.model.localeCompare(b.model));
 }
+
+// ---- Schedules (T-Ap1Xs3) -----------------------------------------------------------------------
+
+/** Cap on the schedule history rows fetched for an expanded schedule. */
+export const SCHEDULE_HISTORY_LIMIT = 20;
+
+/**
+ * "in 5m" / "3h ago" relative to `nowMs` (injected so callers and tests control the clock).
+ * Empty/invalid input is an em dash. Pair with an absolute time: relative alone is useless
+ * for a cron schedule.
+ */
+export function formatRelative(
+  iso: string | null | undefined,
+  nowMs: number,
+): string {
+  if (!iso) return "—";
+  const at = new Date(iso).getTime();
+  if (Number.isNaN(at)) return "—";
+  const delta = Math.round((at - nowMs) / 1000);
+  const abs = Math.abs(delta);
+  if (abs < 45) return delta >= 0 ? "in <1m" : "just now";
+  const unit =
+    abs < 3600
+      ? `${Math.round(abs / 60)}m`
+      : abs < 86400
+        ? `${Math.round(abs / 3600)}h`
+        : `${Math.round(abs / 86400)}d`;
+  return delta >= 0 ? `in ${unit}` : `${unit} ago`;
+}
+
+/** Events that record a fire that did NOT happen (what operators need to diagnose). */
+const SUPPRESSED_EVENT =
+  /skipped|missed|expired|dropped|rejected|exceeded|invalid/;
+
+export function isSuppressedEvent(event: string): boolean {
+  return SUPPRESSED_EVENT.test(event);
+}
+
+/** Glyph + short word for a schedule event: never colour alone. */
+export function scheduleEventLabel(event: string): string {
+  const name = event.replace(/^schedule\./, "");
+  return `${isSuppressedEvent(event) ? "⊘" : "•"} ${name}`;
+}
+
+/** Queued run-now wording: a 202 means queued for the daemon, not started. */
+export const RUN_NOW_QUEUED_TEXT = "queued — will fire within ~15 s";

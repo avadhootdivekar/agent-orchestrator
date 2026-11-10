@@ -22,6 +22,7 @@ import { TabView } from "./tabs/TabView";
 const NAV: { kind: TabKind; label: string; glyph: string }[] = [
   { kind: "runs", label: "Runs", glyph: "▤" },
   { kind: "usage", label: "Usage", glyph: "∑" },
+  { kind: "schedules", label: "Schedules", glyph: "⏱" },
   { kind: "new", label: "New run", glyph: "＋" },
   { kind: "file", label: "Files", glyph: "▸" },
   { kind: "settings", label: "Workspace", glyph: "⚙" },

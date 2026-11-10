@@ -39,6 +39,10 @@ import type {
   SentinelPanelV2,
   SentinelStatus,
   RunSummary,
+  ScheduleHistory,
+  ScheduleRunNowResult,
+  SchedulesResponse,
+  ScheduleToggleResult,
   TemplateInfo,
   TotpEnrollment,
   UsageReport,
@@ -246,6 +250,20 @@ export const api = {
     const query = params.toString();
     return request<LaunchRecord[]>(`/launches${query ? `?${query}` : ""}`);
   },
+
+  /** Schedules merged with scheduler state (T-Ap1Xs3). Read-only. */
+  schedules: () => request<SchedulesResponse>("/schedules"),
+  scheduleHistory: (id: string, limit: number) =>
+    request<ScheduleHistory>(`/schedules/${encodeURIComponent(id)}/history?limit=${limit}`),
+  setScheduleEnabled: (id: string, enabled: boolean) =>
+    postJson<ScheduleToggleResult>(
+      `/schedules/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`,
+    ),
+  /** Queues a request file for the daemon; 202 means "queued", never "started". */
+  runScheduleNow: (id: string, force = false) =>
+    postJson<ScheduleRunNowResult>(
+      `/schedules/${encodeURIComponent(id)}/run-now${force ? "?force=true" : ""}`,
+    ),
 
   startRun: (workflowPath: string, prompt: string, options: RunOptions) =>
     request<LaunchRecord>("/runs", {

@@ -1061,3 +1061,64 @@ export type SentinelControlOutcome =
   | { outcome: "pending" }
   | { outcome: "consumed" }
   | { outcome: "rejected"; rule_id: string; detail: string };
+
+// ---- Schedules (T-Ap1Xs3) -----------------------------------------------------------------------
+// Hand-maintained mirror of `DashboardService.list_schedules` / `schedule_history` (not generated
+// from OpenAPI): keep in the same commit as any change to those response shapes.
+
+export type ScheduleStatus = "active" | "disabled" | "completed" | "quarantined";
+
+export interface Schedule {
+  id: string;
+  kind: string;
+  enabled: boolean;
+  /** Workflow path or template name the schedule points at (one of the two is set). */
+  workflow: string | null;
+  template: string | null;
+  /** Null until a scheduler service has written state for this schedule. */
+  status: ScheduleStatus | null;
+  next_fire_at: string | null;
+  last_fire_at: string | null;
+  last_run_id: string | null;
+  last_status: string | null;
+  consecutive_failures: number;
+  runs_count: number;
+  max_runs: number | null;
+  queued: boolean;
+  active_fires: number;
+}
+
+export interface SchedulesResponse {
+  /** False when no scheduler service has ever written state: schedules will not fire. */
+  daemon_seen: boolean;
+  schedules: Schedule[];
+}
+
+export interface ScheduleEvent {
+  ts: string;
+  event: string;
+  workspace: string | null;
+  schedule_id: string | null;
+  fire_key: string | null;
+  scheduled_for: string | null;
+  run_id: string | null;
+  reason: string | null;
+  detail: string | null;
+  [extra: string]: unknown;
+}
+
+export interface ScheduleHistory {
+  schedule_id: string;
+  events: ScheduleEvent[];
+}
+
+export interface ScheduleToggleResult {
+  schedule_id: string;
+  enabled: boolean;
+  restarted: boolean;
+}
+
+export interface ScheduleRunNowResult {
+  queued: boolean;
+  schedule_id: string;
+}

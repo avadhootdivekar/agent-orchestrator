@@ -17,6 +17,7 @@ export const TAB_KINDS = [
   "graph",
   "file",
   "usage",
+  "schedules",
   "new",
   "settings",
 ] as const;
@@ -53,6 +54,7 @@ export const MAX_TITLE_CHARS = 40;
 export const SINGLETON_KINDS: ReadonlySet<TabKind> = new Set<TabKind>([
   "runs",
   "usage",
+  "schedules",
   "new",
   "settings",
 ]);
@@ -66,6 +68,7 @@ const PARAM_SCHEMA: Record<TabKind, Record<string, [ParamKind, boolean]>> = {
   graph: { run: ["runId", true] },
   file: { path: ["path", false], root: ["root", false] }, // no path = browse the root
   usage: {},
+  schedules: {},
   new: {},
   settings: {},
 };
@@ -140,6 +143,8 @@ export function titleFor(kind: TabKind, params: TabParams): string {
     }
     case "usage":
       return "Usage";
+    case "schedules":
+      return "Schedules";
     case "new":
       return "New run";
     case "settings":

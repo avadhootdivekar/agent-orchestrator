@@ -12,10 +12,12 @@ adapter that maps HTTP verbs onto these methods, which means:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
 import threading
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -46,10 +48,27 @@ from ..feedback import (
 from ..implicit_signals import apply_survival, implicit_signals
 from ..models import RunState, run_waiting_for_input
 from ..project_config import ProjectConfig, find_project_config, load_project_config
+from ..schedules.errors import ScheduleFileError
+from ..schedules.models import ScheduleFile
+from ..schedules.store import ScheduleStore
+from ..service.fire_store import (
+    SCHEDULES_SUBDIR,
+    STATE_FILENAME,
+    ScheduleEventLog,
+    ScheduleStateStore,
+)
+from ..service.paths import default_state_dir
+from ..service.schedule_engine import (
+    ENGINE_LOCK_FILENAME,
+    REQUEST_KIND_RUN_NOW,
+    REQUESTS_SUBDIR,
+)
+from ..service.statefile import atomic_write_bytes
 from ..spec import cross_validate, load_workflow
 from ..survival import compute_survival, validate_ref
 from ..templates import TemplateError, discover_templates, instantiate
 from ..usage import MAX_REPORT_RUN_IDS, build_usage_report, usage_report_payload
+from .errors import ScheduleAlreadyActive, ScheduleFileInvalid, ScheduleNotFound
 from .files import FileBrowser, Root
 from .htmlpreview import build_html_preview
 from .processes import (
@@ -117,6 +136,12 @@ _SLUG_MAX_CHARS = 60
 MAX_CONCURRENT_SURVIVAL = 2
 SURVIVAL_DEFAULT_MAX_RUNS = 50
 DASHBOARD_FEEDBACK_SOURCE = "dashboard"
+
+# Schedules panel (T-Ap1Xs3).
+SCHEDULE_REQUESTED_BY = "ui"
+SCHEDULE_HISTORY_DEFAULT_LIMIT = 20
+SCHEDULE_HISTORY_MAX_LIMIT = 200
+SCHEDULE_STATUS_COMPLETED = "completed"
 
 
 class DashboardError(Exception):
@@ -282,7 +307,9 @@ class DashboardService:
         search_roots: list[str] | None = None,
         clock: Callable[[], datetime] | None = None,
         denied_paths: list[str] | None = None,
+        schedule_state_dir: Path | None = None,
     ) -> None:
+        self._schedule_state_dir = schedule_state_dir
         self._clock_now: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
         self.workspace_root = str(Path(workspace_root).resolve())
         self._browser = browser or FileBrowser(
@@ -1188,6 +1215,145 @@ class DashboardService:
         if record is None:
             raise DashboardNotFoundError(f"launch not found: {launch_id}")
         return self._supervisor.describe(record, include_log=True)
+
+    # -- schedules (T-Ap1Xs3) ---------------------------------------------------
+    # Read-mostly view over `.ao/schedules.yaml` + the scheduler service's state dir. The only
+    # writes are the schedule file's `enabled` flag (via ScheduleStore.mutate), a schedule
+    # event, and a run-now *request file* the daemon drains. This module never launches a run.
+    # None of these methods accept a workflow path or run args: they act only on schedules
+    # already declared in the workspace file (AC17).
+
+    def _schedule_state_dir_path(self) -> Path:
+        return self._schedule_state_dir or default_state_dir()
+
+    def _load_schedule_file(self) -> ScheduleFile:
+        try:
+            return ScheduleStore(self.workspace_root).load()
+        except ScheduleFileError as exc:
+            raise ScheduleFileInvalid(str(exc)) from exc
+
+    def _require_schedule(self, schedule_id: str) -> None:
+        if all(b.id != schedule_id for b in self._load_schedule_file().schedules):
+            raise ScheduleNotFound(f"no such schedule {schedule_id!r}")
+
+    def list_schedules(self) -> dict:
+        """Bindings merged with scheduler state. A missing state dir means no daemon has ever
+        run: bindings are returned with null state and ``daemon_seen: false`` (not an error)."""
+        sdir = self._schedule_state_dir_path()
+        daemon_seen = (sdir / SCHEDULES_SUBDIR / STATE_FILENAME).is_file()
+        state = ScheduleStateStore(sdir)  # read-only here: only the getters are used
+        rows: list[dict] = []
+        for b in self._load_schedule_file().bindings:
+            st = state.get(self.workspace_root, b.id)
+            rows.append(
+                {
+                    "id": b.id,
+                    "kind": b.kind,
+                    "enabled": b.enabled,
+                    "workflow": b.workflow,
+                    "template": b.template,
+                    "status": st.status if st else None,
+                    "next_fire_at": _iso_or_none(st.next_fire_at if st else None),
+                    "last_fire_at": _iso_or_none(st.last_fire_at if st else None),
+                    "last_run_id": st.last_run_id if st else None,
+                    "last_status": st.last_status if st else None,
+                    "consecutive_failures": st.consecutive_failures if st else 0,
+                    "runs_count": st.runs_count if st else 0,
+                    "max_runs": b.until.max_runs if b.until else None,
+                    "queued": bool(st and st.queued_fire_key),
+                    "active_fires": len(st.active_fire_keys) if st else 0,
+                }
+            )
+        return {"daemon_seen": daemon_seen, "schedules": rows}
+
+    def schedule_history(
+        self, schedule_id: str, limit: int = SCHEDULE_HISTORY_DEFAULT_LIMIT
+    ) -> dict:
+        """Newest-first events for one schedule, suppressed/skipped fires included (with their
+        ``reason``): what did not happen is the diagnostic."""
+        self._require_schedule(schedule_id)
+        limit = max(1, min(limit, SCHEDULE_HISTORY_MAX_LIMIT))
+        events = ScheduleEventLog(self._schedule_state_dir_path()).read(
+            limit=limit, schedule_id=schedule_id, workspace_root=self.workspace_root
+        )
+        return {"schedule_id": schedule_id, "events": events}
+
+    def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> dict:
+        """Flip ``enabled`` via ``ScheduleStore.mutate``. Enabling a ``completed`` schedule
+        restarts it (``runs_count`` reset, status ``active``), same as ``ao schedule enable``."""
+        self._require_schedule(schedule_id)
+        sdir = self._schedule_state_dir_path()
+        restarted = False
+        if enabled:
+            st = ScheduleStateStore(sdir).get(self.workspace_root, schedule_id)
+            if st is not None and st.status == SCHEDULE_STATUS_COMPLETED:
+                self._restart_completed(sdir, schedule_id)
+                restarted = True
+
+        def apply(current: ScheduleFile) -> ScheduleFile:
+            data = current.to_data()
+            for row in data.get("schedules", []):
+                if row.get("id") == schedule_id:
+                    row["enabled"] = enabled
+            return ScheduleFile.from_data(data, source=str(ScheduleStore(self.workspace_root).path))
+
+        try:
+            ScheduleStore(self.workspace_root).mutate(apply)
+        except ScheduleFileError as exc:
+            raise ScheduleFileInvalid(str(exc)) from exc
+        ScheduleEventLog(sdir, clock=self._clock_now).emit(
+            "schedule.enabled" if enabled else "schedule.disabled",
+            workspace=self.workspace_root,
+            schedule_id=schedule_id,
+            requested_by=SCHEDULE_REQUESTED_BY,
+            detail=f"requested_by={SCHEDULE_REQUESTED_BY}" + (" restarted" if restarted else ""),
+        )
+        return {"schedule_id": schedule_id, "enabled": enabled, "restarted": restarted}
+
+    def _restart_completed(self, sdir: Path, schedule_id: str) -> None:
+        """Reset a completed schedule's state. ``state.json`` is single-writer (the engine caches
+        it), so only touch it while holding ``engine.lock`` -- the CLI's rule (F9)."""
+        lock_path = sdir / SCHEDULES_SUBDIR / ENGINE_LOCK_FILENAME
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a+") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise ScheduleAlreadyActive(
+                    "a daemon is evaluating; cannot reset a completed schedule's state safely. "
+                    "Retry in a moment."
+                ) from exc
+            try:
+                fresh = ScheduleStateStore(sdir)
+                current = fresh.get(self.workspace_root, schedule_id)
+                if current is not None:
+                    current.runs_count = 0
+                fresh.set_status(self.workspace_root, schedule_id, "active")
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def request_schedule_fire(self, schedule_id: str, force: bool = False) -> dict:
+        """Drop a run-now request file for the daemon (HLD §6.9). NEVER launches anything."""
+        self._require_schedule(schedule_id)
+        sdir = self._schedule_state_dir_path()
+        st = ScheduleStateStore(sdir).get(self.workspace_root, schedule_id)
+        if st is not None and st.active_fire_keys and not force:
+            raise ScheduleAlreadyActive(f"schedule {schedule_id!r} already has an active fire")
+        body = {
+            "kind": REQUEST_KIND_RUN_NOW,
+            "workspace_root": self.workspace_root,
+            "schedule_id": schedule_id,
+            "requested_at": self._clock_now().astimezone(UTC).isoformat(),
+            "force": force,
+            "requested_by": SCHEDULE_REQUESTED_BY,
+        }
+        path = sdir / SCHEDULES_SUBDIR / REQUESTS_SUBDIR / f"{uuid.uuid4().hex}.json"
+        atomic_write_bytes(path, json.dumps(body).encode("utf-8"))
+        return {"queued": True, "schedule_id": schedule_id}
+
+
+def _iso_or_none(value: datetime | None) -> str | None:
+    return value.astimezone(UTC).isoformat() if value is not None else None
 
 
 __all__ = [

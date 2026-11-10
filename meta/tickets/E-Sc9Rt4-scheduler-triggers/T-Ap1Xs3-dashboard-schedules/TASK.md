@@ -5,8 +5,8 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-11-10 (Opus design review w01-06: F17/F20 — rewritten against the tab model and auth applied)
-- Status: Draft
+- Last Updated: 2026-11-11 (implemented, w15-05; see STATUS.md)
+- Status: Implemented (pending review; AC18 full-suite figure in STATUS.md)
 - Estimate: 3 days
 
 ## Requirements Mapping

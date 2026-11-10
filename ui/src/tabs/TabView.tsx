@@ -2,6 +2,7 @@ import { FileBrowser } from "../components/FileBrowser";
 import { NewRun } from "../components/NewRun";
 import { RunDetail } from "../components/RunDetail";
 import { RunsList } from "../components/RunsList";
+import { Schedules } from "../components/Schedules";
 import { Settings } from "../components/Settings";
 import { Usage } from "../components/Usage";
 import { useTabActions } from "./context";
@@ -42,6 +43,8 @@ export function TabView({ tab }: { tab: Tab }) {
       );
     case "usage":
       return <Usage />;
+    case "schedules":
+      return <Schedules />;
     case "new":
       return <NewRun onLaunched={(runId) => (runId ? goRun(runId) : goRuns())} />;
     case "settings":

@@ -2331,3 +2331,19 @@ pre.launch-log {
 .kv dd {
   margin: 0;
 }
+
+/* ---------- schedules panel (T-Ap1Xs3) ---------- */
+
+.schedule-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.schedule-history li.suppressed strong {
+  color: var(--status-critical);
+}

@@ -35,6 +35,7 @@ from ..auth.principal import current_principal
 from ..control import KILL_REASON_MAX, dashboard_actor
 from ..feedback import MAX_NOTE_CHARS, MAX_OPERATOR_NOTE_CHARS, REASONS, Rating, Reason, Scope
 from ..models import INPUT_MAX_FIELDS
+from .errors import ScheduleApiError
 from .files import PathNotAllowedError, PathNotFoundError
 from .htmlpreview import NotMarkupError
 from .security import SecurityMiddleware, resolve_allowed_hosts
@@ -555,6 +556,47 @@ def create_app(
             return service.get_launch(launch_id)
         except DashboardError as exc:
             raise _http_error(exc) from exc
+
+    # -- schedules (T-Ap1Xs3) ----------------------------------------------------
+    # All five routes are AUTHENTICATED by omission from DASHBOARD_ROUTE_POLICIES (deny-by-default
+    # under dashboard auth; tested in tests/ui/test_schedules_api.py). Errors map through the typed
+    # `ScheduleApiError.status_code`, deliberately NOT the message-substring matching the run
+    # routes use. `GET /schedules` is registered before every `/schedules/{id}/...` route.
+
+    @app.get(f"{API_PREFIX}/schedules")
+    def list_schedules() -> dict:
+        try:
+            return service.list_schedules()
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    @app.get(f"{API_PREFIX}/schedules/{{schedule_id}}/history")
+    def schedule_history(schedule_id: str, limit: int = Query(20, ge=1, le=200)) -> dict:
+        try:
+            return service.schedule_history(schedule_id, limit)
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    @app.post(f"{API_PREFIX}/schedules/{{schedule_id}}/enable")
+    def enable_schedule(schedule_id: str) -> dict:
+        try:
+            return service.set_schedule_enabled(schedule_id, True)
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    @app.post(f"{API_PREFIX}/schedules/{{schedule_id}}/disable")
+    def disable_schedule(schedule_id: str) -> dict:
+        try:
+            return service.set_schedule_enabled(schedule_id, False)
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    @app.post(f"{API_PREFIX}/schedules/{{schedule_id}}/run-now", status_code=202)
+    def run_schedule_now(schedule_id: str, force: bool = False) -> dict:
+        try:
+            return service.request_schedule_fire(schedule_id, force)
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     # -- static frontend -------------------------------------------------------
 

@@ -73,6 +73,11 @@ PRE_CHANGE_OPENAPI_PATHS = {
     "/api/runs/{run_id}/resume",
     "/api/runs/{run_id}/signals",
     "/api/runs/{run_id}/summary",
+    "/api/schedules",  # T-Ap1Xs3
+    "/api/schedules/{schedule_id}/history",
+    "/api/schedules/{schedule_id}/enable",
+    "/api/schedules/{schedule_id}/disable",
+    "/api/schedules/{schedule_id}/run-now",
     "/api/templates",
     "/api/templates/{name}/instances",
     "/api/usage",
