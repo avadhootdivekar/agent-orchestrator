@@ -14,7 +14,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_c
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from . import graph_check, hooks, sentinel_backlog, sentinel_powers, sentinel_tick
 from .artifacts import (
@@ -74,6 +74,7 @@ from .logging_setup import attach_run_handler, detach_run_handler, get_run_logge
 from .models import (
     BUILTIN_BUDGET_EXHAUSTED,
     BUILTIN_BUDGET_UNSATISFIABLE,
+    BUILTIN_COST_CAP,
     BUILTIN_QUOTA_MAX_WAIT,
     DEFAULT_LADDER,
     DEFAULT_MAX_EXTENSIONS_PER_BREAKER,
@@ -112,6 +113,7 @@ from .models import (
     TaskRunState,
     TaskSpec,
     WorkflowSpec,
+    compute_run_usage_totals,
     count_monitor_breaker_extensions,
     count_monitor_calls_made,
     count_monitor_heal_retries,
@@ -393,6 +395,36 @@ _RECOVERY_FIELD_ALIASES = {"effort": "turn_budget"}
 SettleSignal = Literal["settled", "requeue", "halt", "reshaped", "await_input"]
 
 
+# Statuses of tasks that still have work to dispatch (T-et7Edf H1): an in-flight ("running")
+# sibling is being drained, not pending work, and "awaiting_input" is parked on a human.
+_COST_CAP_REMAINING_STATUSES: Final = frozenset({"pending", "killed"})
+
+
+def cost_cap_reached(state: RunState) -> dict[str, float] | None:
+    """Return ``{"cost_usd", "cap_usd"}`` iff the run's settled cost has reached its cap.
+
+    Pure and clock-free (T-et7Edf AC3): with no cap set it touches nothing, preserving the
+    stepping-clock guarantee `evaluate_breakers` gives. Summary cost is not in `RunState` and
+    is deliberately excluded (HLD §9).
+    """
+    cap = state.cost_cap_usd
+    if cap is None:
+        return None
+    cost = compute_run_usage_totals(state).cost_usd
+    if cost < cap:
+        return None
+    return {"cost_usd": round(cost, 6), "cap_usd": cap}
+
+
+def _has_remaining_work(workflow: WorkflowSpec, state: RunState) -> bool:
+    """True while any task has not yet been dispatched to completion (pending/killed/unseen)."""
+    for task in workflow.tasks:
+        ts = state.tasks.get(task.id)
+        if ts is None or ts.status in _COST_CAP_REMAINING_STATUSES:
+            return True
+    return False
+
+
 @dataclass
 class DispatchPrep:
     """Result of `_prepare_and_maybe_dispatch` (T-j8YLGd).
@@ -645,6 +677,7 @@ class Orchestrator:
         isolation_strict: bool = False,
         isolation_env: dict[str, dict[str, str]] | None = None,
         record_git_heads: bool = True,
+        cost_cap_usd: float | None = None,
         run_prompt: RunPrompt | None = None,
         summarizer: RunSummarizer | None = None,
         result_cache: ResultCacheHook | None = None,
@@ -672,6 +705,8 @@ class Orchestrator:
         self._summarizer = summarizer if summarizer is not None else RunSummarizer(executor)
         # Opt-out for diff-survival head recording (FR-12): False => no head-recording git calls.
         self._record_git_heads = record_git_heads
+        # Mid-run USD cap (T-et7Edf): None = leave the state's cap alone (sticky on resume).
+        self._cost_cap_usd = cost_cap_usd
         # Prompt VALUE captured by the CLI layer (the engine never reads payload files, NFR-1);
         # stored on a NEW run's state only -- a resume keeps whatever was recorded (FR-13).
         self._run_prompt = run_prompt
@@ -796,6 +831,8 @@ class Orchestrator:
             state.prompt = self._run_prompt
         if self._input_mode is not None:
             state.input_mode = self._input_mode
+        if self._cost_cap_usd is not None:
+            state.cost_cap_usd = self._cost_cap_usd
         if self._effective_settings is not None:
             record_effective_settings(
                 state,
@@ -1672,6 +1709,10 @@ class Orchestrator:
         # _estimate is declared at task-block scope so the reconcile block can
         # reference it regardless of whether the budget gate ran (T-algywf, NFR-3).
         _estimate = 0
+
+        # ---- Cost-cap gate (T-et7Edf): before the budget gate/charge, every dispatch kind ----
+        if self._trip_cost_cap(state, run_log):
+            return DispatchPrep(signal="halt")
 
         # ---- Budget gate (T-algywf, FR-1..FR-3, FR-4) ----
         if self._budget_manager is not None and self._estimator is not None:
@@ -2759,6 +2800,12 @@ class Orchestrator:
         # evaluate_breakers is ever reached (D1) -- so they are unconditionally hard by
         # construction, never consultable, regardless of any workflow.circuit_breakers
         # declaration.
+        # Cost-cap boundary gate (T-et7Edf H1): early halt only while work remains; the final
+        # settle of a run lets it finish (overshoot is the ledger's concern). In-flight siblings
+        # are drained by the run loop's halt path, never killed.
+        if _has_remaining_work(workflow, state) and self._trip_cost_cap(state, run_log):
+            return SettleResult(signal="halt")
+
         _before_tripped_ids = {tb.id for tb in state.tripped_breakers}
         breaker_action = evaluate_breakers(workflow, state, self._clock, self._store, run_log)
         if breaker_action is not None:
@@ -2933,6 +2980,29 @@ class Orchestrator:
             )
         return rt
 
+    def _trip_cost_cap(self, state: RunState, run_log: logging.LoggerAdapter) -> bool:
+        """Record a re-armed `builtin.cost_cap` trip and mark the run resumably failed.
+
+        Returns False (touching nothing) when the cap is unset or not reached. Non-latching:
+        every call that sees the cap reached appends a fresh `TrippedBreaker`. Never reaches
+        the monitor consult (built-in, hard by construction).
+        """
+        hit = cost_cap_reached(state)
+        if hit is None:
+            return False
+        record_trip(
+            state=state,
+            breaker_id=BUILTIN_COST_CAP,
+            condition="run_cost_usd",
+            action="pause",
+            detail=dict(hit),
+            clock=self._clock,
+            run_log=run_log,
+        )
+        state.status = "failed"
+        self._runstate.save(state)
+        return True
+
     def _start_llm_lane(
         self,
         rt: sentinel_tick.SentinelRuntime,
@@ -2955,6 +3025,8 @@ class Orchestrator:
             for br in workflow.circuit_breakers if workflow is not None else []:
                 if br.condition == "run_cost_usd" and br.threshold is not None:
                     cap = br.threshold if cap is None else min(cap, br.threshold)
+            if state.cost_cap_usd is not None:
+                cap = state.cost_cap_usd if cap is None else min(cap, state.cost_cap_usd)
             rt.lane = GenerationLane(
                 spec=llm,
                 driver=driver,
@@ -4095,7 +4167,10 @@ class Orchestrator:
         so `+=` is byte-identical to `=` whenever nothing was accumulated first.
         """
         if not result.actuals_available:
+            # T-et7Edf AC13: a blind attempt (incl. a killed one) is counted, never cleared.
+            ts.attempts_without_actuals += 1
             return
+        ts.actuals_available = True
         ts.cumulative_input_tokens += result.input_tokens or 0
         ts.cumulative_output_tokens += result.output_tokens or 0
         ts.cumulative_cache_creation_input_tokens += result.cache_creation_input_tokens or 0

@@ -80,8 +80,9 @@ class FakeExecutor(Executor):
     token_outputs:
         Mapping of task_id -> token field dict.  On success, if the task_id is
         present, populates the token fields (input_tokens, output_tokens,
-        cache_creation_input_tokens, cache_read_input_tokens) in the returned
-        TaskResult and sets actuals_available=True.  (T-1m9744)
+        cache_creation_input_tokens, cache_read_input_tokens, and optionally
+        cost_usd) in the returned TaskResult and sets actuals_available=True.
+        (T-1m9744, T-et7Edf AC15)
     rate_limit_tasks:
         Mapping of task_id -> retry_after_epoch (float | None).  On the *first*
         call for that task_id the executor returns a failed TaskResult with
@@ -281,6 +282,7 @@ class FakeExecutor(Executor):
                 output_tokens=token_info.get("output_tokens"),
                 cache_creation_input_tokens=token_info.get("cache_creation_input_tokens"),
                 cache_read_input_tokens=token_info.get("cache_read_input_tokens"),
+                cost_usd=token_info.get("cost_usd"),
             )
 
         return TaskResult(

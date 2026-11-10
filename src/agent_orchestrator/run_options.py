@@ -19,6 +19,7 @@ choice there, exactly as it was before the registry existed.
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -36,6 +37,8 @@ SOURCE_ENV: Final = "env"
 SOURCE_CONFIG: Final = "config"
 SOURCE_DEFAULT: Final = "default"
 SOURCE_UNSET: Final = "unset"
+# A sticky-on-resume option that the resume did not re-specify: the value kept from run state.
+SOURCE_STATE: Final = "state"
 
 SCHEMA_ID: Final = "ao.run-options/v1"
 
@@ -85,6 +88,9 @@ class Option:
     ui_label: str | None = None
     resumable: bool = True
     """May a ``resume`` change it (every current option may -- resolved fresh each invocation)."""
+    sticky_on_resume: bool = False
+    """A resume that does not re-specify it keeps the value persisted in run state instead of
+    re-resolving CLI/env/config (``SOURCE_STATE``). Used by ``cost_cap_usd``."""
     providers: tuple[str, ...] = ()
     """Providers/executors that apply the setting (``()`` = provider-independent); shown as
     "applies to: ..." in help and the dashboard."""
@@ -368,6 +374,24 @@ def sentinel_options() -> tuple[Option, ...]:
     return tuple(opts)
 
 
+# `--cost-cap-usd` (T-et7Edf). Deliberately NOT yet in OPTIONS: registering it makes every consumer
+# (dashboard form, `launch_run` allow-list, the registry<->CLI-flag consistency tests) assume
+# `ao run`/`ao resume` accept the flag, and the cli.py wiring is the unfinished part of the ticket.
+# The wiring change appends this constant to OPTIONS (in the Concurrency & budget group, after
+# `budget_total`) in the same commit that adds the typer option.
+COST_CAP_OPTION: Final = Option(
+    "cost_cap_usd",
+    "float",
+    flag="--cost-cap-usd",
+    help=(
+        "Mid-run USD cost cap (CLI only; sticky on resume). The run halts resumably once its "
+        "settled cost reaches the cap."
+    ),
+    ui_group=GROUP_CONCURRENCY,
+    ui_label="Cost cap (USD)",
+    sticky_on_resume=True,
+)
+
 OPTIONS: Final[tuple[Option, ...]] = _BASE_OPTIONS + sentinel_options()
 
 OPTIONS_BY_NAME: Final[Mapping[str, Option]] = {o.name: o for o in OPTIONS}
@@ -540,3 +564,30 @@ class SettingsSnapshot:
 
     def to_dict(self) -> dict[str, dict[str, Any]]:
         return {k: {"value": r.value, "source": r.source} for k, r in self.values.items()}
+
+
+# -- cost-cap helpers (T-et7Edf) -----------------------------------------------------------------
+
+
+def validate_cost_cap_usd(raw: float | None) -> float | None:
+    """Validate the RAW CLI value of ``--cost-cap-usd`` (AC1/AC2, L1).
+
+    Must run *before* :func:`resolve_option`, which treats falsy CLI values as unset (so a raw
+    ``0`` would silently mean "no cap"). ``None`` -> ``None``; zero, negative, NaN and inf raise
+    ``ValueError`` (the CLI maps it to exit 2).
+    """
+    if raw is None:
+        return None
+    if not math.isfinite(raw) or raw <= 0:
+        raise ValueError(f"--cost-cap-usd must be a finite number > 0, got {raw!r}")
+    return float(raw)
+
+
+def resolve_sticky_cost_cap(persisted: float | None, cli: float | None) -> Resolved:
+    """Cap in force on resume: an explicit (validated) CLI value replaces the persisted one
+    (absolute); otherwise the persisted cap is kept (``SOURCE_STATE``) or stays unset."""
+    if cli is not None:
+        return Resolved(cli, SOURCE_CLI)
+    if persisted is not None:
+        return Resolved(persisted, SOURCE_STATE)
+    return Resolved(None, SOURCE_UNSET)

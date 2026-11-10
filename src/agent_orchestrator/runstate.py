@@ -584,6 +584,8 @@ class RunStateStore:
                     cumulative_cache_creation_input_tokens=ts.cumulative_cache_creation_input_tokens,
                     cumulative_cache_read_input_tokens=ts.cumulative_cache_read_input_tokens,
                     cumulative_cost_usd=ts.cumulative_cost_usd,
+                    actuals_available=ts.actuals_available,
+                    attempts_without_actuals=ts.attempts_without_actuals,
                     origin=ts.origin,
                     recovery=ts.recovery,
                 )

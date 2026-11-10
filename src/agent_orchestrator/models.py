@@ -131,6 +131,8 @@ DEFAULT_MAX_PARALLEL: int = 1
 BUILTIN_BUDGET_EXHAUSTED = "builtin.budget_exhausted"
 BUILTIN_BUDGET_UNSATISFIABLE = "builtin.budget_unsatisfiable"
 BUILTIN_QUOTA_MAX_WAIT = "builtin.quota_max_wait"
+# Mid-run USD cost cap (T-et7Edf, ADR-0025 D5): re-armed (non-latching) gate; public contract id.
+BUILTIN_COST_CAP = "builtin.cost_cap"
 # Bounded-control-file read guard (NFR-1 hardening) — shared by the loop gate, router verdict,
 # and verdict-breaker readers so no control JSON read is ever unbounded.
 MAX_CONTROL_FILE_BYTES: int = 65536
@@ -1612,6 +1614,11 @@ class TaskRunState(BaseModel):
     cumulative_cache_creation_input_tokens: int = 0
     cumulative_cache_read_input_tokens: int = 0
     cumulative_cost_usd: float = 0.0
+    # Cost visibility (T-et7Edf AC13): sticky OR of every settled attempt's
+    # `TaskResult.actuals_available`, and a count of settled attempts (incl. killed ones) that
+    # reported none -- so a cost ledger can tell "$0 known" from "$0 because blind".
+    actuals_available: bool = False
+    attempts_without_actuals: int = 0
     # R-21: incremented by the main thread exactly once per dispatch; monotonic across
     # requeues (T2/T3 conflict-ladder escalation, self-heal) and resumes. `attempts` cannot
     # serve this purpose: it is ASSIGNED from `result.attempts` (the per-call retry-loop
@@ -1966,6 +1973,9 @@ class RunState(BaseModel):
     # one entry per start/resume (E-aYG5vn FR-1). Defaults keep older state.json loadable.
     effective_settings: dict[str, EffectiveSetting] = {}
     effective_settings_history: list[SettingsHistoryEntry] = []
+    # Mid-run USD cost cap (T-et7Edf): None = no cap. Sticky across `ao resume` (run_options
+    # `sticky_on_resume`); enforced by the engine's non-latching `builtin.cost_cap` gate.
+    cost_cap_usd: float | None = None
     # Sentinel lane state + utilisation metrics (E-Sn7tL2 T-Sn3Tck). None until a sentinel-enabled
     # run ticks, so a disabled run's state.json stays byte-identical (see runstate exclude rules).
     sentinel: SentinelState | None = None
