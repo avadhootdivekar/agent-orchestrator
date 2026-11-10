@@ -202,3 +202,17 @@ isolation crash-resume tests used an independent `task_b` as the "never dispatch
 **Status:** AC4 done. mypy src + ruff green. Full pytest: 15 failures, all outside this change — 9 sentinel-generation/powers
 e2e + 2 bench fake-subject suites fail identically without my diff (other in-flight units' WIP in the shared checkout);
 `test_run_options` snapshot and `nfr2` were from WIP/my test placement (nfr2 fixed by moving tests to a new file).
+
+### D3 commit + baseline (unit w06-02, 2026-11-11)
+- D3 committed alone as `7792351` (engine.py 4 hunks, isolation repro test, e2e crash-resume test adaptation, this section); other units' hunks
+  (run_id signature, `register_task(task=)`, sentinel/models/guide edits) left uncommitted in the shared tree.
+- **Clean `HEAD` (`ad0b6e9`, and `7792351`) does not import**: `engine.py` has a committed `SyntaxError` (stray `run_id:` docstring lines inside
+  `Orchestrator.run`, from the run-id unit's partial commit), so every test errors at `conftest.py`. The run-id unit's engine hunks (signature +
+  docstring fix) must be committed for HEAD to be usable.
+- Baseline used instead: `HEAD~1` worktree + only those two run_id hunks (no D3, no sentinel WIP). Full suite: **12 failed**. D3 working tree: **13 failed**.
+  Failing in both (11, not caused by D3): 2 bench fake-subject suites (`test_dev_core_suite`, `test_dev_medium_suite`), 6 `test_sentinel_generations` e2e,
+  3 `test_sentinel_powers` e2e (`UnboundLocalError: agent` in the LLM-lane start path — other unit's WIP in `sentinel_*`).
+  Baseline-only: `test_run_options::test_schema_matches_snapshot` (fixed in the WIP tree by the models.py change). Working-tree-only:
+  `bench/test_sandbox::test_stop_kills_grandchildren...` and `cache/test_eligibility::test_u_e1_task_fields_are_all_classified` — both pass on re-run
+  (flaky / transient WIP state), not D3.
+- D3 itself: `test_engine_failure_isolation_of_work.py` + `test_e2e_isolation.py` pass (164 passed incl. sandbox/eligibility files); ruff check/format + mypy src clean.
