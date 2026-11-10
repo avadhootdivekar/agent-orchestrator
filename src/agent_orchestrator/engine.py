@@ -750,11 +750,11 @@ class Orchestrator:
         reposets: dict,
         agents: dict,
         run_state: RunState | None = None,
+        run_id: str | None = None,
     ) -> RunState:
         """Execute *workflow* to completion and return the final RunState.
 
         Parameters
-        run_id: str | None = None,
         ----------
         workflow:
             Parsed and cross-validated WorkflowSpec.
@@ -764,13 +764,13 @@ class Orchestrator:
             Dict of agent_id -> AgentSpec loaded from config.
         run_state:
             Existing RunState to resume from; if None, a new run is created.
+        run_id:
+            Id for the new run (fresh runs only; ignored when *run_state* is given). Still a
+            fresh run -- ``run_state`` stays None -- unlike pre-building a RunState.
         """
         # Validate DAG structure (raises CycleError on cycle)
         graph = build_dag(workflow)
         order = graph.topological_order()
-        run_id:
-            Id for the new run (fresh runs only; ignored when *run_state* is given). Still a
-            fresh run -- ``run_state`` stays None -- unlike pre-building a RunState.
 
         state = run_state or self._runstate.new_run(workflow, run_id=run_id)
 

@@ -702,6 +702,10 @@ class WorkflowDefaults(BaseModel):
         return None if v is None else validate_model_id(v)
 
 
+# One year: bounds IntervalScheduler's timedelta arithmetic (10**30 overflowed in the tick).
+MAX_INTERVAL_SECONDS = 365 * 86400
+
+
 class Trigger(BaseModel):
     type: Literal["manual", "cron", "event", "interval"]
     schedule: str | None = None
@@ -709,9 +713,6 @@ class Trigger(BaseModel):
     event: str | None = None
     # required when type=interval; >=1 (0/negative is always due), <= 1 year (overflow guard)
     interval_seconds: int | None = Field(default=None, ge=1, le=MAX_INTERVAL_SECONDS)
-
-# One year: bounds IntervalScheduler's timedelta arithmetic (10**30 overflowed in the tick).
-MAX_INTERVAL_SECONDS = 365 * 86400
 
 
 
