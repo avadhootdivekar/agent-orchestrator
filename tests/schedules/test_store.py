@@ -15,9 +15,11 @@ from agent_orchestrator.schedules import (
     ScheduleStore,
 )
 
+from ._fixtures import governed_binding, minimal_limits_data
+
 
 def _binding(sid: str) -> ScheduleBinding:
-    return ScheduleBinding(id=sid, kind="cron", schedule="0 * * * *", workflow="w.json")
+    return governed_binding(id=sid)
 
 
 def _add(sid: str) -> Callable[[ScheduleFile], ScheduleFile]:
@@ -115,7 +117,13 @@ def test_concurrent_mutate_loses_nothing(tmp_path: Path) -> None:
 
 def test_save_rejects_invalid_model_and_keeps_file(tmp_path: Path) -> None:
     store = ScheduleStore(tmp_path)
-    row = {"id": "a", "kind": "cron", "schedule": "0 2 * * *", "workflow": "w"}
+    row = {
+        "id": "a",
+        "kind": "cron",
+        "schedule": "0 2 * * *",
+        "workflow": "w",
+        "limits": minimal_limits_data(),
+    }
     store.save(ScheduleFile.from_data({"schedules": [row]}))
     before = store.path.read_text()
 

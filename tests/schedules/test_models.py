@@ -19,6 +19,8 @@ from agent_orchestrator.schedules import (
     ScheduleFileError,
 )
 
+from ._fixtures import minimal_limits_data  # noqa: E402
+
 SRC = "sched.yaml"
 
 
@@ -28,6 +30,7 @@ def cron(**over: Any) -> dict[str, Any]:
         "kind": "cron",
         "schedule": "0 2 * * *",
         "workflow": "workflows/x/workflow.json",
+        "limits": minimal_limits_data(),
     }
     base.update(over)
     return base
@@ -105,7 +108,15 @@ class TestRejections:
         reject(row, "'tick'", "interval_seconds", str(MIN_INTERVAL_SECONDS))
 
     def test_interval_at_minimum_ok(self) -> None:
-        f = load({"id": "tick", "kind": "interval", "interval_seconds": 60, "workflow": "w.json"})
+        f = load(
+            {
+                "id": "tick",
+                "kind": "interval",
+                "interval_seconds": 60,
+                "workflow": "w.json",
+                "limits": minimal_limits_data(),
+            }
+        )
         assert f.schedules[0].interval_seconds == 60
 
     def test_inline_secret(self) -> None:
@@ -297,13 +308,21 @@ class TestDefaultsAndRoundTrip:
                 "instance_id": "nightly-{date}-{rand6}",
                 "prompt_file": "p.md",
             },
-            defaults={"timezone": "UTC", "grace_seconds": 5},
+            defaults={"timezone": "UTC", "grace_seconds": 5, "limits": minimal_limits_data()},
         )
         again = ScheduleFile.from_data(json.loads(json.dumps(f.to_data())), source=SRC)
         assert again == f
 
     def test_roundtrip_minimal_binding(self) -> None:
-        f = load({"id": "m", "kind": "cron", "schedule": "* * * * *", "workflow": "w"})
+        f = load(
+            {
+                "id": "m",
+                "kind": "cron",
+                "schedule": "* * * * *",
+                "workflow": "w",
+                "limits": minimal_limits_data(),
+            }
+        )
         assert ScheduleFile.from_data(f.to_data()) == f
 
 

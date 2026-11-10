@@ -1,5 +1,130 @@
 {
   "$defs": {
+    "CostLimits": {
+      "additionalProperties": false,
+      "description": "Per-run (mid-run, D-5) and per-period cost caps.",
+      "properties": {
+        "per_run_usd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100000.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Run Usd"
+        },
+        "on_cap": {
+          "default": "pause",
+          "enum": [
+            "pause",
+            "abort"
+          ],
+          "title": "On Cap",
+          "type": "string"
+        },
+        "pause_ttl_seconds": {
+          "default": 259200,
+          "maximum": 2592000,
+          "minimum": 0,
+          "title": "Pause Ttl Seconds",
+          "type": "integer"
+        },
+        "periods": {
+          "items": {
+            "$ref": "#/$defs/PeriodCostCap"
+          },
+          "title": "Periods",
+          "type": "array"
+        }
+      },
+      "title": "CostLimits",
+      "type": "object"
+    },
+    "LimitsSpec": {
+      "additionalProperties": false,
+      "description": "The governance ``limits`` block of a binding (or of ``defaults``).",
+      "properties": {
+        "quotas": {
+          "items": {
+            "$ref": "#/$defs/QuotaSpec"
+          },
+          "title": "Quotas",
+          "type": "array"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostLimits"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "LimitsSpec",
+      "type": "object"
+    },
+    "PeriodCostCap": {
+      "additionalProperties": false,
+      "description": "At most ``max_usd`` of run cost charged to one calendar ``period``.",
+      "properties": {
+        "period": {
+          "enum": [
+            "day",
+            "week",
+            "month"
+          ],
+          "title": "Period",
+          "type": "string"
+        },
+        "max_usd": {
+          "exclusiveMinimum": 0,
+          "maximum": 100000.0,
+          "title": "Max Usd",
+          "type": "number"
+        }
+      },
+      "required": [
+        "period",
+        "max_usd"
+      ],
+      "title": "PeriodCostCap",
+      "type": "object"
+    },
+    "QuotaSpec": {
+      "additionalProperties": false,
+      "description": "At most ``max_runs`` invocations per calendar ``period``.",
+      "properties": {
+        "period": {
+          "enum": [
+            "day",
+            "week",
+            "month"
+          ],
+          "title": "Period",
+          "type": "string"
+        },
+        "max_runs": {
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Max Runs",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "period",
+        "max_runs"
+      ],
+      "title": "QuotaSpec",
+      "type": "object"
+    },
     "RunArgs": {
       "additionalProperties": false,
       "description": "Closed set of run options a schedule may set (types/choices from the registry).",
@@ -314,6 +439,19 @@
           "default": null,
           "title": "Prompt File"
         },
+        "prompt_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Sha256"
+        },
         "run_args": {
           "$ref": "#/$defs/RunArgs"
         },
@@ -402,6 +540,33 @@
           ],
           "default": null,
           "title": "Max Concurrent"
+        },
+        "week_start": {
+          "anyOf": [
+            {
+              "enum": [
+                "monday",
+                "sunday"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Week Start"
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LimitsSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "until": {
           "anyOf": [
@@ -496,6 +661,26 @@
           "minimum": 1,
           "title": "Max Concurrent",
           "type": "integer"
+        },
+        "week_start": {
+          "default": "monday",
+          "enum": [
+            "monday",
+            "sunday"
+          ],
+          "title": "Week Start",
+          "type": "string"
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LimitsSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "title": "ScheduleDefaults",

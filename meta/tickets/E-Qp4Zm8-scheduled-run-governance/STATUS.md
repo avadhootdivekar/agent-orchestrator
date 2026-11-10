@@ -6,6 +6,7 @@
 - Owner: architect agent (design) -> dev-epic agent (delivery)
 
 ## This update
+- **2026-11-11 (developer, unit `w08-01-a2-gov-binding-model`):** `T-tPlK1T` implemented (governance limits model, D-2, schema regen, `minimal_limits()` fixtures). Pending review/merge.
 - **2026-11-11 (developer, unit `w07-01-a2-quota-window-math`):** `T-lJu9oZ` implemented — `schedules/windows.py` + 70 tests, 100 % cov, ruff/mypy clean. Pending review/merge.
 - **Design-review edits applied (2026-11-10, run unit `w02-02-a2-apply-design-edits`).** The Opus review
   (`w01-07`: 2 High, 6 Medium, 7 Low) is folded into the HLD (§4, §6.4, §7, §8.1, §9.2/9.3/9.5, §10.2, §16.1, §17, §18.3, §20,

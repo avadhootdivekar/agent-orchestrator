@@ -87,7 +87,7 @@
 ## Task List
 - [x] `T-lJu9oZ-quota-window-math` — pure day/week/month windows in tz; DST, midnight gap, week start (FR-2, NFR-3) — 1.5 d
 - [ ] `T-et7Edf-run-cost-cap-gate` — `ao run/resume --cost-cap-usd`, sticky `RunState.cost_cap_usd` (`Option.sticky_on_resume`), re-armed `builtin.cost_cap` gate (boundary trips only with remaining work), persisted `TaskRunState.actuals_available`, fake `cost_usd` seam, sentinel cap feed (FR-3, NFR-4) — 3 d; **after A3-D3 (T-Rk4Wn7)**
-- [ ] `T-tPlK1T-governance-binding-model` — `LimitsSpec` & co., binding/defaults deltas, D-2 validator, JSON Schema, E-Sc9Rt4 fixture helper (FR-1, FR-2, FR-4, NFR-2) — 2 d
+- [x] `T-tPlK1T-governance-binding-model` — `LimitsSpec` & co., binding/defaults deltas, D-2 validator, JSON Schema, E-Sc9Rt4 fixture helper (FR-1, FR-2, FR-4, NFR-2) — 2 d
 - [ ] `T-Uz0Uol-usage-ledger` — `FireGovernance` record, `charge()`, window usage, high-water mark, cost confidence, index + mtime cache (FR-2, FR-4, NFR-1, NFR-5) — 3 d
 - [ ] `T-PpE5lf-pre-fire-gate-and-reservation` — gate step in `evaluate()`, `check_and_reserve` under flock, prompt snapshot, fail-closed argv check, retire hook (FR-1..FR-4, NFR-1, NFR-2) — 3 d
 - [ ] `T-nI4DBf-capped-run-pause-resume` — cap_state machine, resume drop-request + engine drain, TTL sweep, abort semantics (FR-6) — 2 d

@@ -35,6 +35,7 @@ from pydantic import (
 from ..models import MAX_INTERVAL_SECONDS, Trigger
 from ..run_options import Option, allowed_bool_options, allowed_options, get_option
 from .errors import DuplicateScheduleIdError, ScheduleFileError
+from .governance import LIMITS_REQUIRED, LimitsSpec, WeekStart
 
 SCHEDULE_FILE_VERSION: Final = "1.0"
 MIN_INTERVAL_SECONDS: Final = 60
@@ -88,6 +89,14 @@ SCHEDULE_RUN_ARG_NAMES: Final[tuple[str, ...]] = (
     "sentinel.enabled",
 )
 
+# Registry options a schedule must never carry in ``run_args``: the cost cap has exactly one source,
+# ``limits.cost.per_run_usd`` (T-tPlK1T AC11). Guarded independently of SCHEDULE_RUN_ARG_NAMES.
+RUN_ARG_FORBIDDEN: Final[dict[str, str]] = {
+    "cost_cap_usd": "set limits.cost.per_run_usd instead (the schedule's cap has one source)",
+}
+PROMPT_SHA256_PATTERN: Final = r"^[0-9a-f]{64}$"
+DEFAULT_WEEK_START: Final[WeekStart] = "monday"
+
 # Binding fields that fall back to ``ScheduleFile.defaults`` when left ``None``.
 INHERITABLE_FIELDS: Final[tuple[str, ...]] = (
     "timezone",
@@ -97,6 +106,8 @@ INHERITABLE_FIELDS: Final[tuple[str, ...]] = (
     "jitter_seconds",
     "grace_seconds",
     "max_concurrent",
+    "week_start",
+    "limits",
 )
 
 Kind = Literal["cron", "interval", "file_watch", "webhook"]
@@ -168,6 +179,15 @@ def _check_cron(expr: str) -> str | None:
 class _RunArgsBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _no_forbidden(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for name, hint in RUN_ARG_FORBIDDEN.items():
+                if name in data:
+                    raise ScheduleFileError(f"run_args.{name} is not allowed: {hint}")
+        return data
+
     def as_options(self) -> dict[str, object]:
         """The explicitly-set args as ``launch_run(options=...)`` expects: registry option name
         (dotted for ``sentinel.enabled``) -> value. Unset (``None``) args are omitted so the
@@ -193,6 +213,9 @@ def _run_arg_annotation(opt: Option) -> Any:
 
 def _build_run_args_fields() -> dict[str, Any]:
     registry = set(allowed_options()) | set(allowed_bool_options())
+    forbidden = [n for n in SCHEDULE_RUN_ARG_NAMES if n in RUN_ARG_FORBIDDEN]
+    if forbidden:
+        raise RuntimeError(f"SCHEDULE_RUN_ARG_NAMES must not contain {forbidden}")
     missing = [n for n in SCHEDULE_RUN_ARG_NAMES if n not in registry]
     if missing:  # import-time drift guard: the registry is the source of truth
         raise RuntimeError(
@@ -308,6 +331,8 @@ class ScheduleDefaults(BaseModel):
     jitter_seconds: int = Field(default=0, ge=0, le=MAX_JITTER_SECONDS)
     grace_seconds: int = Field(default=60, ge=0)
     max_concurrent: int = Field(default=1, ge=1)
+    week_start: WeekStart = DEFAULT_WEEK_START
+    limits: LimitsSpec | None = None
 
     @field_validator("timezone")
     @classmethod
@@ -342,6 +367,7 @@ class ScheduleBinding(BaseModel):
     params: dict[str, str] = Field(default_factory=dict)
     instance_id: Annotated[str, StringConstraints(max_length=MAX_INSTANCE_ID_LEN)] | None = None
     prompt_file: str | None = None
+    prompt_sha256: str | None = Field(default=None, pattern=PROMPT_SHA256_PATTERN)
     run_args: RunArgs = Field(default_factory=lambda: RunArgs())
     overlap: Overlap | None = None
     catch_up: CatchUp | None = None
@@ -349,6 +375,8 @@ class ScheduleBinding(BaseModel):
     jitter_seconds: int | None = Field(default=None, ge=0, le=MAX_JITTER_SECONDS)
     grace_seconds: int | None = Field(default=None, ge=0)
     max_concurrent: int | None = Field(default=None, ge=1)
+    week_start: WeekStart | None = None
+    limits: LimitsSpec | None = None
     until: UntilSpec | None = None
     watch: WatchSpec | None = None
     webhook: WebhookSpec | None = None
@@ -382,6 +410,11 @@ class ScheduleBinding(BaseModel):
         for field, (kind, present) in specific.items():
             need(not present or self.kind == kind, field, f"only valid with kind={kind}")
             need(present or self.kind != kind, field, f"required when kind={kind}")
+        need(
+            self.prompt_sha256 is None or self.prompt_file is not None,
+            "prompt_sha256",
+            "prompt_sha256 requires prompt_file (nothing to pin)",
+        )
         if self.interval_seconds is not None:
             need(
                 self.interval_seconds >= MIN_INTERVAL_SECONDS,
@@ -420,6 +453,14 @@ class ScheduleBinding(BaseModel):
                 return False
             literal += text + ("x" if name else "")
         return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", literal) is not None
+
+    def effective_limits(self, defaults: ScheduleDefaults) -> LimitsSpec | None:
+        """``limits`` if set, else ``defaults.limits`` -- replaced wholesale, never deep-merged.
+        ``None`` only when neither declares one (invalid in a loaded :class:`ScheduleFile`, D-2)."""
+        return self.limits if self.limits is not None else defaults.limits
+
+    def effective_week_start(self, defaults: ScheduleDefaults) -> WeekStart:
+        return self.week_start if self.week_start is not None else defaults.week_start
 
     def to_trigger(self) -> Trigger:
         """Adapt to the engine's :class:`Trigger` -- ``cron`` and ``interval`` kinds ONLY.
@@ -486,6 +527,17 @@ class ScheduleFile(BaseModel):
                     f"duplicate schedule id {b.id!r}", schedule_id=b.id, field="id"
                 )
             seen.add(b.id)
+        return self
+
+    @model_validator(mode="after")
+    def _limits_required(self) -> ScheduleFile:
+        """D-2: every schedule's effective limits must declare a quota and/or cost cap."""
+        for b in self.schedules:
+            eff = b.effective_limits(self.defaults)
+            if eff is None or not eff.declares_any_limit():
+                raise ScheduleFileError(
+                    LIMITS_REQUIRED.format(id=b.id), schedule_id=b.id, field="limits"
+                )
         return self
 
     @property
