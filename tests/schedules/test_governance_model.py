@@ -245,6 +245,23 @@ def test_digest_stable_across_key_order_and_float_format() -> None:
     assert limits_digest(a) == limits_digest(c)
 
 
+def test_digest_identity_is_enforcement_not_yaml() -> None:
+    """L2: a ``cost`` block declaring no cap is inert, so it must not change the digest."""
+    quotas = [{"period": "day", "max_runs": 3}]
+    base = limits_digest(LimitsSpec.model_validate({"quotas": quotas}))
+    for inert in ({"on_cap": "abort"}, {}, {"pause_ttl_seconds": 5}, {"periods": []}):
+        spec = LimitsSpec.model_validate({"quotas": quotas, "cost": inert})
+        assert limits_digest(spec) == base, inert
+    # ...but once a cap exists, on_cap is enforcement and does matter
+    pause = LimitsSpec.model_validate({"cost": {"per_run_usd": 1}})
+    abort = LimitsSpec.model_validate({"cost": {"per_run_usd": 1, "on_cap": "abort"}})
+    assert limits_digest(pause) != limits_digest(abort)
+    # and the digest is computed without mutating the caller's model
+    spec = LimitsSpec.model_validate({"quotas": quotas, "cost": {"on_cap": "abort"}})
+    limits_digest(spec)
+    assert spec.cost is not None and spec.cost.on_cap == "abort"
+
+
 def test_digest_list_order_irrelevant() -> None:
     q = [{"period": "day", "max_runs": 1}, {"period": "week", "max_runs": 2}]
     p = [{"period": "day", "max_usd": 1}, {"period": "week", "max_usd": 2}]
@@ -282,6 +299,27 @@ def test_digest_differs_on_any_change(other: dict[str, Any]) -> None:
 _Q = {"period": "day", "max_runs": 3}
 # (id, document, valid-by-shape). Shape cases: schema and pydantic must agree.
 SHAPE_CORPUS: list[tuple[str, dict[str, Any], bool]] = [
+    # M1: an integral float is a valid JSON-Schema "integer"; pydantic must agree.
+    (
+        "ok-max-runs-integral-float",
+        {"schedules": [row(limits={"quotas": [{"period": "day", "max_runs": 3.0}]})]},
+        True,
+    ),
+    (
+        "ok-pause-ttl-integral-float",
+        {"schedules": [row(limits={"cost": {"per_run_usd": 1, "pause_ttl_seconds": 60.0}})]},
+        True,
+    ),
+    (
+        "bad-max-runs-fractional",
+        {"schedules": [row(limits={"quotas": [{"period": "day", "max_runs": 3.5}]})]},
+        False,
+    ),
+    (
+        "bad-max-runs-bool",
+        {"schedules": [row(limits={"quotas": [{"period": "day", "max_runs": True}]})]},
+        False,
+    ),
     ("ok-quota", {"schedules": [row(limits={"quotas": [_Q]})]}, True),
     (
         "ok-cost-full",
@@ -365,6 +403,13 @@ SHAPE_CORPUS: list[tuple[str, dict[str, Any], bool]] = [
 ]
 # Cross-field rules the schema cannot express: pydantic-only (labelled), expected pydantic result.
 PYDANTIC_ONLY_CORPUS: list[tuple[str, dict[str, Any], bool]] = [
+    # L4 (won't-fix, pinned): Python-``re`` jsonschema lets ``$`` match before a trailing newline
+    # (ECMA-262 validators do not); pydantic's Rust regex never does. Fail-closed, so pinned here.
+    (
+        "sha-trailing-newline",
+        {"schedules": [row(prompt_file="p.md", prompt_sha256="a" * 64 + "\n")]},
+        False,
+    ),
     ("d2-no-limits", {"schedules": [row()]}, False),
     ("d2-empty-limits", {"schedules": [row(limits={})]}, False),
     (
@@ -481,3 +526,14 @@ def test_store_roundtrip_byte_for_byte(tmp_path: Path) -> None:
 def test_governed_binding_fixture() -> None:
     b = governed_binding(id="x")
     assert b.id == "x" and b.limits == minimal_limits()
+
+
+def test_integral_float_loads_as_int() -> None:
+    """M1: ``3.0`` is accepted *and normalised* to int, so downstream code never sees a float."""
+    q = QuotaSpec.model_validate({"period": "day", "max_runs": 3.0})
+    assert q.max_runs == 3 and type(q.max_runs) is int
+    c = CostLimits.model_validate({"per_run_usd": 1, "pause_ttl_seconds": 60.0})
+    assert c.pause_ttl_seconds == 60 and type(c.pause_ttl_seconds) is int
+    for bad in ("3", 3.5, True, float("inf"), float("nan"), None):
+        with pytest.raises(ValidationError):
+            QuotaSpec.model_validate({"period": "day", "max_runs": bad})

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 from .errors import ScheduleFileError
 from .windows import Period, WeekStart
@@ -67,7 +67,20 @@ def _dup_periods(periods: list[str]) -> list[str]:
     return dups
 
 
+def _integral_float_to_int(value: Any) -> Any:
+    """``3.0`` -> ``3``; everything else untouched (strict int then rejects ``"3"``, ``True``).
+
+    JSON Schema (Draft 2020-12) treats an integral float as a valid ``integer``; without this,
+    strict pydantic would refuse a file the published schema accepts (schema/pydantic parity).
+    """
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 # Numbers come from a hand-edited file: strict, so a quoted "3" is an error, not a silent coercion.
+# Integer fields additionally accept an integral float (``3.0``) to match the JSON Schema.
+StrictInt = Annotated[int, BeforeValidator(_integral_float_to_int)]
 
 
 class QuotaSpec(BaseModel):
@@ -76,7 +89,7 @@ class QuotaSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     period: Period
-    max_runs: int = Field(strict=True, ge=1, le=MAX_QUOTA_RUNS)
+    max_runs: StrictInt = Field(strict=True, ge=1, le=MAX_QUOTA_RUNS)
 
 
 class PeriodCostCap(BaseModel):
@@ -105,7 +118,7 @@ class CostLimits(BaseModel):
         default=None, strict=True, gt=0, le=MAX_USD, allow_inf_nan=False
     )
     on_cap: OnCap = "pause"
-    pause_ttl_seconds: int = Field(
+    pause_ttl_seconds: StrictInt = Field(
         default=DEFAULT_PAUSE_TTL_SECONDS, strict=True, ge=0, le=MAX_PAUSE_TTL_SECONDS
     )
     periods: list[PeriodCostCap] = Field(default_factory=_empty_periods)
@@ -173,8 +186,17 @@ def _canonical(node: Any) -> Any:
 
 def limits_digest(limits: LimitsSpec) -> str:
     """sha256 hex of the canonical JSON of *limits* (sorted keys, no whitespace, defaults
-    included so an explicit default equals an omitted one; list order is irrelevant)."""
+    included so an explicit default equals an omitted one; list order is irrelevant).
+
+    Identity means "same *enforcement*", not "same YAML": a ``cost`` block that declares no cap
+    (neither ``per_run_usd`` nor ``periods``) enforces nothing, so ``on_cap``/``pause_ttl_seconds``
+    on it are inert and it hashes like an absent ``cost``. A cosmetic edit therefore never looks
+    like a governance change to the ledger (high-water attribution is keyed on this digest).
+    """
     payload = limits.model_dump(mode="json")
+    cost = limits.cost
+    if cost is not None and cost.per_run_usd is None and not cost.periods:
+        payload["cost"] = None
     # Periods are unique per list, so sorting by period makes list order irrelevant.
     payload["quotas"].sort(key=lambda q: q["period"])
     if payload["cost"] is not None:

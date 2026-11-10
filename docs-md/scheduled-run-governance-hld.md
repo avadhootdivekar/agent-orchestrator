@@ -308,35 +308,40 @@ the registry now allow-lists it for the dashboard.
 
 ### 6.3 JSON Schema delta (`specs/schedules.schema.json`)
 
-```json
-{
-  "$defs": {
-    "period": {"enum": ["day", "week", "month"]},
-    "quota": {"type": "object", "additionalProperties": false, "required": ["period", "max_runs"],
-      "properties": {"period": {"$ref": "#/$defs/period"},
-                     "max_runs": {"type": "integer", "minimum": 1, "maximum": 10000}}},
-    "periodCost": {"type": "object", "additionalProperties": false, "required": ["period", "max_usd"],
-      "properties": {"period": {"$ref": "#/$defs/period"},
-                     "max_usd": {"type": "number", "exclusiveMinimum": 0, "maximum": 100000}}},
-    "cost": {"type": "object", "additionalProperties": false,
-      "properties": {
-        "per_run_usd": {"type": "number", "exclusiveMinimum": 0, "maximum": 100000},
-        "on_cap": {"enum": ["pause", "abort"], "default": "pause"},
-        "pause_ttl_seconds": {"type": "integer", "minimum": 0, "maximum": 2592000, "default": 259200},
-        "periods": {"type": "array", "items": {"$ref": "#/$defs/periodCost"}}},
-      "anyOf": [{"required": ["per_run_usd"]}, {"required": ["periods"], "properties": {"periods": {"minItems": 1}}}]},
-    "limits": {"type": "object", "additionalProperties": false,
-      "properties": {"quotas": {"type": "array", "items": {"$ref": "#/$defs/quota"}},
-                     "cost": {"$ref": "#/$defs/cost"}},
-      "anyOf": [{"required": ["quotas"], "properties": {"quotas": {"minItems": 1}}}, {"required": ["cost"]}]}
-  }
-}
-```
+`specs/schedules.schema.json` is **generated from the pydantic models** (`ScheduleFile.model_json_schema(by_alias=True)`;
+`test_checked_in_schema_matches_model` fails on drift), not hand-written. The governance delta therefore appears as
+pydantic emits it: `$defs` named after the classes (`QuotaSpec`, `PeriodCostCap`, `CostLimits`, `LimitsSpec`, plus
+`Period`/`WeekStart` enums), `additionalProperties: false` on each, and the numeric bounds below:
+
+| field | schema |
+|---|---|
+| `QuotaSpec.max_runs` | `integer`, 1..10000 |
+| `PeriodCostCap.max_usd` | `number`, `exclusiveMinimum: 0`, `maximum: 100000` |
+| `CostLimits.per_run_usd` | `number` or `null`, same bounds |
+| `CostLimits.on_cap` | `enum [pause, abort]`, default `pause` |
+| `CostLimits.pause_ttl_seconds` | `integer`, 0..2592000, default 259200 |
 
 `binding.properties` gains `limits`, `prompt_sha256` (`pattern ^[0-9a-f]{64}$`), `week_start`; `defaults.properties`
-gains `limits`, `week_start`. The JSON Schema cannot express "limits here **or** in defaults" cleanly, so D-2 is
-enforced by the pydantic `ScheduleFile` validator (authoritative) and the schema only validates shape — the same
-split E-Sc9Rt4 uses for its cross-field rules. Uniqueness-per-period is pydantic-only for the same reason.
+gains `limits`, `week_start`.
+
+**What the schema does *not* express (pydantic is authoritative).** There are no `anyOf` "at least one limit"
+constraints: D-2 ("every schedule declares a limit, here or in `defaults.limits`") depends on inheritance, which JSON
+Schema cannot state, so it is enforced only by the `ScheduleFile` validator. The same goes for uniqueness per
+period, `per_run_usd <= min(period max_usd)`, and `prompt_sha256` requiring `prompt_file`. The schema validates
+shape only — the same split E-Sc9Rt4 uses for its cross-field rules. Consequence: `limits: {cost: {on_cap: abort}}`
+passes the schema but is rejected on load, and `{quotas: [...], cost: {on_cap: abort}}` is valid in both.
+
+**Deliberate deviations from the §6.2 sketch (T-tPlK1T).**
+- The numeric limit fields are strict, so a quoted `"3"` or `true` is an error rather than a silent coercion
+  (matching `run_args`). The integer fields (`max_runs`, `pause_ttl_seconds`) additionally accept an *integral float*
+  (`3.0`, normalised to `3`) because JSON Schema treats `3.0` as a valid `integer`; `3.5` is rejected by both.
+- `prompt_sha256` with a trailing newline (`"<64 hex>\n"`) is rejected by pydantic's Rust regex but accepted by
+  Python-`re` based `jsonschema` (where `$` matches before a final `\n`; ECMA-262 validators reject it). Fail-closed,
+  so accepted as a known pydantic-only rejection rather than papered over.
+- `limits_digest` identity means *same enforcement*, not same YAML: a `cost` block with neither `per_run_usd` nor
+  `periods` is inert and hashes like an absent `cost`.
+- `save()` writes every default (`on_cap`, `pause_ttl_seconds`, `periods: []`, ...) into the file on first save;
+  a later change to `DEFAULT_PAUSE_TTL_SECONDS` therefore does not reach files already saved.
 
 ### 6.4 Fire-record delta (`service/fire_store.py`, E-Sc9Rt4 T-Fr2Nx8)
 

@@ -15,17 +15,29 @@
   (`tests/schedules/test_models.py`, `tests/schedules/test_store.py`); `tests/service/` needed no edits.
   Notes: the schema is pydantic-generated, so HLD §6.3 `anyOf` "at least one limit" is not emitted; D-2 stays
   pydantic-only (as the HLD states). `store.py` untouched.
-- Ticket created by the `architect` agent as part of the E-Qp4Zm8 design package. Not started.
-- Scope: `LimitsSpec` & co., binding/defaults deltas, D-2 validator, JSON Schema delta, shared fixture helper + E-Sc9Rt4 fixture updates.
+- **2026-11-11 (developer, unit `w12-04-a2-gov-review-fixes`):** fixed the w10-04 Opus review (commit 618b762):
+  - **M1** schema/pydantic parity on integers: `max_runs`/`pause_ttl_seconds` accept an integral float (`3.0` -> `3`),
+    reject `3.5`, `"3"`, `true`, `inf`, `nan` (JSON Schema "integer" semantics). Corpus cases added.
+  - **M2** HLD §6.3 rewritten: schema is pydantic-generated, no `anyOf`, class-named `$defs`, deviations listed.
+  - **L2** decided: digest identity = same *enforcement*; a cap-less `cost` block hashes like no `cost`. Test added.
+  - **L3** stale sections below replaced.
+  - **L4** won't-fix: Python-`re` `jsonschema` quirk (ECMA validators already reject); pydantic fail-closed. Pinned in
+    the pydantic-only corpus and documented in HLD §6.3.
+  - **L1** untouched (dead `_canonical` in `limits_digest`; harmless, not in this unit's list). Still open.
+  - **H1** (committed HEAD unimportable: `engine.py` docstring/`run_id` mix-up, `models.py` `MAX_INTERVAL_SECONDS`
+    defined after use) is *not* fixed here: the fixes exist only as other units' uncommitted edits to `engine.py` /
+    `models.py` in the working tree. State at 2026-11-11: still uncommitted; branch HEAD 59743c5 is not
+    importable from a clean checkout until those owners commit them.
 
 ## Evidence
-- None yet. No implementation has begun. Design basis:
-  `docs-md/scheduled-run-governance-hld.md` and `docs-md/adr/ADR-0025-scheduled-run-governance-quotas-and-cost-caps.md`.
+- Review: `outputs/waves/w10/w10-04-a2-gov-binding-review.md` (565 passed in a patched temp worktree, governance.py
+  100% coverage, 9/10 mutations killed). After this unit: see the unit report `w12-04-a2-gov-review-fixes.md`.
+- Design basis: `docs-md/scheduled-run-governance-hld.md`, `docs-md/adr/ADR-0025-scheduled-run-governance-quotas-and-cost-caps.md`.
 
 ## Risks / Blockers
-- Blocked until E-Sc9Rt4 `T-Sd1Kq7` has merged.
+- H1 above: a clean checkout of the branch does not import until the `engine.py`/`models.py` fixes are committed.
 
 ## Next actions
-1. Read the upstream tasks' **merged code** (including E-Sc9Rt4's), not only the HLD, before starting.
-2. Implement against the acceptance criteria in `TASK.md`, in AC order; report the pytest delta, ruff/format, mypy, coverage.
-3. Hand `effective_limits()`/`limits_digest()` to `T-Uz0Uol`/`T-PpE5lf`.
+1. Owners of the uncommitted `engine.py`/`models.py` edits commit them (H1); gate from a clean worktree.
+2. `T-Uz0Uol` / `T-PpE5lf` consume `effective_limits()` / `limits_digest()` (digest = enforcement identity, see L2).
+3. T-rwj4nV docs: note that a legacy limit-less schedules file fails to load (fail-closed, HLD §17).
