@@ -149,7 +149,7 @@
   `STATUS.md`, re-verified in `T-Se4Bk5`.
 
 ## Task List
-- [ ] `T-Sd1Kq7-schedule-binding-model` — `schedules/` package (models, locked store, JSON
+- [x] `T-Sd1Kq7-schedule-binding-model` — `schedules/` package (models, locked store, JSON
   Schema), `service/statefile.py`, `Trigger.interval_seconds` + `IntervalScheduler` (FR-1, FR-3,
   NFR-3) — 2 d
 - [ ] `T-Fr2Nx8-fire-store-and-state` — `service/fire_store.py`: `FireIntentStore`,

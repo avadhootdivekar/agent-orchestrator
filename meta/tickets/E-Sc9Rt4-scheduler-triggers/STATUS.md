@@ -21,6 +21,15 @@
   riding the hub), D-e (at-most-once on a crash mid-fire ⇒ a missed run, never a duplicate), and
   D-h (`ao run --run-id` is in scope here).
 
+## Update 2026-11-10 — T-Ri7Dz2 implemented (first code in this epic)
+- `ao run --run-id` + `Orchestrator.run(run_id=)` + `RunStateStore.reserve_run_dir`/`new_run(run_id=)`
+  (atomic `os.mkdir` reservation; duplicate -> exit 4 "use `ao resume`"; invalid -> exit 2); shared
+  `RUN_ID_RE`/`validate_run_id` hoisted into `runstate.py` and used by `feedback.py`.
+- `run_id` registry `Option` (no env/config/ui_group); `ALLOWED_OPTIONS` unchanged;
+  `launch_run(run_id=)` kwarg skips discovery; `LaunchRecord.run_id_supplied` +
+  `derive_launch_status(run_dir_exists=)` -> supplied id with no run dir is `failed_to_start`.
+- Tests: `tests/test_run_id_flag.py` (new), run-options help pin, regenerated schema snapshot.
+
 ## Update 2026-11-10 — Opus design review applied (docs/tickets only; still no code)
 - Findings F1-F24 from overseer unit `w01-06` were applied to the HLD (§3.3/§5.1.1/§5.2/§6.1/§6.3/
   §6.4/§6.6/§6.7/§6.9/§7.1/§7.2/§8/§9.2/§13.3/§16), all 14 `TASK.md`s, `EPIC.md` (disposition table
@@ -36,6 +45,8 @@
   `T-Wh9Kv1` (`T-Ap1Xs3` parallel) → `T-Te3Qw8` → `T-Se4Bk5` → `T-Dc6Zr2`. Task ACs changed but task
   estimates/state (all Draft) are unchanged.
 - No `src/` or test file was edited by this update.
+
+- **2026-11-10:** `T-Sd1Kq7` implemented (Done) — see its STATUS.md; downstream tasks unblocked.
 
 ## Sprint plan
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .models import Trigger
@@ -15,7 +15,12 @@ def _utcnow() -> datetime:
 
 
 class Scheduler(ABC):
-    """Abstract scheduler — returns the next fire time for a trigger."""
+    """Abstract scheduler — returns the next fire time for a trigger.
+
+    Contract the engine relies on: a returned value at or before the caller's current time
+    means "fire now" (the caller may pass an old anchor, e.g. a last-scheduled time, and gets
+    back an already-due instant).
+    """
 
     @abstractmethod
     def next_fire(self, trigger: Trigger, now: datetime) -> datetime | None:
@@ -60,6 +65,16 @@ class CronScheduler(Scheduler):
         now_in_tz = now.astimezone(tz)
         it = croniter(trigger.schedule, now_in_tz)
         return it.get_next(datetime)
+
+
+class IntervalScheduler(Scheduler):
+    """Fixed-period scheduler. Stateless: the anchor is the caller's *now*, so feeding the
+    previous result back in (e.g. ``last_scheduled_for``) yields an evenly spaced series."""
+
+    def next_fire(self, trigger: Trigger, now: datetime) -> datetime | None:
+        if trigger.interval_seconds is None:
+            return None
+        return now + timedelta(seconds=trigger.interval_seconds)
 
 
 class EventScheduler(Scheduler):

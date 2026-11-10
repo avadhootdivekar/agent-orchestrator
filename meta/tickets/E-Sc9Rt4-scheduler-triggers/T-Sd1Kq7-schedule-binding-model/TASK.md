@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F3/F4/F6/F12/F20/F21 applied)
-- Status: Draft
+- Status: Done (2026-11-10)
 - Estimate: 2 days
 
 ## Requirements Mapping
@@ -198,3 +198,18 @@ FUNCTION ScheduleFile.bindings() -> list[ResolvedBinding]:
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Sc9Rt4-scheduler-triggers/T-Sd1Kq7-schedule-binding-model/`
 - Large outputs: N/A
+
+## Implementation notes (2026-11-10, developer)
+All 15 ACs implemented. Deviations / decisions:
+- `ScheduleFile.from_data(data, source=)` is the validating entry point; it folds pydantic's aggregate
+  into one `ScheduleFileError` naming file, schedule id and field. `ScheduleStore.load` uses it.
+- Kind-specific fields of the *wrong* kind (e.g. `schedule` with `kind=interval`) are rejected, not
+  ignored; `webhook` requires exactly one of `secret_env` / `secret_file`; `instance_id` may only use
+  the `{date}` / `{rand6}` tokens and must expand to an id-shaped string (no path separators);
+  `version` major must be `1`.
+- `ResolvedBinding` is a type alias of `ScheduleBinding` (inheritable fields filled, typed Optional).
+- `specs/schedules.schema.json` is generated from the model; a test guards drift (enum order normalised).
+- `Trigger.interval_seconds` carries no `>= 60` check (that floor is the binding's, AC3).
+- Coverage: schedules/ 99-100 % (store.py 90 %: OSError branches), statefile.py 100 %.
+Unfinished: none. Follow-up: migrate `registry.py`, `boot_resume.py` and the supervisor snapshot to
+`service/statefile.py` (out of scope here, AC8).

@@ -703,10 +703,11 @@ class WorkflowDefaults(BaseModel):
 
 
 class Trigger(BaseModel):
-    type: Literal["manual", "cron", "event"]
+    type: Literal["manual", "cron", "event", "interval"]
     schedule: str | None = None
     timezone: str = "UTC"
     event: str | None = None
+    interval_seconds: int | None = None  # required when type=interval
 
 
 class LoopSpec(BaseModel):

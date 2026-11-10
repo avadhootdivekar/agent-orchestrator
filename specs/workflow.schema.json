@@ -158,14 +158,16 @@
       "additionalProperties": false,
       "required": ["type"],
       "properties": {
-        "type": { "enum": ["manual", "cron", "event"] },
+        "type": { "enum": ["manual", "cron", "event", "interval"] },
         "schedule": { "type": "string", "description": "5/6-field cron expression; required when type=cron." },
         "timezone": { "type": "string", "default": "UTC" },
-        "event": { "type": "string", "description": "Event key; required when type=event." }
+        "event": { "type": "string", "description": "Event key; required when type=event." },
+        "interval_seconds": { "type": "integer", "minimum": 1, "description": "Fixed period in seconds; required when type=interval." }
       },
       "allOf": [
         { "if": { "properties": { "type": { "const": "cron" } } }, "then": { "required": ["schedule"] } },
-        { "if": { "properties": { "type": { "const": "event" } } }, "then": { "required": ["event"] } }
+        { "if": { "properties": { "type": { "const": "event" } } }, "then": { "required": ["event"] } },
+        { "if": { "properties": { "type": { "const": "interval" } } }, "then": { "required": ["interval_seconds"] } }
       ]
     },
     "task": {

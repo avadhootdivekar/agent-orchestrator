@@ -1,0 +1,658 @@
+{
+  "$defs": {
+    "RunArgs": {
+      "additionalProperties": false,
+      "description": "Closed set of run options a schedule may set (types/choices from the registry).",
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "turn_budget": {
+          "anyOf": [
+            {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Budget"
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effort"
+        },
+        "thinking_effort": {
+          "anyOf": [
+            {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thinking Effort"
+        },
+        "autocompact": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Autocompact"
+        },
+        "max_attempts": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Attempts"
+        },
+        "max_turns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Turns"
+        },
+        "max_parallel": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Parallel"
+        },
+        "budget_total": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budget Total"
+        },
+        "quota_max_wait": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quota Max Wait"
+        },
+        "quota_poll_interval": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quota Poll Interval"
+        },
+        "self_heal": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Self Heal"
+        },
+        "sentinel.enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sentinel.Enabled"
+        }
+      },
+      "title": "RunArgs",
+      "type": "object"
+    },
+    "ScheduleBinding": {
+      "additionalProperties": false,
+      "description": "One schedule. Inheritable fields are ``None`` here; use ``ScheduleFile.bindings`` to\nget them resolved against the file's ``defaults``.",
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9-_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "cron",
+            "interval",
+            "file_watch",
+            "webhook"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schedule"
+        },
+        "interval_seconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval Seconds"
+        },
+        "timezone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timezone"
+        },
+        "workflow": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow"
+        },
+        "template": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Template"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "instance_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instance Id"
+        },
+        "prompt_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt File"
+        },
+        "run_args": {
+          "$ref": "#/$defs/RunArgs"
+        },
+        "overlap": {
+          "anyOf": [
+            {
+              "enum": [
+                "skip",
+                "queue",
+                "allow"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Overlap"
+        },
+        "catch_up": {
+          "anyOf": [
+            {
+              "enum": [
+                "once",
+                "skip"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catch Up"
+        },
+        "catch_up_window_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catch Up Window Seconds"
+        },
+        "jitter_seconds": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jitter Seconds"
+        },
+        "grace_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grace Seconds"
+        },
+        "max_concurrent": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Concurrent"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UntilSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WatchSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "webhook": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebhookSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "title": "ScheduleBinding",
+      "type": "object"
+    },
+    "ScheduleDefaults": {
+      "additionalProperties": false,
+      "description": "Values every binding inherits unless it overrides them (\u00a75.1).",
+      "properties": {
+        "timezone": {
+          "default": "UTC",
+          "title": "Timezone",
+          "type": "string"
+        },
+        "overlap": {
+          "default": "skip",
+          "enum": [
+            "skip",
+            "queue",
+            "allow"
+          ],
+          "title": "Overlap",
+          "type": "string"
+        },
+        "catch_up": {
+          "default": "once",
+          "enum": [
+            "once",
+            "skip"
+          ],
+          "title": "Catch Up",
+          "type": "string"
+        },
+        "catch_up_window_seconds": {
+          "default": 86400,
+          "minimum": 0,
+          "title": "Catch Up Window Seconds",
+          "type": "integer"
+        },
+        "jitter_seconds": {
+          "default": 0,
+          "maximum": 3600,
+          "minimum": 0,
+          "title": "Jitter Seconds",
+          "type": "integer"
+        },
+        "grace_seconds": {
+          "default": 60,
+          "minimum": 0,
+          "title": "Grace Seconds",
+          "type": "integer"
+        },
+        "max_concurrent": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Max Concurrent",
+          "type": "integer"
+        }
+      },
+      "title": "ScheduleDefaults",
+      "type": "object"
+    },
+    "UntilSpec": {
+      "additionalProperties": false,
+      "description": "Inter-run stop condition (\u00a76.8). Any satisfied condition ends the schedule.",
+      "properties": {
+        "max_runs": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Runs"
+        },
+        "artifact_exists": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Exists"
+        },
+        "gate_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gate File"
+        },
+        "gate_field": {
+          "default": "done",
+          "title": "Gate Field",
+          "type": "string"
+        },
+        "gate_equals": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": true,
+          "title": "Gate Equals"
+        }
+      },
+      "title": "UntilSpec",
+      "type": "object"
+    },
+    "WatchSpec": {
+      "additionalProperties": false,
+      "description": "File-watch source (\u00a76.6): workspace-relative glob paths, polled.",
+      "properties": {
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Paths",
+          "type": "array"
+        },
+        "on": {
+          "items": {
+            "enum": [
+              "created",
+              "modified"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "On",
+          "type": "array"
+        },
+        "debounce_seconds": {
+          "default": 30,
+          "minimum": 0,
+          "title": "Debounce Seconds",
+          "type": "integer"
+        },
+        "poll_seconds": {
+          "default": 30,
+          "minimum": 1,
+          "title": "Poll Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "paths"
+      ],
+      "title": "WatchSpec",
+      "type": "object"
+    },
+    "WebhookSpec": {
+      "additionalProperties": false,
+      "description": "Authenticated webhook source (\u00a77.3): the secret is referenced, never inlined.",
+      "properties": {
+        "secret_env": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secret Env"
+        },
+        "secret_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secret File"
+        },
+        "rate_per_minute": {
+          "default": 10,
+          "minimum": 1,
+          "title": "Rate Per Minute",
+          "type": "integer"
+        }
+      },
+      "title": "WebhookSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The whole ``schedules.yaml``.",
+  "properties": {
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    },
+    "defaults": {
+      "$ref": "#/$defs/ScheduleDefaults"
+    },
+    "schedules": {
+      "items": {
+        "$ref": "#/$defs/ScheduleBinding"
+      },
+      "title": "Schedules",
+      "type": "array"
+    }
+  },
+  "title": "ScheduleFile",
+  "type": "object"
+}
