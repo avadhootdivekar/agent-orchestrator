@@ -162,7 +162,7 @@
 - [x] `T-Sv5Hb3-service-integration` — registry additions, `ao service run` wiring,
   `--no-schedules`/`--webhook-*`, status merge, systemd unit delta (FR-2, FR-10, NFR-1, NFR-2) — 2 d
 - [ ] `T-Cl6Jn9-schedule-cli` — the `ao schedule` sub-app incl. `daemon --once` (FR-9, NFR-5) — 3 d
-- [ ] `T-Fw8Gp4-file-watch-trigger` — `service/watch.py` + `FileWatchScheduler` (FR-11) — 2 d
+- [~] `T-Fw8Gp4-file-watch-trigger` — `service/watch.py` + `FileWatchScheduler` (FR-11) — 2 d — core landed 2026-11-11; CLI flags + e2e pending
 - [ ] `T-Wh9Kv1-webhook-ingress` — `service/webhook.py`, listener app, `WebhookScheduler` (FR-12,
   NFR-3) — 3 d
 - [ ] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d

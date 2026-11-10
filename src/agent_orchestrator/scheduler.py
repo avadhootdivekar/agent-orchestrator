@@ -78,10 +78,14 @@ class IntervalScheduler(Scheduler):
 
 
 class EventScheduler(Scheduler):
-    """Stub event scheduler — fires when a sentinel file exists.
+    """Deprecated stub event scheduler — fires when a sentinel file exists.
 
-    A full event/webhook system is out of MVP scope; this stub allows the
-    interface to be exercised in tests without a real event bus.
+    Behaviour is unchanged. Its successor is ``FileWatchSource`` (``service/watch.py``, the
+    ``file_watch`` schedule kind, T-Fw8Gp4): a per-binding ``TriggerSource`` that polls globs
+    and derives ``scheduled_for`` from the newest changed mtime. A sentinel path is just the
+    degenerate one-file watch, with ``now`` as the fire instant and no digest or debounce.
+    ``FileWatchScheduler`` is the name the design uses for that successor; the stateful logic
+    lives in ``FileWatchSource``, not in a ``Scheduler``.
     """
 
     def __init__(self, sentinel_path: str = "") -> None:
