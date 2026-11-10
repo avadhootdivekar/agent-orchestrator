@@ -91,7 +91,7 @@ with the owning task named.)
     default is `false`, F5) with a `fake`-executor workflow and a `kind: interval,
     interval_seconds: 60` binding, driven by `ao schedule daemon --once` with an injected clock —
     assert a real run directory appears, its `status.json` is `succeeded`, its id is exactly the
-    `ao-<schedule_id>-<ts>` string `T-Lp4Wt6` constructs (UTC-normalised; produced through the
+    `ao-<schedule_id>-<ts>-<fire_key[:6]>` string (amended w16-03, H1) `T-Lp4Wt6` constructs (UTC-normalised; produced through the
     explicit `run_id` seam of `T-Ri7Dz2`, F1), and the fire record links
     `fire_key → run_id`. A second `--once` immediately after produces zero fires.
 12. `ao schedule run-now` with no daemon running: a run directory appears; with a simulated live
@@ -156,7 +156,7 @@ def test_interval_schedule_fires_a_real_run(tmp_path, monkeypatch, fixed_clock):
     assert result.exit_code == 0
     run_dirs = list((ws / ".orchestrator" / "runs").iterdir())
     assert len(run_dirs) == 1
-    assert run_dirs[0].name == scheduled_run_id("nightly", expected_scheduled_for)
+    assert run_dirs[0].name == scheduled_run_id("nightly", expected_scheduled_for, fire_key)
     assert json.loads((run_dirs[0] / "state.json").read_text())["status"] == "succeeded"
 
     again = CliRunner().invoke(app, [... same ...])             # at-most-once

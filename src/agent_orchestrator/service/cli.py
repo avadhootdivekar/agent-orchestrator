@@ -335,8 +335,19 @@ def build_schedule_engine(
         fire_store=engine.fire_store,
         state_store=engine.state_store,
         event_log=engine.event_log,
+        usage_ledger=engine.usage_ledger,  # L2: one ledger + lock for pre-check and authority
+        governance_lock_path=engine.governance_lock_path,
     )
-    engine.start()
+    try:
+        engine.start()
+    except Exception:
+        # start() may hold engine.lock already (e.g. reconcile raised): release it before the
+        # caller degrades to engine=None, or the next restart would be locked out too.
+        try:
+            engine.shutdown()
+        except Exception:  # noqa: BLE001 - best effort; the original error is what matters
+            logger.warning("engine.shutdown() after a failed start() also failed", exc_info=True)
+        raise
     return engine
 
 
@@ -765,9 +776,20 @@ def run(
         raise
 
     # AC3: after supervisor.start() so reconciliation sees auto-resumed runs.
-    engine = build_schedule_engine(
-        registry, registry_path, state_dir, supervisor, no_schedules=no_schedules
-    )
+    # H2: the scheduler is optional -- a held engine.lock (``ao schedule daemon`` / ``run-now
+    # --local``) or a reconcile error must degrade to engine=None, never crash the service after
+    # the dashboards have spawned (systemd would crash-loop them).
+    engine: ScheduleEngine | None
+    try:
+        engine = build_schedule_engine(
+            registry, registry_path, state_dir, supervisor, no_schedules=no_schedules
+        )
+    except Exception:
+        logger.exception(
+            "schedule.engine_start_failed -- continuing without the scheduler "
+            "(dashboards stay up; `ao service status` shows schedules off)"
+        )
+        engine = None
 
     status_provider = build_status_provider(supervisor, schedule_engine=engine)
     hub_app = build_hub_app(status_provider, auth=launch.runtime)

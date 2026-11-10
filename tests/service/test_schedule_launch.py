@@ -95,11 +95,13 @@ def rig(tmp_path: Path) -> Rig:
 
 
 def test_scheduled_run_id_utc_normalised() -> None:
-    assert scheduled_run_id("nightly", T0) == "ao-nightly-20260304T050607Z"
+    assert scheduled_run_id("nightly", T0, "abcdef123") == "ao-nightly-20260304T050607Z-abcdef"
     ist = timezone(timedelta(hours=5, minutes=30))
-    assert scheduled_run_id("nightly", T0.astimezone(ist)) == "ao-nightly-20260304T050607Z"
+    assert scheduled_run_id("nightly", T0.astimezone(ist), "abcdef123") == (
+        "ao-nightly-20260304T050607Z-abcdef"
+    )
     with pytest.raises(ValueError):
-        scheduled_run_id("x", datetime(2026, 1, 1))
+        scheduled_run_id("x", datetime(2026, 1, 1), "k")
 
 
 def test_render_instance_id() -> None:
@@ -131,7 +133,7 @@ def test_happy_path_workflow(rig: Rig) -> None:
     call = rig.sup.launch_calls[0]
     assert call["workflow_path"] == str(Path(rig.root) / "w.json")
     assert call["prompt"] == "do it"
-    assert call["run_id"] == "ao-nightly-20260304T050607Z"
+    assert call["run_id"] == f"ao-nightly-20260304T050607Z-{(d.fire_key or '')[:6]}"
     assert call["options"] == b.run_args.as_options()
     assert "run_id" not in call["options"]
     assert "reposets" not in call and "agents" not in call
@@ -368,8 +370,86 @@ def test_launcher_to_engine_tick(tmp_path: Path) -> None:
     d = fired[0]
     rec = e.fire_store.get(d.fire_key or "", env.root)
     assert rec is not None and rec.status == "launched"
-    assert sup.launch_calls[0]["run_id"] == scheduled_run_id("s", d.scheduled_for)  # type: ignore[arg-type]
+    assert sup.launch_calls[0]["run_id"] == scheduled_run_id("s", d.scheduled_for, d.fire_key)  # type: ignore[arg-type]
     assert [x["event"] for x in env.events("schedule.fired")] == ["schedule.fired"]
     # same instant again: key is burned, no second launch
     env.tick(now + timedelta(seconds=1))
     assert len(sup.launch_calls) == 1
+
+
+# -- w16-03 review fixes (w14-03 H1/M1/L3) ------------------------------------------------------
+
+
+def test_h1_two_fires_in_the_same_second_get_distinct_run_ids(rig: Rig) -> None:
+    """Distinct fire keys within one UTC second must not share a run id (else the 2nd child
+    exits 4 while its record says launched)."""
+    write_workflow(Path(rig.root) / "w.json")
+    b = make_binding()
+    t1 = T0 + timedelta(milliseconds=400)
+    d1, d2 = rig.decision(b, T0), rig.decision(b, t1)
+    assert d1.fire_key != d2.fire_key
+    r1, r2 = rig.launcher.launch(d1), rig.launcher.launch(d2)
+    ids = [c["run_id"] for c in rig.sup.launch_calls]
+    assert len(set(ids)) == 2
+    assert r1.run_id != r2.run_id and r1.status == r2.status == "launched"
+    assert all(i.startswith("ao-nightly-20260304T050607Z-") and len(i) <= 128 for i in ids)
+
+
+def test_h1_run_id_is_stable_for_the_same_fire() -> None:
+    a = scheduled_run_id("s", T0, "deadbeefcafe")
+    assert a == scheduled_run_id("s", T0, "deadbeefcafe")
+    assert a != scheduled_run_id("s", T0, "feedbeefcafe")
+
+
+def _flaky_launched_update(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    real = rig.launcher._fires.update  # noqa: SLF001
+
+    def update(key: str, **fields: Any) -> Any:
+        if fields.get("status") == "launched":
+            raise OSError(28, "No space left on device")
+        return real(key, **fields)
+
+    monkeypatch.setattr(rig.launcher._fires, "update", update)  # noqa: SLF001
+
+
+@pytest.mark.parametrize("governed", [False, True])
+def test_m1_launched_update_failure_does_not_escape_and_reconcile_resolves_launched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, governed: bool
+) -> None:
+    """Crash/IO failure after spawn: launch() returns the intended record (no re-raise) and a
+    restart's reconcile marks it launched via run-dir liveness, not orphaned."""
+    from .test_governance_gate import cap_renderer, limits  # lazy: that module imports this one
+
+    rig = Rig(tmp_path, options_renderer=cap_renderer) if governed else Rig(tmp_path)
+    write_workflow(Path(rig.root) / "w.json")
+    kw = {"limits": limits(quota_day=5, per_run=2, week=10)} if governed else {}
+    d = rig.decision(make_binding(**kw), T0)
+    _flaky_launched_update(rig, monkeypatch)
+    rec = rig.launcher.launch(d)  # must not raise
+    assert len(rig.sup.launch_calls) == 1
+    assert rec.status == "intended"
+    expected = scheduled_run_id(d.schedule_id, T0, d.fire_key or "")
+    assert rec.run_id == expected
+    store = FireIntentStore(rig.state_dir)  # fresh store == daemon restart
+    assert store.get(d.fire_key or "", rig.root).status == "intended"  # type: ignore[union-attr]
+    assert store.reconcile_orphans(lambda pid: False, lambda root, rid: rid == expected) == []
+    after = store.get(d.fire_key or "", rig.root)
+    assert after is not None and after.status == "launched"
+
+
+def test_l3a_set_schedules_flips_only_the_named_workspace(tmp_path: Path) -> None:
+    from agent_orchestrator.service.registry import ServiceRegistry
+
+    reg = ServiceRegistry(tmp_path / "service.yaml")
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(), b.mkdir()
+    reg.add(str(a)), reg.add(str(b))
+    reg.set_schedules(str(a), True)
+    flags = {e.root: e.schedules for e in reg.load().workspaces}
+    assert flags == {str(a.resolve()): True, str(b.resolve()): False}
+
+
+def test_l3b_intent_created_at_uses_the_injected_clock(rig: Rig) -> None:
+    d = rig.decision(make_binding(), T0)
+    rig.launcher._write_plain_intent(d)  # noqa: SLF001
+    assert rig.record(d).created_at == fixed_clock()

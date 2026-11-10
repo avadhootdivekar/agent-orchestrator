@@ -21,3 +21,11 @@ By: developer · Role: developer · Date: 2026-11-11
 
 ## Next actions
 1. `T-Sv5Hb3`: construct the launcher with the engine's shared stores/supervisor.
+
+## 2026-11-11 — review fixes (w16-03, from w14-03) — By: developer · Role: developer · Date: 2026-11-11
+- **H1 fixed**: `scheduled_run_id(schedule_id, scheduled_for, fire_key)` appends `fire_key[:6]`; AC3 amended (TASK.md), `T-Te3Qw8` updated. Test: `test_h1_two_fires_in_the_same_second_get_distinct_run_ids` (+ stability test); mutant "drop suffix" killed.
+- **M1 fixed**: the phase-1 intent already carried the deterministic `run_id` (ab4c516); this unit wraps the `launched` update — failure is logged, the `intended` record is returned (no re-raise), reconcile resolves it to `launched` via run-dir liveness. Test `test_m1_launched_update_failure_does_not_escape_and_reconcile_resolves_launched` (plain + governed); mutants "re-raise" and "no run_id in intent" killed.
+- **L2 fixed**: service wiring passes the engine's `usage_ledger` and `governance_lock_path` (asserted in `test_launcher_shares_engine_stores_and_supervisor`).
+- **L3 fixed**: (a) `test_l3a_set_schedules_flips_only_the_named_workspace` (mutant killed), (b) `test_l3b_intent_created_at_uses_the_injected_clock` (mutant killed), (c) the two webhook run tests `importorskip("fastapi")`.
+- **L5 doc**: AC8 amended with the `cost_cap_usd` exception. Governed-path ordering is covered in `test_governance_gate.py` (kept as is).
+- **Not done, with reasons**: *exit-4 => `launch_failed` reconcile* — unreachable now that run ids are unique per fire, and the supervisor/engine reconcile code is outside this unit's paths; follow-up if wanted. *L1* (`FireIntentStore.write` exclusive create) — `fire_store.py` not owned here; mitigated by `usage.lock`/`engine.lock`. *L4* (status fallback summary) — `ao service status` path is outside the "service run" scope of this unit; still partial.

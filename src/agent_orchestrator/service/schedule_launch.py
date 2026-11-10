@@ -70,6 +70,7 @@ logger = logging.getLogger(__name__)
 
 RUN_ID_PREFIX: Final = "ao"
 RUN_ID_TS_FORMAT: Final = "%Y%m%dT%H%M%SZ"
+RUN_ID_FIRE_KEY_CHARS: Final = 6  # fire-key prefix making the id unique per fire (w14 H1)
 INSTANCE_DATE_FORMAT: Final = "%Y%m%d"
 RAND6_LEN: Final = 6
 RAND6_ALPHABET: Final = string.ascii_lowercase + string.digits  # matches templates' rand6 regex
@@ -104,13 +105,17 @@ class LaunchResolutionError(Exception):
 # -- named helpers (asserted by T-Te3Qw8) -------------------------------------------------------
 
 
-def scheduled_run_id(schedule_id: str, scheduled_for: datetime) -> str:
-    """``ao-<schedule_id>-<scheduled_for as %Y%m%dT%H%M%SZ>``, with *scheduled_for* converted to UTC
-    first (F11) so the literal ``Z`` is truthful. Naive datetimes are rejected."""
+def scheduled_run_id(schedule_id: str, scheduled_for: datetime, fire_key: str) -> str:
+    """``ao-<schedule_id>-<scheduled_for as %Y%m%dT%H%M%SZ>-<fire_key[:6]>``, with *scheduled_for*
+    converted to UTC first (F11) so the literal ``Z`` is truthful. Naive datetimes are rejected.
+
+    The timestamp only has one-second resolution while fire keys hash the full instant (plus
+    event discriminators), so two distinct fires in one second would otherwise share an id and
+    the second child would exit ``EXIT_RUN_EXISTS`` (4) while recorded ``launched`` (w14 H1)."""
     if scheduled_for.tzinfo is None or scheduled_for.utcoffset() is None:
         raise ValueError("scheduled_for must be timezone-aware")
     stamp = scheduled_for.astimezone(UTC).strftime(RUN_ID_TS_FORMAT)
-    return f"{RUN_ID_PREFIX}-{schedule_id}-{stamp}"
+    return f"{RUN_ID_PREFIX}-{schedule_id}-{stamp}-{fire_key[:RUN_ID_FIRE_KEY_CHARS]}"
 
 
 def _default_rand6() -> str:
@@ -214,7 +219,7 @@ class ScheduledLauncher:
 
         try:
             workflow_path, prompt = self._resolve(d, snapshot)
-            run_id = scheduled_run_id(d.schedule_id, d.scheduled_for)
+            run_id = scheduled_run_id(d.schedule_id, d.scheduled_for, d.fire_key)
             # Curated subset of the allow-listed options; run_id is the explicit keyword (F1).
             options: dict[str, object] = dict(d.binding.run_args.as_options())
             if reservation is not None:
@@ -240,14 +245,24 @@ class ScheduledLauncher:
         except Exception as exc:  # noqa: BLE001 - a failed fire must not kill the engine tick
             return self._fail(d, exc)
 
-        launched = self._fires.update(
-            d.fire_key,
-            status="launched",
-            launch_id=rec.launch_id,
-            pid=rec.pid,
-            run_id=run_id,
-            argv_digest=_sha256(" ".join(rec.argv)),
-        )
+        try:
+            launched = self._fires.update(
+                d.fire_key,
+                status="launched",
+                launch_id=rec.launch_id,
+                pid=rec.pid,
+                run_id=run_id,
+                argv_digest=_sha256(" ".join(rec.argv)),
+            )
+        except Exception:  # noqa: BLE001
+            # The child is already running and the intent carries its deterministic run_id, so
+            # leave the record ``intended``: reconcile_orphans resolves it to ``launched`` via the
+            # run dir / pid (w14 M1). Never re-raise: the engine would record a failed fire.
+            logger.exception("could not stamp launched on %s; reconcile will resolve", d.fire_key)
+            stored = self._fires.get(d.fire_key, d.workspace_root)
+            if stored is None:  # pragma: no cover - raced with a prune
+                raise
+            return stored
         # The child is running: bookkeeping trouble from here on must not flip the record.
         try:
             now = self._clock()
@@ -285,7 +300,7 @@ class ScheduledLauncher:
                 effective_due=d.effective_due,
                 created_at=self._clock(),
                 status="intended",
-                run_id=scheduled_run_id(d.schedule_id, d.scheduled_for),  # M1
+                run_id=scheduled_run_id(d.schedule_id, d.scheduled_for, d.fire_key),  # M1
             )
         )
 
@@ -306,7 +321,7 @@ class ScheduledLauncher:
                 fires=self._fires,
                 lock_path=self._lock_path,
                 now=self._clock(),
-                run_id=scheduled_run_id(d.schedule_id, d.scheduled_for),
+                run_id=scheduled_run_id(d.schedule_id, d.scheduled_for, d.fire_key),
             )
         except FireAlreadyRecordedError:
             raise

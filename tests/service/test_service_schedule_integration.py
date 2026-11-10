@@ -163,6 +163,7 @@ class _StubEngine:
         self.registry_path, self.kwargs = registry_path, kwargs
         self.calls: list[str] = []
         self.fire_store = self.state_store = self.event_log = object()
+        self.usage_ledger, self.governance_lock_path = object(), Path("gov.lock")
         _StubEngine.instances.append(self)
 
     def process_supervisor(self, root: str) -> object:
@@ -249,6 +250,8 @@ def test_launcher_shares_engine_stores_and_supervisor(tmp_path: Path) -> None:
         assert launcher._fires is engine.fire_store  # noqa: SLF001
         assert launcher._state is engine.state_store  # noqa: SLF001
         assert launcher._events is engine.event_log  # noqa: SLF001
+        assert launcher._ledger is engine.usage_ledger  # noqa: SLF001  (L2)
+        assert launcher._lock_path == engine.governance_lock_path  # noqa: SLF001  (L2)
         assert launcher._supervisor_factory == engine.process_supervisor  # noqa: SLF001
     finally:
         engine.shutdown()
@@ -469,6 +472,32 @@ def test_run_startup_tick_and_shutdown_order(run_env: SimpleNamespace) -> None:
     assert run_env.hub_calls[0]()["schedules"]["enabled"] is True
 
 
+def test_run_engine_start_failure_degrades_to_no_scheduler(
+    run_env: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H2: EngineLockHeldError from engine.start() must not crash `ao service run`."""
+
+    class LockedEngine(_StubEngine):
+        def start(self) -> None:
+            run_env.order.log.append("eng.start")
+            raise se.EngineLockHeldError("engine.lock held by `ao schedule daemon`")
+
+        def tick(self) -> None:  # pragma: no cover - must never run
+            run_env.order.log.append("eng.tick")
+
+        def shutdown(self) -> None:
+            run_env.order.log.append("eng.shutdown")
+
+    monkeypatch.setattr(se, "ScheduleEngine", LockedEngine)
+    result = runner.invoke(app, ["service", "run"])
+    assert result.exit_code == 0, result.output
+    log = run_env.order.log
+    assert "eng.tick" not in log  # the loop never ticks a dead engine
+    assert log.count("eng.shutdown") == 1  # the half-started engine released its lock once
+    assert "sup.tick" in log and log[-1] == "sup.shutdown"  # dashboards supervised + shut down
+    assert run_env.hub_calls[0]()["schedules"]["enabled"] is False
+
+
 def test_run_no_schedules_flag_never_builds_engine(run_env: SimpleNamespace) -> None:
     result = runner.invoke(app, ["service", "run", "--no-schedules"])
     assert result.exit_code == 0, result.output
@@ -486,6 +515,7 @@ def test_run_registry_kill_switch_never_builds_engine(
 
 
 def test_run_webhook_builds_real_app_and_opens_second_socket(run_env: SimpleNamespace) -> None:
+    pytest.importorskip("fastapi")  # needs the `ui` extra (L3c)
     result = runner.invoke(app, ["service", "run", "--webhook"])
     assert result.exit_code == 0, result.output
     assert len(run_env.uvicorn.configs) == 2  # hub + webhook listener
@@ -493,6 +523,7 @@ def test_run_webhook_builds_real_app_and_opens_second_socket(run_env: SimpleName
 
 
 def test_run_webhook_nonloopback_warns(run_env: SimpleNamespace) -> None:
+    pytest.importorskip("fastapi")  # needs the `ui` extra (L3c)
     result = runner.invoke(app, ["service", "run", "--webhook", "--webhook-host", "0.0.0.0"])
     assert result.exit_code == 0, result.output
     assert "non-loopback" in result.output and "HMAC" in result.output

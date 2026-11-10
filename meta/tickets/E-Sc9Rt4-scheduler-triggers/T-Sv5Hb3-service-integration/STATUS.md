@@ -26,3 +26,7 @@
    rule this epic inherits from E-GIytcL).
 2. Implement against the acceptance criteria in `TASK.md`, in AC order.
 3. Hand the registry policy block to `T-Cl6Jn9` and the wired webhook flags to `T-Wh9Kv1`; confirm with `git diff` that `service/cli.py` grew a sibling rather than being restructured.
+
+## 2026-11-11 — review fixes (w16-03, from w14-03) — By: developer · Role: developer · Date: 2026-11-11
+- **H2 fixed**: `ao service run` wraps `build_schedule_engine`; `EngineLockHeldError` (or any start failure) logs `schedule.engine_start_failed`, the half-started engine is shut down (lock released) and the service continues with `engine=None` (hub reports `schedules.enabled=false`, dashboards stay up). Test `test_run_engine_start_failure_degrades_to_no_scheduler`; mutant "no guard" killed.
+- L4 (status fallback is a raw state.json dump) remains open, AC10 partial.

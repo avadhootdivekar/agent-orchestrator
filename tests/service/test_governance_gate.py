@@ -940,7 +940,7 @@ def test_m1_intended_record_carries_deterministic_run_id_so_reconcile_finds_run_
     rec = store.get(d.fire_key or "", rig.root)
     from agent_orchestrator.service.schedule_launch import scheduled_run_id
 
-    expected = scheduled_run_id(d.schedule_id, T0)
+    expected = scheduled_run_id(d.schedule_id, T0, d.fire_key or "")
     assert rec is not None and rec.run_id == expected
     # the child survived the crash: its run dir exists -> launched, reservation still held
     seen: list[str] = []

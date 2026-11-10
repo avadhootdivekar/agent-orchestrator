@@ -48,8 +48,11 @@ Do NOT touch: `service/schedule_engine.py`, `service/fire_store.py`, `schedules/
    `launch_id`, `pid` and `run_id`. If anything between phases raises, the record is updated to
    `launch_failed` with the reason and `ScheduleStateStore.record_failure` is called; the
    exception is **not** re-raised (a failed fire must not kill the engine tick).
-3. The run id supplied to `ao run` is `ao-<schedule_id>-<scheduled_for as %Y%m%dT%H%M%SZ>`,
-   built by a named module-level function so `T-Te3Qw8` can assert the exact string.
+3. The run id supplied to `ao run` is
+   `ao-<schedule_id>-<scheduled_for as %Y%m%dT%H%M%SZ>-<fire_key[:6]>` (**amended 2026-11-11, w14-03
+   H1**: the second-resolution stamp alone collided for distinct fires in one UTC second; the
+   fire-key prefix makes the id unique per fire; max length 3+64+1+16+1+6 = 91 <= 128),
+   built by `scheduled_run_id(schedule_id, scheduled_for, fire_key)` so `T-Te3Qw8` can assert the exact string.
    **`scheduled_for` is converted to UTC (`astimezone(UTC)`) before formatting** and before the
    literal `Z` is appended (F11). It is passed through `launch_run(run_id=...)` — `T-Ri7Dz2`'s
    explicit keyword (F1) — never through `options` (dropped) and never as raw argv. The schedule
@@ -88,6 +91,8 @@ Do NOT touch: `service/schedule_engine.py`, `service/fire_store.py`, `schedules/
    `SCHEDULE_RUN_ARG_NAMES` ⊆ `ALLOWED_OPTIONS` ∪ `ALLOWED_BOOL_OPTIONS`** — assert this in a test
    that reads the allow-list at runtime rather than hardcoding the expected keys, so a future
    divergence fails loudly; and assert `"run_id" not in options`.
+   *(Amended w14-03 L5: a governed fire adds `cost_cap_usd` to `options` — the one sanctioned
+   exception, HLD §8.4 / ADR-0025 — verified rendered before and after spawn.)*
 
 ### Tests
 9. Happy path with `tests/ui/conftest.py`'s `StubSupervisor` (reuse it; hoist the fixture if the
