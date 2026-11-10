@@ -45,7 +45,9 @@ A bad CLI/env value exits 2. `ao validate` checks a workflow's `sentinel:` block
 | `max_injected_tasks` | null | cap on sentinel-origin injections; null ⇒ `max(20, ceil(3 × max_parallel × expected_hours))` |
 | `recovery.enabled` | `true` | liveness/recovery lane (only active when `enabled`) |
 | `recovery.idle_kill_minutes` | 15 (floor 12 unless `recovery.force`) | no growth of the attempt's `transcript.jsonl` ⇒ kill |
-| `recovery.stuck_factor` / `stuck_min_minutes` | 3.0 / 20 | kill when running > factor × median of ≥3 settled same-agent tasks and ≥ min minutes |
+| `recovery.stuck_factor` / `stuck_min_minutes` | 3.0 / 20 | kill when the attempt has run > factor × baseline and ≥ min minutes; baseline = task's `expected_minutes`, else median of ≥3 settled tasks with the same agent **and** `stuck_cohort` tag (see "stuck_factor and heterogeneous work") |
+| `recovery.stuck_activity_veto` / `stuck_veto_minutes` | `true` / null (⇒ `idle_kill_minutes`) | a stuck_factor kill is vetoed while output grew within the window |
+| `recovery.systemic_task_window_seconds` | 600 | repeat kills of the SAME task closer together than this count as one systemic incident (0 = count every kill) |
 | `recovery.cost_kill_pct` | null | kill when already-settled earlier-attempt cost ≥ pct × task cap |
 | `recovery.max_recovery_kills_per_task` | 2 | beyond this a kill becomes a normal failure |
 | `recovery.kill_grace_seconds` | 10 | TERM → grace → KILL of the process group |
@@ -64,6 +66,29 @@ A bad CLI/env value exits 2. `ao validate` checks a workflow's `sentinel:` block
 | `llm.max_generations_per_hour`, `trigger_cooldown_minutes`, `max_triggers_per_generation`, `max_tokens_per_generation` | 3, 5, 20, 400000 | rotation limits |
 | `llm.max_consecutive_rejections` | 5 | consecutive quarantined proposals ⇒ LLM auto-paused |
 | `llm.planner`, `planner_idle_seconds` | `false`, 120 | routed-runner planner (needs `powers: act`) |
+
+### stuck_factor and heterogeneous work
+
+The stuck_factor baseline is a median of *past durations*, so it is only meaningful when peers are the
+same kind of work. Peers are matched on **agent + `stuck_cohort`** (an optional per-task tag): untagged
+tasks only peer with untagged tasks of the same agent (the historic behaviour), and a tagged task never
+inherits a baseline from other tags. **Limit:** an agent that runs mixed work (a 5-minute doc check and a
+40-minute full test sweep) has no honest shared median unless the tasks are tagged, so for such work set
+per-task hints in the TaskSpec:
+
+- `stuck_cohort: "<tag>"` — compare only against settled tasks with this tag (fewer than 3 ⇒ no stuck kill).
+- `expected_minutes: N` — explicit baseline (replaces the peer median).
+- `no_stuck_kill: true` — never duration-kill the task (idle and cost triggers still apply).
+
+Because stuck_factor kills a task that is still *producing output*, it is vetoed while the activity file
+grew within `stuck_veto_minutes` (default `idle_kill_minutes`). Note the consequence with the default
+window: a task with no output for ≥ `idle_kill_minutes` is killed by the idle trigger first, so stuck_factor
+mainly fires for tasks with no activity signal; shorten `stuck_veto_minutes` (or set `stuck_activity_veto:
+false`) to restore a pure duration kill.
+
+Kills of the same task inside `systemic_task_window_seconds` count as one incident toward
+`systemic_kill_alarm`; a retry loop on one task no longer looks like a fleet-wide failure (the per-task
+ladder `max_recovery_kills_per_task` still bounds it).
 
 `idle_kill_minutes` was sized from 34 196 observed inter-output gaps (max healthy gap 600.4 s = Bash 10-minute cap; none > 15 min).
 

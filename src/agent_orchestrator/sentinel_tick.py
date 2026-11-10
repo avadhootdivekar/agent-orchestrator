@@ -33,6 +33,7 @@ from .models import (
     SentinelState,
     TaskRecovery,
     TaskRunState,
+    TaskSpec,
 )
 
 if TYPE_CHECKING:
@@ -504,7 +505,11 @@ def _parse(ts_iso: str | None) -> datetime | None:
 
 
 def register_task(
-    state: RunState, rt: SentinelRuntime, tid: str, now: datetime | None = None
+    state: RunState,
+    rt: SentinelRuntime,
+    tid: str,
+    now: datetime | None = None,
+    task: TaskSpec | None = None,
 ) -> CancelToken | None:
     """Wire a fresh cancel token for a task about to be dispatched (None when recovery is off).
 
@@ -520,6 +525,10 @@ def register_task(
     ts.last_activity_size = None
     ts.running_seconds = None
     ts.attempt_started_at = (now or datetime.now(UTC)).isoformat()
+    if task is not None:
+        ts.stuck_cohort = task.stuck_cohort
+        ts.expected_minutes = task.expected_minutes
+        ts.no_stuck_kill = task.no_stuck_kill
     return token
 
 
@@ -547,10 +556,19 @@ def sample_liveness(state: RunState, rt: SentinelRuntime, now: datetime) -> bool
 
 
 def _peer_durations(state: RunState, tid: str, ts: TaskRunState) -> list[float]:
-    """Wall seconds of completed same-kind (same agent) tasks, excluding *tid* itself."""
+    """Wall seconds of settled comparable tasks (same agent AND same ``stuck_cohort`` tag).
+
+    Untagged tasks only peer with untagged ones, so a tagged long-running kind is never judged
+    against short tasks of the same agent. *tid* itself is excluded.
+    """
     out: list[float] = []
     for other_id, other in state.tasks.items():
-        if other_id == tid or other.status != "succeeded" or other.agent != ts.agent:
+        if (
+            other_id == tid
+            or other.status != "succeeded"
+            or other.agent != ts.agent
+            or other.stuck_cohort != ts.stuck_cohort
+        ):
             continue
         a, b = _parse(other.started_at), _parse(other.ended_at)
         if a is not None and b is not None and b >= a:
@@ -569,19 +587,42 @@ def _in_retry_cooldown(ts: TaskRunState, now: datetime) -> bool:
     return started is not None and (now - started).total_seconds() < RETRY_COOLDOWN_SECONDS
 
 
+def _stuck_by_duration(
+    state: RunState,
+    spec: SentinelRecoverySpec,
+    tid: str,
+    ts: TaskRunState,
+    last: datetime | None,
+    now: datetime,
+) -> bool:
+    """stuck_factor trigger: running > factor x baseline, unless opted out or recently active."""
+    running = ts.running_seconds or 0.0
+    if ts.no_stuck_kill or running < spec.stuck_min_minutes * 60:
+        return False
+    if ts.expected_minutes is not None:
+        baseline = ts.expected_minutes * 60.0
+    else:
+        peers = _peer_durations(state, tid, ts)
+        if len(peers) < STUCK_MIN_SAMPLES:
+            return False
+        baseline = statistics.median(peers)
+    if running <= spec.stuck_factor * baseline:
+        return False
+    if spec.stuck_activity_veto and last is not None:
+        window = (spec.stuck_veto_minutes or spec.idle_kill_minutes) * 60
+        if (now - last).total_seconds() < window:
+            return False
+    return True
+
+
 def _trigger_for(
     state: RunState, spec: SentinelRecoverySpec, tid: str, ts: TaskRunState, now: datetime
 ) -> str | None:
     last = _parse(ts.last_activity_at)
     if last is not None and (now - last).total_seconds() >= spec.idle_kill_minutes * 60:
         return REASON_IDLE
-    running = ts.running_seconds or 0.0
-    if running >= spec.stuck_min_minutes * 60:
-        peers = _peer_durations(state, tid, ts)
-        if len(peers) >= STUCK_MIN_SAMPLES and running > spec.stuck_factor * statistics.median(
-            peers
-        ):
-            return REASON_STUCK
+    if _stuck_by_duration(state, spec, tid, ts, last, now):
+        return REASON_STUCK
     cap = ts.effective_limits.task_cost_cap_usd if ts.effective_limits is not None else None
     if spec.cost_kill_pct is not None and cap:
         # Only cost already settled for earlier attempts is visible mid-flight (the live attempt's
@@ -713,16 +754,35 @@ def settle_kill(
     return decision
 
 
+def _incidents(
+    sent: SentinelState, spec: SentinelRecoverySpec, now: datetime
+) -> list[SentinelKill]:
+    """Kills in the systemic window, with repeat kills of one task collapsed into one incident.
+
+    A kill of a task within ``systemic_task_window_seconds`` of that task's previous kept incident
+    is the same incident (a retry loop on one task is not a fleet-wide problem).
+    """
+    dedupe = float(spec.systemic_task_window_seconds)
+    kept: list[SentinelKill] = []
+    last_at: dict[str, datetime] = {}
+    for k in sent.kill_log:
+        at = _parse(k.at)
+        if at is None or (now - at).total_seconds() > SYSTEMIC_WINDOW_SECONDS:
+            continue
+        prev = last_at.get(k.task_id)
+        if prev is not None and (at - prev).total_seconds() <= dedupe:
+            continue
+        last_at[k.task_id] = at
+        kept.append(k)
+    return kept
+
+
 def _check_systemic(
     sent: SentinelState, spec: SentinelRecoverySpec, rt: SentinelRuntime, now: datetime
 ) -> None:
     if sent.systemic_alarm:
         return
-    recent = [
-        k
-        for k in sent.kill_log
-        if (a := _parse(k.at)) is not None and (now - a).total_seconds() <= SYSTEMIC_WINDOW_SECONDS
-    ]
+    recent = _incidents(sent, spec, now)
     if len(recent) < spec.systemic_kill_alarm:
         return
     sent.systemic_alarm = True

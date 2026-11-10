@@ -1043,7 +1043,9 @@ class Orchestrator:
                             break
                         assert prep.task is not None  # DISPATCH always carries its payload
                         if rt is not None:
-                            sentinel_tick.register_task(state, rt, tid, self._clock())
+                            sentinel_tick.register_task(
+                                state, rt, tid, self._clock(), task=prep.task
+                            )
                         fut = pool.submit(
                             self._run_and_integrate,
                             task=prep.task,
@@ -2934,10 +2936,10 @@ class Orchestrator:
     ) -> None:
         """Wire the LLM generation lane (fail-safe: any error leaves the mechanical sentinel on)."""
         try:
+            agent = (agents or {}).get(llm.agent) if llm.agent else None
             if self._sentinel_driver_factory is not None:
                 driver = self._sentinel_driver_factory(llm)
             else:
-                agent = (agents or {}).get(llm.agent) if llm.agent else None
                 driver = make_driver(llm.driver, agent, None)
             for warning in lane_permission_warnings(llm.powers, agent, llm.agent):
                 rt.log.warning("sentinel.warn: %s", warning, extra={"event": "sentinel.warn"})

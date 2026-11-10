@@ -194,7 +194,11 @@ def test_stuck_factor_needs_three_samples_and_floor() -> None:
     from agent_orchestrator.models import SentinelRecoverySpec, TaskRunState
 
     spec = SentinelRecoverySpec(
-        idle_kill_minutes=600, force=True, stuck_factor=3, stuck_min_minutes=20
+        idle_kill_minutes=600,
+        force=True,
+        stuck_factor=3,
+        stuck_min_minutes=20,
+        stuck_activity_veto=False,  # these tests exercise the duration rule alone
     )
     now = datetime(2026, 11, 9, 12, tzinfo=UTC)
 
@@ -421,7 +425,11 @@ def test_retried_task_gets_per_attempt_clock_no_second_stuck_kill() -> None:
     from agent_orchestrator.models import SentinelRecoverySpec, TaskRecovery, TaskRunState
 
     spec = SentinelRecoverySpec(
-        idle_kill_minutes=600, force=True, stuck_factor=3, stuck_min_minutes=20
+        idle_kill_minutes=600,
+        force=True,
+        stuck_factor=3,
+        stuck_min_minutes=20,
+        stuck_activity_veto=False,  # these tests exercise the duration rule alone
     )
     t0 = datetime(2026, 11, 9, 12, tzinfo=UTC)  # fixed clock
     st = RunState(run_id="r", workflow_id="w", started_at="x", updated_at="x")
@@ -471,3 +479,136 @@ def test_retry_cooldown_blocks_rapid_rekills() -> None:
     assert not sentinel_tick._in_retry_cooldown(
         ts, t0 + timedelta(seconds=sentinel_tick.RETRY_COOLDOWN_SECONDS)
     )
+
+
+# -- T-Rk4Wn7 D2: comparable cohort, activity veto, systemic dedupe ---------------------------
+
+_T0 = datetime(2026, 11, 9, 12, tzinfo=UTC)
+
+
+def _d2_rt(spec: SentinelRecoverySpec) -> sentinel_tick.SentinelRuntime:
+    return sentinel_tick.SentinelRuntime(
+        ceiling=1,
+        tick_seconds=1,
+        inbox_batch_max=1,
+        live_limit=1,
+        control_dir=Path("."),
+        clock=lambda: _T0,
+        log=logging.getLogger("t"),
+        recovery=spec,
+    )
+
+
+def _d2_state(peer_cohort: str | None, me: dict[str, Any] | None = None) -> RunState:
+    from agent_orchestrator.models import TaskRunState
+
+    st = RunState(run_id="r", workflow_id="w", started_at="x", updated_at="x")
+    for i in range(3):  # 2-minute peers -> threshold 6 min, floored by stuck_min 20 min
+        s = _T0 - timedelta(hours=5)
+        st.tasks[f"p{i}"] = TaskRunState(
+            status="succeeded",
+            agent="ag",
+            stuck_cohort=peer_cohort,
+            started_at=s.isoformat(),
+            ended_at=(s + timedelta(minutes=2)).isoformat(),
+        )
+    st.tasks["me"] = TaskRunState(
+        status="running",
+        agent="ag",
+        started_at=(_T0 - timedelta(minutes=30)).isoformat(),
+        attempt_started_at=(_T0 - timedelta(minutes=30)).isoformat(),
+        running_seconds=30 * 60.0,
+        **(me or {}),
+    )
+    return st
+
+
+def _stuck(st: RunState, spec: SentinelRecoverySpec, last_activity_min_ago: float | None) -> Any:
+    ts = st.tasks["me"]
+    if last_activity_min_ago is not None:
+        ts.last_activity_at = (_T0 - timedelta(minutes=last_activity_min_ago)).isoformat()
+    return sentinel_tick._trigger_for(st, spec, "me", ts, _T0)
+
+
+_SPEC = dict(idle_kill_minutes=600, force=True, stuck_factor=3, stuck_min_minutes=20)
+
+
+def test_peer_cohort_is_agent_and_tag() -> None:
+    spec = SentinelRecoverySpec(**_SPEC, stuck_activity_veto=False)
+    # Untagged task vs untagged peers: legacy behaviour, killed.
+    assert _stuck(_d2_state(None), spec, None) == sentinel_tick.REASON_STUCK
+    # Tagged task vs untagged short peers: no comparable cohort -> no baseline -> not killed.
+    assert _stuck(_d2_state(None, {"stuck_cohort": "rust-sweep"}), spec, None) is None
+    # Tagged task vs same-tag short peers: comparable and over threshold -> killed.
+    st = _d2_state("rust-sweep", {"stuck_cohort": "rust-sweep"})
+    assert _stuck(st, spec, None) == sentinel_tick.REASON_STUCK
+    # Tagged peers are not a baseline for an untagged task either.
+    assert _stuck(_d2_state("rust-sweep"), spec, None) is None
+
+
+def test_explicit_expected_minutes_and_no_stuck_kill() -> None:
+    spec = SentinelRecoverySpec(**_SPEC, stuck_activity_veto=False)
+    # expected 60 min -> threshold 180 min; 30 min run is fine despite 2-minute peers.
+    assert _stuck(_d2_state(None, {"expected_minutes": 60}), spec, None) is None
+    # expected 5 min -> threshold 15 min -> killed even with no peers at all.
+    st = _d2_state(None, {"expected_minutes": 5})
+    for k in ("p0", "p1", "p2"):
+        del st.tasks[k]
+    assert _stuck(st, spec, None) == sentinel_tick.REASON_STUCK
+    assert _stuck(_d2_state(None, {"no_stuck_kill": True}), spec, None) is None
+
+
+def test_recent_activity_vetoes_stuck_kill() -> None:
+    spec = SentinelRecoverySpec(**_SPEC)  # veto on by default; window = idle_kill_minutes (600)
+    assert _stuck(_d2_state(None), spec, 1) is None  # output 1 min ago -> vetoed
+    assert _stuck(_d2_state(None), spec, 601) == sentinel_tick.REASON_IDLE  # idle fires itself
+    off = SentinelRecoverySpec(**_SPEC, stuck_activity_veto=False)
+    assert _stuck(_d2_state(None), off, 1) == sentinel_tick.REASON_STUCK
+    short = SentinelRecoverySpec(**_SPEC, stuck_veto_minutes=5)
+    assert _stuck(_d2_state(None), short, 10) == sentinel_tick.REASON_STUCK  # outside window
+
+
+def test_register_task_copies_stuck_hints_from_spec() -> None:
+    st = _d2_state(None)
+    spec = SentinelRecoverySpec(**_SPEC)
+    task = TaskSpec(
+        id="me",
+        agent="ag",
+        instruction="i",
+        stuck_cohort="c",
+        expected_minutes=7,
+        no_stuck_kill=True,
+    )
+    sentinel_tick.register_task(st, _d2_rt(spec), "me", _T0, task=task)
+    ts = st.tasks["me"]
+    assert (ts.stuck_cohort, ts.expected_minutes, ts.no_stuck_kill) == ("c", 7, True)
+
+
+def test_repeat_kills_of_one_task_are_one_systemic_incident() -> None:
+    spec = SentinelRecoverySpec(systemic_kill_alarm=3, max_recovery_kills_per_task=5)
+    st = _d2_state(None)
+    rt = _d2_rt(spec)
+    for i in range(3):  # three kills of ONE task inside 32 s (the live incident)
+        sentinel_tick.settle_kill(
+            st, rt, "me", "stuck_factor", "mechanical", False, _T0 + timedelta(seconds=16 * i)
+        )
+    assert st.sentinel is not None and not st.sentinel.systemic_alarm
+    # Kills of three distinct tasks still trip it.
+    for t in ("p0", "p1"):
+        sentinel_tick.settle_kill(
+            st, rt, t, "idle", "mechanical", False, _T0 + timedelta(minutes=1)
+        )
+    assert st.sentinel.systemic_alarm
+
+
+def test_systemic_dedupe_window_zero_restores_old_counting() -> None:
+    spec = SentinelRecoverySpec(
+        systemic_kill_alarm=3, max_recovery_kills_per_task=5, systemic_task_window_seconds=0
+    )
+    st = _d2_state(None)
+    rt = _d2_rt(spec)
+    for i in range(3):
+        sentinel_tick.settle_kill(
+            st, rt, "me", "stuck_factor", "mechanical", False, _T0 + timedelta(seconds=16 * i)
+        )
+    assert st.sentinel is not None and st.sentinel.systemic_alarm
