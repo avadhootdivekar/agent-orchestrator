@@ -65,6 +65,8 @@ from .models import (
     run_waiting_for_input,
 )
 from .run_options import OPTIONS, SENTINEL_PREFIX, SOURCE_DEFAULT, get_option, resolve_option
+from .schedules.cli import app as schedule_app
+from .schedules.cli import validate_workspace_schedules
 from .sentinel_settings import (
     EXIT_BAD_SENTINEL_SETTING,
     SentinelSettings,
@@ -97,6 +99,7 @@ app = typer.Typer(
     add_completion=True,
 )
 app.add_typer(service_app, name="service")
+app.add_typer(schedule_app, name="schedule")
 app.add_typer(auth_app, name="auth")
 app.add_typer(cache_app, name="cache")
 app.add_typer(ctl_app, name="ctl")
@@ -1344,6 +1347,7 @@ def validate(
                 llm.powers, agent_map.get(llm.agent), llm.agent
             ):
                 typer.echo(f"WARNING: {warning}", err=True)
+        validate_workspace_schedules(workflow, wf)
         typer.echo("OK: all specs valid")
     except OrchestratorError as e:
         typer.echo(f"ERROR: {e}", err=True)
