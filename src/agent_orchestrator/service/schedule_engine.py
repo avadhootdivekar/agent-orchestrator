@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import IO, Any, Final, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
+from ..artifacts import ArtifactPathError, LocalFsArtifactStore
 from ..models import TrippedBreaker, compute_run_usage_totals
 from ..scheduler import CronScheduler, IntervalScheduler, Scheduler
 from ..schedules.errors import ScheduleFileError
@@ -803,9 +804,21 @@ class ScheduleEngine:
         if st.status == STATUS_DISABLED or not binding.enabled:
             return no_fire(FireReason.DISABLED)
 
-        # T-Un0Lm6 inserts the ``until`` check HERE (status -> until -> queued drain): on
-        # satisfied it sets status "completed", emits schedule.until_satisfied and returns
-        # FireReason.UNTIL_SATISFIED.
+        # ``until`` (HLD §6.8, T-Un0Lm6): status -> until -> queued drain -> next_fire. A satisfied
+        # schedule is marked ``completed`` (binding untouched) and neither drains a queued fire
+        # nor computes a next one.
+        if binding.until is not None:
+            satisfied_by = until_condition(root, binding, st, self._events)
+            if satisfied_by is not None:
+                self._state.set_status(root, sid, STATUS_COMPLETED, reason=f"until:{satisfied_by}")
+                self._events.emit(
+                    "schedule.until_satisfied",
+                    workspace=root,
+                    schedule_id=sid,
+                    runs_count=st.runs_count,
+                    condition=satisfied_by,
+                )
+                return no_fire(FireReason.UNTIL_SATISFIED)
 
         if (
             run_now is None
@@ -1512,6 +1525,86 @@ def _opted_in(entry: Any) -> bool:
     """F5: schedules are opt-in per workspace (``WorkspaceEntry.schedules``, default False;
     the field lands with ``T-Sv5Hb3`` -- until then no registry entry opts in)."""
     return bool(getattr(entry, "schedules", False))
+
+
+UNTIL_MAX_RUNS: Final = "max_runs"
+UNTIL_ARTIFACT_EXISTS: Final = "artifact_exists"
+UNTIL_GATE: Final = "gate"
+DEFAULT_UNTIL_MAX_RUNS: Final = 100  # CLI bound for an ``until`` schedule given none (HLD §6.8)
+
+
+class EventSink(Protocol):
+    """The slice of ``ScheduleEventLog`` the ``until`` helpers need (also easy to fake)."""
+
+    def emit(self, event: str, level: int | None = None, **fields: Any) -> None: ...
+
+
+def _gate_matches(actual: object, expected: bool | int | str) -> bool:
+    """``==`` restricted to bool/int/str: a float, object, list or null never matches (and never
+    raises), and a bool never equals a non-bool (``True == 1`` must not end a loop)."""
+    if isinstance(actual, bool) != isinstance(expected, bool):
+        return False
+    if not isinstance(actual, bool | int | str):
+        return False
+    return bool(actual == expected)
+
+
+def until_condition(
+    workspace_root: str | Path,
+    binding: ResolvedBinding,
+    state: ScheduleState,
+    events: EventSink | None = None,
+) -> str | None:
+    """Which ``until`` condition (if any) is satisfied now; ``None`` = keep going.
+
+    Order is normative (HLD §6.8): ``max_runs`` FIRST so termination is guaranteed whatever the
+    other conditions do, then ``artifact_exists``, then the gate-file triple. ``max_runs``
+    counts *fires*, not successes: a schedule whose runs all fail still stops at the cap.
+
+    Bad reads NEVER terminate -- deliberately the opposite of the engine's intra-run
+    ``LoopSpec``, where an unreadable gate *fails the run* (the run is broken). Here an
+    unreadable gate means only that the next fire proceeds: a transient write or a crashed run
+    must not silently end a multi-day schedule. Such reads emit ``schedule.until_unreadable``.
+    All paths resolve through ``LocalFsArtifactStore`` (workspace-root guard, also at read time).
+    """
+    until = binding.until
+    if until is None:
+        return None
+    if until.max_runs is not None and state.runs_count >= until.max_runs:
+        return UNTIL_MAX_RUNS
+    store = LocalFsArtifactStore(str(workspace_root))
+    if until.artifact_exists is not None and store.exists(until.artifact_exists):
+        return UNTIL_ARTIFACT_EXISTS
+    if until.gate_file is None:
+        return None
+    try:
+        path = Path(store.resolve(until.gate_file))
+        if not path.is_file():
+            return None  # absent gate: not done yet (not an error)
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ArtifactPathError) as exc:  # ValueError: JSON + UnicodeDecode
+        if events is not None:
+            events.emit(
+                "schedule.until_unreadable",
+                logging.WARNING,
+                workspace=str(workspace_root),
+                schedule_id=binding.id,
+                error=str(exc),
+            )
+        return None
+    if isinstance(data, dict) and _gate_matches(data.get(until.gate_field), until.gate_equals):
+        return UNTIL_GATE
+    return None
+
+
+def until_satisfied(
+    workspace_root: str | Path,
+    binding: ResolvedBinding,
+    state: ScheduleState,
+    events: EventSink | None = None,
+) -> bool:
+    """HLD §6.8 ``until_satisfied``; see :func:`until_condition` for the semantics."""
+    return until_condition(workspace_root, binding, state, events) is not None
 
 
 def _jitter_offset(key: str, binding: ResolvedBinding) -> int:

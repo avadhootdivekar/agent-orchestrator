@@ -165,7 +165,7 @@
 - [~] `T-Fw8Gp4-file-watch-trigger` — `service/watch.py` + `FileWatchScheduler` (FR-11) — 2 d — core landed 2026-11-11; CLI flags + e2e pending
 - [~] `T-Wh9Kv1-webhook-ingress` (core landed; CLI flags + daemon e2e pending T-Cl6Jn9) — `service/webhook.py`, listener app, `WebhookScheduler` (FR-12,
   NFR-3) — 3 d
-- [ ] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d
+- [~] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d — landed 2026-11-11 (AC13 LoopSpec characterization test + coverage report unfinished)
 - [ ] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d
 - [ ] `T-Te3Qw8-integration-e2e-suite` — cross-module integration + `CliRunner` e2e tiers
   (all FRs, NFR-1, NFR-2, NFR-4) — 3 d

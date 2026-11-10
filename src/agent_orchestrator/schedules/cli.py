@@ -48,6 +48,7 @@ from ..service.fire_store import (
 from ..service.paths import default_registry_path, default_state_dir
 from ..service.registry import ServiceRegistry, ServiceRegistryFile, WorkspaceEntry
 from ..service.schedule_engine import (
+    DEFAULT_UNTIL_MAX_RUNS,
     ENGINE_LOCK_FILENAME,
     MAX_CATCHUP_STEPS,
     PURE_KINDS,
@@ -308,6 +309,7 @@ def list_cmd(
                 "next_fire": _iso(st.next_fire_at),
                 "last_fire": _iso(st.last_fire_at),
                 "last_run": st.last_run_id,
+                "runs_count": st.runs_count,
             }
             payload.append(row)
             rows.append(
@@ -319,6 +321,7 @@ def list_cmd(
                     _fmt(st.next_fire_at),
                     _fmt(st.last_fire_at),
                     st.last_run_id or NO_VALUE,
+                    str(st.runs_count),
                 ]
             )
     if any_schedule and not live:
@@ -332,7 +335,9 @@ def list_cmd(
         typer.echo("No schedules.")
         return
     typer.echo(
-        _table(["ID", "KIND", "ENABLED", "STATUS", "NEXT FIRE", "LAST FIRE", "LAST RUN"], rows)
+        _table(
+            ["ID", "KIND", "ENABLED", "STATUS", "NEXT FIRE", "LAST FIRE", "LAST RUN", "RUNS"], rows
+        )
     )
 
 
@@ -573,6 +578,47 @@ def _limits(quotas: list[str], per_run_usd: float | None) -> dict[str, Any] | No
     return limits or None
 
 
+def _until_equals(raw: str) -> bool | int | str:
+    """``--until-equals`` text -> gate value (``true``/``false`` -> bool, digits -> int)."""
+    lowered = raw.strip().lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    stripped = raw.strip()
+    if stripped.lstrip("-").isdigit():
+        return int(stripped)
+    return raw
+
+
+def _until(
+    artifact: str | None,
+    gate: str | None,
+    field: str | None,
+    equals: str | None,
+    max_runs: int | None,
+) -> dict[str, Any] | None:
+    """Build the ``until`` block. An ``until`` is always bounded: with an artifact/gate condition
+    but no ``--max-runs`` the CLI supplies ``DEFAULT_UNTIL_MAX_RUNS`` and says so (HLD §6.8)."""
+    if (field is not None or equals is not None) and gate is None:
+        raise _fail("--until-field/--until-equals need --until-gate", EXIT_USAGE)
+    out: dict[str, Any] = {}
+    if artifact is not None:
+        out["artifact_exists"] = artifact
+    if gate is not None:
+        out["gate_file"] = gate
+        if field is not None:
+            out["gate_field"] = field
+        if equals is not None:
+            out["gate_equals"] = _until_equals(equals)
+    if max_runs is not None:
+        out["max_runs"] = max_runs
+    elif out:
+        out["max_runs"] = DEFAULT_UNTIL_MAX_RUNS
+        typer.echo(
+            f"No --max-runs given: bounding the until loop at {DEFAULT_UNTIL_MAX_RUNS} runs."
+        )
+    return out or None
+
+
 def _slug(text: str) -> str:
     out = "".join(c if c.isalnum() or c in "-_" else "-" for c in text.lower()).strip("-_")
     return out or DEFAULT_ID_PREFIX
@@ -651,6 +697,21 @@ def add_cmd(
     per_run_usd: Annotated[
         float | None, typer.Option("--per-run-usd", help="Per-run cost cap.")
     ] = None,
+    until_artifact: Annotated[
+        str | None, typer.Option("--until-artifact", help="Stop once this path exists.")
+    ] = None,
+    until_gate: Annotated[
+        str | None, typer.Option("--until-gate", help="Stop when this JSON gate file says so.")
+    ] = None,
+    until_field: Annotated[
+        str | None, typer.Option("--until-field", help="Gate JSON field (default: done).")
+    ] = None,
+    until_equals: Annotated[
+        str | None, typer.Option("--until-equals", help="Gate value (default: true).")
+    ] = None,
+    max_runs: Annotated[
+        int | None, typer.Option("--max-runs", help="Stop after N fires (until-loop bound).")
+    ] = None,
     disabled: Annotated[bool, typer.Option("--disabled", help="Create it disabled.")] = False,
     from_workflow: Annotated[
         str | None,
@@ -689,6 +750,10 @@ def add_cmd(
     limits = _limits(quota or [], per_run_usd)
     if limits:
         common["limits"] = limits
+
+    until = _until(until_artifact, until_gate, until_field, until_equals, max_runs)
+    if until:
+        common["until"] = until
 
     new: list[tuple[str, dict[str, Any]]]
     if from_workflow:

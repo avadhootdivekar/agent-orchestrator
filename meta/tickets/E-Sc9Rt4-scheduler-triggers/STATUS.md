@@ -6,6 +6,7 @@
 - Owner: architect agent (design) → dev-epic agent (delivery)
 
 ## This update
+- **2026-11-11 (developer, unit `w17-02-a1-until-termination`):** `T-Un0Lm6` implemented — `until_condition`/`until_satisfied` + `evaluate` call site, `ao schedule add --until-*/--max-runs`, `list` RUNS column; `tests/service/test_until.py` (40 tests, mutation-checked). AC13 and the coverage report remain open; see the task STATUS.
 - **2026-11-11 (developer, unit `w16-01-a1-file-watch-rereview-fixes`):** `T-Fw8Gp4` re-review (w15-01) N1 (symlinked pattern prefix), N2 (queued file-watch fire lost on restart), N3 (future-mtime starvation) and the small Lows fixed, mutation-checked. Pending merge.
 - **Design complete, nothing implemented.** Architecture package delivered:
   `docs-md/scheduler-triggers-hld.md` (HLD + LLD, mermaid diagrams for the service loop, the
