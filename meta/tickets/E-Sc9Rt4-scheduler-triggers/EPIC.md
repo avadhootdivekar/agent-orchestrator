@@ -152,7 +152,7 @@
 - [x] `T-Sd1Kq7-schedule-binding-model` — `schedules/` package (models, locked store, JSON
   Schema), `service/statefile.py`, `Trigger.interval_seconds` + `IntervalScheduler` (FR-1, FR-3,
   NFR-3) — 2 d
-- [ ] `T-Fr2Nx8-fire-store-and-state` — `service/fire_store.py`: `FireIntentStore`,
+- [x] `T-Fr2Nx8-fire-store-and-state` — `service/fire_store.py`: `FireIntentStore`,
   `ScheduleStateStore`, `ScheduleEventLog` (FR-7, FR-10) — 2 d
 - [ ] `T-Ev3Qm5-schedule-engine-core` — `service/schedule_engine.py`: evaluate/tick, overlap,
   catch-up, jitter, concurrency, quarantine (FR-2, FR-4, FR-5, FR-6, NFR-2) — 3 d

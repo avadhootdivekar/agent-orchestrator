@@ -5,8 +5,8 @@
 - Epic ID: `E-Sc9Rt4-scheduler-triggers`
 - Owner: developer agent
 - Created: 2026-09-06
-- Last Updated: 2026-11-10 (Opus design review w01-06: F11/F20 applied)
-- Status: Draft
+- Last Updated: 2026-11-11 (implemented; all 17 ACs met)
+- Status: Done (2026-11-11)
 - Estimate: 2 days
 
 ## Requirements Mapping
@@ -168,3 +168,15 @@ FUNCTION FireIntentStore.reconcile_orphans(pid_alive, run_exists) -> list[record
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Sc9Rt4-scheduler-triggers/T-Fr2Nx8-fire-store-and-state/`
 - Large outputs: N/A
+
+## Implementation notes
+By: developer · Role: developer · Date: 2026-11-11
+- All 17 ACs implemented in `service/fire_store.py` + `tests/service/test_fire_store.py` (55 tests, 99 % coverage).
+- AC4: `statefile.write_json_model_atomic` has no fsync, so `FireIntentStore` has its own fsync-durable writer
+  (statefile untouched). `state.json` (AC8) does use `write_json_model_atomic`.
+- Design additions beyond the ticket: `write()` refuses an existing key (`FireAlreadyRecordedError`) so a re-issued
+  intent cannot regress a `launched` record; `exists()` is judged by file presence (a corrupt record still suppresses);
+  `prune` never removes `intended` records; `emit(event, level=None)` defaults the level from the HLD §12 table
+  (`EVENT_LEVELS`); `FireIntentStore.get/exists` take an optional `workspace_root` to skip the glob.
+- State-store mutator signatures chosen here (downstream `T-Ev3Qm5`/`T-Lp4Wt6` must match): see module.
+- `state.json` is single-writer/no lock (module docstring) — flagged for `T-Ev3Qm5`.

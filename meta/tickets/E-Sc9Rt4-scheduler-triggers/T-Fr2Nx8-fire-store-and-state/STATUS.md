@@ -1,23 +1,22 @@
 # STATUS
 
 - ID: `T-Fr2Nx8-fire-store-and-state`
-- Updated At: 2026-09-06
-- State: Draft
-- Owner: TBD (assigned at sprint start)
+- Updated At: 2026-11-11
+- State: Done
+- Owner: developer
 
 ## This update
-- Ticket created by the `architect` agent as part of the E-Sc9Rt4 design package. Not started.
-- Scope: `service/fire_store.py` — the at-most-once fire-intent store (fsync-durable), per-schedule runtime state, and the structured JSONL event log.
+- By: developer · Role: developer · Date: 2026-11-11
+- Implemented `service/fire_store.py` (fire_key, FireIntentRecord/Store, ScheduleState/StateStore, ScheduleEventLog) and `tests/service/test_fire_store.py`. All 17 ACs met.
 
 ## Evidence
-- None yet — no implementation has begun. Design basis:
-  `docs-md/scheduler-triggers-hld.md` and `docs-md/adr/ADR-0014-service-owned-scheduler-and-triggers.md`.
+- `pytest -q tests/service/test_fire_store.py`: 55 passed; coverage of `service/fire_store.py` 99 %.
+- Crash-simulation (intended + dead pid -> orphaned, zero launches) and clock-rewind no-double-fire tests pass; fsync spy test present.
+- `ruff check`, `ruff format --check`, `mypy src` (221 files): clean.
+- Full suite: 11213 passed, 12 failed, 32 skipped — failures are in bench/cache/sentinel tests that do not import `fire_store` (sentinel ones sit on other units' uncommitted edits in the shared tree); not caused by this change.
 
 ## Risks / Blockers
-- Blocked until: `T-Sd1Kq7`'s `service/statefile.py` lands (AC8). The rest of this task can start in parallel on day 1 of Sprint 1.
+- `state.json` is single-writer with no lock; `T-Ev3Qm5` must keep the engine the only writer.
 
 ## Next actions
-1. Read the upstream task's **merged code**, not only the HLD, before starting (the interface-drift
-   rule this epic inherits from E-GIytcL).
-2. Implement against the acceptance criteria in `TASK.md`, in AC order.
-3. Hand off to `T-Ev3Qm5` with the landed store signatures; flag the single-writer assumption on `state.json` in the handoff.
+1. `T-Ev3Qm5` / `T-Lp4Wt6` integrate against the landed signatures.
