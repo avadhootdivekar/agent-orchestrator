@@ -204,6 +204,7 @@ def test_allow_list_unchanged_and_registry_derived():
         "max_turns": "--max-turns",
         "max_parallel": "--max-parallel",
         "budget_total": "--budget-total",
+        "cost_cap_usd": "--cost-cap-usd",  # T-et7Edf
         "quota_max_wait": "--quota-max-wait",
         "quota_poll_interval": "--quota-poll-interval",
         # T-Sn5Ui1: the Sentinel group of the launch form

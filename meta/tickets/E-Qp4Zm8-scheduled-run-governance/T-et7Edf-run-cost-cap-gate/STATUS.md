@@ -6,6 +6,12 @@
 - Owner: TBD (assigned at sprint start)
 
 ## This update
+- 2026-11-11 — By: developer (unit `w18-01-a2-capped-run-pause-resume`) · Role: developer · Date: 2026-11-11 · Comment: CLI wiring DONE as a prerequisite of
+  T-nI4DBf: `--cost-cap-usd` on `ao run`/`ao resume` (validated first, exit 2; a persisted cap is kept when the flag is absent on
+  resume, an explicit value replaces it), `Orchestrator(cost_cap_usd=)`, `COST_CAP_OPTION` in `OPTIONS` (AC9: the launch renderer now
+  forwards the flag), CLI e2e tier `tests/test_e2e_cli_cost_cap.py` (FakeExecutor `cost_usd`; no separate `fake_cost_script` fixture was
+  needed). **Still unfinished:** `effective_settings_history` / `SOURCE_STATE` in the resume snapshot, CLI WARNING when cap <= spend and
+  when the run is governed (AC14c; `is_governed_run` now exists), `ao status` trailer `xN`, AC17 docstring (T-Hq3vXd), AC12 coverage %.
 - 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: Still PARTIAL, unchanged by this docs unit. Owed: `--cost-cap-usd` CLI wiring + `COST_CAP_OPTION` in `OPTIONS` (uncommitted in the working tree), e2e/`fake_cost_script`, and the `record_trip` docstring + trailer `×N` (AC17, `breakers.py`). Period-cost-cap polish and the cost-cap review (carry-over w18-04) are not recorded as landed.
 - 2026-11-11 — By: developer (unit `w14-02-a2-run-cost-cap-gate`) · Role: developer · Date: 2026-11-11 · Comment: PARTIAL.
   **Done:** `BUILTIN_COST_CAP`, `RunState.cost_cap_usd`, `TaskRunState.actuals_available`/`attempts_without_actuals`

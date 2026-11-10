@@ -39,7 +39,7 @@ import string
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from ..artifacts import ArtifactPathError, LocalFsArtifactStore
 from ..project_config import ProjectConfig, find_project_config, load_project_config
@@ -289,6 +289,35 @@ class ScheduledLauncher:
             )
         except Exception:  # noqa: BLE001
             logger.exception("post-launch bookkeeping failed for %s", d.fire_key)
+        return launched
+
+    def launch_capped_resume(self, rec: FireIntentRecord, new_cap_usd: float) -> Any:
+        """Resume a paused governed run with ``--cost-cap-usd new_cap_usd`` (T-nI4DBf AC11).
+
+        Reuses the ORIGINAL launch's ``workflow_path`` (read from its ``LaunchRecord`` via the
+        fire's ``launch_id``): a template instance dir is never re-rendered. Same fail-closed argv
+        verification as a fresh governed fire. ONLY the engine's resume drain may call this."""
+        if rec.run_id is None or rec.launch_id is None:
+            raise LaunchResolutionError("fire record has no run_id/launch_id to resume from")
+        supervisor = self._supervisor_factory(rec.workspace_root)
+        original = supervisor.get_launch(rec.launch_id)
+        if original is None or not original.workflow_path:
+            raise LaunchResolutionError(f"original launch {rec.launch_id} has no workflow_path")
+        options: dict[str, object] = {COST_CAP_OPTION: new_cap_usd}
+        self._verify_cost_cap_rendered(options, new_cap_usd)  # pre-spawn
+        kwargs: dict[str, object] = {}
+        workspace = self._workspace_arg(original.workflow_path, rec.workspace_root)
+        if workspace is not None:
+            kwargs["workspace"] = workspace
+        launched = supervisor.launch_resume(
+            rec.run_id,
+            workflow_path=original.workflow_path,
+            options=options,
+            **kwargs,  # type: ignore[arg-type]
+        )
+        if not _argv_forwards_cap(launched.argv, new_cap_usd):  # belt
+            self._cancel_unsafe(supervisor, rec.run_id)
+            raise CostCapNotForwardedError(REASON_COST_CAP_NOT_FORWARDED)
         return launched
 
     # -- governance -----------------------------------------------------------------------------

@@ -374,11 +374,7 @@ def sentinel_options() -> tuple[Option, ...]:
     return tuple(opts)
 
 
-# `--cost-cap-usd` (T-et7Edf). Deliberately NOT yet in OPTIONS: registering it makes every consumer
-# (dashboard form, `launch_run` allow-list, the registry<->CLI-flag consistency tests) assume
-# `ao run`/`ao resume` accept the flag, and the cli.py wiring is the unfinished part of the ticket.
-# The wiring change appends this constant to OPTIONS (in the Concurrency & budget group, after
-# `budget_total`) in the same commit that adds the typer option.
+# `--cost-cap-usd` (T-et7Edf): registered in OPTIONS below; `run`/`resume` carry the typer flag.
 COST_CAP_OPTION: Final = Option(
     "cost_cap_usd",
     "float",
@@ -392,7 +388,7 @@ COST_CAP_OPTION: Final = Option(
     sticky_on_resume=True,
 )
 
-OPTIONS: Final[tuple[Option, ...]] = _BASE_OPTIONS + sentinel_options()
+OPTIONS: Final[tuple[Option, ...]] = (*_BASE_OPTIONS, COST_CAP_OPTION, *sentinel_options())
 
 OPTIONS_BY_NAME: Final[Mapping[str, Option]] = {o.name: o for o in OPTIONS}
 

@@ -64,7 +64,14 @@ from .models import (
     assumption_lines,
     run_waiting_for_input,
 )
-from .run_options import OPTIONS, SENTINEL_PREFIX, SOURCE_DEFAULT, get_option, resolve_option
+from .run_options import (
+    OPTIONS,
+    SENTINEL_PREFIX,
+    SOURCE_DEFAULT,
+    get_option,
+    resolve_option,
+    validate_cost_cap_usd,
+)
 from .schedules.cli import app as schedule_app
 from .schedules.cli import validate_workspace_schedules
 from .sentinel_settings import (
@@ -878,6 +885,15 @@ def _sentinel_argv(
     return args
 
 
+def _validated_cost_cap(raw: float | None) -> float | None:
+    """Raw `--cost-cap-usd` -> validated value; exit 2 on zero/negative/NaN/inf (T-et7Edf AC1)."""
+    try:
+        return validate_cost_cap_usd(raw)
+    except ValueError as e:
+        typer.echo(f"ERROR: {e}", err=True)
+        raise typer.Exit(EXIT_USAGE)
+
+
 def _effective_settings_snapshot(
     sentinel_settings: SentinelSettings | None = None, **cli_values: object
 ) -> dict[str, EffectiveSetting]:
@@ -1375,6 +1391,14 @@ def run(
     budget_total: int | None = typer.Option(
         None, "--budget-total", help="Total token budget for the run"
     ),
+    cost_cap_usd: float | None = typer.Option(
+        None,
+        "--cost-cap-usd",
+        help=(
+            "Mid-run USD cost cap (sticky on resume: persisted in run state; an explicit value on"
+            " resume replaces it). The run halts resumably once its settled cost reaches the cap."
+        ),
+    ),
     rate_tokens: int | None = typer.Option(
         None, "--rate-tokens", help="Max tokens per rate window"
     ),
@@ -1558,6 +1582,7 @@ def run(
     ),
 ) -> None:
     """Run a workflow from scratch."""
+    eff_cost_cap = _validated_cost_cap(cost_cap_usd)  # exit 2 before any work (T-et7Edf AC1)
     from datetime import UTC
     from datetime import datetime as _dt
 
@@ -1717,6 +1742,7 @@ def run(
         result_cache=result_cache,
         input_mode=eff_input_mode,
         sentinel=sentinel_settings,
+        cost_cap_usd=eff_cost_cap,
         effective_settings=_effective_settings_snapshot(
             sentinel_settings,
             max_attempts=max_attempts,
@@ -1730,6 +1756,7 @@ def run(
             quota_poll_interval=quota_poll_interval,
             max_parallel=max_parallel,
             budget_total=budget_total,
+            cost_cap_usd=eff_cost_cap,
             self_heal=self_heal,
             record_git_heads=record_git_heads,
         ),
@@ -1777,6 +1804,14 @@ def resume(
     agents: str | None = typer.Option(None, help="Path to agents config JSON/YAML"),
     budget_total: int | None = typer.Option(
         None, "--budget-total", help="Total token budget override"
+    ),
+    cost_cap_usd: float | None = typer.Option(
+        None,
+        "--cost-cap-usd",
+        help=(
+            "Mid-run USD cost cap (sticky on resume: persisted in run state; an explicit value on"
+            " resume replaces it). The run halts resumably once its settled cost reaches the cap."
+        ),
     ),
     rate_tokens: int | None = typer.Option(
         None, "--rate-tokens", help="Max tokens per rate window override"
@@ -1968,6 +2003,7 @@ def resume(
     General instructions, by contrast, are resolved fresh on every invocation, so a workspace
     can add house rules and have a resumed run's remaining tasks pick them up.
     """
+    eff_cost_cap = _validated_cost_cap(cost_cap_usd)  # exit 2 before any work (T-et7Edf AC1)
     from datetime import UTC
     from datetime import datetime as _dt
 
@@ -2157,6 +2193,7 @@ def resume(
         result_cache=result_cache,
         input_mode=eff_input_mode,
         sentinel=sentinel_settings,
+        cost_cap_usd=eff_cost_cap,
         effective_settings=_effective_settings_snapshot(
             sentinel_settings,
             max_attempts=max_attempts,
@@ -2170,6 +2207,7 @@ def resume(
             quota_poll_interval=quota_poll_interval,
             max_parallel=max_parallel,
             budget_total=budget_total,
+            cost_cap_usd=eff_cost_cap,
             self_heal=self_heal,
             record_git_heads=record_git_heads,
         ),

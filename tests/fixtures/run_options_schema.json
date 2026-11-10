@@ -8,6 +8,9 @@
       "budget_total": {
         "type": "integer"
       },
+      "cost_cap_usd": {
+        "type": "number"
+      },
       "effort": {
         "enum": [
           "low",
@@ -362,6 +365,25 @@
       "resumable": true,
       "type": "bool",
       "ui": null
+    },
+    {
+      "choice_labels": {},
+      "choices": [],
+      "config": null,
+      "default": null,
+      "deprecated_flags": [],
+      "env": null,
+      "flag": "--cost-cap-usd",
+      "help": "Mid-run USD cost cap (CLI only; sticky on resume). The run halts resumably once its settled cost reaches the cap.",
+      "name": "cost_cap_usd",
+      "no_flag": null,
+      "providers": [],
+      "resumable": true,
+      "type": "float",
+      "ui": {
+        "group": "Concurrency & budget",
+        "label": "Cost cap (USD)"
+      }
     },
     {
       "choice_labels": {},

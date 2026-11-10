@@ -10,12 +10,12 @@ from agent_orchestrator import run_options as ro
 
 
 def test_option_definition_is_cli_only_sticky_and_in_concurrency_group() -> None:
-    """Defined but not yet registered (see COST_CAP_OPTION note): the cli.py wiring registers it."""
+    """Registered in OPTIONS by the cli.py wiring; it is the only sticky option."""
     o = ro.COST_CAP_OPTION
     assert (o.flag, o.type, o.env, o.config) == ("--cost-cap-usd", "float", None, None)
     assert o.sticky_on_resume is True
     assert o.ui_group == ro.GROUP_CONCURRENCY and o.ui_label == "Cost cap (USD)"
-    assert not any(x.sticky_on_resume for x in ro.OPTIONS)
+    assert [x.name for x in ro.OPTIONS if x.sticky_on_resume] == ["cost_cap_usd"]
 
 
 @pytest.mark.parametrize("bad", [0, 0.0, -1.0, math.nan, math.inf, -math.inf])

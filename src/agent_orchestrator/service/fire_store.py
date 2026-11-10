@@ -493,6 +493,13 @@ class ScheduleStateStore:
             s.active_fire_keys.append(fire_key)
         self._save()
 
+    def mark_active(self, root: str | Path, schedule_id: str, fire_key: str) -> None:
+        """Track *fire_key* as live again (capped-run resume); no counters move."""
+        s = self._entry(root, schedule_id)
+        if fire_key not in s.active_fire_keys:
+            s.active_fire_keys.append(fire_key)
+            self._save()
+
     def adopt_active(self, root: str | Path, schedule_id: str, fire_key: str) -> None:
         """Track a still-live *fire_key* whose tracking was lost (start sweep); no counters move."""
         s = self._entry(root, schedule_id)
@@ -585,6 +592,9 @@ EVENT_LEVELS: dict[str, int] = {
     "schedule.governance.skipped": logging.INFO,
     "schedule.governance.reserved": logging.DEBUG,
     "schedule.governance.run_cost_capped": logging.WARNING,
+    "schedule.governance.resumed": logging.INFO,
+    "schedule.governance.resume_refused": logging.WARNING,
+    "schedule.governance.pause_expired": logging.WARNING,
     "schedule.governance.launch_unsafe": logging.ERROR,
     "schedule.governance.finalize_failed": logging.ERROR,
     "schedule.governance.error": logging.ERROR,

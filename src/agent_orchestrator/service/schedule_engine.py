@@ -43,6 +43,14 @@ from ..schedules.store import ScheduleStore
 from ..schedules.windows import WeekStart
 from ..ui.processes import ProcessSupervisor, _pid_alive
 from ..ui.runs import RunNotFoundError, RunRepository
+from .capped_resume import (
+    REQUEST_KIND_RESUME_CAPPED,
+    ResumeCappedRequest,
+    ResumeOutcome,
+    drain_resume_capped,
+    parse_request_age_ok,
+    sweep_pause_expiry,
+)
 from .fire_store import (
     SCHEDULES_SUBDIR,
     FireAlreadyRecordedError,
@@ -500,6 +508,11 @@ class ScheduleEngine:
             return decisions
         enabled = {str(Path(e.root).resolve()): e for e in entries if _opted_in(e)}
 
+        # T-nI4DBf: capped-run resume requests + pause-expiry sweep, ahead of the evaluation loop
+        # so the sweep never waits behind (and is bounded by) the tick budget.
+        self.drain_resume_requests(now)
+        self._sweep_pause_expiry(now)
+
         for req in self.drain_run_now_requests(now):
             entry = enabled.get(str(Path(req.workspace_root).resolve()))
             binding = self._find_binding(entry, req.schedule_id) if entry is not None else None
@@ -727,6 +740,84 @@ class ScheduleEngine:
                 )
             )
         return out
+
+    # -- capped-run resume (T-nI4DBf, HLD §9.5) -------------------------------------------------
+
+    def drain_resume_requests(self, now: datetime | None = None) -> list[ResumeOutcome]:
+        """Read and DELETE each ``kind: resume_capped`` request and perform it -- this method is
+        the single launch authority for resumes. Expired/invalid files are discarded with
+        ``schedule.request_expired``. Also the in-process path for ``ao schedule resume`` when no
+        daemon is live. Never raises."""
+        now = now if now is not None else self._clock()
+        directory = self._state_dir / SCHEDULES_SUBDIR / REQUESTS_SUBDIR
+        out: list[ResumeOutcome] = []
+        if not directory.is_dir():
+            return out
+        for path in sorted(directory.glob("*.json")):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue  # run-now's drain owns unreadable files
+            if not isinstance(raw, dict) or raw.get("kind") != REQUEST_KIND_RESUME_CAPPED:
+                continue
+            path.unlink(missing_ok=True)  # delete first: at-most-once even if processing crashes
+            req = ResumeCappedRequest.from_json(raw)
+            if req is None:
+                self._events.emit("schedule.request_expired", reason="invalid", detail=path.name)
+                continue
+            if not parse_request_age_ok(req, now):
+                self._events.emit(
+                    "schedule.request_expired",
+                    workspace=req.workspace_root,
+                    schedule_id=req.schedule_id,
+                    reason="expired",
+                    detail=f"requested_at={req.requested_at.isoformat()}",
+                )
+                continue
+            out.append(self._resume_one(req, now))
+        return out
+
+    def _resume_one(self, req: ResumeCappedRequest, now: datetime) -> ResumeOutcome:
+        root = str(Path(req.workspace_root).resolve())
+        binding: ResolvedBinding | None = None
+        try:
+            binding = next(
+                (b for b in self._store_factory(root).load().bindings if b.id == req.schedule_id),
+                None,
+            )
+        except ScheduleFileError as exc:
+            self._events.emit(
+                "schedule.file_invalid", workspace=root, reason="file_invalid", detail=str(exc)
+            )
+        launcher = self._launcher if hasattr(self._launcher, "launch_capped_resume") else None
+        return drain_resume_capped(
+            req,
+            binding=binding,
+            fires=self._fires,
+            ledger=self._ledger,
+            launcher=launcher,  # type: ignore[arg-type]
+            lock_path=self._governance_lock,
+            events=self._events,
+            now=now,
+            other_run_active=lambda rec: self._other_run_active(rec),
+            mark_active=lambda rec: self._state.mark_active(
+                rec.workspace_root, rec.schedule_id, rec.fire_key
+            ),
+        )
+
+    def _other_run_active(self, rec: FireIntentRecord) -> bool:
+        """Is a run of the same schedule other than *rec* live (overlap refusal for a resume)?"""
+        st = self._state.get(rec.workspace_root, rec.schedule_id)
+        if st is None:
+            return False
+        live = self._live_runs()
+        return any(k in live for k in st.active_fire_keys if k != rec.fire_key)
+
+    def _sweep_pause_expiry(self, now: datetime) -> None:
+        try:
+            sweep_pause_expiry(self._fires, self._events, now)
+        except Exception:  # noqa: BLE001 - bookkeeping must never break the tick
+            logger.exception("pause-expiry sweep failed")
 
     def _find_binding(self, entry: Any, schedule_id: str) -> ResolvedBinding | None:
         try:

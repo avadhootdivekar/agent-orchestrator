@@ -387,6 +387,9 @@ def test_hld_event_table_is_complete() -> None:
         "schedule.governance.skipped", "schedule.governance.reserved",
         "schedule.governance.run_cost_capped", "schedule.governance.launch_unsafe",
         "schedule.governance.error", "schedule.governance.finalize_failed",
+        # T-nI4DBf: capped-run lifecycle
+        "schedule.governance.resumed", "schedule.governance.resume_refused",
+        "schedule.governance.pause_expired",
     }  # fmt: skip
     assert set(EVENT_LEVELS) == expected
 

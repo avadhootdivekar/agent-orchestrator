@@ -703,15 +703,16 @@ def test_post_spawn_argv_without_flag_cancels_child(tmp_path: Path) -> None:
     assert rig.sup.cancelled == ["launched-run"]  # the stub's run id for the spawned child
 
 
-def test_real_renderer_does_not_yet_register_cost_cap_so_governed_cost_fire_fails_closed(
+def test_real_renderer_forwards_cost_cap_so_governed_cost_fire_launches(
     tmp_path: Path,
 ) -> None:
-    """UNFINISHED dependency T-et7Edf: until ``cost_cap_usd`` is a run-options registry Option the
-    real renderer drops it, and the launcher correctly refuses to spawn an uncapped run."""
-    rig = Rig(tmp_path)
+    """T-et7Edf registered ``cost_cap_usd``: the real renderer forwards ``--cost-cap-usd`` and the
+    governed fire launches (it fails closed only when the flag would be dropped)."""
+    rig = Rig(tmp_path)  # real _render_options: the pre-spawn check must pass
+    with_cap_argv(rig)
     write_workflow(Path(rig.root) / "w.json")
     rec = rig.launcher.launch(gov_decision(rig, make_binding(limits=limits(per_run=2, week=10))))
-    assert rig.sup.launch_calls == [] and rec.reason == "cost_cap_not_forwarded"
+    assert rec.status == "launched" and rig.sup.launch_calls
 
 
 @pytest.mark.parametrize(
