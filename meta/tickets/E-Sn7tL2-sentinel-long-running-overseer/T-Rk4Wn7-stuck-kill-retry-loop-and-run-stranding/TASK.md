@@ -113,3 +113,31 @@ Config at the time: sentinel enabled + llm enabled (`powers: act`, `budget_pct: 
 
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Sn7tL2-sentinel-long-running-overseer/T-Rk4Wn7-stuck-kill-retry-loop-and-run-stranding/`
+
+
+## Findings: D3 stranding — reproduced, cause confirmed, fixed (AC4; unit w01-03, 2026-11-11)
+
+**Repro (before fix):** `tests/test_engine_failure_isolation_of_work.py` — roots `a` (fails), `b`..`e`, plus `a2` depends_on `a`,
+`max_parallel=2` (more ready tasks than slots). Result before the fix: `a` failed, `b` ran, `c`/`d`/`e` never dispatched, run
+`failed` with `pending` tasks (run log: `run.end status=failed` immediately after the in-flight sibling settled).
+
+**Confirmed cause — NOT in `scheduler.py`** (that module is only the cron/event trigger abstraction; the ticket's guess of a
+scheduler rule was wrong). It is engine fail-fast: `Orchestrator._settle_completed_task` ended with
+`if ts.status not in ("succeeded","skipped"): state.status="failed"; return SettleResult(signal="halt")`, and the `run()` loop
+reacts to `halt` with `_drain_remaining` (settle only what is already in flight) then `break`. So any task failure stopped the
+FILL loop: ready-but-queued independent tasks (beyond `max_parallel`) were never submitted. `ao resume` recomputes readiness,
+which is why `w03-10` dispatched immediately afterwards.
+
+**Fix (engine.py):** task-level `failed`/`timed_out` now records the id in `_RunContext.failed_tasks` and returns `settled`
+(no halt). `_ready_ids` skips those ids this run; their dependents never become ready (predecessor unsettled) so only
+dependents are left pending. When nothing runnable remains the run ends `failed` (`state.status` set at run end if
+`failed_tasks`). Budget/breaker/cancel/injection-error halts still halt immediately (unchanged). Resume re-runs the failed task
+and its dependents (tested).
+
+**Behaviour change:** default is now "continue independent work after a task failure" (was fail-fast). Two pre-existing e2e
+isolation crash-resume tests used an independent `task_b` as the "never dispatched" task; made it `depends_on: [task_a]`
+(same intent). No opt-out flag added — say if a `fail_fast` workflow setting is wanted.
+
+**Status:** AC4 done. mypy src + ruff green. Full pytest: 15 failures, all outside this change — 9 sentinel-generation/powers
+e2e + 2 bench fake-subject suites fail identically without my diff (other in-flight units' WIP in the shared checkout);
+`test_run_options` snapshot and `nfr2` were from WIP/my test placement (nfr2 fixed by moving tests to a new file).

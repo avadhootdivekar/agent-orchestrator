@@ -509,6 +509,10 @@ class _RunContext:
     run_log: logging.LoggerAdapter
     done: set[str]
     quota_exhausted_since: float | None = None
+    # T-Rk4Wn7 D3: tasks that settled failed/timed_out in THIS run. They are not re-dispatched
+    # in this run and their dependents never become ready, but unrelated ready work keeps
+    # dispatching; the run ends "failed" once nothing runnable is left.
+    failed_tasks: set[str] = field(default_factory=set)
     # --- E-Wk9Tz3 task isolation (T-En8Hd4) ---
     # Absolute run directory (<workspace_root>/.orchestrator/runs/<run_id>); set once at
     # run() setup, read by _activate_integration/_sync_checkout/_reconcile_*.
@@ -968,7 +972,9 @@ class Orchestrator:
                     limit = rt.live_limit if rt is not None else self._max_parallel
 
                     # ---- FILL: launch ready non-barrier tasks up to N ----
-                    ready = self._ready_ids(order, preds, state, done, set(in_flight.values()))
+                    ready = self._ready_ids(
+                        order, preds, state, done, set(in_flight.values()) | ctx.failed_tasks
+                    )
                     if not ready and not in_flight:
                         break  # nothing ready, nothing running -> run complete
                     if state.graph_edits:
@@ -1159,6 +1165,8 @@ class Orchestrator:
                     state.run_id,
                     extra={"event": "run.waiting_for_input", "requests": open_ids},
                 )
+            elif ctx.failed_tasks and state.status == "running":
+                state.status = "failed"  # T-Rk4Wn7 D3: ran everything runnable, some failed
             elif not failed and state.status == "running":
                 state.status = "succeeded"
 
@@ -2779,6 +2787,12 @@ class Orchestrator:
             # no-trip path).
             self._runstate.save(state)
 
+        if ts.status in ("failed", "timed_out"):
+            # T-Rk4Wn7 D3: a task-level failure fails only its dependents (never ready, as the
+            # predecessor is unsettled). Independent ready/queued work keeps dispatching; run()
+            # marks the run failed at the end. Budget/breaker/cancel halts return earlier.
+            ctx.failed_tasks.add(tid)
+            return SettleResult(signal="settled")
         if ts.status not in ("succeeded", "skipped"):
             state.status = "failed"
             return SettleResult(signal="halt")

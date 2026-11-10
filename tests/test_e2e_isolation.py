@@ -2231,7 +2231,12 @@ class TestCrashResume:
             ws,
             [
                 {"id": "task_a", "agent": "ag", "outputs": ["output/a.txt"]},
-                {"id": "task_b", "agent": "ag", "outputs": ["output/b.txt"]},
+                {
+                    "id": "task_b",
+                    "agent": "ag",
+                    "depends_on": ["task_a"],
+                    "outputs": ["output/b.txt"],
+                },
             ],
         )
 
@@ -2307,7 +2312,12 @@ class TestCrashResume:
             ws,
             [
                 {"id": "task_a", "agent": "ag", "outputs": ["output/a.txt"]},
-                {"id": "task_b", "agent": "ag", "outputs": ["output/b.txt"]},
+                {
+                    "id": "task_b",
+                    "agent": "ag",
+                    "depends_on": ["task_a"],
+                    "outputs": ["output/b.txt"],
+                },
             ],
         )
 
