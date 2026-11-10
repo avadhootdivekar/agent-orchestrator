@@ -140,3 +140,7 @@ gate catching blocking defects (singleton lock, idempotency re-check, orphan rec
 no amount of design review by the author alone had surfaced. The analogous candidates here are
 the fire-store at-most-once semantics, the tick-budget interaction with child monitoring, and
 the webhook's middleware mounting.
+
+## Update 2026-11-11 — T-Ev3Qm5 implemented
+- `service/schedule_engine.py` + 59 tests landed (see `T-Ev3Qm5-schedule-engine-core/STATUS.md`); `T-Lp4Wt6` / `T-Sv5Hb3` unblocked.
+  Launcher must share the engine's state/fire/event stores and per-workspace ProcessSupervisor.

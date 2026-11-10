@@ -154,7 +154,7 @@
   NFR-3) — 2 d
 - [x] `T-Fr2Nx8-fire-store-and-state` — `service/fire_store.py`: `FireIntentStore`,
   `ScheduleStateStore`, `ScheduleEventLog` (FR-7, FR-10) — 2 d
-- [ ] `T-Ev3Qm5-schedule-engine-core` — `service/schedule_engine.py`: evaluate/tick, overlap,
+- [x] `T-Ev3Qm5-schedule-engine-core` — `service/schedule_engine.py`: evaluate/tick, overlap,
   catch-up, jitter, concurrency, quarantine (FR-2, FR-4, FR-5, FR-6, NFR-2) — 3 d
 - [ ] `T-Ri7Dz2-run-id-flag` — `ao run --run-id` with duplicate-id refusal (FR-8) — 1 d
 - [ ] `T-Lp4Wt6-scheduled-launcher` — `service/schedule_launch.py`: two-phase launch, template
