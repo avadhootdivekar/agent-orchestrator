@@ -107,12 +107,73 @@ Config at the time: sentinel enabled + llm enabled (`powers: act`, `budget_pct: 
 - Code (clone paths; line numbers as of clone HEAD): `src/agent_orchestrator/sentinel_tick.py` `sample_liveness` ~522, `_peer_durations` ~541,
   `_trigger_for` ~553, `_check_systemic` ~695; `src/agent_orchestrator/engine.py` `_start_llm_lane` ~2908; `src/agent_orchestrator/sentinel_driver.py` `ClaudeCliSentinelDriver` ~102.
 
+## Findings: CTL-SCHEMA rejection of g02 note (AC6; research unit w01-05, 2026-11-10)
+
+**Evidence** (read-only, finplan run `o-k6shov-ux-complete-500-20261110T113138Z`, `control/inbox-rejected/`):
+`sentinel-g02-note-001.reason.json` = `{"rule_id":"CTL-SCHEMA","detail":"created_at must be a non-empty string"}`.
+The rejected file has `schema/id/actor/kind` correct, but uses **`"ts": "2026-11-10T14:47:00Z"` instead of `created_at`**, plus two
+fields outside the envelope: top-level **`target: {task_id}`** and top-level **`reason`** (the note's task id belongs in
+`payload`, the reason in `rationale`). `payload.text` itself was valid (≤4000 chars).
+
+**Validator / rule:** `src/agent_orchestrator/sentinel_tick.py` `_parse_entry` (~L255-290): L276-278 require non-empty string
+`kind`/`actor`/`created_at` (this is the check that fired); L286-288 reject unknown top-level fields (would have fired next:
+`['reason','target','ts']`). `_Reject` is raised on the *first* failure only, so the sidecar hides the other violations.
+Schema documented in `docs-md/sentinel-hld.md` ~L636-650 (`required: [schema,id,kind,actor,created_at]`, `additionalProperties: false`).
+Rejection is counted by `_note_rejection` (~L386) toward `consecutive_rejections` (auto-pause of the LLM lane).
+
+**Classification — instructions (pack contract) at fault; schema is correct; note content/format is the proximate symptom.**
+- The schema is strict-by-design and consistent with the HLD; `created_at` is mandatory and the HLD/CLI (`control.py` L157) agree.
+- The generated `pack/sentinel-contract.md` (built in `sentinel_gen.py` ~L319-345) and the driver prompt
+  (`sentinel_driver.py` `render_prompt` L88-99) only say "one `ao.ctl/v1` JSON file per proposal ... id unique, `actor`=`sentinel-gNN`".
+  They never list the envelope fields (`created_at`, `rationale`, `payload`), never give an example entry, and never state that
+  unknown top-level fields are rejected. The model had to guess the envelope and guessed `ts`/`target`/`reason`.
+  (Confirmed by grep of the g02 pack `sentinel-contract.md`: only the one-line mention.)
+- Secondary: the rejection diagnostic reaches the LLM only via the quarantine sidecar, and only the first violation.
+
+**Proposed fixes (followups; not coded here):**
+1. Render a concrete `ao.ctl/v1` envelope + one `note` and one `kill` example (with `created_at`, `payload`, `rationale`) into
+   `sentinel-contract.md` and mention "unknown top-level fields rejected" (`sentinel_gen.py` contract section; add a pack test
+   asserting the contract contains `created_at`). Small and obviously correct.
+2. Optional hardening: have `_parse_entry` collect all envelope violations into one `detail` (or at least name unknown fields first)
+   so the sidecar/ledger shows everything wrong in one go.
+3. Optional leniency decision (owner): accept `ts` as alias — not recommended; keeps the contract single-shape.
+4. Consider not counting a CTL-SCHEMA rejection of a harmless `note` toward auto-pause, or surfacing the sidecar detail in the next pack.
+
 ## Handoff Boundary
 - Upstream: operator RCA in the finplan workspace session (2026-11-10).
 - Downstream: engine/sentinel developer; repro against a TEMP workspace (never this workspace's live runs).
 
 ## Artifacts
 - Docs/comments: `meta/tickets/E-Sn7tL2-sentinel-long-running-overseer/T-Rk4Wn7-stuck-kill-retry-loop-and-run-stranding/`
+
+## D4 implementation (unit w01-02-d4-llm-lane-perms, 2026-11-10)
+- `sentinel_driver.py`: default spawn adds `--permission-mode acceptEdits --allowedTools Read,Glob,Grep,Write,Edit,Bash(mv:*)
+  --add-dir <gNN> --add-dir <inbox>` (least privilege; no skip-permissions). Explicit `llm.agent` argv is left untouched.
+- `lane_permission_warnings` -> `ao validate` (workflow `sentinel:` block) + engine startup warning (`sentinel.warn`).
+- `DriverStatus.permission_denied` (from `permission_denials` in the stream) -> `GenerationLane._permission_alarm`: alarm
+  `llm_permission_denied` in `control/sentinel-alarms.jsonl`, ledger `sentinel_permission_denied`, LLM lane paused.
+- Tests: `tests/test_sentinel_lane_permissions.py` (6, fake driver / fake Popen). Docs: `guide-sentinel.md` "LLM lane permissions".
+- Unverified: live `claude` honouring this exact flag set (no live LLM calls per brief) — smoke-test one real generation.
+
+## D1 implementation (unit w01-01-d1-retry-clock, 2026-11-10)
+- `TaskRunState.attempt_started_at` (new): set by `sentinel_tick.register_task` at every dispatch, including
+  recovery re-dispatches; `sample_liveness` computes `running_seconds` from it (falls back to `started_at`).
+  `started_at` still records the task's first start. Fixes AC1.
+- Cool-down (AC3, rung-burning part): `evaluate_recovery` skips a task for `RETRY_COOLDOWN_SECONDS` (60 s) after
+  a recovery re-dispatch, so state-based triggers (e.g. `cost_kill_pct`) cannot burn all rungs in one poll interval.
+  Not done here: AC3's "N kills of the same task count as one systemic incident".
+- Tests: `tests/test_sentinel_recovery.py::test_retried_task_gets_per_attempt_clock_no_second_stuck_kill`,
+  `::test_retry_cooldown_blocks_rapid_rekills` (fixed clock; fail without the fix).
+- By: developer · Role: developer · Date: 2026-11-10
+
+### AC5 outcome: contract fix landed (unit w02-03, 2026-11-10)
+- `sentinel_gen.py`: new `CTL_ENVELOPE_SECTION` rendered into `pack/sentinel-contract.md` — lists the `ao.ctl/v1` envelope fields
+  (`created_at` not `ts`, `rationale` not `reason`, ids like `task_id` inside `payload`), states "unknown top-level fields are rejected",
+  and gives concrete `note` and `kill` examples.
+- Test `test_contract_renders_ctl_envelope_with_valid_examples` asserts `created_at`/rejection wording and runs both examples through
+  the real `_parse_entry` validator, so the docs cannot drift from the schema.
+- Not done (optional): collecting all envelope violations into one `_parse_entry` detail — left alone because `sentinel_tick.py` has
+  concurrent uncommitted edits from another unit. Followups 3 and 4 above remain owner decisions.
 
 
 ## Findings: D3 stranding — reproduced, cause confirmed, fixed (AC4; unit w01-03, 2026-11-11)

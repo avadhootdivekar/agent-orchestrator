@@ -313,6 +313,35 @@ def merge_memory(
 # ---------------------------------------------------------------------------------------------
 
 
+CTL_ENVELOPE_SECTION = """\
+## `ao.ctl/v1` proposal envelope
+Exactly these top-level fields; **unknown top-level fields are rejected** (CTL-SCHEMA) and the
+whole proposal is quarantined. Put anything else inside `payload`.
+- `schema`: `"ao.ctl/v1"` (required)
+- `id`: unique id, also the file name stem (`<id>.json`) (required)
+- `kind`: one of the accepted kinds above (required)
+- `actor`: `sentinel-gNN` (required)
+- `created_at`: ISO-8601 UTC timestamp string (required; not `ts`, not `time`)
+- `rationale`: short string, at most 4000 chars (optional; not `reason`)
+- `payload`: object with the kind-specific fields (optional; target ids such as `task_id` go
+  here, not at top level)
+
+Note (`payload.text` required):
+```json
+{"schema": "ao.ctl/v1", "id": "sentinel-g02-note-001", "kind": "note", "actor": "sentinel-g02",
+ "created_at": "2026-11-10T14:47:00Z", "rationale": "why this matters",
+ "payload": {"text": "t-build has been idle for 40 minutes"}}
+```
+Kill (`payload.task_id` of a running task required; `no_retry` optional boolean):
+```json
+{"schema": "ao.ctl/v1", "id": "sentinel-g02-kill-001", "kind": "kill", "actor": "sentinel-g02",
+ "created_at": "2026-11-10T14:48:00Z", "rationale": "stuck: no output for 40 minutes",
+ "payload": {"task_id": "t-build", "no_retry": false}}
+```
+
+"""
+
+
 def render_contract(
     enabled_kinds: frozenset[str], limits: dict[str, Any], *, planner: bool = False
 ) -> str:
@@ -334,6 +363,7 @@ def render_contract(
         "- Proposals: one `ao.ctl/v1` JSON file per proposal in the run's `control/inbox/`, id "
         "unique and `actor` = `sentinel-gNN` (your generation). Atomic write (`*.tmp` then rename)."
         f" Currently accepted kinds: {kinds}.\n\n"
+        f"{CTL_ENVELOPE_SECTION}"
         "## Limits\n"
         f"{lim}\n\n"
         "Rejected proposals are quarantined; repeated rejections pause the LLM lane. Do not repeat "

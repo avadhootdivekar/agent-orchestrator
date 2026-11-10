@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -302,6 +303,20 @@ def test_contract_rendered_from_schemas() -> None:
     assert "ao.sentinel.handoff/v1" in text and "`note`" in text and "`kill`" in text
     assert "`directive`" in text  # enabled by T-Sn9Pow
     assert "generation_ttl_minutes" in text
+
+
+def test_contract_renders_ctl_envelope_with_valid_examples(tmp_path: Path) -> None:
+    text = sg.render_contract(sentinel_tick.KINDS_ENABLED, {"generation_ttl_minutes": 60})
+    assert "created_at" in text and "rationale" in text and "payload" in text
+    assert "unknown top-level fields are rejected" in text
+    blocks = re.findall(r"```json\n(\{\"schema\": \"ao\.ctl/v1\".*?)\n```", text, re.S)
+    assert len(blocks) == 2  # note + kill examples
+    kinds = set()
+    for i, raw in enumerate(blocks):
+        f = tmp_path / f"ex{i}.json"
+        f.write_text(raw)
+        kinds.add(sentinel_tick._parse_entry(f)["kind"])  # the examples pass the real validator
+    assert kinds == {"note", "kill"}
 
 
 # ---------------------------------------------------------------------------------------------
