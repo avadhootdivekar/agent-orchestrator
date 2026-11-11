@@ -93,3 +93,29 @@ def test_readonly_store_does_not_roll_back_engine_write_inside_update_governance
     _request(rig, Racing(tmp_path / "state"))
     g = FireIntentStore(tmp_path / "state").get("k2", rig.root).governance  # type: ignore[union-attr]
     assert g is not None and g.cap_state == "aborted" and g.final is True
+
+
+def test_duplicate_queued_resume_is_idempotent(tmp_path: Path) -> None:
+    """w30-03: a second ``resume --queue`` of the same capped run must not drop a second file."""
+    rig = Rig(tmp_path)
+    rig.paused()
+    store = readonly_fire_store(tmp_path / "state")
+    ledger = UsageLedger(
+        store, clock=lambda: NOW, run_state_loader=probe_run, fs_now_ns=lambda: 10**19
+    )
+    ids = iter(["req-1", "req-2"])
+
+    def ask() -> cr.ResumeCappedRequest:
+        return cr.request_capped_resume(rig.root, "s", "r1", 1.0, "cli",
+            state_dir=rig.tmp / "state",
+            binding=rig.binding, fires=store, ledger=ledger, clock=lambda: NOW,
+            new_id=lambda: next(ids), drain=None)  # fmt: skip
+
+    first, second = ask(), ask()
+    files = list(cr.requests_dir(tmp_path / "state").glob("*.json"))
+    assert len(files) == 1
+    assert second.request_id == first.request_id
+    assert (
+        cr.find_pending_request(cr.requests_dir(tmp_path / "state"), rig.root, "r1", NOW)
+        is not None
+    )

@@ -1445,7 +1445,12 @@ def resume_cmd(
     """Resume a run paused by its cost cap (exit 3 when refused: expired/aborted/no headroom)."""
     if local and queue:
         raise _fail("--local and --queue are mutually exclusive", EXIT_USAGE)
-    from ..service.capped_resume import ResumeRefused, request_capped_resume
+    from ..service.capped_resume import (
+        ResumeRefused,
+        find_pending_request,
+        request_capped_resume,
+        requests_dir,
+    )
     from ..service.usage_ledger import UsageLedger
 
     root, sdir = _workspace_root(workspace), _state_dir(state_dir)
@@ -1473,8 +1478,13 @@ def resume_cmd(
 
     try:
         if queue or (not local and probe_engine_lock(sdir)):
+            already = find_pending_request(requests_dir(sdir), str(root), run, now_utc())
             req = request(None)
-            typer.echo("queued; the daemon resumes it within one evaluation interval")
+            typer.echo(
+                "already queued; the daemon resumes it within one evaluation interval"
+                if already is not None
+                else "queued; the daemon resumes it within one evaluation interval"
+            )
         else:
             engine = None
             try:

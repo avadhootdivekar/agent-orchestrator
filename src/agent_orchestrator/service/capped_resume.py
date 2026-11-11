@@ -299,6 +299,28 @@ def check_resume(
     return ResumeCheck(rec, _money(add), new_cap, remaining)
 
 
+def find_pending_request(
+    directory: Path, workspace_root: str, run_id: str, now: datetime
+) -> ResumeCappedRequest | None:
+    """The still-live (within TTL) queued ``resume_capped`` request for *run_id*, if any: lets a
+    repeated ``resume --queue`` be a no-op instead of dropping a second file."""
+    if not directory.is_dir():
+        return None
+    for path in sorted(directory.glob("*.json")):
+        try:
+            req = ResumeCappedRequest.from_json(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+        if (
+            req is not None
+            and req.run_id == run_id
+            and req.workspace_root == str(workspace_root)
+            and parse_request_age_ok(req, now)
+        ):
+            return req
+    return None
+
+
 # -- operator side -------------------------------------------------------------------------------
 
 
@@ -329,19 +351,22 @@ def request_capped_resume(
     chk = check_resume(
         binding=binding, rec=rec, schedule_id=schedule_id, add_usd=add_usd, now=now, ledger=ledger
     )
-    req = ResumeCappedRequest(
-        workspace_root=str(workspace_root),
-        schedule_id=schedule_id,
-        run_id=run_id,
-        add_usd=chk.add_usd,
-        new_cap_usd=chk.new_cap_usd,
-        requested_by=by,
-        requested_at=now,
-        request_id=new_id(),
-    )
     directory = requests_dir(state_dir)
-    directory.mkdir(parents=True, exist_ok=True)
-    atomic_write_bytes(directory / f"{req.request_id}.json", json.dumps(req.to_json()).encode())
+    # Idempotent: a live request for this run is already queued -> report it, write no second file.
+    req = find_pending_request(directory, workspace_root, run_id, now)
+    if req is None:
+        req = ResumeCappedRequest(
+            workspace_root=str(workspace_root),
+            schedule_id=schedule_id,
+            run_id=run_id,
+            add_usd=chk.add_usd,
+            new_cap_usd=chk.new_cap_usd,
+            requested_by=by,
+            requested_at=now,
+            request_id=new_id(),
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        atomic_write_bytes(directory / f"{req.request_id}.json", json.dumps(req.to_json()).encode())
     if drain is not None:
         for outcome in drain(now):
             if outcome.request_id == req.request_id and outcome.refused is not None:
@@ -611,6 +636,7 @@ __all__ = [
     "check_resume",
     "default_add",
     "drain_resume_capped",
+    "find_pending_request",
     "is_governed_run",
     "is_stranded_resume",
     "max_add",
