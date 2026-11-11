@@ -3,6 +3,8 @@
 Operator guide for the service-owned scheduler (E-Sc9Rt4, [ADR-0014](adr/ADR-0014-service-owned-scheduler-and-triggers.md),
 design in [`scheduler-triggers-hld.md`](scheduler-triggers-hld.md)). Budget/quota governance of scheduled runs
 is a separate layer: [`scheduled-run-governance-hld.md`](scheduled-run-governance-hld.md).
+For quotas, cost caps and pause/resume end to end, follow the
+[limits walkthrough](run-options-and-limits-guide.md#walkthrough-a-recurring-job-with-limits-schedule--usage--cap-hit--pause--resume).
 Everything below was checked against the code on `ad/enhancements-10nov` (2026-11-11); the HLD §22 lists what is
 **not** finished.
 

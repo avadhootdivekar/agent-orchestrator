@@ -2,8 +2,8 @@
 
 - Status: **Partially implemented (2026-11-11, branch `ad/enhancements-10nov`) — NOT closed, NOT "Implemented".** Everything in §26.1 and §26.2 is committed: window math, binding `limits` model, pre-fire gate + reservation, derived usage ledger, the engine cost-cap gate, pause/resume/expiry (`service/capped_resume.py`), the `ao schedule usage/resume/set-limits/pin-prompt` commands, `ao run/resume --cost-cap-usd` the dashboard usage route, paused-runs list and the bounded `resume-capped` route (`4f6bbc1`). What is **unfinished** is listed in §26.4 (ticket rollup: `meta/tickets/E-Qp4Zm8-scheduled-run-governance/STATUS.md`, which wins over this text). Where §1–§24 (the design) and §26 disagree, **§26 and the code win**. Builds on E-Sc9Rt4 (mostly shipped, also not closed).
 - Related: [`ADR-0025`](adr/ADR-0025-scheduled-run-governance-quotas-and-cost-caps.md) (this epic's decisions) ·
-  [`scheduler-triggers-hld.md`](scheduler-triggers-hld.md) + [`ADR-0014`](adr/ADR-0014-service-owned-scheduler-and-triggers.md)
-  (the firing mechanism this epic extends) · [`lld-run-control-routing-breakers.md`](lld-run-control-routing-breakers.md)
+  [`scheduler-triggers-hld.md`](scheduler-triggers-hld.md) (which links back; §9.1 CLI, §12 events) + [`ADR-0014`](adr/ADR-0014-service-owned-scheduler-and-triggers.md)
+  (the firing mechanism this epic extends) · operator walkthrough with captured CLI output: [`run-options-and-limits-guide.md`](run-options-and-limits-guide.md#walkthrough-a-recurring-job-with-limits-schedule--usage--cap-hit--pause--resume) · [`lld-run-control-routing-breakers.md`](lld-run-control-routing-breakers.md)
   (ADR-RC-004: every breaker action lands on resumable `failed`) · [`ADR-0016`](adr/ADR-0016-overseer-runner-cadence-and-budget-governance.md)
   (D2/D9: breaker latching, re-armed $0 containment) · [`ADR-0004`](adr/ADR-0004-agent-monitoring-guardrail-modes.md)
   (`hard`/`recommend`) · [`ADR-0019`](adr/ADR-0019-cross-run-result-cache.md) D7 (argv-hashed cache key) ·

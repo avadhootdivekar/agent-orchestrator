@@ -11,6 +11,11 @@
 - Done: HLD §26 as-built, ADR-0025 implementation outcome, guides, ticket sync by this unit (w24-07).
 - **Unmet / open**: `scheduler-triggers-hld.md` cross-links (file dirty from another unit); AC3 "Recurring jobs with limits" walkthrough with captured output (the CLI is now committed, so it can be written); AC1 full name grep; HLD §26 still lists pause/resume, the CLI and `--cost-cap-usd` wiring as unfinished/uncommitted although they landed (`d0378d7`, `3e2870b`) - needs one more pass after T-8knqVe; I-6 blind-executor note beside HLD §9.3 not written.
 
+## Update 2026-11-11 (w29-03) — By: developer · Role: developer · Date: 2026-11-11
+- AC3 done: end-to-end walkthrough (schedule with quota + cost cap -> usage -> cap hit -> pause -> resume -> set-limits/disable) added to `docs-md/run-options-and-limits-guide.md`, every command run against the clone's CLI (`uv run ao schedule ...`) in a temp workspace/state dir; output captured. Caveat stated in the doc: the cap-hit/paused state was **seeded** (no daemon, no agent run), and `resume` ran with `--queue`; the installed `ao` snapshot lacks `schedule`. Observed: duplicate `resume --queue` for the same run is accepted twice (documented, not changed - docs only).
+- Cross-links added: `scheduler-triggers-hld.md` Related line <-> `scheduled-run-governance-hld.md` Related line, plus `guide-scheduled-runs.md` intro.
+- Still open: I-6 blind-executor note beside HLD §9.3; AC1 exhaustive name grep; `meta/ROADMAP.md` rows. State stays Partial.
+
 ## Update 2026-11-11 (w28-05)
 - HLD §26 re-pass done (pause/resume, CLI, `--cost-cap-usd`, resume-capped route, AC17 now described as landed); ADR-0025 outcome table and `run-options-and-limits-guide.md` synced. Still open: AC3 walkthrough with captured output, `scheduler-triggers-hld.md`/`guide-scheduled-runs.md` cross-links (dirty from other units), I-6 note beside HLD §9.3. Task stays Partial.
 
