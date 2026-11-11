@@ -158,6 +158,22 @@ def reason_with_period(event: dict[str, Any]) -> str:
     return f"{reason} ({period})" if period and reason != NO_VALUE else reason
 
 
+def usage_windows(
+    *, workspace: str, at: datetime, binding: ResolvedBinding, ledger: LedgerPort
+) -> list[dict[str, Any]]:
+    """The per-period window rows of one binding at *at* (shared by the CLI doc and the dashboard,
+    so a caller that only needs windows never scans paused records or the event log)."""
+    limits = binding.limits
+    if limits is None:
+        return []
+    tz = ZoneInfo(binding.timezone or "UTC")
+    week_start: WeekStart = binding.week_start or "monday"
+    periods = limit_periods(limits)
+    wins = windows_for(at, periods, tz, week_start)
+    usage = ledger.usage(workspace, binding.id, wins)
+    return [_window_row(p, wins[p], usage[p], limits, tz) for p in periods]
+
+
 def build_usage_doc(
     *,
     workspace: str,
@@ -175,14 +191,8 @@ def build_usage_doc(
     for b in bindings:
         limits = b.limits
         tz_name = b.timezone or "UTC"
-        tz = ZoneInfo(tz_name)
         week_start: WeekStart = b.week_start or "monday"
-        rows: list[dict[str, Any]] = []
-        if limits is not None:
-            periods = limit_periods(limits)
-            wins = windows_for(at, periods, tz, week_start)
-            usage = ledger.usage(workspace, b.id, wins)
-            rows = [_window_row(p, wins[p], usage[p], limits, tz) for p in periods]
+        rows = usage_windows(workspace=workspace, at=at, binding=b, ledger=ledger)
         cost = limits.cost if limits is not None else None
         schedules.append(
             {
@@ -261,7 +271,7 @@ def render_usage(doc: dict[str, Any]) -> str:
             cap = _money(p["cap_usd"]) if p["cap_usd"] is not None else NO_VALUE
             over = f" (overshoot {_money(p['overshoot_usd'])})" if p["overshoot_usd"] > 0 else ""
             lines.append(
-                f"  paused: {p['run_id']}  {_money(p['cost_usd'])} of {cap}{over}  "
+                f"  paused: {p['run_id']}  {_money(p['engine_cost_usd'])} of {cap}{over}  "
                 f"expires {_local(p['expires_at'], tz, '%Y-%m-%d %H:%M %Z')}"
             )
         if s["events"]:

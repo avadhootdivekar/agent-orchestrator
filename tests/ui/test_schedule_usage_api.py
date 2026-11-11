@@ -249,6 +249,7 @@ def _paused(
     cap_state: str = "paused",
     expires: datetime | None = None,
     spent: float = 1.0,
+    engine: float | None = None,
 ) -> None:
     """A governed fire record of schedule *sid*; ``paused`` unless *cap_state* says otherwise."""
     FireIntentStore(state_dir).write(
@@ -258,11 +259,28 @@ def _paused(
             status="launched", run_id=run_id,
             governance=FireGovernance(
                 cap_state=cap_state, run_cost_cap_usd=2.0, cost_observed_usd=spent,
+                engine_cost_usd=engine,
                 paused_at=NOW - timedelta(minutes=30),
                 pause_expires_at=expires or NOW + timedelta(hours=10),
             ),
         )
     )  # fmt: skip
+
+
+def _live_state(svc: DashboardService, run_id: str, cost: float) -> None:
+    """A running ``state.json`` for *run_id* reporting *cost* (so a writable ledger store would
+    raise the persisted high-water mark above the fire record's ``cost_observed_usd``)."""
+    from agent_orchestrator.models import RunState, TaskRunState
+
+    st = RunState(
+        run_id=run_id, workflow_id="w", started_at=NOW.isoformat(), updated_at=NOW.isoformat(),
+        status="running",
+        tasks={"t0": TaskRunState(status="running", cumulative_cost_usd=cost,
+                                  actuals_available=True)},
+    )  # fmt: skip
+    d = Path(svc.workspace_root) / ".orchestrator" / "runs" / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "state.json").write_text(st.model_dump_json(), encoding="utf-8")
 
 
 def _queued(state_dir: Path) -> list[dict[str, Any]]:
@@ -290,6 +308,32 @@ def test_paused_runs_lists_only_paused_with_bounds(
     r4 = next(r for r in rows if r["run_id"] == "r4")
     assert (r4["resumable"], r4["refusal"]) == (False, "expired")
     assert client.get(f"{URL}/nope/paused-runs").status_code == 404
+
+
+def test_paused_runs_spent_is_the_engine_cost_that_overshoot_is_measured_on(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    """REVIEW G-13: charge 5.0 (reservation-inflated) vs engine cost 2.5, cap 2.0 -> the row reads
+    spent 2.5 / cap 2.0 / overshoot 0.5, which reconciles."""
+    _paused(svc, state_dir, run_id="r1", spent=5.0, engine=2.5)
+    (row,) = client.get(f"{URL}/a/paused-runs").json()["paused"]
+    assert (row["spent_usd"], row["cap_usd"], row["overshoot_usd"]) == (2.5, 2.0, 0.5)
+
+
+def test_usage_get_does_not_scan_paused_or_events_via_build_usage_doc(
+    client: TestClient, svc: DashboardService, state_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REVIEW G-16: the dashboard usage GET builds only the windows (no paused scan / event read
+    inside the shared builder)."""
+    from agent_orchestrator.schedules import usage_view
+
+    def boom(*a: Any, **k: Any) -> Any:
+        raise AssertionError("usage GET must not call build_usage_doc / paused scan")
+
+    monkeypatch.setattr(usage_view, "build_usage_doc", boom)
+    monkeypatch.setattr(usage_view, "paused_records", boom)
+    monkeypatch.setattr(usage_view, "governance_events", boom)
+    assert client.get(f"{URL}/a/usage").status_code == 200
 
 
 def test_paused_runs_max_add_is_per_run_bound_only_when_per_run_usd_is_set(
@@ -406,7 +450,10 @@ def test_resume_capped_request_never_writes_fire_records(
     from agent_orchestrator.service.fire_store import ReadOnlyFireStore
     from agent_orchestrator.ui import service as ui_service
 
-    _paused(svc, state_dir)
+    _paused(svc, state_dir, spent=1.0)
+    # G-15: the run has since spent 1.5 > cost_observed_usd + HWM_PERSIST_STEP_USD, so a WRITABLE
+    # store would persist a raised mark -- the byte-equality assert below discriminates.
+    _live_state(svc, "r1", 1.5)
     seen: dict[str, Any] = {}
     real = ui_service.request_capped_resume
 

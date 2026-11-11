@@ -1135,6 +1135,7 @@ export interface PausedRun {
   run_id: string;
   paused_at: string | null;
   pause_expires_at: string | null;
+  /** Engine cost (the cap's own metric), so spent / cap / overshoot reconcile. */
   spent_usd: number;
   cap_usd: number | null;
   /** Spend above the cap (0 when none) — same figure as `ao schedule usage`. */

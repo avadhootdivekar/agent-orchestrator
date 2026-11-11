@@ -323,3 +323,10 @@ called Done on confidence reporting.
 - [x] Testing notes: G-12 (true quota-only binding with a `cancelled` state) and G-15 (fixture must make a
   writable-store write observable).
 - [x] No source edits.
+
+## Fix status — G-13..G-17 (w35-02, developer, 2026-11-11)
+- **G-13 fixed.** CLI `paused:` line renders `engine_cost_usd` as "spent" (`usage_view.py` `render_usage`); dashboard `paused_runs.spent_usd` = `paused_row["engine_cost_usd"]` (so `PausedRuns.tsx` needed no change, only the `PausedRun.spent_usd` doc comment in `types.ts`). The charge stays in the JSON as `cost_usd`. Tests: `test_paused_runs_spent_is_the_engine_cost_that_overshoot_is_measured_on`, `test_render_usage_paused_lines` (charge 9.0 vs engine 3.0).
+- **G-14 fixed.** `Charge.overshoot_usd` is computed from the engine metric (`usage_ledger.py`); `test_row_terminal_overshoot_is_on_the_engine_metric_not_summary_inclusive`.
+- **G-15 fixed.** The G-1 test now writes a running `state.json` costing 1.5 (> `cost_observed_usd` 1.0 + `HWM_PERSIST_STEP_USD`). Mutation check: writable store in `request_capped_resume` with the `isinstance` asserts removed now FAILS the byte-equality assert (it passed before).
+- **G-16 fixed.** New `usage_view.usage_windows(...)`, used by `build_usage_doc` and the dashboard `schedule_usage`; the dashboard no longer scans paused records or the event log inside the builder. Test: `test_usage_get_does_not_scan_paused_or_events_via_build_usage_doc`.
+- **G-17 fixed** (trivial): `ui/service.py` `_check_cost_cap_option` and `cli.py` `_warn_if_schedule_governed` use `readonly_fire_store`. No dedicated test (the lookups are covered by existing governed-resume tests, which still pass).

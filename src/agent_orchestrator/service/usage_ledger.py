@@ -381,7 +381,7 @@ class UsageLedger:
             if rec.status == "launched":
                 self._warn_blind(rec)
             return Charge(1, _money(stored), _money(max(0.0, reserved - stored)), "pending")
-        _, observed = self._observed(rec, st)
+        engine, observed = self._observed(rec, st)
         conf = run_confidence(st)
         running = st.status == "running"
         # A resume writes cap_state="resumed" + the new reservation before the child marks
@@ -393,7 +393,8 @@ class UsageLedger:
         if conf == "unknown" or (conf == "partial" and window_open):
             return Charge(1, _money(max(mark, reserved)), 0.0, conf)
         cap = g.run_cost_cap_usd if g else None
-        over = max(0.0, observed - cap) if cap is not None else 0.0
+        # Overshoot is on the engine gate's metric, like the G-7 event / paused_row (G-14).
+        over = max(0.0, engine - cap) if cap is not None else 0.0
         return Charge(1, _money(mark), 0.0, conf, _money(over))
 
     def usage(

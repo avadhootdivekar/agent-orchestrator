@@ -915,10 +915,10 @@ def _warn_if_schedule_governed(workspace: str, run_id: str) -> None:
     when the service state dir has no fire record for the run (``find_by_run_id`` -> None).
     """
     from .service.capped_resume import is_governed_run
-    from .service.fire_store import FireIntentStore
+    from .service.fire_store import readonly_fire_store
     from .service.paths import default_state_dir
 
-    if is_governed_run(workspace, run_id, fires=FireIntentStore(default_state_dir())):
+    if is_governed_run(workspace, run_id, fires=readonly_fire_store(default_state_dir())):
         typer.echo(
             f"WARNING: run {run_id} is governed by a schedule; --cost-cap-usd replaces its cap "
             "and bypasses the schedule's bounded resume (use `ao schedule resume`).",

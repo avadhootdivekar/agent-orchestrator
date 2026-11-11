@@ -330,10 +330,10 @@ def test_render_usage_no_digest_no_windows_is_just_the_header() -> None:
 
 def test_render_usage_paused_lines() -> None:
     paused = [
-        {"run_id": "r1", "cost_usd": 3.0, "cap_usd": 2.0, "overshoot_usd": 1.0,
-         "expires_at": "2026-11-11T13:00:00+00:00"},
-        {"run_id": "r2", "cost_usd": 1.5, "cap_usd": None, "overshoot_usd": 0.0,
-         "expires_at": None},
+        {"run_id": "r1", "cost_usd": 9.0, "engine_cost_usd": 3.0, "cap_usd": 2.0,
+         "overshoot_usd": 1.0, "expires_at": "2026-11-11T13:00:00+00:00"},
+        {"run_id": "r2", "cost_usd": 1.5, "engine_cost_usd": 1.5, "cap_usd": None,
+         "overshoot_usd": 0.0, "expires_at": None},
     ]  # fmt: skip
     lines = render_usage({"schedules": [_sched(paused=paused)]}).splitlines()
     assert (

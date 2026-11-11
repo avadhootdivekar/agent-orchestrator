@@ -164,6 +164,18 @@ def test_row_terminal_overshoot_is_reported(tmp_path: Path) -> None:
     assert r.charge(r.fire("a", run="r")).overshoot_usd == 0.5
 
 
+def test_row_terminal_overshoot_is_on_the_engine_metric_not_summary_inclusive(
+    tmp_path: Path,
+) -> None:
+    """REVIEW G-14: Charge.overshoot_usd agrees with the G-7 event / paused_row (engine cost - cap);
+    summary cost inflates the charge but never the overshoot."""
+    r = Rig(tmp_path)
+    r.state("r", "failed", [(2.5, True, 0, "failed")])
+    r.summary("r", 1.0)
+    c = r.charge(r.fire("a", run="r"))
+    assert c.actual_usd == 3.5 and c.overshoot_usd == 0.5  # not 3.5 - 2.0
+
+
 def test_row_terminal_partial_open_window_charged_max_closed_observed(tmp_path: Path) -> None:
     r = Rig(tmp_path)
     r.state("r", "failed", [(0.5, True, 0, "succeeded"), (0.0, False, 0, "failed")])

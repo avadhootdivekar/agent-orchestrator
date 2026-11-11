@@ -51,7 +51,7 @@ from ..run_options import validate_cost_cap_usd
 from ..schedules.errors import ScheduleFileError
 from ..schedules.models import ScheduleFile
 from ..schedules.store import ScheduleStore
-from ..schedules.usage_view import build_usage_doc, paused_records, paused_row
+from ..schedules.usage_view import paused_records, paused_row, usage_windows
 from ..service.capped_resume import (
     ResumeRefused,
     default_add,
@@ -62,7 +62,6 @@ from ..service.capped_resume import (
 from ..service.fire_store import (
     SCHEDULES_SUBDIR,
     STATE_FILENAME,
-    FireIntentStore,
     ScheduleEventLog,
     ScheduleStateStore,
     readonly_fire_store,
@@ -842,7 +841,7 @@ class DashboardService:
         except (TypeError, ValueError) as exc:
             raise DashboardValidationError(f"invalid cost_cap_usd: {exc}") from exc
         if run_id is not None:
-            fires = FireIntentStore(self._schedule_state_dir_path())
+            fires = readonly_fire_store(self._schedule_state_dir_path())
             if is_governed_run(self.workspace_root, run_id, fires=fires):
                 rec = fires.find_by_run_id(self.workspace_root, run_id)
                 sid = rec.schedule_id if rec is not None else "?"
@@ -1338,16 +1337,15 @@ class DashboardService:
         sdir = self._schedule_state_dir_path()
         # Shared builder (same windows + ledger as `ao schedule usage`); the ledger's store is
         # read-only so a dashboard GET can never write fire records.
-        shared = build_usage_doc(
-            workspace=self.workspace_root,
-            at=instant,
-            generated_at=instant,
-            bindings=[binding],
-            ledger=UsageLedger(readonly_fire_store(sdir)),
-            fires=readonly_fire_store(sdir),
-            events=ScheduleEventLog(sdir),
-        )
-        windows = {w["period"]: w for w in shared["schedules"][0]["windows"]}
+        windows = {
+            w["period"]: w
+            for w in usage_windows(
+                workspace=self.workspace_root,
+                at=instant,
+                binding=binding,
+                ledger=UsageLedger(readonly_fire_store(sdir)),
+            )
+        }
         skips = self._governance_skips(schedule_id)
         rows = []
         for period, w in windows.items():
@@ -1489,7 +1487,7 @@ class DashboardService:
                     "run_id": rec.run_id,
                     "paused_at": shared["paused_at"],
                     "pause_expires_at": shared["expires_at"],
-                    "spent_usd": shared["cost_usd"],
+                    "spent_usd": shared["engine_cost_usd"],  # same metric as overshoot (G-13)
                     "cap_usd": shared["cap_usd"],
                     "overshoot_usd": shared["overshoot_usd"],
                     "default_add_usd": default_add(binding),
