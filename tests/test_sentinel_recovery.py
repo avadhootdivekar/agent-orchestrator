@@ -628,6 +628,42 @@ def test_register_task_copies_stuck_hints_from_spec() -> None:
     assert (ts.stuck_cohort, ts.expected_minutes, ts.no_stuck_kill) == ("c", 7, True)
 
 
+def test_default_spec_stuck_factor_never_fires() -> None:
+    """Pins docs-md/guide-sentinel.md: under DEFAULT settings (veto on, window = idle_kill_minutes)
+    the duration trigger is inert: output inside the window is vetoed, silence past it is idle."""
+    spec = SentinelRecoverySpec()  # all defaults: idle 15 min, stuck_factor 3, veto on
+    assert spec.stuck_activity_veto is True and spec.stuck_veto_minutes is None
+    assert spec.idle_kill_minutes == 15 and spec.stuck_factor == 3.0
+    for ago in (0, 1, 7, 14.9):  # recent output -> vetoed, never stuck_factor
+        assert _stuck(_d2_state(None), spec, ago) is None
+    for ago in (15, 16, 120):  # silence past idle window -> idle wins over stuck_factor
+        assert _stuck(_d2_state(None), spec, ago) == sentinel_tick.REASON_IDLE
+    # explicit baseline is equally inert under defaults
+    st = _d2_state(None, {"expected_minutes": 1.0})
+    assert _stuck(st, spec, 1) is None
+    # the documented escape hatches restore a pure duration kill
+    off = SentinelRecoverySpec(stuck_activity_veto=False)
+    assert _stuck(_d2_state(None), off, 1) == sentinel_tick.REASON_STUCK
+    short = SentinelRecoverySpec(stuck_veto_minutes=5)
+    assert _stuck(_d2_state(None), short, 10) == sentinel_tick.REASON_STUCK
+
+
+def test_engine_wires_stuck_hints_from_taskspec_at_dispatch(tmp_path: Path) -> None:
+    """D2 hint wiring through Orchestrator (engine -> register_task(task=...))."""
+    store, rs, reposets, agents = _setup(tmp_path)
+    orch = Orchestrator(
+        FakeExecutor(), store, rs, max_parallel=1, clock=StepClock(), sentinel=_settings()
+    )
+    wf = _wf(1, stuck_cohort="sweep", expected_minutes=7, no_stuck_kill=True)
+    state = orch.run(wf, reposets, agents)
+    ts = state.tasks["t0"]
+    assert state.status == "succeeded"
+    assert (ts.stuck_cohort, ts.expected_minutes, ts.no_stuck_kill) == ("sweep", 7, True)
+    # and they persisted to run state on disk
+    saved = rs.load(state.run_id).tasks["t0"]
+    assert (saved.stuck_cohort, saved.expected_minutes, saved.no_stuck_kill) == ("sweep", 7, True)
+
+
 def test_repeat_kills_of_one_task_are_one_systemic_incident() -> None:
     spec = SentinelRecoverySpec(systemic_kill_alarm=3, max_recovery_kills_per_task=5)
     st = _d2_state(None)
