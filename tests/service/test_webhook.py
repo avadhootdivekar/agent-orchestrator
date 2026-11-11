@@ -933,6 +933,46 @@ def test_n1_downgrade_stays_wrong_scheme_even_when_the_nonce_cache_is_empty(
     h.events.clear()
     r = h.client.post(f"/hooks/{h.slug}/hook", content=forged, headers=hdrs)
     assert r.status_code == 401
+    assert {f.get("reason") for _, f in h.events} == {"wrong_scheme"}
+    assert len(h.requests()) == 4  # nothing from the forged request was persisted
+
+
+def test_n1_github_binding_replay_is_409_until_evicted_then_accepted(tmp_path: Path) -> None:
+    """Eviction genuinely happens (tiny cache, ``github`` binding where the body-only signature has
+    no timestamp bound): the replay is 409 while its nonce is cached and 202 once evicted. This
+    pins that the cache is the *only* barrier there -- hence ``nonce_capacity`` sizing (next)."""
+    h = Harness(
+        tmp_path,
+        wh_binding(scheme="github", rate_per_minute=100000),
+        nonce_cache_factory=lambda rate: NonceCache(4),
+    )
+    hdrs = {"X-GitHub-Delivery": "d-0"}
+    assert h.post(sig_header="X-Hub-Signature-256", headers=hdrs).status_code == 202
+    assert h.post(sig_header="X-Hub-Signature-256", headers=hdrs).status_code == 409  # cached
+    for i in range(3):  # 2 keys each -> pushes d-0's two keys out of the 4-slot LRU
+        h.post(
+            body_for(str(i)),
+            sig_header="X-Hub-Signature-256",
+            headers={"X-GitHub-Delivery": f"e{i}"},
+        )
+    assert h.post(sig_header="X-Hub-Signature-256", headers=hdrs).status_code == 202  # evicted
+
+
+def test_n1_github_binding_default_cache_holds_every_admittable_nonce(tmp_path: Path) -> None:
+    """With the real ``nonce_capacity`` sizing, a burst the bucket admits (rate=5) cannot evict
+    the first delivery: its replay is still 409, and traffic past the burst is 429, not stored."""
+    h = Harness(tmp_path, wh_binding(scheme="github", rate_per_minute=5))
+    first = {"X-GitHub-Delivery": "d-0"}
+    assert h.post(sig_header="X-Hub-Signature-256", headers=first).status_code == 202
+    for i in range(4):
+        r = h.post(
+            body_for(str(i)),
+            sig_header="X-Hub-Signature-256",
+            headers={"X-GitHub-Delivery": f"e{i}"},
+        )
+        assert r.status_code == 202
+    assert h.post(body_for("x"), sig_header="X-Hub-Signature-256").status_code == 429
+    assert h.post(sig_header="X-Hub-Signature-256", headers=first).status_code == 409
 
 
 def test_n1_pinned_scheme_rejects_the_other_header_in_both_directions(
@@ -1000,46 +1040,6 @@ def test_n3_other_schedule_traffic_cannot_evict_a_replayable_entry(tmp_path: Pat
     assert h.post(sid="a").status_code == 409  # a's own entry is still there
 
 
-    assert {f.get("reason") for _, f in h.events} == {"wrong_scheme"}
-    assert len(h.requests()) == 4  # nothing from the forged request was persisted
-
-
-def test_n1_github_binding_replay_is_409_until_evicted_then_accepted(tmp_path: Path) -> None:
-    """Eviction genuinely happens (tiny cache, ``github`` binding where the body-only signature has
-    no timestamp bound): the replay is 409 while its nonce is cached and 202 once evicted. This
-    pins that the cache is the *only* barrier there -- hence ``nonce_capacity`` sizing (next)."""
-    h = Harness(
-        tmp_path,
-        wh_binding(scheme="github", rate_per_minute=100000),
-        nonce_cache_factory=lambda rate: NonceCache(4),
-    )
-    hdrs = {"X-GitHub-Delivery": "d-0"}
-    assert h.post(sig_header="X-Hub-Signature-256", headers=hdrs).status_code == 202
-    assert h.post(sig_header="X-Hub-Signature-256", headers=hdrs).status_code == 409  # cached
-    for i in range(3):  # 2 keys each -> pushes d-0's two keys out of the 4-slot LRU
-        h.post(
-            body_for(str(i)),
-            sig_header="X-Hub-Signature-256",
-            headers={"X-GitHub-Delivery": f"e{i}"},
-        )
-    assert h.post(sig_header="X-Hub-Signature-256", headers=hdrs).status_code == 202  # evicted
-
-
-def test_n1_github_binding_default_cache_holds_every_admittable_nonce(tmp_path: Path) -> None:
-    """With the real ``nonce_capacity`` sizing, a burst the bucket admits (rate=5) cannot evict
-    the first delivery: its replay is still 409, and traffic past the burst is 429, not stored."""
-    h = Harness(tmp_path, wh_binding(scheme="github", rate_per_minute=5))
-    first = {"X-GitHub-Delivery": "d-0"}
-    assert h.post(sig_header="X-Hub-Signature-256", headers=first).status_code == 202
-    for i in range(4):
-        r = h.post(
-            body_for(str(i)),
-            sig_header="X-Hub-Signature-256",
-            headers={"X-GitHub-Delivery": f"e{i}"},
-        )
-        assert r.status_code == 202
-    assert h.post(body_for("x"), sig_header="X-Hub-Signature-256").status_code == 429
-    assert h.post(sig_header="X-Hub-Signature-256", headers=first).status_code == 409
 def test_n4_same_body_two_timestamps_same_second_both_launch(tmp_path: Path) -> None:
     """C1: with no delivery id the fallback discriminator must not collide for a re-signed body."""
     env = env_for(tmp_path, [wh_binding(rate_per_minute=1000, overlap="allow")])
