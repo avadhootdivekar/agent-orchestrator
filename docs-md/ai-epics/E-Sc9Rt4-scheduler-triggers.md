@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → dev-epic agent (delivery)
 - Created: 2026-09-06
 - Last Updated: 2026-11-11
-- Status: In progress — MVP and most of MVP-2 landed on `ad/enhancements-10nov` (2026-11-11); reconciled 2026-11-11 (w24-07): 14 tasks = 7 Done, 7 not Done (`T-Se4Bk5` in progress; `T-Sv5Hb3`, `T-Wh9Kv1`, `T-Te3Qw8`, `T-Dc6Zr2` partial; `T-Un0Lm6`, `T-Ap1Xs3` awaiting review), so the epic is NOT closed (see Close-out). Authoritative per-task table: `meta/tickets/E-Sc9Rt4-scheduler-triggers/STATUS.md`
+- Status: In progress — MVP and most of MVP-2 landed on `ad/enhancements-10nov` (2026-11-11); reconciled 2026-11-11 (w35-03): 14 tasks = 11 Done, 3 not Done (`T-Se4Bk5` in progress; `T-Te3Qw8`, `T-Dc6Zr2` partial), so the epic is NOT closed (see Close-out). Authoritative per-task table: `meta/tickets/E-Sc9Rt4-scheduler-triggers/STATUS.md`
 - Origin ask: user request. `Trigger(type=manual|cron|event)` is modelled and validated but
   nothing executes a schedule (ROADMAP §1, §3.2). Decisions D1/D3/D4/D5/D8 in ADR-0014 were
   locked by the user before design work started and are not re-litigated.

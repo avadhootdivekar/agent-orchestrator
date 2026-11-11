@@ -2,16 +2,16 @@
 
 - ID: `E-Sc9Rt4-scheduler-triggers`
 - Updated At: 2026-11-11
-- State: In Progress (10 of 14 tasks Done; 4 NOT Done; not closed)
+- State: In Progress (11 of 14 tasks Done; 3 NOT Done: `T-Te3Qw8`, `T-Se4Bk5`, `T-Dc6Zr2`; not closed)
 - Owner: architect agent (design) → dev-epic agent (delivery)
 
-> **Update 2026-11-11 (reviewer, unit `w28-02-a1-until-rereview`):** `T-Un0Lm6` re-reviewed after `ed84cb4` and marked **Done**. Rollup now **10 Done / 4 NOT Done**; the table below has that row updated, and its other rows are unchanged.
+> **Update 2026-11-11 (reviewer, unit `w28-02-a1-until-rereview`):** `T-Un0Lm6` re-reviewed after `ed84cb4` and marked **Done**. The w28-02 count of "10 Done / 4 NOT Done" was an arithmetic slip: the table below lists 11 Done rows and 3 NOT Done rows; corrected to **11 / 3** by w35-03.
 
 ## Task count: charter said 16, 14 exist (w34-03, developer; docs only)
-The charter's ask A1 says "All 16 tasks"; `EPIC.md` and the directory contain **14** task dirs (no 15th/16th ticket was ever created; the "16" appears to be a charter miscount). Present: `T-Sd1Kq7`, `T-Fr2Nx8`, `T-Ev3Qm5`, `T-Ri7Dz2`, `T-Lp4Wt6`, `T-Cl6Jn9`, `T-Fw8Gp4`, `T-Sv5Hb3`, `T-Wh9Kv1`, `T-Un0Lm6`, `T-Ap1Xs3` (each header State: Done) and the three marked unfinished in their tickets: `T-Te3Qw8` (Partial), `T-Se4Bk5` (In Progress), `T-Dc6Zr2` (Partial). Note: counting the task headers gives 11 Done / 3 NOT Done, while the rollup line above says 10 / 4; the per-task headers are the primary record and the rollup count is not yet reconciled with them (not changed here). Stale leftover `- State:` lines in `T-Ap1Xs3`, `T-Sv5Hb3`, `T-Un0Lm6` (two) and `T-Wh9Kv1` are now labeled as history.
+The charter's ask A1 says "All 16 tasks"; `EPIC.md` and the directory contain **14** task dirs (no 15th/16th ticket was ever created; the "16" appears to be a charter miscount). Present: `T-Sd1Kq7`, `T-Fr2Nx8`, `T-Ev3Qm5`, `T-Ri7Dz2`, `T-Lp4Wt6`, `T-Cl6Jn9`, `T-Fw8Gp4`, `T-Sv5Hb3`, `T-Wh9Kv1`, `T-Un0Lm6`, `T-Ap1Xs3` (each header State: Done) and the three marked unfinished in their tickets: `T-Te3Qw8` (Partial), `T-Se4Bk5` (In Progress), `T-Dc6Zr2` (Partial). Reconciled by w35-03: the 14 task headers give 11 Done / 3 NOT Done and the rollup line and `EPIC.md` now say the same. Stale leftover `- State:` lines in `T-Ap1Xs3`, `T-Sv5Hb3`, `T-Un0Lm6` (two) and `T-Wh9Kv1` are now labeled as history.
 
 ## Rollup 2026-11-11, re-synced after waves 25-26 (w27-02, developer; docs only, branch `ad/enhancements-10nov`, HEAD `c4e3871`)
-This table is the authoritative rollup and matches `EPIC.md`'s Task List and each task's `STATUS.md`/`TASK.md` header. It supersedes the w24-07 table below (kept as history). **14 tasks: 9 Done, 5 NOT Done. Epic NOT closed.**
+This table is the authoritative rollup and matches `EPIC.md`'s Task List and each task's `STATUS.md`/`TASK.md` header. It supersedes the w24-07 table below (kept as history). **14 tasks: 11 Done, 3 NOT Done (corrected by w35-03 from the older 9/5 and 10/4 figures; see the rollup line below). Epic NOT closed.**
 
 | Task | State | Open / unfinished |
 |---|---|---|
@@ -30,7 +30,7 @@ This table is the authoritative rollup and matches `EPIC.md`'s Task List and eac
 | `T-Se4Bk5` security gate | **NOT Done** - In Progress | Closed since w24: R-2b (`3447aff`), GATE-1 (`1396dac`), usage_view 100 %. Still open: whole-tree pytest/ruff/mypy + UI gates on a clean tree; `REVIEW.md` still says R-2 open / pre-dates fixes; TEST-QUALITY FU-8..11 residue (O_NOFOLLOW swap race, jitter flake remainder); S-7 accepted |
 | `T-Dc6Zr2` docs | **NOT Done** - Partial | HLD/ADR-0025 re-sync done w25-06 (`57c8de4`; `[wt]` markers and stale `--watch` wording removed); still open: epic close-out, AC10 file-by-file spot-check of the state-dir layout and the dashboard panel at runtime, and a doc update when M1/W-1 are fixed |
 
-**Rollup: 14 tasks = 10 Done, 4 NOT Done (1 In Progress, 2 Partial, 1 Implemented-with-open-review-findings) — T-Ap1Xs3 moved to Done by w26-08.**  Earlier figure (w27-02): 9 Done, 5 NOT Done. Epic: In Progress, NOT closed.** Critical path to close: fix `until` M1 / dashboard W-1 (one shared engine-routed restart request), re-run the whole gate on a clean tree and update `T-Se4Bk5` `REVIEW.md`, finish `T-Te3Qw8` AC6/AC8a/AC17, then `T-Dc6Zr2` close-out. Unfinished product items: comment-preserving `save` (ruamel), persistent webhook nonces (S-7), the restart-of-completed-schedule fix. The live engine/UI is unchanged until a human runs the install flow (not run by any unit).
+**Rollup: 14 tasks = 11 Done, 3 NOT Done (`T-Se4Bk5` In Progress, `T-Te3Qw8` Partial, `T-Dc6Zr2` Partial). `T-Ap1Xs3` moved to Done by w26-08 and `T-Un0Lm6` by w28-02; earlier figures 9/5 (w27-02) and 10/4 (w28-02) were stale. Verified w35-03 against every task header `- State:` line, the table above, and commits `ed84cb4`, `4ec01b4`, `8d0b4ee`, `3447aff`, `1396dac`, `57c8de4`, `5fc9f6f` in `git log`. Epic: In Progress, NOT closed.** Critical path to close: (`until` M1 / dashboard W-1 already fixed by `ed84cb4`) re-run the whole gate on a clean tree and update `T-Se4Bk5` `REVIEW.md`, finish `T-Te3Qw8` AC6/AC8a/AC17, then `T-Dc6Zr2` close-out. Unfinished product items: comment-preserving `save` (ruamel), persistent webhook nonces (S-7), the restart-of-completed-schedule fix. The live engine/UI is unchanged until a human runs the install flow (not run by any unit).
 
 ## Reconciliation 2026-11-11 (w24-07, developer; SUPERSEDED by the w27-02 rollup above; docs only, branch `ad/enhancements-10nov`, HEAD `1d5c6f9`)
 Every task STATUS/TASK now carries a dated Reconciliation block; this table is the authoritative rollup and matches `EPIC.md`'s Task List. The charter's "16 tasks" is wrong: **14**. Older "This update" bullets below pre-date it and are history, not current state.
