@@ -2,7 +2,7 @@
 
 - ID: `T-Un0Lm6-until-termination`
 - Updated At: 2026-11-11
-- State: Implemented — awaiting review (all 14 ACs met, no independent review recorded)
+- State: Implemented — reviewed 2026-11-11 (w26-07), NOT Done: M1 restart-under-service open (see REVIEW.md)
 - Owner: developer agent
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
@@ -59,3 +59,9 @@
 - Added fixed-clock tests: `test_unreadable_gate_without_event_sink_is_silent_and_never_satisfied` (invalid JSON + undecodable bytes) and `test_plain_schedule_without_until_fires_through_the_engine`. `test_until.py`: 45 passed (was 40+2 param); ruff check/format clean.
 - `tests/service/test_fire_store.py::test_hld_event_table_is_complete` **passes at clean HEAD** (104 passed across both files). The earlier failure came from another unit's uncommitted `schedule_engine.py`/`fire_store.py` edits (event table out of sync with new emits) -- re-check when those land.
 - No src changes; no real bug found.
+
+## Review 2026-11-11 (By: reviewer · unit `w26-07-a1-until-review` · review only, no src changes)
+- Independent Opus review recorded in `REVIEW.md` (HEAD `57c8de4`, clean worktree; service+schedules 1352 passed, mypy clean).
+- Verdict: **Not Done.** M1 (major): `ao schedule enable` / dashboard Enable cannot restart a `completed` schedule while the engine runs (engine holds `engine.lock` for its lifetime; same-process flock also conflicts) — AC4 works only with the service stopped.
+- Should fix: W1 `until_unreadable` emitted every 15 s eval (no de-dup); W2 `max_runs` counts launches, not fires (wording). Minor: m1 `--until-equals=--5` uncaught ValueError; m2 AC6 text vs HLD; m3 gate read not via `read_regular_file`; m4 stale `queued_*` after completion.
+- State stays **Implemented — awaiting fixes (M1)**.
