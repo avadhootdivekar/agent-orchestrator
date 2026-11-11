@@ -2,7 +2,7 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress — NOT Done (R-2b, GATE-1, TQ-R2 closed by w27-05 re-review; NEW R-2c medium open: dashboard resume-capped route is a writable fire-store caller; then whole-tree + UI gate on a clean tip)
+- State: In Progress — NOT Done (R-2, R-2b, R-2c, GATE-1, TQ-R2 all closed; only the whole-tree + UI gate on a clean tip remains, pending a later wave)
 - Owner: reviewer agent (overseer w20-02)
 
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
@@ -226,3 +226,9 @@
     - On `c4e3871`: 4400 passed, and the perf tests 2 passed.
     - Not run: the whole `tests/` tree and the UI gates.
   - **Stale doc, not edited:** `docs-md/scheduler-triggers-hld.md:1584`. The file is dirty from another unit.
+
+## R-2c closure (By: developer · unit `w38-02-a1-secgate-r2c-close` · 2026-11-11 · docs only)
+- **R-2c CLOSED.** Verified on branch `ad/enhancements-10nov` at HEAD `d5ec21a`: fix is `55878de` (w31-01, `fix(governance): dashboard resume uses read-only store`, an ancestor of HEAD). `DashboardService.request_capped_resume` (`src/agent_orchestrator/ui/service.py:1502-1514`) builds `fires = readonly_fire_store(sdir)` and passes it as both `fires` and `UsageLedger(fires, ...)`; no writable `FireIntentStore` remains in that path (the other `ui/service.py` fire-store callers, lines 844/1346/1470, are also read-only).
+- Test run (real): `uv run pytest -q tests/ui/test_schedule_usage_api.py -k never_writes_fire_records` -> **2 passed** (`test_resume_capped_request_never_writes_fire_records` and `test_usage_api_never_writes_fire_records`).
+- Cross-ref: E-Qp4Zm8 `REVIEW.md` G-1 (FIXED w31-01).
+- **Still open / pending:** the whole-tree `pytest`/`ruff`/`mypy` + UI gates on a clean tip (not run here; the tree has other units' uncommitted edits). Do not mark Done until that gate passes (later wave).

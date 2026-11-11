@@ -680,3 +680,9 @@ Not blocking the gate: R-3 remainder (renames/clock seam), R-5, R-6, TQ-R2.
 - [x] Severities are calibrated: R-2c is medium, the same class and trigger as R-2b.
 - [x] Testing notes: mutations M1–M3 and the GATE-1 mutation, p7, p8, and the gate numbers.
 - [x] No product code changed. Only the probe and these notes.
+
+## Addendum 2026-11-11 — R-2c closed (unit `w38-02-a1-secgate-r2c-close`, docs only)
+- **R-2c is CLOSED**; the "OPEN, medium" lines above (and the gate row) are superseded by this note.
+- Evidence: commit `55878de` (w31-01) is in `ad/enhancements-10nov` (HEAD `d5ec21a`). `ui/service.py` `request_capped_resume` uses `readonly_fire_store(sdir)` for both the fires store and the `UsageLedger` (lines 1502-1514), the exact remedy this review named (p8: 33 passed with it).
+- Test: `uv run pytest -q tests/ui/test_schedule_usage_api.py -k never_writes_fire_records` -> 2 passed, including `test_resume_capped_request_never_writes_fire_records`.
+- Gate (T-Se4Bk5 Done): **still pending**. Only the whole-tree `pytest`/`ruff`/`mypy` + UI gates on a clean tip remain; they were not run by this unit.
