@@ -154,6 +154,7 @@
     Aggregate for the two packages 96 %.
   - Whole-tree `pytest -q`, `ruff` and `mypy src` were **not** re-run by this unit: the shared tree is dirty with other
     units' edits, so a whole-tree number would not describe committed code. The last clean numbers are the w22 ones above.
+- 2026-11-11 (developer, w24-02): REVIEW R-3 renames closed in 7e99458: `governance_gate.read_regular_file`, `supervisor.slug_for_root`, public CLI clock `schedules.cli.now_utc` (was `_now`; `now` avoided: shadowed by locals); call sites/tests/HLD updated, no behaviour change. ruff/mypy clean on touched files; tests/service + tests/schedules 1314 passed. Untouched (not from this branch): format drift in `_build_info.py`; E501 in another unit's new `tests/service/test_schedule_engine_fu8.py`.
 - **AC16 synced:** EPIC.md and the epic STATUS.md updated; ADR-0014 gained a late-gate section. AC2's wording
   "`ALLOWED_OPTIONS` unchanged" is **superseded**: `cost_cap_usd` was added to the registry-derived `ALLOWED_OPTIONS` by the
   governance epic. It is deliberate and guarded (still not in `SCHEDULE_RUN_ARG_NAMES`, so a schedule file cannot set it).
