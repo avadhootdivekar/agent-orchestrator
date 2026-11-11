@@ -2,7 +2,7 @@
 
 - ID: `T-Wh9Kv1-webhook-ingress`
 - Updated At: 2026-11-11
-- State: Partial — core + CLI flags delivered; github-scheme replay bound and combined-auth test open
+- State: Partial — all ACs met incl. AC1 combined auth test and AC7/AC8 github-scheme replay gate; only persistent nonces (T-Se4Bk5 / ADR) open
 - Owner: developer agent
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
@@ -51,4 +51,12 @@
 - **AC15** `tests/schedules/test_webhook_cli_e2e.py`: `ao schedule add --webhook` -> signed POST through the real listener app with the real registry lookup -> `ao schedule daemon --once` -> exactly one fire intent and a real run directory, request file consumed, second tick fires 0, replay 409; a bad signature never reaches the daemon (all through `CliRunner`, fixed clock).
 - Evidence: `test_webhook.py` 67 tests (15 new, each mutation-checked: scheme pin, fallback discriminator, ambient deny-list, lookup log, per-schedule nonce scope, id digest, and header-deadline timer all killed), `test_webhook_listener.py` 3, `test_webhook_cli_e2e.py` 10, wiring tests updated; `tests/service tests/schedules`: 1142 passed, 3 failed (1 pre-existing/other-unit: `test_fire_store::test_hld_event_table_is_complete` for `schedule.governance.resumed|pause_expired|resume_refused` from w18-01's uncommitted work; the other 2 were mine and are fixed: stubbed-uvicorn fixture now preloads the real h11 module). `ruff check .`, `mypy src` clean.
 - Still open: AC1 combined hub-auth + webhook test; persistent nonces (T-Se4Bk5); T-Dc6Zr2 must document `scheme`, `AO_WEBHOOK_ALLOWED_HOSTS`, JSON content type, and the proxy requirement.
+  By: developer · Role: developer · Date: 2026-11-11
+
+## Update 2026-11-11 — AC7/AC8 github-scheme replay gate + AC1 combined auth test (w26-06)
+- **AC7 (github scheme)**: GitHub signs the body only and sends no timestamp, so there is still no *signed* time bound. `verify_delivery` now applies the AC7 window to an **optional** `X-AO-Timestamp` on `scheme: github` bindings: present + malformed -> 401 `bad_timestamp`; present + `abs(now-ts) > REPLAY_WINDOW_SECONDS` -> 401 `stale`; absent -> accepted (GitHub's normal form). It is unsigned (not in the HMAC), so it is a gate for stamping senders/proxies only and is checked *after* the HMAC (no oracle). Module "accepted limitations" docstring updated to say exactly this.
+- **AC8 (github scheme)**: unchanged mechanism, now pinned by tests: replay with a forged delivery id + fresh stamp is still 409 (body-hash nonce); absent timestamp -> 202 then 409 on replay.
+- **AC1**: `test_ac1_signed_webhook_succeeds_while_hub_auth_is_enforced` builds the real auth-enabled hub (`tests/auth/helpers/hub.make_hub`): anonymous hub request denied, the webhook app accepts a signed delivery with no cookie, rejects a badly signed one, and carries no `AuthMiddleware`.
+- **Still open (not built, deliberately)**: persistent nonces — the github scheme has no *signed* replay bound, so a restart (or LRU eviction) still reopens replay of a captured delivery; needs an ADR (T-Se4Bk5 S-7). Non-AC: L4 mtime caching, `webhook.expired` event.
+- Evidence: 9 new tests in `tests/service/test_webhook.py` (stale/future/malformed stamp, in-window, absent, forged-id replay, HMAC-before-window ordering, ao-window edge, AC1); mutation (github stamp ignored) killed 4 tests. `test_webhook*.py` + `test_webhook_cli_e2e.py`: 109 passed. `ruff check`/`format --check` clean; `mypy src` clean (233 files).
   By: developer · Role: developer · Date: 2026-11-11

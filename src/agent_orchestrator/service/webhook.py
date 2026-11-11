@@ -23,8 +23,10 @@ Accepted limitations (hand-off to ``T-Se4Bk5``)
   ``"{ts}." + body``, which has no timestamp check.
 * Replay defence. ``ao``: the signature covers the timestamp, which must be within
   ``REPLAY_WINDOW_SECONDS``, so a captured delivery is dead after that window. ``github``: the
-  signature covers the body only, so there is **no time bound**; the only defence is the nonce
-  cache below. Both are de-duplicated on a per-schedule hash of the *signed material*, so a
+  signature covers the body only, so there is **no signed time bound**; the defence is the nonce
+  cache below, plus an optional, *unsigned* ``X-AO-Timestamp`` (stale or malformed -> 401) that
+  only constrains senders/proxies that choose to stamp. Both are de-duplicated on a per-schedule
+  hash of the *signed material*, so a
   captured delivery cannot be replayed by changing the (unsigned) delivery-id header; the delivery
   id is a second nonce.
 * The nonce cache and per-schedule token bucket are **in memory** and reset on restart, so a
@@ -451,14 +453,25 @@ def verify_delivery(
         if not stamp_raw.isascii() or not stamp_raw.isdigit():
             # checked before the HMAC only for shape; a forged stamp still fails the signature
             raise WebhookAuthError("bad_timestamp", 401)
+    # ``github`` has no signed timestamp (GitHub sends none), but an *optional* ``X-AO-Timestamp``
+    # (e.g. stamped by a trusted proxy) is held to the same replay window (AC7). It is unsigned, so
+    # it is an extra gate only -- never the sole replay defence -- and is not part of the HMAC.
+    optional_stamp = None
+    if scheme == "github":
+        optional_stamp = (headers.get(TIMESTAMP_HEADER) or "").strip() or None
+        if optional_stamp is not None and not (
+            optional_stamp.isascii() and optional_stamp.isdigit()
+        ):
+            raise WebhookAuthError("bad_timestamp", 401)
     expected = compute_signature(secret, body, stamp_raw)
     if received is None or not hmac.compare_digest(
         received.strip().encode("utf-8", "replace"), expected.encode("ascii")
     ):
         raise WebhookAuthError("bad_signature", 401)
-    if stamp_raw is not None:
+    window_stamp = stamp_raw if stamp_raw is not None else optional_stamp
+    if window_stamp is not None:
         try:
-            skew = abs(now.timestamp() - int(stamp_raw))
+            skew = abs(now.timestamp() - int(window_stamp))
         except (ValueError, OverflowError):
             raise WebhookAuthError("bad_timestamp", 401) from None
         if skew > REPLAY_WINDOW_SECONDS:

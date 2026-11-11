@@ -1122,3 +1122,91 @@ def test_n6_lookup_failure_is_logged_once_without_content_and_fails_closed(tmp_p
         )
         assert look(slug, "x") is None
         assert events == [("webhook.lookup_failed", {"source": source, "error": err})]
+
+
+# -- github-scheme replay bound (AC7/AC8) and combined hub-auth + webhook (AC1) -------------------
+
+
+def _gh_stamped(h: Harness, stamp: str, body: bytes = BODY, delivery: str = "d-1") -> Any:
+    return h.post(
+        body,
+        sig_header="X-Hub-Signature-256",
+        headers={"X-AO-Timestamp": stamp, "X-GitHub-Delivery": delivery},
+    )
+
+
+def test_github_scheme_optional_timestamp_inside_window_accepted(gh: Harness) -> None:
+    assert _gh_stamped(gh, str(int(gh.clock.now.timestamp()) - 299)).status_code == 202
+    assert len(gh.requests()) == 1
+
+
+@pytest.mark.parametrize("skew", [301, -301, 10**6])
+def test_github_scheme_stale_or_future_timestamp_is_401(gh: Harness, skew: int) -> None:
+    r = _gh_stamped(gh, str(int(gh.clock.now.timestamp()) - skew))
+    assert r.status_code == 401
+    assert {f.get("reason") for _, f in gh.events} == {"stale"}
+    assert gh.requests() == []
+
+
+@pytest.mark.parametrize("stamp", ["abc", "-5", "1.5", "9" * 400])
+def test_github_scheme_malformed_timestamp_is_401(gh: Harness, stamp: str) -> None:
+    assert _gh_stamped(gh, stamp).status_code == 401
+    assert gh.requests() == []
+
+
+def test_github_scheme_without_timestamp_still_accepted_then_409_on_replay(gh: Harness) -> None:
+    """GitHub sends no timestamp: absence is fine; the nonce cache is the (only) replay defence."""
+    hdr = {"X-GitHub-Delivery": "d-9"}
+    assert gh.post(sig_header="X-Hub-Signature-256", headers=hdr).status_code == 202
+    assert gh.post(sig_header="X-Hub-Signature-256", headers=hdr).status_code == 409
+
+
+def test_github_scheme_replay_with_forged_id_and_fresh_stamp_is_409(gh: Harness) -> None:
+    """AC8: changing the unsigned delivery id and adding a fresh stamp does not defeat the
+    body-hash nonce."""
+    assert (
+        gh.post(sig_header="X-Hub-Signature-256", headers={"X-GitHub-Delivery": "a"}).status_code
+        == 202
+    )
+    r = _gh_stamped(gh, str(int(gh.clock.now.timestamp())), delivery="b")
+    assert r.status_code == 409
+
+
+def test_github_scheme_bad_signature_with_stale_stamp_reports_bad_signature(gh: Harness) -> None:
+    """The HMAC is checked before the window, so a stale stamp is not an oracle for a bad key."""
+    r = gh.post(
+        sig_header="X-Hub-Signature-256",
+        secret="wrong-secret-value",
+        headers={"X-AO-Timestamp": "1"},
+    )
+    assert r.status_code == 401
+    assert {f.get("reason") for _, f in gh.events} == {"bad_signature"}
+
+
+def test_ao_scheme_replay_bound_unchanged_at_window_edge(h: Harness) -> None:
+    now = int(h.clock.now.timestamp())
+    assert h.post(headers={"X-AO-Timestamp": str(now - 300)}).status_code == 202
+    assert h.post(body_for("x"), headers={"X-AO-Timestamp": str(now - 301)}).status_code == 401
+
+
+def test_ac1_signed_webhook_succeeds_while_hub_auth_is_enforced(tmp_path: Path) -> None:
+    """AC1 (F18), combined: the real auth-enabled hub app refuses an anonymous request, while the
+    webhook app -- same process, no session cookie -- accepts a correctly signed delivery and
+    still refuses a badly signed one. HMAC is the webhook's whole auth."""
+    from tests.auth.helpers.core import FakeClock
+    from tests.auth.helpers.hub import make_hub
+
+    (tmp_path / "hub").mkdir()
+    (tmp_path / "wh").mkdir()
+    hub = make_hub(tmp_path / "hub", FakeClock())
+    anon = hub.client.get("/api/service/status")
+    assert anon.status_code in (401, 403)  # hub auth is genuinely on and denies by default
+    assert not hub.client.cookies
+
+    h = Harness(tmp_path / "wh")
+    assert not h.client.cookies
+    assert h.post().status_code == 202  # signed, no cookie: accepted despite hub auth being on
+    assert h.post(body_for("bad"), secret="not-the-secret").status_code == 401
+    assert len(h.requests()) == 1
+    # the hub's session gate did not leak onto the webhook app
+    assert "AuthMiddleware" not in {m.cls.__name__ for m in h.app.user_middleware}  # type: ignore[attr-defined]
