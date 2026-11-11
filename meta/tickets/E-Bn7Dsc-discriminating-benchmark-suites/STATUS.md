@@ -6,6 +6,15 @@
 - Owner: Claude (manager) for avadhoot
 
 ## This update
+- By: Claude · Role: manager · Date: 2026-11-11 · Comment: **`T-Dw5Cal` Phase 1 done** ($33.06 of $100).
+  - Plain Sonnet 5.5 on 22 DeepSWE v1.1 tasks: 15 solved, 7 failed. All 7 failures are narrow (1-2 hidden
+    tests).
+  - Sets: `benchmarks/harbor/sets/deepswe-v1.1-sonnet-5.5.json`.
+  - The ao arm is verified on DeepSWE (3 tasks, parity clean). Single attempts: one gain, one loss, one tie,
+    at 3-6x the cost.
+  - Four harness defects fixed (inference-host allowlist, worktree commit before grading, ao tool parity,
+    budgeted runner).
+  - Phase 2 ($200 ask) and the T-Mw4Clo max_waves decision are with the owner.
 - By: Claude · Role: manager · Date: 2026-11-11 · Comment: **Follow-on `T-Dw5Cal-deepswe-calibration-and-comparison`
   opened** (owner ask: DeepSWE first pass for a solved regression set + unsolved grading set, $100; then the
   verified plain-vs-ao comparison; SWE-Marathon after). TB 2.1 is near saturated for current models (Vals:

@@ -6,7 +6,7 @@
 - Owner: Claude (manager) for avadhoot
 - Created: 2026-11-11
 - Last Updated: 2026-11-11
-- Status: In Progress (Phase 1a/1b running)
+- Status: In Progress (Phase 1 done; Phase 2 awaiting owner budget)
 - Estimate: Phase 0-1 < 1 day; Phase 2-3 sized after Phase 1
 - Follows: `T-Hb3Adp-bench-harbor-external` (the Harbor harness this task uses)
 
@@ -69,7 +69,26 @@ Classification (per task, 1c + 1a):
 - Record per task: reward, `partial`, f2p/p2p counts, $ and minutes, language, repo. Output:
   `benchmarks/harbor/sets/deepswe-v1.1-sonnet-5.5.json` (+ the job dirs under `/var/tmp/ao-harbor/jobs/`).
 
+Phase 1 outcome (2026-11-11, details in STATUS.md):
+- [x] 1a, 1b, 1c done. 22 tasks: 15 solved, 7 failed (all narrow).
+- [x] Sets file written: `sets/deepswe-v1.1-sonnet-5.5.json`.
+- [x] ao arm verified on 3 tasks, parity clean (`p1d`).
+- [x] Spend $33.06 of $100.
+- N was 20 (not 10-15): with `budgeted.py` the limit is enforced, so N was sized from the measured mean
+  ($0.81/attempt) instead of the worst case.
+
 ### Phase 2 - Comparison (budget proposed to the owner after Phase 1)
+Proposal (2026-11-11, from Phase 1 measurements):
+- Tasks: the 7-task grading set plus 5 regression tasks (seeded, language-stratified). 12 tasks.
+- Attempts: 3 fresh attempts per task per arm, so 36 attempts per arm.
+- Expected cost:
+  - plain about 36 x $0.85 = ~$31;
+  - ao about 36 x $4.3 = ~$155;
+  - **total ~$190**.
+- Ask: **$200**, enforced as a hard total limit by `budgeted.py` (worst case without it is 72 x $8).
+- Prerequisite: the max_waves / T-Mw4Clo decision (STATUS Risks).
+- With 7 grading tasks, the "~10 discordant tasks" bar below may not be reachable. Either report it as
+  directional, or widen the grading set first (calibrate 20 more tasks for ~$17).
 - FRESH attempts for both arms (selection-bias guard: never reuse the calibration attempts that defined the
   sets; tasks picked because plain Sonnet failed once would otherwise regress towards solved and flatter ao).
 - Grading set + a sample of the regression set, ~3 attempts per task per arm, same `AO_WHEEL_REF`, cap,

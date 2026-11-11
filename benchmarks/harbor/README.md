@@ -80,6 +80,12 @@ harbor view /var/tmp/ao-harbor/jobs        # browse trajectories
 | `datacurve/deep-swe-1-1` | 113 | 2 CPU, 8 GB, 90 min | ~5x larger patches than SWE-bench Pro, 5 languages; best candidate for spread |
 | `abundant/swe-marathon` | 20 | 4-8 CPU, 16-64 GB, 4-10 h | 5 tasks need a GPU (skip here: T400 4 GB). 15 CPU tasks; 16-32 GB each limits concurrency to ~2-3 on 62 GB |
 
+Calibration (T-Dw5Cal, 2026-11-11): plain Sonnet 5.5 solved 15 of 22 DeepSWE v1.1 tasks in one attempt each
+($0.81 and 6 agent minutes per attempt on average; all 7 failures were narrow, 1-2 hidden tests). Sets:
+`sets/deepswe-v1.1-sonnet-5.5.json` (`sets/build_sets.py`; sample via `sets/sample_deepswe.py`). Run pools
+with `budgeted.py` (hard total spend limit, resumable). DeepSWE: at most 2 lanes on this shared host (8 GB per
+container); public ECR may rate-limit anonymous pulls (retry the excluded task).
+
 Docker images are pulled or built per task (DeepSWE images are large); keep 60+ GB free under the
 Docker data-root. Harbor removes each trial's environment after the trial (`--delete`, the
 default; the smoke runs left no `hb__*` images behind); check `docker system df` between datasets.
