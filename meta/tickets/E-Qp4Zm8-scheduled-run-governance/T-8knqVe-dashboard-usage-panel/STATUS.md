@@ -19,6 +19,9 @@
 - Tests: `tests/ui` + `tests/auth` 3054 passed, 1 fail (the OpenAPI path-set pin, since fixed by adding the two new paths; re-run 14/14); new API tests 17 (`test_schedule_usage_api.py`) + 1 (`test_cost_cap_resume_guard_ltw88y.py`) + 1 auth; vitest 921 passed (6 new in `paused-runs.test.tsx`); `make ui-typecheck` clean; ruff/format/mypy clean on touched files.
 - **Still unmet**: AC5 overshoot display (the ledger does not expose overshoot per window); AC6 schedule filter on the feed UI not verified here; AC7 "feed filters" vitest case not added; no browser/e2e of the Resume button against a live daemon; `T-88wSLC` API-level e2e and `T-lTW88y` security pass on this POST are still to run. The paused list shows only `cap_state: paused` records (expired-and-swept ones disappear).
 
+## Docs sync 2026-11-11 (w28-05, docs only)
+- Verified against code: route `resume-capped` (`ui/app.py`), `GET .../paused-runs`, `PausedRuns.tsx`, `readonly_fire_store` in `ui/service.py` all present (`4f6bbc1`). **Unfinished, unchanged:** dashboard overshoot display (no `overshoot` in `ui/src` or `ui/service.py`; only `usage_view.py` CLI emits `overshoot_usd`), feed-filter vitest, live-session/e2e Resume. HLD §26.4 lists these.
+
 ## This update
 - 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: UNFINISHED. `GET /api/schedules/{id}/usage` (`ui/app.py`, `ui/service.py`, `ui/src/*`) is present only in the uncommitted working tree, built bundle assets deleted/regenerated there. Not reviewed. HLD §26.2.
 - Landed (w20-06): `GET /api/schedules/{id}/usage?at=` (404 unknown id, 400 malformed `at`; per-window runs used/max,

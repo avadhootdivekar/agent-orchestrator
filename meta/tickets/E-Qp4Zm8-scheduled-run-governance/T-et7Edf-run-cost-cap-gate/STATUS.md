@@ -5,6 +5,9 @@
 - State: Partial — AC17 (docstring + `ao status` xN) and AC12 line coverage now done; only cosmetic `fake_cost_script` fixture and AC10 full-suite byte check remain
 - Owner: TBD (assigned at sprint start)
 
+## Docs sync 2026-11-11 (w28-05)
+- Verified: `breakers.record_trip` docstring and `cli._tripped_breaker_lines` `xN` present (`e2971e4`). The "AC17 open" lines in the older reconciliation below are superseded. HLD §26/ADR-0025 D5 synced.
+
 ## Update 2026-11-11 (By: developer · Role: developer · unit `w26-04-a2-runcap-trailer-ac17`)
 - **AC17 done.** `breakers.record_trip` docstring now states the truth: it never latches; the registry loop latches, built-ins and `builtin.cost_cap` do not, so a run records the cap trip once per settled sibling (HLD L2). `ao status` (both the state and status.json renderers, via `cli._tripped_breaker_lines`) collapses identical id/condition/action to `... x N` (`xN`, no suffix for a single trip).
 - Tests: `tests/test_tripped_breaker_trailer.py` (5 unit, incl. record_trip non-latching), `tests/test_e2e_cli_cost_cap.py` +2 CliRunner (single trip no suffix = AC11; repeated trips `x3`).

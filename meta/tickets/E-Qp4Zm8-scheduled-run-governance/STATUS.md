@@ -15,9 +15,9 @@ Every task STATUS/TASK carries a dated Reconciliation block; this table is the a
 | `T-nI4DBf` pause/resume | Done | none (limitation B-2 recorded) |
 | `T-Uz0Uol` usage ledger | Partial | production event-sink wiring (`cost_unknown`); exact 50 ms perf figure |
 | `T-PpE5lf` pre-fire gate | Partial | period cost-cap polish (HLD §26.3 #9); L4 main, L5; AC5a engine-tick tier |
-| `T-et7Edf` run cost cap | Partial | AC17 `record_trip` docstring + `ao status` trailer xN; AC12 coverage; `fake_cost_script` (cosmetic) |
+| `T-et7Edf` run cost cap | Partial | `fake_cost_script` (cosmetic); AC10 byte check. AC17 docstring + `ao status` xN and AC12 coverage LANDED (`e2971e4`, w26-04) |
 | `T-rwj4nV` schedule CLI | Implemented, awaiting review | no dedicated review of `usage_view.py`/CLI |
-| `T-8knqVe` dashboard usage | Partial | AC5 overshoot display; AC7 feed-filter vitest; live-session/e2e of Resume; `resume-capped` route, paused list + Resume, M5 409 landed (w26-03) |
+| `T-8knqVe` dashboard usage | Partial | **UNFINISHED:** AC5 overshoot display (dashboard shows none; CLI only); AC6/AC7 feed-filter check + vitest; live-session/e2e of Resume. LANDED (w26-03, `4f6bbc1`): `resume-capped` route, paused list + Resume, M5 409 |
 | `T-88wSLC` e2e suite | Partial | AC1 mapping; AC6 baseline equality; AC7 delta; AC9b |
 | `T-lTW88y` security gate | Partial | AC4 NFR-6 delta vs baseline; re-run after `T-8knqVe`; ADR-0025 acceptance; Info W-4, I-1, I-6, I-7, I-9 |
 | `T-Hq3vXd` docs | Partial | HLD §26 re-pass, AC3 walkthrough, cross-links |
@@ -73,6 +73,8 @@ Every task STATUS/TASK carries a dated Reconciliation block; this table is the a
   `docs-md/ai-epics/E-Qp4Zm8-scheduled-run-governance.md`; this folder's EPIC update and 11 task tickets.
 - D-5 resolved: `on_cap: pause | abort`, default `pause` (ADR-0025 D6).
 - No `src/`, `tests/`, `ui/` or `specs/` file was edited, and no commit was made.
+
+- **2026-11-11 (developer, unit `w28-05-a2-adr-hld-sync`, docs only, branch `ad/enhancements-10nov`):** ADR-0025, HLD §14.2/§14.3/§26 and `run-options-and-limits-guide.md` re-checked against code and synced: capped-run pause/resume (done, B-2 still unfixed), read-only usage views (`readonly_fire_store`), run-cap trailer AC17 (landed `e2971e4`), retire-hook `run_confidence` (`884c167`) and cap_state=resumed crash recovery (`defa662`), `resume-capped` route + paused-runs list (landed `4f6bbc1`; the earlier "resume-capped not landed" caveat no longer applies). Stale claims removed: `--cost-cap-usd` "not committed" (run-options guide), AC17 "owed" (HLD §26.4). **Unfinished, marked in tickets/HLD §26.4:** dashboard usage panel overshoot display + feed-filter vitest + live Resume e2e (`T-8knqVe`); production event-sink for `cost_unknown` (`T-Uz0Uol`); period-only-cap polish (`T-PpE5lf`); B-2; `fake_cost_script`; `T-rwj4nV` review; `T-lTW88y` AC4 baseline delta + re-run after `T-8knqVe`; `T-Hq3vXd` AC3 walkthrough. Not touched (other units' dirty files): `scheduler-triggers-hld.md`, `guide-scheduled-runs.md`. Rollup unchanged: 3 Done, 8 not Done.
 
 ## Sprint plan
 

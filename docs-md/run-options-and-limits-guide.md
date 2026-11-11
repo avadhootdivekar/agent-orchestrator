@@ -40,12 +40,12 @@ spec key wins in the order task > agent > run level.
   (`effective_limits`): thinking effort, turn budget, max turns, autocompact, timeout, attempts.
   `max_turns` is the cap actually applied (explicit value, else derived from the tier).
 
-## Mid-run cost cap (`--cost-cap-usd`) — engine landed, CLI flag not yet committed
+## Mid-run cost cap (`--cost-cap-usd`)
 
-> **Status (2026-11-11):** the engine gate is committed (`RunState.cost_cap_usd`, `builtin.cost_cap`), but the
-> `--cost-cap-usd` typer option on `ao run`/`ao resume` and its entry in the run-options registry (`COST_CAP_OPTION`
-> in `run_options.py`, not yet in `OPTIONS`) are **not committed**. Until they are, the flag below is not available on
-> the committed CLI. Design/as-built: `scheduled-run-governance-hld.md` §9 and §26.
+> **Status (2026-11-11):** committed. `ao run`/`ao resume --cost-cap-usd USD` and `COST_CAP_OPTION` in
+> `run_options.OPTIONS` landed in `3e2870b` (hardened in `4b9d6a3`: bounded by `MAX_COST_CAP_USD`; a schedule-governed
+> run's generic resume refuses `cost_cap_usd`, and the CLI warns when you raise a governed run's cap). Design/as-built:
+> `scheduled-run-governance-hld.md` §9 and §26.
 
 Behaviour as implemented in the engine:
 
@@ -62,8 +62,9 @@ Behaviour as implemented in the engine:
 * The sentinel LLM lane budget is `min(run_cost_usd breaker cap, cost cap)`, see `guide-sentinel.md`.
 
 Scheduled "recurring jobs with limits" (quotas, per-run and period caps) are documented in
-`scheduled-run-governance-hld.md` §26; a walkthrough with captured output is **not written yet**, because the
-`ao schedule add --quota/--cost-per-run/--cost-cap`, `usage` and `resume` commands are uncommitted.
+`scheduled-run-governance-hld.md` §26. The commands exist and are committed (`ao schedule add --quota/--cost-per-run/
+--cost-cap`, `set-limits`, `pin-prompt`, `usage`, `resume`; `d0378d7`); a walkthrough with captured output is **not
+written yet** (`T-Hq3vXd` AC3).
 
 ## Migration: `effort` → `turn_budget`
 

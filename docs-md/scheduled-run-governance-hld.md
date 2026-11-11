@@ -1,6 +1,6 @@
 # Scheduled-run governance — fixed prompts, per-period quotas, cost caps — HLD + LLD (E-Qp4Zm8)
 
-- Status: **Partially implemented (2026-11-11, branch `ad/enhancements-10nov`) — NOT closed, NOT "Implemented".** Everything in §26.1 and §26.2 is committed: window math, binding `limits` model, pre-fire gate + reservation, derived usage ledger, the engine cost-cap gate, pause/resume/expiry (`service/capped_resume.py`), the `ao schedule usage/resume/set-limits/pin-prompt` commands, `ao run/resume --cost-cap-usd` and the dashboard usage route. What is **unfinished** is listed in §26.4 (ticket rollup: `meta/tickets/E-Qp4Zm8-scheduled-run-governance/STATUS.md`, which wins over this text). Where §1–§24 (the design) and §26 disagree, **§26 and the code win**. Builds on E-Sc9Rt4 (mostly shipped, also not closed).
+- Status: **Partially implemented (2026-11-11, branch `ad/enhancements-10nov`) — NOT closed, NOT "Implemented".** Everything in §26.1 and §26.2 is committed: window math, binding `limits` model, pre-fire gate + reservation, derived usage ledger, the engine cost-cap gate, pause/resume/expiry (`service/capped_resume.py`), the `ao schedule usage/resume/set-limits/pin-prompt` commands, `ao run/resume --cost-cap-usd` the dashboard usage route, paused-runs list and the bounded `resume-capped` route (`4f6bbc1`). What is **unfinished** is listed in §26.4 (ticket rollup: `meta/tickets/E-Qp4Zm8-scheduled-run-governance/STATUS.md`, which wins over this text). Where §1–§24 (the design) and §26 disagree, **§26 and the code win**. Builds on E-Sc9Rt4 (mostly shipped, also not closed).
 - Related: [`ADR-0025`](adr/ADR-0025-scheduled-run-governance-quotas-and-cost-caps.md) (this epic's decisions) ·
   [`scheduler-triggers-hld.md`](scheduler-triggers-hld.md) + [`ADR-0014`](adr/ADR-0014-service-owned-scheduler-and-triggers.md)
   (the firing mechanism this epic extends) · [`lld-run-control-routing-breakers.md`](lld-run-control-routing-breakers.md)
@@ -997,7 +997,8 @@ headroom / not paused).
 |---|---|---|---|
 | GET | `/api/schedules/{id}/usage?at=` | `schedule_usage(id, at)` | 200, 404 |
 | GET | `/api/schedules/governance-events?limit=&id=` | `governance_events(limit, id)` | 200 |
-| POST | `/api/schedules/{id}/runs/{run_id}/resume-capped` body `{"add_usd": number \| null}` | `request_capped_resume(...)` | 202, 404, 409 (`not_paused`\|`expired`\|`aborted`\|`no_headroom`), 422 (bad amount) |
+| POST | `/api/schedules/{id}/runs/{run_id}/resume-capped` body `{"add_usd": number \| null}` | `request_capped_resume(...)` | 202, 404, 409 (`not_paused`\|`expired`\|`aborted`\|`no_headroom`\|`overlap`; body carries `reason`), 422 (bad amount / unknown key), 202 = queued |
+| GET | `/api/schedules/{id}/paused-runs` | `paused_runs(id)` | 200, 404 (read-only store; added in `4f6bbc1`) |
 
 Under `AuthMiddleware` (ADR-0021) every new route defaults to `AUTHENTICATED` (no policy entry needed); the POST also
 carries the same Origin/Content-Type gate the sentinel routes use. Without auth configured, the posture is ADR-0010
@@ -1011,6 +1012,7 @@ pass a workflow, argv or an unbounded cap.
   time relative + absolute; ⚠ for `partial`/`unknown` cost confidence; overshoot shown when > 0.
 - **Paused runs** list: run link (existing `RunDetail`), spend vs cap, expiry countdown, *Resume (+$X)* button with an
   amount field defaulting to `per_run_usd`, disabled with reason when not resumable.
+- *As built:* the usage rows, paused list (`GET .../paused-runs`, `PausedRuns.tsx`) and Resume control exist; the **overshoot** indicator is NOT shown in the dashboard (CLI only; §26.4).
 - **Governance feed**: last 50 `schedule.governance.*` events across the workspace, filterable by schedule — this is
   the D-3 "record on dashboard".
 - Polling: reuse the panel's `POLL_MS = 10000`.
@@ -1295,7 +1297,7 @@ with what was actually built, including deviations.
 
 ## 26. As built (2026-11-11) — deviations, landed vs unfinished
 
-Reconciled against `ad/enhancements-10nov` (first by unit `w20-08-a2-docs-adr-sync`, re-synced by `w25-06-a1-hld-docs-sync`; every item below was re-checked as present in `git ls-files`/`git log` and, for CLI flags, in `ao schedule add --help`). This section describes behaviour that exists, not the plan.
+Reconciled against `ad/enhancements-10nov` (first by unit `w20-08-a2-docs-adr-sync`, re-synced by `w25-06-a1-hld-docs-sync` and again by `w28-05-a2-adr-hld-sync` after the w26-03/w26-04 commits; every item below was re-checked as present in `git ls-files`/`git log` and, for CLI flags, in `ao schedule add --help`). This section describes behaviour that exists, not the plan.
 
 ### 26.1 Landed (committed)
 
@@ -1317,6 +1319,10 @@ Event names emitted by the gate/ledger (grep-verified in `src/`): `schedule.gove
 - `ao schedule` commands `set-limits`, `pin-prompt`, `usage`, `resume` and flags `--quota PERIOD=N`, `--cost-per-run` (alias `--per-run-usd`), `--cost-cap PERIOD=USD`, `--on-cap`, `--pause-ttl`, `--week-start`, `--add-usd`, `--clear-quotas`, `--clear-cost`, `--pin-prompt` (`schedules/cli.py`, `schedules/usage_view.py`) — `T-rwj4nV`, commit `d0378d7`; implemented, awaiting a dedicated review.
 - `ao run`/`ao resume --cost-cap-usd` and `COST_CAP_OPTION` in `run_options.OPTIONS` — `T-et7Edf`, commit `3e2870b`; hardened by `4b9d6a3` (retry loop honours the cap; a governed run's resume refuses `cost_cap_usd`; upper bound `MAX_COST_CAP_USD`).
 - `GET /api/schedules/{schedule_id}/usage` (`ui/app.py`, `ui/service.py`, `ui/src/*`) — `T-8knqVe`, commit `d7cb6a7`; partial (see §26.4).
+- `POST /api/schedules/{id}/runs/{run_id}/resume-capped` (202 = request queued; the daemon stays the only launcher; 404 `schedule_not_found`, 422 `bad_amount`/malformed body, 409 `not_paused|expired|aborted|no_headroom|overlap`), `GET /api/schedules/{id}/paused-runs`, `ui/src/components/PausedRuns.tsx` (mounted inside `ScheduleUsage`), and the AC10/M5 guards (generic governed-run resume 409 names the schedule; the template start route validates `options.cost_cap_usd`) — `T-8knqVe`, commit `4f6bbc1` (w26-03).
+- Read-only usage views: the CLI `ao schedule usage/next` and the dashboard usage/paused-runs routes read fire records through `readonly_fire_store` (`service/fire_store.py`, `ReadOnlyFireStore`), which never writes; `ao schedule resume --queue` likewise writes no fire records (`3447aff`).
+- Run-cap trailer (AC17, `T-et7Edf`, `e2971e4`): `breakers.record_trip` docstring states it never latches (built-ins and `builtin.cost_cap` may record one id several times); `ao status` collapses identical trips to `id (cond, action=...) xN` via `cli._tripped_breaker_lines`.
+- Retire-hook confidence (`884c167`, w22-03 M1): `_finalize_governance_once` derives `cost_confidence` from `usage_ledger.run_confidence(state)` (not from "observed > 0"), so a partly blind run is persisted `partial` and charged `max(observed, reserved)` like the live ledger; `cap_state=resumed` records stranded by a crash before the spawn are recovered by `defa662`.
 
 ### 26.3 Deviations from the design (each with reason and task)
 
@@ -1337,12 +1343,12 @@ Event names emitted by the gate/ledger (grep-verified in `src/`): `schedule.gove
 |---|---|---|
 | Pause/resume/expiry of a capped run | `T-nI4DBf` | **Done** (limitation B-2, §26.5) |
 | Period cost-cap polish; L4 main, L5; AC5a engine-tick tier | `T-PpE5lf` | open (§26.3 #9) |
-| `record_trip` docstring and `×N` trailer in `ao status` (AC17); AC12 coverage; `fake_cost_script` (cosmetic) | `T-et7Edf` | owed; `breakers.py` is outside the docs unit |
-| Dashboard usage panel: `resume-capped` route (AC3), paused list + Resume (AC5), AC10 | `T-8knqVe` | partial; usage route itself landed |
+| `fake_cost_script` fixture (cosmetic, suites patch the executor locally); AC10 full-suite `state.json` byte check not re-run | `T-et7Edf` | open (AC17 `record_trip` docstring + `ao status` `xN` trailer and AC12 coverage **landed**, §26.2) |
+| Dashboard usage panel: **overshoot display** (the ledger/UI rows carry no per-window overshoot; only the CLI `ao schedule usage` prints per-period `overshoot_usd`), AC6 feed schedule filter not verified, AC7 feed-filter vitest, no live-session/e2e of the Resume button; paused list omits swept-expired records | `T-8knqVe` | **partial** (usage, feed, `resume-capped`, paused list + Resume, M5 guards landed, §26.2) |
 | Production event-sink wiring for `schedule.governance.cost_unknown`; exact 50 ms ledger figure | `T-Uz0Uol` | open |
 | `ao schedule` governance CLI dedicated review | `T-rwj4nV` | awaiting review |
 | Security/review final gate incl. dev-security half | `T-lTW88y` | re-run on committed tip `5f51452`: PASS (no Critical/High/Warning open); stays Partial on AC4 NFR-6 baseline delta, re-run after `T-8knqVe`, ADR-0025 acceptance |
-| Governance e2e suite | `T-88wSLC` | partial (AC1 mapping; AC7 pre-epic count delta; AC8 coverage; API cases; AC6 baseline + AC9b CLI landed) |
+| Governance e2e suite | `T-88wSLC` | partial (AC1 mapping; AC7 pre-epic count delta; AC8 full coverage; API-level cases; AC6 baseline + AC9b CLI landed) |
 | HLD §26 re-pass, AC3 walkthrough, cross-links (`scheduler-triggers-hld.md` §9.1 now lists the governance flags/commands and links here); `meta/ROADMAP.md` status rows | `T-Hq3vXd` | partial |
 
 ### 26.5 Known limitation B-2 — a cost-cap pause is settled only on the next due tick (w21-03 / w22-01)

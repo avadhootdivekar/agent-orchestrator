@@ -6,7 +6,7 @@
 - Owner: architect agent (design) -> dev-epic agent (delivery)
 - Created: 2026-11-10
 - Last Updated: 2026-11-11 (design-review edits applied, w02-02)
-- Status: In Progress (reconciled 2026-11-11, w24-07) — 11 tasks: 3 Done, 8 not Done (see Task List); not closeable: dashboard resume route/paused list, period cost-cap polish, trailer xN, NFR-6 baseline delta unmet
+- Status: In Progress (reconciled 2026-11-11, w24-07) — 11 tasks: 3 Done, 8 not Done (see Task List); not closeable: dashboard overshoot display + live Resume e2e, period cost-cap polish, event-sink wiring, NFR-6 baseline delta unmet (w28-05: resume-capped route, paused list and trailer xN have landed)
 - Origin ask: user request (2026-11-10), verbatim: "I should be able to invoke the AO runs with some fixed prompts
   periodically, with some required constraints, ... invocations per specified period, like per day, per week or
   something like that. And the cost or something like that per iteration."
@@ -86,14 +86,14 @@
 
 ## Task List
 - [x] `T-lJu9oZ-quota-window-math` — pure day/week/month windows in tz; DST, midnight gap, week start (FR-2, NFR-3) — 1.5 d — **Done**
-- [~] `T-et7Edf-run-cost-cap-gate` — `ao run/resume --cost-cap-usd`, sticky `RunState.cost_cap_usd` (`Option.sticky_on_resume`), re-armed `builtin.cost_cap` gate (boundary trips only with remaining work), persisted `TaskRunState.actuals_available`, fake `cost_usd` seam, sentinel cap feed (FR-3, NFR-4) — 3 d; **after A3-D3 (T-Rk4Wn7)** — **Partial: trailer xN, AC17 docstring, AC12 coverage open**
+- [~] `T-et7Edf-run-cost-cap-gate` — `ao run/resume --cost-cap-usd`, sticky `RunState.cost_cap_usd` (`Option.sticky_on_resume`), re-armed `builtin.cost_cap` gate (boundary trips only with remaining work), persisted `TaskRunState.actuals_available`, fake `cost_usd` seam, sentinel cap feed (FR-3, NFR-4) — 3 d; **after A3-D3 (T-Rk4Wn7)** — **Partial: only cosmetic `fake_cost_script` + AC10 byte check open (AC17 docstring/`xN` trailer and AC12 landed, `e2971e4`)**
 - [x] `T-tPlK1T-governance-binding-model` — `LimitsSpec` & co., binding/defaults deltas, D-2 validator, JSON Schema, E-Sc9Rt4 fixture helper (FR-1, FR-2, FR-4, NFR-2) — 2 d — **Done**
 - [~] `T-Uz0Uol-usage-ledger` — `FireGovernance` record, `charge()`, window usage, high-water mark, cost confidence, index + mtime cache (FR-2, FR-4, NFR-1, NFR-5) — 3 d — **Partial: event-sink wiring open**
 - [~] `T-PpE5lf-pre-fire-gate-and-reservation` — gate step in `evaluate()`, `check_and_reserve` under flock, prompt snapshot, fail-closed argv check, retire hook (FR-1..FR-4, NFR-1, NFR-2) — 3 d — **Partial: period cost-cap polish, L4 main, L5 open**
 - [x] `T-nI4DBf-capped-run-pause-resume` — cap_state machine, resume drop-request + engine drain, TTL sweep, abort semantics (FR-6) — 2 d — **Done; limitation B-2 recorded**
 - [~] `T-rwj4nV-schedule-cli-limits-usage` — `ao schedule add/set-limits/pin-prompt/usage/resume`, list/history columns (FR-1, FR-5, FR-6) — 2 d — **Implemented, awaiting dedicated review (AC1-11)**
-- [~] `T-8knqVe-dashboard-usage-panel` — 3 routes + `ScheduleUsage.tsx` + governance feed (FR-5, FR-6) — 3 d — **Partial: AC3 resume-capped route, AC5 paused list/Resume, AC10 unmet**
-- [~] `T-88wSLC-governance-e2e-suite` — integration + `CliRunner` e2e across the HLD §18.2/§18.3 scenarios (all) — 2.5 d — **Partial: AC1, AC6, AC7 delta, AC9b open**
+- [~] `T-8knqVe-dashboard-usage-panel` — 3 routes + `ScheduleUsage.tsx` + governance feed (FR-5, FR-6) — 3 d — **Partial: AC3 route, AC5 paused list/Resume, AC10 landed (`4f6bbc1`); overshoot display, feed-filter vitest, live Resume e2e unmet**
+- [~] `T-88wSLC-governance-e2e-suite` — integration + `CliRunner` e2e across the HLD §18.2/§18.3 scenarios (all) — 2.5 d — **Partial: AC1 mapping, AC7 pre-epic delta, AC8 full coverage, API cases open (AC6 baseline + AC9b landed)**
 - [~] `T-lTW88y-security-and-review-gate` — early gate on HLD, then dev-security + reviewer pass + NFR-6 re-verification (NFR-1, NFR-2, NFR-6) — 1.5 d — **Partial: all High closed; AC4 baseline delta + ADR acceptance open**
 - [~] `T-Hq3vXd-docs-refresh` — reconcile docs-md + ADR-0025 + E-Sc9Rt4 HLD cross-links + ROADMAP with what was built (all) — 1.5 d — **Partial: HLD §26 refresh + walkthrough open**
 
