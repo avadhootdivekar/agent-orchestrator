@@ -188,3 +188,5 @@
     did **not** reproduce in any of the 3 runs; cause still unproven, consistent with concurrent src edits (a mid-edit
     `ImportError: slug_for_root` collection error was also seen once and was gone minutes later) or host load. The perf test
     is `@pytest.mark.perf`; run with `-m "not perf"` on a loaded host. Not a product defect.
+
+- 2026-11-11 GATE-1 fixed (1396dac): n1 downgrade asserts + github-binding tests restored out of test_n3; test_webhook.py 78 passed, ruff format/check clean.
