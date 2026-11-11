@@ -330,3 +330,99 @@ called Done on confidence reporting.
 - **G-15 fixed.** The G-1 test now writes a running `state.json` costing 1.5 (> `cost_observed_usd` 1.0 + `HWM_PERSIST_STEP_USD`). Mutation check: writable store in `request_capped_resume` with the `isinstance` asserts removed now FAILS the byte-equality assert (it passed before).
 - **G-16 fixed.** New `usage_view.usage_windows(...)`, used by `build_usage_doc` and the dashboard `schedule_usage`; the dashboard no longer scans paused records or the event log inside the builder. Test: `test_usage_get_does_not_scan_paused_or_events_via_build_usage_doc`.
 - **G-17 fixed** (trivial): `ui/service.py` `_check_cost_cap_option` and `cli.py` `_warn_if_schedule_governed` use `readonly_fire_store`. No dedicated test (the lookups are covered by existing governed-resume tests, which still pass).
+
+# Re-review — fixes for G-13..G-17 (Opus, unit `w38-01-a2-gov-g13-rereview`)
+
+By: reviewer (Opus) · Role: reviewer · Date: 2026-11-11
+Branch `ad/enhancements-10nov`, fix commit `ce8f24d`, reviewed at tip `d5ec21a` (`84e71a8` is docs only). Read-only on
+source: no `src/`, `tests/`, `ui/` or `docs-md/` file was edited. The only edit is this section.
+
+## Method
+1. **Suites at `d5ec21a`:** in a throwaway detached worktree (`/tmp/w38rr`, now removed), run with `PYTHONPATH=<worktree>/src`.
+   All 18 tracked governance and cost-cap test files (`tests/**` matching
+   `governance_|cost_cap|capped|usage_ledger|usage_view|schedule_usage|windows|tripped|resume_queue`) gave **551 passed,
+   0 failed**. Vitest `ui/src/test/paused-runs.test.tsx` gave **8/8 passed**. `ruff check` and `ruff format --check` on the 4
+   changed source files and 3 changed test files are clean. `mypy` reports 4 errors, all in `_version.py` (`no-redef`).
+   They were already there before the fix (`ce8f24d^`) and are unrelated.
+2. **Mutation check:** for each fix I reverted only its `src/` hunk in the worktree, kept the new tests, and ran them.
+   The question was whether the tests fail without the fix.
+
+## Per-finding verdict
+| ID | Verdict | Evidence |
+|---|---|---|
+| G-13 (Low) | **PASS (fixed)** | The CLI `paused:` line now renders `engine_cost_usd` (`usage_view.py:274`). The dashboard has `spent_usd = paused_row["engine_cost_usd"]` (`ui/service.py:1490`), and `PausedRuns.tsx:73-74` renders it next to the cap and the overshoot. Spent, cap and overshoot now use one metric. Legacy records fall back to the charge (`usage_view.py:111`). This is also the metric that `capped_resume.py:298` uses for `new_cap`, so the operator's "add" maths agrees with the server. Mutations: reverting the CLI line makes `test_render_usage_paused_lines` fail. Reverting the dashboard line makes `test_paused_runs_spent_is_the_engine_cost_that_overshoot_is_measured_on` fail. |
+| G-14 (Low) | **PASS (fixed)** | `usage_ledger.py:396-397`: `over = max(0.0, engine - cap)`, where `engine` is the first element of `_observed`. Reverting it to `observed` makes `test_row_terminal_overshoot_is_on_the_engine_metric_not_summary_inclusive` fail (charge 3.5, overshoot 0.5). All three overshoot computations (the event, `paused_row` and `Charge`) now agree. |
+| G-15 (Low) | **PASS (fixed)** | `tests/ui/test_schedule_usage_api.py:453-456` writes a running `state.json` with cost 1.5, above `cost_observed_usd` 1.0 plus `HWM_PERSIST_STEP_USD`. Mutation: I put a writable `FireIntentStore` in `request_capped_resume` (`ui/service.py:1514`) and deleted both `isinstance` asserts. The test then **fails on the byte-equality assert**, because the fire record `k-r1.json` differs. I also reverted the `_live_state` line, and the same mutation then passes. So the new fixture is exactly what makes the assert discriminate. |
+| G-16 (Low) | **PASS (fixed)** | The new `usage_view.usage_windows` (`usage_view.py:161-174`) is used by `build_usage_doc` and by the dashboard `schedule_usage` (`ui/service.py:1340-1348`). The dashboard no longer imports `build_usage_doc`. The output does not change: rows and `limits is None → []` behave as before. Reverting `ui/service.py` makes `test_usage_get_does_not_scan_paused_or_events_via_build_usage_doc` fail. One weakness in that test, see **G-19**. |
+| G-17 (Info) | **PASS (fixed), no guard** | `cli.py:921` and `ui/service.py:844` now use `readonly_fire_store`. Both lookups (`is_governed_run` and `find_by_run_id`) are read-only, so no mutator can raise. Reverting both makes **no test fail** (551 still pass). That is acceptable for an Info item, but nothing would catch a regression, see **G-20**. |
+
+**Regression check (quota gate, cost-cap gate, usage view and ledger, dashboard usage API):** I found none.
+- **Quota gate and charging:** `Charge.actual_usd` and `reserved_usd` are unchanged. Only the informational
+  `overshoot_usd` moved to the engine metric, and no gate reads it (callers: `usage_view` and tests).
+- **Cost-cap gate:** not touched by `ce8f24d`. The engine's `settled_run_cost_usd` and the `run_cost_capped` event are
+  unchanged.
+- **Usage view:** `build_usage_doc` still produces the same doc. `paused[].cost_usd` keeps the charge in `--json`, so the
+  JSON shape only gains the existing `engine_cost_usd` key. Only the human text line changed metric.
+- **Dashboard usage API:** the same window rows with less I/O. `_governance_skips` still reads the event log once.
+- **Read-only stores:** every dashboard and CLI path that is only a lookup now uses `readonly_fire_store`. No caller
+  reaches a mutator, because the suites would raise `PermissionError` otherwise.
+- **Display vs resume maths:** the display uses the **persisted** `engine_cost_usd`. `new_cap` uses the **live** engine
+  cost from `state.json`. These are the same while a run is paused, because a paused run makes no progress. This is not
+  a finding.
+
+## New findings (numbered, severity-ranked; none fixed by this unit)
+
+### Suggestions / Low
+**G-18 (Low, docs drift) — the HLD still describes overshoot on the summary-inclusive metric, and says the dashboard does not show it.**
+- Where: `docs-md/scheduled-run-governance-hld.md:701` (`overshoot_usd = max(0, observed − cap)`), `:837` (the §10.2
+  pseudocode `overshoot=max(0, observed - g.run_cost_cap_usd)`), `:1023` ("the **overshoot** indicator is NOT shown in the
+  dashboard (CLI only; §26.4)").
+- Observation: since G-7/G-14, all three computations use `engine − cap`. `PausedRuns.tsx:74` does render
+  `(overshoot $X)`. The `:990` example (`$2.07 of $2.00`) now means engine cost, but nothing says so.
+- Why it matters: §26 says "where the design and code disagree, the code wins", but these lines are the ones a reader
+  will check against the dashboard. They contradict the shipped D-5 behaviour.
+- Next step: in §9.3 and §10.2, change `observed` to `engine` (the cap's own metric) and note that the charge stays
+  summary-inclusive. Drop or rewrite the `:1023` "NOT shown" clause, and close the matching §26.4 item if it is still listed.
+
+**G-19 (Low, test strength) — one of the three monkeypatches in the G-16 test does nothing.**
+- Where: `tests/ui/test_schedule_usage_api.py:333` (`monkeypatch.setattr(usage_view, "build_usage_doc", boom)`).
+- Observation: before the fix, `ui/service.py` imported `build_usage_doc` by name, so patching the `usage_view` module
+  attribute never reached the dashboard. Mutation: I reverted `ui/service.py` and kept only the `build_usage_doc` patch.
+  The test **passed**. Only the `paused_records` and `governance_events` patches (`:334-335`) catch the regression. They
+  work because `build_usage_doc` looks those names up in its own module globals.
+- Why it matters: the test name and its assertion message claim a guard that one of its lines does not give. A
+  future builder that does not use those two helpers would get past it.
+- Next step: patch `agent_orchestrator.ui.service` itself (e.g. `monkeypatch.setattr(ui_service, "build_usage_doc", boom,
+  raising=False)`), or delete the inert line and reword the docstring so it names the two helpers that do the guarding.
+
+### Info
+**G-20 (Info, coverage) — nothing tests the G-17 read-only lookups.** Reverting `cli.py:921` and `ui/service.py:844` to
+`FireIntentStore` leaves all 551 governance tests passing. Nothing writes on those paths today, so this is low risk.
+If a guard is wanted, a spy test like the G-1 one (`isinstance(..., ReadOnlyFireStore)` on the `fires` argument
+of `is_governed_run`) for `_check_cost_cap_option` and `_warn_if_schedule_governed` would cover it.
+
+**G-21 (Info, DRY/literals).** The defaults `"UTC"` and `"monday"` now appear twice in one module:
+`usage_view.py:169-170` (`usage_windows`) and `:193-194` (`build_usage_doc`, used for the doc header). Next step: one
+small `_binding_tz(binding)` / `_binding_week_start(binding)` helper, or named constants, used by both.
+
+## Verdict
+**G-13, G-14, G-15, G-16 and G-17 all PASS (fixed).** For G-13..G-16, every fix has a test that fails without it, and
+that was confirmed by mutation. G-17 is fixed but nothing tests it (G-20). I found no regression in the quota gate, the
+cost-cap gate, the usage view or ledger, or the dashboard usage API. On this evidence, **the A2.7 fix-verification
+item can be marked met.** New findings: 2 Low (G-18 docs drift, G-19 test strength) and 2 Info (G-20, G-21). None
+blocks merge. Together with the earlier verdicts (G-1..G-8 fixed, G-12 fixed in `b04cdc9`), G-9..G-11 are the only
+earlier findings still open, and they are Low/Info.
+
+## Checklist
+- [x] Scope confirmed: `ce8f24d`, i.e. G-13..G-17. Regressions checked in the quota gate, cost-cap gate, usage view,
+  ledger and dashboard usage API.
+- [x] Three alignment levels checked. Project: observability (one overshoot metric) and safe-by-default (read-only
+  stores). Epic: D-5 overshoot display, NFR-5 (G-16 I/O) and FR-5 resume maths. Code: docstrings match behaviour,
+  except the G-19 test docstring.
+- [x] Dimensions walked. SOLID/KISS: `usage_windows` is a clean extraction. DRY: G-21. Magic literals: G-21. Pluggability:
+  `LedgerPort` is still injected. Spec/schema: the JSON shape is unchanged and additive. Determinism/resume: unchanged.
+  Errors/logging: unchanged. Testability: G-19, G-20. Concurrency: the read-only stores remove the write races.
+- [x] Every finding has a location, an observation, why it matters, and a next step.
+- [x] Severity bucketed: 0 Critical, 0 High, 0 Medium, 0 Warning, 2 Low, 2 Info.
+- [x] Testing notes: G-19 (patch the consumer module, not the provider) and G-20 (spy on the store type for the lookups).
+- [x] No source edits.
