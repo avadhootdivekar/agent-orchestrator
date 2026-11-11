@@ -80,3 +80,38 @@ Coverage (AC8, `--cov` over tests/schedules + test_e2e_cli_cost_cap): usage_view
 **STILL UNFINISHED:** AC6 `ao run` baseline `state.json` equality (no pre-epic baseline fixture exists; not faked); full-suite `pytest -q` delta vs epic
 baseline not run; `tests/integration/test_governance_integration.py` and the remaining §18.2/§18.3 name-per-bullet mapping (AC1); API cases (T-8knqVe);
 AC9b (killed attempt => `partial`) at CLI tier. State stays **Partial**.
+
+## Update 2026-11-11 (w22-05, tester)
+By: tester · Role: tester · Date: 2026-11-11
+
+Landed `tests/integration/test_governance_integration.py` (3 tests, `pytest tests/integration` -> **3 passed**, <1 s, no sleeps) plus
+`tests/fixtures/governance/{baseline_state.py,ungoverned_state.pre_epic.json}`. State stays **Partial**.
+- `test_ac6_ungoverned_run_state_equals_pre_epic_baseline_except_defaulted_fields` - pass. Golden = normalized `state.json` of an ungoverned
+  `ao run` produced by the *pre-epic* commit `af24202` (same helper, run from a throwaway worktree); current tree must equal it after
+  removing the governance-added fields (each asserted inert first). Normalization masks timestamps, durations, absolute paths.
+- `test_ac6_baseline_golden_has_no_governance_fields` - pass (the golden really is pre-epic).
+- `test_ac9b_blind_attempt_run_is_partial_and_charged_conservatively_at_the_cli_tier` - pass (CliRunner: `ao schedule` fire -> real `ao run`
+  where t2 reports no actuals; `attempts_without_actuals>=1`, `usage` day window charged >= the $1.00 per-run cost though observed spend < $1).
+  Caveat: the "killed" attempt is modelled as a blind attempt (no `cost_usd`); a sentinel-killed attempt is covered at unit tier only
+  (`test_usage_ledger.py::test_ac12_killed_attempt_plus_reporting_task_is_partial_and_charged_max`).
+- B-1 (resume shim) is fixed in the working tree (w22-01; shims forward `launch_capped_resume`, xfail removed): `pytest tests/schedules` 394 passed.
+
+Findings from AC6 (no src edited):
+- F-1 (doc drift, HLD 18.3): beyond `cost_cap_usd` and per-task `attempts_without_actuals`, `effective_settings` and every
+  `effective_settings_history[].settings` gain an inert `cost_cap_usd: {source: unset, value: null}` entry. Pinned in the test.
+- F-2 (HLD 18.3 wording): `attempts_without_actuals` is **not** 0 for an ungoverned run whose executor reports no `cost_usd`; it equals
+  `attempts` (each attempt without actuals is blind by design). Also `actuals_available` and `cumulative_cost_usd` only appear/are filled
+  when the executor reports `cost_usd`, which the pre-epic tree could not record, so the baseline uses a cost-less executor.
+- F-3: `ao-run` state equality therefore holds only for that executor; a cost-reporting ungoverned run differs by design.
+
+Full suite `pytest -q` (dirty shared tree, 24m52s): **9 failed, 12188 passed, 32 skipped**. No full pre-epic run was done (cost: ~25 min), so the
+"delta vs epic baseline" is not a count delta; instead each failure was re-run on pre-epic `af24202`:
+- 7 `tests/bench/` (`test_blackbox_grader.py` x5, `test_dev_core_suite.py`, `test_dev_medium_suite.py`): HTTP grader `RemoteDisconnected`; reproduced
+  at pre-epic (3/3 sampled fail there too) -> pre-existing/environmental, unrelated.
+- `test_sentinel_e2e_matrix::test_disabled_sentinel_equals_absent_state_golden`, `test_sentinel_generations::test_e2e_resume_...no_duplicate_proposals`:
+  failed only under full-suite load; both pass alone and 3x together (52 passed each) -> flaky under concurrent load from other units.
+Net: no failure attributable to governance. ruff check + format clean on the new files.
+
+**STILL OPEN:** AC1 name-per-bullet mapping for all HLD 18.2/18.3 bullets; AC7 true count delta; AC8 coverage of `windows.py`/`governance.py`
+(last measured: usage_view 97 %, usage_ledger 90 %, capped_resume 89 %, governance_gate 81 %); AC9c queue-burn at CLI tier; API cases (T-8knqVe);
+`tests/test_e2e_cli_schedule_governance.py` is not created (CLI tier lives in `tests/schedules/test_governance_e2e.py` / `test_cost_cap_cli_e2e.py`).

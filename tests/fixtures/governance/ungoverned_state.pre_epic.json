@@ -1,0 +1,674 @@
+{
+ "breaker_overrides": {},
+ "budget_counters": {
+  "charged_estimate": {},
+  "consumed_tokens": 0,
+  "reconciled_cycles": [],
+  "reconciled_tasks": [],
+  "window_consumed_tokens": 0,
+  "window_start_epoch": null
+ },
+ "effective_settings": {
+  "autocompact": {
+   "source": "unset",
+   "value": null
+  },
+  "budget_total": {
+   "source": "unset",
+   "value": null
+  },
+  "effort": {
+   "source": "unset",
+   "value": null
+  },
+  "max_attempts": {
+   "source": "unset",
+   "value": null
+  },
+  "max_parallel": {
+   "source": "default",
+   "value": 1
+  },
+  "max_turns": {
+   "source": "unset",
+   "value": null
+  },
+  "model": {
+   "source": "unset",
+   "value": null
+  },
+  "quota_max_wait": {
+   "source": "default",
+   "value": 21600
+  },
+  "quota_poll_interval": {
+   "source": "default",
+   "value": 900
+  },
+  "record_git_heads": {
+   "source": "default",
+   "value": true
+  },
+  "self_heal": {
+   "source": "config",
+   "value": false
+  },
+  "sentinel.bandwidth.backlog_release": {
+   "source": "default",
+   "value": true
+  },
+  "sentinel.bandwidth.early_checkpoint": {
+   "source": "default",
+   "value": true
+  },
+  "sentinel.bandwidth.early_ckpt_fraction": {
+   "source": "default",
+   "value": 0.5
+  },
+  "sentinel.bandwidth.early_ckpt_grace_seconds": {
+   "source": "default",
+   "value": 120
+  },
+  "sentinel.bandwidth.early_ckpt_min_idle": {
+   "source": "default",
+   "value": null
+  },
+  "sentinel.cancel_grace_seconds": {
+   "source": "default",
+   "value": 30
+  },
+  "sentinel.enabled": {
+   "source": "default",
+   "value": false
+  },
+  "sentinel.inbox_batch_max": {
+   "source": "default",
+   "value": 50
+  },
+  "sentinel.llm.agent": {
+   "source": "default",
+   "value": null
+  },
+  "sentinel.llm.allow_graph_edits": {
+   "source": "default",
+   "value": true
+  },
+  "sentinel.llm.allow_kill": {
+   "source": "default",
+   "value": true
+  },
+  "sentinel.llm.budget_pct": {
+   "source": "default",
+   "value": 10
+  },
+  "sentinel.llm.budget_usd": {
+   "source": "default",
+   "value": null
+  },
+  "sentinel.llm.driver": {
+   "source": "default",
+   "value": "claude-cli"
+  },
+  "sentinel.llm.enabled": {
+   "source": "default",
+   "value": false
+  },
+  "sentinel.llm.generation_ttl_minutes": {
+   "source": "default",
+   "value": 60
+  },
+  "sentinel.llm.heartbeat_minutes": {
+   "source": "default",
+   "value": 30
+  },
+  "sentinel.llm.llm_kill_min_running_minutes": {
+   "source": "default",
+   "value": 10
+  },
+  "sentinel.llm.max_consecutive_rejections": {
+   "source": "default",
+   "value": 5
+  },
+  "sentinel.llm.max_generations_per_hour": {
+   "source": "default",
+   "value": 3
+  },
+  "sentinel.llm.max_injections_per_hour": {
+   "source": "default",
+   "value": 6
+  },
+  "sentinel.llm.max_llm_kills_per_hour": {
+   "source": "default",
+   "value": 2
+  },
+  "sentinel.llm.max_tokens_per_generation": {
+   "source": "default",
+   "value": 400000
+  },
+  "sentinel.llm.max_triggers_per_generation": {
+   "source": "default",
+   "value": 20
+  },
+  "sentinel.llm.planner": {
+   "source": "default",
+   "value": false
+  },
+  "sentinel.llm.planner_idle_seconds": {
+   "source": "default",
+   "value": 120
+  },
+  "sentinel.llm.powers": {
+   "source": "default",
+   "value": "act"
+  },
+  "sentinel.llm.trigger_cooldown_minutes": {
+   "source": "default",
+   "value": 5
+  },
+  "sentinel.max_injected_tasks": {
+   "source": "default",
+   "value": null
+  },
+  "sentinel.max_parallel_ceiling": {
+   "source": "default",
+   "value": null
+  },
+  "sentinel.recovery.cost_kill_pct": {
+   "source": "default",
+   "value": null
+  },
+  "sentinel.recovery.enabled": {
+   "source": "default",
+   "value": true
+  },
+  "sentinel.recovery.escalate": {
+   "source": "default",
+   "value": [
+    {
+     "effort": "high"
+    }
+   ]
+  },
+  "sentinel.recovery.force": {
+   "source": "default",
+   "value": false
+  },
+  "sentinel.recovery.idle_kill_minutes": {
+   "source": "default",
+   "value": 15
+  },
+  "sentinel.recovery.include_barriers": {
+   "source": "default",
+   "value": false
+  },
+  "sentinel.recovery.kill_grace_seconds": {
+   "source": "default",
+   "value": 10
+  },
+  "sentinel.recovery.max_recovery_kills_per_task": {
+   "source": "default",
+   "value": 2
+  },
+  "sentinel.recovery.stuck_activity_veto": {
+   "source": "default",
+   "value": true
+  },
+  "sentinel.recovery.stuck_factor": {
+   "source": "default",
+   "value": 3.0
+  },
+  "sentinel.recovery.stuck_min_minutes": {
+   "source": "default",
+   "value": 20
+  },
+  "sentinel.recovery.stuck_veto_minutes": {
+   "source": "default",
+   "value": null
+  },
+  "sentinel.recovery.systemic_kill_alarm": {
+   "source": "default",
+   "value": 3
+  },
+  "sentinel.recovery.systemic_task_window_seconds": {
+   "source": "default",
+   "value": 600
+  },
+  "sentinel.tick_seconds": {
+   "source": "default",
+   "value": 15
+  },
+  "thinking_effort": {
+   "source": "unset",
+   "value": null
+  },
+  "turn_budget": {
+   "source": "unset",
+   "value": null
+  }
+ },
+ "effective_settings_history": [
+  {
+   "at": "<ts>",
+   "kind": "start",
+   "settings": {
+    "autocompact": {
+     "source": "unset",
+     "value": null
+    },
+    "budget_total": {
+     "source": "unset",
+     "value": null
+    },
+    "effort": {
+     "source": "unset",
+     "value": null
+    },
+    "max_attempts": {
+     "source": "unset",
+     "value": null
+    },
+    "max_parallel": {
+     "source": "default",
+     "value": 1
+    },
+    "max_turns": {
+     "source": "unset",
+     "value": null
+    },
+    "model": {
+     "source": "unset",
+     "value": null
+    },
+    "quota_max_wait": {
+     "source": "default",
+     "value": 21600
+    },
+    "quota_poll_interval": {
+     "source": "default",
+     "value": 900
+    },
+    "record_git_heads": {
+     "source": "default",
+     "value": true
+    },
+    "self_heal": {
+     "source": "config",
+     "value": false
+    },
+    "sentinel.bandwidth.backlog_release": {
+     "source": "default",
+     "value": true
+    },
+    "sentinel.bandwidth.early_checkpoint": {
+     "source": "default",
+     "value": true
+    },
+    "sentinel.bandwidth.early_ckpt_fraction": {
+     "source": "default",
+     "value": 0.5
+    },
+    "sentinel.bandwidth.early_ckpt_grace_seconds": {
+     "source": "default",
+     "value": 120
+    },
+    "sentinel.bandwidth.early_ckpt_min_idle": {
+     "source": "default",
+     "value": null
+    },
+    "sentinel.cancel_grace_seconds": {
+     "source": "default",
+     "value": 30
+    },
+    "sentinel.enabled": {
+     "source": "default",
+     "value": false
+    },
+    "sentinel.inbox_batch_max": {
+     "source": "default",
+     "value": 50
+    },
+    "sentinel.llm.agent": {
+     "source": "default",
+     "value": null
+    },
+    "sentinel.llm.allow_graph_edits": {
+     "source": "default",
+     "value": true
+    },
+    "sentinel.llm.allow_kill": {
+     "source": "default",
+     "value": true
+    },
+    "sentinel.llm.budget_pct": {
+     "source": "default",
+     "value": 10
+    },
+    "sentinel.llm.budget_usd": {
+     "source": "default",
+     "value": null
+    },
+    "sentinel.llm.driver": {
+     "source": "default",
+     "value": "claude-cli"
+    },
+    "sentinel.llm.enabled": {
+     "source": "default",
+     "value": false
+    },
+    "sentinel.llm.generation_ttl_minutes": {
+     "source": "default",
+     "value": 60
+    },
+    "sentinel.llm.heartbeat_minutes": {
+     "source": "default",
+     "value": 30
+    },
+    "sentinel.llm.llm_kill_min_running_minutes": {
+     "source": "default",
+     "value": 10
+    },
+    "sentinel.llm.max_consecutive_rejections": {
+     "source": "default",
+     "value": 5
+    },
+    "sentinel.llm.max_generations_per_hour": {
+     "source": "default",
+     "value": 3
+    },
+    "sentinel.llm.max_injections_per_hour": {
+     "source": "default",
+     "value": 6
+    },
+    "sentinel.llm.max_llm_kills_per_hour": {
+     "source": "default",
+     "value": 2
+    },
+    "sentinel.llm.max_tokens_per_generation": {
+     "source": "default",
+     "value": 400000
+    },
+    "sentinel.llm.max_triggers_per_generation": {
+     "source": "default",
+     "value": 20
+    },
+    "sentinel.llm.planner": {
+     "source": "default",
+     "value": false
+    },
+    "sentinel.llm.planner_idle_seconds": {
+     "source": "default",
+     "value": 120
+    },
+    "sentinel.llm.powers": {
+     "source": "default",
+     "value": "act"
+    },
+    "sentinel.llm.trigger_cooldown_minutes": {
+     "source": "default",
+     "value": 5
+    },
+    "sentinel.max_injected_tasks": {
+     "source": "default",
+     "value": null
+    },
+    "sentinel.max_parallel_ceiling": {
+     "source": "default",
+     "value": null
+    },
+    "sentinel.recovery.cost_kill_pct": {
+     "source": "default",
+     "value": null
+    },
+    "sentinel.recovery.enabled": {
+     "source": "default",
+     "value": true
+    },
+    "sentinel.recovery.escalate": {
+     "source": "default",
+     "value": [
+      {
+       "effort": "high"
+      }
+     ]
+    },
+    "sentinel.recovery.force": {
+     "source": "default",
+     "value": false
+    },
+    "sentinel.recovery.idle_kill_minutes": {
+     "source": "default",
+     "value": 15
+    },
+    "sentinel.recovery.include_barriers": {
+     "source": "default",
+     "value": false
+    },
+    "sentinel.recovery.kill_grace_seconds": {
+     "source": "default",
+     "value": 10
+    },
+    "sentinel.recovery.max_recovery_kills_per_task": {
+     "source": "default",
+     "value": 2
+    },
+    "sentinel.recovery.stuck_activity_veto": {
+     "source": "default",
+     "value": true
+    },
+    "sentinel.recovery.stuck_factor": {
+     "source": "default",
+     "value": 3.0
+    },
+    "sentinel.recovery.stuck_min_minutes": {
+     "source": "default",
+     "value": 20
+    },
+    "sentinel.recovery.stuck_veto_minutes": {
+     "source": "default",
+     "value": null
+    },
+    "sentinel.recovery.systemic_kill_alarm": {
+     "source": "default",
+     "value": 3
+    },
+    "sentinel.recovery.systemic_task_window_seconds": {
+     "source": "default",
+     "value": 600
+    },
+    "sentinel.tick_seconds": {
+     "source": "default",
+     "value": 15
+    },
+    "thinking_effort": {
+     "source": "unset",
+     "value": null
+    },
+    "turn_budget": {
+     "source": "unset",
+     "value": null
+    }
+   }
+  }
+ ],
+ "git_repos": {},
+ "git_start_heads": {},
+ "graph_edits": [],
+ "injected_tasks": [],
+ "input_mode": "blocking",
+ "input_requests": {},
+ "integration": {
+  "active": false,
+  "base_heads": {},
+  "branch": null,
+  "checkout_synced_to": {},
+  "degraded_reason": null,
+  "heads": {},
+  "repos": {},
+  "tier_counts": {},
+  "workspace_lock_held": false
+ },
+ "loop_iterations": {},
+ "metrics": null,
+ "monitor_decisions": [],
+ "prompt": null,
+ "record_git_heads": true,
+ "repo_set": "rs",
+ "result_cache": {},
+ "route_decisions": {},
+ "run_id": "baseline-run",
+ "sentinel": null,
+ "spawned_by": {},
+ "spec_sessions": [
+  {
+   "session": 1,
+   "spec_sha256": "fe5f680e2841d7a80664ed00d7636979ba2d92489e0e0c09b4ebbc14d8b8a3cc",
+   "started_at": "<ts>"
+  }
+ ],
+ "started_at": "<ts>",
+ "status": "succeeded",
+ "task_integration": {},
+ "tasks": {
+  "task_a": {
+   "agent": "ag",
+   "attempt_started_at": null,
+   "attempts": 1,
+   "cumulative_cache_creation_input_tokens": 0,
+   "cumulative_cache_read_input_tokens": 0,
+   "cumulative_cost_usd": 0.0,
+   "cumulative_input_tokens": 0,
+   "cumulative_output_tokens": 0,
+   "dispatch_cycle": 1,
+   "dynamic_outputs": [],
+   "effective_limits": {
+    "autocompact": null,
+    "max_attempts": 1,
+    "max_turns": null,
+    "task_cost_cap_usd": null,
+    "thinking_effort": null,
+    "timeout_seconds": 1800,
+    "turn_budget": null
+   },
+   "effort": null,
+   "end_heads": {},
+   "ended_at": "<ts>",
+   "expected_minutes": null,
+   "last_activity_at": null,
+   "last_activity_size": null,
+   "model": null,
+   "no_stuck_kill": false,
+   "not_taken_reason": null,
+   "origin": "static",
+   "output_artifact_path": "<root>/.orchestrator/runs/baseline-run/task_a/attempt-1",
+   "outputs_present": true,
+   "post_hook_result": null,
+   "pre_hook_result": null,
+   "recovery": null,
+   "review_verdict_path": null,
+   "route": null,
+   "running_seconds": null,
+   "start_heads": {},
+   "started_at": "<ts>",
+   "status": "succeeded",
+   "stuck_cohort": null,
+   "upstream_producers": [],
+   "verdict_path": null
+  },
+  "task_b": {
+   "agent": "ag",
+   "attempt_started_at": null,
+   "attempts": 1,
+   "cumulative_cache_creation_input_tokens": 0,
+   "cumulative_cache_read_input_tokens": 0,
+   "cumulative_cost_usd": 0.0,
+   "cumulative_input_tokens": 0,
+   "cumulative_output_tokens": 0,
+   "dispatch_cycle": 1,
+   "dynamic_outputs": [],
+   "effective_limits": {
+    "autocompact": null,
+    "max_attempts": 1,
+    "max_turns": null,
+    "task_cost_cap_usd": null,
+    "thinking_effort": null,
+    "timeout_seconds": 1800,
+    "turn_budget": null
+   },
+   "effort": null,
+   "end_heads": {},
+   "ended_at": "<ts>",
+   "expected_minutes": null,
+   "last_activity_at": null,
+   "last_activity_size": null,
+   "model": null,
+   "no_stuck_kill": false,
+   "not_taken_reason": null,
+   "origin": "static",
+   "output_artifact_path": "<root>/.orchestrator/runs/baseline-run/task_b/attempt-1",
+   "outputs_present": true,
+   "post_hook_result": null,
+   "pre_hook_result": null,
+   "recovery": null,
+   "review_verdict_path": null,
+   "route": null,
+   "running_seconds": null,
+   "start_heads": {},
+   "started_at": "<ts>",
+   "status": "succeeded",
+   "stuck_cohort": null,
+   "upstream_producers": [],
+   "verdict_path": null
+  },
+  "task_c": {
+   "agent": "ag",
+   "attempt_started_at": null,
+   "attempts": 1,
+   "cumulative_cache_creation_input_tokens": 0,
+   "cumulative_cache_read_input_tokens": 0,
+   "cumulative_cost_usd": 0.0,
+   "cumulative_input_tokens": 0,
+   "cumulative_output_tokens": 0,
+   "dispatch_cycle": 1,
+   "dynamic_outputs": [],
+   "effective_limits": {
+    "autocompact": null,
+    "max_attempts": 1,
+    "max_turns": null,
+    "task_cost_cap_usd": null,
+    "thinking_effort": null,
+    "timeout_seconds": 1800,
+    "turn_budget": null
+   },
+   "effort": null,
+   "end_heads": {},
+   "ended_at": "<ts>",
+   "expected_minutes": null,
+   "last_activity_at": null,
+   "last_activity_size": null,
+   "model": null,
+   "no_stuck_kill": false,
+   "not_taken_reason": null,
+   "origin": "static",
+   "output_artifact_path": "<root>/.orchestrator/runs/baseline-run/task_c/attempt-1",
+   "outputs_present": true,
+   "post_hook_result": null,
+   "pre_hook_result": null,
+   "recovery": null,
+   "review_verdict_path": null,
+   "route": null,
+   "running_seconds": null,
+   "start_heads": {},
+   "started_at": "<ts>",
+   "status": "succeeded",
+   "stuck_cohort": null,
+   "upstream_producers": [
+    "task_a",
+    "task_b"
+   ],
+   "verdict_path": null
+  }
+ },
+ "tripped_breakers": [],
+ "updated_at": "<ts>",
+ "workflow_id": "multi-task-wf"
+}
