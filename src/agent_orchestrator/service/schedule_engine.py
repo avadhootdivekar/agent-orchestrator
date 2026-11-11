@@ -1754,6 +1754,7 @@ class ScheduleEngine:
         try:
             entries = [e for e in self._registry_factory(self._registry_path).load().workspaces]
         except Exception:  # noqa: BLE001
+            logger.debug("schedule status: registry load failed", exc_info=True)  # R-5
             entries = []
         for entry in entries:
             if not _opted_in(entry):
@@ -1761,6 +1762,7 @@ class ScheduleEngine:
             try:
                 bindings = self._store_factory(entry.root).load().bindings
             except Exception:  # noqa: BLE001 - e.g. file_invalid: show the workspace, no rows
+                logger.debug("schedule status: store load failed for %s", entry.root, exc_info=True)
                 bindings = []
             rows: list[dict[str, Any]] = []
             for b in bindings:

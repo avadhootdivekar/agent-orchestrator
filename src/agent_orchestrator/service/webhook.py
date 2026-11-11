@@ -65,6 +65,7 @@ Accepted limitations (hand-off to ``T-Se4Bk5``)
 from __future__ import annotations
 
 import asyncio
+import errno
 import functools
 import hashlib
 import hmac
@@ -101,7 +102,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 64 KiB: far above a git-push/event payload, small enough that a body read cannot exhaust memory.
 MAX_WEBHOOK_BODY_BYTES = 64 * 1024
+# 5 min: the two-sided clock-skew tolerance for the signed ``ao`` timestamp (also bounds replay).
 REPLAY_WINDOW_SECONDS = 300
 NONCE_MIN_ENTRIES = 64  # floor of a per-schedule nonce cache
 NONCE_KEYS_PER_DELIVERY = 2  # signed-material hash + delivery id
@@ -113,6 +116,7 @@ SIGNATURE_HEADERS = ("x-ao-signature", "x-hub-signature-256")
 DELIVERY_HEADERS = ("x-ao-delivery", "x-github-delivery")
 TIMESTAMP_HEADER = "x-ao-timestamp"
 SIGNATURE_PREFIX = "sha256="
+# Attacker-controlled values are clipped to this many chars before logging (log-injection/size).
 MAX_LOGGED_FIELD = 128
 MAX_SECRET_FILE_BYTES = 4096  # a key file larger than this is refused (S-4)
 MIN_WEBHOOK_SECRET_BYTES = 16  # shorter keys (e.g. ``secret_env: HOME``) are refused -> 503
@@ -125,9 +129,12 @@ AMBIENT_SECRET_ENV_NAMES = frozenset(
 AMBIENT_SECRET_ENV_PREFIXES = ("LC_", "XDG_", "SYSTEMD_", "DBUS_", "SSH_")
 WEBHOOK_REQUEST_TTL_SECONDS = 24 * 3600  # a persisted request older than this is dropped (L5)
 # Listener bounds (M2): uvicorn has no read timeouts of its own.
+# Open connections the listener accepts at once; more get 503 instead of exhausting fds.
 WEBHOOK_LIMIT_CONCURRENCY = 256
 WEBHOOK_HEADER_TIMEOUT_SECONDS = 10.0  # connection open -> request headers complete
+# Idle keep-alive connections are closed after 5 s (deliveries are one-shot).
 WEBHOOK_TIMEOUT_KEEP_ALIVE_SECONDS = 5
+# Headers-complete -> body-complete deadline; defeats slow-body (slowloris) senders.
 WEBHOOK_BODY_READ_TIMEOUT_SECONDS = 10.0
 WEBHOOK_ALLOWED_HOSTS_ENV = "AO_WEBHOOK_ALLOWED_HOSTS"
 NON_LOOPBACK_WARNING = (
@@ -246,6 +253,7 @@ def resolve_secret(
             with os.fdopen(fd, "rb") as fh:
                 st = os.fstat(fh.fileno())
                 if not stat.S_ISREG(st.st_mode):
+                    emit("webhook.rejected", reason="secret_not_regular_file", schedule_id=sid)
                     return None
                 if st.st_mode & 0o077:
                     emit("webhook.secret_permissions", reason="secret_permissions", schedule_id=sid)
@@ -255,7 +263,17 @@ def resolve_secret(
                 emit("webhook.rejected", reason="secret_too_large", schedule_id=sid)
                 return None
             return _checked_secret(data.strip(), sid, emit)
-        except (OSError, ValueError):  # ValueError: NUL byte in the path (S-3b)
+        except OSError as exc:  # incl. ELOOP from O_NOFOLLOW, ENOENT, EACCES
+            # R-5: say why (errno name only: never the path contents or the secret).
+            emit(
+                "webhook.rejected",
+                reason="secret_unreadable",
+                detail=errno.errorcode.get(exc.errno or 0, type(exc).__name__),
+                schedule_id=sid,
+            )
+            return None
+        except ValueError:  # NUL byte in the path (S-3b)
+            emit("webhook.rejected", reason="secret_invalid_path", schedule_id=sid)
             return None
     return None
 
@@ -263,6 +281,7 @@ def resolve_secret(
 def _checked_secret(value: bytes, sid: str, emit: Emit) -> bytes | None:
     """*value*, or ``None`` when empty or shorter than ``MIN_WEBHOOK_SECRET_BYTES`` (L3)."""
     if not value:
+        emit("webhook.rejected", reason="secret_empty", schedule_id=sid)
         return None
     if len(value) < MIN_WEBHOOK_SECRET_BYTES:
         emit("webhook.rejected", reason="secret_too_short", schedule_id=sid)

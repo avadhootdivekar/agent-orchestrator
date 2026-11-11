@@ -686,3 +686,11 @@ Not blocking the gate: R-3 remainder (renames/clock seam), R-5, R-6, TQ-R2.
 - Evidence: commit `55878de` (w31-01) is in `ad/enhancements-10nov` (HEAD `d5ec21a`). `ui/service.py` `request_capped_resume` uses `readonly_fire_store(sdir)` for both the fires store and the `UsageLedger` (lines 1502-1514), the exact remedy this review named (p8: 33 passed with it).
 - Test: `uv run pytest -q tests/ui/test_schedule_usage_api.py -k never_writes_fire_records` -> 2 passed, including `test_resume_capped_request_never_writes_fire_records`.
 - Gate (T-Se4Bk5 Done): **still pending**. Only the whole-tree `pytest`/`ruff`/`mypy` + UI gates on a clean tip remain; they were not run by this unit.
+
+## Addendum 2026-11-11 — R-5 and R-7 closed (unit `w40-01-a1-secgate-r5-r7-close`)
+- **R-5 CLOSED.** The "open" lines above are superseded.
+  - `ScheduleEngine._snapshot` (`service/schedule_engine.py`): both swallowed exceptions now `logger.debug(..., exc_info=True)` (registry load; store load with the workspace root).
+  - `resolve_secret` (`service/webhook.py`): every `None` return states its cause via `emit("webhook.rejected", reason=...)`: `secret_unreadable` (`OSError`, with `detail` = errno name such as `ENOENT`/`ELOOP`), `secret_not_regular_file`, `secret_invalid_path` (`ValueError`), and `secret_empty` (the rejection in `_checked_secret` that had no cause). Only reason codes and the errno name are logged, never a path's contents or secret bytes.
+  - Test: `test_r5_secret_rejections_state_cause_and_never_leak` (`tests/service/test_security_fixes_se4bk5_w21.py`).
+- **R-7 CLOSED.** One-line comments now explain `MAX_WEBHOOK_BODY_BYTES`, `REPLAY_WINDOW_SECONDS`, `MAX_LOGGED_FIELD`, `WEBHOOK_LIMIT_CONCURRENCY`, `WEBHOOK_TIMEOUT_KEEP_ALIVE_SECONDS`, `WEBHOOK_BODY_READ_TIMEOUT_SECONDS` (`webhook.py`) and `WATCH_SCAN_BUDGET_SECONDS`, `DEFAULT_WATCH_MAX_FILES`, `MAX_EVENT_PATHS` (`service/watch.py`).
+- Suggestions R-5 and R-7: none open. R-6 remains a documented limitation.

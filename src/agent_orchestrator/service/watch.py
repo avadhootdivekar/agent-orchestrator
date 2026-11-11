@@ -51,7 +51,9 @@ from .supervisor import slug_for_root
 
 logger = logging.getLogger(__name__)
 
+# Per-tick scan cap (250 ms): a huge tree must not stall the scheduler loop (overrun is reported).
 WATCH_SCAN_BUDGET_SECONDS = 0.25
+# Files stat'ed per watch scan; keeps cost bounded on large trees (override per binding).
 DEFAULT_WATCH_MAX_FILES = 5000
 # Directory names ignored at any depth; ``.ao/state`` is a relative-path prefix. ``.orchestrator``
 # is the run output tree: watching it would let a run trigger itself (AC3).
@@ -70,6 +72,7 @@ WATCH_DIGEST_SUBDIR = "schedules/watch"
 EVENT_WATCH_CHANGED = "watch.changed"
 EVENT_WATCH_BUDGET = "schedule.watch_budget_exceeded"
 EVENT_WATCH_FUTURE_MTIME = "schedule.watch_future_mtime"
+# Changed paths listed in one watch event; the rest are summarised by count (bounds event size).
 MAX_EVENT_PATHS = 20
 
 Digest = dict[str, list[int]]  # rel_path -> [mtime_ns, size]

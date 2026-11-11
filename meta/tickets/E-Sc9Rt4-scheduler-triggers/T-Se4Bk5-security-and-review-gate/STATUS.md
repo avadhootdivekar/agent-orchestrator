@@ -2,7 +2,7 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress — clean-tip gate GREEN (w39-01, 2026-11-11); NOT marked Done because REVIEW suggestions R-5 and R-7 are still open (R-6 is a documented limitation)
+- State: In Progress — clean-tip gate GREEN (w39-01); REVIEW R-5/R-7 CLOSED (w40-01, 2026-11-11). NOT marked Done: R-3 remainder (private-name imports, renames) and TEST-QUALITY FU-9 (`O_NOFOLLOW` swap-race seam) / FU-11 remainder are still open; R-6 is a documented limitation
 - Owner: reviewer agent (overseer w20-02)
 
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
@@ -240,3 +240,8 @@
 - **Bench grader spawn-pytest failure:** no longer present. The 2 dev-core/dev-medium suite files pass with the w34-02 edits, and also on a clean `git archive HEAD` (`84e71a8`) run in a temp dir: 56 passed.
 - **Failures: none**, so nothing to attribute to HEAD or to any unit's uncommitted edits.
 - **Result: gate PASSED. Task NOT marked Done:** REVIEW.md R-5 (swallowed exceptions without log) and R-7 (uncommented constants) are still open suggestions; R-6 is an accepted limitation; TEST-QUALITY FU-9 `O_NOFOLLOW` swap race and the FU-11 remainder stay deferred. Close or explicitly waive R-5/R-7, then set Done.
+
+## R-5 / R-7 closed (By: developer · unit `w40-01-a1-secgate-r5-r7-close` · 2026-11-11)
+- R-5: swallowed exceptions in `ScheduleEngine._snapshot` now debug-log with `exc_info`; every `resolve_secret` `None` path emits a `webhook.rejected` reason (`secret_unreadable` + errno name, `secret_not_regular_file`, `secret_invalid_path`, `secret_empty`), no secret/path content logged. R-7: constant comments added in `webhook.py` and `watch.py`.
+- Test `test_r5_secret_rejections_state_cause_and_never_leak`; `uv run pytest tests/service -k "webhook or se4bk5 or watch or schedule"`: 408 passed; `ruff check`/`ruff format --check` on touched files clean; `mypy` on the 3 touched src files clean.
+- **Not Done:** R-3 remainder, FU-9, FU-11 remainder remain open (see above); they need closing or an explicit waiver.

@@ -139,6 +139,35 @@ def test_secret_file_symlink_swapped_after_check_not_followed(
     assert resolve_secret(_target(root, "s.key")) is None
 
 
+def _reasons(target: Any) -> tuple[bytes | None, list[dict[str, Any]]]:
+    events: list[dict[str, Any]] = []
+    out = resolve_secret(target, emit=lambda event, **f: events.append({"event": event, **f}))
+    return out, events
+
+
+def test_r5_secret_rejections_state_cause_and_never_leak(tmp_path: Path) -> None:
+    root = tmp_path / "ws"
+    root.mkdir()
+    os.mkfifo(root / "d", 0o600)
+    (root / "empty.key").write_text("")
+    (root / "empty.key").chmod(0o600)
+    real = root / "real.key"
+    real.write_text("TOPSECRET" * 5)
+    real.chmod(0o600)
+    cases = {
+        "missing.key": ("secret_unreadable", "ENOENT"),
+        "d": ("secret_not_regular_file", None),
+        "empty.key": ("secret_empty", None),
+        "a\x00b": ("secret_invalid_path", None),
+    }
+    for rel, (reason, detail) in cases.items():
+        out, events = _reasons(_target(root, rel))
+        assert out is None, rel
+        assert [e["reason"] for e in events] == [reason], rel
+        assert events[0].get("detail") == detail, rel
+        assert "TOPSECRET" not in repr(events)
+
+
 # -- S-5 ------------------------------------------------------------------------------------------
 
 
