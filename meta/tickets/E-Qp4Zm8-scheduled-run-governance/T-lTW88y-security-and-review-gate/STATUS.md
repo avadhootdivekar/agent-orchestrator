@@ -2,7 +2,7 @@
 
 - ID: `T-lTW88y-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress (final gate run on HEAD `a3d0195`, then spot-rechecked on `3e2870b`; gate **not passed**: H-1/H-2 open)
+- State: In Progress (follow-up unit w21-02 fixed H-1/H-2/W-1 and audited the committed resume/usage code, uncommitted-at-write; gate re-run on the final commit still owed)
 - Owner: reviewer (run unit `w20-03-a2-security-gate`, Opus)
 
 ## This update
@@ -50,6 +50,25 @@
 Counts at `a3d0195`: Critical 1, High 2, Warning 3, Info 4 (+ G-1 Low, fixed). Open at `3e2870b`: High 2, Warning 2, Info 5. Not yet mirrored into ADR-0025: that file has
 uncommitted edits by another unit, and its "Early-gate corrections" section should take these counts when it is
 committed (AC1 sync is open).
+
+## Follow-up update (w21-02, 2026-11-11)
+- By: developer agent · Role: developer · Date: 2026-11-11
+- Comment: fixed the open High/Warning findings and audited the previously deferred code. Test counts are in the run report.
+
+| ID | Status | Fix / evidence |
+|---|---|---|
+| H-1 | **Fixed** | `Orchestrator._retry_hits_cost_cap` is consulted between attempts in `_run_with_retries` (settled run cost + this call's cost so far >= cap stops further attempts). HLD §9.3 bound text corrected. Tests `tests/test_engine_cost_cap.py::test_h1_*` (mutation-checked: fail without the engine change). |
+| H-2 | **Fixed** | `DashboardService._check_cost_cap_option`: `options.cost_cap_usd` is refused (409) on resume of a governed run (`is_governed_run`), and bounded (400) on resume/start. `validate_cost_cap_usd` has the upper bound `MAX_COST_CAP_USD` (100 000). Tests `tests/ui/test_cost_cap_resume_guard_ltw88y.py`. |
+| W-1 | **Fixed** | `TaskResult.blind_attempts` counted per attempt in the loop; `_accumulate_actuals` adds it. Tests `test_w1_*` (mutation-checked). |
+| F-1 | Low, **fixed** | `capped_resume.max_add` had no ceiling with no per-run cap and no period cap (`add_usd` unbounded -> unbounded new cap). Now `min(remaining, MAX_USD)`. |
+| F-2 | Low, **fixed** | Drop request `request_id`/`requested_by` were unbounded free text stored in the fire record and events. `from_json` now requires `request_id` to match `[A-Za-z0-9_-]{1,64}` and `requested_by` <= 128 chars. |
+| F-3 | Low, **fixed** | `GET /schedules/{id}/usage?at=9999-12-31...` raised `OverflowError` (500). The route now returns 400 for years outside 1970..8999. |
+| I-5 | Info | A drop-request file is trusted as far as the state dir is (local user). The drain re-runs `check_resume` under the flock and recomputes `new_cap` itself, ignoring the file's `new_cap_usd`. No finding. |
+
+- **Checklist (b)** PASS (per-resume ceiling `per_run_usd * MAX_RESUME_FACTOR`, headroom in the ORIGINAL fire's windows, re-check under the flock; F-1 closed the one gap). **(g)** PASS: `usage` and `governance-events` are GET-only, authenticated by omission from `DASHBOARD_ROUTE_POLICIES`, `limit` clamped 1..500, `id` max 128 and checked against the schedule file, redacted keys dropped, scoped to this workspace. There is **no resume POST route** in the dashboard (resume is the CLI drop-request), so the Origin gate for it is N/A; the existing POST routes keep the generic Origin/Content-Type gate.
+- **AC5 drop-request schema:** PASS with F-2. **M1-M6 individually re-verified:** still not done (only H1/H2 were).
+- **Still open:** W-3, W-4, I-1..I-4 (unchanged above). W-2 stays Info.
+- **Not done:** the final gate has not been re-run on the committed tip by a reviewer; ADR-0025 stays Proposed.
 
 ## AC2 security checklist (evidence)
 - (a) **FAIL / partial.** `run_args.cost_cap_usd` is rejected (`schedules/models.py:95`,
@@ -107,7 +126,7 @@ design). NaN/inf/negative limits are rejected at load (`allow_inf_nan=False`, `g
   boundary trip only with remaining work). M1–M6 were not individually re-verified in this unit.
 
 ## Next actions
-1. C-1 is committed (`3e2870b`). Fix H-2 before the branch ships: it is live now that the option is registered.
-2. H-1 and W-1 in `T-et7Edf` (engine; needs an AC3 scope exception). W-2 in `T-nI4DBf`.
+1. ~~C-1~~ committed (`3e2870b`); ~~H-2~~ fixed in w21-02.
+2. ~~H-1 and W-1~~ fixed in w21-02 (engine; this is the AC3 scope exception, a fifth engine site).
 3. Re-run checklist items (a), (b) and (g), plus AC5's remaining items, on the committed pause/resume and dashboard code.
 4. Sync the finding counts into ADR-0025's corrections section and the epic STATUS (AC1).

@@ -59,6 +59,8 @@ if TYPE_CHECKING:  # annotation only: the runtime module is not imported by an a
 # ui/vite.config.ts, whose outDir points here) and shipped inside the wheel.
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Accepted years for `GET /schedules/{id}/usage?at=` (window math overflows near datetime.max).
+USAGE_AT_YEARS = range(1970, 9000)
 API_PREFIX = "/api"
 
 # Mirror ``cli.py::UI_DEFAULT_HOST`` / ``UI_DEFAULT_PORT`` (this module cannot import ``cli``):
@@ -418,6 +420,8 @@ def create_app(
     def resume_run(run_id: str, body: ResumeRunRequest | None = None) -> dict:
         try:
             return service.resume_run(run_id, options=(body.options if body else {}))
+        except DashboardValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except DashboardError as exc:
             status = 404 if "not found" in str(exc) else 409
             raise HTTPException(status_code=status, detail=str(exc)) from exc
@@ -587,6 +591,9 @@ def create_app(
             when = datetime.fromisoformat(at) if at else None
         except ValueError:
             raise HTTPException(status_code=400, detail=f"malformed 'at': {at!r}") from None
+        if when is not None and not USAGE_AT_YEARS.start <= when.year < USAGE_AT_YEARS.stop:
+            # Window arithmetic overflows near datetime.max (T-lTW88y audit): refuse, never 500.
+            raise HTTPException(status_code=400, detail=f"'at' out of range: {at!r}")
         try:
             return service.schedule_usage(schedule_id, when)
         except ScheduleApiError as exc:

@@ -328,3 +328,86 @@ class _NullLog:
     def warning(self, *a, **k) -> None: ...
     def error(self, *a, **k) -> None: ...
     def info(self, *a, **k) -> None: ...
+
+
+# -- T-lTW88y H-1 / W-1: retries inside one dispatched task ----------------------------------
+
+
+class _AttemptExecutor:
+    """Scripted per-attempt results: ``(status, cost_usd | None)``; ``None`` cost = blind."""
+
+    def __init__(self, script: list[tuple[str, float | None]]) -> None:
+        self.script = list(script)
+        self.calls = 0
+
+    def execute(self, ctx) -> TaskResult:
+        status, cost = self.script[self.calls]
+        self.calls += 1
+        return TaskResult(
+            task_id=ctx.task_id,
+            status=status,  # type: ignore[arg-type]
+            attempts=1,
+            error=None if status == "succeeded" else "boom",
+            actuals_available=cost is not None,
+            cost_usd=cost,
+        )
+
+
+def _retry_wf(workspace: Path, max_attempts: int) -> WorkflowSpec:
+    from agent_orchestrator.models import RetryPolicy
+
+    wf = _wf(workspace, 1)
+    wf.tasks[0].retries = RetryPolicy(max_attempts=max_attempts, backoff_seconds=0)
+    return wf
+
+
+def test_h1_retry_stops_when_run_cap_reached_between_attempts(
+    workspace: Path, store, rs_store
+) -> None:
+    ex = _AttemptExecutor([("failed", 0.6)] * 5)
+    orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0, cost_cap_usd=0.5)  # type: ignore[arg-type]
+    st = orch.run(_retry_wf(workspace, 5), _reposets(workspace), AGENTS)
+    assert ex.calls == 1  # attempt 1 already crossed the cap: no paid attempts 2..5
+    assert st.tasks["t1"].status == "failed"
+    assert round(st.tasks["t1"].cumulative_cost_usd, 6) == 0.6
+
+
+def test_h1_retry_continues_below_cap_and_stops_on_crossing(
+    workspace: Path, store, rs_store
+) -> None:
+    ex = _AttemptExecutor([("failed", 0.2), ("failed", 0.2), ("failed", 0.2), ("succeeded", 0.2)])
+    orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0, cost_cap_usd=0.5)  # type: ignore[arg-type]
+    orch.run(_retry_wf(workspace, 4), _reposets(workspace), AGENTS)
+    assert ex.calls == 3  # 0.2, 0.4 < 0.5 continue; 0.6 >= 0.5 stops before the 4th
+
+
+def test_h1_no_cap_retries_exhaust_as_before(workspace: Path, store, rs_store) -> None:
+    ex = _AttemptExecutor([("failed", 5.0)] * 3)
+    orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0)  # type: ignore[arg-type]
+    orch.run(_retry_wf(workspace, 3), _reposets(workspace), AGENTS)
+    assert ex.calls == 3
+
+
+def test_h1_cap_counts_settled_cost_of_other_tasks(workspace: Path) -> None:
+    st = _state(1.0, 0.7)
+    assert Orchestrator._retry_hits_cost_cap(st, 0.2) is False
+    assert Orchestrator._retry_hits_cost_cap(st, 0.3) is True
+    assert Orchestrator._retry_hits_cost_cap(_state(None, 9.0), 9.0) is False
+
+
+def test_w1_blind_attempt_after_actuals_attempt_is_counted(
+    workspace: Path, store, rs_store
+) -> None:
+    ex = _AttemptExecutor([("failed", 0.1), ("failed", None), ("failed", None)])
+    orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0)  # type: ignore[arg-type]
+    st = orch.run(_retry_wf(workspace, 3), _reposets(workspace), AGENTS)
+    ts = st.tasks["t1"]
+    assert ts.actuals_available is True  # attempt 1 had actuals...
+    assert ts.attempts_without_actuals == 2  # ...but attempts 2 and 3 are still counted blind
+
+
+def test_w1_all_actuals_attempts_count_zero_blind(workspace: Path, store, rs_store) -> None:
+    ex = _AttemptExecutor([("failed", 0.1), ("succeeded", 0.1)])
+    orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0)  # type: ignore[arg-type]
+    st = orch.run(_retry_wf(workspace, 3), _reposets(workspace), AGENTS)
+    assert st.tasks["t1"].attempts_without_actuals == 0

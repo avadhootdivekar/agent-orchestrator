@@ -20,6 +20,7 @@ import fcntl
 import json
 import logging
 import math
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
 from zoneinfo import ZoneInfo
 
-from ..schedules.governance import MAX_RESUME_FACTOR, MIN_RESERVATION_USD
+from ..schedules.governance import MAX_RESUME_FACTOR, MAX_USD, MIN_RESERVATION_USD
 from ..schedules.windows import Period, WeekStart, windows_for
 from .fire_store import (
     SCHEDULES_SUBDIR,
@@ -48,6 +49,8 @@ REQUESTS_SUBDIR: Final = "requests"
 REQUEST_KIND_RESUME_CAPPED: Final = "resume_capped"
 REQUEST_TTL_SECONDS: Final = 300  # == schedule_engine.REQUEST_TTL_SECONDS (E-Sc9Rt4 rule)
 _MONEY_DECIMALS: Final = 6
+MAX_REQUEST_TEXT: Final = 128  # `requested_by` bound in a drop request
+_REQUEST_ID_RE: Final = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 # ``ResumeRefused.reason`` values (map 1:1 to CLI exit-3 messages and HTTP 409 bodies).
 REASON_NOT_PAUSED: Final = "not_paused"
@@ -161,6 +164,9 @@ class ResumeCappedRequest:
             return None
         if at.tzinfo is None or not (math.isfinite(add) and math.isfinite(cap)):
             return None
+        # Free-text fields land in the fire record and events: bound them (T-lTW88y audit).
+        if len(by) > MAX_REQUEST_TEXT or not _REQUEST_ID_RE.fullmatch(req_id):
+            return None
         return cls(ws, sid, rid, add, cap, by, at, req_id)
 
 
@@ -194,7 +200,9 @@ def max_add(binding: ResolvedBinding, remaining_usd: float) -> float:
     cost = binding.limits.cost if binding.limits is not None else None
     if cost is not None and cost.per_run_usd is not None:
         return _money(cost.per_run_usd * MAX_RESUME_FACTOR)
-    return max(0.0, remaining_usd)
+    # No per-run cap: headroom bounds it, and with no period cap either (remaining == inf) the
+    # absolute MAX_USD does (T-lTW88y audit: an unbounded top-up would mint an unbounded cap).
+    return min(max(0.0, remaining_usd), MAX_USD)
 
 
 def default_add(binding: ResolvedBinding) -> float:

@@ -111,6 +111,16 @@ overshoot recorded, instead of being marked `failed`. (2) `TaskRunState` persist
 validated before `resolve_option`, which treats falsy values as unset. (6) The gate coexists with A3-D3's run-end invariant,
 which exempts breaker/budget/cost-cap halts.
 
+**Security and review gate (T-lTW88y, 2026-11-11).** Counts at `a3d0195`: Critical 1, High 2, Warning 3, Info 4 (+ G-1 Low,
+fixed). After the follow-up unit w21-02: **C-1** resolved (`3e2870b`); **G-1** fixed (`O_NOFOLLOW`); **H-1** fixed (the retry
+loop re-checks the run cap between attempts; §9.3 bound corrected); **H-2** fixed (generic dashboard resume refuses
+`cost_cap_usd` for governed runs with 409, and `--cost-cap-usd` / `options.cost_cap_usd` is bounded to `MAX_COST_CAP_USD`);
+**W-1** fixed (blind attempts counted per attempt via `TaskResult.blind_attempts`); **W-2** Info. Open: W-3 (state.json
+high-water mark can under-report if the run rewrites it), W-4, I-1..I-4. The committed `capped_resume.py` and the
+`usage` / `governance-events` routes were audited (checklist b, g; drop-request schema): three Low findings fixed (F-1
+unbounded `add_usd` without any cost limit, now capped at `MAX_USD`; F-2 unbounded `request_id`/`requested_by` in a drop
+request; F-3 `usage?at=9999-…` returned 500). Details: the T-lTW88y `STATUS.md`.
+
 **Consequence.** The cap is general: it is useful without schedules. The launcher must verify that the flag reached the
 argv, because `_render_options` silently drops unknown keys. It fails closed otherwise.
 

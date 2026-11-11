@@ -49,10 +49,12 @@ from ..feedback import (
 from ..implicit_signals import apply_survival, implicit_signals
 from ..models import RunState, run_waiting_for_input
 from ..project_config import ProjectConfig, find_project_config, load_project_config
+from ..run_options import validate_cost_cap_usd
 from ..schedules.errors import ScheduleFileError
 from ..schedules.models import ScheduleFile
 from ..schedules.store import ScheduleStore
 from ..schedules.windows import windows_for
+from ..service.capped_resume import is_governed_run
 from ..service.fire_store import (
     SCHEDULES_SUBDIR,
     STATE_FILENAME,
@@ -797,6 +799,7 @@ class DashboardService:
                     "in the inputs of the task that should consume it."
                 )
 
+        self._check_cost_cap_option(options)
         self._preflight(workflow_path)
         try:
             record = self._supervisor.launch_run(
@@ -811,12 +814,36 @@ class DashboardService:
             raise DashboardError(str(exc)) from exc
         return self._supervisor.describe(record, include_log=True)
 
+    def _check_cost_cap_option(self, options: dict | None, *, run_id: str | None = None) -> None:
+        """Validate ``options.cost_cap_usd`` (T-lTW88y H-2).
+
+        The value gets the same bound as ``--cost-cap-usd`` (finite, > 0, <= MAX_COST_CAP_USD).
+        On resume of a governed (scheduled) run it is refused outright: it would REPLACE the run's
+        sticky cap with an absolute, unvetted value and bypass the bounded ``add_usd`` resume
+        (``ao schedule resume`` / the schedule resume route).
+        """
+        if not options or "cost_cap_usd" not in options:
+            return
+        raw = options["cost_cap_usd"]
+        try:
+            validate_cost_cap_usd(None if raw is None else float(raw))
+        except (TypeError, ValueError) as exc:
+            raise DashboardValidationError(f"invalid cost_cap_usd: {exc}") from exc
+        if run_id is not None and is_governed_run(
+            self.workspace_root, run_id, fires=FireIntentStore(self._schedule_state_dir_path())
+        ):
+            raise DashboardConflictError(
+                f"run {run_id} is governed by a schedule: cost_cap_usd cannot be replaced here; "
+                "use the schedule resume (add_usd) instead"
+            )
+
     def resume_run(self, run_id: str, options: dict | None = None) -> dict:
         """Resume an interrupted run (FR-R2)."""
         if not self._repo.exists(run_id):
             raise DashboardError(f"run not found: {run_id}")
         if self._supervisor.is_running(run_id):
             raise DashboardError(f"run {run_id} is already running")
+        self._check_cost_cap_option(options, run_id=run_id)
 
         workflow_path = self._workflow_for_run(run_id)
         try:

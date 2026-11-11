@@ -673,7 +673,10 @@ task settles** (the CLI's final `result` event carries `total_cost_usd`; assista
 
 - **Overshoot bound.** Final run cost ≤ `cap` + Σ(cost of tasks in flight at the moment the cap was crossed). With
   `max_parallel = P` and a per-task worst case `C`, the bound is ≈ `P × C` (ADR-0016 D2 states the same bound for the
-  overseer). Summaries add ≤ 2 % plus the final summary (§4).
+  overseer). Summaries add ≤ 2 % plus the final summary (§4). **Retries (T-lTW88y H-1, fixed):** `_run_with_retries`
+  re-checks the cap between attempts of one dispatched task (settled run cost + that call's attempts so far ≥ cap stops
+  further attempts), so a lane is bounded by the attempt that crosses the cap, not by `max_attempts × C`. Other lanes'
+  unsettled spend stays invisible, so the bound remains ≈ `P × C` per crossing attempt.
 - **Existing kills already under-count (M1).** Sentinel recovery already kills tasks (`sentinel_tick.py:570-590`: idle,
   stuck, cost) with `TaskResult.status="killed"`, and their spend is lost (`engine.py:4066`). A scheduled run with sentinel
   recovery on therefore under-reports to both the engine cap and the ledger. With `attempts_without_actuals` (§9.2) the
@@ -690,7 +693,7 @@ task settles** (the CLI's final `result` event carries `total_cost_usd`; assista
 - **Mitigations shipped:** (a) the reservation/cap is the period budget's unit, so overshoot is per-run, not
   cumulative; (b) the ledger records `overshoot_usd = max(0, observed − cap)` per fire and the usage panel shows it, so
   the bound is observed, not assumed; (c) operators who need a tight bound set `run_args.max_parallel: 1`, making the
-  bound one task.
+  bound one task (one attempt, since the retry loop stops at the cap).
 - **Mitigation deferred (FR-8, non-MVP, needs its own small epic):** pass each Claude dispatch
   `--max-budget-usd <remaining unreserved run budget>` (the sentinel driver already does this, `sentinel_driver.py:113`),
   which lets the CLI stop *itself* and still report cost. It is not in MVP because `build_claude_argv`'s output is the

@@ -1363,6 +1363,9 @@ class TaskResult(BaseModel):
     task_id: str
     status: Literal["succeeded", "failed", "cancelled", "timed_out", "killed"]
     attempts: int
+    # Attempts of this call that reported no actuals (blind/killed). `actuals_available` below is
+    # cumulative across attempts, so this is the only per-attempt signal (T-lTW88y W-1).
+    blind_attempts: int = 0
     exit_code: int | None = None
     error: str | None = None
     # Set only for status == "killed" (sentinel recovery, E-Sn7tL2 T-Sn4Rec): why/who killed it.

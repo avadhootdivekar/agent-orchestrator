@@ -3003,6 +3003,22 @@ class Orchestrator:
         self._runstate.save(state)
         return True
 
+    @staticmethod
+    def _retry_hits_cost_cap(state: RunState, in_flight_cost_usd: float) -> bool:
+        """True iff the run's settled cost plus this call's unsettled attempts reached the cap.
+
+        T-lTW88y H-1: `_run_with_retries` consults this between attempts, so one dispatched task
+        cannot make `max_attempts` paid attempts past the cap. Runs on a WORKER thread: it
+        snapshots `state.tasks` (a plain `list()` copy is atomic under the GIL) rather than
+        iterating the live dict the main thread may be inserting into. Other tasks' in-flight
+        spend is invisible by design (HLD 9.3: the bound stays ~ P x C per parallel lane).
+        """
+        cap = state.cost_cap_usd
+        if cap is None:
+            return False
+        settled = sum(ts.cumulative_cost_usd for ts in list(state.tasks.values()))
+        return settled + in_flight_cost_usd >= cap
+
     def _start_llm_lane(
         self,
         rt: sentinel_tick.SentinelRuntime,
@@ -4166,9 +4182,14 @@ class Orchestrator:
         first dispatch, or `prepare_resume`'s reset) always starts `cumulative_*` at 0,
         so `+=` is byte-identical to `=` whenever nothing was accumulated first.
         """
+        # T-et7Edf AC13 / T-lTW88y W-1: every blind attempt (incl. a killed one) is counted,
+        # never cleared. `result.actuals_available` is CUMULATIVE across a call's attempts, so a
+        # blind attempt after an attempt with actuals is only visible via `blind_attempts`
+        # (counted per attempt in `_run_with_retries`). A result that did not come from that loop
+        # (cache hit, pre-dispatch failure: blind_attempts == 0) with no actuals counts as one.
+        blind = result.blind_attempts or (0 if result.actuals_available else 1)
+        ts.attempts_without_actuals += blind
         if not result.actuals_available:
-            # T-et7Edf AC13: a blind attempt (incl. a killed one) is counted, never cleared.
-            ts.attempts_without_actuals += 1
             return
         ts.actuals_available = True
         ts.cumulative_input_tokens += result.input_tokens or 0
@@ -5171,6 +5192,7 @@ class Orchestrator:
         cum_cache_read_input_tokens = 0
         cum_cost_usd = 0.0
         any_actuals = False
+        blind_attempts = 0  # attempts of THIS call that reported no actuals (T-lTW88y W-1)
 
         prior_attempts: list[AttemptRecord] = []
         if recovery is not None and recovery.kills:
@@ -5198,6 +5220,7 @@ class Orchestrator:
                     task_id=task.id,
                     status="cancelled",
                     attempts=attempt,
+                    blind_attempts=blind_attempts,
                     pre_hook_result=pre_hook_result,
                 )
 
@@ -5263,6 +5286,8 @@ class Orchestrator:
             # no-pre_hook task carries pre_hook_result=None here, identical to today.
             result.pre_hook_result = pre_hook_result
 
+            if not result.actuals_available:
+                blind_attempts += 1  # per-attempt, before the cumulative redefinition below
             if result.actuals_available:
                 any_actuals = True
                 cum_input_tokens += result.input_tokens or 0
@@ -5275,6 +5300,7 @@ class Orchestrator:
             # attempt of this task so far" — the correct semantic for a task-level result.
             # Degenerates to today's single-attempt values when there's no retry.
             result.actuals_available = any_actuals
+            result.blind_attempts = blind_attempts
             result.input_tokens = cum_input_tokens if any_actuals else None
             result.output_tokens = cum_output_tokens if any_actuals else None
             result.cache_creation_input_tokens = (
@@ -5328,6 +5354,15 @@ class Orchestrator:
                     output_dir=attempt_output_dir,
                 )
             )
+
+            if attempt < retry.max_attempts and self._retry_hits_cost_cap(state, cum_cost_usd):
+                logger.warning(
+                    "Task %s: run cost cap reached after attempt %d/%d; no further attempts",
+                    task.id,
+                    attempt,
+                    retry.max_attempts,
+                )
+                break
 
             if attempt < retry.max_attempts and retry.backoff_seconds > 0:
                 self._sleeper(retry.backoff_seconds)

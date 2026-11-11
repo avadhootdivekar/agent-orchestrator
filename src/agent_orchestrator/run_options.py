@@ -41,6 +41,9 @@ SOURCE_UNSET: Final = "unset"
 SOURCE_STATE: Final = "state"
 
 SCHEMA_ID: Final = "ao.run-options/v1"
+# Upper bound for an explicit `--cost-cap-usd` (T-lTW88y H-2); equals governance's MAX_USD so a
+# resumed run can never be given a cap larger than any schedule limit may be.
+MAX_COST_CAP_USD: Final = 100_000.0
 
 # Values an env var may use to mean True for a boolean option (anything else non-blank is False).
 TRUTHY_ENV_VALUES: Final = frozenset({"1", "true", "yes", "on"})
@@ -576,6 +579,8 @@ def validate_cost_cap_usd(raw: float | None) -> float | None:
         return None
     if not math.isfinite(raw) or raw <= 0:
         raise ValueError(f"--cost-cap-usd must be a finite number > 0, got {raw!r}")
+    if raw > MAX_COST_CAP_USD:
+        raise ValueError(f"--cost-cap-usd must be <= {MAX_COST_CAP_USD:g}, got {raw!r}")
     return float(raw)
 
 
