@@ -103,7 +103,7 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
 - Next step: set `confidence = conf if conf != "actual" else ("actual" if observed > 0 else g.cost_confidence)`
   outside the reservation branch, and add a quota-only partial test.
 
-**G-6 (Warning, DRY). Two cost metrics in the engine gate.**
+**G-6 (Warning, DRY). Two cost metrics in the engine gate.** — **FIXED** (2026-11-11, `w32-03`): `compute_run_usage_totals` accepts a `RunState` or an iterable of task states; new `engine.settled_run_cost_usd` (worker-thread-safe `list()` snapshot) is used by both `cost_cap_reached` and `_retry_hits_cost_cap`; agreement test `test_g6_both_gates_share_one_cost_computation` in `tests/test_engine_cost_cap.py`.
 - Where: `src/agent_orchestrator/engine.py:3019` (`_retry_hits_cost_cap` sums `ts.cumulative_cost_usd` itself) against
   `engine.py:403-417` (`cost_cap_reached` → `compute_run_usage_totals`).
 - Observation: today they are the same sum. The retry gate re-implements it inline so it can iterate a snapshot from

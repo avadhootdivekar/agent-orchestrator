@@ -400,6 +400,16 @@ SettleSignal = Literal["settled", "requeue", "halt", "reshaped", "await_input"]
 _COST_CAP_REMAINING_STATUSES: Final = frozenset({"pending", "killed"})
 
 
+def settled_run_cost_usd(state: RunState) -> float:
+    """The one settled-cost metric both cost-cap gates use (G-6).
+
+    Snapshots `state.tasks` (a plain `list()` copy is atomic under the GIL) so a worker thread
+    never iterates the live dict the main thread may be inserting into, then defers to
+    `compute_run_usage_totals` so any term added there reaches every gate.
+    """
+    return compute_run_usage_totals(list(state.tasks.values())).cost_usd
+
+
 def cost_cap_reached(state: RunState) -> dict[str, float] | None:
     """Return ``{"cost_usd", "cap_usd"}`` iff the run's settled cost has reached its cap.
 
@@ -410,7 +420,7 @@ def cost_cap_reached(state: RunState) -> dict[str, float] | None:
     cap = state.cost_cap_usd
     if cap is None:
         return None
-    cost = compute_run_usage_totals(state).cost_usd
+    cost = settled_run_cost_usd(state)
     if cost < cap:
         return None
     return {"cost_usd": round(cost, 6), "cap_usd": cap}
@@ -3016,8 +3026,7 @@ class Orchestrator:
         cap = state.cost_cap_usd
         if cap is None:
             return False
-        settled = sum(ts.cumulative_cost_usd for ts in list(state.tasks.values()))
-        return settled + in_flight_cost_usd >= cap
+        return settled_run_cost_usd(state) + in_flight_cost_usd >= cap
 
     def _start_llm_lane(
         self,

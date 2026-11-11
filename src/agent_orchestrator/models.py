@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any, Literal
 
@@ -2035,15 +2036,20 @@ class RunUsageTotals(BaseModel):
     cost_usd: float = 0.0
 
 
-def compute_run_usage_totals(state: RunState) -> RunUsageTotals:
+def compute_run_usage_totals(state: RunState | Iterable[TaskRunState]) -> RunUsageTotals:
     """Sum actual usage across every task in *state* (E-9h3m7k FR-3).
+
+    Accepts a `RunState` or an iterable of `TaskRunState` (a snapshot, e.g.
+    ``list(state.tasks.values())`` taken by a worker thread) so every cost gate shares this one
+    computation (G-6).
 
     Pure function of `state.tasks` — safe to call at any point (mid-run, on resume, or
     after completion); tasks that haven't settled yet simply contribute zero (their
     `cumulative_*` fields default to 0 / 0.0 until the engine sets them on settle).
     """
     totals = RunUsageTotals()
-    for ts in state.tasks.values():
+    tasks = state.tasks.values() if isinstance(state, RunState) else state
+    for ts in tasks:
         totals.input_tokens += ts.cumulative_input_tokens
         totals.output_tokens += ts.cumulative_output_tokens
         totals.cache_creation_input_tokens += ts.cumulative_cache_creation_input_tokens

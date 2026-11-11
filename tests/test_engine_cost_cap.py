@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from agent_orchestrator.engine import Orchestrator, cost_cap_reached
+from agent_orchestrator.engine import Orchestrator, cost_cap_reached, settled_run_cost_usd
 from agent_orchestrator.executors.fake import FakeExecutor
 from agent_orchestrator.models import (
     BUILTIN_COST_CAP,
@@ -555,3 +555,18 @@ def test_n1_cancel_between_attempts_keeps_spent_cost(workspace: Path, store, rs_
     assert round(ts.cumulative_cost_usd, 6) == 0.3
     assert ts.actuals_available is True
     assert ts.attempts_without_actuals == 0  # the one attempt that ran reported actuals
+
+
+def test_g6_both_gates_share_one_cost_computation() -> None:
+    """G-6: the dispatch/boundary gate and the retry gate agree at every cost point."""
+    from agent_orchestrator.models import compute_run_usage_totals
+
+    st = _state(1.0, 0.4, 0.3)
+    snapshot = list(st.tasks.values())
+    assert compute_run_usage_totals(snapshot).cost_usd == compute_run_usage_totals(st).cost_usd
+    assert settled_run_cost_usd(st) == compute_run_usage_totals(st).cost_usd
+    for extra in (0.0, 0.29, 0.3, 0.31):
+        retry = Orchestrator._retry_hits_cost_cap(st, extra)
+        # in-flight spend of the retrying call is the only difference between the two gates
+        st2 = _state(1.0, 0.4, 0.3, extra)
+        assert retry is (cost_cap_reached(st2) is not None)
