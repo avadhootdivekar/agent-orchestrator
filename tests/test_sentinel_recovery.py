@@ -692,3 +692,65 @@ def test_systemic_dedupe_window_zero_restores_old_counting() -> None:
             st, rt, "me", "stuck_factor", "mechanical", False, _T0 + timedelta(seconds=16 * i)
         )
     assert st.sentinel is not None and st.sentinel.systemic_alarm
+
+
+class _StuckThenBriefExecutor(FakeExecutor):
+    """t3 attempt 1 hangs until killed; attempt 2 runs ~8 simulated minutes, then succeeds."""
+
+    def __init__(self, clock: StepClock) -> None:
+        super().__init__()
+        self.clock = clock
+        self.calls: dict[str, int] = {}
+
+    def execute(self, ctx: TaskContext) -> TaskResult:
+        n = self.calls[ctx.task_id] = self.calls.get(ctx.task_id, 0) + 1
+        if ctx.task_id != "t3" or ctx.cancel_event is None:
+            return super().execute(ctx)
+        if n == 1:
+            assert ctx.cancel_event.wait(20), "attempt 1 never cancelled"
+            tok = ctx.cancel_event
+            return TaskResult(
+                task_id=ctx.task_id,
+                status="killed",
+                attempts=1,
+                kill_reason=tok.reason,
+                kill_source=tok.source,
+            )
+        start = self.clock.now  # peek: no clock advance
+        end = time.monotonic() + WAIT_S
+        while self.clock.now - start < timedelta(minutes=8):
+            assert not ctx.cancel_event.is_set(), "attempt 2 was killed again"
+            assert time.monotonic() < end, "stepping clock never advanced"
+            time.sleep(0.005)
+        return super().execute(ctx)
+
+
+def test_engine_stuck_kill_then_retry_is_not_killed_again(tmp_path: Path) -> None:
+    """L-10: engine-tier D1 -- stuck_factor kill -> retry -> no second kill (stepping clock).
+
+    Peers p0-p2 settle fast (cohort median ~seconds), so t3's threshold is the 10 min floor.
+    Attempt 1 is stuck-killed (>10 simulated min). The retry then runs ~8 simulated min, well
+    past the first attempt's start clock but inside its own stuck_min_minutes: the per-attempt
+    clock must keep it alive (on the first-start clock it would be re-killed at once).
+    """
+    store, rs, reposets, agents = _setup(tmp_path)
+    clock = StepClock()
+    ex = _StuckThenBriefExecutor(clock)
+    tasks = [TaskSpec(id=f"p{i}", agent="ag", instruction="x.md") for i in range(3)]
+    tasks.append(TaskSpec(id="t3", agent="ag", instruction="x.md", depends_on=["p0", "p1", "p2"]))
+    wf = WorkflowSpec(version="1.0", id="wf", repo_set="rs", tasks=tasks)
+    settings = _settings(
+        idle_kill_minutes=600,
+        stuck_factor=3,
+        stuck_min_minutes=10,
+        stuck_activity_veto=False,
+        systemic_kill_alarm=99,
+    )
+    orch = Orchestrator(ex, store, rs, max_parallel=1, clock=clock, sentinel=settings)
+    state = orch.run(wf, reposets, agents)
+    ts = state.tasks["t3"]
+    assert state.status == "succeeded" and ts.status == "succeeded"
+    assert ex.calls["t3"] == 2  # killed once, retried once, never killed again
+    assert ts.recovery is not None and ts.recovery.kills == 1
+    assert ts.recovery.last_reason == "stuck_factor"
+    assert state.sentinel is not None and len(state.sentinel.kill_log) == 1

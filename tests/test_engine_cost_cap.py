@@ -570,3 +570,48 @@ def test_g6_both_gates_share_one_cost_computation() -> None:
         # in-flight spend of the retrying call is the only difference between the two gates
         st2 = _state(1.0, 0.4, 0.3, extra)
         assert retry is (cost_cap_reached(st2) is not None)
+
+
+# -- L-8 --------------------------------------------------------------------------------------
+
+
+def test_l8_failed_task_dependents_are_not_remaining_work(workspace: Path, store, rs_store) -> None:
+    """a fails, b (independent) crosses the cap, c depends on failed a and never dispatches (D3).
+
+    c stays pending, so it is not remaining work: the settle of b must not record a cost_cap trip.
+    """
+    wf = _wf(
+        workspace,
+        0,
+        [{"id": "a"}, {"id": "b"}, {"id": "c", "depends_on": ["a"]}],
+    )
+    ex = FakeExecutor(behaviors={"a": "fail"}, token_outputs={"b": {"cost_usd": 0.9}})
+    st = Orchestrator(ex, store, rs_store, clock=lambda: _T0, cost_cap_usd=0.5, max_parallel=1).run(
+        wf, _reposets(workspace), AGENTS
+    )
+    assert st.tasks["a"].status == "failed" and st.tasks["b"].status == "succeeded"
+    assert compute_run_usage_totals(st).cost_usd > 0.5  # the cap really was crossed
+    assert "c" not in st.tasks or st.tasks["c"].status == "pending"
+    assert _cap_trips(st) == []
+
+
+def test_l8_helper_excludes_descendants_but_keeps_independent_work() -> None:
+    from agent_orchestrator.engine import _has_remaining_work
+    from agent_orchestrator.models import TaskSpec
+
+    def t(i: str, dep: list[str]) -> TaskSpec:
+        return TaskSpec(id=i, agent="ag", instruction="x.md", depends_on=dep, outputs=[], inputs=[])
+
+    wf = WorkflowSpec(
+        version="1.0",
+        id="wf",
+        repo_set="rs",
+        tasks=[t("c", ["b"]), t("b", ["a"]), t("a", []), t("z", [])],
+    )
+    st = RunState(run_id="r", workflow_id="w", started_at="x", updated_at="x")
+    st.tasks["a"] = TaskRunState(status="failed")
+    st.tasks["z"] = TaskRunState(status="succeeded")
+    assert _has_remaining_work(wf, st) is True  # without the failed set, b/c look pending
+    assert _has_remaining_work(wf, st, {"a"}) is False  # b, c blocked transitively
+    st.tasks["z"] = TaskRunState(status="pending")
+    assert _has_remaining_work(wf, st, {"a"}) is True  # independent z remains

@@ -426,9 +426,26 @@ def cost_cap_reached(state: RunState) -> dict[str, float] | None:
     return {"cost_usd": round(cost, 6), "cap_usd": cap}
 
 
-def _has_remaining_work(workflow: WorkflowSpec, state: RunState) -> bool:
-    """True while any task has not yet been dispatched to completion (pending/killed/unseen)."""
+def _has_remaining_work(
+    workflow: WorkflowSpec, state: RunState, failed: frozenset[str] | set[str] = frozenset()
+) -> bool:
+    """True while any task has not yet been dispatched to completion (pending/killed/unseen).
+
+    Tasks that are *failed* or transitively depend on one are excluded (L-8): D3 never
+    dispatches them in this run, so they are not remaining work and must not cause a spurious
+    cost-cap trip on the final settle.
+    """
+    blocked = set(failed)
+    changed = bool(blocked)
+    while changed:  # fixed point over depends_on (task order need not be topological)
+        changed = False
+        for task in workflow.tasks:
+            if task.id not in blocked and any(d in blocked for d in task.depends_on):
+                blocked.add(task.id)
+                changed = True
     for task in workflow.tasks:
+        if task.id in blocked:
+            continue
         ts = state.tasks.get(task.id)
         if ts is None or ts.status in _COST_CAP_REMAINING_STATUSES:
             return True
@@ -2813,7 +2830,10 @@ class Orchestrator:
         # Cost-cap boundary gate (T-et7Edf H1): early halt only while work remains; the final
         # settle of a run lets it finish (overshoot is the ledger's concern). In-flight siblings
         # are drained by the run loop's halt path, never killed.
-        if _has_remaining_work(workflow, state) and self._trip_cost_cap(state, run_log):
+        _failed_now = ctx.failed_tasks | ({tid} if ts.status in ("failed", "timed_out") else set())
+        if _has_remaining_work(workflow, state, _failed_now) and self._trip_cost_cap(
+            state, run_log
+        ):
             return SettleResult(signal="halt")
 
         _before_tripped_ids = {tb.id for tb in state.tripped_breakers}
