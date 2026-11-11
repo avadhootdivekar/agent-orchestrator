@@ -25,6 +25,13 @@ Every task STATUS/TASK carries a dated Reconciliation block; this table is the a
 **Rollup: 11 tasks = 3 Done, 8 not Done (7 Partial: `T-Uz0Uol`, `T-PpE5lf`, `T-et7Edf`, `T-8knqVe`, `T-88wSLC`, `T-lTW88y`, `T-Hq3vXd`; 1 Implemented-awaiting-review: `T-rwj4nV`). Epic state: In Progress, NOT closeable.** Done: `T-lJu9oZ`, `T-tPlK1T`, `T-nI4DBf`.
 
 ## This update
+- **2026-11-11 (tester, unit `w39-02-a2-gate-record`, HEAD `e8abe04`): A2 gate record. Verdict: gate GREEN, epic and `T-lTW88y` NOT Done.**
+  - Whole-tree gate (w39-01, same branch): 12363 py passed / 32 skipped / 0 failed; ruff, ruff format, `mypy src` clean; UI tsc ok, vitest 923 passed.
+  - Targeted governance run by me (15 files: quota/window math, binding model, governance e2e + CLI e2e, usage view, usage ledger, pre-fire gate, capped resume, security gate, DST engine, cost-cap engine/CLI/options, usage API): **535 passed, 0 failed, 0 skipped** (23 s, `uv run pytest -q`). DST/midnight cases are in `test_windows.py` and `test_schedule_engine_dst.py`.
+  - w38-01 Opus re-review of G-13..G-17: all five fixed, A2.7 can be marked met. Open from it: G-18 (Low, HLD overshoot drift), G-19 (Low, no-op monkeypatch in G-16 test), G-20 (Info, no test for G-17 lookups), G-21 (Info, repeated "UTC"/"monday" defaults). Earlier G-9..G-11 (Low/Info) also still open.
+  - `T-lTW88y` stays Partial: re-review has open findings, and its own unmet items remain (AC4 NFR-6 delta vs baseline, ADR-0025 acceptance, Info W-4/I-1/I-6/I-7/I-9). Rollup unchanged: 3 Done, 8 not Done; epic not closeable.
+  - Docs only; no src/tests edits.
+
 - **2026-11-11 (reviewer/Opus, unit `w21-06-a2-test-quality-review`): mandatory test-quality review** of the governance
   tests (`tests/schedules/test_windows.py`, `test_governance_model.py`, `test_governance_e2e.py`,
   `test_cli_governance_e2e.py`; `tests/service/test_governance_gate.py`, `test_usage_ledger.py`, `test_capped_resume.py`,
