@@ -195,3 +195,131 @@ required. A future hardening is `openat` walking with `O_NOFOLLOW|O_DIRECTORY`.
 - [x] Severity bucketed (no Critical; 1 High, 2 Medium, 4 Warning, 4 Low/Info)
 - [x] Testing notes included
 - [x] No source edits
+
+---
+
+# Re-review — fixes for G-1..G-8 (Opus, unit `w34-01-a2-gov-rereview`)
+
+By: reviewer (Opus) · Role: reviewer · Date: 2026-11-11
+Branch `ad/enhancements-10nov`, tip `e1b1264`. Read-only on source: no `src/`, `tests/` or `ui/` file was edited. The
+only edits are this section and one line in the epic `STATUS.md`.
+
+## Scope
+Fix commits: `55878de` (G-1, G-3), `845247b` (G-2, `usage_ledger` fix), `a50a3ce` (G-8), `5677e98` (G-6), `d88df5f`
+(G-4; it also carries the `FireGovernance.engine_cost_usd` field that G-7 uses) and `e5011ea` (G-5, G-7). I also
+checked for regressions in the quota gate, the cost-cap gates and pause/resume.
+
+## Method
+1. **Suites at tip `e1b1264`:** all 20 governance and cost-cap test files (`tests/**` matching
+   `governance_|cost_cap|capped|usage_ledger|usage_view|schedule_usage|windows|tripped|resume_queue`) gave
+   **547 passed, 0 failed**. This is up from 496 at `69dd4c0`. Vitest `ui/src/test/paused-runs.test.tsx` gave 8/8 passed.
+2. **Mutation check:** I used a throwaway git worktree at `/tmp/w34rr`, now removed. For each fix I reverted only its
+   `src/` hunk (with `git apply -R` or a one-line edit), kept the new tests, and ran them. The question was whether
+   the tests fail without the fix.
+3. **Probes:** I ran one throwaway pytest probe in the same worktree. It was never committed. It confirmed G-12 below.
+
+## Per-finding verdict
+| ID | Verdict | Evidence |
+|---|---|---|
+| G-1 (High) | **PASS (fixed)** | `ui/service.py:1516`: `request_capped_resume` passes `readonly_fire_store(sdir)` for `fires` and the ledger. With G-4, every mutator on that store refuses, so a dashboard resume can no longer write a fire record. Reverting `55878de`+`a50a3ce` makes `test_resume_capped_request_never_writes_fire_records` fail. One weakness in the test, see **G-15**: only its `isinstance` asserts catch the regression. The byte-equality assert also passes against a writable store. |
+| G-2 (Medium) | **PASS (fixed)** | `usage_ledger.py:387-392`: `live = running or cap_state == "resumed"`, so a resumed run still holds `reserved - mark` until it is final. Reverting `845247b` makes `test_g2_resumed_pending_child_keeps_topup_reserved` and `test_g2_fire_refused_while_resume_pending` fail. Lifecycle checked: the reservation is released when (a) the retire hook sets `final=True` after the child ends (`resumed` is not in `GOVERNANCE_CAPPED_STATES`, and a stale trip at or before `resumed_at` is not treated as a cap), (b) the hook re-pauses on a fresh trip, or (c) `recover_stranded_resume` rolls back an unspawned child. In none of these paths is the reservation held for ever. `test_g2_resumed_then_final_releases_reservation` passes with or without the fix, so it is not a regression guard (it is harmless). |
+| G-3 (Medium) | **PASS (fixed)** | `schedule_usage` (`ui/service.py:1341`) now maps the window rows of `build_usage_doc`. `paused_runs` uses `paused_records` and `paused_row`, and exposes `overshoot_usd`, so T-8knqVe AC5 is closed. Reverting the fix makes `test_paused_runs_and_usage_share_the_cli_paused_row_with_overshoot` fail. Leftovers: G-13 (display) and G-16 (wasted work). |
+| G-4 (Warning) | **PASS (fixed)** | `fire_store.py:432-454`: `_persist`, `_delete`, `write`, `update`, `write_suppressed`, `prune` and `reconcile_orphans` each raise `PermissionError`. `_persist` and `_delete` are the two disk chokepoints (`fire_store.py:270/281/302/394/399`). Reverting the fix makes `test_readonly_store_refuses_every_mutator_and_reads_still_work` fail. No current caller of a readonly store reaches a mutator: the CLI `resume` drains through `engine.drain_resume_requests`, which uses the engine's own writable store. The full suites still pass. |
+| G-5 (Warning) | **PARTIAL: open for killed runs** | Fixed for runs that are not killed: reverting the 3-line block makes `test_g5_quota_only_binding_partly_blind_run_is_persisted_partial` fail. The block is gated `and not killed` (`schedule_engine.py:1579`), though, and the reservation branch that relabels killed runs does not run on a binding without `reserved_usd`. A probe on a quota-only binding (`limits(quota_day=5)`, reservation-less) used a `cancelled` run with one reporting task and one attempt without actuals. `run_confidence(state)` gives `partial`, but the record is persisted `cost_confidence="actual"` and `final=True`. This is the same G-5 class, so see **G-12**. The new test also models "quota-only" as a cost binding (`limits(per_run=2, week=50)`) with `reserved=None`, not as a true quota-only binding. |
+| G-6 (Warning) | **PASS (fixed)** | `engine.py:403-411` adds `settled_run_cost_usd` (a `list()` snapshot passed to `compute_run_usage_totals`). Both `cost_cap_reached` (`:423`) and `_retry_hits_cost_cap` (`:3029`) call it, and the snapshot keeps the retry gate's worker-thread safety. No behavioural test can fail without this fix, because before the fix the two sums were identical. `test_g6_both_gates_share_one_cost_computation` fails without it only through `ImportError`. That is acceptable for a pure DRY change. |
+| G-7 (Warning) | **PASS (fixed), with display and dead-field leftovers** | Finalisation persists `engine_cost_usd`. The `run_cost_capped` event and `paused_row` compute overshoot on that metric, and legacy records fall back to the charge. Reverting the 2 lines makes `test_g7_overshoot_uses_engine_cost_not_the_reserved_charge` and `test_paused_row_overshoot_uses_engine_cost_metric` fail. Leftovers are **G-13** (the "spent / cap (overshoot)" text no longer reconciles) and **G-14** (`Charge.overshoot_usd` is still on `observed`). |
+| G-8 (Low) | **PASS (fixed)** | `paused_runs` returns `max_add_usd: null` unless the binding has `per_run_usd`. The POST re-check is unchanged. Reverting `a50a3ce` makes 2 UI-API tests fail. Vitest `paused-runs.test.tsx` passes 8/8. |
+| G-9..G-11 | not in fix scope | Unchanged and still open as recorded (Low/Info). |
+
+**Regression check (quota gate, cost-cap gates, pause/resume):** I found no regression. The quota gate counts
+`runs=1` per non-suppressed record, as before. The only charging change is G-2, which only adds reservation (the
+fail-safe direction). The cost-cap dispatch, boundary and retry gates now share one metric. Pause/resume works the
+same way: the drain writes under the flock, launches outside it, and rolls back on failure. Stranded-resume recovery
+and the retire hook's stale-trip rule are unchanged. All 547 governance-suite tests pass.
+
+## New findings (numbered, severity-ranked; none fixed by this unit)
+
+### Warnings
+**G-12 (Warning) — G-5 residual: a killed (`cancelled`) partly blind run on a reservation-less binding is persisted
+`actual`.**
+- Where: `src/agent_orchestrator/service/schedule_engine.py:1579` (`if conf in _CONSERVATIVE_CONFIDENCES and not
+  killed`), and `:1582-1588`, the only branch that relabels killed runs, which requires `g.reserved_usd is not None`.
+- Observation: with a quota-only binding and a `cancelled` run (task a reported $0.40; task b has
+  `attempts_without_actuals=1`), the ledger with state gives `partial`, but the persisted value is `actual`
+  (`final=True`). Probe output: `ledger-with-state: partial persisted: actual final: True`.
+- Why it matters: once `state.json` is cleaned up, `usage` and the dashboard confidence flag say `actual` for a run
+  whose spend was partly invisible. This is exactly the under-reporting G-5 described. Charging is unaffected,
+  because quota-only bindings have no cost cap.
+- Next step: drop `and not killed` for the label only (`confidence = conf`) when `g.reserved_usd is None`. For killed
+  runs, `unknown` is also defensible and matches the reservation branch. Add a test that uses a true quota-only
+  binding (`limits(quota_day=…)`) and a `cancelled` partly blind state.
+
+### Suggestions / Low
+**G-13 (Low) — the paused row's "spent X / cap Y (overshoot Z)" no longer reconciles.**
+- Where: `src/agent_orchestrator/schedules/usage_view.py:264` (CLI text: `cost_usd` "of" cap), and
+  `ui/src/components/PausedRuns.tsx:73-74` (`spent_usd` = `paused_row.cost_usd`).
+- Observation: since G-7, `overshoot_usd` is `engine_cost_usd − cap`, but "spent" still shows the charge
+  (`cost_observed_usd`). The charge includes summary cost and can be inflated by the reservation. The G-7 test shape
+  renders as "spent $5.00 / cap $2.00 (overshoot $0.30)".
+- Why it matters: an operator deciding how much to add on resume sees numbers that contradict each other. D-5's
+  intent is a single, clear overshoot display.
+- Next step: show `engine_cost_usd` as "spent". If the charge is shown at all, label it "charged". In the dashboard,
+  map `engine_cost_usd` into the UI type.
+
+**G-14 (Low) — `Charge.overshoot_usd` is still computed on `observed`, and nothing in production reads it.**
+- Where: `src/agent_orchestrator/service/usage_ledger.py:396` (`over = max(0.0, observed - cap)`), where `observed`
+  includes summary cost.
+- Observation: this is the third overshoot computation, on a different metric from the G-7 one. It is only asserted
+  in `tests/service/test_usage_ledger.py:153,164`. The w32-02 STATUS note already lists it as a followup.
+- Why it matters: it is latent drift. The next consumer that picks it up will disagree with the event and with
+  `paused_row`.
+- Next step: compute it from the engine metric (`_observed` already returns it as the first tuple element), or
+  delete the field and its two asserts.
+
+**G-15 (Low, test strength) — the byte-equality half of the G-1 regression test is vacuous.**
+- Where: `tests/ui/test_schedule_usage_api.py:401-424`.
+- Observation: I restored a writable `FireIntentStore` in `request_capped_resume` and removed the two `isinstance`
+  asserts. The test still passes, because the fixture's `cost_observed_usd` already equals the observed state cost,
+  so `_raise_mark` never persists. Only the structural `isinstance` checks guard G-1.
+- Why it matters: a refactor that keeps a readonly-looking wrapper but writes some other way would pass the test.
+- Next step: make the fixture's state report a cost of at least `cost_observed_usd + HWM_PERSIST_STEP_USD` (or a
+  confidence change) so that a writable store would persist. Then the byte-equality assert actually discriminates.
+
+**G-16 (Low, NFR-5) — the dashboard `schedule_usage` builds and throws away paused rows and events, and reads the
+event log twice.**
+- Where: `src/agent_orchestrator/ui/service.py:1341-1351`.
+- Observation: `build_usage_doc` also runs `paused_records` (a schedule scan) and `governance_events` (an event-log
+  read up to `EVENT_SCAN`). `schedule_usage` uses only `windows`, then reads the event log again in
+  `_governance_skips`.
+- Why it matters: every usage GET does extra I/O. This is not a correctness problem.
+- Next step: split a `usage_windows(...)` helper out of `build_usage_doc` (both the CLI and the dashboard call it),
+  or let the dashboard reuse `shared["events"]`.
+
+### Info
+**G-17 (Info).** `ui/service.py:845` (`_check_cost_cap_option`) and `cli.py:921` still build a writable
+`FireIntentStore` for pure lookups (`is_governed_run` / `find_by_run_id`). Neither reaches the ledger, so nothing is
+written today. For consistency with ADR-0025 and G-4, use `readonly_fire_store` there as well.
+
+**Process note (not numbered):** `d88df5f` (G-4) also carries the G-7 `FireGovernance.engine_cost_usd` field. The
+`e5011ea` message says so. Bisecting G-7 on its own is therefore not clean. No action is needed.
+
+## Verdict
+G-1, G-2, G-3, G-4, G-6, G-7 and G-8 are **fixed**, and each fix has a test that fails without it (G-6 only through
+the import, as expected for a DRY change). G-5 is **partially fixed**: it is still open for killed runs, see **G-12**
+(Warning). I found no regression in the quota gate, the cost-cap gates or pause/resume. New findings: 1 Warning
+(G-12), 4 Low (G-13..G-16) and 1 Info (G-17). None blocks merge. G-12 should be fixed before T-Uz0Uol / T-nI4DBf are
+called Done on confidence reporting.
+
+## Checklist
+- [x] Scope confirmed: the six fix commits listed above, tip `e1b1264`.
+- [x] Three alignment levels checked. Project: resume safety (G-1/G-2) and observability (G-5/G-7/G-13). Epic:
+  FR-4/FR-5, NFR-1, NFR-5 and D-5. Code: docstring contracts, e.g. `paused_row` claims "overshoot" but sits beside a
+  mismatched "spent".
+- [x] Dimensions walked. SOLID/KISS: OK. DRY: G-14, G-16. Magic literals: none new. Pluggability: OK. Spec/schema:
+  `engine_cost_usd` is optional with a legacy fallback, which is expand–contract safe. Determinism/resume: G-2 OK.
+  Errors: `PermissionError` carries context. Testability: G-15. Concurrency: G-1/G-4 OK.
+- [x] Every finding has a location, an observation, why it matters, and a next step.
+- [x] Severity bucketed: 0 Critical, 0 High, 0 Medium, 1 Warning, 4 Low, 1 Info.
+- [x] Testing notes: G-12 (true quota-only binding with a `cancelled` state) and G-15 (fixture must make a
+  writable-store write observable).
+- [x] No source edits.
