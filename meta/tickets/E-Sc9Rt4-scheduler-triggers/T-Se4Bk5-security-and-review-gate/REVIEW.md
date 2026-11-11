@@ -495,3 +495,19 @@ Not blocking the gate: R-3 remainder (renames/clock seam), R-5, R-6, TQ-R2.
 - [x] Severities are not inflated. R-2b is medium (operator-triggered, narrow window), not high like R-2.
 - [x] Testing notes: p7 reproduction, TQ-R2 mutation result, GATE-1 failing test.
 - [x] No code fixed. Only the probe and these ticket notes were added.
+
+### Addendum: rechecked on `1317fe8` (after 7 concurrent commits from other units)
+
+- **R-3: now closed.** `7e99458` adds the public `read_regular_file` and `slug_for_root` and the CLI
+  clock `now_utc`.
+- **R-2b: still open.** `schedules/cli.py:1473` is still `FireIntentStore(sdir)`. p7 on a clean
+  `1317fe8` tree: 1 failed, 2 passed, the same R-2b reproduction.
+- **GATE-1: still open.** `7e99458` committed the rename in `test_webhook.py` but not the assertion
+  restoration.
+  - On a clean `1317fe8` tree, `test_webhook.py`, `test_usage_ledger.py`, `test_capped_resume.py`,
+    `test_schedule_usage_api.py` and `test_schedule_engine_fu8.py` give
+    **1 failed (`test_n3_…`), 212 passed**.
+  - `ruff format --check` still flags `tests/service/test_webhook.py`.
+  - `ruff check` is clean and `mypy src` is clean (233 files).
+- The gate statement is unchanged: **not passed**. Remaining: R-2b, GATE-1, then the clean-tree
+  whole-gate rerun.
