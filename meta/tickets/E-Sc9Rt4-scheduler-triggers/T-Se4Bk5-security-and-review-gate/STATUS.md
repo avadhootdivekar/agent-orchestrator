@@ -199,3 +199,8 @@
   `get` and persist inside `update_governance`) + `test_resume_queue_cli_uses_a_read_only_fire_store` (CliRunner). Note: probe p7
   test2 builds its own writable `CliStore`, so it still "fails" as a probe by construction; its faithful post-fix equivalent is
   the TQ-R2 test, which passes. Unrelated: pre-existing mypy `unused-ignore` errors in tests/service/test_capped_resume.py.
+
+- 2026-11-11 (developer, w27-03) Test hygiene: probe p7 (`output/.../se4bk5-probes/p7_resume_queue_r2.py`) now builds its store via
+  `schedules.cli.readonly_fire_store` (what `resume_cmd` calls) and passes 3/3 via the copy-in procedure; removed 5 unused
+  `type: ignore` in `tests/service/test_capped_resume.py` (70 passed). `service/webhook.py` E501 no longer reproduces (`ruff check`
+  clean on src + tests/service). `mypy src`: 233 files clean. Other mypy errors in tests/service (e.g. test_governance_gate `Env.run_states`) are not mine, untouched.

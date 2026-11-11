@@ -184,7 +184,7 @@ class Rig:
             ledger=self.ledger,
         )
 
-    def request(self, add: float | None = None, run: str = "r1", drain: bool = False, **kw: Any):  # type: ignore[no-untyped-def]
+    def request(self, add: float | None = None, run: str = "r1", drain: bool = False, **kw: Any):
         return cr.request_capped_resume(
             self.root, kw.pop("schedule_id", "s"), run, add, "cli",
             state_dir=self.tmp / "state", binding=kw.pop("binding", self.binding),
@@ -568,7 +568,7 @@ def test_two_resumes_then_final_cap_stay_within_the_week_cap(rig: Rig) -> None:
     rig.paused(cost=2.0)
     t = NOW
     for n in (1, 2):
-        rig.request(PER_RUN, new_id=lambda n=n: f"req{n}")  # type: ignore[call-arg]
+        rig.request(PER_RUN, new_id=lambda n=n: f"req{n}")
         t += timedelta(minutes=1)
         rig.env.clock.now = t
         assert rig.engine.drain_resume_requests()[0].refused is None
@@ -588,7 +588,7 @@ def test_two_resumes_then_final_cap_stay_within_the_week_cap(rig: Rig) -> None:
     assert u.actual_usd + u.reserved_usd <= WEEK_MAX
     # a third resume that would breach the week cap is refused with no_headroom
     rig.write_state("r1", "failed", 9.5, trip_at=t.isoformat())
-    assert refused(rig.request, new_id=lambda: "req3").reason == "no_headroom"  # type: ignore[call-arg]
+    assert refused(rig.request, new_id=lambda: "req3").reason == "no_headroom"
 
 
 def test_stale_cap_trip_does_not_repause_a_later_non_cap_failure(rig: Rig) -> None:
@@ -812,7 +812,7 @@ def test_resume_fails_closed_when_the_cap_flag_would_be_dropped(tmp_path: Path) 
 
     rig, d = _capped_launch_rig(tmp_path)
     rec = rig.launcher.launch(d)
-    rig.launcher._render = lambda o: []  # type: ignore[method-assign]  # renderer drops the cap
+    rig.launcher._render = lambda o: []  # renderer drops the cap
     with pytest.raises(CostCapNotForwardedError):
         rig.launcher.launch_capped_resume(rec, 3.0)
     assert len(rig.sup.launch_calls) == 1  # nothing spawned
@@ -830,7 +830,7 @@ def test_post_spawn_argv_without_the_cap_cancels_the_resumed_child(tmp_path: Pat
         r.argv = ["ao", "resume"]
         return r
 
-    rig.sup.launch_resume = bare  # type: ignore[method-assign]
+    rig.sup.launch_resume = bare
     with pytest.raises(CostCapNotForwardedError):
         rig.launcher.launch_capped_resume(rec, 3.0)
     assert rig.sup.cancelled == [rec.run_id]
