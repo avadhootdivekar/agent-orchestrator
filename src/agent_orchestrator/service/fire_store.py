@@ -606,6 +606,7 @@ EVENT_LEVELS: dict[str, int] = {
     "schedule.governance.run_cost_capped": logging.WARNING,
     "schedule.governance.resumed": logging.INFO,
     "schedule.governance.resume_refused": logging.WARNING,
+    "schedule.governance.resume_recovered": logging.WARNING,
     "schedule.governance.pause_expired": logging.WARNING,
     "schedule.governance.launch_unsafe": logging.ERROR,
     "schedule.governance.finalize_failed": logging.ERROR,

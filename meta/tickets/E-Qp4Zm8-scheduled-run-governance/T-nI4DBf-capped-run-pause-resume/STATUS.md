@@ -48,3 +48,17 @@
 3. Hand `request_capped_resume`/`ResumeRefused` to `T-rwj4nV` and `T-8knqVe`.
 
 - 2026-11-11 — By: developer (unit `w22-01-a2-capped-resume-shim`) · Role: developer · Date: 2026-11-11 · Comment: B-1 FIXED: `_Deferred` (schedules/cli.py) and `_DeferredLauncher` (service/cli.py) now forward `launch_capped_resume`; regression tests added; strict xfail and `direct_launcher` workaround removed from tests/schedules/test_cost_cap_cli_e2e.py. B-2 KNOWN LIMITATION (not changed): a cap pause is settled only on the schedule's next due tick, so the pause/resume is not visible right after the run exits. Proposed fix (settle in the retire hook or a settle-only pass each tick) recorded in HLD §26.5; needs a design decision.
+
+- 2026-11-11 — By: developer (unit `w25-01-a2-resumed-record-sweep`) · Role: developer · Date: 2026-11-11 · Comment: Closed the
+  "stranded `cap_state=resumed`" gap (found by w24-03). A crash between the drain's `resumed` write and the spawn left the
+  record `resumed` forever (not in `GOVERNANCE_CAPPED_STATES`, and `_sweep_unfinalized` skipped `cap_state != none`).
+  **Decision:** the drain now stamps `launch_id_before` + `prior{reserved,cap,final}` in the resume entry; `ScheduleEngine.start()`
+  (via `_sweep_unfinalized` -> `_recover_resumed`) handles every untracked `resumed` record: live child -> adopt (no respawn);
+  `launch_id` unchanged AND `state.json` untouched since the resume -> roll back to `paused` (same inverse as the
+  launch-failure rollback; pause expiry untouched so the normal sweep still expires it) + WARNING
+  `schedule.governance.resume_recovered`; otherwise (child ran and ended, legacy entry without marker) -> existing retire hook
+  finalises it. Recovery NEVER spawns, so it cannot double-spawn and is idempotent (re-checked under the governance lock).
+  Deliberately start-only, not per tick: a tick-time rollback could race the dashboard's in-process drain between its write and
+  spawn. Operator re-requests the resume after a rollback. Residual: a child spawned but whose launch stamp failed AND that
+  already finished without touching state.json is indistinguishable from stranded (would roll back to paused; no spend lost
+  as the ledger charges by state). Tests: `tests/service/test_capped_resume.py` (5 new).

@@ -924,6 +924,7 @@ FUNCTION read_prompt(d) -> PromptSnapshot | Skip:
 | `schedule.governance.run_cost_capped` | WARNING | `run_id`, `cost_usd`, `cap_usd`, `overshoot_usd`, `on_cap`, `pause_expires_at` |
 | `schedule.governance.resumed` | INFO | `run_id`, `add_usd`, `new_cap_usd`, `requested_by` |
 | `schedule.governance.resume_refused` | INFO | `run_id`, `reason` |
+| `schedule.governance.resume_recovered` | WARNING | `run_id`, `fire_key` — start-up rolled a `resumed` record whose spawn never happened (crash) back to `paused` |
 | `schedule.governance.pause_expired` | WARNING | `run_id`, `paused_at` |
 | `schedule.governance.cost_unknown` | WARNING | `run_id`, `charged_usd` |
 | `schedule.governance.limits_changed` | INFO | `old_digest`, `new_digest` |

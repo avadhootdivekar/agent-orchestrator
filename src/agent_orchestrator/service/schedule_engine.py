@@ -48,7 +48,9 @@ from .capped_resume import (
     ResumeCappedRequest,
     ResumeOutcome,
     drain_resume_capped,
+    is_stranded_resume,
     parse_request_age_ok,
+    recover_stranded_resume,
     sweep_pause_expiry,
 )
 from .fire_store import (
@@ -1450,6 +1452,36 @@ class ScheduleEngine:
             except Exception:  # noqa: BLE001 - recovery must never stop the engine starting
                 logger.exception("could not re-register recovered fire %s", rec.fire_key)
 
+    def _recover_resumed(self, rec: FireIntentRecord) -> None:
+        """Start-time repair of a ``resumed`` record nothing is tracking (w25-01). Live child ->
+        adopt it (never respawn); never spawned -> roll back to ``paused`` for the operator to
+        re-request; otherwise the child ran and ended -> the normal retire hook finalises it.
+        Start-only on purpose: a tick-time rollback could race an in-flight in-process drain
+        (the dashboard's resume) between its ``resumed`` write and its spawn."""
+        active = {k for s in self._state.all().values() for k in s.active_fire_keys}
+        if rec.fire_key in active or rec.run_id is None:
+            return  # tracked: _live_runs retires and finalises it when it ends
+        try:
+            if self._is_live(rec):
+                self._state.adopt_active(rec.workspace_root, rec.schedule_id, rec.fire_key)
+                return
+            try:
+                updated: datetime | None = _parse_dt(
+                    getattr(
+                        self._repo(rec.workspace_root).load_state(rec.run_id), "updated_at", None
+                    )
+                )
+            except RunNotFoundError:
+                updated = None
+            if is_stranded_resume(rec, updated):
+                recover_stranded_resume(
+                    rec, fires=self._fires, events=self._events, lock_path=self._governance_lock
+                )
+            else:
+                self._finalize_governance(rec.fire_key)
+        except Exception:  # noqa: BLE001 - recovery must never stop the engine starting
+            logger.exception("could not recover resumed record %s", rec.fire_key)
+
     def _sweep_unfinalized(self) -> None:
         """M2 crash recovery at start: governed ``launched`` records that never got their retire
         hook (the process died between ``retire_finished`` and finalisation) and whose run is no
@@ -1458,6 +1490,9 @@ class ScheduleEngine:
         active = {k for s in self._state.all().values() for k in s.active_fire_keys}
         for rec in self._fires.list(status="launched"):
             g = rec.governance
+            if g is not None and not g.final and g.cap_state == "resumed":
+                self._recover_resumed(rec)  # w25-01: crash around a capped resume's spawn
+                continue
             if g is None or g.final or g.cap_state != "none" or rec.run_id is None:
                 continue
             if rec.fire_key in active:

@@ -24,7 +24,7 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
 from zoneinfo import ZoneInfo
@@ -77,6 +77,7 @@ RESUME_REASONS: Final = frozenset(
 EVENT_RESUMED: Final = "schedule.governance.resumed"
 EVENT_RESUME_REFUSED: Final = "schedule.governance.resume_refused"
 EVENT_PAUSE_EXPIRED: Final = "schedule.governance.pause_expired"
+EVENT_RESUME_RECOVERED: Final = "schedule.governance.resume_recovered"
 
 REQUESTED_BY_CLI: Final = "cli"
 
@@ -417,6 +418,16 @@ def drain_resume_capped(
                         "add_usd": chk.add_usd,
                         "new_cap_usd": chk.new_cap_usd,
                         "request_id": req.request_id,
+                        # Crash-recovery marker (w25-01): the spawn stamps a NEW launch_id on the
+                        # record, so ``launch_id == launch_id_before`` on a ``resumed`` record means
+                        # the process died before the child was ever spawned. ``prior`` is what the
+                        # rollback restores.
+                        "launch_id_before": chk.rec.launch_id,
+                        "prior": {
+                            "reserved_usd": before.reserved_usd,
+                            "run_cost_cap_usd": before.run_cost_cap_usd,
+                            "final": before.final,
+                        },
                     },
                 ]
                 fires.update_governance(
@@ -508,6 +519,75 @@ def sweep_pause_expiry(
     return expired
 
 
+def is_stranded_resume(rec: FireIntentRecord, state_updated_at: datetime | None) -> bool:
+    """A ``resumed`` record whose child was provably never spawned (crash between the drain's
+    ``resumed`` write and the spawn): the newest resume entry carries its ``launch_id_before``
+    marker, the record's ``launch_id`` is still that one (a spawn stamps a new one), and the run's
+    ``state.json`` has not been touched since the resume. Anything ambiguous (legacy entry without
+    a marker, a run that wrote state after the resume) is NOT stranded: the caller finalises it
+    instead, which charges the spend rather than guessing it away."""
+    g = rec.governance
+    if g is None or g.cap_state != "resumed" or not g.resumes:
+        return False
+    last = g.resumes[-1]
+    if "launch_id_before" not in last or not isinstance(last.get("prior"), dict):
+        return False
+    resumed_at = _parse_iso(last.get("at"))
+    if resumed_at is None or last["launch_id_before"] != rec.launch_id:
+        return False
+    return state_updated_at is None or state_updated_at <= resumed_at
+
+
+def recover_stranded_resume(
+    rec: FireIntentRecord, *, fires: FireIntentStore, events: EventSink, lock_path: Path
+) -> bool:
+    """Roll a stranded ``resumed`` record back to ``paused`` (the exact inverse of the drain's
+    write, same as its launch-failure rollback) so the operator can ask again. Never spawns, so it
+    cannot double-spawn; idempotent (re-checks under the governance lock, a second call is a no-op).
+    Returns whether it rolled back. The pause expiry is untouched: the normal sweep expires it."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            cur = fires.get(rec.fire_key, rec.workspace_root)
+            g = cur.governance if cur is not None else None
+            if cur is None or g is None or g.cap_state != "resumed" or not g.resumes:
+                return False
+            if cur.launch_id != g.resumes[-1].get("launch_id_before"):
+                return False  # a spawn stamped the record in the meantime
+            prior = g.resumes[-1]["prior"]
+            fires.update_governance(
+                cur.fire_key,
+                cap_state="paused",
+                reserved_usd=prior.get("reserved_usd"),
+                run_cost_cap_usd=prior.get("run_cost_cap_usd"),
+                final=bool(prior.get("final", False)),
+                resumes=g.resumes[:-1],
+            )
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    events.emit(
+        EVENT_RESUME_RECOVERED,
+        level=logging.WARNING,
+        workspace=rec.workspace_root,
+        schedule_id=rec.schedule_id,
+        fire_key=rec.fire_key,
+        run_id=rec.run_id,
+        detail="resume write was never followed by a spawn; rolled back to paused",
+    )
+    return True
+
+
+def _parse_iso(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 def parse_request_age_ok(req: ResumeCappedRequest, now: datetime) -> bool:
     """Requests older than :data:`REQUEST_TTL_SECONDS` are discarded (E-Sc9Rt4 rule)."""
     return now - req.requested_at <= timedelta(seconds=REQUEST_TTL_SECONDS)
@@ -515,6 +595,7 @@ def parse_request_age_ok(req: ResumeCappedRequest, now: datetime) -> bool:
 
 __all__ = [
     "EVENT_PAUSE_EXPIRED",
+    "EVENT_RESUME_RECOVERED",
     "EVENT_RESUMED",
     "EVENT_RESUME_REFUSED",
     "GOVERNANCE_LOCK_NAME",
@@ -529,8 +610,10 @@ __all__ = [
     "default_add",
     "drain_resume_capped",
     "is_governed_run",
+    "is_stranded_resume",
     "max_add",
     "parse_request_age_ok",
+    "recover_stranded_resume",
     "request_capped_resume",
     "requests_dir",
     "sweep_pause_expiry",

@@ -378,7 +378,8 @@ def test_drain_resumes_updates_record_marks_active_and_emits(rig: Rig) -> None:
     )
     assert g.resumes == [
         {"at": (NOW + timedelta(seconds=30)).isoformat(), "by": "cli", "add_usd": 1.5,
-         "new_cap_usd": 3.5, "request_id": "req1"}
+         "new_cap_usd": 3.5, "request_id": "req1", "launch_id_before": "launch-0",
+         "prior": {"reserved_usd": PER_RUN, "run_cost_cap_usd": PER_RUN, "final": False}}
     ]  # fmt: skip
     assert rig.launcher.calls == [("r1", 3.5)]
     st = rig.engine.state_store.get(rig.root, "s")
@@ -476,6 +477,88 @@ def test_tick_drains_requests_via_the_engine_loop(rig: Rig) -> None:
     rig.request()
     rig.env.tick(NOW + timedelta(seconds=5))
     assert rig.launcher.calls == [("r1", 4.0)]
+
+
+# -- w25-01: a crash between the "resumed" write and the spawn ------------------------------------
+
+
+class _Crash(BaseException):
+    """Escapes the drain's ``except Exception`` like a SIGKILL: nothing after the raise runs."""
+
+
+def _strand(rig: Rig) -> None:
+    """Paused run -> drain writes cap_state=resumed -> the process dies inside the launcher."""
+    rig.paused()
+    rig.request(1.5)
+    rig.launcher.fail = _Crash()  # type: ignore[assignment]
+    with pytest.raises(_Crash):
+        rig.engine.drain_resume_requests()
+    assert rig.gov().cap_state == "resumed" and rig.launcher.calls == []
+    rig.launcher.fail = None
+
+
+def test_stranded_resumed_record_is_rolled_back_to_paused_at_start(rig: Rig) -> None:
+    _strand(rig)
+    rig.env.clock.now = NOW + timedelta(seconds=60)
+    rig.engine.start()
+    g = rig.gov()
+    assert (g.cap_state, g.reserved_usd, g.run_cost_cap_usd, g.final, g.resumes) == (
+        "paused", PER_RUN, PER_RUN, False, [],
+    )  # fmt: skip
+    assert g.pause_expires_at == T0 + timedelta(seconds=TTL)  # the operator's window is unchanged
+    assert rig.launcher.calls == []  # recovery never spawns
+    [ev] = rig.events("schedule.governance.resume_recovered")
+    assert (ev["run_id"], ev["fire_key"]) == ("r1", "k1")
+    # the operator can simply ask again, and the retry spawns exactly once
+    rig.request(1.5)
+    [out] = rig.engine.drain_resume_requests()
+    assert out.refused is None and rig.launcher.calls == [("r1", 3.5)]
+
+
+def test_stranded_recovery_is_idempotent_and_never_double_spawns(rig: Rig) -> None:
+    _strand(rig)
+    rig.env.clock.now = NOW + timedelta(seconds=60)
+    rig.engine.start()
+    rig.engine.start()
+    rig.env.tick(NOW + timedelta(seconds=90))
+    assert len(rig.events("schedule.governance.resume_recovered")) == 1
+    assert rig.launcher.calls == [] and rig.gov().cap_state == "paused"
+
+
+def test_stranded_recovery_past_the_ttl_is_expired_by_the_sweep(rig: Rig) -> None:
+    _strand(rig)
+    rig.env.clock.now = T0 + timedelta(seconds=TTL + 5)
+    rig.engine.start()
+    assert rig.gov().cap_state == "paused"
+    rig.env.tick(T0 + timedelta(seconds=TTL + 20))
+    assert rig.gov().cap_state == "expired" and rig.launcher.calls == []
+
+
+def test_resumed_record_with_a_live_child_is_adopted_not_rolled_back(rig: Rig) -> None:
+    """Crash AFTER the spawn but before mark_active: the child is running -> adopt, no respawn."""
+    rig.paused()
+    rig.request(1.5)
+    rig.engine.drain_resume_requests()
+    rig.engine.state_store.retire_finished(["k1"])  # the lost bookkeeping
+    rig.engine.start()
+    st = rig.engine.state_store.get(rig.root, "s")
+    assert st is not None and "k1" in st.active_fire_keys
+    assert rig.gov().cap_state == "resumed" and len(rig.launcher.calls) == 1
+    assert rig.events("schedule.governance.resume_recovered") == []
+
+
+def test_resumed_record_whose_child_ran_and_ended_is_finalised_not_rolled_back(rig: Rig) -> None:
+    rig.paused()
+    rig.request(1.5)
+    rig.engine.drain_resume_requests()
+    rig.engine.state_store.retire_finished(["k1"])
+    rig.env.alive.discard("r1")
+    rig.env.clock.now = NOW + timedelta(minutes=5)
+    rig.write_state("r1", "succeeded", cost=3.0)  # the resumed child finished
+    rig.engine.start()
+    g = rig.gov()
+    assert g.final is True and g.cap_state == "resumed"
+    assert rig.events("schedule.governance.resume_recovered") == []
 
 
 # -- AC5: re-pause with a fresh TTL; two resumes stay inside the original window ------------------
