@@ -290,3 +290,208 @@ The other tools:
 - [x] Testing notes are given per finding (R-1 tests added; R-2 interleaving test proposed).
 - [x] No unrelated refactor. Only R-1 (a small local fix in this epic's module), the S-10 help text and
   the probes were changed.
+
+---
+
+# R-2 re-verification after w23-01/w23-02 (Opus, overseer unit w24-06-a1-security-gate-r2-verify)
+
+- By: reviewer agent (Opus) · Role: reviewer · Date: 2026-11-11
+- Reviewed state: committed tip **`1d5c6f9`** on `ad/enhancements-10nov`.
+  - The R-2 fix is `ea88f56`. Its subject says `docs(tickets): … STATUS note`, but it also carries the
+    `ReadOnlyFireStore` code change.
+  - The R-3/R-4 seams are in `0f2a99b`.
+- Method:
+  - Extracted the tip with `git archive 1d5c6f9` into a temp tree and ran `uv sync --extra dev --extra ui`
+    there. Other units' uncommitted edits in the shared tree (`tests/service/test_webhook.py`, ADR-0025,
+    ticket files) could not affect the results.
+  - Read every fire-store construction site in `src/` (`grep FireIntentStore( / readonly_fire_store /
+    UsageLedger(`) against the full write surface of `FireIntentStore`: `write`, `update`,
+    `update_governance`, `write_suppressed`, `reconcile_orphans`, `prune` (all via `_persist` or
+    `_delete`).
+  - Wrote probe `se4bk5-probes/p7_resume_queue_r2.py` and mutation-checked the R-2 tests.
+- Only change made in this pass: the p7 probe and this section. No code was fixed.
+
+## R-2 view paths: closed (verified in code)
+
+`ReadOnlyFireStore` (`service/fire_store.py:408`) overrides `update_governance`. It applies the merge in
+memory and never calls `_persist`. That is the only fire-store method `UsageLedger` calls that writes
+(`_raise_mark`, `usage_ledger.py:357`). The ledger otherwise calls only `directory`, `read_file` and
+`get`.
+
+| View path | Store it uses | Writes fire records? |
+|---|---|---|
+| Dashboard `GET …/schedules/{id}/usage` (`ui/service.py:1334`) | `UsageLedger(readonly_fire_store(sdir))` | **No** |
+| Dashboard run view, `is_governed_run` (`ui/service.py:834`) | writable `FireIntentStore`, but only `find_by_run_id`, a read | No |
+| `ao schedule usage` (`schedules/cli.py:1423`) | `_readonly_ledger` → `readonly_fire_store` | **No** |
+| `ao schedule list` (`:372`) | `_readonly_ledger` | **No** |
+| `ao schedule next` (`:580`) | `_readonly_ledger` | **No** |
+| `ao schedule history` (`:634`) | `ScheduleEventLog.read` only, no fire store | No |
+| `ao resume` governed check (`cli.py:899`) | writable store, only `find_by_run_id` | No |
+
+The dashboard builds no `ScheduleEngine` and no other `UsageLedger` (grep `ScheduleEngine(` /
+`build_schedule_engine(` in `src/`: only `schedules/cli.py:308` and `service/cli.py:789`).
+
+Tests (in the clean tree):
+- `test_r2_view_ledger_never_rewrites_fire_records` and `test_usage_api_never_writes_fire_records`
+  compare bytes and mtime of the record. Both pass, and both fail if the view store is writable.
+
+**Verdict: R-2 is closed for every view path** (dashboard usage API, `ao schedule usage/list/next/history`).
+
+## New / residual findings
+
+**R-2b (medium, open). `ao schedule resume` on the queue path is still a second, unlocked fire-record
+writer. It can roll back the engine's cap transition on a sibling fire.**
+- **Where:** `schedules/cli.py:1473-1474` builds a **writable** `FireIntentStore(sdir)` and
+  `UsageLedger(fires)`. The original R-2 named this caller (`ao schedule resume`, old `cli.py:1400`).
+  The w23-01 fix did not change it.
+- **Path to the write:**
+  - `request_capped_resume` → `check_resume` → `_remaining` → `ledger.usage(...)` over **every** fire in
+    the binding's windows → `charge` → `_raise_mark` → `FireIntentStore.update_governance` → `_persist`.
+  - The write happens when the daemon holds the engine lock: `--queue`, the auto-queue branch, or the
+    `EngineLockHeldError` fallback (`:1491-1503`). In all three, the CLI process is not the engine.
+- **Two docstrings are now false:**
+  - `check_resume` says "never writes" (`capped_resume.py:250`).
+  - `update_governance` says it is "safe because the engine is the single writer" (`fire_store.py:285`).
+- **Failure scenario, reproduced by p7 test 2:**
+  - An operator runs `ao schedule resume s --run r1` while the daemon is live.
+  - The CLI's `update_governance("k2")` reads sibling record k2.
+  - The engine then writes `cap_state=aborted, final=True` on k2.
+  - The CLI persists its stale copy with only a higher `cost_observed_usd`.
+  - Result: `k2 after race: none False 1.0`. The engine's abort/final is lost. At-most-once still
+    holds, but a lost `aborted`/`final` cannot be recovered (same impact class as R-2).
+  - p7 test 1 also shows the plain write: the CLI request rewrites k2 with no race needed.
+- **Severity: medium, not high.** It needs an explicit operator command while a daemon is live, and the
+  window is narrow (one `get`→`os.replace` inside `update_governance`, a few ms including fsyncs).
+  R-2 was high because a polling dashboard tab hit it continuously.
+- **Fix (small, same pattern as w23-01):** in `resume_cmd`, build `fires = readonly_fire_store(sdir)`.
+  - The request side only validates.
+  - The authoritative re-check and all writes happen in `drain_resume_capped`, under the governance
+    flock, in the engine process. That is the engine's own store in both the queue path and the
+    `--local` path, where `engine.drain_resume_requests` is used.
+  - p7 test 3 shows the request over `readonly_fire_store` writes nothing.
+  - Also correct the two docstrings above.
+- **Owner:** E-Qp4Zm8 T-nI4DBf (capped resume) / the `usage_ledger.py` owner.
+
+**TQ-R2 (low). `test_r2_view_does_not_clobber_a_concurrent_engine_governance_write` does not model the
+real race window.**
+- **What it does:** the engine write lands in the run-state loader, **before** the view's
+  `update_governance` re-reads the record. A writable view would re-read the fresh record, so
+  `cap_state` survives anyway.
+- **Mutation check:** I swapped `readonly_fire_store` for `FireIntentStore` in the test. `cap_state ==
+  "paused"` still held; only the `cost_observed_usd == 0.0` clause failed.
+- **Why it matters:** the test still catches "any write", but its name and docstring claim it catches
+  the rollback, and it does not.
+- **Next step:** inject the engine write between `get()` and `_persist` inside `update_governance`, as
+  p7 test 2 does with a `get` override.
+
+**GATE-1 (medium for the gate, not for the product). The committed tip `1d5c6f9` has a failing test
+and fails `ruff format --check`.**
+- **Cause:** `5e118bc` (FU-1/FU-2, the n1 nonce-eviction rewrite) moved the last two assertions of
+  `test_n1_downgrade_stays_wrong_scheme_even_when_the_nonce_cache_is_empty` (`wrong_scheme` reason,
+  "nothing persisted") into the tail of `test_n3_other_schedule_traffic_cannot_evict_a_replayable_entry`
+  (`tests/service/test_webhook.py:1003-1004`). It also put the two new `test_n1_github_*` tests after
+  `test_n3` with no blank-line separation.
+- **Effects:**
+  - `test_n3` fails, because its events set is empty.
+  - The n1 downgrade test lost its two strongest assertions (S-1 regression guard weakened).
+  - `ruff format --check` fails on `tests/service/test_webhook.py`.
+- **Already in progress:** another unit's uncommitted edit in the shared tree moves the asserts back.
+  That same edit also renames `_slug_for_root` → `slug_for_root` (R-3) while `src/` still exports only
+  `_slug_for_root`, so it must land together with the matching `src/` rename.
+- **Next step:** the owning unit commits the restoration, then the whole gate is rerun on a clean tree.
+
+## R-3 / R-4 status (verified in code)
+
+- **R-4: closed.**
+  - `webhook.resolve_secret` (`webhook.py:232-237`) uses `LocalFsArtifactStore(target.workspace_root).resolve`.
+  - `governance_gate.read_prompt` (`governance_gate.py:242-254`) does the same, and keeps its explicit
+    absolute-path refusal.
+  - `resolve` (`artifacts.py:82-89`) resolves symlinks and then checks containment against the
+    resolved root.
+  - Semantics are unchanged from the old checks:
+    - an absolute in-root `secret_file` was already accepted before;
+    - `.` or the root itself opens a directory, which `S_ISREG` refuses.
+  - The S-4 single open with `O_NOFOLLOW` + `fstat` + capped read is intact after the guard.
+  - The `0o077` permission check and the size cap are intact.
+  - Test `test_secret_file_root_guard_is_the_shared_resolver` proves which guard is in charge: the
+    shared resolver is patched to refuse, and the result is `secret_outside_workspace`. A matching
+    governance-gate test exists.
+  - Residuals unchanged:
+    - R-6: intermediate-directory TOCTOU, a documented limitation.
+    - R-5: `resolve_secret` returns `None` with no reason for `OSError`, a non-regular file or
+      `ValueError`. Suggestion, open.
+- **R-3: partially closed, remainder tracked.**
+  - Closed in `0f2a99b`:
+    - `ScheduleEngine` takes optional `fire_store`, `state_store` and `event_log`;
+    - `build_schedule_engine(monotonic=)`;
+    - `ScheduleEngine.clock/.monotonic` are exposed.
+  - Still open, recorded in STATUS.md (w23-02 line):
+    - the private-name imports (`supervisor._slug_for_root` in `fire_store.py:36`, `watch.py:50` and
+      `webhook.py:90`; `governance_gate._read_regular_file` in `schedule_launch.py`);
+    - 13 `monkeypatch.setattr(sched_cli, "_now", …)` uses across `tests/schedules` and
+      `tests/service/test_until.py`.
+  - Should-fix, not a security item.
+
+## Gate run on the clean `1d5c6f9` tree (real results)
+
+- `ruff check src tests`: **All checks passed.**
+- `ruff format --check src tests`: **2 files would be reformatted.**
+  - `tests/service/test_webhook.py` is GATE-1.
+  - `src/agent_orchestrator/_build_info.py` is generated by hatch and untracked, so it is not a defect.
+- `mypy src`: **Success: no issues found in 233 source files.**
+- `pytest tests/service tests/schedules tests/ui`: **2 failed, 2132 passed, 2 skipped** (459.8 s).
+  - `test_webhook.py::test_n3_…` is GATE-1, a real failure.
+  - `test_governance_gate.py::test_perf_tick_over_200_governed_schedules_stays_in_budget` is a
+    load-induced flake. The host load average was 58 during the run. Rerun alone three times: 3/3 pass
+    (4.7 s / 1.2 s / 1.0 s).
+- p7 probe: **1 failed, 2 passed**, as documented in the probe (the failure is the R-2b reproduction).
+- Not run in this pass: `make ui-typecheck` / `make ui-test`, the whole `tests/` tree outside these
+  three directories, and coverage.
+
+## Gate statement
+
+**The T-Se4Bk5 security gate CANNOT be marked passed yet.**
+
+What holds:
+- R-2 is closed for all view paths.
+- R-4 is closed.
+- The S-1..S-10 results from the previous pass are unaffected: no change touched them, apart from the
+  GATE-1 test damage, which weakens the S-1 downgrade test without changing `src/`.
+
+What remains before the gate can pass:
+1. **R-2b (medium):** switch `ao schedule resume` to `readonly_fire_store` on the request side and
+   correct the two docstrings. Then re-run p7: test 2 must pass, and test 1 flips to fail.
+2. **GATE-1:** commit the `test_webhook.py` restoration, together with the matching `slug_for_root`
+   rename in `src/` if that is part of the same change.
+3. **Clean-tree whole-gate rerun** on the resulting tip:
+   - `ruff check` / `ruff format --check` / `mypy src`;
+   - full `pytest` (perf tests on an idle host, or `-m "not perf"` plus a separate perf run);
+   - `make ui-typecheck` / `make ui-test`.
+
+Not blocking the gate: R-3 remainder (renames/clock seam), R-5, R-6, TQ-R2.
+
+## Finding counts (this pass)
+
+- Blocking for the gate: R-2b (medium) and GATE-1.
+- Should-fix: R-3 remainder (tracked).
+- Low: TQ-R2.
+- Closed: R-2 (view paths), R-4.
+
+## Pre-submit checklist
+
+- [x] Scope: R-2 closure (`ea88f56`), the w23-02 seams (`0f2a99b`), R-3/R-4 status and the gate on
+  `1d5c6f9`. Stated above.
+- [x] Alignment checked:
+  - project: single-writer and safe-by-default;
+  - task: TASK.md AC12/AC13/AC9 and the brief's acceptance;
+  - code intent: the `check_resume` and `update_governance` docstrings contradict the behaviour.
+- [x] Dimensions walked:
+  - concurrency/resume safety: R-2b;
+  - DRY/guards: R-4 closed;
+  - pluggability/testability: R-3;
+  - errors/logging: R-5 unchanged;
+  - determinism, magic literals and spec/DAG: no change in this diff, nothing to flag.
+- [x] Each finding has a location, observation, impact and next step.
+- [x] Severities are not inflated. R-2b is medium (operator-triggered, narrow window), not high like R-2.
+- [x] Testing notes: p7 reproduction, TQ-R2 mutation result, GATE-1 failing test.
+- [x] No code fixed. Only the probe and these ticket notes were added.

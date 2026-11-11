@@ -163,3 +163,14 @@
   residue, `usage_view.py` coverage 78 %, whole-tree gate re-run on a clean tree.
 - 2026-11-11 (developer, w23-02): TEST-QUALITY FU-3 and REVIEW R-3 (clock seam + injectable stores) / R-4 (webhook + governance gate use LocalFsArtifactStore.resolve) closed. `build_schedule_engine(monotonic=)`, `ScheduleEngine.clock/.monotonic`, optional `fire_store/state_store/event_log`. Opt-in integration test now ticks twice past the rate limit with an opted-in control; mutation-checked (dropping the seam or forcing opt-in fails). R-3 renames (`read_regular_file`, `slug_for_root`, public CLI clock) remain open.
 - 2026-11-11 (tester, w24-03): TEST-QUALITY FU-8 done (`tests/service/test_schedule_engine_fu8.py`: first sighting + restart, capped-resume crash window, engine drain wired to the real launcher; mutation-checked). FU-9 done except the `O_NOFOLLOW` swap race (needs a src seam; deferred with reason). FU-10 deferred (dead branch confirmed, src change owned by T-Sd1Kq7). FU-11 partly done (jitter flake, PYTHONHASHSEED); remainder deferred in TEST-QUALITY.md. **New open finding:** a run whose daemon dies between `update_governance(cap_state="resumed")` and the spawn stays `resumed` forever (not swept, not resumable again); pinned in a test, needs a product decision.
+- 2026-11-11 (reviewer Opus, w24-06): R-2 re-verified on `1d5c6f9`.
+  - **Closed for every view path:** dashboard usage API, `ao schedule usage/list/next/history`. R-4 is
+    closed too.
+  - **Gate NOT passed.** Two items block it:
+    - **R-2b (medium):** `ao schedule resume` (queue path) still persists cost marks from a non-engine
+      process. Probe p7 reproduces a lost engine `aborted/final`. Fix: `readonly_fire_store` on the
+      request side.
+    - **GATE-1:** `5e118bc` damaged `test_webhook.py` (`test_n3` fails, `ruff format` fails). The
+      restoration is uncommitted in the shared tree.
+  - Remaining after those two: a clean-tree whole-gate rerun, including UI gates.
+  - Details: REVIEW.md, "R-2 re-verification after w23-01/w23-02".
