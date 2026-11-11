@@ -34,7 +34,7 @@ from typing import IO, Any, Final, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
 from ..artifacts import ArtifactPathError, LocalFsArtifactStore
-from ..models import TrippedBreaker, compute_run_usage_totals
+from ..models import RunState, TrippedBreaker, compute_run_usage_totals
 from ..scheduler import CronScheduler, IntervalScheduler, Scheduler
 from ..schedules.errors import ScheduleFileError
 from ..schedules.governance import LimitsSpec
@@ -53,6 +53,7 @@ from .capped_resume import (
 )
 from .fire_store import (
     SCHEDULES_SUBDIR,
+    CostConfidence,
     FireAlreadyRecordedError,
     FireIntentRecord,
     FireIntentStore,
@@ -75,6 +76,7 @@ from .governance_gate import (
 )
 from .registry import ServiceRegistry
 from .statefile import atomic_write_bytes
+from .usage_ledger import run_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -1471,10 +1473,18 @@ class ScheduleEngine:
         observed = max(g.cost_observed_usd, _observed_cost(state))
         confidence = "actual" if observed > 0 else g.cost_confidence
         killed = status not in (RUN_STATUS_SUCCEEDED, RUN_STATUS_FAILED)
-        if g.reserved_usd is not None and (observed <= 0 or killed):
+        # M1 (w01-07) / T-lTW88y re-review: a PARTLY blind run (a killed or blind attempt next to
+        # tasks that reported) has spend the observed figure cannot see. Persist the same
+        # confidence and charge the ledger's ``run_confidence`` gives it, so the window does not
+        # under-charge once ``state.json`` is gone.
+        conf = _run_confidence(state)
+        if g.reserved_usd is not None and (
+            observed <= 0 or killed or conf in _CONSERVATIVE_CONFIDENCES
+        ):
             # H1 / HLD §10.4, §16: a blind executor (no cost reported) or an externally killed run
             # is charged what it could have spent, never $0 -- otherwise period caps never bind.
-            observed, confidence = max(observed, g.reserved_usd), "unknown"
+            observed = max(observed, g.reserved_usd)
+            confidence = "partial" if conf == "partial" and not killed else "unknown"
         resumed_at = max(
             (t for t in (_parse_dt(r.get("at")) for r in g.resumes) if t is not None),
             default=None,
@@ -1683,6 +1693,16 @@ class ScheduleEngine:
             "webhook": {"enabled": False, "host": None, "port": None},
             "by_workspace": by_workspace,
         }
+
+
+# Run confidences the ledger charges conservatively (``max(observed, reserved)``) while open.
+_CONSERVATIVE_CONFIDENCES: Final = frozenset({"partial", "unknown"})
+
+
+def _run_confidence(state: Any) -> CostConfidence | None:
+    """``usage_ledger.run_confidence`` for a real :class:`RunState`; ``None`` for any other shape
+    (a probe that could not load a full state), which keeps the plain observed-cost rule."""
+    return run_confidence(state) if isinstance(state, RunState) else None
 
 
 def _observed_cost(state: Any) -> float:

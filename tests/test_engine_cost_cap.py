@@ -411,3 +411,19 @@ def test_w1_all_actuals_attempts_count_zero_blind(workspace: Path, store, rs_sto
     orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0)  # type: ignore[arg-type]
     st = orch.run(_retry_wf(workspace, 3), _reposets(workspace), AGENTS)
     assert st.tasks["t1"].attempts_without_actuals == 0
+
+
+def test_n1_cancel_between_attempts_keeps_spent_cost(workspace: Path, store, rs_store) -> None:
+    """T-lTW88y N-1: a cancel observed before attempt 2 must not drop attempt 1's paid cost."""
+    ex = _AttemptExecutor([("failed", 0.3)] * 3)
+
+    def cancel() -> bool:
+        return ex.calls >= 1  # attempt 1 ran; cancelled before attempt 2
+
+    orch = Orchestrator(ex, store, rs_store, clock=lambda: _T0, cancel_fn=cancel)  # type: ignore[arg-type]
+    st = orch.run(_retry_wf(workspace, 3), _reposets(workspace), AGENTS)
+    ts = st.tasks["t1"]
+    assert ex.calls == 1
+    assert round(ts.cumulative_cost_usd, 6) == 0.3
+    assert ts.actuals_available is True
+    assert ts.attempts_without_actuals == 0  # the one attempt that ran reported actuals

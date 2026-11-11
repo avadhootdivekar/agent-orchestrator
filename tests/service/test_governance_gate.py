@@ -1480,15 +1480,9 @@ def test_ln3_post_spawn_argv_with_wrong_cap_value_cancels_child(tmp_path: Path) 
 
 # -- w21-06 test-quality review: the SimpleNamespace ``_state`` above cannot express a partly blind
 # run (no ``actuals_available``), so the retire hook was never compared with the ledger's
-# ``run_confidence`` on a real RunState. This pins the divergence until the hook is fixed.
+# ``run_confidence`` on a real RunState. Fixed by the w22-03 re-review (M1): the hook now agrees.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="retire hook derives confidence from observed>0, not run_confidence(): a partly blind "
-    "run is persisted 'actual' at its observed cost (ledger says 'partial', charges max(obs, "
-    "reserved)); once state.json is gone the window under-charges. Follow-up in epic STATUS.",
-)
 def test_retire_hook_confidence_matches_ledger_for_partly_blind_run(tmp_path: Path) -> None:
     from agent_orchestrator.models import RunState, TaskRunState
     from agent_orchestrator.service.usage_ledger import run_confidence

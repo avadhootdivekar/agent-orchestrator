@@ -5215,13 +5215,23 @@ class Orchestrator:
             if self._cancel_fn():
                 # Post-hook deliberately does NOT fire here (HLD §6): nothing meaningful
                 # completed. pre_hook_result IS attached -- it already ran, unconditionally,
-                # before this loop started.
+                # before this loop started. The cumulative actuals of the attempts that DID run
+                # are carried (T-lTW88y N-1): a cancel between attempts must not drop money
+                # already spent from the run's cost, the cap gate or the usage ledger.
                 return TaskResult(
                     task_id=task.id,
                     status="cancelled",
                     attempts=attempt,
                     blind_attempts=blind_attempts,
                     pre_hook_result=pre_hook_result,
+                    actuals_available=any_actuals,
+                    input_tokens=cum_input_tokens if any_actuals else None,
+                    output_tokens=cum_output_tokens if any_actuals else None,
+                    cache_creation_input_tokens=(
+                        cum_cache_creation_input_tokens if any_actuals else None
+                    ),
+                    cache_read_input_tokens=cum_cache_read_input_tokens if any_actuals else None,
+                    cost_usd=cum_cost_usd if any_actuals else None,
                 )
 
             # Attempt-suffixed capture dir (E-9h3m7k): each retry gets its own
