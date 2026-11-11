@@ -241,3 +241,6 @@ ui/tsconfig.tsbuildinfo
 
 # repo-intel (ri) build index — local cache, rebuilt from the repo tree, never committed.
 meta/index/
+
+# Sentinel runtime alarm log (written at repo root when ao runs here) — never committed.
+sentinel-alarms.jsonl
