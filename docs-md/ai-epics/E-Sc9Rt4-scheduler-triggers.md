@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → dev-epic agent (delivery)
 - Created: 2026-09-06
 - Last Updated: 2026-11-11
-- Status: In progress — MVP and most of MVP-2 landed on `ad/enhancements-10nov` (2026-11-11); `T-Te3Qw8` partial and `T-Se4Bk5` not started, so the epic is NOT closed (see Close-out)
+- Status: In progress — MVP and most of MVP-2 landed on `ad/enhancements-10nov` (2026-11-11); reconciled 2026-11-11 (w24-07): 14 tasks = 7 Done, 7 not Done (`T-Se4Bk5` in progress; `T-Sv5Hb3`, `T-Wh9Kv1`, `T-Te3Qw8`, `T-Dc6Zr2` partial; `T-Un0Lm6`, `T-Ap1Xs3` awaiting review), so the epic is NOT closed (see Close-out). Authoritative per-task table: `meta/tickets/E-Sc9Rt4-scheduler-triggers/STATUS.md`
 - Origin ask: user request. `Trigger(type=manual|cron|event)` is modelled and validated but
   nothing executes a schedule (ROADMAP §1, §3.2). Decisions D1/D3/D4/D5/D8 in ADR-0014 were
   locked by the user before design work started and are not re-litigated.
@@ -173,13 +173,13 @@ Test counts are `def test_*` per file on 2026-11-11 (parametrization not expande
 | Scheduled launcher, `--run-id` (FR-8) | `service/schedule_launch.py`, `runstate.py` | `test_schedule_launch.py` 29, `tests/test_run_id_flag.py` |
 | Service integration (FR-10) | `service/cli.py`, `registry.py` | `test_service_schedule_integration.py` 32 |
 | `ao schedule` CLI (FR-9) — **partial** | `schedules/cli.py` | `tests/schedules/test_cli_e2e.py` 43, `test_webhook_cli_e2e.py` 5 |
-| File-watch trigger (FR-11) — **core only, no CLI flag** | `service/watch.py` | `test_watch.py` 51 |
+| File-watch trigger (FR-11) — Done (CLI flags landed `511408a`) | `service/watch.py` | `test_watch.py` 51 |
 | Webhook ingress (FR-12) | `service/webhook.py` | `test_webhook.py` 62, `test_webhook_listener.py` 3, `test_webhook_cli_wiring.py` 2 |
 | `until` termination (FR-13) | `schedule_engine.py` | `test_until.py` 28 (+parametrized; 45 collected) |
 | Dashboard panel + 5 routes (FR-14) | `ui/app.py`, `ui/service.py`, `ui/src/components/Schedules.tsx` | `tests/ui/test_schedules_api.py` 20, `ui/src/test/schedules.test.tsx`, `tests/auth/test_schedules_auth.py` 2 |
 | Governance gate (added scope) | `schedules/models.py`, `service/capped_resume.py`, engine | `test_governance_gate.py` 67, `test_capped_resume.py` 42, `test_governance_model.py` 27 |
 | Integration/e2e suite | `tests/schedules/test_e2e_schedules.py` | 11 per-trigger CliRunner e2e tests (`T-Te3Qw8`, **partial**) |
-| Security + architecture gate | — | **not started** (`T-Se4Bk5`) |
+| Security + architecture gate | — | **in progress, not Done** (`T-Se4Bk5`: S-1..S-10, R-1..R-4 closed; clean-tree gate re-run and `usage_view.py` coverage owed) |
 
 ## Risks & Blockers
 
@@ -209,8 +209,8 @@ Test counts are `def test_*` per file on 2026-11-11 (parametrization not expande
 
 ### Close-out (2026-11-11) — deferred items and why
 
-- `T-Se4Bk5` security/architecture gate: not started; `T-Te3Qw8` integration/e2e suite: only the per-trigger tier landed (11 tests). The work waves ran out; the epic cannot close without them.
-- `ao schedule add --watch`, `--from-workflow`, event-kind `next`, comment-preserving `save` (ruamel), `daemon --once` e2e legs: unfinished (HLD §22).
+- `T-Se4Bk5` security/architecture gate: in progress (review and probes done, R-2 closed; not Done until the gate is re-run on a clean tree); `T-Te3Qw8` integration/e2e suite: per-trigger tier + shared fixtures + real fake-executor run landed, AC6/AC8a/AC17 open. The epic cannot close without them.
+- Comment-preserving `save` (ruamel) and persistent webhook nonces are unfinished; `ao schedule add --watch`, `--from-workflow`, event-kind `next` and the `daemon --once` e2e legs have shipped since HLD §22 was written.
 - Limitations carried into `meta/ROADMAP.md` §4: DST fall-back double fire; at-most-once missed run on crash mid-fire; in-memory webhook nonce/rate state resets on restart; microsecond `launch_id` resolution; plus the isolation/run-id/supervisor items listed there.
 - Roadmap §3.1 (authentication/authorization on triggers, audit) is untouched and still highest priority — one HMAC webhook is not an auth model.
 

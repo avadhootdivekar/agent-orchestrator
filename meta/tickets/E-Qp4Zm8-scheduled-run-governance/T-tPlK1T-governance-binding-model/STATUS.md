@@ -2,8 +2,13 @@
 
 - ID: `T-tPlK1T-governance-binding-model`
 - Updated At: 2026-11-11
-- State: Done (pending review/merge)
+- State: Done
 - Owner: TBD (assigned at sprint start)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Done**
+- All ACs met; reviewed (governance review fixes `e757305`: int/float parity, digest identity, HLD 6.3) and exercised by the schema-vs-pydantic parity corpus (w21-06). No unmet ACs. Merge to `main` via PR pending.
 
 ## This update
 - **2026-11-11 (developer, unit `w08-01-a2-gov-binding-model`):** implemented. New `schedules/governance.py`

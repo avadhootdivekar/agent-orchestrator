@@ -2,8 +2,14 @@
 
 - ID: `T-Uz0Uol-usage-ledger`
 - Updated At: 2026-11-11
-- State: Implemented (pending review/merge)
+- State: Partial — ACs 1-13 implemented; event-sink wiring open
 - Owner: developer agent
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial — ACs 1-13 implemented; event-sink wiring open**
+- Committed `61ddea2`; 52 tests, 97 % coverage, mutation-checked; reviewed in the T-lTW88y gate (F-1/F-2/N-1 fixes).
+- **Unmet / open**: the production event sink is not wired - nothing outside `usage_ledger.py` passes an `event_sink`, so `schedule.governance.cost_unknown` is never emitted by the service; AC8 perf asserted at 500 ms (10x margin), the exact 50 ms figure never measured.
 
 ## This update
 - 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: Docs reconciled (HLD §26). Still open: production event-sink wiring (`schedule.governance.cost_unknown`), `ScheduleEngine` default factory still `FireRecordLedger` alias.

@@ -2,8 +2,14 @@
 
 - ID: `T-Ri7Dz2-run-id-flag`
 - Updated At: 2026-11-11
-- State: Done (2026-11-10, branch `ad/enhancements-10nov`; see epic STATUS "T-Ri7Dz2 implemented")
+- State: Done
 - Owner: TBD (assigned at sprint start)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Done**
+- All ACs met (`tests/test_run_id_flag.py`); AC6 re-verified by the T-Se4Bk5 gate (probe `p6_run_id.py`: traversal/symlink refused, 2 procs x 20 trials = one winner). AC4 wording was replaced by the design review (explicit `launch_run(run_id=)` kwarg); `cost_cap_usd` was later added to the registry-derived `ALLOWED_OPTIONS` by E-Qp4Zm8 (deliberate; `run_id` is not forwardable). No unmet ACs.
+- The `Not started` lines in Evidence/Next actions below are template residue from 2026-09-06; ignore them.
 
 ## This update
 - Ticket created by the `architect` agent as part of the E-Sc9Rt4 design package. Not started.

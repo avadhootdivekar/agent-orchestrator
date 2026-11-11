@@ -5,8 +5,8 @@
 - Title: Scheduler daemon — cron & event triggers owned by `ao service`
 - Owner: architect agent (design) → dev-epic agent (delivery)
 - Created: 2026-09-06
-- Last Updated: 2026-11-10
-- Status: Draft (design amended 2026-11-10 by the Opus design review; implementation not started)
+- Last Updated: 2026-11-11
+- Status: In Progress (reconciled 2026-11-11, w24-07) — 14 tasks: 7 Done, 7 not Done (see Task List); epic NOT closed
 - Origin ask: user request — "`Trigger` is spec'd but nothing executes a schedule; `ao service` is the only always-on process, so it should own cron/event trigger evaluation." Decisions D1/D3/D4/D5/D8 in ADR-0014 were locked by the user before design started and are not re-litigated.
 
 ## Summary
@@ -151,28 +151,28 @@
 ## Task List
 - [x] `T-Sd1Kq7-schedule-binding-model` — `schedules/` package (models, locked store, JSON
   Schema), `service/statefile.py`, `Trigger.interval_seconds` + `IntervalScheduler` (FR-1, FR-3,
-  NFR-3) — 2 d
+  NFR-3) — 2 d — **Done**
 - [x] `T-Fr2Nx8-fire-store-and-state` — `service/fire_store.py`: `FireIntentStore`,
-  `ScheduleStateStore`, `ScheduleEventLog` (FR-7, FR-10) — 2 d
+  `ScheduleStateStore`, `ScheduleEventLog` (FR-7, FR-10) — 2 d — **Done**
 - [x] `T-Ev3Qm5-schedule-engine-core` — `service/schedule_engine.py`: evaluate/tick, overlap,
-  catch-up, jitter, concurrency, quarantine (FR-2, FR-4, FR-5, FR-6, NFR-2) — 3 d
-- [x] `T-Ri7Dz2-run-id-flag` — `ao run --run-id` with duplicate-id refusal (FR-8) — 1 d
+  catch-up, jitter, concurrency, quarantine (FR-2, FR-4, FR-5, FR-6, NFR-2) — 3 d — **Done**
+- [x] `T-Ri7Dz2-run-id-flag` — `ao run --run-id` with duplicate-id refusal (FR-8) — 1 d — **Done**
 - [x] `T-Lp4Wt6-scheduled-launcher` — `service/schedule_launch.py`: two-phase launch, template
-  instantiation per fire, `run_args` → existing options allow-list (FR-7, FR-8, NFR-3) — 2 d
-- [x] `T-Sv5Hb3-service-integration` — registry additions, `ao service run` wiring,
-  `--no-schedules`/`--webhook-*`, status merge, systemd unit delta (FR-2, FR-10, NFR-1, NFR-2) — 2 d
-- [~] `T-Cl6Jn9-schedule-cli` — the `ao schedule` sub-app incl. `daemon --once` (FR-9, NFR-5) — 3 d — landed 2026-11-11 for cron/interval; event-kind flags/`observe` in `next` pending T-Fw8Gp4/T-Wh9Kv1
-- [~] `T-Fw8Gp4-file-watch-trigger` — `service/watch.py` + `FileWatchScheduler` (FR-11) — 2 d — core landed 2026-11-11; CLI flags + e2e pending
-- [~] `T-Wh9Kv1-webhook-ingress` (core landed; CLI flags + daemon e2e pending T-Cl6Jn9) — `service/webhook.py`, listener app, `WebhookScheduler` (FR-12,
-  NFR-3) — 3 d
-- [~] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d — landed 2026-11-11 (AC13 done; coverage report unfinished)
-- [~] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d — implemented 2026-11-11, awaiting review
-- [~] `T-Te3Qw8-integration-e2e-suite` (per-trigger e2e tier landed, 11 tests; rest open) — cross-module integration + `CliRunner` e2e tiers
-  (all FRs, NFR-1, NFR-2, NFR-4) — 3 d
-- [~] `T-Se4Bk5-security-and-review-gate` (2026-11-11: S-1..S-10 closed, REVIEW.md done, AC7/AC16 done, AC14 UI + coverage evidenced; **not Done: R-2 high open, fix unit w23-01**) — `dev-security` audit of the untrusted-file and
-  webhook surfaces + `reviewer` architecture pass + NFR-6 re-verification (NFR-3, NFR-6) — 2 d
-- [~] `T-Dc6Zr2-docs-refresh` (partial 2026-11-11: HLD §21-23, ADR, LLD, README, ROADMAP, ai-epics, guide done; epic close-out blocked on T-Se4Bk5) — reconcile `docs-md/` + ADR-0014 + ROADMAP §1/§3.2 with what was
-  actually built, including deviations (all) — 2 d
+  instantiation per fire, `run_args` → existing options allow-list (FR-7, FR-8, NFR-3) — 2 d — **Done**
+- [~] `T-Sv5Hb3-service-integration` — registry additions, `ao service run` wiring,
+  `--no-schedules`/`--webhook-*`, status merge, systemd unit delta (FR-2, FR-10, NFR-1, NFR-2) — 2 d — **Partial: AC10 status fallback open**
+- [x] `T-Cl6Jn9-schedule-cli` — the `ao schedule` sub-app incl. `daemon --once` (FR-9, NFR-5) — 3 d — **Done; follow-ups S4/W3 open**
+- [x] `T-Fw8Gp4-file-watch-trigger` — `service/watch.py` + `FileWatchScheduler` (FR-11) — 2 d — **Done; accepted limitations in STATUS**
+- [~] `T-Wh9Kv1-webhook-ingress` — `service/webhook.py`, listener app, `WebhookScheduler` (FR-12,
+  NFR-3) — 3 d — **Partial: github-scheme replay bound (AC7/8) + combined auth test (AC1) open**
+- [~] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d — **Implemented, awaiting review (ACs 1-14 met)**
+- [~] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d — **Implemented, awaiting review (ACs 1-18)**
+- [~] `T-Te3Qw8-integration-e2e-suite` — cross-module integration + `CliRunner` e2e tiers
+  (all FRs, NFR-1, NFR-2, NFR-4) — 3 d — **Partial: AC6, AC8a, AC17, AC18 not-exercised list open**
+- [~] `T-Se4Bk5-security-and-review-gate` — `dev-security` audit of the untrusted-file and
+  webhook surfaces + `reviewer` architecture pass + NFR-6 re-verification (NFR-3, NFR-6) — 2 d — **In Progress, NOT Done: usage_view coverage 78%, clean-tree gate re-run, FU-8/9/10/11 open; R-2 closed**
+- [~] `T-Dc6Zr2-docs-refresh` — reconcile `docs-md/` + ADR-0014 + ROADMAP §1/§3.2 with what was
+  actually built, including deviations (all) — 2 d — **Partial: epic close-out blocked**
 
 **Total: 14 tasks (the overseer charter's "16 tasks" was wrong; F19), 32 person-days across 3 sprints. See `STATUS.md` for the capacity math and sprint
 assignment.**

@@ -2,8 +2,15 @@
 
 - ID: `T-Cl6Jn9-schedule-cli`
 - Updated At: 2026-11-11
-- State: Partially Done (MVP surface landed; dependent ACs unfinished, listed below)
+- State: Done
 - Owner: developer agent
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Done**
+- ACs 1-19 met: `observe` branch of `next` landed (`47afab8`, w22-04), `--watch` flags `511408a`, webhook flags w19-01, `--from-workflow` pre-existing; reviewed twice (w15-03 -> w17-01 High fixes H1/H2; mutation-checked). The older "Partially Done / `next` observe unfinished" wording is superseded.
+- Open non-AC follow-ups: **S4** `--workflow` vs `--from-workflow` path base needs an owner decision; **W3** comments/key order lost on CLI writes (needs `ruamel.yaml`); `_build_engine` is a second copy of `build_schedule_engine` (shared factory still to extract); W5 residual tests (M2, M3/M4, M6, M12, M13, M15, M16) not added.
+- Coverage: `schedules/cli.py` 94 % in the T-Se4Bk5 two-package run (73 % from `test_cli_e2e.py` alone).
 
 ## This update
 By: developer · Role: developer · Date: 2026-11-11

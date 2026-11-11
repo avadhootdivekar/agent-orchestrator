@@ -2,8 +2,14 @@
 
 - ID: `T-Fw8Gp4-file-watch-trigger`
 - Updated At: 2026-11-11
-- State: Partial — core landed, w13-03 review H1/H2/M1-M4 fixed (see 'Review fixes'); CLI flags (`ao schedule add --watch ...`) and the `ao schedule daemon --once` e2e (AC12) are NOT done
+- State: Done
 - Owner: developer agent (overseer unit w12-03-a1-file-watch)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Done**
+- ACs 1-13 met. AC12 (CLI + `ao schedule daemon --once` e2e) landed with `511408a` / `tests/schedules/test_e2e_schedules.py`; the older "CLI flags NOT done" lines are superseded. Reviewed twice (w13-03 H1/H2/M1-M4; w15-01 N1-N3), all fixed with mutation-checked tests; `watch.py` 96 % coverage.
+- Accepted/recorded (non-AC): L-a (A->B->A->B preserved-mtime cycle swallowed), L6 orphan digest files, L7 `overlap: skip` drops edits (use `queue`), custom `instance_dir` outside `workflows/*/runs` not auto-ignored.
 
 ## This update
 - `src/agent_orchestrator/service/watch.py` added: `WatchDigestStore`, `scan`, `changed_paths`, `FileWatchSource` (observe pure/read-only, commit saves digest), `DEFAULT_WATCH_IGNORES` (incl. `.orchestrator`), `WATCH_SCAN_BUDGET_SECONDS`.

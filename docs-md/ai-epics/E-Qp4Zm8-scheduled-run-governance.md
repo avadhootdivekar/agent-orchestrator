@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → dev-epic agent (delivery)
 - Created: 2026-11-10
 - Last Updated: 2026-11-11
-- Status: In progress — partially implemented, NOT closed (see HLD §26 for landed vs unfinished)
+- Status: In progress — reconciled 2026-11-11 (w24-07): 11 tasks = 3 Done (`T-lJu9oZ`, `T-tPlK1T`, `T-nI4DBf`), 8 not Done; NOT closed. Authoritative table: `meta/tickets/E-Qp4Zm8-scheduled-run-governance/STATUS.md` (HLD §26 pre-dates it)
 - Origin ask (owner, verbatim): "I should be able to invoke the AO runs with some fixed prompts periodically, with some
   required constraints, ... invocations per specified period, like per day, per week or something like that. And the
   cost or something like that per iteration."
@@ -113,7 +113,8 @@ E-Sc9Rt4's evaluator, a governance block to its fire records, and a mid-run cost
 
 ## Evidence log (2026-11-11, `w20-08`)
 
-Landed and committed: window math (`T-lJu9oZ`), binding `limits` model (`T-tPlK1T`), pre-fire gate (`T-PpE5lf`), usage ledger
-(`T-Uz0Uol`), engine cost-cap gate (`T-et7Edf`, partial), governance e2e (`T-88wSLC`, partial). Unfinished or uncommitted:
-pause/resume (`T-nI4DBf`), `ao schedule` limits/usage CLI (`T-rwj4nV`), dashboard usage route (`T-8knqVe`), `--cost-cap-usd`
-CLI wiring, period cost-cap polish, final gate (`T-lTW88y`). Details and deviations: `../scheduled-run-governance-hld.md` §26.
+Reconciled 2026-11-11 (w24-07), all committed on the branch except two untracked integration paths: Done = `T-lJu9oZ`, `T-tPlK1T`,
+`T-nI4DBf` (pause/resume). Partial = `T-Uz0Uol` (event sink), `T-PpE5lf` (period cost-cap polish), `T-et7Edf` (trailer xN, AC17),
+`T-8knqVe` (usage API + panel landed; `resume-capped` route, paused list unmet), `T-88wSLC`, `T-lTW88y` (NFR-6 baseline delta),
+`T-Hq3vXd`. `T-rwj4nV` (limits/usage CLI) is implemented, awaiting dedicated review. `--cost-cap-usd` wiring has landed; the final
+gate found no open Critical/High. Not closeable. Details and deviations: `../scheduled-run-governance-hld.md` §26.

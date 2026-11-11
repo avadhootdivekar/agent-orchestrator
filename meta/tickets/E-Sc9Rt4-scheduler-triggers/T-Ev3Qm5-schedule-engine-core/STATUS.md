@@ -5,6 +5,12 @@
 - State: Done
 - Owner: developer agent
 
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Done**
+- All ACs met; reviewed (Opus review w10-03: M1-M4 + Lows fixed, mutation-checked; later `Candidate.discriminator`/`skip_catch_up` additions reviewed with T-Fw8Gp4). No unmet ACs.
+- Recorded, not fixed (non-AC): L2 `MAX_CATCHUP_STEPS` walk cost (perf only); jitter > period accepted by the model (clamp recommended); HLD §14 DST spring-forward wording (doc).
+
 ## This update
 By: developer · Role: developer · Date: 2026-11-11
 - Implemented `service/schedule_engine.py` (ScheduleEngine, FireDecision, FireReason, ScheduledLauncher + TriggerSource

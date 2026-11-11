@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-11 (implemented; see STATUS.md)
-- Status: Partially Done (cron/interval/webhook/until + `--watch` flags landed; `next` observe branch unfinished)
+- Status: Done (follow-ups open) (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 3 days
 
 ## Requirements Mapping

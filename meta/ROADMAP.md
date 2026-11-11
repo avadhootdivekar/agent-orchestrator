@@ -41,7 +41,7 @@ ships a browser dashboard.
 | **Cross-run result cache (`ao run --cache`, `ao cache`)** | **New, opt-in** | Reuses an identical, previously successful task's declared outputs instead of re-dispatching the agent. Double opt-in (operator flag + `cache: true` per task), default off, `shadow` measure-only mode. NOT prompt caching. E-Rc4Hk8 / ADR-0019 — §2c. **Value unproven: G0 not yet run.** |
 | Authentication / multi-user | **New, opt-in** | Local accounts + optional TOTP 2FA for `ao ui` and the `ao service` hub (E-Da5Tn9, ADR-0021). Per-realm sessions, no roles/SSO yet — §3.1. |
 | **Workspace-only mode (no `repo_set`)** | **New** | A workflow may omit `repo_set`; reposets file optional, `--workspace` on `ao run`/`resume`, all I/O and run state under one workspace dir; git features degrade (isolation → none). ADR-0022, `docs-md/no-repo-set-mode-hld.md`; example `specs/examples/workflow-no-repo-set.json`. |
-| Cron / event triggers | **Mostly shipped, opt-in, epic not closed** | `ao service` fires cron/interval/file-watch/webhook schedules from `.ao/schedules.yaml`, `until` termination, `ao schedule` CLI, dashboard panel (E-Sc9Rt4, ADR-0014) — §2d. Security gate + e2e suite unfinished. Webhook HMAC is **not** the auth epic (§3.1). |
+| Cron / event triggers | **Mostly shipped, opt-in, epic not closed** | `ao service` fires cron/interval/file-watch/webhook schedules from `.ao/schedules.yaml`, `until` termination, `ao schedule` CLI, dashboard panel (E-Sc9Rt4, ADR-0014) — §2d. Security gate (`T-Se4Bk5`, R-2 closed but clean-tree re-run owed) + e2e suite (`T-Te3Qw8`) unfinished. Webhook HMAC is **not** the auth epic (§3.1). |
 
 ### Recently delivered
 
@@ -60,7 +60,7 @@ ships a browser dashboard.
 
 ### Mostly landed, not closed (2026-11-11)
 
-- **E-Sc9Rt4 — Service-owned scheduler & triggers** (ADR-0014, `docs-md/scheduler-triggers-hld.md`, operator guide `docs-md/guide-scheduled-runs.md`): see §2d. 14 tasks; 6 Done, 7 partial/in review (incl. `T-Te3Qw8`), 1 not started (`T-Se4Bk5`).
+- **E-Sc9Rt4 — Service-owned scheduler & triggers** (ADR-0014, `docs-md/scheduler-triggers-hld.md`, operator guide `docs-md/guide-scheduled-runs.md`): see §2d. 14 tasks (the charter's "16" was wrong); reconciled 2026-11-11: 7 Done, 7 not Done (`T-Se4Bk5` in progress; `T-Sv5Hb3`, `T-Wh9Kv1`, `T-Te3Qw8`, `T-Dc6Zr2` partial; `T-Un0Lm6`, `T-Ap1Xs3` implemented, awaiting review). Governance companion **E-Qp4Zm8** (ADR-0025, `docs-md/scheduled-run-governance-hld.md`): 11 tasks; 3 Done, 8 not Done (`T-8knqVe` resume route/paused list unmet).
 
 ---
 
@@ -205,7 +205,7 @@ It is **not** Claude prompt caching (that is ADR-0015's separate scope).
 - `ScheduleEngine` inside `ao service run` (opt-in per workspace, kill switches `--no-schedules`), bindings in `<workspace>/.ao/schedules.yaml`: `cron`, `interval`, `file_watch`, `webhook`; `skip|queue|allow` overlap, bounded catch-up, at-most-once fire store, `until` termination, `ao run --run-id`.
 - `ao schedule list|next|history|validate|add|remove|enable|disable|run-now|daemon`; dashboard **Schedules** panel + 5 `/api/schedules` routes; hub status `schedules` key; a pre-fire governance gate (budget/quota/pause-resume, `scheduled-run-governance-hld.md`).
 - Webhook listener is separate, default-off (`--webhook`, port 8771), HMAC-authenticated with the signature scheme pinned per binding (`ao` | `github`).
-- **Unfinished:** `ao schedule add --watch` / `--from-workflow`, event-kind `next`, comment-preserving `save`, the rest of the integration/e2e suite (`T-Te3Qw8`) and the security/architecture gate (`T-Se4Bk5`). Details: HLD §22.
+- **Unfinished (reconciled 2026-11-11):** comment-preserving `save` (ruamel), persistent webhook nonces (github-scheme replay across restart), the rest of the e2e suite (`T-Te3Qw8` AC6/AC8a/AC17), close-out of the security/architecture gate (`T-Se4Bk5`: clean-tree gate re-run, `usage_view.py` coverage), plus the E-Qp4Zm8 gaps (dashboard capped-resume route + paused list, period cost-cap polish, `ao status` trailer, NFR-6 baseline delta). `ao schedule add --watch` and `--from-workflow` and event-kind `next` **have shipped**. Details: HLD §22, epic STATUS.md.
 
 ## 3. Next 3–6 months
 
@@ -249,7 +249,7 @@ Still open from the original security list:
 
 *Largely delivered by E-Sc9Rt4 / ADR-0014 (§2d): scheduler daemon, file-watch and webhook triggers, dashboard surface.* What genuinely remains:
 
-- Finish E-Sc9Rt4: the `dev-security` + architecture gate (`T-Se4Bk5`), the remaining e2e tier (`T-Te3Qw8`), `ao schedule add --watch` / `--from-workflow`.
+- Finish E-Sc9Rt4: close the `dev-security` + architecture gate (`T-Se4Bk5`) and the remaining e2e tier (`T-Te3Qw8`); finish E-Qp4Zm8 (`T-8knqVe` resume route, `T-lTW88y` baseline delta). (`--watch` / `--from-workflow` already shipped.)
 - Authentication and authorization *on triggers* is **not** covered by the webhook HMAC — it stays under §3.1.
 - Catch-up/overlap beyond `skip|queue|allow`, calendar-aware schedules, multi-host scheduling: not designed.
 

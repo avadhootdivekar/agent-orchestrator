@@ -2,8 +2,15 @@
 
 - ID: `T-nI4DBf-capped-run-pause-resume`
 - Updated At: 2026-11-11
-- State: Partial (code in working tree, uncommitted, unreviewed; NOT done)
+- State: Done (committed `3e2870b`; reviewed in T-lTW88y; limitation B-2 recorded)
 - Owner: TBD (assigned at sprint start)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Done (committed `3e2870b`; reviewed in T-lTW88y; limitation B-2 recorded)**
+- All ACs met: ACs 1-9, 11, 12 by `tests/service/test_capped_resume.py` (54 tests), AC10 coverage 95 % (>= 85 %), CLI tier `test_e2e_cli_cost_cap.py`; B-1 (engine shims dropped `launch_capped_resume`) fixed `b93b576`; `capped_resume.py` audited in the T-lTW88y gate (W-2 Info accepted). The older "uncommitted, unreviewed" state is superseded.
+- Known limitation **B-2** (not an AC): a cap pause is settled only on the schedule's next due tick, so it is not visible right after the run exits; proposed fix (settle in the retire hook or a settle-only pass) not built.
+- The HTTP resume route and Resume button are T-8knqVe's scope, not this task's.
 
 ## This update
 - 2026-11-11 — By: developer (unit `w18-01-a2-capped-run-pause-resume`) · Role: developer · Date: 2026-11-11 · Comment: IMPLEMENTED (pending review/merge).

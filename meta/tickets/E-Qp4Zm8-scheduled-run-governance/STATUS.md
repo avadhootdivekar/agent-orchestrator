@@ -2,8 +2,27 @@
 
 - ID: `E-Qp4Zm8-scheduled-run-governance`
 - Updated At: 2026-11-11
-- State: In Progress — partially implemented, NOT closeable (see below)
+- State: In Progress (3 of 11 tasks Done; not closeable)
 - Owner: architect agent (design) -> dev-epic agent (delivery)
+
+## Reconciliation 2026-11-11 (w24-07, developer; docs only, branch `ad/enhancements-10nov`, HEAD `1d5c6f9`)
+Every task STATUS/TASK carries a dated Reconciliation block; this table is the authoritative rollup and matches `EPIC.md`'s Task List. Older bullets below that say "uncommitted", "working tree only" or "NOT started" for `T-nI4DBf`, `T-rwj4nV`, `T-8knqVe`, `T-lTW88y` are superseded: all of that code is committed (`d0378d7`, `3e2870b`, `d7cb6a7`, `4b9d6a3`...).
+
+| Task | State | Unmet ACs / open |
+|---|---|---|
+| `T-lJu9oZ` window math | Done | - |
+| `T-tPlK1T` binding model | Done | - |
+| `T-nI4DBf` pause/resume | Done | none (limitation B-2 recorded) |
+| `T-Uz0Uol` usage ledger | Partial | production event-sink wiring (`cost_unknown`); exact 50 ms perf figure |
+| `T-PpE5lf` pre-fire gate | Partial | period cost-cap polish (HLD §26.3 #9); L4 main, L5; AC5a engine-tick tier |
+| `T-et7Edf` run cost cap | Partial | AC17 `record_trip` docstring + `ao status` trailer xN; AC12 coverage; `fake_cost_script` (cosmetic) |
+| `T-rwj4nV` schedule CLI | Implemented, awaiting review | no dedicated review of `usage_view.py`/CLI |
+| `T-8knqVe` dashboard usage | Partial | AC3 `resume-capped` route; AC5 paused list + Resume; AC10 (M5) |
+| `T-88wSLC` e2e suite | Partial | AC1 mapping; AC6 baseline equality; AC7 delta; AC9b |
+| `T-lTW88y` security gate | Partial | AC4 NFR-6 delta vs baseline; re-run after `T-8knqVe`; ADR-0025 acceptance; Info W-4, I-1, I-6, I-7, I-9 |
+| `T-Hq3vXd` docs | Partial | HLD §26 re-pass, AC3 walkthrough, cross-links |
+
+**Rollup: 11 tasks = 3 Done, 8 not Done (7 Partial: `T-Uz0Uol`, `T-PpE5lf`, `T-et7Edf`, `T-8knqVe`, `T-88wSLC`, `T-lTW88y`, `T-Hq3vXd`; 1 Implemented-awaiting-review: `T-rwj4nV`). Epic state: In Progress, NOT closeable.** Done: `T-lJu9oZ`, `T-tPlK1T`, `T-nI4DBf`.
 
 ## This update
 - **2026-11-11 (reviewer/Opus, unit `w21-06-a2-test-quality-review`): mandatory test-quality review** of the governance

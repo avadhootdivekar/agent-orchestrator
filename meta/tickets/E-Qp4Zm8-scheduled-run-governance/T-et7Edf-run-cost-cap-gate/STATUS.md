@@ -2,8 +2,14 @@
 
 - ID: `T-et7Edf-run-cost-cap-gate`
 - Updated At: 2026-11-11
-- State: In Progress (partial: engine + registry done; CLI wiring pending)
+- State: Partial — engine gate, CLI wiring, sticky cap, resume warning done; trailer xN, AC17 docstring, AC12 coverage open
 - Owner: TBD (assigned at sprint start)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial — engine gate, CLI wiring, sticky cap, resume warning done; trailer xN, AC17 docstring, AC12 coverage open**
+- Done: engine gate + sticky `RunState.cost_cap_usd` + `builtin.cost_cap` + `attempts_without_actuals`; `--cost-cap-usd` on `ao run`/`ao resume` and `COST_CAP_OPTION` in `OPTIONS` (`3e2870b`); `SOURCE_STATE` resume resolution; CLI WARNING on `ao resume --cost-cap-usd` for a governed run (`5f51452`, AC14c); H-1 retry-loop cap fix and W-1 per-attempt blind count (`4b9d6a3`); e2e tier `test_e2e_cli_cost_cap.py`.
+- **Unmet / open**: **AC17** `record_trip` docstring and the `ao status` trailer `xN` collapse (not present in `breakers.py`/reporting); **AC12** coverage % never measured for the engine cost-cap delta; the named `fake_cost_script` fixture does not exist (suites patch `DispatchExecutor` locally; cosmetic, T-lTW88y M6); AC10 full-suite/state.json byte check only in a unit report; I-6/I-7 accepted Info.
 
 ## This update
 - 2026-11-11 — By: developer (unit `w18-01-a2-capped-run-pause-resume`) · Role: developer · Date: 2026-11-11 · Comment: CLI wiring DONE as a prerequisite of

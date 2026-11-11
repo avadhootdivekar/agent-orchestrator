@@ -2,10 +2,89 @@
 
 - ID: `T-lTW88y-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress (follow-up unit w21-02 fixed H-1/H-2/W-1 and audited the committed resume/usage code, uncommitted-at-write; gate re-run on the final commit still owed)
-- Owner: reviewer (run unit `w20-03-a2-security-gate`, Opus)
+- State: Partial — early + final gate run, all Critical/High closed; NFR-6 delta vs baseline and ADR acceptance open
+- Owner: reviewer (gate `w20-03`, fixes `w21-02`, re-review `w22-03`, Opus)
 
-## This update
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial — early + final gate run, all Critical/High closed; NFR-6 delta vs baseline and ADR acceptance open**
+- Done: early gate (design review w01-07), final gate on committed HEAD (w20-03), fixes (G-1, H-1, H-2, W-1, F-1..F-3, N-1, M1, M5) and a clean-clone re-review (w22-03) with mutation evidence; checklist AC2 (a)-(h) PASS at the committed tip. C-1 and all High findings are closed.
+- **Unmet / open**: **AC4** NFR-6 full-suite delta vs the epic baseline (no pre-epic baseline fixture committed; the only whole-tree numbers are the T-Se4Bk5 gate on `4b9d6a3`: 12155 passed, 5 failed outside this epic); open Info: W-4, I-1, I-6, I-7, I-9; ADR-0025 stays **Proposed** until the epic owner accepts it. The gate must be re-run after T-8knqVe's resume route lands.
+
+## Re-review on the committed tip (w22-03, Opus)
+- By: reviewer agent · Role: reviewer · Date: 2026-11-11
+- Comment: re-ran the gate on committed code only (fresh `git clone` of the branch, never the shared working tree).
+  The H-1/H-2/W-1 fixes (`4b9d6a3`) were verified by mutation. Every open lower finding and every w01-07 Medium (M1–M6)
+  got an individual verdict. Four more small, clear gaps were fixed with tests in `884c167` and `5f51452`. Each new test
+  is mutation-checked: it fails with the fix removed or on the pre-fix commit.
+
+### Mutation evidence for the w21-02 fixes (clone of `4b9d6a3`)
+| Fix | Mutant | Killing test |
+|---|---|---|
+| H-1 | `_retry_hits_cost_cap` break disabled | `test_engine_cost_cap.py::test_h1_retry_stops_when_run_cap_reached_between_attempts` |
+| W-1 | per-attempt `blind_attempts += 1` removed | `test_engine_cost_cap.py::test_w1_blind_attempt_after_actuals_attempt_is_counted` |
+| H-2 (409) | `_check_cost_cap_option` dropped from `resume_run` | `ui/test_cost_cap_resume_guard_ltw88y.py::test_governed_run_resume_rejects_cost_cap` |
+| H-2 (bound) | `MAX_COST_CAP_USD` check disabled | `ui/test_cost_cap_resume_guard_ltw88y.py::test_validate_cost_cap_has_upper_bound` |
+| F-3 | `usage?at=` year guard disabled | `ui/test_schedule_usage_api.py::test_usage_at_out_of_range_is_400_not_500` |
+| F-1 | `min(.., MAX_USD)` removed | **none at `4b9d6a3`** (440 passed). New test `test_f1_max_add_without_any_cost_cap_is_bounded_by_max_usd` kills it |
+| F-2 | request text bound disabled | **none at `4b9d6a3`** (440 passed). New test `test_f2_unbounded_or_unsafe_request_text_is_rejected` kills it |
+
+### Verdicts, all findings
+| ID | Verdict | Evidence |
+|---|---|---|
+| C-1 | **Closed** (`3e2870b`) | `--cost-cap-usd` wired. `test_e2e_cli_cost_cap.py` runs end to end |
+| G-1 | **Closed** | `O_NOFOLLOW`. 3 tests in `test_governance_security_gate_ltw88y.py` |
+| H-1 | **Closed**, residual I-6 | Mutation above. The bound is now ≈ P × C + one attempt per lane |
+| H-2 | **Closed**, residual I-7 | Mutation above. `start_run` and `resume_run` validate the cap; a governed resume gets 409 |
+| W-1 | **Closed** | Mutation above |
+| W-2 | **Info, accepted** | Unchanged since `3e2870b`. Resume read-modify-writes run under the `usage.lock` flock, on the engine thread |
+| W-3 | **Accepted, documented** | HLD §13.3 ("Agents can write `state.json`" / "The engine's in-run gate trusts `state.json`") records the residual and the ADR-0016 D9 acceptance. The high-water mark and the reservation floor bound it. No code change |
+| W-4 | **Open, Info** | `FireIntentStore.write` is still `exists()` then replace. `b93b576` moved it to `atomic_write_bytes(durable=True)` with a unique tmp file, but the final step is still `os.replace`, not an exclusive create. Safe under `usage.lock` and a single engine |
+| I-1 | **Open, Info** | `FireIntentStore.prune` is still not called in `src/`. The only `.prune(` hit is the unrelated `cache/cli_ops.py:538` |
+| I-2 | **Accepted** | Unchanged (directory-component race; the attacker already has workspace write access) |
+| I-3 | **Accepted** | Unchanged (catch-up fires are charged to their scheduled window by design) |
+| I-4 | **Closed** (export artefact) | `_build_info.py` is gitignored (`.gitignore:227`), so `ruff format --check .` in a git checkout skips it. It only showed up because the earlier gate ran on a `git archive` export |
+| F-1/F-2/F-3 | **Closed** | F-1/F-2 had no test. Tests added (above). F-3 was already tested |
+| **N-1** | Warning, **fixed** `884c167` | `_run_with_retries` returned a fresh `TaskResult(status="cancelled")` when a cancel was seen between attempts. That dropped the cumulative actuals of the attempts that had already run: probe on `4b9d6a3`, $0.30 spent → `cumulative_cost_usd 0.0`, `actuals_available False`, counted blind. The cancelled result now carries the cumulative fields. Test `test_n1_cancel_between_attempts_keeps_spent_cost` |
+| **I-6** | Info, accepted | A blind executor (no `cost_usd`) still retries past the cap: probe, 4/4 attempts at cap $0.01. The engine cannot see blind spend. The ledger charges `max(observed, reserved)`. Document next to HLD §9.3 (`T-Hq3vXd`) |
+| **I-7** | Info | The template instantiate-and-start route (`ui/service.py` `create_run(start=True)`, `options=` at ~l.653) skips `_check_cost_cap_option`. An out-of-range cap is still refused by `ao run` (exit 2, in the run log) rather than with a 400. The run is new, so not governed. No bypass |
+| **I-8** | Info, **closed by `f4f0fc8`** (another unit) | At `5f51452`, `ruff check .` on a clean clone gave 75 errors, all in the committed `output/E-Sc9Rt4-scheduler-triggers/se4bk5-probes/*.py`, and `ruff format --check .` flagged the same 5 files. `src`/`tests` were clean. `f4f0fc8` (T-Se4Bk5) made the probes lint/format clean |
+| **I-9** | Info, pre-existing | `mypy src` on a fresh clone (no generated `_build_info.py`): 4 `no-redef` errors in `_version.py:26`. In a built checkout it is clean (233 files). Suggest a `# type: ignore[no-redef]` or a `TYPE_CHECKING` split |
+
+### w01-07 High/Medium, re-verified one by one (AC5)
+| ID | Verdict | Evidence |
+|---|---|---|
+| H1 | Implemented | `_has_remaining_work` gates the boundary trip. `test_serial_two_tasks_halts_at_boundary_with_second_pending` |
+| H2 | Implemented | `TaskRunState.actuals_available` / `attempts_without_actuals`, now per attempt (W-1). `usage_ledger.run_confidence` |
+| M1 | **Was partial, fixed `884c167`** | The ledger charged a partly blind run `max(observed, reserved)`, but the retire hook (`_finalize_governance_once`) persisted `cost_confidence=actual` at the observed cost. That was the strict xfail pinned by w21-06. Once `state.json` is gone, the window under-charged. The hook now uses `run_confidence` on a real `RunState`: partial/unknown → `max(observed, reserved)`, with the ledger's confidence. The xfail is removed and `test_retire_hook_confidence_matches_ledger_for_partly_blind_run` passes |
+| M2 | Implemented | `queued_scheduled_for` (`fire_store.py`, `schedule_engine.py:~1191`). `test_queued_fire_over_quota_is_burned_in_original_window`, `test_queued_fire_within_quota_drains` |
+| M3 | Implemented | Trip-after-latest-resume rule (L3 included). `test_retire_hook_ignores_stale_trip_after_resume_and_honours_fresh_one`, `test_l3_unparseable_trip_time_after_resume_fails_closed_and_equal_time_is_stale` |
+| M4 | Implemented | The cost-cap halt goes through `DispatchPrep/SettleResult(signal="halt")` and ends `failed` with pending work (`test_serial_two_tasks_halts_at_boundary_with_second_pending`, AC16 tests in `test_engine_cost_cap.py`) |
+| M5 | **Was partial, fixed `5f51452`** | (a) `Option.sticky_on_resume` + `SOURCE_STATE` were present (`test_run_options_cost_cap.py`). (c) The dashboard 409 was present (H-2). The CLI WARNING on `ao resume --cost-cap-usd` for a governed run (T-et7Edf AC14c) was **missing**. It is now added as `cli._warn_if_schedule_governed`: it warns and never refuses. Test `test_m5_resume_with_explicit_cap_warns_only_for_a_governed_run[True/False]` (the governed case fails on `4b9d6a3`) |
+| M6 | Implemented (Info) | `FakeExecutor.token_outputs[..]["cost_usd"]` (`executors/fake.py:285`), used by the CLI e2e tiers (`test_e2e_cli_cost_cap.py`, `schedules/test_cost_cap_cli_e2e.py`). The AC's named `fake_cost_script` fixture in `tests/conftest.py` does not exist. Each suite patches `DispatchExecutor` locally instead. Cosmetic |
+
+### Checklist AC2 at the committed tip
+(a) **PASS**: H-2 is closed and `run_args.cost_cap_usd` is rejected. The CLI escape hatch now warns (M5). (b) **PASS**:
+F-1 ceiling, with a test now. (c) PASS. (d) PASS (W-3 accepted). (e) PASS. (f) PASS. (g) **PASS**: `usage` and
+`governance-events` are GET-only and authenticated. There is no resume POST, so the Origin gate is N/A (w21-02). (h) PASS.
+Related: production bug **B-1** (the `ao schedule resume` shims dropped `launch_capped_resume`, found by w21-03) is
+fixed at `b93b576`: both shims forward it, and `tests/service/test_deferred_launcher.py` covers it.
+
+### Flake: `test_parallel_siblings_are_drained_not_killed`
+**Not a real race.** In `run()`, the FILL pass submits both `a` and `b` before the first DRAIN (`engine.py`, the FILL
+loop, then `as_completed`), so `b` always runs, whatever the thread timing. Settle order varies, and the assertions
+already accept both orders (max trip 0.9). The test uses `max_attempts=1`, so the H-1 worker-thread path is never
+reached. Stress result: **400/400 passed** under 24 busy-loop CPU hogs plus a concurrent full suite. The one failure
+w21-02 saw was in the shared working tree while other units' edits were in flight, and that unit briefly ran
+`git stash push -- src`. That environmental cause is the most likely explanation. No change.
+
+### AC4 / NFR-6 gate numbers (committed tip)
+No governance-specific baseline delta exists. Whole-tree numbers are the T-Se4Bk5 gate on `4b9d6a3` (same branch tip as the fixes above): `pytest -q` 12155 passed, 5 failed (2 install-script tests that need a `.git`, auth openapi baseline fixed by `0f7dac0`, 2 bench fake-pass suites outside this epic), 35 skipped, 2 xfailed; `mypy src` 0 errors; `ruff check .`/`ruff format --check .` clean at the later tip after `f4f0fc8`. AC4's delta vs a pre-epic baseline is **not** met (see Reconciliation).
+
+### What is still open
+- W-4, I-1, I-6, I-7, I-9 (all Info, owners above). ADR-0025 stays **Proposed** until the epic owner accepts it.
+
+## Earlier update (w20-03 gate)
 - By: reviewer agent · Role: reviewer · Date: 2026-11-11
 - Comment: I ran the final security and review gate on **committed HEAD** (`a3d0195`, exported with `git archive` so
   uncommitted carry-over work could not leak in). I reviewed `governance_gate.py`, `usage_ledger.py`, `fire_store.py`,
@@ -128,5 +207,6 @@ design). NaN/inf/negative limits are rejected at load (`allow_inf_nan=False`, `g
 ## Next actions
 1. ~~C-1~~ committed (`3e2870b`); ~~H-2~~ fixed in w21-02.
 2. ~~H-1 and W-1~~ fixed in w21-02 (engine; this is the AC3 scope exception, a fifth engine site).
-3. Re-run checklist items (a), (b) and (g), plus AC5's remaining items, on the committed pause/resume and dashboard code.
-4. Sync the finding counts into ADR-0025's corrections section and the epic STATUS (AC1).
+3. ~~Re-run checklist (a), (b), (g) and AC5 on the committed code~~ done in w22-03 (all PASS; M1/M5 completed).
+4. ~~Sync counts into ADR-0025 and the epic STATUS~~ done in w22-03.
+5. Remaining Info items: W-4, I-1, I-6 (doc in `T-Hq3vXd`), I-7, I-9. None blocks the gate.

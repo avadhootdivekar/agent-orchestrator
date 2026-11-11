@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F1/F22/F24 applied; see `../EPIC.md` "Late-gate corrections")
-- Status: Done (2026-11-10, branch `ad/enhancements-10nov`)
+- Status: Done (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 1 day
 
 ## Requirements Mapping

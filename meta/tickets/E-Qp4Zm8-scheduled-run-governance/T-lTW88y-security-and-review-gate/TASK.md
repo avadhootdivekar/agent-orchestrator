@@ -6,7 +6,7 @@
 - Owner: reviewer + dev-security agents
 - Created: 2026-11-10
 - Last Updated: 2026-11-11
-- Status: In Progress (final gate run 2026-11-11; H-1/H-2/W-1 fixed in w21-02, re-run owed — see STATUS)
+- Status: Partial (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 1.5 days (0.5 d early gate + 1 d final gate)
 
 ## Requirements Mapping

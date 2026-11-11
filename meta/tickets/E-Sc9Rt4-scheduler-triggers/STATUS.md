@@ -1,9 +1,31 @@
 # STATUS
 
 - ID: `E-Sc9Rt4-scheduler-triggers`
-- Updated At: 2026-11-10
-- State: Draft
+- Updated At: 2026-11-11
+- State: In Progress (7 of 14 tasks Done; not closed)
 - Owner: architect agent (design) → dev-epic agent (delivery)
+
+## Reconciliation 2026-11-11 (w24-07, developer; docs only, branch `ad/enhancements-10nov`, HEAD `1d5c6f9`)
+Every task STATUS/TASK now carries a dated Reconciliation block; this table is the authoritative rollup and matches `EPIC.md`'s Task List. The charter's "16 tasks" is wrong: **14**. Older "This update" bullets below pre-date it and are history, not current state.
+
+| Task | State | Unmet ACs / open |
+|---|---|---|
+| `T-Sd1Kq7` binding model | Done | - |
+| `T-Fr2Nx8` fire store | Done | - |
+| `T-Ev3Qm5` engine core | Done | - |
+| `T-Ri7Dz2` run-id flag | Done | - |
+| `T-Lp4Wt6` launcher | Done | - |
+| `T-Cl6Jn9` schedule CLI | Done | none (follow-ups S4 owner decision, W3 comment loss) |
+| `T-Fw8Gp4` file watch | Done | none (accepted limitations L-a, L6, L7) |
+| `T-Sv5Hb3` service integration | Partial | AC10 status fallback |
+| `T-Wh9Kv1` webhook ingress | Partial | AC7/AC8 github-scheme replay bound; AC1 combined auth test |
+| `T-Un0Lm6` until | Implemented, awaiting review | no review recorded |
+| `T-Ap1Xs3` dashboard | Implemented, awaiting review | no review recorded; AC18 figure only in unit report |
+| `T-Te3Qw8` e2e suite | Partial | AC6, AC8a, AC17 clean-tree delta; AC18 not-exercised list |
+| `T-Se4Bk5` security gate | In Progress, NOT Done | usage_view coverage 78 % < 80 %; gate not re-run on clean tree; FU-8/9/10/11; R-2/R-3/R-4 closed |
+| `T-Dc6Zr2` docs | Partial | epic close-out; HLD `[wt]` markers and §9.1 `--watch` wording stale |
+
+**Rollup: 14 tasks = 7 Done, 7 not Done (1 In Progress, 4 Partial, 2 Implemented-awaiting-review). Epic state: In Progress, NOT closed** (the older "Draft" and "6 Done / 1 not started" figures are superseded; `T-Cl6Jn9` and `T-Fw8Gp4` moved to Done, `T-Sv5Hb3` demoted to Partial on its recorded AC10 gap, `T-Se4Bk5` is In Progress not "not started"). Unfinished product items: comment-preserving `save` (ruamel), persistent webhook nonces, `T-Se4Bk5` close-out.
 
 ## This update
 - **2026-11-11 (developer, unit `w23-05-a1-security-gate-closeout`):** `T-Se4Bk5` AC7 (threat-model delta, in SECURITY.md + ADR-0014), AC14 UI/coverage evidence (`make ui-typecheck` clean, `make ui-test` 915 passed, scheduler/service coverage 96 % aggregate, `usage_view.py` 78 % below floor) and AC16 (EPIC/ADR sync) done; docs only. **`T-Se4Bk5` is NOT Done: R-2 (high, unlocked fire-record cost-mark writers) is open, fix owned by unit w23-01.** Task rollup unchanged: 6 Done, 7 partial/in review, `T-Se4Bk5` in progress (no longer "not started"). Epic state stays Draft until R-2 is re-verified and the whole-tree gate is re-run on a clean tree.

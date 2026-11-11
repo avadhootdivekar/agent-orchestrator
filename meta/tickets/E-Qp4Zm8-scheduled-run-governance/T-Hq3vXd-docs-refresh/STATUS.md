@@ -2,8 +2,14 @@
 
 - ID: `T-Hq3vXd-docs-refresh`
 - Updated At: 2026-11-11
-- State: Partial (docs synced to landed code; epic NOT closeable)
+- State: Partial — docs synced to landed code; epic NOT closeable
 - Owner: TBD (assigned at sprint start)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial — docs synced to landed code; epic NOT closeable**
+- Done: HLD §26 as-built, ADR-0025 implementation outcome, guides, ticket sync by this unit (w24-07).
+- **Unmet / open**: `scheduler-triggers-hld.md` cross-links (file dirty from another unit); AC3 "Recurring jobs with limits" walkthrough with captured output (the CLI is now committed, so it can be written); AC1 full name grep; HLD §26 still lists pause/resume, the CLI and `--cost-cap-usd` wiring as unfinished/uncommitted although they landed (`d0378d7`, `3e2870b`) - needs one more pass after T-8knqVe; I-6 blind-executor note beside HLD §9.3 not written.
 
 ## This update
 - 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: PARTIAL, honest. Done: HLD status line + §4 line refs refreshed + new §26 (As built, deviations, unfinished); ADR-0025 status + "Implementation outcome" (kept Proposed, not Accepted); epic narrative evidence log; `run-options-and-limits-guide.md` (cost cap section, marked flag-not-committed); `guide-sentinel.md` (cap interaction, kill under-count); all task STATUS + epic rollup.

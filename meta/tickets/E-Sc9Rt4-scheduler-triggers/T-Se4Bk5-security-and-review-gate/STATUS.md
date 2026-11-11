@@ -2,8 +2,15 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress (security + architecture review done; AC7 done, AC14 UI + coverage evidenced, AC16 synced; **R-2 (high) still open — NOT Done**; unit w23-01 owns the R-2 fix)
+- State: In Progress — NOT Done (gate evidence incomplete; no high finding open)
 - Owner: reviewer agent (overseer w20-02)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **In Progress — NOT Done (gate evidence incomplete; no high finding open)**
+- Closed since the older entries below: **R-2** (view-path fire-record writer; `ReadOnlyFireStore` in `fire_store.py`, tests `test_r2_*` + `test_usage_api_never_writes_fire_records`, committed), **R-3/R-4** (`0f2a99b`), S-1/S-8/S-10, R-1, AC7 (threat-model delta), AC16 (EPIC/ADR sync), TEST-QUALITY TQ-1..14 and FU-1..FU-7 (FU-4 via R-1).
+- **Unmet / open**: **AC14** `schedules/usage_view.py` coverage 78 % < 80 % floor (follow-up unit w24-04 in flight when this was written); **whole-tree gate** (pytest/ruff/mypy) not re-run on a clean tree after the fixes (REVIEW.md and its "not Done" verdict pre-date R-2's fix); TEST-QUALITY FU-8, FU-10, FU-11 deferred and FU-9 partial (w24-03 in flight); S-7 (github-scheme replay across restart) stays an accepted limitation.
+- Do not mark Done until the gate is re-run on a clean tree and `REVIEW.md` is updated to say R-2 is closed.
 
 ## This update
 - By: reviewer agent (w20-02-a1-security-gate) · Role: reviewer · Date: 2026-11-11

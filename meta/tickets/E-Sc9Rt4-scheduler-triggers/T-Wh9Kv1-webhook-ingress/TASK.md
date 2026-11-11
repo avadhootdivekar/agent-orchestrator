@@ -6,7 +6,7 @@
 - Owner: developer agent (security-sensitive — `T-Se4Bk5` audits this module specifically)
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F6/F14/F16/F18/F20 applied)
-- Status: Partial — core delivered 2026-11-11 (AC1–6, 9–16 met; AC7/AC8 met for the `ao` scheme, the `github` scheme has no time-bounded replay defence until the nonce cache is persisted, T-Se4Bk5 ADR). AC15 + AC15b landed 2026-11-11 (w19-01). Open: AC1 combined hub-auth test; persistent nonces
+- Status: Partial (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 3 days
 
 ## Requirements Mapping

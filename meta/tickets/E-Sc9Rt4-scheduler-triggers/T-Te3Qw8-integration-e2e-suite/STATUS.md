@@ -2,8 +2,14 @@
 
 - ID: `T-Te3Qw8-integration-e2e-suite`
 - Updated At: 2026-11-11
-- State: In progress (partial: per-trigger e2e landed; see below)
+- State: Partial
 - Owner: TBD (assigned at sprint start)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial**
+- Landed: per-trigger e2e tier (`test_e2e_schedules.py`, 11 tests: AC11, 13, 14, 15 + cron/disabled/no-file), AC2/AC3 shared fixtures and `make test-schedules` (w21-04, `0f7dac0`), a real fake-executor scheduled run asserting `state.json` `succeeded` (headline AC11), DST engine tests (T-Se4Bk5 FU-1). AC4-9/16 are covered by `tests/service/test_schedule_engine*.py` and `test_service_schedule_integration.py`.
+- **Unmet / open**: **AC6** Supervisor/engine interleaving and **AC8a** (F2 zombie, F7, F9) not re-verified in this suite; **AC17** clean-tree whole-suite before/after delta (last gate numbers: 12155 passed / 5 failed on `4b9d6a3`, failures outside the epic); **AC18** not-exercised list stands: real uvicorn child via the schedule path, systemd, network. No independent review recorded.
 
 ## This update
 - **2026-11-11 (tester, w21-04) leftovers closed:** `make_schedule_workspace(tmp)` (tests/schedules/_fixtures.py, used by the e2e `Env`); `_allow_testclient_host` hoisted to `tests/conftest.py` (removed from tests/ui + tests/auth conftests); `make test-schedules` added; `test_scheduled_fire_runs_a_real_fake_executor_run_to_succeeded` (a schedule fire runs `ao run --run-id <constructed id>` with fake agents; asserts `state.json` `succeeded` + output file). `test_hld_event_table_is_complete` already passed (table already lists `schedule.governance.*`); the "2 webhook uvicorn" tests (test_webhook_cli_wiring / test_webhook_listener) passed 72/72 here -- not reproducible, no skip added. Also fixed stale `tests/auth/test_auth_off_regression.py` openapi path set (+2 schedule routes). Still NOT exercised: real uvicorn child via the schedule path, systemd, network.

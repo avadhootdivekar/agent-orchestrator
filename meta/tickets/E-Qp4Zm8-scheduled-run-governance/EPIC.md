@@ -5,8 +5,8 @@
 - Title: Recurring `ao` runs with fixed prompts, per-period invocation caps and cost limits
 - Owner: architect agent (design) -> dev-epic agent (delivery)
 - Created: 2026-11-10
-- Last Updated: 2026-11-10 (design-review edits applied, w02-02)
-- Status: In Progress (2026-11-11) — partially implemented, not closeable: pause/resume, `--cost-cap-usd` CLI wiring, period cost-cap polish and the final gate are unfinished; see STATUS.md and HLD §26
+- Last Updated: 2026-11-11 (design-review edits applied, w02-02)
+- Status: In Progress (reconciled 2026-11-11, w24-07) — 11 tasks: 3 Done, 8 not Done (see Task List); not closeable: dashboard resume route/paused list, period cost-cap polish, trailer xN, NFR-6 baseline delta unmet
 - Origin ask: user request (2026-11-10), verbatim: "I should be able to invoke the AO runs with some fixed prompts
   periodically, with some required constraints, ... invocations per specified period, like per day, per week or
   something like that. And the cost or something like that per iteration."
@@ -85,17 +85,17 @@
 - FR-10: notifications on skip/cap (excluded by D-3 for MVP).
 
 ## Task List
-- [x] `T-lJu9oZ-quota-window-math` — pure day/week/month windows in tz; DST, midnight gap, week start (FR-2, NFR-3) — 1.5 d
-- [ ] `T-et7Edf-run-cost-cap-gate` — `ao run/resume --cost-cap-usd`, sticky `RunState.cost_cap_usd` (`Option.sticky_on_resume`), re-armed `builtin.cost_cap` gate (boundary trips only with remaining work), persisted `TaskRunState.actuals_available`, fake `cost_usd` seam, sentinel cap feed (FR-3, NFR-4) — 3 d; **after A3-D3 (T-Rk4Wn7)**
-- [x] `T-tPlK1T-governance-binding-model` — `LimitsSpec` & co., binding/defaults deltas, D-2 validator, JSON Schema, E-Sc9Rt4 fixture helper (FR-1, FR-2, FR-4, NFR-2) — 2 d
-- [ ] `T-Uz0Uol-usage-ledger` — `FireGovernance` record, `charge()`, window usage, high-water mark, cost confidence, index + mtime cache (FR-2, FR-4, NFR-1, NFR-5) — 3 d
-- [ ] `T-PpE5lf-pre-fire-gate-and-reservation` — gate step in `evaluate()`, `check_and_reserve` under flock, prompt snapshot, fail-closed argv check, retire hook (FR-1..FR-4, NFR-1, NFR-2) — 3 d
-- [~] `T-nI4DBf-capped-run-pause-resume` (implemented, pending review) — cap_state machine, resume drop-request + engine drain, TTL sweep, abort semantics (FR-6) — 2 d
-- [~] `T-rwj4nV-schedule-cli-limits-usage` (implemented; resume awaits T-nI4DBf commit) — `ao schedule add/set-limits/pin-prompt/usage/resume`, list/history columns (FR-1, FR-5, FR-6) — 2 d
-- [ ] `T-8knqVe-dashboard-usage-panel` — 3 routes + `ScheduleUsage.tsx` + governance feed (FR-5, FR-6) — 3 d
-- [ ] `T-88wSLC-governance-e2e-suite` — integration + `CliRunner` e2e across the HLD §18.2/§18.3 scenarios (all) — 2.5 d
-- [ ] `T-lTW88y-security-and-review-gate` — early gate on HLD, then dev-security + reviewer pass + NFR-6 re-verification (NFR-1, NFR-2, NFR-6) — 1.5 d
-- [ ] `T-Hq3vXd-docs-refresh` — reconcile docs-md + ADR-0025 + E-Sc9Rt4 HLD cross-links + ROADMAP with what was built (all) — 1.5 d
+- [x] `T-lJu9oZ-quota-window-math` — pure day/week/month windows in tz; DST, midnight gap, week start (FR-2, NFR-3) — 1.5 d — **Done**
+- [~] `T-et7Edf-run-cost-cap-gate` — `ao run/resume --cost-cap-usd`, sticky `RunState.cost_cap_usd` (`Option.sticky_on_resume`), re-armed `builtin.cost_cap` gate (boundary trips only with remaining work), persisted `TaskRunState.actuals_available`, fake `cost_usd` seam, sentinel cap feed (FR-3, NFR-4) — 3 d; **after A3-D3 (T-Rk4Wn7)** — **Partial: trailer xN, AC17 docstring, AC12 coverage open**
+- [x] `T-tPlK1T-governance-binding-model` — `LimitsSpec` & co., binding/defaults deltas, D-2 validator, JSON Schema, E-Sc9Rt4 fixture helper (FR-1, FR-2, FR-4, NFR-2) — 2 d — **Done**
+- [~] `T-Uz0Uol-usage-ledger` — `FireGovernance` record, `charge()`, window usage, high-water mark, cost confidence, index + mtime cache (FR-2, FR-4, NFR-1, NFR-5) — 3 d — **Partial: event-sink wiring open**
+- [~] `T-PpE5lf-pre-fire-gate-and-reservation` — gate step in `evaluate()`, `check_and_reserve` under flock, prompt snapshot, fail-closed argv check, retire hook (FR-1..FR-4, NFR-1, NFR-2) — 3 d — **Partial: period cost-cap polish, L4 main, L5 open**
+- [x] `T-nI4DBf-capped-run-pause-resume` — cap_state machine, resume drop-request + engine drain, TTL sweep, abort semantics (FR-6) — 2 d — **Done; limitation B-2 recorded**
+- [~] `T-rwj4nV-schedule-cli-limits-usage` — `ao schedule add/set-limits/pin-prompt/usage/resume`, list/history columns (FR-1, FR-5, FR-6) — 2 d — **Implemented, awaiting dedicated review (AC1-11)**
+- [~] `T-8knqVe-dashboard-usage-panel` — 3 routes + `ScheduleUsage.tsx` + governance feed (FR-5, FR-6) — 3 d — **Partial: AC3 resume-capped route, AC5 paused list/Resume, AC10 unmet**
+- [~] `T-88wSLC-governance-e2e-suite` — integration + `CliRunner` e2e across the HLD §18.2/§18.3 scenarios (all) — 2.5 d — **Partial: AC1, AC6, AC7 delta, AC9b open**
+- [~] `T-lTW88y-security-and-review-gate` — early gate on HLD, then dev-security + reviewer pass + NFR-6 re-verification (NFR-1, NFR-2, NFR-6) — 1.5 d — **Partial: all High closed; AC4 baseline delta + ADR acceptance open**
+- [~] `T-Hq3vXd-docs-refresh` — reconcile docs-md + ADR-0025 + E-Sc9Rt4 HLD cross-links + ROADMAP with what was built (all) — 1.5 d — **Partial: HLD §26 refresh + walkthrough open**
 
 **Total: 25 person-days, 2 sprints at 83 % utilization — capacity math and dependency graph in `STATUS.md`.**
 

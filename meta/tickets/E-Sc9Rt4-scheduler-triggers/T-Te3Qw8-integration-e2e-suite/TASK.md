@@ -6,7 +6,7 @@
 - Owner: tester agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F1/F2/F7/F8/F9/F10/F14/F20 applied)
-- Status: Partial (per-trigger e2e tier landed 2026-11-11; remainder open — see STATUS)
+- Status: Partial (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 3 days
 
 ## Requirements Mapping

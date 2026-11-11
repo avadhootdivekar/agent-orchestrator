@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-11 (implemented; all 17 ACs met)
-- Status: Done (2026-11-11)
+- Status: Done (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 2 days
 
 ## Requirements Mapping

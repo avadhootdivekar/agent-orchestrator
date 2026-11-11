@@ -2,8 +2,14 @@
 
 - ID: `T-rwj4nV-schedule-cli-limits-usage`
 - Updated At: 2026-11-11
-- State: Partial (CLI in working tree, uncommitted; NOT done)
+- State: Implemented — awaiting dedicated review (AC1-11 implemented, committed)
 - Owner: TBD (assigned at sprint start)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Implemented — awaiting dedicated review (AC1-11 implemented, committed)**
+- Committed `d0378d7`; the old "uncommitted, resume blocked on T-nI4DBf" state is superseded: `capped_resume.py` landed (`3e2870b`) and the `--local` drain path is now exercised by T-88wSLC (`test_resume_local_add_usd_completes_task_4_and_charges_the_same_fire`).
+- **Why not Done**: no dedicated code review recorded for `schedules/usage_view.py`/the new CLI (the T-lTW88y gate covered the GET routes and resume path only); `usage_view.py` measured 78 % in the T-Se4Bk5 coverage run vs 97 % in T-88wSLC's (different test scopes; w24-04 owns the follow-up).
 
 ## This update
 - **2026-11-11 (developer, unit `w20-01-a2-limits-usage-cli`):** implemented AC1-AC11 in `schedules/cli.py` + new `schedules/usage_view.py`

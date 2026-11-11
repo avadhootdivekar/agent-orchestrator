@@ -2,8 +2,14 @@
 
 - ID: `T-PpE5lf-pre-fire-gate-and-reservation`
 - Updated At: 2026-11-11
-- State: In Progress (partial; w14-04 review fixes applied, pending re-review/merge)
+- State: Partial — gate, reservation, retire hook done; period-cost-cap polish and two Lows open
 - Owner: developer agent
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial — gate, reservation, retire hook done; period-cost-cap polish and two Lows open**
+- Done since the older text: real renderer forwards `--cost-cap-usd` (`3e2870b`, so the AC7-real-renderer item is closed) and the production ledger is `T-Uz0Uol`; review fixes H1/M1-M3 + re-review N-M1/L-n1..3 landed; N-1 and M1 retire-hook confidence fixed in T-lTW88y.
+- **Unmet / open**: period-only binding reserves all remaining window headroom (HLD §26.3 item 9, period cost-cap polish); **L4 main** (post-spawn `launch_failed` charges 0 runs / $0) and **L5** left open with reasons; AC5a is tested at the launcher, not through a full engine tick.
 
 ## This update
 - 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: Docs reconciled (HLD §26). Period-cost-cap polish remains open: a period-only binding reserves all remaining window headroom (rounded down to cents), see HLD §26.3 item 9. L4/L5 remain as recorded above.

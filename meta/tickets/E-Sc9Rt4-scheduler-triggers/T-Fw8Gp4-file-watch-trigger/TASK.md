@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F6/F16/F20 applied)
-- Status: Partial (core landed 2026-11-11; CLI flags + daemon e2e pending upstream)
+- Status: Done (accepted limitations) (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 2 days
 
 ## Requirements Mapping

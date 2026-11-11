@@ -2,8 +2,15 @@
 
 - ID: `T-Un0Lm6-until-termination`
 - Updated At: 2026-11-11
-- State: In Review (AC14 coverage report recorded 2026-11-11)
+- State: Implemented — awaiting review (all 14 ACs met, no independent review recorded)
 - Owner: developer agent
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Implemented — awaiting review (all 14 ACs met, no independent review recorded)**
+- ACs 1-14 met per the task record: AC13 (LoopSpec contrast) and AC14 (coverage 100 % statements/0 partial branches of the until code at `76ca870`) landed in w18-03/w19-03. The `## Unfinished` list in this file is superseded.
+- **Why not Done**: no review pass of `until` is recorded (only the T-Se4Bk5 gate touched it indirectly).
+- Deviation: termination is recorded in `ScheduleState` + event log; no suppressed fire record is written (no instant is burned).
 
 ## This update
 - By: developer · Role: developer · Date: 2026-11-11 (unit `w17-02-a1-until-termination`)

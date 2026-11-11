@@ -2,8 +2,14 @@
 
 - ID: `T-Dc6Zr2-docs-refresh`
 - Updated At: 2026-11-11
-- State: Partial — docs reconciled with landed code; epic NOT closed (see Unfinished)
+- State: Partial — docs reconciled with landed code; epic cannot close
 - Owner: developer agent (overseer unit w20-07-a1-docs-refresh)
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial — docs reconciled with landed code; epic cannot close**
+- Met: HLD §21-23, ADR-0014 late-gate sections, LLD, README, ROADMAP, ai-epics, operator guide `docs-md/guide-scheduled-runs.md`; ticket-state sync redone by this unit (w24-07) for both epics.
+- **Unmet / open**: epic close-out (blocked on T-Se4Bk5 and T-Te3Qw8, not Done); AC10 spot-check not done for the §5.3 state-dir layout file-by-file and for the dashboard panel at runtime; HLD still carries `[wt]` (working-tree-only) markers for webhook scheme pinning that is now committed - `docs-md/scheduler-triggers-hld.md` had another unit's uncommitted edit when this ran, so it was not touched; `ao schedule add --watch`/`--from-workflow` are marked NOT shipped in HLD §9.1 although both now exist.
 
 ## This update — 2026-11-11 (developer, unit `w20-07-a1-docs-refresh`)
 - **Done:** HLD status header + §8.2 (scheme pinning, per-schedule nonce cache, extra statuses/reasons) + §9.1 (CLI flags actually shipped; `--watch`/`--from-workflow` marked NOT shipped) + §12 (full event table) + new §21 *Deviations* (11 entries), §22 *Delivery status*, §23 *Constants sweep*; ADR-0014 status + "Late-gate corrections (2026-11-11)"; LLD §7/§12 + `Trigger` snippet; README `ao schedule` section + `interval` trigger row; ROADMAP §1 row, §2d, §3.2, §4 (limitations a-j; §3.1 untouched); ai-epics evidence log, traceability table, close-out; new operator guide `docs-md/guide-scheduled-runs.md` (AC9: nightly / laptop off / overlap / stop / git push / why-not-fired); ticket sync (EPIC checkboxes, T-Ri7Dz2, T-Un0Lm6, T-Te3Qw8, T-Se4Bk5, this ticket).

@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-11-10
 - Last Updated: 2026-11-11
-- Status: Implemented (AC1-11); `resume` blocked on T-nI4DBf commit - see STATUS.md
+- Status: Implemented (awaiting review) (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 2 days
 
 ## Requirements Mapping

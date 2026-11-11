@@ -2,8 +2,15 @@
 
 - ID: `T-Wh9Kv1-webhook-ingress`
 - Updated At: 2026-11-11
-- State: Partial (core implemented, awaiting commit review; two items blocked on T-Cl6Jn9)
+- State: Partial — core + CLI flags delivered; github-scheme replay bound and combined-auth test open
 - Owner: developer agent
+
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial — core + CLI flags delivered; github-scheme replay bound and combined-auth test open**
+- Met: AC1-6, 9-16 incl. AC15/AC15b (`ao schedule add --webhook`, daemon `--once` leg); two security reviews fixed (H1/M1-M3/N1-N6); real-socket listener contract test.
+- **Unmet / open**: **AC7/AC8** for the `github` scheme (no time-bounded replay defence; nonce cache is in memory and resets on restart - T-Se4Bk5 S-7, accepted limitation, persistent nonces not built); **AC1** combined hub-auth + webhook test (only structural; SECURITY.md has a written confirmation, no test).
+- Non-AC: L4 registry/schedules mtime caching, `webhook.expired` event on TTL purge. Header "two items blocked on T-Cl6Jn9" is stale (T-Cl6Jn9 landed).
 
 ## This update
 - `service/webhook.py` landed: `build_webhook_app` (SecurityMiddleware mounted; only `POST /hooks/{slug}/{id}` + `GET /healthz`), `verify_delivery` (constant-time HMAC over raw bytes, X-AO/X-Hub headers, optional timestamp window), `resolve_secret` (env / workspace-guarded 0600 file), `NonceCache`, `TokenBucket`, `WebhookRequestQueue` (fsync'd `requests/*.json`, bounded per schedule), `WebhookSource` (observe/commit), `make_binding_lookup`.

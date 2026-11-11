@@ -5,6 +5,12 @@
 - State: Done
 - Owner: developer agent
 
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Done**
+- All ACs met; reviewed (w14-03: H1/M1/L2/L3/L5 fixed, mutation-checked). No unmet ACs (AC3/AC8 amended in TASK.md).
+- Not done, with reasons (non-AC): exit-4 => `launch_failed` reconcile (unreachable with per-fire unique run ids); `FireIntentStore.write` exclusive create (W-4); status fallback summary.
+
 ## This update
 By: developer · Role: developer · Date: 2026-11-11
 - Implemented `service/schedule_launch.py`: two-phase (intended -> launched/launch_failed) `ScheduledLauncher`, UTC-normalised `scheduled_run_id`, `render_instance_id` ({date}/{rand6}), root-guarded workflow/prompt resolution, template resolution by name only (F4), zero new argv surface, no reposets/agents (F10), `workspace` only for no-repo-set workflows.

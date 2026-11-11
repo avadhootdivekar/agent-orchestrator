@@ -5,6 +5,12 @@
 - State: Partial
 - Owner: TBD (assigned at sprint start)
 
+## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
+- Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
+- State: **Partial**
+- Landed: CliRunner quota/DST/restart tier (`01060ae`), cost-cap/usage/resume tiers (`e71d73d`; B-1 xfail removed), retire-confidence pin resolved by `884c167`, TQ Q-1..Q-11 closed, seeded window property test (w24-05), `tests/integration/test_governance_integration.py` and `tests/fixtures/governance/` exist but are **untracked/uncommitted** (another in-flight unit).
+- **Unmet / open**: **AC1** the full HLD §18.2/§18.3 name-per-bullet mapping; **AC6** `ao run` baseline `state.json` equality vs the pre-epic baseline (fixture untracked, not committed); **AC7** delta report (full-suite `pytest -q` vs epic baseline never run on a clean tree); **AC9b**; API cases depend on T-8knqVe's unmet routes; coverage not measured for the other new modules.
+
 ## This update
 - 2026-11-11 — By: developer (unit `w20-08-a2-docs-adr-sync`) · Role: developer · Date: 2026-11-11 · Comment: Remains Partial; pause/resume and usage-CLI e2e depend on uncommitted work.
 - Ticket created by the `architect` agent as part of the E-Qp4Zm8 design package. Not started.

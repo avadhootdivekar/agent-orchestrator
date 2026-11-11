@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-11-10
 - Last Updated: 2026-11-11
-- Status: Implemented (pending review/merge)
+- Status: Partial (reconciled 2026-11-11, w24-07; see STATUS.md)
 - Estimate: 3 days
 
 ## Requirements Mapping
