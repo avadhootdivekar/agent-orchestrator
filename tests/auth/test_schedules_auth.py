@@ -1,4 +1,4 @@
-"""The five ``/api/schedules`` routes are AUTHENTICATED by omission from the policy table
+"""The seven ``/api/schedules`` routes are AUTHENTICATED by omission from the policy table
 (T-Ap1Xs3 AC14a): 401 without a session, working with one."""
 
 from __future__ import annotations
@@ -19,6 +19,9 @@ ROUTES = [
     ("POST", "/api/schedules/a/enable"),
     ("POST", "/api/schedules/a/disable"),
     ("POST", "/api/schedules/a/run-now"),
+    # T-8knqVe governance routes: authenticated by omission like their peers.
+    ("GET", "/api/schedules/a/usage"),
+    ("GET", "/api/schedules/governance-events"),
 ]
 
 
@@ -36,7 +39,7 @@ def test_unauthenticated_is_401(
     assert response.status_code == 401
 
 
-def test_with_a_session_all_five_routes_work(
+def test_with_a_session_all_schedule_routes_work(
     build_dashboard: Callable[..., FastAPI], stub_runtime: StubRuntime, tmp_path: Path
 ) -> None:
     app = build_dashboard(stub_runtime)
