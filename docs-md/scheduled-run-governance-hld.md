@@ -425,7 +425,7 @@ Properties (each is a unit test):
 - **Store instants, derive keys.** The ledger stores `scheduled_for` instants, never window keys. Changing a binding's
   `timezone` or `week_start` re-buckets history deterministically on the next evaluation — no double quota, no lost
   quota. (Stated limitation: such a change can move past fires into or out of the *current* window; it is an operator
-  action, logged as `schedule.governance.limits_changed` when `limits_digest` changes.)
+  action. Each fire records the `limits_digest` it was gated under, but no `limits_changed` event is emitted — design intent only, not implemented.)
 - **E-Sc9Rt4's DST fall-back double fire is now contained.** A daily 01:30 cron in a DST zone fires twice on fall-back
   day (ADR-0014 known limitation). Both instants land in the same `day:` window, so a `{period: day, max_runs: 1}`
   quota skips the second. Pinned by a test.
@@ -928,13 +928,14 @@ FUNCTION read_prompt(d) -> PromptSnapshot | Skip:
 |---|---|---|
 | `schedule.governance.skipped` | INFO | `reason` (`quota_exhausted`\|`cost_cap_reached`\|`prompt_missing`\|`prompt_changed`), `period`, `used`, `max`, `remaining_usd`, `needed_usd`, `resets_at` |
 | `schedule.governance.reserved` | DEBUG | `reserved_usd`, `run_cost_cap_usd`, `prompt_sha256` (12-char prefix) |
-| `schedule.governance.run_cost_capped` | WARNING | `run_id`, `cost_usd`, `cap_usd`, `overshoot_usd`, `on_cap`, `pause_expires_at` |
-| `schedule.governance.resumed` | INFO | `run_id`, `add_usd`, `new_cap_usd`, `requested_by` |
-| `schedule.governance.resume_refused` | INFO | `run_id`, `reason` |
-| `schedule.governance.resume_recovered` | WARNING | `run_id`, `fire_key` — start-up rolled a `resumed` record whose spawn never happened (crash) back to `paused` |
+| `schedule.governance.run_cost_capped` | WARNING | `run_id`, `cost_usd` (observed), `cap_usd`, `engine_cost_usd`, `overshoot_usd` (engine metric), `on_cap`, `pause_expires_at` |
+| `schedule.governance.resumed` | INFO | `run_id`, `add_usd`, `new_cap_usd`, `by`, `request_id` |
+| `schedule.governance.resume_refused` | WARNING | `run_id`, `reason`, `detail`, `by` |
+| `schedule.governance.resume_recovered` | WARNING | `run_id`, `fire_key`, `detail` — start-up rolled a `resumed` record whose spawn never happened (crash) back to `paused` |
 | `schedule.governance.pause_expired` | WARNING | `run_id`, `paused_at` |
-| `schedule.governance.cost_unknown` | WARNING | `run_id`, `charged_usd` |
-| `schedule.governance.limits_changed` | INFO | `old_digest`, `new_digest` |
+| `schedule.governance.cost_unknown` | WARNING | `run_id`, `reason="no_state_json"` (emitted only when an event sink is injected) |
+| `schedule.governance.finalize_failed` | ERROR | `run_id`, `fire_key`, `attempts` — retire-hook finalisation given up after retries |
+| ~~`schedule.governance.limits_changed`~~ | — | **Not implemented** (design only; never emitted) |
 | `schedule.governance.launch_unsafe` | ERROR | `reason="cost_cap_not_forwarded"` |
 | `schedule.governance.error` | ERROR | gate raised; fire suppressed `governance_error` (fail closed) |
 | engine run log: `breaker.trip` with `breaker_id="builtin.cost_cap"` | WARNING | `{cost_usd, cap_usd}` (existing event shape) |
@@ -1059,7 +1060,7 @@ We will:
 | Cap reached while a task is mid-flight | Halt at next settle; drain; overshoot recorded. |
 | Operator `ao resume` without `--cost-cap-usd` | Sticky cap ⇒ halts at first dispatch ($0). |
 | Operator `ao resume --cost-cap-usd 999` (out-of-band) | Allowed (explicit act); the ledger still charges it to the fire's window ⇒ later fires of that job skip on `cost_cap_reached`. Surfaced as overshoot. |
-| Limits edited mid-window | Takes effect at next evaluation; history re-bucketed by current tz/week_start; `limits_changed` event. Lowering a cap below current usage simply skips the next fires. |
+| Limits edited mid-window | Takes effect at next evaluation; history re-bucketed by current tz/week_start; no event (`limits_changed` is not implemented). Lowering a cap below current usage simply skips the next fires. |
 | Binding removed while runs paused | Fire records remain; `ao schedule resume` refuses (`ScheduleNotFoundError`); runs stay manually resumable under their sticky cap. |
 | Clock jumps backwards | No re-count (stored `scheduled_for`); `pause_expires_at` comparisons may delay expiry by the jump — acceptable. |
 | Gate raises | Fail closed: `suppressed(governance_error)` + ERROR event; quarantine after 5 (E-Sc9Rt4). |
@@ -1318,7 +1319,7 @@ Reconciled against `ad/enhancements-10nov` (first by unit `w20-08-a2-docs-adr-sy
 | CliRunner governance e2e (quota skip, DST/Berlin boundaries, restart) | `T-88wSLC` (partial) | `tests/` |
 
 Event names emitted by the gate/ledger (grep-verified in `src/`): `schedule.governance.skipped`, `.reserved`, `.cost_unknown`,
-`.error`, `.finalize_failed`, `.launch_unsafe`, `.run_cost_capped`, `.resumed`, `.resume_refused`, `.pause_expired`.
+`.error`, `.finalize_failed`, `.launch_unsafe`, `.run_cost_capped`, `.resumed`, `.resume_refused`, `.resume_recovered`, `.pause_expired`. `limits_changed` (§13.1 earlier draft) is not emitted.
 
 ### 26.2 Landed later (committed since the first as-built pass)
 
