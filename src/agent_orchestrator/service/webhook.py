@@ -76,6 +76,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..artifacts import LocalFsArtifactStore
+from ..errors import ArtifactPathError
 from ..schedules.models import WebhookScheme
 from ..schedules.store import ScheduleStore
 from .registry import ServiceRegistry
@@ -227,9 +229,10 @@ def resolve_secret(
         return _checked_secret(env.get(spec.secret_env, "").encode("utf-8"), sid, emit)
     if spec.secret_file:
         try:
-            root = Path(target.workspace_root).resolve()
-            path = (root / spec.secret_file).resolve()
-            if path != root and root not in path.parents:
+            # R-4: the one shared root guard (also used by the launcher's _guarded_path).
+            try:
+                path = Path(LocalFsArtifactStore(target.workspace_root).resolve(spec.secret_file))
+            except ArtifactPathError:
                 emit("webhook.rejected", reason="secret_outside_workspace", schedule_id=sid)
                 return None
             # S-4: open ONCE without following a symlink swapped in after the checks above, then

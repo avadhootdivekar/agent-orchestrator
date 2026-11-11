@@ -338,6 +338,31 @@ def test_secret_file_group_readable_is_503_through_app(tmp_path: Path) -> None:
     assert "webhook.secret_permissions" in [e for e, _ in h.events]
 
 
+def test_secret_file_root_guard_is_the_shared_resolver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-4: containment is decided by LocalFsArtifactStore.resolve, not a private check. The model
+    already rejects `..`/absolute at load, so a valid in-root file that the shared resolver
+    refuses proves which guard is in charge."""
+    from agent_orchestrator.artifacts import LocalFsArtifactStore
+    from agent_orchestrator.errors import ArtifactPathError
+
+    seen: list[str] = []
+
+    def refuse(self: LocalFsArtifactStore, path: str) -> str:
+        seen.append(path)
+        raise ArtifactPathError(path)
+
+    monkeypatch.setattr(LocalFsArtifactStore, "resolve", refuse)
+    events: list[tuple[str, dict[str, Any]]] = []
+    t = _file_target(tmp_path, 0o600)
+    assert resolve_secret(t, emit=lambda e, **f: events.append((e, f))) is None
+    assert seen == ["sec.txt"]
+    assert [(e, f["reason"]) for e, f in events] == [
+        ("webhook.rejected", "secret_outside_workspace")
+    ]
+
+
 def test_secret_file_missing_and_escape(tmp_path: Path) -> None:
     t = _file_target(tmp_path, 0o600, rel="missing.txt")
     assert resolve_secret(t) is None

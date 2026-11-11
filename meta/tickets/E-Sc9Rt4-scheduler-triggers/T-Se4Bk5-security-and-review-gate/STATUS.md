@@ -153,3 +153,4 @@
 - **Still open:** R-2 (high; fire-record cost-mark writes from dashboard/CLI usage views are unlocked) — fix owned by
   unit **w23-01**; re-verify after it lands, then this task can be marked Done. Also open: R-3, R-4 (handed), FU-2..FU-11
   residue, `usage_view.py` coverage 78 %, whole-tree gate re-run on a clean tree.
+- 2026-11-11 (developer, w23-02): TEST-QUALITY FU-3 and REVIEW R-3 (clock seam + injectable stores) / R-4 (webhook + governance gate use LocalFsArtifactStore.resolve) closed. `build_schedule_engine(monotonic=)`, `ScheduleEngine.clock/.monotonic`, optional `fire_store/state_store/event_log`. Opt-in integration test now ticks twice past the rate limit with an opted-in control; mutation-checked (dropping the seam or forcing opt-in fails). R-3 renames (`read_regular_file`, `slug_for_root`, public CLI clock) remain open.

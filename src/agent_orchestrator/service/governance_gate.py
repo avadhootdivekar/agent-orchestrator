@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Protocol
 from zoneinfo import ZoneInfo
 
+from ..artifacts import LocalFsArtifactStore
+from ..errors import ArtifactPathError
 from ..schedules.governance import (
     MAX_PROMPT_BYTES,
     MIN_RESERVATION_USD,
@@ -237,14 +239,16 @@ def read_prompt(binding: ResolvedBinding, workspace_root: str) -> PromptSnapshot
     rel = binding.prompt_file
     if not rel:
         return PromptSnapshot()
-    root = Path(workspace_root).resolve()
+    # R-4: root containment through the shared resolver (absolute paths stay refused).
     try:
-        path = (root / rel).resolve()
+        if Path(rel).is_absolute():
+            raise ArtifactPathError(rel)
+        path = Path(LocalFsArtifactStore(workspace_root).resolve(rel))
     except ValueError:
         return GateResult(
             False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": DETAIL_INVALID_PATH}
         )
-    if not path.is_relative_to(root) or Path(rel).is_absolute():
+    except ArtifactPathError:
         return GateResult(
             False, REASON_PROMPT_MISSING, None, {"path": rel, "detail": "escapes_root"}
         )

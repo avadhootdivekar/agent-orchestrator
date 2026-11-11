@@ -207,6 +207,25 @@ def test_prompt_symlink_escaping_root_is_refused(tmp_path: Path) -> None:
     assert g.detail["detail"] == "escapes_root"
 
 
+def test_prompt_root_guard_is_the_shared_resolver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-4: a valid in-root prompt that LocalFsArtifactStore.resolve refuses is `escapes_root`."""
+    from agent_orchestrator.artifacts import LocalFsArtifactStore
+    from agent_orchestrator.errors import ArtifactPathError
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "p.md").write_text("ok")
+
+    def refuse(self: LocalFsArtifactStore, path: str) -> str:
+        raise ArtifactPathError(path)
+
+    monkeypatch.setattr(LocalFsArtifactStore, "resolve", refuse)
+    g = read_prompt(binding("g", prompt_file="p.md"), str(ws))
+    assert isinstance(g, gg.GateResult) and g.detail["detail"] == "escapes_root"
+
+
 # -- interim ledger: counting, windows, mtime cache -------------------------------------------
 
 

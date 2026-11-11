@@ -295,6 +295,7 @@ def build_schedule_engine(
     *,
     no_schedules: bool = False,
     clock: Callable[[], datetime] = _utc_now,
+    monotonic: Callable[[], float] = time.monotonic,
     engine_factory: Callable[..., ScheduleEngine] | None = None,
 ) -> ScheduleEngine | None:
     """Construct (and `start()`) the `ScheduleEngine`, or return ``None`` when a kill switch is
@@ -322,6 +323,7 @@ def build_schedule_engine(
         registry_path,
         state_dir=state_dir,
         clock=clock,
+        monotonic=monotonic,
         launcher=deferred,
         eval_interval_seconds=cfg.eval_interval_seconds,
         max_concurrent_global=cfg.max_concurrent_global,

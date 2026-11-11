@@ -260,28 +260,80 @@ def test_launcher_shares_engine_stores_and_supervisor(tmp_path: Path) -> None:
         engine.shutdown()
 
 
-def _real_engine(tmp_path: Path) -> se.ScheduleEngine:
+class _Mono:
+    """Settable monotonic clock: lets a test step past the engine's ``eval_interval`` (FU-3)."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float = 3600.0) -> None:
+        self.now += seconds
+
+
+def _real_engine(tmp_path: Path, mono: _Mono | None = None) -> se.ScheduleEngine:
     engine = build_schedule_engine(
         ServiceRegistryFile(),
         tmp_path / "service.yaml",
         tmp_path / "st",
         object(),
         clock=_clock,  # type: ignore[arg-type]
+        monotonic=mono or _Mono(),
     )
     assert engine is not None
     return engine
+
+
+def _fire_events(engine: se.ScheduleEngine) -> list[dict[str, Any]]:
+    return [e for e in engine.event_log.read() if e["event"].startswith("schedule.fire")]
+
+
+def _tick_twice(engine: se.ScheduleEngine, mono: _Mono) -> list[Any]:
+    """First tick = first sighting (seeds the interval anchor); the second, an hour later on both
+    clocks and past the rate limit, is the one that would fire an opted-in schedule."""
+    first = engine.tick(T0)
+    mono.advance()
+    return [*first, *engine.tick(datetime(2026, 1, 1, 1, tzinfo=UTC))]
+
+
+def test_monotonic_seam_reaches_the_engine(tmp_path: Path) -> None:
+    mono = _Mono()
+    engine = _real_engine(tmp_path, mono)
+    try:
+        assert engine.monotonic is mono
+        assert engine.clock is _clock
+    finally:
+        engine.shutdown()
 
 
 def test_valid_schedule_file_with_default_flag_fires_nothing(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     _write_schedules(ws)
     ServiceRegistry(tmp_path / "service.yaml").add(str(ws))  # schedules defaults to False
-    engine = _real_engine(tmp_path)
+    mono = _Mono()
+    engine = _real_engine(tmp_path, mono)
     try:
-        assert engine.tick(T0) == []
-        assert engine.tick(datetime(2026, 1, 2, tzinfo=UTC)) == []
-        assert [e for e in engine.event_log.read() if e["event"].startswith("schedule.fire")] == []
+        assert _tick_twice(engine, mono) == []
+        assert _fire_events(engine) == []
         assert engine.status_snapshot()["by_workspace"] == []  # not opted in -> not listed
+    finally:
+        engine.shutdown()
+
+
+def test_opted_in_workspace_fires_on_the_same_two_ticks(tmp_path: Path) -> None:
+    """Control for the test above (mutation check, FU-3): identical setup but opted in, so the
+    second tick DOES fire. If the opt-in filter regressed, the previous test would fail; if the
+    seam stopped working (rate-limited tick), this one would."""
+    ws = tmp_path / "ws"
+    _write_schedules(ws)
+    ServiceRegistry(tmp_path / "service.yaml").add(str(ws), schedules=True)
+    mono = _Mono()
+    engine = _real_engine(tmp_path, mono)
+    try:
+        decisions = _tick_twice(engine, mono)
+        assert [d.schedule_id for d in decisions] == ["s"]
     finally:
         engine.shutdown()
 

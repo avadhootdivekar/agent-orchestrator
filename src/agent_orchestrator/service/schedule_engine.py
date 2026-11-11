@@ -296,6 +296,9 @@ class ScheduleEngine:
         max_concurrent_global: int = DEFAULT_MAX_CONCURRENT_GLOBAL,
         usage_ledger_factory: Callable[[FireIntentStore], UsageLedger] = FireRecordLedger,
         governance_lock_path: Path | None = None,
+        fire_store: FireIntentStore | None = None,
+        state_store: ScheduleStateStore | None = None,
+        event_log: ScheduleEventLog | None = None,
     ) -> None:
         if state_dir is None:
             from .paths import default_state_dir
@@ -313,9 +316,10 @@ class ScheduleEngine:
         self._eval_interval = eval_interval_seconds
         self._max_global = max_concurrent_global
 
-        self._fires = FireIntentStore(self._state_dir, clock=clock)
-        self._state = ScheduleStateStore(self._state_dir)
-        self._events = ScheduleEventLog(self._state_dir, clock=clock)
+        # R-3: stores are injectable; the defaults keep the previous behaviour.
+        self._fires = fire_store or FireIntentStore(self._state_dir, clock=clock)
+        self._state = state_store or ScheduleStateStore(self._state_dir)
+        self._events = event_log or ScheduleEventLog(self._state_dir, clock=clock)
         self._ledger: UsageLedger = usage_ledger_factory(self._fires)
         self._governance_lock = (
             Path(governance_lock_path)
@@ -374,6 +378,16 @@ class ScheduleEngine:
     @property
     def state_store(self) -> ScheduleStateStore:
         return self._state
+
+    @property
+    def clock(self) -> Clock:
+        """The wall clock this engine (and its default stores) reads."""
+        return self._clock
+
+    @property
+    def monotonic(self) -> Monotonic:
+        """The monotonic clock behind the tick rate limit and retry back-off."""
+        return self._monotonic
 
     @property
     def fire_store(self) -> FireIntentStore:
