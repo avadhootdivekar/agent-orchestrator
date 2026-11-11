@@ -13,20 +13,31 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from typing import Any
 
 import pytest
 import uvicorn
 
 from agent_orchestrator.service import webhook as wh
-from agent_orchestrator.service.webhook import WebhookRequestQueue, build_webhook_app
+from agent_orchestrator.service.webhook import (
+    WebhookRequestQueue,
+    WebhookTarget,
+    build_webhook_app,
+    compute_signature,
+)
+
+from ..schedules._fixtures import minimal_limits
+from .test_schedule_engine import binding
 
 DEADLINE = 0.6
 
 
 @contextmanager
-def _listener(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[int]:
+def _listener(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lookup: Any = lambda s, i: None
+) -> Iterator[int]:
     monkeypatch.setattr(wh, "WEBHOOK_HEADER_TIMEOUT_SECONDS", DEADLINE)
-    app = build_webhook_app(lambda s, i: None, WebhookRequestQueue(tmp_path / "state"))
+    app = build_webhook_app(lookup, WebhookRequestQueue(tmp_path / "state"))
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -116,3 +127,90 @@ def test_a_prompt_request_is_not_cut_off_and_keep_alive_reuse_is_rearmed(
             time.sleep(DEADLINE + 0.4)  # well past the original deadline: not killed mid-flight...
             # ...but the connection is idle between requests, so the re-armed deadline closes it.
             assert _closed_by_server(s, 2)
+
+
+# -- signed POST + slow body over the real socket (T-Se4Bk5 FU-9) ---------------------------------
+
+SECRET = "listener-secret-xyz"
+ROOT = "/tmp/ws-listener"
+BODY = b'{"ref": "refs/heads/main", "n": 1}'
+
+
+def _signed_lookup(slug: str, sid: str) -> WebhookTarget | None:
+    from agent_orchestrator.schedules.models import WebhookSpec
+
+    if (slug, sid) != ("ws", "hook"):
+        return None
+    b = binding(
+        "hook", kind="webhook", interval_seconds=None,
+        webhook=WebhookSpec(secret_env="AO_TEST_LISTENER_SECRET"), limits=minimal_limits(),
+    )  # fmt: skip
+    return WebhookTarget(ROOT, b)
+
+
+def _post_head(body: bytes, *, secret: str = SECRET, delivery: str = "d1") -> bytes:
+    ts = str(int(time.time()))  # the listener runs on the real clock
+    sig = compute_signature(secret.encode(), body, ts)
+    return (
+        b"POST /hooks/ws/hook HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+        b"Content-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\nX-AO-Timestamp: {ts}\r\nX-AO-Signature: {sig}\r\n"
+        f"X-AO-Delivery: {delivery}\r\n\r\n".encode()
+    )
+
+
+def _status(s: socket.socket) -> tuple[int, bytes]:
+    s.settimeout(10)
+    data = b""
+    while chunk := s.recv(4096):
+        data += chunk
+    assert data, "server closed without a response"
+    return int(data.split(b" ", 2)[1]), data
+
+
+def _queued(tmp_path: Path) -> list[Path]:
+    d = tmp_path / "state" / "schedules" / "requests"
+    return sorted(d.glob("*.json")) if d.is_dir() else []
+
+
+def test_signed_post_over_a_real_socket_is_accepted_and_a_bad_signature_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AO_TEST_LISTENER_SECRET", SECRET)
+    with _listener(tmp_path, monkeypatch, _signed_lookup) as port:
+        with socket.create_connection(("127.0.0.1", port)) as s:
+            s.sendall(_post_head(BODY) + BODY)
+            code, _ = _status(s)
+        assert code == 202 and len(_queued(tmp_path)) == 1
+        with socket.create_connection(("127.0.0.1", port)) as s:
+            s.sendall(_post_head(BODY, secret="wrong", delivery="d2") + BODY)
+            code, _ = _status(s)
+        assert code == 401 and len(_queued(tmp_path)) == 1  # nothing new persisted
+
+
+def test_a_body_held_open_past_the_header_deadline_is_not_cut_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Headers arrive at once, the body trickles in slower than the header deadline: the deadline
+    is disarmed once headers complete, so the delivery is still accepted."""
+    monkeypatch.setenv("AO_TEST_LISTENER_SECRET", SECRET)
+    with _listener(tmp_path, monkeypatch, _signed_lookup) as port:
+        with socket.create_connection(("127.0.0.1", port)) as s:
+            s.sendall(_post_head(BODY))
+            s.sendall(BODY[:10])
+            time.sleep(DEADLINE + 0.6)  # body held open well past the header deadline
+            s.sendall(BODY[10:])
+            code, _ = _status(s)
+        assert code == 202 and len(_queued(tmp_path)) == 1
+
+
+def test_a_body_that_never_completes_gets_408_and_persists_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AO_TEST_LISTENER_SECRET", SECRET)
+    monkeypatch.setattr(wh, "WEBHOOK_BODY_READ_TIMEOUT_SECONDS", 0.5)
+    with _listener(tmp_path, monkeypatch, _signed_lookup) as port:
+        with socket.create_connection(("127.0.0.1", port)) as s:
+            s.sendall(_post_head(BODY) + BODY[:5])  # promises len(BODY) bytes, sends 5
+            code, _ = _status(s)
+        assert code == 408 and _queued(tmp_path) == []

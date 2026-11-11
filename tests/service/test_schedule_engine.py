@@ -446,10 +446,19 @@ def test_collapse_bounded_by_max_steps(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def _jitter_env(tmp_path: Path, jitter: int = 3600, **kw: Any) -> tuple[Env, datetime, int]:
-    env = env_for(tmp_path, [binding(interval_seconds=DAY, jitter_seconds=jitter, **kw)])
-    env.anchor()
-    sf = T0 + timedelta(seconds=DAY)
-    return env, sf, se._jitter_offset(fire_key(env.root, "s", sf), env.binding())
+    # fire_key hashes the (random) tmp_path, so the offset is 0 for ~1 in jitter+1 roots; nudge the
+    # period by a minute until it is not, so tests asserting ``off > 0`` are never flaky.
+    for extra in range(0, 60 * 20, 60):
+        env = env_for(
+            tmp_path / str(extra),
+            [binding(interval_seconds=DAY + extra, jitter_seconds=jitter, **kw)],
+        )
+        env.anchor()
+        sf = T0 + timedelta(seconds=DAY + extra)
+        off = se._jitter_offset(fire_key(env.root, "s", sf), env.binding())
+        if off > 0 or jitter == 0:
+            break
+    return env, sf, off
 
 
 def test_jitter_deterministic_across_processes_and_bounded(tmp_path: Path) -> None:
@@ -460,10 +469,13 @@ def test_jitter_deterministic_across_processes_and_bounded(tmp_path: Path) -> No
         "from types import SimpleNamespace as N;"
         "print(_jitter_offset(sys.argv[1], N(jitter_seconds=3600)))"
     )
-    out = subprocess.run(
-        [sys.executable, "-c", code, key], capture_output=True, text=True, check=True
-    )
-    assert int(out.stdout) == off
+    for hashseed in ("0", "12345"):  # the offset must not depend on str-hash randomisation
+        out = subprocess.run(
+            [sys.executable, "-c", code, key],
+            capture_output=True, text=True, check=True,
+            env={**os.environ, "PYTHONHASHSEED": hashseed},
+        )  # fmt: skip
+        assert int(out.stdout) == off
     for i in range(200):
         k = fire_key(env.root, "s", T0 + timedelta(seconds=i))
         assert 0 <= se._jitter_offset(k, SimpleNamespace(jitter_seconds=300)) <= 300  # type: ignore[arg-type]
