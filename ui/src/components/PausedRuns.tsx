@@ -36,11 +36,13 @@ function PausedRow({
     amount.trim() !== "" &&
     Number.isFinite(value) &&
     value > 0 &&
-    value <= run.max_add_usd;
+    (run.max_add_usd === null || value <= run.max_add_usd);
   const disabledReason = !run.resumable
     ? (run.refusal ?? "not resumable")
     : !amountOk
-      ? `amount must be > 0 and ≤ ${formatCost(run.max_add_usd)}`
+      ? run.max_add_usd === null
+        ? "amount must be > 0"
+        : `amount must be > 0 and ≤ ${formatCost(run.max_add_usd)}`
       : null;
 
   const resume = async () => {
@@ -98,6 +100,9 @@ function PausedRow({
       </button>
       {disabledReason ? (
         <span className="muted"> ({disabledReason})</span>
+      ) : null}
+      {run.max_add_usd === null && run.resumable ? (
+        <span className="muted"> (bounded by period headroom)</span>
       ) : null}
       {refused ? (
         <div className="error" role="alert">

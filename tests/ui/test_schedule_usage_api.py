@@ -284,11 +284,26 @@ def test_paused_runs_lists_only_paused_with_bounds(
     r1 = next(r for r in rows if r["run_id"] == "r1")
     assert (r1["spent_usd"], r1["cap_usd"]) == (1.0, 2.0)
     assert r1["resumable"] is True and r1["refusal"] is None
-    assert r1["default_add_usd"] > 0 and r1["max_add_usd"] > 0
+    assert r1["default_add_usd"] > 0
+    assert r1["max_add_usd"] is None  # binding "a" has no per_run_usd: no MAX_USD ceiling (G-8)
     assert r1["overshoot_usd"] == 0.0  # spent 1.0 of cap 2.0
     r4 = next(r for r in rows if r["run_id"] == "r4")
     assert (r4["resumable"], r4["refusal"]) == (False, "expired")
     assert client.get(f"{URL}/nope/paused-runs").status_code == 404
+
+
+def test_paused_runs_max_add_is_per_run_bound_only_when_per_run_usd_is_set(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    """G-8: with per_run_usd the ceiling is per_run * factor; without it null (never MAX_USD)."""
+    from agent_orchestrator.service.capped_resume import MAX_RESUME_FACTOR
+
+    _paused(svc, state_dir, run_id="rp", sid="p")
+    (row,) = client.get(f"{URL}/p/paused-runs").json()["paused"]
+    assert row["max_add_usd"] == 1.0 * MAX_RESUME_FACTOR
+    _paused(svc, state_dir, run_id="rn", sid="a")
+    (row,) = client.get(f"{URL}/a/paused-runs").json()["paused"]
+    assert row["max_add_usd"] is None
 
 
 def test_paused_runs_and_usage_share_the_cli_paused_row_with_overshoot(

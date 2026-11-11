@@ -1140,7 +1140,8 @@ export interface PausedRun {
   /** Spend above the cap (0 when none) — same figure as `ao schedule usage`. */
   overshoot_usd: number;
   default_add_usd: number;
-  max_add_usd: number;
+  /** Per-resume ceiling; null when the schedule has no per_run_usd (bounded by period headroom). */
+  max_add_usd: number | null;
   resumable: boolean;
   /** Why Resume is disabled (`expired`), else null. */
   refusal: string | null;

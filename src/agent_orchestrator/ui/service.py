@@ -1461,7 +1461,8 @@ class DashboardService:
     def paused_runs(self, schedule_id: str) -> dict:
         """Cost-cap-paused runs of one schedule (newest first) with the numbers the Resume control
         needs. Read-only: headroom is NOT computed here (the POST re-checks everything and a
-        refusal is shown inline)."""
+        refusal is shown inline). ``max_add_usd`` is ``null`` on a binding without ``per_run_usd``:
+        the only bound is then the period headroom, which is not computed here (G-8)."""
         binding = next(
             (b for b in self._load_schedule_file().bindings if b.id == schedule_id), None
         )
@@ -1469,6 +1470,13 @@ class DashboardService:
             raise ScheduleNotFound(f"no such schedule {schedule_id!r}")
         now = self._clock_now()
         fires = readonly_fire_store(self._schedule_state_dir_path())
+        cost = binding.limits.cost if binding.limits is not None else None
+        # Without per_run_usd, max_add() is the absolute MAX_USD ceiling -- meaningless to show.
+        max_add_usd = (
+            max_add(binding, float("inf"))
+            if cost is not None and cost.per_run_usd is not None
+            else None
+        )
         rows = []
         for rec in paused_records(fires, self.workspace_root, schedule_id):
             if rec.run_id is None or rec.governance is None:
@@ -1485,7 +1493,7 @@ class DashboardService:
                     "cap_usd": shared["cap_usd"],
                     "overshoot_usd": shared["overshoot_usd"],
                     "default_add_usd": default_add(binding),
-                    "max_add_usd": max_add(binding, float("inf")),
+                    "max_add_usd": max_add_usd,
                     "resumable": not expired,
                     "refusal": "expired" if expired else None,
                 }

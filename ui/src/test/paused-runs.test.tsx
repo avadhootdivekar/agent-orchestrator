@@ -122,6 +122,21 @@ describe("PausedRuns", () => {
     expect(postCalls(fn)).toHaveLength(0);
   });
 
+  it("shows 'bounded by period headroom' and no ceiling when max_add_usd is null", async () => {
+    const fn = mockFetch([{ ...RUN, max_add_usd: null }]);
+    render(<PausedRuns id="nightly" pollMs={60000} clock={() => NOW} />);
+    const input = await screen.findByLabelText("Amount to add for run-1");
+    expect(screen.getByText(/bounded by period headroom/)).toBeTruthy();
+    fireEvent.change(input, { target: { value: "5000" } });
+    const button = screen.getByRole("button", {
+      name: "Resume",
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(screen.queryByText(/100,?000/)).toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(postCalls(fn)).toHaveLength(1));
+  });
+
   it("surfaces a 409 refusal reason inline", async () => {
     mockFetch(
       [RUN],

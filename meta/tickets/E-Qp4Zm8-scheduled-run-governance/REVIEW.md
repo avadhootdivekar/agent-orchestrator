@@ -71,7 +71,7 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
   `mark + max(0, reserved - mark)`. Add a ledger test with exactly the probe's shape, plus a gate test that a fire is
   refused while a resume is pending.
 
-**G-3 (Medium, DRY / AC drift) — FIXED (w31-01). The dashboard usage API re-implements the usage document instead of using the shared builder.** `schedule_usage` now maps `build_usage_doc` window rows (UI keys unchanged, skip counts kept); `paused_runs` uses `paused_records` + `usage_view.paused_row` (renamed from `_paused_row`) and exposes `overshoot_usd`, shown in `PausedRuns.tsx`. Tests: `test_paused_runs_and_usage_share_the_cli_paused_row_with_overshoot`. G-8 (`max_add_usd` ceiling) remains open.
+**G-3 (Medium, DRY / AC drift) — FIXED (w31-01). The dashboard usage API re-implements the usage document instead of using the shared builder.** `schedule_usage` now maps `build_usage_doc` window rows (UI keys unchanged, skip counts kept); `paused_runs` uses `paused_records` + `usage_view.paused_row` (renamed from `_paused_row`) and exposes `overshoot_usd`, shown in `PausedRuns.tsx`. Tests: `test_paused_runs_and_usage_share_the_cli_paused_row_with_overshoot`. G-8 (`max_add_usd` ceiling) fixed in w32-04.
 - Where: `src/agent_orchestrator/ui/service.py:1327-1380` (`schedule_usage`) and `:1461-1495` (`paused_runs`), against
   `src/agent_orchestrator/schedules/usage_view.py` `build_usage_doc` / `paused_records` / `_paused_row`.
 - Observation: `usage_view.py`'s module docstring says its dict "IS the dashboard API body … so the two surfaces never
@@ -124,10 +124,12 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
   `observed`), and label summary cost separately.
 
 ### Suggestions / Info
-**G-8 (Low).** `paused_runs` reports `max_add_usd = max_add(binding, inf)` (`ui/service.py:1488`). On bindings with
+**G-8 (Low) — FIXED (w32-04).** `paused_runs` reports `max_add_usd = max_add(binding, inf)` (`ui/service.py:1488`). On bindings with
 no `per_run_usd` that is `MAX_USD` ($100 000), so the Resume control shows a meaningless ceiling. The POST re-checks,
 so this is not a security issue. Next step: compute headroom with a readonly ledger, or show "bounded by period
 headroom".
+
+Fix: `paused_runs` now returns `max_add_usd: null` on bindings without `per_run_usd` (per-run ceiling otherwise); `PausedRuns.tsx` shows "bounded by period headroom" and no ceiling. POST re-check unchanged. Tests: `test_paused_runs_max_add_is_per_run_bound_only_when_per_run_usd_is_set`, vitest `paused-runs.test.tsx`.
 
 **G-9 (Low, NFR-5).** `sweep_pause_expiry` (`capped_resume.py:502`) scans `fires.list(status="launched")` across all
 workspaces on every tick. It is O(all records), not O(window). Next step: index paused records (or go through the
@@ -167,7 +169,7 @@ required. A future hardening is `openat` walking with `O_NOFOLLOW|O_DIRECTORY`.
 | T-et7Edf run cost cap | Meets core ACs; G-6 | sticky, re-armed, boundary-only-with-work, retry H-1, trailer xN (AC17) OK |
 | T-nI4DBf pause/resume | Done, but **G-1** (via route) and **G-2** affect resume integrity | stranded-resume recovery OK; B-2 known |
 | T-rwj4nV CLI limits/usage | Meets AC1-11 on read; readonly views correct | dedicated review now done (this unit) |
-| T-8knqVe dashboard | Partial; **G-1**, **G-3**, G-8 | overshoot display missing (G-3 is the root) |
+| T-8knqVe dashboard | Partial; **G-1**, **G-3**, G-8 (fixed) | overshoot display missing (G-3 is the root) |
 | T-88wSLC e2e | Partial (as ticketed) | missing: test for G-1/G-2 shapes |
 | T-lTW88y gate | Partial; G-1 must close before PASS on the UI half | |
 | T-Hq3vXd docs | out of code scope | |
