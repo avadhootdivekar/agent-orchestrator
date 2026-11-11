@@ -88,6 +88,9 @@ ao service run --webhook [--webhook-host H] [--webhook-port 8771]     # listener
   "Secret" field). `ao` (default) accepts only `X-AO-Signature` = `sha256=` HMAC over `"{ts}.{body}"` and **requires** `X-AO-Timestamp`
   (epoch seconds, within `REPLAY_WINDOW_SECONDS` = 300). Sending the *other* scheme's header is a 401 (`wrong_scheme`).
   GitHub sends no timestamp, so a `github` binding has **no time bound**; its replay defence is the nonce cache (+ `X-GitHub-Delivery`).
+  Optional extra: if a `github` delivery also carries an `X-AO-Timestamp` (epoch seconds; GitHub never sends one, a trusted proxy may),
+  it must be digits (else 401 `bad_timestamp`) and within 300 s of now (else 401 `stale`, checked after the signature). It is **not signed**,
+  so it is only an extra gate, not a replay defence; omitting it is always accepted.
 * The secret is `secret_env` (an env var **name**) or `secret_file` (workspace-relative, mode 0600) — never inline; < 16 bytes or an
   ambient variable such as `HOME` is refused (503).
 * Non-loopback binding prints a warning and needs `AO_WEBHOOK_ALLOWED_HOSTS` (else 421). Put TLS + per-client limits in front.

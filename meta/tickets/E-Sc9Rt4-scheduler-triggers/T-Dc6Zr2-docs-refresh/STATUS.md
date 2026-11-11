@@ -5,6 +5,10 @@
 - State: Partial — docs reconciled with landed code; epic cannot close
 - Owner: developer agent (overseer unit w20-07-a1-docs-refresh)
 
+## Sync 2026-11-11 (w28-03, developer; docs only)
+- Done (T-Wh9Kv1 review D-1): the optional, unsigned `X-AO-Timestamp` gate on `scheme: github` is now documented in `docs-md/scheduler-triggers-hld.md` §8.2 (pseudocode + design note) and `docs-md/guide-scheduled-runs.md` §6, checked against `service/webhook.py::verify_delivery` (malformed -> 401 `bad_timestamp` before HMAC; skew > 300 s -> 401 `stale` after HMAC; absent -> no check; not part of the signed material/replay key).
+- Unfinished: unchanged from the w27-02 block below (epic close-out, AC10 runtime spot-checks, until M1 / dashboard W-1 restart note). `docs-md/scheduler-triggers-hld.md` also holds another unit's uncommitted §11 edit, which was not committed by this unit.
+
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
 - Supersedes the w24-07 open list below for HLD items: w25-06 (`57c8de4`) re-synced the HLD, governance HLD §26 and ADR-0025 (`[wt]` markers and the `--watch`/`--from-workflow` "not shipped" wording are gone).
 - **Unfinished:** epic close-out (blocked on T-Se4Bk5, T-Te3Qw8, T-Un0Lm6, T-Ap1Xs3); AC10 file-by-file spot-check of the §5.3 state-dir layout and of the dashboard panel at runtime; docs must be updated when the until M1 / dashboard W-1 restart fix lands (the guide currently does not say the service must be stopped to restart a completed schedule).

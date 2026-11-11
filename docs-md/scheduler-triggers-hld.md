@@ -956,12 +956,16 @@ FUNCTION handle_webhook(ws_slug, schedule_id, headers, raw_body):
   # signature header present => 401 reason=wrong_scheme (an ao signature is also a valid github
   # signature over "{ts}."+body, so accepting both would let one defeat the other's replay bound).
   ts  = headers.get("X-AO-Timestamp") IF scheme == "ao" ELSE NULL
+  # scheme == github ONLY: an OPTIONAL, UNSIGNED X-AO-Timestamp (e.g. stamped by a trusted proxy)
+  # is checked too. Present but not all ASCII digits => 401 reason=bad_timestamp (before the HMAC);
+  # present and well-formed => held to the same REPLAY_WINDOW_SECONDS after the HMAC passes.
+  gh_ts = headers.get("X-AO-Timestamp") IF scheme == "github" ELSE NULL    # not part of `signed`
   sig = headers.get("X-AO-Signature") IF scheme == "ao" ELSE headers.get("X-Hub-Signature-256")
   signed = ts + "." + raw_body IF ts IS NOT NULL ELSE raw_body
   expected = "sha256=" + hmac_sha256_hex(secret, signed)
   IF sig IS NULL OR NOT hmac.compare_digest(sig, expected):
       emit("webhook.rejected", reason="bad_signature");  RETURN 401
-  IF ts IS NOT NULL AND abs(now_epoch() - int(ts)) > REPLAY_WINDOW_SECONDS:    # 300
+  IF (ts OR gh_ts) IS NOT NULL AND abs(now_epoch() - int(ts OR gh_ts)) > REPLAY_WINDOW_SECONDS:  # 300
       emit("webhook.rejected", reason="stale");  RETURN 401
   delivery = headers.get("X-AO-Delivery") OR headers.get("X-GitHub-Delivery") OR sha256(raw_body)
   # nonces are per (workspace, schedule): sha256(signed) ALWAYS, plus the delivery id when sent
@@ -996,6 +1000,15 @@ Notes that are design decisions, not implementation detail:
   timestamp); a `github` binding therefore has no time bound and the nonce cache is its only replay
   defense, which is why it is mandatory. *(Corrected 2026-11-11: the original text made the timestamp
   optional for any caller; the code pins the scheme, see §21 D2.)*
+- **Optional unsigned timestamp gate on `scheme: github`.** If a `github` delivery *also* carries an
+  `X-AO-Timestamp` header (GitHub never sends one; a trusted proxy or custom sender may), it is
+  validated: non-digit/malformed => `401 bad_timestamp` (checked before the HMAC), otherwise, after
+  the HMAC passes, a skew over `REPLAY_WINDOW_SECONDS` (300 s, either direction) => `401 stale`.
+  Absent header => no check (unchanged behaviour). The header is **not covered by the HMAC**
+  (the signed material stays the bare body and the replay key is still `sha256(body)`), so anyone
+  who can modify headers in transit can add, strip or refresh it: it is a convenience gate for
+  trusted stampers, **never** a replay defence on its own, and does not remove the "no signed time
+  bound" limitation or the restart replay window. (`service/webhook.py::verify_delivery`.)
 - **Status codes shipped** (beyond the 202/401/404/409/413/429/503 above): `408` body read timeout
   (`WEBHOOK_BODY_READ_TIMEOUT_SECONDS` 10 s), `421` Host not in `AO_WEBHOOK_ALLOWED_HOSTS` off-loopback
   (`SecurityMiddleware`), `429 queue_full` (`WEBHOOK_QUEUE_MAXSIZE` 64 pending request files per schedule),
