@@ -107,3 +107,10 @@ By: developer unit `w25-02-a1-dead-cron-gap-branch` · Date: 2026-11-11.
 | ID | Status | What was done |
 |---|---|---|
 | FU-10 | **Done** | Removed the dead `min(gaps) < MIN_INTERVAL_SECONDS` sampling branch (plus `CRON_GAP_SAMPLES`, `_CRON_GAP_ANCHOR`, unused `datetime` import) from `schedules/models.py::_check_cron`; a comment records why (5-field cron has minute granularity; 6/7-field rejected earlier by `CRON_FIELD_COUNT`). `test_cron_gap_check_is_deterministic` replaced by `test_five_field_cron_never_fires_faster_than_min_interval` (asserts min gap >= 60 s for accepted crons) and `test_cron_seconds_field_rejected_by_field_count`. |
+
+## w41-01 addendum (FU-9 remainder, FU-11 remainder) — developer, 2026-11-11
+
+| ID | Status | What was done |
+|---|---|---|
+| FU-9 | **Done** | The `O_NOFOLLOW` swap race is tested deterministically by `test_secret_file_symlink_swapped_after_check_not_followed` (`tests/service/test_security_fixes_se4bk5_w21.py`): an `os.open` seam swaps the file for a symlink after resolve and before open, so no src seam was needed. Mutation (in-process `os.O_NOFOLLOW = 0`): 1 failed; unmutated: 1 passed. |
+| FU-11 | **Done (two waivers)** | Done: `fork` context now parametrised with `spawn` in `tests/schedules/test_store.py` (17 passed); misnamed `test_clock_rewind_does_not_double_fire` renamed to `test_same_instant_in_another_timezone_is_not_double_fired` with a truthful docstring. Already resolved by earlier work (re-verified): the wall-clock tick-budget check is now a `@pytest.mark.perf` test gated on a deterministic scan counter, with a counter-based non-vacuous sibling; the 255-socket `ulimit` test no longer exists; the Apia, `runs_count` and "defaults alone" claims are not present in the current tests. **WAIVED:** `jump_at_call = calls + 3` call counting in `test_schedule_engine.py` and `test_schedule_interleave_ac6_ac8a.py`. It pins how many monotonic reads the tick makes before the 2nd binding, so an engine refactor will fail it loudly rather than silently, and a clock-hook seam would be a src change for a test-only gain; the comment on each line states the assumption. |

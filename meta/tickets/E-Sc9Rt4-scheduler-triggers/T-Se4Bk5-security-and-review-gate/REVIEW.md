@@ -694,3 +694,8 @@ Not blocking the gate: R-3 remainder (renames/clock seam), R-5, R-6, TQ-R2.
   - Test: `test_r5_secret_rejections_state_cause_and_never_leak` (`tests/service/test_security_fixes_se4bk5_w21.py`).
 - **R-7 CLOSED.** One-line comments now explain `MAX_WEBHOOK_BODY_BYTES`, `REPLAY_WINDOW_SECONDS`, `MAX_LOGGED_FIELD`, `WEBHOOK_LIMIT_CONCURRENCY`, `WEBHOOK_TIMEOUT_KEEP_ALIVE_SECONDS`, `WEBHOOK_BODY_READ_TIMEOUT_SECONDS` (`webhook.py`) and `WATCH_SCAN_BUDGET_SECONDS`, `DEFAULT_WATCH_MAX_FILES`, `MAX_EVENT_PATHS` (`service/watch.py`).
 - Suggestions R-5 and R-7: none open. R-6 remains a documented limitation.
+
+## Addendum w41-01: R-3 remainder closed, final disposition (developer, 2026-11-11)
+- **R-3: closed.** Re-grepped `src/` and `tests/`: no private-name imports (`_slug_for_root`, `_read_regular_file`) and no `sched_cli._now` patches remain. The `cache_cli._now` patches in `tests/test_e2e_cli_result_cache_admin.py` belong to another CLI and are out of scope here.
+- **R-6: WAIVED (accepted limitation).** Intermediate-directory TOCTOU on the secret path cannot be closed without `openat2`/`RESOLVE_BENEATH`-style walking; the final component is protected by `O_NOFOLLOW`, and the workspace root is operator-owned. Documented in SECURITY.md.
+- No open R-items remain.

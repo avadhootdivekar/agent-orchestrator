@@ -2,7 +2,7 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress — clean-tip gate GREEN (w39-01); REVIEW R-5/R-7 CLOSED (w40-01, 2026-11-11). NOT marked Done: R-3 remainder (private-name imports, renames) and TEST-QUALITY FU-9 (`O_NOFOLLOW` swap-race seam) / FU-11 remainder are still open; R-6 is a documented limitation
+- State: Done (2026-11-11, w41-01) — clean-tip gate GREEN (w39-01); R-3, R-5, R-7 closed; TEST-QUALITY FU-9 closed and FU-11 closed except two explicitly waived cosmetic items (see TEST-QUALITY.md w41-01). R-6 and S-7 remain documented, accepted limitations.
 - Owner: reviewer agent (overseer w20-02)
 
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
@@ -245,3 +245,9 @@
 - R-5: swallowed exceptions in `ScheduleEngine._snapshot` now debug-log with `exc_info`; every `resolve_secret` `None` path emits a `webhook.rejected` reason (`secret_unreadable` + errno name, `secret_not_regular_file`, `secret_invalid_path`, `secret_empty`), no secret/path content logged. R-7: constant comments added in `webhook.py` and `watch.py`.
 - Test `test_r5_secret_rejections_state_cause_and_never_leak`; `uv run pytest tests/service -k "webhook or se4bk5 or watch or schedule"`: 408 passed; `ruff check`/`ruff format --check` on touched files clean; `mypy` on the 3 touched src files clean.
 - **Not Done:** R-3 remainder, FU-9, FU-11 remainder remain open (see above); they need closing or an explicit waiver.
+
+## Closed: R-3 remainder, FU-9, FU-11 remainder (By: developer · unit `w41-01-a1-secgate-remainder` · 2026-11-11)
+- R-3: verified closed in code: no `_slug_for_root`, `_read_regular_file` or `sched_cli._now` references remain in `src/` or `tests/` (the only `_now` patches left are `cache_cli` in `tests/test_e2e_cli_result_cache_admin.py`, a different CLI outside this ticket).
+- FU-9: `O_NOFOLLOW` swap race is covered by the existing `test_secret_file_symlink_swapped_after_check_not_followed` (an `os.open` seam swaps the file for a symlink between resolve and open; no src change needed). Mutation: `os.O_NOFOLLOW = 0` in-process -> that test fails; restored -> passes.
+- FU-11: `test_concurrent_mutate_loses_nothing` now runs under `fork` and `spawn`; `test_clock_rewind_does_not_double_fire` renamed to `test_same_instant_in_another_timezone_is_not_double_fired`. Other items verified done or waived: see TEST-QUALITY.md.
+- Verification: `pytest tests/schedules tests/service/{test_fire_store,test_security_fixes_se4bk5_w21,test_webhook,test_webhook_listener,test_schedule_engine}.py`: 683 passed; `ruff check src tests/schedules tests/service` clean; `ruff format --check` clean on touched files; `mypy src`: no issues in 234 files.

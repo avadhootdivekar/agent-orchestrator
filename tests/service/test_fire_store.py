@@ -207,8 +207,9 @@ def test_reconcile_promotes_live_pid_or_existing_run(store: FireIntentStore) -> 
     assert store.reconcile_orphans(lambda p: False, lambda r, i: False) == []  # idempotent
 
 
-def test_clock_rewind_does_not_double_fire(store: FireIntentStore) -> None:
-    """A backwards clock re-derives an already-recorded fire_key; the store still suppresses it."""
+def test_same_instant_in_another_timezone_is_not_double_fired(store: FireIntentStore) -> None:
+    """The same instant expressed in another tz re-derives the recorded fire_key; the store still
+    suppresses it (FU-11: renamed from ``clock_rewind``, which this never exercised)."""
     key = fire_key(ROOT, "nightly", T0)
     store.write(_rec(key))
     store.update(key, status="launched", run_id="r1")

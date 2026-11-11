@@ -103,9 +103,12 @@ def test_mutate_failure_leaves_file_untouched(tmp_path: Path) -> None:
     store.mutate(_add("two"))
 
 
-def test_concurrent_mutate_loses_nothing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("method", ["fork", "spawn"])
+def test_concurrent_mutate_loses_nothing(tmp_path: Path, method: str) -> None:
+    # FU-11: flock is fork-agnostic, but spawn (fresh interpreter, module-level worker) is the
+    # default on macOS/3.14+, so both start methods are exercised.
     ids = [f"s{i}" for i in range(8)]
-    ctx = multiprocessing.get_context("fork")
+    ctx = multiprocessing.get_context(method)
     procs = [ctx.Process(target=_worker, args=(str(tmp_path), i)) for i in ids]
     for p in procs:
         p.start()
