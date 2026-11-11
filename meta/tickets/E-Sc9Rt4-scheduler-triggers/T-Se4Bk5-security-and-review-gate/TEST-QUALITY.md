@@ -69,3 +69,19 @@ The "`runs_used` only ever 0" finding against `tests/ui/test_schedule_usage_api.
 ## w23-03 addendum (FU-1 / FU-2)
 
 Observed in the shared tree, not caused by this unit: `test_secret_file_root_guard_uses_shared_resolver[dotdot|absolute]` fail in `tests/service/test_webhook.py` (another unit's uncommitted R-4 src+test edits). Full `tests/service tests/schedules`: 1296 passed, 2 failed (those two). Behaviour worth a product decision (not changed): the fall-fold double fire of a daily `30 1` cron is current croniter behaviour; it is pinned here, not endorsed.
+
+## w23-04 addendum (FU-5..FU-11)
+
+By: tester unit `w23-04-a1-tq-followups-low` · Date: 2026-11-11. Test-only changes; nothing under `src/` was touched.
+
+| ID | Status | What was done / why deferred |
+|---|---|---|
+| FU-5 | **Done** | `test_list_all_covers_registered` now binds `o1` in a second workspace and asserts `["nightly"]` without `--all` and `["nightly", "o1"]` with it; the `service add` exit code is checked. Error-path tests now assert the exit code and message: `no such schedule 'nope'` (1), `mutually exclusive` (2), `drop --cron/--interval` (2, both tests), `invalid cron expression ''` (1), the launch failure (1, `no slots`). The review said `exit_code == 1` for the `--from-workflow` conflicts; the real code is **2** (usage error), so that is what is asserted. |
+| FU-6 | **Done** | `Env.freeze_mtimes()` backdates every file to a fixed past instant before the snapshot, and `files_mtimes()` now returns `(mtime_ns, sha256)`. A same-tick rewrite changes the content hash or the mtime. |
+| FU-7 | **Done (test-side)** | `_fixtures.pin_engine_monotonic` wraps `schedules.cli.ScheduleEngine` with a frozen `monotonic`, so the 0.25 s scan budget is unreachable. It is applied in the `env` fixtures of `test_cli_e2e.py` and `test_e2e_schedules.py`. No `src/` seam was needed: the engine already accepts `monotonic=` and hands it to the file-watch factory. |
+| FU-8 | **Deferred** | Needs engine/capped-resume tests in `test_schedule_engine*.py` / `test_capped_resume.py`, which the concurrent cron/DST and governance units are editing. Also needs a crash-injection design for the `update_governance` → spawn window. Not small. |
+| FU-9 | **Partly done** | Done: `test_concurrent_identical_deliveries_accept_exactly_one` (8 racing identical deliveries give one 202, seven 409s, one queued file; **mutation: removing the `accept()` lock → fails 3 of 3 runs**); `secret_file` oversize (incl. exact-limit boundary) and FIFO (no hang) tests; the listener `recv` loop now fails fast on early close; the no-op `WEBHOOK_QUEUE_MAXSIZE` monkeypatch is dropped. **Deferred:** an `O_NOFOLLOW` test — `LocalFsArtifactStore.resolve` follows symlinks first, so the flag is only reachable through a swap race (attempted; the test was wrong and was removed); a signed POST over a real socket; holding the slow body open in the listener test. |
+| FU-10 | **Deferred** | Source change owned by T-Sd1Kq7 (`schedules/models.py`); not a test-only edit. |
+| FU-11 | **Deferred** | Opportunistic list; none of the files were being touched here. The `jitter off > 0` 1-in-3601 flake and the `fork` context are still open. |
+
+Verification: `pytest tests/schedules` 394 passed; `tests/service/test_webhook.py` + `test_webhook_listener.py` 81 passed; `ruff check` and `ruff format --check` clean on the touched files.

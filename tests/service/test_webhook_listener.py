@@ -109,7 +109,9 @@ def test_a_prompt_request_is_not_cut_off_and_keep_alive_reuse_is_rearmed(
             s.sendall(req)
             got = b""
             while not got.endswith(b"}"):  # headers + the JSON body (may arrive separately)
-                got += s.recv(4096)
+                chunk = s.recv(4096)
+                assert chunk, f"server closed before the response completed: {got!r}"
+                got += chunk
             assert b"200 OK" in got  # headers completed in time: deadline disarmed
             time.sleep(DEADLINE + 0.4)  # well past the original deadline: not killed mid-flight...
             # ...but the connection is idle between requests, so the re-armed deadline closes it.

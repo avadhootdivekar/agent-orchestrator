@@ -125,3 +125,4 @@
 - R-2 closed. Remaining open: AC7, AC14 UI gates/coverage, AC16 (unchanged).
 
 - 2026-11-11 (tester, w23-03): TEST-QUALITY FU-1 and FU-2 closed (commit 5e118bc). Engine DST tests: tests/service/test_schedule_engine_dst.py. FU-3..FU-11 remain open.
+- 2026-11-11 (tester, w23-04): TEST-QUALITY FU-5, FU-6, FU-7 done; FU-9 partly (concurrency, secret_file oversize/FIFO, listener recv); FU-8, FU-10, FU-11 deferred with reasons in TEST-QUALITY.md. FU-3/FU-4 still open.

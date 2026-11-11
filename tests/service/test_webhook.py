@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -291,8 +292,7 @@ def test_unresolvable_secret_503(h: Harness, monkeypatch: pytest.MonkeyPatch) ->
     assert h.post().status_code == 503 and h.requests() == []
 
 
-def test_queue_full_429(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(wh, "WEBHOOK_QUEUE_MAXSIZE", 2)
+def test_queue_full_429(tmp_path: Path) -> None:
     h = Harness(tmp_path, wh_binding(rate_per_minute=100))
     h.queue = h.queue.__class__(h.state, maxsize=2)
     app = build_webhook_app(h._lookup, h.queue, clock=h.clock, emit=lambda *a, **k: None)
@@ -348,6 +348,48 @@ def test_secret_file_missing_and_escape(tmp_path: Path) -> None:
     os.symlink(outside, link)
     t2 = WebhookTarget(t.workspace_root, wh_binding(secret_env=None, secret_file="link.txt"))
     assert resolve_secret(t2) is None
+
+
+def test_secret_file_oversize_refused(tmp_path: Path) -> None:
+    t = _file_target(tmp_path, 0o600)
+    (Path(t.workspace_root) / "sec.txt").write_text("k" * (wh.MAX_SECRET_FILE_BYTES + 1))
+    events: list[tuple[str, dict[str, Any]]] = []
+    assert resolve_secret(t, emit=lambda e, **f: events.append((e, f))) is None
+    assert [(e, f["reason"]) for e, f in events] == [("webhook.rejected", "secret_too_large")]
+    # exactly at the limit is still accepted (boundary)
+    (Path(t.workspace_root) / "sec.txt").write_text("k" * wh.MAX_SECRET_FILE_BYTES)
+    assert resolve_secret(t) == b"k" * wh.MAX_SECRET_FILE_BYTES
+
+
+def test_secret_file_fifo_refused_without_blocking(tmp_path: Path) -> None:
+    """A FIFO planted at the secret path must not hang the resolver (O_NONBLOCK + S_ISREG)."""
+    t = _file_target(tmp_path, 0o600)
+    path = Path(t.workspace_root) / "sec.txt"
+    path.unlink()
+    os.mkfifo(path, 0o600)
+    assert resolve_secret(t) is None
+
+
+def test_concurrent_identical_deliveries_accept_exactly_one(tmp_path: Path) -> None:
+    """The check->persist->remember section is one critical section: N racing copies of one
+    signed delivery give exactly one 202 (the rest 409) and one queued request."""
+    h = Harness(tmp_path, wh_binding(rate_per_minute=1000))
+    n = 8
+    barrier = threading.Barrier(n, timeout=10)
+    codes: list[int] = []
+
+    def deliver() -> None:
+        barrier.wait()
+        codes.append(h.post().status_code)
+
+    threads = [threading.Thread(target=deliver) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+    assert not any(t.is_alive() for t in threads)
+    assert sorted(codes) == [202] + [409] * (n - 1)
+    assert len(h.requests()) == 1
 
 
 def test_inline_secret_rejected_at_load_time() -> None:

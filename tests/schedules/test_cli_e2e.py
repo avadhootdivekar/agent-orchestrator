@@ -28,7 +28,7 @@ from agent_orchestrator.service.fire_store import (
 )
 
 from ..ui.conftest import StubSupervisor
-from ._fixtures import make_schedule_workspace
+from ._fixtures import make_schedule_workspace, pin_engine_monotonic
 
 runner = CliRunner()
 T0 = datetime(2026, 3, 4, 5, 6, 7, tzinfo=UTC)
@@ -89,11 +89,13 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     monkeypatch.chdir(e.ws)
     monkeypatch.setattr(sched_cli, "_now", lambda: T0)
     monkeypatch.setattr(sched_cli, "_SUPERVISOR_FACTORY", e.sup)
+    pin_engine_monotonic(monkeypatch)
     return e
 
 
 def opt_in(env: Env) -> None:
-    assert runner.invoke(app, ["service", "add", str(env.ws), "--schedules"]).exit_code == 0
+    res = runner.invoke(app, ["service", "add", str(env.ws), "--schedules"])
+    assert res.exit_code == 0, res.output
 
 
 def test_lifecycle(env: Env) -> None:
@@ -221,8 +223,10 @@ def test_run_now_local_with_lock_held_queues_instead(env: Env) -> None:
 def test_run_now_queue_flag_and_unknown(env: Env) -> None:
     env.add()
     assert "queued" in env.run("run-now", "nightly", "--queue").output
-    env.run("run-now", "nope", ok=False)
-    env.run("run-now", "nightly", "--local", "--queue", ok=False)
+    unknown = env.run("run-now", "nope", ok=False)
+    assert unknown.exit_code == 1 and "no such schedule 'nope'" in unknown.output
+    both = env.run("run-now", "nightly", "--local", "--queue", ok=False)
+    assert both.exit_code == 2 and "mutually exclusive" in both.output
 
 
 def test_run_now_overlap_reports_not_fired(env: Env) -> None:
@@ -283,9 +287,17 @@ def test_list_all_covers_registered(env: Env, tmp_path: Path) -> None:
     opt_in(env)
     other = tmp_path / "other"
     (other / ".ao").mkdir(parents=True)
-    runner.invoke(app, ["service", "add", str(other), "--schedules"])
-    out = json.loads(env.run("list", "--all", "--json").stdout)
-    assert [s["id"] for s in out["schedules"]] == ["nightly"]
+    (other / "w.json").write_text("{}")
+    added = runner.invoke(app, ["service", "add", str(other), "--schedules"])
+    assert added.exit_code == 0, added.output
+    # FU-5: bind a schedule in the second workspace so --all has something extra to show.
+    env.run(
+        "add", "o1", "--interval", "60", "--workflow", "w.json", *QUOTA, "--workspace", str(other)
+    )
+    default = json.loads(env.run("list", "--json").stdout)
+    assert sorted(s["id"] for s in default["schedules"]) == ["nightly"]
+    everything = json.loads(env.run("list", "--all", "--json").stdout)
+    assert sorted(s["id"] for s in everything["schedules"]) == ["nightly", "o1"]
 
 
 def test_daemon_refuses_when_lock_held(env: Env) -> None:
@@ -401,8 +413,12 @@ def test_from_workflow_manual_only_adds_nothing(env: Env) -> None:
 
 def test_from_workflow_conflicting_flags(env: Env) -> None:
     _write_spec(env.ws / "flow.json", [{"type": "cron", "schedule": "0 3 * * *"}])
-    env.run("add", "x", "--from-workflow", "flow.json", "--cron", "0 1 * * *", *QUOTA, ok=False)
-    env.run("add", "--from-workflow", "missing.json", *QUOTA, ok=False)
+    both = env.run(
+        "add", "x", "--from-workflow", "flow.json", "--cron", "0 1 * * *", *QUOTA, ok=False
+    )
+    assert both.exit_code == 2 and "drop --cron/--interval" in both.output
+    missing = env.run("add", "--from-workflow", "missing.json", *QUOTA, ok=False)
+    assert missing.exit_code == 1 and "missing.json" in missing.output
 
 
 def _agents_file(tmp: Path) -> Path:
@@ -597,7 +613,7 @@ def test_run_now_local_launch_failure_exits_1(env: Env, monkeypatch: pytest.Monk
 
     monkeypatch.setattr(sched_cli, "_SUPERVISOR_FACTORY", lambda root: Boom(Path(root)))
     res = env.run("run-now", "nightly", "--local", ok=False)
-    assert "ERROR" in res.output
+    assert res.exit_code == 1 and "ERROR" in res.output and "no slots" in res.output
 
 
 def test_enable_refusal_says_stop_the_daemon(env: Env) -> None:
@@ -621,13 +637,14 @@ def test_nonpositive_counts_and_intervals_rejected(env: Env, args: list[str]) ->
 
 def test_add_empty_cron_reports_cron_not_interval(env: Env) -> None:
     res = env.run("add", "x", "--cron", "", "--workflow", "w.json", *QUOTA, ok=False)
-    assert "interval_seconds" not in res.output
+    assert res.exit_code == 1 and "interval_seconds" not in res.output
+    assert "invalid cron expression ''" in res.output
 
 
 def test_from_workflow_conflict_with_zero_interval(env: Env) -> None:
     _write_spec(env.ws / "flow.json", [{"type": "cron", "schedule": "0 3 * * *"}])
     res = env.run("add", "--from-workflow", "flow.json", "--interval", "0", *QUOTA, ok=False)
-    assert "drop --cron/--interval" in res.output
+    assert res.exit_code == 2 and "drop --cron/--interval" in res.output
 
 
 def test_daemon_restores_signal_handlers(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:

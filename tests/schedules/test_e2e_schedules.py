@@ -36,6 +36,7 @@ from agent_orchestrator.service.webhook import (
     compute_signature,
 )
 
+from ._fixtures import pin_engine_monotonic
 from .test_cli_e2e import QUOTA, T0, Env, RunDirSupervisor
 
 runner = CliRunner()
@@ -53,6 +54,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     monkeypatch.chdir(e.ws)
     monkeypatch.setattr(sched_cli, "_now", lambda: T0)
     monkeypatch.setattr(sched_cli, "_SUPERVISOR_FACTORY", e.sup)
+    pin_engine_monotonic(monkeypatch)
     return e
 
 

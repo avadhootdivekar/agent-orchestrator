@@ -120,13 +120,25 @@ class Env:
             name, workspace=str(self.ws), schedule_id="daily", **fields
         )
 
-    def files_mtimes(self) -> dict[str, int]:
-        return {
-            str(p): p.stat().st_mtime_ns
+    def _files(self) -> list[Path]:
+        return [
+            p
             for base in (self.ws, self.state)
             if base.exists()
             for p in base.rglob("*")
             if p.is_file()
+        ]
+
+    def freeze_mtimes(self) -> None:
+        """Backdate every file so a later same-tick rewrite cannot keep an equal mtime (FU-6)."""
+        for p in self._files():
+            os.utime(p, ns=(10**9, 10**9))
+
+    def files_mtimes(self) -> dict[str, tuple[int, str]]:
+        """``path -> (mtime_ns, sha256)``: a rewrite shows up in the mtime or the content."""
+        return {
+            str(p): (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
+            for p in self._files()
         }
 
 
@@ -298,6 +310,7 @@ def test_usage_json_validates_and_at_is_read_only(env: Env) -> None:
     doc = json.loads(env.run("usage", "--json").output)
     jsonschema.validate(doc, USAGE_JSON_SCHEMA)
     assert doc["schedules"][0]["paused"][0]["overshoot_usd"] == pytest.approx(0.07)
+    env.freeze_mtimes()
     before = env.files_mtimes()
     res = env.run("usage", "daily", "--at", "2026-11-17T09:00:00+00:00", "--json")
     future = json.loads(res.output)["schedules"][0]
@@ -389,6 +402,7 @@ def test_next_annotates_would_skip_without_writing(env: Env) -> None:
     env.add("daily", "--quota", "day=2")
     env.fire("a", datetime(2026, 11, 10, 8, 0, tzinfo=UTC), cost=1.0, final=True)
     env.fire("b", datetime(2026, 11, 10, 9, 0, tzinfo=UTC), cost=1.0, final=True)
+    env.freeze_mtimes()
     before = env.files_mtimes()
     out = env.run("next", "-n", "15").output
     assert "would skip: quota_exhausted (resets 2026-11-10T23:00:00+00:00)" in out

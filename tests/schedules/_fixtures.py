@@ -8,6 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from agent_orchestrator.schedules.governance import LimitsSpec, QuotaSpec
 from agent_orchestrator.schedules.models import ScheduleBinding
 
@@ -45,3 +47,21 @@ def make_schedule_workspace(tmp: Path) -> tuple[Path, Path]:
     (ws / ".ao").mkdir(parents=True)
     (ws / "w.json").write_text("{}")
     return ws, tmp / "state"
+
+
+def pin_engine_monotonic(monkeypatch: pytest.MonkeyPatch, value: float = 1000.0) -> None:
+    """Give CLI-built schedule engines a frozen monotonic clock (FU-7).
+
+    ``schedules.cli._build_engine`` has no clock seam, so file-watch scans would run their 0.25 s
+    budget against the real clock: on a loaded box an over-budget scan silently means "no fire".
+    A frozen clock makes the scan budget unreachable and the tests deterministic.
+    """
+    from agent_orchestrator.schedules import cli as sched_cli
+
+    real = sched_cli.ScheduleEngine
+
+    def build(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("monotonic", lambda: value)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(sched_cli, "ScheduleEngine", build)
