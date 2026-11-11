@@ -139,7 +139,10 @@ def test_add_set_list_schedules_flag(tmp_path: Path) -> None:
     assert runner.invoke(app, ["service", "set", str(ws), "--schedules"]).exit_code == 0
     assert ServiceRegistry().load().workspaces[0].schedules is True
     listing = runner.invoke(app, ["service", "list"]).output
-    assert "SCHEDULES" in listing and "True" in listing
+    # w21-05 review: AUTORESUME also prints "True", so check the SCHEDULES column itself
+    lines = listing.splitlines()
+    hdr = next(i for i, ln in enumerate(lines) if ln.startswith("ROOT"))
+    assert lines[hdr].split()[3] == "SCHEDULES" and lines[hdr + 1].split()[3] == "True"
 
     assert runner.invoke(app, ["service", "set", str(ws), "--no-schedules"]).exit_code == 0
     assert ServiceRegistry().load().workspaces[0].schedules is False
@@ -543,7 +546,8 @@ def test_engine_registers_webhook_source(stub_engine: type[_StubEngine], tmp_pat
 
 
 def test_run_without_webhook_opens_only_the_hub_socket(run_env: SimpleNamespace) -> None:
-    runner.invoke(app, ["service", "run"])
+    result = runner.invoke(app, ["service", "run"])
+    assert result.exit_code == 0, result.output
     assert len(run_env.uvicorn.configs) == 1
 
 

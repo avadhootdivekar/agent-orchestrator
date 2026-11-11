@@ -219,3 +219,22 @@ def test_attribute_assignment_is_persisted(tmp_path: Path) -> None:
     f.schedules[0].enabled = False
     store.save(f)
     assert store.load().schedules[0].enabled is False
+
+
+def test_mutate_holds_exclusive_lock_while_fn_runs(tmp_path: Path) -> None:
+    """w21-05 review: the re-read and concurrency tests pass without the flock (sequential, or a
+    lucky interleave); this pins that *fn* runs while the companion lock is held exclusively."""
+    import fcntl
+
+    store = ScheduleStore(tmp_path)
+    seen: list[bool] = []
+
+    def probe(f: ScheduleFile) -> ScheduleFile:
+        with open(store.path.with_name("schedules.yaml.lock"), "a+") as other:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(other.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        seen.append(True)
+        return f
+
+    store.mutate(probe)
+    assert seen == [True]

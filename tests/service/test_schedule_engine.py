@@ -391,7 +391,10 @@ def test_queued_fire_survives_restart_with_original_scheduled_for(tmp_path: Path
         ("once", 61, True, True),
         ("once", 3599, True, True),
         ("once", 3601, False, False),
+        ("once", 60, True, False),  # w21-05 review: exact edges pin `>` (not `>=`) on grace...
+        ("once", 3600, True, True),  # ...and on the catch-up window
         ("skip", 59, True, False),
+        ("skip", 60, True, False),
         ("skip", 61, False, False),
         ("skip", 3599, False, False),
     ],
@@ -595,14 +598,16 @@ def test_f2_real_supervisor_child_exit_is_reaped_and_key_retired(tmp_path: Path)
     env.engine.state_store.record_fire(
         env.root, "s", scheduled_for=T0, run_id=rec.run_id or "", fire_at=T0, fire_key=key
     )
-    deadline = time.time() + 10
-    while time.time() < deadline and sup._children[rec.pid].poll() is None:
+    # w21-05 review: wait WITHOUT reaping (WNOWAIT) -- the old poll() loop reaped the child itself,
+    # so the test passed even with the engine's reconcile removed. The tick must do the reaping.
+    deadline = time.monotonic() + 10
+    while os.waitid(os.P_PID, rec.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+        assert time.monotonic() < deadline, "child never exited"
         time.sleep(0.05)
-    # poll() above already reaped it for this instance; a *fresh* instance would see a zombie as
-    # alive -- so prove the engine's tick (reconcile) is what retires the key.
     sup2 = env.engine.process_supervisor(env.root)
     assert sup2 is sup
     env.engine.tick(T0 + timedelta(seconds=5))
+    assert rec.pid not in sup._children  # reaped by the tick's reconcile, not by the test
     env.engine._live_runs()
     assert key not in env.engine.state_store.get(env.root, "s").active_fire_keys  # type: ignore[union-attr]
     with pytest.raises(ChildProcessError):

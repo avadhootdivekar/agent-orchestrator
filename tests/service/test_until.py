@@ -119,6 +119,7 @@ def test_gate_unreadable_when_path_is_a_directory(tmp_path: Path) -> None:
     ev = Events()
     # a directory is "not a file": absent, not an error
     assert until_satisfied(tmp_path, ub(gate_file="gate.json"), ScheduleState(), ev) is False
+    assert ev.items == []  # w21-05 review: "not an error" means no until_unreadable event
 
 
 def test_gate_unreadable_permission(tmp_path: Path) -> None:
@@ -483,4 +484,5 @@ def test_loopspec_bad_gate_still_fails_the_run_while_until_gate_never_does(
     orch, reposets, agents = make_orchestrator(FakeExecutor(gate_payloads={"review": ["yes"]}))
     assert orch.run(wf, reposets, agents).status != "succeeded"
     # ... while the until side keeps going on the same kind of bad read:
+    gate(tmp_path, "{nope", "g.json")  # w21-05 review: actually malformed, not merely missing
     assert until_satisfied(tmp_path, ub(gate_file="g.json"), ScheduleState()) is False

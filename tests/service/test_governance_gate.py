@@ -6,6 +6,7 @@ Covers ``service/governance_gate.py`` plus the governance call sites in ``schedu
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -138,6 +139,22 @@ def test_period_only_reservation_rounds_down_and_min_boundary(
     assert g.admit is admit and g.reservation_usd == reservation
     if not admit:
         assert g.detail["needed_usd"] == 0.10
+
+
+def test_cost_gate_reports_tightest_period_and_clamps_overspend() -> None:
+    # w21-05 review: limits() only builds one period; pin multi-period selection + the clamp.
+    lim = LimitsSpec(
+        cost=CostLimits(
+            periods=[
+                PeriodCostCap(period="day", max_usd=4),
+                PeriodCostCap(period="week", max_usd=20),
+            ]
+        )
+    )
+    g = run_gate(lim, day=WindowUsage(actual_usd=3.5), week=WindowUsage(actual_usd=1))
+    assert g.admit and g.reservation_usd == 0.5  # day (0.5 left) is tighter than week (19)
+    g = run_gate(lim, day=WindowUsage(actual_usd=1), week=WindowUsage(actual_usd=25))
+    assert (g.admit, g.detail["period"], g.detail["remaining_usd"]) == (False, "week", 0.0)
 
 
 def test_actual_plus_reserved_both_count_and_no_cost_block_is_free() -> None:
@@ -783,7 +800,7 @@ def test_concurrent_run_now_threads_launch_exactly_once(tmp_path: Path) -> None:
         )
         for _ in range(2)
     ]
-    barrier = threading.Barrier(2)
+    barrier = threading.Barrier(2, timeout=10)  # a regression fails instead of hanging CI
     out: list[FireIntentRecord] = []
 
     def go(i: int) -> None:
@@ -794,7 +811,8 @@ def test_concurrent_run_now_threads_launch_exactly_once(tmp_path: Path) -> None:
     for t in threads:
         t.start()
     for t in threads:
-        t.join()
+        t.join(timeout=10)
+    assert not any(t.is_alive() for t in threads)
     assert sorted(r.status for r in out) == ["launched", "suppressed"]
     assert len(rig.sup.launch_calls) == 1
 
@@ -1177,6 +1195,10 @@ def test_l2_check_and_reserve_invalidates_ledger_under_lock_before_reading(
     class Spy(FakeLedger):
         def usage(self, *a: Any, **k: Any) -> dict[Period, WindowUsage]:
             order.append("usage")
+            # w21-05 review: prove the read happens while check_and_reserve holds the flock
+            with open(tmp_path / "usage.lock", "a+") as probe:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             return super().usage(*a, **k)
 
         def invalidate(self, *a: Any, **k: Any) -> None:

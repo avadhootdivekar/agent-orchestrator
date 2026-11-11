@@ -23,7 +23,11 @@ from typer.testing import CliRunner
 
 from agent_orchestrator.cli import app
 from agent_orchestrator.schedules import cli as sched_cli
-from agent_orchestrator.service.fire_store import FireIntentStore, ScheduleStateStore
+from agent_orchestrator.service.fire_store import (
+    FireIntentStore,
+    ScheduleEventLog,
+    ScheduleStateStore,
+)
 from agent_orchestrator.service.supervisor import _slug_for_root
 from agent_orchestrator.service.webhook import (
     WebhookRequestQueue,
@@ -173,6 +177,29 @@ def test_file_watch_fires_once_per_change_and_ignores_orchestrator_dir(env: Env)
     assert once(env)[0] == 0 and len(fires(env)) == 1
 
 
+def test_file_watch_ignores_orchestrator_dir_even_when_the_glob_matches(env: Env) -> None:
+    """w21-05 review: the guard check above uses ``inbox/*.md``, which can never match
+    ``.orchestrator/runs/inbox.md`` -- it passed with the ignore set removed. Use a glob that
+    does match so only the ``.orchestrator`` guard can keep it from firing."""
+    add_binding(
+        env,
+        {
+            "id": "watcher",
+            "kind": "file_watch",
+            "watch": {"paths": ["**/*.md"], "debounce_seconds": 30, "poll_seconds": 1},
+        },
+    )
+    assert once(env)[0] == 0
+    orch = env.ws / ".orchestrator" / "runs"
+    orch.mkdir(parents=True)
+    (orch / "x.md").write_text("x")
+    pin_mtime(orch / "x.md", EPOCH)
+    assert once(env)[0] == 0 and fires(env) == []
+    (env.ws / "y.md").write_text("y")  # positive control: a matching file elsewhere does fire
+    pin_mtime(env.ws / "y.md", EPOCH)
+    assert once(env)[0] == 1
+
+
 def test_file_watch_within_debounce_defers_then_fires(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -307,3 +334,6 @@ def test_daemon_once_unparseable_schedules_file_does_not_crash(env: Env) -> None
     env.sched_file.write_text("schedules: [ {oops")
     n, _ = once(env)
     assert n == 0 and fires(env) == []
+    # w21-05 review: the bad file is reported in the event log, not silently swallowed
+    events = [e["event"] for e in ScheduleEventLog(env.state).read()]
+    assert "schedule.file_invalid" in events

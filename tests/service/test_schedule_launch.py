@@ -228,7 +228,6 @@ def test_template_fresh_instance_per_fire(rig: Rig) -> None:
     assert r1.status == r2.status == "launched"
     p1, p2 = (c["workflow_path"] for c in rig.sup.launch_calls)
     assert p1 != p2 and "nightly-20260304" in p1 and "nightly-20260305" in p2
-    assert json.loads(Path(p1).read_text())["id"].endswith("nightly-20260304") or Path(p1).is_file()
     assert Path(p1).is_file() and Path(p2).is_file()
 
 
@@ -366,7 +365,7 @@ def test_launcher_to_engine_tick(tmp_path: Path) -> None:
     env.anchor()
     now = env.clock.now + timedelta(seconds=61)
     fired = env.tick(now)
-    assert [d.reason for d in fired] == ["due"] or len(fired) == 1
+    assert [d.reason for d in fired] == ["due"]
     d = fired[0]
     rec = e.fire_store.get(d.fire_key or "", env.root)
     assert rec is not None and rec.status == "launched"

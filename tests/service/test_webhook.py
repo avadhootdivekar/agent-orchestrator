@@ -186,18 +186,28 @@ def test_wrong_secret_401(h: Harness) -> None:
     assert h.post(secret="nope").status_code == 401 and h.requests() == []
 
 
-def test_missing_signature_401(h: Harness) -> None:
-    assert h.post(sig_header=None).status_code == 401
-
-
-def test_signature_over_raw_bytes_not_reserialised(h: Harness) -> None:
-    sig = compute_signature(SECRET.encode(), b'{"a":1}')
+def test_missing_signature_401(h: Harness, gh: Harness) -> None:
+    # w21-05 review: send a valid timestamp so the request reaches the signature branch
+    # (with no timestamp it was refused as bad_timestamp and never tested the missing-sig path).
     r = h.client.post(
         f"/hooks/{h.slug}/hook",
-        content=b'{"a": 1}',  # same JSON, different bytes
-        headers={"Content-Type": "application/json", "X-Hub-Signature-256": sig},
+        content=BODY,
+        headers={"Content-Type": "application/json", "X-AO-Timestamp": str(int(T0.timestamp()))},
     )
-    assert r.status_code == 401
+    assert r.status_code == 401 and h.events[-1][1]["reason"] == "bad_signature"
+    assert gh.post(sig_header=None).status_code == 401
+    assert gh.events[-1][1]["reason"] == "bad_signature" and gh.requests() == []
+
+
+def test_signature_over_raw_bytes_not_reserialised(gh: Harness) -> None:
+    # w21-05 review: use the github (body-only) scheme so the HMAC check is actually reached;
+    # on the default ao binding this header was refused as wrong_scheme before any HMAC.
+    sig = compute_signature(SECRET.encode(), b'{"a":1}')
+    url = f"/hooks/{gh.slug}/hook"
+    hdrs = {"Content-Type": "application/json", "X-Hub-Signature-256": sig}
+    assert gh.client.post(url, content=b'{"a": 1}', headers=hdrs).status_code == 401  # same JSON
+    assert gh.events[-1][1]["reason"] == "bad_signature"
+    assert gh.client.post(url, content=b'{"a":1}', headers=hdrs).status_code == 202  # control
 
 
 def test_oversize_body_413_by_content_length_and_stream(h: Harness) -> None:
@@ -216,6 +226,15 @@ def test_oversize_body_413_by_content_length_and_stream(h: Harness) -> None:
         headers={"Content-Type": "application/json", "X-AO-Signature": "sha256=00"},
     )
     assert r.status_code == 413
+
+
+@pytest.mark.parametrize(("offset", "code"), [(300, 202), (-300, 202), (301, 401), (-301, 401)])
+def test_replay_window_boundary_both_directions(h: Harness, offset: int, code: int) -> None:
+    # w21-05 review: pins the inclusive edge and the abs() (future skew) of the replay window.
+    r = h.post(headers={"X-AO-Timestamp": str(int(T0.timestamp()) + offset)})
+    assert r.status_code == code
+    if code == 401:
+        assert h.events[-1][1]["reason"] == "stale"
 
 
 def test_stale_and_bad_timestamp_401(h: Harness) -> None:
@@ -357,6 +376,15 @@ def test_non_json_content_type_rejected_by_mounted_middleware(h: Harness) -> Non
     assert r.status_code == 415
 
 
+def test_token_bucket_burst_capped_at_rate_after_long_idle() -> None:
+    # w21-05 review: a long idle must not bank more than rate_per_minute tokens.
+    c = Clock()
+    b = TokenBucket(c)
+    assert b.allow(("w", "a"), 2) and b.allow(("w", "a"), 2) and not b.allow(("w", "a"), 2)
+    c.now += timedelta(hours=1)
+    assert b.allow(("w", "a"), 2) and b.allow(("w", "a"), 2) and not b.allow(("w", "a"), 2)
+
+
 def test_works_without_any_session_cookie(h: Harness) -> None:
     # HMAC is the whole auth (F18): no AuthMiddleware, so no cookie is needed or consulted.
     assert not h.client.cookies
@@ -401,6 +429,8 @@ def test_no_secret_or_signature_in_any_log_or_response(
         )
     )
     assert [r.status_code for r in responses] == [401, 401, 202, 409, 401, 503]
+    # w21-05 review: positive control -- the default emitter logged, so the scan is not vacuous
+    assert "webhook.rejected" in caplog.text and "webhook.received" in caplog.text
     blob = caplog.text + "".join(r.text for r in responses)
     for forbidden in (SECRET, good, wrong, "attacker-key", good.split("=")[1], wrong.split("=")[1]):
         assert forbidden not in blob

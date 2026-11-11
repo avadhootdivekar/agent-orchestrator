@@ -444,8 +444,9 @@ def test_m2_revert_with_preserved_mtime_fires_again_in_engine(tmp_path: Path) ->
     touch(f, EPOCH + 100, content="BB")
     env.tick(T0 + timedelta(minutes=6))  # B observed (fire or overlap_skip) and committed
     touch(f, EPOCH, content="A")  # ``cp -p`` revert: same (mtime, size) as the first fire
+    env.end_run("run-1")  # w21-05 review: free the overlap slot so the only valid outcome is a fire
     d = env.evaluate(now=T0 + timedelta(minutes=30))
-    assert d.reason != "already_fired"
+    assert d.fire and d.reason == "due"
 
 
 def test_m2_discriminator_is_deterministic_for_replay() -> None:
