@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from agent_orchestrator.models import TrippedBreaker
+from agent_orchestrator.models import RunState, TaskRunState, TrippedBreaker
 from agent_orchestrator.schedules.governance import (
     MAX_PROMPT_BYTES,
     CostLimits,
@@ -440,13 +440,16 @@ def test_period_cap_mid_run_then_settle_admits(tmp_path: Path) -> None:
     assert g.governance.final and g.governance.cost_observed_usd == 0.5
 
 
-def _state(status: str, cost: float = 0.0, trips: list[TrippedBreaker] | None = None) -> Any:
-    task = SimpleNamespace(
-        cumulative_input_tokens=0, cumulative_output_tokens=0,
-        cumulative_cache_creation_input_tokens=0, cumulative_cache_read_input_tokens=0,
-        cumulative_cost_usd=cost,
+def _state(status: str, cost: float = 0.0, trips: list[TrippedBreaker] | None = None) -> RunState:
+    """A real RunState (not a mock): a SimpleNamespace hid the Q-1 partly-blind confidence bug."""
+    return RunState(
+        run_id="r", workflow_id="w", started_at=T0.isoformat(), updated_at=T0.isoformat(),
+        status=status,  # type: ignore[arg-type]
+        tripped_breakers=trips or [],
+        tasks={"t": TaskRunState(
+            status="succeeded", cumulative_cost_usd=cost, actuals_available=cost > 0
+        )},
     )  # fmt: skip
-    return SimpleNamespace(status=status, tripped_breakers=trips or [], tasks={"t": task})
 
 
 def trip(at: datetime) -> TrippedBreaker:
@@ -1518,7 +1521,6 @@ def test_ln3_post_spawn_argv_with_wrong_cap_value_cancels_child(tmp_path: Path) 
 
 
 def test_retire_hook_confidence_matches_ledger_for_partly_blind_run(tmp_path: Path) -> None:
-    from agent_orchestrator.models import RunState, TaskRunState
     from agent_orchestrator.service.usage_ledger import run_confidence
 
     env = gov_env(tmp_path, limits(per_run=2, week=50))
