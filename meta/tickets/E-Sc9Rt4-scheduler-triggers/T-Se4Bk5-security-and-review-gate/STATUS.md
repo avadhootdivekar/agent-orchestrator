@@ -2,7 +2,7 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress (security findings S-1..S-6 closed; architecture pass AC6-AC16 not started)
+- State: In Progress (S-1..S-10 closed or limitation; REVIEW.md AC6/AC8-AC13 done with R-2 (high) open; AC7, AC14 UI/coverage, AC16 not done)
 - Owner: reviewer agent (overseer w20-02)
 
 ## This update
@@ -86,3 +86,31 @@
   - committed state in a clean worktree: 959 passed, 1 failed (`test_capped_resume.py::test_only_the_resume_drain_calls_launch_capped_resume`, already failing at HEAD `47afab8` in a file this unit did not touch), 1 xfailed;
   - ruff clean.
 - Still NOT done for this task: everything listed under the w21 update above (AC6, AC7, AC8-AC13, AC14, AC16), plus FU-1..FU-11.
+
+## w22 Opus re-review
+- By: reviewer agent (w22-02-a1-security-gate-rereview, Opus) · Role: reviewer · Date: 2026-11-11
+- Comment: I re-verified the security gate on committed tip `4b9d6a3` (clean `git archive` tree) and did the
+  architecture pass. Full write-up: [`REVIEW.md`](REVIEW.md).
+- Re-verified by re-running the probes: S-1..S-5 closed, S-6 n/a.
+  - **S-8 closed**: the real-socket contract test `tests/service/test_webhook_listener.py` guards the uvicorn internals.
+  - **S-10 closed**: `cost_cap_usd` in `ALLOWED_OPTIONS` is deliberate and guarded; `run_id` is not
+    forwardable. The stale "CLI only" help is fixed in `b93b576`.
+- AC6 (run-id guard) holds. New probe `p6_run_id.py`: traversal shapes and symlink reuse are refused, and
+  2 processes × 20 trials give exactly one winner each time.
+- Findings:
+  - **R-1** (fire store: fixed tmp name, no directory fsync; also TEST-QUALITY FU-4): **fixed in `b93b576`**,
+    with tests that fail on the old code.
+  - **R-2 (high, open)**: dashboard/CLI usage views persist fire-record cost marks with no lock, so they can roll
+    back the engine's concurrent update. Handed to E-Qp4Zm8 (`usage_ledger.py` owner).
+  - R-3 (private test patches, non-injected stores) and R-4 (duplicate root guards): open, handed.
+  - Suggestions: R-5, R-7. New limitation: R-6.
+  - The committed probes broke whole-tree ruff; fixed in `f4f0fc8`.
+- Gate on `4b9d6a3`: `pytest -q` **12155 passed, 5 failed**, 35 skipped, 2 xfailed. The failures:
+  - 2 install-script tests: environment (no `.git` in the archive); they pass in the checkout;
+  - the auth openapi baseline: already fixed by `0f7dac0`;
+  - 2 bench fake-pass suites: they reproduce in the checkout and are outside this epic.
+- Other tools on `4b9d6a3`: `mypy src` 0 errors; `ruff check .` 75 errors and `ruff format --check .` 5 files,
+  all in the probes. At the new tip both are clean. `pytest tests/service tests/schedules` at the new tip: 1283 passed.
+- Still NOT done: R-2 fix (blocks Done), AC7 threat-model paragraph, AC14 `make ui-typecheck`/`ui-test` and
+  coverage, AC16 (EPIC/ADR-0014 sync, including the late-gate note that AC2's "ALLOWED_OPTIONS unchanged" is
+  superseded by `cost_cap_usd`).
