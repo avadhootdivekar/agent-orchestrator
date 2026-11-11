@@ -5,6 +5,13 @@
 - State: Partial — NOT Done
 - Owner: TBD (assigned at sprint start)
 
+## Sync 2026-11-11 (w36-01, tester): AC6 + AC8a closed (tests only, no src edits)
+- New `tests/service/test_schedule_interleave_ac6_ac8a.py` (5 tests) and `tests/schedules/test_run_now_engine_lock_f9.py` (1 test): **6 passed**, 5/5 repeat runs stable; `ruff check` + `ruff format --check` clean on both. `tests/service` + `tests/schedules` together: **1400 passed**.
+- AC6: real `Supervisor` + `ScheduleEngine` alternated (fixed `_FakeMonotonic`, engine clock/monotonic stubs). (a) child SIGKILLed inside the engine's launch (mid-evaluation) is detected by the next `Supervisor.tick()` and restarted after backoff while the engine keeps firing; (b) daemon's own `monitor_tick` with a forced monotonic budget overrun: unreached schedule `b` left unchanged (no state, `schedule.tick_budget_exceeded`), supervisor still restarts its child, `b` fires next alternation.
+- AC8a: F2 -- child launched via the engine's tick->launcher->shared `ProcessSupervisor`, exit observed with WNOWAIT, next tick reaps (`os.waitpid` -> `ChildProcessError`), next due tick fires (not `overlap_skip`) and the key is retired. F7 -- `jitter=300, grace=60, catch_up=skip`: no early fire, fires at effective_due, no `schedule.catch_up`, record `intended -> launched` once with no pre-existing record. F9 -- second engine on same state dir raises `EngineLockHeldError`, lock stays held until shutdown; `run-now --local` against a REAL engine's lock queues (request file `kind: run_now`, nothing launched) and fires after release. F8 (queue drain intended->launched) was NOT added here (not in this unit's brief).
+- Mypy on the two new files: only pre-existing-style test-tree noise, none from the project `mypy src` gate; `src/` untouched. No production change needed; no followups.
+- **Remaining:** AC17 (clean-tree whole-suite before/after count, per-module coverage, `mypy src` count) and AC18 (explicit not-exercised list: real uvicorn child, real agent CLI, systemd, network). No independent review recorded.
+
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
 - No change since w24-07 below. **Unfinished:** AC6, AC8a, AC17 (clean-tree whole-suite delta), AC18 not-exercised list; no independent review. Blocked on the T-Se4Bk5 clean-tree gate re-run for AC17.
 
