@@ -20,12 +20,6 @@ INDEX_HTML = "<!doctype html><title>spa shell</title>"
 ASSET_JS = "console.log('asset');"
 
 
-@pytest.fixture(autouse=True)
-def _allow_testclient_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``TestClient`` sends ``Host: testserver``; widen the Host allowlist like tests/ui does."""
-    monkeypatch.setenv("AO_UI_ALLOWED_HOSTS", "testserver")
-
-
 @pytest.fixture()
 def dashboard_service(tmp_path: Path) -> DashboardService:
     """A ``DashboardService`` over an empty workspace with the ``StubSupervisor`` (no processes)."""

@@ -36,7 +36,7 @@ from agent_orchestrator.service.webhook import (
     compute_signature,
 )
 
-from .test_cli_e2e import QUOTA, T0, Env
+from .test_cli_e2e import QUOTA, T0, Env, RunDirSupervisor
 
 runner = CliRunner()
 SECRET = "e2e-secret-value-0123456789abcdef"
@@ -337,3 +337,89 @@ def test_daemon_once_unparseable_schedules_file_does_not_crash(env: Env) -> None
     # w21-05 review: the bad file is reported in the event log, not silently swallowed
     events = [e["event"] for e in ScheduleEventLog(env.state).read()]
     assert "schedule.file_invalid" in events
+
+
+# -- a REAL run through the fake executor (no stub supervisor) ---------------------------------
+
+
+class FakeExecutorSupervisor(RunDirSupervisor):
+    """Launches the scheduled run for real: ``ao run --run-id <id>`` with ``fake`` agents.
+
+    Nothing is spawned as a subprocess (the supervisor runs the CLI in-process), but the engine,
+    ``RunStateStore`` and ``FakeExecutor`` all execute -- so ``state.json`` really reaches
+    ``succeeded`` for the exact id the schedule constructed.
+    """
+
+    def launch_run(self, **kwargs: object) -> Any:
+        ws = self.workspace
+        res = runner.invoke(
+            app,
+            [
+                "run",
+                "--workflow",
+                str(ws / "fake-wf.json"),
+                "--reposets",
+                str(ws / "fake-reposets.json"),
+                "--agents",
+                str(ws / "fake-agents.json"),
+                "--run-id",
+                str(kwargs["run_id"]),
+            ],  # fmt: skip
+            env={"AO_WORKSPACE_ROOT": str(ws)},
+        )
+        self.run_exit_code, self.run_output = res.exit_code, res.output
+        return super().launch_run(**kwargs)
+
+
+def test_scheduled_fire_runs_a_real_fake_executor_run_to_succeeded(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = env.ws
+    (ws / "instr.md").write_text("do the thing\n")
+    (ws / "fake-wf.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "id": "sched-fake",
+                "repo_set": "s",
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "agent": "a",
+                        "instruction": "instr.md",
+                        "inputs": [],
+                        "outputs": ["output/t1.md"],
+                        "depends_on": [],
+                    }
+                ],
+            }  # fmt: skip
+        )
+    )
+    (ws / "fake-reposets.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "repo_sets": {
+                    "s": {
+                        "workspace_root": ".",
+                        "repos": [{"id": "core", "path": ".", "role": "primary"}],
+                    }
+                },
+            }  # fmt: skip
+        )
+    )
+    (ws / "fake-agents.json").write_text(
+        json.dumps({"version": "1.0", "agents": {"a": {"executor": "fake"}}})
+    )
+    sup = FakeExecutorSupervisor(ws)
+    monkeypatch.setattr(sched_cli, "_SUPERVISOR_FACTORY", lambda root: sup)
+    env.run("add", "real", "--interval", "60", "--workflow", "fake-wf.json", *QUOTA)
+    due(env, "real")
+    assert once(env)[0] == 1
+    [rec] = fires(env)
+    assert rec.status == "launched" and rec.run_id
+    assert sup.run_exit_code == 0, sup.run_output  # type: ignore[attr-defined]
+    state = json.loads((ws / ".orchestrator" / "runs" / rec.run_id / "state.json").read_text())
+    assert state["run_id"] == rec.run_id
+    assert state["status"] == "succeeded"
+    assert (ws / "output" / "t1.md").stat().st_size > 0

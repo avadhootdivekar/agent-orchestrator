@@ -78,6 +78,8 @@ PRE_CHANGE_OPENAPI_PATHS = {
     "/api/schedules/{schedule_id}/enable",
     "/api/schedules/{schedule_id}/disable",
     "/api/schedules/{schedule_id}/run-now",
+    "/api/schedules/{schedule_id}/usage",  # T-8knqVe
+    "/api/schedules/governance-events",  # T-8knqVe
     "/api/templates",
     "/api/templates/{name}/instances",
     "/api/usage",

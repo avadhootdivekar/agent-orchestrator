@@ -1,4 +1,4 @@
-.PHONY: test test-fast test-playground test-real-llm lint format typecheck validate-sum-of-array \
+.PHONY: test test-fast test-playground test-schedules test-real-llm lint format typecheck validate-sum-of-array \
         bench-validate bench-smoke bench-run bench-report bench-medium bench-large bench-xlarge \
         bench-refcheck bench-arena-rate \
         ui ui-install ui-build ui-dev ui-test ui-typecheck test-ui
@@ -66,6 +66,11 @@ test-fast:
 
 test-playground:
 	uv run pytest tests/playground -q
+
+test-schedules:
+	uv run pytest tests/schedules tests/service/test_schedule_engine.py \
+	  tests/service/test_service_schedule_integration.py tests/service/test_fire_store.py \
+	  tests/service/test_webhook.py tests/service/test_webhook_cli_wiring.py -q
 
 test-real-llm:
 	AO_E2E_REAL_LLM=1 AO_MAX_ATTEMPTS=$(MAX_ATTEMPTS) AO_BUDGET_TOTAL=$(BUDGET_TOTAL) AO_MAX_TURNS=$(MAX_TURNS) \

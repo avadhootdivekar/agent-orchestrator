@@ -29,6 +29,25 @@ from agent_orchestrator.models import (
 from agent_orchestrator.runstate import RunStateStore
 
 # ---------------------------------------------------------------------------
+# Host allowlist for TestClient (hoisted from tests/ui + tests/auth, T-Te3Qw8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _allow_testclient_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make `SecurityMiddleware`'s Host allowlist (ui/security.py) accept `TestClient`.
+
+    httpx's `TestClient` sends `Host: testserver`, which is not one of the dashboard's default
+    allowed hosts (loopback only), so every request would 421. Defined ONCE at the tests root
+    (a new top-level test dir used to silently lose the per-dir copy and 421) by widening the
+    allowlist through the operator env var `AO_UI_ALLOWED_HOSTS`, which `create_app()` resolves
+    at call time. Tests proving the Host check rejects a bad value pass an explicit
+    `allowed_hosts=` argument, which bypasses env resolution.
+    """
+    monkeypatch.setenv("AO_UI_ALLOWED_HOSTS", "testserver")
+
+
+# ---------------------------------------------------------------------------
 # Fixed clock (NFR-2)
 # ---------------------------------------------------------------------------
 

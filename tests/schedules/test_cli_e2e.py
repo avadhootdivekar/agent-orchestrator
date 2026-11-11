@@ -28,6 +28,7 @@ from agent_orchestrator.service.fire_store import (
 )
 
 from ..ui.conftest import StubSupervisor
+from ._fixtures import make_schedule_workspace
 
 runner = CliRunner()
 T0 = datetime(2026, 3, 4, 5, 6, 7, tzinfo=UTC)
@@ -47,10 +48,7 @@ class RunDirSupervisor(StubSupervisor):
 
 class Env:
     def __init__(self, tmp: Path) -> None:
-        self.ws = (tmp / "ws").resolve()
-        (self.ws / ".ao").mkdir(parents=True)
-        (self.ws / "w.json").write_text("{}")
-        self.state = tmp / "state"
+        self.ws, self.state = make_schedule_workspace(tmp)
         self.sups: dict[str, RunDirSupervisor] = {}
 
     def sup(self, root: str) -> RunDirSupervisor:
