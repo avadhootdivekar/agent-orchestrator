@@ -28,11 +28,19 @@ each arm's sessions loaded).
 
 ```bash
 bash benchmarks/harbor/setup.sh          # installs harbor==0.25.0 (uv tool), creates config + dirs
-claude setup-token                       # subscription token (or use an API key)
-$EDITOR ~/.config/ao-harbor/env          # CLAUDE_CODE_OAUTH_TOKEN=... or ANTHROPIC_API_KEY=...
 bash benchmarks/harbor/setup.sh --check  # READY?
 bash benchmarks/harbor/setup.sh --smoke  # optional: no-LLM oracle run of hello-world
 ```
+
+Credentials (`run.sh --auth`):
+- `host` (default when the file below holds no credential): the host's own Claude login. Only its
+  current **access token** goes to the containers (`CLAUDE_CODE_OAUTH_TOKEN` in a per-job 0600 env
+  file under `$AO_HARBOR_ROOT/secrets/`, deleted when the job ends), never the refresh token, so
+  a container can never rotate it and log the host out. The token lasts ~8 h; `run.sh` refuses
+  to start when it has under `--min-token-hours` (default 3) left. Any `claude` command on the
+  host refreshes it.
+- `file`: `~/.config/ao-harbor/env` with `CLAUDE_CODE_OAUTH_TOKEN=...` (`claude setup-token`,
+  long-lived) or `ANTHROPIC_API_KEY=...`.
 
 Needs Docker (user in the `docker` group), `uv`, `git`, `claude`. Work root `/var/tmp/ao-harbor`
 (`AO_HARBOR_ROOT`): `jobs/` (results), `wheels/` (ao wheels per commit), `prompts/`. It is outside
@@ -43,7 +51,7 @@ install or `ao.service`.
 
 ```bash
 H=benchmarks/harbor
-# identical task list for every arm
+# identical task list for every arm (bare names get the dataset's org prefix)
 printf '%s\n' fix-git cobol-modernization >/var/tmp/ao-harbor/pilot.txt
 $H/run.sh --arm cc --model sonnet --dataset terminal-bench/terminal-bench-2-1 --tasks-file /var/tmp/ao-harbor/pilot.txt -n 2
 $H/run.sh --arm ao --model sonnet --dataset terminal-bench/terminal-bench-2-1 --tasks-file /var/tmp/ao-harbor/pilot.txt -n 2

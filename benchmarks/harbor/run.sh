@@ -22,6 +22,9 @@
 #                so pass the SAME --subject to both arms of a comparison.
 # --install-only install the agent in each container and stop (no LLM spend): checks the
 #                ao wheel/uv/claude install path on a dataset's images.
+# --auth         file (credentials file; default when it holds one) or host (the host's
+#                current Claude login access token, per job, deleted after; never the
+#                refresh token). --min-token-hours H (default 3): refuse if it expires sooner.
 # Env: AO_HARBOR_ROOT (/var/tmp/ao-harbor), AO_HARBOR_ENV_FILE (~/.config/ao-harbor/env),
 #      CLAUDE_CODE_VERSION (default: the host's `claude --version`).
 # Results land in $AO_HARBOR_ROOT/jobs/<job-name>/; summarize with summarize.py.
@@ -36,6 +39,7 @@ PARITY_ENV="$HERE/parity/env"
 
 arm="" model="" dataset="" task="" path="" tasks_file="" n_tasks="" concurrency="2"
 effort="high" budget_usd="20" attempts="1" job_name="" subject="" install_only=0 dry_run=0
+auth="" min_token_hours="3"
 includes=() extra=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -55,6 +59,8 @@ while [ $# -gt 0 ]; do
     --subject) subject="$2"; shift 2 ;;
     --install-only) install_only=1; shift ;;
     --dry-run) dry_run=1; shift ;;
+    --auth) auth="$2"; shift 2 ;;
+    --min-token-hours) min_token_hours="$2"; shift 2 ;;
     --) shift; extra=("$@"); break ;;
     -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
@@ -94,6 +100,10 @@ args+=(--effort "$effort" --ae "CLAUDE_CODE_EFFORT_LEVEL=$effort")
 # Spend cap per benchmark task, identical for both arms: the plain arm's one session gets
 # `claude --max-budget-usd`, the whole ao run (all sessions) `run_budget_usd` (AoAgent maps it).
 args+=(--ak "max_budget_usd=$budget_usd")
+# Agent install (claude, and for ao also uv + Python + the wheel) runs in Harbor's setup phase,
+# not on the task's agent clock; its 6-min default is too tight for ao on heavier images.
+# Applied to both arms; the agent timeout (the comparison's clock) is untouched.
+args+=(--agent-setup-timeout-multiplier "${AO_HARBOR_SETUP_TIMEOUT_MULT:-3}")
 [ "$install_only" = 1 ] && args+=(--install-only)
 if [ -n "$tasks_file" ]; then
   while IFS= read -r line; do
@@ -101,14 +111,39 @@ if [ -n "$tasks_file" ]; then
     [ -n "$line" ] && includes+=("$line")
   done <"$tasks_file"
 fi
-for inc in ${includes[@]+"${includes[@]}"}; do args+=(-i "$inc"); done
+# Harbor names a dataset's tasks "<org>/<task>"; add the dataset's org to bare names.
+org=""
+[ -n "$dataset" ] && case "$dataset" in */*) org="${dataset%%/*}" ;; esac
+for inc in ${includes[@]+"${includes[@]}"}; do
+  case "$inc" in */*) ;; *) [ -n "$org" ] && inc="$org/$inc" ;; esac
+  args+=(-i "$inc")
+done
 while IFS= read -r line; do  # parity env: identical for every arm
   line="${line%%#*}"; line="$(echo "$line" | xargs)"
   [ -n "$line" ] && args+=(--ae "$line")
 done <"$PARITY_ENV"
+# Credentials. file: $AO_HARBOR_ENV_FILE (setup-token or API key). host: the host's current
+# Claude login access token ONLY (never the refresh token, so containers cannot rotate it and
+# log the host out), written to a per-job 0600 env file that is deleted when the job ends.
+# The job must finish before the token expires: --min-token-hours (default 3) is enforced.
+if [ -z "$auth" ]; then
+  if [ -f "$AO_HARBOR_ENV_FILE" ] && grep -Eq '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=.+' "$AO_HARBOR_ENV_FILE"; then
+    auth="file"
+  else
+    auth="host"
+  fi
+fi
+secret_env=""
 if [ "$install_only" = 0 ]; then
-  [ -f "$AO_HARBOR_ENV_FILE" ] || [ "$dry_run" = 1 ] || die "no credentials file $AO_HARBOR_ENV_FILE (run setup.sh)"
-  args+=(--env-file "$AO_HARBOR_ENV_FILE")
+  case "$auth" in
+    file)
+      [ -f "$AO_HARBOR_ENV_FILE" ] || [ "$dry_run" = 1 ] || die "no credentials file $AO_HARBOR_ENV_FILE (run setup.sh)"
+      args+=(--env-file "$AO_HARBOR_ENV_FILE") ;;
+    host)
+      secret_env="$AO_HARBOR_ROOT/secrets/$job_name.env"
+      args+=(--env-file "$secret_env") ;;
+    *) die "--auth must be file or host" ;;
+  esac
 fi
 
 export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"  # makes ao_harbor importable
@@ -146,5 +181,24 @@ echo "job: $AO_HARBOR_ROOT/jobs/$job_name"
 echo "+ harbor ${args[*]}"
 [ "$dry_run" = 1 ] && exit 0
 mkdir -p "$AO_HARBOR_ROOT/jobs"
+if [ -n "$secret_env" ]; then
+  (umask 077 && mkdir -p "$AO_HARBOR_ROOT/secrets")
+  trap 'rm -f "$secret_env"' EXIT
+  MIN_TOKEN_HOURS="$min_token_hours" OUT="$secret_env" python3 - <<'PY' || die "host login unusable (see above)"
+import json, os, sys, time
+oauth = json.load(open(os.path.expanduser("~/.claude/.credentials.json"))).get("claudeAiOauth") or {}
+token, expires_ms = oauth.get("accessToken"), oauth.get("expiresAt") or 0
+hours_left = (expires_ms / 1000 - time.time()) / 3600
+if not token:
+    sys.exit("no host Claude login (run `claude` and log in)")
+if hours_left < float(os.environ["MIN_TOKEN_HOURS"]):
+    sys.exit(f"host token expires in {hours_left:.1f} h < --min-token-hours; "
+             "use any claude command on the host to refresh it, then retry")
+fd = os.open(os.environ["OUT"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as fh:
+    fh.write(f"CLAUDE_CODE_OAUTH_TOKEN={token}\nCLAUDE_FORCE_OAUTH=1\n")
+print(f"run.sh: auth=host (access token valid {hours_left:.1f} h more)", file=sys.stderr)
+PY
+fi
 cd "$AO_HARBOR_ROOT"  # never inside a checkout: no CLAUDE.md/.claude above the job
-exec harbor "${args[@]}"
+harbor "${args[@]}"
