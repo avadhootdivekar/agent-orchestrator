@@ -119,3 +119,40 @@ def test_duplicate_queued_resume_is_idempotent(tmp_path: Path) -> None:
         cr.find_pending_request(cr.requests_dir(tmp_path / "state"), rig.root, "r1", NOW)
         is not None
     )
+
+
+def test_readonly_store_refuses_every_mutator_and_reads_still_work(tmp_path: Path) -> None:
+    """T-Qp4Zm8 REVIEW G-4: every mutator raises and nothing lands on disk; reads are unaffected."""
+    import pytest
+
+    state = tmp_path / "state"
+    root = str(tmp_path / "ws")
+    rec = FireIntentRecord(fire_key="k1", workspace_root=root, schedule_id="s",
+        scheduled_for=T0, created_at=T0, status="launched", run_id="r1")  # fmt: skip
+    FireIntentStore(state).write(rec)
+    ro = readonly_fire_store(state)
+    path = ro.directory(root) / "k1.json"
+    before = {p: p.read_bytes() for p in path.parent.glob("*.json")}
+
+    new = rec.model_copy(update={"fire_key": "k2"})
+    calls: list[Any] = [
+        lambda: ro.write(new),
+        lambda: ro.write_suppressed(
+            "k3", "why", workspace_root=root, schedule_id="s", scheduled_for=T0
+        ),
+        lambda: ro.update("k1", status="failed"),
+        lambda: ro._persist(rec),
+        lambda: ro._delete(rec),
+        lambda: ro.prune(max_age_days=0, max_records=0),
+        lambda: ro.reconcile_orphans(lambda _p: False, lambda _r, _i: False),
+    ]  # fmt: skip
+    for call in calls:
+        with pytest.raises(PermissionError, match="ReadOnlyFireStore refuses"):
+            call()
+    assert {p: p.read_bytes() for p in path.parent.glob("*.json")} == before
+    # reads, and the in-memory-only governance merge, still work
+    assert (
+        ro.get("k1") == rec and ro.exists("k1", root) and [r.fire_key for r in ro.list()] == ["k1"]
+    )
+    assert ro.update_governance("k1", cost_observed_usd=2.0).governance is not None
+    assert {p: p.read_bytes() for p in path.parent.glob("*.json")} == before

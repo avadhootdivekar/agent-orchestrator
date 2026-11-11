@@ -124,6 +124,10 @@ class FireGovernance(BaseModel):
     pause_ttl_seconds: int | None = None
     cost_observed_usd: float = 0.0  # high-water mark; only ever rises
     cost_confidence: CostConfidence = "pending"
+    # G-7: the cap's own metric (``compute_run_usage_totals(state).cost_usd``) at finalisation;
+    # ``None`` on records that predate it. ``overshoot_usd`` is measured on this, never on the
+    # (possibly reserved-inflated, summary-inclusive) ``cost_observed_usd`` charge.
+    engine_cost_usd: float | None = None
     cap_state: CapState = "none"
     paused_at: AwareDatetime | None = None
     pause_expires_at: AwareDatetime | None = None
@@ -407,6 +411,12 @@ class FireIntentStore:
 # -- schedule state ----------------------------------------------------------------------------
 
 
+def _readonly_error(op: str) -> PermissionError:
+    return PermissionError(
+        f"ReadOnlyFireStore refuses {op}: view callers must never write fire records"
+    )
+
+
 class ReadOnlyFireStore(FireIntentStore):
     """A fire store whose governance write-back is applied in memory only. The ledger persists
     cost high-water marks on read; ``update_governance`` is an unlocked read-modify-write, so a
@@ -418,6 +428,30 @@ class ReadOnlyFireStore(FireIntentStore):
             raise KeyError(fire_key)
         gov = (rec.governance or FireGovernance()).model_copy(update=fields)
         return rec.model_copy(update={"governance": gov})
+
+    # Every other mutator refuses (T-Qp4Zm8 REVIEW G-4): a future view helper that reached
+    # ``update``/``write`` would otherwise persist silently. ``_persist`` and ``_delete`` are the
+    # two disk chokepoints, so ``reconcile_orphans`` and ``prune`` are covered through them.
+    def _persist(self, record: FireIntentRecord) -> Path:
+        raise _readonly_error("_persist")
+
+    def _delete(self, rec: FireIntentRecord) -> int:
+        raise _readonly_error("_delete")
+
+    def write(self, record: FireIntentRecord) -> None:
+        raise _readonly_error("write")
+
+    def update(self, fire_key: str, **fields: Any) -> FireIntentRecord:
+        raise _readonly_error("update")
+
+    def write_suppressed(self, *args: Any, **kwargs: Any) -> FireIntentRecord:
+        raise _readonly_error("write_suppressed")
+
+    def prune(self, *args: Any, **kwargs: Any) -> int:
+        raise _readonly_error("prune")
+
+    def reconcile_orphans(self, *args: Any, **kwargs: Any) -> builtins.list[FireIntentRecord]:
+        raise _readonly_error("reconcile_orphans")
 
 
 def readonly_fire_store(state_dir: Path) -> FireIntentStore:

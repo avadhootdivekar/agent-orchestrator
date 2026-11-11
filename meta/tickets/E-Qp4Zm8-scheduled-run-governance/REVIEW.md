@@ -83,7 +83,7 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
   the UI type. Use `_paused_row` for the paused list; that also closes AC5.
 
 ### Warnings
-**G-4 (Warning). `ReadOnlyFireStore` is read-only in name only.**
+**G-4 (Warning) — FIXED (w32-01). `ReadOnlyFireStore` is read-only in name only.** `ReadOnlyFireStore` now raises `PermissionError` from `write`, `write_suppressed`, `update`, `_persist`, `_delete`, `prune` and `reconcile_orphans`; reads and the in-memory `update_governance` are unchanged. Test: `test_readonly_store_refuses_every_mutator_and_reads_still_work` (`tests/service/test_resume_queue_readonly.py`).
 - Where: `src/agent_orchestrator/service/fire_store.py:410-425`.
 - Observation: it overrides only `update_governance`. `write`, `write_suppressed`, `update` and `_persist` still
   persist.
