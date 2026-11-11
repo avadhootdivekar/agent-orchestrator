@@ -61,6 +61,7 @@ from .governance_gate import (
     GateResult,
     PromptSnapshot,
     UsageLedger,
+    _read_regular_file,
     check_and_reserve,
     skeleton,
 )
@@ -484,8 +485,13 @@ class ScheduledLauncher:
             return None
         path = self._guarded_path(store, prompt_file, "prompt_file")
         try:
-            text = Path(path).read_text(encoding="utf-8")
-        except OSError as exc:
+            # S-2: same non-blocking, regular-file-only, size-capped open as the governed path.
+            data = _read_regular_file(Path(path), prompt_file)
+            if isinstance(data, GateResult):
+                detail = data.detail.get("detail", "not a regular file")
+                raise LaunchResolutionError(f"prompt_file unreadable: {prompt_file} ({detail})")
+            text = data.decode("utf-8")
+        except (OSError, ValueError) as exc:
             raise LaunchResolutionError(f"prompt_file unreadable: {prompt_file} ({exc})") from exc
         if pinned_sha is not None and _sha256(text) != pinned_sha:
             raise LaunchResolutionError(f"prompt_file {prompt_file} does not match prompt_sha256")

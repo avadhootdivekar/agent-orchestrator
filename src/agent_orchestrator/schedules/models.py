@@ -127,6 +127,8 @@ def _binding_error(schedule_id: str, field: str, message: str) -> ScheduleFileEr
 def _require_workspace_relative(value: str) -> str:
     """Reject absolute paths, ``~`` and any ``..`` segment (resolution/containment itself is
     ``LocalFsArtifactStore``'s job -- this is only the load-time shape check)."""
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+        raise ScheduleFileError(f"path {value!r} must not contain NUL or control characters")
     segments = value.replace("\\", "/").split("/")
     if not value or value.startswith(("/", "~")) or ".." in segments or value[1:2] == ":":
         raise ScheduleFileError(

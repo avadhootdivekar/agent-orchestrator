@@ -141,3 +141,20 @@ re-check the dashboard path: a cap only lowers spend.
   `docs-md/scheduler-triggers-hld.md`, and both have carry-over uncommitted edits that were in progress.
   It is not caused by this pass. `ruff check`, `ruff format --check` and `mypy` are clean on the files
   this pass touched.
+
+## w21 update — fixes landed (By: developer agent, unit w21-01-a1-security-fixes, 2026-11-11)
+
+Base: `19b17db` on `ad/enhancements-10nov`. Regression tests: `tests/service/test_security_fixes_se4bk5_w21.py`
+(14 cases; 13 fail against the pre-fix source, all pass after).
+
+| Finding | State | How |
+|---|---|---|
+| **S-1** (blocking) | **Fixed (already committed before w21)** | `webhook.scheme` pin (`verify_delivery` refuses the other scheme's header with `wrong_scheme` 401) is in HEAD. Probe `se4bk5-probes/p1_downgrade.py` re-run on this tree: `AO replay a week later: stale`, `downgrade replay: wrong_scheme`. |
+| S-2 | Fixed | `ScheduledLauncher._read_prompt` uses `governance_gate._read_regular_file` (O_NONBLOCK, O_NOFOLLOW, S_ISREG, size cap). FIFO and oversize tests. |
+| S-3a | Fixed | `_require_workspace_relative` rejects NUL/control chars at load. The w20 governance-gate NUL test now bypasses validation to keep the second wall covered. |
+| S-3b | Fixed | `resolve_secret` catches `ValueError` -> `None` (503). |
+| S-4 | Fixed | `resolve_secret` opens once with `O_RDONLY|O_NOFOLLOW|O_NONBLOCK`, `fstat` (regular, mode `&0o077==0`), size cap `MAX_SECRET_FILE_BYTES`. Swap-after-check and FIFO tests. |
+| S-5 | Fixed | `WebhookRequestQueue.enqueue` -> `statefile.atomic_write_bytes(durable=True)`; webhook `_fsync_dir` removed (the statefile one logs failures). No `.tmp` left on failure (tested). |
+| S-6 | No change needed | The `else 10` fallback no longer exists at HEAD; `spec.rate_per_minute` is used directly. |
+| S-7..S-9 | Unchanged | Documented limitations. |
+| S-8, S-10 | Still open | uvicorn header-deadline contract test; `cost_cap_usd` in `ALLOWED_OPTIONS` (another unit's uncommitted work is in the tree; re-verify when it lands). |

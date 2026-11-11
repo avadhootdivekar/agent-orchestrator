@@ -2,7 +2,7 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress (security pass partial; architecture pass not started)
+- State: In Progress (security findings S-1..S-6 closed; architecture pass AC6-AC16 not started)
 - Owner: reviewer agent (overseer w20-02)
 
 ## This update
@@ -60,3 +60,9 @@
    T-Sd1Kq7), with the exact changes given in SECURITY.md.
 3. Not started: AC6 (run-id guard), AC7 (threat-model delta paragraph), AC8–AC13 (`REVIEW.md`
    architecture pass), AC14 (whole-tree quality gate), AC16 (EPIC/ADR sync).
+
+## w21 update
+- By: developer agent (w21-01-a1-security-fixes) · Role: developer · Date: 2026-11-11
+- S-1 blocking: the scheme pin was already committed; probe p1 re-run prints `wrong_scheme` for the downgrade. S-2..S-5 fixed with regression tests, S-6 already gone. Details: SECURITY.md "w21 update".
+- Evidence: `uv run pytest -q tests/service tests/schedules`: 1248 passed + 2 failed before I fixed one of my own w20 tests (it loaded a NUL path through the validator that now rejects it); the other failure is `tests/schedules/test_cost_cap_cli_e2e.py::test_prototype`, an untracked file from another unit's in-progress cost-cap work, not mine. After the fix, the two security test files pass (45).
+- Still NOT done: AC6, AC7, AC8-AC13 (REVIEW.md), AC14 whole-tree gate (tree currently has another unit's uncommitted edits: ruff/mypy/format failures in `schedules/cli.py` and `test_cost_cap_cli_e2e.py`, and `tests/auth` openapi test failing), AC16. S-8 and S-10 re-verify pending.

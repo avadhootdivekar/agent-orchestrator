@@ -66,6 +66,7 @@ import hmac
 import json
 import logging
 import os
+import stat
 import threading
 import uuid
 from collections import OrderedDict
@@ -83,6 +84,7 @@ from .schedule_engine import (
     Candidate,
     ResolvedBinding,
 )
+from .statefile import atomic_write_bytes
 from .supervisor import _slug_for_root
 
 if TYPE_CHECKING:
@@ -105,6 +107,7 @@ DELIVERY_HEADERS = ("x-ao-delivery", "x-github-delivery")
 TIMESTAMP_HEADER = "x-ao-timestamp"
 SIGNATURE_PREFIX = "sha256="
 MAX_LOGGED_FIELD = 128
+MAX_SECRET_FILE_BYTES = 4096  # a key file larger than this is refused (S-4)
 MIN_WEBHOOK_SECRET_BYTES = 16  # shorter keys (e.g. ``secret_env: HOME``) are refused -> 503
 # Ambient process variables are guessable/world-visible, so never a key (N5), whatever their length.
 AMBIENT_SECRET_ENV_NAMES = frozenset(
@@ -184,19 +187,6 @@ def _default_emit(event: str, **fields: Any) -> None:
     logger.log(level, "%s %s", event, json.dumps(fields, default=str, sort_keys=True))
 
 
-def _fsync_dir(path: Path) -> None:
-    try:
-        fd = os.open(path, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
-
-
 def _requests_dir(state_dir: Path) -> Path:
     return Path(state_dir) / SCHEDULES_SUBDIR / REQUESTS_SUBDIR
 
@@ -242,13 +232,22 @@ def resolve_secret(
             if path != root and root not in path.parents:
                 emit("webhook.rejected", reason="secret_outside_workspace", schedule_id=sid)
                 return None
-            if not path.is_file():
+            # S-4: open ONCE without following a symlink swapped in after the checks above, then
+            # fstat/read through the descriptor (no path re-walk).
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as fh:
+                st = os.fstat(fh.fileno())
+                if not stat.S_ISREG(st.st_mode):
+                    return None
+                if st.st_mode & 0o077:
+                    emit("webhook.secret_permissions", reason="secret_permissions", schedule_id=sid)
+                    return None
+                data = fh.read(MAX_SECRET_FILE_BYTES + 1)
+            if len(data) > MAX_SECRET_FILE_BYTES:
+                emit("webhook.rejected", reason="secret_too_large", schedule_id=sid)
                 return None
-            if path.stat().st_mode & 0o077:
-                emit("webhook.secret_permissions", reason="secret_permissions", schedule_id=sid)
-                return None
-            return _checked_secret(path.read_bytes().strip(), sid, emit)
-        except OSError:
+            return _checked_secret(data.strip(), sid, emit)
+        except (OSError, ValueError):  # ValueError: NUL byte in the path (S-3b)
             return None
     return None
 
@@ -546,7 +545,6 @@ class WebhookRequestQueue:
         if len(pending) >= self._maxsize:
             raise WebhookQueueFullError(delivery.schedule_id)
         final = self._dir / f"{uuid.uuid4().hex}.json"
-        tmp = final.with_suffix(".tmp")
         payload = {
             "kind": REQUEST_KIND_WEBHOOK,
             "workspace_slug": delivery.workspace_slug,
@@ -554,13 +552,7 @@ class WebhookRequestQueue:
             "received_at": delivery.received_at.astimezone(UTC).isoformat(),
             "delivery_id": delivery.delivery_id,
         }
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload))
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, final)
-        _fsync_dir(self._dir)
+        atomic_write_bytes(final, json.dumps(payload).encode("utf-8"), durable=True)
         return final
 
 

@@ -48,9 +48,10 @@ def test_template_must_be_a_bare_name(value: str) -> None:
 
 
 def test_nul_byte_prompt_file_is_a_named_refusal_not_a_crash(tmp_path: Path) -> None:
-    # A YAML ``"\0"`` escape passes the load-time shape check; the gate must refuse it by name
-    # (prompt_missing / invalid_path) instead of letting ``ValueError`` escape (T-Se4Bk5 S-3).
-    b = _binding(prompt_file="p\x00.md")
+    # Load now rejects NUL (S-3a, see test_security_fixes_se4bk5_w21); the gate is the second
+    # wall, so bypass validation and require a named refusal, not a ``ValueError`` (S-3).
+    b = _binding(prompt_file="p.md")
+    object.__setattr__(b, "prompt_file", "p\x00.md")
     g = gg.read_prompt(b, str(tmp_path))
     assert isinstance(g, gg.GateResult) and not g.admit
     assert (g.reason, g.detail["detail"]) == (gg.REASON_PROMPT_MISSING, gg.DETAIL_INVALID_PATH)
