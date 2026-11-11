@@ -1576,8 +1576,9 @@ class ScheduleEngine:
         # confidence and charge the ledger's ``run_confidence`` gives it, so the window does not
         # under-charge once ``state.json`` is gone.
         conf = _run_confidence(state)
-        if conf in _CONSERVATIVE_CONFIDENCES and not killed:
-            # G-5: the label does not depend on a cost reservation (quota-only bindings have none).
+        if conf in _CONSERVATIVE_CONFIDENCES:
+            # G-5/G-12: the label depends neither on a cost reservation (quota-only bindings have
+            # none) nor on the run being killed; the reservation branch below may still relabel.
             confidence = conf
         if g.reserved_usd is not None and (
             observed <= 0 or killed or conf in _CONSERVATIVE_CONFIDENCES

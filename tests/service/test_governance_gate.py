@@ -1588,6 +1588,22 @@ def test_g5_quota_only_binding_partly_blind_run_is_persisted_partial(tmp_path: P
     assert g.cost_observed_usd == pytest.approx(0.4)  # no reservation: charged what was observed
 
 
+def test_g12_killed_quota_only_run_is_persisted_conservative(tmp_path: Path) -> None:
+    """REVIEW G-12: a killed (cancelled) partly blind run on a true quota-only binding (no cost
+    limits, no reservation) persists the ledger's conservative confidence, not ``actual``."""
+    from agent_orchestrator.service.usage_ledger import run_confidence
+
+    env = gov_env(tmp_path, limits(quota_day=5))
+    put_run(env, "k1", T0, "r1", reserved=None)
+    st = _partly_blind_state("cancelled")
+    assert run_confidence(st) == "partial"
+    _retire(env, "r1", st)
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.final and g.reserved_usd is None
+    assert g.cost_confidence == "partial"
+    assert g.cost_observed_usd == pytest.approx(0.4)  # no reservation: charged what was observed
+
+
 def test_g7_overshoot_uses_engine_cost_not_the_reserved_charge(tmp_path: Path) -> None:
     """REVIEW G-7: a capped run charged max(observed, reserved) reports overshoot on the engine
     metric (the cap's own), and persists that metric for the paused-row view."""

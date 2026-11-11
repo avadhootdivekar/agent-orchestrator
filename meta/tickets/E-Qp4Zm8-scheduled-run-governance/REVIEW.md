@@ -240,7 +240,7 @@ and the retire hook's stale-trip rule are unchanged. All 547 governance-suite te
 ## New findings (numbered, severity-ranked; none fixed by this unit)
 
 ### Warnings
-**G-12 (Warning) — G-5 residual: a killed (`cancelled`) partly blind run on a reservation-less binding is persisted
+**G-12 (Warning) — FIXED 2026-11-11 (w35-01): `_finalize_governance_once` no longer gates the conservative label on `not killed`; test `test_g12_killed_quota_only_run_is_persisted_conservative`. G-5 residual: a killed (`cancelled`) partly blind run on a reservation-less binding is persisted
 `actual`.**
 - Where: `src/agent_orchestrator/service/schedule_engine.py:1579` (`if conf in _CONSERVATIVE_CONFIDENCES and not
   killed`), and `:1582-1588`, the only branch that relabels killed runs, which requires `g.reserved_usd is not None`.
