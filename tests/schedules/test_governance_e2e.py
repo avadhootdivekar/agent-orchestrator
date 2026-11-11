@@ -2,10 +2,11 @@
 
 Real ``ao`` root app, real ``ScheduleEngine`` + gate + ledger, fixed injected clock
 (``schedules.cli._now``), temp workspace/state (never a real ``$HOME``), stub supervisor (nothing is
-spawned). No sleeps. Scope: ``ao schedule usage`` / ``resume`` and the real renderer's
-``--cost-cap-usd`` are not committed yet, so per-run cost-cap and pause/resume e2e cases are covered
-at engine level (tests/test_engine_cost_cap.py, tests/service/test_governance_gate.py) and listed
-UNFINISHED in the ticket.
+spawned). No sleeps. Scope here is quota / prompt / skip-record / history. ``ao schedule usage`` /
+``resume`` / limit flags are covered at CLI tier in ``test_cli_governance_e2e.py`` and ``ao run`` /
+``ao resume --cost-cap-usd`` in ``tests/test_e2e_cli_cost_cap.py``. A daemon-fired run that forwards
+``--cost-cap-usd`` and then pauses is covered at service level only
+(``tests/service/test_governance_gate.py``, ``test_capped_resume.py``).
 """
 
 # ruff: noqa: F811

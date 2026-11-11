@@ -6,7 +6,7 @@
 - Owner: tester agent
 - Created: 2026-11-10
 - Last Updated: 2026-11-11
-- Status: Partial (CliRunner quota/boundary tier landed; cost-cap/resume e2e unfinished)
+- Status: Partial (CliRunner quota + cost-cap/usage/resume tiers landed; bug B-1 xfail; AC1/AC6/AC7 delta/AC9b open)
 - Estimate: 2.5 days
 
 ## Requirements Mapping

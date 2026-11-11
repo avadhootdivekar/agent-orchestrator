@@ -216,6 +216,12 @@ def test_parallel_siblings_are_drained_not_killed(workspace: Path, store, rs_sto
     assert st.tasks["a"].status == st.tasks["b"].status == "succeeded"
     assert round(compute_run_usage_totals(st).cost_usd, 6) == 0.9
     assert st.tasks.get("c") is None or st.tasks["c"].status == "pending"
+    # the failure is the cap halt itself, not some other failure. Settle order of a/b is not fixed:
+    # a first trips at 0.6 and again at 0.9 once b drains (repeat trips are by design, HLD L2:
+    # the status trailer shows "x N"); b first trips once at 0.9. Either way the last one is 0.9.
+    trips = _cap_trips(st)
+    assert trips and all(t.detail["cap_usd"] == 0.5 for t in trips)
+    assert max(t.detail["cost_usd"] for t in trips) == 0.9
 
 
 def test_dispatch_gate_blocks_new_dispatch_when_cap_already_reached(
@@ -255,15 +261,18 @@ def test_raised_cap_on_resume_completes(workspace: Path, store, rs_store) -> Non
     assert len(_cap_trips(out)) == 1
 
 
-def test_dispatch_gate_covers_injected_and_redispatch(workspace: Path, store, rs_store) -> None:
-    """Both paths funnel through `_prepare_and_maybe_dispatch`; assert via a spy on the gate."""
+def test_gate_is_consulted_at_each_dispatch_and_boundary_with_work_left(
+    workspace: Path, store, rs_store
+) -> None:
+    """Spy on the gate: one dispatch check per task plus one boundary check while work remains.
+    (Injected-task and redispatch paths are not exercised here; see the epic STATUS follow-ups.)"""
     calls: list[str] = []
     orch = Orchestrator(_costs(t1=0.1, t2=0.1), store, rs_store, clock=lambda: _T0, cost_cap_usd=9)
     orig = orch._trip_cost_cap
     orch._trip_cost_cap = lambda s, log: (calls.append("g"), orig(s, log))[1]  # type: ignore[method-assign]
     orch.run(_wf(workspace, 2), _reposets(workspace), AGENTS)
-    # one dispatch gate + one boundary gate per task (boundary only while work remains)
-    assert len(calls) >= 2
+    # dispatch(t1), boundary after t1 (t2 left), dispatch(t2); no boundary after t2 (nothing left)
+    assert len(calls) == 3
 
 
 # -- AC7 --------------------------------------------------------------------------------------

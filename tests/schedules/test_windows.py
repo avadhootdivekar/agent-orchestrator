@@ -200,7 +200,8 @@ def test_week_across_dst_is_seven_local_dates() -> None:
 
 
 def test_week_across_dst_sunday_start() -> None:
-    # Berlin week starting Sunday 2024-03-24 contains the spring-forward on the 31st: 167 h.
+    # Sunday start: the week of 2024-03-24 ends before the spring-forward (a plain 168 h); the
+    # transition on Sunday the 31st falls in the next week, which is the 167 h one.
     w = window_for(u(2024, 3, 28, 12), "week", BERLIN, "sunday")
     assert w.key == "week:2024-03-24"
     assert (w.start, w.end) == (u(2024, 3, 23, 23), u(2024, 3, 30, 23))

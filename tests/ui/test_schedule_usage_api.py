@@ -16,7 +16,12 @@ import yaml
 pytest.importorskip("fastapi", reason="dashboard API needs the optional [ui] extra")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from agent_orchestrator.service.fire_store import ScheduleEventLog  # noqa: E402
+from agent_orchestrator.service.fire_store import (  # noqa: E402
+    FireGovernance,
+    FireIntentRecord,
+    FireIntentStore,
+    ScheduleEventLog,
+)
 from agent_orchestrator.ui.app import API_PREFIX, create_app  # noqa: E402
 from agent_orchestrator.ui.service import DashboardService  # noqa: E402
 
@@ -94,6 +99,38 @@ def test_usage_counts_quota_exhausted_skips_in_window_only(
     assert (w["skipped"], w["quota_exhausted"]) == (2, 1)
 
 
+def test_usage_reflects_fire_records_through_the_real_ledger(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    """The panel's numbers come from the same ledger the gate uses: seed fire records (no mocked
+    ledger) and check runs / actual / reserved / confidence, window bounds and schedule scoping."""
+    store = FireIntentStore(state_dir)
+
+    def put(key: str, at: datetime, sid: str = "a", status: str = "launched", **gov: Any) -> None:
+        store.write(
+            FireIntentRecord(
+                fire_key=key, workspace_root=svc.workspace_root, schedule_id=sid,
+                scheduled_for=at, created_at=at, status=status,  # type: ignore[arg-type]
+                run_id=f"run-{key}", governance=FireGovernance(**gov) if gov else None,
+            )
+        )  # fmt: skip
+
+    put("done", NOW - timedelta(hours=3), final=True, cost_observed_usd=1.25,
+        cost_confidence="actual", reserved_usd=2.0)  # fmt: skip
+    put("running", NOW - timedelta(hours=1), reserved_usd=2.0)  # no run state yet: held
+    put("skip", NOW - timedelta(hours=2), status="suppressed", reserved_usd=2.0)  # costs nothing
+    put("yesterday", NOW - timedelta(days=1), final=True, cost_observed_usd=9.0)
+    put("other", NOW - timedelta(hours=1), sid="b", final=True, cost_observed_usd=9.0)
+    (w,) = client.get(f"{URL}/a/usage").json()["windows"]
+    assert (w["runs_used"], w["runs_max"]) == (2, 2)
+    assert w["actual_usd"] == pytest.approx(1.25) and w["reserved_usd"] == pytest.approx(2.0)
+    assert w["confidence"] == "pending"
+    (prev,) = client.get(
+        f"{URL}/a/usage", params={"at": (NOW - timedelta(days=1)).isoformat()}
+    ).json()["windows"]
+    assert (prev["runs_used"], prev["actual_usd"]) == (1, pytest.approx(9.0))
+
+
 def test_usage_at_selects_window(client: TestClient) -> None:
     (w,) = client.get(f"{URL}/a/usage", params={"at": "2026-11-05T10:00:00+00:00"}).json()[
         "windows"
@@ -104,6 +141,12 @@ def test_usage_at_selects_window(client: TestClient) -> None:
 def test_usage_errors(client: TestClient) -> None:
     assert client.get(f"{URL}/nope/usage").status_code == 404
     assert client.get(f"{URL}/a/usage", params={"at": "garbage"}).status_code == 400
+
+
+@pytest.mark.parametrize("at", ["9999-12-31T23:59:59+00:00", "0001-01-01T00:00:00+00:00"])
+def test_usage_at_out_of_range_is_400_not_500(client: TestClient, at: str) -> None:
+    """T-lTW88y audit: window math overflows near datetime.max; refuse instead of a 500."""
+    assert client.get(f"{URL}/a/usage", params={"at": at}).status_code == 400
 
 
 def test_governance_events_newest_first_filtered_and_clamped(

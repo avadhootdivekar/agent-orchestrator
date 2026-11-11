@@ -79,12 +79,15 @@ def test_run_halts_resumably_at_the_cap_and_records_a_trip(
 
 
 def test_resume_is_sticky_until_an_explicit_new_cap(tmp_path: Path, specs: list[str]) -> None:
-    runner.invoke(app, ["run", *specs, "--run-id", RUN_ID, "--cost-cap-usd", "1.0"])
+    r = runner.invoke(app, ["run", *specs, "--run-id", RUN_ID, "--cost-cap-usd", "1.0"])
+    assert r.exit_code == 1, r.output
     # no flag: the persisted cap (1.0) still stops the run at its first dispatch
     r = runner.invoke(app, ["resume", "--run-id", RUN_ID, *specs])
     assert r.exit_code == 1, r.output
     st = _state(tmp_path)
     assert st["cost_cap_usd"] == 1.0 and st["tasks"]["task_c"]["status"] != "succeeded"
+    assert _cost(st) == 2 * COST_PER_TASK  # nothing was dispatched: no new spend
+    assert [t["id"] for t in st["tripped_breakers"]] == ["builtin.cost_cap"] * 2  # re-armed
     # an explicit absolute cap replaces it and the run finishes
     r = runner.invoke(app, ["resume", "--run-id", RUN_ID, *specs, "--cost-cap-usd", "5.0"])
     assert r.exit_code == 0, r.output
