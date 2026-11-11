@@ -334,18 +334,34 @@ an older `ao` reading a newer file).
 ### 5.3 Runtime state — `~/.local/state/ao/service/schedules/`
 
 ```
-~/.local/state/ao/service/
+~/.local/state/ao/service/            # paths.default_state_dir(): $AO_SERVICE_STATE_DIR (exact dir)
+                                      #   > $XDG_STATE_HOME/ao/service > ~/.local/state/ao/service
   supervisor.json  boot_resume.json  port_resolution.json  logs/     (existing)
   schedules/
     state.json                       # per (workspace_slug, schedule_id) runtime state
+    engine.lock                      # flock; held by the one evaluating engine (service or `run-now` local fire)
+    usage.lock                       # flock; governance gate / capped-run resume critical section
     fires/<workspace_slug>/<fire_key>.json
-    watch/<workspace_slug>/<schedule_id>.json     # file-watch digests
-    requests/<request_id>.json       # run-now drop directory (§6.9)
+    watch/<workspace_slug>/<schedule_id>.json     # file-watch digests {rel_path: [mtime_ns, size]}
+    requests/<uuid>.json             # drop directory (§6.9), four `kind`s: run_now, webhook,
+                                     #   restart_completed, resume_capped (file name is a uuid4 hex)
     events.jsonl   events.jsonl.1    # structured event log, single rollover
 ```
 
-`<workspace_slug>` uses `supervisor.py::slug_for_root` (already exists: a readable basename
-plus a hash suffix) so two workspaces with the same basename never collide.
+All of these are created lazily (`mkdir(parents=True)` on first write), so a fresh state dir has
+none of `schedules/` until the first schedule command or engine tick. JSON files are written
+atomically (temp file `<name>.<random>.tmp` in the same directory, then rename), so a `.tmp`
+sibling can be seen briefly. `engine.lock` and `usage.lock` hold no data; they exist only as
+flock targets. `requests/*.json` files are deleted when drained (an expired or invalid one is
+discarded with a `schedule.request_expired` event); a concurrency-blocked run-now is re-written
+under a new uuid name.
+
+`<workspace_slug>` is `supervisor.py::slug_for_root(<resolved root>)`: the **whole resolved root
+path** with every run of non-alphanumeric characters collapsed to `_` (leading/trailing `_`
+stripped), plus `-` and the first 8 hex digits of the SHA-256 of the root string — for example
+`/home/me/ao-runner-finplan` becomes `home_me_ao_runner_finplan-<8 hex>`. (An earlier version of
+this section said "basename plus a hash suffix"; the code has never used the basename alone.) The
+slug is stable per root, so two workspaces with the same basename never collide.
 
 State lives in the **service** state dir, not the workspace, because the service owns fires and
 a workspace may be registered/unregistered without losing or leaking fire history; the CLI reads
@@ -1094,6 +1110,12 @@ left alone.
 | POST | `/api/schedules/{id}/disable` | `set_schedule_enabled(id, False)` | 200, 404 |
 | POST | `/api/schedules/{id}/run-now` | `request_schedule_fire(id, force)` | 202, 404, 409 (already active and not `force`) |
 
+The dashboard router (`ui/app.py`) now also serves governance routes added by the governance epic —
+`GET /api/schedules/governance-events`, `GET /api/schedules/{id}/usage`, `GET /api/schedules/{id}/paused-runs`,
+`POST /api/schedules/{id}/runs/{run_id}/resume-capped` (202) — documented in
+[`scheduled-run-governance-hld.md`](scheduled-run-governance-hld.md); the five routes above are unchanged.
+`GET /api/schedules` is registered before the `{id}` routes so `governance-events` is not read as an id.
+
 `enable`/`disable` write `.ao/schedules.yaml` through the locked `mutate()`; `run-now` writes a
 drop-directory request (§6.9). The dashboard therefore never launches a scheduled run itself.
 
@@ -1580,7 +1602,9 @@ Each entry: what shipped, why, and whether it is better. Verified against `src/`
 | D10 | `Trigger.type` = manual/cron/event | `Literal["manual","cron","event","interval"]` + `interval_seconds` (1 … `MAX_INTERVAL_SECONDS`) on `WorkflowSpec.triggers`; the binding-file `kind` is `cron|interval|file_watch|webhook` | As designed (LLD §7 updated). |
 | D11 | Governance not part of this epic | A pre-fire governance gate (budget caps, quota, pause/resume, `--per-run-usd`, `--quota`) sits in the fire path — owned by [`scheduled-run-governance-hld.md`](scheduled-run-governance-hld.md); `run-now --force` bypasses overlap only | Additive. |
 
-No other divergence was found in the sections swept (§5.3 state layout, §6 constants, §10 routes, §11 panel files).
+No other divergence was found in the sections swept (§5.3 state layout, §6 constants, §10 routes, §11 panel files),
+apart from the §5.3 corrections made by the w36-02 file-by-file check (§23): the slug is the sanitized full root path
+plus hash, not a basename; `engine.lock`, `usage.lock` and the four request kinds were missing from the layout.
 A deviation list that said "none" would have been wrong; D1 and D2 are the ones a reader building against the
 original text would trip on.
 
@@ -1628,5 +1652,11 @@ Extracted from this document and ADR-0014 and grepped in `src/` on 2026-11-11:
 
 Event vocabulary: `grep -rho '"\(schedule\|webhook\|watch\)\.[a-z_.]*"' src` was diffed against §12; every emitted name
 is now in the table (`watch.changed` is a watch-source internal payload name, not a log event). State-dir layout
-(§5.3) was not re-derived file-by-file; spot-checked: `schedules/engine.lock`, `schedules/events.jsonl`,
-`schedules/state.json`, `schedules/requests/` exist as named in code.
+(§5.3) was re-derived file-by-file against code in w36-02 (2026-11-11) from `service/fire_store.py`
+(`SCHEDULES_SUBDIR`, `FIRES_SUBDIR`, `STATE_FILENAME`, `EVENTS_FILENAME`, `EVENTS_ROLLOVER_SUFFIX`),
+`service/schedule_engine.py` (`ENGINE_LOCK_FILENAME`, `REQUESTS_SUBDIR`, `REQUEST_KIND_*`),
+`service/governance_gate.py` (`GOVERNANCE_LOCK_NAME = "usage.lock"`), `service/watch.py`
+(`WATCH_DIGEST_SUBDIR = "schedules/watch"`), `service/capped_resume.py`, `service/webhook.py`,
+`schedules/cli.py::_queue_request`, `service/supervisor.py` (`supervisor.json`, `port_resolution.json`,
+`logs/`), `service/boot_resume.py` (`boot_resume.json`) and `service/paths.py::default_state_dir`.
+Runtime behaviour was not exercised (no live service started); this is a static code check.
