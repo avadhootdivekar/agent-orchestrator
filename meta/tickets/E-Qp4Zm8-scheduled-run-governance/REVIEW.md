@@ -54,7 +54,7 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
   request). Optionally make `ReadOnlyFireStore` enforce this (see G-4).
 
 ### Medium
-**G-2 (Medium). A resume's new reservation is invisible to the ledger until the resumed child marks `state.json` running.**
+**G-2 (Medium) — FIXED (w31-02). A resume's new reservation is invisible to the ledger until the resumed child marks `state.json` running.** `UsageLedger.charge` now treats `cap_state=="resumed" and not final` like a running run (`mark + max(0, reserved - mark)`); tests `test_g2_*` in `tests/service/test_usage_ledger.py` (probe shape: reserved 4, state failed, $2 spent -> actual 2 / reserved 2) and `test_g2_fire_refused_while_resume_pending` in `tests/service/test_governance_gate.py`. Both fail without the fix.
 - Where: `src/agent_orchestrator/service/usage_ledger.py:388-394` (`charge`). The reservation is held only when
   `st.status == "running"`. `capped_resume.py:435-442` writes `cap_state="resumed"` and `reserved_usd=new_cap` under
   the flock, then launches outside it.

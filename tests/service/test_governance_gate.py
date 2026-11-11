@@ -1539,3 +1539,24 @@ def test_retire_hook_confidence_matches_ledger_for_partly_blind_run(tmp_path: Pa
     assert g is not None and g.final
     assert g.cost_confidence == "partial"
     assert g.cost_observed_usd == 2.0  # max(observed, reserved), as the ledger charges it
+
+
+def test_g2_fire_refused_while_resume_pending(tmp_path: Path) -> None:
+    """REVIEW G-2: a resumed run whose child has not marked state running still holds its top-up.
+
+    The record is written without registering it as an active fire (the drain's window between
+    its flock'd write and the child's first state.json save), so only the ledger can see it.
+    """
+    env = gov_env(tmp_path, limits(per_run=2, week=5), overlap="allow", max_concurrent=5)
+    gov = FireGovernance(
+        reserved_usd=4.0, run_cost_cap_usd=4.0, cost_observed_usd=2.0, cap_state="resumed"
+    )
+    _put(env.engine.fire_store, env.root, "k1", T0, "launched", sid="s", gov=gov, run_id="r1")
+    # the ledger reads state.json from disk (not the fake repo): the paused run's file says failed
+    sdir = Path(env.root) / ".orchestrator" / "runs" / "r1"
+    sdir.mkdir(parents=True)
+    (sdir / "state.json").write_text(_state("failed", cost=2.0).model_dump_json(), encoding="utf-8")
+    d = env.evaluate(now=NOW1)
+    # held: 2 actual + 2 reserved = 4 of 5 -> 1 left < per_run 2
+    assert (d.fire, d.reason) == (False, "cost_cap_reached")
+    assert d.gate is not None and d.gate.detail["remaining_usd"] == 1.0

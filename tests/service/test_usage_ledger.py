@@ -191,6 +191,30 @@ def test_row_capped_states_charge_observed_no_reservation(tmp_path: Path, cap_st
     assert (c.actual_usd, c.reserved_usd) == (1.2, 0.0)
 
 
+def test_g2_resumed_pending_child_keeps_topup_reserved(tmp_path: Path) -> None:
+    """REVIEW G-2 probe: cap_state=resumed, reserved $4, state still `failed`, $2 spent."""
+    r = Rig(tmp_path)
+    r.state("r", "failed", [(2.0, True, 0, "failed")])
+    c = r.charge(r.fire("a", run="r", reserved=4.0, cap_state="resumed"))
+    assert (c.actual_usd, c.reserved_usd) == (2.0, 2.0)
+    w = windows_for(T0, ["day"], ZoneInfo("UTC"), "monday")  # same shape through usage()
+    assert r.ledger.usage(r.root, "s", w)["day"].reserved_usd == 2.0
+
+
+def test_g2_resumed_then_final_releases_reservation(tmp_path: Path) -> None:
+    r = Rig(tmp_path)
+    r.state("r", "succeeded", [(2.5, True, 0, "succeeded")])
+    c = r.charge(r.fire("a", run="r", reserved=4.0, cap_state="resumed", final=True))
+    assert (c.actual_usd, c.reserved_usd) == (2.5, 0.0)
+
+
+def test_g2_resumed_running_unchanged(tmp_path: Path) -> None:
+    r = Rig(tmp_path)
+    r.state("r", "running", [(2.0, True, 0, "succeeded")])
+    c = r.charge(r.fire("a", run="r", reserved=4.0, cap_state="resumed"))
+    assert (c.actual_usd, c.reserved_usd) == (2.0, 2.0)
+
+
 # -- AC12 / AC10 -------------------------------------------------------------------------------
 
 

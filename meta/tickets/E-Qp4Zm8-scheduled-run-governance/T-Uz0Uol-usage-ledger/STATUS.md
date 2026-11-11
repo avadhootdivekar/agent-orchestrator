@@ -45,3 +45,12 @@
 - `update_governance` is an unlocked read-modify-write (single-writer engine assumption); `T-nI4DBf` writing `cap_state`
   concurrently should go through the same method.
 - Depends on `RunState` fields from `T-et7Edf` (committed in 1c0bfeb).
+
+## Update 2026-11-11 — REVIEW G-2 fixed (w31-02)
+By: developer · Role: developer · Date: 2026-11-11
+Comment: `UsageLedger.charge` treats `cap_state=="resumed" and not final` as live: the resume top-up stays reserved
+(`mark + max(0, reserved - mark)`) until the resumed child is finalised, even while `state.json` still says `failed`.
+Tests: 3 ledger tests (probe shape through `charge` and `usage`, final releases, running unchanged) + 1 gate test (fire
+refused with `cost_cap_reached` while a resume is pending). Both pending-resume tests were verified to fail without the fix.
+`pytest tests/service tests/schedules tests/ui/test_schedule_usage_api.py` 1421 passed; ruff + `mypy src` clean.
+Note: a child that dies before writing state leaves the reservation held until the record is finalised (over-, not under-reserved).

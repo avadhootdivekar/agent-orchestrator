@@ -384,8 +384,11 @@ class UsageLedger:
         _, observed = self._observed(rec, st)
         conf = run_confidence(st)
         running = st.status == "running"
-        mark = self._raise_mark(rec, observed, conf, terminal=not running)
-        if running and not (g is not None and g.final):
+        # A resume writes cap_state="resumed" + the new reservation before the child marks
+        # state.json running (REVIEW G-2): until finalised it holds its reservation like a live run.
+        live = running or (g is not None and g.cap_state == "resumed")
+        mark = self._raise_mark(rec, observed, conf, terminal=not live)
+        if live and not (g is not None and g.final):
             return Charge(1, _money(mark), _money(max(0.0, reserved - mark)), conf)
         if conf == "unknown" or (conf == "partial" and window_open):
             return Charge(1, _money(max(mark, reserved)), 0.0, conf)
