@@ -39,3 +39,5 @@
 1. Read the upstream tasks' **merged code** (including E-Sc9Rt4's), not only the HLD, before starting.
 2. Implement against the acceptance criteria in `TASK.md`, in AC order; report the pytest delta, ruff/format, mypy, coverage.
 3. Hand `request_capped_resume`/`ResumeRefused` to `T-rwj4nV` and `T-8knqVe`.
+
+- 2026-11-11 — By: developer (unit `w22-01-a2-capped-resume-shim`) · Role: developer · Date: 2026-11-11 · Comment: B-1 FIXED: `_Deferred` (schedules/cli.py) and `_DeferredLauncher` (service/cli.py) now forward `launch_capped_resume`; regression tests added; strict xfail and `direct_launcher` workaround removed from tests/schedules/test_cost_cap_cli_e2e.py. B-2 KNOWN LIMITATION (not changed): a cap pause is settled only on the schedule's next due tick, so the pause/resume is not visible right after the run exits. Proposed fix (settle in the retire hook or a settle-only pass each tick) recorded in HLD §26.5; needs a design decision.

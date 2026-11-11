@@ -1345,3 +1345,21 @@ Event names emitted by the gate/ledger (grep-verified in `src/`): `schedule.gove
 | Governance e2e suite | `T-88wSLC` | partial |
 | `scheduler-triggers-hld.md` governance cross-links (§6.3 note, §5.1 rows) | `T-Hq3vXd` | not done here: the file carries another unit's uncommitted edits |
 | `meta/ROADMAP.md` status rows | `T-Hq3vXd` | outside this unit's brief; not done |
+
+### 26.5 Known limitation B-2 — a cost-cap pause is settled only on the next due tick (w21-03 / w22-01)
+
+**Behaviour today (unchanged, by decision):** when a governed run trips its cost cap, the pause
+(`paused` entry in the usage ledger, `cap_state`) becomes visible only once the engine settles the
+fire, which happens on the next engine tick at which that schedule is due/evaluated — not at the
+moment the run exits. Until then `ao schedule usage` shows no pause and `ao schedule resume` has
+nothing to resume. The e2e suite (`tests/schedules/test_cost_cap_cli_e2e.py`) mirrors this by
+ticking once at `SETTLE` after the run before asserting.
+
+**Proposed fix (NOT implemented; semantics deliberately not changed in w22-01):** settle in the
+run-retire hook (or run a settle-only pass of the engine loop on every tick for fires with a live
+or just-retired run), independent of whether the schedule is due. This needs a design decision on
+lock ordering vs. the governance lock and on pause-TTL start (`paused_at`).
+
+**B-1 (fixed, w22-01):** the launcher shims (`_Deferred` in `schedules/cli.py`, `_DeferredLauncher`
+in `service/cli.py`) now forward `launch_capped_resume`, so `ao schedule resume` no longer ends
+`launch_failed`.

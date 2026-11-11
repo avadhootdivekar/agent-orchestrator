@@ -281,6 +281,11 @@ class _DeferredLauncher:
             raise RuntimeError("scheduled launcher used before the engine finished wiring")
         return self.target.launch(decision)
 
+    def launch_capped_resume(self, rec: Any, new_cap_usd: float) -> Any:
+        if self.target is None:
+            raise RuntimeError("scheduled launcher used before the engine finished wiring")
+        return self.target.launch_capped_resume(rec, new_cap_usd)
+
 
 def build_schedule_engine(
     registry: ServiceRegistryFile,

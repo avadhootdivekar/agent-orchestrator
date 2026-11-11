@@ -189,27 +189,6 @@ def test_per_run_cap_halts_serial_run_after_task_3_and_usage_shows_paused_oversh
     assert "schedule.governance.run_cost_capped" in hist.stdout
 
 
-@pytest.fixture()
-def direct_launcher(monkeypatch: pytest.MonkeyPatch) -> None:
-    """TEST-ONLY workaround for the wiring bug below: hand the engine the real ``ScheduledLauncher``
-    (which has ``launch_capped_resume``) instead of the CLI's ``_Deferred`` shim."""
-    real = sched_cli._build_engine
-
-    def build(*a: Any, **kw: Any) -> Any:
-        engine = real(*a, **kw)
-        engine._launcher = engine._launcher.target
-        return engine
-
-    monkeypatch.setattr(sched_cli, "_build_engine", build)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG (production, src/): the `_Deferred` launcher shim in schedules/cli.py and "
-    "`_DeferredLauncher` in service/cli.py do not forward launch_capped_resume, so "
-    "ScheduleEngine._resume_one sees launcher=None and every resume ends `launch_failed`. "
-    "Un-xfail once the shims forward it; then drop the `direct_launcher` workaround.",
-)
 def test_resume_local_with_the_real_cli_wiring_launches_the_run(
     capenv: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -219,7 +198,7 @@ def test_resume_local_with_the_real_cli_wiring_launches_the_run(
 
 
 def test_resume_local_add_usd_completes_task_4_and_charges_the_same_fire(
-    capenv: Env, monkeypatch: pytest.MonkeyPatch, direct_launcher: None
+    capenv: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     rid = _fire_capped(capenv, monkeypatch, quota="day=1")
     res = capenv.run("resume", "nightly", "--run", rid, "--add-usd", "1.00", "--local")
@@ -291,3 +270,22 @@ def test_one_task_run_crossing_its_cap_succeeds_with_overshoot_and_no_pause(
     doc = _usage()
     assert doc["paused"] == []
     assert doc["windows"][0]["actual_usd"] == pytest.approx(TASK_COST)
+
+
+def test_cli_deferred_shim_forwards_launch_capped_resume(
+    capenv: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B-1 regression: the ``schedules.cli`` ``_Deferred`` shim forwards the resume call."""
+    engine = sched_cli._build_engine(capenv.state, None)
+    shim = engine._launcher
+    assert hasattr(shim, "launch_capped_resume")
+    calls: list[tuple[Any, float]] = []
+
+    class _Target:
+        def launch_capped_resume(self, rec: Any, new_cap_usd: float) -> str:
+            calls.append((rec, new_cap_usd))
+            return "ok"
+
+    shim.target = _Target()
+    assert shim.launch_capped_resume("rec", 3.0) == "ok"
+    assert calls == [("rec", 3.0)]

@@ -32,7 +32,7 @@ from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-from .statefile import read_json_model, write_json_model_atomic
+from .statefile import atomic_write_bytes, read_json_model, write_json_model_atomic
 from .supervisor import _slug_for_root
 
 logger = logging.getLogger(__name__)
@@ -242,25 +242,19 @@ class FireIntentStore:
 
     # -- writes --
     def _persist(self, record: FireIntentRecord) -> Path:
-        """tmp -> write -> flush -> fsync -> ``os.replace``.
+        """Durable atomic write: unique tmp -> write -> fsync file -> ``os.replace`` -> fsync dir.
 
         The ``fsync`` is the point of the whole design (HLD §6.6): a record that only reached the
         page cache when the machine loses power cannot make a fire at-most-once. REMOVING IT
         REMOVES THE AT-MOST-ONCE GUARANTEE; ``test_write_calls_fsync`` fails loudly if it goes.
+        The directory fsync makes the *rename* durable too, and the unique (``mkstemp``) tmp name
+        keeps two writer processes from sharing one tmp file (T-Se4Bk5 R-1: this used to be a
+        second hand-rolled idiom with a fixed ``<key>.json.tmp`` and no directory fsync).
         """
-        directory = self._dir_for(record.workspace_root)
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{record.fire_key}.json"
-        tmp = path.with_suffix(".json.tmp")
-        try:
-            with open(tmp, "w", encoding="utf-8") as fh:
-                fh.write(record.model_dump_json(indent=2, by_alias=True))
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, path)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
+        path = self._dir_for(record.workspace_root) / f"{record.fire_key}.json"
+        atomic_write_bytes(
+            path, record.model_dump_json(indent=2, by_alias=True).encode("utf-8"), durable=True
+        )
         return path
 
     def write(self, record: FireIntentRecord) -> None:

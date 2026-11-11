@@ -171,3 +171,5 @@ Comment: Design package complete. HLD sections 1-25 are present. Phase-4 consult
 tester/dev-security/dev-critic) were NOT run in this design-only pass. They are scheduled as T-lTW88y step 1 (early
 gate), so this epic is not marked "ready for implementation" until that gate has run and E-Sc9Rt4 Sprint 1 has
 merged.
+
+- 2026-11-11 — By: developer (unit `w22-01-a2-capped-resume-shim`) · Role: developer · Date: 2026-11-11 · Comment: T-nI4DBf B-1 (launcher shims dropped `launch_capped_resume`) fixed; B-2 (pause settled only on next due tick) documented as a known limitation in HLD §26.5 with proposed fix, semantics unchanged.

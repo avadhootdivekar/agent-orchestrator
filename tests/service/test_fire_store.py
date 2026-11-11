@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -224,13 +225,32 @@ def test_clock_rewind_does_not_double_fire(store: FireIntentStore) -> None:
 
 
 def test_write_calls_fsync(store: FireIntentStore, monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[int] = []
+    """Every persist fsyncs the record file AND its directory (the rename must be durable)."""
+    kinds: list[str] = []
     real = os.fsync
-    monkeypatch.setattr(fs.os, "fsync", lambda fd: (calls.append(fd), real(fd))[1])
+
+    def spy(fd: int) -> None:
+        kinds.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real(fd)
+
+    monkeypatch.setattr(fs.os, "fsync", spy)
     store.write(_rec())
-    assert len(calls) == 1
+    assert kinds == ["file", "dir"]
     store.update("k1", status="launched")
-    assert len(calls) == 2  # every persist, not just the first intent
+    assert kinds == ["file", "dir", "file", "dir"]  # every persist, not just the first intent
+
+
+def test_persist_does_not_use_a_fixed_shared_tmp_name(
+    store: FireIntentStore, tmp_path: Path
+) -> None:
+    """T-Se4Bk5 R-1: a second writer process (dashboard/CLI usage ledger) must not collide on a
+    fixed ``<key>.json.tmp``. A directory squatting on that old name used to break every write."""
+    store.write(_rec())
+    d = next((tmp_path / "schedules/fires").iterdir())
+    (d / "k1.json.tmp").mkdir()
+    store.update("k1", status="launched")
+    got = store.get("k1")
+    assert got is not None and got.status == "launched"
 
 
 def test_failed_write_leaves_no_tmp_and_no_record(

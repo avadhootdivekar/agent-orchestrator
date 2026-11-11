@@ -383,8 +383,8 @@ COST_CAP_OPTION: Final = Option(
     "float",
     flag="--cost-cap-usd",
     help=(
-        "Mid-run USD cost cap (CLI only; sticky on resume). The run halts resumably once its "
-        "settled cost reaches the cap."
+        "Mid-run USD cost cap (CLI and dashboard launch form; sticky on resume). The run halts "
+        "resumably once its settled cost reaches the cap."
     ),
     ui_group=GROUP_CONCURRENCY,
     ui_label="Cost cap (USD)",

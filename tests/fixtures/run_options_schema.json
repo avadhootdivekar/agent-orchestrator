@@ -374,7 +374,7 @@
       "deprecated_flags": [],
       "env": null,
       "flag": "--cost-cap-usd",
-      "help": "Mid-run USD cost cap (CLI only; sticky on resume). The run halts resumably once its settled cost reaches the cap.",
+      "help": "Mid-run USD cost cap (CLI and dashboard launch form; sticky on resume). The run halts resumably once its settled cost reaches the cap.",
       "name": "cost_cap_usd",
       "no_flag": null,
       "providers": [],

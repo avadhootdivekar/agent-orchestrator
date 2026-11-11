@@ -614,8 +614,9 @@ def test_only_the_resume_drain_calls_launch_capped_resume() -> None:
         for p in src.rglob("*.py")
         if re.search(r"\.launch_capped_resume\(", p.read_text())
     }
-    # the only call site: the drain in capped_resume.py (the engine reaches it through that)
-    assert callers == {"service/capped_resume.py"}
+    # the only real call site: the drain in capped_resume.py (the engine reaches it through that).
+    # The two Deferred launcher shims merely forward the call to the real launcher (B-1, w22-01).
+    assert callers == {"service/capped_resume.py", "schedules/cli.py", "service/cli.py"}
     cli_like = [p for p in src.rglob("*.py") if "launch_resume(" in p.read_text()]
     # nothing in the schedule layer (cli/engine/schedules) calls launch_resume directly
     assert not [p for p in cli_like if "schedules/" in p.as_posix()]
