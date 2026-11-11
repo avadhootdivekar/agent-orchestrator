@@ -2,8 +2,14 @@
 
 - ID: `T-et7Edf-run-cost-cap-gate`
 - Updated At: 2026-11-11
-- State: Partial — engine gate, CLI wiring, sticky cap, resume warning done; trailer xN, AC17 docstring, AC12 coverage open
+- State: Partial — AC17 (docstring + `ao status` xN) and AC12 line coverage now done; only cosmetic `fake_cost_script` fixture and AC10 full-suite byte check remain
 - Owner: TBD (assigned at sprint start)
+
+## Update 2026-11-11 (By: developer · Role: developer · unit `w26-04-a2-runcap-trailer-ac17`)
+- **AC17 done.** `breakers.record_trip` docstring now states the truth: it never latches; the registry loop latches, built-ins and `builtin.cost_cap` do not, so a run records the cap trip once per settled sibling (HLD L2). `ao status` (both the state and status.json renderers, via `cli._tripped_breaker_lines`) collapses identical id/condition/action to `... x N` (`xN`, no suffix for a single trip).
+- Tests: `tests/test_tripped_breaker_trailer.py` (5 unit, incl. record_trip non-latching), `tests/test_e2e_cli_cost_cap.py` +2 CliRunner (single trip no suffix = AC11; repeated trips `x3`).
+- **AC12 gap closed (measured):** `pytest tests/test_engine_cost_cap.py tests/test_e2e_cli_cost_cap.py --cov=agent_orchestrator.engine` -> every line of `cost_cap_reached`, `_trip_cost_cap`, both call sites (dispatch prep, boundary) and the sentinel cap min is executed; no missing line inside them. (Line-range check against the json report; whole-file engine coverage from these two files is 38%, as expected.)
+- Still open: cosmetic `fake_cost_script` fixture (T-lTW88y M6); AC10 full-suite byte check not re-run here. ruff on touched files clean; mypy src clean.
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.

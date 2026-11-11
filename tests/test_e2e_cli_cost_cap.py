@@ -141,3 +141,31 @@ def test_m5_resume_with_explicit_cap_warns_only_for_a_governed_run(
     assert r.exit_code == 0, r.output
     assert ("governed by a schedule" in r.output) is governed
     assert _state(tmp_path)["cost_cap_usd"] == 5.0  # the escape hatch still works
+
+
+# --- T-et7Edf AC17 / AC11: `ao status` tripped-breakers trailer collapses repeats to "xN" -------
+
+
+def _status(tmp_path: Path) -> str:
+    r = runner.invoke(app, ["status", "--run-id", RUN_ID, "--workspace", str(tmp_path)])
+    assert r.exit_code == 0, r.output
+    return r.output
+
+
+def test_status_shows_single_cap_trip_without_suffix(tmp_path: Path, specs: list[str]) -> None:
+    runner.invoke(app, ["run", *specs, "--run-id", RUN_ID, "--cost-cap-usd", "1.0"])
+    out = _status(tmp_path)
+    assert "Tripped breakers: builtin.cost_cap (run_cost_usd, action=pause)" in out
+    assert " x" not in next(ln for ln in out.splitlines() if "Tripped breakers" in ln)
+
+
+def test_status_collapses_repeated_cap_trips_to_xn(tmp_path: Path, specs: list[str]) -> None:
+    runner.invoke(app, ["run", *specs, "--run-id", RUN_ID, "--cost-cap-usd", "1.0"])
+    # `ao status` reads status.json when present, else state.json: repeat the trip in both.
+    for name in ("state.json", "status.json"):
+        for path in tmp_path.rglob(f"{RUN_ID}/{name}"):
+            st = json.loads(path.read_text())
+            st["tripped_breakers"] = st["tripped_breakers"] * 3  # one per settled sibling (L2)
+            path.write_text(json.dumps(st))
+    lines = [ln for ln in _status(tmp_path).splitlines() if "Tripped breakers" in ln]
+    assert lines == ["Tripped breakers: builtin.cost_cap (run_cost_usd, action=pause) x3"]

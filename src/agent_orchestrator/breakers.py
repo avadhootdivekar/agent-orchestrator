@@ -432,8 +432,13 @@ def record_trip(
 
     Pure recording primitive: does not itself persist `state` (the caller owns
     persistence, matching the engine's existing `self._runstate.save(state)` convention
-    elsewhere in the run loop) and does not decide *whether* to record — callers are
-    responsible for the latch check (an id must be recorded at most once, ever).
+    elsewhere in the run loop) and does not decide *whether* to record — the caller owns
+    any latch. The registry-driven `evaluate_breakers` loop latches (an id is recorded at
+    most once until `apply_breaker_extension` un-latches it), but the built-ins do NOT:
+    the budget stops and the non-latching `builtin.cost_cap` gate (T-et7Edf) call this
+    on every check that sees the condition hold, so one id can appear several times in
+    `state.tripped_breakers` (e.g. a run records the cap trip once per settled sibling,
+    HLD L2). Readers must tolerate repeated ids; `ao status` collapses them to `id xN`.
 
     Deliberately reusable outside the registry-driven `evaluate_breakers` loop: T-r3j9b6
     re-frames the pre-existing budget/quota stops to call this exact function (LLD §8.2's

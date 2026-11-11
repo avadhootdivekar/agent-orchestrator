@@ -402,8 +402,13 @@ def _print_state(state) -> None:
             f"{tokens:<20} {ts.cumulative_cost_usd:.4f}"
         )
     # Routing + circuit-breaker observability trailer (LLD §10.2, FR-CB4).
-    for tb in getattr(state, "tripped_breakers", []):
-        typer.echo(f"Tripped breakers: {tb.id} ({tb.condition}, action={tb.action})")
+    for line in _tripped_breaker_lines(
+        [
+            {"id": tb.id, "condition": tb.condition, "action": tb.action}
+            for tb in getattr(state, "tripped_breakers", [])
+        ]
+    ):
+        typer.echo(line)
     # Run-wide actual usage totals (E-9h3m7k FR-3) — real values, not estimates.
     totals = compute_run_usage_totals(state)
     typer.echo(
@@ -447,6 +452,23 @@ def _print_state(state) -> None:
     )
 
 
+def _tripped_breaker_lines(trips: list[dict]) -> list[str]:
+    """Trailer lines for `ao status`: repeated identical trips collapse to `... xN`.
+
+    Non-latching built-ins (`builtin.cost_cap`, budget stops) record one trip per check that
+    sees the condition hold (HLD L2), so the same id/condition/action can repeat. Distinct
+    entries keep first-seen order; a single trip renders exactly as before (no suffix).
+    """
+    counts: dict[tuple[str, str, str], int] = {}
+    for tb in trips:
+        key = (tb["id"], tb["condition"], tb["action"])
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        f"Tripped breakers: {i} ({c}, action={a})" + (f" x{n}" if n > 1 else "")
+        for (i, c, a), n in counts.items()
+    ]
+
+
 def _print_status_snapshot(snap: dict) -> None:
     """Print a status.json snapshot in the same table format as _print_state."""
     typer.echo(f"\nRun:          {snap.get('run_id', '')}")
@@ -471,8 +493,8 @@ def _print_status_snapshot(snap: dict) -> None:
             f"{task_entry.get('cost_usd', 0.0):.4f}"
         )
     # Routing + circuit-breaker observability trailer (LLD §10.2, FR-CB4).
-    for tb in snap.get("tripped_breakers", []):
-        typer.echo(f"Tripped breakers: {tb['id']} ({tb['condition']}, action={tb['action']})")
+    for line in _tripped_breaker_lines(snap.get("tripped_breakers", [])):
+        typer.echo(line)
     # Run-wide actual usage totals (E-9h3m7k FR-3) — real values, not estimates.
     totals = snap.get("usage_totals") or {}
     typer.echo(
