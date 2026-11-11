@@ -160,7 +160,10 @@ case "$arm" in
     # function ao uses (ao-bench harbor-prompt): both arms see byte-identical task prompts.
     template="$AO_HARBOR_ROOT/prompts/$(basename "$subject" .json).j2"
     if [ "$dry_run" = 0 ]; then
-      uv run --project "$REPO_ROOT" ao-bench harbor-prompt --subject "$subject" --out "$template" >/dev/null
+      # Write + rename: parallel jobs (budgeted.py lanes) share this path, and a running job's
+      # agent reads it when its trial starts, so it must never be seen half-written.
+      uv run --project "$REPO_ROOT" ao-bench harbor-prompt --subject "$subject" --out "$template.$$.tmp" >/dev/null
+      mv -f "$template.$$.tmp" "$template"
     fi
     args+=(-a ao_harbor.agent:CcAgent --ak "prompt_template_path=$template")
     ;;
