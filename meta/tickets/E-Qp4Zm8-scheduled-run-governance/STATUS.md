@@ -19,12 +19,13 @@ Every task STATUS/TASK carries a dated Reconciliation block; this table is the a
 | `T-rwj4nV` schedule CLI | Implemented, awaiting review | no dedicated review of `usage_view.py`/CLI |
 | `T-8knqVe` dashboard usage | Partial | **UNFINISHED:** AC5 overshoot display (dashboard shows none; CLI only); AC6/AC7 feed-filter check + vitest; live-session/e2e of Resume. LANDED (w26-03, `4f6bbc1`): `resume-capped` route, paused list + Resume, M5 409 |
 | `T-88wSLC` e2e suite | Partial | AC1 mapping; AC7 pre-epic count delta; AC8 full coverage; API cases (AC6 baseline + AC9b CLI landed w22-05) |
-| `T-lTW88y` security gate | Partial | AC4 NFR-6 delta vs baseline; re-run after `T-8knqVe`; ADR-0025 acceptance; Info W-4, I-1, I-6, I-7, I-9 |
+| `T-lTW88y` security gate | Partial | AC4 delta **recorded** (w41-03: baseline 11006 passed/3 failed vs tip 12363/0, branch-wide); open: re-run after `T-8knqVe`; ADR-0025 acceptance (owner); Info W-4, I-1, I-6, I-7, I-9 |
 | `T-Hq3vXd` docs | Partial | HLD §26 re-pass, AC3 walkthrough, cross-links |
 
 **Rollup: 11 tasks = 3 Done, 8 not Done (7 Partial: `T-Uz0Uol`, `T-PpE5lf`, `T-et7Edf`, `T-8knqVe`, `T-88wSLC`, `T-lTW88y`, `T-Hq3vXd`; 1 Implemented-awaiting-review: `T-rwj4nV`). Epic state: In Progress, NOT closeable.** Done: `T-lJu9oZ`, `T-tPlK1T`, `T-nI4DBf`.
 
 ## This update
+- **2026-11-11 (developer, unit `w41-03-a2-ltw88y-close`, docs only): `T-lTW88y` AC4 baseline delta recorded; ADR-0025 stays Proposed.** Pre-epic baseline `991391b` measured: 11006 passed / 3 failed (2 bench + 1 load-flaky audit test, none governance) / 35 skipped; tip per w39-01: 12363 passed / 0 failed / 32 skipped; delta +1357 passed (branch-wide, not epic-only; different environments). ADR-0025 not moved to Accepted: acceptance needs the owner and D5/D6 items (B-2 decision, live Resume e2e, usage-window overshoot in `T-8knqVe`) are still open. Rollup unchanged: 3 Done, 8 not Done.
 - **2026-11-11 (tester, unit `w39-02-a2-gate-record`, HEAD `e8abe04`): A2 gate record. Verdict: gate GREEN, epic and `T-lTW88y` NOT Done.**
   - Whole-tree gate (w39-01, same branch): 12363 py passed / 32 skipped / 0 failed; ruff, ruff format, `mypy src` clean; UI tsc ok, vitest 923 passed.
   - Targeted governance run by me (15 files: quota/window math, binding model, governance e2e + CLI e2e, usage view, usage ledger, pre-fire gate, capped resume, security gate, DST engine, cost-cap engine/CLI/options, usage API): **535 passed, 0 failed, 0 skipped** (23 s, `uv run pytest -q`). DST/midnight cases are in `test_windows.py` and `test_schedule_engine_dst.py`.

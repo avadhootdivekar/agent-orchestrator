@@ -2,7 +2,7 @@
 
 - ID: `T-lTW88y-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: Partial. The gate was re-run on the committed tip `5f51452` by w22-03 and PASSED: no Critical/High/Warning is open and the rest is Info. Still unmet: the AC4 delta vs a pre-epic baseline (none was ever recorded) and ADR-0025 acceptance
+- State: Partial. AC4 baseline delta now RECORDED (w41-03, below); remaining: ADR-0025 acceptance (owner decision), re-run after T-8knqVe, open Info/Low. Earlier text: The gate was re-run on the committed tip `5f51452` by w22-03 and PASSED: no Critical/High/Warning is open and the rest is Info. Still unmet: the AC4 delta vs a pre-epic baseline (none was ever recorded) and ADR-0025 acceptance
 - Owner: reviewer (gate `w20-03`, fixes `w21-02`, re-review `w22-03`, Opus)
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
@@ -10,6 +10,31 @@
 - State: **Partial — early + final gate run, all Critical/High closed; NFR-6 delta vs baseline and ADR acceptance open**
 - Done: early gate (design review w01-07), final gate on committed HEAD (w20-03), fixes (G-1, H-1, H-2, W-1, F-1..F-3, N-1, M1, M5) and a clean-clone re-review (w22-03) with mutation evidence; checklist AC2 (a)-(h) PASS at the committed tip. C-1 and all High findings are closed.
 - **Unmet / open**: **AC4** NFR-6 full-suite delta vs the epic baseline (no pre-epic baseline fixture committed; the only whole-tree numbers are the T-Se4Bk5 gate on `4b9d6a3`: 12155 passed, 5 failed outside this epic); open Info: W-4, I-1, I-6, I-7, I-9; ADR-0025 stays **Proposed** until the epic owner accepts it. The gate must be re-run after T-8knqVe's resume route lands.
+
+## AC4 NFR-6 baseline delta — recorded (w41-03, 2026-11-11, developer, docs only)
+Baseline = `991391b`, the parent of the epic's first commit `a6ca4b9` (design docs only, no governance code). Measured by me, not
+inferred: clone of that commit in `/tmp`, shared `.venv` interpreter with `PYTHONPATH=<clone>/src`, `python -m pytest -q`, 24m27s.
+
+| Tree | passed | failed | skipped | Source |
+|---|---|---|---|---|
+| Pre-epic baseline `991391b` | **11006** | **3** | 35 | w41-03 (this unit, non-git-attached clone) |
+| Branch tip `ad/enhancements-10nov` (`84e71a8`..`89920f0`) | **12363** | **0** | 32 | w39-01 gate (`uv run pytest -q`), not re-run by me |
+
+- **Delta: +1357 passed, -3 failed, -3 skipped.** The 3 baseline failures: `tests/bench/test_dev_{core,medium}_suite.py::test_fake_subject_full_suite_run...`
+  (fail at baseline, pre-existing, bench-only; they pass at the tip after the bench shim `98be694`) and
+  `tests/auth/test_audit.py::test_four_spawn_processes_write_one_hundred_valid_lines` (passes when re-run alone, 61 passed with the
+  audit file; load flake on a shared host). None is governance-related. No test that passed at baseline fails at the tip.
+- **Caveats (do not over-read):** the delta is for the whole branch (159 commits since baseline, 68 test files touched, +18914/-27 lines),
+  not for the epic alone: bench/Harbor/sentinel/other tickets are included. The two sides were run in different environments
+  (tip via `uv run` in a git checkout; baseline via a clone with `PYTHONPATH`). Epic-only count is not isolated; the governance-scoped
+  files were last run as 535 passed / 0 failed (w39-02).
+- Other NFR-6 parts at the tip (w39-01): `ruff check` pass, `ruff format --check` 780 formatted, `mypy src` 233 files clean, coverage per new
+  module recorded above (all >= 80 %).
+- **AC4: met** with the above numbers. The task nevertheless stays **Partial** (see next).
+
+### Still open after w41-03
+- ADR-0025 acceptance is the epic owner's decision and is not made here (ADR stays Proposed; gap list in the ADR).
+- Gate re-run after `T-8knqVe` (partial) and open lower findings: W-4, I-1, I-6, I-7, I-9 (Info) and review G-9..G-11, G-18..G-21 (Low/Info).
 
 ## Re-review on the committed tip (w22-03, Opus)
 - By: reviewer agent · Role: reviewer · Date: 2026-11-11

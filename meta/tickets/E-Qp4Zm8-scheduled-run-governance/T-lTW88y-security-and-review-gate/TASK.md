@@ -6,7 +6,7 @@
 - Owner: reviewer + dev-security agents
 - Created: 2026-11-10
 - Last Updated: 2026-11-11
-- Status: Partial (reconciled 2026-11-11, w24-07; see STATUS.md)
+- Status: Partial (reconciled 2026-11-11, w41-03: AC4 baseline delta recorded; ADR acceptance + T-8knqVe re-run open; see STATUS.md)
 - Estimate: 1.5 days (0.5 d early gate + 1 d final gate)
 
 ## Requirements Mapping

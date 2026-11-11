@@ -1355,7 +1355,7 @@ Event names emitted by the gate/ledger (grep-verified in `src/`): `schedule.gove
 | Dashboard usage panel: per-window overshoot (the paused list shows per-run overshoot; the usage window rows still carry none, only the CLI `ao schedule usage` prints per-period `overshoot_usd`), AC6 feed schedule filter not verified, AC7 feed-filter vitest, no live-session/e2e of the Resume button; paused list omits swept-expired records | `T-8knqVe` | **partial** (usage, feed, `resume-capped`, paused list + Resume, M5 guards landed, §26.2) |
 | Production event-sink wiring for `schedule.governance.cost_unknown`; exact 50 ms ledger figure | `T-Uz0Uol` | open |
 | `ao schedule` governance CLI dedicated review | `T-rwj4nV` | awaiting review |
-| Security/review final gate incl. dev-security half | `T-lTW88y` | re-run on committed tip `5f51452`: PASS (no Critical/High/Warning open); stays Partial on AC4 NFR-6 baseline delta, re-run after `T-8knqVe`, ADR-0025 acceptance |
+| Security/review final gate incl. dev-security half | `T-lTW88y` | re-run on committed tip `5f51452`: PASS (no Critical/High/Warning open); AC4 NFR-6 baseline delta **recorded** (w41-03: pre-epic `991391b` 11006 passed/3 failed vs tip 12363/0, branch-wide); stays Partial on re-run after `T-8knqVe`, ADR-0025 acceptance (owner; ADR stays Proposed) |
 | Governance e2e suite | `T-88wSLC` | partial (AC1 mapping; AC7 pre-epic count delta; AC8 full coverage; API-level cases; AC6 baseline + AC9b CLI landed) |
 | HLD §26 re-pass, AC3 walkthrough, cross-links (`scheduler-triggers-hld.md` §9.1 now lists the governance flags/commands and links here); `meta/ROADMAP.md` status rows | `T-Hq3vXd` | partial |
 
