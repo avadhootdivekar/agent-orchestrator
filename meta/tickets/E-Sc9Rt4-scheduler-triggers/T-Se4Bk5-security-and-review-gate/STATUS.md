@@ -2,7 +2,7 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress — NOT Done (R-2b and GATE-1 closed; whole-tree gate on a clean tree and REVIEW.md update open)
+- State: In Progress — NOT Done (R-2b, GATE-1, TQ-R2 closed by w27-05 re-review; NEW R-2c medium open: dashboard resume-capped route is a writable fire-store caller; then whole-tree + UI gate on a clean tip)
 - Owner: reviewer agent (overseer w20-02)
 
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
@@ -208,3 +208,21 @@
   `schedules.cli.readonly_fire_store` (what `resume_cmd` calls) and passes 3/3 via the copy-in procedure; removed 5 unused
   `type: ignore` in `tests/service/test_capped_resume.py` (70 passed). `service/webhook.py` E501 no longer reproduces (`ruff check`
   clean on src + tests/service). `mypy src`: 233 files clean. Other mypy errors in tests/service (e.g. test_governance_gate `Env.run_states`) are not mine, untouched.
+
+- 2026-11-11 (reviewer Opus, w27-05): re-review of the w26 fixes. Full section: REVIEW.md, "Re-review of the w26 fixes".
+  - **Closed:**
+    - **R-2b**: verified in code, by 3 mutation checks, and by p7 3/3 on `eca653b`.
+    - **GATE-1**: the `1396dac` restoration is mutation-killing, `test_n3` passes, and format is clean.
+    - **TQ-R2**: closed. Low leftover: the old `test_usage_ledger.py` race-test docstring still overclaims.
+  - **New, R-2c (medium, open, blocks Done):** `4f6bbc1` added a dashboard `POST …/resume-capped` that
+    builds a writable `FireIntentStore` (`ui/service.py` `request_capped_resume`). It is the same unlocked
+    non-engine writer as R-2b.
+    - Reproduced by new probe `se4bk5-probes/p8_dashboard_resume_r2c.py`: 1 failed / 1 passed.
+      With `readonly_fire_store(sdir)` it gives 33 passed.
+    - Owner: T-8knqVe.
+  - **Gate on clean `eca653b`** (`pytest -m "not perf"` over `tests/{service,schedules,ui,auth}`):
+    - 4424 passed, 6 skipped, 0 failed;
+    - `ruff check` clean, `mypy src` clean, and format clean except the generated `_build_info.py`.
+    - On `c4e3871`: 4400 passed, and the perf tests 2 passed.
+    - Not run: the whole `tests/` tree and the UI gates.
+  - **Stale doc, not edited:** `docs-md/scheduler-triggers-hld.md:1584`. The file is dirty from another unit.
