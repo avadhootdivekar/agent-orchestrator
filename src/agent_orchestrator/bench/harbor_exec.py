@@ -201,10 +201,15 @@ EXIT_PARITY_MISMATCH = 3
 
 
 def trial_init_events(trial_dir: Path) -> list[dict]:
-    """Every Claude Code `system/init` event a Harbor trial recorded (one per session)."""
+    """Every Claude Code `system/init` event a Harbor trial recorded (one per session).
+
+    ao's run summarizer (`<run>/summary/`, a fixed cheap-model engine session with no Bash
+    and no repo access; see `summarizer.py`) is engine bookkeeping, not a task session, so
+    it is left out: it would otherwise always differ from the plain arm in model and tools."""
     import tarfile
     import tempfile
 
+    from ..summarizer import SUMMARY_DIR_NAME
     from .envcheck import init_events
 
     agent_dir = trial_dir / "agent"
@@ -214,6 +219,9 @@ def trial_init_events(trial_dir: Path) -> list[dict]:
         with tempfile.TemporaryDirectory() as tmp, tarfile.open(tarball) as tar:
             tar.extractall(tmp, filter="data")
             for transcript in sorted(Path(tmp).rglob("transcript.jsonl")):
+                parts = transcript.relative_to(tmp).parts  # .orchestrator/runs/<run>/<task>/..
+                if len(parts) > 3 and parts[3] == SUMMARY_DIR_NAME:
+                    continue
                 events += init_events(transcript)
     return events
 

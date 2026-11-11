@@ -141,6 +141,17 @@ def subject_support_dirs(subject: Path) -> list[Path]:
     return sorted(dirs)
 
 
+def with_disallowed_tools(agents_doc: dict[str, Any], tools: list[str]) -> dict[str, Any]:
+    """*agents_doc* (an `agents.json`) with *tools* added to every agent's
+    `disallowed_tools` (ao passes them as `claude --disallowedTools`, as Harbor does for the
+    plain arm). Returns a new dict; existing entries are kept, order preserved, no dups."""
+    patched = json.loads(json.dumps(agents_doc))
+    for spec in patched.get("agents", {}).values():
+        current = list(spec.get("disallowed_tools") or [])
+        spec["disallowed_tools"] = current + [t for t in tools if t not in current]
+    return patched
+
+
 def usage_to_context(usage: dict[str, Any], context: AgentContext) -> None:
     """Copy an `ao-bench exec-subject` result into Harbor's AgentContext.
 
@@ -246,6 +257,29 @@ class AoAgent(CcAgent):
                 _built_wheel = await asyncio.to_thread(build_wheel, out)
             return _built_wheel
 
+    async def _upload_disallowed_tools(self, environment: BaseEnvironment, subject: Path) -> None:
+        """Tool parity. Harbor gives the plain arm `--disallowedTools` from the shared
+        options (`disallowed_tools`, plus WebSearch/WebFetch when the task's agent network is
+        restricted, e.g. DeepSWE). ao's sessions never go through Harbor's claude command, so
+        the same list goes into every agent of the uploaded `agents.json` (overwrites the copy
+        just uploaded). No-op when the list is empty (TB 2.1: web tools on in both arms).
+        Called from run(): Harbor applies the network-driven web-tool disable at the start of
+        the agent phase (`set_web_tools_disabled`, after install), so options are final there."""
+        tools = [t for t in (self.options.disallowed_tools or "").split(",") if t]
+        agents_rel = json.loads(subject.read_text()).get("agents")
+        if not tools or not agents_rel or Path(agents_rel).is_absolute():
+            return
+        local = (subject.parent / agents_rel).resolve()
+        remote = REMOTE_SUBJECTS / local.relative_to(SUBJECTS_DIR).as_posix()
+        patched = with_disallowed_tools(json.loads(local.read_text()), tools)
+        await self._upload_config_text(
+            environment,
+            content=json.dumps(patched, indent=2),
+            remote_path=remote.as_posix(),
+            filename=local.name,
+        )
+        self.logger.info(f"ao agents get --disallowedTools {','.join(tools)} (plain-arm parity)")
+
     @override
     async def install(self, environment: BaseEnvironment) -> None:
         await super().install(environment)  # Claude Code, exactly as the claude-code arm
@@ -322,6 +356,7 @@ class AoAgent(CcAgent):
             filename="instruction.md",
         )
         repo_dir = await self._repo_dir(environment)
+        await self._upload_disallowed_tools(environment, self._subject_path())
         subject = REMOTE_SUBJECTS / self._subject_path().name
         argv = [
             "ao-bench", "exec-subject",

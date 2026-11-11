@@ -100,7 +100,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 | Auto memory | off (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`); otherwise ao's later sessions would read earlier sessions' memory |
 | claude.ai MCP connectors | off (`ENABLE_CLAUDEAI_MCP_SERVERS=false`) |
 | Permission mode, autocompact, output style, thinking display, max output tokens | Claude Code defaults in both (`bypassPermissions`; neither arm sets the others) |
-| Web tools / network | the dataset's own agent network policy, both arms. Public-network tasks (TB 2.1): web tools on (Claude Code default). Offline-agent tasks (DeepSWE: `[agent] network_mode = "no-network"`): Harbor disables web search, and only the inference host is allowlisted (`run.sh` passes `--allow-agent-host api.anthropic.com`, `AO_HARBOR_INFERENCE_HOST` to override; Harbor cannot infer it for an OAuth login and otherwise blocks every API call with ECONNRESET) |
+| Web tools / network | the dataset's own agent network policy, both arms. Public-network tasks (TB 2.1): web tools on (Claude Code default). Offline-agent tasks (DeepSWE: `[agent] network_mode = "no-network"`): Harbor disables web search (`--disallowedTools WebSearch,WebFetch` on the plain arm; the ao arm puts the same list into every agent of its uploaded `agents.json` at run start, since ao's sessions bypass Harbor's claude command), and only the inference host is allowlisted (`run.sh` passes `--allow-agent-host api.anthropic.com`, `AO_HARBOR_INFERENCE_HOST` to override; Harbor cannot infer it for an OAuth login and otherwise blocks every API call with ECONNRESET) |
 | Spend cap per benchmark task | `run.sh --budget-usd` (default 20): the plain arm's session gets `claude --max-budget-usd`, the whole ao run (all its sessions) `run_budget_usd`. ao's per-unit `task_budget_usd` (subject, 8) is internal pacing |
 | Wall-clock limit | the dataset's own agent timeout, both arms (leaderboard-comparable); ao's overhead counts against it |
 | Credentials | same env file |
@@ -108,7 +108,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 
 | Different by design (the thing under test) | |
 |---|---|
-| Sessions | plain: one `claude -p` session. ao: many sessions (intake, waves of units, checkpoints, final verify, closeout) |
+| Sessions | plain: one `claude -p` session. ao: many sessions (intake, waves of units, checkpoints, final verify, closeout), plus the engine's run summarizer (fixed Haiku session, no Bash, no repo; runs on expensive/failed runs; its cost counts in ao's total; `harbor-parity` leaves it out) |
 | ao's orchestration instructions | overseer contract, stage instructions, role prompt templates (`agents.json`): ao's method |
 | Per-session turn caps | plain: none. ao: per-unit turn budgets (`medium` 30 / `high` 60) from the template |
 | Git | none in either arm: the shared wrapper prompt says local workspace-only mode, no git changes. The ao subject has `init_git: false` and a `branch_policy` telling overseer-runner's (LLM) git-branch-off stage to write its go-ahead without git; ao still spends one short session on that stage (deterministic no-git mode: T-Ng1Wsp) |

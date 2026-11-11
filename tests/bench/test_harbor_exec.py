@@ -204,13 +204,19 @@ def _cc_job(root: Path, *inits: str) -> Path:
     return root
 
 
-def _ao_job(root: Path, *transcripts: str) -> Path:
+def _ao_job(root: Path, *transcripts: str, summary: str | None = None) -> Path:
     agent = root / "task__1" / "agent"
     agent.mkdir(parents=True)
+    members = [
+        (f".orchestrator/runs/r/t{i}/attempt-1/transcript.jsonl", text)
+        for i, text in enumerate(transcripts)
+    ]
+    if summary is not None:  # ao's run summarizer session
+        members.append((".orchestrator/runs/r/summary/capture/transcript.jsonl", summary))
     with tarfile.open(agent / "ao-orchestrator.tgz", "w:gz") as tar:
-        for i, text in enumerate(transcripts):
+        for name, text in members:
             data = text.encode()
-            info = tarfile.TarInfo(f".orchestrator/runs/r/t{i}/attempt-1/transcript.jsonl")
+            info = tarfile.TarInfo(name)
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
     return root
@@ -223,6 +229,16 @@ def test_harbor_parity_matching_arms_exit_zero(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
     assert report["profiles"]["ao"]["sessions"] == 2 and report["mismatches"] == {}
+
+
+def test_harbor_parity_ignores_ao_run_summarizer_session(tmp_path: Path) -> None:
+    # The summarizer is a fixed Haiku engine session (no Bash, no repo): not a task session.
+    cc = _cc_job(tmp_path / "cc", _init(["Bash", "Edit"]))
+    summary = _init(["Read", "Write", "Glob", "Grep"], model="claude-haiku-5-5")
+    ao = _ao_job(tmp_path / "ao", _init(["Bash", "Edit"]), summary=summary)
+    result = runner.invoke(app, ["harbor-parity", str(cc), str(ao)])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["profiles"]["ao"]["sessions"] == 1
 
 
 def test_harbor_parity_flags_extra_skill_or_tool_in_one_arm(tmp_path: Path) -> None:
