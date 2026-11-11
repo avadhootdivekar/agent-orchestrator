@@ -99,7 +99,7 @@ It writes (this is the whole `limits` block; edit it by hand if you prefer):
            periods: [{period: week, max_usd: 10.0}]}
 ```
 
-`--per-run`/`--cost-per-run` is the per-run cap handed to the engine as `--cost-cap-usd`; `--on-cap abort` makes a hit
+`--cost-per-run` (alias `--per-run-usd`) is the per-run cap handed to the engine as `--cost-cap-usd`; `--on-cap abort` makes a hit
 final instead of resumable. The daemon fires it once opted in (`ao service add --workspace . --schedules`, then
 `ao service run`).
 

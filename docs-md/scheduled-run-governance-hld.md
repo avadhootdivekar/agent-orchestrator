@@ -682,6 +682,13 @@ task settles** (the CLI's final `result` event carries `total_cost_usd`; assista
   recovery on therefore under-reports to both the engine cap and the ledger. With `attempts_without_actuals` (§9.2) the
   ledger marks such runs `partial` and charges `max(observed, reserved)` while the fire's window is open. The in-run limit
   is documented in `guide-sentinel.md` and the governance guide.
+- **Blind executors overshoot unboundedly (T-lTW88y I-6, accepted Info).** The retry-loop cap re-check above only works
+  when the executor reports `cost_usd`. A *blind* executor (no `cost_usd` in its result) leaves settled cost at 0, so the
+  engine cannot see any spend and keeps retrying past the cap: the review probe ran 4/4 attempts at a $0.01 cap. The
+  in-task retry loop therefore does not bound blind attempts, and the overshoot is not capped at one attempt per lane.
+  The ledger is the backstop: it charges `max(observed, reserved)` for the fire while its window is open, so period
+  budgets stay conservative even though the in-run cap is not. Operators using a blind executor should rely on
+  `max_attempts`, `run_args.max_parallel: 1` and the reservation, not on the per-run cap.
 - **Why not kill in-flight tasks to tighten it ("hard abort")** — rejected, three reasons:
   1. A killed `claude -p` never emits its `result` event, so **its cost is never recorded** — `cumulative_cost_usd`
      stays 0 for spend that really happened. Killing to save money makes the ledger *under*-count, the one outcome

@@ -207,6 +207,24 @@ It is **not** Claude prompt caching (that is ADR-0015's separate scope).
 - Webhook listener is separate, default-off (`--webhook`, port 8771), HMAC-authenticated with the signature scheme pinned per binding (`ao` | `github`).
 - **Unfinished (reconciled 2026-11-11):** comment-preserving `save` (ruamel), persistent webhook nonces (github-scheme replay across restart), the rest of the e2e suite (`T-Te3Qw8` AC6/AC8a/AC17), close-out of the security/architecture gate (`T-Se4Bk5`: clean-tree gate re-run, `usage_view.py` coverage), plus the E-Qp4Zm8 gaps (dashboard capped-resume route + paused list, period cost-cap polish, `ao status` trailer, NFR-6 baseline delta). `ao schedule add --watch` and `--from-workflow` and event-kind `next` **have shipped**. Details: HLD §22, epic STATUS.md.
 
+### 2d-i. Scheduled-run governance tickets (E-Qp4Zm8, ADR-0025 — not closed; reconciled 2026-11-11)
+
+| Ticket | State | Open items |
+|---|---|---|
+| `T-tPlK1T` governance binding model | Done | — |
+| `T-lJu9oZ` quota window math | Done | — |
+| `T-nI4DBf` capped-run pause/resume | Done | limitation B-2 recorded |
+| `T-Uz0Uol` usage ledger | Partial | event-sink wiring |
+| `T-PpE5lf` pre-fire gate + reservation | Partial | period cost-cap polish, two Lows |
+| `T-et7Edf` run cost-cap gate | Partial | cosmetic `fake_cost_script` fixture, AC10 full-suite byte check |
+| `T-rwj4nV` `ao schedule` limits/usage CLI | Implemented | awaiting dedicated review |
+| `T-8knqVe` dashboard usage panel | Partial | overshoot display (AC5), live-auth/e2e pass |
+| `T-88wSLC` governance e2e suite | Partial | see ticket STATUS |
+| `T-lTW88y` security + review gate | Partial | AC4 NFR-6 baseline delta; ADR-0025 still Proposed |
+| `T-Hq3vXd` docs refresh | Partial | AC1 name grep done 2026-11-11; epic not closeable until the above close |
+
+Details: `meta/tickets/E-Qp4Zm8-scheduled-run-governance/STATUS.md`, HLD §26.
+
 ## 3. Next 3–6 months
 
 Ordered by dependency, not by calendar. Each bullet is roughly epic-sized.

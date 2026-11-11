@@ -5,6 +5,11 @@
 - State: Partial — docs synced to landed code; epic NOT closeable
 - Owner: TBD (assigned at sprint start)
 
+## Update 2026-11-11 (w30-02) — By: developer · Role: developer · docs only
+- Done: I-6 blind-executor note added beside HLD §9.3 (`scheduled-run-governance-hld.md`); `meta/ROADMAP.md` §2d-i table with all 11 E-Qp4Zm8 tickets; AC1 name grep over the governance HLD, ADR-0025, run-options guide, guide-scheduled-runs, guide-sentinel and scheduler-triggers HLD: every `ao schedule <subcommand>` (list, next, history, validate, add, set-limits, pin-prompt, usage, resume, remove, enable, disable, run-now, daemon) and every flag was matched against `uv run ao ... --help` and `src/`.
+- Mismatch fixed: `run-options-and-limits-guide.md` named `--per-run`; the real flag is `--cost-per-run` (alias `--per-run-usd`). Not mismatches: `ao schedule save` (HLD D9) is the Python `save` function, not a command; `--usage--cap-hit...` is a heading anchor.
+- Task stays Partial: epic not closeable while the other tickets are open (see ROADMAP §2d-i).
+
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
 - Checked against branch `ad/enhancements-10nov` at HEAD `1d5c6f9`. Any older line below that says "not started", "uncommitted" or "in the working tree" is superseded by this block where they disagree.
 - State: **Partial — docs synced to landed code; epic NOT closeable**
