@@ -158,6 +158,16 @@ def reason_with_period(event: dict[str, Any]) -> str:
     return f"{reason} ({period})" if period and reason != NO_VALUE else reason
 
 
+def _binding_tz_name(binding: ResolvedBinding) -> str:
+    """The binding's IANA zone name, defaulting to UTC (one place for the default)."""
+    return binding.timezone or "UTC"
+
+
+def _binding_week_start(binding: ResolvedBinding) -> WeekStart:
+    """The binding's week-start day, defaulting to Monday (one place for the default)."""
+    return binding.week_start or "monday"
+
+
 def usage_windows(
     *, workspace: str, at: datetime, binding: ResolvedBinding, ledger: LedgerPort
 ) -> list[dict[str, Any]]:
@@ -166,8 +176,8 @@ def usage_windows(
     limits = binding.limits
     if limits is None:
         return []
-    tz = ZoneInfo(binding.timezone or "UTC")
-    week_start: WeekStart = binding.week_start or "monday"
+    tz = ZoneInfo(_binding_tz_name(binding))
+    week_start = _binding_week_start(binding)
     periods = limit_periods(limits)
     wins = windows_for(at, periods, tz, week_start)
     usage = ledger.usage(workspace, binding.id, wins)
@@ -190,8 +200,8 @@ def build_usage_doc(
     schedules: list[dict[str, Any]] = []
     for b in bindings:
         limits = b.limits
-        tz_name = b.timezone or "UTC"
-        week_start: WeekStart = b.week_start or "monday"
+        tz_name = _binding_tz_name(b)
+        week_start = _binding_week_start(b)
         rows = usage_windows(workspace=workspace, at=at, binding=b, ledger=ledger)
         cost = limits.cost if limits is not None else None
         schedules.append(

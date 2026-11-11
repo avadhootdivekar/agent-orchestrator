@@ -426,3 +426,13 @@ earlier findings still open, and they are Low/Info.
 - [x] Severity bucketed: 0 Critical, 0 High, 0 Medium, 0 Warning, 2 Low, 2 Info.
 - [x] Testing notes: G-19 (patch the consumer module, not the provider) and G-20 (spy on the store type for the lookups).
 - [x] No source edits.
+
+## Fix status — G-18..G-21 (w41-02, developer, 2026-11-11)
+| ID | Status | Change |
+|---|---|---|
+| G-18 | **fixed** | HLD §9.3 mitigation (b), §10.2 pseudocode now use `engine` (the cap's own metric; charge stays summary-inclusive); the "NOT shown in the dashboard" clause is replaced by the as-built `PausedRuns.tsx` overshoot; §26.4 row narrowed to per-window overshoot only. |
+| G-19 | **fixed** | `test_usage_get_does_not_scan_paused_or_events_via_build_usage_doc` now also patches `ui.service.build_usage_doc` (consumer module, `raising=False`); docstring names which patch guards what. |
+| G-20 | **fixed** | New spy tests `test_cost_cap_option_lookup_uses_read_only_fire_store` and `test_cli_warn_if_schedule_governed_uses_read_only_fire_store` assert `isinstance(fires, ReadOnlyFireStore)`. Mutation: reverting `cli.py` to a writable `FireIntentStore` makes the CLI test fail. |
+| G-21 | **fixed** | `usage_view._binding_tz_name` / `_binding_week_start` hold the `"UTC"` / `"monday"` defaults; used by `usage_windows` and `build_usage_doc`. |
+
+Verification: 422 passed (`tests/ui/test_schedule_usage_api.py`, `tests/service/test_governance_gate.py`, `tests/schedules`, `-k "not e2e and not perf"`); ruff clean; mypy src clean. Not re-reviewed by Opus yet.

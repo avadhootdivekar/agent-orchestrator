@@ -698,7 +698,7 @@ task settles** (the CLI's final `result` event carries `total_cost_usd`; assista
   3. It would not bound overshoot by much anyway: the cap is only *detected* at a settle, so in-flight siblings have
      already spent most of what they will spend.
 - **Mitigations shipped:** (a) the reservation/cap is the period budget's unit, so overshoot is per-run, not
-  cumulative; (b) the ledger records `overshoot_usd = max(0, observed − cap)` per fire and the usage panel shows it, so
+  cumulative; (b) the ledger records `overshoot_usd = max(0, engine − cap)` per fire (`engine` = the cap's own metric, the run's engine cost; the *charge* stays summary-inclusive) and the usage panel shows it, so
   the bound is observed, not assumed; (c) operators who need a tight bound set `run_args.max_parallel: 1`, making the
   bound one task (one attempt, since the retry loop stops at the cap).
 - **Mitigation deferred (FR-8, non-MVP, needs its own small epic):** pass each Claude dispatch
@@ -834,7 +834,7 @@ FUNCTION charge(rec, now) -> Charge(runs: 0|1, actual: float, reserved: float, c
       RETURN Charge(1, max(g.cost_observed_usd, g.reserved_usd or 0), 0, conf)
   IF conf == "unknown":                                          # §10.4 conservative rule
       RETURN Charge(1, max(g.cost_observed_usd, g.reserved_usd or 0), 0, "unknown")
-  RETURN Charge(1, g.cost_observed_usd, 0, conf, overshoot=max(0, observed - g.run_cost_cap_usd))
+  RETURN Charge(1, g.cost_observed_usd, 0, conf, overshoot=max(0, engine - g.run_cost_cap_usd))  # engine = cap's own metric; charge stays summary-inclusive
 ```
 
 `WindowUsage(period) = Σ charge(rec)` over fire records of this `(workspace, schedule_id)` whose `scheduled_for` falls
@@ -1020,7 +1020,7 @@ pass a workflow, argv or an unbounded cap.
   time relative + absolute; ⚠ for `partial`/`unknown` cost confidence; overshoot shown when > 0.
 - **Paused runs** list: run link (existing `RunDetail`), spend vs cap, expiry countdown, *Resume (+$X)* button with an
   amount field defaulting to `per_run_usd`, disabled with reason when not resumable.
-- *As built:* the usage rows, paused list (`GET .../paused-runs`, `PausedRuns.tsx`) and Resume control exist; the **overshoot** indicator is NOT shown in the dashboard (CLI only; §26.4).
+- *As built:* the usage rows, paused list (`GET .../paused-runs`, `PausedRuns.tsx`) and Resume control exist; the paused list shows `(overshoot $X)` (`PausedRuns.tsx`, engine-cost metric, G-7/G-14); the `$2.07 of $2.00` example above is engine cost.
 - **Governance feed**: last 50 `schedule.governance.*` events across the workspace, filterable by schedule — this is
   the D-3 "record on dashboard".
 - Polling: reuse the panel's `POLL_MS = 10000`.
@@ -1352,7 +1352,7 @@ Event names emitted by the gate/ledger (grep-verified in `src/`): `schedule.gove
 | Pause/resume/expiry of a capped run | `T-nI4DBf` | **Done** (limitation B-2, §26.5) |
 | Period cost-cap polish; L4 main, L5; AC5a engine-tick tier | `T-PpE5lf` | open (§26.3 #9) |
 | `fake_cost_script` fixture (cosmetic, suites patch the executor locally); AC10 full-suite `state.json` byte check not re-run | `T-et7Edf` | open (AC17 `record_trip` docstring + `ao status` `xN` trailer and AC12 coverage **landed**, §26.2) |
-| Dashboard usage panel: **overshoot display** (the ledger/UI rows carry no per-window overshoot; only the CLI `ao schedule usage` prints per-period `overshoot_usd`), AC6 feed schedule filter not verified, AC7 feed-filter vitest, no live-session/e2e of the Resume button; paused list omits swept-expired records | `T-8knqVe` | **partial** (usage, feed, `resume-capped`, paused list + Resume, M5 guards landed, §26.2) |
+| Dashboard usage panel: per-window overshoot (the paused list shows per-run overshoot; the usage window rows still carry none, only the CLI `ao schedule usage` prints per-period `overshoot_usd`), AC6 feed schedule filter not verified, AC7 feed-filter vitest, no live-session/e2e of the Resume button; paused list omits swept-expired records | `T-8knqVe` | **partial** (usage, feed, `resume-capped`, paused list + Resume, M5 guards landed, §26.2) |
 | Production event-sink wiring for `schedule.governance.cost_unknown`; exact 50 ms ledger figure | `T-Uz0Uol` | open |
 | `ao schedule` governance CLI dedicated review | `T-rwj4nV` | awaiting review |
 | Security/review final gate incl. dev-security half | `T-lTW88y` | re-run on committed tip `5f51452`: PASS (no Critical/High/Warning open); stays Partial on AC4 NFR-6 baseline delta, re-run after `T-8knqVe`, ADR-0025 acceptance |

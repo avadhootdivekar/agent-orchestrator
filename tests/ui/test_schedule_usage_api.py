@@ -323,17 +323,58 @@ def test_paused_runs_spent_is_the_engine_cost_that_overshoot_is_measured_on(
 def test_usage_get_does_not_scan_paused_or_events_via_build_usage_doc(
     client: TestClient, svc: DashboardService, state_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """REVIEW G-16: the dashboard usage GET builds only the windows (no paused scan / event read
-    inside the shared builder)."""
+    """REVIEW G-16/G-19: the dashboard usage GET builds only the windows. ``build_usage_doc`` is
+    patched in the consumer module (``ui.service``); ``paused_records`` / ``governance_events``
+    are the helpers the shared builder would call, patched in ``usage_view``."""
     from agent_orchestrator.schedules import usage_view
+    from agent_orchestrator.ui import service as ui_service
 
     def boom(*a: Any, **k: Any) -> Any:
         raise AssertionError("usage GET must not call build_usage_doc / paused scan")
 
+    monkeypatch.setattr(ui_service, "build_usage_doc", boom, raising=False)
     monkeypatch.setattr(usage_view, "build_usage_doc", boom)
     monkeypatch.setattr(usage_view, "paused_records", boom)
     monkeypatch.setattr(usage_view, "governance_events", boom)
     assert client.get(f"{URL}/a/usage").status_code == 200
+
+
+def test_cost_cap_option_lookup_uses_read_only_fire_store(
+    svc: DashboardService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REVIEW G-20: ``_check_cost_cap_option`` looks the run up through a ``ReadOnlyFireStore``."""
+    from agent_orchestrator.service.fire_store import ReadOnlyFireStore
+    from agent_orchestrator.ui import service as ui_service
+
+    seen: list[Any] = []
+
+    def spy(workspace: Any, run_id: str, *, fires: Any) -> bool:
+        seen.append(fires)
+        return False
+
+    monkeypatch.setattr(ui_service, "is_governed_run", spy)
+    svc._check_cost_cap_option({"cost_cap_usd": 1.0}, run_id="r1")
+    assert len(seen) == 1 and isinstance(seen[0], ReadOnlyFireStore)
+
+
+def test_cli_warn_if_schedule_governed_uses_read_only_fire_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """REVIEW G-20: ``cli._warn_if_schedule_governed`` reads fires via a ``ReadOnlyFireStore``."""
+    from agent_orchestrator import cli
+    from agent_orchestrator.service import capped_resume
+    from agent_orchestrator.service.fire_store import ReadOnlyFireStore
+
+    monkeypatch.setenv("AO_SERVICE_STATE_DIR", str(tmp_path))
+    seen: list[Any] = []
+
+    def spy(workspace: Any, run_id: str, *, fires: Any) -> bool:
+        seen.append(fires)
+        return False
+
+    monkeypatch.setattr(capped_resume, "is_governed_run", spy)
+    cli._warn_if_schedule_governed(str(tmp_path), "r1")
+    assert len(seen) == 1 and isinstance(seen[0], ReadOnlyFireStore)
 
 
 def test_paused_runs_max_add_is_per_run_bound_only_when_per_run_usd_is_set(
