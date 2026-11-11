@@ -104,6 +104,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 | Spend cap per benchmark task | `run.sh --budget-usd` (default 20): the plain arm's session gets `claude --max-budget-usd`, the whole ao run (all its sessions) `run_budget_usd`. ao's per-unit `task_budget_usd` (subject, 8) is internal pacing |
 | Wall-clock limit | the dataset's own agent timeout, both arms (leaderboard-comparable); ao's overhead counts against it |
 | Credentials | same env file |
+| Grading capture | after the agent finishes, any uncommitted change in the task's working dir (if it is a git work tree) is committed (`worktree_commit_command` in `ao_harbor/agent.py`, both arms). The shared wrapper forbids git changes, and DeepSWE grades `git diff <base> HEAD`: without this every uncommitted fix scores as an empty patch (seen: p1a sqlfmt, f2p 0/32 with a 0-byte `model.patch`) |
 
 | Different by design (the thing under test) | |
 |---|---|

@@ -79,6 +79,27 @@ GIT_IDENTITY_ENV = {
     "GIT_COMMITTER_EMAIL": "ao-harbor@localhost",
 }
 
+# Grading capture, both arms. The shared wrapper prompt forbids git changes (local
+# workspace-only mode), but some verifiers grade only committed work: DeepSWE collects
+# `git diff <base> HEAD`, so uncommitted edits score as an empty patch (f2p 0). After the agent
+# finishes, any uncommitted change in the task's working dir (a git work tree) is committed, so
+# the verifier sees exactly the agent's working tree. No-op outside a work tree or when clean.
+WORKTREE_COMMIT_MESSAGE = "harbor: agent working-tree changes"
+
+
+def worktree_commit_command(repo_dir: str) -> str:
+    """POSIX sh command committing every uncommitted change in *repo_dir*; prints
+    `committed` when it made a commit and always exits 0."""
+    git = "git -c 'safe.directory=*' -c user.name=ao-harbor -c user.email=ao-harbor@localhost"
+    return (
+        f"( cd {shlex.quote(repo_dir)} 2>/dev/null || exit 0; "
+        f"{git} rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0; "
+        f'[ -n "$({git} status --porcelain)" ] || exit 0; '
+        f"{git} add -A && {git} commit -q --no-verify "
+        f"-m {shlex.quote(WORKTREE_COMMIT_MESSAGE)} && echo committed ) || true"
+    )
+
+
 _wheel_lock = asyncio.Lock()
 _built_wheel: Path | None = None
 
@@ -173,12 +194,30 @@ class CcAgent(ClaudeCode):
             owner = shlex.quote(str(environment.default_user))
             await self.exec_as_root(environment, command=f"chown -R {owner} {config_dir}")
 
+    async def _repo_dir(self, environment: BaseEnvironment) -> str:
+        configured = getattr(self.options, "repo_dir", None)
+        if configured:
+            return configured
+        result = await environment.exec(command="pwd")
+        return (result.stdout or "/app").strip().splitlines()[-1]
+
+    async def _commit_worktree(self, environment: BaseEnvironment, repo_dir: str) -> None:
+        """Commit the agent's uncommitted changes in *repo_dir* (see worktree_commit_command).
+        Best effort: a failure here must not turn a finished run into an agent error."""
+        result = await environment.exec(command=worktree_commit_command(repo_dir), user="root")
+        if "committed" in (result.stdout or ""):
+            self.logger.info(f"Committed the agent's working-tree changes in {repo_dir}")
+
     @override
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
         await self._upload_parity_bundle(environment)
-        await super().run(instruction, environment, context)
+        repo_dir = await self._repo_dir(environment)
+        try:
+            await super().run(instruction, environment, context)
+        finally:
+            await self._commit_worktree(environment, repo_dir)
 
 
 class AoAgent(CcAgent):
@@ -251,13 +290,6 @@ class AoAgent(CcAgent):
         remote_schemas = (probe.stdout or "").strip().splitlines()[-1]
         await self.exec_as_root(environment, command=f"mkdir -p {shlex.quote(remote_schemas)}")
         await environment.upload_dir(BENCH_SCHEMAS_DIR, remote_schemas)
-
-    async def _repo_dir(self, environment: BaseEnvironment) -> str:
-        configured = getattr(self.options, "repo_dir", None)
-        if configured:
-            return configured
-        result = await environment.exec(command="pwd")
-        return (result.stdout or "/app").strip().splitlines()[-1]
 
     def _run_env(self) -> dict[str, str]:
         env = self._resolve_auth_env()
@@ -343,6 +375,7 @@ class AoAgent(CcAgent):
                 command=(f"if [ -L {repo_q} ]; then rm {repo_q} && mv {ws_repo_q} {repo_q}; fi"),
                 user="root",
             )
+            await self._commit_worktree(environment, repo_dir)
 
     @override
     def populate_context_post_run(self, context: AgentContext) -> None:

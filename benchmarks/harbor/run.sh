@@ -194,7 +194,10 @@ echo "+ harbor ${args[*]}"
 mkdir -p "$AO_HARBOR_ROOT/jobs"
 if [ -n "$secret_env" ]; then
   (umask 077 && mkdir -p "$AO_HARBOR_ROOT/secrets")
+  # EXIT alone does not run when bash is killed by a signal: turn INT/TERM into an exit.
   trap 'rm -f "$secret_env"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   MIN_TOKEN_HOURS="$min_token_hours" OUT="$secret_env" python3 - <<'PY' || die "host login unusable (see above)"
 import json, os, sys, time
 oauth = json.load(open(os.path.expanduser("~/.claude/.credentials.json"))).get("claudeAiOauth") or {}
