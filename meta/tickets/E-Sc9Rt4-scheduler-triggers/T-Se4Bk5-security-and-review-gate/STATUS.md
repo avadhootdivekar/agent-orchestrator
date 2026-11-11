@@ -2,7 +2,7 @@
 
 - ID: `T-Se4Bk5-security-and-review-gate`
 - Updated At: 2026-11-11
-- State: In Progress — NOT Done (R-2, R-2b, R-2c, GATE-1, TQ-R2 all closed; only the whole-tree + UI gate on a clean tip remains, pending a later wave)
+- State: In Progress — clean-tip gate GREEN (w39-01, 2026-11-11); NOT marked Done because REVIEW suggestions R-5 and R-7 are still open (R-6 is a documented limitation)
 - Owner: reviewer agent (overseer w20-02)
 
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
@@ -232,3 +232,11 @@
 - Test run (real): `uv run pytest -q tests/ui/test_schedule_usage_api.py -k never_writes_fire_records` -> **2 passed** (`test_resume_capped_request_never_writes_fire_records` and `test_usage_api_never_writes_fire_records`).
 - Cross-ref: E-Qp4Zm8 `REVIEW.md` G-1 (FIXED w31-01).
 - **Still open / pending:** the whole-tree `pytest`/`ruff`/`mypy` + UI gates on a clean tip (not run here; the tree has other units' uncommitted edits). Do not mark Done until that gate passes (later wave).
+
+## Clean-tip whole-tree gate (By: tester · unit `w39-01-a1-clean-tip-gate` · 2026-11-11 · read-only run, STATUS only)
+- Branch `ad/enhancements-10nov`, started at HEAD `84e71a8` (tip moved to `89920f0` during the run; the commits in between are docs plus `98be694`, the bench shim). The only uncommitted tracked edits at start were `tests/bench/{conftest,test_dev_core_suite,test_dev_medium_suite}.py` (w34-02 carry-over, committed as `98be694` meanwhile); the rest was untracked `benchmarks/results/*`.
+- **`uv run pytest -q` (whole `tests/`): 12363 passed, 32 skipped, 0 failed** (23m30s). `ruff check .`: all checks passed. `ruff format --check .`: 780 files formatted. `mypy src`: 233 files, no issues.
+- **UI:** `tsc -b --noEmit` exit 0; `vitest run`: 73 files, **923 passed**, 0 failed.
+- **Bench grader spawn-pytest failure:** no longer present. The 2 dev-core/dev-medium suite files pass with the w34-02 edits, and also on a clean `git archive HEAD` (`84e71a8`) run in a temp dir: 56 passed.
+- **Failures: none**, so nothing to attribute to HEAD or to any unit's uncommitted edits.
+- **Result: gate PASSED. Task NOT marked Done:** REVIEW.md R-5 (swallowed exceptions without log) and R-7 (uncommented constants) are still open suggestions; R-6 is an accepted limitation; TEST-QUALITY FU-9 `O_NOFOLLOW` swap race and the FU-11 remainder stay deferred. Close or explicitly waive R-5/R-7, then set Done.
