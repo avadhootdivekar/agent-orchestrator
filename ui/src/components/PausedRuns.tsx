@@ -69,6 +69,7 @@ function PausedRow({
       </TabLink>{" "}
       <span>
         spent {formatCost(run.spent_usd)} / cap {formatCost(run.cap_usd)}
+        {run.overshoot_usd > 0 ? ` (overshoot ${formatCost(run.overshoot_usd)})` : ""}
       </span>
       <span className="muted" title={run.pause_expires_at ?? undefined}>
         {" "}

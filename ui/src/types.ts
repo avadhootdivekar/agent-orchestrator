@@ -1137,6 +1137,8 @@ export interface PausedRun {
   pause_expires_at: string | null;
   spent_usd: number;
   cap_usd: number | null;
+  /** Spend above the cap (0 when none) — same figure as `ao schedule usage`. */
+  overshoot_usd: number;
   default_add_usd: number;
   max_add_usd: number;
   resumable: boolean;

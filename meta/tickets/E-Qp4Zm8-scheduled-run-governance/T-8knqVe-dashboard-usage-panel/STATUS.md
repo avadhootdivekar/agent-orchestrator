@@ -47,3 +47,6 @@
 2. Read the upstream tasks' **merged code** (including E-Sc9Rt4's), not only the HLD, before starting.
 2. Implement against the acceptance criteria in `TASK.md`, in AC order; report the pytest delta, ruff/format, mypy, coverage.
 3. Hand the POST surface to `T-lTW88y` for security review.
+
+## Update 2026-11-11 (w31-01, developer)
+- G-3 done: dashboard `schedule_usage`/`paused_runs` delegate to `usage_view.build_usage_doc` / `paused_row`; paused rows carry `overshoot_usd` and the Paused-runs panel shows "(overshoot $x)" → **AC5 overshoot display closed**. UI type `PausedRun.overshoot_usd` added; vitest `paused-runs` 7 green, tsc clean. Still open: G-8 (`max_add_usd` shows the $100k ceiling on bindings without `per_run_usd`).

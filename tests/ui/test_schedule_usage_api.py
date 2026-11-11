@@ -285,9 +285,36 @@ def test_paused_runs_lists_only_paused_with_bounds(
     assert (r1["spent_usd"], r1["cap_usd"]) == (1.0, 2.0)
     assert r1["resumable"] is True and r1["refusal"] is None
     assert r1["default_add_usd"] > 0 and r1["max_add_usd"] > 0
+    assert r1["overshoot_usd"] == 0.0  # spent 1.0 of cap 2.0
     r4 = next(r for r in rows if r["run_id"] == "r4")
     assert (r4["resumable"], r4["refusal"]) == (False, "expired")
     assert client.get(f"{URL}/nope/paused-runs").status_code == 404
+
+
+def test_paused_runs_and_usage_share_the_cli_paused_row_with_overshoot(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    """G-3 / T-8knqVe AC5: the paused list is the shared ``paused_row`` (overshoot included) and
+    the usage windows come from ``build_usage_doc`` -- same numbers as the CLI document."""
+    from agent_orchestrator.schedules.usage_view import build_usage_doc
+    from agent_orchestrator.service.fire_store import ScheduleEventLog, readonly_fire_store
+    from agent_orchestrator.service.usage_ledger import UsageLedger
+
+    _paused(svc, state_dir, run_id="r1", spent=2.75)  # cap 2.0 -> overshoot 0.75
+    (row,) = client.get(f"{URL}/a/paused-runs").json()["paused"]
+    assert (row["spent_usd"], row["cap_usd"], row["overshoot_usd"]) == (2.75, 2.0, 0.75)
+    fires = readonly_fire_store(state_dir)
+    cli = build_usage_doc(
+        workspace=svc.workspace_root, at=NOW, generated_at=NOW,
+        bindings=[b for b in svc._load_schedule_file().bindings if b.id == "a"],
+        ledger=UsageLedger(fires), fires=fires, events=ScheduleEventLog(state_dir),
+    )["schedules"][0]  # fmt: skip
+    assert cli["paused"][0]["overshoot_usd"] == 0.75
+    (w,) = client.get(f"{URL}/a/usage").json()["windows"]
+    (cw,) = cli["windows"]
+    assert (w["window_key"], w["runs_used"], w["actual_usd"], w["reserved_usd"]) == (
+        cw["key"], cw["runs"], cw["actual_usd"], cw["reserved_usd"],
+    )  # fmt: skip
 
 
 def test_resume_capped_queues_a_bounded_request(
@@ -345,6 +372,41 @@ def test_resume_capped_over_per_resume_max_is_422_bad_amount(
     assert _queued(state_dir) == []
     ok = client.post(f"{URL}/p/runs/r1/resume-capped", json={"add_usd": 1.0}, headers=ORIGIN)
     assert ok.status_code == 202
+
+
+def _record_bytes(state_dir: Path) -> dict[str, bytes]:
+    """Every state-dir file except the queued request (the one allowed write)."""
+    return {
+        str(p.relative_to(state_dir)): p.read_bytes()
+        for p in sorted(state_dir.rglob("*"))
+        if p.is_file() and "requests" not in p.parts
+    }
+
+
+def test_resume_capped_request_never_writes_fire_records(
+    client: TestClient, svc: DashboardService, state_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G-1 / R-2c: the dashboard resume path is read-only on fire records (byte-equal before/after)
+    and hands ``check_resume`` a read-only store for BOTH the fires and the ledger."""
+    from agent_orchestrator.service.fire_store import ReadOnlyFireStore
+    from agent_orchestrator.ui import service as ui_service
+
+    _paused(svc, state_dir)
+    seen: dict[str, Any] = {}
+    real = ui_service.request_capped_resume
+
+    def spy(*args: Any, **kw: Any) -> Any:
+        seen["fires"], seen["ledger_store"] = kw["fires"], kw["ledger"]._fires
+        return real(*args, **kw)
+
+    monkeypatch.setattr(ui_service, "request_capped_resume", spy)
+    before = _record_bytes(state_dir)
+    assert before, "fixture must have written a fire record"
+    r = client.post(f"{URL}/a/runs/r1/resume-capped", json={"add_usd": 1.5}, headers=ORIGIN)
+    assert r.status_code == 202, r.text
+    assert isinstance(seen["fires"], ReadOnlyFireStore)
+    assert isinstance(seen["ledger_store"], ReadOnlyFireStore)
+    assert _record_bytes(state_dir) == before
 
 
 def test_resume_capped_over_headroom_is_409(

@@ -101,7 +101,8 @@ def _window_row(
     }
 
 
-def _paused_row(rec: FireIntentRecord) -> dict[str, Any]:
+def paused_row(rec: FireIntentRecord) -> dict[str, Any]:
+    """One paused run as the shared usage-doc row (CLI and dashboard; carries ``overshoot_usd``)."""
     g = rec.governance
     assert g is not None
     cap = g.run_cost_cap_usd
@@ -190,7 +191,7 @@ def build_usage_doc(
                 "per_run_usd": cost.per_run_usd if cost is not None else None,
                 "on_cap": cost.on_cap if cost is not None else None,
                 "windows": rows,
-                "paused": [_paused_row(r) for r in paused_records(fires, workspace, b.id)],
+                "paused": [paused_row(r) for r in paused_records(fires, workspace, b.id)],
                 "events": governance_events(events, workspace, b.id),
             }
         )

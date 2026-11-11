@@ -35,7 +35,7 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
 ## Findings (numbered, severity-ranked)
 
 ### High
-**G-1 (High). The dashboard resume path persists fire-record writes without a lock (R-2c is still open).**
+**G-1 (High) — FIXED (w31-01). The dashboard resume path persists fire-record writes without a lock (R-2c is still open).** `DashboardService.request_capped_resume` now uses `readonly_fire_store(sdir)` for both `fires` and the ledger; test `test_resume_capped_request_never_writes_fire_records` (byte-equality + store type). Closes T-Se4Bk5 R-2c.
 - Where: `src/agent_orchestrator/ui/service.py:1506` (`fires = FireIntentStore(sdir)`) and `:1517`
   (`ledger=UsageLedger(fires, …)`).
 - Observation: `check_resume` → `_remaining` → `ledger.usage` → `charge` → `_raise_mark` →
@@ -71,7 +71,7 @@ Two throwaway probes (in `/tmp`, not committed) confirmed G-1 and G-2 below.
   `mark + max(0, reserved - mark)`. Add a ledger test with exactly the probe's shape, plus a gate test that a fire is
   refused while a resume is pending.
 
-**G-3 (Medium, DRY / AC drift). The dashboard usage API re-implements the usage document instead of using the shared builder.**
+**G-3 (Medium, DRY / AC drift) — FIXED (w31-01). The dashboard usage API re-implements the usage document instead of using the shared builder.** `schedule_usage` now maps `build_usage_doc` window rows (UI keys unchanged, skip counts kept); `paused_runs` uses `paused_records` + `usage_view.paused_row` (renamed from `_paused_row`) and exposes `overshoot_usd`, shown in `PausedRuns.tsx`. Tests: `test_paused_runs_and_usage_share_the_cli_paused_row_with_overshoot`. G-8 (`max_add_usd` ceiling) remains open.
 - Where: `src/agent_orchestrator/ui/service.py:1327-1380` (`schedule_usage`) and `:1461-1495` (`paused_runs`), against
   `src/agent_orchestrator/schedules/usage_view.py` `build_usage_doc` / `paused_records` / `_paused_row`.
 - Observation: `usage_view.py`'s module docstring says its dict "IS the dashboard API body … so the two surfaces never

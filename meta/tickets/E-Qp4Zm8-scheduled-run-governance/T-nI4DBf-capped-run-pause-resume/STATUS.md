@@ -62,3 +62,6 @@
   spawn. Operator re-requests the resume after a rollback. Residual: a child spawned but whose launch stamp failed AND that
   already finished without touching state.json is indistinguishable from stranded (would roll back to paused; no spend lost
   as the ledger charges by state). Tests: `tests/service/test_capped_resume.py` (5 new).
+
+## Update 2026-11-11 (w31-01, developer)
+- REVIEW G-1 fixed: the dashboard resume route (`DashboardService.request_capped_resume`) uses `readonly_fire_store` for fires + ledger, so it never writes fire records unlocked (R-2c closed); regression test asserts byte-equal records and read-only store types. G-2 (resumed reservation visibility) is handled by a separate unit.

@@ -11,6 +11,7 @@ const RUN: PausedRun = {
   pause_expires_at: "2026-11-11T22:00:00+00:00",
   spent_usd: 1.5,
   cap_usd: 2,
+  overshoot_usd: 0,
   default_add_usd: 1,
   max_add_usd: 1,
   resumable: true,
@@ -47,6 +48,12 @@ describe("PausedRuns", () => {
     const { container } = render(<PausedRuns id="nightly" pollMs={60000} />);
     await waitFor(() => expect(fn).toHaveBeenCalled());
     expect(container.textContent).toBe("");
+  });
+
+  it("shows the overshoot only when spend is above the cap", async () => {
+    mockFetch([{ ...RUN, spent_usd: 2.75, overshoot_usd: 0.75 }]);
+    render(<PausedRuns id="nightly" pollMs={60000} clock={() => NOW} />);
+    expect(await screen.findByText(/\(overshoot \$0\.75\)/)).toBeTruthy();
   });
 
   it("lists spend vs cap, the expiry countdown and a default amount", async () => {

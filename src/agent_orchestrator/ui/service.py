@@ -22,7 +22,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -52,7 +51,7 @@ from ..run_options import validate_cost_cap_usd
 from ..schedules.errors import ScheduleFileError
 from ..schedules.models import ScheduleFile
 from ..schedules.store import ScheduleStore
-from ..schedules.windows import windows_for
+from ..schedules.usage_view import build_usage_doc, paused_records, paused_row
 from ..service.capped_resume import (
     ResumeRefused,
     default_add,
@@ -1336,35 +1335,36 @@ class DashboardService:
         instant = at or self._clock_now()
         if instant.tzinfo is None:
             instant = instant.replace(tzinfo=UTC)
-        limits = binding.limits
-        quotas = {q.period: q.max_runs for q in limits.quotas} if limits else {}
-        cost = limits.cost if limits else None
-        caps = {c.period: c.max_usd for c in cost.periods} if cost else {}
-        periods = list(dict.fromkeys([*quotas, *caps]))
-        windows = windows_for(
-            instant, periods, ZoneInfo(binding.timezone or "UTC"), binding.week_start or "monday"
-        )
         sdir = self._schedule_state_dir_path()
-        usage = UsageLedger(readonly_fire_store(sdir)).usage(
-            self.workspace_root, schedule_id, windows
+        # Shared builder (same windows + ledger as `ao schedule usage`); the ledger's store is
+        # read-only so a dashboard GET can never write fire records.
+        shared = build_usage_doc(
+            workspace=self.workspace_root,
+            at=instant,
+            generated_at=instant,
+            bindings=[binding],
+            ledger=UsageLedger(readonly_fire_store(sdir)),
+            fires=readonly_fire_store(sdir),
+            events=ScheduleEventLog(sdir),
         )
+        windows = {w["period"]: w for w in shared["schedules"][0]["windows"]}
         skips = self._governance_skips(schedule_id)
         rows = []
         for period, w in windows.items():
-            u = usage[period]
-            in_window = [e for e in skips if w.start <= _parse_ts(e["ts"]) < w.end]
+            start, end = _parse_ts(w["start"]), _parse_ts(w["resets_at"])
+            in_window = [e for e in skips if start <= _parse_ts(e["ts"]) < end]
             rows.append(
                 {
                     "period": period,
-                    "window_key": w.key,
-                    "window_start": _iso_or_none(w.start),
-                    "resets_at": _iso_or_none(w.end),
-                    "runs_used": u.runs,
-                    "runs_max": quotas.get(period),
-                    "actual_usd": u.actual_usd,
-                    "reserved_usd": u.reserved_usd,
-                    "max_usd": caps.get(period),
-                    "confidence": u.confidence,
+                    "window_key": w["key"],
+                    "window_start": _iso_or_none(start),
+                    "resets_at": _iso_or_none(end),
+                    "runs_used": w["runs"],
+                    "runs_max": w["max_runs"],
+                    "actual_usd": w["actual_usd"],
+                    "reserved_usd": w["reserved_usd"],
+                    "max_usd": w["max_usd"],
+                    "confidence": w["confidence"],
                     "skipped": len(in_window),
                     "quota_exhausted": sum(
                         1 for e in in_window if e.get("reason") == GOVERNANCE_REASON_QUOTA
@@ -1470,20 +1470,20 @@ class DashboardService:
         now = self._clock_now()
         fires = readonly_fire_store(self._schedule_state_dir_path())
         rows = []
-        for rec in fires.iter_schedule(
-            self.workspace_root, schedule_id, datetime.min.replace(tzinfo=UTC)
-        ):
-            g = rec.governance
-            if g is None or g.cap_state != "paused" or rec.run_id is None:
+        for rec in paused_records(fires, self.workspace_root, schedule_id):
+            if rec.run_id is None or rec.governance is None:
                 continue
+            g = rec.governance
             expired = g.pause_expires_at is None or now >= g.pause_expires_at
+            shared = paused_row(rec)  # same row (incl. overshoot_usd) as `ao schedule usage`
             rows.append(
                 {
                     "run_id": rec.run_id,
-                    "paused_at": _iso_or_none(g.paused_at),
-                    "pause_expires_at": _iso_or_none(g.pause_expires_at),
-                    "spent_usd": g.cost_observed_usd,
-                    "cap_usd": g.run_cost_cap_usd,
+                    "paused_at": shared["paused_at"],
+                    "pause_expires_at": shared["expires_at"],
+                    "spent_usd": shared["cost_usd"],
+                    "cap_usd": shared["cap_usd"],
+                    "overshoot_usd": shared["overshoot_usd"],
                     "default_add_usd": default_add(binding),
                     "max_add_usd": max_add(binding, float("inf")),
                     "resumable": not expired,
@@ -1503,7 +1503,9 @@ class DashboardService:
             (b for b in self._load_schedule_file().bindings if b.id == schedule_id), None
         )
         sdir = self._schedule_state_dir_path()
-        fires = FireIntentStore(sdir)
+        # Read-only store for BOTH the fires and the ledger: check_resume -> ledger.usage can
+        # raise the high-water mark (an unlocked read-modify-write) on a writable store (G-1/R-2c).
+        fires = readonly_fire_store(sdir)
         try:
             req = request_capped_resume(
                 self.workspace_root,
