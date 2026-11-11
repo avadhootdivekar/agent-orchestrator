@@ -100,3 +100,44 @@ def test_run_without_a_cap_is_unchanged(tmp_path: Path, specs: list[str]) -> Non
     r = runner.invoke(app, ["run", *specs, "--run-id", RUN_ID])
     assert r.exit_code == 0, r.output
     assert _state(tmp_path)["cost_cap_usd"] is None
+
+
+def _govern(state_dir: Path, workspace: Path, run_id: str) -> None:
+    from datetime import UTC, datetime
+
+    from agent_orchestrator.service.fire_store import (
+        FireGovernance,
+        FireIntentRecord,
+        FireIntentStore,
+    )
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    FireIntentStore(state_dir).write(
+        FireIntentRecord(
+            fire_key="s1@2026-01-01T00:00:00+00:00",
+            workspace_root=str(workspace),
+            schedule_id="s1",
+            scheduled_for=now,
+            created_at=now,
+            status="launched",
+            run_id=run_id,
+            governance=FireGovernance(cap_state="paused"),
+        )
+    )
+
+
+@pytest.mark.parametrize("governed", [True, False])
+def test_m5_resume_with_explicit_cap_warns_only_for_a_governed_run(
+    tmp_path: Path, specs: list[str], monkeypatch: pytest.MonkeyPatch, governed: bool
+) -> None:
+    """T-et7Edf AC14c (w01-07 M5): a WARNING, never a refusal (HLD §16 escape hatch)."""
+    state_dir = tmp_path / "svc-state"
+    monkeypatch.setenv("AO_SERVICE_STATE_DIR", str(state_dir))
+    r = runner.invoke(app, ["run", *specs, "--run-id", RUN_ID, "--cost-cap-usd", "1.0"])
+    assert r.exit_code == 1, r.output
+    if governed:
+        _govern(state_dir, tmp_path, RUN_ID)
+    r = runner.invoke(app, ["resume", "--run-id", RUN_ID, *specs, "--cost-cap-usd", "5.0"])
+    assert r.exit_code == 0, r.output
+    assert ("governed by a schedule" in r.output) is governed
+    assert _state(tmp_path)["cost_cap_usd"] == 5.0  # the escape hatch still works

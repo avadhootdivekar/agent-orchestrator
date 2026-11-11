@@ -885,6 +885,25 @@ def _sentinel_argv(
     return args
 
 
+def _warn_if_schedule_governed(workspace: str, run_id: str) -> None:
+    """T-et7Edf AC14c / w01-07 M5: ``ao resume --cost-cap-usd`` on a schedule-governed run.
+
+    The explicit flag stays the escape hatch (HLD §16), so this WARNS, never refuses: the value
+    REPLACES the run's sticky cap and bypasses the bounded ``ao schedule resume`` top-up. No-op
+    when the service state dir has no fire record for the run (``find_by_run_id`` -> None).
+    """
+    from .service.capped_resume import is_governed_run
+    from .service.fire_store import FireIntentStore
+    from .service.paths import default_state_dir
+
+    if is_governed_run(workspace, run_id, fires=FireIntentStore(default_state_dir())):
+        typer.echo(
+            f"WARNING: run {run_id} is governed by a schedule; --cost-cap-usd replaces its cap "
+            "and bypasses the schedule's bounded resume (use `ao schedule resume`).",
+            err=True,
+        )
+
+
 def _validated_cost_cap(raw: float | None) -> float | None:
     """Raw `--cost-cap-usd` -> validated value; exit 2 on zero/negative/NaN/inf (T-et7Edf AC1)."""
     try:
@@ -2090,6 +2109,8 @@ def resume(
     except FileNotFoundError as e:
         typer.echo(f"ERROR: {e}", err=True)
         raise typer.Exit(1)
+    if eff_cost_cap is not None:
+        _warn_if_schedule_governed(workspace, run_id)
 
     # ---- Breaker extension (E-3JTmVu FR-2d) ----
     # Applied to the already-loaded/prepared `existing` RunState, BEFORE orch.run() -- the
