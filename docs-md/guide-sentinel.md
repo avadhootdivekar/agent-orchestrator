@@ -45,7 +45,7 @@ A bad CLI/env value exits 2. `ao validate` checks a workflow's `sentinel:` block
 | `max_injected_tasks` | null | cap on sentinel-origin injections; null ⇒ `max(20, ceil(3 × max_parallel × expected_hours))` |
 | `recovery.enabled` | `true` | liveness/recovery lane (only active when `enabled`) |
 | `recovery.idle_kill_minutes` | 15 (floor 12 unless `recovery.force`) | no growth of the attempt's `transcript.jsonl` ⇒ kill |
-| `recovery.stuck_factor` / `stuck_min_minutes` | 3.0 / 20 | kill when the attempt has run > factor × baseline and ≥ min minutes; baseline = task's `expected_minutes`, else median of ≥3 settled tasks with the same agent **and** `stuck_cohort` tag (see "stuck_factor and heterogeneous work") |
+| `recovery.stuck_factor` / `stuck_min_minutes` | 3.0 / 20 | kill when the attempt has run > factor × baseline and ≥ min minutes; baseline = task's `expected_minutes`, else median of ≥3 settled tasks with the same agent **and** `stuck_cohort` tag (see "stuck_factor and heterogeneous work"; note: inert under default veto settings) |
 | `recovery.stuck_activity_veto` / `stuck_veto_minutes` | `true` / null (⇒ `idle_kill_minutes`) | a stuck_factor kill is vetoed while output grew within the window |
 | `recovery.systemic_task_window_seconds` | 600 | repeat kills of the SAME task closer together than this count as one systemic incident (0 = count every kill) |
 | `recovery.cost_kill_pct` | null | kill when already-settled earlier-attempt cost ≥ pct × task cap |
@@ -82,8 +82,9 @@ per-task hints in the TaskSpec:
 
 Because stuck_factor kills a task that is still *producing output*, it is vetoed while the activity file
 grew within `stuck_veto_minutes` (default `idle_kill_minutes`). Note the consequence with the default
-window: a task with no output for ≥ `idle_kill_minutes` is killed by the idle trigger first, so stuck_factor
-mainly fires for tasks with no activity signal; shorten `stuck_veto_minutes` (or set `stuck_activity_veto:
+window: a task with no output for ≥ `idle_kill_minutes` is killed by the idle trigger first, and a task with
+output inside that window is vetoed, so **under default settings `stuck_factor` never fires** (a task that
+keeps writing output is bounded only by its timeout/cost cap); set `stuck_veto_minutes` below `idle_kill_minutes` (or `stuck_activity_veto:
 false`) to restore a pure duration kill.
 
 Kills of the same task inside `systemic_task_window_seconds` count as one incident toward

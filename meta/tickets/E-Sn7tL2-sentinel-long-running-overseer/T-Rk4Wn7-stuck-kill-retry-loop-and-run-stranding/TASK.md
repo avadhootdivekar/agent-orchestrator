@@ -7,7 +7,7 @@
 - Owner: `TODO`
 - Created: `2026-11-10`
 - Last Updated: `2026-11-11`
-- Status: `Done` (D1-D4 + CTL-SCHEMA landed; one open OWNER question, `defaults.fail_fast` opt-out, not a blocker; see STATUS.md)
+- Status: `Done` for D1-D4 + CTL-SCHEMA code; open follow-ups (W1/W2/S1/S2, `fail_fast` owner question, live D4 smoke, A3.6 full-suite) listed in "A3.6 bookkeeping" below
 - Estimate: `< 3 days`
 
 ## Requirements Mapping
@@ -35,7 +35,7 @@ though idle was not the trigger), i.e. activity does not veto a duration-based k
 failed (exit 143), `w03-10` (depends_on only `ck-02`, which had SUCCEEDED) and `ck-03` were never dispatched
 and `run.end status=failed` was emitted as soon as the last running task finished, leaving 2 tasks `pending`.
 Wave 3 had more ready tasks than `max_parallel` (10); `w03-10` was still queued when the failure landed.
-I did not find a fail-fast rule in `scheduler.py`; the exact cause is UNCONFIRMED — needs reproduction
+*(Original filing text; superseded: cause CONFIRMED as engine fail-fast `halt` in `_settle_completed_task`, see "Findings: D3 stranding" below.)* I did not find a fail-fast rule in `scheduler.py`; the exact cause was UNCONFIRMED at filing
 (queued-but-ready task + a sibling failure). After `ao resume` with unchanged DAG, `w03-10` dispatched
 immediately, so the DAG/inputs were fine; the stall was in dispatch.
 
@@ -262,11 +262,37 @@ Done: M1 (option b, test added), L2 (documented in code), L6 (labels/claims corr
   D3 settle change (`failed` → `halt`) fails this test and `test_engine_failure_isolation_of_work`; engine restored byte-identical afterwards.
 - Final state: **D1** done (per-attempt `attempt_started_at` clock, H1 mutation-checked). **D2** done (cohort/expected_minutes/no_stuck_kill,
   activity veto, systemic window; M2 cool-down mutation-checked). **D3** done (`7792351`; continue-on-failure; L4 pinned; docs updated M3).
-  **D4** done (agent permission fix + `_start_llm_lane` unbound-`agent` regression fixed). **CTL-SCHEMA** investigated (cause: empty `created_at`
-  on LLM-authored `note`; sidecar `reason.json` documented); shared `CTL_ENVELOPE_FIELDS`/`RATIONALE_MAX_CHARS` + parity test (L5). Not done: not
+  **D4** done in code (live `claude` honouring the lane flag set still UNVERIFIED - manual smoke test; agent permission fix + `_start_llm_lane` unbound-`agent` regression fixed). **CTL-SCHEMA** investigated (cause: the LLM-authored `note` used `ts` instead of the
+  required `created_at` plus unknown top-level fields `target`/`reason`; contract now renders the envelope; sidecar `reason.json` documented); shared `CTL_ENVELOPE_FIELDS`/`RATIONALE_MAX_CHARS` + parity test (L5). Not done: not
   counting CTL-SCHEMA note rejections toward auto-pause / surfacing sidecar detail in the next pack (owner decision, followup 3/4 above).
 - **OPEN OWNER DECISION — `defaults.fail_fast` opt-out**: D3 made continue-on-failure the unconditional default. Options: (a) keep as is;
   (b) add `defaults.fail_fast: true` workflow setting restoring halt-on-first-failure (spec/schema change; one-line seam at the
   `ctx.failed_tasks.add(tid)` / `settled` return in `engine._settle_completed_task` — engine.py currently carries another unit's uncommitted edits,
   so not done here). Recommendation: (a) now, (b) only if a workflow needs it.
 - By: developer · Role: developer · Date: 2026-11-11
+
+## A3.6 bookkeeping (unit w28-04-a3-ticket-status-sync, 2026-11-11)
+Ledger/commit map (overseer run `o-6w86nm-sched-governance`, outputs/waves/wNN/):
+| Item | Unit | Commits |
+|---|---|---|
+| D4 LLM-lane perms | w01-02 | `25589a0` |
+| D1 per-attempt clock + cool-down | w01-01 | `1f89974` |
+| CTL-SCHEMA research / contract fix (AC6) | w01-05 / w02-03 | `918c63f` |
+| D3 repro, confirmed cause, fix | w01-03, w06-02 | `7792351`, `5098b35` |
+| D2 cohort/expected_minutes/veto/systemic | w01-04, w13-01 | `b6cac37`, `8ccc4c9` |
+| Opus code review (H1/H2/M1-M3/L1-L6) | w09-03 | - |
+| Review fixes | w12-05, w13-01 | `4472e17` (M1/L2/L6), `d8734a6` (H2), `979eef1` (H1/M2/M3/L1/L3/L5) |
+| L4 T4 + sibling isolation e2e | w16-05 | `cf68d2f` |
+| Opus RE-review: **PASS**, no Critical; H1/H2/M1/M2/M3(docs)/L-items verified fixed by mutation | w16-04 | HEAD `0d09ff7` |
+| Independent verify A3.1-A3.5 PASS | w21-07 | `63eadc9` |
+| Full suite | w25-05 | `ed59d71` |
+Heterogeneity limit (AC2) is documented in `docs-md/guide-sentinel.md` "stuck_factor and heterogeneous work"; LLM lane perms in "LLM lane permissions".
+
+**Open items from the w16-04 re-review that are NOT yet addressed (no later commit touches `sentinel_tick.py`/`guide-sentinel.md` for them):**
+- **W1** under default settings `stuck_factor` can never fire (veto window == `idle_kill_minutes`; idle fires first); a runaway task writing output every minute is never duration-killed. Guide text was wrong about this; corrected in `guide-sentinel.md` by this unit. Still open: pin default-spec behaviour with a test; owner question whether a hard `stuck_factor_max` ignoring the veto is wanted.
+- **W2** engine wiring `register_task(..., task=prep.task)` (`engine.py` ~1046) has no test; dropping it passes 289 sentinel tests (mutation 9). Needs one engine-level D2 hint test.
+- **S1** `docs-md/task-isolation-hld.md` T4 rows (~668, ~2436) do not mention continue-on-failure; `test_e2e_isolation_sibling_failure.py` closing dependent assert is conditional on `loser == "task_b"`.
+- **S2** `docs-md/sentinel-hld.md:172` still describes the old stuck rule. **S4** (optional) no `compileall` gate in pre-commit/CI.
+- Live `claude` smoke test of the D4 flag set; `fail_fast` owner decision; CTL-SCHEMA followups 3/4 (owner).
+
+**Remaining A3.6 gap - full-suite green:** w25-05 on HEAD a009de1: **2 failed, 12258 passed, 32 skipped**. Both failures (`tests/bench/test_{dev_core,dev_medium}_suite.py::test_fake_subject_full_suite_run_...`) are pre-existing/environmental (grader `uv run pytest` cannot spawn `pytest`; identical on clean origin/main 991391b). So the suite is NOT strictly green; fix needs a benchmarks/suites grader change (`uv run --with pytest pytest ...`) that awaits approval. Not run again by this unit.

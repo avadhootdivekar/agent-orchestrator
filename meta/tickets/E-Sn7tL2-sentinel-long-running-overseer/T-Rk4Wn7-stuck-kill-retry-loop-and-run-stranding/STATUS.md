@@ -2,7 +2,7 @@
 
 - ID: `T-Rk4Wn7-stuck-kill-retry-loop-and-run-stranding`
 - Updated At: `2026-11-11`
-- State: `Done` (open owner question: `defaults.fail_fast` opt-out; not a blocker)
+- State: `Done` (code); open follow-ups W1/W2/S1/S2, `defaults.fail_fast` owner question, live D4 smoke, A3.6 full-suite (2 env bench failures) - see TASK.md "A3.6 bookkeeping"
 - Owner: `TODO`
 
 ## This update
@@ -18,7 +18,7 @@
 - See TASK.md "Evidence (where to look)".
 
 ## Risks / Blockers
-- None. Open owner question (not a blocker): `defaults.fail_fast` opt-out for D3 (recommendation: keep continue-on-failure). Live engine is a non-editable `uv tool` snapshot; fixes need the human install step.
+- No blockers. Known gap (re-review w16-04 W1): under default settings `stuck_factor` never fires (idle trigger wins); W2 engine hint wiring untested. Open owner question (not a blocker): `defaults.fail_fast` opt-out for D3 (recommendation: keep continue-on-failure). Live engine is a non-editable `uv tool` snapshot; fixes need the human install step.
 
 ## Next actions
 1. Owner: decide `defaults.fail_fast` (TASK.md "A3 close-out").
@@ -26,3 +26,5 @@
 3. Optional: stop counting CTL-SCHEMA note rejections toward auto-pause (followups 3/4).
 
 - By: tester · Role: tester · Date: 2026-11-11 · Comment: w25-05 full-suite run on HEAD a009de1 (`.venv/bin/python -m pytest -q -p no:cacheprovider`, no perf deselection; real_llm/docker/network/swebench/browser/slow stay opt-in skipped): **2 failed, 12258 passed, 32 skipped in 1099s**. Both failures = `tests/bench/test_{dev_core,dev_medium}_suite.py::test_fake_subject_full_suite_run_produces_valid_run_json_and_summary`: grader `uv run pytest -q --tb=no` in the fixture dir exits 2 with "Failed to spawn `pytest`: No such file or directory", so 0/6 solved. **Pre-existing, not branch-caused**: reproduced identically on a clean worktree of origin/main 991391b (2 failed, 54 passed), and with .venv/bin on PATH. Environmental (host has no `pytest` that `uv run` can spawn in the dep-less fixture project). The 12 test_blackbox_grader RemoteDisconnected failures and the auth OpenAPI failure seen by w21-07 did NOT recur (all passed). Recommendation: change the suite grader to `uv run --with pytest pytest -q --tb=no` (production-adjacent benchmarks/suites change, needs approval) or `uv tool install pytest` on the host; neither done here. Not blocking A3.6/A1.5 beyond these 2 bench-harness tests.
+
+- By: developer · Role: developer · Date: 2026-11-11 · Comment: **w28-04 bookkeeping sync.** Added TASK.md "A3.6 bookkeeping" (ledger unit/commit map for D1-D4, CTL-SCHEMA, Opus review w09-03, fixes w12-05/w13-01, re-review w16-04 PASS, L4 w16-05, verify w21-07, full-suite w25-05). Re-review open items W1/W2/S1/S2/S4 were missing from the ticket and are now listed (still unfixed). Corrected the close-out CTL-SCHEMA cause (`ts` not `created_at`, plus unknown fields) and D4 live-smoke caveat. **Remaining A3.6 gap: full suite is 2 failed / 12258 passed (pre-existing bench grader env failures), not strictly green.**
