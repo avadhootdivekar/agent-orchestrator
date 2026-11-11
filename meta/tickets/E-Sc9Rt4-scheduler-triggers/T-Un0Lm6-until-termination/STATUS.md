@@ -2,8 +2,17 @@
 
 - ID: `T-Un0Lm6-until-termination`
 - Updated At: 2026-11-11
-- State: Implemented — reviewed 2026-11-11 (w26-07), NOT Done: M1 restart-under-service open (see REVIEW.md)
+- State: Implemented — review findings M1/W1/W2/m1/m4 fixed 2026-11-11 (w27-01); awaiting re-review for Done (m2, m3 open; see REVIEW.md "Resolution")
 - Owner: developer agent
+
+## Fixes 2026-11-11 (By: developer · Role: developer · unit `w27-01-a1-until-restart-fix`)
+- **M1 fixed:** new `restart_completed` request kind. `ao schedule enable` / dashboard Enable on a `completed` schedule call `schedule_engine.restart_completed_schedule`: if it can take `engine.lock` (no engine) it resets state directly; otherwise it drops `requests/<uuid>.json` and the running engine applies it at the start of its next tick (`drain_restart_requests` -> `apply_restart`: `runs_count=0`, `queued_*` cleared (m4), status `active`). TTL/invalid handling as run-now. The CLI says "restart queued"; the dashboard no longer returns 409 "Retry in a moment". The duplicated locked reset in CLI/UI is folded into the one helper.
+- **W1 fixed:** `until_condition(..., unreadable_seen=)`; the engine keeps last error per schedule, so `schedule.until_unreadable` emits once per distinct error (a clean/absent-gate read forgets it). Without the map (library callers/tests) behaviour is unchanged.
+- **W2 fixed (wording):** `max_runs` counts launched runs (`runs_count`); docstring, TASK.md Risks, governance HLD §D-2 row. No launch-failure quarantine added (separate ticket).
+- **m1 fixed:** `_until_equals` uses `-?[0-9]+` fullmatch; `--5` / `²` stay strings. Guide gets one sentence on typing + restart.
+- Tests (`tests/service/test_until.py`): in-process `engine.start()` + restart request -> next `tick()` applies it and fires (queued key cleared); direct path without engine; no-op for non-completed; expired/invalid discarded; CLI enable with engine lock held queues; W1 dedup (+ unseen-map still emits); m1 params. Old "refuses / 409" tests in `test_cli_e2e.py` / `test_schedules_api.py` rewritten to assert queueing. Mutation-checked: removing the drain call and removing the dedup each fail a test.
+- Evidence: `pytest tests/service tests/schedules tests/ui`: **2224 passed, 2 skipped**; `ruff check .`, `ruff format --check .` clean; `mypy src` clean (233 files).
+- **Still open:** m2 (AC6 text vs HLD — owner/manager call), m3 (gate read via `read_regular_file`), s1 docstring note; independent re-review needed before Done.
 
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
 - Supersedes the w24-07 "awaiting review" line below: review recorded in `REVIEW.md` (`c4e3871`), verdict Not Done.

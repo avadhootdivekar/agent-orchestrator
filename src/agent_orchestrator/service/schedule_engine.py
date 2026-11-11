@@ -89,12 +89,14 @@ MAX_CONSECUTIVE_EVAL_ERRORS = 5
 STATUS_COMPLETED: Final = "completed"
 STATUS_QUARANTINED: Final = "quarantined"
 STATUS_DISABLED: Final = "disabled"
+STATUS_ACTIVE: Final = "active"
 MAX_CATCHUP_STEPS = 10_000
 REQUEST_TTL_SECONDS = 300
 DEFAULT_MAX_CONCURRENT_GLOBAL = 3
 ENGINE_LOCK_FILENAME = "engine.lock"
 REQUESTS_SUBDIR = "requests"
 REQUEST_KIND_RUN_NOW = "run_now"
+REQUEST_KIND_RESTART_COMPLETED: Final = "restart_completed"
 COST_CAP_BREAKER_ID = "builtin.cost_cap"
 # L-n1: a failing retire-hook finalisation is retried with capped exponential backoff, then given
 # up on (one ERROR event); the start sweep picks the record up again on the next restart.
@@ -322,6 +324,9 @@ class ScheduleEngine:
         self._fires = fire_store or FireIntentStore(self._state_dir, clock=clock)
         self._state = state_store or ScheduleStateStore(self._state_dir)
         self._events = event_log or ScheduleEventLog(self._state_dir, clock=clock)
+        # W1: last ``until_unreadable`` error per (workspace, schedule), so a persistently bad gate
+        # emits once per distinct error rather than every evaluation.
+        self._until_errors: dict[tuple[str, str], str] = {}
         self._ledger: UsageLedger = usage_ledger_factory(self._fires)
         self._governance_lock = (
             Path(governance_lock_path)
@@ -529,6 +534,7 @@ class ScheduleEngine:
         # T-nI4DBf: capped-run resume requests + pause-expiry sweep, ahead of the evaluation loop
         # so the sweep never waits behind (and is bounded by) the tick budget.
         self.drain_resume_requests(now)
+        self.drain_restart_requests(now)
         self._sweep_pause_expiry(now)
 
         for req in self.drain_run_now_requests(now):
@@ -759,6 +765,46 @@ class ScheduleEngine:
             )
         return out
 
+    # -- completed-schedule restart (T-Un0Lm6 M1) -----------------------------------------------
+
+    def drain_restart_requests(self, now: datetime | None = None) -> list[str]:
+        """Read and DELETE each ``kind: restart_completed`` request and apply it here, in the
+        engine (the single ``state.json`` writer): reset ``runs_count``, clear ``queued_*`` and
+        set the status back to ``active``. Expired/invalid files are discarded with
+        ``schedule.request_expired``; a request for a schedule that is no longer ``completed`` is
+        a no-op. Returns the restarted schedule ids. Never raises."""
+        now = now if now is not None else self._clock()
+        directory = self._state_dir / SCHEDULES_SUBDIR / REQUESTS_SUBDIR
+        out: list[str] = []
+        if not directory.is_dir():
+            return out
+        for path in sorted(directory.glob("*.json")):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue  # run-now's drain owns unreadable files
+            if not isinstance(raw, dict) or raw.get("kind") != REQUEST_KIND_RESTART_COMPLETED:
+                continue
+            path.unlink(missing_ok=True)  # delete first: at-most-once even if processing crashes
+            requested_at = _parse_dt(raw.get("requested_at"))
+            root, sid = raw.get("workspace_root"), raw.get("schedule_id")
+            if requested_at is None or not isinstance(root, str) or not isinstance(sid, str):
+                self._events.emit("schedule.request_expired", reason="invalid", detail=path.name)
+                continue
+            if now - requested_at > timedelta(seconds=REQUEST_TTL_SECONDS):
+                self._events.emit(
+                    "schedule.request_expired",
+                    workspace=root,
+                    schedule_id=sid,
+                    reason="expired",
+                    detail=f"requested_at={requested_at.isoformat()}",
+                )
+                continue
+            if apply_restart(self._state, root, sid):
+                self._until_errors.pop((str(Path(root).resolve()), sid), None)
+                out.append(sid)
+        return out
+
     # -- capped-run resume (T-nI4DBf, HLD §9.5) -------------------------------------------------
 
     def drain_resume_requests(self, now: datetime | None = None) -> list[ResumeOutcome]:
@@ -939,7 +985,9 @@ class ScheduleEngine:
         # schedule is marked ``completed`` (binding untouched) and neither drains a queued fire
         # nor computes a next one.
         if binding.until is not None:
-            satisfied_by = until_condition(root, binding, st, self._events)
+            satisfied_by = until_condition(
+                root, binding, st, self._events, unreadable_seen=self._until_errors
+            )
             if satisfied_by is not None:
                 self._state.set_status(root, sid, STATUS_COMPLETED, reason=f"until:{satisfied_by}")
                 self._events.emit(
@@ -1794,17 +1842,22 @@ def until_condition(
     binding: ResolvedBinding,
     state: ScheduleState,
     events: EventSink | None = None,
+    unreadable_seen: dict[tuple[str, str], str] | None = None,
 ) -> str | None:
     """Which ``until`` condition (if any) is satisfied now; ``None`` = keep going.
 
     Order is normative (HLD §6.8): ``max_runs`` FIRST so termination is guaranteed whatever the
     other conditions do, then ``artifact_exists``, then the gate-file triple. ``max_runs``
-    counts *fires*, not successes: a schedule whose runs all fail still stops at the cap.
+    counts *launched runs* (``runs_count``, bumped when a launch succeeds, whatever the run's
+    outcome): a schedule whose runs all fail still stops at the cap. Burned/skipped instants and
+    failed launches do not count.
 
     Bad reads NEVER terminate -- deliberately the opposite of the engine's intra-run
     ``LoopSpec``, where an unreadable gate *fails the run* (the run is broken). Here an
     unreadable gate means only that the next fire proceeds: a transient write or a crashed run
-    must not silently end a multi-day schedule. Such reads emit ``schedule.until_unreadable``.
+    must not silently end a multi-day schedule. Such reads emit ``schedule.until_unreadable``,
+    de-duplicated when *unreadable_seen* is given: only a change of error (per schedule) emits,
+    and a clean read forgets the last error.
     All paths resolve through ``LocalFsArtifactStore`` (workspace-root guard, also at read time).
     """
     until = binding.until
@@ -1813,6 +1866,7 @@ def until_condition(
     if until.max_runs is not None and state.runs_count >= until.max_runs:
         return UNTIL_MAX_RUNS
     store = LocalFsArtifactStore(str(workspace_root))
+    seen_key = (str(Path(workspace_root).resolve()), binding.id)
     if until.artifact_exists is not None and store.exists(until.artifact_exists):
         return UNTIL_ARTIFACT_EXISTS
     if until.gate_file is None:
@@ -1820,10 +1874,15 @@ def until_condition(
     try:
         path = Path(store.resolve(until.gate_file))
         if not path.is_file():
+            if unreadable_seen is not None:
+                unreadable_seen.pop(seen_key, None)
             return None  # absent gate: not done yet (not an error)
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, ArtifactPathError) as exc:  # ValueError: JSON + UnicodeDecode
-        if events is not None:
+        repeated = unreadable_seen is not None and unreadable_seen.get(seen_key) == str(exc)
+        if unreadable_seen is not None:
+            unreadable_seen[seen_key] = str(exc)
+        if events is not None and not repeated:
             events.emit(
                 "schedule.until_unreadable",
                 logging.WARNING,
@@ -1832,9 +1891,55 @@ def until_condition(
                 error=str(exc),
             )
         return None
+    if unreadable_seen is not None:
+        unreadable_seen.pop(seen_key, None)
     if isinstance(data, dict) and _gate_matches(data.get(until.gate_field), until.gate_equals):
         return UNTIL_GATE
     return None
+
+
+def apply_restart(store: ScheduleStateStore, root: str | Path, schedule_id: str) -> bool:
+    """Restart a ``completed`` schedule in *store*: ``runs_count`` -> 0, ``queued_*`` cleared (a
+    stale queue from before completion must not drain after the restart), status ``active``.
+    Returns False (no change) when the schedule is not ``completed``. The caller must be the
+    state's single writer: the engine, or a process holding ``engine.lock``."""
+    st = store.get(root, schedule_id)
+    if st is None or st.status != STATUS_COMPLETED:
+        return False
+    st.runs_count = 0
+    store.clear_queued(root, schedule_id)
+    store.set_status(root, schedule_id, STATUS_ACTIVE)
+    return True
+
+
+def restart_completed_schedule(
+    state_dir: Path, root: str | Path, schedule_id: str, now: datetime
+) -> bool:
+    """Restart a ``completed`` schedule from outside the engine. Returns True when applied
+    directly (no engine running: we took ``engine.lock`` and wrote state ourselves) and False
+    when a live engine holds the lock and the restart was queued as a ``restart_completed``
+    request, applied at the start of the engine's next tick (single-writer rule, F9)."""
+    path = _lock_path(state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            body = {
+                "kind": REQUEST_KIND_RESTART_COMPLETED,
+                "workspace_root": str(Path(root).resolve()),
+                "schedule_id": schedule_id,
+                "requested_at": now.astimezone(UTC).isoformat(),
+            }
+            req_dir = path.parent / REQUESTS_SUBDIR
+            req_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes(req_dir / f"{uuid.uuid4().hex}.json", json.dumps(body).encode())
+            return False
+        try:
+            apply_restart(ScheduleStateStore(state_dir), root, schedule_id)
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    return True
 
 
 def until_satisfied(
@@ -1872,4 +1977,6 @@ __all__ = [
     "ScheduledLauncher",
     "TriggerSource",
     "probe_engine_lock",
+    "restart_completed_schedule",
+    "apply_restart",
 ]

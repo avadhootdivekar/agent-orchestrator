@@ -12,7 +12,6 @@ adapter that maps HTTP verbs onto these methods, which means:
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -71,9 +70,9 @@ from ..service.fire_store import (
 )
 from ..service.paths import default_state_dir
 from ..service.schedule_engine import (
-    ENGINE_LOCK_FILENAME,
     REQUEST_KIND_RUN_NOW,
     REQUESTS_SUBDIR,
+    restart_completed_schedule,
 )
 from ..service.statefile import atomic_write_bytes
 from ..service.usage_ledger import UsageLedger
@@ -1413,7 +1412,11 @@ class DashboardService:
         if enabled:
             st = ScheduleStateStore(sdir).get(self.workspace_root, schedule_id)
             if st is not None and st.status == SCHEDULE_STATUS_COMPLETED:
-                self._restart_completed(sdir, schedule_id)
+                # Applied directly when no engine runs, else queued for the engine's next tick:
+                # the dashboard lives in the engine's own process, which holds engine.lock.
+                restart_completed_schedule(
+                    sdir, self.workspace_root, schedule_id, self._clock_now()
+                )
                 restarted = True
 
         def apply(current: ScheduleFile) -> ScheduleFile:
@@ -1435,28 +1438,6 @@ class DashboardService:
             detail=f"requested_by={SCHEDULE_REQUESTED_BY}" + (" restarted" if restarted else ""),
         )
         return {"schedule_id": schedule_id, "enabled": enabled, "restarted": restarted}
-
-    def _restart_completed(self, sdir: Path, schedule_id: str) -> None:
-        """Reset a completed schedule's state. ``state.json`` is single-writer (the engine caches
-        it), so only touch it while holding ``engine.lock`` -- the CLI's rule (F9)."""
-        lock_path = sdir / SCHEDULES_SUBDIR / ENGINE_LOCK_FILENAME
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+") as handle:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as exc:
-                raise ScheduleAlreadyActive(
-                    "a daemon is evaluating; cannot reset a completed schedule's state safely. "
-                    "Retry in a moment."
-                ) from exc
-            try:
-                fresh = ScheduleStateStore(sdir)
-                current = fresh.get(self.workspace_root, schedule_id)
-                if current is not None:
-                    current.runs_count = 0
-                fresh.set_status(self.workspace_root, schedule_id, "active")
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def request_schedule_fire(self, schedule_id: str, force: bool = False) -> dict:
         """Drop a run-now request file for the daemon (HLD §6.9). NEVER launches anything."""

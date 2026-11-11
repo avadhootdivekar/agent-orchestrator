@@ -147,3 +147,7 @@ usable under the always-on service (M1). Remaining before Done:
 1. M1 — engine-routed restart (or an owner decision to accept + document the "stop the service" limitation).
 2. W1, W2 wording, m1 — small fixes, can land with M1.
 3. m2 — reconcile AC6 text with the HLD (owner/manager).
+
+## Resolution 2026-11-11 (By: developer · unit `w27-01-a1-until-restart-fix`)
+- M1 fixed (engine-applied `restart_completed` request; direct locked write only when no engine runs; test uses in-process `engine.start()`). W1 fixed (dedup per schedule on error change). W2 wording fixed. m1 fixed. m4 fixed as part of M1 (`queued_*` cleared on restart).
+- Open: m2 (owner/manager), m3, s1. Not re-reviewed independently — the Done call stays with the reviewer.

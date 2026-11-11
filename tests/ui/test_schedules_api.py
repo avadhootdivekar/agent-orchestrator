@@ -221,7 +221,7 @@ def test_enable_completed_schedule_resets_runs_count(
     assert after is not None and after.runs_count == 0 and after.status == "active"
 
 
-def test_enable_completed_while_daemon_holds_lock_is_409(
+def test_enable_completed_while_daemon_holds_lock_queues_restart(
     svc: DashboardService,
     client: TestClient,
     state_dir: Path,
@@ -236,7 +236,9 @@ def test_enable_completed_while_daemon_holds_lock_is_409(
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         r = client.post(f"{URL}/a/enable", headers=ORIGIN)
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-    assert r.status_code == 409
+    assert r.status_code == 200 and r.json()["restarted"] is True
+    (req,) = list((state_dir / "schedules" / "requests").glob("*.json"))
+    assert json.loads(req.read_text())["kind"] == "restart_completed"
 
 
 @pytest.mark.parametrize("verb", ["enable", "disable", "run-now"])

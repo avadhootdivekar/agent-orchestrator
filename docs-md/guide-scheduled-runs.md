@@ -101,7 +101,7 @@ Work down this list; every step leaves evidence.
 1. **Is an engine running?** `ao schedule list` prints a warning when no daemon holds the engine lock. Run `ao service run` / install the unit.
 2. **Is the workspace opted in?** `ao service list` — `schedules` must be on (default off), and the daemon not started with `--no-schedules`.
 3. **Does the file load?** `ao schedule validate` (`schedule.file_invalid` in the events log otherwise).
-4. **Is it enabled and active?** `ao schedule list` STATUS: `disabled`, `completed` (an `until` fired), `quarantined` (5 eval errors).
+4. **Is it enabled and active?** `ao schedule list` STATUS: `disabled`, `completed` (an `until` fired; `ao schedule enable ID` or the dashboard Enable restarts it -- with a running engine the restart is queued and applied on its next tick, `runs_count` reset), `quarantined` (5 eval errors). `--until-equals` types `true`/`false`/`-?digits` as bool/int; any other text is a string (a string that looks like a bool/int can only be set in the YAML).
 5. **When is it due?** `ao schedule next` (cron/interval; event kinds appear only while a pending event is observed). Cron uses the binding's timezone; DST fall-back can fire an hour twice (use `timezone: UTC`).
 6. **What did the engine decide?** `ao schedule history [ID]` (or the dashboard row): `schedule.skipped_overlap`, `schedule.skipped_concurrency`,
    `schedule.missed`, `schedule.governance.skipped` (budget/quota/pause), `schedule.fire_failed`, `schedule.until_satisfied`.

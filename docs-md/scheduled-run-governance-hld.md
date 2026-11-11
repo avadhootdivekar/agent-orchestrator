@@ -909,7 +909,7 @@ FUNCTION read_prompt(d) -> PromptSnapshot | Skip:
 | Concurrency caps | Not burned (transient); governance before it, so a quota-exhausted fire is never retried. | §8.1. |
 | Run-now / `--force` | Gated identically; `force` bypasses **overlap only**, never governance (consistent with ADR-0014 D10 "never the concurrency caps, never `until`"). | No governance bypass exists in MVP. |
 | Orphaned fire | Counts 1 run, $0 if no run dir, else observed. | §10.2. |
-| `until` | Independent; `until.max_runs` counts lifetime fires, quotas count per window; both apply. | Not a D-2 limit (§21). |
+| `until` | Independent; `until.max_runs` counts lifetime launched runs, quotas count per window; both apply. | Not a D-2 limit (§21). |
 | DST fall-back double fire | Contained by a day quota (§7). | Test pinned. |
 | Paused run vs overlap | A paused run's `state.status` is `failed` ⇒ not active ⇒ the next natural fire proceeds (fresh run). A *resumed* run is active again. | Matches E-Sc9Rt4's derived "active" rule (status == running). |
 

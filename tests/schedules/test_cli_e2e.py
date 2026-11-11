@@ -368,7 +368,7 @@ def test_enable_resets_completed_schedule(env: Env) -> None:
     store.set_status(env.ws, "nightly", "completed")
     assert "completed" in env.run("list").output
     with env.engine_lock():
-        assert "daemon is evaluating" in env.run("enable", "nightly", ok=False).output
+        assert "restart queued" in env.run("enable", "nightly").output  # was: refused (M1)
     env.run("enable", "nightly")
     fresh = ScheduleStateStore(env.state).get(env.ws, "nightly")
     assert fresh is not None and fresh.status == "active" and fresh.runs_count == 0
@@ -616,14 +616,14 @@ def test_run_now_local_launch_failure_exits_1(env: Env, monkeypatch: pytest.Monk
     assert res.exit_code == 1 and "ERROR" in res.output and "no slots" in res.output
 
 
-def test_enable_refusal_says_stop_the_daemon(env: Env) -> None:
+def test_enable_while_engine_runs_queues_restart_instead_of_refusing(env: Env) -> None:
     env.add()
     store = ScheduleStateStore(env.state)
     store.advance_anchor(env.ws, "nightly", T0)
     store.set_status(env.ws, "nightly", "completed")
     with env.engine_lock():
-        out = env.run("enable", "nightly", ok=False).output
-    assert "Stop the daemon" in out and "retry" not in out
+        out = env.run("enable", "nightly").output  # exit 0: no more "stop the daemon"
+    assert "restart queued" in out and "Stop the daemon" not in out
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,7 @@ from agent_orchestrator.schedules.models import ScheduleBinding, UntilSpec
 from agent_orchestrator.service.fire_store import ScheduleState, ScheduleStateStore
 from agent_orchestrator.service.schedule_engine import (
     DEFAULT_UNTIL_MAX_RUNS,
+    restart_completed_schedule,
     until_condition,
     until_satisfied,
 )
@@ -324,9 +325,22 @@ def test_add_explicit_options_round_trip(cenv: CliEnv) -> None:
     }  # fmt: skip
 
 
-@pytest.mark.parametrize("raw,typed", [("true", True), ("False", False), ("3", 3), ("x", "x")])
+@pytest.mark.parametrize(
+    "raw,typed",
+    [
+        ("true", True),
+        ("False", False),
+        ("3", 3),
+        ("x", "x"),
+        ("-5", -5),
+        ("--5", "--5"),
+        ("²", "²"),
+    ],
+)
 def test_until_equals_typing(cenv: CliEnv, raw: str, typed: object) -> None:
-    cenv.add("loop", "--until-gate", "g.json", "--until-equals", raw)
+    # ``=`` form: argparse-style click would read a bare ``--5`` as an unknown option
+    cenv.run("add", "loop", "--interval", "60", "--workflow", "w.json", "--quota", "day=100",
+             "--until-gate", "g.json", f"--until-equals={raw}")  # fmt: skip
     assert _until_row(cenv)["until"]["gate_equals"] == typed
 
 
@@ -486,3 +500,134 @@ def test_loopspec_bad_gate_still_fails_the_run_while_until_gate_never_does(
     # ... while the until side keeps going on the same kind of bad read:
     gate(tmp_path, "{nope", "g.json")  # w21-05 review: actually malformed, not merely missing
     assert until_satisfied(tmp_path, ub(gate_file="g.json"), ScheduleState()) is False
+
+
+# -- M1: restart of a completed schedule while the engine runs (w27-01) -------------------------
+
+
+def _completed_env(tmp_path: Path) -> Any:
+    env = env_for(tmp_path, [_engine_binding(max_runs=1)])
+    env.anchor()
+    st = env.engine.state_store
+    st.record_fire(env.root, "s", scheduled_for=T0, run_id="r0", fire_at=T0, fire_key="k0")
+    env.end_run("r0")
+    st.set_queued(env.root, "s", "stale-queued-key", T0)
+    assert env.evaluate(now=T0 + timedelta(hours=1)).reason == "until_satisfied"
+    return env
+
+
+def _requests(env: Any) -> list[Path]:
+    return sorted((env.tmp / "state" / "schedules" / "requests").glob("*.json"))
+
+
+def test_restart_while_engine_runs_is_queued_and_applied_next_tick(tmp_path: Path) -> None:
+    env = _completed_env(tmp_path)
+    env.engine.start()  # in-process: holds engine.lock like the service's engine does
+    try:
+        applied_directly = restart_completed_schedule(
+            env.tmp / "state", env.root, "s", T0 + timedelta(hours=1)
+        )
+        assert applied_directly is False
+        st = env.engine.state_store.get(env.root, "s")
+        assert st is not None and st.status == "completed"  # nothing touched out-of-process
+        assert len(_requests(env)) == 1
+
+        env.clock.now = T0 + timedelta(hours=1, seconds=1)
+        env.mono.t += 100  # past the eval-interval rate limit
+        fired = env.engine.tick()
+        assert _requests(env) == []  # drained (at-most-once)
+        # restarted at the start of the tick and, the loop being due again, fired in that tick:
+        # runs_count is 1 (reset to 0, then this launch), not the pre-completion 1 + 1
+        assert [d.schedule_id for d in fired] == ["s"]
+        st = env.engine.state_store.get(env.root, "s")
+        assert st is not None and st.status == "active" and st.runs_count == 1
+        assert st.disabled_reason is None
+        assert st.queued_fire_key is None and st.queued_scheduled_for is None  # m4
+    finally:
+        env.engine.shutdown()
+
+
+def test_restart_without_engine_applies_directly(tmp_path: Path) -> None:
+    env = _completed_env(tmp_path)
+    assert restart_completed_schedule(env.tmp / "state", env.root, "s", T0) is True
+    st = ScheduleStateStore(env.tmp / "state").get(env.root, "s")
+    assert st is not None and st.status == "active" and st.runs_count == 0
+    assert st.queued_fire_key is None
+    assert _requests(env) == []
+
+
+def test_restart_request_for_non_completed_schedule_is_a_noop(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [_engine_binding(max_runs=5)])
+    env.engine.state_store.record_fire(
+        env.root, "s", scheduled_for=T0, run_id="r0", fire_at=T0, fire_key="k0"
+    )
+    env.engine.start()
+    try:
+        restart_completed_schedule(env.tmp / "state", env.root, "s", T0)
+        assert env.engine.drain_restart_requests(T0) == []
+        st = env.engine.state_store.get(env.root, "s")
+        assert st is not None and st.runs_count == 1  # not reset
+    finally:
+        env.engine.shutdown()
+
+
+def test_stale_and_invalid_restart_requests_are_discarded(tmp_path: Path) -> None:
+    env = _completed_env(tmp_path)
+    env.engine.start()
+    try:
+        restart_completed_schedule(env.tmp / "state", env.root, "s", T0 - timedelta(hours=1))
+        (env.tmp / "state" / "schedules" / "requests" / "bad.json").write_text(
+            json.dumps({"kind": "restart_completed", "schedule_id": "s"})
+        )
+        assert env.engine.drain_restart_requests(T0 + timedelta(hours=1)) == []
+        assert _requests(env) == []
+        reasons = {e.get("reason") for e in env.events("schedule.request_expired")}
+        assert reasons == {"expired", "invalid"}
+        st = env.engine.state_store.get(env.root, "s")
+        assert st is not None and st.status == "completed"
+    finally:
+        env.engine.shutdown()
+
+
+def test_cli_enable_with_engine_running_queues_restart(cenv: CliEnv) -> None:
+    cenv.add("loop", "--max-runs", "1")
+    store = ScheduleStateStore(cenv.state)
+    store.record_fire(cenv.ws, "loop", scheduled_for=E2E_T0, run_id="r", fire_at=E2E_T0)
+    store.set_status(cenv.ws, "loop", "completed")
+    with cenv.engine_lock():
+        out = cenv.run("enable", "loop").output
+    assert "restart queued" in out
+    (req,) = list((cenv.state / "schedules" / "requests").glob("*.json"))
+    assert json.loads(req.read_text())["kind"] == "restart_completed"
+    st = ScheduleStateStore(cenv.state).get(cenv.ws, "loop")
+    assert st is not None and st.status == "completed"  # the engine applies it, not the CLI
+    assert cenv.data()["schedules"][0]["enabled"] is True
+
+
+# -- W1: until_unreadable is emitted once per distinct error -------------------------------------
+
+
+def test_unreadable_gate_event_is_deduplicated(tmp_path: Path) -> None:
+    env = env_for(tmp_path, [_engine_binding(gate_file="gate.json")])
+    gate_path = Path(env.root, "gate.json")
+    gate_path.write_text("{nope")
+    env.anchor()
+    for i in range(1, 6):
+        env.evaluate(now=T0 + timedelta(seconds=i))
+    assert len(env.events("schedule.until_unreadable")) == 1
+    gate_path.write_text("[1, 2")  # a different error re-emits
+    env.evaluate(now=T0 + timedelta(seconds=10))
+    assert len(env.events("schedule.until_unreadable")) == 2
+    gate_path.write_text('{"done": false}')  # clean read forgets the error
+    env.evaluate(now=T0 + timedelta(seconds=11))
+    gate_path.write_text("[1, 2")
+    env.evaluate(now=T0 + timedelta(seconds=12))
+    assert len(env.events("schedule.until_unreadable")) == 3
+
+
+def test_until_condition_without_seen_map_still_emits_every_time(tmp_path: Path) -> None:
+    gate(tmp_path, "{nope")
+    ev = Events()
+    for _ in range(3):
+        until_condition(tmp_path, ub(gate_file="gate.json"), ScheduleState(), ev)
+    assert ev.names().count("schedule.until_unreadable") == 3

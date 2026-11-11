@@ -23,18 +23,17 @@ never reach a real ``$HOME``.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
+import re
 import signal
 import threading
 import uuid
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
-from typing import IO, Annotated, Any, Final
+from typing import Annotated, Any, Final
 from zoneinfo import ZoneInfo
 
 import typer
@@ -58,7 +57,6 @@ from ..service.registry import (
 )
 from ..service.schedule_engine import (
     DEFAULT_UNTIL_MAX_RUNS,
-    ENGINE_LOCK_FILENAME,
     MAX_CATCHUP_STEPS,
     PURE_KINDS,
     REQUEST_KIND_RUN_NOW,
@@ -68,6 +66,7 @@ from ..service.schedule_engine import (
     RunNowRequest,
     ScheduleEngine,
     probe_engine_lock,
+    restart_completed_schedule,
 )
 from ..service.statefile import atomic_write_bytes
 from .errors import ScheduleFileError
@@ -218,27 +217,6 @@ def _inert_reason(registry: ServiceRegistryFile, root: Path) -> str | None:
             f"enable them with `ao service set {root} --schedules`"
         )
     return None
-
-
-@contextmanager
-def _hold_engine_lock(state_dir: Path) -> Iterator[bool]:
-    """Try to take ``engine.lock`` non-blocking for the duration of the block. Yields whether it
-    was acquired; releases on exit. Same file/``flock`` the engine uses (F9)."""
-    path = state_dir / SCHEDULES_SUBDIR / ENGINE_LOCK_FILENAME
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle: IO[str] = open(path, "a+")  # noqa: SIM115 - released in the finally below
-    held = False
-    try:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            held = True
-        except OSError:
-            held = False
-        yield held
-    finally:
-        if held:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
 
 
 class _SingleWorkspaceRegistry(ServiceRegistry):
@@ -903,13 +881,16 @@ def _write_prompt(root: Path, schedule_id: str, text: str, force: bool) -> str:
     return str(rel)
 
 
+_INT_LITERAL: Final = re.compile(r"-?[0-9]+")
+
+
 def _until_equals(raw: str) -> bool | int | str:
     """``--until-equals`` text -> gate value (``true``/``false`` -> bool, digits -> int)."""
     lowered = raw.strip().lower()
     if lowered in ("true", "false"):
         return lowered == "true"
     stripped = raw.strip()
-    if stripped.lstrip("-").isdigit():
+    if _INT_LITERAL.fullmatch(stripped):  # not isdigit(): '²' passes it but int() rejects it
         return int(stripped)
     return raw
 
@@ -1574,20 +1555,11 @@ def enable_cmd(
     state = ScheduleStateStore(sdir)
     st = state.get(root, schedule_id)
     restart = st is not None and st.status == STATUS_COMPLETED
+    queued = False
     if restart:
-        # state.json is single-writer (the engine caches it): only touch it while holding the
-        # engine lock, otherwise the daemon's next save would silently undo the reset.
-        with _hold_engine_lock(sdir) as held:
-            if not held:
-                raise _fail(
-                    "a daemon is evaluating; cannot reset a completed schedule's state safely. "
-                    "Stop the daemon and run `enable` again."
-                )
-            fresh = ScheduleStateStore(sdir)
-            current = fresh.get(root, schedule_id)
-            if current is not None:
-                current.runs_count = 0
-            fresh.set_status(root, schedule_id, STATUS_ACTIVE)
+        # state.json is single-writer (the engine caches it): with no engine running we reset it
+        # directly under ``engine.lock``; with one running the restart is queued for its next tick.
+        queued = not restart_completed_schedule(sdir, root, schedule_id, now_utc())
     _set_enabled(root, schedule_id, True)
     ScheduleEventLog(sdir, clock=now_utc).emit(
         EVENT_ENABLED,
@@ -1595,9 +1567,14 @@ def enable_cmd(
         schedule_id=schedule_id,
         detail=f"requested_by={requested_by}" + (" restarted" if restart else ""),
     )
-    typer.echo(
-        f"Enabled schedule {schedule_id!r}" + (" (restarted: runs_count reset)" if restart else "")
-    )
+    suffix = ""
+    if restart:
+        suffix = (
+            " (restart queued: the running engine resets runs_count on its next tick)"
+            if queued
+            else " (restarted: runs_count reset)"
+        )
+    typer.echo(f"Enabled schedule {schedule_id!r}" + suffix)
 
 
 @app.command(name="disable")

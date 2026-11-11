@@ -98,8 +98,9 @@ Do NOT touch: `engine.py`, `models.py` (`LoopSpec` is not changed by this task),
   nothing). AC12 exists to catch it.
 - This task edits a file `T-Ev3Qm5` owns. Keep the diff to the helper plus its one call site and
   confirm with `git diff` at handoff.
-- `max_runs` counts **fires**, not successes. A schedule whose runs all fail still terminates at
-  `max_runs` — correct (it bounds spend) but worth documenting, since a user may expect
+- `max_runs` counts **launched runs** (`runs_count`, bumped on a successful launch; the run's
+  outcome is irrelevant), not successes and not burned/skipped instants. A schedule whose runs all
+  fail still terminates at `max_runs` — correct (it bounds spend) but worth documenting, since a user may expect
   "100 successful runs".
 
 ## Dependencies
