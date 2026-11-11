@@ -2,7 +2,7 @@
 
 - ID: `T-Rk4Wn7-stuck-kill-retry-loop-and-run-stranding`
 - Updated At: `2026-11-11`
-- State: `Done` (code); open follow-ups W1/W2/S1/S2, `defaults.fail_fast` owner question, live D4 smoke, A3.6 full-suite (2 env bench failures) - see TASK.md "A3.6 bookkeeping"
+- State: `Done` (code); open follow-ups W1/W2/S1/S2, `defaults.fail_fast` owner question, live D4 smoke, A3.6 full-suite now GREEN (w39-01, see last entry) - see TASK.md "A3.6 bookkeeping"
 - Owner: `TODO`
 
 ## This update
@@ -41,3 +41,6 @@
   Total 74 passed, 0 failed. Not run: full suite (another wave owns it). Live D4 smoke still unverified.
 
 - 2026-11-11 — By: reviewer (Opus, unit `w35-04-all-final-branch-review`) · Role: reviewer · Date: 2026-11-11 · Comment: final whole-branch review (charter cycle 4) recorded in [`E-Sc9Rt4-scheduler-triggers/REVIEW-final-branch.md`](../../E-Sc9Rt4-scheduler-triggers/REVIEW-final-branch.md): D1/D2/D3/D4/CTL-SCHEMA verified implemented with discriminating tests; no blocker. Follow-ups: M-6 default veto window makes stuck-duration kill unreachable, M-7 incidental denial pauses LLM lane, L-8 spurious cost_cap trip after failure, L-9 wrapped-claude warning, L-10 engine-tier D1 test; D3 fail_fast owner decision and real-claude D4 check still open; overseer-runner-hld.md:688 contradicts D3.
+
+- By: tester · Role: tester · Date: 2026-11-11 · Comment: **w39-03 A3.6 gate record (verify, docs only).** Branch ad/enhancements-10nov, HEAD e8abe04. Evidence from w39-01 (clean-tip gate): `uv run pytest -q` **12363 passed, 32 skipped, 0 failed**; `ruff check` + `ruff format --check` clean (780 files); `mypy src` clean (233 files); UI tsc clean, vitest 923 passed. This supersedes the earlier "2 failed" full-suite runs (w25-05/w30-04): the 2 bench-grader env failures are gone because w34-02 (commit `98be694`) added a hermetic uv shim in tests/bench/conftest.py; w39-01 also ran the dev-core/dev-medium suites on a clean `git archive` of 84e71a8 (56 passed). Caveat: w39-01's full run overlapped the then-uncommitted w34-02 edits, so the clean-archive run covers the without-edits case. Code review: w09-03 Opus findings fixed (w12-05/w13-01) and re-reviewed PASS by w16-04 (14-mutant matrix, no Critical); W1/W2 closed by w29-02 tests; w35-04 final branch review found no blocker. **A3.6 test/lint/type criteria: MET.**
+  **Not marked fully closed - remaining (all non-blocking, none are test failures):** (1) OWNER: `defaults.fail_fast` opt-out for D3 (recommendation keep); (2) OWNER: `stuck_factor_max` / whether default veto window should be effective (w35-04 M-6, `stuck_factor` unreachable under defaults); (3) S1 docs-md/task-isolation-hld.md T4 rows lack continue-on-failure note (verified still absent), and L4 test's closing assert is conditional; (4) S2 docs-md/sentinel-hld.md:172 still states the old stuck rule (verified); (5) S4 no compileall gate in CI; (6) w35-04 M-7/L-8/L-9/L-10 and docs-md/overseer-runner-hld.md:688 contradicts D3 (halt wording, verified still present); (7) HUMAN: live `claude` D4 smoke after `install.sh` promotion. State line left as `Done` (code) with these follow-ups.
