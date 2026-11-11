@@ -35,7 +35,19 @@
 | p1a `*.netblocked` | plain Sonnet 5.5 | 1 | $8 | $0.00 | infra: DeepSWE agent phase is `no-network` and Harbor allowlists no inference host for an OAuth login -> ECONNRESET x10 (fixed 480f8fe: `--allow-agent-host api.anthropic.com`) |
 | p1a `*.nocommit` | plain Sonnet 5.5 | 1 | $8 | $2.43 | infra: sqlfmt fixed in 14.6 min but left uncommitted (shared wrapper says no git); DeepSWE grades `git diff base HEAD` -> 0-byte patch, f2p 0/32. Excluded. Fixed f78ae44 (harness commits the worktree after the agent, both arms) |
 
-DeepSWE budget ($100): $2.43 spent so far.
+| p1a-deepswe-cc-sonnet | plain Sonnet 5.5 | 2 | $8 | $3.88 | sqlfmt reward 0 (f2p 30/32, p2p 1271/1273, $2.03, 14 min); koota reward 0 (f2p 37/38, p2p 172/172, $1.85, 10 min). Both genuine narrow fails |
+| p1b-deepswe-ao-sonnet | ao + Sonnet 5.5 (wheel 5626232) | 2 | $8 | $10.79 | sqlfmt reward 0 (same 30/32 + same 2 p2p, $5.84, 30 min; ao run FAILED at ck-03: max_waves=3 forced closeout vs OV-R14 verify rule, T-Mw4Clo); koota reward 1 (38/38, 172/172, $4.95, 20 min, run succeeded) |
+
+DeepSWE budget ($100): $17.10 spent through 1b. 1c launched with a hard limit of $60
+(`benchmarks/harbor/budgeted.py`, 20 tasks, `sets/deepswe-v1.1-calib-1c.txt`, seed 20261111, 2 lanes).
+
+Phase 1b verification findings (ao arm on DeepSWE):
+- Comparison path works end to end (reward, cost, ao run state, no token in job files, secrets deleted).
+- Parity (`harbor-parity`): ao sessions had WebSearch/WebFetch that the plain arm lacks on offline tasks ->
+  fixed 17def35 (ao agents get the plain arm's `disallowed_tools`); ao's run summarizer (Haiku, no repo) is
+  engine bookkeeping and is now excluded from the parity profile. Network was blocked for both arms anyway.
+- The harbor subject's `max_waves=3` hits the T-Mw4Clo trap (5th occurrence). Open: fix in ao or raise
+  `max_waves` for the harbor subject before Phase 2 (owner decision).
 
 ## Evidence
 - Oracle: `/var/tmp/ao-harbor/jobs/oracle-pilot-tb21`, `oracle-pilot-deepswe` (5/5 PASS).
