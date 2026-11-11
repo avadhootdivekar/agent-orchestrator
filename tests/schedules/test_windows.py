@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from datetime import UTC, date, datetime, timedelta
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -281,6 +282,69 @@ def test_containment_and_adjacency(tz: ZoneInfo, period: str, week_start: str) -
             nxt = window_for(w.end, period, tz, week_start)  # type: ignore[arg-type]
             assert nxt.key != w.key and nxt.start == w.end
             assert window_for(w.start, period, tz, week_start).key == w.key  # type: ignore[arg-type]
+
+
+# ---- seeded randomised property test (E-Qp4Zm8 Q-11) -----------------------------------------
+
+_PROP_SEED = 20261111
+_PROP_CASES = 400
+_PROP_ZONES = (
+    "UTC", "Europe/Berlin", "America/New_York", "America/Havana", "America/Santiago",
+    "Asia/Beirut", "Australia/Lord_Howe", "Asia/Kolkata", "Pacific/Auckland",
+    "America/Sao_Paulo", "Africa/Cairo", "Pacific/Chatham", "Asia/Tehran",
+)  # fmt: skip
+_PROP_PERIODS = ("day", "week", "month")
+
+
+@pytest.mark.parametrize("period", _PROP_PERIODS)
+def test_random_zone_instant_window_invariants(period: str) -> None:
+    """Seeded, bounded: any (zone, instant 2012-2035, week_start) yields a window that contains
+    the instant, tiles with its neighbours, has a label-consistent key, and a sane length.
+    Replay a failure with the printed seed/case index."""
+    rng = random.Random(f"{_PROP_SEED}:{period}")
+    lo = int(u(2012, 1, 1).timestamp())
+    hi = int(u(2035, 12, 31).timestamp())
+    for case in range(_PROP_CASES):
+        tz = ZoneInfo(rng.choice(_PROP_ZONES))
+        week_start = rng.choice(("monday", "sunday"))
+        t = datetime.fromtimestamp(rng.randint(lo, hi), tz=UTC)
+        ctx = (
+            f"seed={_PROP_SEED}:{period} case={case} tz={tz.key} t={t.isoformat()} ws={week_start}"
+        )
+        w = window_for(t, period, tz, week_start)  # type: ignore[arg-type]
+        assert w.start <= t < w.end, ctx
+        nxt = window_for(w.end, period, tz, week_start)  # type: ignore[arg-type]
+        assert nxt.start == w.end and nxt.key != w.key, ctx  # adjacent windows tile
+        prev = window_for(w.start - timedelta(microseconds=1), period, tz, week_start)  # type: ignore[arg-type]
+        assert prev.end == w.start and prev.key != w.key, ctx
+        # any instant inside the window maps back to the same window (idempotent)
+        mid = w.start + (w.end - w.start) / 2
+        assert window_for(mid, period, tz, week_start) == w, ctx  # type: ignore[arg-type]
+        # key names the local date of the window start (label authority)
+        local_start = w.start.astimezone(tz).date()
+        if period == "day":
+            assert w.key == f"day:{t.astimezone(tz).date().isoformat()}", ctx
+        elif period == "month":
+            assert w.key == f"month:{local_start.isoformat()[:7]}", ctx
+        else:
+            first = 0 if week_start == "monday" else 6
+            assert local_start.weekday() == first, ctx
+            assert w.key == f"week:{local_start.isoformat()}", ctx
+        # DST-safe length: within [22h, 25h+] per day; weeks/months bounded by calendar dates
+        span_h = hours(w)
+        bound = {
+            "day": (22, 26),
+            "week": (6 * 24 - 2, 8 * 24 + 2),
+            "month": (27 * 24 - 2, 32 * 24 + 2),
+        }
+        assert bound[period][0] <= span_h <= bound[period][1], f"{ctx} span_h={span_h}"
+
+
+def test_random_property_is_reproducible() -> None:
+    """Same seed -> same draws, so a failing case index replays exactly."""
+    a = random.Random(f"{_PROP_SEED}:day")
+    b = random.Random(f"{_PROP_SEED}:day")
+    assert [a.randint(0, 10**9) for _ in range(5)] == [b.randint(0, 10**9) for _ in range(5)]
 
 
 # ---- label wins over bounds (historical tzdata) --------------------------------------------

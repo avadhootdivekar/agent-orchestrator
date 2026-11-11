@@ -202,3 +202,24 @@ def test_usage_api_never_writes_fire_records(
     (w,) = client.get(f"{URL}/a/usage").json()["windows"]
     assert w["actual_usd"] == pytest.approx(1.5)  # observed cost is reported...
     assert (path.read_bytes(), path.stat().st_mtime_ns) == before  # ...never persisted
+
+
+def test_usage_row_keys_match_ui_type_ssot(client: TestClient) -> None:
+    """Drift guard for the mocked-fetch UI test (``ui/src/test/schedule-usage.test.tsx``): the
+    real endpoint's per-window field names must equal ``ScheduleUsageWindow`` in ``ui/src/types.ts``
+    (the UI fixture is typed ``ScheduleUsageDoc``, so tsc ties the mock to the same interface)."""
+    import re
+
+    types_ts = Path(__file__).resolve().parents[2] / "ui" / "src" / "types.ts"
+    if not types_ts.is_file():
+        pytest.skip("ui/src/types.ts not present (installed wheel / sparse checkout)")
+    text = types_ts.read_text()
+    m = re.search(r"export interface ScheduleUsageWindow \{(.*?)\n\}", text, re.S)
+    assert m, "ScheduleUsageWindow interface not found in ui/src/types.ts"
+    ts_fields = set(re.findall(r"^\s+(\w+)\??:", m.group(1), re.M))
+    doc = client.get(f"{URL}/a/usage").json()
+    (w,) = doc["windows"]
+    assert set(w) == ts_fields
+    m2 = re.search(r"export interface ScheduleUsageDoc \{(.*?)\n\}", text, re.S)
+    assert m2
+    assert set(doc) == set(re.findall(r"^\s+(\w+)\??:", m2.group(1), re.M))
