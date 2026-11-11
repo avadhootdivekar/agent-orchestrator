@@ -82,6 +82,23 @@ def test_warning_for_act_agent_without_permission_flags() -> None:
     assert not sd.lane_permission_warnings("act", ok, "a")
 
 
+@pytest.mark.parametrize(
+    "tpl",
+    [
+        ["env", "FOO=1", "claude", "-p", "{prompt}"],
+        ["npx", "-y", "@anthropic-ai/claude-code", "-p", "{prompt}"],
+        ["/usr/local/bin/claude", "-p", "{prompt}"],
+    ],
+)
+def test_warning_for_wrapped_claude(tpl: list[str]) -> None:
+    bare = AgentSpec(executor="claude_cli", command_template=tpl)
+    assert sd.lane_permission_warnings("act", bare, "a")
+    ok = AgentSpec(executor="claude_cli", command_template=[*tpl, "--dangerously-skip-permissions"])
+    assert not sd.lane_permission_warnings("act", ok, "a")
+    other = AgentSpec(executor="claude_cli", command_template=["env", "FOO=1", "other", "-p"])
+    assert not sd.lane_permission_warnings("act", other, "a")
+
+
 def test_detect_permission_denial() -> None:
     ev = {"type": "result", "permission_denials": [{"tool_name": "Write"}, {"tool_name": "Bash"}]}
     assert "2 tool call(s) denied: Bash, Write" == sd.detect_permission_denial(

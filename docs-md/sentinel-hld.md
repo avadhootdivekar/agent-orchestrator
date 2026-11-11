@@ -169,7 +169,7 @@ Per task, `state.tasks[tid].recovery{kills, last_reason, escalation_step}`.
 
 ```
 running ──trigger──▶ KILL ──▶ killed
- triggers: idle ≥ idle_kill_minutes │ running ≥ stuck_factor×median(same-kind settled; ≥3 samples; floor stuck_min_minutes)
+ triggers: idle ≥ idle_kill_minutes │ running ≥ stuck_min_minutes AND > stuck_factor×baseline (baseline = task expected_minutes, else median of settled same-agent+stuck_cohort peers, ≥3 samples); skipped if no_stuck_kill or recent activity within stuck_veto_minutes (stuck_activity_veto)
            │ cost ≥ cost_kill_pct×task cap │ manual/LLM kill
 killed ─▶ kills < max_recovery_kills_per_task ?
             yes ─▶ step 0: retry same (+ retry-context note "killed: <reason>")

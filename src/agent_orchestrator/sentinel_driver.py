@@ -69,6 +69,15 @@ def lane_permission_args(gen_dir: str, inbox_dir: str) -> list[str]:
     return out
 
 
+def _invokes_claude(argv: list[str]) -> bool:
+    """True when *argv* runs ``claude`` directly or wrapped (``env``/``npx``/path-qualified)."""
+    for tok in argv:
+        base = os.path.basename(tok)
+        if base in ("claude", "claude-code") or tok.startswith("@anthropic-ai/claude-code"):
+            return True
+    return False
+
+
 def lane_permission_warnings(
     powers: str, agent: AgentSpec | None, agent_name: str | None = None
 ) -> list[str]:
@@ -80,7 +89,7 @@ def lane_permission_warnings(
     if powers != "act" or agent is None:
         return []
     argv = list(agent.command_template) + list(agent.extra_args)
-    if not argv or os.path.basename(argv[0]) != "claude" or has_permission_flags(argv):
+    if not _invokes_claude(argv) or has_permission_flags(argv):
         return []
     return [
         f"sentinel.llm.agent {agent_name or '<agent>'!r} has no permission flag "
