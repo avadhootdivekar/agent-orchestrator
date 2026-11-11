@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 import string
-from datetime import UTC, datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, TypeVar
 from zoneinfo import available_timezones
@@ -54,10 +53,9 @@ MAX_TEMPLATE_LEN: Final = 64
 MAX_INSTANCE_ID_LEN: Final = 64
 # MAX_INTERVAL_SECONDS (one year, S3) lives in ``..models`` next to the root ``Trigger`` (N1).
 # croniter also accepts a 6th (seconds) and 7th (year) field; only the classic 5 are allowed (W4).
+# Five fields have minute granularity, so a valid cron can never fire more often than
+# MIN_INTERVAL_SECONDS (60 s): no separate min-gap check is needed (FU-10).
 CRON_FIELD_COUNT: Final = 5
-# Consecutive fires sampled from a fixed anchor to find the smallest cron gap (W4).
-CRON_GAP_SAMPLES: Final = 8
-_CRON_GAP_ANCHOR: Final = datetime(2024, 1, 1, tzinfo=UTC)  # fixed -> deterministic
 
 # Bounds for numeric run_args taken from an untrusted file (HLD §13.3: bounded work and spend).
 # name -> (ge, le); ``None`` = unbounded on that side. Options not listed stay unbounded.
@@ -164,15 +162,6 @@ def _check_cron(expr: str) -> str | None:
             f"cron {expr!r} has more than {CRON_FIELD_COUNT} fields (seconds/year fields are "
             "not allowed)"
         )
-    it = croniter(expr, _CRON_GAP_ANCHOR)
-    prev = it.get_next(float)
-    gaps = []
-    for _ in range(CRON_GAP_SAMPLES):
-        nxt = it.get_next(float)
-        gaps.append(nxt - prev)
-        prev = nxt
-    if min(gaps) < MIN_INTERVAL_SECONDS:
-        return f"cron {expr!r} fires more often than every {MIN_INTERVAL_SECONDS}s"
     return None
 
 

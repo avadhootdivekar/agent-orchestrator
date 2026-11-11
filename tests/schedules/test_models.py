@@ -398,13 +398,30 @@ class TestReviewFixes:
     def test_cron_seconds_and_year_fields_rejected(self, expr: str) -> None:
         reject(cron(schedule=expr), "'nightly'", "schedule", "fields")
 
-    def test_cron_gap_check_is_deterministic(self) -> None:
+    @pytest.mark.parametrize(
+        "expr",
+        ["* * * * *", "*/1 * * * *", "0-59 * * * *", "* * * * 1-5", "0,1 * * * *", "0 2 * * *"],
+    )
+    def test_five_field_cron_never_fires_faster_than_min_interval(self, expr: str) -> None:
+        # FU-10: the former min-gap sampling branch was dead -- 5 fields have minute granularity,
+        # so every accepted cron fires at most once per MIN_INTERVAL_SECONDS.
+        from datetime import UTC, datetime
+
+        from croniter import croniter
+
         from agent_orchestrator.schedules import models as m
 
-        load(cron(schedule="* * * * *"))  # exactly 60s gap: allowed
-        load(cron(schedule="0 2 * * *"))
-        assert m._check_cron("* * * * *") is None
-        assert m._check_cron("* * * * * *") is not None  # per-second via 6th field
+        load(cron(schedule=expr))
+        assert m._check_cron(expr) is None
+        it = croniter(expr, datetime(2024, 1, 1, tzinfo=UTC))
+        fires = [it.get_next(float) for _ in range(20)]
+        assert min(b - a for a, b in zip(fires, fires[1:], strict=False)) >= MIN_INTERVAL_SECONDS
+
+    def test_cron_seconds_field_rejected_by_field_count(self) -> None:
+        from agent_orchestrator.schedules import models as m
+
+        msg = m._check_cron("* * * * * *")
+        assert msg is not None and "fields" in msg
 
     def test_length_limits(self) -> None:
         reject(

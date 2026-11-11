@@ -99,3 +99,11 @@ By: tester unit `w24-03-a1-tq-followups-rest` · Date: 2026-11-11. Test-only cha
 | FU-11 | **Partly done** | Done: the jitter `off > 0` 1-in-3601 flake (`_jitter_env` nudges the period until the tmp_path-dependent offset is non-zero); the cross-process jitter test now runs under two `PYTHONHASHSEED` values. **Deferred (still open):** `jump_at_call = calls + 3` call counting; the store test's `fork` context (deliberate: the worker is module-level and flock is fork-agnostic, but `spawn` is untested); the wall-clock `perf_counter` bound and vacuous `tick_budget_exceeded == []`; the 255-socket `ulimit -n` assumption; the misnamed tests and overclaiming docstrings. Not touched here because their files are edited by other units or the fix is cosmetic. |
 
 Verification (this session, shared tree with other units' uncommitted edits): `pytest tests/service/test_schedule_engine.py tests/service/test_schedule_engine_fu8.py tests/service/test_webhook_listener.py` 89 passed; `ruff check` and `ruff format --check` clean on those 3 files.
+
+## w25-02 addendum (FU-10 closed)
+
+By: developer unit `w25-02-a1-dead-cron-gap-branch` · Date: 2026-11-11.
+
+| ID | Status | What was done |
+|---|---|---|
+| FU-10 | **Done** | Removed the dead `min(gaps) < MIN_INTERVAL_SECONDS` sampling branch (plus `CRON_GAP_SAMPLES`, `_CRON_GAP_ANCHOR`, unused `datetime` import) from `schedules/models.py::_check_cron`; a comment records why (5-field cron has minute granularity; 6/7-field rejected earlier by `CRON_FIELD_COUNT`). `test_cron_gap_check_is_deterministic` replaced by `test_five_field_cron_never_fires_faster_than_min_interval` (asserts min gap >= 60 s for accepted crons) and `test_cron_seconds_field_rejected_by_field_count`. |
