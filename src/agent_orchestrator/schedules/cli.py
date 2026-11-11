@@ -288,6 +288,10 @@ def _build_engine(
         def launch(self, decision: FireDecision) -> Any:
             return self.target.launch(decision)
 
+        def launch_capped_resume(self, rec: Any, new_cap_usd: float) -> Any:
+            # B-1 (w21-03): without this the engine's resume drain sees no launcher capability.
+            return self.target.launch_capped_resume(rec, new_cap_usd)
+
     def clock() -> datetime:
         return _now()
 
@@ -482,6 +486,45 @@ def _would_skip(
     return text, {"reason": result.reason, **result.detail}
 
 
+def _readonly_digest_store(state_dir: Path) -> Any:
+    """A ``WatchDigestStore`` whose ``save`` is a no-op: a preview must not seed the baseline."""
+    from ..service.watch import Digest, WatchDigestStore
+
+    class _ReadOnly(WatchDigestStore):
+        def save(self, workspace_slug: str, schedule_id: str, digest: Digest) -> None:
+            return None
+
+    return _ReadOnly(state_dir)
+
+
+def _observe_event_kind(
+    root: Path, b: ResolvedBinding, st: ScheduleState, now: datetime, sdir: Path
+) -> datetime | None:
+    """The instant of the pending event ``TriggerSource.observe`` reports for *b*, else ``None``.
+
+    Read-only: ``observe`` never consumes (no ``commit`` here) and the file-watch digest store is
+    wrapped so its baseline seeding is dropped. A source error reads as "nothing pending"."""
+    from ..service.watch import FileWatchSource
+    from ..service.webhook import WebhookSource
+
+    try:
+        source: Any
+        if b.kind == "webhook":
+            source = WebhookSource(sdir, str(root), b)
+        elif b.kind == "file_watch" and b.watch is not None:
+            source = FileWatchSource(str(root), b.watch, _readonly_digest_store(sdir))
+        else:
+            return None
+        candidate = source.observe(b, st, now)
+    except Exception:  # noqa: BLE001 - a preview must never fail on a broken source
+        return None
+    return candidate.scheduled_for if candidate is not None else None
+
+
+def _pending_note(fire: tuple[datetime, str, str], pending: set[tuple[datetime, str, str]]) -> str:
+    return "pending event" if fire in pending else ""
+
+
 @app.command(name="next")
 def next_cmd(
     count: Annotated[
@@ -494,7 +537,8 @@ def next_cmd(
     as_json: JsonOpt = False,
     state_dir: StateDirOpt = None,
 ) -> None:
-    """Upcoming fires, soonest first (cron/interval only; event kinds have no predicted time)."""
+    """Upcoming fires, soonest first. Event kinds (file_watch/webhook) have no predicted time; one
+    shows up only when its source already observes a pending event (marked ``pending event``)."""
     now = _now()
     state = ScheduleStateStore(_state_dir(state_dir))
     scheds: dict[str, Scheduler] = {
@@ -504,14 +548,25 @@ def next_cmd(
     fires: list[tuple[datetime, str, str]] = []
     resolved: dict[tuple[str, str], ResolvedBinding] = {}
     skipped_event_kinds: list[str] = []
+    pending_events: set[tuple[datetime, str, str]] = set()
+    sdir = _state_dir(state_dir)
     for root in _selected_roots(workspace, all_workspaces):
         for b in _load_file(root).bindings:
             if not b.enabled:
                 continue
             if b.kind not in PURE_KINDS:
-                # F6: event kinds are observe-only and never committed here; with no source
-                # constructed nothing can be consumed, so they are simply listed as unpredicted.
-                skipped_event_kinds.append(f"{b.id} ({b.kind})")
+                # F6: event kinds are observe-only and never committed here, so the preview
+                # shows a pending event but can never consume it.
+                st = state.get(root, b.id) or ScheduleState()
+                if st.status in (STATUS_COMPLETED, STATUS_QUARANTINED):
+                    continue
+                seen = _observe_event_kind(root, b, st, now, sdir)
+                if seen is None:
+                    skipped_event_kinds.append(f"{b.id} ({b.kind})")
+                else:
+                    resolved[(str(root), b.id)] = b
+                    fires.append((seen, str(root), b.id))
+                    pending_events.add((seen, str(root), b.id))
                 continue
             st = state.get(root, b.id) or ScheduleState()
             if st.status in (STATUS_COMPLETED, STATUS_QUARANTINED):
@@ -527,22 +582,41 @@ def next_cmd(
     if as_json:
         _emit_json(
             [
-                {"at": _iso(t), "workspace": w, "id": i, **({"would_skip": n[1]} if n else {})}
-                for (t, w, i), n in zip(fires, notes, strict=True)
+                {
+                    "at": _iso(t),
+                    "workspace": w,
+                    "id": i,
+                    **(
+                        {"pending_event": True, "kind": resolved[(w, i)].kind}
+                        if f in pending_events
+                        else {}
+                    ),
+                    **({"would_skip": n[1]} if n else {}),
+                }
+                for f, n in zip(fires, notes, strict=True)
+                for t, w, i in [f]
             ]
         )
         return
     if skipped_event_kinds:
         typer.echo(
-            "NOTE: no predicted time for event-driven schedules: " + ", ".join(skipped_event_kinds),
+            "NOTE: no predicted time for event-driven schedules (no pending event): "
+            + ", ".join(skipped_event_kinds),
             err=True,
         )
     if not fires:
         typer.echo("No upcoming fires.")
         return
-    if any(notes):
+    if any(notes) or pending_events:
         rows = [
-            [_fmt(t), i, w, n[0] if n else ""] for (t, w, i), n in zip(fires, notes, strict=True)
+            [
+                _fmt(t),
+                i,
+                w,
+                "; ".join(x for x in (_pending_note(f, pending_events), n[0] if n else "") if x),
+            ]
+            for f, n in zip(fires, notes, strict=True)
+            for t, w, i in [f]
         ]
         typer.echo(_table(["NEXT FIRE", "ID", "WORKSPACE", "NOTE"], rows))
         return

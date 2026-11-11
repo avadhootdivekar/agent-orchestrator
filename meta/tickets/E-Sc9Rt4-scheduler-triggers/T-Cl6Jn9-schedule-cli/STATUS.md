@@ -16,7 +16,7 @@ By: developer · Role: developer · Date: 2026-11-11
 ## Acceptance criteria
 Done: 1 (see deviation), 2, 3 (cron/interval), 4, 5, 6 (cron/interval + common flags), 7, 8, 9, 10, 11, 12, 13, 14, 15, 15a (daemon + run-now lock cases, `next` read-only), 16, 17, 18.
 Unfinished (depend on unlanded/other tasks):
-- AC15a "`next` never mutates a file-watch digest" and AC3's `TriggerSource.observe` branch: event kinds are listed as "no predicted time" and no source is constructed; wire `observe` when `T-Fw8Gp4`/`T-Wh9Kv1` register their sources (they must also add `--watch` / `--webhook` / `--until-*` flags to `add`).
+- ~~AC15a/AC3 `observe` branch~~ DONE 2026-11-11 (unit `w22-04-a1-schedule-next-observe`): `ao schedule next` builds `WebhookSource` / `FileWatchSource` (digest store wrapped read-only so baseline seeding is dropped; no `commit`) and lists a pending event at its observed instant (`pending event` note; `pending_event`+`kind` in `--json`); no pending event -> the unpredicted NOTE. Tests `tests/schedules/test_next_observe.py` (3, fixed clock T0: no-pending, webhook not consumed, file-watch writes nothing).
 - AC19 coverage target met (see Evidence).
 Deviations: AC1 reads `<state_dir>/schedules/state.json` always (the hub snapshot is derived from the same store, and F9 says liveness comes from the lock, so no hub probe); `enable` of a `completed` schedule needs the engine lock to reset state.json (single-writer cache) and refuses with a clear message while a daemon holds it.
 
@@ -54,5 +54,5 @@ By: developer · Role: developer · Date: 2026-11-11
 - `ao schedule add --watch GLOB` (repeatable) + `--watch-on` (repeatable, created|modified), `--debounce`, `--poll-seconds`, `--max-files` now write a `kind: file_watch` binding (T-Fw8Gp4's flag set, landed here because the engine source `FileWatchSource` is already wired). Errors: `--watch` with `--cron/--interval` or `--webhook`; tuning flags without `--watch`; bad `--watch-on` value; escaping globs/non-positive numbers are refused by `WatchSpec`/option `min=` (nothing written).
 - `--from-workflow`: already shipped (AC8/AC17 tests exist: `test_from_workflow_*`); no design gap. It derives cron/interval only, as the spec has no file_watch/webhook trigger type.
 - Tests (`tests/schedules/test_cli_e2e.py`, CliRunner on root app, fixed clock): binding shape, defaults + list, 5 conflict cases (nothing written), tuning-flags-need-watch, escaping glob/bad numbers, `daemon --once` e2e (baseline 0 -> change 1 -> 0, one fire record).
-- Still open: AC3/AC15a `next` calling `observe` (event kinds still "no predicted time"); `--webhook` flags exist already.
+- AC3/AC15a `next` calling `observe`: done (w22-04); `--webhook` flags exist already.
 - Evidence: `tests/schedules/test_cli_e2e.py` 58 passed; `schedules/cli.py` coverage 73% from that file alone (the earlier 90% figure was over the wider schedules suite); `mypy src` 0 errors; ruff clean on own paths. `tests/schedules + tests/service` has 3-4 failures in other units' untracked files (`test_security_*se4bk5*`, `test_cost_cap_cli_e2e.py`), none in watch/cli code.

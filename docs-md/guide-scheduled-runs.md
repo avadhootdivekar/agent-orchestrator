@@ -35,7 +35,7 @@ webhook`; see HLD §5.1). Other triggers: `--interval SECONDS` (minimum `MIN_INT
 [--debounce S] [--poll-seconds S] [--max-files N] --workflow ... --quota day=10` writes a `kind: file_watch` binding
 (globs are workspace-relative; `--watch` replaces `--cron/--interval`, cannot combine with `--webhook`; the tuning flags
 need `--watch`). The first daemon scan only seeds the baseline, so files that already exist never fire. `ao schedule
-next` shows event kinds with no predicted time. `--from-workflow PATH` derives bindings from a spec's cron/interval
+next` has no predicted time for event kinds, but lists one (marked `pending event`, `"pending_event": true` in `--json`) when its source already observes a pending change; the preview is read-only and consumes nothing. `--from-workflow PATH` derives bindings from a spec's cron/interval
 triggers (file-watch/webhook are not spec trigger types, so they are added with `--watch`/`--webhook`).
 
 No daemon handy (dev/test)? `ao schedule daemon --workspace . [--once]` runs the same engine in the foreground and
@@ -102,7 +102,7 @@ Work down this list; every step leaves evidence.
 2. **Is the workspace opted in?** `ao service list` — `schedules` must be on (default off), and the daemon not started with `--no-schedules`.
 3. **Does the file load?** `ao schedule validate` (`schedule.file_invalid` in the events log otherwise).
 4. **Is it enabled and active?** `ao schedule list` STATUS: `disabled`, `completed` (an `until` fired), `quarantined` (5 eval errors).
-5. **When is it due?** `ao schedule next` (cron/interval; event kinds have no predicted time). Cron uses the binding's timezone; DST fall-back can fire an hour twice (use `timezone: UTC`).
+5. **When is it due?** `ao schedule next` (cron/interval; event kinds appear only while a pending event is observed). Cron uses the binding's timezone; DST fall-back can fire an hour twice (use `timezone: UTC`).
 6. **What did the engine decide?** `ao schedule history [ID]` (or the dashboard row): `schedule.skipped_overlap`, `schedule.skipped_concurrency`,
    `schedule.missed`, `schedule.governance.skipped` (budget/quota/pause), `schedule.fire_failed`, `schedule.until_satisfied`.
    Raw log: `~/.local/state/ao/service/schedules/events.jsonl` (rolls over at `EVENT_LOG_MAX_BYTES` = 8 MiB).
