@@ -6,8 +6,8 @@
 - Type: BUG (found in a live overseer-runner run, 2026-11-10)
 - Owner: `TODO`
 - Created: `2026-11-10`
-- Last Updated: `2026-11-10`
-- Status: `Draft`
+- Last Updated: `2026-11-11`
+- Status: `Done` (D1-D4 + CTL-SCHEMA landed; one open OWNER question, `defaults.fail_fast` opt-out, not a blocker; see STATUS.md)
 - Estimate: `< 3 days`
 
 ## Requirements Mapping
