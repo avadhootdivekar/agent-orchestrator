@@ -1,6 +1,6 @@
 # ADR-0025 — Scheduled-run governance: mandatory per-job limits, calendar-window quotas, a derived usage ledger, and a sticky re-armed mid-run cost cap that pauses by default
 
-- Status: **Proposed — partially implemented (2026-11-11)**. D1, D2, D3, D4, D7 and the engine half of D5 are committed on `ad/enhancements-10nov`; D6 (pause/resume) and the CLI half of D5 are unfinished or uncommitted, so this ADR is **not yet Accepted**. See "Implementation outcome". Builds on ADR-0014 (now mostly shipped, also not closed).
+- Status: **Proposed — implemented except the items in the HLD §26.4 list (2026-11-11)**. D1–D7 are committed on `ad/enhancements-10nov`; the security gate `T-lTW88y` re-run passed on `5f51452` but stays Partial, so this ADR is **not yet Accepted**. See "Implementation outcome". Builds on ADR-0014 (now mostly shipped, also not closed).
 - Date: 2026-11-10
 - Deciders: Avadhoot Divekar (owner — D-1..D-5 locked before design), Claude (architect role)
 - Related: **ADR-0014** (scheduler; at-most-once fires, drop-directory launch authority) · **ADR-RC-004** in
@@ -209,9 +209,8 @@ Source of truth for details: `scheduled-run-governance-hld.md` §26 (as built, d
 | D2 calendar windows by local-date label | **Landed** (`schedules/windows.py`, `T-lJu9oZ`); Santiago/Beirut/DST fixtures. |
 | D3 derived usage ledger | **Landed** (`service/usage_ledger.py`, `T-Uz0Uol`). Deviation: lazy per-workspace index; `schedule.governance.cost_unknown` only emitted when an event sink is injected (not wired in production yet). |
 | D4 one pre-fire gate, governance skips burn the key | **Landed** (`service/governance_gate.py`, `T-PpE5lf`) with review corrections: blind/killed runs charged `max(observed, reserved)`; idempotent re-driven finalisation. |
-| D5 sticky `--cost-cap-usd`, non-latching `builtin.cost_cap` | **Engine landed** (`RunState.cost_cap_usd`, dispatch + boundary gate, boundary trip only with remaining work). **CLI flag wiring is not committed**; `COST_CAP_OPTION` is not yet in `run_options.OPTIONS` (`T-et7Edf`, partial). Overshoot ≈ in-flight work stays as documented; a run that finishes everything while over its cap is `succeeded`. The `cost_cap_source` field from the design review was rejected (cannot cross the allow-listed argv). |
-| D6 `on_cap: pause | abort`, default `pause` | **Model landed** (`LimitsSpec`, `pause_ttl_seconds`). The pause/resume/expiry machinery (`service/capped_resume.py`) exists in the working tree but is **uncommitted and unreviewed** (`T-nI4DBf`). |
-| D7 fixed prompts by path, hashed, optionally pinned | **Landed** in the gate (`prompt_sha256`, `MAX_PROMPT_BYTES`); the `ao schedule pin-prompt` CLI is uncommitted. |
+| D5 sticky `--cost-cap-usd`, non-latching `builtin.cost_cap` | **Landed**: engine (`RunState.cost_cap_usd`, dispatch + boundary gate, boundary trip only with remaining work) and CLI (`ao run/resume --cost-cap-usd`, `COST_CAP_OPTION` in `run_options.OPTIONS`, commit `3e2870b`; hardened `4b9d6a3`). Overshoot ≈ in-flight work stays as documented; a run that finishes everything while over its cap is `succeeded`. The `cost_cap_source` field from the design review was rejected (cannot cross the allow-listed argv). Open: `T-et7Edf` AC17 (`record_trip` docstring, `ao status` ×N trailer). |
+| D6 `on_cap: pause | abort`, default `pause` | **Landed** (`LimitsSpec`, `service/capped_resume.py`, `ao schedule resume`, expiry sweep; `T-nI4DBf` Done, commit `3e2870b`). Known limitation B-2: a pause is settled on the next due tick (HLD §26.5). |
+| D7 fixed prompts by path, hashed, optionally pinned | **Landed** in the gate (`prompt_sha256`, `MAX_PROMPT_BYTES`) and the CLI (`ao schedule pin-prompt`, `--pin-prompt`; `d0378d7`). |
 
-Alternatives table above is unchanged. Move to **Accepted** only when `T-nI4DBf`, `T-et7Edf` CLI wiring and `T-lTW88y`
-(security/review gate, still to run) are done.
+Alternatives table above is unchanged. Move to **Accepted** only when `T-lTW88y` closes (AC4 NFR-6 baseline delta, re-run after the `T-8knqVe` dashboard work) and the §26.4 items that touch D5/D6 (`T-et7Edf` AC17, B-2 decision) are resolved or explicitly accepted by the owner.
