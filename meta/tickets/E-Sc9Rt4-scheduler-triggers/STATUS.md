@@ -171,3 +171,7 @@ the webhook's middleware mounting.
 ## Update 2026-11-11 — schedule follow-ups (w18-03)
 - `T-Un0Lm6` AC13 test landed (only AC14 coverage report open). `T-Cl6Jn9` W4 fixed (public `ScheduleEngine.fire`), W3 partly fixed (`save` no longer materializes defaults; comment loss remains, needs ruamel), kill-switch flake not reproducible, S4 awaits owner decision.
 - 2026-11-11: `T-Wh9Kv1` re-review fixes landed (N1 scheme pin, N2 header deadline, N3 per-schedule nonces, N4-N6) + `ao schedule add --webhook` flags and daemon `--once` e2e (AC15/AC15b). Persistent nonces handed to `T-Se4Bk5`. See `T-Wh9Kv1-webhook-ingress/STATUS.md`.
+
+## Update 2026-11-11 — test-quality review (w21-05)
+- `T-Se4Bk5` mandatory Opus test-quality review: findings TQ-1..TQ-14 fixed in `b5fe677` (test-only, mutation-checked); open follow-ups FU-1..FU-11, of which 3 are High: no cron/DST engine coverage, a vacuous integration opt-in test needing a monotonic seam, and a nonce-eviction test that doesn't test eviction. See `T-Se4Bk5-security-and-review-gate/TEST-QUALITY.md`. Epic state unchanged.
+  By: reviewer · Role: reviewer · Date: 2026-11-11

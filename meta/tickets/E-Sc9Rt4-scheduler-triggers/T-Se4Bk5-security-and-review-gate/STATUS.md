@@ -66,3 +66,23 @@
 - S-1 blocking: the scheme pin was already committed; probe p1 re-run prints `wrong_scheme` for the downgrade. S-2..S-5 fixed with regression tests, S-6 already gone. Details: SECURITY.md "w21 update".
 - Evidence: `uv run pytest -q tests/service tests/schedules`: 1248 passed + 2 failed before I fixed one of my own w20 tests (it loaded a NUL path through the validator that now rejects it); the other failure is `tests/schedules/test_cost_cap_cli_e2e.py::test_prototype`, an untracked file from another unit's in-progress cost-cap work, not mine. After the fix, the two security test files pass (45).
 - Still NOT done: AC6, AC7, AC8-AC13 (REVIEW.md), AC14 whole-tree gate (tree currently has another unit's uncommitted edits: ruff/mypy/format failures in `schedules/cli.py` and `test_cost_cap_cli_e2e.py`, and `tests/auth` openapi test failing), AC16. S-8 and S-10 re-verify pending.
+
+## w21 test-quality review
+- By: reviewer agent (w21-05-a1-test-quality-review, Opus) · Role: reviewer · Date: 2026-11-11
+- Comment: I ran the mandatory test-quality review of the scheduler-triggers tests (24 files, about 10.8k lines). Full findings with severity and evidence are in [`TEST-QUALITY.md`](TEST-QUALITY.md).
+- **Fixed in `b5fe677`** (test-only, mutation-checked): 6 High, 7 Medium, Low batch (TQ-1..TQ-14). The High ones are tests that could not fail:
+  - webhook raw-bytes and missing-signature tests that were refused before the HMAC ran;
+  - replay-window edges;
+  - the F2 zombie test, which reaped the child itself;
+  - the `.orchestrator` self-trigger guard, whose glob never matched;
+  - the store `mutate` flock.
+- **Open follow-ups**: FU-1..FU-11. The three High ones:
+  - FU-1: the nonce-eviction test doesn't test eviction, and at 12.9 s it is the slowest test;
+  - FU-2: **no cron or non-UTC timezone/DST coverage through the engine**;
+  - FU-3: the integration opt-in test is vacuous because of the real `monotonic`, which needs a src seam in `build_schedule_engine`.
+  - There is also a durability gap (FU-4): the fire store has no directory fsync, and a test pins the wrong fsync count.
+- Evidence:
+  - baseline: 950 passed, 1 xfailed;
+  - committed state in a clean worktree: 959 passed, 1 failed (`test_capped_resume.py::test_only_the_resume_drain_calls_launch_capped_resume`, already failing at HEAD `47afab8` in a file this unit did not touch), 1 xfailed;
+  - ruff clean.
+- Still NOT done for this task: everything listed under the w21 update above (AC6, AC7, AC8-AC13, AC14, AC16), plus FU-1..FU-11.
