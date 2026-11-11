@@ -251,3 +251,9 @@
 - FU-9: `O_NOFOLLOW` swap race is covered by the existing `test_secret_file_symlink_swapped_after_check_not_followed` (an `os.open` seam swaps the file for a symlink between resolve and open; no src change needed). Mutation: `os.O_NOFOLLOW = 0` in-process -> that test fails; restored -> passes.
 - FU-11: `test_concurrent_mutate_loses_nothing` now runs under `fork` and `spawn`; `test_clock_rewind_does_not_double_fire` renamed to `test_same_instant_in_another_timezone_is_not_double_fired`. Other items verified done or waived: see TEST-QUALITY.md.
 - Verification: `pytest tests/schedules tests/service/{test_fire_store,test_security_fixes_se4bk5_w21,test_webhook,test_webhook_listener,test_schedule_engine}.py`: 683 passed; `ruff check src tests/schedules tests/service` clean; `ruff format --check` clean on touched files; `mypy src`: no issues in 234 files.
+
+## Final whole-tree gate (By: tester · unit `w40-04-all-final-gate` · 2026-11-11 · HEAD 629f273, branch ad/enhancements-10nov)
+- `.venv/bin/pytest -q -p no:cacheprovider`: **1 failed, 12382 passed, 32 skipped** (1721 s). The one failure, `tests/auth/test_audit.py::test_four_spawn_processes_write_one_hundred_valid_lines` (85/100 lines, `LockTimeoutError`), is a load-induced flake unrelated to this ticket: it passes alone (`tests/auth/test_audit.py`: 40 passed in 6 s) and `auth/audit.py` is untouched since #18.
+- `ruff check .`: clean. `ruff format --check .`: 785 files formatted. `mypy src`: no issues in 234 files.
+- UI (`ui/`): `tsc -b --noEmit` exit 0; `vitest run`: 73 files, 923 tests passed.
+- No failure attributable to T-Se4Bk5 commits.
