@@ -32,11 +32,14 @@ Accepted limitations (hand-off to ``T-Se4Bk5``)
 * The nonce cache and per-schedule token bucket are **in memory** and reset on restart, so a
   restart reopens a replay window: ``REPLAY_WINDOW_SECONDS`` for ``ao`` senders, *unbounded* for
   ``github`` senders (any previously captured delivery is accepted once more). Persisting them
-  needs an ADR and is the ``T-Se4Bk5`` follow-up; until then a ``github`` binding should only be
+  needs an ADR and is the ``T-Se4Bk5`` follow-up; for ``github`` there is no window at all, so a
+  captured delivery also replays once ``nonce_capacity`` later keys (LRU eviction) have pushed it
+  out, restart or not (L-2); until then a ``github`` binding should only be
   used where a duplicate run is cheap or the schedule has ``overlap``/``until`` guards. Nonce
-  caches are per schedule and sized for the full replay window at the schedule's rate limit
-  (``nonce_capacity``), so other schedules' traffic (or a secret holder of another schedule)
-  cannot evict an entry inside the ``ao`` window (N3).
+  caches are per schedule and sized for the full two-sided replay window
+  (2 x ``REPLAY_WINDOW_SECONDS``) at the schedule's rate limit (``nonce_capacity``), so other
+  schedules' traffic (or a secret holder of another schedule) cannot evict an entry inside the
+  ``ao`` window (N3).
 * An unknown workspace slug answers slightly faster than a known slug with an unknown schedule
   (a timing oracle on guessable slugs), and 503 ``secret_unresolvable`` reveals that the schedule
   exists. Both are accepted; registry/schedule lookups are not cached (every request re-reads
@@ -369,10 +372,12 @@ class NonceCache:
 
 
 def nonce_capacity(rate_per_minute: int) -> int:
-    """Entries that hold every nonce the token bucket can admit inside ``REPLAY_WINDOW_SECONDS``
-    (burst of ``rate`` + ``rate`` per minute for the window), so legitimate traffic on a schedule
-    cannot push a still-replayable entry out of its own cache."""
-    admitted = rate_per_minute * (1 + -(-REPLAY_WINDOW_SECONDS // 60))
+    """Entries that hold every nonce the token bucket can admit while a delivery stays replayable.
+    The timestamp check is two-sided (``abs(now - ts) <= REPLAY_WINDOW_SECONDS``), so a stamp up to
+    a window in the future stays valid for up to ``2 * REPLAY_WINDOW_SECONDS`` after acceptance:
+    burst of ``rate`` + ``rate`` per minute for that span. Legitimate traffic on a schedule then
+    cannot push a still-replayable entry out of its own cache (W-1)."""
+    admitted = rate_per_minute * (1 + -(-2 * REPLAY_WINDOW_SECONDS // 60))
     return max(NONCE_MIN_ENTRIES, admitted * NONCE_KEYS_PER_DELIVERY)
 
 
@@ -459,15 +464,15 @@ def verify_delivery(
     optional_stamp = None
     if scheme == "github":
         optional_stamp = (headers.get(TIMESTAMP_HEADER) or "").strip() or None
-        if optional_stamp is not None and not (
-            optional_stamp.isascii() and optional_stamp.isdigit()
-        ):
-            raise WebhookAuthError("bad_timestamp", 401)
     expected = compute_signature(secret, body, stamp_raw)
     if received is None or not hmac.compare_digest(
         received.strip().encode("utf-8", "replace"), expected.encode("ascii")
     ):
         raise WebhookAuthError("bad_signature", 401)
+    # github's optional stamp is shape-checked only *after* the HMAC, so an unsigned request with a
+    # junk stamp is logged as ``bad_signature`` (operator triage), not ``bad_timestamp`` (L-1).
+    if optional_stamp is not None and not (optional_stamp.isascii() and optional_stamp.isdigit()):
+        raise WebhookAuthError("bad_timestamp", 401)
     window_stamp = stamp_raw if stamp_raw is not None else optional_stamp
     if window_stamp is not None:
         try:

@@ -5,6 +5,11 @@
 - State: Done (accepted limitations) — all ACs met incl. AC1 combined auth test and AC7/AC8 github-scheme replay gate (w26-06, `8d0b4ee`)
 - Owner: developer agent
 
+## Fix 2026-11-11 (w28-01, developer; review W-1/L-1/L-2 closed)
+- W-1 fixed: `nonce_capacity` now sizes for `2 × REPLAY_WINDOW_SECONDS` (two-sided window); regression `test_w1_future_skewed_stamp_nonce_survives_drained_traffic_until_stale` (stamp +299 s, 65 drained deliveries, replay -> 409); mutation-checked (fails against the one-sided formula). HLD §21 D3 updated.
+- L-1 fixed: github `X-AO-Timestamp` shape check moved after the HMAC; `test_l1_github_malformed_stamp_with_bad_signature_reports_bad_signature`. L-2: module docstring notes LRU eviction for github replay.
+- Still open: D-1 (HLD §8.2 / guide describe github stamp) -> T-Dc6Zr2; S-7 persistent nonces (ADR).
+
 ## Review 2026-11-11 (w27-06, reviewer/Opus; docs only) — see `REVIEW.md`
 - Verdict: **Done stands**. All 16 ACs verified in code; 109 webhook tests pass, `webhook.py` coverage 98 %, ruff/format/mypy clean. No Critical findings.
 - **Open should-fix W-1 (Medium):** `nonce_capacity` covers a one-sided 300 s window, but the stamp check is two-sided (`abs`). With the sender's clock ahead by more than ~6 s and traffic at the max rate, a captured `ao` delivery is evicted and replays (reproduced: 202). Fix: size for `2 × REPLAY_WINDOW_SECONDS`, add a regression test, and land it before the T-Se4Bk5 clean-tree gate.

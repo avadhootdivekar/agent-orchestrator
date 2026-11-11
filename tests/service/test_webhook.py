@@ -1009,7 +1009,7 @@ def test_n1_default_scheme_is_ao_and_unknown_scheme_is_a_load_error() -> None:
 
 def test_n3_nonce_caches_are_per_schedule_and_sized_for_the_replay_window(tmp_path: Path) -> None:
     for rate in (1, 10, 600):
-        admitted = rate * (1 + wh.REPLAY_WINDOW_SECONDS // 60)  # burst + one window of refill
+        admitted = rate * (1 + 2 * wh.REPLAY_WINDOW_SECONDS // 60)  # burst + two windows of refill
         assert wh.nonce_capacity(rate) >= admitted * wh.NONCE_KEYS_PER_DELIVERY
     made: list[int] = []
 
@@ -1021,6 +1021,23 @@ def test_n3_nonce_caches_are_per_schedule_and_sized_for_the_replay_window(tmp_pa
     assert h.post(body_for("a")).status_code == 202
     assert h.post(body_for("b")).status_code == 202
     assert made == [10]  # one cache for the schedule, created lazily at its own rate
+
+
+def test_w1_future_skewed_stamp_nonce_survives_drained_traffic_until_stale(tmp_path: Path) -> None:
+    """W-1: a stamp 299 s ahead stays valid ~600 s; its nonce must outlive 65 later deliveries."""
+    h = Harness(tmp_path)  # rate 10/min, real nonce_capacity sizing
+    t0 = h.clock.now
+    first = {"X-AO-Timestamp": str(int(t0.timestamp()) + 299), "X-AO-Delivery": "captured"}
+    assert h.post(headers=first).status_code == 202
+    for p in h.requests():
+        p.unlink()
+    for i in range(65):
+        h.clock.now = t0 + timedelta(seconds=6 * (i + 1))
+        assert h.post(body_for(f"w{i}")).status_code == 202
+        for p in h.requests():
+            p.unlink()
+    h.clock.now = t0 + timedelta(seconds=395)  # stamp is still inside the window
+    assert h.post(headers=first).status_code == 409
 
 
 def test_n3_other_schedule_traffic_cannot_evict_a_replayable_entry(tmp_path: Path) -> None:
@@ -1152,6 +1169,16 @@ def test_github_scheme_stale_or_future_timestamp_is_401(gh: Harness, skew: int) 
 def test_github_scheme_malformed_timestamp_is_401(gh: Harness, stamp: str) -> None:
     assert _gh_stamped(gh, stamp).status_code == 401
     assert gh.requests() == []
+
+
+def test_l1_github_malformed_stamp_with_bad_signature_reports_bad_signature(gh: Harness) -> None:
+    r = gh.post(
+        sig_header="X-Hub-Signature-256",
+        secret="wrong-secret-value",
+        headers={"X-AO-Timestamp": "abc"},
+    )
+    assert r.status_code == 401
+    assert {f.get("reason") for _, f in gh.events} == {"bad_signature"}
 
 
 def test_github_scheme_without_timestamp_still_accepted_then_409_on_replay(gh: Harness) -> None:
