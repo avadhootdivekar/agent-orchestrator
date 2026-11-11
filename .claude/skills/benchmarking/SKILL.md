@@ -89,6 +89,13 @@ reference bot or `BOTS_VERSION`, re-rate: `uv run ao-bench arena-rate --pool dev
 --write` (CPU only, no LLM spend; Othello 8x8 takes a while). Add a game: a module under `bench/games/`, a line in
 `pools.py`, a rules test, then `arena-rate`. Subjects get `--max-turns 80` like other open-ended tasks.
 
+## External benchmarks (Harbor)
+Third-party datasets (Terminal-Bench 2.1, DeepSWE, SWE-Marathon, SWE-bench Pro, ...) run through Harbor, not
+`ao-bench run`: `benchmarks/harbor/README.md` (setup, `run.sh --arm cc|ao`, `summarize.py`). Both arms get the
+same net input (byte-identical task prompt, shared `parity/claude/` + `parity/env`, model pinned inside ao, same
+effort); run `uv run ao-bench harbor-parity <cc-job> <ao-job>` on every pilot before reading scores, and confirm
+budget with the owner before anything beyond a 1-2 task pilot (`T-Hb3Adp`).
+
 ## Adding things
 - **New generated family**: `src/agent_orchestrator/bench/gen/<family>.py` (subclass `Family`, register), a stdlib
   Python reference that reads `INSTANCE_JSON`, probes per the DSL (core/trap/perf), SPEC.md prose that never

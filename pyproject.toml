@@ -60,7 +60,8 @@ python_version = "3.11"
 strict = false
 warn_unused_ignores = true
 # Benchmark suite task fixtures/graders are standalone sandboxes (many share module names like `conftest`/`run`); not product code.
-exclude = ["^benchmarks/suites/"]
+# benchmarks/harbor/ runs in the Harbor CLI's own venv (Python 3.12, `harbor` package), not this one.
+exclude = ["^benchmarks/suites/", "^benchmarks/harbor/"]
 
 [[tool.mypy.overrides]]
 module = ["jsonschema", "jsonschema.*", "croniter", "yaml"]

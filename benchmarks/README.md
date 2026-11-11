@@ -894,6 +894,13 @@ import-swebench` makes scaling N a one-command operation — see [SWE-bench impo
 
 ---
 
+## External benchmarks through Harbor (T-Hb3Adp)
+
+Third-party agentic-coding datasets (Terminal-Bench 2.1, DeepSWE, SWE-Marathon, SWE-bench Pro, ...) run through
+[Harbor](https://harborframework.com), which owns the task containers and verifiers; `ao-bench` contributes the ao
+arm (`ao-bench exec-subject`) and the input-parity tools (`harbor-prompt`, `harbor-parity`). Setup, running,
+the identical-vs-different-by-design table and result reading: [`harbor/README.md`](harbor/README.md).
+
 ## Adding a grader or subject type
 
 Both are registry seams (`SUBJECT_REGISTRY`/`GRADER_REGISTRY` in `bench/registries.py`) — no schema edit needed to

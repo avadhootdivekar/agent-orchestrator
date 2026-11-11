@@ -39,6 +39,7 @@ from . import (
 from .calibrate import calibrate_command
 from .errors import BenchError
 from .gen.cli import gen_command
+from .harbor_exec import exec_subject_command, parity_command, prompt_template_command
 from .pr_mined_import import import_prs_command
 from .sandbox import images_command
 from .spec import load_subject, load_suite
@@ -57,6 +58,9 @@ app.command(name="calibrate")(calibrate_command)
 app.command(name="images")(images_command)
 app.command(name="import-prs")(import_prs_command)
 app.command(name="import-exercism")(exercism.import_exercism_command)  # T-Pf4Mix
+app.command(name="exec-subject")(exec_subject_command)  # T-Hb3Adp (Harbor adapter)
+app.command(name="harbor-prompt")(prompt_template_command)  # T-Hb3Adp (input parity)
+app.command(name="harbor-parity")(parity_command)  # T-Hb3Adp (input parity check)
 
 # Exit codes (design doc §7 / this task's own AC): 0 ok, 1 usage/spec error, 2 a run
 # completed but at least one task's SUBJECT (not grader-verdict) status indicates a

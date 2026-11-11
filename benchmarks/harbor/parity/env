@@ -1,0 +1,7 @@
+# Agent env applied to EVERY arm (run.sh passes each line as `harbor run --ae KEY=VALUE`).
+# Reaches every claude session in the container: the cc arm's one session and each of ao's.
+# No auto memory: ao runs several sessions in one CLAUDE_CONFIG_DIR, so memory written by
+# one session would otherwise feed the next, an input the single-session arm never gets.
+CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
+# No claude.ai connectors (Drive, Docs, ...) via a subscription OAuth token.
+ENABLE_CLAUDEAI_MCP_SERVERS=false

@@ -401,6 +401,8 @@ def _latest_run_dir(runs_root: Path) -> Path:
 # Instance slug passed to `ao new` (the template's id_pattern adds a random prefix); one
 # instance per task workspace, so a fixed slug is unambiguous.
 TEMPLATE_INSTANCE_SLUG = "bench"
+# Default `ao` launcher for ao_workflow subjects: the editable checkout (ASSUMPTION A2).
+_DEFAULT_AO_LAUNCHER: tuple[str, ...] = ("uv", "run", "ao")
 TEMPLATE_REPO_SET_PARAM = "repo_set"
 # `init_git`: the local bare remote lives in the workspace, OUTSIDE repo/ (never graded).
 GIT_ORIGIN_DIRNAME = "_origin.git"
@@ -495,7 +497,11 @@ class AoWorkflowSubject(Subject):
                     f"ao_workflow subject {self.spec.id!r} missing required field(s): {missing}"
                 ),
             )
-        if shutil.which("uv") is None:
+        # `ao` launcher: `uv run ao` from the checkout under test (default), or the prefix
+        # `ctx.ao_launcher` gives (`ao-bench exec-subject`, where `ao` is an installed tool).
+        launcher = list(ctx.ao_launcher) if ctx.ao_launcher else list(_DEFAULT_AO_LAUNCHER)
+        launcher_cwd = Path(ctx.workspace) if ctx.ao_launcher else REPO_ROOT
+        if not ctx.ao_launcher and shutil.which("uv") is None:
             return SubjectResult(
                 status="error",
                 wall_clock_seconds=0.0,
@@ -559,7 +565,7 @@ class AoWorkflowSubject(Subject):
                 if template_dir.is_dir()
                 else cast(str, self.spec.template)
             )
-            argv = ["uv", "run", "ao", "new", template_ref, TEMPLATE_INSTANCE_SLUG]
+            argv = [*launcher, "new", template_ref, TEMPLATE_INSTANCE_SLUG]
             argv += ["--workspace", ctx.workspace]
             if repo_set:
                 argv += ["--param", f"{TEMPLATE_REPO_SET_PARAM}={repo_set}"]
@@ -569,9 +575,7 @@ class AoWorkflowSubject(Subject):
             argv += ["--reposets", str(rendered_path), "--agents", str(agents_path)]
         else:
             argv = [
-                "uv",
-                "run",
-                "ao",
+                *launcher,
                 "run",
                 "--workflow",
                 str(main_path),
@@ -612,9 +616,9 @@ class AoWorkflowSubject(Subject):
         try:
             returncode, timed_out = _run_with_timeout(
                 argv,
-                # ASSUMPTION A2: invoke `uv run ao` from the repo root (the editable
+                # ASSUMPTION A2: by default `uv run ao` from the repo root (the editable
                 # install), never a stale global `ao` snapshot (learnings).
-                cwd=REPO_ROOT,
+                cwd=launcher_cwd,
                 stdout_path=stdout_path,
                 stderr_path=stderr_path,
                 timeout_seconds=ctx.timeout_seconds,
@@ -625,7 +629,7 @@ class AoWorkflowSubject(Subject):
                 status="error",
                 wall_clock_seconds=time.monotonic() - t0,
                 capture_dir=ctx.capture_dir,
-                raw_error=f"Failed to spawn `uv run ao run`: {exc}",
+                raw_error=f"Failed to spawn `{' '.join(launcher)}`: {exc}",
                 argv=argv,
                 resolved_model=self.spec.model,
             )

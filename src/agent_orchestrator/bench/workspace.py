@@ -155,6 +155,11 @@ class RunContext(BaseModel):
     parity_fingerprint: str | None = None
     env: dict[str, str] = {}
     permission_mode: str | None = None
+    # Command prefix that launches `ao` for an `ao_workflow` subject. None (every
+    # `ao-bench run`) = `uv run ao` from REPO_ROOT, the checkout under test. Set by
+    # `ao-bench exec-subject` (bench/harbor_exec.py), which runs where `ao` is an installed
+    # tool and there is no checkout, e.g. inside a Harbor task container.
+    ao_launcher: list[str] | None = None
 
 
 def _assert_under_bench_root(path: Path) -> Path:
