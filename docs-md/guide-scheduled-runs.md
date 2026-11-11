@@ -31,8 +31,12 @@ ao service run                # or `ao service install` for systemd; the daemon 
 
 Or hand-write `.ao/schedules.yaml` (`schedules:` list, optional `defaults:`; kinds `cron | interval | file_watch |
 webhook`; see HLD §5.1). Other triggers: `--interval SECONDS` (minimum `MIN_INTERVAL_SECONDS` = 60), `--webhook`
-(§6 below). A **file-watch** binding is supported in the file (`kind: file_watch`, `watch:`) but **`ao schedule add`
-has no `--watch` flag yet** — write it in YAML.
+(§6 below). **File-watch**: `ao schedule add inbox --watch "in/*.md" [--watch GLOB]... [--watch-on created|modified]...
+[--debounce S] [--poll-seconds S] [--max-files N] --workflow ... --quota day=10` writes a `kind: file_watch` binding
+(globs are workspace-relative; `--watch` replaces `--cron/--interval`, cannot combine with `--webhook`; the tuning flags
+need `--watch`). The first daemon scan only seeds the baseline, so files that already exist never fire. `ao schedule
+next` shows event kinds with no predicted time. `--from-workflow PATH` derives bindings from a spec's cron/interval
+triggers (file-watch/webhook are not spec trigger types, so they are added with `--watch`/`--webhook`).
 
 No daemon handy (dev/test)? `ao schedule daemon --workspace . [--once]` runs the same engine in the foreground and
 refuses to start if another engine holds `schedules/engine.lock`.

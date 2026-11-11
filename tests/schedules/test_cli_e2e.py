@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -648,3 +649,106 @@ def test_daemon_restores_signal_handlers(env: Env, monkeypatch: pytest.MonkeyPat
     res = runner.invoke(app, ["schedule", "daemon", "--workspace", str(env.ws)])
     assert res.exit_code == 0, res.output
     assert {s: _signal.getsignal(s) for s in sigs} == before
+
+
+# -- add --watch (T-Fw8Gp4 flags, T-Cl6Jn9 surface) -----------------------------------------
+
+
+def test_add_watch_writes_file_watch_binding(env: Env) -> None:
+    env.run(
+        "add", "inbox", "--watch", "in/*.md", "--watch", "docs/**/*.txt", "--watch-on", "created",
+        "--debounce", "5", "--poll-seconds", "10", "--max-files", "99",
+        "--workflow", "w.json", *QUOTA,
+    )  # fmt: skip
+    row = env.data()["schedules"][0]
+    assert row["kind"] == "file_watch"
+    assert row["watch"] == {
+        "paths": ["in/*.md", "docs/**/*.txt"],
+        "on": ["created"],
+        "debounce_seconds": 5,
+        "poll_seconds": 10,
+        "max_files": 99,
+    }
+    assert "cron" not in row and "interval_seconds" not in row
+
+
+def test_add_watch_defaults_and_list(env: Env) -> None:
+    env.run("add", "inbox", "--watch", "in/*.md", "--workflow", "w.json", *QUOTA)
+    assert env.data()["schedules"][0]["watch"] == {"paths": ["in/*.md"]}
+    rows = json.loads(env.run("list", "--json").stdout)["schedules"]
+    assert [r["id"] for r in rows] == ["inbox"] and rows[0]["kind"] == "file_watch"
+
+
+@pytest.mark.parametrize(
+    ("extra", "needle"),
+    [
+        (["--cron", "0 * * * *"], "drop --cron/--interval"),
+        (["--interval", "60"], "drop --cron/--interval"),
+        (["--webhook", "--secret-env", "S"], "--watch or --webhook"),
+        (["--watch-on", "deleted"], "not created|modified"),
+        (["--watch-on", "bogus"], "not created|modified"),
+    ],
+)
+def test_add_watch_errors(env: Env, extra: list[str], needle: str) -> None:
+    res = env.run("add", "w", "--watch", "in/*", "--workflow", "w.json", *QUOTA, *extra, ok=False)
+    assert needle in res.output
+    assert not env.sched_file.exists()
+
+
+def test_watch_tuning_flags_need_watch(env: Env) -> None:
+    for flag in (["--debounce", "5"], ["--poll-seconds", "5"], ["--max-files", "5"]):
+        res = env.run(
+            "add", "w", "--interval", "60", "--workflow", "w.json", *QUOTA, *flag, ok=False
+        )
+        assert "need --watch" in res.output
+    assert (
+        "need --watch"
+        in env.run(
+            "add",
+            "w",
+            "--interval",
+            "60",
+            "--workflow",
+            "w.json",
+            *QUOTA,
+            "--watch-on",
+            "created",
+            ok=False,
+        ).output
+    )
+    assert not env.sched_file.exists()
+
+
+def test_add_watch_rejects_escaping_glob_and_bad_numbers(env: Env) -> None:
+    assert (
+        "watch"
+        in env.run("add", "w", "--watch", "/etc/*", "--workflow", "w.json", *QUOTA, ok=False).output
+    )
+    assert (
+        "watch"
+        in env.run("add", "w", "--watch", "../x/*", "--workflow", "w.json", *QUOTA, ok=False).output
+    )
+    for flag in ("--poll-seconds", "--max-files"):
+        env.run("add", "w", "--watch", "a", "--workflow", "w.json", *QUOTA, flag, "0", ok=False)
+    assert not env.sched_file.exists()
+
+
+def test_watch_daemon_once_fires_once_after_change(env: Env) -> None:
+    env.run(
+        "add", "inbox", "--watch", "in/*.md", "--debounce", "30", "--workflow", "w.json", *QUOTA
+    )
+
+    def once() -> str:
+        res = runner.invoke(app, ["schedule", "daemon", "--once", "--workspace", str(env.ws)])
+        assert res.exit_code == 0, res.output
+        return res.stdout.strip()
+
+    assert once() == "0"  # seeds the baseline: pre-existing state never fires
+    (env.ws / "in").mkdir()
+    f = env.ws / "in" / "a.md"
+    f.write_text("x")
+    old = (T0 - timedelta(seconds=100)).timestamp()  # settled past the 30s debounce
+    os.utime(f, (old, old))
+    assert once() == "1"
+    assert once() == "0"  # at-most-once: nothing changed since
+    assert len(FireIntentStore(env.state).list()) == 1

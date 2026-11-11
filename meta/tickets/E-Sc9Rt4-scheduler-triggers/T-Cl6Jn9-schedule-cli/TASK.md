@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-11 (implemented; see STATUS.md)
-- Status: Partially Done (cron/interval MVP surface landed; webhook/watch/until-dependent ACs unfinished)
+- Status: Partially Done (cron/interval/webhook/until + `--watch` flags landed; `next` observe branch unfinished)
 - Estimate: 3 days
 
 ## Requirements Mapping

@@ -1000,6 +1000,23 @@ def add_cmd(
         str | None,
         typer.Option("--webhook-scheme", help="ao (X-AO-Signature, default) | github"),
     ] = None,
+    watch: Annotated[
+        list[str] | None,
+        typer.Option("--watch", help="Fire on file changes: workspace-relative glob (repeatable)."),
+    ] = None,
+    watch_on: Annotated[
+        list[str] | None,
+        typer.Option("--watch-on", help="created | modified (repeatable; default both)."),
+    ] = None,
+    debounce: Annotated[
+        int | None, typer.Option("--debounce", min=0, help="Watch quiet period, seconds.")
+    ] = None,
+    poll_seconds: Annotated[
+        int | None, typer.Option("--poll-seconds", min=1, help="Watch scan period, seconds.")
+    ] = None,
+    max_files: Annotated[
+        int | None, typer.Option("--max-files", min=1, help="Watch scan bound (files).")
+    ] = None,
     disabled: Annotated[bool, typer.Option("--disabled", help="Create it disabled.")] = False,
     from_workflow: Annotated[
         str | None,
@@ -1076,6 +1093,14 @@ def add_cmd(
         if schedule_id is None:
             raise _fail("ID is required (unless --from-workflow)", EXIT_USAGE)
         webhook_opts = (secret_env, secret_file, rate_per_minute, webhook_scheme)
+        watch_opts = (watch_on, debounce, poll_seconds, max_files)
+        if watch and webhook:
+            raise _fail("give one trigger: --watch or --webhook", EXIT_USAGE)
+        if watch:
+            if cron is not None or interval is not None:
+                raise _fail("--watch is the trigger; drop --cron/--interval", EXIT_USAGE)
+        elif any(o is not None for o in watch_opts):
+            raise _fail("--watch-on/--debounce/--poll-seconds/--max-files need --watch", EXIT_USAGE)
         if webhook:
             if cron is not None or interval is not None:
                 raise _fail("--webhook is the trigger; drop --cron/--interval", EXIT_USAGE)
@@ -1084,8 +1109,10 @@ def add_cmd(
                 "--secret-env/--secret-file/--rate-per-minute/--webhook-scheme need --webhook",
                 EXIT_USAGE,
             )
-        elif (cron is None) == (interval is None):
-            raise _fail("give exactly one of --cron / --interval (or --webhook)", EXIT_USAGE)
+        elif not watch and (cron is None) == (interval is None):
+            raise _fail(
+                "give exactly one of --cron / --interval (or --webhook / --watch)", EXIT_USAGE
+            )
         if (workflow is None) == (template is None):
             raise _fail("give exactly one of --workflow / --template", EXIT_USAGE)
         fields: dict[str, Any]
@@ -1105,6 +1132,20 @@ def add_cmd(
                 if v is not None
             }
             fields = {"kind": "webhook", "webhook": spec}
+        elif watch:
+            bad = [e for e in watch_on or [] if e not in ("created", "modified")]
+            if bad:
+                raise _fail(f"--watch-on: {bad[0]!r} is not created|modified", EXIT_USAGE)
+            wspec: dict[str, Any] = {"paths": list(watch)}
+            for wkey, wval in (
+                ("on", list(dict.fromkeys(watch_on)) if watch_on else None),
+                ("debounce_seconds", debounce),
+                ("poll_seconds", poll_seconds),
+                ("max_files", max_files),
+            ):
+                if wval is not None:
+                    wspec[wkey] = wval
+            fields = {"kind": "file_watch", "watch": wspec}
         elif cron is not None:
             fields = {"kind": "cron", "schedule": cron}
         else:
