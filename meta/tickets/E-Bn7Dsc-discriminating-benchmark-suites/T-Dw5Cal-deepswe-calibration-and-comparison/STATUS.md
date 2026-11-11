@@ -20,6 +20,11 @@
 - By: Claude · Role: manager · Date: 2026-11-11 · Comment: 50 GB available, rerunning 1a then 1b one container at
   a time (`/var/tmp/ao-harbor/pilot/p1-sequential.sh`), same flags apart from `-n 1`.
 
+- By: Claude · Role: manager · Date: 2026-11-11 · Comment: two harness defects found on the first DeepSWE
+  trials and fixed (inference host blocked by the offline agent policy; uncommitted fix graded as an empty patch).
+  Note: on DeepSWE the agent has no web access in either arm (dataset policy, enforced by Harbor), unlike TB 2.1;
+  this is the leaderboard condition and keeps parity. 1a/1b relaunched sequentially with both fixes.
+
 ## Spend ledger (list-price equivalent, subscription token)
 | Job | Arm | Tasks | Cap/task | Spent | Note |
 |---|---|---|---|---|---|
@@ -27,8 +32,10 @@
 | pilot1/pilot2 ao | ao + Sonnet 5.5 | 1 | $10 | $0.00 | harness errors before any LLM call (fixed) |
 | pilot3-tb21-dna-ao-sonnet-nogit | ao + Sonnet 5.5 | 1 | $10 | $2.05 | reward 1.0, 9.5 min, Phase 0 gate |
 | p1a/p1b `*.killed-oom` | both | 2+2 | $8 | $0.00 | killed in agent setup (memory pressure) |
+| p1a `*.netblocked` | plain Sonnet 5.5 | 1 | $8 | $0.00 | infra: DeepSWE agent phase is `no-network` and Harbor allowlists no inference host for an OAuth login -> ECONNRESET x10 (fixed 480f8fe: `--allow-agent-host api.anthropic.com`) |
+| p1a `*.nocommit` | plain Sonnet 5.5 | 1 | $8 | $2.43 | infra: sqlfmt fixed in 14.6 min but left uncommitted (shared wrapper says no git); DeepSWE grades `git diff base HEAD` -> 0-byte patch, f2p 0/32. Excluded. Fixed f78ae44 (harness commits the worktree after the agent, both arms) |
 
-DeepSWE budget ($100): $0 spent so far.
+DeepSWE budget ($100): $2.43 spent so far.
 
 ## Evidence
 - Oracle: `/var/tmp/ao-harbor/jobs/oracle-pilot-tb21`, `oracle-pilot-deepswe` (5/5 PASS).
