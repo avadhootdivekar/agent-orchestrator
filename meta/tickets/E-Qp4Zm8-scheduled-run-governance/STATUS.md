@@ -18,7 +18,7 @@ Every task STATUS/TASK carries a dated Reconciliation block; this table is the a
 | `T-et7Edf` run cost cap | Partial | `fake_cost_script` (cosmetic); AC10 byte check. AC17 docstring + `ao status` xN and AC12 coverage LANDED (`e2971e4`, w26-04) |
 | `T-rwj4nV` schedule CLI | Implemented, awaiting review | no dedicated review of `usage_view.py`/CLI |
 | `T-8knqVe` dashboard usage | Partial | **UNFINISHED:** AC5 overshoot display (dashboard shows none; CLI only); AC6/AC7 feed-filter check + vitest; live-session/e2e of Resume. LANDED (w26-03, `4f6bbc1`): `resume-capped` route, paused list + Resume, M5 409 |
-| `T-88wSLC` e2e suite | Partial | AC1 mapping; AC6 baseline equality; AC7 delta; AC9b |
+| `T-88wSLC` e2e suite | Partial | AC1 mapping; AC7 pre-epic count delta; AC8 full coverage; API cases (AC6 baseline + AC9b CLI landed w22-05) |
 | `T-lTW88y` security gate | Partial | AC4 NFR-6 delta vs baseline; re-run after `T-8knqVe`; ADR-0025 acceptance; Info W-4, I-1, I-6, I-7, I-9 |
 | `T-Hq3vXd` docs | Partial | HLD §26 re-pass, AC3 walkthrough, cross-links |
 
@@ -195,3 +195,5 @@ gate), so this epic is not marked "ready for implementation" until that gate has
 merged.
 
 - 2026-11-11 — By: developer (unit `w22-01-a2-capped-resume-shim`) · Role: developer · Date: 2026-11-11 · Comment: T-nI4DBf B-1 (launcher shims dropped `launch_capped_resume`) fixed; B-2 (pause settled only on next due tick) documented as a known limitation in HLD §26.5 with proposed fix, semantics unchanged.
+
+- w27-04 (A1/transient-failures, 2026-11-11): tests/service run 6x on ad/enhancements-10nov (3 sequential, 1 reverse file order, 2 concurrent): 951/951, 951/951, 961 x4 passed, 0 failed. w26-05's 4 unattributed transient failures NOT reproduced; most likely shared-tree edits by concurrent units (test count rose 951->961 mid-session as test_until.py was edited by another unit). No fix made. Followup: if seen again, capture `-rf` output + `git status` at failure time.

@@ -1108,14 +1108,15 @@ only on schedules already declared in the workspace file.
 ## 11. Dashboard panel
 
 Deliberately small and consistent with `ui/README.md`'s conventions (named-export function
-component, hooks only, `setInterval` polling, theme tokens, glyph+word status never colour
-alone). Files touched:
+component, hooks only, the shared `usePolling` hook, theme tokens, glyph+word status never colour
+alone). Files touched (as shipped by T-Ap1Xs3; corrected in its review, 2026-11-11):
 
 1. `ui/src/components/Schedules.tsx` (new) — table of schedules: id, kind, next fire (relative +
    absolute), last fire, last run (opens the existing `RunDetail` view), status chip,
    enable/disable toggle, *Run now*. An expandable row shows the last 20 history events.
-2. `ui/src/App.tsx` — three edits: add `"schedules"` to the `View` union, one `NAV` entry
-   (`{ id: "schedules", label: "Schedules", glyph: "⏱" }`), one ternary arm.
+2. `ui/src/App.tsx` + `ui/src/tabs/model.ts` + `ui/src/tabs/TabView.tsx` — one new `TabKind`
+   (`schedules`) and one `NAV` entry (`{ kind: "schedules", label: "Schedules", glyph: "⏱" }`);
+   the dashboard is a tab model, there is no `View` union any more.
 3. `ui/src/api.ts` — `schedules()`, `scheduleHistory(id, limit)`, `setScheduleEnabled(id, on)`,
    `runScheduleNow(id, force)`.
 4. `ui/src/types.ts` — `Schedule`, `ScheduleEvent` interfaces (hand-maintained mirror of §10).
@@ -1127,8 +1128,8 @@ alone). Files touched:
 Poll interval `POLL_MS = 10000` — schedules change on the order of minutes, so the 3–4 s
 run-polling cadence would be wasteful.
 
-The panel also surfaces `GET /api/launches`, which exists on the backend today with **no UI at
-all** — a free win while we are in this file.
+`GET /api/launches` already has a UI (`components/FailedLaunches.tsx`), so the panel does not
+re-surface it; its `daemon_seen: false` warning links to the Runs tab instead.
 
 ## 12. Observability
 
