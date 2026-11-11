@@ -190,3 +190,12 @@
     is `@pytest.mark.perf`; run with `-m "not perf"` on a loaded host. Not a product defect.
 
 - 2026-11-11 GATE-1 fixed (1396dac): n1 downgrade asserts + github-binding tests restored out of test_n3; test_webhook.py 78 passed, ruff format/check clean.
+
+- 2026-11-11 (By: developer · Role: developer · w26-01) R-2b fixed: `ao schedule resume` (queue/validation path) now builds its
+  `request_capped_resume` store via `readonly_fire_store(sdir)` (schedules/cli.py `resume_cmd`), so the CLI never writes fire
+  records; the in-process `--local` drain still uses the engine's own writable store. `check_resume` / `update_governance`
+  docstrings corrected (ledger persists marks on read; unlocked RMW is engine-only, ADR-0025). Tests:
+  `tests/service/test_resume_queue_readonly.py` (3: no fire write, writable-store control, TQ-R2 engine write injected between
+  `get` and persist inside `update_governance`) + `test_resume_queue_cli_uses_a_read_only_fire_store` (CliRunner). Note: probe p7
+  test2 builds its own writable `CliStore`, so it still "fails" as a probe by construction; its faithful post-fix equivalent is
+  the TQ-R2 test, which passes. Unrelated: pre-existing mypy `unused-ignore` errors in tests/service/test_capped_resume.py.

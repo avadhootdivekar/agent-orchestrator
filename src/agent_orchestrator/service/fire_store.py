@@ -282,8 +282,10 @@ class FireIntentStore:
         (same write-then-rename + fsync as every other write). ``cost_observed_usd`` is a
         high-water mark: a lower value than the stored one is ignored, never written.
 
-        Read-modify-write without a lock: safe because the engine is the single writer of
-        governance state; the ledger only writes the monotonic mark through here.
+        Read-modify-write WITHOUT a lock: only safe when the caller is the engine (the single
+        writer of fire records, ADR-0025). Any other process (CLI, dashboard) must go through
+        :func:`readonly_fire_store`, whose override never persists; a writable store there can
+        roll back a concurrent engine write landing between the ``get`` and the persist.
         """
         current = self.get(fire_key)
         if current is None:

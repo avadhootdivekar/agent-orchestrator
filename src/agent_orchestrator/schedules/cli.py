@@ -1465,12 +1465,14 @@ def resume_cmd(
     if local and queue:
         raise _fail("--local and --queue are mutually exclusive", EXIT_USAGE)
     from ..service.capped_resume import ResumeRefused, request_capped_resume
-    from ..service.fire_store import FireIntentStore
     from ..service.usage_ledger import UsageLedger
 
     root, sdir = _workspace_root(workspace), _state_dir(state_dir)
     binding = next((b for b in _load_file(root).bindings if b.id == schedule_id), None)
-    fires = FireIntentStore(sdir)
+    # View store: this process only validates and drops a request file; the engine owns every fire
+    # record write (ADR-0025). A writable store would let the ledger persist cost marks via an
+    # unlocked read-modify-write that can roll back a concurrent engine cap transition (R-2b).
+    fires = readonly_fire_store(sdir)
     ledger = UsageLedger(fires, clock=now_utc)
 
     def request(drain: Callable[[datetime], list[Any]] | None) -> Any:

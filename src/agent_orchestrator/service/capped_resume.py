@@ -248,7 +248,9 @@ def check_resume(
     ledger: UsageLedger,
 ) -> ResumeCheck:
     """The validation shared by the request and the drain re-check, in the AC1 order. Raises
-    :class:`ResumeRefused`; never writes."""
+    :class:`ResumeRefused`. It writes nothing itself, but *ledger* persists cost high-water marks
+    through its own store on read: a non-engine caller (the CLI queue path) must pass a ledger
+    over :func:`~.fire_store.readonly_fire_store`, or it races the engine's governance writes."""
     if binding is None:
         raise ResumeRefused(REASON_SCHEDULE_NOT_FOUND, f"no such schedule {schedule_id!r}")
     if rec is None or rec.schedule_id != schedule_id or rec.governance is None:

@@ -245,6 +245,27 @@ def test_on_cap_abort_is_final_and_resume_is_refused_exit_3(
     assert _tasks_done(_state(capenv, rid)) == ["t1", "t2", "t3"]
 
 
+def test_resume_queue_cli_uses_a_read_only_fire_store(
+    capenv: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-2b: the CLI request side must not hold a writable fire store (engine is sole writer)."""
+    from agent_orchestrator.service import capped_resume as cr
+    from agent_orchestrator.service.fire_store import ReadOnlyFireStore
+
+    rid = _fire_capped(capenv, monkeypatch)
+    seen: list[Any] = []
+    real = cr.request_capped_resume
+
+    def spy(*a: Any, **kw: Any) -> Any:
+        seen.append((kw["fires"], kw["ledger"]))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(cr, "request_capped_resume", spy)
+    res = runner.invoke(app, ["schedule", "resume", "nightly", "--run", rid, "--queue"])
+    assert res.exit_code == 0, res.output
+    assert len(seen) == 1 and isinstance(seen[0][0], ReadOnlyFireStore)
+
+
 def test_pause_expiry_then_resume_refused_exit_3(
     capenv: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
