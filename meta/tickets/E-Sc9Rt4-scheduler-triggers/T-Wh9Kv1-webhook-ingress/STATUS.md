@@ -5,6 +5,12 @@
 - State: Done (accepted limitations) — all ACs met incl. AC1 combined auth test and AC7/AC8 github-scheme replay gate (w26-06, `8d0b4ee`)
 - Owner: developer agent
 
+## Review 2026-11-11 (w27-06, reviewer/Opus; docs only) — see `REVIEW.md`
+- Verdict: **Done stands**. All 16 ACs verified in code; 109 webhook tests pass, `webhook.py` coverage 98 %, ruff/format/mypy clean. No Critical findings.
+- **Open should-fix W-1 (Medium):** `nonce_capacity` covers a one-sided 300 s window, but the stamp check is two-sided (`abs`). With the sender's clock ahead by more than ~6 s and traffic at the max rate, a captured `ao` delivery is evicted and replays (reproduced: 202). Fix: size for `2 × REPLAY_WINDOW_SECONDS`, add a regression test, and land it before the T-Se4Bk5 clean-tree gate.
+- Low: L-1 a malformed github stamp is rejected before the HMAC (logged as `bad_timestamp`, contrary to the w26-06 "after the HMAC" claim); L-2 the module docstring omits LRU eviction for github replay; D-1 HLD §8.2 and the user guide do not describe the optional github stamp (-> T-Dc6Zr2).
+  By: reviewer · Role: reviewer · Date: 2026-11-11
+
 ## Sync 2026-11-11 (w27-02, developer; docs only; HEAD `c4e3871`)
 - Supersedes the w24-07 block below (Partial): AC7/AC8 and AC1 landed in w26-06. **Unfinished, not ACs:** persistent nonces (github scheme has no signed replay bound; a restart reopens replay of a captured delivery) needs an ADR (T-Se4Bk5 S-7, accepted); L4 mtime caching and a `webhook.expired` event. The w26-06 timestamp gate has had no separate review.
 
