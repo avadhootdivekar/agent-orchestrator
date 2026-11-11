@@ -1149,12 +1149,15 @@ def test_m3_check_and_reserve_uses_binding_timezone_and_week_start(tmp_path: Pat
     assert reserve(b, lim, datetime(2026, 1, 1, 19, 0, tzinfo=UTC), "kA").admit
     wl = LimitsSpec(quotas=[QuotaSpec(period="week", max_runs=1)])
     sat, sun = datetime(2026, 1, 3, 12, 0, tzinfo=UTC), datetime(2026, 1, 4, 0, 0, tzinfo=UTC)
-    store2, root = _seed(tmp_path / "w", sat)
-    store = store2
+    # each week_start case gets its own store holding only the Saturday fire: a shared store would
+    # let the sunday case's own reservation (kB) refuse the monday case even if week_start were
+    # ignored, so the monday refusal would prove nothing
+    store, root = _seed(tmp_path / "w_sun", sat)
     bs = binding("s", limits=wl, week_start="sunday")
     assert reserve(bs, wl, sun, "kB").admit
+    store, root = _seed(tmp_path / "w_mon", sat)
     bm = binding("s", limits=wl, week_start="monday")
-    assert not reserve(bm, wl, sun + timedelta(minutes=1), "kC").admit
+    assert not reserve(bm, wl, sun, "kC").admit
 
 
 # -- L1 / L2 / L3 / L6 ------------------------------------------------------------------------

@@ -289,7 +289,9 @@ def test_without_per_run_the_ceiling_is_the_remaining_headroom(tmp_path: Path) -
     r = Rig(tmp_path, limits(per_run=None, week=10))
     r.paused(cost=4.0)  # 6 left
     assert r.check(add=6.0).add_usd == 6.0
-    assert refused(r.check, add=6.5).reason in {"bad_amount", "no_headroom"}
+    # ceiling == remaining here, so over-asking is a headroom refusal that names what is left
+    e = refused(r.check, add=6.5)
+    assert e.reason == "no_headroom" and e.remaining_usd == pytest.approx(6.0)
 
 
 def test_new_cap_uses_engine_metric_not_summary_cost(rig: Rig) -> None:

@@ -439,18 +439,25 @@ def test_ac8_month_usage_of_one_schedule_over_50k_records_is_fast(tmp_path: Path
     d = r.store.directory(r.root)
     d.mkdir(parents=True)
     month_start = datetime(2026, 11, 1, tzinfo=UTC)
+    w = {"month": window_for(NOW, "month", UTC_TZ, "monday")}
+    expected = 0
     for i in range(50_000):
         sf = month_start + timedelta(minutes=i % 40_000) - timedelta(days=(i % 7) * 40)
+        sid = f"s{i % 100}"
+        # s0's records are started runs (each counts 1), the rest suppressed: a fast path that
+        # returned an empty or wrong window would fail the count below, not just pass the timer
         rec = FireIntentRecord(
-            fire_key=f"k{i}", workspace_root=r.root, schedule_id=f"s{i % 100}", scheduled_for=sf,
-            created_at=sf, status="suppressed",
+            fire_key=f"k{i}", workspace_root=r.root, schedule_id=sid, scheduled_for=sf,
+            created_at=sf, status="launched" if sid == "s0" else "suppressed",
         )  # fmt: skip
         (d / f"k{i}.json").write_text(rec.model_dump_json())
-    w = {"month": window_for(NOW, "month", UTC_TZ, "monday")}
-    r.ledger.usage(r.root, "s0", w)  # warm: builds the index
+        expected += sid == "s0" and w["month"].start <= sf < w["month"].end
+    assert expected > 0
+    assert r.ledger.usage(r.root, "s0", w)["month"].runs == expected  # warm: builds the index
     t = time.perf_counter()
-    r.ledger.usage(r.root, "s0", w)
+    got = r.ledger.usage(r.root, "s0", w)
     elapsed = time.perf_counter() - t
+    assert got["month"].runs == expected
     assert elapsed < 0.05 * 10, elapsed  # spec 50 ms; x10 CI margin
 
 
