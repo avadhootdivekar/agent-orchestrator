@@ -5,6 +5,7 @@ import { formatCost, formatRelative, formatTimestamp } from "../format";
 import type { ScheduleEvent, ScheduleUsageDoc } from "../types";
 import { usePolling } from "../usePolling";
 import { Empty, ErrorBanner } from "./common";
+import { PausedRuns } from "./PausedRuns";
 
 /** Governance feed length (T-8knqVe AC6). */
 export const GOVERNANCE_FEED_LIMIT = 50;
@@ -95,6 +96,7 @@ export function ScheduleUsage({
           ))}
         </ul>
       )}
+      <PausedRuns id={id} pollMs={pollMs} clock={clock} />
       {events !== null && events.length === 0 ? (
         <Empty>No governance events.</Empty>
       ) : null}

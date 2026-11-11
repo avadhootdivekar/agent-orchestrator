@@ -39,6 +39,8 @@ import type {
   SentinelPanelV2,
   SentinelStatus,
   RunSummary,
+  PausedRunsResponse,
+  ResumeCappedResult,
   ScheduleEvent,
   ScheduleHistory,
   ScheduleRunNowResult,
@@ -125,6 +127,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (body && typeof body.detail === "string") detail = body.detail;
       if (body && typeof body.code === "string") {
         code = body.code;
+        extra = body as Record<string, unknown>;
+      }
+      if (body && typeof body.reason === "string" && extra === undefined) {
         extra = body as Record<string, unknown>;
       }
     } catch {
@@ -262,6 +267,15 @@ export const api = {
   governanceEvents: (id: string | null, limit: number) =>
     request<{ events: ScheduleEvent[] }>(
       `/schedules/governance-events?limit=${limit}${id ? `&id=${encodeURIComponent(id)}` : ""}`,
+    ),
+  schedulePausedRuns: (id: string) =>
+    request<PausedRunsResponse>(`/schedules/${encodeURIComponent(id)}/paused-runs`),
+  /** Queues a bounded top-up for the daemon; `addUsd` null = the schedule's default. A refusal is an
+   *  ApiError whose `extra.reason` is the machine-readable cause (409/422). */
+  resumeCapped: (id: string, runId: string, addUsd: number | null) =>
+    postJson<ResumeCappedResult>(
+      `/schedules/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/resume-capped`,
+      { add_usd: addUsd },
     ),
   setScheduleEnabled: (id: string, enabled: boolean) =>
     postJson<ScheduleToggleResult>(

@@ -54,7 +54,13 @@ from ..schedules.errors import ScheduleFileError
 from ..schedules.models import ScheduleFile
 from ..schedules.store import ScheduleStore
 from ..schedules.windows import windows_for
-from ..service.capped_resume import is_governed_run
+from ..service.capped_resume import (
+    ResumeRefused,
+    default_add,
+    is_governed_run,
+    max_add,
+    request_capped_resume,
+)
 from ..service.fire_store import (
     SCHEDULES_SUBDIR,
     STATE_FILENAME,
@@ -75,7 +81,12 @@ from ..spec import cross_validate, load_workflow
 from ..survival import compute_survival, validate_ref
 from ..templates import TemplateError, discover_templates, instantiate
 from ..usage import MAX_REPORT_RUN_IDS, build_usage_report, usage_report_payload
-from .errors import ScheduleAlreadyActive, ScheduleFileInvalid, ScheduleNotFound
+from .errors import (
+    ScheduleAlreadyActive,
+    ScheduleFileInvalid,
+    ScheduleNotFound,
+    ScheduleResumeRefused,
+)
 from .files import FileBrowser, Root
 from .htmlpreview import build_html_preview
 from .processes import (
@@ -621,6 +632,8 @@ class DashboardService:
 
         # Fail before scaffolding anything: a bad repo set would otherwise leave a
         # half-useful instance dir behind and only surface when the run process dies.
+        if start:
+            self._check_cost_cap_option(options)  # same bound as start_run (T-lTW88y I-7)
         chosen_repo_set = (params or {}).get(REPO_SET_PARAM, "").strip()
         if chosen_repo_set:
             self._check_repo_set(chosen_repo_set)
@@ -830,13 +843,15 @@ class DashboardService:
             validate_cost_cap_usd(None if raw is None else float(raw))
         except (TypeError, ValueError) as exc:
             raise DashboardValidationError(f"invalid cost_cap_usd: {exc}") from exc
-        if run_id is not None and is_governed_run(
-            self.workspace_root, run_id, fires=FireIntentStore(self._schedule_state_dir_path())
-        ):
-            raise DashboardConflictError(
-                f"run {run_id} is governed by a schedule: cost_cap_usd cannot be replaced here; "
-                "use the schedule resume (add_usd) instead"
-            )
+        if run_id is not None:
+            fires = FireIntentStore(self._schedule_state_dir_path())
+            if is_governed_run(self.workspace_root, run_id, fires=fires):
+                rec = fires.find_by_run_id(self.workspace_root, run_id)
+                sid = rec.schedule_id if rec is not None else "?"
+                raise DashboardConflictError(
+                    f"run {run_id} is governed by schedule `{sid}`: cost_cap_usd cannot be "
+                    "replaced here; use Resume on the Usage panel / `ao schedule resume`"
+                )
 
     def resume_run(self, run_id: str, options: dict | None = None) -> dict:
         """Resume an interrupted run (FR-R2)."""
@@ -1461,6 +1476,77 @@ class DashboardService:
         path = sdir / SCHEDULES_SUBDIR / REQUESTS_SUBDIR / f"{uuid.uuid4().hex}.json"
         atomic_write_bytes(path, json.dumps(body).encode("utf-8"))
         return {"queued": True, "schedule_id": schedule_id}
+
+    def paused_runs(self, schedule_id: str) -> dict:
+        """Cost-cap-paused runs of one schedule (newest first) with the numbers the Resume control
+        needs. Read-only: headroom is NOT computed here (the POST re-checks everything and a
+        refusal is shown inline)."""
+        binding = next(
+            (b for b in self._load_schedule_file().bindings if b.id == schedule_id), None
+        )
+        if binding is None:
+            raise ScheduleNotFound(f"no such schedule {schedule_id!r}")
+        now = self._clock_now()
+        fires = readonly_fire_store(self._schedule_state_dir_path())
+        rows = []
+        for rec in fires.iter_schedule(
+            self.workspace_root, schedule_id, datetime.min.replace(tzinfo=UTC)
+        ):
+            g = rec.governance
+            if g is None or g.cap_state != "paused" or rec.run_id is None:
+                continue
+            expired = g.pause_expires_at is None or now >= g.pause_expires_at
+            rows.append(
+                {
+                    "run_id": rec.run_id,
+                    "paused_at": _iso_or_none(g.paused_at),
+                    "pause_expires_at": _iso_or_none(g.pause_expires_at),
+                    "spent_usd": g.cost_observed_usd,
+                    "cap_usd": g.run_cost_cap_usd,
+                    "default_add_usd": default_add(binding),
+                    "max_add_usd": max_add(binding, float("inf")),
+                    "resumable": not expired,
+                    "refusal": "expired" if expired else None,
+                }
+            )
+        rows.sort(key=lambda r: r["paused_at"] or "", reverse=True)
+        return {"schedule_id": schedule_id, "paused": rows}
+
+    def request_capped_resume(
+        self, schedule_id: str, run_id: str, add_usd: float | None = None
+    ) -> dict:
+        """Queue a bounded resume of a cap-paused run (T-8knqVe AC3). Validates with the shared
+        ``check_resume`` and drops a request file; the daemon is the only launcher (so this
+        returns *queued*, never *started*). ``ResumeRefused`` maps to a typed API error."""
+        binding = next(
+            (b for b in self._load_schedule_file().bindings if b.id == schedule_id), None
+        )
+        sdir = self._schedule_state_dir_path()
+        fires = FireIntentStore(sdir)
+        try:
+            req = request_capped_resume(
+                self.workspace_root,
+                schedule_id,
+                run_id,
+                add_usd,
+                SCHEDULE_REQUESTED_BY,
+                state_dir=sdir,
+                binding=binding,
+                fires=fires,
+                ledger=UsageLedger(fires, clock=self._clock_now),
+                clock=self._clock_now,
+            )
+        except ResumeRefused as exc:
+            raise ScheduleResumeRefused(
+                exc.reason, str(exc), remaining_usd=exc.remaining_usd, window=exc.window
+            ) from exc
+        return {
+            "queued": True,
+            "schedule_id": schedule_id,
+            "run_id": run_id,
+            "add_usd": req.add_usd,
+            "new_cap_usd": req.new_cap_usd,
+        }
 
 
 SCHEDULE_USAGE_SCHEMA = "ao.schedule.usage/v1"

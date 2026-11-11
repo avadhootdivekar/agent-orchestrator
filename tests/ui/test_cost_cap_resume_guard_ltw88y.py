@@ -98,3 +98,15 @@ def test_resume_rejects_out_of_range_cap_with_400(
     write_run(workspace, make_run_state(run_id="plain", status="failed"))
     r = client.post(f"{API_PREFIX}/runs/plain/resume", json={"options": {"cost_cap_usd": bad}})
     assert r.status_code == 400
+
+
+def test_governed_resume_409_names_the_schedule_and_the_governed_path(
+    client: TestClient, workspace: Path, state_dir: Path
+) -> None:
+    """T-8knqVe AC10 (M5): the 409 tells the operator where to go instead."""
+    write_run(workspace, make_run_state(run_id="gov", status="failed"))
+    _govern(state_dir, workspace, "gov")
+    detail = client.post(
+        f"{API_PREFIX}/runs/gov/resume", json={"options": {"cost_cap_usd": 5}}
+    ).json()["detail"]
+    assert "governed by schedule `" in detail and "Resume on the Usage panel" in detail

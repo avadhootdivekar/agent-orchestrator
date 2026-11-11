@@ -31,8 +31,8 @@ NOW = datetime(2026, 11, 11, 12, 0, tzinfo=UTC)
 URL = f"{API_PREFIX}/schedules"
 
 
-def _binding(sid: str) -> dict[str, Any]:
-    return {
+def _binding(sid: str, per_run: float | None = None) -> dict[str, Any]:
+    b = {
         "id": sid,
         "kind": "cron",
         "schedule": "0 * * * *",
@@ -42,6 +42,9 @@ def _binding(sid: str) -> dict[str, Any]:
             "cost": {"periods": [{"period": "day", "max_usd": 5.0}]},
         },
     }
+    if per_run is not None:
+        b["limits"]["cost"]["per_run_usd"] = per_run
+    return b
 
 
 @pytest.fixture()
@@ -53,7 +56,14 @@ def state_dir(tmp_path: Path) -> Path:
 def svc(workspace: Path, stub_supervisor: StubSupervisor, state_dir: Path) -> DashboardService:
     path = workspace / ".ao" / "schedules.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump({"version": "1.0", "schedules": [_binding("a"), _binding("b")]}))
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0",
+                "schedules": [_binding("a"), _binding("b"), _binding("p", per_run=1.0)],
+            }
+        )
+    )
     return DashboardService(
         str(workspace),
         supervisor=stub_supervisor,  # type: ignore[arg-type]
@@ -223,3 +233,188 @@ def test_usage_row_keys_match_ui_type_ssot(client: TestClient) -> None:
     m2 = re.search(r"export interface ScheduleUsageDoc \{(.*?)\n\}", text, re.S)
     assert m2
     assert set(doc) == set(re.findall(r"^\s+(\w+)\??:", m2.group(1), re.M))
+
+
+# -- paused runs + resume-capped (T-8knqVe AC3 / AC5) ---------------------------------------------
+
+ORIGIN = {"Origin": "http://testserver"}
+
+
+def _paused(
+    svc: DashboardService,
+    state_dir: Path,
+    *,
+    run_id: str = "r1",
+    sid: str = "a",
+    cap_state: str = "paused",
+    expires: datetime | None = None,
+    spent: float = 1.0,
+) -> None:
+    """A governed fire record of schedule *sid*; ``paused`` unless *cap_state* says otherwise."""
+    FireIntentStore(state_dir).write(
+        FireIntentRecord(
+            fire_key=f"k-{run_id}", workspace_root=svc.workspace_root, schedule_id=sid,
+            scheduled_for=NOW - timedelta(hours=1), created_at=NOW - timedelta(hours=1),
+            status="launched", run_id=run_id,
+            governance=FireGovernance(
+                cap_state=cap_state, run_cost_cap_usd=2.0, cost_observed_usd=spent,
+                paused_at=NOW - timedelta(minutes=30),
+                pause_expires_at=expires or NOW + timedelta(hours=10),
+            ),
+        )
+    )  # fmt: skip
+
+
+def _queued(state_dir: Path) -> list[dict[str, Any]]:
+    import json
+
+    d = state_dir / "schedules" / "requests"
+    return [json.loads(p.read_text()) for p in sorted(d.glob("*.json"))] if d.is_dir() else []
+
+
+def test_paused_runs_lists_only_paused_with_bounds(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    _paused(svc, state_dir, run_id="r1")
+    _paused(svc, state_dir, run_id="r2", cap_state="resumed")
+    _paused(svc, state_dir, run_id="r3", sid="b")
+    _paused(svc, state_dir, run_id="r4", expires=NOW - timedelta(minutes=1))
+    rows = client.get(f"{URL}/a/paused-runs").json()["paused"]
+    assert {r["run_id"] for r in rows} == {"r1", "r4"}
+    r1 = next(r for r in rows if r["run_id"] == "r1")
+    assert (r1["spent_usd"], r1["cap_usd"]) == (1.0, 2.0)
+    assert r1["resumable"] is True and r1["refusal"] is None
+    assert r1["default_add_usd"] > 0 and r1["max_add_usd"] > 0
+    r4 = next(r for r in rows if r["run_id"] == "r4")
+    assert (r4["resumable"], r4["refusal"]) == (False, "expired")
+    assert client.get(f"{URL}/nope/paused-runs").status_code == 404
+
+
+def test_resume_capped_queues_a_bounded_request(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    _paused(svc, state_dir)
+    r = client.post(f"{URL}/a/runs/r1/resume-capped", json={"add_usd": 1.5}, headers=ORIGIN)
+    assert r.status_code == 202, r.text
+    assert r.json()["queued"] is True and r.json()["add_usd"] == 1.5
+    (req,) = _queued(state_dir)
+    assert req["kind"] == "resume_capped" and req["run_id"] == "r1" and req["add_usd"] == 1.5
+    assert req["requested_by"] == "ui"
+
+
+def test_resume_capped_null_amount_uses_default(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    _paused(svc, state_dir)
+    r = client.post(f"{URL}/a/runs/r1/resume-capped", json={"add_usd": None}, headers=ORIGIN)
+    assert r.status_code == 202 and r.json()["add_usd"] > 0
+    assert client.post(f"{URL}/b/runs/r1/resume-capped", json={}, headers=ORIGIN).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "body", [{"add_usd": 0}, {"add_usd": -1}, {"add_usd": "x"}, {"add_usd": 1e12},
+             {"add_usd": 1, "workflow": "evil.json"}, {"argv": ["x"]}, {"cost_cap_usd": 99}],
+)  # fmt: skip
+def test_resume_capped_rejects_bad_bodies_422(
+    client: TestClient, svc: DashboardService, state_dir: Path, body: dict[str, Any]
+) -> None:
+    _paused(svc, state_dir)
+    r = client.post(f"{URL}/a/runs/r1/resume-capped", json=body, headers=ORIGIN)
+    assert r.status_code == 422
+    assert _queued(state_dir) == []
+
+
+def test_resume_capped_rejects_nonfinite_422(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    _paused(svc, state_dir)
+    r = client.post(
+        f"{URL}/a/runs/r1/resume-capped", content='{"add_usd": NaN}',
+        headers={**ORIGIN, "Content-Type": "application/json"},
+    )  # fmt: skip
+    assert r.status_code == 422 and _queued(state_dir) == []
+
+
+def test_resume_capped_over_per_resume_max_is_422_bad_amount(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    """Schedule ``p`` has per_run_usd=1.0, so one resume may add at most $1.0 (H-2 / ADR-0025)."""
+    _paused(svc, state_dir, sid="p")
+    r = client.post(f"{URL}/p/runs/r1/resume-capped", json={"add_usd": 1.5}, headers=ORIGIN)
+    assert r.status_code == 422 and r.json()["reason"] == "bad_amount"
+    assert _queued(state_dir) == []
+    ok = client.post(f"{URL}/p/runs/r1/resume-capped", json={"add_usd": 1.0}, headers=ORIGIN)
+    assert ok.status_code == 202
+
+
+def test_resume_capped_over_headroom_is_409(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    """No per-run cap: the day's $5 headroom bounds it."""
+    _paused(svc, state_dir)
+    r = client.post(f"{URL}/a/runs/r1/resume-capped", json={"add_usd": 6.0}, headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["reason"] == "no_headroom"
+    assert _queued(state_dir) == []
+
+
+@pytest.mark.parametrize(
+    ("cap_state", "reason"), [("resumed", "not_paused"), ("expired", "expired"),
+                              ("aborted", "aborted"), ("none", "not_paused")],
+)  # fmt: skip
+def test_resume_capped_refusals_are_409_with_reason(
+    client: TestClient, svc: DashboardService, state_dir: Path, cap_state: str, reason: str
+) -> None:
+    _paused(svc, state_dir, cap_state=cap_state)
+    r = client.post(f"{URL}/a/runs/r1/resume-capped", json={"add_usd": 1}, headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["reason"] == reason and r.json()["detail"]
+    assert _queued(state_dir) == []
+
+
+def test_resume_capped_overdue_pause_is_409_expired(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    _paused(svc, state_dir, expires=NOW - timedelta(seconds=1))
+    r = client.post(f"{URL}/a/runs/r1/resume-capped", json={"add_usd": 1}, headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["reason"] == "expired"
+
+
+def test_resume_capped_no_headroom_is_409_with_numbers(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    """Day cap is $5: a prior $4.80 spend leaves $0.20, so +$1 is refused with the headroom."""
+    _paused(svc, state_dir, run_id="r1", spent=4.8)
+    r = client.post(f"{URL}/a/runs/r1/resume-capped", json={"add_usd": 1}, headers=ORIGIN)
+    assert r.status_code == 409 and r.json()["reason"] == "no_headroom"
+    assert r.json()["remaining_usd"] == pytest.approx(0.2, abs=0.05)
+
+
+def test_resume_capped_unknown_schedule_or_run_404(
+    client: TestClient, svc: DashboardService, state_dir: Path
+) -> None:
+    _paused(svc, state_dir)
+    assert (
+        client.post(f"{URL}/nope/runs/r1/resume-capped", json={}, headers=ORIGIN).status_code == 404
+    )
+    r = client.post(f"{URL}/a/runs/ghost/resume-capped", json={}, headers=ORIGIN)
+    assert r.status_code == 404 and r.json()["reason"] == "schedule_not_found"
+
+
+def test_resume_capped_cross_origin_is_403(svc: DashboardService, state_dir: Path) -> None:
+    """The Origin gate (``ui/security.py``) covers the new POST like every mutating route."""
+    from agent_orchestrator.ui.security import DEFAULT_ALLOWED_HOSTS
+
+    _paused(svc, state_dir)
+    with TestClient(
+        create_app(svc, allowed_hosts=DEFAULT_ALLOWED_HOSTS), base_url="http://localhost"
+    ) as c:
+        r = c.post(
+            f"{URL}/a/runs/r1/resume-capped", json={"add_usd": 1},
+            headers={"origin": "http://evil.example"},
+        )  # fmt: skip
+        assert r.status_code == 403
+        r = c.post(
+            f"{URL}/a/runs/r1/resume-capped", content="{}",
+            headers={"origin": "http://localhost", "content-type": "text/plain"},
+        )  # fmt: skip
+        assert r.status_code in (403, 415, 422)
+    assert _queued(state_dir) == []

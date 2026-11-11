@@ -32,3 +32,18 @@ class ScheduleAlreadyActive(ScheduleApiError):
     """A fire is already active (no ``force``) or the daemon owns the state (409)."""
 
     status_code = 409
+
+
+class ScheduleResumeRefused(ScheduleApiError):
+    """A capped-run resume was refused (T-8knqVe AC3). ``reason`` is one of
+    ``capped_resume.RESUME_REASONS``; the status maps 1:1 from it (404 unknown schedule/run,
+    422 bad amount, 409 everything else)."""
+
+    def __init__(self, reason: str, message: str, **extra: object) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.extra = {k: v for k, v in extra.items() if v is not None}
+        self.status_code = RESUME_REASON_STATUS.get(reason, 409)
+
+
+RESUME_REASON_STATUS = {"schedule_not_found": 404, "bad_amount": 422}

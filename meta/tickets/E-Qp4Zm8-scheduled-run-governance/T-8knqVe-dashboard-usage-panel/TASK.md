@@ -6,7 +6,7 @@
 - Owner: developer agent (frontend + API)
 - Created: 2026-11-10
 - Last Updated: 2026-11-10
-- Status: Partial (reconciled 2026-11-11, w24-07; see STATUS.md)
+- Status: Partial (updated 2026-11-11, w26-03; see STATUS.md)
 - Estimate: 3 days
 
 ## Requirements Mapping

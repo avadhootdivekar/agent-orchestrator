@@ -1130,6 +1130,34 @@ export interface ScheduleUsageDoc {
   windows: ScheduleUsageWindow[];
 }
 
+/** One cost-cap-paused run (`DashboardService.paused_runs`). */
+export interface PausedRun {
+  run_id: string;
+  paused_at: string | null;
+  pause_expires_at: string | null;
+  spent_usd: number;
+  cap_usd: number | null;
+  default_add_usd: number;
+  max_add_usd: number;
+  resumable: boolean;
+  /** Why Resume is disabled (`expired`), else null. */
+  refusal: string | null;
+}
+
+export interface PausedRunsResponse {
+  schedule_id: string;
+  paused: PausedRun[];
+}
+
+/** 202 body of `POST .../resume-capped`: queued for the daemon, never "started". */
+export interface ResumeCappedResult {
+  queued: boolean;
+  schedule_id: string;
+  run_id: string;
+  add_usd: number;
+  new_cap_usd: number;
+}
+
 export interface ScheduleHistory {
   schedule_id: string;
   events: ScheduleEvent[];

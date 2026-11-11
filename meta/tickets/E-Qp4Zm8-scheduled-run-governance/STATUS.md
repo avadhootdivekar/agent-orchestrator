@@ -17,7 +17,7 @@ Every task STATUS/TASK carries a dated Reconciliation block; this table is the a
 | `T-PpE5lf` pre-fire gate | Partial | period cost-cap polish (HLD §26.3 #9); L4 main, L5; AC5a engine-tick tier |
 | `T-et7Edf` run cost cap | Partial | AC17 `record_trip` docstring + `ao status` trailer xN; AC12 coverage; `fake_cost_script` (cosmetic) |
 | `T-rwj4nV` schedule CLI | Implemented, awaiting review | no dedicated review of `usage_view.py`/CLI |
-| `T-8knqVe` dashboard usage | Partial | AC3 `resume-capped` route; AC5 paused list + Resume; AC10 (M5) |
+| `T-8knqVe` dashboard usage | Partial | AC5 overshoot display; AC7 feed-filter vitest; live-session/e2e of Resume; `resume-capped` route, paused list + Resume, M5 409 landed (w26-03) |
 | `T-88wSLC` e2e suite | Partial | AC1 mapping; AC6 baseline equality; AC7 delta; AC9b |
 | `T-lTW88y` security gate | Partial | AC4 NFR-6 delta vs baseline; re-run after `T-8knqVe`; ADR-0025 acceptance; Info W-4, I-1, I-6, I-7, I-9 |
 | `T-Hq3vXd` docs | Partial | HLD §26 re-pass, AC3 walkthrough, cross-links |

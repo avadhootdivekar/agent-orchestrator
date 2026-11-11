@@ -23,10 +23,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .._version import get_version_string
 from ..auth.http.middleware import AuthMiddleware
@@ -36,7 +36,8 @@ from ..auth.principal import current_principal
 from ..control import KILL_REASON_MAX, dashboard_actor
 from ..feedback import MAX_NOTE_CHARS, MAX_OPERATOR_NOTE_CHARS, REASONS, Rating, Reason, Scope
 from ..models import INPUT_MAX_FIELDS
-from .errors import ScheduleApiError
+from ..schedules.governance import MAX_USD
+from .errors import ScheduleApiError, ScheduleResumeRefused
 from .files import PathNotAllowedError, PathNotFoundError
 from .htmlpreview import NotMarkupError
 from .security import SecurityMiddleware, resolve_allowed_hosts
@@ -102,6 +103,14 @@ class StartRunRequest(BaseModel):
     workflow_path: str | None = None
     prompt: str | None = None
     options: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResumeCappedRequest(BaseModel):
+    """Body of ``POST .../resume-capped``: ONLY a bounded top-up. Unknown keys are a 422, so no
+    workflow, argv or absolute cap can ride along (T-8knqVe AC3)."""
+
+    model_config = ConfigDict(extra="forbid")
+    add_usd: float | None = Field(default=None, gt=0, le=MAX_USD, allow_inf_nan=False)
 
 
 class ResumeRunRequest(BaseModel):
@@ -624,6 +633,38 @@ def create_app(
     def run_schedule_now(schedule_id: str, force: bool = False) -> dict:
         try:
             return service.request_schedule_fire(schedule_id, force)
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    @app.get(f"{API_PREFIX}/schedules/{{schedule_id}}/paused-runs")
+    def schedule_paused_runs(schedule_id: str) -> dict:
+        try:
+            return service.paused_runs(schedule_id)
+        except ScheduleApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    @app.post(
+        f"{API_PREFIX}/schedules/{{schedule_id}}/runs/{{run_id}}/resume-capped", status_code=202
+    )
+    def resume_capped(schedule_id: str, run_id: str, body: dict[str, Any] = Body(...)) -> Any:
+        # Validated by hand: FastAPI's own 422 echoes the offending input, and a JSON `NaN`
+        # there is not serialisable (a 500). `include_input=False` keeps the answer a clean 422.
+        try:
+            amount = ResumeCappedRequest.model_validate(body).add_usd
+        except ValidationError as exc:
+            detail = "; ".join(
+                f"{'.'.join(map(str, e['loc'])) or 'body'}: {e['msg']}"
+                for e in exc.errors(include_input=False, include_url=False)
+            )
+            raise HTTPException(status_code=422, detail=detail) from None
+        try:
+            return service.request_capped_resume(schedule_id, run_id, amount)
+        except ScheduleResumeRefused as exc:
+            # `reason` is machine-readable for the UI; `detail` keeps the usual envelope.
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": str(exc), "reason": exc.reason, **exc.extra},
+            )
         except ScheduleApiError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
