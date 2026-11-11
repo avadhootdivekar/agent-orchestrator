@@ -2,8 +2,13 @@
 
 - ID: `T-Un0Lm6-until-termination`
 - Updated At: 2026-11-11
-- State: Implemented — review findings M1/W1/W2/m1/m4 fixed 2026-11-11 (w27-01); awaiting re-review for Done (m2, m3 open; see REVIEW.md "Resolution")
+- State: **Done** (re-review w28-02, 2026-11-11: M1/W1/W2/m1/m4 fixed and verified; m2/m3 open, non-blocking; see REVIEW.md "Re-review")
 - Owner: developer agent
+
+## Re-review 2026-11-11 (By: reviewer (Opus) · Role: reviewer · unit `w28-02-a1-until-rereview` · review only, no src changes)
+- Independent re-review of `ed84cb4` from a clean worktree (HEAD `44cdf92`): `pytest tests/service tests/schedules tests/ui` **2224 passed, 2 skipped**; ruff/format clean; `mypy src` clean (233 files); 4 mutations caught; in-process probe confirms the dashboard Enable path queues the restart and the next engine tick applies it.
+- Verdict: **Done.** AC4 met with the service running. m2 (AC6 wording) and m3 (hardened gate reader) are **not blocking**.
+- Follow-ups (minor, not gating): n1 dashboard response does not say restart is queued; n2 restart request lost/expired on corrupt-registry ticks or a save `OSError`; n3 three duplicated request-drain loops; n4 scheduler HLD §6.2/§6.8/§6.9 do not mention `restart_completed`; m2, m3, s1.
 
 ## Fixes 2026-11-11 (By: developer · Role: developer · unit `w27-01-a1-until-restart-fix`)
 - **M1 fixed:** new `restart_completed` request kind. `ao schedule enable` / dashboard Enable on a `completed` schedule call `schedule_engine.restart_completed_schedule`: if it can take `engine.lock` (no engine) it resets state directly; otherwise it drops `requests/<uuid>.json` and the running engine applies it at the start of its next tick (`drain_restart_requests` -> `apply_restart`: `runs_count=0`, `queued_*` cleared (m4), status `active`). TTL/invalid handling as run-now. The CLI says "restart queued"; the dashboard no longer returns 409 "Retry in a moment". The duplicated locked reset in CLI/UI is folded into the one helper.

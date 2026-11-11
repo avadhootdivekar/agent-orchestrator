@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F16/F20 applied)
-- Status: Implemented — reviewed (w26-07), NOT Done: M1 open (synced w27-02)
+- Status: Done — re-reviewed w28-02 (2026-11-11): M1/W1/W2/m1/m4 fixed (`ed84cb4`); m2/m3 open, non-blocking
 - Estimate: 2 days
 
 ## Requirements Mapping

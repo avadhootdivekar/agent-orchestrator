@@ -151,3 +151,79 @@ usable under the always-on service (M1). Remaining before Done:
 ## Resolution 2026-11-11 (By: developer · unit `w27-01-a1-until-restart-fix`)
 - M1 fixed (engine-applied `restart_completed` request; direct locked write only when no engine runs; test uses in-process `engine.start()`). W1 fixed (dedup per schedule on error change). W2 wording fixed. m1 fixed. m4 fixed as part of M1 (`queued_*` cleared on restart).
 - Open: m2 (owner/manager), m3, s1. Not re-reviewed independently — the Done call stays with the reviewer.
+
+## Re-review 2026-11-11 (By: reviewer (Opus) · Role: reviewer · unit `w28-02-a1-until-rereview`)
+
+- Scope: fix commit `ed84cb4` (M1/W1/W2/m1/m4), read and tested from a clean detached worktree at HEAD
+  `44cdf92`. No src/test changes landed between `ed84cb4` and `e913b63`, so the result applies to the
+  current branch tip. Files: `service/schedule_engine.py` (`drain_restart_requests`, `apply_restart`,
+  `restart_completed_schedule`, `until_condition` dedup, tick wiring), `schedules/cli.py` (`enable_cmd`,
+  `_until_equals`), `ui/service.py::set_schedule_enabled`, `tests/service/test_until.py`,
+  `tests/schedules/test_cli_e2e.py`, `tests/ui/test_schedules_api.py`, `docs-md/guide-scheduled-runs.md`,
+  `docs-md/scheduled-run-governance-hld.md`. Read for context: `fire_store.ScheduleStateStore`,
+  `drain_run_now_requests`/`drain_resume_requests`, `ScheduleEngine.start/_acquire_lock`, `service/cli.py`
+  (`--no-schedules` builds no engine, so it takes the direct path).
+
+### Evidence (observed, this re-review)
+- `uv run --extra dev --extra ui pytest tests/service tests/schedules tests/ui -q`: **2224 passed, 2 skipped**, 0 failed (121 s).
+- `ruff check` on the touched files: clean. `ruff format --check src tests`: 675 files clean. `mypy src`: **no issues, 233 files**.
+- Mutation checks (each reverted afterwards; run over `test_until.py` + `test_cli_e2e.py` + `test_schedules_api.py`):
+  removing the `drain_restart_requests` call in the tick: 1 failed · removing the `not repeated` dedup guard: 1 failed ·
+  removing `clear_queued` in `apply_restart` (m4): 1 failed · removing the `runs_count = 0` reset: 5 failed.
+- Throwaway probes (temp worktree, deleted):
+  - **P1, the original M1 scenario for the dashboard:** engine `start()`ed in-process, then `DashboardService.set_schedule_enabled("s", True)`
+    in the same process. Result: 200 with `restarted: true`, one `restart_completed` request file, state still `completed`. Next
+    `tick()`: status `active`, the schedule fires in that tick, `runs_count == 1`. Before the fix this path always raised (same-process flock conflict).
+  - P2: two enables while the engine runs leave two requests. One tick applies the first; the second is a no-op (status already
+    `active`); on-disk `state.json` matches the engine cache.
+  - P3: a tick whose registry load fails does not drain the request. It stays on disk and is applied on a later good tick, or
+    expires after `REQUEST_TTL_SECONDS` with `schedule.request_expired` (see n2).
+
+### Prior findings: status
+| ID | Status | Verification |
+|---|---|---|
+| M1 restart blocked while engine runs | **Fixed** | CLI and dashboard both call `restart_completed_schedule`. With `engine.lock` free it writes state directly under the lock; with the lock held it drops a `kind: restart_completed` request, which the engine (the single writer, F9 kept) applies at the start of its next tick. Run-now's drain skips foreign kinds (`kind != run_now -> continue`) and resume's drain skips non-`resume_capped`, so the three drains coexist. Tests use an in-process `engine.start()`, which is the strict case. P1 covers the dashboard. |
+| W1 `until_unreadable` spam | **Fixed** | One emit per distinct `str(exc)` per `(resolved root, id)`. A clean read or an absent gate forgets it, and so does a restart. The dedup map is in memory, so each `daemon --once` invocation or service restart emits once more. That is acceptable. |
+| W2 `max_runs` wording | **Fixed** | The docstring, TASK.md Risks and governance HLD §D-2 row now say "launched runs". A launch-failure quarantine is not added (out of scope, as recommended). |
+| m1 `--until-equals` crash | **Fixed** | `-?[0-9]+` fullmatch. `--5` and `²` stay strings (parametrized test). The guide explains the typing rule. |
+| m2 AC6 text vs HLD/impl | Open, **non-blocking** | The behaviour is the better one: a missing gate means "not done yet" and stays silent. It is recorded in STATUS.md. Only the AC wording is out of date. It needs an owner/manager edit of the AC text, not a code change. |
+| m3 gate read not via `read_regular_file` | Open, **non-blocking** | Low risk: the workspace is operator-owned and path escape is caught at resolve time. It is a hardening/DRY follow-up (bounded size, O_NOFOLLOW). |
+| m4 stale `queued_*` after completion | **Fixed** | `apply_restart` clears `queued_*`. Asserted by a test and by mutation. |
+| s1 `until_satisfied` only used by tests | Open | Suggestion only. |
+
+### New findings (none Critical, none Major)
+- **n1 (minor): the dashboard cannot tell "restarted" from "restart queued".** `ui/service.py::set_schedule_enabled`
+  ignores the bool returned by `restart_completed_schedule` and always returns `restarted: true`. The CLI does distinguish
+  ("restart queued ..." vs "restarted"). The UI (`ui/src/types.ts`) does not display `restarted` today, so nothing misleads a
+  user yet, but the API contract hides the 0-15 s window in which the row still shows `completed`. Next step: return
+  `restart_queued: not applied` in the response and the `schedule.enabled` event detail. Small follow-up, also relevant to `T-Ap1Xs3` W-1.
+- **n2 (minor): edge cases of the queued restart.** (a) `drain_restart_requests` runs inside `_evaluate_all` only after the
+  registry loads, so a run of corrupt-registry ticks lasting more than `REQUEST_TTL_SECONDS` (300 s) expires the request. The
+  binding is then `enabled: true` but still `completed`, and the only signal is a `schedule.request_expired` event. (b) Its
+  docstring says "Never raises", but an `OSError` from `apply_restart -> _save` propagates. The tick catches it
+  (`schedule.eval_failed`), but the request was already unlinked, so that restart is lost, and the rest of that tick's run-now
+  and evaluation is skipped. Both are rare and fail safe: no spend, the state stays `completed`, and re-running enable fixes it.
+  Next step: wrap each request in `try/except OSError` with an event, matching run-now.
+- **n3 (minor, DRY): three near-identical request-drain loops.** `drain_run_now_requests`, `drain_resume_requests` and
+  `drain_restart_requests` repeat the same glob, parse, kind filter, delete-first, TTL check and `request_expired` steps (~25
+  lines each). Next step: one `_iter_requests(kind, now)` generator in `schedule_engine.py` that yields valid unexpired
+  payloads. Not required for Done.
+- **n4 (minor, docs): the scheduler HLD does not mention the queued restart.** `docs-md/scheduler-triggers-hld.md` §6.8
+  (~L772) still says only "`ao schedule enable <id>` resets it", and the §6.2 tick pseudocode (~L453) and §6.9 request kinds do
+  not list `drain_restart_requests` / `kind: restart_completed`. The operator guide is correct. Not fixed here: that file has
+  another unit's uncommitted edits in the shared tree. Hand it to `T-Dc6Zr2` or the next HLD sync.
+- Pre-existing, not introduced by this fix: the direct path holds `engine.lock` for a few milliseconds. A service engine
+  starting at exactly that moment fails with `EngineLockHeldError`. The old code took the same lock the same way.
+
+### Dimensions checked
+SOLID/KISS: one helper (`restart_completed_schedule`) replaces the two duplicated locked resets in the CLI and dashboard, and
+`apply_restart` is the single mutation used by both paths. Good. DRY: n3. Magic literals: `REQUEST_KIND_RESTART_COMPLETED` and
+`STATUS_ACTIVE` are named; the `"until:"` reason prefix is still inline (minor, carried over). Pluggability: unchanged. Spec/DAG:
+n/a. Determinism/resume: the request carries `now` from the caller's injected clock; TTL is compared against the engine clock;
+delete-first gives at-most-once. Errors/logging: n2(b). Testability: in-process engine start, fixed clocks, mutation-checked.
+Concurrency: F9 single-writer kept; probe P2 shows duplicate requests are idempotent.
+
+### Verdict
+**T-Un0Lm6 may be marked Done.** M1 is fixed and verified, including the dashboard path. W1, W2, m1 and m4 are fixed. AC4 is now
+**met** with the service running. All other AC verdicts from the first review stand. **m2 and m3 are not blocking**: m2 is AC
+wording only (owner/manager call) and m3 is a hardening follow-up. n1-n4 are minor follow-ups and should go in tickets, not gate Done.

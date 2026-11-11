@@ -6,7 +6,7 @@
 - Owner: architect agent (design) → dev-epic agent (delivery)
 - Created: 2026-09-06
 - Last Updated: 2026-11-11
-- Status: In Progress (re-synced 2026-11-11 after waves 25-26, w27-02) — 14 tasks: 9 Done, 5 not Done (see Task List); epic NOT closed
+- Status: In Progress (re-synced 2026-11-11 after waves 25-26, w27-02; T-Un0Lm6 Done per w28-02 re-review) — 14 tasks: 10 Done, 4 not Done (see Task List); epic NOT closed
 - Origin ask: user request — "`Trigger` is spec'd but nothing executes a schedule; `ao service` is the only always-on process, so it should own cron/event trigger evaluation." Decisions D1/D3/D4/D5/D8 in ADR-0014 were locked by the user before design started and are not re-litigated.
 
 ## Summary
@@ -165,7 +165,7 @@
 - [x] `T-Fw8Gp4-file-watch-trigger` — `service/watch.py` + `FileWatchScheduler` (FR-11) — 2 d — **Done; accepted limitations in STATUS**
 - [x] `T-Wh9Kv1-webhook-ingress` — `service/webhook.py`, listener app, `WebhookScheduler` (FR-12,
   NFR-3) — 3 d — **Done (w26-06: AC7/8 github replay gate + AC1 combined auth test); accepted limitation: nonces not persistent (S-7)**
-- [~] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d — **NOT Done — implemented (ACs 1-14), reviewed w26-07: Major M1 open (restart of a `completed` loop impossible while the service runs)**
+- [~] `T-Un0Lm6-until-termination` — `until` evaluation + `completed` lifecycle (FR-13) — 2 d — **Done — w27-01 fixes (`ed84cb4`) re-reviewed w28-02: M1/W1/W2/m1/m4 fixed; open non-blocking: m2 (AC6 wording), m3, n1-n4**
 - [~] `T-Ap1Xs3-dashboard-schedules` — 5 UI routes + typed errors + React panel (FR-14) — 3 d — **NOT Done — implemented (ACs 1-18); review w26-08 in progress (REVIEW.md still a draft): W-1 completed-schedule enable under a running daemon, W-2 inert-workspace run-now notice open**
 - [~] `T-Te3Qw8-integration-e2e-suite` — cross-module integration + `CliRunner` e2e tiers
   (all FRs, NFR-1, NFR-2, NFR-4) — 3 d — **NOT Done — Partial: AC6, AC8a, AC17 (clean-tree gate), AC18 not-exercised list open**

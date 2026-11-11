@@ -2,8 +2,10 @@
 
 - ID: `E-Sc9Rt4-scheduler-triggers`
 - Updated At: 2026-11-11
-- State: In Progress (9 of 14 tasks Done; 5 NOT Done; not closed)
+- State: In Progress (10 of 14 tasks Done; 4 NOT Done; not closed)
 - Owner: architect agent (design) → dev-epic agent (delivery)
+
+> **Update 2026-11-11 (reviewer, unit `w28-02-a1-until-rereview`):** `T-Un0Lm6` re-reviewed after `ed84cb4` and marked **Done**. Rollup now **10 Done / 4 NOT Done**; the table below has that row updated, and its other rows are unchanged.
 
 ## Rollup 2026-11-11, re-synced after waves 25-26 (w27-02, developer; docs only, branch `ad/enhancements-10nov`, HEAD `c4e3871`)
 This table is the authoritative rollup and matches `EPIC.md`'s Task List and each task's `STATUS.md`/`TASK.md` header. It supersedes the w24-07 table below (kept as history). **14 tasks: 9 Done, 5 NOT Done. Epic NOT closed.**
@@ -19,7 +21,7 @@ This table is the authoritative rollup and matches `EPIC.md`'s Task List and eac
 | `T-Fw8Gp4` file watch | Done | accepted limitations L-a, L6, L7 |
 | `T-Sv5Hb3` service integration | **Done** (was Partial) | AC10 closed by w26-05 (`4ec01b4`); known limit: status fallback counts include schedules not opted in |
 | `T-Wh9Kv1` webhook ingress | **Done** (was Partial) | AC7/AC8 github-scheme replay gate + AC1 combined auth test landed w26-06 (`8d0b4ee`); accepted limitation: nonces not persistent across restart (S-7, needs ADR); the new github timestamp gate has had no separate review |
-| `T-Un0Lm6` until | **NOT Done** - Implemented, reviewed | w26-07 review (`c4e3871`): **M1 major** (restart of a `completed` loop impossible while the service runs; AC4 only with service stopped); W1 `until_unreadable` not de-duplicated, W2 `max_runs` counts launches; minors m1-m4. No fix landed yet |
+| `T-Un0Lm6` until | **Done** (was NOT Done) | w27-01 fixes (`ed84cb4`) re-reviewed w28-02: M1/W1/W2/m1/m4 fixed and verified (2224 passed). Open, non-blocking: m2 AC6 wording (owner), m3 hardened gate reader, n1-n4 minors (see task REVIEW.md) |
 | `T-Ap1Xs3` dashboard | **NOT Done** - Implemented, review in progress | w26-08 `REVIEW.md` is still an uncommitted draft (verdict/AC18-figure placeholders unfilled): W-1 (same lock problem as until M1, misleading "retry" 409), W-2 (Run now says queued for an inert workspace), W-3 (CLI logic triplicated). No Critical. No fix landed yet |
 | `T-Te3Qw8` e2e suite | **NOT Done** - Partial | AC6, AC8a, AC17 clean-tree before/after delta, AC18 not-exercised list; no independent review |
 | `T-Se4Bk5` security gate | **NOT Done** - In Progress | Closed since w24: R-2b (`3447aff`), GATE-1 (`1396dac`), usage_view 100 %. Still open: whole-tree pytest/ruff/mypy + UI gates on a clean tree; `REVIEW.md` still says R-2 open / pre-dates fixes; TEST-QUALITY FU-8..11 residue (O_NOFOLLOW swap race, jitter flake remainder); S-7 accepted |
