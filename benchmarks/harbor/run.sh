@@ -5,7 +5,7 @@
 #   benchmarks/harbor/run.sh --arm cc|ao --model sonnet|opus|<claude-model-id> \
 #       (--dataset ORG/NAME[@VER] | --task ORG/NAME | --path DIR) \
 #       [--tasks-file FILE] [--include GLOB]... [--n-tasks N] [-n CONCURRENCY] \
-#       [--effort LEVEL] [--attempts K] [--job-name NAME] [--subject JSON] \
+#       [--effort LEVEL] [--budget-usd USD] [--attempts K] [--job-name NAME] [--subject JSON] \
 #       [--install-only] [--dry-run] [-- EXTRA_HARBOR_ARGS...]
 #
 # Arms. Both get the same net input (see README "Input parity"): same container, pinned
@@ -35,7 +35,7 @@ DEFAULT_SUBJECT="$REPO_ROOT/benchmarks/subjects/ao-overseer-harbor.json"
 PARITY_ENV="$HERE/parity/env"
 
 arm="" model="" dataset="" task="" path="" tasks_file="" n_tasks="" concurrency="2"
-effort="high" attempts="1" job_name="" subject="" install_only=0 dry_run=0
+effort="high" budget_usd="20" attempts="1" job_name="" subject="" install_only=0 dry_run=0
 includes=() extra=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +49,7 @@ while [ $# -gt 0 ]; do
     --n-tasks) n_tasks="$2"; shift 2 ;;
     -n|--concurrency) concurrency="$2"; shift 2 ;;
     --effort) effort="$2"; shift 2 ;;
+    --budget-usd) budget_usd="$2"; shift 2 ;;
     --attempts) attempts="$2"; shift 2 ;;
     --job-name) job_name="$2"; shift 2 ;;
     --subject) subject="$2"; shift 2 ;;
@@ -90,6 +91,9 @@ args=(run -o "$AO_HARBOR_ROOT/jobs" --job-name "$job_name" -m "anthropic/$model_
 # ao arm AO_THINKING_EFFORT (-> `--effort` on every agent), and every session the env
 # fallback CLAUDE_CODE_EFFORT_LEVEL.
 args+=(--effort "$effort" --ae "CLAUDE_CODE_EFFORT_LEVEL=$effort")
+# Spend cap per benchmark task, identical for both arms: the plain arm's one session gets
+# `claude --max-budget-usd`, the whole ao run (all sessions) `run_budget_usd` (AoAgent maps it).
+args+=(--ak "max_budget_usd=$budget_usd")
 [ "$install_only" = 1 ] && args+=(--install-only)
 if [ -n "$tasks_file" ]; then
   while IFS= read -r line; do

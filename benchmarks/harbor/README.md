@@ -52,7 +52,8 @@ uv run ao-bench harbor-parity /var/tmp/ao-harbor/jobs/<cc-job> /var/tmp/ao-harbo
 harbor view /var/tmp/ao-harbor/jobs        # browse trajectories
 ```
 
-- `--model sonnet|opus|haiku|<id>`; `--effort` (default `high`, same for both arms);
+- `--model sonnet|opus|haiku|<id>`; `--effort` (default `high`) and `--budget-usd` (default 20, per
+  benchmark task) are applied identically to both arms;
   `-n` concurrency (default 2); `--attempts K`; `--n-tasks N`; `--include GLOB`; `--dry-run`
   prints the harbor command; `--install-only` installs the agent in each container and stops
   (no LLM spend).
@@ -91,6 +92,8 @@ something should help one arm, it goes into the shared parity layer so it helps 
 | claude.ai MCP connectors | off (`ENABLE_CLAUDEAI_MCP_SERVERS=false`) |
 | Permission mode, autocompact, output style, thinking display, max output tokens | Claude Code defaults in both (`bypassPermissions`; neither arm sets the others) |
 | Web tools | enabled in both (Claude Code default) |
+| Spend cap per benchmark task | `run.sh --budget-usd` (default 20): the plain arm's session gets `claude --max-budget-usd`, the whole ao run (all its sessions) `run_budget_usd`. ao's per-unit `task_budget_usd` (subject, 8) is internal pacing |
+| Wall-clock limit | the dataset's own agent timeout, both arms (leaderboard-comparable); ao's overhead counts against it |
 | Credentials | same env file |
 
 | Different by design (the thing under test) | |
@@ -99,7 +102,7 @@ something should help one arm, it goes into the shared parity layer so it helps 
 | ao's orchestration instructions | overseer contract, stage instructions, role prompt templates (`agents.json`): ao's method |
 | Per-session turn caps | plain: none. ao: per-unit turn budgets (`medium` 30 / `high` 60) from the template |
 | Git | ao's `init_git` commits the repo and adds a local bare `origin` (outside the repo) for its branch-off stage |
-| Spend | ao is capped by `run_budget_usd`/`task_budget_usd` (subject params); plain Claude Code is not capped |
+
 
 Verify parity on every pilot before reading scores: `ao-bench harbor-parity <cc-job> <ao-job>`
 compares every session's init event (tools, skills, agents, slash commands, MCP servers,

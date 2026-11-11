@@ -59,6 +59,8 @@ PATH_PREFIX = 'export PATH="$HOME/.local/bin:$PATH"; '
 USAGE_FILE = "ao-usage.json"
 # overseer-runner params pinned to the arm's model (see run()).
 MODEL_PIN_PARAMS = ("allowed_models", "default_unit_model")
+# overseer-runner's whole-run USD cap, set from the shared `max_budget_usd` option.
+RUN_BUDGET_PARAM = "run_budget_usd"
 ORCHESTRATOR_TARBALL = "ao-orchestrator.tgz"
 # Identity for commits made by ao's git stages and agents; task images rarely set one.
 GIT_IDENTITY_ENV = {
@@ -288,6 +290,10 @@ class AoAgent(CcAgent):
             # Same-model parity: the overseer may otherwise pick another model per unit.
             for key in MODEL_PIN_PARAMS:
                 argv += ["--param", f"{key}={model}"]
+        if self.options.max_budget_usd:
+            # Spend parity: the whole ao run (all its sessions) gets the same USD cap the plain
+            # arm's single session gets from `claude --max-budget-usd` (same --ak value).
+            argv += ["--param", f"{RUN_BUDGET_PARAM}={self.options.max_budget_usd}"]
         await self._upload_parity_bundle(environment)
         try:
             await self.exec_as_agent(
