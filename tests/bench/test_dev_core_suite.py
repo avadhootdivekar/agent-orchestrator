@@ -273,7 +273,7 @@ def test_test_writing_task_grader_rejects_a_noop_test(tmp_path: Path) -> None:
 
 
 def test_fake_subject_full_suite_run_produces_valid_run_json_and_summary(
-    tmp_path: Path,
+    tmp_path: Path, hermetic_uv: Path
 ) -> None:
     record = run_suite(
         _SUITE_PATH,

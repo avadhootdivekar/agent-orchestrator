@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
+import sys
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -52,6 +54,29 @@ def _bench_root_outside_checkout(tmp_path_factory: pytest.TempPathFactory) -> It
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv(ENV_BENCH_WORKSPACE_ROOT, str(root))
         yield root
+
+
+@pytest.fixture
+def hermetic_uv(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Put a `uv` shim first on PATH for suite `command`/`pytest` graders.
+
+    Graders run `uv run python ...` / `uv run pytest ...` in a temp workspace outside the
+    project, where uv picks its own managed Python (no pytest: "No module named pytest").
+    The shim runs them under THIS interpreter instead. Only those two forms are emulated;
+    anything else exits 2."""
+    bindir = tmp_path_factory.mktemp("uv-shim")
+    shim = bindir / "uv"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = run ]; then shift; fi\n'
+        'if [ "$1" = python ]; then shift; exec "$AO_TEST_PYTHON" "$@"; fi\n'
+        'if [ "$1" = pytest ]; then shift; exec "$AO_TEST_PYTHON" -m pytest "$@"; fi\n'
+        'echo "uv shim: unsupported: $*" >&2; exit 2\n'
+    )
+    shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("AO_TEST_PYTHON", sys.executable)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    return shim
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
