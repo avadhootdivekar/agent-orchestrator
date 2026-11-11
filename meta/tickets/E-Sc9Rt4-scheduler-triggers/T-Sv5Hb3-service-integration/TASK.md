@@ -6,7 +6,7 @@
 - Owner: developer agent
 - Created: 2026-09-06
 - Last Updated: 2026-11-10 (Opus design review w01-06: F5/F18/F20/F23 applied)
-- Status: Partial (AC10 fallback open) (reconciled 2026-11-11, w24-07; see STATUS.md)
+- Status: Done (AC10 implemented 2026-11-11, w26-05; see STATUS.md)
 - Estimate: 2 days
 
 ## Requirements Mapping

@@ -265,6 +265,33 @@ def _schedules_summary(schedules: Any) -> str | None:
     )
 
 
+def _persisted_schedules_summary(state_dir: Path) -> str | None:
+    """AC10: the same one-line schedules summary as the live path, derived from the persisted
+    ``<state_dir>/schedules/state.json`` when the hub is unreachable. Counts, earliest
+    ``next_fire_at`` among active schedules and live scheduled runs come from the state file; the
+    webhook state is not persisted, so it is reported as unknown. ``None`` when there is no state
+    file (nothing scheduled yet). Read-only: only the store's getters are used."""
+    from .fire_store import ScheduleStateStore  # lazy: keeps `ao service` import light
+
+    if not (state_dir / SCHEDULES_STATE_SUBDIR / SCHEDULES_STATE_FILENAME).is_file():
+        return None
+    totals = {"active": 0, "disabled": 0, "quarantined": 0}
+    next_fire: datetime | None = None
+    live_runs = 0
+    for st in ScheduleStateStore(state_dir).all().values():
+        if st.status in totals:
+            totals[st.status] += 1
+        live_runs += len(st.active_fire_keys)
+        if st.status == "active" and st.next_fire_at is not None:
+            next_fire = st.next_fire_at if next_fire is None else min(next_fire, st.next_fire_at)
+    next_iso = next_fire.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if next_fire else "-"
+    return (
+        f"Schedules (persisted, daemon not running): {totals['active']} active, "
+        f"{totals['disabled']} disabled, {totals['quarantined']} quarantined; "
+        f"next fire {next_iso}; live scheduled runs {live_runs}; webhook unknown"
+    )
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -543,6 +570,13 @@ def status() -> None:
         typer.echo("No persisted service state found (never run, or cleanly shut down).")
         return
     typer.echo(json.dumps(fallback, indent=2))
+    try:
+        summary = _persisted_schedules_summary(state_dir)
+    except Exception as exc:  # noqa: BLE001 - a bad schedules file must not break `status`
+        logger.warning("persisted schedules summary failed: %s", exc)
+        summary = None
+    if summary:
+        typer.echo(summary)
 
 
 # -- systemd commands ------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 - ID: `T-Sv5Hb3-service-integration`
 - Updated At: 2026-11-11
-- State: Partial — all ACs implemented and reviewed except AC10 (status fallback)
+- State: Done — all ACs implemented (AC10 closed by w26-05)
 - Owner: TBD (assigned at sprint start)
 
 ## Reconciliation 2026-11-11 (By: developer · Role: developer · unit `w24-07-a1-task-status-sync` · docs only)
@@ -37,3 +37,8 @@
 ## 2026-11-11 — review fixes (w16-03, from w14-03) — By: developer · Role: developer · Date: 2026-11-11
 - **H2 fixed**: `ao service run` wraps `build_schedule_engine`; `EngineLockHeldError` (or any start failure) logs `schedule.engine_start_failed`, the half-started engine is shut down (lock released) and the service continues with `engine=None` (hub reports `schedules.enabled=false`, dashboards stay up). Test `test_run_engine_start_failure_degrades_to_no_scheduler`; mutant "no guard" killed.
 - L4 (status fallback is a raw state.json dump) remains open, AC10 partial.
+
+## 2026-11-11 — AC10 closed (w26-05) — By: developer · Role: developer · Date: 2026-11-11
+- `ao service status` with the hub unreachable now prints, after the raw persisted sections, a formatted one-line summary from `<state_dir>/schedules/state.json` (`_persisted_schedules_summary`): active/disabled/quarantined counts, earliest active `next_fire_at`, live scheduled runs, webhook "unknown" (not persisted). Read-only; a corrupt file degrades to no summary. Resolves review finding L4.
+- Tests (fixed timestamps, CliRunner): formatted summary, empty state, corrupt state. `tests/service`: all pass; ruff/format/mypy clean on touched files.
+- Known limit: persisted state has no opt-in/registry filter, so counts include any schedule present in state.json.

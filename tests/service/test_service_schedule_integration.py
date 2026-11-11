@@ -692,15 +692,59 @@ def test_status_command_prints_schedules_summary_from_live_hub(
     assert "webhook off" in out
 
 
-def test_status_fallback_reads_persisted_schedules_state(
+def _write_state(tmp_path: Path, schedules: dict[str, Any]) -> None:
+    import json
+
+    sdir = tmp_path / "state" / "schedules"
+    sdir.mkdir(parents=True)
+    (sdir / "state.json").write_text(json.dumps({"schedules": schedules}))
+
+
+def test_status_fallback_prints_formatted_schedules_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC10: hub down -> same summary as live, derived from state.json (fixed timestamps)."""
+    _write_state(
+        tmp_path,
+        {
+            "w|a": {
+                "status": "active",
+                "next_fire_at": "2026-01-01T00:05:00Z",
+                "active_fire_keys": ["k1", "k2"],
+            },
+            "w|b": {"status": "active", "next_fire_at": "2026-01-01T00:01:00Z"},
+            "w|c": {"status": "disabled", "next_fire_at": "2025-01-01T00:00:00Z"},
+            "w|d": {"status": "quarantined"},
+        },
+    )
+    monkeypatch.setattr(service_cli, "_probe_hub_status", lambda port: None)
+    out = runner.invoke(app, ["service", "status"]).output
+    assert '"schedules"' in out  # raw sections still printed
+    assert (
+        "Schedules (persisted, daemon not running): 2 active, 1 disabled, 1 quarantined; "
+        "next fire 2026-01-01T00:01:00Z; live scheduled runs 2; webhook unknown"
+    ) in out
+
+
+def test_status_fallback_empty_state_has_no_next_fire(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_state(tmp_path, {})
+    monkeypatch.setattr(service_cli, "_probe_hub_status", lambda port: None)
+    out = runner.invoke(app, ["service", "status"]).output
+    assert "0 active, 0 disabled, 0 quarantined; next fire -; live scheduled runs 0" in out
+
+
+def test_status_fallback_corrupt_state_does_not_break_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sdir = tmp_path / "state" / "schedules"
     sdir.mkdir(parents=True)
-    (sdir / "state.json").write_text('{"marker": "persisted"}')
+    (sdir / "state.json").write_text("{not json")
     monkeypatch.setattr(service_cli, "_probe_hub_status", lambda port: None)
-    out = runner.invoke(app, ["service", "status"]).output
-    assert '"schedules"' in out and "persisted" in out
+    result = runner.invoke(app, ["service", "status"])
+    assert result.exit_code == 0
+    assert "Schedules (persisted" in result.output or "No persisted" in result.output
 
 
 # -- systemd (AC12, AC13) ----
