@@ -1454,3 +1454,36 @@ def test_ln3_post_spawn_argv_with_wrong_cap_value_cancels_child(tmp_path: Path) 
     rec = rig.launcher.launch(gov_decision(rig, make_binding(limits=limits(per_run=2, week=10))))
     assert rec.status == "launch_failed" and rec.reason == "cost_cap_not_forwarded"
     assert rig.sup.cancelled == ["launched-run"]
+
+
+# -- w21-06 test-quality review: the SimpleNamespace ``_state`` above cannot express a partly blind
+# run (no ``actuals_available``), so the retire hook was never compared with the ledger's
+# ``run_confidence`` on a real RunState. This pins the divergence until the hook is fixed.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="retire hook derives confidence from observed>0, not run_confidence(): a partly blind "
+    "run is persisted 'actual' at its observed cost (ledger says 'partial', charges max(obs, "
+    "reserved)); once state.json is gone the window under-charges. Follow-up in epic STATUS.",
+)
+def test_retire_hook_confidence_matches_ledger_for_partly_blind_run(tmp_path: Path) -> None:
+    from agent_orchestrator.models import RunState, TaskRunState
+    from agent_orchestrator.service.usage_ledger import run_confidence
+
+    env = gov_env(tmp_path, limits(per_run=2, week=50))
+    put_run(env, "k1", T0, "r1", reserved=2.0)
+    st = RunState(
+        run_id="r1", workflow_id="w", started_at=T0.isoformat(), updated_at=T0.isoformat(),
+        status="succeeded",
+        tasks={
+            "a": TaskRunState(status="succeeded", cumulative_cost_usd=0.4, actuals_available=True),
+            "b": TaskRunState(status="succeeded", cumulative_cost_usd=0.0, actuals_available=False),
+        },
+    )  # fmt: skip
+    assert run_confidence(st) == "partial"
+    _retire(env, "r1", st)
+    g = env.engine.fire_store.get("k1").governance  # type: ignore[union-attr]
+    assert g is not None and g.final
+    assert g.cost_confidence == "partial"
+    assert g.cost_observed_usd == 2.0  # max(observed, reserved), as the ledger charges it
